@@ -282,11 +282,13 @@ async def test_revision_chain_0149_0131_0149_preserves_full_state_and_issued_pdf
     from tests.conftest import MIGRATOR_SYNC_URL
     from tests.test_letters import contract_body, create_template, issue_body
     from tests.test_reserve_ledger import reserve_world, finalize
+    from tests.financial_coverage_helpers import reserve_evidence
 
     # Include 0149-only statement rows even when this rehearsal runs alone.
     reserve = await reserve_world(client_a_admin, seed_data)
+    evidence = {key.removeprefix('reserve_'): value for key, value in (await reserve_evidence(client_a_admin, reserve)).items()}
     adjustment = await client_a_admin.post(f"/api/weg-settlements/{reserve['run']}/reserve-ledger/overrides", json={
-        'component': 'ADJUSTMENT', 'amount': '1.00', 'reason': 'Synthetic retained statement evidence'})
+        'component': 'ADJUSTMENT', 'amount': '1.00', 'reason': 'Synthetic retained statement evidence', **evidence})
     assert adjustment.status_code == 201, adjustment.text
     await finalize(client_a_admin, reserve)
 

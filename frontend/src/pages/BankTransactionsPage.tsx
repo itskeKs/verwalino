@@ -10,6 +10,7 @@ import type {
   BankAssignmentLine, BankMatchSuggestion, BankMatchLine, LeaseRecord,
   OwnerProfile, TenantProfile, Person, Unit, OwnershipRecord,
 } from "../api/types";
+import { ReserveEvidenceFields } from "../components/ReserveEvidenceFields";
 import { useAuth } from "../auth/useAuth";
 import { Dialog, DialogContent, DialogTitle, DialogDescription } from "../components/ui/dialog";
 
@@ -150,11 +151,13 @@ function AccountTransactions({ id }: { id: string }) {
     setMutationError(null);
     setSuccess(null);
     try {
-      if (lines) await assignBankTransaction(item.id, lines);
-      else await ignoreBankTransaction(item.id);
+      const result = lines ? await assignBankTransaction(item.id, lines) : null;
+      if (!lines) await ignoreBankTransaction(item.id);
       if (!mounted.current) return;
       setEditing(null);
-      setSuccess(lines ? "Umsatz zugeordnet." : "Umsatz ignoriert.");
+      setSuccess(result?.payments.some(payment => payment.status === 'draft')
+        ? 'Rücklagenentnahme als Entwurf übernommen. Bitte ergänzen Sie in der Zahlung den bestätigten Kostenbeleg und den Beschluss vor dem Buchen.'
+        : lines ? "Umsatz zugeordnet." : "Umsatz ignoriert.");
       resetList();
       setRevision(value => value + 1);
     } catch (error) {
@@ -290,7 +293,7 @@ function validLine(line: BankAssignmentLine): boolean {
   return Object.hasOwn(PAYMENT_TYPES, line.payment_type) && positiveAmount(line.amount) !== null
     && Number.isInteger(line.period_year) && line.period_year >= 1 && line.period_year <= 9999
     && Number.isInteger(line.period_month) && line.period_month >= 1 && line.period_month <= 12
-    && lease !== owner && !(owner && line.tenant_profile_id)
+    && (line.payment_type === "RUECKLAGENENTNAHME" ? !lease && !owner && !line.tenant_profile_id : lease !== owner && !(owner && line.tenant_profile_id))
     && (!TENANT_TYPES.has(line.payment_type) || lease) && (!OWNER_TYPES.has(line.payment_type) || owner);
 }
 function coversTransaction(lines: BankAssignmentLine[], amount: string): boolean {
@@ -329,6 +332,8 @@ interface SplitRow {
   targetKind: "lease" | "owner";
   target: string;
   note: string;
+  reserve_cost_entry_id?: string | null;
+  reserve_register_entry_id?: string | null;
 }
 interface TargetData {
   leases: LeaseRecord[];
@@ -393,13 +398,13 @@ function SplitDialog({ transaction, account, busy, error, onClose, onSubmit }: {
       const amount = positiveAmount(item.amount);
       const lease = item.targetKind === "lease" ? targets.leases.find(lease => lease.id === item.target) : undefined;
       const owner = item.targetKind === "owner" ? targets.owners.find(owner => owner.id === item.target) : undefined;
-      if (!amount || !/^\d{1,4}$/.test(item.period_year) || !/^\d{1,2}$/.test(item.period_month) || (!lease && !owner)) {
+      if (!amount || !/^\d{1,4}$/.test(item.period_year) || !/^\d{1,2}$/.test(item.period_month) || (item.payment_type !== "RUECKLAGENENTNAHME" && !lease && !owner)) {
         setValidation("Bitte positive Beträge (max. 12 Vorkommastellen, 2 Nachkommastellen), Periode und ein gültiges Ziel im Bankobjekt angeben.");
         return;
       }
       const line: BankAssignmentLine = {
         payment_type: item.payment_type, amount, period_year: Number(item.period_year), period_month: Number(item.period_month),
-        ...(lease ? { lease_agreement_id: lease.id, tenant_profile_id: lease.tenant_profile_id } : { owner_profile_id: owner!.id }),
+        ...(item.payment_type === "RUECKLAGENENTNAHME" ? { reserve_cost_entry_id: item.reserve_cost_entry_id, reserve_register_entry_id: item.reserve_register_entry_id } : lease ? { lease_agreement_id: lease.id, tenant_profile_id: lease.tenant_profile_id } : { owner_profile_id: owner!.id }),
         ...(item.note.trim() ? { note: item.note.trim() } : {}),
       };
       if (!validLine(line)) { setValidation("Bitte Zahlungsart, Ziel und gültige Periode prüfen."); return; }
@@ -415,7 +420,7 @@ function SplitDialog({ transaction, account, busy, error, onClose, onSubmit }: {
     ? (total < 0n ? -total : total) - entered.reduce<bigint>((sum, amount) => sum + amount!, 0n) : null;
 
   return <Dialog open onOpenChange={open => { if (!open && !busy) onClose(); }}>
-    <DialogContent className="max-w-3xl max-h-[90vh] overflow-y-auto" onEscapeKeyDown={event => { if (busy) event.preventDefault(); }} onPointerDownOutside={event => { if (busy) event.preventDefault(); }}>
+    <DialogContent style={{ width: 'calc(100% - 2rem)', gridTemplateColumns: 'minmax(0, 1fr)' }} className="max-w-3xl max-h-[90vh] overflow-y-auto" onEscapeKeyDown={event => { if (busy) event.preventDefault(); }} onPointerDownOutside={event => { if (busy) event.preventDefault(); }}>
       <DialogTitle>Umsatz aufteilen</DialogTitle>
       <DialogDescription>{transaction.counterparty_name ?? "Unbekannte Gegenpartei"} · {money(transaction.amount)} · {transaction.amount.startsWith("-") ? "Ausgang (OUT)" : "Eingang (IN)"}. Splitbeträge immer positiv, z. B. 700,00. Die Buchungsberechtigung wird serverseitig geprüft.</DialogDescription>
       {(transaction.suggestions ?? []).map((suggestion, index) => <div key={index}>
@@ -426,9 +431,9 @@ function SplitDialog({ transaction, account, busy, error, onClose, onSubmit }: {
       {!targets && !targetError && <p>Lade Ziele…</p>}
       {validation && <p role="alert" className="error-text">{validation}</p>}
       {error && <p role="alert" className="error-text">{error}</p>}
-      <form onSubmit={event => { event.preventDefault(); submit(); }} noValidate>
-        <fieldset disabled={busy || !targets}>
-          {rows.map((item, index) => <fieldset key={item.key} className="card">
+      <form style={{ minWidth: 0 }} onSubmit={event => { event.preventDefault(); submit(); }} noValidate>
+        <fieldset style={{ minWidth: 0 }} disabled={busy || !targets}>
+          {rows.map((item, index) => <fieldset key={item.key} style={{ minWidth: 0 }} className={`card ${item.payment_type === 'RUECKLAGENENTNAHME' ? 'form-grid reserve-payment-form' : ''}`}>
             <legend>Splitzeile {index + 1}</legend>
             <label>Zahlungsart<select aria-label="Zahlungsart" value={item.payment_type} onChange={event => {
               const payment_type = event.target.value as BankAssignmentLine["payment_type"];
@@ -439,7 +444,9 @@ function SplitDialog({ transaction, account, busy, error, onClose, onSubmit }: {
             <label>Periode Jahr<input type="number" min="1" max="9999" value={item.period_year} onChange={event => update(item.key, { period_year: event.target.value })} /></label>
             <label>Periode Monat<input type="number" min="1" max="12" value={item.period_month} onChange={event => update(item.key, { period_month: event.target.value })} /></label>
             {item.payment_type === "NACHZAHLUNG" && <label>Zielart<select aria-label="Zielart" value={item.targetKind} onChange={event => update(item.key, { targetKind: event.target.value as SplitRow["targetKind"], target: "" })}><option value="lease">Mietvertrag</option><option value="owner">Eigentümer</option></select></label>}
-            {item.targetKind === "lease" ? <label>Mietvertrag<select aria-label="Mietvertrag" value={item.target} onChange={event => update(item.key, { target: event.target.value })}>
+            {item.payment_type === 'RUECKLAGENENTNAHME' ? <ReserveEvidenceFields propertyId={account?.property_id}
+              cost={item.reserve_cost_entry_id || ''} register={item.reserve_register_entry_id || ''} required={false}
+              onChange={(cost, register) => update(item.key, { reserve_cost_entry_id: cost || null, reserve_register_entry_id: register || null })} /> : item.targetKind === "lease" ? <label>Mietvertrag<select aria-label="Mietvertrag" value={item.target} onChange={event => update(item.key, { target: event.target.value })}>
               <option value="">Mietvertrag wählen</option>
               {targets?.leases.map(lease => <option key={lease.id} value={lease.id}>{name(targets.tenants.find(tenant => tenant.id === lease.tenant_profile_id)?.person_id)} · Einheit {targets.units.find(unit => unit.id === lease.unit_id)?.number} · ab {lease.valid_from}{lease.valid_to ? ` bis ${lease.valid_to}` : " (laufend)"}</option>)}
             </select></label> : <label>Eigentümer<select aria-label="Eigentümer" value={item.target} onChange={event => update(item.key, { target: event.target.value })}>
@@ -451,7 +458,7 @@ function SplitDialog({ transaction, account, busy, error, onClose, onSubmit }: {
           </fieldset>)}
           <button type="button" className="btn" disabled={rows.length >= 100} onClick={() => setRows(current => [...current, row(Math.max(...current.map(item => item.key)) + 1)])}>Zeile hinzufügen</button>
           <p>Restbetrag: {remaining === null ? "Beträge eingeben" : money(decimal(remaining))}</p>
-          <button type="submit" className="btn btn--primary">{busy ? "Bitte warten…" : "Zuordnung buchen"}</button>
+          <button type="submit" className="btn btn--primary">{busy ? 'Bitte warten…' : rows.some(item => item.payment_type === 'RUECKLAGENENTNAHME' && (!item.reserve_cost_entry_id || !item.reserve_register_entry_id)) ? 'Als Entwurf übernehmen' : 'Zuordnung buchen'}</button>
         </fieldset>
         <button type="button" className="btn" disabled={busy} onClick={onClose}>Abbrechen</button>
       </form>

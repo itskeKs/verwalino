@@ -15,7 +15,7 @@ import uuid
 from datetime import date
 from decimal import Decimal
 
-from tests.financial_coverage_helpers import attest_fixture, finalize_weg_fixture, weg_values
+from tests.financial_coverage_helpers import attest_fixture, finalize_weg_fixture, weg_values, reserve_evidence
 import pytest
 from sqlalchemy import text
 
@@ -981,6 +981,11 @@ class TestM4VermoegensberichtE2E:
             "receivables": [{"label": "Hausgeldrueckstand", "amount": "500.00"}],
             "payables": [{"label": "offene Rechnung", "amount": "1200.00"}],
         }
+        evidence = {key.removeprefix('reserve_'): value for key, value in (await reserve_evidence(client_a_admin, m4_seed)).items()}
+        for component, amount in [('WITHDRAWAL', '8000.00'), ('CONTRIBUTION', '6000.00')]:
+            correction = await client_a_admin.post(f"/api/weg-settlements/{run_id}/reserve-ledger/overrides", json={
+                'component': component, 'amount': amount, 'reason': 'Documented synthetic correction', **evidence})
+            assert correction.status_code == 201, correction.text
         await attest_fixture(client_a_admin, "settlement", run_id, body)
         resp = await client_a_admin.post(f"/api/weg-settlements/asset-reports/{run_id}/finalize", json=body)
         assert resp.status_code == 200, resp.text

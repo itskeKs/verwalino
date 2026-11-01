@@ -658,11 +658,22 @@ allocation and WEMoG settlement-balance calculation; it changes neither.
   filter the source payments.
 - `RUECKLAGENENTNAHME` is a counterparty-neutral payout type; it cannot be
   assigned to a tenant, owner or lease. Every booked payout reduces cash.
-  Before computing/finalizing, link it to its confirmed funded cost and an
-  accepted resolution in the property's resolution register. The link records
+  Before booking, attach BOTH a confirmed funded cost receipt and an accepted
+  resolution-register entry to the payment draft (`reserve_cost_entry_id` and
+  `reserve_register_entry_id`). Missing either reference returns
+  `RESERVE_PAYOUT_EVIDENCE_REQUIRED` and leaves the payment editable. The payment
+  form requires both selections. Bank assignment without both references creates
+  a draft and displays a German hint to complete its evidence on the payment.
+  Imported drafts retain their bank amount, direction, value date and account
+  and cannot be discarded (`RESERVE_IMPORTED_DRAFT_BOUND`); their evidence stays
+  editable, so an assigned bank line cannot lose its bookable payment.
+  Both references freeze with the booking; Storno retains them. Computing and
+  finalizing retain the evidence guard as a second line for historical payouts. The link records
   the complete payout, never a resolution's authorized budget. Several active
   linked payouts cannot exceed the cost amount. Unlinked payouts remain visible
-  and block computation. No wording parsing or inferred payment date is used.
+  and block computation. No wording parsing or inferred payment date is used. Excluding funded costs
+  from owner cost distribution remains follow-up #191; this change does not
+  alter that distribution.
 - Cash refunds and reversal rows have their own signed value-date entries.
   Original bookings remain in their original cash period, even when reversed
   later. The existing Storno operation keeps the original value date; a real
@@ -699,18 +710,26 @@ allocation and WEMoG settlement-balance calculation; it changes neither.
   the exact accounting scope. Prior-year scopes must be readable and either the
   same scope or whole-property WEG scopes with the same mandate. First-period
   opening starts at zero; an imported balance is an explicit reasoned opening
-  adjustment. If no plan exists, an asset report shows planning as unknown,
+  adjustment only in the first ledger year (`RESERVE_OPENING_IMPORT_ONLY`
+  otherwise). If no plan exists, an asset report shows planning as unknown,
   while dedicated reserve receipts and reasoned opening/other adjustments remain
   available; Hausgeld uses any finalized plan covering its cash date.
 - `reserve_ledger_entry` retains append-only signed adjustments and funding
   evidence. `OPENING`, `CONTRIBUTION` and `WITHDRAWAL` adjustments change those
   components; `ADJUSTMENT` adds a signed amount directly. A reason is mandatory.
+  Typed withdrawal corrections (including negative amounts) and other manual
+  adjustments require BOTH a confirmed cost receipt and an accepted registered
+  resolution; a reason alone cannot override missing evidence. The only
+  evidence-free manual entry is the audited import of the first year's opening
+  balance. Payment-specific Hausgeld assignments retain their booked cash proof.
   Corrections apply only to the exact start/end period they were posted for; a
   July–December opening does not enter a January–December ledger. Funding links
   remain payment-specific across periods so later reversals retain their evidence.
   Existing typed reserve total fields are optional target-total overrides: input
   attestation appends only their difference from the derived total, with
-  `reserve_override_reason`, and audits it. Repeating the same attestation adds
+  `reserve_override_reason`, and audits it. A typed withdrawal target with a
+  nonzero delta is refused without both references; use the correction dialog
+  to attach them instead. Repeating the same attestation adds
   no second adjustment. A subsequent source/ledger change invalidates coverage.
   A payment-specific contribution assignment may range from zero to its signed
   cash amount; the database and service reject a wrong sign or excess amount.

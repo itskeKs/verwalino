@@ -275,3 +275,27 @@ async def test_raw_upload_limit_protects_new_import_path():
     assert RequestBodyLimitMiddleware._is_upload_scope({
         "type": "http", "method": "POST", "path": f"/api/bank-accounts/{uuid.uuid4()}/imports",
     })
+
+
+@pytest.mark.anyio
+async def test_imported_reserve_payout_stays_draft_until_both_references_exist(client_a_admin, import_accounts):
+    api = client_a_admin
+    account = import_accounts['a']
+    assert (await upload(api, account, dry_run=False)).status_code == 200
+    page = await api.get('/api/bank-transactions', params={'bank_account_id': account})
+    outgoing = next(row for row in page.json()['items'] if Decimal(row['amount']) < 0)
+    assigned = await api.post(f"/api/bank-transactions/{outgoing['id']}/assign", json={'lines': [{
+        'payment_type': 'RUECKLAGENENTNAHME', 'amount': '200.01', 'period_year': 2026, 'period_month': 1}]})
+    assert assigned.status_code == 200, assigned.text
+    draft = assigned.json()['payments'][0]
+    assert draft['status'] == 'draft'
+    refused = await api.post(f"/api/payments/{draft['id']}/book")
+    assert refused.status_code == 422, refused.text
+    assert refused.json()['detail']['code'] == 'RESERVE_PAYOUT_EVIDENCE_REQUIRED'
+    discarded = await api.delete(f"/api/payments/{draft['id']}")
+    assert discarded.status_code == 409, discarded.text
+    assert discarded.json()['detail']['code'] == 'RESERVE_IMPORTED_DRAFT_BOUND'
+    for changes in ({'amount': '1.00'}, {'direction': 'IN'}, {'value_date': '2026-01-08'}):
+        changed = await api.patch(f"/api/payments/{draft['id']}", json=changes)
+        assert changed.status_code == 409, changed.text
+        assert changed.json()['detail']['code'] == 'RESERVE_IMPORTED_DRAFT_BOUND'

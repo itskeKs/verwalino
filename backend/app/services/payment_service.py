@@ -55,6 +55,8 @@ from app.models.audit_event import AuditEvent
 from app.services.financial_scope_service import FinancialScopeService
 from app.models.payment import Payment
 from app.services.special_levy_service import SpecialLevyService
+from app.repositories.cost_entry_repo import CostEntryRepository
+from app.repositories.register_entry_repo import RegisterEntryRepository
 from app.repositories.audit_repo import AuditRepository
 from app.repositories.bank_account_repo import BankAccountRepository
 from app.repositories.economic_plan_repo import (
@@ -159,12 +161,24 @@ class PaymentService:
             if unit.property_id != account.property_id or lease.tenant_profile_id != tenant.id:
                 raise HTTPException(422, "Deposit lease, tenant and account must belong together")
 
+    async def _reserve_evidence(self, payment, *, complete):
+        from app.services.reserve_ledger_service import ReserveLedgerService
+        if payment.payment_type != 'RUECKLAGENENTNAHME':
+            if payment.reserve_cost_entry_id or payment.reserve_register_entry_id:
+                raise HTTPException(422, {'code': 'RESERVE_FUNDING_LINKS_INVALID', 'message': 'Diese Belege sind nur für eine Rücklagenentnahme zulässig.'})
+            return
+        await ReserveLedgerService(self._session, self._org_id, self._user_id).require_evidence(
+            payment.property_id, payment.reserve_cost_entry_id, payment.reserve_register_entry_id,
+            complete=complete, payment=payment if complete else None)
+
     # ------------------------------------------------------------------
     # create / update draft
     # ------------------------------------------------------------------
     async def _resolve_parents(self, links):
         parents = {}
         for field, repository, detail in (
+            ("reserve_cost_entry_id", CostEntryRepository, {"code": "RESERVE_FUNDING_SOURCE_NOT_FOUND", "message": "Finanzierungsbeleg nicht gefunden."}),
+            ("reserve_register_entry_id", RegisterEntryRepository, {"code": "RESERVE_FUNDING_SOURCE_NOT_FOUND", "message": "Finanzierungsbeleg nicht gefunden."}),
             ("bank_account_id", BankAccountRepository, "Bank account not found"),
             ("tenant_profile_id", TenantProfileRepository, "Tenant profile not found"),
             ("owner_profile_id", OwnerProfileRepository, "Owner profile not found"),
@@ -194,6 +208,8 @@ class PaymentService:
         settlement_run_id: uuid.UUID | None = None,
         note: str | None = None,
         bank_transaction_id: uuid.UUID | None = None,
+        reserve_cost_entry_id: uuid.UUID | None = None,
+        reserve_register_entry_id: uuid.UUID | None = None,
     ) -> Payment:
         """Create an editable draft payment (m6 section 5; ADR-0009 E6-3).
 
@@ -205,7 +221,8 @@ class PaymentService:
         parents = await self._resolve_parents({
             "bank_account_id": bank_account_id, "tenant_profile_id": tenant_profile_id,
             "owner_profile_id": owner_profile_id, "lease_agreement_id": lease_agreement_id,
-            "settlement_run_id": settlement_run_id,
+            "settlement_run_id": settlement_run_id, "reserve_cost_entry_id": reserve_cost_entry_id,
+            "reserve_register_entry_id": reserve_register_entry_id,
         })
         account = parents["bank_account_id"]
 
@@ -230,8 +247,12 @@ class PaymentService:
             settlement_run_id=settlement_run_id,
             status="draft",
             note=note,
+            reserve_cost_entry_id=reserve_cost_entry_id,
+            reserve_register_entry_id=reserve_register_entry_id,
         )
-        await self._require_deposit_sources(payment)
+        with self._session.no_autoflush:
+            await self._require_deposit_sources(payment)
+            await self._reserve_evidence(payment, complete=False)
         payment = await self._repo.create(payment)
         await self._session.refresh(payment, ["management_mandate_id"])
         await self._audit.create(
@@ -264,6 +285,12 @@ class PaymentService:
                 detail="Cannot edit a booked payment; correct via Storno + Neubuchung",
             )
 
+        if payment.bank_transaction_id and any(
+                field in updates and updates[field] != getattr(payment, field)
+                for field in ('amount', 'direction', 'value_date', 'bank_account_id')):
+            raise HTTPException(409, {'code': 'RESERVE_IMPORTED_DRAFT_BOUND',
+                'message': 'Betrag, Richtung, Wertstellung und Konto folgen dem importierten Bankumsatz. Bitte ergänzen Sie die Belege im Entwurf.'})
+
         # If the bank account changes, re-mirror property_id (ADR-0010).
         if "bank_account_id" in updates and updates["bank_account_id"] is not None:
             if updates["bank_account_id"] != payment.bank_account_id and await self._repo.is_scope_bound(payment.id):
@@ -283,7 +310,9 @@ class PaymentService:
                 setattr(payment, field_name, value)
                 changed[field_name] = {"old": str(old_val), "new": str(value)}
 
-        await self._require_deposit_sources(payment)
+        with self._session.no_autoflush:
+            await self._require_deposit_sources(payment)
+            await self._reserve_evidence(payment, complete=False)
         payment = await self._repo.update(payment)
         if changed:
             await self._audit.create(
@@ -310,6 +339,9 @@ class PaymentService:
             )
         if payment.cancelled_at is not None:
             return
+        if payment.bank_transaction_id:
+            raise HTTPException(409, {'code': 'RESERVE_IMPORTED_DRAFT_BOUND',
+                'message': 'Ein importierter Zahlungsentwurf kann nicht verworfen werden. Bitte ergänzen Sie die Belege und buchen Sie die Zahlung.'})
         bound = await self._repo.is_scope_bound(payment.id)
         if bound:
             payment.cancelled_at = datetime.now(timezone.utc)
@@ -345,6 +377,8 @@ class PaymentService:
                 detail=f"Cannot book from status '{payment.status}'",
             )
 
+        await self._require_deposit_sources(payment)
+        await self._reserve_evidence(payment, complete=True)
         reserve_plan_unresolved = False
         if payment.payment_type == 'HAUSGELD_VORSCHUSS':
             from app.engine.reserve_ledger import hausgeld_reserve_share, plan_reserve_entries
@@ -367,7 +401,9 @@ class PaymentService:
         payment.booked_at = now
         payment.booked_by = self._user_id
         payment.retention_until = _compute_retention_until(payment.value_date)
-        await self._require_deposit_sources(payment)
+        with self._session.no_autoflush:
+            await self._require_deposit_sources(payment)
+            await self._reserve_evidence(payment, complete=False)
         payment = await self._repo.update(payment)
 
         await self._audit.create(
@@ -436,6 +472,8 @@ class PaymentService:
             booked_by=self._user_id,
             retention_until=_compute_retention_until(original.value_date),
             reverses_id=original.id,
+            reserve_cost_entry_id=original.reserve_cost_entry_id,
+            reserve_register_entry_id=original.reserve_register_entry_id,
             note=note or f"Storno zu {original.id}",
         )
         storno = await self._repo.create(storno)

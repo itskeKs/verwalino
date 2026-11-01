@@ -1,3 +1,4 @@
+import { ReserveEvidenceFields } from './ReserveEvidenceFields';
 import { useEffect, useState } from 'react';
 import { addReserveOverride, getReserveLedger, listCostEntries, listPayments, listRegisterEntries } from '../api/endpoints';
 import type { CostEntry, Payment, RegisterEntry, ReserveComponent, ReserveLedger, ReserveOverride } from '../api/types';
@@ -52,7 +53,11 @@ export function ReserveLedgerPanel({ runId, propertyId, status, onChanged, disab
     if (!reason.trim() || (component !== 'FUNDING' && !/^-?\d+(\.\d{1,2})?$/.test(normalized))) {
       setFormError('Bitte geben Sie einen Betrag mit höchstens zwei Nachkommastellen und eine Begründung ein.'); return;
     }
+    if ((component === 'FUNDING' || component === 'WITHDRAWAL' || component === 'ADJUSTMENT' || (component === 'CONTRIBUTION' && !payment)) && (!cost || !register)) {
+      setFormError('Bitte verknüpfen Sie einen bestätigten Kostenbeleg und einen Beschluss aus der Beschluss-Sammlung.'); return;
+    }
     const body: ReserveOverride = { component, amount: component === 'FUNDING' ? '0.00' : normalized, reason: reason.trim() };
+    if (component === 'WITHDRAWAL' || component === 'ADJUSTMENT' || (component === 'CONTRIBUTION' && !payment)) Object.assign(body, { cost_entry_id: cost, register_entry_id: register });
     if (component === 'FUNDING') Object.assign(body, { payment_id: payment, cost_entry_id: cost, register_entry_id: register });
     else if (component === 'CONTRIBUTION' && payment) body.payment_id = payment;
     setSaving(true);
@@ -102,7 +107,7 @@ export function ReserveLedgerPanel({ runId, propertyId, status, onChanged, disab
       <DialogTitle>Rücklagenkorrektur</DialogTitle>
       <DialogDescription>Erfassen Sie eine begründete Differenz. Positive Entnahmen vermindern den Bestand; sonstige Korrekturen werden mit Vorzeichen addiert.</DialogDescription>
       <form onSubmit={save}><fieldset disabled={saving || disabled} className="form-grid" style={{ gridTemplateColumns: 'minmax(0, 1fr)' }}>
-        <label>Art<select aria-label="Art" value={component} onChange={e => { setComponent(e.target.value as ReserveComponent); setPayment(''); }}>
+        <label>Art<select aria-label="Art" value={component} onChange={e => { setComponent(e.target.value as ReserveComponent); setPayment(''); setCost(''); setRegister(''); }}>
           {(['ADJUSTMENT', 'OPENING', 'CONTRIBUTION', 'WITHDRAWAL', 'FUNDING'] as const).map(kind => <option key={kind} value={kind}>{componentLabels[kind]}</option>)}
         </select></label>
         {component === 'CONTRIBUTION' && ledger?.entries.some(entry => entry.kind === 'UNASSIGNED') &&
@@ -116,6 +121,9 @@ export function ReserveLedgerPanel({ runId, propertyId, status, onChanged, disab
           <label>Bestätigter Kostenbeleg *<select aria-label="Bestätigter Kostenbeleg *" required value={cost} onChange={e => setCost(e.target.value)}><option value="">Bitte wählen</option>{sources.costs.map(c => <option key={c.id} value={c.id}>{c.document_number || day(c.invoice_date)} · {euro(c.gross_amount)}</option>)}</select></label>
           <label>Beschluss-Sammlung *<select aria-label="Beschluss-Sammlung *" required value={register} onChange={e => setRegister(e.target.value)}><option value="">Bitte wählen</option>{sources.register.map(r => <option key={r.id} value={r.id}>Nr. {r.sequence_number} · {r.wording.slice(0, 120)}</option>)}</select></label>
         </> : <p>Finanzierungsbelege werden geladen…</p> : <label>Betrag *<input required inputMode="decimal" value={amount} onChange={e => setAmount(e.target.value)} /></label>}
+        {(component === 'WITHDRAWAL' || component === 'ADJUSTMENT' || (component === 'CONTRIBUTION' && !payment)) &&
+          <ReserveEvidenceFields propertyId={propertyId} cost={cost} register={register} onChange={(cost, register) => { setCost(cost); setRegister(register); }} />}
+        {component === 'OPENING' && <p>Ein Import des Anfangsbestands ist nur im ersten Rücklagenjahr zulässig. Bitte begründen Sie den übernommenen Bestand.</p>}
         <label>Begründung *<textarea required maxLength={2000} value={reason} onChange={e => setReason(e.target.value)} /></label>
         {formError && <p role="alert" className="error-text">{formError}</p>}
         <div className="form-actions"><button className="btn btn--primary" disabled={component === 'FUNDING' && !sources} type="submit">{saving ? 'Speichern…' : 'Speichern'}</button>

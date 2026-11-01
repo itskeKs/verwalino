@@ -29,12 +29,18 @@ class AssignmentLine(BaseModel):
     lease_agreement_id: uuid.UUID | None = None
     tenant_profile_id: uuid.UUID | None = None
     owner_profile_id: uuid.UUID | None = None
+    reserve_cost_entry_id: uuid.UUID | None = None
+    reserve_register_entry_id: uuid.UUID | None = None
     note: Annotated[str, Field(max_length=500)] | None = None
 
     @model_validator(mode="after")
     def coherent_target(self):
         tenant = self.lease_agreement_id is not None
         owner = self.owner_profile_id is not None
+        if self.payment_type == 'RUECKLAGENENTNAHME':
+            if tenant or owner or self.tenant_profile_id:
+                raise ValueError('Reserve payouts have no personal counterparty')
+            return self
         if tenant == owner or owner and self.tenant_profile_id is not None:
             raise ValueError("Choose exactly one lease or owner target")
         if self.payment_type in TENANT_TYPES and not tenant:

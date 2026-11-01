@@ -148,16 +148,19 @@ class ReserveLedgerService:
                                 if payment.payment_type == 'HAUSGELD_VORSCHUSS' and assignment else {})})
             link = funding.get(payment.reverses_id or payment.id)
             if payment.payment_type == 'RUECKLAGENENTNAHME':
+                cost_id = link.cost_entry_id if link else payment.reserve_cost_entry_id
+                register_id = link.register_entry_id if link else payment.reserve_register_entry_id
+                backed = bool(cost_id and register_id)
                 amount = -signed
                 if late:
                     late_cash -= amount
                 else:
                     withdrawals += amount
                 rows.append({'kind': 'LATE_CASH' if late else 'WITHDRAWAL', **({'component': 'WITHDRAWAL'} if late else {}), 'date': str(payment.value_date), 'amount': format(-amount if late else amount, '.2f'),
-                             'payment_id': str(payment.id), 'cost_entry_id': str(link.cost_entry_id) if link else None,
-                             'register_entry_id': str(link.register_entry_id) if link else None,
-                             'reason': link.reason if link else 'Kostenbeleg und Beschluss noch nicht verknüpft'})
-                if link is None and not (payment.reversed_by_id in payment_ids or payment.reverses_id in payment_ids):
+                             'payment_id': str(payment.id), 'cost_entry_id': str(cost_id) if cost_id else None,
+                             'register_entry_id': str(register_id) if register_id else None,
+                             'reason': (link.reason if link else payment.note) if backed else 'Kostenbeleg und Beschluss noch nicht verknüpft'})
+                if not backed and not (payment.reversed_by_id in payment_ids or payment.reverses_id in payment_ids):
                     unlinked.append(str(payment.id))
         for entry in entries:
             if entry.payment_id or not run.period_start <= entry.entry_date <= run.period_end:
@@ -171,7 +174,8 @@ class ReserveLedgerService:
             else:
                 overrides += entry.amount
             rows.append({'kind': 'OVERRIDE', 'component': entry.component, 'date': str(entry.entry_date),
-                         'amount': format(entry.amount, '.2f'), 'reason': entry.reason, 'id': str(entry.id)})
+                         'amount': format(entry.amount, '.2f'), 'reason': entry.reason, 'id': str(entry.id),
+                         **({'cost_entry_id': str(entry.cost_entry_id), 'register_entry_id': str(entry.register_entry_id)} if entry.cost_entry_id else {})})
         return {**reserve_totals(opening, contributions, withdrawals, overrides, late_cash),
                 'planned_contributions_total': format(money(plan.reserve_contribution_total), '.2f') if plan else None,
                 'economic_plan_id': str(plan.id) if plan else None, 'economic_plan_sha256': plan.snapshot_sha256 if plan else None,
@@ -184,6 +188,22 @@ class ReserveLedgerService:
         ledger = await self.read(run)
         return {**ledger, 'entries': await self.repo.display_entries(ledger['entries'])}
 
+    async def require_evidence(self, property_id, cost_id, register_id, *, complete=True, payment=None):
+        with self.session.no_autoflush:
+            cost, register, result = await self.repo.evidence_sources(cost_id, register_id)
+        if (cost_id and (cost is None or cost.property_id != property_id)
+                or register_id and (register is None or register.property_id != property_id)):
+            raise HTTPException(404, {'code': 'RESERVE_FUNDING_SOURCE_NOT_FOUND', 'message': 'Finanzierungsbeleg nicht gefunden.'})
+        if not complete:
+            return
+        if (cost is None or register is None or cost.status != 'confirmed' or cost.superseded_by_id
+                or result != 'ANGENOMMEN'):
+            raise HTTPException(422, {'code': 'RESERVE_PAYOUT_EVIDENCE_REQUIRED',
+                'message': 'Bitte verknüpfen Sie einen bestätigten Kostenbeleg und einen angenommenen Beschluss aus der Beschluss-Sammlung vor dem Buchen.'})
+        if payment and payment.amount + await self.repo.funded_amount(cost_id, payment.id) > cost.gross_amount:
+            raise HTTPException(422, {'code': 'RESERVE_PAYOUT_EVIDENCE_REQUIRED',
+                'message': 'Die aktiven Rücklagenentnahmen dürfen den bestätigten Kostenbetrag nicht überschreiten.'})
+
     async def add(self, run, component, amount, reason, payment_id=None, cost_entry_id=None, register_entry_id=None):
         ledger = await self.read(run)
         if ledger['frozen']:
@@ -194,11 +214,17 @@ class ReserveLedgerService:
             amount = money(amount)
         except ValueError:
             raise HTTPException(422, {'code': 'RESERVE_AMOUNT_INVALID', 'message': 'Bitte geben Sie einen endlichen Betrag ein.'}) from None
+        if component == 'OPENING':
+            if ledger.get('opening_source_run_id') or await self.repo.has_earlier_ledger(run):
+                raise HTTPException(422, {'code': 'RESERVE_OPENING_IMPORT_ONLY', 'message': 'Ein Import des Anfangsbestands ist nur im ersten Rücklagenjahr zulässig.'})
         if component == 'FUNDING':
+            await self.require_evidence(run.property_id, cost_entry_id, register_entry_id)
             sources = await self.repo.funding_sources(payment_id, cost_entry_id, register_entry_id)
             if any(source is None or source.property_id != run.property_id for source in sources):
                 raise HTTPException(404, {'code': 'RESERVE_FUNDING_SOURCE_NOT_FOUND', 'message': 'Finanzierungsbeleg nicht gefunden.'})
             payment, cost, register = sources
+            if payment.reserve_cost_entry_id and (payment.reserve_cost_entry_id != cost_entry_id or payment.reserve_register_entry_id != register_entry_id):
+                raise HTTPException(422, {'code': 'RESERVE_PAYOUT_EVIDENCE_REQUIRED', 'message': 'Die Verknüpfung muss den unveränderbaren Buchungsbelegen entsprechen.'})
             if (payment.status != 'booked' or payment.direction != 'OUT' or payment.payment_type != 'RUECKLAGENENTNAHME'
                     or payment.reverses_id
                     or cost.status != 'confirmed' or cost.superseded_by_id or cost.gross_amount < payment.amount
@@ -218,6 +244,8 @@ class ReserveLedgerService:
                     'message': 'Die Rücklagenzuordnung muss zwischen null und dem vorzeichenbehafteten Zahlungsbetrag liegen.'})
             # The immutable organization/payment unique key permits exactly one
             # assignment, so its total cannot grow through another draft or race.
+        elif component in ('WITHDRAWAL', 'ADJUSTMENT', 'CONTRIBUTION') and payment_id is None:
+            await self.require_evidence(run.property_id, cost_entry_id, register_entry_id)
         elif any((payment_id, cost_entry_id, register_entry_id)):
             raise HTTPException(422, {'code': 'RESERVE_FUNDING_LINKS_INVALID', 'message': 'Belegverknüpfungen sind nur für eine finanzierte Entnahme zulässig.'})
         entry = await self.repo.create(ReserveLedgerEntry(

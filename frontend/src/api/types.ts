@@ -1014,6 +1014,8 @@ export interface BankAssignmentLine {
   tenant_profile_id?: string;
   owner_profile_id?: string;
   note?: string;
+  reserve_cost_entry_id?: string | null;
+  reserve_register_entry_id?: string | null;
 }
 
 export interface BankMatchLine extends Omit<BankAssignmentLine, "amount" | "lease_agreement_id" | "tenant_profile_id" | "owner_profile_id"> {
@@ -1094,6 +1096,7 @@ export type PaymentType =
 export type PaymentStatus = "draft" | "booked" | "cancelled";
 
 export interface Payment {
+  bank_transaction_id?: string | null;
   id: string;
   organization_id: string;
   bank_account_id: string;
@@ -1116,6 +1119,8 @@ export interface Payment {
   reversed_by_id: string | null;
   retention_until: string | null;
   note: string | null;
+  reserve_cost_entry_id?: string | null;
+  reserve_register_entry_id?: string | null;
 }
 
 export interface PaymentCreate {
@@ -1131,6 +1136,8 @@ export interface PaymentCreate {
   period_month?: number | null;
   settlement_run_id?: string | null;
   note?: string | null;
+  reserve_cost_entry_id?: string | null;
+  reserve_register_entry_id?: string | null;
 }
 
 export interface PaymentUpdate {
@@ -1146,6 +1153,8 @@ export interface PaymentUpdate {
   period_month?: number | null;
   settlement_run_id?: string | null;
   note?: string | null;
+  reserve_cost_entry_id?: string | null;
+  reserve_register_entry_id?: string | null;
 }
 
 export interface OpenItem {

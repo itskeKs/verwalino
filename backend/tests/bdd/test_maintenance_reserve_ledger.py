@@ -182,3 +182,134 @@ def visible_late_cash(world, reserve_scenario, browser_world, request):
             await expect(row).to_be_in_viewport()
 
     browser_world.run(inspect_register())
+
+
+@when('I try to book a reserve payout without its cost receipt and resolution')
+def unbacked_payout(world, reserve_scenario):
+    w = reserve_scenario
+    draft = create(world, '/api/payments', {'bank_account_id': w['bank_giro'], 'direction': 'OUT',
+        'amount': '1200.00', 'value_date': '2025-02-01', 'payment_type': 'RUECKLAGENENTNAHME'})
+    w['payout'] = draft['id']
+    w['refusal'] = world.act('POST', f"/api/payments/{draft['id']}/book")
+
+
+@then('booking is refused and the payout remains an editable draft')
+def payout_refused(world, reserve_scenario):
+    w = reserve_scenario
+    assert w['refusal'].status_code == 422, w['refusal'].text
+    assert w['refusal'].json()['detail']['code'] == 'RESERVE_PAYOUT_EVIDENCE_REQUIRED'
+    assert world.look(world.actor, f"/api/payments/{w['payout']}").json()['status'] == 'draft'
+
+
+@then('payment and correction forms require cost receipt and resolution on desktop and mobile')
+def evidence_forms(world, reserve_scenario, browser_world, request):
+    from playwright.async_api import expect
+    from tests.bdd.report import artifact_directory, attach_artifact
+    w = reserve_scenario
+    category = next(row for row in world.act('GET', '/api/cost-categories').json() if row['code'] == 'GARTENPFLEGE')
+    cost = create(world, '/api/cost-entries', {'property_id': w['property'], 'accounting_scope_id': w['scope'],
+        'cost_category_id': category['id'], 'cost_category_plan_version': category['plan_version'],
+        'document_number': 'RE-2025-Ä-123456789', 'invoice_date': '2025-02-01',
+        'service_period_from': '2025-01-01', 'service_period_to': '2025-12-31',
+        'gross_amount': '1200.00', 'tenant_apportionable': 'UMLAGEFAEHIG', 'source': 'MANUAL'})
+    response = world.act('POST', f"/api/cost-entries/{cost['id']}/confirm")
+    assert response.status_code == 200, response.text
+    meeting = create(world, '/api/meetings', {'property_id': w['property'], 'meeting_date': '2025-01-15', 'meeting_type': 'ORDENTLICH'})
+    assert world.act('POST', f"/api/meetings/{meeting['id']}/hold").status_code == 200
+    resolution = create(world, '/api/meetings/resolutions', {'meeting_id': meeting['id'],
+        'wording': 'Gartenreparatur aus der Erhaltungsrücklage mit ausführlicher Begründung',
+        'result': 'ANGENOMMEN', 'votes_yes': 1, 'votes_no': 0, 'votes_abstain': 0})
+    register = create(world, f"/api/meetings/resolutions/{resolution['id']}/register", {})
+    statement = ('Buchungstag;Wertstellung;Betrag;Name;IBAN;Verwendungszweck;Währung\n'
+        '02.02.2025;03.02.2025;-1200,00;Gartenservice;;Reparatur;EUR\n'
+        '04.02.2025;05.02.2025;-100,00;Gartenservice;;Prüfung;EUR\n').encode()
+    imported = world.act('POST', f"/api/bank-accounts/{w['bank_giro']}/imports", params={'dry_run': 'false'},
+        files={'file': ('reserve.csv', statement, 'text/csv')})
+    assert imported.status_code == 200, imported.text
+    transactions = world.act('GET', '/api/bank-transactions', params={'bank_account_id': w['bank_giro']}).json()['items']
+    transaction = next(row for row in transactions if row['amount'] == '-1200.00')
+    assigned = world.act('POST', f"/api/bank-transactions/{transaction['id']}/assign", json={'lines': [{
+        'payment_type': 'RUECKLAGENENTNAHME', 'amount': '1200.00', 'period_year': 2025, 'period_month': 2}]})
+    assert assigned.status_code == 200, assigned.text
+    payout = assigned.json()['payments'][0]['id']
+    directory = artifact_directory(request.node)
+
+    async def inspect():
+        page = browser_world.page
+        errors = []
+        page.on('pageerror', lambda error: errors.append(str(error)))
+        page.on('console', lambda message: errors.append(message.text) if message.type == 'error' else None)
+        for width in (1280, 360):
+            await page.set_viewport_size({'width': width, 'height': 1000})
+            await browser_world.visit(f"/weg-abrechnungen/{w['run']}")
+            await page.get_by_role('button', name='Korrektur erfassen', exact=True).click()
+            await page.get_by_label('Art', exact=True).select_option('WITHDRAWAL')
+            await expect(page.get_by_label('Bestätigter Kostenbeleg *', exact=True)).to_be_enabled()
+            await expect(page.get_by_label('Beschluss-Sammlung *', exact=True)).to_have_attribute('required', '')
+            await page.get_by_label('Betrag *', exact=True).fill('-1.200,00')
+            await page.get_by_label('Bestätigter Kostenbeleg *', exact=True).select_option(cost['id'])
+            await page.get_by_label('Beschluss-Sammlung *', exact=True).select_option(register['id'])
+            await page.get_by_label('Begründung *', exact=True).fill('Belegte Entnahmekorrektur für die Gartenreparatur')
+            await capture('correction', width)
+            await page.get_by_role('button', name='Abbrechen', exact=True).click()
+            await browser_world.visit('/zahlungen')
+            await page.get_by_role('button', name='+ Neue Zahlung', exact=True).click()
+            await page.get_by_label('Bankkonto *', exact=True).select_option(w['bank_giro'])
+            await page.get_by_label('Zahlungstyp *', exact=True).select_option('RUECKLAGENENTNAHME')
+            await expect(page.get_by_label('Bestätigter Kostenbeleg *', exact=True)).to_be_enabled()
+            await expect(page.get_by_label('Beschluss-Sammlung *', exact=True)).to_have_attribute('required', '')
+            await page.get_by_label('Bestätigter Kostenbeleg *', exact=True).select_option(cost['id'])
+            await page.get_by_label('Beschluss-Sammlung *', exact=True).select_option(register['id'])
+            await page.get_by_label('Bestätigter Kostenbeleg *', exact=True).scroll_into_view_if_needed()
+            await capture('payment-capture', width)
+            await browser_world.visit(f'/zahlungen/{payout}')
+            await expect(page.get_by_role('alert')).to_contain_text('bleibt ein Entwurf')
+            await expect(page.get_by_role('button', name='Entwurf verwerfen', exact=True)).to_have_count(0)
+            await page.get_by_role('button', name='Bearbeiten', exact=True).click()
+            await expect(page.get_by_label('Bestätigter Kostenbeleg *', exact=True)).to_be_enabled()
+            await page.get_by_label('Bestätigter Kostenbeleg *', exact=True).select_option(cost['id'])
+            await page.get_by_label('Beschluss-Sammlung *', exact=True).select_option(register['id'])
+            await page.get_by_label('Bestätigter Kostenbeleg *', exact=True).scroll_into_view_if_needed()
+            await capture('imported-payment-edit', width)
+            await page.get_by_role('button', name='Abbrechen', exact=True).click()
+            await browser_world.visit(f"/bankkonten/{w['bank_giro']}/umsaetze")
+            await page.get_by_role('button', name='Aufteilen', exact=True).click()
+            await page.get_by_label('Zahlungsart', exact=True).select_option('RUECKLAGENENTNAHME')
+            await page.get_by_label('Betrag (EUR)', exact=True).fill('100,00')
+            await expect(page.get_by_role('button', name='Als Entwurf übernehmen', exact=True)).to_be_enabled()
+            await capture('bank-payout-draft', width)
+            if width == 360:
+                await page.get_by_role('button', name='Als Entwurf übernehmen', exact=True).click()
+                await expect(page.get_by_role('status')).to_contain_text('Rücklagenentnahme als Entwurf übernommen')
+            else:
+                await page.get_by_role('button', name='Abbrechen', exact=True).click()
+        await browser_world.visit(f'/zahlungen/{payout}')
+        await page.get_by_role('button', name='Bearbeiten', exact=True).click()
+        await expect(page.get_by_label('Bestätigter Kostenbeleg *', exact=True)).to_be_enabled()
+        await page.get_by_label('Bestätigter Kostenbeleg *', exact=True).select_option(cost['id'])
+        await page.get_by_label('Beschluss-Sammlung *', exact=True).select_option(register['id'])
+        await page.get_by_role('button', name='Speichern', exact=True).click()
+        await expect(page.get_by_role('button', name='Buchen', exact=True)).to_be_visible()
+        page.once('dialog', lambda dialog: dialog.accept())
+        await page.get_by_role('button', name='Buchen', exact=True).click()
+        await expect(page.get_by_role('button', name='Buchen', exact=True)).to_have_count(0)
+        assert not errors, errors
+
+    async def capture(name, width):
+        page = browser_world.page
+        assert await page.evaluate('document.documentElement.scrollWidth <= window.innerWidth')
+        assert await page.locator('vite-error-overlay').count() == 0
+        assert await page.locator('[data-reserve-evidence]').evaluate_all("""groups => groups.every(group => {
+          const box = group.getBoundingClientRect();
+          return box.left >= 0 && box.right <= window.innerWidth && group.scrollWidth <= group.clientWidth
+            && [...group.querySelectorAll('p, label, select')].every(element => {
+              const rect = element.getBoundingClientRect();
+              return rect.left >= box.left && rect.right <= box.right;
+            });
+        })""")
+        if directory:
+            filename = directory / f'{name}-{width}.png'
+            await page.screenshot(path=str(filename), full_page=False)
+            attach_artifact(request.node, filename)
+
+    browser_world.run(inspect())

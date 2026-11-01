@@ -33,6 +33,7 @@ import type {
 } from "../api/types";
 import type { PaymentListQuery } from "../api/endpoints";
 import { ApiError } from "../api/client";
+import { ReserveEvidenceFields } from "../components/ReserveEvidenceFields";
 import { SepaExport } from "../components/SepaExport";
 
 const STATUS_OPTIONS: { value: string; label: string }[] = [
@@ -272,9 +273,13 @@ export function PaymentsPage() {
   }
 
   const isTenantType = TENANT_TYPES.has(form.payment_type);
+  const reserveProperty = bankAccounts.find(account => account.id === form.bank_account_id)?.property_id;
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
+    if (form.payment_type === 'RUECKLAGENENTNAHME' && (!form.reserve_cost_entry_id || !form.reserve_register_entry_id)) {
+      setError('Bitte verknüpfen Sie einen bestätigten Kostenbeleg und einen Beschluss aus der Beschluss-Sammlung.'); return;
+    }
     setSaving(true);
     setError(null);
     try {
@@ -376,7 +381,7 @@ export function PaymentsPage() {
       {showForm && (
         <div className="card" style={{ marginBottom: "1rem" }}>
           <h2>Neue Zahlung anlegen</h2>
-          <form onSubmit={handleSubmit} className="form-grid">
+          <form onSubmit={handleSubmit} className={`form-grid ${form.payment_type === 'RUECKLAGENENTNAHME' ? 'reserve-payment-form' : ''}`}>
             <label>
               Bankkonto *
               <select
@@ -384,7 +389,7 @@ export function PaymentsPage() {
                 required
                 value={form.bank_account_id}
                 onChange={(e) =>
-                  setForm({ ...form, bank_account_id: e.target.value })
+                  setForm({ ...form, bank_account_id: e.target.value, reserve_cost_entry_id: null, reserve_register_entry_id: null })
                 }
               >
                 <option value="">-- Konto waehlen --</option>
@@ -405,6 +410,7 @@ export function PaymentsPage() {
                   setForm({
                     ...form,
                     payment_type: e.target.value,
+                    reserve_cost_entry_id: null, reserve_register_entry_id: null,
                     direction: e.target.value === 'RUECKLAGENENTNAHME' ? 'OUT' : form.direction,
                     // Clear counterparty when switching between tenant/owner types
                     tenant_profile_id: null,
@@ -458,7 +464,7 @@ export function PaymentsPage() {
                 }
               />
             </label>
-            {form.payment_type === 'RUECKLAGENENTNAHME' ? <p>Auszahlung aus der Rücklage. Verknüpfen Sie anschließend Kostenbeleg und Beschluss im Rücklagenbuch.</p> : isTenantType ? (
+            {form.payment_type === 'RUECKLAGENENTNAHME' ? <p className="form-full-width">Eine Rücklagenentnahme ist eine Auszahlung ohne Mieter- oder Eigentümerzuordnung.</p> : isTenantType ? (
               <label>
                 Mieter
                 <select
@@ -579,6 +585,9 @@ export function PaymentsPage() {
                 placeholder="1-12"
               />
             </label>
+            {form.payment_type === 'RUECKLAGENENTNAHME' && <ReserveEvidenceFields propertyId={reserveProperty}
+              cost={form.reserve_cost_entry_id || ''} register={form.reserve_register_entry_id || ''}
+              onChange={(cost, register) => setForm({ ...form, reserve_cost_entry_id: cost || null, reserve_register_entry_id: register || null })} />}
             <label className="form-full-width">
               Notiz
               <textarea

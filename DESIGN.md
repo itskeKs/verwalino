@@ -788,7 +788,12 @@ Typed withdrawal adjustments are labelled “Entnahmekorrektur”; booked payout
 remain “Finanzierte Entnahme”. The reason for target reserve values sits inside
 the two-column form grid at full width on both detail pages.
 Funded payouts select the existing booking, confirmed cost and registered
-resolution. The dialog preserves useful inputs after refusal. A successful
+resolution. Evidence groups constrain long document/resolution options to their
+form width; payout capture and bank split fields stack at 360 px.
+“Entnahmekorrektur” and other manual adjustments require both
+“Bestätigter Kostenbeleg *” and “Beschluss-Sammlung *”; negative amounts have the
+same rule. Only “Anfangsbestand” permits an evidence-free import in the first
+ledger year. Payment-specific Hausgeld assignments keep their existing cash proof. The dialog preserves useful inputs after refusal. A successful
 change refreshes the ledger and invalidates the displayed coverage review;
 saving typed target-total overrides also refreshes the ledger. Finalized ledger
 snapshots have no correction action. Negative balances and missing funding
@@ -801,7 +806,13 @@ assignment stays between zero and the signed payment amount; structured reserve
 refusals display their German message while retaining the amount and reason.
 
 Payment capture offers “Rücklagenentnahme”, defaults its direction to “Ausgang”,
-and explains its neutral counterparty and subsequent ledger linkage. The payment
+and requires a confirmed cost receipt AND an accepted resolution before booking.
+Both selectors are available when editing an imported payment draft. Bank
+assignment offers “Als Entwurf übernehmen” when either reference is missing,
+then explains in German how to complete the evidence on the payment. Imported
+drafts offer evidence editing and retain their assigned bank line; they have no
+“Entwurf verwerfen” action. It keeps
+reserve payouts neutral with no tenant or owner target. The payment
 detail and bank-assignment vocabulary use the same German name. This type does
 not create a tenant or owner receivable.
 
@@ -818,6 +829,19 @@ disposable test database.
 | Asset report with late cash | [after](docs/assets/reserve-ledger/asset-after-1280.png) | [after](docs/assets/reserve-ledger/asset-after-360.png) |
 | WEG reserve reason form | [form](docs/assets/reserve-ledger/weg-form-1280.png) | [form](docs/assets/reserve-ledger/weg-form-360.png) |
 | Asset report reserve reason form | [form](docs/assets/reserve-ledger/asset-form-1280.png) | [form](docs/assets/reserve-ledger/asset-form-360.png) |
-| Reasoned correction | — | [dialog](docs/assets/reserve-ledger/override-dialog-360.png) |
+| Correction before evidence gate | — | [dialog](docs/assets/reserve-ledger/override-dialog-360.png) |
 | Payout funding | — | [dialog](docs/assets/reserve-ledger/funding-dialog-360.png) |
 | Payout detail | [detail](docs/assets/reserve-ledger/payment-detail-after-1280.png) | [detail](docs/assets/reserve-ledger/payment-detail-after-360.png) |
+
+
+Evidence capture uses synthetic records at both widths. The browser
+journey verifies both required references, imported-draft retention, a draft
+bank assignment, and subsequent booking after evidence completion, including
+field bounds and console health.
+
+| Evidence capture | Desktop (1280 px) | Mobile (360 px) |
+| --- | --- | --- |
+| Withdrawal correction | [after](docs/assets/reserve-ledger/correction-1280.png) | [after](docs/assets/reserve-ledger/correction-360.png) |
+| Payment draft capture | [form](docs/assets/reserve-ledger/payment-capture-1280.png) | [form](docs/assets/reserve-ledger/payment-capture-360.png) |
+| Imported draft evidence editing | [form](docs/assets/reserve-ledger/imported-payment-edit-1280.png) | [form](docs/assets/reserve-ledger/imported-payment-edit-360.png) |
+| Bank payout kept as draft | [dialog](docs/assets/reserve-ledger/bank-payout-draft-1280.png) | [dialog](docs/assets/reserve-ledger/bank-payout-draft-360.png) |

@@ -53,6 +53,8 @@ it('offers a reserve withdrawal without an owner or tenant counterparty', async 
   await openCreate();
   fireEvent.change(expectExplicitSelect('Zahlungstyp *'), { target: { value: 'RUECKLAGENENTNAHME' } });
   expect(screen.getByLabelText('Zahlungstyp *', { exact: true })).toHaveValue('RUECKLAGENENTNAHME');
+  expect(await screen.findByLabelText('Bestätigter Kostenbeleg *')).toBeInTheDocument();
+  expect(screen.getByLabelText('Beschluss-Sammlung *')).toBeInTheDocument();
   expect(screen.queryByLabelText('Eigentuemer', { exact: true })).not.toBeInTheDocument();
   expect(screen.queryByLabelText('Mieter', { exact: true })).not.toBeInTheDocument();
 });
