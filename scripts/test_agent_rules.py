@@ -16,7 +16,7 @@ ROOT = Path(__file__).resolve().parents[1]
 HOOK = ROOT / ".codex/hooks/attach_rules.py"
 TOPICS = {"language", "migrations", "api-layer", "engine", "gobd",
           "frontend-ui", "testing", "selfhost", "docs",
-          "architecture", "domain", "ai-pipeline"}
+          "architecture", "domain", "ai-pipeline", "session-cleanup"}
 
 
 def read_rule(path: Path) -> tuple[dict, str]:
@@ -111,6 +111,37 @@ class AgentRuleTests(unittest.TestCase):
         self.assertEqual(os.readlink(link), "AGENTS.md")
         self.assertEqual(link.read_text(encoding="utf-8"), (ROOT / "AGENTS.md").read_text(encoding="utf-8"))
 
+    def test_session_cleanup_policy_is_shared_by_all_hosts(self):
+        required = (
+            "Every session removes what it created when its task is merged, closed or abandoned.",
+            "Before a new task, check for and remove your own leftovers.",
+            "Remove your own worktrees and local branches after the PR is merged or closed;",
+            "never discard uncommitted work.",
+            "Remove your own separately authorized acceptance/verifier stacks completely:",
+            "containers, volumes (including anonymous volumes), networks and local images used only by that project.",
+            "Stop your own dev servers, free their ports and terminate every background process you started, including installer-harness children.",
+            "Remove scratch files and temporary artefacts you wrote",
+            "remove only your own inactive lock files.",
+            "Never touch other sessions' resources:",
+            "A matching name or label alone does not establish ownership. Never prune Docker globally.",
+            "Leave production (`docker-compose.prod.yml`, project `hausverwaltung` on the owner's Mac, `verwalino` on the hosted server) and shared test project `infra` untouched.",
+            "Never remove `/tmp/verwalino-testdb.lock` while another run holds it.",
+            "The only repair is starting the shared test DB with `docker compose -f infra/docker-compose.declaration-test.yml up -d postgres` when it is down, while holding its otherwise free lock; never restart a running DB.",
+            "Report cleanup in one line in the status/report, never in a repository file.",
+        )
+        agents = (ROOT / "AGENTS.md").read_text(encoding="utf-8")
+        for relative in ("AGENTS.md", ".claude/rules/session-cleanup.md", ".cursor/rules/session-cleanup.mdc"):
+            with self.subTest(path=relative):
+                path = ROOT / relative
+                self.assertTrue(path.is_file(), f"{relative}: missing cleanup rule")
+                body = agents if relative == "AGENTS.md" else read_rule(path)[1]
+                normalized = " ".join(body.split())
+                for sentence in required:
+                    self.assertTrue(sentence in normalized, f"{relative}: missing cleanup contract: {sentence}")
+                if relative != "AGENTS.md":
+                    section = agents.split("## Session cleanup\n", 1)[1].split("\n## ", 1)[0].strip()
+                    self.assertEqual(body.split("\n", 1)[1].strip(), section)
+
     def test_hooks_configuration_wires_both_events_to_the_adapter(self):
         config = json.loads((ROOT / ".codex/hooks.json").read_text())
         self.assertEqual(set(config["hooks"]), {"SessionStart", "PreToolUse"})
@@ -129,12 +160,13 @@ class AgentRuleTests(unittest.TestCase):
     def test_session_start_returns_only_the_always_on_rules(self):
         expected = {path.stem for path in (ROOT / ".cursor/rules").glob("*.mdc")
                     if read_rule(path)[0]["alwaysApply"]}
-        self.assertEqual(expected, {"language", "docs"})
+        self.assertEqual(expected, {"language", "docs", "session-cleanup"})
         for source in ("startup", "resume", "clear", "compact", "fork"):
             with self.subTest(source=source):
                 payload = {"hook_event_name": "SessionStart", "source": source}
                 self.assertEqual(self.attached_topics(payload), expected)
                 self.assertIn("The software is German", self.run_hook(payload))
+                self.assertIn("Every session removes what it created", self.run_hook(payload))
 
     def test_a_migration_patch_attaches_migrations_and_not_frontend_rules(self):
         payload = {"hook_event_name": "PreToolUse", "tool_name": "apply_patch",
