@@ -104,10 +104,7 @@ async def get_unscoped_session() -> AsyncGenerator[AsyncSession, None]:
         async with session.begin():
             # Explicitly set the impossible UUID so that any accidental
             # tenant query returns nothing.
-            await session.execute(
-                text("SELECT set_config('app.current_org_id', :org, true)"),
-                {"org": _NULL_ORG},
-            )
+            await set_tenant_context(session, uuid.UUID(_NULL_ORG))
             yield session
 
 

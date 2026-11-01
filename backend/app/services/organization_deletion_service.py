@@ -11,6 +11,7 @@ from urllib.parse import unquote
 from fastapi import HTTPException
 from sqlalchemy import text
 
+from app.core.locking import LockTimeoutError, bound_lock_waits
 from app.core.storage import LocalFsDocumentStore, get_store
 from app.services.organization_archive import json_bytes
 from app.services.organization_export_service import export_store
@@ -221,9 +222,14 @@ async def scrub_retained_payloads(db, org, tables, hashes, scrub):
             hashes[key] = retained_hash(name, {**row, **changed})
 
 
-async def lifecycle_lock(db, org):
-    await db.execute(text("SELECT pg_advisory_xact_lock(hashtextextended(:key,0))"), {'key': f'scope-acl:{org}'})
-    await db.execute(text("SELECT pg_advisory_xact_lock(hashtextextended(:key,0))"), {'key': f'organization-lifecycle:{org}'})
+async def lifecycle_lock(db, org, *, nowait=False):
+    await bound_lock_waits(db)
+    for key in ('scope-acl', 'organization-lifecycle'):
+        if nowait:
+            if not await db.scalar(text('SELECT pg_try_advisory_xact_lock(hashtextextended(:key,0))'), {'key': f'{key}:{org}'}):
+                raise LockTimeoutError('Organization lifecycle lock held; retry later')
+        else:
+            await db.execute(text('SELECT pg_advisory_xact_lock(hashtextextended(:key,0))'), {'key': f'{key}:{org}'})
 
 
 async def audit(db, org, actor, action):
@@ -281,14 +287,15 @@ async def cancel_deletion(db, auth, *, now=None):
     return {'status': 'cancelled'}
 
 
-async def run_deletion(db, org, *, now=None):
+async def run_deletion(db, org, *, now=None, nowait=False):
     """Operator maintenance only. Never called by an HTTP/runtime connection."""
     if await db.scalar(text('SELECT session_user')) != 'app_migrator':
         raise RuntimeError('Operator database role required')
     now = now or datetime.now(timezone.utc)
     await db.execute(text("SELECT set_config('app.current_org_id',:org,true)"), {'org': str(org)})
-    await lifecycle_lock(db, org)
-    state = (await db.execute(text('SELECT * FROM organization_deletion WHERE organization_id=:org FOR UPDATE'), {'org': org})).mappings().one_or_none()
+    await lifecycle_lock(db, org, nowait=nowait)
+    row_lock = ' NOWAIT' if nowait else ''
+    state = (await db.execute(text('SELECT * FROM organization_deletion WHERE organization_id=:org FOR UPDATE' + row_lock), {'org': org})).mappings().one_or_none()
     if not state or state['status'] != 'cooling_off' or state['execute_after'] > now:
         return False
     # Transaction-local and useful only for an actual operator login. Evidence

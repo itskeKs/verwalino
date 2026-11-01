@@ -37,6 +37,43 @@ def tracking_routes(monkeypatch):
     return "/api/test-tracker"
 
 
+@pytest.mark.parametrize('kind', ['asyncpg', 'psycopg2', 'storage', 'computation'])
+async def test_lock_timeout_is_a_retryable_conflict_without_tracker_event(kind, monkeypatch, offline_tracker):
+    from sqlalchemy.exc import DBAPIError
+    from app.core import storage
+
+    monkeypatch.setattr(app.router, 'routes', list(app.router.routes))
+
+    @app.get('/api/test-lock-timeout')
+    async def locked():
+        if kind == 'storage':
+            # Use the same exception type as hosted directory admission.
+            error_type = getattr(storage, 'StorageLockTimeout', TimeoutError)
+            raise error_type('synthetic directory contention')
+        original = Exception('synthetic database contention')
+        setattr(original, 'pgcode' if kind == 'psycopg2' else 'sqlstate', '55P03')
+        error = DBAPIError('SELECT synthetic_lock()', {}, original)
+        if kind == 'computation':
+            from app.services.financial_computation_service import begin_computation
+            async def blocked(*args):
+                raise error
+            return await begin_computation(SimpleNamespace(scalar=blocked), None,
+                SimpleNamespace(__tablename__='settlement_run', id=None), 'finalize')
+        raise error
+
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app, raise_app_exceptions=False),
+                                base_url='http://test') as browser:
+        response = await browser.get('/api/test-lock-timeout')
+    events, tracker = offline_tracker
+    tracker.flush()
+    assert response.status_code == 409, response.text
+    assert response.json()['detail'] == {
+        'code': 'LOCK_TIMEOUT',
+        'message': 'Der Vorgang ist gerade durch eine andere Aktion gesperrt. Bitte versuchen Sie es in Kürze erneut.',
+    }
+    assert events == []
+
+
 @pytest.fixture
 def offline_tracker(monkeypatch):
     import sentry_sdk

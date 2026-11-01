@@ -24,6 +24,7 @@ from typing import Any, Callable, Generic, Sequence, TypeVar
 from sqlalchemy import select
 
 from app.core.config import Settings, settings
+from app.core.locking import is_lock_timeout
 from app.core.db import get_worker_tenant_session
 from app.core.storage import DocumentStore, get_store
 from app.declarations.batching import PageBatch, PageBatcher
@@ -429,8 +430,12 @@ class DeclarationPipeline:
             await self._fail(lease, exc.code, retryable=exc.retryable, ledger=ledger)
         except ValueError:
             await self._fail(lease, "DRAFT_PUBLICATION_FAILED", retryable=False, ledger=ledger)
-        except Exception:
-            await self._fail(lease, "PIPELINE_UNEXPECTED_FAILURE", retryable=False, ledger=ledger)
+        except Exception as exc:
+            # Database contention interrupts this worker just like a lost process;
+            # preserve charged usage and let the existing five-minute retry resume.
+            interrupted = is_lock_timeout(exc)
+            await self._fail(lease, "WORKER_INTERRUPTED" if interrupted else "PIPELINE_UNEXPECTED_FAILURE",
+                             retryable=interrupted, ledger=ledger)
 
     async def _load(self, lease: WorkerLease):
         async with self._tenant_session_factory(lease.organization_id) as session:
@@ -1095,20 +1100,23 @@ class DeclarationPipeline:
     async def _fail(self, lease, code: str, *, retryable: bool, ledger: _Ledger | None) -> None:
         if code == "LEASE_LOST":
             return
+        # Loading or entering PREFLIGHT can itself time out before a run exists.
+        failure_states = {"PREFLIGHT", "EXTRACTING", "RECONCILING"}
         persisted_entries: tuple[PassLedgerEntry, ...] = ()
         async with self._tenant_session_factory(lease.organization_id) as session:
             repo = DeclarationImportRepository(session, lease.organization_id)
-            if ledger is None:
-                item = await repo.lock_current_lease(
-                    lease, {"PREFLIGHT", "EXTRACTING", "RECONCILING"}
-                )
-                if item is None:
-                    raise PipelineFailure("LEASE_LOST")
-                ledger = _Ledger(int(item.input_tokens), int(item.output_tokens), Decimal(item.estimated_cost_usd), int(item.attempt_count), self._settings.declaration_max_input_tokens, self._settings.declaration_max_output_tokens, Decimal(item.max_cost_usd), self._settings)
-            elif await repo.lock_current_lease(
-                lease, {"PREFLIGHT", "EXTRACTING", "RECONCILING"}
-            ) is None:
+            item = await repo.lock_current_lease(lease, failure_states | {"QUEUED", "RETRY_WAIT"})
+            if item is None:
                 raise PipelineFailure("LEASE_LOST")
+            if item.status in {"QUEUED", "RETRY_WAIT"}:
+                # Keep the database's existing lifecycle: enter PREFLIGHT before
+                # recording a failure that happened while trying to enter it.
+                if not await repo.transition_with_lease(
+                    lease, {item.status}, "PREFLIGHT", {"current_stage": "preflight"}
+                ):
+                    raise PipelineFailure("LEASE_LOST")
+            if ledger is None:
+                ledger = _Ledger(int(item.input_tokens), int(item.output_tokens), Decimal(item.estimated_cost_usd), int(item.attempt_count), self._settings.declaration_max_input_tokens, self._settings.declaration_max_output_tokens, Decimal(item.max_cost_usd), self._settings)
             next_attempt = datetime.now(timezone.utc) + timedelta(minutes=5) if retryable else None
             run = await repo.get_run_for_import_for_update(
                 lease.import_id, getattr(self, "_active_run_id", None)
@@ -1127,7 +1135,7 @@ class DeclarationPipeline:
                 run.completed_at = datetime.now(timezone.utc)
             if not await repo.transition_with_lease(
                 lease,
-                {"PREFLIGHT", "EXTRACTING", "RECONCILING"},
+                failure_states,
                 "RETRY_WAIT" if retryable else "FAILED",
                 {
                     "current_stage": "retry_wait" if retryable else "failed",

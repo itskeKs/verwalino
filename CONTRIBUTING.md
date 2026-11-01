@@ -96,6 +96,46 @@ AGENTS.md retains the safety baseline and tests/CI check parity.
   `make test-backend`, `make test-bdd`, `make test-browser` and `make test-scenarios-report`
   acquire/release the lock themselves.
 
+Backend tests have a 600-second per-test timeout (including fixture setup and teardown).
+`pytest-timeout` uses its thread method to print all thread stacks and terminate a hung
+test process; the Make target then releases the shared database lock. PostgreSQL test
+connections also use a five-second lock timeout and a 120-second statement timeout.
+Ordinary tenant, review and worker sessions retain the database's waiting policy.
+Only deletion lifecycle and hosted quota admission cap transaction lock waits at 30 seconds,
+preserve stricter caller limits, and reset on commit or rollback. Hosted document directory
+admission also waits at most 30 seconds and closes handles on timeout or cancellation.
+HTTP database lock timeouts (SQLSTATE `55P03`) and directory timeouts return 409 with
+`LOCK_TIMEOUT` and a German retry message, without an error-tracker event. Invoice and
+intake workers retry the saved completion output in a fresh transaction, retaining lease fencing,
+for at most ten attempts with exponential delays from one second up to 30 seconds; on exhaustion,
+the worker loop reports failure and the durable lease can be reclaimed within the job's attempt cap.
+The declaration pipeline treats a database lock timeout like an interrupted worker: the run is
+marked `RETRY_WAIT` with its charged usage kept and re-runs after five minutes; no output is replayed.
+In hosted mode, the operator's `quota-recount` caps database lock waits likewise and refuses an already
+held directory lock immediately; either contention exits with code 1 and the same retry message.
+Deletion CLI admission uses try-advisory locks and `FOR UPDATE NOWAIT` per organization;
+failed organizations roll back their transaction, including open savepoints, and close
+their session before the run continues. Contended organizations are reported for retry. Tests pass their
+own organization IDs; deletion cleanup touches only those rows and uses `NOWAIT`.
+
+On SQLAlchemy or raw psycopg2 lock timeout, the test-session instrumentation opens a separate
+connection and prints the failing PID/statement, `pg_stat_activity` (including blocking PIDs,
+queries and transaction ages) and `pg_locks` for open transactions. The timed-out wait has
+already left `pg_locks`, so all open transactions are included to retain potential holders.
+A pytest report hook retains a fallback and identifies diagnostics already emitted at the error.
+On any local pytest timeout, the same independent connection dumps all test-database backends
+and their locks with the test ID before the usual Python stacks.
+When a test body fails, the session rolls back every database transaction it left open (ORM
+sessions, SQLAlchemy connections and raw psycopg2 connections) before fixture finalizers run and
+lists them in the failure report under `open transactions`; `HV_TEST_KEEP_OPEN_TRANSACTIONS=1`
+disables this to reproduce the raw symptom. Fixtures of a passing test keep owning their
+transactions (several commit at teardown).
+Pytest includes these stderr diagnostics with the named failure; synthetic contention tests
+verify the dump, but do not identify the holder from the historical CI hangs.
+Keep targeted runs short (`timeout 1500 make test-backend PYTEST_ARGS="…"`); a legitimately
+longer test needs an explicit `@pytest.mark.timeout(...)` with a reason.
+CI retains its 75-minute backend job limit.
+
 Hosted signup acceptance sends real SMTP to the local Mailpit inbox. Start it once with
 `docker compose -f infra/docker-compose.declaration-test.yml up -d mailpit` and leave it
 running for other worktrees. `scripts/test-env.sh` (sourced by the Make targets) exports

@@ -152,6 +152,15 @@ permits unlink after the outer commit; byte aggregates never prove liveness.
 Selfhost removes the row only, without usage/reference queries or unlink.
 Rollback cancels removal; unlink failures log a warning and may leave an orphan
 for `quota-recount`. See [operations](../DEPLOY.md#hosted-organization-quotas).
+Hosted quota admission limits transaction lock waits and document directory waits
+to 30 seconds, preserving stricter database limits. Lock contention returns HTTP
+409 with `detail.code=LOCK_TIMEOUT` and a German retry message; ordinary sessions
+keep the database's waiting policy. `quota-recount` exits with code 1 and the same
+operator retry message for database and directory contention. Invoice and intake
+extraction workers retain completed output while retrying a fresh completion
+transaction; the existing lease and authority checks still fence stale results.
+The declaration pipeline marks a run hit by a lock timeout `RETRY_WAIT` (usage kept)
+and re-runs it after five minutes instead of failing it permanently.
 The request-body middleware remains the first upload boundary and reports the
 route's actual raw-body cap (1.75 MiB for master import; 26 MiB for uploads,
 including the multipart envelope). File-content and upload-storage refusals

@@ -11,17 +11,28 @@ Provides:
 from __future__ import annotations
 
 import asyncio
+import json
 import os
+import sys
 import uuid
 from contextlib import closing
 from datetime import date
+from functools import cache, wraps
+import signal
+import threading
+import weakref
 from typing import AsyncGenerator
 from unittest.mock import patch
 
 import pytest
 import pytest_asyncio
 import httpx
-from sqlalchemy import text
+import psycopg2
+from sqlalchemy import event, text
+from sqlalchemy.engine import Engine
+from sqlalchemy.orm import Session
+from sqlalchemy.ext.asyncio import async_session
+from sqlalchemy.util.concurrency import greenlet_spawn
 from sqlalchemy.ext.asyncio import (
     AsyncSession,
     async_sessionmaker,
@@ -39,6 +50,7 @@ from app.core.declaration_test_database import (
     reset_foreign_test_database,
 )
 from app.core.db import override_engine, override_worker_engine, override_review_engine
+from app.core.locking import is_lock_timeout
 from app.main import app
 from tests.bdd.world import admin_credentials, target_url
 
@@ -60,6 +72,287 @@ if target_url():
     MIGRATOR_URL = APP_RW_URL = MIGRATOR_SYNC_URL = None
 else:
     MIGRATOR_URL, APP_RW_URL, MIGRATOR_SYNC_URL = require_disposable_database_settings(settings)
+    # Bound direct psycopg2 connections too, including migration rehearsals.
+    os.environ['PGOPTIONS'] = (os.environ.get('PGOPTIONS', '')
+                              + ' -c lock_timeout=5s -c statement_timeout=120s')
+
+
+@event.listens_for(Engine, 'begin')
+def bound_test_database_waits(connection):
+    """Cover async app, worker, review and ad-hoc test transactions alike."""
+    if connection.dialect.name == 'postgresql':
+        connection.exec_driver_sql("SET LOCAL lock_timeout='5s'")
+        connection.exec_driver_sql("SET LOCAL statement_timeout='120s'")
+
+
+def _diagnostic_stream():
+    """Test diagnostics bypass pytest's sys-level capture (capsys), so tests that
+    assert a CLI's exact stderr stay unaffected; fd capture still shows the dump
+    in the failure report and in CI logs."""
+    return sys.__stderr__
+
+
+# Retain an unwrapped connector so a diagnostic failure cannot recursively dump.
+_diagnostic_connect = psycopg2.connect
+_current_test_item = None
+
+
+def dump_test_database_activity(*, pid=None, include_idle=False):
+    """Use an independent connection, even if the test's transaction is aborted."""
+    if target_url():
+        return
+    from psycopg2.extras import RealDictCursor
+
+    try:
+        with closing(_diagnostic_connect(MIGRATOR_SYNC_URL, connect_timeout=3,
+                     options='-c statement_timeout=2000 -c lock_timeout=1000')) as diagnostic:
+            with diagnostic.cursor(cursor_factory=RealDictCursor) as cursor:
+                # The timed-out wait is gone from pg_locks. Include all open
+                # transactions so its holder remains visible after 55P03.
+                cursor.execute("""SELECT pid,state,wait_event_type,wait_event,query,
+                    pg_blocking_pids(pid) AS blocking_pids,
+                    clock_timestamp()-xact_start AS xact_age
+                    FROM pg_stat_activity WHERE datname=current_database()
+                    AND pid<>pg_backend_pid() AND (%s OR xact_start IS NOT NULL OR pid=%s)
+                    ORDER BY pid""", (include_idle, pid))
+                activity = cursor.fetchall()
+                cursor.execute("""SELECT pid,locktype,mode,granted,relation::regclass::text,
+                    transactionid,classid,objid,objsubid FROM pg_locks
+                    WHERE pid=ANY(%s) ORDER BY pid,granted,locktype""",
+                    ([row['pid'] for row in activity],))
+                print('pg_stat_activity=' + json.dumps(activity, default=str), file=_diagnostic_stream())
+                print('pg_locks=' + json.dumps(cursor.fetchall(), default=str), file=_diagnostic_stream())
+    except Exception as diagnostic_error:
+        # A diagnostic must never replace the original named test failure.
+        print(f'Lock diagnostic unavailable: {type(diagnostic_error).__name__}', file=_diagnostic_stream())
+
+
+def dump_test_lock_timeout(error, *, statement=None, pid=None):
+    if target_url() or not is_lock_timeout(error):
+        return
+    if _current_test_item is not None:
+        _current_test_item._lock_dump_emitted = True
+    print(f'PostgreSQL lock timeout: pid={pid} waiting_statement={statement!r}', file=_diagnostic_stream())
+    dump_test_database_activity(pid=pid)
+
+
+def _capture_raw_lock_timeout(operation):
+    @wraps(operation)
+    def captured(self, *args, **kwargs):
+        try:
+            return operation(self, *args, **kwargs)
+        except Exception as error:
+            if is_lock_timeout(error):
+                connection = getattr(self, 'connection', self)
+                query = getattr(self, 'query', None)
+                statement = query.decode('utf-8', errors='replace') if isinstance(query, bytes) else query
+                dump_test_lock_timeout(error, statement=statement or 'COMMIT', pid=connection.get_backend_pid())
+            raise
+    return captured
+
+
+@cache
+def _diagnostic_cursor_factory(factory):
+    class DiagnosticCursor(factory):
+        execute = _capture_raw_lock_timeout(factory.execute)
+        executemany = _capture_raw_lock_timeout(factory.executemany)
+        callproc = _capture_raw_lock_timeout(factory.callproc)
+    return DiagnosticCursor
+
+
+@cache
+def _diagnostic_connection_factory(factory):
+    class DiagnosticConnection(factory):
+        def cursor(self, name=None, cursor_factory=None, *args, **kwargs):
+            cursor_factory = _diagnostic_cursor_factory(cursor_factory or self.cursor_factory or psycopg2.extensions.cursor)
+            return super().cursor(name, cursor_factory, *args, **kwargs)
+
+        commit = _capture_raw_lock_timeout(factory.commit)
+        __exit__ = _capture_raw_lock_timeout(factory.__exit__)
+    return DiagnosticConnection
+
+
+def pytest_configure(config):
+    if target_url():
+        return
+
+    @wraps(psycopg2.connect)
+    def connect(dsn=None, connection_factory=None, *args, **kwargs):
+        # Cover every raw fixture, including export_store's teardown TRUNCATE,
+        # while preserving custom connection/cursor factories. Asyncpg test
+        # statements currently all go through SQLAlchemy's handle_error below.
+        connection = _diagnostic_connect(dsn, _diagnostic_connection_factory(
+            connection_factory or psycopg2.extensions.connection), *args, **kwargs)
+        _open_raw_connections.add(connection)
+        return connection
+
+    config._lock_diagnostic_patch = pytest.MonkeyPatch()
+    config._lock_diagnostic_patch.setattr(psycopg2, 'connect', connect)
+
+
+def pytest_unconfigure(config):
+    if patcher := getattr(config, '_lock_diagnostic_patch', None):
+        patcher.undo()
+
+
+@event.listens_for(Engine, 'handle_error')
+def capture_database_lock_timeout(context):
+    if not is_lock_timeout(context.original_exception):
+        return
+    driver = context.connection.connection.driver_connection
+    pid = driver.get_server_pid() if hasattr(driver, 'get_server_pid') else driver.get_backend_pid()
+    dump_test_lock_timeout(context.original_exception, statement=context.statement, pid=pid)
+
+
+@pytest.hookimpl(hookwrapper=True)
+def pytest_runtest_makereport(item, call):
+    # Keep a fallback for exceptions without an instrumented DB connection.
+    if call.excinfo is not None and not target_url():
+        error = call.excinfo.value
+        if is_lock_timeout(error):
+            if getattr(item, '_lock_dump_emitted', False):
+                print(f'{item.nodeid}: lock timeout dump already emitted', file=_diagnostic_stream())
+            else:
+                dump_test_lock_timeout(error)
+    yield
+
+
+@pytest.hookimpl(hookwrapper=True, tryfirst=True)
+def pytest_runtest_protocol(item):
+    global _current_test_item
+    previous, _current_test_item = _current_test_item, item
+    item._lock_dump_emitted = False
+    try:
+        yield
+    finally:
+        _current_test_item = previous
+
+
+# ---------------------------------------------------------------------------
+# Transactions a FAILED test body leaves open are rolled back before any fixture
+# finalizer runs. Otherwise a teardown TRUNCATE or a migration rehearsal's
+# LOCK TABLE ... NOWAIT waits on, or fails against, the leaked transaction
+# (#180: the CI hang; the #190 rerun's 55P03 on `person`). Covered: ORM sessions,
+# SQLAlchemy connections (async and sync) and raw psycopg2 connections opened
+# through the instrumented connect above. Fixtures of a PASSING test keep owning
+# their transactions: several (app_rw_session, migrator_session) commit at
+# teardown, so a passing test is left alone.
+# ---------------------------------------------------------------------------
+_open_test_sessions = weakref.WeakSet()
+_open_test_connections = weakref.WeakSet()
+_open_raw_connections = weakref.WeakSet()
+
+
+@event.listens_for(Session, 'after_begin')
+def _track_open_test_session(session, transaction, connection):
+    _open_test_sessions.add(session)
+
+
+@event.listens_for(Engine, 'begin')
+def _track_open_test_connection(connection):
+    _open_test_connections.add(connection)
+
+
+@event.listens_for(Engine, 'commit')
+@event.listens_for(Engine, 'rollback')
+def _forget_ended_test_connection(connection):
+    _open_test_connections.discard(connection)
+
+
+def _raw_in_transaction(connection):
+    return not connection.closed and connection.status in (
+        psycopg2.extensions.STATUS_BEGIN, psycopg2.extensions.STATUS_IN_TRANSACTION)
+
+
+async def _end_open_test_transactions():
+    ended = []
+    for session in list(_open_test_sessions):
+        _open_test_sessions.discard(session)
+        if not session.in_transaction():
+            continue
+        try:
+            proxy = async_session(session)
+            if proxy is not None:
+                await proxy.rollback()
+            else:
+                session.rollback()
+            ended.append('session')
+        except Exception as error:
+            ended.append(f'session (rollback failed: {type(error).__name__})')
+    for connection in list(_open_test_connections):
+        _open_test_connections.discard(connection)
+        if connection.closed or not connection.in_transaction():
+            continue
+        try:
+            if connection.dialect.is_async:
+                await greenlet_spawn(connection.rollback)
+            else:
+                connection.rollback()
+            ended.append('connection')
+        except Exception as error:
+            ended.append(f'connection (rollback failed: {type(error).__name__})')
+    for raw in list(_open_raw_connections):
+        if not _raw_in_transaction(raw):
+            continue
+        try:
+            raw.rollback()
+            ended.append('psycopg2')
+        except Exception as error:
+            ended.append(f'psycopg2 (rollback failed: {type(error).__name__})')
+    return ended
+
+
+@pytest.hookimpl(hookwrapper=True)
+def pytest_runtest_call(item):
+    outcome = yield
+    if outcome.excinfo is None or target_url() or os.environ.get('HV_TEST_KEEP_OPEN_TRANSACTIONS'):
+        return
+    try:
+        loop = asyncio.get_event_loop_policy().get_event_loop()
+    except RuntimeError:
+        return
+    if loop.is_closed() or loop.is_running():
+        return
+    ended = loop.run_until_complete(_end_open_test_transactions())
+    if ended:
+        # Part of the failure report; nothing is printed outside pytest's capture.
+        item.add_report_section('call', 'open transactions',
+            f'rolled back {len(ended)} open test transaction(s) before teardown: {", ".join(ended)}')
+
+
+@pytest.hookimpl(tryfirst=True)
+def pytest_timeout_set_timer(item, settings):
+    """Add database evidence before pytest-timeout's normal stacks/termination."""
+    if target_url():
+        return None
+    import pytest_timeout
+
+    def expired(timeout_func):
+        if not settings.disable_debugger_detection and pytest_timeout.is_debugging():
+            return
+        capture = item.config.pluginmanager.getplugin('capturemanager')
+        from contextlib import nullcontext
+        with capture.global_and_fixture_disabled() if capture else nullcontext():
+            print(f'Pytest timeout: test id={item.nodeid}', file=_diagnostic_stream(), flush=True)
+            dump_test_database_activity(include_idle=True)
+        timeout_func(item, settings)
+
+    if settings.method == 'signal' and threading.current_thread() is threading.main_thread():
+        def cancel():
+            signal.setitimer(signal.ITIMER_REAL, 0)
+            signal.signal(signal.SIGALRM, signal.SIG_DFL)
+        item.cancel_timeout = cancel
+        signal.signal(signal.SIGALRM, lambda signum, frame: expired(pytest_timeout.timeout_sigalrm))
+        signal.setitimer(signal.ITIMER_REAL, settings.timeout)
+    else:
+        timer = threading.Timer(settings.timeout, expired, (pytest_timeout.timeout_timer,))
+        timer.name = f'pytest_timeout {item.nodeid}'
+        def cancel():
+            timer.cancel()
+            timer.join()
+        item.cancel_timeout = cancel
+        timer.start()
+    return True
 
 
 def pytest_sessionstart(session):

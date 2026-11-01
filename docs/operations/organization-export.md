@@ -200,6 +200,15 @@ exact-name confirmation, compute the retention snapshot and set the deadline
 from the database clock plus seven days. Runtime SQL cannot supply a deadline or
 mark an organization erased; execution belongs to the operator.
 
+Deletion lifecycle transactions allow at most 30 seconds per lock acquisition,
+preserving a stricter caller limit. A database lock timeout returns HTTP 409 with
+`detail.code=LOCK_TIMEOUT` and the German message “Der Vorgang ist gerade durch
+eine andere Aktion gesperrt. Bitte versuchen Sie es in Kürze erneut.” Retry after
+the competing action finishes. Ordinary tenant transactions keep their previous
+waiting policy. The deletion CLI tries each organization's advisory and lifecycle
+row locks without waiting, reports contended organizations for retry, and continues
+with the others; subsequent locks within an admitted erasure retain the 30-second bound.
+
 The database write guard takes **no advisory lock**. It reads
 `organization_deletion.status` with a plain SELECT on each statement's visible
 state, without a transaction-local cache. Under READ COMMITTED, a write that
