@@ -12,6 +12,12 @@ Refs #
 <!-- Which scenario in features/ and which unit tests were added or changed, and that they were
 red before the change. "None" needs a reason. -->
 
+## User check
+
+<!-- Copy the issue's user check. The acceptance run on this state reports here as a comment
+(passed / not passed per point, findings); for `owner` checks the owner answers here. Delete when
+the issue has no user check. -->
+
 ## Checks
 
 - [ ] `make lint` green
