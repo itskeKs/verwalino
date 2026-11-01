@@ -153,12 +153,34 @@ class ReserveLedgerRepository(TenantRepository[ReserveLedgerEntry]):
         return await self._session.scalar(text('SELECT reserve_funded_amount(:org,:cost,:payment)'),
             {'org': self._org_id, 'cost': cost_id, 'payment': exclude_payment_id})
 
+    async def _opening_period_exists(self, run, scope_id, query):
+        # A selected calculation scope hides compatible prior/next WEG scopes.
+        # Keep live organization/source RLS while comparing all readable scopes.
+        previous = await self._session.scalar(text("SELECT current_setting('app.current_scope_id',true)"))
+        await self._session.execute(text("SELECT set_config('app.current_scope_id','',true)"))
+        exists = await self._session.scalar(text(query),
+            {'org': self._org_id, 'property': run.property_id, 'start': run.period_start,
+             'scope': scope_id, 'mandate': run.management_mandate_id})
+        await self._session.execute(text("SELECT set_config('app.current_scope_id',:scope,true)"), {'scope': previous or ''})
+        return exists
+
     async def has_earlier_ledger(self, run):
-        return await self._session.scalar(text("""SELECT EXISTS(SELECT 1 FROM settlement_run r
+        scope = await self.current_scope(run)
+        return await self._opening_period_exists(run, scope.id if scope else None,
+            """SELECT EXISTS(SELECT 1 FROM settlement_run r
             WHERE r.organization_id=:org AND r.property_id=:property AND r.period_start<:start
               AND r.run_type IN ('WEG_JAHRESABRECHNUNG','VERMOEGENSBERICHT')
-              AND (r.superseded_by_id IS NULL OR EXISTS(
-                SELECT 1 FROM reserve_ledger_entry e WHERE e.organization_id=r.organization_id AND e.settlement_run_id=r.id))
-              AND (SELECT b.scope_id FROM accounting_scope_binding b WHERE b.organization_id=r.organization_id AND b.settlement_run_id=r.id) IS NOT DISTINCT FROM :scope)"""),
-            {'org': self._org_id, 'property': run.property_id, 'start': run.period_start,
-             'scope': (scope.id if (scope := await self.current_scope(run)) else None)})
+              AND r.superseded_by_id IS NULL
+              AND reserve_ledger_scope_matches(:org,
+                (SELECT b.scope_id FROM accounting_scope_binding b WHERE b.organization_id=r.organization_id AND b.settlement_run_id=r.id),
+                CAST(:scope AS uuid),r.management_mandate_id,CAST(:mandate AS uuid)))""")
+
+    async def has_later_opening_import(self, run, scope_id):
+        return await self._opening_period_exists(run, scope_id,
+            """SELECT EXISTS(SELECT 1 FROM settlement_run r
+            JOIN reserve_ledger_entry e ON e.organization_id=r.organization_id AND e.settlement_run_id=r.id
+            WHERE r.organization_id=:org AND r.property_id=:property AND r.period_start>:start
+              AND r.run_type IN ('WEG_JAHRESABRECHNUNG','VERMOEGENSBERICHT') AND e.component='OPENING'
+              AND reserve_ledger_scope_matches(:org,
+                (SELECT b.scope_id FROM accounting_scope_binding b WHERE b.organization_id=r.organization_id AND b.settlement_run_id=r.id),
+                CAST(:scope AS uuid),r.management_mandate_id,CAST(:mandate AS uuid)))""")

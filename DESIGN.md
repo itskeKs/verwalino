@@ -807,7 +807,7 @@ refusals display their German message while retaining the amount and reason.
 
 Payment capture offers “Rücklagenentnahme”, defaults its direction to “Ausgang”,
 and requires a confirmed cost receipt AND an accepted resolution before booking.
-Evidence selectors offer only confirmed, non-superseded costs and accepted
+Evidence selectors, including the funded-payout picker, offer only confirmed, non-superseded costs and accepted
 resolutions, while keeping an already-linked invalid entry visible as the current value.
 Both selectors are available when editing an imported payment draft. Bank
 assignment offers “Als Entwurf übernehmen” when either reference is missing,
@@ -833,6 +833,8 @@ disposable test database.
 | Asset report reserve reason form | [form](docs/assets/reserve-ledger/asset-form-1280.png) | [form](docs/assets/reserve-ledger/asset-form-360.png) |
 | Correction before evidence gate | — | [dialog](docs/assets/reserve-ledger/override-dialog-360.png) |
 | Payout funding | — | [dialog](docs/assets/reserve-ledger/funding-dialog-360.png) |
+| Payout evidence before filtering | [before](docs/assets/reserve-ledger/funding-options-before-1280.png) | [before](docs/assets/reserve-ledger/funding-options-before-360.png) |
+| Payout evidence after filtering | [after](docs/assets/reserve-ledger/funding-options-after-1280.png) | [after](docs/assets/reserve-ledger/funding-options-after-360.png) |
 | Payout detail | [detail](docs/assets/reserve-ledger/payment-detail-after-1280.png) | [detail](docs/assets/reserve-ledger/payment-detail-after-360.png) |
 
 

@@ -46,7 +46,7 @@ from app.services.weg_settlement_service import (
     WegComputeExtras,
     WegSettlementService,
 )
-from app.services.reserve_ledger_service import ReserveLedgerService
+from app.services.reserve_ledger_service import ReserveLedgerService, OPENING_IMPORT_ONLY, OPENING_IMPORT_EXISTS
 
 router = APIRouter(prefix="/api/weg-settlements", tags=["weg-settlements"])
 
@@ -267,6 +267,15 @@ async def reserve_ledger(run_id: uuid.UUID, auth: AuthContext = Depends(get_curr
     return await service.read_display(run)
 
 
+def _raise_reserve_opening_error(exc: DBAPIError):
+    code = getattr(exc.orig, 'sqlstate', None)
+    constraint = getattr(getattr(exc.orig, '__cause__', None), 'constraint_name', None)
+    if (code, constraint) in {('23505', 'uq_reserve_opening_import'), ('23514', 'reserve_opening_import_only')}:
+        raise HTTPException(422, OPENING_IMPORT_ONLY) from None
+    if (code, constraint) == ('23514', 'reserve_opening_import_exists'):
+        raise HTTPException(422, OPENING_IMPORT_EXISTS) from None
+
+
 @router.post('/{run_id}/reserve-ledger/overrides', status_code=201)
 async def reserve_override(run_id: uuid.UUID, body: ReserveOverrideRequest,
                            auth: AuthContext = Depends(require_write_dep), db: AsyncSession = Depends(get_db, scope='function')):
@@ -275,14 +284,16 @@ async def reserve_override(run_id: uuid.UUID, body: ReserveOverrideRequest,
     try:
         entry = await service.add(run, **body.model_dump())
     except DBAPIError as exc:
+        _raise_reserve_opening_error(exc)
         code = getattr(exc.orig, 'sqlstate', None)
         if code in {'23514', '23505', '23503'}:
             constraint = getattr(getattr(exc.orig, '__cause__', None), 'constraint_name', None)
             if constraint == 'reserve_assignment_amount':
                 raise HTTPException(422, {'code': 'RESERVE_ASSIGNMENT_EXCEEDS_PAYMENT',
                     'message': 'Die Rücklagenzuordnung muss zwischen null und dem vorzeichenbehafteten Zahlungsbetrag liegen.'}) from None
-            raise HTTPException(409 if code == '23505' else 422,
-                {'code': 'RESERVE_PAYMENT_ALREADY_ASSIGNED' if code == '23505' else 'RESERVE_INPUT_INVALID',
+            duplicate_payment = code == '23505' and constraint == 'reserve_ledger_entry_organization_id_payment_id_key'
+            raise HTTPException(409 if duplicate_payment else 422,
+                {'code': 'RESERVE_PAYMENT_ALREADY_ASSIGNED' if duplicate_payment else 'RESERVE_INPUT_INVALID',
                  'message': 'Bitte prüfen Sie Rücklagenzeitraum, Auszahlung, Kostenbetrag und Beschlussverknüpfung.'}) from None
         raise
     return {'id': str(entry.id)}
@@ -374,14 +385,18 @@ async def create_weg_run(
     db: AsyncSession = Depends(get_db),
 ):
     svc = WegSettlementService(db, auth.organization_id, auth.user_id)
-    run = await svc.create_weg_draft(
-        accounting_scope_id=body.accounting_scope_id,
-        property_id=uuid.UUID(body.property_id),
-        economic_plan_id=uuid.UUID(body.economic_plan_id),
-        period_start=body.period_start,
-        period_end=body.period_end,
-        management_mandate_id=uuid.UUID(body.management_mandate_id) if body.management_mandate_id else None,
-    )
+    try:
+        run = await svc.create_weg_draft(
+            accounting_scope_id=body.accounting_scope_id,
+            property_id=uuid.UUID(body.property_id),
+            economic_plan_id=uuid.UUID(body.economic_plan_id),
+            period_start=body.period_start,
+            period_end=body.period_end,
+            management_mandate_id=uuid.UUID(body.management_mandate_id) if body.management_mandate_id else None,
+        )
+    except DBAPIError as exc:
+        _raise_reserve_opening_error(exc)
+        raise
     return _run_out(run, [])
 
 
@@ -455,13 +470,17 @@ async def create_asset_report(
     db: AsyncSession = Depends(get_db),
 ):
     svc = WegSettlementService(db, auth.organization_id, auth.user_id)
-    run = await svc.create_asset_report_draft(
-        accounting_scope_id=body.accounting_scope_id,
-        property_id=uuid.UUID(body.property_id),
-        period_start=body.period_start,
-        period_end=body.period_end,
-        management_mandate_id=uuid.UUID(body.management_mandate_id) if body.management_mandate_id else None,
-    )
+    try:
+        run = await svc.create_asset_report_draft(
+            accounting_scope_id=body.accounting_scope_id,
+            property_id=uuid.UUID(body.property_id),
+            period_start=body.period_start,
+            period_end=body.period_end,
+            management_mandate_id=uuid.UUID(body.management_mandate_id) if body.management_mandate_id else None,
+        )
+    except DBAPIError as exc:
+        _raise_reserve_opening_error(exc)
+        raise
     return _run_out(run, [])
 
 

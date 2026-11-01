@@ -710,11 +710,13 @@ allocation and WEMoG settlement-balance calculation; it changes neither.
   the exact accounting scope. Prior-year scopes must be readable and either the
   same scope or whole-property WEG scopes with the same mandate. First-period
   opening starts at zero; an imported balance is an explicit reasoned opening
-  adjustment only in the first ledger year (`RESERVE_OPENING_IMPORT_ONLY`
-  otherwise), with at most one opening import per ledger. An earlier WEG annual
-  settlement or asset-report run for the same property and scope blocks the import
-  even while still a draft; superseded runs count when they retain ledger entries,
-  and their current replacement counts independently. If no plan exists, an asset report shows planning as unknown,
+  adjustment only in the earliest period (`RESERVE_OPENING_IMPORT_ONLY`
+  otherwise), with at most one opening import per ledger. The earliest period is
+  the smallest `period_start` among non-superseded WEG annual settlement and
+  asset-report runs for the property in the same scope, including whole-property
+  WEG scopes with the same mandate. Drafts count too. Once an opening is imported,
+  creating an earlier period in that scope is refused
+  (`RESERVE_OPENING_IMPORT_EXISTS`). If no plan exists, an asset report shows planning as unknown,
   while dedicated reserve receipts and reasoned opening/other adjustments remain
   available; Hausgeld uses any finalized plan covering its cash date.
 - `reserve_ledger_entry` retains append-only signed adjustments and funding

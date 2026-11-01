@@ -251,6 +251,8 @@ class WegSettlementService:
             engine_version=ENGINE_VERSION,
         )
         sphere = await FinancialScopeService(self._session, self._org_id, self._user_id).prepare_new(run, accounting_scope_id)
+        await ReserveLedgerService(self._session, self._org_id, self._user_id).require_period_creation(
+            run, sphere.id if sphere is not None else None)
         try:
             validate_settlement_period(period_start, period_end)
         except ValueError as exc:
@@ -372,7 +374,9 @@ class WegSettlementService:
             status="draft",
             engine_version=ENGINE_VERSION,
         )
-        await FinancialScopeService(self._session, self._org_id, self._user_id).prepare_new(run, accounting_scope_id)
+        sphere = await FinancialScopeService(self._session, self._org_id, self._user_id).prepare_new(run, accounting_scope_id)
+        await ReserveLedgerService(self._session, self._org_id, self._user_id).require_period_creation(
+            run, sphere.id if sphere is not None else None)
         run = await self._runs.create(run)
         await self._audit.create(
             AuditEvent(

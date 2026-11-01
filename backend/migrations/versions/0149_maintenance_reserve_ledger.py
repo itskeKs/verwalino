@@ -118,6 +118,41 @@ def upgrade():
     $$;
     REVOKE ALL ON FUNCTION reserve_funded_amount(uuid,uuid,uuid) FROM PUBLIC;
     GRANT EXECUTE ON FUNCTION reserve_funded_amount(uuid,uuid,uuid) TO app_rw;
+    -- Shared by service queries and both opening-period guards. Invoker rights
+    -- preserve RLS on service reads; trigger callers already run as definer.
+    CREATE FUNCTION reserve_ledger_scope_matches(org uuid,prior_scope uuid,next_scope uuid,prior_mandate uuid,next_mandate uuid)
+    RETURNS boolean LANGUAGE sql STABLE SET search_path=pg_catalog,pg_temp AS $$
+      SELECT prior_scope IS NOT DISTINCT FROM next_scope OR EXISTS(
+        SELECT 1 FROM public.accounting_scope p, public.accounting_scope n
+        WHERE p.organization_id=org AND n.organization_id=org AND p.id=prior_scope AND n.id=next_scope
+          AND p.whole_property AND n.whole_property AND p.scope_type='WEG' AND n.scope_type='WEG'
+          AND prior_mandate IS NOT DISTINCT FROM next_mandate)
+    $$;
+    REVOKE ALL ON FUNCTION reserve_ledger_scope_matches(uuid,uuid,uuid,uuid,uuid) FROM PUBLIC;
+    GRANT EXECUTE ON FUNCTION reserve_ledger_scope_matches(uuid,uuid,uuid,uuid,uuid) TO app_rw;
+    CREATE FUNCTION guard_reserve_opening_period() RETURNS trigger
+    LANGUAGE plpgsql SECURITY DEFINER SET search_path=pg_catalog,pg_temp SET row_security=off AS $$
+    BEGIN
+      IF NEW.run_type NOT IN ('WEG_JAHRESABRECHNUNG','VERMOEGENSBERICHT') THEN RETURN NEW; END IF;
+      PERFORM pg_advisory_xact_lock_shared(hashtextextended('scope-acl:'||NEW.organization_id::text,0));
+      PERFORM pg_advisory_xact_lock(hashtextextended('financial-inputs:'||NEW.organization_id::text,0));
+      IF EXISTS(SELECT 1 FROM public.settlement_run r JOIN public.reserve_ledger_entry e
+        ON e.organization_id=r.organization_id AND e.settlement_run_id=r.id
+        WHERE r.organization_id=NEW.organization_id AND r.property_id=NEW.property_id
+          AND r.period_start>NEW.period_start AND r.run_type IN ('WEG_JAHRESABRECHNUNG','VERMOEGENSBERICHT')
+          AND e.component='OPENING' AND public.reserve_ledger_scope_matches(NEW.organization_id,
+            public.financial_scope_id(r.organization_id,'settlement_run',r.id),
+            public.financial_scope_id(NEW.organization_id,'settlement_run',NEW.id),
+            r.management_mandate_id,NEW.management_mandate_id)) THEN
+        RAISE EXCEPTION 'Cannot create an earlier period before an imported reserve opening'
+          USING ERRCODE='23514',CONSTRAINT='reserve_opening_import_exists';
+      END IF;
+      RETURN NEW;
+    END $$;
+    REVOKE ALL ON FUNCTION guard_reserve_opening_period() FROM PUBLIC;
+    -- bind_new_financial_resource runs first, so the new run's scope is known.
+    CREATE TRIGGER guard_reserve_opening_period BEFORE INSERT ON settlement_run
+      FOR EACH ROW EXECUTE FUNCTION guard_reserve_opening_period();
     CREATE TRIGGER a_organization_lifecycle BEFORE INSERT OR UPDATE OR DELETE ON reserve_ledger_entry
       FOR EACH ROW EXECUTE FUNCTION public.organization_lifecycle_guard();
     CREATE TRIGGER a_lock_reserve_sources BEFORE INSERT OR UPDATE OR DELETE ON reserve_ledger_entry
@@ -146,17 +181,13 @@ def upgrade():
       IF NEW.component='OPENING' AND EXISTS(SELECT 1 FROM public.settlement_run r
         WHERE r.organization_id=NEW.organization_id AND r.property_id=NEW.property_id AND r.period_start<parent.period_start
           AND r.run_type IN ('WEG_JAHRESABRECHNUNG','VERMOEGENSBERICHT')
-          AND (r.superseded_by_id IS NULL OR EXISTS(
-            SELECT 1 FROM public.reserve_ledger_entry e WHERE e.organization_id=r.organization_id AND e.settlement_run_id=r.id))
-          AND (public.financial_scope_id(r.organization_id,'settlement_run',r.id) IS NOT DISTINCT FROM sphere
-            OR EXISTS(SELECT 1 FROM public.accounting_scope prior_scope, public.accounting_scope next_scope
-              WHERE prior_scope.id=public.financial_scope_id(r.organization_id,'settlement_run',r.id) AND next_scope.id=sphere
-                AND prior_scope.organization_id=NEW.organization_id AND next_scope.organization_id=NEW.organization_id
-                AND prior_scope.whole_property AND next_scope.whole_property AND prior_scope.scope_type='WEG' AND next_scope.scope_type='WEG'
-                AND r.management_mandate_id IS NOT DISTINCT FROM parent.management_mandate_id))) THEN
+          AND r.superseded_by_id IS NULL
+          AND public.reserve_ledger_scope_matches(NEW.organization_id,
+            public.financial_scope_id(r.organization_id,'settlement_run',r.id),sphere,
+            r.management_mandate_id,parent.management_mandate_id)) THEN
         RAISE EXCEPTION 'Reserve opening import is limited to first ledger year' USING ERRCODE='23514',CONSTRAINT='reserve_opening_import_only'; END IF;
       IF NEW.cost_entry_id IS NOT NULL OR NEW.component IN ('WITHDRAWAL','ADJUSTMENT') THEN
-        SELECT * INTO cost FROM public.cost_entry WHERE organization_id=NEW.organization_id AND id=NEW.cost_entry_id;
+        SELECT * INTO cost FROM public.cost_entry WHERE organization_id=NEW.organization_id AND id=NEW.cost_entry_id FOR UPDATE;
         IF cost.id IS NULL OR cost.property_id IS DISTINCT FROM parent.property_id OR cost.status<>'confirmed' OR cost.superseded_by_id IS NOT NULL
           OR NOT public.financial_scope_access(NEW.organization_id,'cost_entry',cost.id,'read')
           OR NOT EXISTS(SELECT 1 FROM public.resolution_register_entry e JOIN public.resolution r
@@ -176,7 +207,7 @@ def upgrade():
       END IF;
       IF NEW.component='FUNDING' THEN
         SELECT * INTO cash FROM public.payment WHERE organization_id=NEW.organization_id AND id=NEW.payment_id;
-        SELECT * INTO cost FROM public.cost_entry WHERE organization_id=NEW.organization_id AND id=NEW.cost_entry_id;
+        SELECT * INTO cost FROM public.cost_entry WHERE organization_id=NEW.organization_id AND id=NEW.cost_entry_id FOR UPDATE;
         IF cash.property_id IS DISTINCT FROM parent.property_id OR cost.property_id IS DISTINCT FROM parent.property_id
           OR cash.status<>'booked' OR cash.direction<>'OUT' OR cash.payment_type<>'RUECKLAGENENTNAHME'
           OR cash.reverses_id IS NOT NULL
@@ -285,9 +316,12 @@ def downgrade():
       RAISE EXCEPTION 'Retain reserve statement evidence; populated downgrade refused'; END IF; END $$;""")
     patch_source_digest(reverse=True)
     patch_booking_scope(reverse=True)
-    op.execute("""DROP TABLE reserve_ledger_entry;
+    op.execute("""DROP TRIGGER guard_reserve_opening_period ON settlement_run;
+      DROP FUNCTION guard_reserve_opening_period();
+      DROP TABLE reserve_ledger_entry;
       DROP FUNCTION IF EXISTS recheck_reserve_computations();
       DROP FUNCTION guard_reserve_ledger();
+      DROP FUNCTION reserve_ledger_scope_matches(uuid,uuid,uuid,uuid,uuid);
       DROP FUNCTION reserve_history_access(uuid,uuid,date);
       DROP TRIGGER guard_reserve_payment_evidence ON payment;
       DROP FUNCTION guard_reserve_payment_evidence();

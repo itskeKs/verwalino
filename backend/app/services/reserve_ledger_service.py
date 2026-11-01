@@ -15,6 +15,8 @@ from app.repositories.settlement_repo import SettlementRunRepository
 from app.services.financial_scope_service import FinancialScopeService
 
 ZERO = Decimal('0.00')
+OPENING_IMPORT_ONLY = {'code': 'RESERVE_OPENING_IMPORT_ONLY', 'message': 'Ein Import des Anfangsbestands ist nur einmal im ersten Rücklagenjahr zulässig.'}
+OPENING_IMPORT_EXISTS = {'code': 'RESERVE_OPENING_IMPORT_EXISTS', 'message': 'Vor dem Jahr mit importiertem Anfangsbestand kann kein früherer Abrechnungszeitraum angelegt werden.'}
 
 
 class ReserveLedgerService:
@@ -35,6 +37,10 @@ class ReserveLedgerService:
         if write and run.status != 'draft':
             raise HTTPException(409, {'code': 'RESERVE_PERIOD_FINALIZED', 'message': 'Die Rücklage dieses Zeitraums ist finalisiert.'})
         return run
+
+    async def require_period_creation(self, run, scope_id):
+        if await self.repo.has_later_opening_import(run, scope_id):
+            raise HTTPException(422, OPENING_IMPORT_EXISTS)
 
     async def read(self, run):
         if run.status == 'finalized':
@@ -220,7 +226,7 @@ class ReserveLedgerService:
         if component == 'OPENING':
             if (ledger.get('opening_source_run_id') or await self.repo.has_earlier_ledger(run)
                     or any(row.get('component') == 'OPENING' for row in ledger['entries'])):
-                raise HTTPException(422, {'code': 'RESERVE_OPENING_IMPORT_ONLY', 'message': 'Ein Import des Anfangsbestands ist nur einmal im ersten Rücklagenjahr zulässig.'})
+                raise HTTPException(422, OPENING_IMPORT_ONLY)
         if component == 'FUNDING':
             await self.require_evidence(run.property_id, cost_entry_id, register_entry_id)
             sources = await self.repo.funding_sources(payment_id, cost_entry_id, register_entry_id)

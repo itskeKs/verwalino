@@ -7,6 +7,8 @@ from sqlalchemy.exc import DBAPIError
 
 from tests.test_m4_weg import _seed_weg, _create_and_finalize_plan
 from tests.financial_coverage_helpers import attest_fixture, reserve_evidence
+from tests.test_financial_scope_boundary import scope_seed as scope_seed
+from tests.test_invoice_extraction_worker import worker_tenant as worker_tenant
 from tests.test_ownership_change import (
     ownership_world as ownership_world, ownership_client, create_owner, end_owner,
 )
@@ -453,7 +455,11 @@ async def test_cash_ratio_excludes_units_owned_only_before_or_after_value_date(c
 
 
 @pytest.mark.asyncio
-async def test_half_year_opening_adjustment_does_not_enter_full_year(client_a_admin, seed_data):
+async def test_half_year_opening_adjustment_does_not_enter_full_year(client_a_admin, seed_data, migrator_session):
+    from uuid import UUID, uuid4
+    from app.models.settlement_run import SettlementRun
+    from app.services.reserve_ledger_service import ReserveLedgerService
+
     api = client_a_admin
     w = _seed_weg(seed_data)
     response = await api.post('/api/weg-settlements/asset-reports', json={
@@ -464,8 +470,15 @@ async def test_half_year_opening_adjustment_does_not_enter_full_year(client_a_ad
         'component': 'OPENING', 'amount': '1000.00', 'reason': 'Synthetic half-year opening'})
     assert response.status_code == 201, response.text
     assert (await api.get(f'/api/weg-settlements/{report}/reserve-ledger')).json()['opening_balance'] == '1000.00'
-    w = await reserve_world(api, seed_data)
-    assert (await api.get(f"/api/weg-settlements/{w['run']}/reserve-ledger")).json()['opening_balance'] == '0.00'
+    # Project the same property's full year without inserting an earlier run:
+    # the opening-import guard now deliberately refuses that creation order.
+    full_year = SettlementRun(id=uuid4(), organization_id=seed_data['org_a_id'],
+        property_id=UUID(w['property']), run_type='VERMOEGENSBERICHT', status='draft',
+        period_start=date(2025, 1, 1), period_end=date(2025, 12, 31))
+    await migrator_session.execute(text("SELECT set_config('app.current_org_id',:org,true),set_config('app.current_user_id',:actor,true)"),
+        {'org': str(seed_data['org_a_id']), 'actor': str(seed_data['user_a_admin_id'])})
+    ledger = await ReserveLedgerService(migrator_session, seed_data['org_a_id'], seed_data['user_a_admin_id']).read(full_year)
+    assert ledger['opening_balance'] == '0.00'
 
 
 @pytest.mark.asyncio
@@ -983,6 +996,154 @@ async def test_opening_import_cannot_be_repeated(client_a_admin, seed_data):
         if status == 422:
             assert response.json()['detail']['code'] == 'RESERVE_OPENING_IMPORT_ONLY'
     assert (await api.get(path)).json()['opening_balance'] == '5000.00'
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('kind', ['weg', 'asset'])
+@pytest.mark.parametrize('database_backstop', [False, True])
+async def test_imported_opening_blocks_creation_of_an_earlier_period(
+        client_a_admin, seed_data, monkeypatch, kind, database_backstop):
+    from unittest.mock import AsyncMock
+    from app.repositories.reserve_ledger_repo import ReserveLedgerRepository
+
+    api = client_a_admin
+    w = _seed_weg(seed_data)
+    plan = await _create_and_finalize_plan(api, w)
+    later = await api.post('/api/weg-settlements/asset-reports', json={
+        'property_id': w['property'], 'period_start': '2026-01-01', 'period_end': '2026-12-31'})
+    assert later.status_code == 201, later.text
+    response = await api.post(f"/api/weg-settlements/{later.json()['id']}/reserve-ledger/overrides", json={
+        'component': 'OPENING', 'amount': '5000.00', 'reason': 'Audited first opening'})
+    assert response.status_code == 201, response.text
+    if database_backstop:
+        monkeypatch.setattr(ReserveLedgerRepository, 'has_later_opening_import', AsyncMock(return_value=False), raising=False)
+    body = {'property_id': w['property'], 'period_start': '2025-01-01', 'period_end': '2025-12-31'}
+    if kind == 'weg':
+        body['economic_plan_id'] = plan
+    response = await api.post('/api/weg-settlements' + ('/asset-reports' if kind == 'asset' else ''), json=body)
+    assert response.status_code == 422, response.text
+    assert response.json()['detail']['code'] == 'RESERVE_OPENING_IMPORT_EXISTS'
+    assert (await api.get(f"/api/weg-settlements/{later.json()['id']}/reserve-ledger")).json()['opening_balance'] == '5000.00'
+
+
+@pytest.mark.asyncio
+async def test_earliest_import_carries_exact_frozen_closing_through_later_years(client_a_admin, seed_data):
+    api = client_a_admin
+    w = await reserve_world(api, seed_data)
+    response = await api.post(f"/api/weg-settlements/{w['run']}/reserve-ledger/overrides", json={
+        'component': 'OPENING', 'amount': '700.00', 'reason': 'Audited earliest opening'})
+    assert response.status_code == 201, response.text
+    await payment(api, w, '123.45')
+    await finalize(api, w)
+    previous = w['run']
+    values = {'bank_balances': [{'bank_account_id': w[key], 'label': key, 'account_type': kind, 'balance': '0.00'}
+        for key, kind in [('bank_giro', 'LAUFEND'), ('bank_ruecklage', 'RUECKLAGE')]], 'receivables': [], 'payables': []}
+    for year in (2026, 2027):
+        response = await api.post('/api/weg-settlements/asset-reports', json={
+            'property_id': w['property'], 'period_start': f'{year}-01-01', 'period_end': f'{year}-12-31'})
+        assert response.status_code == 201, response.text
+        run = response.json()['id']
+        ledger = (await api.get(f'/api/weg-settlements/{run}/reserve-ledger')).json()
+        frozen = (await api.get(f'/api/weg-settlements/{previous}/reserve-ledger')).json()
+        assert ledger['opening_balance'] == frozen['closing_balance'] == '823.45'
+        assert ledger['opening_source_run_id'] == previous
+        await attest_fixture(api, 'settlement', run, values)
+        response = await api.post(f'/api/weg-settlements/asset-reports/{run}/finalize', json=values)
+        assert response.status_code == 200, response.text
+        previous = run
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('constraint,sqlstate,status,code', [
+    ('uq_reserve_opening_import', '23505', 422, 'RESERVE_OPENING_IMPORT_ONLY'),
+    ('reserve_opening_import_only', '23514', 422, 'RESERVE_OPENING_IMPORT_ONLY'),
+    ('reserve_ledger_entry_organization_id_payment_id_key', '23505', 409, 'RESERVE_PAYMENT_ALREADY_ASSIGNED'),
+])
+async def test_override_database_errors_keep_the_specific_reserve_code(monkeypatch, constraint, sqlstate, status, code):
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+    from uuid import uuid4
+    from fastapi import HTTPException
+    from sqlalchemy.exc import IntegrityError
+    from app.api import weg_settlements as routes
+
+    class DriverError(Exception):
+        pass
+    driver = DriverError()
+    driver.sqlstate = sqlstate
+    driver.__cause__ = DriverError()
+    driver.__cause__.constraint_name = constraint
+    service = SimpleNamespace(subject=AsyncMock(), add=AsyncMock(side_effect=IntegrityError(None, None, driver)))
+    monkeypatch.setattr(routes, 'ReserveLedgerService', lambda *args: service)
+    with pytest.raises(HTTPException) as refusal:
+        await routes.reserve_override(uuid4(), routes.ReserveOverrideRequest(
+            component='OPENING', amount='1.00', reason='Audited import'),
+            SimpleNamespace(organization_id=uuid4(), user_id=uuid4()), None)
+    assert refusal.value.status_code == status
+    assert refusal.value.detail['code'] == code
+
+
+@pytest.mark.asyncio
+async def test_direct_ledger_write_locks_its_cost_evidence(client_a_admin, seed_data, migrator_session, app_rw_session):
+    api = client_a_admin
+    w = await reserve_world(api, seed_data)
+    evidence = await reserve_evidence(api, w)
+    # NO KEY UPDATE permits the FK's KEY SHARE lock, but blocks the guard's UPDATE lock.
+    await migrator_session.execute(text('SELECT id FROM cost_entry WHERE id=:cost FOR NO KEY UPDATE'),
+        {'cost': evidence['reserve_cost_entry_id']})
+    await app_rw_session.execute(text("SELECT set_config('app.current_org_id',:org,true),set_config('app.current_user_id',:actor,true)"),
+        {'org': str(seed_data['org_a_id']), 'actor': str(seed_data['user_a_admin_id'])})
+    await app_rw_session.execute(text("SET LOCAL lock_timeout='200ms'"))
+    with pytest.raises(DBAPIError) as blocked:
+        async with app_rw_session.begin_nested():
+            await app_rw_session.execute(text("""INSERT INTO reserve_ledger_entry
+                (organization_id,property_id,settlement_run_id,entry_date,component,amount,reason,cost_entry_id,register_entry_id,created_by)
+                VALUES (:org,:property,:run,'2025-01-01','WITHDRAWAL',1,'Concurrent evidence',:cost,:register,:actor)"""),
+                {'org': seed_data['org_a_id'], 'property': w['property'], 'run': w['run'],
+                 'cost': evidence['reserve_cost_entry_id'], 'register': evidence['reserve_register_entry_id'],
+                 'actor': seed_data['user_a_admin_id']})
+    assert blocked.value.orig.sqlstate == '55P03'
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('import_first', [False, True])
+async def test_whole_property_weg_scopes_share_the_first_period_rule(migrator_session, scope_seed, monkeypatch, import_first):
+    from uuid import uuid4
+    from unittest.mock import AsyncMock
+    from fastapi import HTTPException
+    from app.services.reserve_ledger_service import ReserveLedgerService
+    from app.services.weg_settlement_service import WegSettlementService
+    from tests.test_financial_scope_boundary import actor
+    from tests.test_scope_grants import scope_fixture
+
+    session = migrator_session
+    ids = await scope_fixture(session, scope_seed)
+    ids['next_scope'] = uuid4()
+    await session.execute(text("""INSERT INTO accounting_scope
+        (id,organization_id,property_id,scope_type,label,valid_from,whole_property,origin,created_by)
+        VALUES (:next_scope,:org,:property,'WEG','Next reserve year','2025-01-01',true,'REVIEWED',:actor)"""), ids)
+    await session.execute(text("""INSERT INTO scope_grant
+        (organization_id,scope_id,user_id,capabilities,granted_by,reason)
+        VALUES (:org,:next_scope,:clerk,ARRAY['read','prepare'],:actor,'Prepare next reserve year')"""), ids)
+    await actor(session, ids)
+    service = WegSettlementService(session, ids['org'], ids['clerk'])
+    if not import_first:
+        await service.create_asset_report_draft(ids['property'], date(2025, 1, 1), date(2025, 12, 31), accounting_scope_id=ids['scope'])
+    await session.execute(text("SELECT set_config('app.current_scope_id','',true)"))
+    later = await service.create_asset_report_draft(ids['property'], date(2026, 1, 1), date(2026, 12, 31), accounting_scope_id=ids['next_scope'])
+    ledger = ReserveLedgerService(session, ids['org'], ids['clerk'])
+    monkeypatch.setattr(ledger, 'read', AsyncMock(return_value={'frozen': False, 'entries': []}))
+    if import_first:
+        await ledger.add(later, 'OPENING', Decimal('5000'), 'Audited first import')
+        await session.execute(text("SELECT set_config('app.current_scope_id','',true)"))
+    with pytest.raises(HTTPException) as refused:
+        if import_first:
+            await service.create_asset_report_draft(ids['property'], date(2025, 1, 1), date(2025, 12, 31), accounting_scope_id=ids['scope'])
+        else:
+            await ledger.add(later, 'OPENING', Decimal('5000'), 'Not the earliest WEG period')
+    assert refused.value.status_code == 422
+    assert refused.value.detail['code'] == ('RESERVE_OPENING_IMPORT_EXISTS' if import_first else 'RESERVE_OPENING_IMPORT_ONLY')
+    await session.execute(text('RESET ROLE'))
 
 
 @pytest.mark.asyncio

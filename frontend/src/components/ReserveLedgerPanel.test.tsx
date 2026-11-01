@@ -1,5 +1,5 @@
 import { afterEach, expect, it, vi } from 'vitest';
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { ReserveLedgerPanel } from './ReserveLedgerPanel';
 
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
@@ -129,4 +129,32 @@ it('requires cost and resolution for typed withdrawal corrections', async () => 
   expect(await screen.findByLabelText('Bestätigter Kostenbeleg *')).toBeRequired();
   expect(screen.getByLabelText('Beschluss-Sammlung *')).toBeRequired();
   expect(screen.queryByLabelText('Gebuchte Auszahlung *')).not.toBeInTheDocument();
+});
+
+it('filters funding evidence and retains selected values after sources become invalid', async () => {
+  let invalid = false;
+  vi.stubGlobal('fetch', vi.fn(async (url: string) => json(url.includes('cost-entries') ? [
+    { id: 'cost-1', status: 'confirmed', superseded_by_id: invalid ? 'cost-2' : null, document_number: 'RE-1', gross_amount: '4000.00' },
+    { id: 'cost-old', status: 'confirmed', superseded_by_id: 'cost-1', document_number: 'Alt', gross_amount: '4000.00' },
+    { id: 'cost-draft', status: 'draft', document_number: 'Entwurf', gross_amount: '4000.00' },
+  ] : url.includes('/meetings/register/') ? [
+    { id: 'register-1', result: invalid ? 'ABGELEHNT' : 'ANGENOMMEN', sequence_number: 1, wording: 'Reparatur' },
+    { id: 'register-rejected', result: 'ABGELEHNT', sequence_number: 2, wording: 'Abgelehnt' },
+  ] : url.includes('/payments') ? [] : ledger)));
+  render(<ReserveLedgerPanel runId="run-1" propertyId="property-1" status="draft" onChanged={() => {}} />);
+  fireEvent.click(await screen.findByRole('button', { name: 'Korrektur erfassen' }));
+  fireEvent.change(screen.getByLabelText('Art'), { target: { value: 'FUNDING' } });
+  const cost = await screen.findByLabelText('Bestätigter Kostenbeleg *');
+  const register = screen.getByLabelText('Beschluss-Sammlung *');
+  expect(within(cost).getAllByRole('option').map(row => row.getAttribute('value'))).toEqual(['', 'cost-1']);
+  expect(within(register).getAllByRole('option').map(row => row.getAttribute('value'))).toEqual(['', 'register-1']);
+  fireEvent.change(cost, { target: { value: 'cost-1' } });
+  fireEvent.change(register, { target: { value: 'register-1' } });
+  fireEvent.click(screen.getByRole('button', { name: 'Abbrechen' }));
+  invalid = true;
+  fireEvent.click(screen.getByRole('button', { name: 'Korrektur erfassen' }));
+  const retained = await screen.findByLabelText('Bestätigter Kostenbeleg *');
+  expect(retained).toHaveValue('cost-1');
+  expect(screen.getByLabelText('Beschluss-Sammlung *')).toHaveValue('register-1');
+  expect(within(retained).getAllByRole('option').map(row => row.getAttribute('value'))).toEqual(['', 'cost-1']);
 });
