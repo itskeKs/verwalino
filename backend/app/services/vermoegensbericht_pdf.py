@@ -25,7 +25,9 @@ _CSS = (Path(__file__).resolve().parent.parent / "templates" / "weg_abrechnung.c
     encoding="utf-8"
 )
 
-_RESERVE_TYPES = ("RESERVE_OPENING", "RESERVE_CONTRIBUTION", "RESERVE_WITHDRAWAL", "RESERVE_CLOSING")
+_RESERVE_TYPES = ("RESERVE_OPENING", "RESERVE_CONTRIBUTION", "RESERVE_WITHDRAWAL", "RESERVE_CLOSING",
+                  "RESERVE_LATE_CASH", "RESERVE_ADJUSTMENT", "SUBTOTAL")
+# Historical asset reports used SUBTOTAL only for reserve corrections/late cash.
 # Line types whose value is a manual Verwalter-Angabe (ADR-0008).
 _MANUAL_TYPES = ("BANK_BALANCE", "RECEIVABLE", "PAYABLE")
 
@@ -73,7 +75,7 @@ def build_vermoegensbericht_html(
     recv_rows = []
     pay_rows = []
     for ln in ordered:
-        if ln.line_type in _RESERVE_TYPES or (ln.line_type == 'SUBTOTAL' and ln.note == 'Rücklagenbuch'):
+        if ln.line_type in _RESERVE_TYPES:
             cls = "closing" if ln.line_type == "RESERVE_CLOSING" else ""
             reserve_rows.append(_row(ln, cls))
         elif ln.line_type == "BANK_BALANCE":
@@ -85,8 +87,10 @@ def build_vermoegensbericht_html(
 
     sections = []
     if reserve_rows:
+        overdrawn = any(ln.line_type == 'RESERVE_CLOSING' and ln.amount < 0 for ln in ordered)
         sections.append(
             "<h2>Stand der Erhaltungsruecklage</h2>"
+            + ("<p class='hint'><strong>Die Rücklage ist überzogen.</strong> Bitte prüfen Sie die Finanzierung und die Belege.</p>" if overdrawn else "") +
             "<table class='lines'><tbody>" + "".join(reserve_rows) + "</tbody></table>"
         )
     if bank_rows:

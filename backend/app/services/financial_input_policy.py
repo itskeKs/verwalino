@@ -61,7 +61,7 @@ class FinancialInputPolicy:
         if any(value is None for key, value in values.items() if key not in reserve_fields):
             incomplete("missing_input", self.component(subject, kind))
         if any(values.get(key) is not None for key in reserve_fields) and not values.get('reserve_override_reason', '').strip():
-            raise HTTPException(422, 'Manuelle Rücklagenwerte benötigen eine Begründung.')
+            raise HTTPException(422, {'code': 'RESERVE_CORRECTION_REASON_REQUIRED', 'message': 'Manuelle Rücklagenwerte benötigen eine Begründung.'})
         if kind != "economic_plan" and subject.run_type == "BK_MIETER":
             if subject.advance_payments_total is None:
                 incomplete("unknown_advance_payments", "advance_payments")
@@ -71,7 +71,8 @@ class FinancialInputPolicy:
         context = {key: str(getattr(subject, key, None)) for key in (
             "property_id", "management_mandate_id", "unit_id", "lease_agreement_id",
             "tenant_profile_id", "economic_plan_id", "plan_year", "period_start", "period_end")}
-        context["sources"] = await self.repo.source_revision(subject.property_id)
+        context["sources"] = await self.repo.source_revision(subject.property_id,
+            reserve=getattr(subject, 'run_type', None) in ('WEG_JAHRESABRECHNUNG', 'VERMOEGENSBERICHT'))
         if getattr(subject, "economic_plan_id", None):
             plan = await self.repo.linked_plan(subject.economic_plan_id)
             context["economic_plan_revision"] = plan["revision"] if plan else None

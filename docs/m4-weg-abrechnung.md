@@ -704,9 +704,19 @@ allocation and WEMoG settlement-balance calculation; it changes neither.
   attestation appends only their difference from the derived total, with
   `reserve_override_reason`, and audits it. Repeating the same attestation adds
   no second adjustment. A subsequent source/ledger change invalidates coverage.
+  A payment-specific contribution assignment may range from zero to its signed
+  cash amount; the database and service reject a wrong sign or excess amount.
+  The unique payment assignment prevents adding further allocations in another
+  draft. Refusals expose stable `RESERVE_*` codes with German display messages.
+  Reserve history affects coverage only for reserve-consuming settlements;
+  finalizing a tenant statement does not stale another statement or a plan.
 
 `closing = opening + actual contributions − withdrawals + other adjustments + late cash`.
-An overdrawn balance is retained and explicitly flagged, never clipped to zero.
+An overdrawn balance is retained and explicitly flagged in the UI and both
+PDFs, never clipped to zero. PDF reserve rows use structured line types,
+including `RESERVE_LATE_CASH` and `RESERVE_ADJUSTMENT`; translated notes do not
+determine inclusion. Reserve payers without cost or plan positions retain their
+contributions and receive an explicit owner-assignment review notice.
 Staff must review financing; this ledger does not authorize an overdraft.
 
 `GET /api/weg-settlements/{run_id}/reserve-ledger` reads the live draft or the
@@ -729,9 +739,9 @@ marked as legacy, without rewriting them.
 The WEG and asset-report detail pages show planned/actual totals, dated ledger
 rows, overdrawn/missing-link feedback and a reasoned correction dialog. Manual
 bank key-date balances, receivables and payables remain administrator inputs.
-Migration **0149**, based on **0146**, supplies the append-only ledger, RLS,
-source locks, computation-source checks and payout constraints; 0147/0148 are
-reserved for the separate deletion work and are not parents on this branch.
+Migration **0149**, based on **0148**, supplies the append-only ledger, RLS,
+source locks, computation-source checks and payout constraints after the
+organization-deletion and retention migrations.
 
 Executable acceptance: [maintenance_reserve_ledger.feature](../features/maintenance_reserve_ledger.feature),
 `backend/tests/test_reserve_ledger.py`, `backend/tests/engine/test_reserve_ledger.py`

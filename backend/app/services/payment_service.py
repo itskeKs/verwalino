@@ -123,19 +123,19 @@ class PaymentService:
             from app.repositories.property_repo import PropertyRepository
             account = await self._accounts.get_by_id(payment.bank_account_id)
             if account is None:
-                raise HTTPException(404, 'Bankkonto nicht gefunden.')
+                raise HTTPException(404, {'code': 'RESERVE_FUNDING_SOURCE_NOT_FOUND', 'message': 'Bankkonto nicht gefunden.'})
             scope_id = await FinancialScopeService(self._session, self._org_id, self._user_id).enter(account)
             if scope_id:
                 sphere = await AccountingScopeRepository(self._session, self._org_id).get_by_id(scope_id)
                 if sphere is None or sphere.scope_type != 'WEG':
-                    raise HTTPException(422, 'Rücklagenentnahmen benötigen einen WEG-Abrechnungskreis.')
+                    raise HTTPException(422, {'code': 'RESERVE_PAYOUT_WEG_REQUIRED', 'message': 'Rücklagenentnahmen benötigen einen WEG-Abrechnungskreis.'})
             else:
                 prop = await PropertyRepository(self._session, self._org_id).get_by_id(account.property_id)
                 if prop is None or prop.management_type not in ('WEG', 'MISCH'):
-                    raise HTTPException(422, 'Rücklagenentnahmen benötigen ein WEG-Objekt.')
+                    raise HTTPException(422, {'code': 'RESERVE_PAYOUT_WEG_REQUIRED', 'message': 'Rücklagenentnahmen benötigen ein WEG-Objekt.'})
         if payment.payment_type == 'RUECKLAGENENTNAHME' and (
                 payment.direction != 'OUT' or payment.tenant_profile_id or payment.owner_profile_id or payment.lease_agreement_id):
-            raise HTTPException(422, 'Eine Rücklagenentnahme ist eine Auszahlung ohne Mieter- oder Eigentümerzuordnung.')
+            raise HTTPException(422, {'code': 'RESERVE_PAYOUT_DIRECTION_REQUIRED', 'message': 'Eine Rücklagenentnahme ist eine Auszahlung ohne Mieter- oder Eigentümerzuordnung.'})
         if payment.payment_type != "KAUTION":
             return
         if payment.lease_agreement_id is None:
@@ -350,6 +350,10 @@ class PaymentService:
             reserves = ReserveLedgerRepository(self._session, self._org_id)
             reserve_plan_unresolved = True
             for plan in (await reserves.payment_plans(payment))[:1]:
+                # Historical plans without allocation inputs cannot establish a
+                # reserve ratio. Booking still succeeds with an unresolved audit.
+                if not plan.snapshot_payload or not {'inputs', 'result'} <= plan.snapshot_payload.keys():
+                    continue
                 units = (await reserves.owner_units([payment])).get(payment.id, set())
                 planned = plan_reserve_entries(plan.snapshot_payload, plan.reserve_contribution_total, plan.period_start)
                 reserve_plan_unresolved = hausgeld_reserve_share(

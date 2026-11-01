@@ -243,7 +243,7 @@ class ReserveOverrideRequest(BaseModel):
     model_config = ConfigDict(extra='forbid')
     component: Literal['OPENING', 'CONTRIBUTION', 'WITHDRAWAL', 'ADJUSTMENT', 'FUNDING']
     amount: Decimal = Field(max_digits=14, decimal_places=2, allow_inf_nan=False)
-    reason: str = Field(min_length=1, max_length=2000)
+    reason: str = Field(max_length=2000)
     payment_id: uuid.UUID | None = None
     cost_entry_id: uuid.UUID | None = None
     register_entry_id: uuid.UUID | None = None
@@ -267,8 +267,13 @@ async def reserve_override(run_id: uuid.UUID, body: ReserveOverrideRequest,
     except DBAPIError as exc:
         code = getattr(exc.orig, 'sqlstate', None)
         if code in {'23514', '23505', '23503'}:
+            constraint = getattr(getattr(exc.orig, '__cause__', None), 'constraint_name', None)
+            if constraint == 'reserve_assignment_amount':
+                raise HTTPException(422, {'code': 'RESERVE_ASSIGNMENT_EXCEEDS_PAYMENT',
+                    'message': 'Die Rücklagenzuordnung muss zwischen null und dem vorzeichenbehafteten Zahlungsbetrag liegen.'}) from None
             raise HTTPException(409 if code == '23505' else 422,
-                'Bitte prüfen Sie Rücklagenzeitraum, Auszahlung, Kostenbetrag und Beschlussverknüpfung.') from None
+                {'code': 'RESERVE_PAYMENT_ALREADY_ASSIGNED' if code == '23505' else 'RESERVE_INPUT_INVALID',
+                 'message': 'Bitte prüfen Sie Rücklagenzeitraum, Auszahlung, Kostenbetrag und Beschlussverknüpfung.'}) from None
         raise
     return {'id': str(entry.id)}
 

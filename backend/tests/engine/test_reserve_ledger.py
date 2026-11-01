@@ -99,3 +99,24 @@ def test_asset_report_lists_late_cash_after_opening_balance():
     lines = sorted(result.lines, key=lambda row: row.sort_order)
     assert lines[0].line_type == 'RESERVE_OPENING'
     assert lines[1].label == 'Nachträgliche Buchungen zum abgeschlossenen Jahr'
+
+
+def test_asset_report_selects_late_cash_and_adjustments_by_structured_type():
+    from dataclasses import replace
+    from types import SimpleNamespace
+    from app.engine.vermoegensbericht import build_vermoegensbericht
+    from app.engine.types import VermoegensberichtInput, ReserveInput, PropertyInput
+    from app.services.vermoegensbericht_pdf import build_vermoegensbericht_html
+    result = build_vermoegensbericht(VermoegensberichtInput(
+        period_start=date(2026, 1, 1), period_end=date(2026, 12, 31),
+        property=PropertyInput(id='synthetic', name='Synthetic WEG', management_type='WEG'),
+        reserve=ReserveInput(opening_balance=D('26000'), withdrawals_total=D('0'), late_cash_total=D('999'), overrides_total=D('-99')),
+        reserve_contributions_total=D('0'), bank_balances=(), receivables=(), payables=()))
+    # Changing human-readable notes must not change financial row selection.
+    lines = [replace(line, note='Reviewed cash component') for line in result.lines]
+    run = SimpleNamespace(period_start=date(2026, 1, 1), period_end=date(2026, 12, 31), snapshot_sha256=None)
+    html = build_vermoegensbericht_html(run, lines)
+    assert 'Nachträgliche Buchungen zum abgeschlossenen Jahr' in html
+    assert '999,00 EUR' in html and '-99,00 EUR' in html and '26.900,00 EUR' in html
+    closing = next(line for line in result.lines if line.line_type == 'RESERVE_CLOSING')
+    assert 'Korrekturen' in closing.note and 'Nachträgliche Buchungen' in closing.note

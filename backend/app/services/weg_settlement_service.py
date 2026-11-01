@@ -631,9 +631,9 @@ class WegSettlementService:
 
         ledger = await ReserveLedgerService(self._session, self._org_id, self._user_id).read(run)
         if any(row['kind'] == 'UNASSIGNED' for row in ledger['entries']):
-            raise HTTPException(422, 'Bitte klären Sie alle Zahlungen ohne Planbezug vor der Berechnung.')
+            raise HTTPException(422, {'code': 'RESERVE_ASSIGNMENT_REQUIRED', 'message': 'Bitte klären Sie alle Zahlungen ohne Planbezug vor der Berechnung.'})
         if ledger.get('unlinked_payment_ids'):
-            raise HTTPException(422, 'Bitte verknüpfen Sie alle Rücklagenentnahmen mit Kostenbeleg und Beschluss.')
+            raise HTTPException(422, {'code': 'RESERVE_PAYOUT_EVIDENCE_REQUIRED', 'message': 'Bitte verknüpfen Sie alle Rücklagenentnahmen mit Kostenbeleg und Beschluss.'})
         paid_reserve = {}
         for row in ledger['entries']:
             if row['kind'] == 'CONTRIBUTION' and row.get('owner_profile_id'):
@@ -711,7 +711,7 @@ class WegSettlementService:
                 self._session.add(self._line(run, owner.owner_profile_id, "RESERVE_CONTRIBUTION",
                                              "Zufuehrung Erhaltungsruecklage (Ihr Anteil)",
                                              owner.subtotal_reserve, sort,
-                                             note="Vermoegensbildung (keine Kostenumlage)")); sort += 1
+                                             note=owner.reserve_notice or "Vermoegensbildung (keine Kostenumlage)")); sort += 1
             if owner.paid_advances is not None:
                 self._session.add(self._line(run, owner.owner_profile_id, "ADVANCE_PAYMENT",
                                              "(nachrichtlich) geleistete Vorschuesse",
@@ -724,10 +724,10 @@ class WegSettlementService:
                                      "Erhaltungsruecklage Anfangsbestand", dev.opening_balance, sort,
                                      note="Anfangsbestand laut Rücklagenbuch")); sort += 1
         if dev.late_cash_total:
-            self._session.add(self._line(run, None, 'SUBTOTAL', 'Nachträgliche Buchungen zum abgeschlossenen Jahr',
+            self._session.add(self._line(run, None, 'RESERVE_LATE_CASH', 'Nachträgliche Buchungen zum abgeschlossenen Jahr',
                                          dev.late_cash_total, sort, note='Rücklagenbuch · ursprüngliche Wertstellung')); sort += 1
         if dev.overrides_total:
-            self._session.add(self._line(run, None, 'SUBTOTAL', 'Begründete Rücklagenkorrekturen',
+            self._session.add(self._line(run, None, 'RESERVE_ADJUSTMENT', 'Begründete Rücklagenkorrekturen',
                                          dev.overrides_total, sort, note='Rücklagenbuch')); sort += 1
         self._session.add(self._line(run, None, "RESERVE_CONTRIBUTION",
                                      "Zufuehrung Erhaltungsruecklage (gesamt)", dev.contributions_total,
@@ -779,9 +779,9 @@ class WegSettlementService:
 
         ledger = await ReserveLedgerService(self._session, self._org_id, self._user_id).read(run)
         if any(row['kind'] == 'UNASSIGNED' for row in ledger['entries']):
-            raise HTTPException(422, 'Bitte klären Sie alle Zahlungen ohne Planbezug vor der Berechnung.')
+            raise HTTPException(422, {'code': 'RESERVE_ASSIGNMENT_REQUIRED', 'message': 'Bitte klären Sie alle Zahlungen ohne Planbezug vor der Berechnung.'})
         if ledger.get('unlinked_payment_ids'):
-            raise HTTPException(422, 'Bitte verknüpfen Sie alle Rücklagenentnahmen mit Kostenbeleg und Beschluss.')
+            raise HTTPException(422, {'code': 'RESERVE_PAYOUT_EVIDENCE_REQUIRED', 'message': 'Bitte verknüpfen Sie alle Rücklagenentnahmen mit Kostenbeleg und Beschluss.'})
         inp = VermoegensberichtInput(
             period_start=run.period_start,
             period_end=run.period_end,

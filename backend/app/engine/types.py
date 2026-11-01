@@ -496,6 +496,7 @@ class OwnerResult:
     # (nachrichtlich) actually-paid advances of this owner -- separate from the
     # Spitze (m4 section 2.1). None if not supplied.
     paid_advances: Decimal | None = None
+    reserve_notice: str | None = None
 
 
 @dataclass(frozen=True)
@@ -566,7 +567,8 @@ class AssetReportLine:
     """One Bestandszeile of the Vermoegensbericht (m4 section 6.5)."""
 
     line_type: str  # RESERVE_OPENING | RESERVE_CONTRIBUTION | RESERVE_WITHDRAWAL
-    #                 | RESERVE_CLOSING | BANK_BALANCE | RECEIVABLE | PAYABLE
+    #                 | RESERVE_CLOSING | RESERVE_LATE_CASH | RESERVE_ADJUSTMENT
+    #                 | BANK_BALANCE | RECEIVABLE | PAYABLE
     label: str
     amount: Decimal
     sort_order: int

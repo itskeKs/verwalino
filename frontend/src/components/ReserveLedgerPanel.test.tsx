@@ -69,7 +69,7 @@ it('separates cash from planning and saves a reasoned signed correction', async 
 
 it('keeps the reason and amount after refusal and flags an overdrawn balance', async () => {
   vi.stubGlobal('fetch', vi.fn(async (_url: string, init?: RequestInit) => init?.method === 'POST'
-    ? json({ detail: 'Die Rücklage ist finalisiert.' }, 409) : json({ ...ledger, overdrawn: true, closing_balance: '-1.00' })));
+    ? json({ detail: { code: 'RESERVE_PERIOD_FINALIZED', message: 'Die Rücklage ist finalisiert.' } }, 409) : json({ ...ledger, overdrawn: true, closing_balance: '-1.00' })));
   render(<ReserveLedgerPanel runId="run-1" propertyId="property-1" status="draft" onChanged={() => {}} />);
   await screen.findByText(/Rücklage ist überzogen/);
   fireEvent.click(screen.getByRole('button', { name: 'Korrektur erfassen' }));

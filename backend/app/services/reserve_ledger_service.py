@@ -27,13 +27,13 @@ class ReserveLedgerService:
         await self.scope.lock_inputs()
         run = await SettlementRunRepository(self.session, self.org_id).get_by_id(run_id)
         if run is None or run.run_type not in ('WEG_JAHRESABRECHNUNG', 'VERMOEGENSBERICHT'):
-            raise HTTPException(404, 'Rücklagenabrechnung nicht gefunden.')
+            raise HTTPException(404, {'code': 'RESERVE_NOT_FOUND', 'message': 'Rücklagenabrechnung nicht gefunden.'})
         await self.scope.enter(run, capability=ScopeCapability.PREPARE if write else ScopeCapability.READ,
                                computation=run.status == 'draft')
         if not await self.repo.require_sources(run):
-            raise HTTPException(404, 'Rücklagenquellen nicht zugänglich.')
+            raise HTTPException(404, {'code': 'RESERVE_SOURCES_NOT_FOUND', 'message': 'Rücklagenquellen nicht zugänglich.'})
         if write and run.status != 'draft':
-            raise HTTPException(409, 'Die Rücklage dieses Zeitraums ist finalisiert.')
+            raise HTTPException(409, {'code': 'RESERVE_PERIOD_FINALIZED', 'message': 'Die Rücklage dieses Zeitraums ist finalisiert.'})
         return run
 
     async def read(self, run):
@@ -44,7 +44,7 @@ class ReserveLedgerService:
             # Existing immutable snapshots are never rewritten or re-derived.
             dev = (run.snapshot_payload or {}).get('result', {}).get('reserve_development')
             if dev is None:
-                raise HTTPException(409, 'Dieser historische Snapshot enthält keine Rücklagenentwicklung.')
+                raise HTTPException(409, {'code': 'RESERVE_HISTORY_UNAVAILABLE', 'message': 'Dieser historische Snapshot enthält keine Rücklagenentwicklung.'})
             return {**dev, 'overrides_total': '0.00', 'planned_contributions_total': None,
                     'overdrawn': Decimal(dev['closing_balance']) < 0, 'entries': [],
                     'booking_basis': 'LEGACY_SNAPSHOT', 'frozen': True, 'opening_source_run_id': None}
@@ -52,7 +52,7 @@ class ReserveLedgerService:
             finalized = await self.repo.finalized(run)
         except DBAPIError as exc:
             if getattr(exc.orig, 'sqlstate', None) == '42501':
-                raise HTTPException(404, 'Rücklagenabrechnung nicht gefunden.') from None
+                raise HTTPException(404, {'code': 'RESERVE_NOT_FOUND', 'message': 'Rücklagenabrechnung nicht gefunden.'}) from None
             raise
         current_scope = await self.repo.current_scope(run)
         current_id = current_scope.id if current_scope else None
@@ -67,13 +67,13 @@ class ReserveLedgerService:
         opening = ZERO
         if prior:
             if prior.period_end != run.period_start - timedelta(days=1):
-                raise HTTPException(409, 'Bitte schließen Sie die Lücke zum letzten finalisierten Rücklagenzeitraum.')
+                raise HTTPException(409, {'code': 'RESERVE_PERIOD_GAP', 'message': 'Bitte schließen Sie die Lücke zum letzten finalisierten Rücklagenzeitraum.'})
             opening = Decimal((await self.read(prior))['closing_balance'])
         plans = await self.repo.plans(run)
         if run.economic_plan_id:
             plans = [p for p in plans if p.id == run.economic_plan_id]
         if len(plans) > 1 or run.economic_plan_id and not plans:
-            raise HTTPException(422, 'Genau ein aktueller, finalisierter Wirtschaftsplan für diesen Zeitraum ist erforderlich.')
+            raise HTTPException(422, {'code': 'RESERVE_PLAN_REQUIRED', 'message': 'Genau ein aktueller, finalisierter Wirtschaftsplan für diesen Zeitraum ist erforderlich.'})
         plan = plans[0] if plans else None
         rows = plan_reserve_entries(plan.snapshot_payload, plan.reserve_contribution_total, plan.period_start) if plan else []
         # Frozen ledgers identify consumed bookings, including earlier late cash.
@@ -122,7 +122,7 @@ class ReserveLedgerService:
                         cash_plan = next((p for p in cash_plans if str(p.id) == source_id), None) if source_id else next(
                             (p for p in cash_plans if p.period_start <= payment.value_date <= p.period_end), None)
                         if source_id and cash_plan is None:
-                            raise HTTPException(404, 'Rücklagenabrechnung nicht gefunden.')
+                            raise HTTPException(404, {'code': 'RESERVE_NOT_FOUND', 'message': 'Rücklagenabrechnung nicht gefunden.'})
                     if cash_plan and cash_plan.id not in plan_rows:
                         plan_rows[cash_plan.id] = plan_reserve_entries(
                             cash_plan.snapshot_payload, cash_plan.reserve_contribution_total, cash_plan.period_start)
@@ -183,31 +183,39 @@ class ReserveLedgerService:
     async def add(self, run, component, amount, reason, payment_id=None, cost_entry_id=None, register_entry_id=None):
         ledger = await self.read(run)
         if ledger['frozen']:
-            raise HTTPException(409, 'Die Rücklage dieses Zeitraums ist finalisiert.')
+            raise HTTPException(409, {'code': 'RESERVE_PERIOD_FINALIZED', 'message': 'Die Rücklage dieses Zeitraums ist finalisiert.'})
         if not reason.strip():
-            raise HTTPException(422, 'Bitte begründen Sie die Rücklagenkorrektur.')
+            raise HTTPException(422, {'code': 'RESERVE_CORRECTION_REASON_REQUIRED', 'message': 'Bitte begründen Sie die Rücklagenkorrektur.'})
         try:
             amount = money(amount)
         except ValueError:
-            raise HTTPException(422, 'Bitte geben Sie einen endlichen Betrag ein.') from None
+            raise HTTPException(422, {'code': 'RESERVE_AMOUNT_INVALID', 'message': 'Bitte geben Sie einen endlichen Betrag ein.'}) from None
         if component == 'FUNDING':
             sources = await self.repo.funding_sources(payment_id, cost_entry_id, register_entry_id)
             if any(source is None or source.property_id != run.property_id for source in sources):
-                raise HTTPException(404, 'Finanzierungsbeleg nicht gefunden.')
+                raise HTTPException(404, {'code': 'RESERVE_FUNDING_SOURCE_NOT_FOUND', 'message': 'Finanzierungsbeleg nicht gefunden.'})
             payment, cost, register = sources
             if (payment.status != 'booked' or payment.direction != 'OUT' or payment.payment_type != 'RUECKLAGENENTNAHME'
                     or payment.reverses_id
                     or cost.status != 'confirmed' or cost.superseded_by_id or cost.gross_amount < payment.amount
                     or not any(row.get('payment_id') == str(payment.id) for row in ledger['entries'])):
-                raise HTTPException(422, 'Bitte wählen Sie eine aktive Auszahlung und einen bestätigten Kostenbeleg.')
+                raise HTTPException(422, {'code': 'RESERVE_PAYOUT_EVIDENCE_REQUIRED', 'message': 'Bitte wählen Sie eine aktive Auszahlung und einen bestätigten Kostenbeleg.'})
             if any(e.payment_id == payment_id for e in await self.repo.entries(run)):
-                raise HTTPException(409, 'Diese Auszahlung ist bereits der Rücklage zugeordnet.')
+                raise HTTPException(409, {'code': 'RESERVE_PAYMENT_ALREADY_ASSIGNED', 'message': 'Diese Auszahlung ist bereits der Rücklage zugeordnet.'})
             amount = ZERO
         elif component == 'CONTRIBUTION' and payment_id and not any((cost_entry_id, register_entry_id)):
-            if not any(row['kind'] == 'UNASSIGNED' and row.get('payment_id') == str(payment_id) for row in ledger['entries']):
-                raise HTTPException(422, 'Bitte wählen Sie eine Zahlung ohne Planbezug.')
+            unassigned = next((row for row in ledger['entries']
+                if row['kind'] == 'UNASSIGNED' and row.get('payment_id') == str(payment_id)), None)
+            if unassigned is None:
+                raise HTTPException(422, {'code': 'RESERVE_ASSIGNMENT_REQUIRED', 'message': 'Bitte wählen Sie eine Zahlung ohne Planbezug.'})
+            signed = Decimal(unassigned['amount'])
+            if not min(ZERO, signed) <= amount <= max(ZERO, signed):
+                raise HTTPException(422, {'code': 'RESERVE_ASSIGNMENT_EXCEEDS_PAYMENT',
+                    'message': 'Die Rücklagenzuordnung muss zwischen null und dem vorzeichenbehafteten Zahlungsbetrag liegen.'})
+            # The immutable organization/payment unique key permits exactly one
+            # assignment, so its total cannot grow through another draft or race.
         elif any((payment_id, cost_entry_id, register_entry_id)):
-            raise HTTPException(422, 'Belegverknüpfungen sind nur für eine finanzierte Entnahme zulässig.')
+            raise HTTPException(422, {'code': 'RESERVE_FUNDING_LINKS_INVALID', 'message': 'Belegverknüpfungen sind nur für eine finanzierte Entnahme zulässig.'})
         entry = await self.repo.create(ReserveLedgerEntry(
             property_id=run.property_id, settlement_run_id=run.id,
             entry_date=run.period_start if component == 'OPENING' else run.period_end,
@@ -230,7 +238,7 @@ class ReserveLedgerService:
                 continue
             reason = values.reserve_override_reason
             if not reason or not reason.strip():
-                raise HTTPException(422, 'Manuelle Rücklagenwerte benötigen eine Begründung.')
+                raise HTTPException(422, {'code': 'RESERVE_CORRECTION_REASON_REQUIRED', 'message': 'Manuelle Rücklagenwerte benötigen eine Begründung.'})
             delta = money(value) - Decimal(ledger[total])
             if delta:
                 await self.add(run, component, delta, reason)

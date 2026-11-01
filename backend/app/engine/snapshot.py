@@ -394,6 +394,7 @@ def build_weg_snapshot_payload(
                     "subtotal_umlagefaehig": _m(o.subtotal_umlagefaehig),
                     "subtotal_nicht_umlagefaehig": _m(o.subtotal_nicht_umlagefaehig),
                     "subtotal_reserve": _m(o.subtotal_reserve),
+                    **({'reserve_notice': o.reserve_notice} if o.reserve_notice else {}),
                     "owner_cost_total": _m(o.owner_cost_total),
                     "plan_advance": _m(o.plan_advance),
                     "abrechnungsspitze": _m(o.abrechnungsspitze),

@@ -764,7 +764,9 @@ links have explicit German feedback; unlinked cash payouts block computation.
 Hausgeld without a determinable reserve ratio appears as “Ohne Planbezug” with
 its full signed payment amount and blocks computation. A covering finalized plan
 or a reasoned, payment-specific contribution correction resolves it. The
-contribution dialog offers “Zahlung ohne Planbezug” for these entries.
+contribution dialog offers “Zahlung ohne Planbezug” for these entries. A payment
+assignment stays between zero and the signed payment amount; structured reserve
+refusals display their German message while retaining the amount and reason.
 
 Payment capture offers “Rücklagenentnahme”, defaults its direction to “Ausgang”,
 and explains its neutral counterparty and subsequent ledger linkage. The payment

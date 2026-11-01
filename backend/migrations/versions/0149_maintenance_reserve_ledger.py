@@ -7,6 +7,19 @@ down_revision = '0148'
 branch_labels = None
 depends_on = None
 PAYMENT_TYPES = "'KALTMIETE','NK_VORAUSZAHLUNG','HAUSGELD_VORSCHUSS','RUECKLAGENANTEIL','SONDERZAHLUNG','NACHZAHLUNG','KAUTION'"
+LINE_TYPES = "'COST','ADVANCE_PAYMENT','BALANCE','SUBTOTAL','OWNER_COST_TOTAL','PLAN_ADVANCE','ABRECHNUNGSSPITZE','RESERVE_CONTRIBUTION','RESERVE_OPENING','RESERVE_WITHDRAWAL','RESERVE_CLOSING','BANK_BALANCE','RECEIVABLE','PAYABLE'"
+
+
+def reserve_computation_check():
+    # Freeze the existing deferred-check implementation under this revision's
+    # own name. A direct trigger dependency on 0115 prevents its isolated
+    # downgrade rehearsals while the later reserve table still exists.
+    definition = op.get_bind().scalar(text(
+        "SELECT pg_get_functiondef('recheck_transaction_computations()'::regprocedure)"))
+    original = 'FUNCTION public.recheck_transaction_computations()'
+    assert definition.count(original) == 1
+    op.execute(definition.replace(original, 'FUNCTION public.recheck_reserve_computations()'))
+    op.execute('REVOKE ALL ON FUNCTION recheck_reserve_computations() FROM PUBLIC,app_rw,app_worker,app_review')
 
 
 def patch_source_digest(reverse=False):
@@ -35,6 +48,10 @@ def patch_booking_scope(reverse=False):
 
 
 def upgrade():
+    op.execute(f"""ALTER TABLE settlement_line DROP CONSTRAINT ck_settlement_line_ck_settlement_line_line_type;
+      ALTER TABLE settlement_line ADD CONSTRAINT ck_settlement_line_ck_settlement_line_line_type
+        CHECK(line_type IN ({LINE_TYPES},'RESERVE_LATE_CASH','RESERVE_ADJUSTMENT'));""")
+    reserve_computation_check()
     op.execute(f"""ALTER TABLE payment DROP CONSTRAINT ck_payment_ck_payment_type;
       ALTER TABLE payment ADD CONSTRAINT ck_payment_ck_payment_type CHECK(payment_type IN ({PAYMENT_TYPES},'RUECKLAGENENTNAHME'));
       ALTER TABLE payment ADD CONSTRAINT ck_reserve_payout CHECK(payment_type<>'RUECKLAGENENTNAHME' OR
@@ -124,6 +141,10 @@ def upgrade():
           RAISE EXCEPTION 'Reserve funding requires coherent booked cost and registered resolution' USING ERRCODE='23514'; END IF;
       ELSIF NEW.payment_id IS NOT NULL THEN
         SELECT * INTO cash FROM public.payment WHERE organization_id=NEW.organization_id AND id=NEW.payment_id;
+        IF (cash.direction='IN' AND (NEW.amount<0 OR NEW.amount>cash.amount))
+          OR (cash.direction='OUT' AND (NEW.amount>0 OR NEW.amount< -cash.amount)) THEN
+          RAISE EXCEPTION 'Reserve assignment exceeds signed payment'
+            USING ERRCODE='23514',CONSTRAINT='reserve_assignment_amount'; END IF;
         IF cash.property_id IS DISTINCT FROM parent.property_id OR cash.status<>'booked'
           OR cash.payment_type<>'HAUSGELD_VORSCHUSS'
           OR NOT public.financial_scope_access(NEW.organization_id,'payment',cash.id,'read')
@@ -156,7 +177,7 @@ def upgrade():
     REVOKE ALL ON FUNCTION reserve_history_access(uuid,uuid,date) FROM PUBLIC;
     GRANT EXECUTE ON FUNCTION reserve_history_access(uuid,uuid,date) TO app_rw;
     CREATE CONSTRAINT TRIGGER recheck_computation AFTER INSERT OR UPDATE OR DELETE ON reserve_ledger_entry
-      DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION recheck_transaction_computations();
+      DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION recheck_reserve_computations();
     ''')
     patch_source_digest()
     patch_booking_scope()
@@ -164,16 +185,21 @@ def upgrade():
 
 def downgrade():
     op.execute("""DO $$ BEGIN IF EXISTS(SELECT 1 FROM reserve_ledger_entry) THEN
-      RAISE EXCEPTION 'Retain reserve ledger evidence; populated downgrade refused'; END IF; END $$;""")
+      RAISE EXCEPTION 'Retain reserve ledger evidence; populated downgrade refused'; END IF;
+      IF EXISTS(SELECT 1 FROM payment WHERE payment_type='RUECKLAGENENTNAHME') THEN
+      RAISE EXCEPTION 'Retain reserve payout bookings; populated downgrade refused'; END IF;
+      IF EXISTS(SELECT 1 FROM settlement_line WHERE line_type IN ('RESERVE_LATE_CASH','RESERVE_ADJUSTMENT')) THEN
+      RAISE EXCEPTION 'Retain reserve statement evidence; populated downgrade refused'; END IF; END $$;""")
     patch_source_digest(reverse=True)
     patch_booking_scope(reverse=True)
     op.execute("""DROP TABLE reserve_ledger_entry;
+      DROP FUNCTION IF EXISTS recheck_reserve_computations();
       DROP FUNCTION guard_reserve_ledger();
       DROP FUNCTION reserve_history_access(uuid,uuid,date);
       ALTER TABLE resolution_register_entry DROP CONSTRAINT uq_reserve_register_org;""")
     op.execute('ALTER TABLE payment DROP CONSTRAINT uq_reserve_payment_org')
-    op.execute(f"""DO $$ BEGIN IF EXISTS(SELECT 1 FROM payment WHERE payment_type='RUECKLAGENENTNAHME') THEN
-      RAISE EXCEPTION 'Retain reserve payout bookings; populated downgrade refused'; END IF; END $$;
-      ALTER TABLE payment DROP CONSTRAINT IF EXISTS ck_reserve_payout;
+    op.execute(f"""ALTER TABLE settlement_line DROP CONSTRAINT ck_settlement_line_ck_settlement_line_line_type;
+      ALTER TABLE settlement_line ADD CONSTRAINT ck_settlement_line_ck_settlement_line_line_type CHECK(line_type IN ({LINE_TYPES}));
+      ALTER TABLE payment DROP CONSTRAINT ck_reserve_payout;
       ALTER TABLE payment DROP CONSTRAINT ck_payment_ck_payment_type;
       ALTER TABLE payment ADD CONSTRAINT ck_payment_ck_payment_type CHECK(payment_type IN ({PAYMENT_TYPES}));""")

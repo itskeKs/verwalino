@@ -33,7 +33,10 @@ async def test_ledger_separates_planned_from_cash_and_requires_override_reason(c
     assert response.json()['planned_contributions_total'] == '6000.00'
     assert response.json()['contributions_total'] == '0.00'
     override = path + '/overrides'
-    assert (await api.post(override, json={'component': 'OPENING', 'amount': '20000.00', 'reason': ' '})).status_code == 422
+    for reason in ('', ' '):
+        refused = await api.post(override, json={'component': 'OPENING', 'amount': '20000.00', 'reason': reason})
+        assert refused.status_code == 422
+        assert refused.json()['detail']['code'] == 'RESERVE_CORRECTION_REASON_REQUIRED'
     response = await api.post(override, json={'component': 'OPENING', 'amount': '20000.00', 'reason': 'Imported bank-confirmed balance'})
     assert response.status_code == 201, response.text
     assert (await api.get(path)).json()['closing_balance'] == '20000.00'
@@ -136,7 +139,7 @@ async def test_same_period_frozen_ledger_cannot_replace_another_accessible_scope
 async def payment(api, w, amount, *, kind='RUECKLAGENANTEIL', direction='IN', when='2025-02-01'):
     body = {'bank_account_id': w['bank_giro'], 'direction': direction, 'amount': amount,
             'value_date': when, 'payment_type': kind, 'period_year': int(when[:4]), 'period_month': int(when[5:7])}
-    if direction == 'IN':
+    if direction == 'IN' or kind == 'HAUSGELD_VORSCHUSS':
         body['owner_profile_id'] = w['owner_a']
     response = await api.post('/api/payments', json=body)
     assert response.status_code == 201, response.text
@@ -229,6 +232,21 @@ async def test_finalized_year_freezes_cash_and_carries_closing_into_next_period(
     assert next(row['amount'] for row in response.json()['lines'] if row['line_type'] == 'RESERVE_CLOSING') == '26000.00'
     stored = await migrator_session.scalar(text('SELECT snapshot_payload FROM settlement_run WHERE id=CAST(:id AS uuid)'), {'id': report})
     assert stored['reserve_ledger']['closing_balance'] == '26000.00'
+    response = await api.post('/api/weg-settlements/asset-reports', json={
+        'property_id': w['property'], 'period_start': '2026-01-01', 'period_end': '2026-12-31'})
+    assert response.status_code == 201, response.text
+    report = response.json()['id']
+    await attest_fixture(api, 'settlement', report, report_values)
+    response = await api.post(f'/api/weg-settlements/asset-reports/{report}/finalize', json=report_values)
+    assert response.status_code == 200, response.text
+    document = await api.get(f'/api/weg-settlements/asset-reports/{report}/pdf')
+    assert document.status_code == 200, document.text
+    content = pdf_text(document.content)
+    assert 'Nachträgliche Buchungen zum abgeschlossenen Jahr' in content
+    assert '999,00 EUR' in content
+    assert '26.000,00 EUR' in content and '26.999,00 EUR' in content
+    amounts = {line['line_type']: Decimal(line['amount']) for line in response.json()['lines']}
+    assert amounts['RESERVE_OPENING'] + amounts['RESERVE_CONTRIBUTION'] - amounts['RESERVE_WITHDRAWAL'] + amounts['RESERVE_LATE_CASH'] == amounts['RESERVE_CLOSING'] == Decimal('26999.00')
 
 
 async def ownership_plan(api, w, year, reserve='365.00'):
@@ -345,7 +363,8 @@ async def test_hausgeld_booked_before_plan_stays_unassigned_until_resolved(clien
     ], 'receivables': [], 'payables': []}
     await attest_fixture(api, 'settlement', report, values)
     blocked = await api.post(f'/api/weg-settlements/asset-reports/{report}/compute', json=values)
-    assert blocked.status_code == 422 and 'Planbezug' in blocked.text
+    assert blocked.status_code == 422
+    assert blocked.json()['detail']['code'] == 'RESERVE_ASSIGNMENT_REQUIRED'
     await _create_and_finalize_plan(api, w)
     ledger = (await api.get(path)).json()
     if not known_owner:
@@ -598,6 +617,10 @@ async def test_withdrawal_requires_cash_cost_and_registered_resolution(client_a_
     path = f"/api/weg-settlements/{w['run']}/reserve-ledger"
     assert (await api.get(path)).json()['withdrawals_total'] == '1000.00'
     assert (await api.get(path)).json()['unlinked_payment_ids'] == [cash]
+    await attest_fixture(api, 'settlement', w['run'], paid(w))
+    refused = await api.post(f"/api/weg-settlements/{w['run']}/compute", json=paid(w))
+    assert refused.status_code == 422
+    assert refused.json()['detail']['code'] == 'RESERVE_PAYOUT_EVIDENCE_REQUIRED'
     body = {'component': 'FUNDING', 'amount': '0.00', 'reason': 'Executed garden repair resolution',
             'payment_id': cash, 'cost_entry_id': w['ce_garten'], 'register_entry_id': register}
     response = await api.post(path + '/overrides', json=body)
@@ -644,3 +667,149 @@ async def test_reserve_payout_refuses_rental_accounts_and_personal_counterpartie
     bank = await api.post('/api/bank-accounts', json={'property_id': prop.json()['id'], 'account_type': 'LAUFEND', 'label': 'Rental account'})
     assert bank.status_code == 201, bank.text
     assert (await api.post('/api/payments', json={**body, 'bank_account_id': bank.json()['id']})).status_code == 422
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('direction,amount', [('IN', '5000.00'), ('IN', '-250.00'), ('OUT', '-5000.00'), ('OUT', '250.00')])
+async def test_unassigned_reserve_amount_cannot_exceed_or_reverse_payment(client_a_admin, seed_data, migrator_session, direction, amount):
+    api = client_a_admin
+    w = _seed_weg(seed_data)
+    cash = await payment(api, w, '100.00', kind='HAUSGELD_VORSCHUSS', direction=direction, when='2025-08-05')
+    # Remove the plan ratio: this is a cash assignment, not a general adjustment.
+    response = await api.post('/api/weg-settlements/asset-reports', json={
+        'property_id': w['property'], 'period_start': '2025-08-01', 'period_end': '2025-08-31'})
+    assert response.status_code == 201, response.text
+    path = f"/api/weg-settlements/{response.json()['id']}/reserve-ledger"
+    before = (await api.get(path)).json()
+    assert cash in before['unlinked_payment_ids']
+    refused = await api.post(path + '/overrides', json={
+        'component': 'CONTRIBUTION', 'payment_id': cash, 'amount': amount, 'reason': 'Reviewed bank receipt'})
+    assert refused.status_code == 422, refused.text
+    assert refused.json()['detail']['code'] == 'RESERVE_ASSIGNMENT_EXCEEDS_PAYMENT'
+    assert (await api.get(path)).json() == before
+    await migrator_session.execute(text("SELECT set_config('app.current_user_id',:actor,true)"), {'actor': str(seed_data['user_a_admin_id'])})
+    with pytest.raises(DBAPIError) as refused_write:
+        async with migrator_session.begin_nested():
+            await migrator_session.execute(text("""INSERT INTO reserve_ledger_entry
+                (organization_id,property_id,settlement_run_id,entry_date,component,amount,reason,payment_id,created_by)
+                VALUES (:org,:property,:run,'2025-08-31','CONTRIBUTION',:amount,'Reviewed receipt',:payment,:actor)"""),
+                {'org': seed_data['org_a_id'], 'property': w['property'], 'run': path.split('/')[3],
+                 'amount': Decimal(amount), 'payment': cash, 'actor': seed_data['user_a_admin_id']})
+    assert refused_write.value.orig.sqlstate == '23514'
+    assert refused_write.value.orig.__cause__.constraint_name == 'reserve_assignment_amount'
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('direction,amount', [('IN', '0.00'), ('IN', '25.00'), ('IN', '100.00'), ('OUT', '-25.00'), ('OUT', '-100.00')])
+async def test_unassigned_reserve_accepts_zero_partial_and_full_signed_payment(client_a_admin, seed_data, direction, amount):
+    api = client_a_admin
+    w = _seed_weg(seed_data)
+    cash = await payment(api, w, '100.00', kind='HAUSGELD_VORSCHUSS', direction=direction, when='2025-08-05')
+    report = await api.post('/api/weg-settlements/asset-reports', json={
+        'property_id': w['property'], 'period_start': '2025-01-01', 'period_end': '2025-12-31'})
+    assert report.status_code == 201, report.text
+    path = f"/api/weg-settlements/{report.json()['id']}/reserve-ledger"
+    body = {'component': 'CONTRIBUTION', 'payment_id': cash, 'amount': amount, 'reason': 'Reviewed bank receipt'}
+    response = await api.post(path + '/overrides', json=body)
+    assert response.status_code == 201, response.text
+    ledger = (await api.get(path)).json()
+    assert ledger['contributions_total'] == amount
+    assert ledger['unlinked_payment_ids'] == []
+    # One retained assignment per payment also bounds the aggregate across drafts.
+    duplicate = await api.post(path + '/overrides', json=body)
+    assert duplicate.status_code == 422
+    assert duplicate.json()['detail']['code'] == 'RESERVE_ASSIGNMENT_REQUIRED'
+
+
+@pytest.mark.asyncio
+async def test_reserve_payer_without_cost_or_plan_lines_is_listed_with_notice(client_a_admin, seed_data):
+    api = client_a_admin
+    w = await reserve_world(api, seed_data)
+    await payment(api, w, '600.00')
+    person = await api.post('/api/persons', json={'first_name': 'Synthetic', 'last_name': 'Reserve payer without unit'})
+    owner = await api.post('/api/owner-profiles', json={'person_id': person.json()['id']})
+    outsider = owner.json()['id']
+    await payment(api, {**w, 'owner_a': outsider}, '500.00')
+    result = await finalize(api, w)
+    reserves = [line for line in result['lines'] if line['line_type'] == 'RESERVE_CONTRIBUTION' and line['addressee_owner_profile_id']]
+    assert sum(Decimal(line['amount']) for line in reserves) == Decimal('1100.00')
+    line = next(line for line in reserves if line['addressee_owner_profile_id'] == outsider)
+    assert line['amount'] == '500.00'
+    assert 'ohne Kosten- oder Planposition' in line['note']
+    document = await api.get(f"/api/weg-settlements/{w['run']}/pdf")
+    assert 'ohne Kosten- oder Planposition' in pdf_text(document.content)
+
+
+def pdf_text(data):
+    import io
+    import pdfplumber
+    with pdfplumber.open(io.BytesIO(data)) as document:
+        return '\n'.join(page.extract_text() or '' for page in document.pages)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('family', ['weg', 'asset'])
+async def test_negative_reserve_is_explicitly_flagged_in_pdf(client_a_admin, seed_data, family):
+    api = client_a_admin
+    w = await reserve_world(api, seed_data)
+    if family == 'asset':
+        report = await api.post('/api/weg-settlements/asset-reports', json={
+            'property_id': w['property'], 'period_start': '2025-01-01', 'period_end': '2025-12-31'})
+        assert report.status_code == 201, report.text
+        w['run'] = report.json()['id']
+    path = f"/api/weg-settlements/{w['run']}/reserve-ledger"
+    response = await api.post(path + '/overrides', json={'component': 'ADJUSTMENT', 'amount': '-1000.00', 'reason': 'Imported overdraft'})
+    assert response.status_code == 201, response.text
+    if family == 'weg':
+        await finalize(api, w)
+        url = f"/api/weg-settlements/{w['run']}/pdf"
+    else:
+        values = {'bank_balances': [{'bank_account_id': w[key], 'label': key, 'account_type': kind, 'balance': '0.00'}
+                  for key, kind in [('bank_giro', 'LAUFEND'), ('bank_ruecklage', 'RUECKLAGE')]], 'receivables': [], 'payables': []}
+        await attest_fixture(api, 'settlement', w['run'], values)
+        response = await api.post(f"/api/weg-settlements/asset-reports/{w['run']}/finalize", json=values)
+        assert response.status_code == 200, response.text
+        url = f"/api/weg-settlements/asset-reports/{w['run']}/pdf"
+    document = await api.get(url)
+    assert document.status_code == 200, document.text
+    content = pdf_text(document.content)
+    assert 'Die Rücklage ist überzogen.' in content
+    assert '-1.000,00 EUR' in content
+
+
+@pytest.mark.asyncio
+async def test_reserve_migration_roundtrip_below_oldest_affected_revision(migrator_session):
+    from alembic.migration import MigrationContext
+    from alembic.operations import Operations
+    from alembic.script import ScriptDirectory
+    from sqlalchemy import create_engine
+    from app.deployment import TARGET
+    from tests.conftest import MIGRATOR_SYNC_URL, clear_disposable_source_context
+    graph = ScriptDirectory('migrations')
+    revisions = list(graph.iterate_revisions(TARGET, '0091'))
+    engine = create_engine(MIGRATOR_SYNC_URL)
+    try:
+        with engine.connect() as connection, connection.begin() as transaction:
+            connection.execute(text('SET CONSTRAINTS ALL IMMEDIATE'))
+            with connection.connection.cursor() as cursor:
+                clear_disposable_source_context(cursor)
+            signatures = ['financial_computation_source_digest(uuid,uuid,uuid,boolean)',
+                          'validate_accounting_binding_baseline(public.accounting_scope_binding)']
+            def definitions():
+                return {signature: connection.scalar(text('SELECT pg_get_functiondef(CAST(:signature AS regprocedure))'),
+                    {'signature': signature}) for signature in signatures}
+            before = definitions()
+            with Operations.context(MigrationContext.configure(connection)):
+                for revision in revisions:
+                    revision.module.downgrade()
+                    if revision.revision == TARGET:
+                        assert connection.scalar(text("SELECT to_regclass('reserve_ledger_entry')")) is None
+                        assert connection.scalar(text("SELECT to_regprocedure('recheck_reserve_computations()')")) is None
+                        assert 'RUECKLAGENENTNAHME' not in connection.scalar(text("SELECT pg_get_constraintdef(oid) FROM pg_constraint WHERE conrelid='payment'::regclass AND conname='ck_payment_ck_payment_type'"))
+                        assert 'RESERVE_LATE_CASH' not in connection.scalar(text("SELECT pg_get_constraintdef(oid) FROM pg_constraint WHERE conrelid='settlement_line'::regclass AND conname='ck_settlement_line_ck_settlement_line_line_type'"))
+                for revision in reversed(revisions):
+                    revision.module.upgrade()
+            assert definitions() == before
+            transaction.rollback()
+    finally:
+        engine.dispose()
