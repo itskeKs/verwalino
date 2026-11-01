@@ -45,3 +45,6 @@ document_storage/
 
 # Manually shared private diagnostics
 /diagnostics/
+
+# Local research notes (not committed)
+/docs/research/domain-gaps-2026-11-01/
