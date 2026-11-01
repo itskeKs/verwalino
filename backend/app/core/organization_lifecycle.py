@@ -1,9 +1,10 @@
-"""Translate only the immediate lifecycle guard conflict at the HTTP boundary."""
+"""Translate lifecycle guard and retryable lock conflicts at the HTTP boundary."""
 from fastapi import HTTPException, Request
 from sqlalchemy.exc import DBAPIError
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from app.core.request_id import http_error
+from app.core.locking import LOCK_TIMEOUT_MESSAGE, LockTimeoutError, is_lock_timeout
 
 
 class OrganizationLifecycleMiddleware:
@@ -24,11 +25,16 @@ class OrganizationLifecycleMiddleware:
 
         try:
             await self.app(scope, receive, track_start)
-        except DBAPIError as exc:
+        except (DBAPIError, LockTimeoutError) as exc:
             # Registering DBAPIError as a handled exception would make Starlette
             # wrap unrelated deferred commit failures after response start.
-            if started or getattr(exc.orig, 'sqlstate', None) != 'P0023':
+            if started:
                 raise
-            response = await http_error(Request(scope), HTTPException(409,
-                'Ihre Organisation ist während der Löschung schreibgeschützt.'))
+            if is_lock_timeout(exc):
+                detail = {'code': 'LOCK_TIMEOUT', 'message': LOCK_TIMEOUT_MESSAGE}
+            elif getattr(exc.orig, 'sqlstate', None) == 'P0023':
+                detail = 'Ihre Organisation ist während der Löschung schreibgeschützt.'
+            else:
+                raise
+            response = await http_error(Request(scope), HTTPException(409, detail))
             await response(scope, receive, send)

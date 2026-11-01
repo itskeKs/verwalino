@@ -11,7 +11,9 @@ Provides:
 from __future__ import annotations
 
 import asyncio
+import json
 import os
+import sys
 import uuid
 from contextlib import closing
 from datetime import date
@@ -40,6 +42,7 @@ from app.core.declaration_test_database import (
     reset_foreign_test_database,
 )
 from app.core.db import override_engine, override_worker_engine, override_review_engine
+from app.core.locking import is_lock_timeout
 from app.main import app
 from tests.bdd.world import admin_credentials, target_url
 
@@ -72,6 +75,57 @@ def bound_test_database_waits(connection):
     if connection.dialect.name == 'postgresql':
         connection.exec_driver_sql("SET LOCAL lock_timeout='5s'")
         connection.exec_driver_sql("SET LOCAL statement_timeout='120s'")
+
+
+def dump_test_lock_timeout(error, *, statement=None, pid=None):
+    """Use an independent connection: the failing transaction is already aborted."""
+    if target_url() or not is_lock_timeout(error):
+        return
+    import psycopg2
+    from psycopg2.extras import RealDictCursor
+
+    print(f'PostgreSQL lock timeout: pid={pid} waiting_statement={statement!r}', file=sys.stderr)
+    try:
+        with closing(psycopg2.connect(MIGRATOR_SYNC_URL, connect_timeout=3,
+                     options='-c statement_timeout=2000 -c lock_timeout=1000')) as diagnostic:
+            with diagnostic.cursor(cursor_factory=RealDictCursor) as cursor:
+                # The timed-out wait is gone from pg_locks. Include all open
+                # transactions so its holder remains visible after 55P03.
+                cursor.execute("""SELECT pid,state,wait_event_type,wait_event,query,
+                    pg_blocking_pids(pid) AS blocking_pids,
+                    clock_timestamp()-xact_start AS xact_age
+                    FROM pg_stat_activity WHERE datname=current_database()
+                    AND pid<>pg_backend_pid() AND (xact_start IS NOT NULL OR pid=%s)
+                    ORDER BY pid""", (pid,))
+                activity = cursor.fetchall()
+                cursor.execute("""SELECT pid,locktype,mode,granted,relation::regclass::text,
+                    transactionid,classid,objid,objsubid FROM pg_locks
+                    WHERE pid=ANY(%s) ORDER BY pid,granted,locktype""",
+                    ([row['pid'] for row in activity],))
+                print('pg_stat_activity=' + json.dumps(activity, default=str), file=sys.stderr)
+                print('pg_locks=' + json.dumps(cursor.fetchall(), default=str), file=sys.stderr)
+    except Exception as diagnostic_error:
+        # A diagnostic must never replace the original named test failure.
+        print(f'Lock diagnostic unavailable: {type(diagnostic_error).__name__}', file=sys.stderr)
+
+
+@event.listens_for(Engine, 'handle_error')
+def capture_database_lock_timeout(context):
+    if not is_lock_timeout(context.original_exception):
+        return
+    driver = context.connection.connection.driver_connection
+    pid = driver.get_server_pid() if hasattr(driver, 'get_server_pid') else driver.get_backend_pid()
+    dump_test_lock_timeout(context.original_exception, statement=context.statement, pid=pid)
+
+
+@pytest.hookimpl(hookwrapper=True)
+def pytest_runtest_makereport(item, call):
+    # Also cover unwrapped synchronous psycopg2 failures in setup/teardown.
+    if call.excinfo is not None:
+        error = call.excinfo.value
+        if not hasattr(error, 'orig'):
+            dump_test_lock_timeout(error)
+    yield
 
 
 def pytest_sessionstart(session):

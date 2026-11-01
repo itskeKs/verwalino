@@ -128,11 +128,12 @@ def quota_recount(arguments: list[str]) -> None:
     conn = psycopg2.connect(settings.database_url_sync)
     try:
         with conn.cursor() as cursor:
-            cursor.execute(LOCK_TIMEOUT_SQL)
+            hosted = get_quota_plan().name != "unlimited"
+            if hosted:
+                cursor.execute(LOCK_TIMEOUT_SQL)
             cursor.execute("SELECT id FROM public.organization WHERE id=%s", (org,))
             if cursor.fetchone() is None:
                 ap.error("Organization not found")
-            hosted = get_quota_plan().name != "unlimited"
             if hosted:
                 cursor.execute("SELECT pg_advisory_xact_lock_shared(hashtextextended(%s,0))", (f"scope-acl:{org}",))
                 cursor.execute("SELECT pg_advisory_xact_lock(hashtextextended(%s,0))", (f"organization-quota:{org}",))
@@ -180,6 +181,10 @@ def quota_recount(arguments: list[str]) -> None:
                             AND a.payload_diff->>'bytes'=v.payload::jsonb->>'bytes')""", originals)
                 conn.commit()
                 print(f"Scanned {scanned} originals, {total} bytes for {org}.")
+    except (psycopg2.errors.LockNotAvailable, TimeoutError):
+        conn.rollback()
+        print('Organization lock is held; retry quota-recount later.', file=sys.stderr)
+        raise SystemExit(1) from None
     except BaseException:
         conn.rollback()
         raise

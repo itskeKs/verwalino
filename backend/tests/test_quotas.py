@@ -258,8 +258,7 @@ async def test_hosted_quota_lock_wait_is_bounded(rent_db, monkeypatch, key, budg
                           {'key': f'{key}:{org}'})
     try:
         async with AsyncSession(rent_db.bind) as waiter:
-            await waiter.execute(text("SET LOCAL lock_timeout='0'"))
-            await waiter.execute(text("SET LOCAL statement_timeout='0'"))
+            await waiter.execute(text("SET LOCAL lock_timeout='250ms'"))
             with pytest.raises(DBAPIError) as error:
                 await asyncio.wait_for(lock_quota(waiter, org, budget=budget), timeout=10)
             assert error.value.orig.sqlstate == '55P03'
@@ -275,6 +274,7 @@ async def test_hosted_storage_lock_timeout_closes_the_waiting_handle(monkeypatch
     from app.core import storage
 
     monkeypatch.setattr(settings, 'deployment_mode', 'hosted')
+    monkeypatch.setattr(storage, 'LOCK_WAIT_SECONDS', 0.1)
     store, org = storage.LocalFsDocumentStore(tmp_path), uuid.uuid4()
     holder = storage.open_storage_lock(store, org)
     storage.fcntl.flock(holder, storage.fcntl.LOCK_EX | storage.fcntl.LOCK_NB)
@@ -406,7 +406,7 @@ async def test_quota_recount_records_legacy_and_orphan_sizes_idempotently(rent_w
     assert store.get(key) == b"legacy"
 
 
-async def test_hosted_recount_refuses_a_held_directory_lock_without_charges(rent_world, rent_db, monkeypatch, tmp_path):
+async def test_hosted_recount_refuses_a_held_directory_lock_without_charges(rent_world, rent_db, monkeypatch, tmp_path, capsys):
     import os
     from app import admin_cli
     from app.core import storage
@@ -420,8 +420,10 @@ async def test_hosted_recount_refuses_a_held_directory_lock_without_charges(rent
     holder = storage.open_storage_lock(store, org)
     storage.fcntl.flock(holder, storage.fcntl.LOCK_EX | storage.fcntl.LOCK_NB)
     try:
-        with pytest.raises(TimeoutError, match='retry'):
+        with pytest.raises(SystemExit) as stopped:
             admin_cli.quota_recount(['--org', str(org)])
+        assert stopped.value.code == 1
+        assert capsys.readouterr().err == 'Organization lock is held; retry quota-recount later.\n'
     finally:
         os.close(holder)
     assert await rent_db.scalar(text("SELECT count(*) FROM audit_event WHERE organization_id=:org AND action='quota_recount'"), {'org': org}) == 0
@@ -1113,3 +1115,39 @@ async def test_racing_unit_creates_cannot_exceed_the_count_limit(rent_world, mon
         answers = await asyncio.gather(create("A"), create("B"))
         assert sorted(answer.status_code for answer in answers) == [201, 409]
         assert len((await api.get("/api/units")).json()) == 3
+
+
+async def test_quota_recount_database_contention_exits_with_retry_message(rent_world, rent_db, monkeypatch, capsys):
+    from app import admin_cli
+    monkeypatch.setattr(settings, 'deployment_mode', 'hosted')
+    org = rent_world['org']
+    await rent_db.execute(text('SELECT pg_advisory_xact_lock(hashtextextended(:key,0))'),
+                          {'key': f'organization-quota:{org}'})
+    try:
+        with pytest.raises(SystemExit) as stopped:
+            admin_cli.quota_recount(['--org', str(org)])
+        assert stopped.value.code == 1
+        assert capsys.readouterr().err == 'Organization lock is held; retry quota-recount later.\n'
+    finally:
+        await rent_db.rollback()
+
+
+async def test_selfhost_recount_preserves_unlimited_database_waits(rent_world, monkeypatch, tmp_path):
+    import psycopg2
+    from app import admin_cli
+
+    monkeypatch.setattr(settings, 'deployment_mode', 'selfhost')
+    monkeypatch.setattr(settings, 'document_storage_root', str(tmp_path))
+    observed = []
+    class RecountConnection(psycopg2.extensions.connection):
+        def commit(self):
+            with self.cursor() as cursor:
+                cursor.execute('SHOW lock_timeout')
+                observed.append(cursor.fetchone()[0])
+            super().commit()
+    connect = psycopg2.connect
+    monkeypatch.setattr(admin_cli.psycopg2, 'connect',
+        lambda *args, **kwargs: connect(*args, **kwargs, connection_factory=RecountConnection,
+                                      options='-c lock_timeout=0 -c statement_timeout=120s'))
+    admin_cli.quota_recount(['--org', str(rent_world['org'])])
+    assert observed == ['0']

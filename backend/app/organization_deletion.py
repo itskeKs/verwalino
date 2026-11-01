@@ -10,6 +10,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 
 from app.core.config import settings
+from app.core.locking import bound_lock_waits, is_lock_timeout
 from app.services.organization_deletion_service import ErasureFileCleanupError, erase_unretained_files, run_deletion
 
 logger = logging.getLogger(__name__)
@@ -22,7 +23,7 @@ class ErasureResult:
     cleanup_pending: list[UUID] = field(default_factory=list)
 
 
-async def run():
+async def run(*, organization_ids=None):
     engine = create_async_engine(settings.database_url_migrator)
     result = ErasureResult()
     try:
@@ -31,7 +32,10 @@ async def run():
                 if await db.scalar(text('SELECT session_user')) != 'app_migrator':
                     raise RuntimeError('Operator database role required')
                 organizations = (await db.execute(text('''SELECT organization_id FROM organization_deletion
-                  WHERE status IN ('cooling_off','deleted_pending_retention') ORDER BY organization_id'''))).scalars().all()
+                  WHERE status IN ('cooling_off','deleted_pending_retention')
+                  AND (:all_orgs OR organization_id=ANY(CAST(:orgs AS uuid[])))
+                  ORDER BY organization_id'''),
+                  {'all_orgs': organization_ids is None, 'orgs': list(organization_ids or [])})).scalars().all()
         for org in organizations:
             erased = False
             try:
@@ -40,20 +44,24 @@ async def run():
                 async with AsyncSession(engine) as db:
                     async with db.begin():
                         await db.execute(text("SELECT set_config('app.current_org_id',:org,true)"), {'org': str(org)})
-                        erased = await run_deletion(db, org)
+                        erased = await run_deletion(db, org, nowait=True)
             except ErasureFileCleanupError:
                 result.completed += bool(erased)
                 result.cleanup_pending.append(org)
                 logger.exception('Organization erased, file cleanup pending; retry on the next run: %s', org)
                 continue
-            except Exception:
+            except Exception as error:
                 result.failed.append(org)
-                logger.exception('Organization erasure failed; retry on the next run: %s', org)
+                if is_lock_timeout(error):
+                    logger.warning('Organization lock held; retry on the next run: %s', org)
+                else:
+                    logger.exception('Organization erasure failed; retry on the next run: %s', org)
                 continue
             result.completed += bool(erased)
             try:
                 async with AsyncSession(engine) as db:
                     async with db.begin():
+                        await bound_lock_waits(db)
                         await retry_file_cleanup(db, org)
             except Exception:
                 result.cleanup_pending.append(org)

@@ -14,6 +14,7 @@ from app.core.live_principal import get_live_member_db
 from app.services.quota_service import quota_summary
 from app.core.live_principal import require_live_principal
 from app.core.db import get_session_factory, set_tenant_context
+from app.core.locking import bound_lock_waits
 from app.services.organization_export_service import create_export, download_export
 from fastapi import Request
 from fastapi.responses import StreamingResponse
@@ -147,22 +148,29 @@ class DeletionConfirmation(BaseModel):
     organization_name: str
 
 
+async def get_deletion_db(auth: AuthContext = Depends(require_admin_dep), db: AsyncSession = Depends(get_db, scope="function")):
+    # Lifecycle admission must bound the ACL acquisition before the service runs.
+    await bound_lock_waits(db)
+    await require_live_principal(db, auth, writer=True, exclusive=True, administrator=True)
+    return db
+
+
 @router.post("/deletion")
 async def request_organization_deletion(auth: AuthContext = Depends(require_admin_dep),
-                                      db: AsyncSession = Depends(get_import_db)):
+                                      db: AsyncSession = Depends(get_deletion_db)):
     from app.services.organization_deletion_service import request_deletion
     return await request_deletion(db, auth)
 
 
 @router.post("/deletion/confirm")
 async def confirm_organization_deletion(body: DeletionConfirmation, auth: AuthContext = Depends(require_admin_dep),
-                                      db: AsyncSession = Depends(get_import_db)):
+                                      db: AsyncSession = Depends(get_deletion_db)):
     from app.services.organization_deletion_service import confirm_deletion
     return await confirm_deletion(db, auth, body.organization_name)
 
 
 @router.post("/deletion/cancel")
 async def cancel_organization_deletion(auth: AuthContext = Depends(require_admin_dep),
-                                     db: AsyncSession = Depends(get_import_db)):
+                                     db: AsyncSession = Depends(get_deletion_db)):
     from app.services.organization_deletion_service import cancel_deletion
     return await cancel_deletion(db, auth)

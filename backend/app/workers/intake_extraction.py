@@ -4,6 +4,7 @@ import json
 import uuid
 
 from app.core.request_id import correlation_context
+from app.core.locking import retry_worker_completion
 from sqlalchemy import text
 from app.core.db import set_tenant_context
 from app.core.intake_extraction import run_isolated_extraction,valid_result,outcome
@@ -44,7 +45,9 @@ async def process_once(session_factory,org_id,*,processor=run_isolated_extractio
                 answer=await run_bounded_processor(processor,*args)
                 if not valid_result(answer,*args):answer=failure('processor_failed')
             except Exception:answer=failure('processor_failed')
-        async with session_factory() as db,db.begin():
-            await set_tenant_context(db,org_id)
-            return bool(await db.scalar(text('SELECT complete_intake_extraction(:org,:job,:fence,CAST(:result AS jsonb))'),
-                {**params,'result':json.dumps(answer)}))
+        async def finish():
+            async with session_factory() as db,db.begin():
+                await set_tenant_context(db,org_id)
+                return bool(await db.scalar(text('SELECT complete_intake_extraction(:org,:job,:fence,CAST(:result AS jsonb))'),
+                    {**params,'result':json.dumps(answer)}))
+        return await retry_worker_completion(finish)

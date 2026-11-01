@@ -33,7 +33,7 @@ from sqlalchemy.orm import Session
 from starlette.concurrency import run_in_threadpool
 
 from app.core.config import settings
-from app.core.locking import LOCK_WAIT_SECONDS
+from app.core.locking import LOCK_WAIT_SECONDS, StorageLockTimeout
 
 logger = logging.getLogger(__name__)
 
@@ -344,7 +344,7 @@ async def lock_document_storage(session, org_id, store: DocumentStore) -> bool:
                 except BlockingIOError:
                     remaining = deadline - asyncio.get_running_loop().time()
                     if remaining <= 0:
-                        raise TimeoutError('Timed out waiting for organization document storage lock') from None
+                        raise StorageLockTimeout('Timed out waiting for organization document storage lock') from None
                     await asyncio.sleep(min(0.05, remaining))
         except BaseException:
             os.close(handle)

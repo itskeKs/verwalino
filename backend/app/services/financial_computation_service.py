@@ -40,7 +40,7 @@ async def begin_computation(session, org_id, subject, operation):
             {'org':org_id,'kind':subject.__tablename__,'target':subject.id,'operation':operation})
     except DBAPIError as error:
         code=getattr(error.orig,'sqlstate',None)
-        if code in {'42501','23514','55P03'}:
-            raise HTTPException({'42501':404,'55P03':409}.get(code,422),
+        if code in {'42501','23514'}:
+            raise HTTPException(404 if code == '42501' else 422,
                 'Complete stable computation inputs unavailable; review inputs and retry') from None
         raise

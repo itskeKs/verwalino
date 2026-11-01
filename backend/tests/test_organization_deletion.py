@@ -10,23 +10,31 @@ import pytest_asyncio
 from sqlalchemy import text
 
 from app.services.organization_deletion_service import ERASURE_SCRUB_COLUMNS
-from tests.test_rent_changes import rent_db, rent_world, api_client  # noqa: F401
+from tests.test_rent_changes import rent_db, rent_world as base_rent_world, api_client  # noqa: F401
 from tests.test_organization_export import export_store  # noqa: F401
+
+
+@pytest_asyncio.fixture
+async def rent_world(base_rent_world, rent_db):
+    rent_db.info['erasure_test_organizations'] = [base_rent_world['org'], base_rent_world['foreign_org']]
+    return base_rent_world
 
 
 @pytest_asyncio.fixture(autouse=True)
 async def isolate_erasure_decisions(rent_db):
-    # Other migration rehearsals must still refuse genuine retained decisions.
-    # Remove only this module's new synthetic lifecycle rows at teardown.
-    baseline = (await rent_db.execute(text('SELECT organization_id FROM organization_deletion'))).scalars().all()
-    await rent_db.rollback()
+    # Pure scrub tests create no lifecycle rows. DB tests own only these UUIDs;
+    # never delete new rows belonging to another test/session.
     try:
         yield
     finally:
         await rent_db.rollback()
-        async with rent_db.begin():
-            await rent_db.execute(text('DELETE FROM organization_deletion WHERE NOT(organization_id=ANY(CAST(:baseline AS uuid[])))'),
-                                 {'baseline': baseline})
+        organizations = rent_db.info.get('erasure_test_organizations', [])
+        if organizations:
+            async with rent_db.begin():
+                await rent_db.execute(text("SET LOCAL lock_timeout='1s'"))
+                await rent_db.execute(text('''DELETE FROM organization_deletion WHERE organization_id IN (
+                    SELECT organization_id FROM organization_deletion
+                    WHERE organization_id=ANY(CAST(:orgs AS uuid[])) FOR UPDATE NOWAIT)'''), {'orgs': organizations})
 
 
 async def assert_no_person_marker(db, org, marker):
@@ -360,23 +368,50 @@ def test_payload_scrub_structurally_neutralizes_every_entity_scrub_column(entity
 async def test_runtime_budget_review_completes_with_lifecycle_guard(rent_world, rent_db, export_store):
     from sqlalchemy import event
     from app.core.db import get_review_session_factory
-    # Bound the reproduced self-wait at the second connection, not at 15 minutes.
+
     engine = get_review_session_factory().kw['bind']
-    def bounded_wait(connection, *_):
-        connection.cursor().execute("SET lock_timeout='1s'")
-    event.listen(engine.sync_engine, 'connect', bounded_wait)
+    checked_out = []
+    # Apply on every transaction, including pooled connections. The global
+    # test begin listener otherwise overwrites a checkout-level timeout.
+    def bounded_wait(connection):
+        connection.exec_driver_sql("SET LOCAL lock_timeout='1s'")
+        checked_out.append((connection.scalar(text('SELECT pg_backend_pid()')),
+                            connection.scalar(text('SHOW lock_timeout'))))
+    event.listen(engine.sync_engine, 'begin', bounded_wait)
+    task = None
     try:
         assert await rent_db.scalar(text("SELECT count(*) FROM pg_trigger WHERE tgname='a_organization_lifecycle'")) > 0
         await rent_db.rollback()
+        # Warm the review pool, then block its next attestation INSERT. The
+        # request holds ACL while this second connection waits on our holder.
         async with api_client(rent_world) as api:
             state = (await api.get('/api/access-preparation/runtime-budget')).json()
-            reviewed = await asyncio.wait_for(api.post('/api/access-preparation/runtime-budget/review',
+            await rent_db.execute(text('LOCK TABLE runtime_budget_attestation IN SHARE MODE'))
+            pid = await rent_db.scalar(text('SELECT pg_backend_pid()'))
+            task = asyncio.create_task(api.post('/api/access-preparation/runtime-budget/review',
                 json={'expected_review_id': None, 'policy_digest': state['policy_digest'],
                       'reason': 'Synthetic configured budget review', 'acknowledged': True},
-                headers={'Idempotency-Key': str(uuid.uuid4())}), timeout=5)
+                headers={'Idempotency-Key': str(uuid.uuid4())}))
+            async with asyncio.timeout(3):
+                while not await rent_db.scalar(text('''SELECT EXISTS(SELECT 1 FROM pg_stat_activity
+                    WHERE :pid=ANY(pg_blocking_pids(pid)))'''), {'pid': pid}):
+                    if task.done():
+                        pytest.fail(f'Review did not wait for attestation holder: {task.result()}')
+                    await asyncio.sleep(0.01)
+            await rent_db.rollback()
+            done, _ = await asyncio.wait([task], timeout=5)
+            assert done, 'Runtime review did not finish after explicit holder rollback'
+            reviewed = task.result()
             assert reviewed.status_code == 201, reviewed.text
+            assert len(checked_out) == 2
+            assert checked_out[0] == checked_out[1]  # The pooled connection retained its 1s guard.
+            assert checked_out[1][1] == '1s'
     finally:
-        event.remove(engine.sync_engine, 'connect', bounded_wait)
+        # Release before joining; cancellation must never release the holder.
+        await rent_db.rollback()
+        if task is not None:
+            await asyncio.gather(task, return_exceptions=True)
+        event.remove(engine.sync_engine, 'begin', bounded_wait)
 
 
 async def test_me_reads_lifecycle_without_import_admission(rent_world, rent_db, export_store):
@@ -414,10 +449,8 @@ async def test_operator_deletion_fails_fast_when_another_transaction_holds_a_loc
     task = None
     async with AsyncSession(rent_db.bind) as waiter:
         try:
-            # Disable the test-session safety net: this must exercise the
-            # product's bound, including row locks after the advisory locks.
-            await waiter.execute(text("SET LOCAL lock_timeout='0'"))
-            await waiter.execute(text("SET LOCAL statement_timeout='0'"))
+            # Preserve a stricter caller bound, including subsequent row locks.
+            await waiter.execute(text("SET LOCAL lock_timeout='250ms'"))
             pid = await waiter.scalar(text('SELECT pg_backend_pid()'))
             task = asyncio.create_task(run_deletion(waiter, w['org'],
                 now=datetime.now(timezone.utc) + timedelta(days=8)))
@@ -458,26 +491,36 @@ async def test_lifecycle_lock_preserves_a_stricter_transaction_timeout(rent_db):
     await rent_db.rollback()
 
 
-async def test_tenant_session_bounds_the_acl_wait_before_service_admission(rent_world, rent_db):
-    from sqlalchemy.exc import DBAPIError
+@pytest.mark.parametrize('key', ['scope-acl', 'financial-inputs'])
+async def test_ordinary_tenant_sessions_keep_waiting_for_contended_writes(rent_world, rent_db, key):
     from sqlalchemy.ext.asyncio import AsyncSession
     from app.core.db import set_tenant_context
-    from app.core.live_principal import require_live_principal
-    from app.core.tenant import AuthContext
+    from app.services.financial_scope_service import FinancialScopeService
 
     org = rent_world['org']
-    await rent_db.execute(text('SELECT pg_advisory_xact_lock(hashtextextended(:key,0))'), {'key': f'scope-acl:{org}'})
-    try:
-        async with AsyncSession(rent_db.bind) as waiter:
+    await rent_db.execute(text('SELECT pg_advisory_xact_lock(hashtextextended(:key,0))'), {'key': f'{key}:{org}'})
+    holder = await rent_db.scalar(text('SELECT pg_backend_pid()'))
+    task = None
+    async with AsyncSession(rent_db.bind) as waiter:
+        try:
             await waiter.execute(text("SET LOCAL lock_timeout='0'"))
-            await waiter.execute(text("SET LOCAL statement_timeout='0'"))
             await set_tenant_context(waiter, org)
-            auth = AuthContext(rent_world['admin'], org, 'OWNER_ADMIN')
-            with pytest.raises(DBAPIError) as error:
-                await asyncio.wait_for(require_live_principal(waiter, auth, writer=True), timeout=10)
-            assert error.value.orig.sqlstate == '55P03'
-    finally:
-        await rent_db.rollback()
+            assert await waiter.scalar(text('SHOW lock_timeout')) == '0'
+            pid = await waiter.scalar(text('SELECT pg_backend_pid()'))
+            task = asyncio.create_task(FinancialScopeService(waiter, org, None).lock_inputs())
+            async with asyncio.timeout(3):
+                while holder not in await rent_db.scalar(text('SELECT pg_blocking_pids(:pid)'), {'pid': pid}):
+                    if task.done():
+                        await task
+                        pytest.fail('Writer did not wait for the holder')
+                    await asyncio.sleep(0.01)
+            await rent_db.rollback()
+            await asyncio.wait_for(asyncio.shield(task), timeout=3)
+        finally:
+            await rent_db.rollback()
+            if task is not None:
+                await asyncio.gather(task, return_exceptions=True)
+            await waiter.rollback()
 
 
 async def test_retention_catalog_classifies_every_organization_table(rent_db):
@@ -773,6 +816,55 @@ async def test_erasure_scrubs_mutable_retained_text_and_keeps_immutable_fields(r
     assert immutable_title == immutable_quote == marker
 
 
+@pytest.mark.parametrize('lock', ['scope-acl', 'organization-lifecycle', 'row'])
+async def test_cli_skips_a_contended_organization_and_finishes_the_next(rent_world, rent_db, export_store, lock):
+    from app import organization_deletion as cli
+    w = rent_world
+    for foreign in (False, True):
+        async with api_client(w, foreign=foreign) as api:
+            assert (await api.post('/api/organizations/deletion')).status_code == 200
+            assert (await api.post('/api/organizations/deletion/confirm',
+                                  json={'organization_name': 'T23 synthetic'})).status_code == 200
+    await rent_db.execute(text("UPDATE organization_deletion SET execute_after=now()-interval '1 day' WHERE organization_id IN (:org,:foreign_org)"), w)
+    await rent_db.commit()
+    first, second = sorted((w['org'], w['foreign_org']))
+    if lock == 'row':
+        await rent_db.execute(text('SELECT 1 FROM organization_deletion WHERE organization_id=:org FOR UPDATE'), {'org': first})
+    else:
+        await rent_db.execute(text('SELECT pg_advisory_xact_lock(hashtextextended(:key,0))'), {'key': f'{lock}:{first}'})
+    task = asyncio.create_task(cli.run(organization_ids=[first, second]))
+    try:
+        done, _ = await asyncio.wait([task], timeout=3)
+        assert done, 'CLI waited for a contended organization instead of continuing'
+        result = task.result()
+        assert result.completed == 1
+        assert result.failed == [first]
+        assert not result.cleanup_pending
+    finally:
+        await rent_db.rollback()
+        await asyncio.gather(task, return_exceptions=True)
+
+
+async def test_cli_filter_never_visits_an_unrelated_lifecycle_row(rent_world, rent_db, export_store, monkeypatch):
+    from app import organization_deletion as cli
+    w = rent_world
+    for foreign in (False, True):
+        async with api_client(w, foreign=foreign) as api:
+            assert (await api.post('/api/organizations/deletion')).status_code == 200
+            assert (await api.post('/api/organizations/deletion/confirm',
+                                  json={'organization_name': 'T23 synthetic'})).status_code == 200
+    visited = []
+    original = cli.run_deletion
+    async def record(db, org, **kwargs):
+        visited.append(org)
+        return await original(db, org, **kwargs)
+    monkeypatch.setattr(cli, 'run_deletion', record)
+    await cli.run(organization_ids=[w['org']])
+    assert visited == [w['org']]
+    await cli.run(organization_ids=[])
+    assert visited == [w['org']]
+
+
 async def test_cli_continues_after_one_due_organization_fails(rent_world, rent_db, export_store, monkeypatch, caplog):
     from app import organization_deletion as cli
     w = rent_world
@@ -784,13 +876,13 @@ async def test_cli_continues_after_one_due_organization_fails(rent_world, rent_d
     await rent_db.commit()
     first, second = sorted((w['org'], w['foreign_org']))
     original = cli.run_deletion
-    async def fail_first(db, org):
+    async def fail_first(db, org, **kwargs):
         if org == first:
             await db.execute(text("UPDATE organization SET name='Must roll back' WHERE id=:org"), {'org': org})
             raise RuntimeError('Synthetic organization erasure failure')
-        return await original(db, org)
+        return await original(db, org, **kwargs)
     monkeypatch.setattr(cli, 'run_deletion', fail_first)
-    result = await cli.run()
+    result = await cli.run(organization_ids=[w['org'], w['foreign_org']])
     assert result.completed == 1
     assert result.failed == [first]
     states = dict((await rent_db.execute(text('SELECT organization_id,status FROM organization_deletion WHERE organization_id IN (:org,:foreign_org)'), w)).all())
@@ -799,7 +891,7 @@ async def test_cli_continues_after_one_due_organization_fails(rent_world, rent_d
     assert str(first) in caplog.text
     await rent_db.rollback()
     monkeypatch.setattr(cli, 'run_deletion', original)
-    result = await cli.run()
+    result = await cli.run(organization_ids=[w['org'], w['foreign_org']])
     assert result.completed == 1
     assert result.failed == []
     assert await rent_db.scalar(text('SELECT status FROM organization_deletion WHERE organization_id=:org'), {'org': first}) == 'deleted_pending_retention'
@@ -837,14 +929,14 @@ async def test_cli_counts_committed_erasure_with_pending_cleanup_once(rent_world
         raise OSError('Synthetic cleanup failure')
     target = service if failure_point == 'after_commit' else cli
     monkeypatch.setattr(target, 'erase_unretained_files', fail_cleanup)
-    result = await cli.run()
+    result = await cli.run(organization_ids=[w['org'], w['foreign_org']])
     assert result.completed == 1
     assert result.failed == []
     assert result.cleanup_pending == [w['org']]
     assert await rent_db.scalar(text('SELECT status FROM organization_deletion WHERE organization_id=:org'), w) == 'deleted_pending_retention'
     await rent_db.rollback()
     monkeypatch.setattr(target, 'erase_unretained_files', original)
-    retried = await cli.run()
+    retried = await cli.run(organization_ids=[w['org'], w['foreign_org']])
     assert retried.completed == 0
     assert retried.failed == retried.cleanup_pending == []
 
@@ -1315,3 +1407,30 @@ async def test_user_hard_delete_nulls_only_audit_actor_and_operator_can_delete_h
     assert after == before
     assert (await rent_db.execute(text('DELETE FROM audit_event WHERE id=:id'), {'id': identity})).rowcount == 1
     await rent_db.rollback()
+
+
+async def test_deletion_admission_bounds_acl_before_live_principal_check(rent_world, export_store, monkeypatch):
+    from sqlalchemy import event
+    from app.api import organizations
+    from app.core.db import get_engine
+
+    engine = get_engine()
+    def unlimited(connection):
+        connection.exec_driver_sql("SET LOCAL lock_timeout='0'")
+    original = organizations.require_live_principal
+    observed = []
+    async def check(db, auth, **kwargs):
+        observed.append(await db.scalar(text('SHOW lock_timeout')))
+        assert observed[-1] == '30s'
+        return await original(db, auth, **kwargs)
+    monkeypatch.setattr(organizations, 'require_live_principal', check)
+    event.listen(engine.sync_engine, 'begin', unlimited)
+    try:
+        async with api_client(rent_world) as api:
+            assert (await api.post('/api/organizations/deletion')).status_code == 200
+            assert (await api.post('/api/organizations/deletion/confirm',
+                json={'organization_name': 'T23 synthetic'})).status_code == 200
+            assert (await api.post('/api/organizations/deletion/cancel')).status_code == 200
+        assert observed == ['30s'] * 3
+    finally:
+        event.remove(engine.sync_engine, 'begin', unlimited)

@@ -382,3 +382,41 @@ def test_invoice_compose_service_is_offline_and_least_privilege():
     assert worker["restart"] == "unless-stopped"
     assert worker["healthcheck"]["test"] == ["CMD", "python", "-m", "app.workers.invoice_extraction", "--healthcheck"]
     assert worker["depends_on"]["app"]["condition"] == "service_healthy"
+
+
+@pytest.mark.asyncio
+async def test_worker_retries_finished_output_after_lock_timeout_without_extracting_again(worker_tenant, tmp_path, monkeypatch):
+    from sqlalchemy.exc import DBAPIError
+    from app.core.storage import LocalFsDocumentStore, set_store
+    from app.core.db import get_worker_session_factory
+    from app.services.invoice_processing_service import InvoiceProcessingService
+    from app.workers.invoice_extraction import process_once
+
+    api, ids = worker_tenant
+    set_store(LocalFsDocumentStore(str(tmp_path)))
+    original = InvoiceProcessingService.finish
+    finishes, extractions, sessions = [], [], []
+    async def contended_finish(self, claim, result):
+        finishes.append(result)
+        sessions.append(self.session)
+        if len(finishes) == 1:
+            error = Exception('synthetic lock contention')
+            error.sqlstate = '55P03'
+            raise DBAPIError('SELECT finish()', {}, error)
+        return await original(self, claim, result)
+    def processor(data, mime):
+        extractions.append(data)
+        return extract_invoice(data, mime)
+    monkeypatch.setattr(InvoiceProcessingService, 'finish', contended_finish)
+    try:
+        uploaded = await api.post('/api/invoice-documents/upload',
+            files={'file': ('scan.pdf', pdf_bytes(), 'application/pdf')})
+        assert uploaded.status_code == 201, uploaded.text
+        assert await process_once(get_worker_session_factory(), ids['org_a_id'], processor=processor)
+        ready = (await api.get(f"/api/invoice-documents/{uploaded.json()['id']}")).json()
+        assert ready['processing_status'] == 'succeeded'
+        assert len(extractions) == 1
+        assert len(finishes) == 2 and finishes[0] is finishes[1]
+        assert sessions[0] is not sessions[1]
+    finally:
+        set_store(None)
