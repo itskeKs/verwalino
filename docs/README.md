@@ -59,6 +59,7 @@ Start with the project overview, then choose a page for the task at hand.
 | --- | --- |
 | [Contributing](../CONTRIBUTING.md) | Development environment, checks, issues, commits, and pull requests. |
 | [Repository rules](../AGENTS.md) | Workspace, safety, scope, and verification requirements. |
+| [Session cleanup](../AGENTS.md#session-cleanup) | Remove session-owned leftovers; [acceptance stack commands](operations/acceptance-cleanup.md). |
 | [Frontend design contract](../DESIGN.md) | UI components, copy, layouts, formats, and screenshot references. |
 | [Logo](assets/brand/README.md) | Wordmark, standalone mark, app icon, and their size and colour rules. |
 | [Executable scenarios](../features/README.md) | Gherkin specifications, bindings, and scenario execution. |
