@@ -1406,6 +1406,7 @@ full-line comments are allowed. The file is read as data, never sourced. Mode mu
 253 characters with labels at most 63, without scheme, credentials, path or port.
 `HV_ALLOWED_HOSTS` is required: a comma-separated list without spaces, wildcards or empty entries that
 includes the exact public host and `127.0.0.1` for health checks, as shown above.
+Each entry follows the public host's DNS rules, with IPv4 literals and `localhost` also allowed.
 Leading/trailing commas and consecutive commas are refused. The deploy script merges this
 list with the installer's allowed hosts, removing duplicates: `localhost` and `127.0.0.1`
 are always present, as is `VERWALINO_DOMAIN` in HTTPS mode.
@@ -1416,6 +1417,7 @@ Keep the existing SMTP settings and generated secrets in `.env.selfhost`; never 
 three app keys there. The existing HTTPS config should have
 `VERWALINO_DOMAIN=app.verwalino.de`, matching the public routing hostname. In `https` mode,
 `HV_PUBLIC_HOST` must equal `VERWALINO_DOMAIN`; a mismatch exits 2 before any side effects.
+Local mode skips this equality rule because no public hostname is routed; the public host is then used only for mail links.
 The installer validates its own file via `status` before checkout. Immediately after checkout,
 the deploy script checks that the app overlay exists and validates Compose quietly, before
 image pull, backup or pinning. The managed server start then takes

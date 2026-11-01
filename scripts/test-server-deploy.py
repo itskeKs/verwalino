@@ -624,6 +624,46 @@ class DeployTests(ServerCase):
                     self.assertEqual(call["installer_allowed_hosts"], call["allowed_hosts"])
                 self.assertEqual(path.read_bytes(), private_before)
 
+    def test_local_mode_uses_the_public_host_for_mail_without_a_routing_domain(self):
+        self.config.write_text(self.config.read_text().replace("VERWALINO_MODE=https", "VERWALINO_MODE=local")
+                               .replace("VERWALINO_DOMAIN=verwaltung.example.org", "VERWALINO_DOMAIN="))
+        for mode in ("selfhost", "hosted"):
+            with self.subTest(mode=mode):
+                self.log.unlink(missing_ok=True)
+                path = self.hosted_app_config(mode)
+                path.write_text(path.read_text().replace("verwaltung.example.org", "mail.example.net"))
+                result = self.deploy()
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                start = next(c for c in self.calls("docker") if "up" in c["args"] and c["args"][-1] == "app")
+                self.assertEqual(start["public_host"], "mail.example.net")
+                self.assertEqual(start["allowed_hosts"], "localhost,127.0.0.1,mail.example.net")
+                self.assertEqual(start["installer_allowed_hosts"], start["allowed_hosts"])
+                self.assertNotIn("https", start["args"])
+
+    def test_invalid_allowed_host_entries_refuse_before_any_side_effect(self):
+        path = self.hosted_app_config()
+        valid = path.read_text()
+        for host in (".", "-", "-.", "..", "-app.example.org", "app-.example.org", "app..example.org",
+                     "app.example.org.", "a" * 64 + ".example.org", "123", "999.0.0.1"):
+            with self.subTest(host=host):
+                path.write_text(valid.replace(",localhost,", f",{host},localhost,"))
+                result = self.deploy()
+                self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+                self.assertIn("HV_ALLOWED_HOSTS", result.stderr)
+                self.assertEqual(self.calls(), [])
+                self.assertEqual(self.log_files(), [])
+                self.assertEqual(stat.S_IMODE((self.srv / "logs").stat().st_mode), 0o755)
+                self.assert_untouched()
+
+    def test_allowed_hosts_accept_valid_dns_labels_ipv4_and_localhost(self):
+        path = self.hosted_app_config()
+        hosts = "verwaltung.example.org,localhost,127.0.0.1,192.0.2.10,app-2.example.org," + "a" * 63 + ".example.org"
+        path.write_text("HV_PUBLIC_HOST=verwaltung.example.org\n" + f"HV_ALLOWED_HOSTS={hosts}\n")
+        result = self.deploy()
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        start = next(c for c in self.calls("docker") if "up" in c["args"] and c["args"][-1] == "app")
+        self.assertEqual(start["allowed_hosts"], hosts)
+
     def test_app_opt_in_keeps_proxy_and_site_in_the_start_chain(self):
         self.hosted_app_config("hosted")
         (self.srv / "config/Caddyfile.hosted").write_text((ROOT / "infra/Caddyfile.hosted").read_text())

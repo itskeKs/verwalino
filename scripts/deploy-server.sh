@@ -100,6 +100,13 @@ if [[ "$target" = release && ( -e "$APP_CONFIG" || -L "$APP_CONFIG" ) ]]; then
         invalid_app_config 'HV_PUBLIC_HOST must be a lowercase DNS hostname, without scheme or port.'
     [[ "$app_allowed_hosts" =~ ^[a-z0-9.-]+(,[a-z0-9.-]+)*$ && ",$app_allowed_hosts," = *",$app_public_host,"* ]] || \
         invalid_app_config 'HV_ALLOWED_HOSTS must be a comma-separated list without spaces or empty entries including HV_PUBLIC_HOST exactly.'
+    ipv4_octet='(25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9])'
+    IFS=, read -r -a app_host_entries <<< "$app_allowed_hosts"
+    for host in "${app_host_entries[@]}"; do
+        [[ ${#host} -le 253 && ( "$host" = localhost || "$host" =~ ^$ipv4_octet(\.$ipv4_octet){3}$ ||
+            ( "$host" =~ ^$dns_label(\.$dns_label)+$ && "${host##*.}" =~ [a-z] ) ) ]] || \
+            invalid_app_config 'HV_ALLOWED_HOSTS entries must be lowercase DNS hostnames, IPv4 literals or localhost.'
+    done
     [[ ",$app_allowed_hosts," = *',127.0.0.1,'* ]] || \
         invalid_app_config 'HV_ALLOWED_HOSTS must include 127.0.0.1 for the app health checks.'
     if [[ -f "$CONFIG" && "$(sed -n 's/^VERWALINO_MODE=//p' "$CONFIG")" = https ]]; then
