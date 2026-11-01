@@ -22,7 +22,7 @@ day = 04.11.2026) rightly show as open.
 | | |
 | --- | --- |
 | User | Sabine Muster, a private landlady, owner of the property |
-| Property | Musterstraße 1, 12345 Musterstadt; account DE02500105170137075030 |
+| Property | Musterstraße 1, 12345 Musterstadt; account DE75512108001245126199 |
 | Statement | [sparkasse-2026-01-10.csv](data/sparkasse-2026-01-10.csv): January to October 2026, Sparkasse format CSV-CAMT, example IBANs, fictional data |
 
 | | Unit 1 (ground floor) | Unit 2 (upper floor) |
@@ -118,10 +118,11 @@ creates her property-management organization and her account, and signs in.
 **Expected:**
 - From January 2027 Anna's monthly amount due is 930.00 €; until December 2026 it stays 900.00 €.
 - Payments so far and the open April amount stay unchanged.
-- **Additional check, only if Verwalino offers a rent increase request under § 558 BGB:** such a
-  request to Anna taking effect before 01.04.2027 is rejected by Verwalino or comes with a
-  warning, because the rent must have been unchanged for 15 months when it takes effect (start of
-  tenancy 01.01.2026).
+- **Additional check, only if Verwalino offers a rent increase request under § 558 BGB,** made
+  after the change above is entered: such a request to Anna taking effect before 01.04.2028 is
+  rejected by Verwalino or comes with a warning. The rent must have been unchanged for 15 months
+  when the increase takes effect, and the agreed increase of 01.01.2027 starts that period again
+  (only increases under §§ 559 to 560 BGB do not count).
 
 **Checked by:** agent
 **Also at 360 px:** no

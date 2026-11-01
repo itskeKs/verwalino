@@ -46,7 +46,7 @@ enforcement; every baseline and safety rule here stays in force.
 ## Work comes from issues
 
 - A task is a GitHub issue written as a spec: What → Why it happens → Proposed change →
-  Acceptance → Out of scope (`.github/ISSUE_TEMPLATE/task.md`). Read it with
+  User check → Acceptance → Out of scope (`.github/ISSUE_TEMPLATE/task.md`). Read it with
   `gh issue view N -R itskeKs/verwalino`. There is no task list file.
 - Scope is the issue's acceptance list: nothing less, nothing unasked. Do not add request or
   response fields, parameters, configuration keys, endpoints or options the issue does not name,
@@ -84,7 +84,7 @@ enforcement; every baseline and safety rule here stays in force.
 - Done means a user can do it. An issue whose change a user notices carries a „User check“
   written before the change ([docs/acceptance/README.md](docs/acceptance/README.md)); the
   PR is merged only after it passed on the PR's state: by a blind acceptance run that sees only
-  the running product (a portable install, the authorized portable acceptance of
+  the running product (a portable install, the separately authorized portable acceptance of
   "Databases and containers" below), or by the owner where no agent can go. The core journeys in
   [docs/acceptance/journeys.md](docs/acceptance/journeys.md) run blind at every milestone, and
   each has an automated twin in `features/journeys/` that runs in CI; a confirmed acceptance
