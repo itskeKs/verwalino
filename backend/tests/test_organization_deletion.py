@@ -391,6 +391,95 @@ async def test_me_reads_lifecycle_without_import_admission(rent_world, rent_db, 
         await rent_db.rollback()
 
 
+@pytest.mark.parametrize('lock', ['scope-acl', 'organization-lifecycle', 'organization_deletion', 'organization'])
+async def test_operator_deletion_fails_fast_when_another_transaction_holds_a_lock(
+    rent_world, rent_db, export_store, lock,
+):
+    from sqlalchemy.exc import DBAPIError
+    from sqlalchemy.ext.asyncio import AsyncSession
+    from app.services.organization_deletion_service import run_deletion
+
+    w = rent_world
+    async with api_client(w) as api:
+        assert (await api.post('/api/organizations/deletion')).status_code == 200
+        assert (await api.post('/api/organizations/deletion/confirm',
+                               json={'organization_name': 'T23 synthetic'})).status_code == 200
+    holder = await rent_db.scalar(text('SELECT pg_backend_pid()'))
+    if lock in {'scope-acl', 'organization-lifecycle'}:
+        await rent_db.execute(text('SELECT pg_advisory_xact_lock(hashtextextended(:key,0))'),
+                              {'key': f"{lock}:{w['org']}"})
+    else:
+        column = 'id' if lock == 'organization' else 'organization_id'
+        await rent_db.execute(text(f'SELECT 1 FROM {lock} WHERE {column}=:org FOR UPDATE'), w)
+    task = None
+    async with AsyncSession(rent_db.bind) as waiter:
+        try:
+            # Disable the test-session safety net: this must exercise the
+            # product's bound, including row locks after the advisory locks.
+            await waiter.execute(text("SET LOCAL lock_timeout='0'"))
+            await waiter.execute(text("SET LOCAL statement_timeout='0'"))
+            pid = await waiter.scalar(text('SELECT pg_backend_pid()'))
+            task = asyncio.create_task(run_deletion(waiter, w['org'],
+                now=datetime.now(timezone.utc) + timedelta(days=8)))
+            async with asyncio.timeout(10):
+                while holder not in await rent_db.scalar(text('SELECT pg_blocking_pids(:pid)'), {'pid': pid}):
+                    if task.done():
+                        await task
+                        pytest.fail('Deletion completed while its lock was held')
+                    await asyncio.sleep(0.01)
+            activity = (await rent_db.execute(text('''SELECT pid,wait_event_type,wait_event,query,
+                pg_blocking_pids(pid) AS holders FROM pg_stat_activity WHERE pid=:pid'''), {'pid': pid})).mappings().one()
+            locks = (await rent_db.execute(text('''SELECT locktype,mode,granted FROM pg_locks
+                WHERE pid=:pid AND NOT granted'''), {'pid': pid})).all()
+            assert activity['wait_event_type'] == 'Lock' and locks, (dict(activity), locks)
+            with pytest.raises(DBAPIError) as error:
+                try:
+                    await asyncio.wait_for(asyncio.shield(task), timeout=10)
+                except TimeoutError:
+                    pytest.fail(f'Deletion lock wait exceeded 10 seconds: {dict(activity)}, locks={locks}')
+            assert error.value.orig.sqlstate == '55P03', (dict(activity), locks)
+        finally:
+            # Release the holder before joining a failed/cancelled waiter.
+            await rent_db.rollback()
+            if task is not None:
+                task.cancel()
+                await asyncio.gather(task, return_exceptions=True)
+            await waiter.rollback()
+    state = (await rent_db.execute(text('SELECT status,completed_at FROM organization_deletion WHERE organization_id=:org'), w)).one()
+    assert state == ('cooling_off', None)
+    await rent_db.rollback()
+
+
+async def test_lifecycle_lock_preserves_a_stricter_transaction_timeout(rent_db):
+    from app.services.organization_deletion_service import lifecycle_lock
+    await rent_db.execute(text("SET LOCAL lock_timeout='100ms'"))
+    await lifecycle_lock(rent_db, uuid.uuid4())
+    assert await rent_db.scalar(text("SHOW lock_timeout")) == '100ms'
+    await rent_db.rollback()
+
+
+async def test_tenant_session_bounds_the_acl_wait_before_service_admission(rent_world, rent_db):
+    from sqlalchemy.exc import DBAPIError
+    from sqlalchemy.ext.asyncio import AsyncSession
+    from app.core.db import set_tenant_context
+    from app.core.live_principal import require_live_principal
+    from app.core.tenant import AuthContext
+
+    org = rent_world['org']
+    await rent_db.execute(text('SELECT pg_advisory_xact_lock(hashtextextended(:key,0))'), {'key': f'scope-acl:{org}'})
+    try:
+        async with AsyncSession(rent_db.bind) as waiter:
+            await waiter.execute(text("SET LOCAL lock_timeout='0'"))
+            await waiter.execute(text("SET LOCAL statement_timeout='0'"))
+            await set_tenant_context(waiter, org)
+            auth = AuthContext(rent_world['admin'], org, 'OWNER_ADMIN')
+            with pytest.raises(DBAPIError) as error:
+                await asyncio.wait_for(require_live_principal(waiter, auth, writer=True), timeout=10)
+            assert error.value.orig.sqlstate == '55P03'
+    finally:
+        await rent_db.rollback()
+
+
 async def test_retention_catalog_classifies_every_organization_table(rent_db):
     guards = (await rent_db.execute(text('''SELECT DISTINCT p.proname FROM pg_trigger t
       JOIN pg_proc p ON p.oid=t.tgfoid WHERE NOT t.tgisinternal AND (t.tgtype & 8)>0

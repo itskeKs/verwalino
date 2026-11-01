@@ -245,6 +245,99 @@ async def test_hosted_storage_locks_the_shared_directory_without_creating_lock_f
         session.close()
 
 
+@pytest.mark.parametrize('key,budget', [('scope-acl', False), ('organization-quota', False), ('hosted-ai', True)])
+async def test_hosted_quota_lock_wait_is_bounded(rent_db, monkeypatch, key, budget):
+    import asyncio
+    from sqlalchemy.exc import DBAPIError
+    from sqlalchemy.ext.asyncio import AsyncSession
+    from app.services.quota_service import lock_quota
+
+    monkeypatch.setattr(settings, 'deployment_mode', 'hosted')
+    org = uuid.uuid4()
+    await rent_db.execute(text('SELECT pg_advisory_xact_lock(hashtextextended(:key,0))'),
+                          {'key': f'{key}:{org}'})
+    try:
+        async with AsyncSession(rent_db.bind) as waiter:
+            await waiter.execute(text("SET LOCAL lock_timeout='0'"))
+            await waiter.execute(text("SET LOCAL statement_timeout='0'"))
+            with pytest.raises(DBAPIError) as error:
+                await asyncio.wait_for(lock_quota(waiter, org, budget=budget), timeout=10)
+            assert error.value.orig.sqlstate == '55P03'
+    finally:
+        await rent_db.rollback()
+
+
+async def test_hosted_storage_lock_timeout_closes_the_waiting_handle(monkeypatch, tmp_path):
+    import asyncio
+    import os
+    from types import SimpleNamespace
+    from sqlalchemy.orm import Session
+    from app.core import storage
+
+    monkeypatch.setattr(settings, 'deployment_mode', 'hosted')
+    store, org = storage.LocalFsDocumentStore(tmp_path), uuid.uuid4()
+    holder = storage.open_storage_lock(store, org)
+    storage.fcntl.flock(holder, storage.fcntl.LOCK_EX | storage.fcntl.LOCK_NB)
+    session = Session()
+    session.begin()
+    handles = []
+    original = storage.open_storage_lock
+    def track_handle(*args):
+        handle = original(*args)
+        handles.append(handle)
+        return handle
+    monkeypatch.setattr(storage, 'open_storage_lock', track_handle)
+    try:
+        with pytest.raises(TimeoutError, match='document storage lock'):
+            await asyncio.wait_for(storage.lock_document_storage(SimpleNamespace(info=session.info), org, store), timeout=10)
+        assert not session.info['storage_write_locks']
+        with pytest.raises(OSError):
+            os.fstat(handles[0])
+        os.close(holder)
+        holder = None
+        assert await storage.lock_document_storage(SimpleNamespace(info=session.info), org, store)
+    finally:
+        if holder is not None:
+            os.close(holder)
+        session.close()
+    with pytest.raises(OSError):
+        os.fstat(handles[-1])
+
+
+async def test_cancelled_storage_lock_wait_closes_the_handle(monkeypatch, tmp_path):
+    import asyncio
+    import os
+    from types import SimpleNamespace
+    from app.core import storage
+
+    monkeypatch.setattr(settings, 'deployment_mode', 'hosted')
+    store, org = storage.LocalFsDocumentStore(tmp_path), uuid.uuid4()
+    holder = storage.open_storage_lock(store, org)
+    storage.fcntl.flock(holder, storage.fcntl.LOCK_EX | storage.fcntl.LOCK_NB)
+    attempted, handles = asyncio.Event(), []
+    original = storage.open_storage_lock
+    def track_handle(*args):
+        handle = original(*args)
+        handles.append(handle)
+        attempted.set()
+        return handle
+    monkeypatch.setattr(storage, 'open_storage_lock', track_handle)
+    session = SimpleNamespace(info={})
+    task = asyncio.create_task(storage.lock_document_storage(session, org, store))
+    try:
+        await asyncio.wait_for(attempted.wait(), timeout=2)
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await asyncio.wait_for(task, timeout=2)
+        assert not session.info['storage_write_locks']
+        with pytest.raises(OSError):
+            os.fstat(handles[0])
+    finally:
+        os.close(holder)
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
+
+
 @pytest.mark.asyncio
 async def test_usage_and_uploads_use_database_sizes_without_a_directory_walk(rent_world, monkeypatch, tmp_path):
     from app.core import storage
@@ -311,6 +404,32 @@ async def test_quota_recount_records_legacy_and_orphan_sizes_idempotently(rent_w
         assert await rent_db.scalar(text("SELECT count(*) FROM audit_event WHERE organization_id=:org AND action='quota_recount'"),
             {"org": rent_world["org"]}) == 1
     assert store.get(key) == b"legacy"
+
+
+async def test_hosted_recount_refuses_a_held_directory_lock_without_charges(rent_world, rent_db, monkeypatch, tmp_path):
+    import os
+    from app import admin_cli
+    from app.core import storage
+
+    monkeypatch.setattr(settings, 'deployment_mode', 'hosted')
+    monkeypatch.setattr(settings, 'document_storage_root', str(tmp_path))
+    org = rent_world['org']
+    store = storage.LocalFsDocumentStore(tmp_path)
+    key = storage.make_storage_key(str(org), storage.compute_sha256(b'legacy'))
+    store.put(key, b'legacy', content_type='application/pdf')
+    holder = storage.open_storage_lock(store, org)
+    storage.fcntl.flock(holder, storage.fcntl.LOCK_EX | storage.fcntl.LOCK_NB)
+    try:
+        with pytest.raises(TimeoutError, match='retry'):
+            admin_cli.quota_recount(['--org', str(org)])
+    finally:
+        os.close(holder)
+    assert await rent_db.scalar(text("SELECT count(*) FROM audit_event WHERE organization_id=:org AND action='quota_recount'"), {'org': org}) == 0
+    await rent_db.rollback()
+    admin_cli.quota_recount(['--org', str(org)])
+    assert await rent_db.scalar(text("SELECT count(*) FROM audit_event WHERE organization_id=:org AND action='quota_recount'"), {'org': org}) == 1
+    assert store.get(key) == b'legacy'
+    await rent_db.rollback()
 
 
 @pytest.mark.asyncio

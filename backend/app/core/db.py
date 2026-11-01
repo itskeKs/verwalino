@@ -24,6 +24,7 @@ from sqlalchemy.ext.asyncio import (
 from sqlalchemy import text
 
 from app.core.config import settings
+from app.core.locking import bound_lock_waits
 
 # ---------------------------------------------------------------------------
 # Engine (app_rw -- NO BYPASSRLS)
@@ -75,6 +76,8 @@ _NULL_ORG = "00000000-0000-0000-0000-000000000000"
 
 async def set_tenant_context(session: AsyncSession, org_id: uuid.UUID) -> None:
     """Set the tenant context for the current transaction (SET LOCAL)."""
+    # Authorization and database guards can lock before a domain service runs.
+    await bound_lock_waits(session)
     await session.execute(
         text("SELECT set_config('app.current_org_id', :org, true)"),
         {"org": str(org_id)},
@@ -104,10 +107,7 @@ async def get_unscoped_session() -> AsyncGenerator[AsyncSession, None]:
         async with session.begin():
             # Explicitly set the impossible UUID so that any accidental
             # tenant query returns nothing.
-            await session.execute(
-                text("SELECT set_config('app.current_org_id', :org, true)"),
-                {"org": _NULL_ORG},
-            )
+            await set_tenant_context(session, uuid.UUID(_NULL_ORG))
             yield session
 
 

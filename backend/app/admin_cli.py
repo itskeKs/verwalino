@@ -117,6 +117,7 @@ def unlock(arguments: list[str]) -> None:
 def quota_recount(arguments: list[str]) -> None:
     """Record legacy physical sizes without changing retained document metadata."""
     from app.core.quotas import get_quota_plan
+    from app.core.locking import LOCK_TIMEOUT_SQL
     from app.core.storage import LocalFsDocumentStore, open_storage_lock
 
     ap = argparse.ArgumentParser(prog="admin_cli quota-recount", description="Reconcile retained local document sizes as the migrator.")
@@ -127,6 +128,7 @@ def quota_recount(arguments: list[str]) -> None:
     conn = psycopg2.connect(settings.database_url_sync)
     try:
         with conn.cursor() as cursor:
+            cursor.execute(LOCK_TIMEOUT_SQL)
             cursor.execute("SELECT id FROM public.organization WHERE id=%s", (org,))
             if cursor.fetchone() is None:
                 ap.error("Organization not found")
@@ -138,7 +140,10 @@ def quota_recount(arguments: list[str]) -> None:
                 if hosted:
                     handle = open_storage_lock(store, org)
                     cleanup.callback(os.close, handle)
-                    fcntl.flock(handle, fcntl.LOCK_EX)
+                    try:
+                        fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                    except BlockingIOError:
+                        raise TimeoutError('Organization document storage lock is held; retry quota-recount later') from None
                 # The migrator can see source-restricted references. Recount
                 # must not freeze sized live originals as permanent audit charges.
                 cursor.execute("""SELECT storage_uri FROM (

@@ -91,6 +91,20 @@ AGENTS.md retains the safety baseline and tests/CI check parity.
   `make test-backend`, `make test-bdd`, `make test-browser` and `make test-scenarios-report`
   acquire/release the lock themselves.
 
+Backend tests have a 600-second per-test timeout (including fixture setup and teardown).
+`pytest-timeout` uses its thread method to print all thread stacks and terminate a hung
+test process; the Make target then releases the shared database lock. PostgreSQL test
+connections also use a five-second lock timeout and a 120-second statement timeout.
+Tenant sessions, deletion and hosted quota transactions cap lock acquisition at five seconds, preserve
+stricter caller limits, and release the setting on commit or rollback; hosted document
+directory locks use the same bound and close their handles on timeout or cancellation.
+The operator's `quota-recount` caps database lock waits likewise and refuses an already
+held directory lock immediately; retry the command after the other writer finishes.
+The deletion contention regressions capture `pg_stat_activity`, `pg_blocking_pids()` and
+`pg_locks` to identify the waiting statement and its holder. Keep targeted runs short
+(`timeout 900 make test-backend PYTEST_ARGS="…"`); a legitimately longer test needs an
+explicit `@pytest.mark.timeout(...)` with a reason. CI retains its 75-minute backend job limit.
+
 Hosted signup acceptance sends real SMTP to the local Mailpit inbox. Start it once with
 `docker compose -f infra/docker-compose.declaration-test.yml up -d mailpit` and leave it
 running for other worktrees. `scripts/test-env.sh` (sourced by the Make targets) exports

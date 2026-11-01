@@ -11,6 +11,7 @@ from urllib.parse import unquote
 from fastapi import HTTPException
 from sqlalchemy import text
 
+from app.core.locking import bound_lock_waits
 from app.core.storage import LocalFsDocumentStore, get_store
 from app.services.organization_archive import json_bytes
 from app.services.organization_export_service import export_store
@@ -222,6 +223,7 @@ async def scrub_retained_payloads(db, org, tables, hashes, scrub):
 
 
 async def lifecycle_lock(db, org):
+    await bound_lock_waits(db)
     await db.execute(text("SELECT pg_advisory_xact_lock(hashtextextended(:key,0))"), {'key': f'scope-acl:{org}'})
     await db.execute(text("SELECT pg_advisory_xact_lock(hashtextextended(:key,0))"), {'key': f'organization-lifecycle:{org}'})
 

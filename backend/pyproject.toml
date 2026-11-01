@@ -31,6 +31,7 @@ ops = [
 dev = [
     "pytest>=8,<9",
     "pytest-asyncio>=0.25,<1",
+    "pytest-timeout>=2.4,<3",
     "httpx>=0.28,<1",
     "reportlab>=4.0,<5",
     # M3: property-based testing of the distribution engine invariants
@@ -56,6 +57,8 @@ include = ["app*"]
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
+timeout = 600
+timeout_method = "thread"
 markers = [
     "browser: browser journeys (opt in with --run-browser)",
     "selfhost: scenario requires the self-hosted deployment policy",

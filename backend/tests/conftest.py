@@ -21,7 +21,8 @@ from unittest.mock import patch
 import pytest
 import pytest_asyncio
 import httpx
-from sqlalchemy import text
+from sqlalchemy import event, text
+from sqlalchemy.engine import Engine
 from sqlalchemy.ext.asyncio import (
     AsyncSession,
     async_sessionmaker,
@@ -60,6 +61,17 @@ if target_url():
     MIGRATOR_URL = APP_RW_URL = MIGRATOR_SYNC_URL = None
 else:
     MIGRATOR_URL, APP_RW_URL, MIGRATOR_SYNC_URL = require_disposable_database_settings(settings)
+    # Bound direct psycopg2 connections too, including migration rehearsals.
+    os.environ['PGOPTIONS'] = (os.environ.get('PGOPTIONS', '')
+                              + ' -c lock_timeout=5s -c statement_timeout=120s')
+
+
+@event.listens_for(Engine, 'begin')
+def bound_test_database_waits(connection):
+    """Cover async app, worker, review and ad-hoc test transactions alike."""
+    if connection.dialect.name == 'postgresql':
+        connection.exec_driver_sql("SET LOCAL lock_timeout='5s'")
+        connection.exec_driver_sql("SET LOCAL statement_timeout='120s'")
 
 
 def pytest_sessionstart(session):

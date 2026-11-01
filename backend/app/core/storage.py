@@ -15,6 +15,7 @@ Content-addressing: path = <root>/<org_id>/<sha256[:2]>/<sha256>.bin
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import fcntl
 import logging
@@ -32,6 +33,7 @@ from sqlalchemy.orm import Session
 from starlette.concurrency import run_in_threadpool
 
 from app.core.config import settings
+from app.core.locking import LOCK_WAIT_SECONDS
 
 logger = logging.getLogger(__name__)
 
@@ -333,7 +335,17 @@ async def lock_document_storage(session, org_id, store: DocumentStore) -> bool:
     if lock_key not in locks:
         handle = open_storage_lock(store, org_id)
         try:
-            await run_in_threadpool(fcntl.flock, handle, fcntl.LOCK_EX)
+            deadline = asyncio.get_running_loop().time() + LOCK_WAIT_SECONDS
+            while True:
+                try:
+                    # A blocking flock in a worker thread cannot be cancelled.
+                    fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                    break
+                except BlockingIOError:
+                    remaining = deadline - asyncio.get_running_loop().time()
+                    if remaining <= 0:
+                        raise TimeoutError('Timed out waiting for organization document storage lock') from None
+                    await asyncio.sleep(min(0.05, remaining))
         except BaseException:
             os.close(handle)
             raise
