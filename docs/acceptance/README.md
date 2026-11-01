@@ -49,8 +49,9 @@ change, and the PR is merged only once it has passed. A change to a core journey
 
 ## Mandatory last step: cleanup
 
-After every run, including a failed or abandoned run, remove the disposable acceptance stack
-completely using the [label-filtered cleanup commands](../operations/acceptance-cleanup.md).
+After every run, including a failed or abandoned run, the launching session must remove the
+disposable acceptance stack completely using the
+[label-filtered cleanup commands](../operations/acceptance-cleanup.md).
 Stop every background process and dev server the run started; remove its scratch directories,
 temporary screenshots and inactive lock files. Remove its worktree and local branch only after
 the PR is merged or closed, following [Session cleanup](../../AGENTS.md#session-cleanup).

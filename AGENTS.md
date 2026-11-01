@@ -81,12 +81,12 @@ enforcement; every baseline and safety rule here stays in force.
   containers, volumes (including anonymous volumes), networks and local images used only
   by that project. Stop your own dev servers, free their ports and terminate every
   background process you started, including installer-harness children.
-- Remove scratch files and temporary artefacts you wrote (`/tmp/<prefix>-*`, scratch
-  directories and screenshots outside tracked docs); remove only your own inactive lock
-  files. Keep committed deliverables.
+- Remove scratch files and temporary artefacts you wrote (temporary files under your own
+  unique prefix, scratch directories and screenshots outside tracked docs); remove only your own
+  inactive lock files. Keep committed deliverables.
 - Never touch other sessions' resources: worktrees, branches, containers, volumes,
   networks, images, processes or ports (including `verwalino-review-*`,
-  `verwalino-abnahme-*`, `.claude/worktrees/*` and other issue worktrees).
+  `verwalino-abnahme-*`, `.claude/worktrees/*`, `.coddy/worktrees/*` and other issue worktrees).
   A matching name or label alone does not establish ownership. Never prune Docker globally.
 - Leave production (`docker-compose.prod.yml`, project `hausverwaltung` on the owner's Mac,
   `verwalino` on the hosted server) and shared test project `infra` untouched.
@@ -182,8 +182,9 @@ files with `rg -n` and line ranges.
   `hausverwaltung` would otherwise replace the production database container.
   Exception: separately authorized portable acceptance may use the reviewed
   `infra/docker-compose.yml` from this checkout or a registered Git worktree, with
-  project `verwalino` and its explicit private `.env.selfhost`, only for the existing
-  installer's build/pull, readiness/start, one-shot migration/admin bootstrap,
+  project `verwalino` (the installer's fixed `--project-name verwalino`) and its explicit
+  private `.env.selfhost`, only for the existing installer's build/pull, readiness/start,
+  one-shot migration/admin bootstrap,
   status/logs, normal stop and final cleanup operations. It must never use alpha containers,
   volumes or networks, or serve as a backend test database. Final cleanup may remove only
   the session's disposable resources labelled `com.docker.compose.project=verwalino` and

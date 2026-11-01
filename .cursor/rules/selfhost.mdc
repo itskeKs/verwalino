@@ -17,7 +17,7 @@ alwaysApply: false
 
 - Follow AGENTS.md's Databases and containers rules, including its narrow
   separately authorized exceptions and Session cleanup rule. Never delete production
-  `pgdata` or `documents` volumes, run `docker compose down -v` on production, or test there.
+  `pgdata` or `documents` volumes or test on production; never `docker compose down -v`.
   Remove only your own disposable acceptance resources as allowed by that exception;
   follow `docs/operations/acceptance-cleanup.md`.
 - The test database is only `infra-postgres-1` at `127.0.0.1:55432`, configured by

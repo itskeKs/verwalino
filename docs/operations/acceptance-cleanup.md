@@ -7,7 +7,8 @@ shared-resource limits are in [Session cleanup](../../AGENTS.md#session-cleanup)
 These commands document cleanup, not authorization to start a stack.
 
 Use this procedure only for your separately authorized disposable portable project `verwalino`
-on a host where that project is not production. Never use it on the hosted server, where
+on a host where that project is not production and no other session uses it. The installer
+hard-codes `--project-name verwalino`. Never use it on the hosted server, where
 `verwalino` is production, or against `hausverwaltung`, shared test project `infra`, or another
 session's project. Do not use global Docker prune commands or delete build caches shared by
 other work. A matching project label alone does not prove that a resource is yours.
@@ -18,7 +19,7 @@ Confirm the Docker context is the one used for the run. Inspect the project-labe
 
 ```sh
 docker context show
-docker container ls --all --filter 'label=com.docker.compose.project=verwalino'
+docker ps --all --filter 'label=com.docker.compose.project=verwalino'
 docker volume ls --filter 'label=com.docker.compose.project=verwalino'
 docker network ls --filter 'label=com.docker.compose.project=verwalino'
 docker image ls --filter 'label=com.docker.compose.project=verwalino'
@@ -67,7 +68,7 @@ only if this run created them and they are used exclusively by this project; lea
 base/release images, images without that project label and shared build cache alone. Never
 widen the project filter.
 
-Repeat the four filtered listings above and check `docker compose ls -a`: the disposable
+Repeat the four label-filtered listings above: the disposable
 acceptance project and its owned resources must be gone. Check that your process groups have
 exited and their ports are free; stop only processes you started. Remove your scratch files,
 temporary screenshots, private acceptance config and inactive installer locks after no process
