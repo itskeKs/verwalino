@@ -46,3 +46,13 @@ An issue whose change a user notices carries a „User check“ section in the s
 user does, what they then see with concrete values, and who checks. It is written before the
 change, and the PR is merged only once it has passed. A change to a core journey updates
 [journeys.md](journeys.md) in the same PR.
+
+## Mandatory last step: cleanup
+
+After every run, including a failed or abandoned run, remove the disposable acceptance stack
+completely using the [label-filtered cleanup commands](../operations/acceptance-cleanup.md).
+Stop every background process and dev server the run started; remove its scratch directories,
+temporary screenshots and inactive lock files. Remove its worktree and local branch only after
+the PR is merged or closed, following [Session cleanup](../../AGENTS.md#session-cleanup).
+Leave other sessions, the shared test services and production untouched. End the status/report
+with one cleanup line; never write a cleanup report into the repository.

@@ -70,6 +70,32 @@ enforcement; every baseline and safety rule here stays in force.
   along, and write no new plan, log or status documents; decisions go into the issue, the PR
   description, or an ADR under `docs/adr/` when they bind future work.
 
+## Session cleanup
+
+- Every session removes what it created when its task is merged, closed or abandoned.
+  Before a new task, check for and remove your own leftovers.
+- Remove your own worktrees and local branches after the PR is merged or closed; for an
+  abandoned task without a PR, first preserve work that must be kept. Check the PR state,
+  a clean tree and stopped processes before removal; never discard uncommitted work.
+- Remove your own separately authorized acceptance/verifier stacks completely:
+  containers, volumes (including anonymous volumes), networks and local images used only
+  by that project. Stop your own dev servers, free their ports and terminate every
+  background process you started, including installer-harness children.
+- Remove scratch files and temporary artefacts you wrote (`/tmp/<prefix>-*`, scratch
+  directories and screenshots outside tracked docs); remove only your own inactive lock
+  files. Keep committed deliverables.
+- Never touch other sessions' resources: worktrees, branches, containers, volumes,
+  networks, images, processes or ports (including `verwalino-review-*`,
+  `verwalino-abnahme-*`, `.claude/worktrees/*` and other issue worktrees).
+  A matching name or label alone does not establish ownership. Never prune Docker globally.
+- Leave production (`docker-compose.prod.yml`, project `hausverwaltung` on the owner's Mac,
+  `verwalino` on the hosted server) and shared test project `infra` untouched.
+  Never remove `/tmp/verwalino-testdb.lock` while another run holds it. The only repair is
+  starting the shared test DB with
+  `docker compose -f infra/docker-compose.declaration-test.yml up -d postgres`
+  when it is down, while holding its otherwise free lock; never restart a running DB.
+- Report cleanup in one line in the status/report, never in a repository file.
+
 ## Verification
 
 - Follow the [testing rule](.claude/rules/testing.md) and [features/README.md](features/README.md).
@@ -158,8 +184,12 @@ files with `rg -n` and line ranges.
   `infra/docker-compose.yml` from this checkout or a registered Git worktree, with
   project `verwalino` and its explicit private `.env.selfhost`, only for the existing
   installer's build/pull, readiness/start, one-shot migration/admin bootstrap,
-  status/logs and normal stop operations. It must never use alpha containers,
-  volumes or networks, delete volumes, or serve as a backend test database.
+  status/logs, normal stop and final cleanup operations. It must never use alpha containers,
+  volumes or networks, or serve as a backend test database. Final cleanup may remove only
+  the session's disposable resources labelled `com.docker.compose.project=verwalino` and
+  anonymous volumes attached exclusively to its labelled containers, on a host where that
+  project is not production and no other session uses it; follow the
+  [acceptance cleanup procedure](docs/operations/acceptance-cleanup.md).
   Separately authorized Caddy validation may use only the reviewed Caddyfile as
   a read-only bind mount, with network `none`, no published ports, a read-only
   root filesystem, all capabilities dropped except `NET_BIND_SERVICE` (the caddy
