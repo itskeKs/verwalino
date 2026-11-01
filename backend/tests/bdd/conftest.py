@@ -160,6 +160,14 @@ def pytest_addoption(parser):
 
 
 def pytest_collection_modifyitems(config, items):
+    """Keep fixtures that control the local app out of HTTP-only target runs.
+
+    Organization archives use migrator fixtures, ASGI clients and local storage;
+    deletion also executes the operator CLI's service in-process. Its browser
+    fixture patches hosted signup and SMTP locally and cleans up through the DB.
+    Password recovery reads Mailpit and patches the local app's public host.
+    These features remain active against the local stack and in PR CI.
+    """
     mode = get_deployment_policy().deployment_mode
     for item in items:
         for required_mode in ("selfhost", "hosted"):
@@ -172,6 +180,9 @@ def pytest_collection_modifyitems(config, items):
                     "organization_isolation.feature": "External isolation requires two organizations; only the bootstrap organization is configured",
                     "first_run_setup.feature": "Setup requires a fresh installation; the external target already has a bootstrap organization",
                     "inbox_review_chain.feature": "needs the in-process invoice worker and direct database fixtures",
+                    "organization_deletion.feature": "needs direct database fixtures and the in-process deletion CLI",
+                    "organization_export_import.feature": "needs direct database fixtures and in-process archive storage",
+                    "password_reset.feature": "needs the Mailpit test mailbox",
                 }.get(Path(template.feature.filename).name)
                 if reason:
                     item.add_marker(pytest.mark.skip(reason=reason))
