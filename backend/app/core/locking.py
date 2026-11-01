@@ -36,14 +36,18 @@ def is_lock_timeout(error):
 
 async def retry_worker_completion(operation):
     """Retry fresh transactions with the same output; DB lease fencing still applies."""
-    while True:
+    # Ten attempts bound a completion outage; persisted leases permit later recovery.
+    attempts = 10
+    for attempt in range(1, attempts + 1):
         try:
             return await operation()
         except Exception as error:
             if not is_lock_timeout(error):
                 raise
+            if attempt == attempts:
+                raise LockTimeoutError(f'Worker completion lock timeout after {attempts} attempts') from error
             logging.getLogger(__name__).warning('Worker completion lock held; retrying saved output')
-            await asyncio.sleep(1)
+            await asyncio.sleep(min(2 ** (attempt - 1), 30))
 
 
 async def bound_lock_waits(db):

@@ -46,6 +46,7 @@ async def process_once(factory, org_id, *, processor=run_isolated_extraction):
             async with factory() as session, session.begin():
                 await set_tenant_context(session, org_id)
                 return await InvoiceProcessingService(session, org_id).finish(claim, result)
+        # On exhaustion, main/WorkflowRunner catches the error; claim() retries the expired lease, then fails at its cap.
         await retry_worker_completion(finish)
         logger.info("Invoice worker job completed")
         return True

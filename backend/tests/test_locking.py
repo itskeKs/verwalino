@@ -51,3 +51,33 @@ async def test_completion_retry_does_not_swallow_unrelated_errors_or_cancellatio
             raise error
         with pytest.raises(type(error)):
             await retry_worker_completion(failed)
+
+
+async def test_completion_retry_stops_after_ten_attempts_with_bounded_backoff(monkeypatch):
+    from unittest.mock import AsyncMock
+    from app.core.locking import LockTimeoutError, retry_worker_completion
+
+    error = LockTimeoutError('completion remains locked')
+    operation = AsyncMock(side_effect=error)
+    sleep = AsyncMock()
+    monkeypatch.setattr(asyncio, 'sleep', sleep)
+    # Stop the old infinite loop deterministically without waiting in real time.
+    sleep.side_effect = [None] * 9 + [AssertionError('completion exceeded ten attempts')]
+    with pytest.raises(LockTimeoutError, match='10 attempts') as terminal:
+        await retry_worker_completion(operation)
+    assert operation.await_count == 10
+    assert terminal.value.__cause__ is error
+    assert [call.args[0] for call in sleep.await_args_list] == [1, 2, 4, 8, 16, 30, 30, 30, 30]
+
+
+async def test_completion_retry_keeps_saved_output_after_two_timeouts(monkeypatch):
+    from unittest.mock import AsyncMock
+    from app.core.locking import LockTimeoutError, retry_worker_completion
+
+    output = object()
+    operation = AsyncMock(side_effect=[LockTimeoutError(), LockTimeoutError(), output])
+    sleep = AsyncMock()
+    monkeypatch.setattr(asyncio, 'sleep', sleep)
+    assert await retry_worker_completion(operation) is output
+    assert operation.await_count == 3
+    assert [call.args[0] for call in sleep.await_args_list] == [1, 2]

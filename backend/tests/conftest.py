@@ -17,12 +17,16 @@ import sys
 import uuid
 from contextlib import closing
 from datetime import date
+from functools import cache, wraps
+import signal
+import threading
 from typing import AsyncGenerator
 from unittest.mock import patch
 
 import pytest
 import pytest_asyncio
 import httpx
+import psycopg2
 from sqlalchemy import event, text
 from sqlalchemy.engine import Engine
 from sqlalchemy.ext.asyncio import (
@@ -77,16 +81,19 @@ def bound_test_database_waits(connection):
         connection.exec_driver_sql("SET LOCAL statement_timeout='120s'")
 
 
-def dump_test_lock_timeout(error, *, statement=None, pid=None):
-    """Use an independent connection: the failing transaction is already aborted."""
-    if target_url() or not is_lock_timeout(error):
+# Retain an unwrapped connector so a diagnostic failure cannot recursively dump.
+_diagnostic_connect = psycopg2.connect
+_current_test_item = None
+
+
+def dump_test_database_activity(*, pid=None, include_idle=False):
+    """Use an independent connection, even if the test's transaction is aborted."""
+    if target_url():
         return
-    import psycopg2
     from psycopg2.extras import RealDictCursor
 
-    print(f'PostgreSQL lock timeout: pid={pid} waiting_statement={statement!r}', file=sys.stderr)
     try:
-        with closing(psycopg2.connect(MIGRATOR_SYNC_URL, connect_timeout=3,
+        with closing(_diagnostic_connect(MIGRATOR_SYNC_URL, connect_timeout=3,
                      options='-c statement_timeout=2000 -c lock_timeout=1000')) as diagnostic:
             with diagnostic.cursor(cursor_factory=RealDictCursor) as cursor:
                 # The timed-out wait is gone from pg_locks. Include all open
@@ -95,8 +102,8 @@ def dump_test_lock_timeout(error, *, statement=None, pid=None):
                     pg_blocking_pids(pid) AS blocking_pids,
                     clock_timestamp()-xact_start AS xact_age
                     FROM pg_stat_activity WHERE datname=current_database()
-                    AND pid<>pg_backend_pid() AND (xact_start IS NOT NULL OR pid=%s)
-                    ORDER BY pid""", (pid,))
+                    AND pid<>pg_backend_pid() AND (%s OR xact_start IS NOT NULL OR pid=%s)
+                    ORDER BY pid""", (include_idle, pid))
                 activity = cursor.fetchall()
                 cursor.execute("""SELECT pid,locktype,mode,granted,relation::regclass::text,
                     transactionid,classid,objid,objsubid FROM pg_locks
@@ -107,6 +114,72 @@ def dump_test_lock_timeout(error, *, statement=None, pid=None):
     except Exception as diagnostic_error:
         # A diagnostic must never replace the original named test failure.
         print(f'Lock diagnostic unavailable: {type(diagnostic_error).__name__}', file=sys.stderr)
+
+
+def dump_test_lock_timeout(error, *, statement=None, pid=None):
+    if target_url() or not is_lock_timeout(error):
+        return
+    if _current_test_item is not None:
+        _current_test_item._lock_dump_emitted = True
+    print(f'PostgreSQL lock timeout: pid={pid} waiting_statement={statement!r}', file=sys.stderr)
+    dump_test_database_activity(pid=pid)
+
+
+def _capture_raw_lock_timeout(operation):
+    @wraps(operation)
+    def captured(self, *args, **kwargs):
+        try:
+            return operation(self, *args, **kwargs)
+        except Exception as error:
+            if is_lock_timeout(error):
+                connection = getattr(self, 'connection', self)
+                query = getattr(self, 'query', None)
+                statement = query.decode('utf-8', errors='replace') if isinstance(query, bytes) else query
+                dump_test_lock_timeout(error, statement=statement or 'COMMIT', pid=connection.get_backend_pid())
+            raise
+    return captured
+
+
+@cache
+def _diagnostic_cursor_factory(factory):
+    class DiagnosticCursor(factory):
+        execute = _capture_raw_lock_timeout(factory.execute)
+        executemany = _capture_raw_lock_timeout(factory.executemany)
+        callproc = _capture_raw_lock_timeout(factory.callproc)
+    return DiagnosticCursor
+
+
+@cache
+def _diagnostic_connection_factory(factory):
+    class DiagnosticConnection(factory):
+        def cursor(self, name=None, cursor_factory=None, *args, **kwargs):
+            cursor_factory = _diagnostic_cursor_factory(cursor_factory or self.cursor_factory or psycopg2.extensions.cursor)
+            return super().cursor(name, cursor_factory, *args, **kwargs)
+
+        commit = _capture_raw_lock_timeout(factory.commit)
+        __exit__ = _capture_raw_lock_timeout(factory.__exit__)
+    return DiagnosticConnection
+
+
+def pytest_configure(config):
+    if target_url():
+        return
+
+    @wraps(psycopg2.connect)
+    def connect(dsn=None, connection_factory=None, *args, **kwargs):
+        # Cover every raw fixture, including export_store's teardown TRUNCATE,
+        # while preserving custom connection/cursor factories. Asyncpg test
+        # statements currently all go through SQLAlchemy's handle_error below.
+        return _diagnostic_connect(dsn, _diagnostic_connection_factory(
+            connection_factory or psycopg2.extensions.connection), *args, **kwargs)
+
+    config._lock_diagnostic_patch = pytest.MonkeyPatch()
+    config._lock_diagnostic_patch.setattr(psycopg2, 'connect', connect)
+
+
+def pytest_unconfigure(config):
+    if patcher := getattr(config, '_lock_diagnostic_patch', None):
+        patcher.undo()
 
 
 @event.listens_for(Engine, 'handle_error')
@@ -120,12 +193,61 @@ def capture_database_lock_timeout(context):
 
 @pytest.hookimpl(hookwrapper=True)
 def pytest_runtest_makereport(item, call):
-    # Also cover unwrapped synchronous psycopg2 failures in setup/teardown.
-    if call.excinfo is not None:
+    # Keep a fallback for exceptions without an instrumented DB connection.
+    if call.excinfo is not None and not target_url():
         error = call.excinfo.value
-        if not hasattr(error, 'orig'):
-            dump_test_lock_timeout(error)
+        if is_lock_timeout(error):
+            if getattr(item, '_lock_dump_emitted', False):
+                print(f'{item.nodeid}: lock timeout dump already emitted', file=sys.stderr)
+            else:
+                dump_test_lock_timeout(error)
     yield
+
+
+@pytest.hookimpl(hookwrapper=True, tryfirst=True)
+def pytest_runtest_protocol(item):
+    global _current_test_item
+    previous, _current_test_item = _current_test_item, item
+    item._lock_dump_emitted = False
+    try:
+        yield
+    finally:
+        _current_test_item = previous
+
+
+@pytest.hookimpl(tryfirst=True)
+def pytest_timeout_set_timer(item, settings):
+    """Add database evidence before pytest-timeout's normal stacks/termination."""
+    if target_url():
+        return None
+    import pytest_timeout
+
+    def expired(timeout_func):
+        if not settings.disable_debugger_detection and pytest_timeout.is_debugging():
+            return
+        capture = item.config.pluginmanager.getplugin('capturemanager')
+        from contextlib import nullcontext
+        with capture.global_and_fixture_disabled() if capture else nullcontext():
+            print(f'Pytest timeout: test id={item.nodeid}', file=sys.stderr, flush=True)
+            dump_test_database_activity(include_idle=True)
+        timeout_func(item, settings)
+
+    if settings.method == 'signal' and threading.current_thread() is threading.main_thread():
+        def cancel():
+            signal.setitimer(signal.ITIMER_REAL, 0)
+            signal.signal(signal.SIGALRM, signal.SIG_DFL)
+        item.cancel_timeout = cancel
+        signal.signal(signal.SIGALRM, lambda signum, frame: expired(pytest_timeout.timeout_sigalrm))
+        signal.setitimer(signal.ITIMER_REAL, settings.timeout)
+    else:
+        timer = threading.Timer(settings.timeout, expired, (pytest_timeout.timeout_timer,))
+        timer.name = f'pytest_timeout {item.nodeid}'
+        def cancel():
+            timer.cancel()
+            timer.join()
+        item.cancel_timeout = cancel
+        timer.start()
+    return True
 
 
 def pytest_sessionstart(session):

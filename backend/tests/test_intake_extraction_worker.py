@@ -129,6 +129,38 @@ async def test_shared_runner_claim_competition_and_attempt_limit(migrator_sessio
         assert (await runner.run_once()).code=='IDLE'
 
 
+async def test_intake_completion_exhaustion_reports_failure_then_recovers_its_durable_lease(migrator_session, scope_seed, store, monkeypatch):
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+    from sqlalchemy.ext.asyncio import AsyncSession
+    from app.core import locking
+    from app.workers.workflow_runner import WorkflowRunner, build_adapters
+
+    ids = await fixture(migrator_session, scope_seed)
+    async with client(ids) as api:
+        await source(api, ids)
+    original = AsyncSession.scalar
+    completions = []
+    async def blocked(db, statement, *args, **kwargs):
+        if str(statement).startswith('SELECT complete_intake_extraction('):
+            completions.append(statement)
+            raise locking.LockTimeoutError('completion remains locked')
+        return await original(db, statement, *args, **kwargs)
+    monkeypatch.setattr(AsyncSession, 'scalar', blocked)
+    monkeypatch.setattr(locking, 'asyncio', SimpleNamespace(sleep=AsyncMock()))
+    async def organizations():
+        return (ids['org'],)
+    runner = WorkflowRunner(organizations, build_adapters(['intake_extraction']))
+    assert (await runner.run_once()).code == 'STAGE_ERROR'
+    assert len(completions) == 10
+    assert (await runner.run_once()).code == 'IDLE'
+    monkeypatch.setattr(AsyncSession, 'scalar', original)
+    await mutate(text("UPDATE intake_extraction_job SET lease_expires_at=clock_timestamp()-interval '1 second' WHERE organization_id=:org"), ids)
+    assert (await runner.run_once()).code == 'PROCESSED'
+    assert await read_value('SELECT status FROM intake_extraction_job WHERE organization_id=:org', ids) == 'succeeded'
+    assert await read_value('SELECT count(*) FROM intake_extraction_attempt WHERE organization_id=:org AND finished_at IS NOT NULL', ids) == 2
+
+
 async def test_actual_worker_boundary_and_private_tables(migrator_session,scope_seed,store):
     from sqlalchemy.exc import DBAPIError
     ids=await fixture(migrator_session,scope_seed)

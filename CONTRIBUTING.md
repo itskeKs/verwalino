@@ -101,7 +101,9 @@ preserve stricter caller limits, and reset on commit or rollback. Hosted documen
 admission also waits at most 30 seconds and closes handles on timeout or cancellation.
 HTTP database lock timeouts (SQLSTATE `55P03`) and directory timeouts return 409 with
 `LOCK_TIMEOUT` and a German retry message, without an error-tracker event. Invoice and
-intake workers retry the saved completion output in a fresh transaction, retaining lease fencing.
+intake workers retry the saved completion output in a fresh transaction, retaining lease fencing,
+for at most ten attempts with exponential delays from one second up to 30 seconds; on exhaustion,
+the worker loop reports failure and the durable lease can be reclaimed within the job's attempt cap.
 In hosted mode, the operator's `quota-recount` caps database lock waits likewise and refuses an already
 held directory lock immediately; either contention exits with code 1 and the same retry message.
 Deletion CLI admission uses try-advisory locks and `FOR UPDATE NOWAIT` per organization;
@@ -109,11 +111,14 @@ failed organizations roll back their transaction, including open savepoints, and
 their session before the run continues. Contended organizations are reported for retry. Tests pass their
 own organization IDs; deletion cleanup touches only those rows and uses `NOWAIT`.
 
-On SQLAlchemy lock timeout, the test-session `handle_error` listener opens a separate
+On SQLAlchemy or raw psycopg2 lock timeout, the test-session instrumentation opens a separate
 connection and prints the failing PID/statement, `pg_stat_activity` (including blocking PIDs,
 queries and transaction ages) and `pg_locks` for open transactions. The timed-out wait has
 already left `pg_locks`, so all open transactions are included to retain potential holders.
-A pytest report hook also dumps unwrapped psycopg2 lock failures in setup, call or teardown.
+A pytest report hook retains a fallback and identifies diagnostics already emitted at the error.
+On any local pytest timeout, the same independent connection dumps all test-database backends
+and their locks with the test ID before the usual Python stacks; the subprocess regression in
+`test_locking_diagnostics.py` is excluded from the ordered predecessor window because it takes over five seconds.
 Pytest includes these stderr diagnostics with the named failure; synthetic contention tests
 verify the dump, but do not identify the holder from the historical CI hangs.
 Keep targeted runs short (`timeout 1500 make test-backend PYTEST_ARGS="…"`); a legitimately

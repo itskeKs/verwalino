@@ -50,4 +50,5 @@ async def process_once(session_factory,org_id,*,processor=run_isolated_extractio
                 await set_tenant_context(db,org_id)
                 return bool(await db.scalar(text('SELECT complete_intake_extraction(:org,:job,:fence,CAST(:result AS jsonb))'),
                     {**params,'result':json.dumps(answer)}))
+        # On exhaustion, WorkflowRunner reports STAGE_ERROR; claim retries the expired lease, then blocks at its cap.
         return await retry_worker_completion(finish)
