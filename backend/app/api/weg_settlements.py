@@ -46,7 +46,7 @@ from app.services.weg_settlement_service import (
     WegComputeExtras,
     WegSettlementService,
 )
-from app.services.reserve_ledger_service import ReserveLedgerService, OPENING_IMPORT_ONLY, OPENING_IMPORT_EXISTS
+from app.services.reserve_ledger_service import ReserveLedgerService, _raise_reserve_opening_error
 
 router = APIRouter(prefix="/api/weg-settlements", tags=["weg-settlements"])
 
@@ -265,15 +265,6 @@ async def reserve_ledger(run_id: uuid.UUID, auth: AuthContext = Depends(get_curr
     service = ReserveLedgerService(db, auth.organization_id, auth.user_id)
     run = await service.subject(run_id)
     return await service.read_display(run)
-
-
-def _raise_reserve_opening_error(exc: DBAPIError):
-    code = getattr(exc.orig, 'sqlstate', None)
-    constraint = getattr(getattr(exc.orig, '__cause__', None), 'constraint_name', None)
-    if (code, constraint) == ('23514', 'reserve_opening_import_only'):
-        raise HTTPException(422, OPENING_IMPORT_ONLY) from None
-    if (code, constraint) == ('23514', 'reserve_opening_import_exists'):
-        raise HTTPException(422, OPENING_IMPORT_EXISTS) from None
 
 
 @router.post('/{run_id}/reserve-ledger/overrides', status_code=201)

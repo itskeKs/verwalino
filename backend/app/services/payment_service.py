@@ -345,8 +345,13 @@ class PaymentService:
             transaction = await transactions.get_by_id_for_update(payment.bank_transaction_id)
             if transaction is None:
                 raise HTTPException(404, 'Bank transaction not found')
+            previous_status = transaction.status
             transaction.status = 'NEU'
             await transactions.update(transaction)
+            await self._audit.create(AuditEvent(actor_user_id=self._user_id,
+                entity_type='bank_transaction', entity_id=transaction.id,
+                action='bank_transaction.released', payload_diff={
+                    'payment_id': str(payment.id), 'previous_status': previous_status}))
         if payment.status == "booked":
             raise HTTPException(
                 status_code=409,

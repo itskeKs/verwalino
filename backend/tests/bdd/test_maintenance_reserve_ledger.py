@@ -41,7 +41,7 @@ def corrected_opening(world, reserve_scenario):
     assert sorted(Decimal(row['amount']) for row in ledger['entries'] if row.get('component') == 'OPENING') == list(map(Decimal, ['-300', '500', '5000']))
 
 
-@when('I release an imported reserve payout draft without evidence')
+@when('I release an imported reserve payout draft with incomplete evidence (none or one reference)')
 def release_payout(world, reserve_scenario):
     w = reserve_scenario
     w['transaction'], w['payout'] = imported_payout(world, w)

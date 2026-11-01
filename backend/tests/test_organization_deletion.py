@@ -40,6 +40,68 @@ async def assert_no_person_marker(db, org, marker):
         assert all(marker not in row for row in rows), name
 
 
+@pytest_asyncio.fixture
+async def reserve_erasure_db(rent_db, export_store):
+    # Release test transactions before export_store's synchronous cleanup, even
+    # when an assertion fails; its TRUNCATE must not wait on this connection.
+    try:
+        yield rent_db
+    finally:
+        await rent_db.rollback()
+
+
+async def test_operator_erasure_guard_accepts_released_and_bound_imported_drafts(rent_world, reserve_erasure_db):
+    from tests.test_reserve_ledger import imported_reserve_draft
+    from app.services.organization_deletion_service import run_deletion
+    rent_db = reserve_erasure_db
+    w = rent_world
+    async with api_client(w) as api:
+        prop = await api.post('/api/properties', json={'name': 'Disposable reserve property', 'management_type': 'WEG'})
+        assert prop.status_code == 201, prop.text
+        bank = await api.post('/api/bank-accounts', json={'property_id': prop.json()['id'], 'account_type': 'LAUFEND', 'label': 'Reserve erasure bank'})
+        assert bank.status_code == 201, bank.text
+        scope = await rent_db.scalar(text("""INSERT INTO accounting_scope(organization_id,property_id,scope_type,
+            label,valid_from,whole_property,origin,created_by) VALUES (:org,:property,'WEG',
+            'Reserve erasure scope','2025-01-01',true,'REVIEWED',:admin) RETURNING id"""), {**w, 'property': prop.json()['id']})
+        await rent_db.execute(text("""INSERT INTO scope_grant(organization_id,scope_id,user_id,capabilities,granted_by,reason)
+            VALUES (:org,:scope,:admin,ARRAY['read','prepare','confirm','approve','export'],:admin,'Reviewed reserve erasure scope')"""),
+            {**w, 'scope': scope})
+        await rent_db.execute(text("""INSERT INTO accounting_scope_binding(organization_id,property_id,scope_id,
+            bank_account_id,origin,reason,reviewed_by) VALUES (:org,:property,:scope,:bank,
+            'REVIEWED','Scoped reserve bank',:admin)"""),
+            {**w, 'property': prop.json()['id'], 'scope': scope, 'bank': bank.json()['id']})
+        await rent_db.commit()
+        world = {'bank_giro': bank.json()['id']}
+        transaction, released = await imported_reserve_draft(api, world)
+        response = await api.delete(f'/api/payments/{released}')
+        assert response.status_code == 204, response.text
+        retained = await api.get(f'/api/payments/{released}')
+        assert retained.status_code == 200, retained.text
+        assert retained.json()['status'] == 'cancelled'
+        assigned = await api.post(f'/api/bank-transactions/{transaction}/assign', json={'lines': [{
+            'payment_type': 'RUECKLAGENENTNAHME', 'amount': '1200.00', 'period_year': 2025, 'period_month': 2}]})
+        assert assigned.status_code == 200, assigned.text
+        assert assigned.json()['payments'][0]['status'] == 'draft'
+        assert await rent_db.scalar(text('SELECT count(*) FROM payment WHERE organization_id=:org'), w) == 2
+        await rent_db.rollback()
+        # Probe the operator-only guard independently of retention selection.
+        # Scope bindings remain retained, so roll back before deferred FK checks.
+        async with rent_db.begin_nested() as probe:
+            await rent_db.execute(text("SET LOCAL app.organization_erasure='on'"))
+            await rent_db.execute(text('DELETE FROM payment WHERE organization_id=:org'), w)
+            assert await rent_db.scalar(text('SELECT count(*) FROM payment WHERE organization_id=:org'), w) == 0
+            await probe.rollback()
+        await rent_db.rollback()
+        assert (await api.post('/api/organizations/deletion')).status_code == 200
+        assert (await api.post('/api/organizations/deletion/confirm', json={'organization_name': 'T23 synthetic'})).status_code == 200
+    async with rent_db.begin():
+        assert await run_deletion(rent_db, w['org'], now=datetime.now(timezone.utc) + timedelta(days=8))
+    # Immutable scope bindings retain these drafts through the retention plan's
+    # FK closure; guard permission does not override that separate decision.
+    assert await rent_db.scalar(text('SELECT count(*) FROM payment WHERE organization_id=:org'), w) == 2
+    await rent_db.rollback()
+
+
 async def test_draft_dunning_dependencies_erase_person_text(rent_world, rent_db, export_store):
     from app.services.organization_deletion_service import run_deletion
     w = rent_world

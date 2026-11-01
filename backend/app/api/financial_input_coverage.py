@@ -5,10 +5,12 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field, ValidationError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import text
+from sqlalchemy.exc import DBAPIError
 from app.core.tenant import AuthContext, get_db, require_write_dep
 from app.repositories.settlement_repo import SettlementRunRepository
 from app.repositories.economic_plan_repo import EconomicPlanRepository
 from app.services.financial_input_policy import FinancialInputPolicy, normalize_values, rental_values
+from app.services.reserve_ledger_service import _raise_reserve_opening_error
 
 router = APIRouter(prefix="/api/financial-input-coverage", tags=["financial-input-coverage"])
 
@@ -66,7 +68,11 @@ async def attest(body: Attestation, auth: AuthContext = Depends(require_write_de
             raise HTTPException(422, "Unsupported coverage subject")
     except (ValidationError, ValueError):
         raise HTTPException(422, "All financial inputs must be explicit before coverage can be attested")
-    declaration = await FinancialInputPolicy(db, auth.organization_id, auth.user_id).attest(
-        subject, body.subject_kind, values, body.reason, [str(i) for i in body.source_document_ids])
+    try:
+        declaration = await FinancialInputPolicy(db, auth.organization_id, auth.user_id).attest(
+            subject, body.subject_kind, values, body.reason, [str(i) for i in body.source_document_ids])
+    except DBAPIError as exc:
+        _raise_reserve_opening_error(exc)
+        raise
     return {"id": str(declaration.id), "revision": declaration.revision, "state": declaration.state,
             "values": declaration.values, "source_revision": declaration.source_revision}

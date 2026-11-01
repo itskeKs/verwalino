@@ -3,6 +3,9 @@ Feature: Maintenance reserve ledger
   ledger reviewed at finalization and the next period carries its closing balance.
   Booked evidence references stay frozen: later cost corrections or resolution
   challenges do not alter the ledger.
+  Finalization freezes opening imports for that exact period, including correction
+  drafts after supersession; evidenced withdrawal and adjustment corrections remain possible.
+  An opening import requires the earliest period and no overlapping, different reserve period.
 
   Scenario: Booked reserve contributions fund the annual reserve development
     Given a WEG with a finalized reserve plan and a booked reserve contribution
@@ -30,9 +33,9 @@ Feature: Maintenance reserve ledger
     When I attest opening balances of 5000, 5500 and 5200 with reasons
     Then the opening is 5200 and retains entries of 5000, 500 and minus 300
 
-  Scenario: An imported reserve payout without evidence can be released and retyped
+  Scenario: An imported reserve payout with incomplete evidence (none or one reference) can be released and retyped
     Given a WEG with a finalized reserve plan and a booked reserve contribution
-    When I release an imported reserve payout draft without evidence
+    When I release an imported reserve payout draft with incomplete evidence (none or one reference)
     Then its bank line is new and can be assigned again
 
   @browser

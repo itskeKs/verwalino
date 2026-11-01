@@ -665,8 +665,8 @@ allocation and WEMoG settlement-balance calculation; it changes neither.
   form requires both selections. Bank assignment without both references creates
   a draft and displays a German hint to complete its evidence on the payment.
   Imported drafts retain their bank amount, direction, value date and account
-  while their evidence stays editable. An unbooked imported payout draft without
-  complete evidence and without a ledger entry can be released with “Zuordnung
+  while their evidence stays editable. An unbooked imported payout draft with
+  incomplete evidence (none or one reference) and without a ledger entry can be released with “Zuordnung
   lösen”. The existing draft-discard endpoint retains scoped drafts as cancelled
   (legacy unscoped drafts are deleted) and resets the bank line to `NEU`, so it
   can be retyped or ignored. The retained cancelled draft keeps its bank reference.
@@ -675,7 +675,11 @@ allocation and WEMoG settlement-balance calculation; it changes neither.
   other active payments stays bound (`RESERVE_IMPORTED_DRAFT_BOUND`). Release and
   assignment serialize under the organization’s `financial-inputs` lock; the
   database guard also requires no booking stamps and the bank reset in the same
-  transaction, and permits no other payment changes during cancellation.
+  transaction, and permits no other payment changes during cancellation. Release
+  audits the payment and bank line, including the payment reference and previous
+  bank status. The operator-only organization-erasure DELETE path bypasses the
+  imported-draft guard for released and still-bound drafts; retention selection
+  remains unchanged, including payments retained through immutable scope bindings.
   Both references freeze with the booking; Storno retains them. Computing and
   finalizing retain the evidence guard as a second line for historical payouts. The link records
   the complete payout, never a resolution's authorized budget. Several active
@@ -724,16 +728,22 @@ allocation and WEMoG settlement-balance calculation; it changes neither.
   total appends another audited `OPENING` entry for the difference, including a
   negative difference, with a reason and the current user. Each entry and its
   reason remain visible; the opening is their sum. For example, 5,000 → 5,500 →
-  5,200 retains entries of 5,000, +500 and −300. An unchanged existing opening is
-  refused with `RESERVE_AMOUNT_INVALID`; a missing reason returns
+  5,200 retains entries of 5,000, +500 and −300. Re-attesting an unchanged opening
+  adds no entry and can refresh stale coverage; an explicit zero opening adjustment
+  is refused with `RESERVE_AMOUNT_INVALID`. A missing reason returns
   `RESERVE_CORRECTION_REASON_REQUIRED`. Direct opening adjustments use the signed
   difference, never another target total. The attestation forms show the current
   opening beside the corrected-total input and reason. Finalization freezes this
   import history (`RESERVE_PERIOD_FINALIZED`); later years cannot import another
-  opening. The earliest period is
+  opening. Once any run of the exact property/scope/period has been finalized,
+  including a superseded run, correction drafts refuse further opening imports
+  while evidence-backed withdrawal and adjustment corrections remain available.
+  The earliest period is
   the smallest `period_start` among non-superseded WEG annual settlement and
   asset-report runs for the property in the same scope, including whole-property
-  WEG scopes with the same mandate. Drafts count too. Once an opening is imported,
+  WEG scopes with the same mandate. Drafts count too. An overlapping, non-identical
+  non-superseded reserve period in a matching scope also blocks opening imports
+  (`RESERVE_OPENING_IMPORT_ONLY`). Once an opening is imported,
   creating an earlier period in that scope is refused
   (`RESERVE_OPENING_IMPORT_EXISTS`). If no plan exists, an asset report shows planning as unknown,
   while dedicated reserve receipts and reasoned opening/other adjustments remain

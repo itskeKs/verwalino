@@ -622,8 +622,7 @@ async def test_typed_reserve_totals_require_reason_and_persist_an_audited_delta(
     await attest_fixture(api, 'settlement', w['run'], values)
     unchanged = await api.post('/api/financial-input-coverage', json={'subject_kind': 'settlement',
         'subject_id': w['run'], 'values': values, 'confirmed_complete': True, 'reason': 'Reviewed records'})
-    assert unchanged.status_code == 422, unchanged.text
-    assert unchanged.json()['detail']['code'] == 'RESERVE_AMOUNT_INVALID'
+    assert unchanged.status_code == 201, unchanged.text
     response = await api.post(f"/api/weg-settlements/{w['run']}/compute", json=values)
     assert response.status_code == 200, response.text
     count = await migrator_session.scalar(text('SELECT count(*) FROM reserve_ledger_entry WHERE settlement_run_id=CAST(:id AS uuid)'), {'id': w['run']})
@@ -1020,7 +1019,7 @@ async def imported_reserve_draft(api, w, *, split=False):
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize('evidence_part', ['none', 'cost', 'register'])
-async def test_legacy_import_release_deletes_draft_and_allows_retyping(client_a_admin, client_b_admin, seed_data, evidence_part):
+async def test_legacy_import_release_deletes_draft_and_allows_retyping(client_a_admin, client_b_admin, seed_data, migrator_session, evidence_part):
     api = client_a_admin
     w = await reserve_world(api, seed_data)
     transaction, draft = await imported_reserve_draft(api, w)
@@ -1032,6 +1031,9 @@ async def test_legacy_import_release_deletes_draft_and_allows_retyping(client_a_
     assert (await client_b_admin.delete(path)).status_code == 404
     response = await api.delete(path)
     assert response.status_code == 204, response.text
+    audit = (await migrator_session.execute(text("SELECT payload_diff FROM audit_event WHERE entity_id=CAST(:id AS uuid) AND action='bank_transaction.released'"), {'id': transaction})).scalar_one()
+    assert audit == {'payment_id': draft, 'previous_status': 'ZUGEORDNET'}
+    await migrator_session.rollback()
     retained = await api.get(path)
     assert retained.status_code == 404, retained.text
     assert (await api.delete(path)).status_code == 404
@@ -1137,8 +1139,7 @@ async def test_opening_reattestation_records_only_the_difference_and_stays_first
     assert refused.status_code == 422, refused.text
     assert refused.json()['detail']['code'] == 'RESERVE_CORRECTION_REASON_REQUIRED'
     unchanged = await attest(w['run'], '5200.00')
-    assert unchanged.status_code == 422, unchanged.text
-    assert unchanged.json()['detail']['code'] == 'RESERVE_AMOUNT_INVALID'
+    assert unchanged.status_code == 201, unchanged.text
     later_plan = await ownership_plan(api, w, 2026)
     later = await api.post('/api/weg-settlements', json={'property_id': w['property'], 'economic_plan_id': later_plan,
         'period_start': '2026-01-01', 'period_end': '2026-12-31'})
@@ -1213,6 +1214,7 @@ async def test_earliest_import_carries_exact_frozen_closing_through_later_years(
 @pytest.mark.asyncio
 @pytest.mark.parametrize('constraint,sqlstate,status,code', [
     ('reserve_opening_import_only', '23514', 422, 'RESERVE_OPENING_IMPORT_ONLY'),
+    ('reserve_period_finalized', '23514', 409, 'RESERVE_PERIOD_FINALIZED'),
     ('reserve_ledger_entry_organization_id_payment_id_key', '23505', 409, 'RESERVE_PAYMENT_ALREADY_ASSIGNED'),
 ])
 async def test_override_database_errors_keep_the_specific_reserve_code(monkeypatch, constraint, sqlstate, status, code):
@@ -1237,6 +1239,141 @@ async def test_override_database_errors_keep_the_specific_reserve_code(monkeypat
             SimpleNamespace(organization_id=uuid4(), user_id=uuid4()), None)
     assert refusal.value.status_code == status
     assert refusal.value.detail['code'] == code
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('constraint,status,code', [
+    ('reserve_opening_import_only', 422, 'RESERVE_OPENING_IMPORT_ONLY'),
+    ('reserve_period_finalized', 409, 'RESERVE_PERIOD_FINALIZED'),
+])
+async def test_attestation_maps_opening_database_refusals(monkeypatch, constraint, status, code):
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+    from uuid import uuid4
+    from fastapi import HTTPException
+    from app.api import financial_input_coverage as routes
+    from app.services.financial_scope_service import FinancialScopeService
+    class DriverError(Exception):
+        sqlstate = '23514'
+    driver = DriverError()
+    driver.__cause__ = DriverError()
+    driver.__cause__.constraint_name = constraint
+    failure = DBAPIError(None, None, driver)
+    subject = SimpleNamespace(run_type='WEG_JAHRESABRECHNUNG')
+    monkeypatch.setattr(FinancialScopeService, 'lock_inputs', AsyncMock())
+    monkeypatch.setattr(routes, 'SettlementRunRepository', lambda *args: SimpleNamespace(get_by_id_for_update=AsyncMock(return_value=subject)))
+    monkeypatch.setattr(routes, 'FinancialInputPolicy', lambda *args: SimpleNamespace(attest=AsyncMock(side_effect=failure)))
+    with pytest.raises(HTTPException) as refused:
+        await routes.attest(routes.Attestation(subject_kind='settlement', subject_id=uuid4(),
+            values={'paid_advances': []}, confirmed_complete=True, reason='Reviewed inputs'),
+            SimpleNamespace(organization_id=uuid4(), user_id=uuid4()), None)
+    assert refused.value.status_code == status
+    assert refused.value.detail['code'] == code
+
+
+@pytest.mark.asyncio
+async def test_unchanged_opening_reattestation_refreshes_stale_cash_coverage(client_a_admin, seed_data):
+    api = client_a_admin
+    w = await reserve_world(api, seed_data)
+    values = {**paid(w), 'reserve_opening_balance': '5000.00', 'reserve_override_reason': 'Reviewed opening'}
+    first = await attest_fixture(api, 'settlement', w['run'], values)
+    repeated = await attest_fixture(api, 'settlement', w['run'], values)
+    assert repeated['id'] == first['id']
+    await payment(api, w, '100.00')
+    stale = await api.post(f"/api/weg-settlements/{w['run']}/compute", json=values)
+    assert stale.status_code == 422, stale.text
+    assert stale.json()['detail']['blockers'][0]['code'] == 'coverage_stale'
+    refreshed = await attest_fixture(api, 'settlement', w['run'], values)
+    assert refreshed['revision'] == first['revision'] + 1
+    computed = await api.post(f"/api/weg-settlements/{w['run']}/compute", json=values)
+    assert computed.status_code == 200, computed.text
+    ledger = (await api.get(f"/api/weg-settlements/{w['run']}/reserve-ledger")).json()
+    assert [row['amount'] for row in ledger['entries'] if row.get('component') == 'OPENING'] == ['5000.00']
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('database_backstop', [False, True])
+async def test_correction_period_keeps_finalized_opening_but_accepts_evidenced_corrections(
+        client_a_admin, seed_data, migrator_session, database_backstop):
+    api = client_a_admin
+    w = await reserve_world(api, seed_data)
+    report = await api.post('/api/weg-settlements/asset-reports', json={'property_id': w['property'],
+        'period_start': '2025-01-01', 'period_end': '2025-12-31'})
+    assert report.status_code == 201, report.text
+    for run, amount in [(w['run'], '5000.00'), (report.json()['id'], '7000.00')]:
+        response = await api.post(f'/api/weg-settlements/{run}/reserve-ledger/overrides',
+            json={'component': 'OPENING', 'amount': amount, 'reason': 'Reviewed import'})
+        assert response.status_code == 201, response.text
+    await finalize(api, w)
+    correction = await api.post(f"/api/settlements/{w['run']}/correction")
+    assert correction.status_code == 201, correction.text
+    run = correction.json()['id']
+    path = f'/api/weg-settlements/{run}/reserve-ledger'
+    assert (await api.get(path)).json()['opening_balance'] == '12000.00'
+    if database_backstop:
+        await migrator_session.execute(text("SELECT set_config('app.current_user_id',:actor,true),set_config('app.current_org_id',:org,true)"),
+            {'actor': str(seed_data['user_a_admin_id']), 'org': str(seed_data['org_a_id'])})
+        with pytest.raises(DBAPIError) as refused:
+            async with migrator_session.begin_nested():
+                await migrator_session.execute(text("""INSERT INTO reserve_ledger_entry
+                    (organization_id,property_id,settlement_run_id,entry_date,component,amount,reason,created_by)
+                    VALUES (:org,:property,:run,'2025-01-01','OPENING',100,'Frozen import',:actor)"""),
+                    {'org': seed_data['org_a_id'], 'property': w['property'], 'run': run, 'actor': seed_data['user_a_admin_id']})
+        assert refused.value.orig.__cause__.constraint_name == 'reserve_period_finalized'
+        await migrator_session.rollback()
+    else:
+        refused = await api.post(path + '/overrides', json={'component': 'OPENING', 'amount': '100.00', 'reason': 'Frozen import'})
+        assert refused.status_code == 409, refused.text
+        assert refused.json()['detail']['code'] == 'RESERVE_PERIOD_FINALIZED'
+    evidence = await reserve_evidence(api, w)
+    for component in ('WITHDRAWAL', 'ADJUSTMENT'):
+        response = await api.post(path + '/overrides', json={'component': component, 'amount': '1.00',
+            'reason': 'Evidence-backed correction', **{key.removeprefix('reserve_'): value for key, value in evidence.items()}})
+        assert response.status_code == 201, response.text
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('overlap', [False, True])
+@pytest.mark.parametrize('database_backstop', [False, True])
+async def test_opening_refuses_earlier_or_overlapping_period_on_both_input_paths(
+        client_a_admin, seed_data, monkeypatch, overlap, database_backstop):
+    from unittest.mock import AsyncMock
+    from app.repositories.reserve_ledger_repo import ReserveLedgerRepository
+    from tests.test_financial_input_policy import attest
+    api = client_a_admin
+    w = await reserve_world(api, seed_data)
+    report = await api.post('/api/weg-settlements/asset-reports', json={'property_id': w['property'],
+        'period_start': '2025-01-01' if overlap else '2026-01-01',
+        'period_end': '2025-06-30' if overlap else '2026-12-31'})
+    assert report.status_code == 201, report.text
+    if database_backstop:
+        monkeypatch.setattr(ReserveLedgerRepository, 'has_earlier_ledger', AsyncMock(return_value=False))
+        monkeypatch.setattr(ReserveLedgerRepository, 'has_overlapping_ledger', AsyncMock(return_value=False), raising=False)
+    run = report.json()['id']
+    body = {'component': 'OPENING', 'amount': '5000.00', 'reason': 'Conflicting import'}
+    refused = await api.post(f'/api/weg-settlements/{run}/reserve-ledger/overrides', json=body)
+    assert refused.status_code == 422, refused.text
+    assert refused.json()['detail']['code'] == 'RESERVE_OPENING_IMPORT_ONLY'
+    values = {'bank_balances': [{'bank_account_id': w[key], 'account_type': kind, 'label': kind, 'balance': '0.00'}
+        for key, kind in [('bank_giro', 'LAUFEND'), ('bank_ruecklage', 'RUECKLAGE')]],
+        'receivables': [], 'payables': [], 'reserve_opening_balance': '5000.00', 'reserve_override_reason': 'Conflicting import'}
+    refused = await attest(api, 'settlement', run, values)
+    assert refused.status_code == 422, refused.text
+    assert refused.json()['detail']['code'] == 'RESERVE_OPENING_IMPORT_ONLY'
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('reserve_fields', [False, True])
+async def test_finalized_attestation_uses_reserve_code_only_for_reserve_fields(client_a_admin, seed_data, reserve_fields):
+    from tests.test_financial_input_policy import attest
+    api = client_a_admin
+    w = await reserve_world(api, seed_data)
+    await finalize(api, w)
+    values = {**paid(w), **({'reserve_opening_balance': '1.00'} if reserve_fields else {})}
+    refused = await attest(api, 'settlement', w['run'], values)
+    assert refused.status_code == 409, refused.text
+    assert refused.json()['detail'] == ({'code': 'RESERVE_PERIOD_FINALIZED',
+        'message': 'Die Rücklage dieses Zeitraums ist finalisiert.'} if reserve_fields else 'Only draft inputs can be attested')
 
 
 @pytest.mark.asyncio

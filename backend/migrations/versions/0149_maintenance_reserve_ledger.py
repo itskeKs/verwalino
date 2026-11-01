@@ -170,6 +170,13 @@ def upgrade():
         OR NEW.created_by IS DISTINCT FROM NULLIF(current_setting('app.current_user_id',true),'')::uuid
         OR public.property_source_security_mode(NEW.organization_id)='PAUSED' THEN
         RAISE EXCEPTION 'Reserve ledger requires current writable period' USING ERRCODE='23514'; END IF;
+      IF NEW.component='OPENING' AND EXISTS(SELECT 1 FROM public.settlement_run r
+        WHERE r.organization_id=NEW.organization_id AND r.property_id=parent.property_id
+          AND r.status='finalized' AND r.period_start=parent.period_start AND r.period_end=parent.period_end
+          AND r.run_type IN ('WEG_JAHRESABRECHNUNG','VERMOEGENSBERICHT')
+          AND public.financial_scope_id(r.organization_id,'settlement_run',r.id) IS NOT DISTINCT FROM sphere) THEN
+        RAISE EXCEPTION 'GoBD: reserve opening period was finalized'
+          USING ERRCODE='23514',CONSTRAINT='reserve_period_finalized'; END IF;
       IF EXISTS(SELECT 1 FROM public.settlement_run r WHERE r.organization_id=NEW.organization_id
         AND r.property_id=parent.property_id AND r.status='finalized' AND r.superseded_by_id IS NULL
         AND r.run_type IN ('WEG_JAHRESABRECHNUNG','VERMOEGENSBERICHT')
@@ -177,7 +184,10 @@ def upgrade():
         AND public.financial_scope_id(r.organization_id,'settlement_run',r.id) IS NOT DISTINCT FROM sphere) THEN
         RAISE EXCEPTION 'GoBD: reserve period is finalized' USING ERRCODE='23514'; END IF;
       IF NEW.component='OPENING' AND EXISTS(SELECT 1 FROM public.settlement_run r
-        WHERE r.organization_id=NEW.organization_id AND r.property_id=NEW.property_id AND r.period_start<parent.period_start
+        WHERE r.organization_id=NEW.organization_id AND r.property_id=NEW.property_id
+          AND (r.period_start<parent.period_start OR (
+            r.period_start<=parent.period_end AND r.period_end>=parent.period_start
+            AND (r.period_start<>parent.period_start OR r.period_end<>parent.period_end)))
           AND r.run_type IN ('WEG_JAHRESABRECHNUNG','VERMOEGENSBERICHT')
           AND r.superseded_by_id IS NULL
           AND public.reserve_ledger_scope_matches(NEW.organization_id,
@@ -252,6 +262,8 @@ def upgrade():
     LANGUAGE plpgsql SECURITY DEFINER SET search_path=pg_catalog,pg_temp SET row_security=off AS $$
     DECLARE cost public.cost_entry;
     BEGIN
+      IF TG_OP='DELETE' AND current_user='app_migrator' AND session_user='app_migrator'
+        AND current_setting('app.organization_erasure',true)='on' THEN RETURN OLD; END IF;
       IF TG_OP IN ('DELETE','UPDATE') AND OLD.bank_transaction_id IS NOT NULL THEN
         IF TG_OP='DELETE' OR NEW.cancelled_at IS DISTINCT FROM OLD.cancelled_at THEN
           IF OLD.payment_type<>'RUECKLAGENENTNAHME' OR OLD.status<>'draft' OR OLD.cancelled_at IS NOT NULL

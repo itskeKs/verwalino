@@ -15,8 +15,19 @@ from app.repositories.settlement_repo import SettlementRunRepository
 from app.services.financial_scope_service import FinancialScopeService
 
 ZERO = Decimal('0.00')
-OPENING_IMPORT_ONLY = {'code': 'RESERVE_OPENING_IMPORT_ONLY', 'message': 'Ein Import des Anfangsbestands ist nur im ersten Rücklagenjahr vor der Finalisierung zulässig.'}
+OPENING_IMPORT_ONLY = {'code': 'RESERVE_OPENING_IMPORT_ONLY', 'message': 'Ein Import des Anfangsbestands ist nur im ersten Rücklagenjahr vor der Finalisierung zulässig und nur, wenn kein anderer, abweichender Rücklagenzeitraum besteht.'}
 OPENING_IMPORT_EXISTS = {'code': 'RESERVE_OPENING_IMPORT_EXISTS', 'message': 'Vor dem Jahr mit importiertem Anfangsbestand kann kein früherer Abrechnungszeitraum angelegt werden.'}
+
+
+def _raise_reserve_opening_error(exc: DBAPIError):
+    code = getattr(exc.orig, 'sqlstate', None)
+    constraint = getattr(getattr(exc.orig, '__cause__', None), 'constraint_name', None)
+    if (code, constraint) == ('23514', 'reserve_opening_import_only'):
+        raise HTTPException(422, OPENING_IMPORT_ONLY) from None
+    if (code, constraint) == ('23514', 'reserve_opening_import_exists'):
+        raise HTTPException(422, OPENING_IMPORT_EXISTS) from None
+    if (code, constraint) == ('23514', 'reserve_period_finalized'):
+        raise HTTPException(409, {'code': 'RESERVE_PERIOD_FINALIZED', 'message': 'Die Rücklage dieses Zeitraums ist finalisiert.'}) from None
 
 
 class ReserveLedgerService:
@@ -274,7 +285,10 @@ class ReserveLedgerService:
         return entry
 
     async def require_opening_period(self, run, ledger):
-        if ledger.get('opening_source_run_id') or await self.repo.has_earlier_ledger(run):
+        if await self.repo.has_finalized_opening_period(run):
+            raise HTTPException(409, {'code': 'RESERVE_PERIOD_FINALIZED', 'message': 'Die Rücklage dieses Zeitraums ist finalisiert.'})
+        if (ledger.get('opening_source_run_id') or await self.repo.has_earlier_ledger(run)
+                or await self.repo.has_overlapping_ledger(run)):
             raise HTTPException(422, OPENING_IMPORT_ONLY)
 
     async def apply_typed_overrides(self, run, values):
@@ -292,10 +306,6 @@ class ReserveLedgerService:
             if not reason or not reason.strip():
                 raise HTTPException(422, {'code': 'RESERVE_CORRECTION_REASON_REQUIRED', 'message': 'Manuelle Rücklagenwerte benötigen eine Begründung.'})
             delta = money(value) - Decimal(ledger[total])
-            if component == 'OPENING':
-                await self.require_opening_period(run, ledger)
-                if not delta and any(row.get('component') == 'OPENING' for row in ledger['entries']):
-                    raise HTTPException(422, {'code': 'RESERVE_AMOUNT_INVALID', 'message': 'Keine Änderung des Anfangsbestands.'})
             if delta:
                 await self.add(run, component, delta, reason)
                 ledger = await self.read(run)
