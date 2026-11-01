@@ -15,6 +15,14 @@ Status: **Draft for confirmation by the human — no application code, no migrat
 
 ## Property settlement periods (#68)
 
+Paid month-assigned Hausgeld advances use the same day-prorated boundary-month
+rule as NK advances (#136), through `engine/mietkonto.py` and `engine/rounding.py`.
+For twelve 100-euro payments, January–14 March credits 245.16 euros and
+15 March–December credits 954.84 euros. Differences of floored cumulative day
+shares retain the remaining cents in the later window, so adjacent windows
+credit exactly 1,200 euros. Whole months are unchanged. Year-only advances keep
+their existing twelve-month split with the annual remainder in December.
+
 Economic plans default to `property.fiscal_year_start_month` using the shared pure
 period functions. `plan_year` identifies the start year: an April plan for 2025
 runs from 1 April 2025 through 31 March 2026. Explicit `period_start` and
@@ -69,8 +77,8 @@ April property, a year-only 1,200-euro payment for 2025 credits 300 euros to
 For 1,000 euros, January–November credit 83.33 euros each and December 83.37 euros.
 Shares are independent of draft/finalization order. Full calendar-year results
 are retained; split months use day-based cumulative cent boundaries so adjacent
-partial-month statements also reconcile. Explicit monthly assignments
-remain unchanged; ledger filtering is unchanged. Paid advances
+partial-month statements also reconcile. Explicit monthly assignments use the
+same boundary-day rule described above; ledger filtering is unchanged. Paid advances
 remain informational
 and do not change the Abrechnungsspitze calculation. Changing the start month never
 rewrites existing plans, settlement dates or finalized snapshots. The WEG statement

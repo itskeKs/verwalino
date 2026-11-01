@@ -50,7 +50,7 @@ Precise algorithm (for **every** split of a total amount `G` (cent-exact) across
 
 This mechanic is implemented **once** as a pure function (`distribute_amount(total, weights) -> list[Decimal]`, m3 doc §4/§10) and is used by **every** distribution key and by the time-share split. The separate rule for year-only advance payments is documented in the amendment below.
 
-**Order for combined distribution (time × key):** First multiply the **exact** (unrounded) value across all stages, **then round+balance once at the end** — never round in between (otherwise rounding errors accumulate). That means: the time share (ADR-0004) and the distribution weight are chained exactly; the largest-remainder rounding applies to the **final** set of `settlement_line` amounts per cost item.
+**Order for combined distribution (time × key):** First multiply the **exact** (unrounded) weights across all stages, **then round+balance once** over the complete source cover. A statement that cuts an already balanced cell selects cumulative day shares using the separate rule in the amendment below; it never rebalances the source.
 
 **Rationale:** Largest remainder is the only one of the three remainder options that *guarantees* the core invariant `Σ == G` **and** distributes the remainder *fairly and deterministically*. "Determinism" is not cosmetic here: A finalized settlement is frozen as a snapshot and hashed (ADR-0003 §3); computing the same inputs twice must yield bit-identically the same snapshot, otherwise the hash integrity is worthless. Commercial display rounding matches the German expectation. Option C is ruled out because it produces exactly the error that settlement reliability forbids.
 
@@ -59,13 +59,13 @@ This mechanic is implemented **once** as a pure function (`distribute_amount(tot
 **Positive:**
 - **Correctness by construction:** `Σ shares == total costs` is not "hopefully" but a property of the function — provable as a property-based test over random amounts/weights (m3 doc §9, "no cent is lost").
 - **Determinism → stable snapshot hash** (ADR-0003 linkage).
-- A single rounding point → no scattered, inconsistent roundings.
+- One largest-remainder pass per source, followed only by stable selection of balanced cell cents for shorter statements.
 - Fair: The remainder goes to those that were arithmetically closest to rounding up.
 
 **Negative / to note:**
 - With very small amounts and many recipients, a recipient may receive 1 cent more/less than their "naively commercially rounded" value — this is **correct** and intended (it is the price for the sum being exact), but must be explained in the procedural documentation (Verfahrensdokumentation).
 - The algorithm must handle **negative amounts** (credits) and `Σw = 0` (no valid weight → defined error, not a silent 0 distribution) cleanly (m3 doc §4.4).
-- **Order discipline** (calculate exactly, round once at the end) is an implementation rule that code review and a targeted test must safeguard.
+- **Order discipline** (exact combined weights, one balancing pass, then cumulative cell selection) is an implementation rule that code review and targeted tests must safeguard.
 
 **Non-negotiable (consequence of this ADR):**
 1. A `float` is **never** used for money or weights (I4); the distribution calculates in `Decimal`.
@@ -75,19 +75,70 @@ This mechanic is implemented **once** as a pure function (`distribute_amount(tot
 
 > **[OPEN/§18]:** Whether a particular type of settlement or a lease prescribes a **deviating** rounding rule (e.g. commercial per item without remainder balancing, with a difference knowingly accepted) must be examined from the domain side. The default of this ADR is the arithmetically exact variant (largest remainder); deviations would be a deliberate domain determination. **No self-certification.**
 
-## Amendment — 2026-10-31: year-only advance payments
+## Amendment — 2026-10-31: cost-cell selection and advance months (#122, #136)
 
-Cost distributions continue to use largest remainder. Year-only NK and Hausgeld
-advances use a second rule: divide the assigned annual amount into twelve calendar
-month shares, floor each to the cent, and assign the annual remainder to December.
-For 1,000.00 euros, January–November receive 83.33 euros each and December 83.37 euros.
-Boundary months are prorated by calendar days using the difference between the
-floored cumulative share through the last covered day and the floored cumulative
-share before the first covered day.
+Costs first balance the complete source cover using largest remainder. A shorter
+statement then selects an already rounded cell of amount `C` and `D` days using
+`floor_cent(C × through / D) − floor_cent(C × before / D)`. This is a second
+rounding step, not another distribution. Adjacent selections telescope: every
+internal cumulative term cancels, leaving `C − 0`. Summing the complete cells
+therefore still recovers the source total exactly, including negative credits
+and owner vacancy shares, independently of statement order. Individual property
+period totals across several cells can differ by cents from a single day share
+of the source total; the complete source still reconciles.
 
-This differs from ranking recipients by their fractional remainders because the
-monthly allocation must remain fixed across independently calculated periods.
-Adjacent periods therefore reconcile exactly, even when they split a month,
-regardless of draft or finalization order. Both rules live in
-`backend/app/engine/rounding.py`: `distribute_amount` for costs and
-`annual_advance_share_for_period` for year-only advances.
+Month-assigned NK advances use the same cumulative rule, with the denominator
+restricted to the lease's occupied days in the assigned month. One statement
+covering all those days credits the full booked payment, even if the lease begins
+or ends mid-month. Day proration applies only between statements of the same
+lease that split those days (#136). It does not prorate an already prorated
+payment again: ten 100-euro payments for a lease starting 15 March credit
+1,000 euros; two statements of a full-year lease split at 14/15 March credit
+245.16 and 954.84 euros from twelve 100-euro payments.
+
+Year-only advances divide equally over calendar months the lease actually covers
+in that assigned year, including its partial first/last month. Floor each month
+share to cents and give the remainder to the last covered month; split a month
+between statements using its occupied lease days as above. A July-start lease's
+only July–December statement therefore credits its full 600-euro annual payment.
+Without a lease span (Hausgeld), all twelve calendar months apply, and December
+retains the remainder: 1,000 euros becomes eleven shares of 83.33 and one of 83.37.
+The shared helpers live in `backend/app/engine/rounding.py`; lifecycle, payment
+type and addressee filters remain in `derive_advance_total_for_period`.
+
+The independence from other statements holds while lease dates and booked payments stay fixed. If a
+lease end is entered later, each assigned year/month bucket substitutes the
+credits in already finalized snapshots for those windows' currently calculated
+shares. The current statement receives its occupied-month/day share plus that
+difference, floored at zero. Several open drafts may each include the same
+outstanding difference; finalizing one makes the others stale until re-derived.
+The last open statement receives the remainder. Late bookings for a finalized
+month also enter the next statement through this difference. A statement in a later calendar window
+that was finalized first also counts, so corrections and reordered finalization
+cannot apply the same difference again. Already credited amounts come
+from frozen snapshot buckets, never a recalculation of the finalized result.
+Thus a 1,200-euro year-only advance with 300 euros finalized through March still
+credits 900 euros after an end on 30 September is entered. With January–14 March
+already crediting 245.16 euros of three 100-euro payments, an end on 20 March leaves
+54.84 euros, exactly 300 euros together. Identical finalized periods count once;
+superseded statements do not count again. A changed lease end is refused with a
+structured German HTTP 409 only when it falls before an active finalized
+DERIVED statement's last day and changes one of its credit buckets, including an
+end on or before that statement's start. MANUAL statements do
+not block date edits, and an end on the statement's last day is allowed.
+Legacy derived snapshots without per-year/month credits remain usable with fixed
+lease dates. After a date edit, a changed credit bucket within the legacy span
+requires correction or a confirmed manual total (`advance_credit_history_missing`,
+HTTP 409 on derivation); the application
+does not invent a historical breakdown or mutate a finalized snapshot.
+
+Active booked advances assigned entirely outside the lease remain credited at
+zero (including an assigned year before the lease begins). Their total appears
+as a non-financial notice line in draft and frozen statement lines, the API and
+the PDF: “Nicht angerechnet: Zahlungen außerhalb des Mietverhältnisses: X €”.
+Before-start months (and wholly before-start assigned years) appear on the statement
+containing the lease start; after-end months (and wholly after-end assigned years)
+appear on the statement containing the lease end. Each side appears once, including
+when the statements are clipped to the lease or split within a month. A statement
+containing both boundaries combines both totals. Other statements do not repeat
+the notice. It does not alter statement costs, credited advances or the balance.

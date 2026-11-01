@@ -54,6 +54,7 @@ class MeterReadingRepository(TenantRepository[MeterReading]):
 
     async def list_boundary_readings(
         self, meter_ids: Sequence[uuid.UUID], period_start: date, period_end: date,
+        *, include_interim: bool = False,
     ) -> Sequence[MeterReading]:
         def window(boundary):
             ordinal = boundary.toordinal()
@@ -67,7 +68,8 @@ class MeterReadingRepository(TenantRepository[MeterReading]):
             result = await self._session.execute(self._base_query().where(
                 MeterReading.meter_id.in_(meter_ids[offset:offset + 1000]),
                 or_(MeterReading.reading_date.between(start_low, start_high),
-                    MeterReading.reading_date.between(end_low, end_high)),
+                    MeterReading.reading_date.between(end_low, end_high),
+                    and_(include_interim, MeterReading.reading_date.between(period_start, period_end))),
             ).order_by(MeterReading.reading_date, MeterReading.id))
             rows.extend(result.scalars().all())
         return rows

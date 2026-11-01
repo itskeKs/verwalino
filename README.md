@@ -18,6 +18,14 @@
 
 # Verwalino
 
+> **Project status (2026-11-01): not working as intended.** Verwalino is in active
+> development and does not yet work end to end the way it should. Expect broken or
+> incomplete workflows; do not rely on it for real property management until this notice
+> is removed. The hosted instance and the v0.1.x releases exist to test the deployment
+> path, not the product. What exists and in which state: [docs/feature-status.md](docs/feature-status.md);
+> open work: [issues](https://github.com/itskeKs/verwalino/issues). A full functional
+> walkthrough of every screen and process follows once the open issues are fixed.
+
 Verwalino is a property-management web app for rental management, homeowners'
 associations (WEG), and individual unit management (SEV). It is intended for small
 and mid-size property managers and private landlords in Germany. The UI is German.

@@ -44,7 +44,7 @@ from datetime import date
 from decimal import Decimal
 
 from app.engine.periods import day_count
-from app.engine.rounding import CENT, annual_advance_share_for_period, distribute_amount
+from app.engine.rounding import CENT, annual_advance_share_for_period, distribute_amount, monthly_advance_share_for_period
 
 # Payment-type vocabulary (m6 section 1.3). Kept here as the engine's view of
 # the controlled vocabulary; the DB CHECK in migration 0016 is the source of
@@ -559,24 +559,82 @@ def derive_advance_total(
     return _money(total)
 
 
-def derive_advance_total_for_period(
+@dataclass(frozen=True)
+class AdvanceCredit:
+    """Frozen credit for one assigned year/month bucket of this lease's NK."""
+
+    year: int
+    month: int | None
+    period_start: date
+    period_end: date
+    amount: Decimal
+
+
+def derive_advance_credits_for_period(
     payments: list[PaymentInput],
     filt: AdvanceFilter,
     period_start: date,
     period_end: date,
-) -> Decimal:
-    """Assigned monthly advances plus the period's share of year-only advances.
+    *, lease_start: date | None = None, lease_end: date | None = None,
+    finalized_credits: tuple[AdvanceCredit, ...] = (),
+) -> tuple[AdvanceCredit, ...]:
+    """Select stable month shares, substituting already frozen credits after edits.
 
-    Each assigned year is split into twelve months by the rounding module;
-    the statement containing December gets that year's remaining cents.
-    Existing lifecycle, type and addressee filters apply to both sums.
+    Replace the current expected shares of other finalized windows with what
+    their snapshots actually credited. Open drafts may share an outstanding
+    adjustment until one finalizes; the final window receives the remainder.
+    With fixed lease dates and payments each substitution is zero.
     """
     if not period_start.year <= filt.year <= period_end.year:
-        return Decimal("0.00")
-    first = period_start.month if filt.year == period_start.year else 1
-    last = period_end.month if filt.year == period_end.year else 12
-    monthly = derive_advance_total([
-        p for p in payments if p.period_month is not None and first <= p.period_month <= last
-    ], filt)
-    yearly = derive_advance_total([p for p in payments if p.period_month is None], filt)
-    return monthly + annual_advance_share_for_period(yearly, filt.year, period_start, period_end)
+        return ()
+    credits = []
+    for month in [*range(1, 13), None]:
+        total = derive_advance_total([p for p in payments if p.period_month == month], filt)
+        if not total:
+            continue
+
+        def share(start, end):
+            args = (total, filt.year, start, end)
+            span = {"lease_start": lease_start, "lease_end": lease_end}
+            if month is None:
+                return annual_advance_share_for_period(*args, **span)
+            return monthly_advance_share_for_period(total, filt.year, month, start, end, **span)
+
+        amount = share(period_start, period_end)
+        for previous in finalized_credits:
+            disjoint = previous.period_end < period_start or previous.period_start > period_end
+            if previous.year == filt.year and previous.month == month and disjoint:
+                amount += share(previous.period_start, previous.period_end) - previous.amount
+        credits.append(AdvanceCredit(filt.year, month, period_start, period_end, max(Decimal("0.00"), amount)))
+    return tuple(credits)
+
+
+def derive_advance_total_for_period(
+    payments: list[PaymentInput], filt: AdvanceFilter, period_start: date, period_end: date,
+    *, lease_start: date | None = None, lease_end: date | None = None,
+    finalized_credits: tuple[AdvanceCredit, ...] = (),
+) -> Decimal:
+    """Credit booked advances over occupied lease months (all months for Hausgeld)."""
+    return sum((c.amount for c in derive_advance_credits_for_period(payments, filt, period_start, period_end,
+        lease_start=lease_start, lease_end=lease_end, finalized_credits=finalized_credits)), Decimal("0.00"))
+
+
+def uncredited_advance_total(
+    payments: list[PaymentInput], filt: AdvanceFilter, lease_start: date, lease_end: date | None,
+    *, period_start: date | None = None, period_end: date | None = None,
+) -> Decimal:
+    """Place outside-lease bookings on the statement containing that lease boundary."""
+    year_start, year_end = date(filt.year, 1, 1), date(filt.year, 12, 31)
+    start, end = period_start or date.min, period_end or date.max
+    result = Decimal("0.00")
+    for month in [*range(1, 13), None]:
+        bucket = [p for p in payments if p.period_month == month]
+        excluded = derive_advance_total(bucket, filt) - derive_advance_total_for_period(
+            bucket, filt, year_start, year_end, lease_start=lease_start, lease_end=lease_end)
+        if not excluded:
+            continue
+        _, bucket_end = _month_bounds(filt.year, month) if month is not None else (year_start, year_end)
+        boundary = lease_start if bucket_end < lease_start else lease_end
+        if boundary is not None and start <= boundary <= end:
+            result += excluded
+    return result

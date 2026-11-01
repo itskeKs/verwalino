@@ -567,7 +567,7 @@ export function SettlementDetailPage() {
   function renderLines(lines: SettlementLine[]) {
     const costLines = lines.filter((l) => l.line_type === "COST");
     const summaryLines = lines.filter(
-      (l) => l.line_type === "ADVANCE_PAYMENT" || l.line_type === "BALANCE",
+      (l) => l.line_type === "ADVANCE_PAYMENT" || l.line_type === "BALANCE" || l.line_type === "SUBTOTAL",
     );
 
     return (
@@ -671,15 +671,15 @@ export function SettlementDetailPage() {
                         ln.line_type === "BALANCE" ? "1.05rem" : undefined,
                     }}
                   >
-                    <td>{ln.label}</td>
-                    <td
+                    <td colSpan={ln.line_type === "SUBTOTAL" ? 2 : 1}>{ln.label}</td>
+                    {ln.line_type !== "SUBTOTAL" && <td
                       style={{
                         fontFamily: "var(--mono)",
                         textAlign: "right",
                       }}
                     >
                       {ln.amount} EUR
-                    </td>
+                    </td>}
                   </tr>
                 ))}
               </tbody>
@@ -771,6 +771,16 @@ export function SettlementDetailPage() {
             <h3 style={{ fontSize: "0.95rem", margin: "0.75rem 0 0.5rem" }}>
               Verbrauch / Personenzahl
             </h3>
+            {needsConsumption(genericEntries) && (
+              <p id="settlement-consumption-period-hint" className="hint">
+                Verbrauch der Einheit im gesamten Objekt-Abrechnungsjahr eingeben, auch bei gekürztem Mietzeitraum.
+              </p>
+            )}
+            {needsPersonCount(genericEntries) && (
+              <p id="settlement-person-period-hint" className="hint">
+                Personenzahlen je Einheit für das gesamte Objekt-Abrechnungsjahr in allen zugehörigen Abrechnungen gleich eingeben.
+              </p>
+            )}
             <div className="form-grid">
               {unitMetrics.map((m, idx) => (
                 <div key={`metric-${idx}`} style={{ display: "contents" }}>
@@ -782,6 +792,7 @@ export function SettlementDetailPage() {
                         inputMode="decimal"
                         placeholder="0.000"
                         aria-label={`Verbrauch (${getUnitLabel(m.unit_id)})`}
+                        aria-describedby="settlement-consumption-period-hint"
                         disabled={consumptionLoading || actionLoading}
                         value={m.consumption ?? ""}
                         onChange={(e) => {
@@ -804,6 +815,7 @@ export function SettlementDetailPage() {
                           {source.start_reading && source.end_reading
                             ? `Zählerbasis: ${source.start_reading.value} (${source.start_reading.reading_date}) → ${source.end_reading.value} (${source.end_reading.reading_date}), jeweils ±31 Tage. ${manualConsumptionIds.has(m.unit_id) ? "Handwert wird verwendet." : "Wird bei Berechnung frisch geprüft."}`
                             : source.reason}
+                          {source.start_reading && source.end_reading && source.reason && ` ${source.reason}`}
                         </small>)}
                     </label>
                   )}
@@ -815,6 +827,7 @@ export function SettlementDetailPage() {
                         min="0"
                         step="1"
                         placeholder="0"
+                        aria-describedby="settlement-person-period-hint"
                         value={m.person_count ?? ""}
                         onChange={(e) => {
                           const next = [...unitMetrics];

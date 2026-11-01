@@ -378,7 +378,7 @@ export function SettlementsPage() {
                 required
                 value={form.lease_agreement_id}
                 onChange={(e) =>
-                  setForm({ ...form, lease_agreement_id: e.target.value })
+                  setForm({ ...form, lease_agreement_id: e.target.value, period_start: "", period_end: "" })
                 }
               >
                 <option value="">-- Mietvertrag waehlen --</option>
@@ -389,7 +389,8 @@ export function SettlementsPage() {
                 ))}
               </select>
             </label>
-            <SettlementPeriodSelect key={`period-${form.property_id}`} propertyId={form.property_id}
+            <SettlementPeriodSelect key={`period-${form.property_id}-${form.lease_agreement_id}`} propertyId={form.property_id}
+              lease={leases.find(lease => lease.id === form.lease_agreement_id)}
               start={form.period_start} end={form.period_end}
               onSelect={period => setForm(current => ({ ...current, period_start: period.period_start, period_end: period.period_end }))} />
             <label>
