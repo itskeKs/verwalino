@@ -678,8 +678,11 @@ allocation and WEMoG settlement-balance calculation; it changes neither.
   transaction, and permits no other payment changes during cancellation. Release
   audits the payment and bank line, including the payment reference and previous
   bank status. The operator-only organization-erasure DELETE path bypasses the
-  imported-draft guard for released and still-bound drafts; retention selection
-  remains unchanged, including payments retained through immutable scope bindings.
+  imported-draft guard for released and still-bound drafts; runtime roles cannot
+  use the erasure setting to bypass it. Migration 0149 exempts the reserve guard
+  from the retention catalog, so unbooked payments keep their "delete unless
+  booked" rule; scope-bound drafts follow the existing immutable-binding
+  retention and FK closure (0032/0147).
   Both references freeze with the booking; Storno retains them. Computing and
   finalizing retain the evidence guard as a second line for historical payouts. The link records
   the complete payout, never a resolution's authorized budget. Several active

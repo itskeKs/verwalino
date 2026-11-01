@@ -50,8 +50,11 @@ async def reserve_erasure_db(rent_db, export_store):
         await rent_db.rollback()
 
 
-async def test_operator_erasure_guard_accepts_released_and_bound_imported_drafts(rent_world, reserve_erasure_db):
-    from tests.test_reserve_ledger import imported_reserve_draft
+@pytest.mark.parametrize('scoped', [False, True], ids=['unscoped', 'immutable-scope-bindings'])
+async def test_erasure_keeps_payment_retention_conditional_with_or_without_scope_bindings(
+        rent_world, reserve_erasure_db, app_rw_session, scoped):
+    from sqlalchemy.exc import DBAPIError
+    from tests.test_reserve_ledger import imported_reserve_draft, payment
     from app.services.organization_deletion_service import run_deletion
     rent_db = reserve_erasure_db
     w = rent_world
@@ -60,21 +63,45 @@ async def test_operator_erasure_guard_accepts_released_and_bound_imported_drafts
         assert prop.status_code == 201, prop.text
         bank = await api.post('/api/bank-accounts', json={'property_id': prop.json()['id'], 'account_type': 'LAUFEND', 'label': 'Reserve erasure bank'})
         assert bank.status_code == 201, bank.text
-        scope = await rent_db.scalar(text("""INSERT INTO accounting_scope(organization_id,property_id,scope_type,
-            label,valid_from,whole_property,origin,created_by) VALUES (:org,:property,'WEG',
-            'Reserve erasure scope','2025-01-01',true,'REVIEWED',:admin) RETURNING id"""), {**w, 'property': prop.json()['id']})
-        await rent_db.execute(text("""INSERT INTO scope_grant(organization_id,scope_id,user_id,capabilities,granted_by,reason)
-            VALUES (:org,:scope,:admin,ARRAY['read','prepare','confirm','approve','export'],:admin,'Reviewed reserve erasure scope')"""),
-            {**w, 'scope': scope})
-        await rent_db.execute(text("""INSERT INTO accounting_scope_binding(organization_id,property_id,scope_id,
-            bank_account_id,origin,reason,reviewed_by) VALUES (:org,:property,:scope,:bank,
-            'REVIEWED','Scoped reserve bank',:admin)"""),
-            {**w, 'property': prop.json()['id'], 'scope': scope, 'bank': bank.json()['id']})
+        rent_bank = await api.post('/api/bank-accounts', json={
+            'property_id': str(w['property']), 'account_type': 'LAUFEND', 'label': 'Draft rent bank'})
+        assert rent_bank.status_code == 201, rent_bank.text
+        cost = await rent_db.scalar(text("""INSERT INTO cost_entry(organization_id,property_id,cost_category_id,
+            cost_category_plan_version,invoice_date,service_period_from,service_period_to,gross_amount,
+            tenant_apportionable,status,source,confirmed_at,confirmed_by)
+            SELECT :org,:property,id,1,'2025-02-01','2025-01-01','2025-12-31',4000,
+            'NICHT_UMLAGEFAEHIG','confirmed','MANUAL',now(),:admin FROM cost_category
+            WHERE code='GARTENPFLEGE' AND plan_version=1 RETURNING id"""), {**w, 'property': prop.json()['id']})
+        if scoped:
+            for property_id, bank_id, scope_type in (
+                    (prop.json()['id'], bank.json()['id'], 'WEG'),
+                    (str(w['property']), rent_bank.json()['id'], 'MIET')):
+                values = {**w, 'property': property_id, 'bank': bank_id, 'scope_type': scope_type}
+                scope = await rent_db.scalar(text("""INSERT INTO accounting_scope(organization_id,property_id,scope_type,
+                    label,valid_from,whole_property,origin,created_by) VALUES (:org,:property,:scope_type,
+                    'Erasure comparison scope','2025-01-01',true,'REVIEWED',:admin) RETURNING id"""), values)
+                values['scope'] = scope
+                await rent_db.execute(text("""INSERT INTO scope_grant(organization_id,scope_id,user_id,capabilities,granted_by,reason)
+                    VALUES (:org,:scope,:admin,ARRAY['read','prepare','confirm','approve','export'],:admin,'Reviewed erasure scope')"""), values)
+                await rent_db.execute(text("""INSERT INTO accounting_scope_binding(organization_id,property_id,scope_id,
+                    bank_account_id,origin,reason,reviewed_by) VALUES (:org,:property,:scope,:bank,
+                    'REVIEWED','Scoped erasure bank',:admin)"""), values)
+                if scope_type == 'WEG':
+                    await rent_db.execute(text("""INSERT INTO accounting_scope_binding(organization_id,property_id,scope_id,
+                        cost_entry_id,origin,reason,reviewed_by) VALUES (:org,:property,:scope,:cost,
+                        'REVIEWED','Scoped reserve cost',:admin)"""), {**values, 'cost': cost})
         await rent_db.commit()
-        world = {'bank_giro': bank.json()['id']}
+        world = {'bank_giro': bank.json()['id'], 'property': prop.json()['id'], 'ce_garten': str(cost)}
         transaction, released = await imported_reserve_draft(api, world)
-        response = await api.delete(f'/api/payments/{released}')
-        assert response.status_code == 204, response.text
+        if scoped:
+            response = await api.delete(f'/api/payments/{released}')
+            assert response.status_code == 204, response.text
+        else:
+            # The unscoped API release deletes immediately. Seed a historical
+            # cancelled row with the same bank reset and all guards enabled.
+            await rent_db.execute(text("UPDATE bank_transaction SET status='NEU' WHERE id=CAST(:id AS uuid)"), {'id': transaction})
+            await rent_db.execute(text('UPDATE payment SET cancelled_at=now() WHERE id=CAST(:id AS uuid)'), {'id': released})
+            await rent_db.commit()
         retained = await api.get(f'/api/payments/{released}')
         assert retained.status_code == 200, retained.text
         assert retained.json()['status'] == 'cancelled'
@@ -82,23 +109,73 @@ async def test_operator_erasure_guard_accepts_released_and_bound_imported_drafts
             'payment_type': 'RUECKLAGENENTNAHME', 'amount': '1200.00', 'period_year': 2025, 'period_month': 2}]})
         assert assigned.status_code == 200, assigned.text
         assert assigned.json()['payments'][0]['status'] == 'draft'
-        assert await rent_db.scalar(text('SELECT count(*) FROM payment WHERE organization_id=:org'), w) == 2
+        bound = assigned.json()['payments'][0]['id']
+        bank_drafts = (await rent_db.execute(text('SELECT id,bank_transaction_id,cancelled_at IS NOT NULL FROM payment WHERE id=ANY(CAST(:ids AS uuid[]))'),
+            {'ids': [bound, released]})).all()
+        assert set(bank_drafts) == {
+            (uuid.UUID(bound), uuid.UUID(transaction), False),
+            (uuid.UUID(released), uuid.UUID(transaction), True)}
         await rent_db.rollback()
+        booked = await payment(api, world, '1200.00', kind='RUECKLAGENENTNAHME', direction='OUT')
+        draft_rent = await api.post('/api/payments', json={'bank_account_id': rent_bank.json()['id'],
+            'direction': 'IN', 'amount': '700.00', 'value_date': '2026-02-01', 'payment_type': 'KALTMIETE',
+            'tenant_profile_id': str(w['tenant']), 'lease_agreement_id': str(w['lease']), 'period_year': 2026, 'period_month': 2})
+        assert draft_rent.status_code == 201, draft_rent.text
+        assert await rent_db.scalar(text('SELECT count(*) FROM payment WHERE organization_id=:org'), w) == 4
+        drafts = {uuid.UUID(identifier) for identifier in (draft_rent.json()['id'], bound, released)}
+        payment_ids = drafts | {uuid.UUID(booked)}
+        bindings = (await rent_db.execute(text('SELECT payment_id FROM accounting_scope_binding WHERE organization_id=:org AND payment_id IS NOT NULL'), w)).scalars().all()
+        assert set(bindings) == (payment_ids if scoped else set())
+        if not scoped:
+            assert await rent_db.scalar(text('SELECT count(*) FROM accounting_scope_binding WHERE organization_id=:org'), w) == 0
+        assert (await rent_db.execute(text("SELECT disposition,retain_when FROM organization_retention_catalog() WHERE entity='payment'"))).one() == (
+            'conditional', "t.status='booked'")
+        plan = (await rent_db.execute(text('SELECT * FROM organization_retention_plan(:org)'), w)).mappings().all()
+        retained_payments = {uuid.UUID(row['identity']['id']): row['legal_basis'] for row in plan if row['entity'] == 'payment'}
+        assert set(retained_payments) == (payment_ids if scoped else {uuid.UUID(booked)})
+        if scoped:
+            # Binding immutability (0032) and the 0147 FK closure retain reserve
+            # drafts exactly like the scope-bound rent draft, independently of
+            # the reserve DELETE guard. Draft bindings seed no person deadline.
+            assert {retained_payments[identifier] for identifier in drafts} == {
+                'ADR-0012: required dependency of retained voucher or evidence'}
+            assert any(row['entity'] == 'tenant_profile' and row['identity']['id'] == str(w['tenant']) for row in plan)
+        assert not any(row['entity'] == 'person' and row['identity']['id'] == str(w['person']) for row in plan)
+        await rent_db.rollback()
+        for draft in (bound, released):
+            with pytest.raises(DBAPIError) as runtime_refusal:
+                # Each refused attempt owns its connection and rollback; do not
+                # reuse the fixture's transaction after a database exception.
+                async with app_rw_session.bind.begin() as runtime:
+                    await runtime.execute(text("SELECT set_config('app.current_org_id',:org,true),set_config('app.current_user_id',:actor,true),set_config('app.organization_erasure','on',true)"),
+                        {'org': str(w['org']), 'actor': str(w['admin'])})
+                    await runtime.execute(text('DELETE FROM payment WHERE id=CAST(:id AS uuid)'), {'id': draft})
+            assert runtime_refusal.value.orig.sqlstate == '23514'
+            assert runtime_refusal.value.orig.__cause__.constraint_name == 'reserve_imported_draft_bound'
         # Probe the operator-only guard independently of retention selection.
-        # Scope bindings remain retained, so roll back before deferred FK checks.
+        # Scope bindings stay immutable under 0032/0147; roll this probe back
+        # before deferred FK checks. Real erasure retains their draft payments.
         async with rent_db.begin_nested() as probe:
             await rent_db.execute(text("SET LOCAL app.organization_erasure='on'"))
-            await rent_db.execute(text('DELETE FROM payment WHERE organization_id=:org'), w)
-            assert await rent_db.scalar(text('SELECT count(*) FROM payment WHERE organization_id=:org'), w) == 0
+            await rent_db.execute(text("DELETE FROM payment WHERE organization_id=:org AND status='draft'"), w)
+            assert await rent_db.scalar(text('SELECT count(*) FROM payment WHERE organization_id=:org'), w) == 1
             await probe.rollback()
         await rent_db.rollback()
         assert (await api.post('/api/organizations/deletion')).status_code == 200
         assert (await api.post('/api/organizations/deletion/confirm', json={'organization_name': 'T23 synthetic'})).status_code == 200
     async with rent_db.begin():
         assert await run_deletion(rent_db, w['org'], now=datetime.now(timezone.utc) + timedelta(days=8))
-    # Immutable scope bindings retain these drafts through the retention plan's
-    # FK closure; guard permission does not override that separate decision.
-    assert await rent_db.scalar(text('SELECT count(*) FROM payment WHERE organization_id=:org'), w) == 2
+    remaining = dict((await rent_db.execute(text('SELECT id,status FROM payment WHERE organization_id=:org'), w)).all())
+    expected = {uuid.UUID(booked): 'booked'}
+    if scoped:
+        expected.update(dict.fromkeys(drafts, 'draft'))
+        assert set((await rent_db.execute(text('SELECT payment_id FROM accounting_scope_binding WHERE organization_id=:org AND payment_id IS NOT NULL'), w)).scalars()) == payment_ids
+    assert remaining == expected
+    # The retained scope-bound rent draft has the existing 0147 person handling:
+    # unlike a booked voucher it does not prevent tenant anonymization.
+    person = (await rent_db.execute(text('SELECT last_name,anonymized_at FROM person WHERE id=:person'), w)).one()
+    assert person.last_name == 'Anonymisiert'
+    assert person.anonymized_at is not None
     await rent_db.rollback()
 
 
@@ -466,6 +543,8 @@ async def test_retention_catalog_classifies_every_organization_table(rent_db):
     assert {row['entity'] for row in classified} == tables
     assert all(row['disposition'] in {'retain', 'conditional', 'delete', 'lifecycle', 'anonymize'} for row in classified)
     by_name = {row['entity']: row['disposition'] for row in classified}
+    assert next((row['disposition'], row['retain_when']) for row in classified if row['entity'] == 'payment') == (
+        'conditional', "t.status='booked'")
     for name in ('person_data_domain', 'person_data_grant', 'property_data_domain', 'property_data_grant',
                  'dunning_scope_context', 'property_source_admission', 'special_levy', 'special_levy_allocation',
                  'reserve_ledger_entry'):

@@ -47,6 +47,76 @@ def patch_booking_scope(reverse=False):
     op.execute(definition.replace(before, after))
 
 
+def retention_catalog(restore=False):
+    # Frozen 0147 body: exempt only the reviewed row-conditional payment guard.
+    # The reserve ledger remains retained by its privileges and append-only guard.
+    definition = r'''
+    CREATE OR REPLACE FUNCTION public.organization_retention_catalog()
+      RETURNS TABLE(entity text,pk text[],disposition text,retain_when text)
+      LANGUAGE sql STABLE SECURITY DEFINER
+      SET search_path=pg_catalog,pg_temp SET row_security=off AS $$
+      WITH catalog AS (
+        SELECT c.relname::text entity, keys.pk,
+          -- Live SEPA consent/configuration has no runtime DELETE action,
+          -- but that alone is not a voucher binding (ADR-0012). Any actual
+          -- immutable DELETE trigger/policy still protects it below.
+          (c.relname NOT IN ('sepa_creditor','sepa_mandate') AND (
+          NOT has_table_privilege('app_rw',c.oid,'DELETE')
+          OR (c.relrowsecurity AND NOT EXISTS(SELECT 1 FROM pg_policy p WHERE p.polrelid=c.oid
+            AND p.polcmd IN ('d','*') AND p.polpermissive AND pg_get_expr(p.polqual,p.polrelid)<>'false'))))
+          OR EXISTS(SELECT 1 FROM pg_policy p WHERE p.polrelid=c.oid AND p.polcmd IN ('d','*')
+            AND NOT p.polpermissive AND pg_get_expr(p.polqual,p.polrelid)='false')
+          OR EXISTS(SELECT 1 FROM pg_trigger t JOIN pg_proc f ON f.oid=t.tgfoid
+            WHERE t.tgrelid=c.oid AND NOT t.tgisinternal AND t.tgenabled<>'D' AND (t.tgtype & 8)>0
+            AND f.proname NOT IN (
+              'organization_lifecycle_guard','lock_scope_principal_change','lock_scope_unit_history',
+              'lock_financial_input_sources','lock_strict_property_source_binding',
+              'lock_property_source_security_change','lock_knowledge_budget_policy',
+              'lock_invoice_sources','lock_mapping_meter','task_acl_lock','sepa_input_lock','t55_input_lock',
+              'recheck_transaction_computations','guard_declaration_worker_effect','guard_declaration_issue_review',
+              'authorize_bound_financial_write','authorize_bound_payment_write','authorize_dunning_write',
+              'guard_financial_source_input','guard_strict_financial_resource',
+              'guard_property_source_security','guard_knowledge_budget_policy',
+              'trg_cost_entry_immutability','protect_adopted_cost','trg_payment_immutability',
+              'trg_settlement_run_immutability','trg_settlement_line_immutability',
+              'trg_economic_plan_immutability','trg_economic_plan_line_immutability',
+              'trg_dunning_notice_immutability','protect_dunning_quarantine')) protected
+        FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace
+        LEFT JOIN LATERAL (SELECT array_agg(a.attname::text ORDER BY k.pos) pk
+          FROM pg_constraint p CROSS JOIN LATERAL unnest(p.conkey) WITH ORDINALITY k(num,pos)
+          JOIN pg_attribute a ON a.attrelid=c.oid AND a.attnum=k.num
+          WHERE p.conrelid=c.oid AND p.contype='p') keys ON true
+        WHERE n.nspname='public' AND c.relkind='r' AND EXISTS(SELECT 1 FROM pg_attribute a
+          WHERE a.attrelid=c.oid AND a.attname='organization_id' AND NOT a.attisdropped)
+      ), classified AS (
+        SELECT *, CASE
+          WHEN pk IS NULL THEN 'unclassified'
+          WHEN entity='organization_deletion' THEN 'lifecycle'
+          WHEN entity IN ('user','membership','person') THEN 'anonymize'
+          WHEN entity='password_reset_request' THEN 'delete'
+          WHEN protected THEN 'retain'
+          WHEN entity IN ('cost_entry','payment','settlement_run','settlement_line',
+            'economic_plan','economic_plan_line','dunning_notice') THEN 'conditional'
+          ELSE 'delete' END disposition FROM catalog
+      ) SELECT entity,pk,disposition,CASE
+        WHEN disposition='retain' THEN 'true'
+        WHEN disposition<>'conditional' THEN 'false'
+        WHEN entity='cost_entry' THEN $sql$t.status='confirmed' OR EXISTS(SELECT 1 FROM public.document_cost_link l JOIN public.allocation_set s ON s.id=l.allocation_set_id AND s.organization_id=l.organization_id WHERE l.organization_id=t.organization_id AND l.cost_entry_id=t.id AND s.kind='intake_reviewed')$sql$
+        WHEN entity='payment' THEN $sql$t.status='booked'$sql$
+        WHEN entity IN ('settlement_run','economic_plan') THEN $sql$t.status='finalized'$sql$
+        WHEN entity='dunning_notice' THEN $sql$t.status='issued' OR EXISTS(SELECT 1 FROM public.dunning_quarantine_disposition q WHERE q.organization_id=t.organization_id AND q.notice_id=t.id)$sql$
+        WHEN entity='settlement_line' THEN $sql$EXISTS(SELECT 1 FROM public.settlement_run r WHERE r.organization_id=t.organization_id AND r.id=t.settlement_run_id AND r.status='finalized')$sql$
+        WHEN entity='economic_plan_line' THEN $sql$EXISTS(SELECT 1 FROM public.economic_plan r WHERE r.organization_id=t.organization_id AND r.id=t.economic_plan_id AND r.status='finalized')$sql$
+        END FROM classified ORDER BY entity;
+    $$;
+    REVOKE ALL ON FUNCTION public.organization_retention_catalog() FROM PUBLIC,app_rw,app_worker,app_review;
+    '''
+    if not restore:
+        definition = definition.replace("'protect_dunning_quarantine'",
+            "'protect_dunning_quarantine','guard_reserve_payment_evidence'")
+    op.execute(definition)
+
+
 def upgrade():
     op.execute(f"""ALTER TABLE settlement_line DROP CONSTRAINT ck_settlement_line_ck_settlement_line_line_type;
       ALTER TABLE settlement_line ADD CONSTRAINT ck_settlement_line_ck_settlement_line_line_type
@@ -334,6 +404,7 @@ def upgrade():
     CREATE CONSTRAINT TRIGGER recheck_computation AFTER INSERT OR UPDATE OR DELETE ON reserve_ledger_entry
       DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION recheck_reserve_computations();
     ''')
+    retention_catalog()
     patch_source_digest()
     patch_booking_scope()
 
@@ -345,6 +416,7 @@ def downgrade():
       RAISE EXCEPTION 'Retain reserve payout bookings; populated downgrade refused'; END IF;
       IF EXISTS(SELECT 1 FROM settlement_line WHERE line_type IN ('RESERVE_LATE_CASH','RESERVE_ADJUSTMENT')) THEN
       RAISE EXCEPTION 'Retain reserve statement evidence; populated downgrade refused'; END IF; END $$;""")
+    retention_catalog(restore=True)
     patch_source_digest(reverse=True)
     patch_booking_scope(reverse=True)
     op.execute("""DROP TRIGGER guard_reserve_opening_period ON settlement_run;

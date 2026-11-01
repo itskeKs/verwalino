@@ -134,6 +134,16 @@ def rehearse_initial_upgrade(starting_schema='0122'):
                     expected_security = connection.execute(text("SELECT c.relname,c.relrowsecurity,c.relforcerowsecurity,c.relacl::text FROM pg_class c WHERE c.relnamespace='public'::regnamespace AND c.relname=ANY(:tables) ORDER BY c.relname"), {'tables': tables}).all()
                     expected.rollback()
                 for revision in reversed(revisions):
+                    if revision.revision == '0149':
+                        def retention_catalog():
+                            return {row[0]: tuple(row[1:]) for row in connection.execute(
+                                text('SELECT * FROM organization_retention_catalog()'))}
+                        def retention_definition():
+                            return tuple(connection.execute(text("""SELECT pg_get_functiondef(oid),proacl::text,
+                                pg_get_userbyid(proowner) FROM pg_proc
+                                WHERE oid='public.organization_retention_catalog()'::regprocedure""")).one())
+                        original_catalog = retention_catalog()
+                        original_catalog_definition = retention_definition()
                     if starting_schema == '0146' and revision.revision == '0147':
                         def trigger_definitions():
                             return connection.execute(text('''SELECT p.proname,pg_get_functiondef(p.oid),p.proacl::text,
@@ -162,6 +172,21 @@ def rehearse_initial_upgrade(starting_schema='0122'):
                             audit_guard = next(row for row in trigger_definitions() if row[0] == 'guard_audit_event_payload')
                             guard_baseline.rollback()
                     revision.module.upgrade()
+                    if revision.revision == '0149':
+                        upgraded_catalog = retention_catalog()
+                        assert upgraded_catalog.pop('reserve_ledger_entry') == (['id'], 'retain', 'true')
+                        assert upgraded_catalog == original_catalog
+                        assert upgraded_catalog['payment'] == (['id'], 'conditional', "t.status='booked'")
+                        definition, grants, owner = original_catalog_definition
+                        assert retention_definition() == (definition.replace("'protect_dunning_quarantine'",
+                            "'protect_dunning_quarantine','guard_reserve_payment_evidence'"), grants, owner)
+                        # 0149 must restore the exact frozen 0147 definition,
+                        # owner, grants and every catalog row before removal.
+                        with connection.begin_nested() as catalog_rehearsal:
+                            revision.module.downgrade()
+                            assert retention_catalog() == original_catalog
+                            assert retention_definition() == original_catalog_definition
+                            catalog_rehearsal.rollback()
                     if starting_schema == '0146' and revision.revision == '0147':
                         assert connection.scalar(text('''SELECT count(*) FROM pg_trigger
                           WHERE tgrelid='public.audit_event'::regclass AND NOT tgisinternal
