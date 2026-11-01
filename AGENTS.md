@@ -81,6 +81,15 @@ enforcement; every baseline and safety rule here stays in force.
 - UI work is never blind: a change under `frontend/src/` is opened in a real browser at desktop
   width and 360 px before the PR, with before/after screenshots in the PR body, taken on the test
   database with synthetic data, never on production ([frontend rule](.claude/rules/frontend-ui.md)).
+- Done means a user can do it. An issue whose change a user notices carries a „User check“
+  written before the change ([docs/acceptance/README.md](docs/acceptance/README.md)); the
+  PR is merged only after it passed on the PR's state: by a blind acceptance run that sees only
+  the running product (a portable install, the authorized portable acceptance of
+  "Databases and containers" below), or by the owner where no agent can go. The core journeys in
+  [docs/acceptance/journeys.md](docs/acceptance/journeys.md) run blind at every milestone, and
+  each has an automated twin in `features/journeys/` that runs in CI; a confirmed acceptance
+  finding first fails as a step there, then gets fixed. Expected values come from the domain,
+  never from the implementation.
 - Run tests selectively, `make lint` before every push, and `make test` before a merge.
 
 ## Gates
