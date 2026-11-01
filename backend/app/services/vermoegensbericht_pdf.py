@@ -137,7 +137,7 @@ def build_vermoegensbericht_html(
   <div class="disclaimer">
     Hinweis (ADR-0008, [§18/fachlich]): Der <strong>Stand der
     Erhaltungsruecklage</strong> ist aus der Entwicklung (Anfangsbestand +
-    Zufuehrungen - Entnahmen ± Korrekturen = Endbestand) abgeleitet. Die mit
+    Zufuehrungen - Entnahmen ± Korrekturen + nachträgliche Buchungen = Endbestand) abgeleitet. Die mit
     <em>(Verwalter-Angabe)</em> gekennzeichneten Werte (Bankkonten-Stichtagssalden,
     Forderungen/Verbindlichkeiten) sind <strong>manuelle Angaben der
     Verwaltung</strong> und <strong>kein automatischer Buchungssaldo</strong>

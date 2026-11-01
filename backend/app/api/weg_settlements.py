@@ -17,7 +17,7 @@ from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.exc import DBAPIError
@@ -61,6 +61,16 @@ class WegRunCreate(BaseModel):
     period_start: date
     period_end: date
     management_mandate_id: str | None = None
+
+    @field_validator('economic_plan_id', mode='before')
+    @classmethod
+    def require_valid_plan_id(cls, value):
+        try:
+            uuid.UUID(value)
+        except (ValueError, TypeError, AttributeError):
+            raise HTTPException(422, {'code': 'WEG_PLAN_REQUIRED',
+                'message': 'Bitte wählen Sie einen gültigen Wirtschaftsplan.'}) from None
+        return value
 
 
 class PlanSuccessorSelection(BaseModel):

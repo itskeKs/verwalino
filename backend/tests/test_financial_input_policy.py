@@ -236,10 +236,12 @@ async def test_plan_correction_waits_until_weg_snapshot_is_frozen(client_a_admin
     locked, release = asyncio.Event(), asyncio.Event()
     original_revision = CoverageDeclarationRepository.source_revision
 
-    async def paused_revision(self, property_id):
+    async def paused_revision(self, property_id, *, reserve=False):
+        assert property_id == m4_seed["property"] or str(property_id) == m4_seed["property"]
+        assert reserve is True
         locked.set()
         await release.wait()
-        return await original_revision(self, property_id)
+        return await original_revision(self, property_id, reserve=reserve)
 
     monkeypatch.setattr(CoverageDeclarationRepository, "source_revision", paused_revision)
     final_task = asyncio.create_task(client_a_admin.post(f"/api/weg-settlements/{run_id}/finalize", json=values))

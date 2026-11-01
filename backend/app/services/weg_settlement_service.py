@@ -737,7 +737,7 @@ class WegSettlementService:
                                      note="Entnahme laut Rücklagenbuch")); sort += 1
         self._session.add(self._line(run, None, "RESERVE_CLOSING",
                                      "Erhaltungsruecklage Endbestand", dev.closing_balance, sort,
-                                     note="Anfang + Zuführung − Entnahme ± Korrekturen")); sort += 1
+                                     note="Anfang + Zuführung − Entnahme ± Korrekturen + nachträgliche Buchungen")); sort += 1
         await self._session.flush()
 
     def _line(self, run, owner_id, line_type, label, amount, sort_order, *,

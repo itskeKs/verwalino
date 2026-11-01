@@ -723,7 +723,8 @@ allocation and WEMoG settlement-balance calculation; it changes neither.
 An overdrawn balance is retained and explicitly flagged in the UI and both
 PDFs, never clipped to zero. PDF reserve rows use structured line types,
 including `RESERVE_LATE_CASH` and `RESERVE_ADJUSTMENT`; translated notes do not
-determine inclusion. Reserve payers without cost or plan positions retain their
+determine inclusion. Closing-balance explanations in WEG statements and the asset
+report PDF explicitly include late cash in that equation. Reserve payers without cost or plan positions retain their
 contributions and receive an explicit owner-assignment review notice.
 Staff must review financing; this ledger does not authorize an overdraft.
 

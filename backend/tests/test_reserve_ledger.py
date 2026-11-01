@@ -217,6 +217,8 @@ async def test_finalized_year_freezes_cash_and_carries_closing_into_next_period(
     lines = next_result['lines']
     assert next(row['sort_order'] for row in lines if row['line_type'] == 'RESERVE_OPENING') < next(
         row['sort_order'] for row in lines if row['label'] == 'Nachträgliche Buchungen zum abgeschlossenen Jahr')
+    closing_note = next(row['note'] for row in lines if row['line_type'] == 'RESERVE_CLOSING')
+    assert 'nachträgliche Buchungen' in closing_note
     assert (await api.get(f'/api/weg-settlements/{next_run}/reserve-ledger')).json()['closing_balance'] == '26999.00'
     # A report for the issued year consumes the exact same frozen ledger.
     response = await api.post('/api/weg-settlements/asset-reports', json={
@@ -245,6 +247,7 @@ async def test_finalized_year_freezes_cash_and_carries_closing_into_next_period(
     assert 'Nachträgliche Buchungen zum abgeschlossenen Jahr' in content
     assert '999,00 EUR' in content
     assert '26.000,00 EUR' in content and '26.999,00 EUR' in content
+    assert 'nachträgliche Buchungen' in content
     amounts = {line['line_type']: Decimal(line['amount']) for line in response.json()['lines']}
     assert amounts['RESERVE_OPENING'] + amounts['RESERVE_CONTRIBUTION'] - amounts['RESERVE_WITHDRAWAL'] + amounts['RESERVE_LATE_CASH'] == amounts['RESERVE_CLOSING'] == Decimal('26999.00')
 
@@ -667,6 +670,27 @@ async def test_reserve_payout_refuses_rental_accounts_and_personal_counterpartie
     bank = await api.post('/api/bank-accounts', json={'property_id': prop.json()['id'], 'account_type': 'LAUFEND', 'label': 'Rental account'})
     assert bank.status_code == 201, bank.text
     assert (await api.post('/api/payments', json={**body, 'bank_account_id': bank.json()['id']})).status_code == 422
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('signed,amount', [('100.00', '5000.00'), ('100.00', '-250.00'), ('-100.00', '-5000.00'), ('-100.00', '250.00')])
+async def test_service_rejects_unassigned_amount_before_writing(signed, amount):
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+    from fastapi import HTTPException
+    from app.services.reserve_ledger_service import ReserveLedgerService
+
+    service = ReserveLedgerService(None, 'org', 'actor')
+    service.read = AsyncMock(return_value={'frozen': False, 'entries': [
+        {'kind': 'UNASSIGNED', 'payment_id': 'cash', 'amount': signed},
+    ]})
+    service.repo.create = AsyncMock(side_effect=AssertionError('Invalid assignment reached persistence'))
+    with pytest.raises(HTTPException) as refused:
+        await service.add(SimpleNamespace(id='run', property_id='property', period_start=None, period_end=None), 'CONTRIBUTION',
+                          Decimal(amount), 'Reviewed receipt', payment_id='cash')
+    assert refused.value.status_code == 422
+    assert refused.value.detail['code'] == 'RESERVE_ASSIGNMENT_EXCEEDS_PAYMENT'
+    service.repo.create.assert_not_awaited()
 
 
 @pytest.mark.asyncio

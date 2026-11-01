@@ -838,6 +838,18 @@ class TestM4WegSettlementE2E:
         assert resp.status_code == 404
 
     @pytest.mark.asyncio
+    @pytest.mark.parametrize("plan_id", [None, "None", "", "not-a-uuid"])
+    async def test_weg_refuses_invalid_plan_with_structured_german_message(self, client_a_admin, m4_seed, plan_id):
+        response = await client_a_admin.post("/api/weg-settlements", json={
+            "property_id": m4_seed["property"], "economic_plan_id": plan_id,
+            "period_start": "2025-01-01", "period_end": "2025-12-31",
+        })
+        assert response.status_code == 422, response.text
+        assert response.json()["detail"] == {
+            "code": "WEG_PLAN_REQUIRED", "message": "Bitte wählen Sie einen gültigen Wirtschaftsplan.",
+        }
+
+    @pytest.mark.asyncio
     async def test_weg_pdf_renders_for_finalized(self, client_a_admin, m4_seed):
         plan_id = await _create_and_finalize_plan(client_a_admin, m4_seed)
         resp = await client_a_admin.post("/api/weg-settlements", json={

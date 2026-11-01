@@ -87,13 +87,6 @@ and owner vacancy shares, independently of statement order. Individual property
 period totals across several cells can differ by cents from a single day share
 of the source total; the complete source still reconciles.
 
-This differs from ranking recipients by their fractional remainders because the
-monthly allocation must remain fixed across independently calculated periods.
-Adjacent periods therefore reconcile exactly, even when they split a month,
-regardless of draft or finalization order. Both rules live in
-`backend/app/engine/rounding.py`: `distribute_amount` for costs and
-`annual_advance_share_for_period` for year-only advances.
-
 Month-assigned NK advances use the same cumulative rule, with the denominator
 restricted to the lease's occupied days in the assigned month. One statement
 covering all those days credits the full booked payment, even if the lease begins
