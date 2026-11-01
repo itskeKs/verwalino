@@ -15,11 +15,32 @@ async def draft(client, seed, amount):
 
 
 async def attest(client, kind, subject_id, values):
+    if kind == 'settlement' and 'advance_payments_total' in values:
+        current = await client.get(f'/api/settlements/{subject_id}')
+        if current.status_code == 200 and current.json()['run_type'] == 'BK_MIETER':
+            values = {'heating_advance_payments_total': current.json()['heating_advance_payments_total'],
+                'heating_advance_payments_source': current.json()['heating_advance_payments_source'], **values}
     return await client.post("/api/financial-input-coverage", json={
         "subject_kind": kind, "subject_id": subject_id, "values": values,
         "reason": "Synthetic complete account records checked for this period",
         "confirmed_complete": True, "source_document_ids": [],
     })
+
+
+@pytest.mark.asyncio
+async def test_unknown_heating_total_is_not_silently_replaced_with_zero(client_a_admin, m3_seed):
+    response = await client_a_admin.post('/api/settlements', json={
+        'property_id': m3_seed['property'], 'lease_agreement_id': m3_seed['lease_a'],
+        'period_start': '2025-01-01', 'period_end': '2025-06-30',
+        'advance_payments_total': '0.00', 'heating_advance_payments_total': None})
+    assert response.status_code == 201, response.text
+    assert response.json()['heating_advance_payments_total'] is None
+    run_id = response.json()['id']
+    coverage = await attest(client_a_admin, 'settlement', run_id, {
+        'advance_payments_total': '0.00', 'advance_payments_source': 'MANUAL',
+        'heating_advance_payments_total': None, 'heating_advance_payments_source': 'MANUAL'})
+    assert coverage.status_code == 422, coverage.text
+    assert coverage.json()['detail']['code'] == 'financial_inputs_incomplete'
 
 
 @pytest.mark.asyncio

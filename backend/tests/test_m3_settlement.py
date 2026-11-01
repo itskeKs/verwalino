@@ -28,6 +28,136 @@ SYNC_URL = os.environ.get(
 )
 
 
+@pytest.mark.parametrize('heating_advance,balance', [('1080.00', '20.00'), ('0.00', '1100.00')])
+def test_operating_and_heating_costs_credit_their_own_advances(heating_advance, balance):
+    from app.engine.settlement import compute_bk_settlement
+    from app.engine.types import CostPositionInput, LeasePeriodInput, PropertyInput, SettlementInput, UnitInput
+    unit, lease, tenant = uuid.uuid4(), uuid.uuid4(), uuid.uuid4()
+    start, end = date(2026, 1, 1), date(2026, 12, 31)
+    positions = tuple(CostPositionInput(uuid.uuid4(), None, code, code, Decimal(amount), start, end,
+        'WOHNFLAECHE', 'UMLAGEFAEHIG') for code, amount in [('GRUNDSTEUER', '1900'), ('MESSDIENST', '1000')])
+    inp = SettlementInput(start, end, PropertyInput(uuid.uuid4(), 'Musterhaus', 'MIET'), lease,
+        (UnitInput(unit, '1', 'WOHNUNG', area=Decimal(70)),),
+        (LeasePeriodInput(lease, unit, tenant, start, None),), (), positions, Decimal('1800'),
+        heating_advance_payments_total=Decimal(heating_advance))
+    result = compute_bk_settlement(inp)
+    assert result.balance == Decimal(balance)
+    assert result.heating_advance_payments_total == Decimal(heating_advance)
+    lines = {line.label: line.amount for line in result.lines}
+    assert lines['Betriebskosten abzüglich Vorauszahlungen'] == Decimal('100')
+    assert lines['Heizkosten abzüglich Vorauszahlungen'] == Decimal('1000') - Decimal(heating_advance)
+
+
+@pytest.mark.asyncio
+async def test_derived_component_totals_have_independent_sources_and_coverage(client_a_admin):
+    from tests.settlement_period_support import create, period_property, statement
+    api = client_a_admin
+    data = await period_property(api, month=1)
+
+    async def payment(kind, amount, book=True):
+        row = await create(api, '/api/payments', {'bank_account_id': data['account']['id'],
+            'direction': 'IN', 'amount': amount, 'value_date': '2026-12-31', 'payment_type': kind,
+            'period_year': 2026, 'tenant_profile_id': data['tenant']['id'], 'lease_agreement_id': data['lease']['id']})
+        if book:
+            response = await api.post(f"/api/payments/{row['id']}/book")
+            assert response.status_code == 200, response.text
+        return row
+
+    await payment('NK_VORAUSZAHLUNG', '1800.00')
+    await payment('HK_VORAUSZAHLUNG', '1080.00')
+    await payment('KALTMIETE', '9000.00')
+    await payment('HK_VORAUSZAHLUNG', '999.00', book=False)
+    reversed_row = await payment('HK_VORAUSZAHLUNG', '60.00')
+    assert (await api.post(f"/api/payments/{reversed_row['id']}/reverse", json={'note': 'Synthetic reversal'})).status_code == 201
+    run = await create(api, '/api/settlements', statement(data, '2026-01-01', '2026-12-31'))
+    url = f"/api/settlements/{run['id']}"
+    response = await api.patch(url + '/advance-payments-derived', params={'period_year': 2026})
+    assert response.status_code == 200, response.text
+    assert (response.json()['advance_payments_total'], response.json()['heating_advance_payments_total']) == ('1800.00', '1080.00')
+    response = await api.patch(url + '/advance-payments', json={'heating_advance_payments_total': '1000.00'})
+    assert response.status_code == 200, response.text
+    assert response.json()['advance_payments_source'] == 'DERIVED'
+    assert response.json()['heating_advance_payments_source'] == 'MANUAL'
+    assert response.json()['advance_payments_total'] == '1800.00'
+    # A later HK booking invalidates only the corresponding derived total.
+    assert (await api.patch(url + '/advance-payments-derived', params={'period_year': 2026})).status_code == 200
+    values = {'advance_payments_total': '1800.00', 'advance_payments_source': 'DERIVED',
+        'heating_advance_payments_total': '1080.00', 'heating_advance_payments_source': 'DERIVED'}
+    await attest_fixture(api, 'settlement', run['id'], values)
+    await payment('HK_VORAUSZAHLUNG', '10.00')
+    response = await api.post(url + '/compute', json={})
+    assert response.status_code == 422, response.text
+    assert response.json()['detail']['blockers'][0]['component'] == 'heating_advance_payments'
+
+
+@pytest.mark.asyncio
+async def test_manual_heating_totals_keep_the_same_sign_as_operating_totals(client_a_admin):
+    from tests.settlement_period_support import create, period_property, statement
+    api = client_a_admin
+    data = await period_property(api, month=1)
+    run = await create(api, '/api/settlements', {**statement(data, '2026-01-01', '2026-12-31'),
+        'advance_payments_total': '0.00', 'heating_advance_payments_total': '-20.00'})
+    url = f"/api/settlements/{run['id']}"
+    await attest_fixture(api, 'settlement', run['id'], {'advance_payments_total': '0.00',
+        'advance_payments_source': 'MANUAL', 'heating_advance_payments_total': '-20.00',
+        'heating_advance_payments_source': 'MANUAL'})
+    response = await api.post(url + '/finalize', json={})
+    assert response.status_code == 200, response.text
+    assert response.json()['balance'] == '20.00'
+
+
+@pytest.mark.asyncio
+async def test_pre_split_finalized_snapshot_keeps_its_digest_and_pdf(client_a_admin, m3_seed):
+    """Retain the literal pre-split payload: readers must never fill new keys."""
+    import json
+    from app.engine.canonical import canonical_json, sha256_hex
+    coverage_id = str(uuid.uuid4())
+    payload = {'engine_version': 'm3.1.0', 'run_type': 'BK_MIETER',
+        'period': {'start': '2025-01-01', 'end': '2025-06-30'},
+        'inputs': {'advance_payments_total': '600.00', 'advance_payments_source': 'MANUAL'},
+        'result': {'total_cost': '700.00', 'advance_payments_total': '600.00', 'balance': '100.00'},
+        'financial_input_coverage': {'id': coverage_id, 'source_revision': '0' * 64}}
+    digest = sha256_hex(canonical_json(payload))
+    run_id = str(uuid.uuid4())
+    import psycopg2
+    with psycopg2.connect(SYNC_URL) as conn, conn.cursor() as cur:
+        cur.execute("""INSERT INTO settlement_run
+            (id,organization_id,property_id,lease_agreement_id,run_type,period_start,period_end,
+             advance_payments_total,advance_payments_source,total_cost,balance,status,
+             snapshot_payload,snapshot_sha256,engine_version,finalized_at)
+            VALUES (%s,%s,%s,%s,'BK_MIETER','2025-01-01','2025-06-30',600,'MANUAL',700,100,
+             'finalized',%s,%s,'m3.1.0',now())""",
+            (run_id, str(m3_seed['org_a_id']), m3_seed['property'], m3_seed['lease_a'], json.dumps(payload), digest))
+        cur.execute("""INSERT INTO coverage_declaration(id,organization_id,settlement_run_id,property_id,
+            period_start,period_end,component,revision,state,values,source_document_ids,source_revision,reason,attestor_id)
+            VALUES (%s,%s,%s,%s,'2025-01-01','2025-06-30','BK_MIETER',1,'known',%s,'[]',%s,'Legacy fixture',%s)""",
+            (coverage_id, str(m3_seed['org_a_id']), run_id, m3_seed['property'], json.dumps(payload['inputs']),
+             '0' * 64, str(m3_seed['user_a_admin_id'])))
+        for order, kind, label, amount in [(0, 'ADVANCE_PAYMENT', 'Geleistete Vorauszahlungen', '600'),
+                (1, 'BALANCE', 'Nachzahlung', '100')]:
+            cur.execute("""INSERT INTO settlement_line(id,organization_id,settlement_run_id,line_type,label,amount,sort_order)
+                VALUES (%s,%s,%s,%s,%s,%s,%s)""", (str(uuid.uuid4()), str(m3_seed['org_a_id']), run_id, kind, label, amount, order))
+    response = await client_a_admin.get(f'/api/settlements/{run_id}/pdf')
+    assert response.status_code == 200, response.text
+    assert response.content.startswith(b'%PDF-')
+    with psycopg2.connect(SYNC_URL) as conn, conn.cursor() as cur:
+        cur.execute('SELECT snapshot_payload,snapshot_sha256 FROM settlement_run WHERE id=%s', (run_id,))
+        saved, sha = cur.fetchone()
+        cur.execute("""SELECT financial_computation_state(organization_id,'settlement_run',id)->>'parent_digest',
+            bounded_computation_digest(to_jsonb(r)-'updated_at'-ARRAY['heating_advance_payments_total','heating_advance_payments_source'])
+            FROM settlement_run r WHERE id=%s""", (run_id,))
+        actual_parent, legacy_parent = cur.fetchone()
+        assert actual_parent == legacy_parent
+    assert saved == payload
+    assert sha256_hex(canonical_json(saved)) == sha == digest
+    for field, value in [('heating_advance_payments_total', '90'), ('heating_advance_payments_source', "'DERIVED'")]:
+        with psycopg2.connect(SYNC_URL) as conn:
+            with pytest.raises(psycopg2.Error, match='GoBD'):
+                with conn.cursor() as cur:
+                    cur.execute(f'UPDATE settlement_run SET {field}={value} WHERE id=%s', (run_id,))
+            conn.rollback()
+
+
 # ===========================================================================
 # Seed: a full Mischobjekt for org_a (via migrator -> persists across the
 # API client's own transactions). Mirrors engine Golden 5 (the exit scenario).
@@ -1293,7 +1423,8 @@ async def test_advance_proposal_finalized_tenant_cost(client_a_admin, m3_seed):
     assert response.status_code == 200, response.text
     proposal = response.json()
     assert proposal["lease_agreement_id"] == m3_seed["lease_a"]
-    assert proposal["tenant_cost"] == finalized.json()["total_cost"]
+    assert proposal["tenant_cost"] == "643.97"  # 901.85 less 210.00 heating and 47.88 CO2.
+    assert proposal["heating_tenant_cost"] == "257.88"
     assert proposal["months"] == "6"
     from decimal import ROUND_HALF_UP
     assert Decimal(proposal["monthly_amount"]) == (Decimal(proposal["tenant_cost"]) / 6).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
@@ -1336,8 +1467,22 @@ def _proposal_snapshot(cost="1200.00", start="2026-01-01", end="2026-12-31", *, 
         snapshot_payload={"run_type": "BK_MIETER", "period": {"start": start, "end": end},
             "inputs": {"lease_periods": [{"lease_agreement_id": str(lease),
                 "from": tenancy_start or start, "to": tenancy_end}]},
-            "result": {"total_cost": cost, "balance": "-99999.00"}},
+            "result": {"total_cost": cost, "balance": "-99999.00", 'lines': [
+                {'line_type': 'COST', 'category_code': 'GRUNDSTEUER', 'amount': cost}]}},
     )
+
+
+def test_legacy_advance_proposal_splits_only_the_frozen_cost_lines():
+    from app.services.settlement_service import SettlementService
+    from copy import deepcopy
+    run = _proposal_snapshot('2900.00')
+    run.snapshot_payload['result']['lines'] = [
+        {'line_type': 'COST', 'category_code': 'GRUNDSTEUER', 'amount': '1900.00'},
+        {'line_type': 'COST', 'category_code': 'MESSDIENST', 'amount': '1000.00'}]
+    frozen = deepcopy(run.snapshot_payload)
+    result = SettlementService._advance_proposal(run)
+    assert (result['monthly_amount'], result['heating_monthly_amount']) == ('158.33', '83.33')
+    assert run.snapshot_payload == frozen
 
 
 @pytest.mark.parametrize("cost,start,end,tenancy_start,tenancy_end,months,amount", [
@@ -1414,7 +1559,8 @@ async def test_proposal_accept_preserves_history_and_frozen_rows(rent_world, ren
             assert result.status_code == 201, result.text
         proposal = (await api.get(url)).json()
         assert proposal == {"lease_agreement_id": str(world["lease"]), "tenant_cost": "1200.00",
-            "months": "12", "monthly_amount": "100.00", "period_start": "2026-01-01", "period_end": "2026-12-31"}
+            "months": "12", "monthly_amount": "100.00", "heating_monthly_amount": "0.00",
+            "heating_tenant_cost": "0.00", "period_start": "2026-01-01", "period_end": "2026-12-31"}
         assert frozen["balance"] == "201.00"  # Never balance / months or paid advances.
         before = (await rent_db.execute(text("SELECT snapshot_payload,snapshot_sha256 FROM settlement_run WHERE id=:id"), {"id":uuid.UUID(run_id)})).one()
         payments = (await rent_db.execute(text("SELECT to_jsonb(p) FROM payment p WHERE lease_agreement_id=:lease ORDER BY id"), {"lease":world["lease"]})).all()

@@ -9,7 +9,7 @@ Flow (m3-abrechnungs-engine.md section 3.2 / section 7):
      cells as owner attribution (so no cent disappears, section 3.3 / I-D).
   4. total_cost = sum of the tenant's rounded position shares (already cent-
      exact per position -> add without re-rounding, section 4.3).
-  5. balance = total_cost - advance_payments_total.
+  5. balance = total_cost - operating advances - heating advances.
   6. assemble result lines + full computation trace + canonical snapshot payload.
 
 The output is a pure data structure; the service layer persists it (settlement_
@@ -41,6 +41,7 @@ from app.engine.heating_settlement import distribute_heating_position
 from app.engine.rounding import CENT, day_share_for_period
 from app.engine.types import (
     ALL_KEYS,
+    HEATING_CATEGORY_CODES,
     ComputationStep,
     CostPositionInput,
     EngineResult,
@@ -130,7 +131,7 @@ def compute_bk_settlement(inp: SettlementInput) -> EngineResult:
                     pos = replace(pos, heating=replace(pos.heating, slices=slices))
                 positions.append(pos)
             parts.append(replace(inp, period_start=start, period_end=end,
-                cost_positions=tuple(positions), advance_payments_total=Decimal(0)))
+                cost_positions=tuple(positions), advance_payments_total=Decimal(0), heating_advance_payments_total=Decimal(0)))
         inp = replace(inp, allocation_inputs=tuple(parts))
     if inp.allocation_inputs:
         # Provider amounts describe this selected statement, so crossing a
@@ -296,19 +297,35 @@ def _finish_result(inp, cost_lines, computation, vacancy_attr, heating_costs, to
     # 4./5. Soll - Vorauszahlung -> Saldo (section 7), once per statement.
     sort_order = len(cost_lines)
     advance = _money(inp.advance_payments_total)
-    balance = _money(total_cost - advance)
+    heating_advance = _money(inp.heating_advance_payments_total)
+    heating_ids = {pos.cost_entry_id for pos in inp.cost_positions
+        if pos.heating is not None or pos.category_code in HEATING_CATEGORY_CODES}
+    heating_cost = (sum((result.heating_cost_total for result in period_results), Decimal('0.00'))
+        if period_results else sum((line.amount for line in cost_lines if line.cost_entry_id in heating_ids), Decimal('0.00')))
+    balance = _money(total_cost - advance - heating_advance)
 
     # Advance-payment + balance lines (BGH: Abzug der Vorauszahlungen + Saldo).
     lines: list[ResultLine] = list(cost_lines)
     lines.append(
         ResultLine(
             line_type="ADVANCE_PAYMENT",
-            label="Geleistete Vorauszahlungen",
+            label="Betriebskosten-Vorauszahlungen",
             amount=advance,
             sort_order=sort_order,
             note=f"Quelle: {inp.advance_payments_source}",
         )
     )
+    sort_order += 1
+    lines.append(ResultLine(line_type='SUBTOTAL', label='Betriebskosten abzüglich Vorauszahlungen',
+        amount=_money(total_cost - heating_cost - advance), sort_order=sort_order,
+        note=f'Quelle: {inp.advance_payments_source}'))
+    sort_order += 1
+    lines.append(ResultLine(line_type='ADVANCE_PAYMENT', label='Heizkosten-Vorauszahlungen',
+        amount=heating_advance, sort_order=sort_order, note=f'Quelle: {inp.heating_advance_payments_source}'))
+    sort_order += 1
+    lines.append(ResultLine(line_type='SUBTOTAL', label='Heizkosten abzüglich Vorauszahlungen',
+        amount=_money(heating_cost - heating_advance), sort_order=sort_order,
+        note=f'Quelle: {inp.heating_advance_payments_source}'))
     sort_order += 1
     lines.append(
         ResultLine(
@@ -336,6 +353,8 @@ def _finish_result(inp, cost_lines, computation, vacancy_attr, heating_costs, to
         computation=tuple(computation),
         total_cost=_money(total_cost),
         advance_payments_total=advance,
+        heating_advance_payments_total=heating_advance,
+        heating_cost_total=_money(heating_cost),
         balance=balance,
         vacancy_attribution=tuple(vacancy_attr),
         heating_costs=tuple(heating_costs),

@@ -52,6 +52,7 @@ class SettlementRunCreate(BaseModel):
     period_start: date
     period_end: date
     advance_payments_total: str | None = None
+    heating_advance_payments_total: str | None = "0.00"
     management_mandate_id: str | None = None
 
 
@@ -91,6 +92,8 @@ class AdvanceProposalOut(BaseModel):
     tenant_cost: str
     months: str
     monthly_amount: str
+    heating_tenant_cost: str
+    heating_monthly_amount: str
     period_start: date
     period_end: date
 
@@ -102,7 +105,14 @@ class AdvanceProposalAccept(BaseModel):
 
 
 class AdvancePaymentsUpdate(BaseModel):
-    advance_payments_total: str
+    advance_payments_total: str | None = None
+    heating_advance_payments_total: str | None = None
+
+    @model_validator(mode="after")
+    def has_amount(self):
+        if self.advance_payments_total is None and self.heating_advance_payments_total is None:
+            raise ValueError("Bitte mindestens eine Vorauszahlungssumme angeben.")
+        return self
 
 
 class ExternalAmountIn(BaseModel):
@@ -211,6 +221,8 @@ class SettlementRunOut(BaseModel):
     tenant_profile_id: str | None
     advance_payments_total: str | None
     advance_payments_source: str
+    heating_advance_payments_total: str | None
+    heating_advance_payments_source: str
     total_cost: str | None
     balance: str | None
     status: str
@@ -246,8 +258,13 @@ class SettlementBatchOut(BaseModel):
 # ---------------------------------------------------------------------------
 def _dec(value: str, field: str) -> Decimal:
     try:
-        return Decimal(value)
+        amount = Decimal(value)
+        if field == "heating_advance_payments_total" and (not amount.is_finite() or abs(amount) >= Decimal("1000000000000") or amount != amount.quantize(Decimal("0.01"))):
+            raise ValueError("Invalid heating advance amount")
+        return amount
     except (InvalidOperation, ValueError):
+        if field == 'heating_advance_payments_total':
+            raise HTTPException(422, 'Bitte geben Sie die Heizkosten-Vorauszahlung als endlichen, centgenauen EUR-Betrag ein.') from None
         raise HTTPException(status_code=422, detail=f"Invalid decimal for {field}: {value}")
 
 
@@ -311,6 +328,8 @@ def _run_out(run: SettlementRun, lines: list[SettlementLine]) -> SettlementRunOu
         if run.advance_payments_total is not None
         else None,
         advance_payments_source=run.advance_payments_source,
+        heating_advance_payments_total=str(run.heating_advance_payments_total) if run.heating_advance_payments_total is not None else None,
+        heating_advance_payments_source=run.heating_advance_payments_source,
         total_cost=str(run.total_cost) if run.total_cost is not None else None,
         balance=str(run.balance) if run.balance is not None else None,
         status=run.status,
@@ -438,6 +457,8 @@ async def create_settlement(
         advance_payments_total=_dec(body.advance_payments_total, "advance_payments_total")
         if body.advance_payments_total is not None
         else None,
+        heating_advance_payments_total=_dec(body.heating_advance_payments_total, "heating_advance_payments_total")
+        if body.heating_advance_payments_total is not None else None,
         management_mandate_id=uuid.UUID(body.management_mandate_id)
         if body.management_mandate_id
         else None,
@@ -454,7 +475,8 @@ async def set_advance_payments(
 ):
     svc = SettlementService(db, auth.organization_id, auth.user_id)
     run = await svc.set_advance_payments(
-        run_id, _dec(body.advance_payments_total, "advance_payments_total")
+        run_id, _dec(body.advance_payments_total, "advance_payments_total") if body.advance_payments_total is not None else None,
+        heating_amount=_dec(body.heating_advance_payments_total, "heating_advance_payments_total") if body.heating_advance_payments_total is not None else None
     )
     return _run_out(run, [])
 
