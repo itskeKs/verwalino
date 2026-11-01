@@ -440,3 +440,104 @@ def evidence_forms(world, reserve_scenario, browser_world, request):
             attach_artifact(request.node, filename)
 
     browser_world.run(inspect())
+
+
+@given('a WEG with partially assigned Hausgeld and a finalized reserve plan', target_fixture='reserve_scenario')
+def partially_assigned_hausgeld(world, seed_data):
+    from tests.test_reserve_ledger import unit_correction_world
+    world.actor = world.administrator_of('Verwaltung Alpha')
+    world.actor_organization = 'Verwaltung Alpha'
+    w = world.run(unit_correction_world(world.actor, seed_data))
+    response = world.act('PUT', f"/api/units/{w['u1']}", json={'number': 'Wohnung 1 · Vorderhaus Südflügel · Aufgang Änne'})
+    assert response.status_code == 200, response.text
+    run = create(world, '/api/weg-settlements', {'property_id': w['property'], 'economic_plan_id': w['plan'],
+        'period_start': '2025-01-01', 'period_end': '2025-12-31'})
+    w['weg_run'] = run['id']
+    return w
+
+
+@when('I correct the unit contribution by 300 euros')
+def unit_contribution(world, reserve_scenario):
+    w = reserve_scenario
+    response = world.act('POST', f"/api/weg-settlements/{w['run']}/reserve-ledger/overrides", json={
+        'component': 'CONTRIBUTION', 'unit_id': w['u1'], 'amount': '300.00', 'reason': 'Reconciled unit cash'})
+    assert response.status_code == 201, response.text
+
+
+@then('only 200 euros remain assignable and a further 300 euros is refused')
+def unit_contribution_cap(world, reserve_scenario):
+    w = reserve_scenario
+    path = f"/api/weg-settlements/{w['run']}/reserve-ledger"
+    ledger = world.look(world.actor, path).json()
+    assert next(u for u in ledger['contribution_headroom'] if u['unit_id'] == w['u1'])['remaining'] == '200.00'
+    refused = world.act('POST', path + '/overrides', json={'component': 'CONTRIBUTION', 'unit_id': w['u1'],
+        'amount': '300.00', 'reason': 'Would exceed remaining cash'})
+    assert refused.status_code == 422, refused.text
+    assert refused.json()['detail']['code'] == 'RESERVE_CONTRIBUTION_EXCEEDS_BOOKED'
+
+
+@when('I attest a derived contribution or withdrawal total')
+def derived_attestation(world, reserve_scenario):
+    reserve_scenario['refusals'] = [world.act('POST', '/api/financial-input-coverage', json={
+        'subject_kind': 'settlement', 'subject_id': reserve_scenario['run'], 'confirmed_complete': True,
+        'reason': 'Reviewed synthetic totals', 'values': {field: '1000.00'}})
+        for field in ('reserve_contributions_total', 'reserve_withdrawals_total')]
+
+
+@then('each attestation is refused with the derived-total read-only code')
+def derived_attestation_refused(reserve_scenario):
+    for response in reserve_scenario['refusals']:
+        assert response.status_code == 422, response.text
+        assert response.json()['detail']['code'] == 'RESERVE_DERIVED_TOTAL_READ_ONLY'
+
+
+@then('the unit correction shows remaining headroom and preserves inputs after refusal')
+def unit_correction_form(world, reserve_scenario, browser_world, tmp_path):
+    import os
+    from playwright.async_api import expect
+    w = reserve_scenario
+    directory = Path(__file__).resolve().parents[3] / 'docs/assets/reserve-ledger' if os.environ.get('VERWALINO_CAPTURE_DESIGN') == '1' else tmp_path
+
+    async def inspect():
+        page = browser_world.page
+        for kind, route, opening in [('weg', f"/weg-abrechnungen/{w['weg_run']}", 'Rücklagen-Anfangsbestand'),
+                                     ('asset', f"/vermoegensberichte/{w['run']}", 'Rücklage Anfangsbestand')]:
+            await browser_world.visit(route)
+            await expect(page.get_by_label(opening, exact=True)).to_be_visible()
+            for label in ('Rücklagen-Entnahmen (Jahr)', 'Rücklage Zuführung', 'Rücklage Entnahmen'):
+                await expect(page.get_by_label(label, exact=True)).to_have_count(0)
+            for width in (1280, 360):
+                await page.set_viewport_size({'width': width, 'height': 1000})
+                await browser_world.visit(route)
+                await expect(page.get_by_text('Aktueller Anfangsbestand:', exact=False)).not_to_contain_text('Wird geladen')
+                await page.get_by_label(opening, exact=True).scroll_into_view_if_needed()
+                assert await page.evaluate('document.documentElement.scrollWidth <= window.innerWidth')
+                await page.screenshot(path=str(directory / f'round13b-{kind}-after-{width}.png'))
+        await page.get_by_role('button', name='Korrektur erfassen', exact=True).click()
+        await page.get_by_label('Art', exact=True).select_option('CONTRIBUTION')
+        for width in (1280, 360):
+            await page.set_viewport_size({'width': width, 'height': 1000})
+            await page.screenshot(path=str(directory / f'round13b-contribution-after-{width}.png'))
+        unit = page.get_by_role('combobox', name='Einheit *', exact=True)
+        await expect(unit).to_be_visible()
+        await unit.select_option(w['u1'])
+        await expect(page.get_by_text('Noch zuordenbar:', exact=False)).to_contain_text('500,00')
+        await expect(page.get_by_text('Allgemeine Zuführungskorrektur', exact=True)).to_have_count(0)
+        await page.get_by_label('Betrag *', exact=True).fill('500,01')
+        await page.get_by_label('Begründung *', exact=True).fill('Gebuchtes Hausgeld der Einheit anhand der Bankunterlagen geprüft')
+        await page.get_by_role('button', name='Speichern', exact=True).click()
+        await expect(page.get_by_role('alert').last).to_have_text('Die Zuführungskorrektur darf den Rücklagenanteil des gebuchten Hausgelds der Einheit nicht überschreiten.')
+        await expect(page.get_by_label('Betrag *', exact=True)).to_have_value('500,01')
+        for width in (1280, 360):
+            await page.set_viewport_size({'width': width, 'height': 1000})
+            assert await page.evaluate('document.documentElement.scrollWidth <= window.innerWidth')
+            await page.screenshot(path=str(directory / f'round13b-contribution-after-{width}.png'))
+        await page.get_by_label('Betrag *', exact=True).fill('300,00')
+        await page.get_by_role('button', name='Speichern', exact=True).click()
+        await expect(page.get_by_role('dialog')).to_have_count(0)
+        await expect(page.get_by_text('Einheit: Wohnung 1 · Vorderhaus Südflügel · Aufgang Änne', exact=True).last).to_be_visible()
+        await page.get_by_role('button', name='Korrektur erfassen', exact=True).click()
+        await expect(page.get_by_role('combobox', name='Einheit *', exact=True)).to_be_visible()
+        await page.get_by_role('combobox', name='Einheit *', exact=True).select_option(w['u1'])
+        await expect(page.get_by_text('Noch zuordenbar:', exact=False)).to_contain_text('200,00')
+    browser_world.run(inspect())

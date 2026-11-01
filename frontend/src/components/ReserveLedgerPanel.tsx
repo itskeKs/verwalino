@@ -10,7 +10,7 @@ const day = (value: string) => value.split('-').reverse().join('.');
 const labels: Record<string, string> = { PLANNED: 'Geplant (Soll)', CONTRIBUTION: 'Gebuchte Zuführung', WITHDRAWAL: 'Finanzierte Entnahme',
   OVERRIDE: 'Begründete Korrektur', OPENING: 'Anfangsbestand', ADJUSTMENT: 'Sonstige Korrektur', FUNDING: 'Finanzierte Entnahme verknüpfen',
   LATE_CASH: 'Nachträgliche Buchungen zum abgeschlossenen Jahr', UNASSIGNED: 'Ohne Planbezug' };
-const componentLabels: Record<string, string> = { ...labels, WITHDRAWAL: 'Entnahmekorrektur', OPENING: 'Korrektur Anfangsbestand' };
+const componentLabels: Record<string, string> = { ...labels, CONTRIBUTION: 'Zuführungskorrektur', PAYMENT_ASSIGNMENT: 'Gebuchte Zuführung', WITHDRAWAL: 'Entnahmekorrektur', OPENING: 'Korrektur Anfangsbestand' };
 
 export function ReserveLedgerPanel({ runId, propertyId, status, onChanged, onOpeningLoaded, disabled = false, refreshKey = 0 }: {
   runId: string; propertyId: string; status: string; onChanged: () => void; disabled?: boolean; refreshKey?: number;
@@ -20,13 +20,14 @@ export function ReserveLedgerPanel({ runId, propertyId, status, onChanged, onOpe
   const [error, setError] = useState('');
   const [version, setVersion] = useState(0);
   const [open, setOpen] = useState(false);
-  const [component, setComponent] = useState<ReserveComponent>('ADJUSTMENT');
+  const [component, setComponent] = useState<ReserveComponent | 'PAYMENT_ASSIGNMENT'>('ADJUSTMENT');
   const [amount, setAmount] = useState('');
   const [reason, setReason] = useState('');
   const [saving, setSaving] = useState(false);
   const [formError, setFormError] = useState('');
   const [sources, setSources] = useState<{ payments: Payment[]; costs: CostEntry[]; register: RegisterEntry[] } | null>(null);
   const [payment, setPayment] = useState('');
+  const [unit, setUnit] = useState('');
   const [cost, setCost] = useState('');
   const [register, setRegister] = useState('');
 
@@ -55,17 +56,19 @@ export function ReserveLedgerPanel({ runId, propertyId, status, onChanged, onOpe
     if (!reason.trim() || (component !== 'FUNDING' && !/^-?\d+(\.\d{1,2})?$/.test(normalized))) {
       setFormError('Bitte geben Sie einen Betrag mit höchstens zwei Nachkommastellen und eine Begründung ein.'); return;
     }
-    if ((component === 'FUNDING' || component === 'WITHDRAWAL' || component === 'ADJUSTMENT' || (component === 'CONTRIBUTION' && !payment)) && (!cost || !register)) {
+    if ((component === 'FUNDING' || component === 'WITHDRAWAL' || component === 'ADJUSTMENT') && (!cost || !register)) {
       setFormError('Bitte verknüpfen Sie einen bestätigten Kostenbeleg und einen Beschluss aus der Beschluss-Sammlung.'); return;
     }
-    const body: ReserveOverride = { component, amount: component === 'FUNDING' ? '0.00' : normalized, reason: reason.trim() };
-    if (component === 'WITHDRAWAL' || component === 'ADJUSTMENT' || (component === 'CONTRIBUTION' && !payment)) Object.assign(body, { cost_entry_id: cost, register_entry_id: register });
+    const body: ReserveOverride = { component: component === 'PAYMENT_ASSIGNMENT' ? 'CONTRIBUTION' : component, amount: component === 'FUNDING' ? '0.00' : normalized, reason: reason.trim() };
+    if (component === 'WITHDRAWAL' || component === 'ADJUSTMENT') Object.assign(body, { cost_entry_id: cost, register_entry_id: register });
     if (component === 'FUNDING') Object.assign(body, { payment_id: payment, cost_entry_id: cost, register_entry_id: register });
-    else if (component === 'CONTRIBUTION' && payment) body.payment_id = payment;
+    else if (component === 'PAYMENT_ASSIGNMENT') body.payment_id = payment;
+    else if (component === 'CONTRIBUTION') body.unit_id = unit;
     setSaving(true);
     try {
       await addReserveOverride(runId, body);
-      setOpen(false); setAmount(''); setReason(''); setPayment(''); setVersion(v => v + 1); onChanged();
+      if (component === 'PAYMENT_ASSIGNMENT') setComponent('CONTRIBUTION');
+      setOpen(false); setAmount(''); setReason(''); setPayment(''); setUnit(''); setVersion(v => v + 1); onChanged();
     } catch (err) { setFormError(err instanceof Error ? err.message : 'Korrektur konnte nicht gespeichert werden.'); }
     finally { setSaving(false); }
   }
@@ -109,12 +112,20 @@ export function ReserveLedgerPanel({ runId, propertyId, status, onChanged, onOpe
       <DialogTitle>Rücklagenkorrektur</DialogTitle>
       <DialogDescription>Erfassen Sie eine begründete Differenz. Positive Entnahmen vermindern den Bestand; sonstige Korrekturen werden mit Vorzeichen addiert.</DialogDescription>
       <form onSubmit={save}><fieldset disabled={saving || disabled} className="form-grid" style={{ gridTemplateColumns: 'minmax(0, 1fr)' }}>
-        <label>Art<select aria-label="Art" value={component} onChange={e => { setComponent(e.target.value as ReserveComponent); setPayment(''); setCost(''); setRegister(''); }}>
+        <label>Art<select aria-label="Art" value={component} onChange={e => { setComponent(e.target.value as typeof component); setPayment(''); setUnit(''); setFormError(''); setCost(''); setRegister(''); }}>
           {(['ADJUSTMENT', 'OPENING', 'CONTRIBUTION', 'WITHDRAWAL', 'FUNDING'] as const).map(kind => <option key={kind} value={kind}>{componentLabels[kind]}</option>)}
+          {ledger?.entries.some(entry => entry.kind === 'UNASSIGNED') && <option value="PAYMENT_ASSIGNMENT">Gebuchte Zuführung</option>}
         </select></label>
-        {component === 'CONTRIBUTION' && ledger?.entries.some(entry => entry.kind === 'UNASSIGNED') &&
-          <label>Zahlung ohne Planbezug<select value={payment} onChange={e => setPayment(e.target.value)}>
-            <option value="">Allgemeine Zuführungskorrektur</option>
+        {component === 'CONTRIBUTION' && <><label>Einheit *<select required value={unit} onChange={e => setUnit(e.target.value)}>
+          <option value="">Bitte wählen</option>
+          {ledger?.contribution_headroom?.map(item => <option key={item.unit_id} value={item.unit_id}>{item.unit_number}</option>)}
+        </select></label>
+          {unit && <p>Noch zuordenbar: {euro(ledger?.contribution_headroom?.find(item => item.unit_id === unit)?.remaining ?? '0.00')}</p>}
+          <p>Die Zuführungskorrektur ist auf den Rücklagenanteil des gebuchten Hausgelds dieser Einheit begrenzt. Bitte begründen Sie die Zuordnung.</p>
+        </>}
+        {component === 'PAYMENT_ASSIGNMENT' && ledger?.entries.some(entry => entry.kind === 'UNASSIGNED') &&
+          <label>Zahlung ohne Planbezug<select required value={payment} onChange={e => setPayment(e.target.value)}>
+            <option value="">Bitte wählen</option>
             {ledger.entries.filter(entry => entry.kind === 'UNASSIGNED').map(entry =>
               <option key={entry.payment_id} value={entry.payment_id}>{day(entry.date)} · {euro(entry.amount)} · {entry.owner_name || entry.payment_note || 'Ohne Eigentümerzuordnung'}</option>)}
           </select></label>}
@@ -123,7 +134,7 @@ export function ReserveLedgerPanel({ runId, propertyId, status, onChanged, onOpe
           <label>Bestätigter Kostenbeleg *<select aria-label="Bestätigter Kostenbeleg *" required value={cost} onChange={e => setCost(e.target.value)}><option value="">Bitte wählen</option>{reserveCostOptions(sources.costs, cost).map(c => <option key={c.id} value={c.id}>{c.document_number || day(c.invoice_date)} · {euro(c.gross_amount)}</option>)}</select></label>
           <label>Beschluss-Sammlung *<select aria-label="Beschluss-Sammlung *" required value={register} onChange={e => setRegister(e.target.value)}><option value="">Bitte wählen</option>{reserveResolutionOptions(sources.register, register).map(r => <option key={r.id} value={r.id}>Nr. {r.sequence_number} · {r.wording.slice(0, 120)}</option>)}</select></label>
         </> : <p>Finanzierungsbelege werden geladen…</p> : <label>Betrag *<input required inputMode="decimal" value={amount} onChange={e => setAmount(e.target.value)} /></label>}
-        {(component === 'WITHDRAWAL' || component === 'ADJUSTMENT' || (component === 'CONTRIBUTION' && !payment)) &&
+        {(component === 'WITHDRAWAL' || component === 'ADJUSTMENT') &&
           <ReserveEvidenceFields propertyId={propertyId} cost={cost} register={register} onChange={(cost, register) => { setCost(cost); setRegister(register); }} />}
         {component === 'OPENING' && <p>Ein Import des Anfangsbestands ist nur im ersten Rücklagenjahr vor der Finalisierung zulässig. Aktueller Anfangsbestand: {ledger && euro(ledger.opening_balance)}. Geben Sie hier die begründete Differenz ein.</p>}
         <label>Begründung *<textarea required maxLength={2000} value={reason} onChange={e => setReason(e.target.value)} /></label>

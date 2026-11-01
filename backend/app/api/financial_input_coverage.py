@@ -9,7 +9,7 @@ from sqlalchemy.exc import DBAPIError
 from app.core.tenant import AuthContext, get_db, require_write_dep
 from app.repositories.settlement_repo import SettlementRunRepository
 from app.repositories.economic_plan_repo import EconomicPlanRepository
-from app.services.financial_input_policy import FinancialInputPolicy, normalize_values, rental_values
+from app.services.financial_input_policy import FinancialInputPolicy, normalize_values, rental_values, reject_derived_reserve_totals
 from app.services.reserve_ledger_service import _raise_reserve_opening_error
 
 router = APIRouter(prefix="/api/financial-input-coverage", tags=["financial-input-coverage"])
@@ -49,6 +49,7 @@ async def attest(body: Attestation, auth: AuthContext = Depends(require_write_de
     subject = await repo.get_by_id_for_update(body.subject_id)
     if subject is None:
         raise HTTPException(404, "Financial subject not found")
+    reject_derived_reserve_totals(subject, body.subject_kind, body.values)
     # Reuse the same typed adapters as compute/finalize; omitted fields stay unknown.
     try:
         if body.subject_kind == "economic_plan":

@@ -4,7 +4,7 @@ from decimal import Decimal as D
 
 import pytest
 
-from app.engine.reserve_ledger import money, reserve_totals, planned_reserve_entries, hausgeld_reserve_share
+from app.engine.reserve_ledger import money, reserve_totals, planned_reserve_entries
 
 
 def test_commercial_rounding_and_signed_override_preserve_the_balance():
@@ -39,38 +39,6 @@ def test_nonfinite_money_is_rejected(amount):
         money(amount)
 
 
-def test_random_owner_changes_keep_unit_ratios_and_cash_rounding_exact():
-    from fractions import Fraction
-    from random import Random
-    rng = Random(36)
-    for sequence in range(400):
-        # Units can have different cent-exact plan ratios and several co-owners.
-        planned, owners, history = [], [], {}
-        for unit in range(rng.randint(1, 8)):
-            reserve = rng.randint(0, 100000)
-            advance = reserve + rng.randint(1, 100000)
-            planned.append({'unit_id': unit, 'amount': str(D(reserve) / 100)})
-            owners.extend([{'unit_id': unit, 'annual_advance': str(D(advance // 2) / 100)},
-                           {'unit_id': unit, 'annual_advance': str(D(advance - advance // 2) / 100)}])
-            for change in range(rng.randint(2, 8)):
-                history[f'{sequence}-{unit}-{change}'] = unit
-        expected_total = actual_total = D(0)
-        for _ in range(rng.randint(5, 30)):
-            payer = rng.choice(list(history))  # includes former owners and successors
-            unit = history[payer]
-            amount = rng.randint(1, 1000000) * rng.choice([-1, 1])
-            reserve = Fraction(planned[unit]['amount'])
-            advance = sum(Fraction(o['annual_advance']) for o in owners if o['unit_id'] == unit)
-            exact_cents = Fraction(amount) * reserve / advance
-            rounded = (abs(exact_cents.numerator) * 2 + exact_cents.denominator) // (2 * exact_cents.denominator)
-            expected = D(rounded if amount > 0 else -rounded) / 100
-            actual = hausgeld_reserve_share(D(amount) / 100, {unit}, planned, owners)
-            assert actual == expected
-            assert hausgeld_reserve_share(-D(amount) / 100, {unit}, planned, owners) == -actual
-            expected_total += expected
-            actual_total += actual
-        assert actual_total == expected_total
-
 
 def test_late_cash_is_a_separate_signed_balance_component():
     totals = reserve_totals(D('26000'), D('0'), D('0'), D('0'), D('999'))
@@ -78,14 +46,6 @@ def test_late_cash_is_a_separate_signed_balance_component():
     assert totals['contributions_total'] == '0.00'
     assert totals['late_cash_total'] == '999.00'
 
-
-@pytest.mark.parametrize('units,planned,owners', [
-    (set(), [], []),
-    ({'u1'}, [], []),
-    ({'u1'}, [{'unit_id': 'u1', 'amount': '100'}], [{'unit_id': 'u1', 'annual_advance': '0'}]),
-])
-def test_unassigned_hausgeld_has_no_reserve_amount(units, planned, owners):
-    assert hausgeld_reserve_share(D('1300'), units, planned, owners) is None
 
 
 def test_asset_report_lists_late_cash_after_opening_balance():

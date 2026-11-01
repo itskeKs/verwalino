@@ -10,7 +10,7 @@ async def attest_fixture(client, kind, subject_id, values):
 
 
 def weg_values(seed, opening="0.00", withdrawals="0.00"):
-    return {"reserve_opening_balance": opening, "reserve_withdrawals_total": withdrawals,
+    return {"reserve_opening_balance": opening,
         "reserve_override_reason": "Synthetic fixture: reviewed reserve correction",
         "paid_advances": [{"owner_profile_id": seed[key], "paid_total": "0.00"}
                           for key in ("owner_a", "owner_b")]}

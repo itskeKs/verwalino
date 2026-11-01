@@ -136,7 +136,7 @@ async def test_late_hausgeld_uses_frozen_plan_and_storno_amount_after_source_cha
     service.repo = S(finalized=AsyncMock(return_value=[(frozen, None)]), current_scope=AsyncMock(return_value=None),
         plans=AsyncMock(return_value=[]), entries=AsyncMock(return_value=[]), payments=AsyncMock(return_value=[cash]),
         owner_units=AsyncMock(return_value={cash.id: {'a', 'b'} if storno else {'a'}}),
-        cash_plans=AsyncMock(return_value=[replacement, original]))
+        cash_plans=AsyncMock(return_value=[replacement, original]), hausgeld_share=AsyncMock(return_value=Decimal('50')))
     ledger = await service.read(run)
     assert ledger['late_cash_total'] == ('-50.00' if storno else '50.00')
     assert ledger['closing_balance'] == ('0.00' if storno else '100.00')
@@ -434,7 +434,6 @@ async def test_hausgeld_booked_before_plan_stays_unassigned_until_resolved(clien
 async def test_cash_ratio_excludes_units_owned_only_before_or_after_value_date(client_a_admin, seed_data, migrator_session):
     from uuid import UUID
     from types import SimpleNamespace
-    from app.engine.reserve_ledger import hausgeld_reserve_share
     from app.repositories.reserve_ledger_repo import ReserveLedgerRepository
 
     api = client_a_admin
@@ -451,7 +450,10 @@ async def test_cash_ratio_excludes_units_owned_only_before_or_after_value_date(c
     # Unequal unit ratios expose an accidental historical/future unit union.
     planned = [{'unit_id': w['u1'], 'amount': '3600.00'}, {'unit_id': w['u2'], 'amount': '2400.00'}]
     owners = [{'unit_id': w['u1'], 'annual_advance': '7100.00'}, {'unit_id': w['u2'], 'annual_advance': '5900.00'}]
-    assert hausgeld_reserve_share(Decimal('1300'), units[cash], planned, owners) == Decimal('659.15')
+    import json
+    amount = await migrator_session.scalar(text('SELECT reserve_hausgeld_share(1300,:units,CAST(:planned AS jsonb),CAST(:owners AS jsonb))'),
+        {'units': list(units[cash]), 'planned': json.dumps(planned), 'owners': json.dumps(owners)})
+    assert amount == Decimal('659.15')
 
 
 @pytest.mark.asyncio
@@ -959,7 +961,7 @@ async def test_reserve_payout_requires_both_references_at_booking(client_a_admin
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize('missing', ['both', 'cost', 'resolution'])
-@pytest.mark.parametrize('component', ['WITHDRAWAL', 'ADJUSTMENT', 'CONTRIBUTION'])
+@pytest.mark.parametrize('component', ['WITHDRAWAL', 'ADJUSTMENT'])
 async def test_typed_withdrawal_correction_requires_both_references(client_a_admin, seed_data, missing, component):
     api = client_a_admin
     w = await reserve_world(api, seed_data)
@@ -1535,7 +1537,7 @@ async def test_typed_correction_cannot_exceed_confirmed_cost(client_a_admin, see
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize('component', ['WITHDRAWAL', 'CONTRIBUTION'])
+@pytest.mark.parametrize('component', ['WITHDRAWAL'])
 @pytest.mark.parametrize('amount', ['-999999.00', '0.00'])
 async def test_typed_cash_correction_requires_positive_amount(client_a_admin, seed_data, component, amount):
     api = client_a_admin
@@ -1597,7 +1599,6 @@ async def test_booking_includes_typed_corrections_in_cost_cap(client_a_admin, se
     ('duplicate', 'OPENING', '-7.00', None),
     ('sign', 'OPENING', '0.00', 'reserve_amount_invalid'),
     ('sign', 'WITHDRAWAL', '-1.00', 'reserve_amount_invalid'),
-    ('sign', 'CONTRIBUTION', '0.00', 'reserve_amount_invalid'),
     ('cap', 'ADJUSTMENT', '-50000.00', 'reserve_payout_evidence_required'),
     ('payout', 'WITHDRAWAL', '1200.00', 'reserve_payout_evidence_required'),
     ('correction', 'ADJUSTMENT', '1200.00', 'reserve_payout_evidence_required'),
@@ -1661,7 +1662,7 @@ async def test_typed_withdrawal_target_without_evidence_is_refused(client_a_admi
         'values': {**paid(w), 'reserve_withdrawals_total': '1200.00', 'reserve_override_reason': 'Unsupported manual target'},
         'confirmed_complete': True, 'reason': 'Reviewed records'})
     assert response.status_code == 422, response.text
-    assert response.json()['detail']['code'] == 'RESERVE_PAYOUT_EVIDENCE_REQUIRED'
+    assert response.json()['detail']['code'] == 'RESERVE_DERIVED_TOTAL_READ_ONLY'
 
 
 @pytest.mark.asyncio
@@ -1820,3 +1821,226 @@ async def test_database_guards_keep_cost_chain_cap(client_a_admin, seed_data, mi
                     (organization_id,property_id,settlement_run_id,entry_date,component,amount,reason,cost_entry_id,register_entry_id,created_by)
                     VALUES (:org,:property,:run,'2025-02-01','WITHDRAWAL',4000,'Cost correction chain',:cost,:register,:actor)"""), values)
     assert refusal.value.orig.__cause__.constraint_name == 'reserve_payout_evidence_required'
+
+
+async def unit_correction_world(api, seed):
+    w = _seed_weg(seed)
+    w['cash'] = await payment(api, w, '1300.00', kind='HAUSGELD_VORSCHUSS')
+    report = await api.post('/api/weg-settlements/asset-reports', json={
+        'property_id': w['property'], 'period_start': '2025-01-01', 'period_end': '2025-12-31'})
+    assert report.status_code == 201, report.text
+    w['run'] = report.json()['id']
+    assigned = await api.post(f"/api/weg-settlements/{w['run']}/reserve-ledger/overrides", json={
+        'component': 'CONTRIBUTION', 'payment_id': w['cash'], 'amount': '100.00', 'reason': 'Partial cash assignment'})
+    assert assigned.status_code == 201, assigned.text
+    w['plan'] = await _create_and_finalize_plan(api, w)
+    return w
+
+
+@pytest.mark.asyncio
+async def test_unit_contribution_corrections_consume_only_remaining_booked_headroom(client_a_admin, seed_data):
+    api = client_a_admin
+    w = await unit_correction_world(api, seed_data)
+    path = f"/api/weg-settlements/{w['run']}/reserve-ledger"
+    body = {'component': 'CONTRIBUTION', 'unit_id': w['u1'], 'amount': '300.00', 'reason': 'Reconcile booked unit reserve share'}
+    first = await api.post(path + '/overrides', json=body)
+    assert first.status_code == 201, first.text
+    ledger = (await api.get(path)).json()
+    row = next(row for row in ledger['entries'] if row.get('id') == first.json()['id'])
+    assert row['unit_id'] == w['u1'] and row['unit_number'] == '1'
+    assert next(u for u in ledger['contribution_headroom'] if u['unit_id'] == w['u1'])['remaining'] == '200.00'
+    refused = await api.post(path + '/overrides', json=body)
+    assert refused.status_code == 422, refused.text
+    assert refused.json()['detail']['code'] == 'RESERVE_CONTRIBUTION_EXCEEDS_BOOKED'
+    final = await api.post(path + '/overrides', json={**body, 'amount': '200.00'})
+    assert final.status_code == 201, final.text
+    assert (await api.get(path)).json()['contributions_total'] == '600.00'
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('amount,reason,code', [
+    ('500.01', 'Above booked amount', 'RESERVE_CONTRIBUTION_EXCEEDS_BOOKED'),
+    ('0.00', 'Zero correction', 'RESERVE_AMOUNT_INVALID'),
+    ('-1.00', 'Negative correction', 'RESERVE_AMOUNT_INVALID'),
+    ('1.00', ' ', 'RESERVE_CORRECTION_REASON_REQUIRED'),
+])
+async def test_unit_contribution_correction_rejects_invalid_inputs(client_a_admin, seed_data, amount, reason, code):
+    w = await unit_correction_world(client_a_admin, seed_data)
+    response = await client_a_admin.post(f"/api/weg-settlements/{w['run']}/reserve-ledger/overrides", json={
+        'component': 'CONTRIBUTION', 'unit_id': w['u1'], 'amount': amount, 'reason': reason})
+    assert response.status_code == 422, response.text
+    assert response.json()['detail']['code'] == code
+
+
+@pytest.mark.asyncio
+async def test_unit_contribution_correction_hides_other_properties_and_organizations(client_a_admin, client_b_admin, seed_data):
+    api = client_a_admin
+    w = await reserve_world(api, seed_data)
+    other = _seed_weg(seed_data)
+    body = {'component': 'CONTRIBUTION', 'unit_id': other['u1'], 'amount': '1.00', 'reason': 'Foreign unit'}
+    path = f"/api/weg-settlements/{w['run']}/reserve-ledger/overrides"
+    assert (await api.post(path, json=body)).status_code == 404
+    body['unit_id'] = w['u1']
+    assert (await client_b_admin.post(path, json=body)).status_code == 404
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('evidenced', [False, True])
+async def test_free_and_evidenced_contribution_corrections_are_refused(client_a_admin, seed_data, evidenced):
+    api = client_a_admin
+    w = await reserve_world(api, seed_data)
+    body = {'component': 'CONTRIBUTION', 'amount': '1.00', 'reason': 'No unit reference'}
+    if evidenced:
+        body.update({k.removeprefix('reserve_'): v for k, v in (await reserve_evidence(api, w)).items()})
+    refused = await api.post(f"/api/weg-settlements/{w['run']}/reserve-ledger/overrides", json=body)
+    assert refused.status_code == 422, refused.text
+    assert refused.json()['detail']['code'] == 'RESERVE_CONTRIBUTION_UNIT_REQUIRED'
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('family', ['weg', 'asset_report'])
+@pytest.mark.parametrize('field', ['reserve_contributions_total', 'reserve_withdrawals_total'])
+async def test_attesting_derived_reserve_totals_is_precisely_refused(client_a_admin, seed_data, family, field):
+    api = client_a_admin
+    w = await reserve_world(api, seed_data)
+    if family == 'asset_report':
+        report = await api.post('/api/weg-settlements/asset-reports', json={
+            'property_id': w['property'], 'period_start': '2025-01-01', 'period_end': '2025-12-31'})
+        w['run'] = report.json()['id']
+    refused = await api.post('/api/financial-input-coverage', json={'subject_kind': 'settlement', 'subject_id': w['run'],
+        'confirmed_complete': True, 'reason': 'Reviewed records', 'values': {field: '1000.00'}})
+    assert refused.status_code == 422, refused.text
+    assert refused.json()['detail'] == {'code': 'RESERVE_DERIVED_TOTAL_READ_ONLY',
+        'message': 'Zuführungen und Entnahmen werden aus Buchungen abgeleitet; Korrekturen erfolgen mit Bezug im Rücklagenbuch.'}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('case', ['no_unit', 'above_cap', 'remaining', 'wrong_property'])
+async def test_database_enforces_unit_contribution_cap_as_app_rw(client_a_admin, seed_data, app_rw_session, case):
+    w = await unit_correction_world(client_a_admin, seed_data)
+    if case == 'remaining':
+        accepted = await client_a_admin.post(f"/api/weg-settlements/{w['run']}/reserve-ledger/overrides", json={
+            'component': 'CONTRIBUTION', 'unit_id': w['u1'], 'amount': '400.00', 'reason': 'First correction'})
+        assert accepted.status_code == 201, accepted.text
+    unit = None if case == 'no_unit' else _seed_weg(seed_data)['u1'] if case == 'wrong_property' else w['u1']
+    await app_rw_session.execute(text("SELECT set_config('app.current_org_id',:org,true),set_config('app.current_user_id',:actor,true)"),
+        {'org': str(seed_data['org_a_id']), 'actor': str(seed_data['user_a_admin_id'])})
+    with pytest.raises(DBAPIError) as refused:
+        async with app_rw_session.begin_nested():
+            await app_rw_session.execute(text("""INSERT INTO reserve_ledger_entry
+                (organization_id,property_id,settlement_run_id,entry_date,component,amount,reason,created_by)
+                VALUES (:org,:property,:run,'2025-12-31','CONTRIBUTION',:amount,'No unit',:actor)""") if case == 'no_unit' else text("""
+                INSERT INTO reserve_ledger_entry
+                (organization_id,property_id,settlement_run_id,entry_date,component,amount,reason,created_by,unit_id)
+                VALUES (:org,:property,:run,'2025-12-31','CONTRIBUTION',:amount,'Unit cap',:actor,:unit)"""),
+                {'org': seed_data['org_a_id'], 'actor': seed_data['user_a_admin_id'], 'property': w['property'],
+                 'run': w['run'], 'unit': unit, 'amount': Decimal('500.01') if case == 'above_cap' else Decimal('101.00')})
+    assert refused.value.orig.sqlstate == '23514'
+
+
+@pytest.mark.asyncio
+async def test_random_unit_cash_ratios_use_the_canonical_sql_and_exact_reversals(migrator_session):
+    import json
+    from fractions import Fraction
+    from random import Random
+    rng = Random(36)
+    cases = []
+    for _ in range(400):
+        reserve = rng.randint(0, 100000)
+        advance = reserve + rng.randint(1, 100000)
+        amount = rng.randint(1, 1000000) * rng.choice([-1, 1])
+        exact = Fraction(amount * reserve, advance)
+        rounded = (abs(exact.numerator) * 2 + exact.denominator) // (2 * exact.denominator)
+        expected = Decimal(rounded if amount > 0 else -rounded) / 100
+        cases.append({'cash': str(Decimal(amount) / 100), 'expected': str(expected),
+            'planned': [{'unit_id': 'u1', 'amount': str(Decimal(reserve) / 100)}],
+            'owners': [{'unit_id': 'u1', 'annual_advance': str(Decimal(advance // 2) / 100)},
+                       {'unit_id': 'u1', 'annual_advance': str(Decimal(advance - advance // 2) / 100)}]})
+    failures = await migrator_session.scalar(text("""SELECT count(*) FROM jsonb_array_elements(CAST(:cases AS jsonb)) c
+        WHERE reserve_hausgeld_share((c->>'cash')::numeric,ARRAY['u1'],c->'planned',c->'owners')<>(c->>'expected')::numeric
+        OR reserve_hausgeld_share(-(c->>'cash')::numeric,ARRAY['u1'],c->'planned',c->'owners')<> -(c->>'expected')::numeric"""),
+        {'cases': json.dumps(cases)})
+    assert failures == 0
+    for units, planned, owners in [([], [], []), (['u1'], [], []),
+            (['u1'], [{'unit_id': 'u1', 'amount': '100'}], [{'unit_id': 'u1', 'annual_advance': '0'}])]:
+        assert await migrator_session.scalar(text('SELECT reserve_hausgeld_share(1300,:units,CAST(:planned AS jsonb),CAST(:owners AS jsonb))'),
+            {'units': units, 'planned': json.dumps(planned), 'owners': json.dumps(owners)}) is None
+
+
+@pytest.mark.asyncio
+async def test_zero_reserve_plan_keeps_zero_planned_rows_and_allows_finalization(client_a_admin, seed_data):
+    api = client_a_admin
+    w = _seed_weg(seed_data)
+    plan = await _create_and_finalize_plan(api, w, reserve='0.00')
+    created = await api.post('/api/weg-settlements', json={'property_id': w['property'], 'economic_plan_id': plan,
+        'period_start': '2025-01-01', 'period_end': '2025-12-31'})
+    assert created.status_code == 201, created.text
+    w['run'] = created.json()['id']
+    ledger = await api.get(f"/api/weg-settlements/{w['run']}/reserve-ledger")
+    assert ledger.status_code == 200, ledger.text
+    assert len(ledger.json()['entries']) == 24
+    assert {r['amount'] for r in ledger.json()['entries']} == {'0.00'}
+    assert (await finalize(api, w))['status'] == 'finalized'
+
+
+@pytest.mark.asyncio
+async def test_storno_cannot_finalize_a_unit_correction_without_booked_backing(client_a_admin, seed_data):
+    api = client_a_admin
+    w = await unit_correction_world(api, seed_data)
+    path = f"/api/weg-settlements/{w['run']}/reserve-ledger"
+    response = await api.post(path + '/overrides', json={'component': 'CONTRIBUTION', 'unit_id': w['u1'],
+        'amount': '500.00', 'reason': 'Remaining booked reserve share'})
+    assert response.status_code == 201, response.text
+    assert (await api.post(f"/api/payments/{w['cash']}/reverse", json={'note': 'Returned receipt'})).status_code == 201
+    values = {'bank_balances': [
+        {'bank_account_id': w['bank_giro'], 'label': 'Giro', 'account_type': 'LAUFEND', 'balance': '0.00'},
+        {'bank_account_id': w['bank_ruecklage'], 'label': 'Reserve', 'account_type': 'RUECKLAGE', 'balance': '0.00'},
+    ], 'receivables': [], 'payables': []}
+    await attest_fixture(api, 'settlement', w['run'], values)
+    refused = await api.post(f"/api/weg-settlements/asset-reports/{w['run']}/finalize", json=values)
+    assert refused.status_code == 422, refused.text
+    assert refused.json()['detail']['code'] == 'RESERVE_CONTRIBUTION_EXCEEDS_BOOKED'
+    # Retained corrections stay unchanged; replacement cash cannot be credited twice.
+    await payment(api, w, '1300.00', kind='HAUSGELD_VORSCHUSS')
+    await attest_fixture(api, 'settlement', w['run'], values)
+    # Automatic credit consumes all replacement cash, so the old correction is still unsupported.
+    refused = await api.post(f"/api/weg-settlements/asset-reports/{w['run']}/finalize", json=values)
+    assert refused.status_code == 422, refused.text
+
+
+@pytest.mark.asyncio
+async def test_report_refuses_unsupported_unit_corrections_before_building_the_statement(monkeypatch):
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+    from uuid import uuid4
+    from fastapi import HTTPException
+    from app.services.reserve_ledger_service import ReserveLedgerService
+    from app.services.weg_settlement_service import WegSettlementService, AssetReportInputs
+    ledger = {'entries': [], 'frozen': False, 'opening_balance': '0.00', 'contributions_total': '500.00',
+        'withdrawals_total': '0.00', 'overrides_total': '0.00', 'late_cash_total': '0.00'}
+    monkeypatch.setattr(ReserveLedgerService, 'read', AsyncMock(return_value=ledger))
+    session = SimpleNamespace(scalar=AsyncMock(return_value=True))
+    run = SimpleNamespace(id=uuid4(), property_id=uuid4(), status='draft',
+        period_start=date(2025, 1, 1), period_end=date(2025, 12, 31))
+    service = WegSettlementService(session, uuid4(), uuid4())
+    with pytest.raises(HTTPException) as refused:
+        await service._compute_report_engine(run, AssetReportInputs(bank_balances=[], receivables=[], payables=[]))
+    assert refused.value.status_code == 422
+    assert refused.value.detail['code'] == 'RESERVE_CONTRIBUTION_EXCEEDS_BOOKED'
+
+
+@pytest.mark.asyncio
+async def test_partial_period_unit_correction_uses_the_covering_frozen_plan(client_a_admin, seed_data):
+    api = client_a_admin
+    w = await unit_correction_world(api, seed_data)
+    report = await api.post('/api/weg-settlements/asset-reports', json={
+        'property_id': w['property'], 'period_start': '2025-01-01', 'period_end': '2025-06-30'})
+    assert report.status_code == 201, report.text
+    path = f"/api/weg-settlements/{report.json()['id']}/reserve-ledger"
+    ledger = (await api.get(path)).json()
+    assert ledger['contributions_total'] == '100.00'
+    assert next(u for u in ledger['contribution_headroom'] if u['unit_id'] == w['u1'])['remaining'] == '500.00'
+    accepted = await api.post(path + '/overrides', json={'component': 'CONTRIBUTION', 'unit_id': w['u1'],
+        'amount': '500.00', 'reason': 'Reconcile booked first-half Hausgeld against annual plan'})
+    assert accepted.status_code == 201, accepted.text
+    assert (await api.get(path)).json()['contributions_total'] == '600.00'

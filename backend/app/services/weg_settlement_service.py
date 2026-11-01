@@ -633,7 +633,10 @@ class WegSettlementService:
                 )
             )
 
-        ledger = await ReserveLedgerService(self._session, self._org_id, self._user_id).read(run)
+        reserves = ReserveLedgerService(self._session, self._org_id, self._user_id)
+        ledger = await reserves.read(run)
+        if not ledger['frozen']:
+            await reserves.require_contribution_backing(run)
         if any(row['kind'] == 'UNASSIGNED' for row in ledger['entries']):
             raise HTTPException(422, {'code': 'RESERVE_ASSIGNMENT_REQUIRED', 'message': 'Bitte klären Sie alle Zahlungen ohne Planbezug vor der Berechnung.'})
         if ledger.get('unlinked_payment_ids'):
@@ -781,7 +784,10 @@ class WegSettlementService:
     ) -> tuple[VermoegensberichtInput, AssetReportResult]:
         from app.repositories.property_repo import PropertyRepository  # noqa: F401
 
-        ledger = await ReserveLedgerService(self._session, self._org_id, self._user_id).read(run)
+        reserves = ReserveLedgerService(self._session, self._org_id, self._user_id)
+        ledger = await reserves.read(run)
+        if not ledger['frozen']:
+            await reserves.require_contribution_backing(run)
         if any(row['kind'] == 'UNASSIGNED' for row in ledger['entries']):
             raise HTTPException(422, {'code': 'RESERVE_ASSIGNMENT_REQUIRED', 'message': 'Bitte klären Sie alle Zahlungen ohne Planbezug vor der Berechnung.'})
         if ledger.get('unlinked_payment_ids'):

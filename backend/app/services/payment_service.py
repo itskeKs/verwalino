@@ -398,7 +398,6 @@ class PaymentService:
         await self._reserve_evidence(payment, complete=True)
         reserve_plan_unresolved = False
         if payment.payment_type == 'HAUSGELD_VORSCHUSS':
-            from app.engine.reserve_ledger import hausgeld_reserve_share, plan_reserve_entries
             from app.repositories.reserve_ledger_repo import ReserveLedgerRepository
             await FinancialScopeService(self._session, self._org_id, self._user_id).enter(payment)
             reserves = ReserveLedgerRepository(self._session, self._org_id)
@@ -409,9 +408,7 @@ class PaymentService:
                 if not plan.snapshot_payload or not {'inputs', 'result'} <= plan.snapshot_payload.keys():
                     continue
                 units = (await reserves.owner_units([payment])).get(payment.id, set())
-                planned = plan_reserve_entries(plan.snapshot_payload, plan.reserve_contribution_total, plan.period_start)
-                reserve_plan_unresolved = hausgeld_reserve_share(
-                    payment.amount, units, planned, plan.snapshot_payload['result']['owners']) is None
+                reserve_plan_unresolved = await reserves.hausgeld_share(payment.amount, units, plan) is None
 
         now = datetime.now(timezone.utc)
         payment.status = "booked"

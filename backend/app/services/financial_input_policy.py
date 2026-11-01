@@ -43,6 +43,13 @@ def incomplete(code, component):
         {"code": code, "component": component, "action": "Review complete period inputs and record a coverage declaration"}]})
 
 
+def reject_derived_reserve_totals(subject, kind, values):
+    if (kind == 'settlement' and subject.run_type in ('WEG_JAHRESABRECHNUNG', 'VERMOEGENSBERICHT')
+            and any(values.get(field) is not None for field in ('reserve_contributions_total', 'reserve_withdrawals_total'))):
+        from app.services.reserve_ledger_service import DERIVED_TOTAL_READ_ONLY
+        raise HTTPException(422, DERIVED_TOTAL_READ_ONLY)
+
+
 class FinancialInputPolicy:
     def __init__(self, session, org_id, user_id):
         self.repo = CoverageDeclarationRepository(session, org_id)
@@ -58,6 +65,7 @@ class FinancialInputPolicy:
     def validate_values(self, subject, values, kind):
         values = normalize_values(values)
         reserve_fields = {'reserve_opening_balance', 'reserve_withdrawals_total', 'reserve_contributions_total'}
+        reject_derived_reserve_totals(subject, kind, values)
         if any(value is None for key, value in values.items() if key not in reserve_fields):
             incomplete("missing_input", self.component(subject, kind))
         if any(values.get(key) is not None for key in reserve_fields) and not values.get('reserve_override_reason', '').strip():

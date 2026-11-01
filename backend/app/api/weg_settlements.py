@@ -257,6 +257,7 @@ class ReserveOverrideRequest(BaseModel):
     payment_id: uuid.UUID | None = None
     cost_entry_id: uuid.UUID | None = None
     register_entry_id: uuid.UUID | None = None
+    unit_id: uuid.UUID | None = None
 
 
 @router.get('/{run_id}/reserve-ledger')
@@ -279,6 +280,9 @@ async def reserve_override(run_id: uuid.UUID, body: ReserveOverrideRequest,
         code = getattr(exc.orig, 'sqlstate', None)
         if code in {'23514', '23505', '23503'}:
             constraint = getattr(getattr(exc.orig, '__cause__', None), 'constraint_name', None)
+            if constraint == 'reserve_contribution_exceeds_booked':
+                from app.services.reserve_ledger_service import CONTRIBUTION_EXCEEDS_BOOKED
+                raise HTTPException(422, CONTRIBUTION_EXCEEDS_BOOKED) from None
             if constraint == 'reserve_assignment_amount':
                 raise HTTPException(422, {'code': 'RESERVE_ASSIGNMENT_EXCEEDS_PAYMENT',
                     'message': 'Die Rücklagenzuordnung muss zwischen null und dem vorzeichenbehafteten Zahlungsbetrag liegen.'}) from None

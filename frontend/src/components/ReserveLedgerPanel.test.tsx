@@ -62,7 +62,7 @@ it('shows unassigned Hausgeld at its full amount and saves an audited payment as
   expect(screen.getByRole('alert')).toHaveTextContent('Planbezug');
   expect(screen.getByText(/1\.300,00/, { selector: 'td' })).toBeInTheDocument();
   fireEvent.click(screen.getByRole('button', { name: 'Korrektur erfassen' }));
-  fireEvent.change(screen.getByLabelText('Art'), { target: { value: 'CONTRIBUTION' } });
+  fireEvent.change(screen.getByLabelText('Art'), { target: { value: 'PAYMENT_ASSIGNMENT' } });
   fireEvent.change(screen.getByLabelText('Zahlung ohne Planbezug'), { target: { value: 'unknown-cash' } });
   fireEvent.change(screen.getByLabelText('Betrag *'), { target: { value: '600,00' } });
   fireEvent.change(screen.getByLabelText('Begründung *'), { target: { value: 'Beleg und Einheit geprüft' } });
@@ -72,13 +72,7 @@ it('shows unassigned Hausgeld at its full amount and saves an audited payment as
   })));
   await waitFor(() => expect(screen.queryByText('Ohne Planbezug')).not.toBeInTheDocument());
   fireEvent.click(screen.getByRole('button', { name: 'Korrektur erfassen' }));
-  await chooseEvidence();
-  fireEvent.change(screen.getByLabelText('Betrag *'), { target: { value: '5,00' } });
-  fireEvent.change(screen.getByLabelText('Begründung *'), { target: { value: 'Weitere Zuführung geprüft' } });
-  fireEvent.click(screen.getByRole('button', { name: /^Speichern$/ }));
-  await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(expect.any(String), expect.objectContaining({
-    body: JSON.stringify({ component: 'CONTRIBUTION', amount: '5.00', reason: 'Weitere Zuführung geprüft', cost_entry_id: 'cost-1', register_entry_id: 'register-1' }),
-  })));
+  expect(screen.getByLabelText('Einheit *')).toBeRequired();
 });
 
 it('separates cash from planning and saves a reasoned signed correction', async () => {
@@ -157,4 +151,32 @@ it('filters funding evidence and retains selected values after sources become in
   expect(retained).toHaveValue('cost-1');
   expect(screen.getByLabelText('Beschluss-Sammlung *')).toHaveValue('register-1');
   expect(within(retained).getAllByRole('option').map(row => row.getAttribute('value'))).toEqual(['', 'cost-1']);
+});
+
+
+it('requires a unit and reason, shows remaining headroom and retains inputs on refusal', async () => {
+  const message = 'Die Zuführungskorrektur darf den Rücklagenanteil des gebuchten Hausgelds der Einheit nicht überschreiten.';
+  const fetchMock = vi.fn(async (_url: string, init?: RequestInit) => init?.method === 'POST'
+    ? json({ detail: { code: 'RESERVE_CONTRIBUTION_EXCEEDS_BOOKED', message } }, 422)
+    : json({ ...ledger, contribution_headroom: [{ unit_id: 'unit-1', unit_number: 'Wohnung Änne Groß mit langem Namen', remaining: '1234.56' }] }));
+  vi.stubGlobal('fetch', fetchMock);
+  render(<ReserveLedgerPanel runId="run-1" propertyId="property-1" status="draft" onChanged={() => {}} />);
+  fireEvent.click(await screen.findByRole('button', { name: 'Korrektur erfassen' }));
+  fireEvent.change(screen.getByLabelText('Art'), { target: { value: 'CONTRIBUTION' } });
+  expect(screen.queryByText('Allgemeine Zuführungskorrektur')).not.toBeInTheDocument();
+  expect(screen.queryByLabelText('Bestätigter Kostenbeleg *')).not.toBeInTheDocument();
+  const unit = await screen.findByLabelText('Einheit *');
+  expect(unit).toBeRequired();
+  fireEvent.change(unit, { target: { value: 'unit-1' } });
+  expect(screen.getByText(/Noch zuordenbar:/)).toHaveTextContent('1.234,56');
+  fireEvent.change(screen.getByLabelText('Betrag *'), { target: { value: '1234,57' } });
+  fireEvent.change(screen.getByLabelText('Begründung *'), { target: { value: 'Hausgeld geprüft' } });
+  fireEvent.click(screen.getByRole('button', { name: 'Speichern' }));
+  expect(await screen.findByRole('alert')).toHaveTextContent(message);
+  expect(unit).toHaveValue('unit-1');
+  expect(screen.getByLabelText('Betrag *')).toHaveValue('1234,57');
+  expect(screen.getByLabelText('Begründung *')).toHaveValue('Hausgeld geprüft');
+  expect(fetchMock).toHaveBeenCalledWith(expect.any(String), expect.objectContaining({ body: JSON.stringify({
+    component: 'CONTRIBUTION', amount: '1234.57', reason: 'Hausgeld geprüft', unit_id: 'unit-1',
+  }) }));
 });

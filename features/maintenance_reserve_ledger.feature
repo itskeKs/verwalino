@@ -47,3 +47,18 @@ Feature: Maintenance reserve ledger
   Scenario: Reserve evidence is required in payment and correction forms
     Given a WEG with a finalized reserve plan and a booked reserve contribution
     Then payment and correction forms require cost receipt and resolution on desktop and mobile
+
+  Scenario: A unit contribution correction uses only remaining booked Hausgeld
+    Given a WEG with partially assigned Hausgeld and a finalized reserve plan
+    When I correct the unit contribution by 300 euros
+    Then only 200 euros remain assignable and a further 300 euros is refused
+
+  Scenario: Derived reserve totals cannot be attested
+    Given a WEG with a finalized reserve plan and a booked reserve contribution
+    When I attest a derived contribution or withdrawal total
+    Then each attestation is refused with the derived-total read-only code
+
+  @browser
+  Scenario: A unit contribution correction shows its cap on desktop and mobile
+    Given a WEG with partially assigned Hausgeld and a finalized reserve plan
+    Then the unit correction shows remaining headroom and preserves inputs after refusal
