@@ -865,8 +865,10 @@ async def test_cli_filter_never_visits_an_unrelated_lifecycle_row(rent_world, re
     assert visited == [w['org']]
 
 
-async def test_cli_continues_after_one_due_organization_fails(rent_world, rent_db, export_store, monkeypatch, caplog):
+@pytest.mark.parametrize('nested', [False, True])
+async def test_cli_continues_after_one_due_organization_fails(rent_world, rent_db, export_store, monkeypatch, capsys, nested):
     from app import organization_deletion as cli
+    from app.services.organization_deletion_service import lifecycle_lock
     w = rent_world
     for foreign in (False, True):
         async with api_client(w, foreign=foreign) as api:
@@ -876,32 +878,58 @@ async def test_cli_continues_after_one_due_organization_fails(rent_world, rent_d
     await rent_db.commit()
     first, second = sorted((w['org'], w['foreign_org']))
     original = cli.run_deletion
+    failed_sessions = []
     async def fail_first(db, org, **kwargs):
         if org == first:
+            failed_sessions.append(db)
+            if nested:
+                await db.begin_nested()
+            await lifecycle_lock(db, org, nowait=True)
+            await db.execute(text('SELECT 1 FROM organization_deletion WHERE organization_id=:org FOR UPDATE NOWAIT'), {'org': org})
             await db.execute(text("UPDATE organization SET name='Must roll back' WHERE id=:org"), {'org': org})
             raise RuntimeError('Synthetic organization erasure failure')
+        assert not failed_sessions[0].in_transaction()
+        # This new session must acquire every lock from the failed organization
+        # before processing the next one, without waiting for teardown.
+        await lifecycle_lock(db, first, nowait=True)
+        await db.execute(text('SELECT 1 FROM organization_deletion WHERE organization_id=:org FOR UPDATE NOWAIT'), {'org': first})
         return await original(db, org, **kwargs)
     monkeypatch.setattr(cli, 'run_deletion', fail_first)
-    result = await cli.run(organization_ids=[w['org'], w['foreign_org']])
+    run = cli.run
+    results = []
+    async def run_owned():
+        result = await run(organization_ids=[first, second])
+        results.append(result)
+        return result
+    monkeypatch.setattr(cli, 'run', run_owned)
+    monkeypatch.setattr('sys.argv', ['organization_deletion', 'organization-deletion-run'])
+    with pytest.raises(SystemExit) as stopped:
+        await asyncio.to_thread(cli.main)
+    assert stopped.value.code == 1
+    output = capsys.readouterr()
+    assert 'Organizations erased: 1' in output.out
+    assert str(first) in output.err
+    result, = results
     assert result.completed == 1
     assert result.failed == [first]
-    states = dict((await rent_db.execute(text('SELECT organization_id,status FROM organization_deletion WHERE organization_id IN (:org,:foreign_org)'), w)).all())
-    assert states == {first: 'cooling_off', second: 'deleted_pending_retention'}
-    assert await rent_db.scalar(text('SELECT name FROM organization WHERE id=:org'), {'org': first}) == 'T23 synthetic'
-    assert str(first) in caplog.text
-    await rent_db.rollback()
+    async with rent_db.begin():
+        states = dict((await rent_db.execute(text('SELECT organization_id,status FROM organization_deletion WHERE organization_id IN (:org,:foreign_org)'), w)).all())
+        assert states == {first: 'cooling_off', second: 'deleted_pending_retention'}
+        assert await rent_db.scalar(text('SELECT name FROM organization WHERE id=:org'), {'org': first}) == 'T23 synthetic'
     monkeypatch.setattr(cli, 'run_deletion', original)
-    result = await cli.run(organization_ids=[w['org'], w['foreign_org']])
+    result = await run(organization_ids=[first, second])
     assert result.completed == 1
     assert result.failed == []
-    assert await rent_db.scalar(text('SELECT status FROM organization_deletion WHERE organization_id=:org'), {'org': first}) == 'deleted_pending_retention'
-    await rent_db.rollback()
+    async with rent_db.begin():
+        assert await rent_db.scalar(text('SELECT status FROM organization_deletion WHERE organization_id=:org'), {'org': first}) == 'deleted_pending_retention'
 
 
 def test_cli_reports_failure_with_nonzero_exit_and_organization_ids(monkeypatch, capsys):
     from types import SimpleNamespace
     from app import organization_deletion as cli
-    failed = uuid.uuid4()
+    # This CI UUID is masked as an IBAN by diagnostic logging. CLI summaries
+    # must still report the operator's exact failed organization IDs.
+    failed = uuid.UUID('2dd33013-e544-49df-945c-3f1f7a9587f2')
     async def mixed_result():
         return SimpleNamespace(completed=1, failed=[failed], cleanup_pending=[])
     monkeypatch.setattr(cli, 'run', mixed_result)

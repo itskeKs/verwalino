@@ -43,8 +43,16 @@ async def run(*, organization_ids=None):
                 # cleanup; neither failure can poison the next organization.
                 async with AsyncSession(engine) as db:
                     async with db.begin():
-                        await db.execute(text("SELECT set_config('app.current_org_id',:org,true)"), {'org': str(org)})
-                        erased = await run_deletion(db, org, nowait=True)
+                        finished = False
+                        try:
+                            await db.execute(text("SELECT set_config('app.current_org_id',:org,true)"), {'org': str(org)})
+                            erased = await run_deletion(db, org, nowait=True)
+                            finished = True
+                        finally:
+                            if not finished:
+                                # Roll back the whole organization, including
+                                # open savepoints, before closing its session.
+                                await db.rollback()
             except ErasureFileCleanupError:
                 result.completed += bool(erased)
                 result.cleanup_pending.append(org)

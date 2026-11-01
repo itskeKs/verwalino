@@ -105,7 +105,8 @@ intake workers retry the saved completion output in a fresh transaction, retaini
 In hosted mode, the operator's `quota-recount` caps database lock waits likewise and refuses an already
 held directory lock immediately; either contention exits with code 1 and the same retry message.
 Deletion CLI admission uses try-advisory locks and `FOR UPDATE NOWAIT` per organization;
-contended organizations are reported for retry while the run continues. Tests pass their
+failed organizations roll back their transaction, including open savepoints, and close
+their session before the run continues. Contended organizations are reported for retry. Tests pass their
 own organization IDs; deletion cleanup touches only those rows and uses `NOWAIT`.
 
 On SQLAlchemy lock timeout, the test-session `handle_error` listener opens a separate
