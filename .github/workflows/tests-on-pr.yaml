@@ -1,7 +1,6 @@
 # Quality gate for pull requests and main: backend (ruff + pytest against
 # Postgres), frontend (eslint + tsc + vitest), Markdown links and agent rules.
-# Every step runs the same Makefile target a developer runs locally, so this
-# file only adds the CI environment (test services, toolchains, caches).
+# Tests use the local Makefile targets; CI selects disjoint backend shards.
 
 name: Tests on PR
 
@@ -24,10 +23,14 @@ defaults:
     shell: bash
 
 jobs:
-  backend:
-    name: Backend (ruff, pytest)
+  backend-shards:
+    name: Backend shard ${{ matrix.shard }}/4
     runs-on: ubuntu-latest
-    timeout-minutes: 75
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4]
     services:
       mailpit:
         image: axllent/mailpit:v1.32.0@sha256:0790692be935ea4420d085694f7985b1f692ca6a8771ab0e0bd8ba75ac180498
@@ -79,16 +82,21 @@ jobs:
       # application roles and publishes 127.0.0.1:55432, the only address the
       # destructive test harness accepts (backend/app/core/declaration_test_database.py).
       # Tests such as test_deployment_upgrade.py address the container by that name.
+      # Each matrix job has its own hosted VM, Postgres and Mailpit: fixed names
+      # and ports never share a host or database across shards.
       - name: Start test database
         run: docker compose -f infra/docker-compose.declaration-test.yml up -d --wait postgres
 
       - name: Lint (ruff)
+        if: matrix.shard == 1
         run: make lint-backend
 
       - name: Installer contract tests
+        if: matrix.shard == 1
         run: make test-installer
 
       - name: Validate hosted Caddy wrapper including site and staging
+        if: matrix.shard == 1
         run: |
           docker run --rm --network none --read-only --cap-drop ALL --cap-add NET_BIND_SERVICE --security-opt no-new-privileges \
             --env VERWALINO_DOMAIN=validation.invalid \
@@ -98,13 +106,68 @@ jobs:
             --mount "type=bind,src=$PWD/infra/Caddyfile.site,dst=/etc/caddy/Caddyfile.site,readonly" \
             caddy:2.10.2-alpine caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile
 
-      - name: Backend tests (pytest, whole suite)
-        run: make test-backend
+      - name: Verify every backend test belongs to exactly one shard
+        if: matrix.shard == 1
+        run: |
+          python3 -B scripts/test-backend-shards.py
+          source scripts/test-env.sh
+          cd backend
+          uv run --locked --extra dev --extra ops --extra ocr python ../scripts/backend_test_shards.py check 4
+
+      - name: Backend tests (pytest shard)
+        run: |
+          cp backend/.test_durations backend/test-durations-${{ matrix.shard }}.json
+          make test-backend PYTEST_ARGS="-q -p no:randomly --splits 4 --group ${{ matrix.shard }} --splitting-algorithm least_duration --durations-path test-durations-${{ matrix.shard }}.json --store-durations --clean-durations"
+
+      - name: Upload shard duration measurements
+        uses: actions/upload-artifact@v4
+        with:
+          name: backend-test-durations-${{ matrix.shard }}
+          path: backend/test-durations-${{ matrix.shard }}.json
+          if-no-files-found: error
 
       - name: Hosted API scenarios (Postgres and Mailpit)
         env:
           HV_DEPLOYMENT_MODE: hosted
-        run: make test-bdd-hosted
+        run: make test-bdd-hosted PYTEST_ARGS="-q -p no:randomly --splits 4 --group ${{ matrix.shard }} --splitting-algorithm least_duration"
+
+  # Keep the branch-protection context stable and fail closed on failed,
+  # skipped or cancelled shards. Ruff and the existing backend checks run in
+  # shard 1; its success alone can never satisfy this required check.
+  backend:
+    name: Backend (ruff, pytest)
+    needs: [backend-shards]
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Require all backend shards
+        env:
+          SHARD_RESULT: ${{ needs.backend-shards.result }}
+        run: test "$SHARD_RESULT" = success
+
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Download shard duration measurements
+        uses: actions/download-artifact@v4
+        with:
+          pattern: backend-test-durations-*
+          path: ${{ runner.temp }}/backend-durations
+          merge-multiple: true
+
+      # Main runs publish a complete refresh candidate, never write to the
+      # repository. A maintainer reviews and commits the downloaded file.
+      - name: Merge duration measurements
+        run: python3 scripts/backend_test_shards.py merge backend/.test_durations "${{ runner.temp }}"/backend-durations/test-durations-*.json
+
+      - name: Upload duration refresh candidate
+        uses: actions/upload-artifact@v4
+        with:
+          name: backend-test-durations
+          path: backend/.test_durations
+          include-hidden-files: true
+          if-no-files-found: error
 
   frontend:
     name: Frontend (eslint, tsc, vitest)
