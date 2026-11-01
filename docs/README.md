@@ -62,6 +62,7 @@ Start with the project overview, then choose a page for the task at hand.
 | [Frontend design contract](../DESIGN.md) | UI components, copy, layouts, formats, and screenshot references. |
 | [Logo](assets/brand/README.md) | Wordmark, standalone mark, app icon, and their size and colour rules. |
 | [Executable scenarios](../features/README.md) | Gherkin specifications, bindings, and scenario execution. |
+| [Acceptance from the user's side](acceptance/README.md) | Core journeys with hand-worked expected values, sample data, and the user check. |
 
 | Research and reference | Purpose |
 | --- | --- |

@@ -346,3 +346,16 @@ or component tests (including `bank_statement_import.feature`). Browser scenario
 retain visible review, confirmation, persistence, navigation and cancellation.
 Other scripts in `scripts/acceptance/` remain for later batches; this batch adds no
 new product journeys.
+
+## Journey twins
+
+Each core journey in [docs/acceptance/journeys.md](../docs/acceptance/journeys.md) has an
+automated twin under `features/journeys/`, tagged `@journey` and, like every browser scenario,
+`@browser`: it walks the journey through the real UI and asserts its expected values word for
+word. The values come from the journey the owner approved, never from the code. A journey that
+depends on the date sets a fixed reference date in its `Given` steps, never the clock. A twin
+grows with the fixes: a finding from a blind acceptance run first fails as a step in the twin of
+its journey, then the fix turns it green. Twins use the browser harness above and run with
+`make test-browser`, in CI on every PR; they do not replace the blind run, which checks that a
+user finds the way at all. A twin is written with the first issue that touches its journey, not
+in advance, so none exists yet.
