@@ -1663,6 +1663,47 @@ async def test_reservation_is_committed_before_provider_and_failure_without_usag
     assert run is not None and run.status == "FAILED" and run.input_tokens == item.input_tokens
 
 
+@pytest.mark.parametrize('failure_point', ['load', 'transition', 'quota', 'checkpoint', 'publish'])
+async def test_database_lock_timeout_retries_pipeline_without_losing_usage(seed_data, monkeypatch, failure_point):
+    from app.core.locking import LockTimeoutError
+    from app.services import quota_service
+
+    lease, document_key, store = await _seed_pipeline_import(seed_data, make_text_pdf('Teilungserklärung'))
+    provider = _RecordingProvider(document_key)
+    pipeline = DeclarationPipeline(provider, store=store)
+
+    async def locked(*args, **kwargs):
+        if failure_point == 'quota':
+            from asyncpg import LockNotAvailableError
+            raise LockNotAvailableError('synthetic quota lock timeout')
+        raise LockTimeoutError('synthetic database contention')
+
+    if failure_point == 'quota':
+        monkeypatch.setattr(quota_service, 'require_ai_budget', locked)
+    else:
+        monkeypatch.setattr(pipeline, f'_{failure_point}', locked)
+    before = datetime.now(timezone.utc)
+    await pipeline.run(lease)
+    after = datetime.now(timezone.utc)
+    async with get_tenant_session(lease.organization_id) as session:
+        item = await session.scalar(select(DeclarationImport).where(DeclarationImport.id == lease.import_id))
+        run = await session.scalar(select(DeclarationExtractionRun).where(DeclarationExtractionRun.import_id == lease.import_id))
+    assert item.status == 'RETRY_WAIT'
+    assert item.current_stage == 'retry_wait'
+    assert item.error_code == 'WORKER_INTERRUPTED'
+    # Host and database clocks may differ by tens of milliseconds in either direction.
+    assert abs(item.next_attempt_at - (after + timedelta(minutes=5))) <= (after - before) + timedelta(seconds=5)
+    assert item.lease_token is None and item.lease_owner is None
+    if failure_point in {'load', 'transition', 'quota'}:
+        assert provider.calls == [] and run is None
+        assert item.input_tokens == item.output_tokens == item.attempt_count == 0
+    else:
+        assert run.status == 'FAILED' and run.error_code == 'WORKER_INTERRUPTED'
+        assert item.input_tokens > 0 and item.output_tokens > 0 and item.attempt_count > 0
+        assert (run.input_tokens, run.output_tokens, run.estimated_cost_usd) == (
+            item.input_tokens, item.output_tokens, item.estimated_cost_usd)
+
+
 @pytest.mark.asyncio
 async def test_depleted_recheck_output_budget_skips_estimator_and_persists_warning(seed_data) -> None:
     lease, document_key, store = await _seed_pipeline_import(
