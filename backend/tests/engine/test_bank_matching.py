@@ -19,6 +19,17 @@ OWNER = uuid.UUID(int=3)
 IBAN = "DE02120300000000202051"
 
 
+@pytest.mark.parametrize('purpose', ['Heizkosten Januar 2026', 'Heizung 01/2026', 'HK 01/2026', 'Warmmiete 01/2026'])
+def test_heating_hints_and_warm_rent_include_the_heating_component(purpose):
+    charges = tenant_expected_charges(LeaseChargeInput(LEASE, date(2026, 1, 1), None,
+        Decimal('750'), Decimal('150'), heating_advance_payment=Decimal('90')),
+        date(2026, 1, 1), date(2026, 1, 31))
+    target = replace(tenant(), open_items=account_statement(charges, []).open_items)
+    match, = suggest_matches(row('990' if purpose.startswith('Warm') else '90', purpose), [target])
+    assert {line.payment_type for line in match.lines} == (
+        {'KALTMIETE', 'NK_VORAUSZAHLUNG', 'HK_VORAUSZAHLUNG'} if purpose.startswith('Warm') else {'HK_VORAUSZAHLUNG'})
+
+
 def row(amount="850.00", purpose="Warmmiete Januar 2026", **changes):
     return replace(BankImportRow(date(2026, 1, 2), date(2026, 1, 3), Decimal(amount) if isinstance(amount, str) else amount, "Max Müller", IBAN, purpose), **changes)
 

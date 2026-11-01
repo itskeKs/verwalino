@@ -1605,11 +1605,11 @@ remove `/srv/verwalino/logs/.deploy.lock` once no deploy is running. A stale `/s
 (a run was killed) is removed by hand once no backup is running. Never
 run `docker compose down -v` or delete the volumes.
 
-## Migration compatibility: 0029–0149
+## Migration compatibility: 0029–0150
 
 | Revisions | Effect on existing data and runtime compatibility |
 | --- | --- |
-| 0029–0122 | Adds financial, declaration, source custody and review data structures and guards. The 0028 runtime cannot interpret the new schema or enforce its later security rules. The 0028→0149 rehearsal preserves all old columns and rows with synthetic organization, user, document, draft/failed import and failed extraction-run data, but does not prove every live-data combination. |
+| 0029–0122 | Adds financial, declaration, source custody and review data structures and guards. The 0028 runtime cannot interpret the new schema or enforce its later security rules. The 0028→0150 rehearsal preserves all old columns and rows with synthetic organization, user, document, draft/failed import and failed extraction-run data, but does not prove every live-data combination. |
 | 0123 | Adds nullable replacement evidence and changes exception-completion functions/outcomes. Existing rows retain their old disposition; old clients cannot interpret new replacement outcomes. Downgrade refuses retained evidence. |
 | 0124–0125 | Adds bank transactions and a nullable payment link, then enforces tenant/account coherence and immutable booked links. A 0122 database has no pre-existing links; inconsistent intermediate data is not silently repaired. |
 | 0126–0127 | Adds append-only rent history and frozen special levies; replaces financial/source/report adapters. No old financial rows are rewritten. Older runtimes do not understand the new obligations/history. Their downgrades can drop populated new tables; they are not a safe recovery path. |
@@ -1626,14 +1626,15 @@ run `docker compose down -v` or delete the volumes.
 | 0146 (accepted source) | Adds member-checked organization usage and reference-count functions for deduplicated document bytes (including visual extracts), complete property/unit counts and monthly USD usage. Adds nullable, nonnegative letter size metadata; old originals remain unchanged and `quota-recount` records legacy sizes in the existing audit log. Downgrade removes the functions and reconstructible size column, preserving originals and events. Older runtimes do not enforce hosted quotas. |
 | 0147 (accepted source) | Adds organization erasure state, import admission metadata and lifecycle guards. Populated downgrade refuses. |
 | 0148 (accepted source) | Reconciles expired personal retention in the aggregate preview; immutable vouchers/originals stay unchanged. Populated downgrade refuses to discard the reconciled decision semantics. |
-| 0149 (head; parent 0148) | Adds the append-only maintenance reserve ledger with tenant/source RLS, coherent payout/cost/resolution links, lifecycle protection and computation-source locks. Adds counterparty-neutral `RUECKLAGENENTNAHME` payments. The retention catalog discovers the immutable evidence through its DELETE guard. Existing finalized snapshots and booked payments remain untouched. Populated ledger or payout evidence blocks downgrade; an empty downgrade restores the previous payment vocabulary and source digest. |
+| 0149 (parent 0148) | Adds the append-only maintenance reserve ledger with tenant/source RLS, coherent payout/cost/resolution links, lifecycle protection and computation-source locks. Adds counterparty-neutral `RUECKLAGENENTNAHME` payments. The retention catalog discovers the immutable evidence through its DELETE guard. Existing finalized snapshots and booked payments remain untouched. Populated ledger or payout evidence blocks downgrade; an empty downgrade restores the previous payment vocabulary and source digest. |
+| 0150 (head; parent 0149) | Adds separate nonnegative heating advances to leases/history, tenant-bound HK payments and independent settlement totals/sources. Old frozen snapshots and digests retain their original shape. Empty downgrade restores the exact financial guard definitions; populated heating advances, HK payments or heating statement totals refuse downgrade. |
 
 DDL uses the existing PostgreSQL/Alembic transaction; 0123 also takes financial
 and ACL locks with NOWAIT table locks. Contention or unexpected data/function
 definitions must abort, not trigger repair/deletion. A rollback-only synthetic
-0028→0149 rehearsal compares every old table column/row and retained RLS flags;
-the 0122→0149, 0139→0149 and accepted-source 0140→0149, 0141→0149 and
-0142→0149, 0143→0149, 0144→0149, 0145→0149, 0146→0149, 0147→0149 and 0148→0149 (accepted sources) rehearsals also
+0028→0150 rehearsal compares every old table column/row and retained RLS flags;
+the 0122→0150, 0139→0150 and accepted-source 0140→0150, 0141→0150 and
+0142→0150, 0143→0150, 0144→0150, 0145→0150, 0146→0150, 0147→0150, 0148→0150 and 0149→0150 (accepted sources) rehearsals also
 compare existing ACLs, allowing only the explicit organization INSERT revocation;
 it does not prove live data validity or cross-version runtime compatibility.
 
@@ -1655,10 +1656,10 @@ When adding a migration, update these together in the same release:
 
 ## Deployment boundary and accepted head
 
-The reviewed code targets **0149**. `backend/app/deployment.py` retains `TARGET`,
+The reviewed code targets **0150**. `backend/app/deployment.py` retains `TARGET`,
 `SUPPORTED`, `release_head()` and the read-only schema/role/runtime checks used
-by the migration rehearsals. Those checks accept measured **0028 → 0149**,
-**0122 → 0149**, **0139 → 0149**, **0140 → 0149**, **0141 → 0149**, **0142 → 0149**, **0143 → 0149**, **0144 → 0149**, **0145 → 0149**, **0146 → 0149**, **0147 → 0149**, **0148 → 0149** (accepted sources), or **0149 → 0149**; unknown,
+by the migration rehearsals. Those checks accept measured **0028 → 0150**,
+**0122 → 0150**, **0139 → 0150**, **0140 → 0150**, **0141 → 0150**, **0142 → 0150**, **0143 → 0150**, **0144 → 0150**, **0145 → 0150**, **0146 → 0150**, **0147 → 0150**, **0148 → 0150**, **0149 → 0150** (accepted sources), or **0150 → 0150**; unknown,
 missing, multiple or intermediate revisions are rejected. These are code and
 rehearsal boundaries, not a measurement of a running installation.
 

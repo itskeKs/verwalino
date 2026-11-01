@@ -73,7 +73,7 @@ async def test_notes_remain_editable_after_booking(client_a_admin, lease_seed):
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("field", ["base_rent", "advance_payment", "deposit"])
+@pytest.mark.parametrize("field", ["base_rent", "advance_payment", "heating_advance_payment", "deposit"])
 async def test_booked_lease_rejects_amount_changes(client_a_admin, lease_seed, field):
     lease = await create_lease(client_a_admin, lease_seed)
     book_payment(lease_seed, lease["id"])
@@ -100,7 +100,8 @@ async def test_unbooked_amount_update_preserves_notes(client_a_admin, lease_seed
 
 
 @pytest.mark.asyncio
-async def test_finalized_lease_locks_amounts_but_not_end(client_a_admin, lease_seed):
+@pytest.mark.parametrize('field', ['base_rent', 'heating_advance_payment'])
+async def test_finalized_lease_locks_amounts_but_not_end(client_a_admin, lease_seed, field):
     lease = await create_lease(client_a_admin, lease_seed)
     with psycopg2.connect(MIGRATOR_SYNC_URL) as conn:
         with conn.cursor() as cur:
@@ -110,7 +111,7 @@ async def test_finalized_lease_locks_amounts_but_not_end(client_a_admin, lease_s
                 VALUES (%s,%s,%s,%s,'BK_MIETER','2025-01-01','2025-12-31',
                         'MANUAL','finalized',%s,'m3.1.0',now())""",
                 (str(uuid.uuid4()), str(lease_seed["org_a_id"]), lease_seed["property"], lease["id"], "a" * 64))
-    response = await client_a_admin.patch(f"/api/leases/{lease['id']}", json={"base_rent": "550.00"})
+    response = await client_a_admin.patch(f"/api/leases/{lease['id']}", json={field: "550.00"})
     assert response.status_code == 409, response.text
     response = await client_a_admin.patch(f"/api/leases/{lease['id']}", json={"valid_to": "2025-12-31"})
     assert response.status_code == 200, response.text

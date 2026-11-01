@@ -116,6 +116,24 @@ async def test_warm_rent_suggestions_booking_audit_retention_and_statement(bank_
             await bank_db.execute(text('UPDATE payment SET bank_transaction_id=NULL WHERE bank_transaction_id=:id'), {'id': uuid.UUID(tid)})
 
 
+async def test_heating_purpose_is_suggested_and_booked_as_a_tenant_heating_advance(bank_seed, bank_db):
+    api, ids = bank_seed
+    changed = await api.patch(f"/api/leases/{ids['lease']}", json={'heating_advance_payment': '90.00'})
+    assert changed.status_code == 200, changed.text
+    tid = await transaction(bank_db, ids, amount='90.00', purpose='Heizkosten Juni 2025')
+    response = await listing(api, ids)
+    assert response.status_code == 200, response.text
+    suggestion, = response.json()['items'][0]['suggestions']
+    line, = suggestion['lines']
+    assert (line['payment_type'], line['amount']) == ('HK_VORAUSZAHLUNG', '90.00')
+    response = await api.post(f'{BASE}/{tid}/assign', json={'lines': [{
+        'payment_type': 'HK_VORAUSZAHLUNG', 'amount': '90.00', 'period_year': 2025, 'period_month': 6,
+        'lease_agreement_id': str(ids['lease']), 'tenant_profile_id': str(ids['tenant'])}]})
+    assert response.status_code == 200, response.text
+    payment, = response.json()['payments']
+    assert payment['payment_type'] == 'HK_VORAUSZAHLUNG' and payment['status'] == 'booked'
+
+
 async def test_explicit_month_not_value_month_and_partial_splits(bank_seed, bank_db):
     api, ids = bank_seed
     await transaction(bank_db, ids, purpose='Warmmiete März 2025')

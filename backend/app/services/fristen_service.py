@@ -34,9 +34,11 @@ from app.engine.fristen import (
 )
 from app.engine.mietkonto import (
     LeaseChargeInput,
+    RentChangeInput,
     account_statement,
     tenant_expected_charges,
 )
+from app.repositories.lease_rent_change_repo import LeaseRentChangeRepository
 from app.repositories.fristen_repo import FristenRepository
 from app.repositories.payment_repo import PaymentRepository
 from app.services.dunning_service import _to_payment_input
@@ -219,7 +221,9 @@ class FristenService:
                     valid_from=lease.valid_from,
                     valid_to=inc_to,
                     base_rent=lease.base_rent,
-                    advance_payment=lease.advance_payment,
+                    advance_payment=lease.advance_payment, heating_advance_payment=lease.heating_advance_payment,
+                    rent_changes=tuple(RentChangeInput(row.valid_from, row.base_rent, row.advance_payment, row.heating_advance_payment)
+                        for row in await LeaseRentChangeRepository(self._session, self._org_id).list_for_lease(lease.id)),
                 )
                 charges = tenant_expected_charges(lc, period_start, period_end)
                 payments = await self._payments.list_for_lease(lease.id)

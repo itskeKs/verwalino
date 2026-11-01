@@ -23,6 +23,7 @@ class LeaseRentChange(Base, UUIDPrimaryKeyMixin, TimestampMixin):
         ),
         CheckConstraint("base_rent >= 0 AND base_rent < 'Infinity'::numeric", name="base_rent_finite_nonnegative"),
         CheckConstraint("advance_payment >= 0 AND advance_payment < 'Infinity'::numeric", name="advance_finite_nonnegative"),
+        CheckConstraint("heating_advance_payment >= 0 AND heating_advance_payment < 'Infinity'::numeric", name="heating_advance_finite_nonnegative"),
     )
 
     organization_id: Mapped[uuid.UUID] = mapped_column(
@@ -32,3 +33,4 @@ class LeaseRentChange(Base, UUIDPrimaryKeyMixin, TimestampMixin):
     valid_from: Mapped[date] = mapped_column(Date, nullable=False)
     base_rent: Mapped[Decimal] = mapped_column(Numeric(14, 2), nullable=False)
     advance_payment: Mapped[Decimal] = mapped_column(Numeric(14, 2), nullable=False)
+    heating_advance_payment: Mapped[Decimal] = mapped_column(Numeric(14, 2), nullable=False, default=Decimal('0.00'), server_default='0')

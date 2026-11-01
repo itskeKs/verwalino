@@ -41,6 +41,19 @@ YEAR_START = date(2025, 1, 1)
 YEAR_END = date(2025, 12, 31)
 
 
+def test_heating_advance_is_day_exact_across_a_partial_month_and_rent_change():
+    lease = LeaseChargeInput(_U(90), date(2025, 3, 15), None, Decimal('750'), Decimal('150'),
+        heating_advance_payment=Decimal('90'), rent_changes=(mietkonto.RentChangeInput(
+            date(2025, 3, 25), Decimal('780'), Decimal('160'), heating_advance_payment=Decimal('100')),))
+    charges = tenant_expected_charges(lease, date(2025, 3, 1), date(2025, 4, 30))
+    assert [(c.period_month, c.payment_type, c.amount) for c in charges] == [
+        (3, 'KALTMIETE', Decimal('418.06')), (3, 'NK_VORAUSZAHLUNG', Decimal('84.52')),
+        (3, 'HK_VORAUSZAHLUNG', Decimal('51.61')), (4, 'KALTMIETE', Decimal('780.00')),
+        (4, 'NK_VORAUSZAHLUNG', Decimal('160.00')), (4, 'HK_VORAUSZAHLUNG', Decimal('100.00'))]
+    zero = replace(lease, heating_advance_payment=Decimal(0), rent_changes=())
+    assert len(tenant_expected_charges(zero, date(2025, 4, 1), date(2025, 4, 30))) == 2
+
+
 @pytest.mark.parametrize("month,amount,first_end,lease_end,frozen,expected", [
     (None, "1200.00", date(2025, 3, 31), date(2025, 9, 30), "300.00", "900.00"),
     (3, "100.00", date(2025, 3, 14), date(2025, 3, 20), "45.16", "54.84"),

@@ -23,7 +23,7 @@ from app.repositories.payment_repo import PaymentRepository
 from app.services.payment_service import _to_payment_input
 from app.services.report_service import Money, ReportService
 
-RENT_TYPES = frozenset({'KALTMIETE', 'NK_VORAUSZAHLUNG'})
+RENT_TYPES = frozenset({'KALTMIETE', 'NK_VORAUSZAHLUNG', 'HK_VORAUSZAHLUNG'})
 
 
 class DashboardKpis(BaseModel):
@@ -115,9 +115,9 @@ class DashboardKpiService:
 
         amounts = [p.amount for p in payments]
         for lease in leases:
-            amounts.extend((lease.base_rent, lease.advance_payment))
+            amounts.extend((lease.base_rent, lease.advance_payment, lease.heating_advance_payment))
             for change in histories[lease.id]:
-                amounts.extend((change.base_rent, change.advance_payment))
+                amounts.extend((change.base_rent, change.advance_payment, change.heating_advance_payment))
         # Include room for the full supported calendar, all rows, rate-days
         # and aggregation; never inherit a caller's low Decimal precision.
         with localcontext() as arithmetic:
@@ -146,10 +146,10 @@ class DashboardKpiService:
             lease_input = LeaseChargeInput(
                 lease_agreement_id=lease.id, valid_from=lease.valid_from,
                 valid_to=db_exclusive_to_engine_inclusive(lease.valid_to),
-                base_rent=lease.base_rent, advance_payment=lease.advance_payment,
+                base_rent=lease.base_rent, advance_payment=lease.advance_payment, heating_advance_payment=lease.heating_advance_payment,
                 rent_changes=tuple(RentChangeInput(
                     valid_from=row.valid_from, base_rent=row.base_rent,
-                    advance_payment=row.advance_payment,
+                    advance_payment=row.advance_payment, heating_advance_payment=row.heating_advance_payment,
                 ) for row in histories[lease.id]),
             )
             lease_payments = assigned[lease.id]
