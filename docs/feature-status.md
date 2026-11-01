@@ -7,9 +7,10 @@ Short paths: `api/ services/ engine/ models/ workers/ core/` are under
 repository root. Task IDs (`T…`) are the historical task numbers of the former MVP task list (see git
 history). Update this page in the same PR whenever a feature's status changes.
 
-The hosted instance is being set up on the hosted server (#6) through `scripts/self-host.sh`
-and the [hosted deploy workflow](../DEPLOY.md#hosted-server). It shares the portable
-stack's limits: declaration import/Q&A, SMTP and automatic invoice OCR are disabled.
+The hosted instance uses the portable base through the [hosted deploy workflow](../DEPLOY.md#hosted-server).
+The optional [production app overlay](../DEPLOY.md#production-app-mode-and-mail-opt-in) enables the
+owner's mode and public-host configuration; mail also needs private SMTP settings. Declaration
+import/Q&A and automatic invoice OCR remain disabled in this stack.
 
 The bilingual public website has a separate image and main-push publish/sign/deploy workflow (#24),
 with an optional closed container behind Caddy. Operator enablement and the first live rollout are
@@ -20,7 +21,7 @@ pending; registration stays closed and legal review remains with #26. See the
 
 | Feature | Status | Location |
 | --- | --- | --- |
-| Deployment mode | ✅ validated selfhost/hosted policy, public mode/version/mail-capability metadata, setup/signup gates; remaining hosted features deferred | `core/config.py`, `core/deployment_policy.py`, issue #18 |
+| Deployment mode | ✅ validated selfhost/hosted policy, public mode/version/mail-capability metadata, setup/signup gates; managed production app overlay opt-in, live mail/signup acceptance pending; remaining hosted features deferred | `core/config.py`, `core/deployment_policy.py`, `infra/docker-compose.hosted-app.yml`, issues #18, #150; [operator steps](../DEPLOY.md#production-app-mode-and-mail-opt-in) |
 | Organization quotas | ✅ hosted free constants (2 GiB, 25 MiB/upload, 20 properties, 200 units), atomic write refusals, usage card; model calls disabled by default, shared monthly USD cap over existing ledgers; overrides deferred | `core/quotas.py`, `services/quota_service.py`, `components/OrganizationQuotaCard.tsx`, issue #22 |
 | Organization export/import and deletion | 🟡 owner-admin archive v2 export/import with remapping and atomic refusals; preview, fresh export, seven-day read-only deletion/cancel and operator erasure with bounded lock waits; protected historical evidence adapters and real fresh-install acceptance remain | `api/organizations.py`, `services/organization_export_service.py`, `services/organization_import_service.py`, `services/organization_deletion_service.py`, `components/OrganizationDataCard.tsx`, [format and limits](operations/organization-export.md), issue #23 |
 | Browser first-run setup | ✅ selfhost-only, one-time installer token, 24-hour expiry, atomic first organization/admin; real-stack acceptance pending | `api/setup.py`, `pages/SetupPage.tsx`, `scripts/self-host.sh`, issue #8 |

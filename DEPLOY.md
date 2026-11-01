@@ -22,6 +22,8 @@ setup-token flow. Its manifest relies on the `selfhost` default; it does not for
 `HV_DEPLOYMENT_MODE` from the caller or accept it in `.env.selfhost`. Its HTTP/HTTPS
 `VERWALINO_MODE` is a separate transport choice. Use a separately managed deployment
 to run hosted mode; do not use the portable installer to start a hosted service.
+The managed server's [production app opt-in](#production-app-mode-and-mail-opt-in)
+provides that separate deployment path while retaining the portable base manifest.
 
 For the retained `docker-compose.prod.yml`, `.env.example` is the environment
 template; keep the populated `.env` private with mode 0600. Set the required
@@ -1290,7 +1292,7 @@ Everything belongs to the admin user, who is also a member of `docker`; nothing 
 |---|---|---|
 | `/srv/verwalino/app` | 755 | checkout of this repository; the deploy script moves it to the release tag |
 | `/srv/verwalino/config` | **700** | `.env.selfhost` (**0600**, the installer insists), `deploy_key` (read-only GitHub deploy key for `git fetch`) and the installer's lock directory |
-| `/srv/verwalino/backups` | 700 | `<timestamp>[-label]/` backups (directories 0700, files 0600) |
+| `/srv/verwalino/backups` | 700 | `<timestamp>[.NNNNNN][-label]/` backups (directories 0700, files 0600) |
 | `/srv/verwalino/logs` | 750 | `deploy-<timestamp>.log` (0640), `backup.log` |
 | `/srv/verwalino/data` | 755 | reserved and empty: the stack keeps its data in the Docker volumes `verwalino_pgdata` and `verwalino_documents`, under Docker's data root |
 
@@ -1348,7 +1350,8 @@ an IP-only entry does not match a host name in `DEPLOY_HOST`.
 2. When that run succeeds, [Deploy hosted server](.github/workflows/deploy.yaml) (`workflow_run`) calls
    `ssh chris@host vX.Y.Z`. **Actions → Deploy hosted server → Run workflow** with a `tag` redeploys any
    published tag; on the server, `/srv/verwalino/app/scripts/deploy-server.sh vX.Y.Z` does the same.
-3. [`scripts/deploy-server.sh`](scripts/deploy-server.sh) first checks that the external network
+3. [`scripts/deploy-server.sh`](scripts/deploy-server.sh) validates the optional private
+   [production app config](#production-app-mode-and-mail-opt-in) before any side effects. It checks that the external network
    `verwalino-staging_proxy` exists if the operator's `config/Caddyfile.hosted` exists; a missing network
    exits 2 with its creation command before checkout, backup, pinning or service operations. It then
    recovers the existing site image reference, refusing before checkout if it cannot. It fetches tags
@@ -1356,10 +1359,15 @@ an IP-only entry does not match a host name in `DEPLOY_HOST`.
    after checkout, before pulling the image, backup, image pinning or the installer. Validation uses
    read-only mounts/root, no network, `--cap-drop ALL --cap-add NET_BIND_SERVICE` (required by the stock
    binary's file capability) and `no-new-privileges`. Failure preserves the running Caddy configuration.
+   With the app opt-in, the checked-out tag must contain `infra/docker-compose.hosted-app.yml`,
+   and its Compose chain must pass `config -q` here. Either failure exits 2 and restores the previous
+   checkout before any image pull, backup or pinning; no running service is changed.
    It then pulls `ghcr.io/itskeks/verwalino:vX.Y.Z`, resolves its digest and runs
    [`scripts/server-backup.sh`](scripts/server-backup.sh) as `pre-vX.Y.Z`, writes the digest to `VERWALINO_IMAGE`
    in the config, runs `scripts/self-host.sh start` (pull by digest, stop the app, migrate, start, wait for
-   healthy) and polls `/api/health/ready` for up to 120 s. The run is logged to
+   healthy) when the app opt-in is absent, and polls `/api/health/ready` for up to 120 s.
+   With the opt-in, the managed Compose start below replaces the installer start.
+   The run is logged to
    `/srv/verwalino/logs/deploy-<timestamp>.log`.
 4. On failure it prints the last 100 app log lines and the previous tag, commit and image, and exits non-zero.
    There is **no automatic rollback**: the schema may already be migrated, so starting an older image is not safe
@@ -1368,6 +1376,105 @@ an IP-only entry does not match a host name in `DEPLOY_HOST`.
 
 Secrets of the workflow (repository secrets, names only): `DEPLOY_HOST`, `DEPLOY_USER` (the admin user),
 `DEPLOY_SSH_KEY`, `DEPLOY_KNOWN_HOSTS`. The token is read-only (`contents: read`) and the job uses no other secret.
+
+### Production app mode and mail opt-in
+
+This is an owner-controlled server configuration, independent of the optional
+`config/Caddyfile.hosted` proxy wrapper. After installing a reviewed release containing
+[`infra/docker-compose.hosted-app.yml`](infra/docker-compose.hosted-app.yml) and the updated
+deploy script, create `/srv/verwalino/config/.env.hosted-app` as a regular file with mode **0600**:
+
+```dotenv
+HV_DEPLOYMENT_MODE=hosted
+HV_PUBLIC_HOST=app.verwalino.de
+HV_ALLOWED_HOSTS=app.verwalino.de,localhost,127.0.0.1
+```
+
+The file's presence opts release deploys into the app overlay. The public hostname comes
+from this private file; the overlay hard-codes no domain or hosted default. Omitting
+`HV_DEPLOYMENT_MODE` defaults to `selfhost`; an explicitly empty or invalid value is refused.
+The mode remains the owner's decision; app.verwalino.de runs in `hosted` mode from the first
+overlay deploy (owner decision, #150). `hosted` enables public signup/email confirmation,
+disables first-run setup, enforces hosted free-plan quotas, and selects the strict login rate
+limits (10 failed attempts/IP or 5/email in 15 minutes; 30-minute lockout, repeated lockouts
+doubling up to 24 hours). `selfhost` with a public host is the variant for an installation
+that wants password recovery with SMTP but no public signup; it keeps the selfhost policy and
+relaxed login limits.
+
+Only these three unquoted `KEY=value` keys are accepted, once each; blank lines and
+full-line comments are allowed. The file is read as data, never sourced. Mode must be
+`selfhost` or `hosted`; the public host must be a lowercase DNS hostname, at most
+253 characters with labels at most 63, without scheme, credentials, path or port.
+`HV_ALLOWED_HOSTS` is required: a comma-separated list without spaces, wildcards or empty entries that
+includes the exact public host and `127.0.0.1` for health checks, as shown above.
+Each entry follows the public host's DNS rules, with IPv4 literals and `localhost` also allowed.
+Leading/trailing commas and consecutive commas are refused. The deploy script merges this
+list with the installer's allowed hosts, removing duplicates: `localhost` and `127.0.0.1`
+are always present, as is `VERWALINO_DOMAIN` in HTTPS mode.
+Invalid settings, duplicate/unknown keys, symlinks or non-0600 permissions exit **2**
+before log creation, locks, checkout, backup, pinning or service operations.
+
+Keep the existing SMTP settings and generated secrets in `.env.selfhost`; never add these
+three app keys there. Hosted mode requires a nonempty `HV_SMTP_HOST` in that private config;
+a missing, empty or whitespace-only host exits 2 before any side effects, even if the caller
+exports a host. The existing HTTPS config should have
+`VERWALINO_DOMAIN=app.verwalino.de`, matching the public routing hostname. In `https` mode,
+`HV_PUBLIC_HOST` must equal `VERWALINO_DOMAIN`; a mismatch exits 2 before any side effects.
+Local mode skips this equality rule because no public hostname is routed; the public host is then used only for mail links.
+The installer validates its own file via `status` before checkout. Immediately after checkout,
+the deploy script checks that the app overlay exists and validates Compose quietly, before
+image pull, backup or pinning. The managed server start then takes
+the installer lock, pulls the pinned app, waits for the database,
+stops an existing inbox worker and the app, migrates and starts the app with the overlay,
+waiting for health before starting Caddy. It never briefly starts the app in another mode.
+If the hosted proxy wrapper is present, the app/proxy/site overlays form one chain for
+these operations, preserving Caddy's imports, site image and networks. A managed start
+does not issue portable first-run setup tokens; use this opt-in for the existing server,
+or hosted public signup on an empty database. Keep both private configs in the operator's
+separate secure config backup; the server backup's `config.env` contains only `.env.selfhost`.
+
+The overlay forwards the three private settings to `app` only. `migrate` and `inbox-worker`
+do not read this deployment policy. The installer's `bootstrap` service also retains the
+default `selfhost` policy: `admin_cli` run through that service skips hosted quota locks,
+including during `quota-recount`. For a recount, use the configured migrator environment
+and document store described above with `HV_DEPLOYMENT_MODE=hosted` explicitly set;
+the installer bootstrap service does not forward that mode or mount the document store.
+
+Without `.env.hosted-app`, the release path and its Compose command vectors remain unchanged.
+Staging, site-only deploys and portable status/restore/update behavior are unchanged.
+Use the release deploy path to apply app settings; a manual portable `start` or `update`
+starts the stock selfhost app and does not retain this overlay. Removing the opt-in takes
+effect on the next release deploy, restoring stock selfhost behavior without a public host.
+There is no automatic rollback; keep the existing schema compatibility/restore procedure.
+
+Owner acceptance on the server (these are live checks, not proven by fake-Docker contracts):
+
+1. Before the first hosted deploy on an existing document store, apply **0146** and run
+   `python -m app.admin_cli quota-recount --org <organization-uuid>` for every existing
+   organization, using the migrator connection, document storage root and explicit
+   `HV_DEPLOYMENT_MODE=hosted` environment described in the quota reconciliation instructions
+   above. The installer's `bootstrap` service runs as selfhost and skips hosted quota locks.
+2. The first deploy of the release containing this change still runs the **old script**
+   already on the server: checking out the release does not reload the running script.
+   The new script is active from the **following deploy**. After that first deployment has
+   installed the reviewed files, create `.env.hosted-app` as shown (`hosted`, `app.verwalino.de`),
+   verify the SMTP values in `.env.selfhost`, then redeploy with
+   `/srv/verwalino/app/scripts/deploy-server.sh vX.Y.Z` using the reviewed release tag.
+   Require successful app readiness and no hosted ASGI startup configuration refusal
+   (both valid SMTP and the public host are required).
+3. Fetch `https://app.verwalino.de/api/meta`: require `deployment_mode: hosted` and
+   `mail_available: true`. This checks configuration only, not SMTP delivery.
+4. Complete public signup at `https://app.verwalino.de/signup` with a fresh test email:
+   receive the confirmation, confirm with the chosen password and log in to the new organization.
+   Review that test organization under the existing retention/deletion procedure.
+5. Use **Passwort vergessen?** for that account against the configured SMTP. Receive the HTTPS
+   link on `app.verwalino.de`, reset the password, log in with the new password, and confirm
+   the link cannot be reused.
+6. Negative checks: a mistyped file (invalid mode, a public host that differs from
+   `VERWALINO_DOMAIN`, a missing host in the list) and a redeploy of a tag that predates the
+   overlay must both stop before any pull, backup or restart; the running app stays untouched.
+
+The [website runbook](docs/operations/website-hosting.md) covers the independent proxy/site opt-in.
 
 ### Staging and hosted canary
 
@@ -1459,10 +1566,13 @@ manual portable-installer operations require reapplying the hosted Caddy overrid
 
 ### Backups
 
-[`scripts/server-backup.sh`](scripts/server-backup.sh) writes `/srv/verwalino/backups/<UTC timestamp>[-label]/`:
+[`scripts/server-backup.sh`](scripts/server-backup.sh) writes `/srv/verwalino/backups/<UTC timestamp>[.NNNNNN][-label]/`:
 `db.dump` (`pg_dump` custom format), `documents.tar`, `config.env` (a copy of the config, secrets in clear:
 keep the directory private and encrypt before it leaves the server), `MANIFEST` and `SHA256SUMS`. It keeps the
 newest unlabelled backup of each of the last 14 days and 8 weeks and the 10 newest backups with any label.
+The UTC timestamp is `YYYYMMDDTHHMMSSZ`. Repeating a backup with the same timestamp and label adds
+`.000001`, `.000002`, and so on before the label, continuing after the highest retained counter.
+Existing backups are never overwritten; the padded counters preserve retention order, including for unlabelled backups.
 `scripts/server-backup.sh manual` competes with `pre-<tag>` backups for those 10 places. Schedule it daily:
 
 ```bash
@@ -1489,7 +1599,8 @@ docker image prune -af --filter until=720h                              # old re
 ```
 
 The scripts and the workflow are covered by `make test-installer` (`scripts/test-server-deploy.py`; Docker, git,
-curl and sleep are faked, nothing touches a real host). After a cancelled or broken CI deploy, check for and
+curl, sleep and date are faked; `FAKE_DATE_EPOCH` controls the fixed UTC clock, and nothing touches a real host).
+After a cancelled or broken CI deploy, check for and
 remove `/srv/verwalino/logs/.deploy.lock` once no deploy is running. A stale `/srv/verwalino/backups/.lock`
 (a run was killed) is removed by hand once no backup is running. Never
 run `docker compose down -v` or delete the volumes.
