@@ -474,6 +474,7 @@ not an immutable field; a separate minimization policy remains an owner decision
 | `property_source_classification` | `content_sha256`, `decision`, `reason`, `request_digest`, `source_context_digest` | Retained source, scope or review evidence and its technical provenance. |
 | `property_source_security` | `mode` | Security-mode enum; mutable reason is scrubbed. |
 | `resolution` | `majority_type`, `result`, `wording` | Registered resolution wording and voting classifications. |
+| `reserve_ledger_entry` | `component`, `reason` | Immutable reserve classification and audited correction/funding evidence; retained without rewriting. |
 | `resolution_register_entry` | `challenge_annotation`, `location`, `wording` | Legal register wording/location and mutable challenge annotation (ADR-0011). |
 | `runtime_budget_attestation` | `policy`, `policy_digest` | Retained source, scope or review evidence and its technical provenance. |
 | `runtime_budget_review` | `policy`, `policy_digest`, `reason`, `request_digest` | Retained source, scope or review evidence and its technical provenance. |

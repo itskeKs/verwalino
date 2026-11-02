@@ -178,6 +178,8 @@ class BankImportService:
         return transaction, account
 
     async def _validate_target(self, account, line):
+        if line["payment_type"] == "RUECKLAGENENTNAHME":
+            return
         start = date(line["period_year"], line["period_month"], 1)
         end = date(start.year, start.month, monthrange(start.year, start.month)[1])
         if line.get("lease_agreement_id") is not None:
@@ -232,7 +234,10 @@ class BankImportService:
             payment = await payments.create_draft(
                 **line, bank_account_id=account.id, bank_transaction_id=transaction.id,
                 direction="IN" if transaction.amount > 0 else "OUT", value_date=transaction.value_date)
-            booked.append(await payments.book(payment.id))
+            if payment.payment_type == 'RUECKLAGENENTNAHME' and not (payment.reserve_cost_entry_id and payment.reserve_register_entry_id):
+                booked.append(payment)
+            else:
+                booked.append(await payments.book(payment.id))
         transaction.status = "ZUGEORDNET"
         await self._transactions.update(transaction)
         return transaction, booked

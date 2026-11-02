@@ -134,3 +134,28 @@ def signed_in_session_belongs_to(world, organization):
     answer = world.act("GET", "/api/organizations/me")
     assert answer.status_code == 200, world.describe_response()
     assert answer.json()["name"] == organization
+
+
+@given('an audited draft reserve contribution correction belongs to Verwaltung Alpha')
+def reserve_correction_for_isolation(world, seed_data):
+    from tests.test_reserve_ledger import draft_unit_correction
+    alpha = world.administrator_of('Verwaltung Alpha')
+    w, path = world.run(draft_unit_correction(alpha, seed_data))
+    world.data['reserve_correction'] = (w, path)
+    world.data['reserve_ledger_before'] = world.look(alpha, path.rsplit('/overrides/', 1)[0]).json()
+
+
+@when('Verwaltung Beta tries to reduce and delete that contribution correction')
+def foreign_reserve_correction(world):
+    _, path = world.data['reserve_correction']
+    beta = world.administrator_of('Verwaltung Beta')
+    world.data['reserve_refusals'] = [
+        world.send(beta, 'POST', path + '/reduce', json={'reduced_to': '100.00', 'reason': 'Foreign reduction'}),
+        world.send(beta, 'DELETE', path, json={'reason': 'Foreign deletion'})]
+
+
+@then('the reserve contribution correction is not found and remains unchanged')
+def reserve_correction_unchanged(world):
+    _, path = world.data['reserve_correction']
+    assert all(response.status_code == 404 for response in world.data['reserve_refusals'])
+    assert world.look(world.administrator_of('Verwaltung Alpha'), path.rsplit('/overrides/', 1)[0]).json() == world.data['reserve_ledger_before']

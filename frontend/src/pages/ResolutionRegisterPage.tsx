@@ -9,7 +9,7 @@
  */
 
 import { useEffect, useState, useCallback } from "react";
-import { useSearchParams } from "react-router-dom";
+import { useLocation, useSearchParams } from "react-router-dom";
 import {
   listRegisterEntries,
   annotateChallenge,
@@ -21,6 +21,7 @@ import { ApiError } from "../api/client";
 
 export function ResolutionRegisterPage() {
   const [searchParams, setSearchParams] = useSearchParams();
+  const { hash } = useLocation();
   const [entries, setEntries] = useState<RegisterEntry[]>([]);
   const [properties, setProperties] = useState<Property[]>([]);
   const [error, setError] = useState<string | null>(null);
@@ -74,6 +75,12 @@ export function ResolutionRegisterPage() {
   useEffect(() => {
     reload();
   }, [reload]);
+
+  useEffect(() => {
+    if (!loading && hash.startsWith('#beschluss-')) {
+      document.getElementById(hash.slice(1))?.scrollIntoView();
+    }
+  }, [entries, loading, hash]);
 
   function setFilter(key: string, value: string) {
     const next = new URLSearchParams(searchParams);
@@ -241,7 +248,7 @@ export function ResolutionRegisterPage() {
               </thead>
               <tbody>
                 {entries.map((entry) => (
-                  <tr key={entry.id}>
+                  <tr key={entry.id} id={`beschluss-${entry.id}`}>
                     <td
                       style={{
                         fontFamily: "var(--mono)",

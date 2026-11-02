@@ -5,12 +5,15 @@ import { WegSettlementDetailPage } from './WegSettlementDetailPage';
 import { AssetReportDetailPage } from './AssetReportDetailPage';
 
 const json = (body: unknown) => new Response(JSON.stringify(body), { status: 200, headers: { 'Content-Type': 'application/json' } });
+const emptyLedger = { opening_balance: '0.00', contributions_total: '0.00', withdrawals_total: '0.00', overrides_total: '0.00',
+  closing_balance: '0.00', planned_contributions_total: null, overdrawn: false, frozen: false, booking_basis: 'CASH', entries: [] };
 const run = { id: 'draft', property_id: 'property', run_type: 'WEG_JAHRESABRECHNUNG', status: 'draft', economic_plan_id: 'plan', period_start: '2026-01-01', period_end: '2026-12-31', lines: [], superseded_by_id: null };
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
 
 it('keeps one stable plan selector when its parent blocks financial actions', async () => {
   vi.stubGlobal('fetch', vi.fn(async (url: string) => {
     if (url.endsWith('/economic-plan-successor')) return json({ run_id: 'draft', current_plan_id: 'plan', successor_id: 'new-plan', plan_year: 2026 });
+    if (url.endsWith('/reserve-ledger')) return json(emptyLedger);
     if (/^\/api\/weg-settlements\/[^/]+\/input-owners$/.test(url)) return json([]);
     if (url.includes('/api/weg-settlements/')) return json(run);
     if (url.includes('/api/economic-plans/')) return json({ lines: [] });
@@ -25,6 +28,7 @@ it('keeps one stable plan selector when its parent blocks financial actions', as
 
 it.each(['weg', 'asset'])('clears manual inputs when navigating to a different %s draft', async family => {
   vi.stubGlobal('fetch', vi.fn(async (url: string) => {
+    if (url.endsWith('/reserve-ledger')) return json(emptyLedger);
     if (/^\/api\/weg-settlements\/[^/]+\/input-owners$/.test(url)) return json([]);
     if (url.includes('/api/weg-settlements/')) return json({ ...run, id: url.split('/').at(-1), economic_plan_id: family === 'weg' ? 'plan' : null, run_type: family === 'weg' ? 'WEG_JAHRESABRECHNUNG' : 'VERMOEGENSBERICHT' });
     if (url.includes('/api/economic-plans/')) return json({ lines: [] });
@@ -41,6 +45,7 @@ it.each(['weg', 'asset'])('ignores a late financial command from the previous %s
   let finish: ((value: Response) => void) | undefined;
   vi.stubGlobal('fetch', vi.fn(async (url: string, options: RequestInit) => {
     if (options.method === 'POST') return new Promise<Response>(resolve => { finish = resolve; });
+    if (url.endsWith('/reserve-ledger')) return json(emptyLedger);
     if (/^\/api\/weg-settlements\/[^/]+\/input-owners$/.test(url)) return json([]);
     if (url.includes('/api/weg-settlements/')) return json({ ...run, id: url.split('/').at(-1), economic_plan_id: family === 'weg' ? 'plan' : null });
     if (url.includes('/api/economic-plans/')) return json({ lines: [] });

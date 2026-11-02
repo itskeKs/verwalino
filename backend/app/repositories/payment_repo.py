@@ -19,6 +19,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.payment import Payment
 from app.models.accounting_scope import AccountingScopeBinding
+from app.models.reserve_ledger_entry import ReserveLedgerEntry
 from app.repositories.base import TenantRepository
 
 
@@ -185,3 +186,15 @@ class PaymentRepository(TenantRepository[Payment]):
             AccountingScopeBinding.organization_id == self._org_id,
             AccountingScopeBinding.payment_id == payment_id,
         )) is not None
+
+    async def has_reserve_entry(self, payment_id: uuid.UUID) -> bool:
+        return await self._session.scalar(select(ReserveLedgerEntry.id).where(
+            ReserveLedgerEntry.organization_id == self._org_id,
+            ReserveLedgerEntry.payment_id == payment_id,
+        ).limit(1)) is not None
+
+    async def has_other_bank_payments(self, payment: Payment) -> bool:
+        return await self._session.scalar(self._base_query().with_only_columns(Payment.id).where(
+            Payment.bank_transaction_id == payment.bank_transaction_id,
+            Payment.id != payment.id, Payment.cancelled_at.is_(None),
+        ).limit(1)) is not None

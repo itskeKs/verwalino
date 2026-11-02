@@ -42,12 +42,14 @@ def build_vermoegensbericht(inp: VermoegensberichtInput) -> AssetReportResult:
     opening = _money(inp.reserve.opening_balance)
     withdrawals = _money(inp.reserve.withdrawals_total)
     contributions = _money(inp.reserve_contributions_total)
-    closing = _money(opening + contributions - withdrawals)
+    closing = _money(opening + contributions - withdrawals + inp.reserve.overrides_total + inp.reserve.late_cash_total)
     reserve_dev = ReserveDevelopment(
         opening_balance=opening,
         contributions_total=contributions,
         withdrawals_total=withdrawals,
         closing_balance=closing,
+        overrides_total=inp.reserve.overrides_total,
+        late_cash_total=inp.reserve.late_cash_total,
     )
 
     lines: list[AssetReportLine] = []
@@ -60,11 +62,19 @@ def build_vermoegensbericht(inp: VermoegensberichtInput) -> AssetReportResult:
             label="Erhaltungsruecklage Anfangsbestand",
             amount=opening,
             sort_order=sort_order,
-            is_manual=True,  # opening is manual in M4 ([F4-4])
-            note="Anfangsbestand (in dieser Ausbaustufe manuell erfasst)",
+            is_manual=False,
+            note="Anfangsbestand laut Rücklagenbuch",
         )
     )
     sort_order += 1
+    if inp.reserve.late_cash_total:
+        lines.append(AssetReportLine(line_type='RESERVE_LATE_CASH', label='Nachträgliche Buchungen zum abgeschlossenen Jahr',
+            amount=inp.reserve.late_cash_total, sort_order=sort_order, is_manual=False, note='Rücklagenbuch · ursprüngliche Wertstellung'))
+        sort_order += 1
+    if inp.reserve.overrides_total:
+        lines.append(AssetReportLine(line_type='RESERVE_ADJUSTMENT', label='Begründete Rücklagenkorrekturen',
+            amount=inp.reserve.overrides_total, sort_order=sort_order, is_manual=True, note='Rücklagenbuch'))
+        sort_order += 1
     lines.append(
         AssetReportLine(
             line_type="RESERVE_CONTRIBUTION",
@@ -82,8 +92,8 @@ def build_vermoegensbericht(inp: VermoegensberichtInput) -> AssetReportResult:
             label="Entnahme Erhaltungsruecklage",
             amount=withdrawals,
             sort_order=sort_order,
-            is_manual=True,  # withdrawals manual in M4 ([F4-5])
-            note="Entnahmen im Zeitraum (in dieser Ausbaustufe manuell erfasst)",
+            is_manual=False,
+            note="Entnahmen laut Rücklagenbuch",
         )
     )
     sort_order += 1
@@ -94,7 +104,7 @@ def build_vermoegensbericht(inp: VermoegensberichtInput) -> AssetReportResult:
             amount=closing,
             sort_order=sort_order,
             is_manual=False,
-            note="Endbestand = Anfangsbestand + Zufuehrungen - Entnahmen",
+            note="Endbestand = Anfangsbestand + Zuführungen - Entnahmen + Korrekturen + Nachträgliche Buchungen",
         )
     )
     sort_order += 1

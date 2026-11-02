@@ -130,6 +130,7 @@ class RegisterEntryOut(BaseModel):
     location: str
     wording: str
     resolution_id: str
+    result: str | None
     challenge_annotation: str | None
 
     model_config = {"from_attributes": True}
@@ -186,7 +187,7 @@ def _resolution_out(r) -> ResolutionOut:
     )
 
 
-def _entry_out(e) -> RegisterEntryOut:
+def _entry_out(e, result) -> RegisterEntryOut:
     return RegisterEntryOut(
         id=str(e.id),
         organization_id=str(e.organization_id),
@@ -196,8 +197,14 @@ def _entry_out(e) -> RegisterEntryOut:
         location=e.location,
         wording=e.wording,
         resolution_id=str(e.resolution_id),
+        result=result,
         challenge_annotation=e.challenge_annotation,
     )
+
+
+async def _entries_out(db, org_id, entries):
+    results = await RegisterEntryRepository(db, org_id).resolution_results(entries)
+    return [_entry_out(entry, results.get(entry.resolution_id)) for entry in entries]
 
 
 # ===========================================================================
@@ -406,7 +413,7 @@ async def enter_into_register(
 ):
     svc = MeetingService(db, auth.organization_id, auth.user_id)
     entry = await svc.enter_into_register(resolution_id)
-    return _entry_out(entry)
+    return (await _entries_out(db, auth.organization_id, [entry]))[0]
 
 
 @router.get("/register/{property_id}", response_model=list[RegisterEntryOut])
@@ -417,7 +424,7 @@ async def list_register_entries(
 ):
     repo = RegisterEntryRepository(db, auth.organization_id)
     entries = await repo.list_for_property(property_id)
-    return [_entry_out(e) for e in entries]
+    return await _entries_out(db, auth.organization_id, entries)
 
 
 @router.put("/register/entry/{entry_id}/challenge", response_model=RegisterEntryOut)
@@ -429,7 +436,7 @@ async def annotate_challenge(
 ):
     svc = MeetingService(db, auth.organization_id, auth.user_id)
     entry = await svc.annotate_challenge(entry_id, body.annotation)
-    return _entry_out(entry)
+    return (await _entries_out(db, auth.organization_id, [entry]))[0]
 
 
 # ===========================================================================
