@@ -108,9 +108,9 @@ PERIOD = {"period_start": "2025-01-01", "period_end": "2025-12-31"}
 NO_MATCH = "a filter by another organization's id matches nothing"
 
 PLAN_INPUTS = {"planned_costs": [], "reserve_contribution_total": "0.00"}
-WEG_INPUTS = {"reserve_override_reason": "Reviewed synthetic reserve totals", "reserve_opening_balance": "0.00", "reserve_withdrawals_total": "0.00", "paid_advances": []}
-REPORT_INPUTS = {"reserve_override_reason": "Reviewed synthetic reserve totals", "reserve_opening_balance": "0.00", "reserve_withdrawals_total": "0.00",
-                 "reserve_contributions_total": "0.00", "bank_balances": [], "receivables": [], "payables": []}
+WEG_INPUTS = {"reserve_override_reason": "Reviewed synthetic opening balance", "reserve_opening_balance": "0.00", "paid_advances": []}
+REPORT_INPUTS = {"reserve_override_reason": "Reviewed synthetic opening balance", "reserve_opening_balance": "0.00",
+                 "bank_balances": [], "receivables": [], "payables": []}
 PAYMENT = {"direction": "IN", "amount": "10.00", "value_date": "2025-02-03", "payment_type": "KALTMIETE"}
 CREDITOR = {"creditor_id": "DE98ZZZ09999999999", "name": "Isolation", "country": "DE", "town": "Teststadt",
             "bank_authorized": True}

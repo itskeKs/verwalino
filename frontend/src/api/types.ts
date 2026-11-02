@@ -1318,7 +1318,6 @@ export interface PaidAdvanceIn {
 
 export interface WegComputeRequest {
   reserve_opening_balance?: string | null;
-  reserve_withdrawals_total?: string | null;
   reserve_override_reason?: string;
   paid_advances: PaidAdvanceIn[];
 }
@@ -1338,8 +1337,6 @@ export interface AssetItemIn {
 
 export interface AssetReportComputeRequest {
   reserve_opening_balance?: string | null;
-  reserve_withdrawals_total?: string | null;
-  reserve_contributions_total?: string | null;
   reserve_override_reason?: string;
   bank_balances: { bank_account_id: string; label: string; account_type: BankAccountType; balance: string }[];
   receivables: AssetItemIn[];

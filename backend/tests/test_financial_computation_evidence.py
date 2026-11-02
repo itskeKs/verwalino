@@ -22,7 +22,7 @@ async def prepared_financial(api,seed,kind):
     elif kind=='weg':
         data['economic_plan_id']=await _create_and_finalize_plan(api,seed);body=weg_values(seed)
     else:
-        body={'reserve_override_reason':'Reviewed synthetic reserve totals','reserve_opening_balance':'0.00','reserve_withdrawals_total':'0.00','reserve_contributions_total':'0.00',
+        body={'reserve_override_reason':'Reviewed synthetic opening balance','reserve_opening_balance':'0.00',
           'bank_balances':[{'bank_account_id':seed[key],'label':'Synthetic bank','account_type':account_type,'balance':'0.00'}
             for key,account_type in [('bank_giro','LAUFEND'),('bank_ruecklage','RUECKLAGE')]],'receivables':[],'payables':[]}
     response=await api.post(endpoint,json=data);assert response.status_code==201,response.text
