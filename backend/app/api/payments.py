@@ -19,6 +19,7 @@ from fastapi import APIRouter, Depends, HTTPException, Response
 from pydantic import BaseModel
 
 from sqlalchemy import text
+from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.tenant import AuthContext, get_current_user, get_db, require_write_dep
@@ -33,6 +34,7 @@ from app.services.property_master_service import require_property_master
 from app.models.payment import Payment
 from app.repositories.payment_repo import PaymentRepository
 from app.services.payment_service import PaymentService
+from app.services.reserve_ledger_service import ReserveLedgerService
 from app.services.financial_scope_service import FinancialScopeService
 from app.repositories.lease_agreement_repo import LeaseAgreementRepository
 
@@ -523,7 +525,19 @@ async def reverse_payment(
     db: AsyncSession = Depends(get_live_writer_db),
 ):
     svc = PaymentService(db, auth.organization_id, auth.user_id)
-    storno = await svc.reverse_payment(payment_id, note=body.note if body else None)
+    # Keep the financial lock through savepoint rollback and refusal re-reading.
+    await FinancialScopeService(db, auth.organization_id, auth.user_id).lock_inputs()
+    try:
+        async with db.begin_nested():
+            storno = await svc.reverse_payment(payment_id, note=body.note if body else None)
+    except DBAPIError as exc:
+        constraint = getattr(getattr(exc.orig, '__cause__', None), 'constraint_name', None)
+        if (getattr(exc.orig, 'sqlstate', None), constraint) == ('23514', 'reserve_adjustment_exceeds_withdrawals'):
+            original = await PaymentRepository(db, auth.organization_id).get_by_id(payment_id)
+            detail = await ReserveLedgerService(db, auth.organization_id, auth.user_id).payout_reversal_refusal(original)
+            if detail:
+                raise HTTPException(422, detail) from None
+        raise
     return _to_out(storno)
 
 

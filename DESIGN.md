@@ -797,7 +797,10 @@ and ask for the corrected total plus a reason. The earliest draft can be
 re-attested; each signed difference remains a “Korrektur Anfangsbestand” row
 with its reason. The correction dialog also asks for the corrected total, prefills
 the current opening and previews the read-only signed difference (for example,
-“Differenz: +500,00 €”); only that difference is saved.
+“Differenz: +500,00 €”). It submits the corrected total and the opening it saw;
+the server saves only the difference against the current ledger. If another
+client changed the opening, the dialog retains the inputs and shows
+“Der Anfangsbestand wurde inzwischen geändert. Bitte laden Sie das Rücklagenbuch neu.”
 The opening option and its dialog use “Anfangsbestand korrigieren”
 and explains that the difference and reason remain recorded in the ledger.
 Import wording is reserved for the first-import instructions on the calculation form.
@@ -902,3 +905,5 @@ field bounds and console health.
 | WEG correction with error | — | [before](docs/assets/reserve-ledger/round16-weg-error-before-360.png) · [after](docs/assets/reserve-ledger/round16-weg-error-after-360.png) |
 | Asset-report correction with error | — | [before](docs/assets/reserve-ledger/round16-asset-error-before-360.png) · [after](docs/assets/reserve-ledger/round16-asset-error-after-360.png) |
 | Withdrawal correction with scrolling fields and error | — | [after](docs/assets/reserve-ledger/round16-withdrawal-error-after-360.png) |
+| WEG opening total request | [before](docs/assets/reserve-ledger/round16-weg-opening-after-1280.png) · [after](docs/assets/reserve-ledger/round17-weg-opening-after-1280.png) | [before](docs/assets/reserve-ledger/round16-weg-opening-after-360.png) · [after](docs/assets/reserve-ledger/round17-weg-opening-after-360.png) |
+| Asset-report opening total request | [before](docs/assets/reserve-ledger/round16-asset-opening-after-1280.png) · [after](docs/assets/reserve-ledger/round17-asset-opening-after-1280.png) | [before](docs/assets/reserve-ledger/round16-asset-opening-after-360.png) · [after](docs/assets/reserve-ledger/round17-asset-opening-after-360.png) |

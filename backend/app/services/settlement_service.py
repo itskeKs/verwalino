@@ -485,6 +485,7 @@ class SettlementService:
         await self._write_lines(run, result)
 
         run.snapshot_payload = {**self._snapshot_with_meter_sources(inp, result), "financial_input_coverage": self._coverage}
+        run.engine_version = inp.engine_version
         run.total_cost = result.total_cost
         run.balance = result.balance
         await self._runs.update(run)
@@ -556,6 +557,7 @@ class SettlementService:
 
         now = datetime.now(timezone.utc)
         run.snapshot_payload = payload
+        run.engine_version = inp.engine_version
         run.snapshot_sha256 = sha
         run.total_cost = result.total_cost
         run.balance = result.balance

@@ -253,6 +253,7 @@ class ReserveOverrideRequest(BaseModel):
     model_config = ConfigDict(extra='forbid')
     component: Literal['OPENING', 'CONTRIBUTION', 'WITHDRAWAL', 'ADJUSTMENT', 'FUNDING']
     amount: Decimal = Field(max_digits=14, decimal_places=2, allow_inf_nan=False)
+    expected_opening_balance: Decimal | None = Field(default=None, max_digits=14, decimal_places=2, allow_inf_nan=False)
     reason: str = Field(max_length=2000)
     payment_id: uuid.UUID | None = None
     cost_entry_id: uuid.UUID | None = None
