@@ -37,7 +37,10 @@ def check_shards(shards):
           f"group sizes: {[sum(group.values()) for group in groups]}")
 
 
-def merge_durations(paths):
+def merge_durations(paths, expected):
+    # A missing shard artifact must not yield a silently partial refresh candidate.
+    if len(paths) != expected:
+        raise ValueError(f"Expected {expected} shard measurement files, got {len(paths)}: {[p.name for p in paths]}")
     merged = {}
     for path in paths:
         durations = json.loads(path.read_text())
@@ -57,6 +60,7 @@ def main():
     check.add_argument("shards", type=int)
     merge = commands.add_parser("merge", help="Merge disjoint CI shard measurements for a reviewed refresh commit")
     merge.add_argument("output", type=Path)
+    merge.add_argument("--expected", type=int, required=True, help="number of shard files that must be present")
     merge.add_argument("inputs", type=Path, nargs="+")
     args = parser.parse_args()
     try:
@@ -65,7 +69,7 @@ def main():
                 parser.error("shards must be positive")
             check_shards(args.shards)
         else:
-            args.output.write_text(json.dumps(merge_durations(args.inputs), indent=2) + "\n")
+            args.output.write_text(json.dumps(merge_durations(args.inputs, args.expected), indent=2) + "\n")
     except subprocess.CalledProcessError as error:
         print(error.stdout, file=sys.stderr)
         print(error.stderr, file=sys.stderr)

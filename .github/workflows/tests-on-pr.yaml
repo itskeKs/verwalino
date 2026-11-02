@@ -187,7 +187,7 @@ jobs:
       # Main runs publish a complete refresh candidate, never write to the
       # repository. A maintainer reviews and commits the downloaded file.
       - name: Merge duration measurements
-        run: python3 scripts/backend_test_shards.py merge backend/.test_durations "${{ runner.temp }}"/backend-durations/test-durations-*.json
+        run: python3 scripts/backend_test_shards.py merge --expected 4 backend/.test_durations "${{ runner.temp }}"/backend-durations/test-durations-*.json
 
       - name: Upload duration refresh candidate
         uses: actions/upload-artifact@v4
