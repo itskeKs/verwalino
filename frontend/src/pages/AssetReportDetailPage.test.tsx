@@ -25,7 +25,7 @@ it("keeps missing reserve/account values blank and sends an explicitly reviewed 
   fireEvent.click(screen.getByRole("button", { name: "Berechnen" }));
   await waitFor(() => expect(bodies).toHaveLength(1));
   expect(bodies[0]).toMatchObject({ reserve_opening_balance: null, bank_balances: [{ balance: "" }] });
-  for (const input of [opening, bank, screen.getByLabelText("Rücklage Zuführung"), screen.getByLabelText("Rücklage Entnahmen")]) {
+  for (const input of [opening, bank]) {
     fireEvent.change(input, { target: { value: "0.00" } });
   }
   fireEvent.change(screen.getByLabelText("Grundlage der Prüfung"), { target: { value: "Complete records, no movements" } });
@@ -34,4 +34,16 @@ it("keeps missing reserve/account values blank and sends an explicitly reviewed 
   fireEvent.click(screen.getByRole("button", { name: "Datengrundlage speichern" }));
   await screen.findByRole("status");
   expect(bodies[1]).toMatchObject({ values: { reserve_opening_balance: "0.00", bank_balances: [{ balance: "0.00" }], receivables: [], payables: [] }, confirmed_complete: true });
+});
+
+
+it('does not offer editable derived reserve totals', async () => {
+  vi.stubGlobal('fetch', vi.fn(async (url: string) => json(url.endsWith('/reserve-ledger')
+    ? { opening_balance: '0.00', contributions_total: '0.00', withdrawals_total: '0.00', overrides_total: '0.00', closing_balance: '0.00', planned_contributions_total: '0.00', entries: [], frozen: false, booking_basis: 'CASH' }
+    : url === '/api/properties' || url.includes('/bank-accounts') || url.includes('/persons') || url.includes('/owner-profiles') ? []
+    : { id: 'run-1', property_id: 'property-1', status: 'draft', lines: [], engine_version: 'test' })));
+  render(<MemoryRouter initialEntries={['/report/run-1']}><Routes><Route path="/report/:runId" element={<AssetReportDetailPage />} /></Routes></MemoryRouter>);
+  await screen.findByLabelText('Rücklage Anfangsbestand');
+  expect(screen.queryByLabelText('Rücklage Zuführung')).not.toBeInTheDocument();
+  expect(screen.queryByLabelText('Rücklage Entnahmen')).not.toBeInTheDocument();
 });

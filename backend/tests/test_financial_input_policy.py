@@ -128,9 +128,9 @@ async def test_empty_owner_and_bank_lists_do_not_imply_coverage(client_a_admin, 
     plan_id = await _create_and_finalize_plan(client_a_admin, m4_seed)
     for endpoint, extra, values, expected in [
         ("/api/weg-settlements", {"economic_plan_id": plan_id},
-         {"reserve_override_reason": "Reviewed synthetic reserve totals", "reserve_opening_balance": "0", "reserve_withdrawals_total": "0", "paid_advances": []}, "owner_payment_coverage_missing"),
+         {"reserve_override_reason": "Reviewed synthetic reserve totals", "reserve_opening_balance": "0", "paid_advances": []}, "owner_payment_coverage_missing"),
         ("/api/weg-settlements/asset-reports", {},
-         {"reserve_override_reason": "Reviewed synthetic reserve totals", "reserve_opening_balance": "0", "reserve_withdrawals_total": "0", "reserve_contributions_total": "0",
+         {"reserve_override_reason": "Reviewed synthetic reserve totals", "reserve_opening_balance": "0",
           "bank_balances": [], "receivables": [], "payables": []}, "bank_balance_coverage_missing"),
     ]:
         created = await client_a_admin.post(endpoint, json={"property_id": m4_seed["property"],
@@ -309,8 +309,7 @@ async def test_rollback_switch_preserves_final_read_and_blocks_all_compute_famil
         assert (await client_a_admin.post(f"/api/weg-settlements/{weg.json()['id']}/{action}", json=weg_values(m4_seed))).status_code == 503
     for endpoint, create_extra, body in [
         ("/api/economic-plans", {"plan_year": 2025}, {"planned_costs": [], "reserve_contribution_total": "0"}),
-        ("/api/weg-settlements/asset-reports", {}, {"reserve_override_reason": "Reviewed synthetic reserve totals", "reserve_opening_balance": "0", "reserve_withdrawals_total": "0",
-          "reserve_contributions_total": "0", "bank_balances": [], "receivables": [], "payables": []}),
+        ("/api/weg-settlements/asset-reports", {}, {"reserve_override_reason": "Reviewed synthetic reserve totals", "reserve_opening_balance": "0", "bank_balances": [], "receivables": [], "payables": []}),
     ]:
         created = await client_a_admin.post(endpoint, json={"property_id": m4_seed["property"],
             "period_start": "2025-01-01", "period_end": "2025-12-31", **create_extra})

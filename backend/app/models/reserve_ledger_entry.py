@@ -16,7 +16,7 @@ class ReserveLedgerEntry(Base, UUIDPrimaryKeyMixin):
         ['organization_id', column], [f'{target}.organization_id', f'{target}.id'],
         ondelete='RESTRICT') for column, target in (
             ('property_id', 'property'), ('settlement_run_id', 'settlement_run'),
-            ('payment_id', 'payment'), ('cost_entry_id', 'cost_entry'),
+            ('payment_id', 'payment'), ('unit_id', 'unit'), ('cost_entry_id', 'cost_entry'),
             ('register_entry_id', 'resolution_register_entry')))
 
     organization_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey('organization.id'), nullable=False)
@@ -27,6 +27,7 @@ class ReserveLedgerEntry(Base, UUIDPrimaryKeyMixin):
     amount: Mapped[Decimal] = mapped_column(Numeric(14, 2), nullable=False)
     reason: Mapped[str] = mapped_column(String(2000), nullable=False)
     payment_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True))
+    unit_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True))
     cost_entry_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True))
     register_entry_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True))
     created_by: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey('user.id'), nullable=False)

@@ -40,8 +40,6 @@ export function AssetReportDetailPage() {
   const [balances, setBalances] = useState<Record<string, string>>({});
   const [opening, setOpening] = useState("");
   const [currentOpening, setCurrentOpening] = useState<string | null>(null);
-  const [contributions, setContributions] = useState("");
-  const [withdrawals, setWithdrawals] = useState("");
   const [reserveReason, setReserveReason] = useState("");
   const [ledgerVersion, setLedgerVersion] = useState(0);
   const [ledgerRefresh, setLedgerRefresh] = useState(0);
@@ -61,7 +59,7 @@ export function AssetReportDetailPage() {
     let active = true;
     pageGeneration.current += 1; setBusy(false);
     setLoading(true); setRun(null); setError(null); setActionError(null);
-    setAccounts([]); setBalances({}); setOpening(''); setContributions(''); setWithdrawals(''); setReserveReason(''); setReceivables([]); setPayables([]);
+    setAccounts([]); setBalances({}); setOpening(''); setReserveReason(''); setReceivables([]); setPayables([]);
     Promise.all([getWegRun(runId), listProperties()])
       .then(async ([r, pr]) => {
         const accounts = await listBankAccounts(r.property_id);
@@ -80,8 +78,6 @@ export function AssetReportDetailPage() {
     return {
       reserve_opening_balance: opening || null,
       reserve_override_reason: reserveReason,
-      reserve_withdrawals_total: withdrawals || null,
-      reserve_contributions_total: contributions || null,
       bank_balances: accounts.map((account) => ({ bank_account_id: account.id, label: account.label, account_type: account.account_type, balance: balances[account.id] ?? "" })),
       receivables: receivables,
       payables: payables,
@@ -169,19 +165,13 @@ export function AssetReportDetailPage() {
         <div className="card" style={{ marginBottom: "1rem" }}>
           <h2>Vermögenswerte erfassen</h2>
           <p style={{ fontSize: "0.85rem", color: "var(--text-muted)" }}>
-            Die Erhaltungsrücklage stammt aus dem Rücklagenbuch. Leere Rücklagenfelder übernehmen dessen Werte. Manuelle Gesamtwerte benötigen eine Begründung. Bitte alle Kontostände zum Stichtag prüfen.
+            Zuführungen und Entnahmen werden aus Buchungen abgeleitet; Korrekturen erfolgen mit Bezug im Rücklagenbuch. Der Anfangsbestand kann im ersten Rücklagenjahr mit Begründung importiert werden. Bitte prüfen Sie alle Kontostände zum Stichtag.
             Forderungen/Verbindlichkeiten sind manuelle Verwalter-Angaben (kein Buchungssaldo).
           </p>
           <p>Aktueller Anfangsbestand: {currentOpening === null ? 'Wird geladen…' : new Intl.NumberFormat('de-DE', { style: 'currency', currency: 'EUR' }).format(Number(currentOpening))}. Geben Sie bei einer Berichtigung den korrigierten Gesamtbestand und eine Begründung ein.</p>
           <div className="form-grid">
             <label>Rücklage Anfangsbestand
               <input type="text" inputMode="decimal" placeholder="0.00" value={opening} onChange={(e) => setOpening(e.target.value)} />
-            </label>
-            <label>Rücklage Zuführung
-              <input type="text" inputMode="decimal" placeholder="0.00" value={contributions} onChange={(e) => setContributions(e.target.value)} />
-            </label>
-            <label>Rücklage Entnahmen
-              <input type="text" inputMode="decimal" placeholder="0.00" value={withdrawals} onChange={(e) => setWithdrawals(e.target.value)} />
             </label>
             <label className="form-full-width">Begründung der Rücklagenwerte
               <textarea rows={3} value={reserveReason} maxLength={2000} onChange={e => setReserveReason(e.target.value)} />

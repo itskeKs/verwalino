@@ -41,7 +41,6 @@ export function WegSettlementDetailPage() {
   const [paidValues, setPaidValues] = useState<Record<string, string>>({});
   const [opening, setOpening] = useState("");
   const [currentOpening, setCurrentOpening] = useState<string | null>(null);
-  const [withdrawals, setWithdrawals] = useState("");
   const [reserveReason, setReserveReason] = useState("");
   const [ledgerVersion, setLedgerVersion] = useState(0);
   const [ledgerRefresh, setLedgerRefresh] = useState(0);
@@ -61,7 +60,7 @@ export function WegSettlementDetailPage() {
     let active = true;
     pageGeneration.current += 1; setBusy(false);
     setLoading(true); setRun(null); setError(null); setActionError(null);
-    setPaidOwners([]); setPaidValues({}); setOpening(''); setWithdrawals(''); setReserveReason('');
+    setPaidOwners([]); setPaidValues({}); setOpening(''); setReserveReason('');
     Promise.all([getWegRun(runId), listProperties(), listOwnerProfiles(), listPersons()])
       .then(async ([r, pr, op, per]) => {
         if (!active) return;
@@ -90,7 +89,7 @@ export function WegSettlementDetailPage() {
   }
 
   function req(): WegComputeRequest {
-    return { reserve_opening_balance: opening || null, reserve_withdrawals_total: withdrawals || null, reserve_override_reason: reserveReason, paid_advances: paidOwners.map((id) => ({ owner_profile_id: id, paid_total: paidValues[id] ?? "" })) };
+    return { reserve_opening_balance: opening || null, reserve_override_reason: reserveReason, paid_advances: paidOwners.map((id) => ({ owner_profile_id: id, paid_total: paidValues[id] ?? "" })) };
   }
 
   async function run_(fn: () => Promise<WegRun>) {
@@ -186,7 +185,7 @@ export function WegSettlementDetailPage() {
       {isDraft && (
         <fieldset disabled={busy || planBusy} className="card" style={{ marginBottom: "1rem" }}>
           <h2>Berechnung & begründete Rücklagenwerte</h2>
-          <p>Leere Rücklagenfelder verwenden das Rücklagenbuch. Eingetragene Gesamtwerte werden bei der Prüfung als begründete Korrektur übernommen.</p>
+          <p>Zuführungen und Entnahmen werden aus Buchungen abgeleitet; Korrekturen erfolgen mit Bezug im Rücklagenbuch. Den Anfangsbestand können Sie im ersten Rücklagenjahr mit Begründung importieren.</p>
           {paidOwners.map((id) => <label key={id}>Tatsächlich gezahltes Hausgeld · {ownerName(id)}
             <input inputMode="decimal" placeholder="Unbekannt" value={paidValues[id] ?? ""} onChange={(e) => setPaidValues({ ...paidValues, [id]: e.target.value })} />
           </label>)}
@@ -199,9 +198,6 @@ export function WegSettlementDetailPage() {
           <div className="form-grid">
             <label>Rücklagen-Anfangsbestand
               <input type="text" inputMode="decimal" placeholder="0.00" value={opening} onChange={(e) => setOpening(e.target.value)} />
-            </label>
-            <label>Rücklagen-Entnahmen (Jahr)
-              <input type="text" inputMode="decimal" placeholder="0.00" value={withdrawals} onChange={(e) => setWithdrawals(e.target.value)} />
             </label>
             <label className="form-full-width">Begründung der Rücklagenwerte
               <textarea rows={3} value={reserveReason} maxLength={2000} onChange={e => setReserveReason(e.target.value)} />

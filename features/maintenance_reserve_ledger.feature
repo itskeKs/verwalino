@@ -6,6 +6,10 @@ Feature: Maintenance reserve ledger
   Finalization freezes opening imports for that exact period, including correction
   drafts after supersession; evidenced withdrawal and adjustment corrections remain possible.
   An opening import requires the earliest period and no overlapping, different reserve period.
+  Unit corrections use the reserve share of booked net Hausgeld (receipts minus
+  refunds, net of reversals), less the signed contributions already credited to the unit.
+  Both totals are floored at zero before subtraction; direct reserve payments enter neither.
+  Displayed headroom is at least zero; a negative raw headroom prevents computation and finalization.
 
   Scenario: Booked reserve contributions fund the annual reserve development
     Given a WEG with a finalized reserve plan and a booked reserve contribution
@@ -47,3 +51,23 @@ Feature: Maintenance reserve ledger
   Scenario: Reserve evidence is required in payment and correction forms
     Given a WEG with a finalized reserve plan and a booked reserve contribution
     Then payment and correction forms require cost receipt and resolution on desktop and mobile
+
+  @browser
+  Scenario: Computed reserve drafts and opening corrections use accurate wording
+    Given a WEG with a finalized reserve plan and a booked reserve contribution
+    Then draft reserve captions and opening corrections remain accurate after computation
+
+  Scenario: A unit contribution correction uses only remaining booked Hausgeld
+    Given a WEG with partially assigned Hausgeld and a finalized reserve plan
+    When I correct the unit contribution by 300 euros
+    Then only 200 euros remain assignable and a further 300 euros is refused
+
+  Scenario: Derived reserve totals cannot be attested
+    Given a WEG with a finalized reserve plan and a booked reserve contribution
+    When I attest a derived contribution or withdrawal total
+    Then each attestation is refused with the derived-total read-only code
+
+  @browser
+  Scenario: A unit contribution correction shows its cap on desktop and mobile
+    Given a WEG with partially assigned Hausgeld and a finalized reserve plan
+    Then the unit correction shows remaining headroom and preserves inputs after refusal

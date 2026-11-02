@@ -686,7 +686,11 @@ allocation and WEMoG settlement-balance calculation; it changes neither.
   Both references freeze with the booking; Storno retains them. Computing and
   finalizing retain the evidence guard as a second line for historical payouts. The link records
   the complete payout, never a resolution's authorized budget. Several active
-  linked payouts cannot exceed the cost amount. Unlinked payouts remain visible
+  linked payouts and evidenced withdrawal/adjustment corrections share one cap
+  across every predecessor and successor of a corrected cost receipt. The cap
+  uses the current, non-superseded receipt's gross amount. A lower corrected
+  amount retains existing bookings and their frozen references but prevents
+  further funding beyond that amount. Unlinked payouts remain visible
   and block computation. No wording parsing or inferred payment date is used. Excluding funded costs
   from owner cost distribution remains follow-up #191; this change does not
   alter that distribution.
@@ -742,6 +746,9 @@ allocation and WEMoG settlement-balance calculation; it changes neither.
   (the same scope or whole-property WEG scopes with the same mandate) has been finalized,
   including a superseded run, correction drafts refuse further opening imports
   while evidence-backed withdrawal and adjustment corrections remain available.
+  A draft that reads a finalized sibling's ledger can still compute, re-attest
+  the unchanged opening and attest non-reserve inputs. Only an actual opening
+  difference is refused; these operations never append to the frozen ledger.
   The earliest period is
   the smallest `period_start` among non-superseded WEG annual settlement and
   asset-report runs for the property in the same scope, including whole-property
@@ -753,29 +760,54 @@ allocation and WEMoG settlement-balance calculation; it changes neither.
   for correction runs and the sibling run type. If no plan exists, an asset report shows planning as unknown,
   while dedicated reserve receipts and reasoned opening/other adjustments remain
   available; Hausgeld uses any finalized plan covering its cash date.
-- `reserve_ledger_entry` retains append-only signed adjustments and funding
-  evidence. `OPENING`, `CONTRIBUTION` and `WITHDRAWAL` adjustments change those
-  components; `ADJUSTMENT` adds a signed amount directly. A reason is mandatory.
-  Typed withdrawal corrections and other manual
-  adjustments require BOTH a confirmed cost receipt and an accepted registered
-  resolution; a reason alone cannot override missing evidence. The only
-  evidence-free manual entry is the audited import of the first year's opening
-  balance. Payment-specific Hausgeld assignments retain their booked cash proof.
-  Typed withdrawal and contribution corrections must be positive; withdrawals and
-  the absolute amounts of signed adjustments share the confirmed cost's gross-amount
-  cap with active booked payouts referencing that receipt.
-  Booked evidence references stay frozen: a later cost correction or resolution
-  challenge does not alter the ledger.
-  Corrections apply only to the exact start/end period they were posted for; a
-  half-year opening prevents creation of an overlapping full-year ledger and vice versa.
-  Funding links
-  remain payment-specific across periods so later reversals retain their evidence.
-  Existing typed reserve total fields are optional target-total overrides: input
-  attestation appends only their difference from the derived total, with
-  `reserve_override_reason`, and audits it. A typed withdrawal target with a
-  nonzero delta is refused without both references; use the correction dialog
-  to attach them instead. Repeating the same attestation adds
-  no second adjustment. A subsequent source/ledger change invalidates coverage.
+- `reserve_ledger_entry` retains append-only adjustments and funding evidence.
+  `OPENING`, `CONTRIBUTION` and `WITHDRAWAL` corrections change those components;
+  `ADJUSTMENT` adds a signed amount directly. Every entry requires a reason.
+  Withdrawal and adjustment corrections require BOTH a confirmed cost receipt
+  and an accepted registered resolution. Positive withdrawals and absolute signed
+  adjustments share the confirmed cost's gross-amount cap with active booked payouts.
+  Booked evidence references stay frozen after cost corrections or resolution challenges.
+- A contribution correction requires `unit_id` belonging to the same property,
+  a positive amount and a mandatory reason, with no payment, cost or resolution
+  references. Its cap derives from the reserve share of booked net Hausgeld for that
+  unit in the exact run period (IN receipts minus OUT refunds, net of Storno) and
+  from what is already credited to the unit, summed with signs: automatic rows
+  (including negative refund rows), earlier unit corrections and payment-specific
+  assignments of that unit's Hausgeld. The zero floors below apply only to the
+  first term of the formula; the second term keeps the signed difference.
+  Raw headroom is `LEAST(GREATEST(0, S) - GREATEST(0, D + C), S - D - C)`,
+  where `S` is the signed booked Hausgeld reserve share, `D` is its signed derived
+  credit (using a payment-specific assignment when present), and `C` is the unit's
+  contribution corrections. The API displays `GREATEST(0, raw)`, the amount accepted
+  right now: IN 1,300 with 100 assigned followed by OUT 650 shows 300 even though
+  500 can be corrected in two steps; the service and database guard refuse any
+  correction above raw headroom. Direct reserve payments enter neither aggregate.
+  Frozen plan cells and the cash ratio use the same SQL helpers for automatic
+  contributions, displayed headroom and the definer ledger guard. Plan selection is
+  shared too: use the exact current plan or, for a partial-period asset report,
+  the finalized plan covering each cash date. Multi-unit cash
+  is allocated in cent-exact unit shares. Excess returns
+  `RESERVE_CONTRIBUTION_EXCEEDS_BOOKED`; nonpositive corrections return
+  `RESERVE_AMOUNT_INVALID`. If a later Storno removes the backing for an existing
+  unit correction, draft computation/finalization refuses the unsupported contribution
+  with the same cap code and a message naming the unit. The reversal and retained
+  correction history remain intact.
+  A composite organization/unit foreign key and the
+  trigger protect direct writes. Free contribution corrections, including the
+  former cost-and-resolution path, are refused. Legacy balances enter only through
+  the existing first-year opening import.
+- Corrections apply only to their exact start/end period. Funding links remain
+  payment-specific across periods so later reversals retain their evidence.
+  Live ledger rows use the entry/value date, creation timestamp and ID as their
+  stable order. The display preserves that order; retained snapshots are unchanged.
+  Only `reserve_opening_balance` is an attestable reserve target total, accompanied
+  by `reserve_override_reason`. Attestation appends its signed difference from the
+  ledger opening; repeating it adds no second adjustment. Both WEG annual runs
+  and asset reports refuse non-null `reserve_contributions_total` or
+  `reserve_withdrawals_total`, including zero or an unchanged total, with
+  `RESERVE_DERIVED_TOTAL_READ_ONLY`: “Zuführungen und Entnahmen werden aus Buchungen
+  abgeleitet; Korrekturen erfolgen mit Bezug im Rücklagenbuch.” A subsequent
+  source or ledger change invalidates coverage.
   A payment-specific contribution assignment may range from zero to its signed
   cash amount; the database and service reject a wrong sign or excess amount.
   The unique payment assignment prevents adding further allocations in another

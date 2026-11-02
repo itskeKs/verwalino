@@ -952,8 +952,7 @@ class TestM4VermoegensberichtE2E:
         assert report.status_code == 201, report.text
         run_id = report.json()["id"]
         before = await migrator_session.scalar(text("SELECT to_jsonb(r)::text FROM settlement_run r WHERE id=:id"), {"id": run_id})
-        body = {"reserve_override_reason": "Reviewed synthetic reserve totals", "reserve_opening_balance": "0.00", "reserve_withdrawals_total": "0.00",
-                "reserve_contributions_total": "0.00", "receivables": [], "payables": [], "bank_balances": [
+        body = {"reserve_override_reason": "Reviewed synthetic reserve totals", "reserve_opening_balance": "0.00", "receivables": [], "payables": [], "bank_balances": [
                     {"bank_account_id": visible_bank["id"], "label": "Visible", "account_type": "LAUFEND", "balance": "0.00"},
                 ]}
         if invalid_inputs:
@@ -979,8 +978,6 @@ class TestM4VermoegensberichtE2E:
         run_id = resp.json()["id"]
         body = {
             "reserve_override_reason": "Reviewed synthetic reserve totals", "reserve_opening_balance": "20000.00",
-            "reserve_withdrawals_total": "8000.00",
-            "reserve_contributions_total": "6000.00",
             "bank_balances": [
                 {"bank_account_id": m4_withdrawal_seed["bank_giro"], "label": "Girokonto", "account_type": "LAUFEND", "balance": "15000.00"},
                 {"bank_account_id": m4_withdrawal_seed["bank_ruecklage"], "label": "Ruecklagenkonto", "account_type": "RUECKLAGE", "balance": "18000.00"},
@@ -989,10 +986,12 @@ class TestM4VermoegensberichtE2E:
             "payables": [{"label": "offene Rechnung", "amount": "1200.00"}],
         }
         evidence = {key.removeprefix('reserve_'): value for key, value in (await reserve_evidence(client_a_admin, m4_withdrawal_seed)).items()}
-        for component, amount in [('WITHDRAWAL', '8000.00'), ('CONTRIBUTION', '6000.00')]:
+        for component, amount in [('WITHDRAWAL', '8000.00')]:
             correction = await client_a_admin.post(f"/api/weg-settlements/{run_id}/reserve-ledger/overrides", json={
                 'component': component, 'amount': amount, 'reason': 'Documented synthetic correction', **evidence})
             assert correction.status_code == 201, correction.text
+        from tests.test_reserve_ledger import payment
+        await payment(client_a_admin, m4_withdrawal_seed, '6000.00')
         await attest_fixture(client_a_admin, "settlement", run_id, body)
         resp = await client_a_admin.post(f"/api/weg-settlements/asset-reports/{run_id}/finalize", json=body)
         assert resp.status_code == 200, resp.text
@@ -1015,8 +1014,7 @@ class TestM4VermoegensberichtE2E:
         })
         run_id = resp.json()["id"]
         body = {
-            "reserve_override_reason": "Reviewed synthetic reserve totals", "reserve_opening_balance": "1000.00", "reserve_withdrawals_total": "0.00",
-            "reserve_contributions_total": "0.00", "receivables": [], "payables": [],
+            "reserve_override_reason": "Reviewed synthetic reserve totals", "reserve_opening_balance": "1000.00", "receivables": [], "payables": [],
             "bank_balances": [
                 {"bank_account_id": m4_seed["bank_giro"], "label": "Giro", "account_type": "LAUFEND", "balance": "500.00"},
                 {"bank_account_id": m4_seed["bank_ruecklage"], "label": "Reserve", "account_type": "RUECKLAGE", "balance": "0.00"}],

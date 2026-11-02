@@ -809,6 +809,10 @@ value dates. Rows show dates, movement types, owner names and linked payment
 notes, cost document numbers and resolution register numbers. Register links
 open the property's collection at the referenced entry. At 360 px the table fits its card without sideways scrolling;
 date and amount columns stay compact, while movement labels and reasons wrap.
+Rows retain the server's date, creation timestamp and ID order across reloads.
+Only a finalized run shows “Finalisierter Rücklagenstand · unveränderbarer
+Snapshot.” A draft that reads a frozen sibling ledger keeps its draft wording
+and has no ledger correction action.
 Computed WEG and asset-report lines place late cash after the opening balance
 and wrap long labels within their cells.
 Money uses German grouping/comma decimals with `€`, dates `DD.MM.YYYY`.
@@ -818,30 +822,46 @@ component adjustment or a funded payout, supply its mandatory reason, and save.
 Typed withdrawal adjustments are labelled “Entnahmekorrektur”; booked payouts
 remain “Finanzierte Entnahme”. The reason for target reserve values sits inside
 the two-column form grid at full width on both detail pages.
-Both target-total forms show “Aktueller Anfangsbestand” above the opening input
+Both detail pages display contributions and withdrawals in the ledger; neither
+offers editable derived-total fields. Their opening forms show “Aktueller Anfangsbestand” above the opening input
 and ask for the corrected total plus a reason. The earliest draft can be
 re-attested; each signed difference remains a “Korrektur Anfangsbestand” row
 with its reason. The correction dialog continues to accept a signed difference.
+The opening option and its dialog use “Anfangsbestand korrigieren”
+and explains that the difference and reason remain recorded in the ledger.
+Import wording is reserved for the first-import instructions on the calculation form.
 Funded payouts select the existing booking, confirmed cost and registered
 resolution. Evidence groups constrain long document/resolution options to their
 form width; payout capture and bank split fields stack at 360 px.
 “Entnahmekorrektur” and other manual adjustments require both
 “Bestätigter Kostenbeleg *” and “Beschluss-Sammlung *”; negative amounts have the
-same rule. Only “Anfangsbestand” permits an evidence-free import in the first
-ledger year. Payment-specific Hausgeld assignments keep their existing cash proof. The dialog preserves useful inputs after refusal. A successful
+same rule. “Anfangsbestand” permits the existing first-year import. “Zuführungskorrektur”
+requires “Einheit *” from the property's units, a positive amount and “Begründung *”,
+without cost or resolution selectors. The selected unit shows “Noch zuordenbar: … €”
+using the server's remaining booked-Hausgeld allowance. An excessive correction
+shows “Die Zuführungskorrektur darf den Rücklagenanteil des gebuchten Hausgelds der
+Einheit nicht überschreiten.” and retains the unit, amount and reason. There is no
+“Allgemeine Zuführungskorrektur”. Payment-specific Hausgeld assignments retain
+“Gebuchte Zuführung” and their existing cash proof. The dialog preserves useful inputs after refusal. A successful
 change refreshes the ledger and invalidates the displayed coverage review;
-saving typed target-total overrides also refreshes the ledger. Finalized ledger
+saving a corrected opening target also refreshes the ledger. Finalized ledger
 snapshots have no correction action. Negative balances and missing funding
 links have explicit German feedback; unlinked cash payouts block computation.
 Hausgeld without a determinable reserve ratio appears as “Ohne Planbezug” with
 its full signed payment amount and blocks computation. A covering finalized plan
 or a reasoned, payment-specific contribution correction resolves it. The
-contribution dialog offers “Zahlung ohne Planbezug” for these entries. A payment
+“Gebuchte Zuführung” form offers “Zahlung ohne Planbezug” for these entries. A payment
 assignment stays between zero and the signed payment amount; structured reserve
 refusals display their German message while retaining the amount and reason.
 
 Payment capture offers “Rücklagenentnahme”, defaults its direction to “Ausgang”,
 and requires a confirmed cost receipt AND an accepted resolution before booking.
+Its manual form bypasses native browser constraint bubbles so the app's German
+missing-evidence message and structured server refusals reach the alert surface,
+with entered values retained. Other payment types retain native validation.
+Payout details show the linked cost document number and resolution register
+number with its wording as read-only links to the existing cost and register pages.
+Loading failures identify the unavailable evidence in German and retain the links.
 Evidence selectors, including the funded-payout picker, offer only confirmed, non-superseded costs and accepted
 resolutions, while keeping an already-linked invalid entry visible as the current value.
 Both selectors are available when editing an imported payment draft. Bank
@@ -895,3 +915,10 @@ field bounds and console health.
 | Released bank line | [new](docs/assets/reserve-ledger/round10-released-bank-line-1280.png) | [new](docs/assets/reserve-ledger/round10-released-bank-line-360.png) |
 | WEG audited opening entries | [ledger](docs/assets/reserve-ledger/round10-weg-ledger-after-1280.png) | [ledger](docs/assets/reserve-ledger/round10-weg-ledger-after-360.png) |
 | Asset-report audited opening entries | [ledger](docs/assets/reserve-ledger/round10-asset-ledger-after-1280.png) | [ledger](docs/assets/reserve-ledger/round10-asset-ledger-after-360.png) |
+| Unit contribution correction before / after | [before](docs/assets/reserve-ledger/round13b-contribution-before-1280.png) · [after](docs/assets/reserve-ledger/round13b-contribution-after-1280.png) | [before](docs/assets/reserve-ledger/round13b-contribution-before-360.png) · [after](docs/assets/reserve-ledger/round13b-contribution-after-360.png) |
+| WEG opening-only review | [after](docs/assets/reserve-ledger/round13b-weg-after-1280.png) | [after](docs/assets/reserve-ledger/round13b-weg-after-360.png) |
+| Asset-report opening-only review | [after](docs/assets/reserve-ledger/round13b-asset-after-1280.png) | [after](docs/assets/reserve-ledger/round13b-asset-after-360.png) |
+| Draft caption before / after | [before](docs/assets/reserve-ledger/round13c-draft-before-1280.png) · [after](docs/assets/reserve-ledger/round13c-draft-after-1280.png) | [before](docs/assets/reserve-ledger/round13c-draft-before-360.png) · [after](docs/assets/reserve-ledger/round13c-draft-after-360.png) |
+| Opening correction wording before / after | [before](docs/assets/reserve-ledger/round13c-opening-before-1280.png) · [after](docs/assets/reserve-ledger/round13c-opening-after-1280.png) | [before](docs/assets/reserve-ledger/round13c-opening-before-360.png) · [after](docs/assets/reserve-ledger/round13c-opening-after-360.png) |
+| Manual payout refusal | [after](docs/assets/reserve-ledger/round13c-payout-refusal-1280.png) | [after](docs/assets/reserve-ledger/round13c-payout-refusal-360.png) |
+| Booked payout evidence | [after](docs/assets/reserve-ledger/round13c-payout-detail-1280.png) | [after](docs/assets/reserve-ledger/round13c-payout-detail-360.png) |

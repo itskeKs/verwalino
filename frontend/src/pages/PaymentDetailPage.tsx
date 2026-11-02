@@ -20,6 +20,8 @@ import {
   listTenantProfiles,
   listOwnerProfiles,
   listPersons,
+  getCostEntry,
+  listRegisterEntries,
 } from "../api/endpoints";
 import type {
   Payment,
@@ -29,6 +31,8 @@ import type {
   TenantProfile,
   OwnerProfile,
   Person,
+  CostEntry,
+  RegisterEntry,
 } from "../api/types";
 import { ReserveEvidenceFields } from "../components/ReserveEvidenceFields";
 import { ApiError } from "../api/client";
@@ -80,6 +84,27 @@ export function PaymentDetailPage() {
   const [editPeriodMonth, setEditPeriodMonth] = useState<number | null>(null);
   const [evidence, setEvidence] = useState<{ reserve_cost_entry_id: string | null; reserve_register_entry_id: string | null } | null>(null);
   const [editNote, setEditNote] = useState<string | null>(null);
+  const [reserveReceipt, setReserveReceipt] = useState<CostEntry | null>(null);
+  const [reserveResolution, setReserveResolution] = useState<RegisterEntry | null>(null);
+  const [reserveEvidenceError, setReserveEvidenceError] = useState('');
+
+  const costId = payment?.payment_type === 'RUECKLAGENENTNAHME' ? payment.reserve_cost_entry_id : null;
+  const registerId = payment?.payment_type === 'RUECKLAGENENTNAHME' ? payment.reserve_register_entry_id : null;
+  const propertyId = payment?.property_id;
+  useEffect(() => {
+    let active = true;
+    setReserveReceipt(null); setReserveResolution(null); setReserveEvidenceError('');
+    Promise.all([
+      costId ? getCostEntry(costId) : Promise.resolve(null),
+      registerId && propertyId ? listRegisterEntries(propertyId).then(rows => rows.find(row => row.id === registerId) ?? null) : Promise.resolve(null),
+    ]).then(([cost, resolution]) => {
+      if (active) {
+        setReserveReceipt(cost); setReserveResolution(resolution);
+        if (registerId && !resolution) setReserveEvidenceError('Der verknüpfte Beschluss konnte nicht geladen werden.');
+      }
+    }).catch(() => { if (active) setReserveEvidenceError('Die verknüpften Rücklagenbelege konnten nicht geladen werden. Bitte laden Sie die Seite erneut.'); });
+    return () => { active = false; };
+  }, [costId, registerId, propertyId]);
 
   const reload = useCallback(() => {
     if (!paymentId) return;
@@ -486,8 +511,19 @@ export function PaymentDetailPage() {
                 <td>{payment.note}</td>
               </tr>
             )}
+            {costId && <tr>
+              <td>Kostenbeleg</td>
+              <td><Link className="link" to={`/kosten/${costId}`}>{reserveReceipt?.document_number || 'Kostenbeleg öffnen'}</Link></td>
+            </tr>}
+            {registerId && <tr>
+              <td>Beschluss</td>
+              <td><Link className="link" to={`/beschluss-sammlung?property_id=${payment.property_id}#beschluss-${registerId}`}>
+                {reserveResolution ? `Beschluss Nr. ${reserveResolution.sequence_number} · ${reserveResolution.wording}` : 'Beschluss öffnen'}
+              </Link></td>
+            </tr>}
           </tbody>
         </table>
+        {reserveEvidenceError && <p role="alert" className="error-text">{reserveEvidenceError}</p>}
       </div>
 
       {/* Action buttons */}

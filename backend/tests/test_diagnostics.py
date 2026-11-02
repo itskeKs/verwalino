@@ -9,7 +9,7 @@ import tarfile
 
 import pytest
 
-from app.diagnostics import build_bundle, bundle_filename, config_shapes
+from app.diagnostics import APP_VERSION, build_bundle, bundle_filename, config_shapes
 
 
 @pytest.fixture
@@ -58,7 +58,7 @@ def test_every_bundle_member_excludes_personal_data_and_config_values(private_lo
     assert environment['feature_flags']['HV_ENABLE_API_DOCS'] is False
     assert json.loads(members['containers.json']) == [{'service': 'app', 'state': 'running', 'health': 'healthy'}]
     manifest = json.loads(members['manifest.json'])
-    assert manifest['app_version'] == '0.1.0'
+    assert manifest['app_version'] == APP_VERSION
     assert manifest['release_target'] == TARGET
     assert manifest['created_at'] == '2026-10-30T00:00:00+00:00'
     assert manifest['image_digest'] is None

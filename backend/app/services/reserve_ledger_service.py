@@ -6,7 +6,7 @@ from fastapi import HTTPException
 from sqlalchemy.exc import DBAPIError
 
 from app.core.rbac import ScopeCapability
-from app.engine.reserve_ledger import money, plan_reserve_entries, hausgeld_reserve_share, reserve_totals
+from app.engine.reserve_ledger import money, reserve_totals
 from app.models.audit_event import AuditEvent
 from app.models.reserve_ledger_entry import ReserveLedgerEntry
 from app.repositories.audit_repo import AuditRepository
@@ -17,6 +17,8 @@ from app.services.financial_scope_service import FinancialScopeService
 ZERO = Decimal('0.00')
 OPENING_IMPORT_ONLY = {'code': 'RESERVE_OPENING_IMPORT_ONLY', 'message': 'Ein Import des Anfangsbestands ist nur im ersten Rücklagenjahr vor der Finalisierung zulässig und nur, wenn kein anderer, abweichender Rücklagenzeitraum besteht.'}
 OPENING_IMPORT_EXISTS = {'code': 'RESERVE_OPENING_IMPORT_EXISTS', 'message': 'Nach dem Import eines Anfangsbestands können Sie keinen früheren oder abweichenden, überlappenden Abrechnungszeitraum anlegen.'}
+DERIVED_TOTAL_READ_ONLY = {'code': 'RESERVE_DERIVED_TOTAL_READ_ONLY', 'message': 'Zuführungen und Entnahmen werden aus Buchungen abgeleitet; Korrekturen erfolgen mit Bezug im Rücklagenbuch.'}
+CONTRIBUTION_EXCEEDS_BOOKED = {'code': 'RESERVE_CONTRIBUTION_EXCEEDS_BOOKED', 'message': 'Die Zuführungskorrektur darf den Rücklagenanteil des gebuchten Hausgelds der Einheit nicht überschreiten.'}
 
 
 def _raise_reserve_opening_error(exc: DBAPIError):
@@ -92,7 +94,7 @@ class ReserveLedgerService:
         if len(plans) > 1 or run.economic_plan_id and not plans:
             raise HTTPException(422, {'code': 'RESERVE_PLAN_REQUIRED', 'message': 'Genau ein aktueller, finalisierter Wirtschaftsplan für diesen Zeitraum ist erforderlich.'})
         plan = plans[0] if plans else None
-        rows = plan_reserve_entries(plan.snapshot_payload, plan.reserve_contribution_total, plan.period_start) if plan else []
+        rows = await self.repo.plan_rows(plan) if plan else []
         # Frozen ledgers identify consumed bookings, including earlier late cash.
         history = [r for r, _ in compatible if r.period_end < run.period_start]
         frozen_cash = {row['payment_id']: row for r in history
@@ -113,9 +115,8 @@ class ReserveLedgerService:
         payment_ids = {p.id for p in payments}
         owner_units = await self.repo.owner_units(payments)
         cash_plans = await self.repo.cash_plans(run, start) if any(
-            p.payment_type == 'HAUSGELD_VORSCHUSS' and (plan is None or p.value_date < run.period_start)
+            p.payment_type == 'HAUSGELD_VORSCHUSS' and p.value_date < run.period_start
             for p in payments) else []
-        plan_rows = {plan.id: tuple(rows)} if plan else {}
         for payment in payments:
             signed = payment.amount if payment.direction == 'IN' else -payment.amount
             owner = str(payment.owner_profile_id)
@@ -132,7 +133,9 @@ class ReserveLedgerService:
                     actual = -Decimal(original['amount'])
                 else:
                     cash_plan = plan
-                    if cash_plan is None or payment.value_date < run.period_start:
+                    if payment.value_date >= run.period_start and cash_plan is None:
+                        cash_plan = await self.repo.cash_plan(run, payment.value_date)
+                    elif payment.value_date < run.period_start:
                         source_id = next(((r.snapshot_payload or {}).get('reserve_ledger', {}).get('economic_plan_id')
                             for r in history if r.period_start <= payment.value_date <= r.period_end
                             and (r.snapshot_payload or {}).get('reserve_ledger', {}).get('economic_plan_id')), None)
@@ -140,13 +143,8 @@ class ReserveLedgerService:
                             (p for p in cash_plans if p.period_start <= payment.value_date <= p.period_end), None)
                         if source_id and cash_plan is None:
                             raise HTTPException(404, {'code': 'RESERVE_NOT_FOUND', 'message': 'Rücklagenabrechnung nicht gefunden.'})
-                    if cash_plan and cash_plan.id not in plan_rows:
-                        plan_rows[cash_plan.id] = plan_reserve_entries(
-                            cash_plan.snapshot_payload, cash_plan.reserve_contribution_total, cash_plan.period_start)
-                    planned = plan_rows[cash_plan.id] if cash_plan else []
-                    payload = cash_plan.snapshot_payload if cash_plan else {'inputs': {'owner_periods': []}, 'result': {'owners': []}}
                     units = owner_units.get(payment.id, set())
-                    actual = hausgeld_reserve_share(signed, units, [r for r in planned if r['kind'] == 'PLANNED'], payload['result']['owners'])
+                    actual = await self.repo.hausgeld_share(signed, units, cash_plan) if cash_plan else None
                 if actual is None:
                     unlinked.append(str(payment.id))
                     rows.append({'kind': 'UNASSIGNED', 'date': str(payment.value_date), 'amount': format(signed, '.2f'),
@@ -192,18 +190,29 @@ class ReserveLedgerService:
                 overrides += entry.amount
             rows.append({'kind': 'OVERRIDE', 'component': entry.component, 'date': str(entry.entry_date),
                          'amount': format(entry.amount, '.2f'), 'reason': entry.reason, 'id': str(entry.id),
+                         **({'unit_id': str(entry.unit_id)} if entry.unit_id else {}),
                          **({'cost_entry_id': str(entry.cost_entry_id), 'register_entry_id': str(entry.register_entry_id)} if entry.cost_entry_id else {})})
+        created_at = {str(source.id): source.created_at.isoformat() for source in [*entries, *payments]
+                      if getattr(source, 'created_at', None) is not None}
         return {**reserve_totals(opening, contributions, withdrawals, overrides, late_cash),
                 'planned_contributions_total': format(money(plan.reserve_contribution_total), '.2f') if plan else None,
                 'economic_plan_id': str(plan.id) if plan else None, 'economic_plan_sha256': plan.snapshot_sha256 if plan else None,
                 'booking_basis': 'CASH', 'frozen': False,
                 'unlinked_payment_ids': unlinked,
                 'opening_source_run_id': str(prior.id) if prior else None,
-                'entries': sorted(rows, key=lambda row: (row['date'], row['kind'], row.get('id', ''), row.get('payment_id', ''), row.get('unit_id', ''), row.get('owner_profile_id', '')))}
+                'entries': sorted(rows, key=lambda row: (row['date'], created_at.get(row.get('id') or row.get('payment_id'), ''),
+                    row.get('id') or row.get('payment_id', ''), row['kind'], row.get('unit_id', ''), row.get('owner_profile_id', '')))}
 
     async def read_display(self, run):
         ledger = await self.read(run)
-        return {**ledger, 'entries': await self.repo.display_entries(ledger['entries'])}
+        return {**ledger, 'entries': await self.repo.display_entries(ledger['entries']),
+                'contribution_headroom': [] if ledger['frozen'] else await self.repo.contribution_options(run)}
+
+    async def require_contribution_backing(self, run):
+        unit_number = await self.repo.unsupported_contribution_unit(run)
+        if unit_number is not None:
+            raise HTTPException(422, {**CONTRIBUTION_EXCEEDS_BOOKED,
+                'message': f'Die Zuführungskorrektur der Einheit {unit_number} überschreitet den Rücklagenanteil ihres gebuchten Hausgelds.'})
 
     async def require_evidence(self, property_id, cost_id, register_id, *, complete=True, payment=None, withdrawal_amount=None):
         with self.session.no_autoflush:
@@ -224,7 +233,7 @@ class ReserveLedgerService:
             raise HTTPException(422, {'code': 'RESERVE_PAYOUT_EVIDENCE_REQUIRED',
                 'message': 'Die aktiven Rücklagenentnahmen dürfen den bestätigten Kostenbetrag nicht überschreiten.'})
 
-    async def add(self, run, component, amount, reason, payment_id=None, cost_entry_id=None, register_entry_id=None):
+    async def add(self, run, component, amount, reason, payment_id=None, cost_entry_id=None, register_entry_id=None, unit_id=None):
         ledger = await self.read(run)
         if ledger['frozen']:
             raise HTTPException(409, {'code': 'RESERVE_PERIOD_FINALIZED', 'message': 'Die Rücklage dieses Zeitraums ist finalisiert.'})
@@ -238,7 +247,19 @@ class ReserveLedgerService:
             await self.require_opening_period(run, ledger)
             if amount == ZERO:
                 raise HTTPException(422, {'code': 'RESERVE_AMOUNT_INVALID', 'message': 'Keine Änderung des Anfangsbestands.'})
-        if component == 'FUNDING':
+        if unit_id is not None and (component != 'CONTRIBUTION' or payment_id or cost_entry_id or register_entry_id):
+            raise HTTPException(422, {'code': 'RESERVE_INPUT_INVALID', 'message': 'Der Einheitenbezug ist nur für eine Zuführungskorrektur zulässig.'})
+        if component == 'CONTRIBUTION' and payment_id is None:
+            if unit_id is None or cost_entry_id or register_entry_id:
+                raise HTTPException(422, {'code': 'RESERVE_CONTRIBUTION_UNIT_REQUIRED', 'message': 'Bitte wählen Sie für die Zuführungskorrektur eine Einheit; Kostenbeleg und Beschluss sind hier nicht zulässig.'})
+            unit = await self.repo.unit(run, unit_id)
+            if unit is None:
+                raise HTTPException(404, {'code': 'RESERVE_NOT_FOUND', 'message': 'Rücklagenabrechnung nicht gefunden.'})
+            if amount <= ZERO:
+                raise HTTPException(422, {'code': 'RESERVE_AMOUNT_INVALID', 'message': 'Bitte geben Sie für eine Zuführungskorrektur einen Betrag größer als null ein.'})
+            if amount > await self.repo.contribution_headroom(run, unit_id):
+                raise HTTPException(422, CONTRIBUTION_EXCEEDS_BOOKED)
+        elif component == 'FUNDING':
             await self.require_evidence(run.property_id, cost_entry_id, register_entry_id)
             sources = await self.repo.funding_sources(payment_id, cost_entry_id, register_entry_id)
             if any(source is None or source.property_id != run.property_id for source in sources):
@@ -265,7 +286,7 @@ class ReserveLedgerService:
                     'message': 'Die Rücklagenzuordnung muss zwischen null und dem vorzeichenbehafteten Zahlungsbetrag liegen.'})
             # The immutable organization/payment unique key permits exactly one
             # assignment, so its total cannot grow through another draft or race.
-        elif component in ('WITHDRAWAL', 'ADJUSTMENT', 'CONTRIBUTION') and payment_id is None:
+        elif component in ('WITHDRAWAL', 'ADJUSTMENT') and payment_id is None:
             await self.require_evidence(run.property_id, cost_entry_id, register_entry_id,
                 withdrawal_amount=amount if component == 'WITHDRAWAL' else abs(amount) if component == 'ADJUSTMENT' else None)
             if component in ('WITHDRAWAL', 'CONTRIBUTION') and amount <= ZERO:
@@ -277,11 +298,12 @@ class ReserveLedgerService:
             property_id=run.property_id, settlement_run_id=run.id,
             entry_date=run.period_start if component == 'OPENING' else run.period_end,
             component=component, amount=amount, reason=reason.strip(), created_by=self.user_id,
-            payment_id=payment_id, cost_entry_id=cost_entry_id, register_entry_id=register_entry_id))
+            payment_id=payment_id, cost_entry_id=cost_entry_id, register_entry_id=register_entry_id, unit_id=unit_id))
         await AuditRepository(self.session, self.org_id).create(AuditEvent(
             actor_user_id=self.user_id, entity_type='settlement_run', entity_id=run.id,
             action='reserve.override_added', payload_diff={'entry_id': str(entry.id), 'component': component,
-                'amount': format(amount, '.2f'), 'reason': reason.strip()}))
+                'amount': format(amount, '.2f'), 'reason': reason.strip(),
+                **({'unit_id': str(unit_id)} if unit_id else {})}))
         return entry
 
     async def require_opening_period(self, run, ledger):
@@ -292,21 +314,22 @@ class ReserveLedgerService:
             raise HTTPException(422, OPENING_IMPORT_ONLY)
 
     async def apply_typed_overrides(self, run, values):
+        if any(getattr(values, field, None) is not None for field in ('reserve_contributions_total', 'reserve_withdrawals_total')):
+            raise HTTPException(422, DERIVED_TOTAL_READ_ONLY)
         ledger = await self.read(run)
-        fields = {'reserve_opening_balance': ('OPENING', 'opening_balance'),
-                  'reserve_withdrawals_total': ('WITHDRAWAL', 'withdrawals_total'),
-                  'reserve_contributions_total': ('CONTRIBUTION', 'contributions_total')}
+        fields = {'reserve_opening_balance': ('OPENING', 'opening_balance')}
         for field, (component, total) in fields.items():
             value = getattr(values, field, None)
             if value is None:
+                continue
+            delta = money(value) - Decimal(ledger[total])
+            if not delta:
                 continue
             if ledger['frozen'] and component == 'OPENING':
                 raise HTTPException(409, {'code': 'RESERVE_PERIOD_FINALIZED', 'message': 'Die Rücklage dieses Zeitraums ist finalisiert.'})
             reason = values.reserve_override_reason
             if not reason or not reason.strip():
                 raise HTTPException(422, {'code': 'RESERVE_CORRECTION_REASON_REQUIRED', 'message': 'Manuelle Rücklagenwerte benötigen eine Begründung.'})
-            delta = money(value) - Decimal(ledger[total])
-            if delta:
-                await self.add(run, component, delta, reason)
-                ledger = await self.read(run)
+            await self.add(run, component, delta, reason)
+            ledger = await self.read(run)
         return ledger

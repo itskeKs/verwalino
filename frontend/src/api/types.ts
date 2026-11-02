@@ -1348,6 +1348,7 @@ export interface AssetReportComputeRequest {
 // --- M8 Meetings & Beschluss-Sammlung ---
 export type ReserveComponent = 'OPENING' | 'CONTRIBUTION' | 'WITHDRAWAL' | 'ADJUSTMENT' | 'FUNDING';
 export interface ReserveOverride {
+  unit_id?: string;
   component: ReserveComponent;
   amount: string;
   reason: string;
@@ -1356,6 +1357,7 @@ export interface ReserveOverride {
   register_entry_id?: string;
 }
 export interface ReserveLedger {
+  contribution_headroom?: { unit_id: string; unit_number: string; remaining: string }[];
   unlinked_payment_ids?: string[];
   opening_balance: string;
   contributions_total: string;

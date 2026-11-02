@@ -87,7 +87,10 @@ def synthetic_target(properties=()):
 def test_external_features_use_api_and_skip_local_only_scenarios(pytester, monkeypatch):
     backend = Path(__file__).resolve().parents[1]
     expected_counts = {}
-    for filename in ("organization_isolation", "first_run_setup", "inbox_review_chain", "password_change"):
+    for filename in (
+        "organization_isolation", "first_run_setup", "inbox_review_chain", "password_change",
+        "organization_deletion", "organization_export_import", "password_reset",
+    ):
         feature = FeatureParser(str(backend.parent / "features"), f"{filename}.feature").parse()
         # Each example row is a collected test; plain scenarios contribute one.
         expected_counts[feature.name] = sum(
@@ -97,10 +100,14 @@ def test_external_features_use_api_and_skip_local_only_scenarios(pytester, monke
     expected_passed = expected_counts["Password change"]
     expected_skipped = sum(expected_counts[name] for name in (
         "Organization isolation", "First run setup", "Inbox review chain",
+        "Organization deletion", "Organization export import", "Password reset",
     ))
     monkeypatch.setenv("PYTHONPATH", str(backend))
     # Invalid DB settings make any accidental local fixture access fail loudly.
-    for name in ("HV_DATABASE_URL", "HV_DATABASE_URL_MIGRATOR", "HV_DATABASE_URL_SYNC", "HV_DATABASE_URL_REVIEW"):
+    for name in (
+        "HV_DATABASE_URL", "HV_DATABASE_URL_MIGRATOR", "HV_DATABASE_URL_SYNC", "HV_DATABASE_URL_REVIEW",
+        "VERWALINO_MAILPIT_API",
+    ):
         monkeypatch.delenv(name, raising=False)
     monkeypatch.setenv("VERWALINO_TARGET_ADMIN_EMAIL", "nightly@example.test")
     monkeypatch.setenv("VERWALINO_TARGET_ADMIN_PASSWORD", "bootstrap-password")
@@ -112,7 +119,10 @@ def test_external_features_use_api_and_skip_local_only_scenarios(pytester, monke
             str(backend / "tests/bdd/test_organization_isolation.py"),
             str(backend / "tests/bdd/test_first_run_setup.py"),
             str(backend / "tests/bdd/test_inbox_review_chain.py"),
-            "--scenario-report", str(destination), "-q", "--tb=short",
+            str(backend / "tests/bdd/test_organization_deletion.py"),
+            str(backend / "tests/bdd/test_organization_export_import.py"),
+            str(backend / "tests/bdd/test_password_reset.py"),
+            "--run-browser", "--scenario-report", str(destination), "-q", "--tb=short",
         )
         result.assert_outcomes(passed=expected_passed, skipped=expected_skipped, failed=0, errors=0)
         assert users["nightly@example.test"] == "bootstrap-password"
@@ -128,6 +138,9 @@ def test_external_features_use_api_and_skip_local_only_scenarios(pytester, monke
         ("Organization isolation", "two organizations"),
         ("First run setup", "fresh installation"),
         ("Inbox review chain", "needs the in-process invoice worker and direct database fixtures"),
+        ("Organization deletion", "needs direct database fixtures and the in-process deletion CLI"),
+        ("Organization export import", "needs direct database fixtures and in-process archive storage"),
+        ("Password reset", "needs the Mailpit test mailbox"),
     ):
         skipped = [row for row in rows if row["feature"] == feature_name]
         assert len(skipped) == expected_counts[feature_name]

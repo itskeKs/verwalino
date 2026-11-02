@@ -145,17 +145,19 @@ def upgrade():
       component varchar(16) NOT NULL CHECK(component IN ('OPENING','CONTRIBUTION','WITHDRAWAL','ADJUSTMENT','FUNDING')),
       amount numeric(14,2) NOT NULL CHECK(amount <> 'NaN'::numeric),
       reason varchar(2000) NOT NULL CHECK(length(btrim(reason)) BETWEEN 1 AND 2000),
-      payment_id uuid, cost_entry_id uuid, register_entry_id uuid,
+      payment_id uuid, cost_entry_id uuid, register_entry_id uuid, unit_id uuid,
       created_by uuid NOT NULL REFERENCES "user"(id), created_at timestamptz NOT NULL DEFAULT now(),
       FOREIGN KEY(organization_id,property_id) REFERENCES property(organization_id,id),
       FOREIGN KEY(organization_id,settlement_run_id) REFERENCES settlement_run(organization_id,id),
       FOREIGN KEY(organization_id,payment_id) REFERENCES payment(organization_id,id),
+      FOREIGN KEY(organization_id,unit_id) REFERENCES unit(organization_id,id),
       FOREIGN KEY(organization_id,cost_entry_id) REFERENCES cost_entry(organization_id,id),
       FOREIGN KEY(organization_id,register_entry_id) REFERENCES resolution_register_entry(organization_id,id),
-      CHECK((component='FUNDING' AND payment_id IS NOT NULL AND cost_entry_id IS NOT NULL AND register_entry_id IS NOT NULL AND amount=0)
+      CHECK((unit_id IS NULL OR (component='CONTRIBUTION' AND payment_id IS NULL)) AND ((component='FUNDING' AND payment_id IS NOT NULL AND cost_entry_id IS NOT NULL AND register_entry_id IS NOT NULL AND amount=0)
          OR (component='CONTRIBUTION' AND payment_id IS NOT NULL AND cost_entry_id IS NULL AND register_entry_id IS NULL)
          OR (component='OPENING' AND payment_id IS NULL AND cost_entry_id IS NULL AND register_entry_id IS NULL)
-         OR (component IN ('WITHDRAWAL','ADJUSTMENT','CONTRIBUTION') AND payment_id IS NULL AND cost_entry_id IS NOT NULL AND register_entry_id IS NOT NULL)),
+         OR (component='CONTRIBUTION' AND payment_id IS NULL AND unit_id IS NOT NULL AND cost_entry_id IS NULL AND register_entry_id IS NULL)
+         OR (component IN ('WITHDRAWAL','ADJUSTMENT') AND payment_id IS NULL AND cost_entry_id IS NOT NULL AND register_entry_id IS NOT NULL))),
       UNIQUE(organization_id,payment_id));
     CREATE INDEX ix_reserve_property_date ON reserve_ledger_entry(organization_id,property_id,entry_date);
     ALTER TABLE reserve_ledger_entry ENABLE ROW LEVEL SECURITY;
@@ -175,17 +177,131 @@ def upgrade():
     -- VOLATILE sees writes serialized by financial-inputs, including this statement.
     CREATE FUNCTION reserve_funded_amount(org uuid,cost uuid,excluded_payment uuid) RETURNS numeric
     LANGUAGE sql VOLATILE SET search_path=pg_catalog,pg_temp AS $$
+      WITH RECURSIVE cost_chain AS (
+        SELECT c.id,c.superseded_by_id FROM public.cost_entry c
+        WHERE c.organization_id=org AND c.id=cost
+        UNION
+        SELECT c.id,c.superseded_by_id FROM public.cost_entry c
+        JOIN cost_chain prior ON c.id=prior.superseded_by_id OR c.superseded_by_id=prior.id
+        WHERE c.organization_id=org
+      )
       SELECT COALESCE((SELECT sum(p.amount) FROM public.payment p
         LEFT JOIN public.reserve_ledger_entry e ON e.organization_id=p.organization_id AND e.payment_id=p.id AND e.component='FUNDING'
-        WHERE p.organization_id=org AND COALESCE(p.reserve_cost_entry_id,e.cost_entry_id)=cost
+        WHERE p.organization_id=org AND COALESCE(p.reserve_cost_entry_id,e.cost_entry_id) IN (SELECT id FROM cost_chain)
           AND p.status='booked' AND p.reverses_id IS NULL AND p.reversed_by_id IS NULL
           AND p.id IS DISTINCT FROM excluded_payment),0)
         + COALESCE((SELECT sum(CASE WHEN e.component='ADJUSTMENT' THEN abs(e.amount) ELSE e.amount END)
-          FROM public.reserve_ledger_entry e WHERE e.organization_id=org AND e.cost_entry_id=cost
+          FROM public.reserve_ledger_entry e WHERE e.organization_id=org AND e.cost_entry_id IN (SELECT id FROM cost_chain)
             AND e.payment_id IS NULL AND e.component IN ('WITHDRAWAL','ADJUSTMENT')),0)
     $$;
     REVOKE ALL ON FUNCTION reserve_funded_amount(uuid,uuid,uuid) FROM PUBLIC;
     GRANT EXECUTE ON FUNCTION reserve_funded_amount(uuid,uuid,uuid) TO app_rw;
+    -- Canonical frozen annual reserve cells: Hamilton cents, stable unit/owner ties.
+    -- Planning display, automatic cash and correction caps all consume these cells.
+    CREATE FUNCTION reserve_plan_cells(payload jsonb,total numeric,starts date) RETURNS jsonb
+    LANGUAGE sql IMMUTABLE SET search_path=pg_catalog,pg_temp AS $$
+      WITH owners AS (
+        SELECT u->>'id' unit_id,u->>'number' unit_number,o->>'owner_profile_id' owner_profile_id,
+          (u->>'mea')::numeric mea,COALESCE((o->>'mea_share')::numeric,0) owner_mea,
+          count(*) OVER (PARTITION BY u->>'id') n,
+          sum(COALESCE((o->>'mea_share')::numeric,0)) OVER (PARTITION BY u->>'id') denominator
+        FROM jsonb_array_elements(payload->'inputs'->'units') u
+        JOIN jsonb_array_elements(payload->'inputs'->'owner_periods') o ON o->>'unit_id'=u->>'id'
+        WHERE (u->>'mea')::numeric>0 AND (o->>'from')::date<=starts
+          AND (o->>'to' IS NULL OR (o->>'to')::date>=starts)
+      ), weights AS (
+        SELECT *,CASE WHEN n=1 THEN mea ELSE mea*owner_mea/NULLIF(denominator,0) END weight FROM owners
+      ), exact AS (
+        SELECT *,round(total,2)*weight/sum(weight) OVER () exact FROM weights
+      ), ranked AS (
+        SELECT *,floor(exact*100)/100 base,
+          row_number() OVER (ORDER BY exact-floor(exact*100)/100 DESC,exact DESC,unit_id,owner_profile_id) rank
+        FROM exact
+      ) SELECT COALESCE(jsonb_agg(jsonb_build_object('unit_id',unit_id,'unit_number',unit_number,
+          'owner_profile_id',owner_profile_id,'amount',
+          (base+CASE WHEN rank<=round((round(total,2)-sum_base)*100) THEN 0.01 ELSE 0 END)::text)
+          ORDER BY unit_id,owner_profile_id),'[]'::jsonb)
+        FROM (SELECT *,sum(base) OVER () sum_base FROM ranked) cells
+    $$;
+    CREATE FUNCTION reserve_hausgeld_share(cash numeric,units text[],planned jsonb,owners jsonb) RETURNS numeric
+    LANGUAGE sql IMMUTABLE SET search_path=pg_catalog,pg_temp AS $$
+      SELECT round(cash*COALESCE((SELECT sum((r->>'amount')::numeric)
+          FROM jsonb_array_elements(planned) r WHERE r->>'unit_id'=ANY(units)),0)
+        /NULLIF((SELECT sum((o->>'annual_advance')::numeric)
+          FROM jsonb_array_elements(owners) o WHERE o->>'unit_id'=ANY(units)),0),2)
+    $$;
+    -- Allocate the already-rounded cash total to units, with no lost/extra cent.
+    CREATE FUNCTION reserve_unit_cash(cash numeric,units text[],planned jsonb,owners jsonb)
+    RETURNS TABLE(unit_id text,amount numeric) LANGUAGE sql IMMUTABLE SET search_path=pg_catalog,pg_temp AS $$
+      WITH weights AS (
+        SELECT r->>'unit_id' unit_id,sum((r->>'amount')::numeric) weight
+        FROM jsonb_array_elements(planned) r WHERE r->>'unit_id'=ANY(units) GROUP BY r->>'unit_id'
+      ), exact AS (
+        SELECT *,abs(public.reserve_hausgeld_share(cash,units,planned,owners))*weight/NULLIF(sum(weight) OVER (),0) exact
+        FROM weights
+      ), ranked AS (
+        SELECT *,floor(exact*100)/100 base,
+          row_number() OVER (ORDER BY exact-floor(exact*100)/100 DESC,exact DESC,unit_id) rank FROM exact
+      ) SELECT unit_id,sign(cash)*(base+CASE WHEN rank<=round((abs(public.reserve_hausgeld_share(cash,units,planned,owners))
+          -sum(base) OVER ())*100) THEN 0.01 ELSE 0 END) FROM ranked
+    $$;
+    -- Same exact/covering-plan selection for current-period automatic cash and caps.
+    CREATE FUNCTION reserve_cash_plan(org uuid,property uuid,starts date,ends date,selected uuid,cash_date date)
+    RETURNS uuid LANGUAGE sql STABLE SET search_path=pg_catalog,pg_temp AS $$
+      WITH exact AS (
+        SELECT p.id FROM public.economic_plan p WHERE p.organization_id=org AND p.property_id=property
+          AND p.status='finalized' AND p.superseded_by_id IS NULL AND p.period_start=starts AND p.period_end=ends
+          AND (selected IS NULL OR p.id=selected)
+      ) SELECT COALESCE((SELECT id FROM exact WHERE (SELECT count(*) FROM exact)=1),
+        (SELECT p.id FROM public.economic_plan p WHERE p.organization_id=org AND p.property_id=property
+          AND p.status='finalized' AND p.period_start<=cash_date AND p.period_end>=cash_date
+          AND selected IS NULL AND NOT EXISTS(SELECT 1 FROM exact)
+          ORDER BY p.superseded_by_id IS NOT NULL,p.period_start DESC,p.id LIMIT 1))
+    $$;
+    -- Invoker reads preserve RLS; the definer ledger guard calls this same query.
+    -- VOLATILE sees prior entries serialized by the organization financial lock.
+    CREATE FUNCTION reserve_contribution_headroom(org uuid,run uuid,unit uuid) RETURNS numeric
+    LANGUAGE sql VOLATILE SET search_path=pg_catalog,pg_temp AS $$
+      WITH parent AS (SELECT * FROM public.settlement_run WHERE organization_id=org AND id=run),
+      cash AS (
+        SELECT p.*,CASE WHEN p.reverses_id IS NULL THEN a.amount ELSE -a.amount END assigned,
+          public.reserve_cash_plan(org,r.property_id,r.period_start,r.period_end,r.economic_plan_id,p.value_date) plan_id,
+          ARRAY(SELECT DISTINCT u.id::text FROM public.ownership_history h JOIN public.unit u
+            ON u.organization_id=h.organization_id AND u.id=h.unit_id
+            WHERE h.organization_id=org AND h.owner_profile_id=p.owner_profile_id AND u.property_id=p.property_id
+              AND h.valid_from<=p.value_date AND (h.valid_to IS NULL OR h.valid_to>p.value_date)) units
+        FROM public.payment p CROSS JOIN parent r LEFT JOIN public.reserve_ledger_entry a
+          ON a.organization_id=org AND a.component='CONTRIBUTION' AND a.payment_id=COALESCE(p.reverses_id,p.id)
+        WHERE p.organization_id=org AND p.property_id=r.property_id AND p.status='booked' AND p.cancelled_at IS NULL
+          AND p.value_date BETWEEN r.period_start AND r.period_end
+          AND p.payment_type='HAUSGELD_VORSCHUSS'
+      ), movements AS (
+        SELECT p.*,b.planned,b.owners,
+          (SELECT jsonb_agg(jsonb_build_object('unit_id',c->>'unit_id','annual_advance',c->>'amount'))
+            FROM jsonb_array_elements(b.planned) c) reserve_owners,
+          CASE WHEN p.direction='IN' THEN p.amount ELSE -p.amount END signed
+        FROM cash p JOIN public.economic_plan source ON source.organization_id=org AND source.id=p.plan_id
+        CROSS JOIN LATERAL (SELECT public.reserve_plan_cells(source.snapshot_payload,source.reserve_contribution_total,source.period_start) planned,
+          source.snapshot_payload->'result'->'owners' owners) b
+      ), totals AS (SELECT
+        COALESCE((SELECT sum(s.amount) FROM movements p CROSS JOIN LATERAL
+          public.reserve_unit_cash(p.signed,p.units,p.planned,p.owners) s
+          WHERE s.unit_id=unit::text),0) booked,
+        COALESCE((SELECT sum(s.amount) FROM movements p CROSS JOIN LATERAL public.reserve_unit_cash(
+          COALESCE(p.assigned,p.signed),p.units,p.planned,
+          CASE WHEN p.assigned IS NOT NULL THEN p.reserve_owners ELSE p.owners END) s WHERE s.unit_id=unit::text),0)
+        +COALESCE((SELECT sum(e.amount) FROM public.reserve_ledger_entry e JOIN public.settlement_run r
+          ON r.organization_id=e.organization_id AND r.id=e.settlement_run_id CROSS JOIN parent p
+          WHERE e.organization_id=org AND e.property_id=p.property_id AND e.unit_id=unit AND e.component='CONTRIBUTION'
+            AND r.period_start=p.period_start AND r.period_end=p.period_end),0) credited
+      ) SELECT LEAST(GREATEST(0,booked)-GREATEST(0,credited),booked-credited) FROM totals
+    $$;
+    REVOKE ALL ON FUNCTION reserve_plan_cells(jsonb,numeric,date),reserve_hausgeld_share(numeric,text[],jsonb,jsonb),
+      reserve_unit_cash(numeric,text[],jsonb,jsonb),reserve_contribution_headroom(uuid,uuid,uuid),
+      reserve_cash_plan(uuid,uuid,date,date,uuid,date) FROM PUBLIC;
+    GRANT EXECUTE ON FUNCTION reserve_plan_cells(jsonb,numeric,date),reserve_hausgeld_share(numeric,text[],jsonb,jsonb),
+      reserve_unit_cash(numeric,text[],jsonb,jsonb),reserve_contribution_headroom(uuid,uuid,uuid),
+      reserve_cash_plan(uuid,uuid,date,date,uuid,date) TO app_rw;
     -- Shared by service queries and both opening-period guards. Invoker rights
     -- preserve RLS on service reads; trigger callers already run as definer.
     CREATE FUNCTION reserve_ledger_scope_matches(org uuid,prior_scope uuid,next_scope uuid,prior_mandate uuid,next_mandate uuid)
@@ -271,6 +387,18 @@ def upgrade():
         RAISE EXCEPTION 'Reserve opening import is limited to first ledger year' USING ERRCODE='23514',CONSTRAINT='reserve_opening_import_only'; END IF;
       IF NEW.component='OPENING' AND NEW.amount=0 THEN
         RAISE EXCEPTION 'Reserve opening has no change' USING ERRCODE='23514',CONSTRAINT='reserve_amount_invalid'; END IF;
+      IF NEW.component='CONTRIBUTION' AND NEW.payment_id IS NULL THEN
+        IF NEW.unit_id IS NULL OR NEW.cost_entry_id IS NOT NULL OR NEW.register_entry_id IS NOT NULL
+          OR NOT EXISTS(SELECT 1 FROM public.unit u WHERE u.organization_id=NEW.organization_id
+            AND u.id=NEW.unit_id AND u.property_id=parent.property_id) THEN
+          RAISE EXCEPTION 'Reserve contribution correction requires a unit of this property' USING ERRCODE='23514'; END IF;
+        IF NEW.amount<=0 THEN
+          RAISE EXCEPTION 'Reserve contribution correction must be positive'
+            USING ERRCODE='23514',CONSTRAINT='reserve_amount_invalid'; END IF;
+        IF NEW.amount>public.reserve_contribution_headroom(NEW.organization_id,parent.id,NEW.unit_id) THEN
+          RAISE EXCEPTION 'Reserve contribution exceeds booked unit Hausgeld share'
+            USING ERRCODE='23514',CONSTRAINT='reserve_contribution_exceeds_booked'; END IF;
+      END IF;
       IF NEW.cost_entry_id IS NOT NULL OR NEW.component IN ('WITHDRAWAL','ADJUSTMENT') THEN
         SELECT * INTO cost FROM public.cost_entry WHERE organization_id=NEW.organization_id AND id=NEW.cost_entry_id FOR UPDATE;
         IF cost.id IS NULL OR cost.property_id IS DISTINCT FROM parent.property_id OR cost.status<>'confirmed' OR cost.superseded_by_id IS NOT NULL
@@ -281,7 +409,7 @@ def upgrade():
           RAISE EXCEPTION 'Reserve correction requires confirmed cost AND accepted registered resolution'
             USING ERRCODE='23514',CONSTRAINT='reserve_payout_evidence_required'; END IF;
         IF NEW.payment_id IS NULL THEN
-          IF NEW.component IN ('WITHDRAWAL','CONTRIBUTION') AND NEW.amount<=0 THEN
+          IF NEW.component='WITHDRAWAL' AND NEW.amount<=0 THEN
             RAISE EXCEPTION 'Reserve cash correction must be positive'
               USING ERRCODE='23514',CONSTRAINT='reserve_amount_invalid'; END IF;
           IF NEW.component IN ('WITHDRAWAL','ADJUSTMENT')
@@ -429,6 +557,11 @@ def downgrade():
       DROP TRIGGER guard_reserve_payment_evidence ON payment;
       DROP FUNCTION guard_reserve_payment_evidence();
       DROP FUNCTION reserve_funded_amount(uuid,uuid,uuid);
+      DROP FUNCTION IF EXISTS reserve_contribution_headroom(uuid,uuid,uuid);
+      DROP FUNCTION IF EXISTS reserve_cash_plan(uuid,uuid,date,date,uuid,date);
+      DROP FUNCTION IF EXISTS reserve_unit_cash(numeric,text[],jsonb,jsonb);
+      DROP FUNCTION IF EXISTS reserve_hausgeld_share(numeric,text[],jsonb,jsonb);
+      DROP FUNCTION IF EXISTS reserve_plan_cells(jsonb,numeric,date);
       ALTER TABLE payment DROP CONSTRAINT ck_reserve_payment_evidence;
       ALTER TABLE payment DROP COLUMN reserve_cost_entry_id;
       ALTER TABLE payment DROP COLUMN reserve_register_entry_id;

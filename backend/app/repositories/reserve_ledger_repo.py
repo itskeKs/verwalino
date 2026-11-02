@@ -1,5 +1,7 @@
 """Explicit property/scope source queries for reserve development."""
-from sqlalchemy import select, text, and_, or_
+import json
+from decimal import Decimal
+from sqlalchemy import select, text, and_, or_, func
 
 from app.models.payment import Payment
 from app.models.cost_entry import CostEntry
@@ -14,6 +16,7 @@ from app.models.unit import Unit
 from app.models.owner_profile import OwnerProfile
 from app.models.person import Person
 from app.repositories.base import TenantRepository
+from app.engine.reserve_ledger import monthly_reserve_entries
 
 
 class ReserveLedgerRepository(TenantRepository[ReserveLedgerEntry]):
@@ -30,6 +33,7 @@ class ReserveLedgerRepository(TenantRepository[ReserveLedgerEntry]):
             (Payment, 'payment_id', 'payment_note', Payment.note),
             (CostEntry, 'cost_entry_id', 'cost_document_number', CostEntry.document_number),
             (ResolutionRegisterEntry, 'register_entry_id', 'register_sequence_number', ResolutionRegisterEntry.sequence_number),
+            (Unit, 'unit_id', 'unit_number', Unit.number),
         ):
             identifiers = {row[reference] for row in entries if row.get(reference)}
             values = await self._session.execute(select(model.id, column).where(
@@ -41,7 +45,8 @@ class ReserveLedgerRepository(TenantRepository[ReserveLedgerEntry]):
             .where(OwnerProfile.organization_id == self._org_id, OwnerProfile.id.in_(owners))) if owners else []
         names = {str(identifier): company or f'{first} {last}'.strip() for identifier, first, last, company in people}
         return [{**row, 'owner_name': names.get(row.get('owner_profile_id')),
-                 **{display: values.get(row.get(reference)) for reference, (display, values) in fields.items()}}
+                 **{display: values.get(row.get(reference)) for reference, (display, values) in fields.items()
+                    if reference != 'unit_id' or row.get(reference)}}
                 for row in entries]
 
     async def require_sources(self, run):
@@ -56,7 +61,7 @@ class ReserveLedgerRepository(TenantRepository[ReserveLedgerEntry]):
             ReserveLedgerEntry.property_id == run.property_id,
             or_(ReserveLedgerEntry.payment_id.is_not(None), and_(
                 SettlementRun.period_start == run.period_start, SettlementRun.period_end == run.period_end)))
-            .order_by(ReserveLedgerEntry.entry_date, ReserveLedgerEntry.id))).all())
+            .order_by(ReserveLedgerEntry.entry_date, ReserveLedgerEntry.created_at, ReserveLedgerEntry.id))).all())
 
     async def payments(self, run, start=None):
         return list((await self._session.scalars(select(Payment).where(
@@ -64,7 +69,7 @@ class ReserveLedgerRepository(TenantRepository[ReserveLedgerEntry]):
             Payment.status == 'booked', Payment.cancelled_at.is_(None),
             Payment.payment_type.in_(('HAUSGELD_VORSCHUSS', 'RUECKLAGENANTEIL', 'RUECKLAGENENTNAHME')),
             Payment.value_date.between(start or run.period_start, run.period_end))
-            .order_by(Payment.value_date, Payment.id))).all())
+            .order_by(Payment.value_date, Payment.created_at, Payment.id))).all())
 
     async def plans(self, run):
         return list((await self._session.scalars(select(EconomicPlan).where(
@@ -72,6 +77,12 @@ class ReserveLedgerRepository(TenantRepository[ReserveLedgerEntry]):
             EconomicPlan.status == 'finalized', EconomicPlan.superseded_by_id.is_(None),
             EconomicPlan.period_start == run.period_start, EconomicPlan.period_end == run.period_end)
             .order_by(EconomicPlan.id))).all())
+
+    async def cash_plan(self, run, when):
+        return await self._session.scalar(select(EconomicPlan).where(
+            EconomicPlan.organization_id == self._org_id,
+            EconomicPlan.id == func.reserve_cash_plan(self._org_id, run.property_id,
+                run.period_start, run.period_end, run.economic_plan_id, when)))
 
     async def payment_plans(self, payment):
         return list((await self._session.scalars(select(EconomicPlan).where(
@@ -152,6 +163,50 @@ class ReserveLedgerRepository(TenantRepository[ReserveLedgerEntry]):
     async def funded_amount(self, cost_id, exclude_payment_id=None):
         return await self._session.scalar(text('SELECT reserve_funded_amount(:org,:cost,:payment)'),
             {'org': self._org_id, 'cost': cost_id, 'payment': exclude_payment_id})
+
+    async def plan_cells(self, plan):
+        return await self._session.scalar(text('SELECT reserve_plan_cells(CAST(:payload AS jsonb),:total,:starts)'),
+            {'payload': json.dumps(plan.snapshot_payload), 'total': plan.reserve_contribution_total, 'starts': plan.period_start})
+
+    async def plan_rows(self, plan):
+        cells = await self.plan_cells(plan)
+        rows = monthly_reserve_entries(
+            [(c['unit_id'], c['owner_profile_id'], Decimal(c['amount'])) for c in cells], plan.period_start)
+        numbers = {c['unit_id']: c['unit_number'] for c in cells}
+        return [{**row, 'unit_number': numbers[row['unit_id']]} for row in rows]
+
+    async def hausgeld_share(self, amount, units, plan):
+        return await self._session.scalar(text('SELECT reserve_hausgeld_share(:amount,:units,CAST(:planned AS jsonb),CAST(:owners AS jsonb))'),
+            {'amount': amount, 'units': list(units), 'planned': json.dumps(await self.plan_cells(plan)),
+             'owners': json.dumps(plan.snapshot_payload['result']['owners'])})
+
+    async def unit(self, run, unit_id):
+        return await self._session.scalar(select(Unit).where(Unit.organization_id == self._org_id,
+            Unit.property_id == run.property_id, Unit.id == unit_id))
+
+    async def contribution_headroom(self, run, unit_id):
+        return await self._session.scalar(text('SELECT reserve_contribution_headroom(:org,:run,:unit)'),
+            {'org': self._org_id, 'run': run.id, 'unit': unit_id})
+
+    async def unsupported_contribution_unit(self, run):
+        return await self._session.scalar(text('''SELECT u.number
+            FROM reserve_ledger_entry e JOIN settlement_run r
+              ON r.organization_id=e.organization_id AND r.id=e.settlement_run_id
+            JOIN unit u ON u.organization_id=e.organization_id AND u.id=e.unit_id
+            WHERE e.organization_id=:org AND e.property_id=:property AND e.unit_id IS NOT NULL
+              AND r.period_start=:starts AND r.period_end=:ends
+              AND reserve_contribution_headroom(:org,:run,e.unit_id)<0
+            ORDER BY u.number,u.id LIMIT 1'''),
+            {'org': self._org_id, 'run': run.id, 'property': run.property_id,
+             'starts': run.period_start, 'ends': run.period_end})
+
+    async def contribution_options(self, run):
+        rows = await self._session.execute(select(Unit.id, Unit.number,
+            text('reserve_contribution_headroom(unit.organization_id,:run,unit.id)')).where(
+                Unit.organization_id == self._org_id, Unit.property_id == run.property_id).order_by(Unit.number, Unit.id),
+            {'run': run.id})
+        return [{'unit_id': str(unit), 'unit_number': number, 'remaining': format(max(Decimal('0'), remaining), '.2f')}
+                for unit, number, remaining in rows]
 
     async def _opening_period_exists(self, run, scope_id, query):
         # A selected calculation scope hides compatible prior/next WEG scopes.
