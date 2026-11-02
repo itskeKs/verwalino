@@ -73,6 +73,8 @@ from app.models.property import Property
 from app.models.settlement_line import SettlementLine
 from app.models.settlement_run import SettlementRun
 from app.repositories.audit_repo import AuditRepository
+from app.repositories.lease_agreement_repo import LeaseAgreementRepository
+from app.repositories.lease_rent_change_repo import LeaseRentChangeRepository
 from app.repositories.settlement_repo import (
     SettlementLineRepository,
     SettlementRunRepository,
@@ -191,6 +193,14 @@ class SettlementService:
             raise HTTPException(409, "Advance proposal requires an active finalized BK settlement")
         proposal = self._advance_proposal(run)
         if accept_from is None:
+            lease = await LeaseAgreementRepository(self._session, self._org_id).get_by_id(run.lease_agreement_id)
+            if lease is None:
+                raise HTTPException(404, "Lease agreement not found")
+            history = await LeaseRentChangeRepository(self._session, self._org_id).list_for_lease(lease.id)
+            today = date.today()
+            current = next((row for row in reversed(history) if row.valid_from <= today), lease)
+            proposal["current_monthly_amount"] = f"{current.advance_payment:.2f}"
+            proposal["current_heating_monthly_amount"] = f"{current.heating_advance_payment:.2f}"
             return proposal
         return await LeaseRentChangeService(self._session, self._org_id, self._user_id).create(
             run.lease_agreement_id, accept_from, Decimal(proposal["monthly_amount"]),
@@ -312,7 +322,6 @@ class SettlementService:
         accounting_scope_id: uuid.UUID | None = None,
     ) -> SettlementRun:
         """Create a draft BK_MIETER run for one lease/addressee."""
-        from app.repositories.lease_agreement_repo import LeaseAgreementRepository
 
         lease_repo = LeaseAgreementRepository(self._session, self._org_id)
         lease = await lease_repo.get_by_id(lease_agreement_id)

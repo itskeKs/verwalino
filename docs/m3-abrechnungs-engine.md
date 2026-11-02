@@ -979,6 +979,7 @@ both advance totals; heating advance zero preserves the former overall result.
 The single advance block applies only when the heating advance is zero and no
 allocated tenant heating cost lines occur in any fiscal allocation window, including
 zero-amount lines. Non-apportionable heating positions do not require two blocks.
+An allocated tenant heating cost line exists only when allocation produces a tenant cost line for the position: an explicit zero-amount line counts, but a distribution key that produces no line does not.
 Page and PDF follow the engine's stored advance-line labels.
 
 New snapshots freeze both advance totals/sources, the heating tenant-cost share
@@ -989,10 +990,14 @@ version. Corrections copy both totals and sources into the new draft.
 
 The advance proposal divides the frozen operating and heating tenant-cost
 shares separately by the same exact calendar-month weight. Accepting creates
-one full rent-change row, preserving the effective base rent. The page shows both
-proposals and bases whenever the proposed heating amount or its cost basis is nonzero,
-even if the stored statement has a legacy single advance block. Only when both are
-zero does the proposal show just the operating amount and basis; acceptance then
-writes heating zero. The success message names both written advances. Old snapshots
+one full rent-change row, preserving the effective base rent. The proposal payload
+includes both current advances from today's effective rent-history rate, falling back
+to the lease; the page shows previous amounts and both proposals and bases whenever
+the proposed heating advance is nonzero or differs from the current heating advance,
+including a reduction to zero and legacy statements with a single advance block.
+Only when the proposed and current heating advances are both zero does the proposal
+show just the operating amount and basis with “Nur die Betriebskosten-Vorauszahlung
+wird geändert.”; acceptance then writes unchanged heating zero. Otherwise it says
+“Beide Vorauszahlungen werden geändert.” The success message names both written advances. Old snapshots
 without a heating subtotal derive the split from frozen cost lines and heating
 pools; an incomplete frozen basis refuses the proposal.

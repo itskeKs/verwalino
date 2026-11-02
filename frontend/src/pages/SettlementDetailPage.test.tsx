@@ -194,6 +194,7 @@ const finalized: SettlementRun = {
 };
 const proposal = {
   lease_agreement_id: "lease-1", tenant_cost: "1200.00", months: "12",
+  current_monthly_amount: "150.00", current_heating_monthly_amount: "0.00",
   monthly_amount: "100.00", heating_monthly_amount: "0.00", heating_tenant_cost: "0.00", period_start: "2026-01-01", period_end: "2026-12-31",
 };
 const originalLease = {
@@ -247,12 +248,13 @@ describe("T28 monthly advance proposal", () => {
   });
 
   it.each([
-    ["legacy heating costs", "Geleistete Vorauszahlungen", "83.33", "1000.00"],
-    ["nonzero heating basis rounded to zero", "Geleistete Vorauszahlungen", "0.00", "0.01"],
-    ["nonzero heating advance", "Geleistete Vorauszahlungen", "83.33", "0.00"],
-    ["Bernd without heating", "Geleistete Vorauszahlungen", "0.00", "0.00"],
-    ["split statement without heating proposal", "Betriebskosten-Vorauszahlungen", "0.00", "0.00"],
-  ])("shows the proposal payload and every accepted value for %s", async (_case, label, heatingAmount, heatingBasis) => {
+    ["legacy heating costs", "Geleistete Vorauszahlungen", "0.00", "83.33", "1000.00", true],
+    ["nonzero heating basis rounded to zero", "Geleistete Vorauszahlungen", "0.00", "0.00", "0.01", false],
+    ["nonzero heating advance", "Geleistete Vorauszahlungen", "0.00", "83.33", "0.00", true],
+    ["Bernd without heating", "Geleistete Vorauszahlungen", "0.00", "0.00", "0.00", false],
+    ["split statement with unchanged heating zero", "Betriebskosten-Vorauszahlungen", "0.00", "0.00", "0.00", false],
+    ["split statement reducing heating to zero", "Betriebskosten-Vorauszahlungen", "90.00", "0.00", "0.00", true],
+  ])("shows the proposal payload and every accepted value for %s", async (_case, label, currentHeating, heatingAmount, heatingBasis, showHeating) => {
     vi.mocked(api.getSettlement).mockResolvedValue({ ...finalized, lines: [{
       id: "advance-1", cost_entry_id: null, line_type: "ADVANCE_PAYMENT", cost_category_code: null,
       label,
@@ -262,6 +264,7 @@ describe("T28 monthly advance proposal", () => {
     fetchProposal.mockImplementation(async (_url: string, options?: RequestInit) => new Response(JSON.stringify(
       options?.method === "POST" ? { ...applied, advance_payment: "158.33", heating_advance_payment: heatingAmount }
         : { ...proposal, monthly_amount: "158.33", tenant_cost: "1900.00",
+          current_heating_monthly_amount: currentHeating,
           heating_monthly_amount: heatingAmount, heating_tenant_cost: heatingBasis },
     ), { status: options?.method === "POST" ? 201 : 200 }));
     showProposal();
@@ -269,16 +272,17 @@ describe("T28 monthly advance proposal", () => {
     await within(region).findByText("158,33 EUR");
     expect(region).toHaveTextContent("Betriebskosten-Vorauszahlung: 158,33 EUR monatlich");
     expect(region).toHaveTextContent("Grundlage Betriebskosten: 1.900,00 EUR Mieteranteil / 12 Monate");
-    if (heatingAmount === "0.00" && heatingBasis === "0.00") {
+    if (!showHeating) {
       expect(region).not.toHaveTextContent("Heizkosten-Vorauszahlung");
       expect(region).not.toHaveTextContent("Grundlage Heizkosten");
-      expect(region).toHaveTextContent("Nur die Vorauszahlung wird geändert.");
+      expect(region).toHaveTextContent("Nur die Betriebskosten-Vorauszahlung wird geändert.");
     } else {
-      expect(region).toHaveTextContent(`Heizkosten-Vorauszahlung: ${heatingAmount.replace(".", ",")} EUR monatlich`);
+      expect(region).toHaveTextContent(`Heizkosten-Vorauszahlung: ${heatingAmount.replace(".", ",")} EUR monatlich (bisher ${currentHeating.replace(".", ",")} EUR)`);
       const formattedBasis = heatingBasis === "1000.00" ? "1.000,00" : heatingBasis.replace(".", ",");
       expect(region).toHaveTextContent(`Grundlage Heizkosten: ${formattedBasis} EUR Mieteranteil / 12 Monate`);
       expect(region).toHaveTextContent("Beide Vorauszahlungen werden geändert.");
     }
+    expect(region).toHaveTextContent("Betriebskosten-Vorauszahlung: 158,33 EUR monatlich (bisher 150,00 EUR)");
     accept();
     const status = await within(region).findByRole("status");
     expect(status).toHaveTextContent("Miethistorie ergänzt");
@@ -382,7 +386,7 @@ describe("T28 monthly advance proposal", () => {
     showProposal();
     const region = await screen.findByRole("region", { name: "Vorauszahlungsvorschlag" });
     expect(await within(region).findAllByText("Nicht verfügbar")).toHaveLength(2);
-    expect(region).not.toHaveTextContent("0,00 EUR");
+    expect(region).not.toHaveTextContent(/(?:Vorauszahlung:|Grundlage Betriebskosten:|Grundlage Heizkosten:) 0,00 EUR/);
   });
 
   it("disables date/submit and synchronously prevents double submissions", async () => {

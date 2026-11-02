@@ -338,10 +338,11 @@ positions do not require both blocks. Both snapshot keys remain present.
 Statement totals start unknown (empty fields); “Aus Zahlungen ableiten” derives both.
 The detail page retains its existing decimal-string `EUR` amounts; the advance
 proposal retains its existing German decimal-string `EUR` format. The advance proposal
-uses its own payload: only when both the heating monthly amount and heating cost basis
-are zero does it show just the operating advance and basis with “Nur die Vorauszahlung
-wird geändert.” Otherwise it shows both monthly amounts and bases with “Beide Vorauszahlungen
-werden geändert.”, including for legacy statements with a single advance block.
+uses its own payload, including the lease's current advances, and shows the previous amounts:
+only when the proposed and current heating advances are both zero does it show just the
+operating advance and basis with “Nur die Betriebskosten-Vorauszahlung wird geändert.”
+Otherwise it shows both monthly amounts and bases with “Beide Vorauszahlungen werden geändert.”,
+including a heating reduction to zero and legacy statements with a single advance block.
 Acceptance creates one rent change and the success message names both written advances,
 including heating zero. Existing form grids,
 wrapping labels and horizontally scrollable tables apply at 360 px. Lease and

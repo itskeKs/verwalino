@@ -124,7 +124,7 @@ function AdvanceProposalSection({ runId }: { runId: string }) {
   const [result, setResult] = useState<LeaseRentChange | null>(null);
   const busy = useRef(false);
   const mounted = useRef(false);
-  const singleAdvanceBlock = proposal !== null && [proposal.heating_monthly_amount, proposal.heating_tenant_cost]
+  const singleAdvanceBlock = proposal !== null && [proposal.heating_monthly_amount, proposal.current_heating_monthly_amount]
     .every(value => /^0+(?:\.0+)?$/.test(value));
 
   useEffect(() => {
@@ -179,12 +179,12 @@ function AdvanceProposalSection({ runId }: { runId: string }) {
         <button className="btn" onClick={() => setRetry((value) => value + 1)} disabled={loading}>Erneut versuchen</button>
       </>}
       {proposal && <>
-        <p>Betriebskosten-Vorauszahlung: <strong>{formatProposalMoney(proposal.monthly_amount)}</strong> monatlich</p>
-        {!singleAdvanceBlock && <p>Heizkosten-Vorauszahlung: <strong>{formatProposalMoney(proposal.heating_monthly_amount)}</strong> monatlich</p>}
+        <p>Betriebskosten-Vorauszahlung: <strong>{formatProposalMoney(proposal.monthly_amount)}</strong> monatlich (bisher {formatProposalMoney(proposal.current_monthly_amount)})</p>
+        {!singleAdvanceBlock && <p>Heizkosten-Vorauszahlung: <strong>{formatProposalMoney(proposal.heating_monthly_amount)}</strong> monatlich (bisher {formatProposalMoney(proposal.current_heating_monthly_amount)})</p>}
         <p>Grundlage Betriebskosten: {formatProposalMoney(proposal.tenant_cost)} Mieteranteil / {proposal.months.replace(".", ",")} Monate
           {" "}({proposal.period_start} bis {proposal.period_end}).</p>
         {!singleAdvanceBlock && <p>Grundlage Heizkosten: {formatProposalMoney(proposal.heating_tenant_cost)} Mieteranteil / {proposal.months.replace(".", ",")} Monate.</p>}
-        <p>{singleAdvanceBlock ? "Nur die Vorauszahlung wird geändert." : "Beide Vorauszahlungen werden geändert."} Die Kaltmiete bleibt die am gewählten Tag gültige Rate.
+        <p>{singleAdvanceBlock ? "Nur die Betriebskosten-Vorauszahlung wird geändert." : "Beide Vorauszahlungen werden geändert."} Die Kaltmiete bleibt die am gewählten Tag gültige Rate.
           Der ursprüngliche Mietvertrag und die finalisierte Abrechnung bleiben unverändert.</p>
         {applyError && <p role="alert">{applyError}</p>}
         {result && <p role="status">Miethistorie ergänzt: ab {result.valid_from}, Kaltmiete {formatProposalMoney(result.base_rent)},

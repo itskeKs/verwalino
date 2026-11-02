@@ -1698,6 +1698,7 @@ async def test_proposal_accept_preserves_history_and_frozen_rows(rent_world, ren
         proposal = (await api.get(url)).json()
         assert proposal == {"lease_agreement_id": str(world["lease"]), "tenant_cost": "1200.00",
             "months": "12", "monthly_amount": "100.00", "heating_monthly_amount": "0.00",
+            "current_monthly_amount": "160.00", "current_heating_monthly_amount": "0.00",
             "heating_tenant_cost": "0.00", "period_start": "2026-01-01", "period_end": "2026-12-31"}
         assert frozen["balance"] == "201.00"  # Never balance / months or paid advances.
         before = (await rent_db.execute(text("SELECT snapshot_payload,snapshot_sha256 FROM settlement_run WHERE id=:id"), {"id":uuid.UUID(run_id)})).one()
@@ -1716,6 +1717,40 @@ async def test_proposal_accept_preserves_history_and_frozen_rows(rent_world, ren
         events = (await rent_db.execute(text("SELECT payload_diff FROM audit_event WHERE entity_id=:lease AND action='lease.rent_change_created'"), {"lease":world["lease"]})).scalars().all()
         assert sum(event["rent_change_id"] == row["id"] for event in events) == 1
         assert len((await api.get(history)).json()) == 3
+
+
+@pytest.mark.asyncio
+async def test_proposal_reports_current_advances_from_lease_and_effective_history(rent_world, rent_db, monkeypatch):
+    from app.services import settlement_service
+
+    class Today(date):
+        @classmethod
+        def today(cls):
+            return cls(2026, 11, 2)
+
+    monkeypatch.setattr(settlement_service, "date", Today)
+    world = rent_world
+    async with api_client(world) as api:
+        lease_url = f"/api/leases/{world['lease']}"
+        response = await api.patch(lease_url, json={"advance_payment": "175.00", "heating_advance_payment": "90.00"})
+        assert response.status_code == 200, response.text
+        run_id, frozen = await _proposal_run(api, world, rent_db)
+        url = f"/api/settlements/{run_id}/advance-proposal"
+        for expected in [("175.00", "90.00"), ("180.00", "95.00")]:
+            response = await api.get(url)
+            assert response.status_code == 200, response.text
+            proposal = response.json()
+            assert (proposal["current_monthly_amount"], proposal["current_heating_monthly_amount"]) == expected
+            assert (proposal["monthly_amount"], proposal["heating_monthly_amount"]) == ("100.00", "0.00")
+            if expected == ("175.00", "90.00"):
+                for valid_from, advance, heating in [("2026-06-01", "180.00", "95.00"), ("2027-01-01", "200.00", "110.00")]:
+                    change = await api.post(lease_url + "/rent-changes", json={"valid_from": valid_from,
+                        "base_rent": "750.00", "advance_payment": advance, "heating_advance_payment": heating})
+                    assert change.status_code == 201, change.text
+        accepted = await api.post(url, json={"valid_from": "2026-12-01"})
+        assert accepted.status_code == 201, accepted.text
+        assert (accepted.json()["advance_payment"], accepted.json()["heating_advance_payment"]) == ("100.00", "0.00")
+        assert (await api.get(f"/api/settlements/{run_id}")).json() == frozen
 
 
 @pytest.mark.asyncio

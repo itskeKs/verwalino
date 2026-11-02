@@ -801,6 +801,8 @@ export interface SettlementRun {
 export interface AdvanceProposal {
   heating_tenant_cost: string;
   heating_monthly_amount: string;
+  current_monthly_amount: string;
+  current_heating_monthly_amount: string;
   lease_agreement_id: string;
   tenant_cost: string;
   months: string;

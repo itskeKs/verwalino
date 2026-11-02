@@ -94,6 +94,8 @@ class AdvanceProposalOut(BaseModel):
     monthly_amount: str
     heating_tenant_cost: str
     heating_monthly_amount: str
+    current_monthly_amount: str
+    current_heating_monthly_amount: str
     period_start: date
     period_end: date
 
