@@ -1014,6 +1014,8 @@ export interface BankAssignmentLine {
   tenant_profile_id?: string;
   owner_profile_id?: string;
   note?: string;
+  reserve_cost_entry_id?: string | null;
+  reserve_register_entry_id?: string | null;
 }
 
 export interface BankMatchLine extends Omit<BankAssignmentLine, "amount" | "lease_agreement_id" | "tenant_profile_id" | "owner_profile_id"> {
@@ -1088,11 +1090,13 @@ export type PaymentType =
   | "KAUTION"
   | "HAUSGELD_VORSCHUSS"
   | "RUECKLAGENANTEIL"
+  | "RUECKLAGENENTNAHME"
   | "SONDERZAHLUNG";
 
 export type PaymentStatus = "draft" | "booked" | "cancelled";
 
 export interface Payment {
+  bank_transaction_id?: string | null;
   id: string;
   organization_id: string;
   bank_account_id: string;
@@ -1115,6 +1119,8 @@ export interface Payment {
   reversed_by_id: string | null;
   retention_until: string | null;
   note: string | null;
+  reserve_cost_entry_id?: string | null;
+  reserve_register_entry_id?: string | null;
 }
 
 export interface PaymentCreate {
@@ -1130,6 +1136,8 @@ export interface PaymentCreate {
   period_month?: number | null;
   settlement_run_id?: string | null;
   note?: string | null;
+  reserve_cost_entry_id?: string | null;
+  reserve_register_entry_id?: string | null;
 }
 
 export interface PaymentUpdate {
@@ -1145,6 +1153,8 @@ export interface PaymentUpdate {
   period_month?: number | null;
   settlement_run_id?: string | null;
   note?: string | null;
+  reserve_cost_entry_id?: string | null;
+  reserve_register_entry_id?: string | null;
 }
 
 export interface OpenItem {
@@ -1292,8 +1302,8 @@ export interface PaidAdvanceIn {
 }
 
 export interface WegComputeRequest {
-  reserve_opening_balance: string;
-  reserve_withdrawals_total: string;
+  reserve_opening_balance?: string | null;
+  reserve_override_reason?: string;
   paid_advances: PaidAdvanceIn[];
 }
 
@@ -1311,15 +1321,42 @@ export interface AssetItemIn {
 }
 
 export interface AssetReportComputeRequest {
-  reserve_opening_balance: string;
-  reserve_withdrawals_total: string;
-  reserve_contributions_total: string;
+  reserve_opening_balance?: string | null;
+  reserve_override_reason?: string;
   bank_balances: { bank_account_id: string; label: string; account_type: BankAccountType; balance: string }[];
   receivables: AssetItemIn[];
   payables: AssetItemIn[];
 }
 
 // --- M8 Meetings & Beschluss-Sammlung ---
+export type ReserveComponent = 'OPENING' | 'CONTRIBUTION' | 'WITHDRAWAL' | 'ADJUSTMENT' | 'FUNDING';
+export interface ReserveOverride {
+  unit_id?: string;
+  component: ReserveComponent;
+  amount: string;
+  reason: string;
+  payment_id?: string;
+  cost_entry_id?: string;
+  register_entry_id?: string;
+}
+export interface ReserveLedger {
+  contribution_headroom?: { unit_id: string; unit_number: string; remaining: string }[];
+  unlinked_payment_ids?: string[];
+  opening_balance: string;
+  contributions_total: string;
+  withdrawals_total: string;
+  overrides_total: string;
+  late_cash_total?: string;
+  closing_balance: string;
+  planned_contributions_total: string | null;
+  overdrawn: boolean;
+  frozen: boolean;
+  booking_basis: string;
+  entries: { kind: string; component?: ReserveComponent; date: string; amount: string; reason?: string;
+    payment_note?: string | null; cost_document_number?: string | null; register_sequence_number?: number | null; owner_name?: string | null;
+    id?: string; payment_id?: string; cost_entry_id?: string; register_entry_id?: string; unit_id?: string; unit_number?: string; owner_profile_id?: string }[];
+}
+
 
 export type MeetingStatus = "PLANNED" | "HELD";
 export type MeetingType = "ORDENTLICH" | "AUSSERORDENTLICH";
@@ -1413,6 +1450,7 @@ export interface RegisterEntry {
   location: string;
   wording: string;
   resolution_id: string;
+  result: string | null;
   challenge_annotation: string | null;
 }
 

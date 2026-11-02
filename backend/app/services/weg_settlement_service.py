@@ -76,7 +76,9 @@ from app.repositories.settlement_repo import (
     SettlementRunRepository,
 )
 
-ENGINE_VERSION = "m4.1.0"
+from app.services.reserve_ledger_service import ReserveLedgerService
+
+ENGINE_VERSION = "m4.2.0"
 
 
 @dataclass
@@ -94,6 +96,7 @@ class WegComputeExtras:
     reserve_opening_balance: Decimal | None = None
     reserve_withdrawals_total: Decimal | None = None
     paid_advances: list[ManualOwnerAdvance] | None = None
+    reserve_override_reason: str = ""
 
 
 @dataclass
@@ -112,11 +115,12 @@ class AssetItemEntry:
 
 @dataclass
 class AssetReportInputs:
-    """Manual inputs for a Vermoegensbericht (ADR-0008)."""
+    """Report inputs, with optional reasoned reserve target overrides."""
 
     reserve_opening_balance: Decimal | None = None
     reserve_withdrawals_total: Decimal | None = None
     reserve_contributions_total: Decimal | None = None
+    reserve_override_reason: str = ""
     bank_balances: list[BankBalanceEntry] | None = None
     receivables: list[AssetItemEntry] | None = None
     payables: list[AssetItemEntry] | None = None
@@ -247,6 +251,8 @@ class WegSettlementService:
             engine_version=ENGINE_VERSION,
         )
         sphere = await FinancialScopeService(self._session, self._org_id, self._user_id).prepare_new(run, accounting_scope_id)
+        await ReserveLedgerService(self._session, self._org_id, self._user_id).require_period_creation(
+            run, sphere.id if sphere is not None else None)
         try:
             validate_settlement_period(period_start, period_end)
         except ValueError as exc:
@@ -279,6 +285,7 @@ class WegSettlementService:
         await self._lines.delete_for_run(run.id)
         await self._write_weg_lines(run, result)
 
+        run.engine_version = ENGINE_VERSION
         run.snapshot_payload = {**build_weg_snapshot_payload(inp, result), "financial_input_coverage": coverage}
         # objektweit totals: total_cost = Σ Ist (excl. reserve); balance = Σ Spitze.
         run.total_cost = result.cost_total
@@ -324,6 +331,7 @@ class WegSettlementService:
         await self._write_weg_lines(run, result)
 
         now = datetime.now(timezone.utc)
+        run.engine_version = ENGINE_VERSION
         run.snapshot_payload = payload
         run.snapshot_sha256 = sha
         run.total_cost = result.cost_total
@@ -366,7 +374,9 @@ class WegSettlementService:
             status="draft",
             engine_version=ENGINE_VERSION,
         )
-        await FinancialScopeService(self._session, self._org_id, self._user_id).prepare_new(run, accounting_scope_id)
+        sphere = await FinancialScopeService(self._session, self._org_id, self._user_id).prepare_new(run, accounting_scope_id)
+        await ReserveLedgerService(self._session, self._org_id, self._user_id).require_period_creation(
+            run, sphere.id if sphere is not None else None)
         run = await self._runs.create(run)
         await self._audit.create(
             AuditEvent(
@@ -384,11 +394,12 @@ class WegSettlementService:
         await self._resolve_report_bank_accounts(inputs)
         computation_basis = await begin_computation(self._session, self._org_id, run, 'compute')
         coverage = await FinancialInputPolicy(self._session, self._org_id, self._user_id).require(run, "settlement", inputs)
-        inp, result = self._compute_report_engine(run, inputs)
+        inp, result = await self._compute_report_engine(run, inputs)
 
         await self._lines.delete_for_run(run.id)
         self._write_report_lines(run, result)
 
+        run.engine_version = ENGINE_VERSION
         run.snapshot_payload = {**build_asset_report_payload(inp, result), "financial_input_coverage": coverage}
         await self._runs.update(run)
         await self._session.flush()
@@ -409,7 +420,7 @@ class WegSettlementService:
         await self._resolve_report_bank_accounts(inputs)
         computation_basis = await begin_computation(self._session, self._org_id, run, 'finalize')
         coverage = await FinancialInputPolicy(self._session, self._org_id, self._user_id).require(run, "settlement", inputs)
-        inp, result = self._compute_report_engine(run, inputs)
+        inp, result = await self._compute_report_engine(run, inputs)
 
         payload = build_asset_report_payload(inp, result)
         payload["financial_input_coverage"] = coverage
@@ -425,6 +436,7 @@ class WegSettlementService:
         self._write_report_lines(run, result)
 
         now = datetime.now(timezone.utc)
+        run.engine_version = ENGINE_VERSION
         run.snapshot_payload = payload
         run.snapshot_sha256 = sha
         run.status = "finalized"
@@ -621,6 +633,19 @@ class WegSettlementService:
                 )
             )
 
+        reserves = ReserveLedgerService(self._session, self._org_id, self._user_id)
+        ledger = await reserves.read(run)
+        if not ledger['frozen']:
+            await reserves.require_contribution_backing(run)
+        if any(row['kind'] == 'UNASSIGNED' for row in ledger['entries']):
+            raise HTTPException(422, {'code': 'RESERVE_ASSIGNMENT_REQUIRED', 'message': 'Bitte klären Sie alle Zahlungen ohne Planbezug vor der Berechnung.'})
+        if ledger.get('unlinked_payment_ids'):
+            raise HTTPException(422, {'code': 'RESERVE_PAYOUT_EVIDENCE_REQUIRED', 'message': 'Bitte verknüpfen Sie alle Rücklagenentnahmen mit Kostenbeleg und Beschluss.'})
+        paid_reserve = {}
+        for row in ledger['entries']:
+            if row['kind'] == 'CONTRIBUTION' and row.get('owner_profile_id'):
+                oid = uuid.UUID(row['owner_profile_id'])
+                paid_reserve[oid] = paid_reserve.get(oid, Decimal('0.00')) + Decimal(row['amount'])
         plan_advances = await self._plan_advances_per_owner(run.economic_plan_id)
         expected_owners = {o.owner_profile_id for o in owner_inputs
                            if o.valid_from <= run.period_end and (o.valid_to is None or o.valid_to >= run.period_start)}
@@ -638,13 +663,19 @@ class WegSettlementService:
             property=PropertyInput(id=prop.id, name=prop.name, management_type=prop.management_type),
             units=unit_inputs,
             owner_periods=owner_inputs,
-            cost_positions=tuple(position_inputs),
+            cost_positions=tuple(p for p in position_inputs if not p.reserve_relevant),
             plan_advances=tuple(plan_advances),
             reserve=ReserveInput(
-                opening_balance=extras.reserve_opening_balance,
-                withdrawals_total=extras.reserve_withdrawals_total,
+                opening_balance=Decimal(ledger['opening_balance']),
+                withdrawals_total=Decimal(ledger['withdrawals_total']),
+                contributions_total=Decimal(ledger['contributions_total']),
+                overrides_total=Decimal(ledger['overrides_total']),
+                late_cash_total=Decimal(ledger.get('late_cash_total', '0.00')),
             ),
             paid_advances=paid,
+            reserve_ledger=ledger,
+            reserve_paid_contributions=tuple(OwnerAdvanceInput(owner_profile_id=oid, plan_advance_total=amt)
+                                             for oid, amt in paid_reserve.items()),
             economic_plan_id=run.economic_plan_id,
             engine_version=ENGINE_VERSION,
         )
@@ -687,7 +718,7 @@ class WegSettlementService:
                 self._session.add(self._line(run, owner.owner_profile_id, "RESERVE_CONTRIBUTION",
                                              "Zufuehrung Erhaltungsruecklage (Ihr Anteil)",
                                              owner.subtotal_reserve, sort,
-                                             note="Vermoegensbildung (keine Kostenumlage)")); sort += 1
+                                             note=owner.reserve_notice or "Vermögensbildung (keine Kostenumlage)")); sort += 1
             if owner.paid_advances is not None:
                 self._session.add(self._line(run, owner.owner_profile_id, "ADVANCE_PAYMENT",
                                              "(nachrichtlich) geleistete Vorschuesse",
@@ -698,16 +729,22 @@ class WegSettlementService:
         dev = result.reserve
         self._session.add(self._line(run, None, "RESERVE_OPENING",
                                      "Erhaltungsruecklage Anfangsbestand", dev.opening_balance, sort,
-                                     note="Anfangsbestand (manuell erfasst)")); sort += 1
+                                     note="Anfangsbestand laut Rücklagenbuch")); sort += 1
+        if dev.late_cash_total:
+            self._session.add(self._line(run, None, 'RESERVE_LATE_CASH', 'Nachträgliche Buchungen zum abgeschlossenen Jahr',
+                                         dev.late_cash_total, sort, note='Rücklagenbuch · ursprüngliche Wertstellung')); sort += 1
+        if dev.overrides_total:
+            self._session.add(self._line(run, None, 'RESERVE_ADJUSTMENT', 'Begründete Rücklagenkorrekturen',
+                                         dev.overrides_total, sort, note='Rücklagenbuch')); sort += 1
         self._session.add(self._line(run, None, "RESERVE_CONTRIBUTION",
                                      "Zufuehrung Erhaltungsruecklage (gesamt)", dev.contributions_total,
                                      sort)); sort += 1
         self._session.add(self._line(run, None, "RESERVE_WITHDRAWAL",
                                      "Entnahme Erhaltungsruecklage", dev.withdrawals_total, sort,
-                                     note="Entnahme (manuell erfasst)")); sort += 1
+                                     note="Entnahme laut Rücklagenbuch")); sort += 1
         self._session.add(self._line(run, None, "RESERVE_CLOSING",
                                      "Erhaltungsruecklage Endbestand", dev.closing_balance, sort,
-                                     note="Anfang + Zufuehrung - Entnahme")); sort += 1
+                                     note="Anfang + Zuführung − Entnahme ± Korrekturen + nachträgliche Buchungen")); sort += 1
         await self._session.flush()
 
     def _line(self, run, owner_id, line_type, label, amount, sort_order, *,
@@ -742,20 +779,31 @@ class WegSettlementService:
             if await accounts.get_by_id(balance.bank_account_id) is None:
                 raise HTTPException(404, "Bank account not found")
 
-    def _compute_report_engine(
+    async def _compute_report_engine(
         self, run: SettlementRun, inputs: AssetReportInputs
     ) -> tuple[VermoegensberichtInput, AssetReportResult]:
         from app.repositories.property_repo import PropertyRepository  # noqa: F401
 
+        reserves = ReserveLedgerService(self._session, self._org_id, self._user_id)
+        ledger = await reserves.read(run)
+        if not ledger['frozen']:
+            await reserves.require_contribution_backing(run)
+        if any(row['kind'] == 'UNASSIGNED' for row in ledger['entries']):
+            raise HTTPException(422, {'code': 'RESERVE_ASSIGNMENT_REQUIRED', 'message': 'Bitte klären Sie alle Zahlungen ohne Planbezug vor der Berechnung.'})
+        if ledger.get('unlinked_payment_ids'):
+            raise HTTPException(422, {'code': 'RESERVE_PAYOUT_EVIDENCE_REQUIRED', 'message': 'Bitte verknüpfen Sie alle Rücklagenentnahmen mit Kostenbeleg und Beschluss.'})
         inp = VermoegensberichtInput(
             period_start=run.period_start,
             period_end=run.period_end,
             property=PropertyInput(id=run.property_id, name="", management_type=""),
             reserve=ReserveInput(
-                opening_balance=inputs.reserve_opening_balance,
-                withdrawals_total=inputs.reserve_withdrawals_total,
+                opening_balance=Decimal(ledger['opening_balance']),
+                withdrawals_total=Decimal(ledger['withdrawals_total']),
+                overrides_total=Decimal(ledger['overrides_total']),
+                late_cash_total=Decimal(ledger.get('late_cash_total', '0.00')),
             ),
-            reserve_contributions_total=inputs.reserve_contributions_total,
+            reserve_contributions_total=Decimal(ledger["contributions_total"]),
+            reserve_ledger=ledger,
             bank_balances=tuple(
                 BankBalanceInput(
                     bank_account_id=b.bank_account_id, label=b.label,

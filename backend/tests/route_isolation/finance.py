@@ -99,6 +99,7 @@ def with_sibling(parent: str, parent_id: str, sibling: str, select: str) -> str:
 
 
 BK, WEG, REPORT = "BK_MIETER", "WEG_JAHRESABRECHNUNG", "VERMOEGENSBERICHT"
+WEG_PLAN = "JOIN economic_plan p ON p.id = x.economic_plan_id AND p.organization_id = x.organization_id"
 PROPERTY = row("property", property_id="id")
 TENANT_PAYMENT = other("x.bank_account_id, x.lease_agreement_id, x.tenant_profile_id", '"payment" x',
                        "AND x.lease_agreement_id IS NOT NULL AND x.tenant_profile_id IS NOT NULL")
@@ -107,9 +108,9 @@ PERIOD = {"period_start": "2025-01-01", "period_end": "2025-12-31"}
 NO_MATCH = "a filter by another organization's id matches nothing"
 
 PLAN_INPUTS = {"planned_costs": [], "reserve_contribution_total": "0.00"}
-WEG_INPUTS = {"reserve_opening_balance": "0.00", "reserve_withdrawals_total": "0.00", "paid_advances": []}
-REPORT_INPUTS = {"reserve_opening_balance": "0.00", "reserve_withdrawals_total": "0.00",
-                 "reserve_contributions_total": "0.00", "bank_balances": [], "receivables": [], "payables": []}
+WEG_INPUTS = {"reserve_override_reason": "Reviewed synthetic opening balance", "reserve_opening_balance": "0.00", "paid_advances": []}
+REPORT_INPUTS = {"reserve_override_reason": "Reviewed synthetic opening balance", "reserve_opening_balance": "0.00",
+                 "bank_balances": [], "receivables": [], "payables": []}
 PAYMENT = {"direction": "IN", "amount": "10.00", "value_date": "2025-02-03", "payment_type": "KALTMIETE"}
 CREDITOR = {"creditor_id": "DE98ZZZ09999999999", "name": "Isolation", "country": "DE", "town": "Teststadt",
             "bank_authorized": True}
@@ -241,12 +242,15 @@ PROBES: dict[str, Probe] = {
     "GET /api/weg-settlements/{run_id}": Probe(run(WEG)),
     "GET /api/weg-settlements/{run_id}/economic-plan-successor": Probe(run(WEG)),
     "GET /api/weg-settlements/{run_id}/input-owners": Probe(run(WEG)),
+    "GET /api/weg-settlements/{run_id}/reserve-ledger": Probe(run(WEG)),
+    "POST /api/weg-settlements/{run_id}/reserve-ledger/overrides": Probe(run(WEG), body={
+        'component': 'ADJUSTMENT', 'amount': '1.00', 'reason': 'Foreign reserve probe'}),
     "GET /api/weg-settlements/{run_id}/pdf": Probe(run(WEG)),
     "PATCH /api/weg-settlements/{run_id}/economic-plan": Probe(
-        run(WEG, "x.id AS run_id, x.economic_plan_id AS expected_plan_id, x.economic_plan_id AS successor_id"),
+        run(WEG, "x.id AS run_id, x.economic_plan_id AS expected_plan_id, x.economic_plan_id AS successor_id", WEG_PLAN),
         body={"expected_plan_id": "{expected_plan_id}", "successor_id": "{successor_id}", "reason": "Isolation", "confirmed": True}),
     "POST /api/weg-settlements": Probe(
-        run(WEG, "x.property_id AS property_id, x.economic_plan_id AS economic_plan_id"),
+        run(WEG, "x.property_id AS property_id, x.economic_plan_id AS economic_plan_id", WEG_PLAN),
         body={"property_id": "{property_id}", "economic_plan_id": "{economic_plan_id}", **PERIOD}),
     "POST /api/weg-settlements/asset-reports": Probe(PROPERTY, body={"property_id": "{property_id}", **PERIOD}),
     "POST /api/weg-settlements/asset-reports/{run_id}/compute": Probe(run(REPORT), body=REPORT_INPUTS),

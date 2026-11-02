@@ -612,3 +612,249 @@ These invariants hold for **any** valid input (not only the examples) and are th
 - **Exact PDF layouts / mandatory WEG texts:** SDD §18 (§8.4).
 - **CO2 10-tier self-calculation, commercial-use pre-deduction (Gewerbe-Vorwegabzug):** M3 legacy items (M3 §5/§6), the owner side distributes `gross_amount` (§4.5).
 - **Final legal acceptance:** tax advisor/specialist attorney for WEG law — cannot be replaced by this document.
+
+## Maintenance reserve ledger (#36)
+
+The reserve development now comes from a property ledger in the run's accounting
+context, shared by WEG annual settlements and asset reports. The earlier manual
+M4 source assumptions F4-4/F4-5 are superseded by this section. Investment of
+reserve funds remains outside scope.
+
+**Booking basis: cash by `payment.value_date`.** Planned reserve amounts are
+obligations, not cash holdings. Confirmed reserve cost positions therefore no
+longer count as reserve receipts. This is separate from the existing cost
+allocation and WEMoG settlement-balance calculation; it changes neither.
+
+- A current finalized plan supplies frozen MEA/co-owner weights. The central
+  largest-remainder module distributes its reserve total to owner/unit cells,
+  then twelve monthly rates, with stable ID ties and exact annual reconciliation.
+  The ledger shows these as `PLANNED` entries and a separate planned total.
+- Booked `RUECKLAGENANTEIL` payments contribute their signed cash amount.
+  `HAUSGELD_VORSCHUSS` represents combined Hausgeld: its reserve component is
+  the payment multiplied by the UNIT's frozen annual reserve share divided
+  by its total annual Hausgeld (all co-owner plan lines combined), rounded
+  `ROUND_HALF_UP` once per movement, a deliberate ADR-0005 exception. Historical
+  ownership at the payment's value date maps the payer to the unit, including
+  buyers and former owners paying with a value date in their ownership period.
+  Only units owned on that date have their plan volumes combined.
+  For `n` payments, rounding differs from the sum of exact components by at most
+  `n × 0.005 €`, strictly less without exact half-cent ties (HALF_UP attains the
+  bound at ties). At a ratio of `6000/13000`, `12 × 433.33 €` gives `2,400.00 €`
+  versus `2,399.98 €` when summed before rounding; `100 × 0.01 €` gives `0.00 €`
+  versus `0.46 €`. Fractions are not redistributed between receipts.
+  A separately booked reserve payment must represent additional cash, not a
+  second classification of the same combined receipt. Without a determinable
+  ratio (no usable finalized plan, no dated unit assignment or no positive annual
+  Hausgeld denominator) at booking,
+  the payment is accepted with `reserve_plan_unresolved` in its booking audit.
+  Unresolved cash appears as “Ohne Planbezug” with its full signed payment amount,
+  is excluded from reserve totals and blocks computation. Finalizing a covering
+  plan resolves it only if the payer has a dated unit assignment and a positive
+  annual Hausgeld denominator. Otherwise staff must use “Korrektur erfassen” →
+  “Gebuchte Zuführung”, select “Zahlung ohne Planbezug”, and enter the reviewed
+  reserve component and reason. This append-only, payment-linked correction
+  resolves that booking; an unrelated total adjustment cannot clear it.
+  The property/account and selected financial scope
+  filter the source payments.
+- `RUECKLAGENENTNAHME` is a counterparty-neutral payout type; it cannot be
+  assigned to a tenant, owner or lease. Every booked payout reduces cash.
+  Before booking, attach BOTH a confirmed funded cost receipt and an accepted
+  resolution-register entry to the payment draft (`reserve_cost_entry_id` and
+  `reserve_register_entry_id`). Missing either reference returns
+  `RESERVE_PAYOUT_EVIDENCE_REQUIRED` and leaves the payment editable. The payment
+  form requires both selections. Bank assignment without both references creates
+  a draft and displays a German hint to complete its evidence on the payment.
+  Imported drafts retain their bank amount, direction, value date and account
+  while their evidence stays editable. An unbooked imported payout draft with
+  incomplete evidence (none or one reference) and without a ledger entry can be released with “Zuordnung
+  lösen”. The existing draft-discard endpoint retains scoped drafts as cancelled
+  (legacy unscoped drafts are deleted) and resets the bank line to `NEU`, so it
+  can be retyped or ignored. The retained cancelled draft keeps its bank reference.
+  The confirmation returns to that account's bank transactions. A booked payout,
+  a draft with both evidence references or a ledger entry, or a bank split with
+  other active payments stays bound (`RESERVE_IMPORTED_DRAFT_BOUND`). Release and
+  assignment serialize under the organization’s `financial-inputs` lock; the
+  database guard also requires no booking stamps and the bank reset in the same
+  transaction, and permits no other payment changes during cancellation. Release
+  audits the payment and bank line, including the payment reference and previous
+  bank status. The operator-only organization-erasure DELETE path bypasses the
+  imported-draft guard for released and still-bound drafts; runtime roles cannot
+  use the erasure setting to bypass it. Migration 0149 exempts the reserve guard
+  from the retention catalog, so unbooked payments keep their "delete unless
+  booked" rule; scope-bound drafts follow the existing immutable-binding
+  retention and FK closure (0032/0147).
+  Both references freeze with the booking; Storno retains them. Computing and
+  finalizing retain the evidence guard as a second line for historical payouts. The link records
+  the complete payout, never a resolution's authorized budget. Several active
+  linked payouts and evidenced withdrawal/adjustment corrections share one cap
+  across every predecessor and successor of a corrected cost receipt. The cap
+  uses the current, non-superseded receipt's gross amount. A lower corrected
+  amount retains existing bookings and their frozen references but prevents
+  further funding beyond that amount. Unlinked payouts remain visible
+  and block computation. No wording parsing or inferred payment date is used. Excluding funded costs
+  from owner cost distribution remains follow-up #191; this change does not
+  alter that distribution.
+- Cash refunds and reversal rows have their own signed value-date entries.
+  Original bookings remain in their original cash period, even when reversed
+  later. The existing Storno operation keeps the original value date; a real
+  later refund is a new outgoing booking. Reversing a funded payout permits its
+  corrected replacement to be linked. Combined receipts use the cash period's
+  UNIT plan ratio; assigned arrears months do not select a different plan. Cash
+  booked after a value year was frozen, including Storno with its original value
+  date, enters the next open period as `LATE_CASH`, labelled “Nachträgliche
+  Buchungen zum abgeschlossenen Jahr”. Each row retains its original value date.
+  Its signed net amount is separate from current contributions, withdrawals and
+  manual adjustments. Frozen payment IDs prevent repeated carry-over; legacy
+  snapshots use their finalization cutoff. Late Hausgeld uses the original value
+  period’s frozen plan reference, including a superseded plan, not the next year’s
+  ratio. A Storno of frozen Hausgeld negates the recorded original contribution
+  exactly, even after later acquisitions or plan corrections. Late payouts still require funding
+  evidence before computation.
+  **Legacy cutoff limitation:** a year finalized before this feature has no
+  frozen payment IDs or reserve allocation for its receipts. Original cash booked
+  on or before that year's `finalized_at` is excluded from automatic late cash;
+  a Storno booked afterwards retains the old value date and is included once in
+  the first open ledger. Its original is not added alongside it, and a Hausgeld
+  Storno uses the available value-period plan rather than an unavailable frozen
+  cash component. Operators must compare the imported closing balance, original
+  booking and Storno against the bank evidence before attesting inputs. If the
+  imported balance already includes the reversal, append an opposite signed
+  “Sonstige Korrektur” in the open year for the automatically counted component,
+  naming both payment IDs and the bank evidence in the mandatory reason. If it
+  does not, retain the signed late component and correct only any documented
+  allocation difference. Never edit the historical snapshot or book the original
+  a second time. Automatic exclusion/manual queuing of these legacy Storni is
+  not implemented.
+- Opening comes from the immediately preceding finalized reserve snapshot;
+  a gap blocks automatic carry-over. Same-period report/settlement reuse requires
+  the exact accounting scope. Prior-year scopes must be readable and either the
+  same scope or whole-property WEG scopes with the same mandate. First-period
+  opening starts at zero; an imported balance is an explicit reasoned opening
+  adjustment only in the earliest period (`RESERVE_OPENING_IMPORT_ONLY`
+  otherwise). While this first-year ledger is a draft, re-attesting the corrected
+  total appends another audited `OPENING` entry for the difference, including a
+  negative difference, with a reason and the current user. Each entry and its
+  reason remain visible; the opening is their sum. For example, 5,000 → 5,500 →
+  5,200 retains entries of 5,000, +500 and −300. Re-attesting an unchanged opening
+  adds no entry and can refresh stale coverage; an explicit zero opening adjustment
+  is refused with `RESERVE_AMOUNT_INVALID`. A missing reason returns
+  `RESERVE_CORRECTION_REASON_REQUIRED`. Direct opening adjustments use the signed
+  difference, never another target total. The attestation forms show the current
+  opening beside the corrected-total input and reason. Finalization freezes this
+  import history (`RESERVE_PERIOD_FINALIZED`); later years cannot import another
+  opening. Once any run of the same property and exact period in a compatible scope
+  (the same scope or whole-property WEG scopes with the same mandate) has been finalized,
+  including a superseded run, correction drafts refuse further opening imports
+  while evidence-backed withdrawal and adjustment corrections remain available.
+  A draft that reads a finalized sibling's ledger can still compute, re-attest
+  the unchanged opening and attest non-reserve inputs. Only an actual opening
+  difference is refused; these operations never append to the frozen ledger.
+  The earliest period is
+  the smallest `period_start` among non-superseded WEG annual settlement and
+  asset-report runs for the property in the same scope, including whole-property
+  WEG scopes with the same mandate. Drafts count too. An overlapping, non-identical
+  non-superseded reserve period in a matching scope also blocks opening imports
+  (`RESERVE_OPENING_IMPORT_ONLY`). Once an opening is imported,
+  creating an earlier period or an overlapping, non-identical period in a compatible
+  scope is refused (`RESERVE_OPENING_IMPORT_EXISTS`). Identical periods remain allowed
+  for correction runs and the sibling run type. If no plan exists, an asset report shows planning as unknown,
+  while dedicated reserve receipts and reasoned opening/other adjustments remain
+  available; Hausgeld uses any finalized plan covering its cash date.
+- `reserve_ledger_entry` retains append-only adjustments and funding evidence.
+  `OPENING`, `CONTRIBUTION` and `WITHDRAWAL` corrections change those components;
+  `ADJUSTMENT` adds a signed amount directly. Every entry requires a reason.
+  Withdrawal and adjustment corrections require BOTH a confirmed cost receipt
+  and an accepted registered resolution. Positive withdrawals and absolute signed
+  adjustments share the confirmed cost's gross-amount cap with active booked payouts.
+  Booked evidence references stay frozen after cost corrections or resolution challenges.
+- A contribution correction requires `unit_id` belonging to the same property,
+  a positive amount and a mandatory reason, with no payment, cost or resolution
+  references. Its cap derives from the reserve share of booked net Hausgeld for that
+  unit in the exact run period (IN receipts minus OUT refunds, net of Storno) and
+  from what is already credited to the unit, summed with signs: automatic rows
+  (including negative refund rows), earlier unit corrections and payment-specific
+  assignments of that unit's Hausgeld. The zero floors below apply only to the
+  first term of the formula; the second term keeps the signed difference.
+  Raw headroom is `LEAST(GREATEST(0, S) - GREATEST(0, D + C), S - D - C)`,
+  where `S` is the signed booked Hausgeld reserve share, `D` is its signed derived
+  credit (using a payment-specific assignment when present), and `C` is the unit's
+  contribution corrections. The API displays `GREATEST(0, raw)`, the amount accepted
+  right now: IN 1,300 with 100 assigned followed by OUT 650 shows 300 even though
+  500 can be corrected in two steps; the service and database guard refuse any
+  correction above raw headroom. Direct reserve payments enter neither aggregate.
+  Frozen plan cells and the cash ratio use the same SQL helpers for automatic
+  contributions, displayed headroom and the definer ledger guard. Plan selection is
+  shared too: use the exact current plan or, for a partial-period asset report,
+  the finalized plan covering each cash date. Multi-unit cash
+  is allocated in cent-exact unit shares. Excess returns
+  `RESERVE_CONTRIBUTION_EXCEEDS_BOOKED`; nonpositive corrections return
+  `RESERVE_AMOUNT_INVALID`. If a later Storno removes the backing for an existing
+  unit correction, draft computation/finalization refuses the unsupported contribution
+  with the same cap code and a message naming the unit. The reversal and retained
+  correction history remain intact.
+  A composite organization/property/unit foreign key (`fk_reserve_entry_unit`) and the
+  trigger protect direct writes. Free contribution corrections, including the
+  former cost-and-resolution path, are refused. Legacy balances enter only through
+  the existing first-year opening import.
+- Corrections apply only to their exact start/end period. Funding links remain
+  payment-specific across periods so later reversals retain their evidence.
+  Live ledger rows use the entry/value date, creation timestamp and ID as their
+  stable order. The display preserves that order; retained snapshots are unchanged.
+  Only `reserve_opening_balance` is an attestable reserve target total, accompanied
+  by `reserve_override_reason`. Attestation appends its signed difference from the
+  ledger opening; repeating it adds no second adjustment. Both WEG annual runs
+  and asset reports refuse non-null `reserve_contributions_total` or
+  `reserve_withdrawals_total`, including zero or an unchanged total, with
+  `RESERVE_DERIVED_TOTAL_READ_ONLY`: “Zuführungen und Entnahmen werden aus Buchungen
+  abgeleitet; Korrekturen erfolgen mit Bezug im Rücklagenbuch.” A subsequent
+  source or ledger change invalidates coverage.
+  A payment-specific contribution assignment may range from zero to its signed
+  cash amount; the database and service reject a wrong sign or excess amount.
+  The unique payment assignment prevents adding further allocations in another
+  draft. Refusals expose stable `RESERVE_*` codes with German display messages.
+  Reserve history affects coverage only for reserve-consuming settlements;
+  finalizing a tenant statement does not stale another statement or a plan.
+
+`closing = opening + actual contributions − withdrawals + other adjustments + late cash`.
+An overdrawn balance is retained and explicitly flagged in the UI and both
+PDFs, never clipped to zero. PDF reserve rows use structured line types,
+including `RESERVE_LATE_CASH` and `RESERVE_ADJUSTMENT`; translated notes do not
+determine inclusion. Closing-balance explanations in WEG statements and the asset
+report PDF explicitly include late cash in that equation. Reserve payers without cost or plan positions retain their
+contributions and receive an explicit owner-assignment review notice.
+Staff must review financing; this ledger does not authorize an overdraft.
+
+`GET /api/weg-settlements/{run_id}/reserve-ledger` reads the live draft or the
+frozen ledger. `POST .../reserve-ledger/overrides` appends a reasoned adjustment
+or `FUNDING` link. Organization roles, complete source access, the existing
+financial-scope capabilities and tenant-bound foreign keys apply. Hidden reserve
+history returns the same generic 404 as a missing ledger; the database helper
+refuses hidden and nonexistent properties with the same permission error. New ledger
+writes cannot modify an already finalized reserve period. Corrections are
+additional entries in an open period, not edits of historical evidence.
+
+Finalization stores the complete ordered ledger, plan hash, source references,
+carry-over run and all totals in the existing canonical settlement snapshot.
+Later bookings, reversals, plan corrections and overrides do not change an
+issued year's ledger or the opening carried from it. Late cash changes the next
+open closing balance through its separate component. Historical snapshots
+without a ledger are displayed from their existing frozen reserve development,
+marked as legacy, without rewriting them.
+
+The WEG and asset-report detail pages show planned/actual totals, dated ledger
+rows, overdrawn/missing-link feedback and a reasoned correction dialog. Manual
+bank key-date balances, receivables and payables remain administrator inputs.
+Ledger reads add current, access-controlled owner names, payment notes, cost
+document numbers and resolution register numbers for links to the source records;
+the retained snapshot and its amounts remain unchanged. Typed withdrawal
+adjustments appear as “Entnahmekorrektur”, distinct from funded cash withdrawals.
+Migration **0149**, based on **0148**, supplies the append-only ledger, RLS,
+source locks, computation-source checks and payout constraints after the
+organization-deletion and retention migrations.
+
+Executable acceptance: [maintenance_reserve_ledger.feature](../features/maintenance_reserve_ledger.feature),
+`backend/tests/test_reserve_ledger.py`, `backend/tests/engine/test_reserve_ledger.py`
+and the existing WEG, isolation and upgrade tests. The reference files named
+`fachreferenz.md` / `domain-reference.md` are absent from this checkout; the cash
+allocation, first-period import and negative-balance decisions above need owner
+review alongside the existing M4/ADR domain assumptions.

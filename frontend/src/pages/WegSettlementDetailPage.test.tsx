@@ -38,6 +38,7 @@ function frozenLine(id: string, owner: string, amount: string): WegLine {
 const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } });
 function install(runs: WegRun[] = [draft()], ownersReply: (id: string) => Response | Promise<Response> = () => json([seller, buyer])) {
   const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
+    if (url.endsWith('/reserve-ledger')) return json({ opening_balance: '0.00', contributions_total: '0.00', withdrawals_total: '0.00', overrides_total: '0.00', closing_balance: '0.00', planned_contributions_total: '0.00', entries: [], frozen: false, overdrawn: false, booking_basis: 'CASH' });
     if (url === "/api/properties") return json([property]);
     if (url === "/api/owner-profiles") return json(profiles);
     if (url === "/api/persons") return json(people);
@@ -59,6 +60,14 @@ function show() {
     <Route path="/weg-abrechnungen/:runId" element={<WegSettlementDetailPage />} />
   </Routes></MemoryRouter>);
 }
+
+it('shows the current opening beside the corrected balance input and reason', async () => {
+  install(); show();
+  expect(await screen.findByText(/Aktueller Anfangsbestand: 0,00/)).toBeInTheDocument();
+  fireEvent.change(screen.getByLabelText('Rücklagen-Anfangsbestand'), { target: { value: '5500.00' } });
+  expect(screen.getByLabelText('Rücklagen-Anfangsbestand')).toHaveValue('5500.00');
+  expect(screen.getByLabelText('Begründung der Rücklagenwerte')).toBeInTheDocument();
+});
 const paymentLabel = (name: string) => `Tatsächlich gezahltes Hausgeld · ${name}`;
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); vi.restoreAllMocks(); });
 
@@ -73,6 +82,7 @@ it("uses both coverage owners despite seller-only plan lines and sends two expli
   const fetchMock = install(); show();
   const sellerInput = await screen.findByRole("textbox", { name: paymentLabel("Anna Alt") });
   const buyerInput = await screen.findByRole("textbox", { name: paymentLabel("Berta Neu") });
+  expect(screen.getByLabelText('Begründung der Rücklagenwerte').closest('.form-grid')).not.toBeNull();
   expect(plan.lines.map(line => line.owner_profile_id)).toEqual([seller]);
   expect(sellerInput).toHaveValue(""); expect(buyerInput).toHaveValue("");
   expect(screen.queryByRole("textbox", { name: paymentLabel("Clara Fremd") })).not.toBeInTheDocument();
@@ -81,16 +91,17 @@ it("uses both coverage owners despite seller-only plan lines and sends two expli
   expect(buyerInput).toHaveValue("");
   fireEvent.change(buyerInput, { target: { value: "0" } });
   fireEvent.change(screen.getByRole("textbox", { name: "Rücklagen-Anfangsbestand" }), { target: { value: "0" } });
-  fireEvent.change(screen.getByRole("textbox", { name: "Rücklagen-Entnahmen (Jahr)" }), { target: { value: "0" } });
+  fireEvent.change(screen.getByLabelText('Begründung der Rücklagenwerte'), { target: { value: 'Geprüfter Import' } });
   fireEvent.change(screen.getByRole("textbox", { name: "Grundlage der Prüfung" }), { target: { value: "Beide Eigentümer und Kontoauszüge vollständig geprüft" } });
   fireEvent.click(screen.getByRole("checkbox", { name: "Alle angezeigten Beträge und Listen sind vollständig geprüft, einschließlich bestätigter Nullbeträge." }));
   fireEvent.click(screen.getByRole("button", { name: "Datengrundlage speichern" }));
   await screen.findByRole("status");
   const coverage = fetchMock.mock.calls.find(([url]) => url === "/api/financial-input-coverage")!;
-  const values = { reserve_opening_balance: "0", reserve_withdrawals_total: "0", paid_advances: [
+  const values = { reserve_opening_balance: "0", reserve_override_reason: 'Geprüfter Import', paid_advances: [
     { owner_profile_id: seller, paid_total: "0" }, { owner_profile_id: buyer, paid_total: "0" },
   ] };
   expect(JSON.parse(coverage[1]!.body as string)).toMatchObject({ subject_kind: "settlement", subject_id: runId, values });
+  expect(JSON.parse(coverage[1]!.body as string).values).toEqual(values);
   fireEvent.click(screen.getByRole("button", { name: "Berechnen" }));
   await waitFor(() => expect(fetchMock.mock.calls.some(([url]) => url.endsWith("/compute"))).toBe(true));
   const compute = fetchMock.mock.calls.find(([url]) => url.endsWith("/compute"))!;
@@ -159,4 +170,11 @@ it.each([
   expect(screen.queryByRole("alert")).not.toBeInTheDocument();
   expect(fetchMock.mock.calls.filter(([url]) => url.endsWith("/input-owners"))).toHaveLength(2);
   expect(fetchMock.mock.calls.filter(([, init]) => init?.method === "POST")).toHaveLength(0);
+});
+
+
+it('does not offer editable derived reserve totals', async () => {
+  install(); show();
+  await screen.findByLabelText('Rücklagen-Anfangsbestand');
+  expect(screen.queryByLabelText('Rücklagen-Entnahmen (Jahr)')).not.toBeInTheDocument();
 });

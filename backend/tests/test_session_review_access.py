@@ -267,7 +267,7 @@ def _chain_0131_projection(head):
     return projected
 
 
-async def test_revision_chain_0148_0131_0148_preserves_full_state_and_issued_pdf(rent_world):
+async def test_revision_chain_0149_0131_0149_preserves_full_state_and_issued_pdf(rent_world, client_a_admin, seed_data):
     """Rollback-only whole-chain rehearsal, not a production downgrade strategy."""
     import os
     from pathlib import Path
@@ -281,6 +281,16 @@ async def test_revision_chain_0148_0131_0148_preserves_full_state_and_issued_pdf
 
     from tests.conftest import MIGRATOR_SYNC_URL
     from tests.test_letters import contract_body, create_template, issue_body
+    from tests.test_reserve_ledger import reserve_world, finalize
+    from tests.financial_coverage_helpers import reserve_evidence
+
+    # Include 0149-only statement rows even when this rehearsal runs alone.
+    reserve = await reserve_world(client_a_admin, seed_data)
+    evidence = {key.removeprefix('reserve_'): value for key, value in (await reserve_evidence(client_a_admin, reserve)).items()}
+    adjustment = await client_a_admin.post(f"/api/weg-settlements/{reserve['run']}/reserve-ledger/overrides", json={
+        'component': 'ADJUSTMENT', 'amount': '1.00', 'reason': 'Synthetic retained statement evidence', **evidence})
+    assert adjustment.status_code == 201, adjustment.text
+    await finalize(client_a_admin, reserve)
 
     expected = ('127.0.0.1', 55432, 'hausverwaltung', 'app_migrator')
     for raw in (MIGRATOR_SYNC_URL, os.environ['HV_DATABASE_URL_SYNC']):
@@ -309,6 +319,29 @@ async def test_revision_chain_0148_0131_0148_preserves_full_state_and_issued_pdf
         })
         assert bank.status_code == 201, bank.text
         bank_id = bank.json()['id']
+        scope = await admin.post('/api/accounting-scopes', json={
+            'property_id': str(w['property']), 'scope_type': 'MIET', 'label': 'Chain rental scope',
+            'valid_from': '2026-01-01', 'whole_property': True, 'units': [],
+        }, headers={'Idempotency-Key': str(uuid.uuid4())})
+        assert scope.status_code == 201, scope.text
+        scope_path = '/api/accounting-scopes/' + scope.json()['id']
+        grant = await admin.post(scope_path + '/grants', json={
+            'user_id': str(w['admin']), 'capabilities': ['read', 'prepare', 'confirm'], 'reason': 'Chain corpus access',
+        }, headers={'Idempotency-Key': str(uuid.uuid4())})
+        assert grant.status_code == 201, grant.text
+        binding = await admin.post(scope_path + '/bindings', json={
+            'resource_type': 'bank_account', 'resource_id': bank_id, 'reason': 'Chain bank evidence',
+        })
+        assert binding.status_code == 201, binding.text
+        payment = await admin.post('/api/payments', json={
+            'bank_account_id': bank_id, 'direction': 'IN', 'amount': '700.00',
+            'value_date': '2026-02-01', 'payment_type': 'KALTMIETE',
+            'tenant_profile_id': str(w['tenant']), 'lease_agreement_id': str(w['lease']),
+            'period_year': 2026, 'period_month': 2,
+        })
+        assert payment.status_code == 201, payment.text
+        booked = await admin.post('/api/payments/' + payment.json()['id'] + '/book')
+        assert booked.status_code == 200, booked.text
         ended_bank = await admin.patch(f'/api/bank-accounts/{bank_id}', json={'is_active': False})
         assert ended_bank.status_code == 200 and ended_bank.json()['is_active'] is False
         vendor = await admin.post('/api/vendors', json={'person_id': issued.json()[0]['person_id']})
@@ -328,9 +361,9 @@ async def test_revision_chain_0148_0131_0148_preserves_full_state_and_issued_pdf
     config = Config()
     config.set_main_option('script_location', str(Path(__file__).parents[1] / 'migrations'))
     scripts = ScriptDirectory.from_config(config)
-    assert scripts.get_heads() == ['0148']
-    assert [r.revision for r in scripts.iterate_revisions('0148', '0131')] == [
-        f'{number:04}' for number in range(148, 131, -1)
+    assert scripts.get_heads() == ['0149']
+    assert [r.revision for r in scripts.iterate_revisions('0149', '0131')] == [
+        f'{number:04}' for number in range(149, 131, -1)
     ]
     engine = create_engine(MIGRATOR_SYNC_URL)
     try:
@@ -374,7 +407,7 @@ async def test_revision_chain_0148_0131_0148_preserves_full_state_and_issued_pdf
                     assert transaction.is_active and connection.in_transaction()
                     assert version() == (target,)
                     stop, first = int(target), int(start[0])
-                    numbers = range(first - 1, stop - 1, -1) if downgrade else range(first + 1, stop + 1)
+                    numbers = [n for n in (range(first - 1, stop - 1, -1) if downgrade else range(first + 1, stop + 1))]
                     assert seen == [(f'{number:04}',) for number in numbers]
 
                 def projection_0131():
@@ -387,13 +420,46 @@ async def test_revision_chain_0148_0131_0148_preserves_full_state_and_issued_pdf
                         historical.rollback()
                     return projected
 
-                assert version() == ('0148',)
+                assert version() == ('0149',)
                 retained = _chain_snapshot(connection)
+                reserve_line_types = ('RESERVE_LATE_CASH', 'RESERVE_ADJUSTMENT')
+                assert any(row['line_type'] == 'RESERVE_ADJUSTMENT' for row in retained['data']['settlement_line'])
+                generation = connection.scalar(text('SELECT session_version FROM public."user" WHERE id=:id'), {'id': w['reader']})
+                # Neutralize only 0149 evidence and its direct dependents in this
+                # rollback-only migrator TX. Keep all legacy payment/binding rows
+                # throughout the chain; FK checks remain enabled during cleanup.
+                cleanup_tables = ('reserve_ledger_entry', 'scope_payment_reconciliation_item',
+                                  'accounting_scope_binding', 'payment', 'settlement_line')
+                for table in cleanup_tables:
+                    connection.execute(text(f'ALTER TABLE public.{table} DISABLE TRIGGER USER'))
+                connection.execute(text('DELETE FROM public.reserve_ledger_entry'))
+                connection.execute(text("""DELETE FROM public.scope_payment_reconciliation_item
+                    WHERE binding_id IN (SELECT b.id FROM public.accounting_scope_binding b
+                      JOIN public.payment p ON p.organization_id=b.organization_id AND p.id=b.payment_id
+                      WHERE p.payment_type='RUECKLAGENENTNAHME')"""))
+                connection.execute(text("""DELETE FROM public.accounting_scope_binding
+                    WHERE payment_id IN (SELECT id FROM public.payment WHERE payment_type='RUECKLAGENENTNAHME')"""))
+                connection.execute(text("DELETE FROM public.payment WHERE payment_type='RUECKLAGENENTNAHME'"))
+                connection.execute(text("""DELETE FROM public.settlement_line
+                    WHERE line_type IN ('RESERVE_LATE_CASH','RESERVE_ADJUSTMENT')"""))
+                for table in cleanup_tables:
+                    connection.execute(text(f'ALTER TABLE public.{table} ENABLE TRIGGER USER'))
+                without_reserves = _chain_snapshot(connection)
+                assert without_reserves['data']['settlement_line'] == [
+                    row for row in retained['data']['settlement_line'] if row['line_type'] not in reserve_line_types]
+                corpus = {
+                    table: [row for row in retained['data'][table] if row['organization_id'] == str(w['org'])]
+                    for table in ('payment', 'accounting_scope_binding')
+                }
+                assert all(corpus.values())
+                for table, rows in corpus.items():
+                    assert [row for row in without_reserves['data'][table]
+                            if row['organization_id'] == str(w['org'])] == rows
                 with pytest.raises(DBAPIError) as refusal:
                     with connection.begin_nested():
                         migrate('0142', downgrade=True)
-                assert refusal.value.orig.pgcode == '23502'
-                assert _chain_snapshot(connection) == retained
+                assert refusal.value.orig.pgcode == '23502', str(refusal.value.orig)
+                assert _chain_snapshot(connection) == without_reserves
                 # Only this rollback-only rehearsal excludes template-less originals
                 # after proving 0143 refuses them; every retained row is restored below.
                 connection.execute(text('CREATE TEMP TABLE chain_templated_letters ON COMMIT DROP AS '
@@ -454,9 +520,11 @@ async def test_revision_chain_0148_0131_0148_preserves_full_state_and_issued_pdf
                 down = _chain_snapshot(connection)
                 down['data'].pop('alembic_version')
                 assert down == old
-                migrate('0148', downgrade=False)
+                migrate('0149', downgrade=False)
                 connection.execute(text('SET CONSTRAINTS ALL IMMEDIATE'))
                 assert _chain_snapshot(connection) == head
+                for table, rows in corpus.items():
+                    assert [row for row in head['data'][table] if row['organization_id'] == str(w['org'])] == rows
             finally:
                 transaction.rollback()
             assert _chain_snapshot(connection) == retained

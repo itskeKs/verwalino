@@ -19,9 +19,10 @@ class CoverageDeclarationRepository(TenantRepository[CoverageDeclaration]):
         await self._session.execute(text("SELECT pg_advisory_xact_lock(hashtextextended(:key, 0))"),
                                     {"key": f"financial-inputs:{self._org_id}"})
 
-    async def source_revision(self, property_id):
+    async def source_revision(self, property_id, *, reserve=False):
         parts = []
-        for table in ("property", "unit", "cost_entry", "payment", "bank_account"):
+        tables = ("property", "unit", "cost_entry", "payment", "bank_account")
+        for table in (*tables, 'reserve_ledger_entry') if reserve else tables:
             column = "id" if table == "property" else "property_id"
             result = await self._session.execute(text(
                 f"SELECT t::text FROM {table} t WHERE t.organization_id=:org AND t.{column}=:property ORDER BY t.id"),
@@ -33,6 +34,12 @@ class CoverageDeclarationRepository(TenantRepository[CoverageDeclaration]):
                 "WHERE t.organization_id=:org AND u.property_id=:property ORDER BY t.id"),
                 {"org": self._org_id, "property": property_id})
             parts.extend([table, *result.scalars()])
+        if reserve:
+            result = await self._session.execute(text(
+                "SELECT t::text FROM settlement_run t WHERE organization_id=:org AND property_id=:property "
+                "AND run_type IN ('WEG_JAHRESABRECHNUNG','VERMOEGENSBERICHT') "
+                "AND status='finalized' ORDER BY id"), {'org': self._org_id, 'property': property_id})
+            parts.extend(['finalized_reserve_sources', *result.scalars()])
         return hashlib.sha256("\n".join(parts).encode()).hexdigest()
 
     async def owner_ids(self, subject):

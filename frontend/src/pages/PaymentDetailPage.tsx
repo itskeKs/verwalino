@@ -20,6 +20,8 @@ import {
   listTenantProfiles,
   listOwnerProfiles,
   listPersons,
+  getCostEntry,
+  listRegisterEntries,
 } from "../api/endpoints";
 import type {
   Payment,
@@ -29,7 +31,10 @@ import type {
   TenantProfile,
   OwnerProfile,
   Person,
+  CostEntry,
+  RegisterEntry,
 } from "../api/types";
+import { ReserveEvidenceFields } from "../components/ReserveEvidenceFields";
 import { ApiError } from "../api/client";
 
 const STATUS_LABELS: Record<string, string> = {
@@ -50,6 +55,7 @@ const PAYMENT_TYPE_LABELS: Record<string, string> = {
   KAUTION: "Kaution",
   HAUSGELD_VORSCHUSS: "Hausgeld-Vorschuss",
   RUECKLAGENANTEIL: "Ruecklagenanteil",
+  RUECKLAGENENTNAHME: "Rücklagenentnahme",
   SONDERZAHLUNG: "Sonder-/Nachzahlung",
 };
 
@@ -76,7 +82,29 @@ export function PaymentDetailPage() {
   const [isEditing, setIsEditing] = useState(false);
   const [editPeriodYear, setEditPeriodYear] = useState<number | null>(null);
   const [editPeriodMonth, setEditPeriodMonth] = useState<number | null>(null);
+  const [evidence, setEvidence] = useState<{ reserve_cost_entry_id: string | null; reserve_register_entry_id: string | null } | null>(null);
   const [editNote, setEditNote] = useState<string | null>(null);
+  const [reserveReceipt, setReserveReceipt] = useState<CostEntry | null>(null);
+  const [reserveResolution, setReserveResolution] = useState<RegisterEntry | null>(null);
+  const [reserveEvidenceError, setReserveEvidenceError] = useState('');
+
+  const costId = payment?.payment_type === 'RUECKLAGENENTNAHME' ? payment.reserve_cost_entry_id : null;
+  const registerId = payment?.payment_type === 'RUECKLAGENENTNAHME' ? payment.reserve_register_entry_id : null;
+  const propertyId = payment?.property_id;
+  useEffect(() => {
+    let active = true;
+    setReserveReceipt(null); setReserveResolution(null); setReserveEvidenceError('');
+    Promise.all([
+      costId ? getCostEntry(costId) : Promise.resolve(null),
+      registerId && propertyId ? listRegisterEntries(propertyId).then(rows => rows.find(row => row.id === registerId) ?? null) : Promise.resolve(null),
+    ]).then(([cost, resolution]) => {
+      if (active) {
+        setReserveReceipt(cost); setReserveResolution(resolution);
+        if (registerId && !resolution) setReserveEvidenceError('Der verknüpfte Beschluss konnte nicht geladen werden.');
+      }
+    }).catch(() => { if (active) setReserveEvidenceError('Die verknüpften Rücklagenbelege konnten nicht geladen werden. Bitte laden Sie die Seite erneut.'); });
+    return () => { active = false; };
+  }, [costId, registerId, propertyId]);
 
   const reload = useCallback(() => {
     if (!paymentId) return;
@@ -162,6 +190,8 @@ export function PaymentDetailPage() {
   const isBooked = payment?.status === "booked";
   const isReversed = !!payment?.reversed_by_id;
   const isStorno = !!payment?.reverses_id;
+  const canReleaseImport = isDraft && payment?.bank_transaction_id && payment.payment_type === 'RUECKLAGENENTNAHME'
+    && !payment.booked_at && !payment.booked_by && !(payment.reserve_cost_entry_id && payment.reserve_register_entry_id);
 
   // --- Actions ---
 
@@ -207,14 +237,16 @@ export function PaymentDetailPage() {
   async function handleDelete() {
     if (!paymentId) return;
     const confirmed = window.confirm(
-      "Entwurf verwerfen? Die Zahlung kann danach nicht mehr gebucht werden.",
+      canReleaseImport
+        ? 'Möchten Sie die Zuordnung lösen? Der Zahlungsentwurf wird verworfen und der Bankumsatz erhält den Status „Neu“. Sie können ihn anschließend neu zuordnen oder ignorieren.'
+        : "Entwurf verwerfen? Die Zahlung kann danach nicht mehr gebucht werden.",
     );
     if (!confirmed) return;
     setActionLoading(true);
     setActionError(null);
     try {
       await deletePayment(paymentId);
-      navigate("/zahlungen");
+      navigate(canReleaseImport ? `/bankkonten/${payment!.bank_account_id}/umsaetze` : "/zahlungen");
     } catch (err) {
       setActionError(err instanceof ApiError ? err.message : String(err));
     } finally {
@@ -224,20 +256,26 @@ export function PaymentDetailPage() {
 
   async function handleSaveEdit() {
     if (!paymentId) return;
-    if (editPeriodYear === null && editPeriodMonth === null && editNote === null) {
+    if (editPeriodYear === null && editPeriodMonth === null && editNote === null && evidence === null) {
       setIsEditing(false);
       return;
+    }
+    const selected = evidence || payment;
+    if (payment?.payment_type === 'RUECKLAGENENTNAHME' && (!selected?.reserve_cost_entry_id || !selected.reserve_register_entry_id)) {
+      setActionError('Bitte verknüpfen Sie einen bestätigten Kostenbeleg und einen Beschluss aus der Beschluss-Sammlung.'); return;
     }
     setActionLoading(true);
     setActionError(null);
     try {
-      const updates: Pick<Parameters<typeof updatePayment>[1], "period_year" | "period_month" | "note"> = {};
+      const updates: Pick<Parameters<typeof updatePayment>[1], "period_year" | "period_month" | "note" | "reserve_cost_entry_id" | "reserve_register_entry_id"> = {};
       if (editPeriodYear !== null) updates.period_year = editPeriodYear;
       if (editPeriodMonth !== null) updates.period_month = editPeriodMonth;
       if (editNote !== null) updates.note = editNote;
+      if (evidence) Object.assign(updates, evidence);
       const updated = await updatePayment(paymentId, updates);
       setPayment(updated);
       setIsEditing(false);
+      setEvidence(null);
       setEditPeriodYear(null);
       setEditPeriodMonth(null);
       setEditNote(null);
@@ -252,12 +290,14 @@ export function PaymentDetailPage() {
 
   function handleCancelEdit() {
     setIsEditing(false);
+    setEvidence(null);
     setEditPeriodYear(null);
     setEditPeriodMonth(null);
     setEditNote(null);
   }
 
   function handleStartEdit() {
+    setEvidence(null);
     setEditPeriodYear(payment?.period_year ?? null);
     setEditPeriodMonth(payment?.period_month ?? null);
     setEditNote(payment?.note ?? null);
@@ -471,8 +511,19 @@ export function PaymentDetailPage() {
                 <td>{payment.note}</td>
               </tr>
             )}
+            {costId && <tr>
+              <td>Kostenbeleg</td>
+              <td><Link className="link" to={`/kosten/${costId}`}>{reserveReceipt?.document_number || 'Kostenbeleg öffnen'}</Link></td>
+            </tr>}
+            {registerId && <tr>
+              <td>Beschluss</td>
+              <td><Link className="link" to={`/beschluss-sammlung?property_id=${payment.property_id}#beschluss-${registerId}`}>
+                {reserveResolution ? `Beschluss Nr. ${reserveResolution.sequence_number} · ${reserveResolution.wording}` : 'Beschluss öffnen'}
+              </Link></td>
+            </tr>}
           </tbody>
         </table>
+        {reserveEvidenceError && <p role="alert" className="error-text">{reserveEvidenceError}</p>}
       </div>
 
       {/* Action buttons */}
@@ -486,6 +537,8 @@ export function PaymentDetailPage() {
       >
         {isDraft && (
           <>
+            {payment.payment_type === 'RUECKLAGENENTNAHME' && !isEditing && (!payment.reserve_cost_entry_id || !payment.reserve_register_entry_id) &&
+              <p role="alert">Diese Rücklagenentnahme bleibt ein Entwurf. Bitte ergänzen Sie über „Bearbeiten“ den bestätigten Kostenbeleg und den Beschluss vor dem Buchen.</p>}
             {isEditing ? (
               <div style={{ display: "flex", gap: "8px", alignItems: "center", flexWrap: "wrap" }}>
                 <label style={{ fontSize: "0.875rem" }}>
@@ -520,6 +573,11 @@ export function PaymentDetailPage() {
                     style={{ marginLeft: "4px", width: "200px" }}
                   />
                 </label>
+                {payment.payment_type === 'RUECKLAGENENTNAHME' && <div className="form-grid" style={{ width: '100%' }}>
+                  <ReserveEvidenceFields propertyId={payment.property_id} cost={(evidence || payment).reserve_cost_entry_id || ''}
+                    register={(evidence || payment).reserve_register_entry_id || ''}
+                    onChange={(cost, register) => setEvidence({ reserve_cost_entry_id: cost || null, reserve_register_entry_id: register || null })} />
+                </div>}
                 <button
                   className="btn btn--primary"
                   onClick={handleSaveEdit}
@@ -551,14 +609,17 @@ export function PaymentDetailPage() {
                 >
                   Bearbeiten
                 </button>
-                <button
+                {!payment.bank_transaction_id && <button
                   className="btn"
                   onClick={handleDelete}
                   disabled={actionLoading}
                   style={{ color: "#b71c1c" }}
                 >
                   Entwurf verwerfen
-                </button>
+                </button>}
+                {canReleaseImport && <button className="btn" onClick={handleDelete} disabled={actionLoading}>
+                  Zuordnung lösen
+                </button>}
               </>
             )}
           </>

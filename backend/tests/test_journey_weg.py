@@ -41,14 +41,15 @@ async def test_weg_pdf_available_before_success_response(t13_seed, client_a_admi
     elif kind == "weg":
         plan_id = await _create_and_finalize_plan(client_a_admin, seed["property_id"], seed["mandate_id"])
         created = await client_a_admin.post("/api/weg-settlements", json={**period, "economic_plan_id": plan_id})
-        values = {"reserve_opening_balance": "0.00", "reserve_withdrawals_total": "0.00", "paid_advances": [
+        values = {"reserve_override_reason": "Reviewed synthetic reserve totals", "reserve_opening_balance": "0.00", "paid_advances": [
             {"owner_profile_id": seed[owner], "paid_total": "6000.00"} for owner in ("owner_a", "owner_b")
         ]}
         prefix, coverage_kind = "/api/weg-settlements", "settlement"
     else:
+        await _create_and_finalize_plan(client_a_admin, seed['property_id'], seed['mandate_id'])
         created = await client_a_admin.post("/api/weg-settlements/asset-reports", json=period)
-        values = {"reserve_opening_balance": "0.00", "reserve_withdrawals_total": "0.00",
-                  "reserve_contributions_total": "1000.00", "receivables": [], "payables": [],
+        values = {"reserve_override_reason": "Reviewed synthetic reserve totals", "reserve_opening_balance": "0.00",
+                  "receivables": [], "payables": [],
                   "bank_balances": [
                       {"bank_account_id": seed[key], "label": label, "account_type": account_type, "balance": amount}
                       for key, label, account_type, amount in (
@@ -60,6 +61,13 @@ async def test_weg_pdf_available_before_success_response(t13_seed, client_a_admi
     assert created.status_code == 201, created.text
     run_id = created.json()["id"]
     url = f"{prefix}/{run_id}"
+    if kind != 'economic_plan':
+        for field in ('reserve_contributions_total', 'reserve_withdrawals_total'):
+            refused = await client_a_admin.post('/api/financial-input-coverage', json={
+                'subject_kind': coverage_kind, 'subject_id': run_id, 'values': {**values, field: '1000.00'},
+                'confirmed_complete': True, 'reason': 'Review derived total'})
+            assert refused.status_code == 422, refused.text
+            assert refused.json()['detail']['code'] == 'RESERVE_DERIVED_TOTAL_READ_ONLY'
     await attest_fixture(client_a_admin, coverage_kind, run_id, values)
     computed = await client_a_admin.post(f"{url}/compute", json=values)
     assert computed.status_code == 200, computed.text
@@ -368,7 +376,7 @@ async def test_full_weg_journey(t13_seed, journey_client: AsyncClient):
 
     # 7. Attest settlement coverage, then finalize with actual derived paid advances
     paid_advances = [{"owner_profile_id": item["owner_profile_id"], "paid_total": item["paid_total"]} for item in derived]
-    values = {"reserve_opening_balance": "0.00", "reserve_withdrawals_total": "0.00",
+    values = {"reserve_override_reason": "Reviewed synthetic reserve totals", "reserve_opening_balance": "0.00",
               "paid_advances": paid_advances}
     await attest_fixture(client_a_admin, "settlement", settlement_id, values)
     resp = await client_a_admin.post(
@@ -398,8 +406,7 @@ async def test_full_weg_journey(t13_seed, journey_client: AsyncClient):
     assert resp.status_code == 201, resp.text
     report_id = resp.json()["id"]
     report_values = {
-        "reserve_opening_balance": "1000.00", "reserve_withdrawals_total": "0.00",
-        "reserve_contributions_total": "0.00", "receivables": [], "payables": [],
+        "receivables": [], "payables": [],
         "bank_balances": [
             {"bank_account_id": bank_giro, "label": "Giro", "account_type": "LAUFEND", "balance": "0.00"},
             {"bank_account_id": seed["bank_ruecklage"], "label": "Reserve", "account_type": "RUECKLAGE", "balance": "1000.00"},
@@ -481,7 +488,7 @@ async def test_pdf_generation_only(t13_seed, journey_client: AsyncClient):
     paid_advances = [{"owner_profile_id": item["owner_profile_id"], "paid_total": item["paid_total"]} for item in derived]
 
     # Attest settlement coverage before compute/finalize
-    values = {"reserve_opening_balance": "0.00", "reserve_withdrawals_total": "0.00",
+    values = {"reserve_override_reason": "Reviewed synthetic reserve totals", "reserve_opening_balance": "0.00",
               "paid_advances": paid_advances}
     await attest_fixture(client_a_admin, "settlement", settlement_id, values)
 
@@ -489,8 +496,7 @@ async def test_pdf_generation_only(t13_seed, journey_client: AsyncClient):
     resp = await client_a_admin.post(
         f"/api/weg-settlements/{settlement_id}/compute",
         json={
-            "reserve_opening_balance": "0.00",
-            "reserve_withdrawals_total": "0.00",
+            "reserve_override_reason": "Reviewed synthetic reserve totals", "reserve_opening_balance": "0.00",
             "paid_advances": paid_advances,
         },
     )

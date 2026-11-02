@@ -895,8 +895,19 @@ code {
 /* Frozen identifiers and long German titles must remain readable on phones. */
 .settlement-detail { min-width: 0; overflow-wrap: anywhere; }
 .settlement-detail .info-table { table-layout: fixed; }
+.reserve-ledger-table { table-layout: fixed; }
+.reserve-ledger-table th:first-child { width: 6.5rem; }
+.reserve-ledger-table th:last-child { width: 8rem; }
+.reserve-ledger-table td { overflow-wrap: anywhere; }
 @media (max-width: 768px) {
   .settlement-detail .info-table td:first-child { width: 45%; }
+  .reserve-ledger-table th:first-child { width: 5.25rem; }
+  .reserve-ledger-table th:last-child { width: 6rem; }
+  .reserve-ledger-table th,
+  .reserve-ledger-table td { padding: 0.5rem 0.25rem; }
+  .settlement-detail .data-table { table-layout: fixed; }
+  .settlement-detail .data-table th,
+  .settlement-detail .data-table td { overflow-wrap: anywhere; }
 }
 
 /* Bounded master-data lists retain table columns inside the mobile viewport. */
@@ -932,3 +943,19 @@ code {
 .source-admission-review :is(textarea, input, select):focus-visible { outline: 2px solid hsl(var(--ring)); outline-offset: 2px; }
 .source-admission-review .review-confirmation { display: flex; align-items: baseline; gap: 0.5rem; margin-bottom: 1rem; }
 .source-admission-review .review-confirmation input { flex: none; }
+
+
+/* Reserve evidence must fit long source labels without widening its form. */
+.reserve-evidence-fields {
+  min-width: 0;
+  grid-template-columns: minmax(0, 1fr);
+}
+.reserve-payment-form { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.reserve-payment-form > *, .reserve-evidence-fields > * { min-width: 0; }
+.reserve-payment-form :is(input, select, textarea), .reserve-evidence-fields :is(input, select, textarea) {
+  min-width: 0;
+  max-width: 100%;
+}
+@media (max-width: 768px) {
+  .reserve-payment-form { grid-template-columns: minmax(0, 1fr); }
+}

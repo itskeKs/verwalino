@@ -13,12 +13,14 @@ from __future__ import annotations
 import uuid
 from datetime import date
 from decimal import Decimal, InvalidOperation
+from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.exc import DBAPIError
 
 from app.core.rbac import ScopeCapability
 from app.repositories.coverage_declaration_repo import CoverageDeclarationRepository
@@ -44,6 +46,7 @@ from app.services.weg_settlement_service import (
     WegComputeExtras,
     WegSettlementService,
 )
+from app.services.reserve_ledger_service import ReserveLedgerService, _raise_reserve_opening_error
 
 router = APIRouter(prefix="/api/weg-settlements", tags=["weg-settlements"])
 
@@ -58,6 +61,16 @@ class WegRunCreate(BaseModel):
     period_start: date
     period_end: date
     management_mandate_id: str | None = None
+
+    @field_validator('economic_plan_id', mode='before')
+    @classmethod
+    def require_valid_plan_id(cls, value):
+        try:
+            uuid.UUID(value)
+        except (ValueError, TypeError, AttributeError):
+            raise HTTPException(422, {'code': 'WEG_PLAN_REQUIRED',
+                'message': 'Bitte wählen Sie einen gültigen Wirtschaftsplan.'}) from None
+        return value
 
 
 class PlanSuccessorSelection(BaseModel):
@@ -74,8 +87,9 @@ class PaidAdvanceIn(BaseModel):
 
 
 class WegComputeRequest(BaseModel):
-    reserve_opening_balance: str
-    reserve_withdrawals_total: str
+    reserve_opening_balance: str | None = None
+    reserve_withdrawals_total: str | None = None
+    reserve_override_reason: str = Field(default='', max_length=2000)
     paid_advances: list[PaidAdvanceIn]
 
 
@@ -100,9 +114,10 @@ class AssetItemIn(BaseModel):
 
 
 class AssetReportComputeRequest(BaseModel):
-    reserve_opening_balance: str
-    reserve_withdrawals_total: str
-    reserve_contributions_total: str
+    reserve_opening_balance: str | None = None
+    reserve_withdrawals_total: str | None = None
+    reserve_contributions_total: str | None = None
+    reserve_override_reason: str = Field(default='', max_length=2000)
     bank_balances: list[BankBalanceIn]
     receivables: list[AssetItemIn]
     payables: list[AssetItemIn]
@@ -143,9 +158,14 @@ class WegRunOut(BaseModel):
     lines: list[WegLineOut] = []
 
 
-def _dec(value: str, field: str) -> Decimal:
+def _dec(value: str | None, field: str) -> Decimal | None:
+    if value is None:
+        return None
     try:
-        return Decimal(value)
+        result = Decimal(value)
+        if not result.is_finite():
+            raise ValueError('finite amount required')
+        return result
     except (InvalidOperation, ValueError):
         raise HTTPException(status_code=422, detail=f"Invalid decimal for {field}: {value}")
 
@@ -154,6 +174,7 @@ def _weg_extras(body: WegComputeRequest | None) -> WegComputeExtras:
     if body is None:
         return WegComputeExtras()
     return WegComputeExtras(
+        reserve_override_reason=body.reserve_override_reason,
         reserve_opening_balance=_dec(body.reserve_opening_balance, "reserve_opening_balance"),
         reserve_withdrawals_total=_dec(body.reserve_withdrawals_total, "reserve_withdrawals_total"),
         paid_advances=[
@@ -170,6 +191,7 @@ def _report_inputs(body: AssetReportComputeRequest | None) -> AssetReportInputs:
     if body is None:
         return AssetReportInputs()
     return AssetReportInputs(
+        reserve_override_reason=body.reserve_override_reason,
         reserve_opening_balance=_dec(body.reserve_opening_balance, "reserve_opening_balance"),
         reserve_withdrawals_total=_dec(body.reserve_withdrawals_total, "reserve_withdrawals_total"),
         reserve_contributions_total=_dec(body.reserve_contributions_total, "reserve_contributions_total"),
@@ -227,6 +249,51 @@ def _run_out(run: SettlementRun, lines: list[SettlementLine]) -> WegRunOut:
 # ---------------------------------------------------------------------------
 # Shared read endpoints (both run types)
 # ---------------------------------------------------------------------------
+class ReserveOverrideRequest(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+    component: Literal['OPENING', 'CONTRIBUTION', 'WITHDRAWAL', 'ADJUSTMENT', 'FUNDING']
+    amount: Decimal = Field(max_digits=14, decimal_places=2, allow_inf_nan=False)
+    reason: str = Field(max_length=2000)
+    payment_id: uuid.UUID | None = None
+    cost_entry_id: uuid.UUID | None = None
+    register_entry_id: uuid.UUID | None = None
+    unit_id: uuid.UUID | None = None
+
+
+@router.get('/{run_id}/reserve-ledger')
+async def reserve_ledger(run_id: uuid.UUID, auth: AuthContext = Depends(get_current_user),
+                         db: AsyncSession = Depends(get_db)):
+    service = ReserveLedgerService(db, auth.organization_id, auth.user_id)
+    run = await service.subject(run_id)
+    return await service.read_display(run)
+
+
+@router.post('/{run_id}/reserve-ledger/overrides', status_code=201)
+async def reserve_override(run_id: uuid.UUID, body: ReserveOverrideRequest,
+                           auth: AuthContext = Depends(require_write_dep), db: AsyncSession = Depends(get_db, scope='function')):
+    service = ReserveLedgerService(db, auth.organization_id, auth.user_id)
+    run = await service.subject(run_id, write=True)
+    try:
+        entry = await service.add(run, **body.model_dump())
+    except DBAPIError as exc:
+        _raise_reserve_opening_error(exc)
+        code = getattr(exc.orig, 'sqlstate', None)
+        if code in {'23514', '23505', '23503'}:
+            constraint = getattr(getattr(exc.orig, '__cause__', None), 'constraint_name', None)
+            if constraint == 'reserve_contribution_exceeds_booked':
+                from app.services.reserve_ledger_service import CONTRIBUTION_EXCEEDS_BOOKED
+                raise HTTPException(422, CONTRIBUTION_EXCEEDS_BOOKED) from None
+            if constraint == 'reserve_assignment_amount':
+                raise HTTPException(422, {'code': 'RESERVE_ASSIGNMENT_EXCEEDS_PAYMENT',
+                    'message': 'Die Rücklagenzuordnung muss zwischen null und dem vorzeichenbehafteten Zahlungsbetrag liegen.'}) from None
+            duplicate_payment = code == '23505' and constraint == 'reserve_ledger_entry_organization_id_payment_id_key'
+            raise HTTPException(409 if duplicate_payment else 422,
+                {'code': 'RESERVE_PAYMENT_ALREADY_ASSIGNED' if duplicate_payment else 'RESERVE_INPUT_INVALID',
+                 'message': 'Bitte prüfen Sie Rücklagenzeitraum, Auszahlung, Kostenbetrag und Beschlussverknüpfung.'}) from None
+        raise
+    return {'id': str(entry.id)}
+
+
 @router.get("", response_model=list[WegRunOut])
 async def list_weg_runs(
     property_id: uuid.UUID | None = None,
@@ -313,14 +380,18 @@ async def create_weg_run(
     db: AsyncSession = Depends(get_db),
 ):
     svc = WegSettlementService(db, auth.organization_id, auth.user_id)
-    run = await svc.create_weg_draft(
-        accounting_scope_id=body.accounting_scope_id,
-        property_id=uuid.UUID(body.property_id),
-        economic_plan_id=uuid.UUID(body.economic_plan_id),
-        period_start=body.period_start,
-        period_end=body.period_end,
-        management_mandate_id=uuid.UUID(body.management_mandate_id) if body.management_mandate_id else None,
-    )
+    try:
+        run = await svc.create_weg_draft(
+            accounting_scope_id=body.accounting_scope_id,
+            property_id=uuid.UUID(body.property_id),
+            economic_plan_id=uuid.UUID(body.economic_plan_id),
+            period_start=body.period_start,
+            period_end=body.period_end,
+            management_mandate_id=uuid.UUID(body.management_mandate_id) if body.management_mandate_id else None,
+        )
+    except DBAPIError as exc:
+        _raise_reserve_opening_error(exc)
+        raise
     return _run_out(run, [])
 
 
@@ -394,13 +465,17 @@ async def create_asset_report(
     db: AsyncSession = Depends(get_db),
 ):
     svc = WegSettlementService(db, auth.organization_id, auth.user_id)
-    run = await svc.create_asset_report_draft(
-        accounting_scope_id=body.accounting_scope_id,
-        property_id=uuid.UUID(body.property_id),
-        period_start=body.period_start,
-        period_end=body.period_end,
-        management_mandate_id=uuid.UUID(body.management_mandate_id) if body.management_mandate_id else None,
-    )
+    try:
+        run = await svc.create_asset_report_draft(
+            accounting_scope_id=body.accounting_scope_id,
+            property_id=uuid.UUID(body.property_id),
+            period_start=body.period_start,
+            period_end=body.period_end,
+            management_mandate_id=uuid.UUID(body.management_mandate_id) if body.management_mandate_id else None,
+        )
+    except DBAPIError as exc:
+        _raise_reserve_opening_error(exc)
+        raise
     return _run_out(run, [])
 
 

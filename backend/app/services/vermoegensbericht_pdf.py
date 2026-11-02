@@ -25,9 +25,11 @@ _CSS = (Path(__file__).resolve().parent.parent / "templates" / "weg_abrechnung.c
     encoding="utf-8"
 )
 
-_RESERVE_TYPES = ("RESERVE_OPENING", "RESERVE_CONTRIBUTION", "RESERVE_WITHDRAWAL", "RESERVE_CLOSING")
+_RESERVE_TYPES = ("RESERVE_OPENING", "RESERVE_CONTRIBUTION", "RESERVE_WITHDRAWAL", "RESERVE_CLOSING",
+                  "RESERVE_LATE_CASH", "RESERVE_ADJUSTMENT", "SUBTOTAL")
+# Historical asset reports used SUBTOTAL only for reserve corrections/late cash.
 # Line types whose value is a manual Verwalter-Angabe (ADR-0008).
-_MANUAL_TYPES = ("RESERVE_OPENING", "RESERVE_WITHDRAWAL", "BANK_BALANCE", "RECEIVABLE", "PAYABLE")
+_MANUAL_TYPES = ("BANK_BALANCE", "RECEIVABLE", "PAYABLE")
 
 
 @dataclass
@@ -85,8 +87,10 @@ def build_vermoegensbericht_html(
 
     sections = []
     if reserve_rows:
+        overdrawn = any(ln.line_type == 'RESERVE_CLOSING' and ln.amount < 0 for ln in ordered)
         sections.append(
             "<h2>Stand der Erhaltungsruecklage</h2>"
+            + ("<p class='hint'><strong>Die Rücklage ist überzogen.</strong> Bitte prüfen Sie die Finanzierung und die Belege.</p>" if overdrawn else "") +
             "<table class='lines'><tbody>" + "".join(reserve_rows) + "</tbody></table>"
         )
     if bank_rows:
@@ -132,10 +136,9 @@ def build_vermoegensbericht_html(
 
   <div class="disclaimer">
     Hinweis (ADR-0008, [§18/fachlich]): Der <strong>Stand der
-    Erhaltungsruecklage</strong> ist aus der Entwicklung (Anfangsbestand +
-    Zufuehrungen - Entnahmen = Endbestand) abgeleitet. Die mit
-    <em>(Verwalter-Angabe)</em> gekennzeichneten Werte (Anfangsbestand und
-    Entnahmen der Ruecklage, Bankkonten-Stichtagssalden,
+    Erhaltungsrücklage</strong> ist aus der Entwicklung (Anfangsbestand +
+    Zuführungen - Entnahmen ± Korrekturen + nachträgliche Buchungen = Endbestand) abgeleitet. Die mit
+    <em>(Verwalter-Angabe)</em> gekennzeichneten Werte (Bankkonten-Stichtagssalden,
     Forderungen/Verbindlichkeiten) sind <strong>manuelle Angaben der
     Verwaltung</strong> und <strong>kein automatischer Buchungssaldo</strong>
     (kein Bankabgleich in dieser Ausbaustufe). Vollstaendigkeit und Eignung fuer

@@ -65,7 +65,7 @@ TENANT_TABLES = frozenset({
     # M2 Kosten & GoBD-Belegfluss
     "cost_entry", "invoice_document", "operation_receipt", "invoice_processing_attempt",
     # M3 Verteilungs-/Abrechnungs-Engine
-    "settlement_run", "settlement_line", "coverage_declaration",
+    "settlement_run", "settlement_line", "coverage_declaration", "reserve_ledger_entry",
     # M4 WEG-Abrechnung (Wirtschaftsplan eigene Entitaet)
     "economic_plan", "economic_plan_line", "special_levy", "special_levy_allocation",
     # M6 Zahlungen, Mietkonto & offene Posten

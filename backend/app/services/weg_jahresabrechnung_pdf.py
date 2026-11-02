@@ -42,7 +42,8 @@ _KEY_LABELS = {
 }
 
 # Object-wide reserve development line types (not per-owner).
-_RESERVE_DEV_TYPES = ("RESERVE_OPENING", "RESERVE_WITHDRAWAL", "RESERVE_CLOSING")
+_RESERVE_DEV_TYPES = ("RESERVE_OPENING", "RESERVE_WITHDRAWAL", "RESERVE_CLOSING", "SUBTOTAL",
+                      "RESERVE_LATE_CASH", "RESERVE_ADJUSTMENT")
 
 
 @dataclass
@@ -169,8 +170,10 @@ def build_weg_jahresabrechnung_html(
         )
     reserve_section = ""
     if reserve_rows:
+        overdrawn = any(ln.line_type == 'RESERVE_CLOSING' and ln.amount < 0 for ln in reserve_dev)
         reserve_section = (
             "<h2>Entwicklung der Erhaltungsruecklage</h2>"
+            + ("<p class='hint'><strong>Die Rücklage ist überzogen.</strong> Bitte prüfen Sie die Finanzierung und die Belege.</p>" if overdrawn else "") +
             "<table class='lines'><tbody>" + "".join(reserve_rows) + "</tbody></table>"
         )
 

@@ -64,6 +64,8 @@ class PaymentCreate(BaseModel):
     period_year: int | None = None
     period_month: int | None = None
     settlement_run_id: str | None = None
+    reserve_cost_entry_id: uuid.UUID | None = None
+    reserve_register_entry_id: uuid.UUID | None = None
     note: str | None = None
 
 
@@ -79,6 +81,8 @@ class PaymentUpdate(BaseModel):
     period_year: int | None = None
     period_month: int | None = None
     settlement_run_id: str | None = None
+    reserve_cost_entry_id: uuid.UUID | None = None
+    reserve_register_entry_id: uuid.UUID | None = None
     note: str | None = None
 
 
@@ -87,6 +91,8 @@ class ReverseRequest(BaseModel):
 
 
 class PaymentOut(BaseModel):
+    reserve_cost_entry_id: str | None = None
+    reserve_register_entry_id: str | None = None
     bank_transaction_id: str | None = None
     id: str
     organization_id: str
@@ -137,6 +143,8 @@ class MietkontoOut(BaseModel):
 
 def _to_out(p: Payment) -> PaymentOut:
     return PaymentOut(
+        reserve_cost_entry_id=str(p.reserve_cost_entry_id) if p.reserve_cost_entry_id else None,
+        reserve_register_entry_id=str(p.reserve_register_entry_id) if p.reserve_register_entry_id else None,
         id=str(p.id),
         bank_transaction_id=str(p.bank_transaction_id) if p.bank_transaction_id else None,
         organization_id=str(p.organization_id),
@@ -464,6 +472,8 @@ async def create_payment(
         period_year=body.period_year,
         period_month=body.period_month,
         settlement_run_id=uuid.UUID(body.settlement_run_id) if body.settlement_run_id else None,
+        reserve_cost_entry_id=body.reserve_cost_entry_id,
+        reserve_register_entry_id=body.reserve_register_entry_id,
         note=body.note,
     )
     return _to_out(payment)
@@ -479,7 +489,7 @@ async def update_payment(
     svc = PaymentService(db, auth.organization_id, auth.user_id)
     updates: dict = {}
     for field_name, value in body.model_dump(exclude_unset=True).items():
-        if value is None:
+        if value is None and field_name not in ("reserve_cost_entry_id", "reserve_register_entry_id"):
             continue
         if field_name == "amount":
             updates[field_name] = _dec(value, "amount")

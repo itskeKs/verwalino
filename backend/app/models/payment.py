@@ -91,6 +91,9 @@ class Payment(Base, UUIDPrimaryKeyMixin, TimestampMixin):
         nullable=True,
     )
 
+    reserve_cost_entry_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
+    reserve_register_entry_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
+
     # GoBD / immutability (ADR-0003/0009).
     status: Mapped[str] = mapped_column(
         String(12), nullable=False, default="draft"
@@ -131,6 +134,8 @@ class Payment(Base, UUIDPrimaryKeyMixin, TimestampMixin):
     note: Mapped[str | None] = mapped_column(String(500), nullable=True)
 
     __table_args__ = (
+        ForeignKeyConstraint(['organization_id', 'reserve_cost_entry_id'], ['cost_entry.organization_id', 'cost_entry.id'], name='fk_reserve_payment_cost'),
+        ForeignKeyConstraint(['organization_id', 'reserve_register_entry_id'], ['resolution_register_entry.organization_id', 'resolution_register_entry.id'], name='fk_reserve_payment_register'),
         ForeignKeyConstraint(["organization_id", "tenant_profile_id"], ["tenant_profile.organization_id", "tenant_profile.id"],
             name="fk_payment_tenant_profile_id_tenant", ondelete="RESTRICT"),
         ForeignKeyConstraint(["organization_id", "owner_profile_id"], ["owner_profile.organization_id", "owner_profile.id"],
