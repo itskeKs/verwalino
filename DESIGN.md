@@ -330,7 +330,12 @@ Tenant payment labels use “Betriebskosten-Vorauszahlung” and
 MANUAL/DERIVED sources. The existing derivation action loads both components;
 manual edits retain each component's own source. Computed statements and PDFs
 show “Betriebskosten abzüglich Vorauszahlungen”, “Heizkosten abzüglich
-Vorauszahlungen” and the overall balance. The advance proposal shows both
+Vorauszahlungen” and the overall balance. When the heating advance total is zero
+and there are no heating positions, the page and PDF retain the single block
+“Geleistete Vorauszahlungen” instead; both snapshot keys remain present.
+Statement totals start unknown (empty fields); “Aus Zahlungen ableiten” derives both.
+The detail page retains its existing decimal-string `EUR` amounts; the advance
+proposal retains its existing German `€` format. The advance proposal shows both
 monthly amounts and accepts them in one rent change. Existing form grids,
 wrapping labels and horizontally scrollable tables apply at 360 px. Lease and
 rent-account form controls stay within their grid cells with long tenant names.

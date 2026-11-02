@@ -29,7 +29,7 @@ def patch_guards(reverse=False):
     # retained payload as-is; only new split snapshots include the new columns.
     patch_function('financial_computation_state(uuid,text,uuid)',
         "public.bounded_computation_digest(parent-'updated_at')",
-        "public.bounded_computation_digest((parent-'updated_at') - CASE WHEN payload#>'{inputs,heating_advance_payments_total}' IS NULL THEN ARRAY['heating_advance_payments_total','heating_advance_payments_source'] ELSE ARRAY[]::text[] END)", reverse)
+        "public.bounded_computation_digest((parent-'updated_at') - CASE WHEN payload#>>'{inputs,heating_advance_payments_total}' IS NULL THEN ARRAY['heating_advance_payments_total','heating_advance_payments_source'] ELSE ARRAY[]::text[] END)", reverse)
     original = "    IF OLD.status = 'finalized' THEN\n        IF NEW.organization_id"
     guarded = "    IF OLD.status = 'finalized' THEN" + """
         IF NEW.heating_advance_payments_total IS DISTINCT FROM OLD.heating_advance_payments_total
@@ -51,6 +51,7 @@ def upgrade():
         ALTER TABLE payment ADD CONSTRAINT ck_payment_heating_counterparty
           CHECK(payment_type <> 'HK_VORAUSZAHLUNG' OR (tenant_profile_id IS NOT NULL AND owner_profile_id IS NULL));
         ALTER TABLE settlement_run ADD COLUMN heating_advance_payments_total NUMERIC(14,2) DEFAULT 0;
+        ALTER TABLE settlement_run ALTER COLUMN heating_advance_payments_total DROP DEFAULT;
         ALTER TABLE settlement_run ADD COLUMN heating_advance_payments_source VARCHAR(12) NOT NULL DEFAULT 'MANUAL';
         ALTER TABLE settlement_run ADD CONSTRAINT ck_settlement_run_heating_source CHECK(heating_advance_payments_source IN ('MANUAL','DERIVED'));
         ALTER TABLE settlement_run ADD CONSTRAINT ck_settlement_run_heating_total CHECK(heating_advance_payments_total > '-Infinity'::numeric AND heating_advance_payments_total < 'Infinity'::numeric)""")

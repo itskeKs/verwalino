@@ -428,12 +428,12 @@ async def test_original_lease_documents_and_finalized_snapshot_unchanged(deposit
     async with api_client(w) as api:
         await pay(api, w, bank_account_id=w["rent_bank"], payment_type="NK_VORAUSZAHLUNG", amount="150.00", period_year=2026, period_month=3)
         response = await api.post("/api/settlements", json={
-            "property_id": str(w["property"]), "lease_agreement_id": str(w["lease"]),
+            'heating_advance_payments_total': '0.00', "property_id": str(w["property"]), "lease_agreement_id": str(w["lease"]),
             "period_start": "2026-01-01", "period_end": "2026-04-30", "advance_payments_total": "150.00"})
         assert response.status_code == 201, response.text
         run_id = response.json()["id"]
         await attest_fixture(api, "settlement", run_id, {
-            "advance_payments_total": "150.00", "advance_payments_source": "MANUAL"})
+            'heating_advance_payments_total': '0.00', 'heating_advance_payments_source': "MANUAL", "advance_payments_total": "150.00", "advance_payments_source": "MANUAL"})
         response = await api.post(f"/api/settlements/{run_id}/finalize", json={})
         assert response.status_code == 200, response.text
         finalized = response.json()

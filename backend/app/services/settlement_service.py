@@ -307,7 +307,7 @@ class SettlementService:
         period_start: date,
         period_end: date,
         advance_payments_total: Decimal | None = None,
-        heating_advance_payments_total: Decimal | None = Decimal("0.00"),
+        heating_advance_payments_total: Decimal | None = None,
         management_mandate_id: uuid.UUID | None = None,
         accounting_scope_id: uuid.UUID | None = None,
     ) -> SettlementRun:

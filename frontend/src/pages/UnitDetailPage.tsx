@@ -421,7 +421,7 @@ export function UnitDetailPage() {
         <div className="card" style={{ marginBottom: "1rem" }}>
           <h2>{editingLease ? "Mietvertrag bearbeiten / beenden" : "Neuen Mietvertrag anlegen"}</h2>
           {leaseFormError && <p className="error-text">{leaseFormError}</p>}
-          <form onSubmit={handleLeaseSubmit} className="form-grid [&>*]:min-w-0 [&_input]:min-w-0 [&_select]:min-w-0">
+          <form onSubmit={handleLeaseSubmit} className="form-grid">
             <label>
               <span id="lease-tenant-label">Mieter *</span>
               <select

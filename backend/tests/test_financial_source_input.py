@@ -26,7 +26,7 @@ async def clear_synthetic_source_grants():
 
 async def test_rental_calculations_require_current_source_authority(client_a_admin, seed_data, m3_seed):
     run = await draft(client_a_admin, m3_seed, '0.00')
-    values = {'advance_payments_total':'0.00','advance_payments_source':'MANUAL'}
+    values = {'heating_advance_payments_total': '0.00', 'heating_advance_payments_source': 'MANUAL', 'advance_payments_total':'0.00','advance_payments_source':'MANUAL'}
     assert (await attest(client_a_admin, 'settlement', run, values)).status_code == 201
     await classify_property_finance(seed_data, m3_seed['property'], scope_type='MIET')
     await grant_property_contacts(client_a_admin, seed_data, m3_seed['property'])
@@ -120,7 +120,7 @@ async def test_all_weg_compute_and_finalize_paths_require_complete_sources(clien
 async def test_direct_sql_cannot_write_calculation_outputs_without_source_rights(client_a_admin, seed_data, m3_seed, m4_seed):
     from sqlalchemy.exc import DBAPIError
     rental = await draft(client_a_admin, m3_seed, '0.00')
-    values = {'advance_payments_total':'0.00','advance_payments_source':'MANUAL'}
+    values = {'heating_advance_payments_total': '0.00', 'heating_advance_payments_source': 'MANUAL', 'advance_payments_total':'0.00','advance_payments_source':'MANUAL'}
     assert (await attest(client_a_admin, 'settlement', rental, values)).status_code == 201
     assert (await client_a_admin.post(f'/api/settlements/{rental}/compute', json=_extras_for_exit(m3_seed))).status_code == 200
     result = await client_a_admin.post('/api/economic-plans', json={'property_id':m4_seed['property'],'plan_year':2025,

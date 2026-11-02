@@ -304,29 +304,32 @@ def _finish_result(inp, cost_lines, computation, vacancy_attr, heating_costs, to
         if period_results else sum((line.amount for line in cost_lines if line.cost_entry_id in heating_ids), Decimal('0.00')))
     balance = _money(total_cost - advance - heating_advance)
 
+    split_advances = bool(heating_ids) or heating_advance != 0
+
     # Advance-payment + balance lines (BGH: Abzug der Vorauszahlungen + Saldo).
     lines: list[ResultLine] = list(cost_lines)
     lines.append(
         ResultLine(
             line_type="ADVANCE_PAYMENT",
-            label="Betriebskosten-Vorauszahlungen",
+            label="Betriebskosten-Vorauszahlungen" if split_advances else "Geleistete Vorauszahlungen",
             amount=advance,
             sort_order=sort_order,
             note=f"Quelle: {inp.advance_payments_source}",
         )
     )
     sort_order += 1
-    lines.append(ResultLine(line_type='SUBTOTAL', label='Betriebskosten abzüglich Vorauszahlungen',
-        amount=_money(total_cost - heating_cost - advance), sort_order=sort_order,
-        note=f'Quelle: {inp.advance_payments_source}'))
-    sort_order += 1
-    lines.append(ResultLine(line_type='ADVANCE_PAYMENT', label='Heizkosten-Vorauszahlungen',
-        amount=heating_advance, sort_order=sort_order, note=f'Quelle: {inp.heating_advance_payments_source}'))
-    sort_order += 1
-    lines.append(ResultLine(line_type='SUBTOTAL', label='Heizkosten abzüglich Vorauszahlungen',
-        amount=_money(heating_cost - heating_advance), sort_order=sort_order,
-        note=f'Quelle: {inp.heating_advance_payments_source}'))
-    sort_order += 1
+    if split_advances:
+        lines.append(ResultLine(line_type='SUBTOTAL', label='Betriebskosten abzüglich Vorauszahlungen',
+            amount=_money(total_cost - heating_cost - advance), sort_order=sort_order,
+            note=f'Quelle: {inp.advance_payments_source}'))
+        sort_order += 1
+        lines.append(ResultLine(line_type='ADVANCE_PAYMENT', label='Heizkosten-Vorauszahlungen',
+            amount=heating_advance, sort_order=sort_order, note=f'Quelle: {inp.heating_advance_payments_source}'))
+        sort_order += 1
+        lines.append(ResultLine(line_type='SUBTOTAL', label='Heizkosten abzüglich Vorauszahlungen',
+            amount=_money(heating_cost - heating_advance), sort_order=sort_order,
+            note=f'Quelle: {inp.heating_advance_payments_source}'))
+        sort_order += 1
     lines.append(
         ResultLine(
             line_type="BALANCE",

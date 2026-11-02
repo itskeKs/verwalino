@@ -325,8 +325,8 @@ and adds `heating_advance_payments_total` / `heating_advance_payments_source`.
 Each source is MANUAL or DERIVED independently. The existing derivation action
 fills both from their matching active booked payment types. Year/month buckets,
 lease bounds, reversals and frozen credits apply separately to each type.
-Heating totals default to zero for compatibility; an explicit unknown total
-blocks computation and coverage. Finalization freezes both totals and sources.
+Both totals default to unknown; missing totals block computation, coverage and
+finalization. Finalization freezes both totals and sources.
 Manual heating totals use the same signed numeric carrier as operating totals;
 monthly lease and rent-change rates remain non-negative. An older rent-change
 request that omits heating preserves the effective heating rate.
@@ -595,6 +595,8 @@ overrides and ELSTER submission remain follow-ups, with no migration in this cha
 | `other` | Sonstige Kosten | Werbungskosten |
 <!-- anlage-v-lines:end -->
 
+Both operating-cost and heating advances map to the Umlagen income line in the Anlage V aid.
+
 ##### Default Anlage V category mapping
 
 `NACHZAHLUNG` uses the existing unassigned fallback rather than an entry in the
@@ -612,8 +614,8 @@ compares this documentation exactly.
 | Category / income code | German detail label | Judgement note |
 | --- | --- | --- |
 | `KALTMIETE` | Mieteinnahmen für Wohnungen (ohne Umlagen) | [§/fachlich] Wohnraummiete als Vorschlag; andere Nutzungen, Angehörige und Vorjahresmieten gesondert prüfen. |
-| `HK_VORAUSZAHLUNG` | Unassigned in the Anlage V mapping aid | Included in payment income and reconciliation; review its tax classification explicitly. #67 does not change the tax mapping. |
 | `NK_VORAUSZAHLUNG` | Einnahmen aus umgelegten Neben-/Betriebskosten (Umlagen) | [§/fachlich] Laufende Umlagen; Abrechnungserstattungen und Nachzahlungen gesondert prüfen. |
+| `HK_VORAUSZAHLUNG` | Einnahmen aus umgelegten Neben-/Betriebskosten (Umlagen) | [§/fachlich] Laufende Umlagen; Abrechnungserstattungen und Nachzahlungen gesondert prüfen. |
 | `KAUTION` | Nicht zugeordnet | [§/fachlich] Ausgeschlossen: verwahrte Kaution, keine Miete; eine spätere Verrechnung ist gesondert zu prüfen. |
 | `HAUSGELD_VORSCHUSS` | Nicht zugeordnet | [§/fachlich] Ausgeschlossen: WEG-Eigentümervorschuss, keine Vermietungseinnahme. |
 | `RUECKLAGENANTEIL` | Nicht zugeordnet | [§/fachlich] Ausgeschlossen: Rücklagenzuführung, keine Vermietungseinnahme. |

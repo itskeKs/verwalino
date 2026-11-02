@@ -56,7 +56,7 @@ function makeEmptyForm(): SettlementRunCreate {
     period_start: "",
     period_end: "",
     advance_payments_total: null,
-    heating_advance_payments_total: "0.00",
+    heating_advance_payments_total: null,
     management_mandate_id: null,
   };
 }

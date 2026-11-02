@@ -288,7 +288,7 @@ class TestOwnershipRoundtrip:
 class TestAdjacencyEndToEnd:
     async def _create_run(self, client, seed, lease_id):
         resp = await client.post("/api/settlements", json={
-            "property_id": seed["property"],
+            'heating_advance_payments_total': '0.00', "property_id": seed["property"],
             "lease_agreement_id": lease_id,
             "period_start": "2025-01-01",
             "period_end": "2025-12-31",
@@ -297,7 +297,7 @@ class TestAdjacencyEndToEnd:
         assert resp.status_code == 201, resp.text
         from tests.test_financial_input_policy import attest
         coverage = await attest(client, "settlement", resp.json()["id"],
-                                {"advance_payments_total": "0.00", "advance_payments_source": "MANUAL"})
+                                {'heating_advance_payments_total': '0.00', 'heating_advance_payments_source': "MANUAL", "advance_payments_total": "0.00", "advance_payments_source": "MANUAL"})
         coverage.raise_for_status()
         return resp.json()["id"]
 

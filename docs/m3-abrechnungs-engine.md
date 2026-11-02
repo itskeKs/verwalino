@@ -964,6 +964,11 @@ Implemented BK behavior: `POST /api/settlements/{id}/finalize` ends the DB trans
 
 ## Separate operating and heating advances (#67)
 
+Both advance totals start unknown and block finalization until they are entered or
+derived and attested. When the heating total is zero and there are no heating
+positions, the statement and PDF retain the single “Geleistete Vorauszahlungen”
+block; otherwise they show both component blocks. Snapshots always retain both totals.
+
 `HEATING_CATEGORY_CODES` in `engine/types.py` is the single documented set:
 `HEIZUNG_ZENTRAL`, `WARMWASSER_ZENTRAL`, `MESSDIENST`, `CO2_KOSTEN`.
 A position in this set, or carrying a heating configuration, belongs to heating;

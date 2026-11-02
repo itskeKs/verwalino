@@ -14,7 +14,7 @@ ROOT = '/api/reports/dashboard-kpis'
 
 
 @pytest.mark.asyncio
-async def test_dashboard_and_deadlines_include_the_effective_heating_advance(rent_world):
+async def test_dashboard_uses_effective_heating_while_deadlines_keep_original_contract(rent_world):
     w = rent_world
     async with api_client(w) as api:
         response = await api.post(f"/api/leases/{w['lease']}/rent-changes", json={
@@ -27,9 +27,9 @@ async def test_dashboard_and_deadlines_include_the_effective_heating_advance(ren
         response = await api.get('/api/fristen', params={'reference_date': '2026-10-31'})
         assert response.status_code == 200, response.text
         overdue = next(row for row in response.json() if row['kind'] == 'OFFENE_POSTEN')
-        # Target: 18 items through September + three in October. The other
-        # same-organization lease contributes another 20 rent/BK items.
-        assert overdue['detail'].startswith('41 '), overdue
+        # Deadlines retain the original contract: 20 rent/BK items per lease.
+        # The heating-only history change is included by the dashboard above.
+        assert overdue['detail'].startswith('40 '), overdue
 
 
 def query(world, **values):

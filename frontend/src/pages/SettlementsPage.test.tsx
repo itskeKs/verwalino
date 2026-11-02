@@ -199,7 +199,7 @@ it("retains the existing single-create payload and detail navigation", async () 
   vi.mocked(api.post).mockResolvedValueOnce(created[0]);
   fireEvent.click(within(form).getByRole("button", { name: "Anlegen" }));
   await screen.findByText("Einzelabrechnung geöffnet");
-  expect(api.post).toHaveBeenCalledExactlyOnceWith("/api/settlements", { property_id: "property-1", lease_agreement_id: "lease-1", period_start: "2025-07-01", period_end: "2026-06-30", advance_payments_total: null, heating_advance_payments_total: "0.00", management_mandate_id: null, accounting_scope_id: null });
+  expect(api.post).toHaveBeenCalledExactlyOnceWith("/api/settlements", { property_id: "property-1", lease_agreement_id: "lease-1", period_start: "2025-07-01", period_end: "2026-06-30", advance_payments_total: null, heating_advance_payments_total: null, management_mandate_id: null, accounting_scope_id: null });
 });
 
 it.each(["Objekt *", "Mietvertrag *"])("explicitly labels the single-create select %s", async label => {
@@ -218,6 +218,8 @@ it('normalizes both German advance amounts before creating the statement', async
   await screen.findByRole('option', { name: 'Sonnenhof' });
   fireEvent.click(screen.getByRole('button', { name: '+ Neue Abrechnung' }));
   const form = screen.getByRole('heading', { name: 'Neue Abrechnung anlegen' }).parentElement!.querySelector('form')!;
+  expect(within(form).getByLabelText('Betriebskosten-Vorauszahlung (EUR)')).toHaveValue('');
+  expect(within(form).getByLabelText('Heizkosten-Vorauszahlung (EUR)')).toHaveValue('');
   fireEvent.change(within(form).getByLabelText(/^Objekt/), { target: { value: 'property-1' } });
   fireEvent.change(within(form).getByLabelText(/^Mietvertrag/), { target: { value: 'lease-1' } });
   fireEvent.change(within(form).getByLabelText('Abrechnungszeitraum von *'), { target: { value: '2026-01-01' } });

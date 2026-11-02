@@ -240,6 +240,8 @@ export function SettlementDetailPage() {
   const [previewRun, setPreviewRun] = useState<SettlementRun | null>(null);
   const [showPreview, setShowPreview] = useState(false);
 
+  const singleAdvanceBlock = run?.lines.some(line =>
+    line.line_type === "ADVANCE_PAYMENT" && line.label === "Geleistete Vorauszahlungen");
   const isDraft = run?.status === "draft";
   const isFinalized = run?.status === "finalized";
 
@@ -657,7 +659,7 @@ export function SettlementDetailPage() {
                         fontWeight: 600,
                       }}
                     >
-                      {formatProposalMoney(ln.amount)}
+                      {ln.amount} EUR
                     </td>
                   </tr>
                 ))}
@@ -687,7 +689,7 @@ export function SettlementDetailPage() {
                         textAlign: "right",
                       }}
                     >
-                      {formatProposalMoney(ln.amount)}
+                      {ln.amount} EUR
                     </td>}
                   </tr>
                 ))}
@@ -1015,10 +1017,10 @@ export function SettlementDetailPage() {
               <td>{run.run_type}</td>
             </tr>
             <tr>
-              <td>Betriebskosten-Vorauszahlungen</td>
+              <td>{singleAdvanceBlock ? "Geleistete Vorauszahlungen" : "Betriebskosten-Vorauszahlungen"}</td>
               <td>
                 <span style={{ fontFamily: "var(--mono)" }}>
-                  {formatProposalMoney(run.advance_payments_total ?? "")}
+                  {run.advance_payments_total ?? "-"} EUR
                 </span>
                 <span
                   style={{
@@ -1051,15 +1053,15 @@ export function SettlementDetailPage() {
                 )}
               </td>
             </tr>
-            <tr><td>Heizkosten-Vorauszahlungen</td><td>
-              <span style={{ fontFamily: "var(--mono)" }}>{formatProposalMoney(run.heating_advance_payments_total ?? "")}</span>
+            {!singleAdvanceBlock && <tr><td>Heizkosten-Vorauszahlungen</td><td>
+              <span style={{ fontFamily: "var(--mono)" }}>{run.heating_advance_payments_total ?? "-"} EUR</span>
               <span style={{ marginLeft: "0.5rem" }}>({run.heating_advance_payments_source})</span>
-            </td></tr>
+            </td></tr>}
             {run.total_cost != null && (
               <tr>
                 <td>Gesamtkosten</td>
                 <td style={{ fontFamily: "var(--mono)" }}>
-                  {formatProposalMoney(run.total_cost)}
+                  {run.total_cost} EUR
                 </td>
               </tr>
             )}
@@ -1084,7 +1086,7 @@ export function SettlementDetailPage() {
                           : undefined,
                   }}
                 >
-                  {formatProposalMoney(run.balance)}
+                  {run.balance} EUR
                 </td>
               </tr>
             )}

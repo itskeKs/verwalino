@@ -52,7 +52,7 @@ class SettlementRunCreate(BaseModel):
     period_start: date
     period_end: date
     advance_payments_total: str | None = None
-    heating_advance_payments_total: str | None = "0.00"
+    heating_advance_payments_total: str | None = None
     management_mandate_id: str | None = None
 
 

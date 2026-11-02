@@ -264,7 +264,7 @@ describe("T28 monthly advance proposal", () => {
     expect(screen.getByRole("button", { name: "PDF herunterladen" })).toBeEnabled();
     expect(screen.getByRole("button", { name: "Korrekturabrechnung erstellen" })).toBeEnabled();
     expect(screen.getByText("original-snapshot")).toBeVisible();
-    expect(screen.getByText("1.800,00 €")).toBeVisible();
+    expect(screen.getByText("1800.00 EUR")).toBeVisible();
     expect(api.getSettlement).toHaveBeenCalledTimes(1);
     expect(api.computeSettlement).not.toHaveBeenCalled();
     expect(api.finalizeSettlement).not.toHaveBeenCalled();
@@ -429,7 +429,7 @@ async function showConsumption() {
   return screen.findByLabelText(/^Verbrauch \(1/);
 }
 describe("T31 meter consumption prefill", () => {
-  it('renders both component results and the overall balance with exact German amounts', async () => {
+  it('renders both component results and the overall balance in the existing EUR format', async () => {
     const labels = ['Betriebskosten abzüglich Vorauszahlungen', 'Heizkosten abzüglich Vorauszahlungen'];
     vi.mocked(api.getSettlement).mockResolvedValueOnce({ ...consumptionDraft, total_cost: '2900.00', balance: '20.00',
       advance_payments_total: '1800.00', heating_advance_payments_total: '1080.00',
@@ -438,10 +438,25 @@ describe("T31 meter consumption prefill", () => {
         distribution_key: null, total_amount: null, distribution_base_total: null, distribution_base_share: null,
         time_share_days: null, time_share_total_days: null, note: 'Quelle: DERIVED' })) });
     showProposal();
-    expect((await screen.findByText(labels[0])).closest('tr')).toHaveTextContent('100,00 €');
-    expect(screen.getByText(labels[1]).closest('tr')).toHaveTextContent('-80,00 €');
-    expect(screen.getByText('1.080,00 €')).toBeVisible();
-    expect(screen.getByText('20,00 €')).toBeVisible();
+    expect((await screen.findByText(labels[0])).closest('tr')).toHaveTextContent('100.00 EUR');
+    expect(screen.getByText(labels[1]).closest('tr')).toHaveTextContent('-80.00 EUR');
+    expect(screen.getByText('1080.00 EUR')).toBeVisible();
+    expect(screen.getByText('20.00 EUR')).toBeVisible();
+  });
+
+  it('keeps Bernd on one advance block without heating costs or advances', async () => {
+    vi.mocked(api.getSettlement).mockResolvedValueOnce({ ...consumptionDraft,
+      advance_payments_total: '1440.00', heating_advance_payments_total: '0.00', total_cost: '970.00', balance: '-470.00',
+      lines: [{ id: 'advance', cost_entry_id: null, line_type: 'ADVANCE_PAYMENT',
+        label: 'Geleistete Vorauszahlungen', amount: '1440.00', sort_order: 0,
+        cost_category_code: null, distribution_key: null, total_amount: null,
+        distribution_base_total: null, distribution_base_share: null,
+        time_share_days: null, time_share_total_days: null, note: 'Quelle: MANUAL' }] });
+    vi.mocked(api.listCostEntries).mockResolvedValueOnce([]);
+    showProposal();
+    expect(await screen.findAllByText('Geleistete Vorauszahlungen')).toHaveLength(2);
+    expect(screen.queryByText('Heizkosten-Vorauszahlungen')).toBeNull();
+    expect(screen.queryByText('Betriebskosten abzüglich Vorauszahlungen')).toBeNull();
   });
 
   it('changes only the heating total and preserves the operating derived source', async () => {

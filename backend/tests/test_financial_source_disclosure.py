@@ -93,7 +93,7 @@ async def test_saved_plan_rows_and_pdf_require_current_source_access(client_a_ad
 
 async def test_saved_rental_sources_cannot_be_read_from_raw_child_rows(client_a_admin, seed_data, m3_seed):
     run = await draft(client_a_admin, m3_seed, '0.00')
-    values = {'advance_payments_total':'0.00','advance_payments_source':'MANUAL'}
+    values = {'heating_advance_payments_total': '0.00', 'heating_advance_payments_source': 'MANUAL', 'advance_payments_total':'0.00','advance_payments_source':'MANUAL'}
     assert (await attest(client_a_admin, 'settlement', run, values)).status_code == 201
     result = await client_a_admin.post(f'/api/settlements/{run}/finalize', json=_extras_for_exit(m3_seed))
     assert result.status_code == 200, result.text
@@ -113,7 +113,7 @@ async def test_each_pdf_family_checks_source_export_before_render(client_a_admin
         property_id = m3_seed['property']
         endpoint = '/api/settlements'
         subject = await draft(client_a_admin, m3_seed, '0.00')
-        values = {'advance_payments_total':'0.00','advance_payments_source':'MANUAL'}
+        values = {'heating_advance_payments_total': '0.00', 'heating_advance_payments_source': 'MANUAL', 'advance_payments_total':'0.00','advance_payments_source':'MANUAL'}
         final_values = _extras_for_exit(m3_seed)
         renderer = 'app.api.settlements.render_settlement_pdf'
     else:

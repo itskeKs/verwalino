@@ -31,7 +31,7 @@ def split_charges(world):
     assert Decimal(response.json()['soll_total']) == Decimal('990')
 
 
-@when('the manager finalizes a statement with 1900 euros operating and 1000 euros heating costs')
+@when('the manager derives missing heating advances and finalizes a statement with 1900 euros operating and 1000 euros heating costs')
 def split_statement(world):
     data = world.data['advance_split']
     for code, amount in [('GRUNDSTEUER', '1900.00'), ('MESSDIENST', '1000.00')]:
@@ -43,8 +43,18 @@ def split_statement(world):
             'tenant_profile_id': data['tenant']['id'], 'lease_agreement_id': data['lease']['id']}))
         response = world.act('POST', f"/api/payments/{payment['id']}/book")
         assert response.status_code == 200, world.describe_response()
-    run = world.run(create(world.actor, '/api/settlements', statement(data, '2026-01-01', '2026-12-31')))
+    run = world.run(create(world.actor, '/api/settlements', {
+        **statement(data, '2026-01-01', '2026-12-31'), 'advance_payments_total': '1800.00'}))
     url = f"/api/settlements/{run['id']}"
+    world.act('POST', '/api/financial-input-coverage', json={
+        'subject_kind': 'settlement', 'subject_id': run['id'], 'confirmed_complete': True,
+        'reason': 'Synthetic complete annual records reviewed', 'source_document_ids': [],
+        'values': {'advance_payments_total': '1800.00', 'advance_payments_source': 'MANUAL',
+            'heating_advance_payments_total': run['heating_advance_payments_total'],
+            'heating_advance_payments_source': 'MANUAL'}})
+    refused = world.act('POST', url + '/finalize', json={})
+    assert refused.status_code == 422, world.describe_response()
+    assert refused.json()['detail']['code'] == 'financial_inputs_incomplete'
     response = world.act('PATCH', url + '/advance-payments-derived', params={'period_year': 2026})
     assert response.status_code == 200, world.describe_response()
     assert response.json()['heating_advance_payments_total'] == '1080.00'
@@ -117,3 +127,36 @@ def foreign_advances(world):
 @then('all separate advance requests are reported as not found')
 def no_foreign_advances(world):
     assert [response.status_code for response in world.data['foreign_advance_responses']] == [404] * 8
+
+
+@when("the manager finalizes Bernd's statement without heating costs or heating advances")
+def single_statement(world):
+    data = world.run(period_property(world.actor, month=1))
+    response = world.act('PATCH', f"/api/leases/{data['lease']['id']}", json={
+        'base_rent': '600.00', 'advance_payment': '120.00', 'heating_advance_payment': '0.00'})
+    assert response.status_code == 200, world.describe_response()
+    confirmed_period_cost(world, data, 'GRUNDSTEUER', '970.00', '2026-01-01', '2026-12-31', 'WOHNFLAECHE')
+    run = world.run(create(world.actor, '/api/settlements', {
+        **statement(data, '2026-01-01', '2026-12-31'),
+        'advance_payments_total': '1440.00', 'heating_advance_payments_total': '0.00'}))
+    world.run(attest_fixture(world.actor, 'settlement', run['id'], {
+        'advance_payments_total': '1440.00', 'advance_payments_source': 'MANUAL',
+        'heating_advance_payments_total': '0.00', 'heating_advance_payments_source': 'MANUAL'}))
+    response = world.act('POST', f"/api/settlements/{run['id']}/finalize", json={})
+    assert response.status_code == 200, world.describe_response()
+    world.data['single_run'] = response.json()
+
+
+@then('the statement and PDF show one block of paid advances and a credit of 470 euros')
+def single_results(world):
+    run = world.data['single_run']
+    assert run['balance'] == '-470.00'
+    advances = [line for line in run['lines'] if line['line_type'] == 'ADVANCE_PAYMENT']
+    assert [(line['label'], line['amount']) for line in advances] == [('Geleistete Vorauszahlungen', '1440.00')]
+    assert not any(line['line_type'] == 'SUBTOTAL' and line['note'] for line in run['lines'])
+    response = world.act('GET', f"/api/settlements/{run['id']}/pdf")
+    assert response.status_code == 200, world.describe_response()
+    content = subprocess.run(['pdftotext', '-', '-'], input=response.content, capture_output=True, check=True).stdout.decode()
+    assert 'Geleistete Vorauszahlungen' in content
+    assert 'Heizkosten-Vorauszahlungen' not in content
+    assert '-470,00' in content

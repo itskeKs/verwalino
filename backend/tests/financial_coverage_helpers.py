@@ -1,10 +1,5 @@
 """Explicit evidence for synthetic positive accounting fixtures."""
 async def attest_fixture(client, kind, subject_id, values):
-    if kind == "settlement" and "advance_payments_total" in values:
-        current = await client.get(f"/api/settlements/{subject_id}")
-        assert current.status_code == 200, current.text
-        values = {"heating_advance_payments_total": current.json()["heating_advance_payments_total"],
-            "heating_advance_payments_source": current.json()["heating_advance_payments_source"], **values}
     response = await client.post("/api/financial-input-coverage", json={
         "subject_kind": kind, "subject_id": subject_id, "values": values,
         "confirmed_complete": True, "reason": "Synthetic fixture: complete period records checked",
