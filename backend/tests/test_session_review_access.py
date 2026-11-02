@@ -288,7 +288,10 @@ async def test_revision_chain_0149_0131_0149_preserves_full_state_and_issued_pdf
     reserve = await reserve_world(client_a_admin, seed_data)
     evidence = {key.removeprefix('reserve_'): value for key, value in (await reserve_evidence(client_a_admin, reserve)).items()}
     adjustment = await client_a_admin.post(f"/api/weg-settlements/{reserve['run']}/reserve-ledger/overrides", json={
-        'component': 'ADJUSTMENT', 'amount': '1.00', 'reason': 'Synthetic retained statement evidence', **evidence})
+        # A positive adjustment needs active withdrawals on the receipt (round 16);
+        # a negative one adds a withdrawal within the receipt cap and yields the
+        # same RESERVE_ADJUSTMENT statement evidence.
+        'component': 'ADJUSTMENT', 'amount': '-1.00', 'reason': 'Synthetic retained statement evidence', **evidence})
     assert adjustment.status_code == 201, adjustment.text
     await finalize(client_a_admin, reserve)
 
