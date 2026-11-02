@@ -54,6 +54,6 @@ disposable acceptance stack completely using the
 [label-filtered cleanup commands](../operations/acceptance-cleanup.md).
 Stop every background process and dev server the run started; remove its scratch directories,
 temporary screenshots and inactive lock files. Remove its worktree and local branch only after
-the PR is merged or closed, following [Session cleanup](../../AGENTS.md#session-cleanup).
+the PR is merged or closed, following [Worktrees and cleanup](../../AGENTS.md#worktrees-and-cleanup).
 Leave other sessions, the shared test services and production untouched. End the status/report
 with one cleanup line; never write a cleanup report into the repository.
