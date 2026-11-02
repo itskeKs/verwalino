@@ -799,6 +799,7 @@ export interface SettlementRun {
 }
 
 export interface AdvanceProposal {
+  accept_from: string;
   heating_tenant_cost: string;
   heating_monthly_amount: string;
   current_monthly_amount: string;

@@ -23,6 +23,14 @@ class LeaseRentChangeService:
     def __init__(self, session, org_id, user_id):
         self.session, self.org_id, self.user_id = session, org_id, user_id
 
+    async def rate_on(self, lease, valid_from: date):
+        """Resolve the full rate in effect on a date, including that day's change."""
+        source = lease
+        for change in await LeaseRentChangeRepository(self.session, self.org_id).list_for_lease(lease.id):
+            if change.valid_from <= valid_from:
+                source = change
+        return source
+
     async def create(self, lease_id: uuid.UUID, valid_from: date,
                      advance_payment: Decimal, *, base_rent: Decimal | None = None,
                      heating_advance_payment: Decimal | None = None):
@@ -34,10 +42,7 @@ class LeaseRentChangeService:
         await require_history_prepare(self.session, self.org_id, "lease_agreement", lease)
         if valid_from < lease.valid_from or (lease.valid_to is not None and valid_from >= lease.valid_to):
             raise HTTPException(422, "Rent change must be within the lease period")
-        source = lease
-        for change in await LeaseRentChangeRepository(self.session, self.org_id).list_for_lease(lease_id):
-            if change.valid_from <= valid_from:
-                source = change
+        source = await self.rate_on(lease, valid_from)
         if base_rent is None:
             base_rent = source.base_rent
         if heating_advance_payment is None:

@@ -111,14 +111,14 @@ function nextProposalDate(periodEnd: string): string {
   return isProposalDate(next) ? next : "";
 }
 
-function AdvanceProposalSection({ runId }: { runId: string }) {
+function AdvanceProposalSection({ runId, periodEnd }: { runId: string; periodEnd: string }) {
   const { session } = useAuth();
   const canApply = session?.role === "OWNER_ADMIN" || session?.role === "CLERK";
   const [proposal, setProposal] = useState<AdvanceProposal | null>(null);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [retry, setRetry] = useState(0);
-  const [validFrom, setValidFrom] = useState("");
+  const [validFrom, setValidFrom] = useState(() => nextProposalDate(periodEnd));
   const [saving, setSaving] = useState(false);
   const [applyError, setApplyError] = useState<string | null>(null);
   const [result, setResult] = useState<LeaseRentChange | null>(null);
@@ -134,20 +134,24 @@ function AdvanceProposalSection({ runId }: { runId: string }) {
 
   useEffect(() => {
     let active = true;
+    if (!isProposalDate(validFrom)) {
+      setLoading(false);
+      return;
+    }
     setLoading(true);
     setLoadError(null);
-    getAdvanceProposal(runId)
+    getAdvanceProposal(runId, validFrom)
       .then((value) => {
         if (!active) return;
+        if (value.accept_from !== validFrom) throw new Error("Der Vorschlag gehört nicht zum gewählten Datum. Bitte erneut laden.");
         setProposal(value);
-        setValidFrom(nextProposalDate(value.period_end));
       })
       .catch((err: unknown) => {
         if (active) setLoadError(err instanceof Error ? err.message : String(err));
       })
       .finally(() => { if (active) setLoading(false); });
     return () => { active = false; };
-  }, [runId, retry]);
+  }, [runId, validFrom, retry]);
 
   async function handleApply(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -157,6 +161,7 @@ function AdvanceProposalSection({ runId }: { runId: string }) {
       setApplyError("Bitte ein gültiges Datum angeben.");
       return;
     }
+    if (loading || loadError || proposal.accept_from !== validFrom) return;
     busy.current = true;
     setSaving(true);
     try {
@@ -190,15 +195,15 @@ function AdvanceProposalSection({ runId }: { runId: string }) {
         {result && <p role="status">Miethistorie ergänzt: ab {result.valid_from}, Kaltmiete {formatProposalMoney(result.base_rent)},
           {" "}Betriebskosten-Vorauszahlung {formatProposalMoney(result.advance_payment)},
           {" "}Heizkosten-Vorauszahlung {formatProposalMoney(result.heating_advance_payment)} monatlich.</p>}
-        {canApply && !result && <form onSubmit={handleApply} noValidate>
-          <label>Übernehmen ab
-            <input type="date" value={validFrom} onChange={(event) => setValidFrom(event.target.value)} disabled={saving} required />
-          </label>
-          <button className="btn btn--primary" type="submit" disabled={saving || loading || !!loadError}>
-            Vorauszahlungen übernehmen
-          </button>
-        </form>}
       </>}
+      {canApply && !result && (proposal || !isProposalDate(validFrom)) && <form onSubmit={handleApply} noValidate>
+        <label>Übernehmen ab
+          <input type="date" value={validFrom} onChange={(event) => setValidFrom(event.target.value)} disabled={saving} required />
+        </label>
+        <button className="btn btn--primary" type="submit" disabled={!proposal || saving || loading || !!loadError || (isProposalDate(validFrom) && proposal.accept_from !== validFrom)}>
+          Vorauszahlungen übernehmen
+        </button>
+      </form>}
     </section>
   );
 }
@@ -1110,7 +1115,7 @@ export function SettlementDetailPage() {
       </div>
 
       {run.id === runId && isFinalized && !run.superseded_by_id && run.run_type === "BK_MIETER" && (
-        <AdvanceProposalSection key={run.id} runId={run.id} />
+        <AdvanceProposalSection key={run.id} runId={run.id} periodEnd={run.period_end} />
       )}
 
       {/* Advance payment edit */}

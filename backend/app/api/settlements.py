@@ -88,6 +88,7 @@ class ConsumptionSuggestionOut(BaseModel):
 
 
 class AdvanceProposalOut(BaseModel):
+    accept_from: date
     lease_agreement_id: str
     tenant_cost: str
     months: str
@@ -423,10 +424,11 @@ async def get_heating_consumption(
 @router.get("/{run_id}/advance-proposal", response_model=AdvanceProposalOut)
 async def get_advance_proposal(
     run_id: uuid.UUID,
+    accept_from: date | None = None,
     auth: AuthContext = Depends(get_current_user),
     db: AsyncSession = Depends(get_live_member_db),
 ):
-    return await SettlementService(db, auth.organization_id, auth.user_id).advance_proposal(run_id)
+    return await SettlementService(db, auth.organization_id, auth.user_id).advance_proposal(run_id, accept_from=accept_from)
 
 
 @router.post("/{run_id}/advance-proposal", response_model=RentChangeOut, status_code=201)
@@ -437,7 +439,7 @@ async def accept_advance_proposal(
     db: AsyncSession = Depends(get_db, scope="function"),
 ):
     await require_live_principal(db, auth, writer=True)
-    row = await SettlementService(db, auth.organization_id, auth.user_id).advance_proposal(
+    row = await SettlementService(db, auth.organization_id, auth.user_id).accept_advance_proposal(
         run_id, accept_from=body.valid_from,
     )
     return _rent_change_out(row)

@@ -26,7 +26,7 @@ import uuid
 import json
 from calendar import monthrange
 from dataclasses import asdict, dataclass, field, replace
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP, localcontext
 from fractions import Fraction
 from types import SimpleNamespace
@@ -74,7 +74,6 @@ from app.models.settlement_line import SettlementLine
 from app.models.settlement_run import SettlementRun
 from app.repositories.audit_repo import AuditRepository
 from app.repositories.lease_agreement_repo import LeaseAgreementRepository
-from app.repositories.lease_rent_change_repo import LeaseRentChangeRepository
 from app.repositories.settlement_repo import (
     SettlementLineRepository,
     SettlementRunRepository,
@@ -181,6 +180,25 @@ class SettlementService:
         self._meter_sources: list[dict] = []
 
     async def advance_proposal(self, run_id: uuid.UUID, *, accept_from: date | None = None):
+        run, proposal = await self._load_advance_proposal(run_id, ScopeCapability.READ)
+        accept_from = accept_from if accept_from is not None else run.period_end + timedelta(days=1)
+        lease = await LeaseAgreementRepository(self._session, self._org_id).get_by_id(run.lease_agreement_id)
+        if lease is None:
+            raise HTTPException(404, "Lease agreement not found")
+        current = await LeaseRentChangeService(self._session, self._org_id, self._user_id).rate_on(lease, accept_from)
+        proposal["accept_from"] = accept_from.isoformat()
+        proposal["current_monthly_amount"] = f"{current.advance_payment:.2f}"
+        proposal["current_heating_monthly_amount"] = f"{current.heating_advance_payment:.2f}"
+        return proposal
+
+    async def accept_advance_proposal(self, run_id: uuid.UUID, *, accept_from: date):
+        run, proposal = await self._load_advance_proposal(run_id, ScopeCapability.PREPARE)
+        return await LeaseRentChangeService(self._session, self._org_id, self._user_id).create(
+            run.lease_agreement_id, accept_from, Decimal(proposal["monthly_amount"]),
+            heating_advance_payment=Decimal(proposal["heating_monthly_amount"]),
+        )
+
+    async def _load_advance_proposal(self, run_id: uuid.UUID, capability: ScopeCapability):
         scope = FinancialScopeService(self._session, self._org_id, self._user_id)
         # Serialize with corrections, ACL/source changes and T23 writes. Re-read
         # under the lock so a concurrent correction cannot accept a stale run.
@@ -188,24 +206,10 @@ class SettlementService:
         run = await self._runs.get_by_id(run_id)
         if run is None:
             raise HTTPException(404, "Settlement run not found")
-        await scope.enter(run, capability=ScopeCapability.READ if accept_from is None else ScopeCapability.PREPARE)
+        await scope.enter(run, capability=capability)
         if run.status != "finalized" or run.superseded_by_id is not None or run.run_type != "BK_MIETER":
             raise HTTPException(409, "Advance proposal requires an active finalized BK settlement")
-        proposal = self._advance_proposal(run)
-        if accept_from is None:
-            lease = await LeaseAgreementRepository(self._session, self._org_id).get_by_id(run.lease_agreement_id)
-            if lease is None:
-                raise HTTPException(404, "Lease agreement not found")
-            history = await LeaseRentChangeRepository(self._session, self._org_id).list_for_lease(lease.id)
-            today = date.today()
-            current = next((row for row in reversed(history) if row.valid_from <= today), lease)
-            proposal["current_monthly_amount"] = f"{current.advance_payment:.2f}"
-            proposal["current_heating_monthly_amount"] = f"{current.heating_advance_payment:.2f}"
-            return proposal
-        return await LeaseRentChangeService(self._session, self._org_id, self._user_id).create(
-            run.lease_agreement_id, accept_from, Decimal(proposal["monthly_amount"]),
-            heating_advance_payment=Decimal(proposal["heating_monthly_amount"]),
-        )
+        return run, self._advance_proposal(run)
 
     @staticmethod
     def _advance_proposal(run: SettlementRun) -> dict:

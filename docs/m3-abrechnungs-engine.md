@@ -762,7 +762,9 @@ period. Whole calendar months count as one, partial months as occupied days/cale
 of the month. Calendar weights stay exactly rational; money stays Decimal and is
 commercially rounded to the cent once. Example: January through 05.02.2024,
 0.17 EUR / (1 + 5/29) = 0.15 EUR. A missing, negative, or incoherent historical basis
-results in 409, no zero assumption.
+results in 409, no zero assumption. The optional ISO-date query `accept_from` defaults to
+the day after the settlement period ends and is returned in the payload. Both current
+advances are the rates valid on that date, resolved by the same rent-history lookup as POST.
 
 The detail page shows the amount and basis; readers see no adoption control. POST to the
 same URL accepts only `valid_from` and, after live role, scope, and history-prepare checks,
@@ -991,8 +993,10 @@ version. Corrections copy both totals and sources into the new draft.
 The advance proposal divides the frozen operating and heating tenant-cost
 shares separately by the same exact calendar-month weight. Accepting creates
 one full rent-change row, preserving the effective base rent. The proposal payload
-includes both current advances from today's effective rent-history rate, falling back
-to the lease; the page shows previous amounts and both proposals and bases whenever
+includes both current advances from the rent-history rate valid on the acceptance date,
+falling back to the lease. The page passes its selected date to GET and refetches on date
+changes; acceptance stays disabled until a matching proposal returns. It shows previous
+amounts and both proposals and bases whenever
 the proposed heating advance is nonzero or differs from the current heating advance,
 including a reduction to zero and legacy statements with a single advance block.
 Only when the proposed and current heating advances are both zero does the proposal

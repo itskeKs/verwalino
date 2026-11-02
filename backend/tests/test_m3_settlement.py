@@ -1699,7 +1699,8 @@ async def test_proposal_accept_preserves_history_and_frozen_rows(rent_world, ren
         assert proposal == {"lease_agreement_id": str(world["lease"]), "tenant_cost": "1200.00",
             "months": "12", "monthly_amount": "100.00", "heating_monthly_amount": "0.00",
             "current_monthly_amount": "160.00", "current_heating_monthly_amount": "0.00",
-            "heating_tenant_cost": "0.00", "period_start": "2026-01-01", "period_end": "2026-12-31"}
+            "heating_tenant_cost": "0.00", "period_start": "2026-01-01", "period_end": "2026-12-31",
+            "accept_from": "2027-01-01"}
         assert frozen["balance"] == "201.00"  # Never balance / months or paid advances.
         before = (await rent_db.execute(text("SELECT snapshot_payload,snapshot_sha256 FROM settlement_run WHERE id=:id"), {"id":uuid.UUID(run_id)})).one()
         payments = (await rent_db.execute(text("SELECT to_jsonb(p) FROM payment p WHERE lease_agreement_id=:lease ORDER BY id"), {"lease":world["lease"]})).all()
@@ -1737,9 +1738,10 @@ async def test_proposal_reports_current_advances_from_lease_and_effective_histor
         run_id, frozen = await _proposal_run(api, world, rent_db)
         url = f"/api/settlements/{run_id}/advance-proposal"
         for expected in [("175.00", "90.00"), ("180.00", "95.00")]:
-            response = await api.get(url)
+            response = await api.get(url, params={"accept_from": "2026-12-01"})
             assert response.status_code == 200, response.text
             proposal = response.json()
+            assert proposal["accept_from"] == "2026-12-01"
             assert (proposal["current_monthly_amount"], proposal["current_heating_monthly_amount"]) == expected
             assert (proposal["monthly_amount"], proposal["heating_monthly_amount"]) == ("100.00", "0.00")
             if expected == ("175.00", "90.00"):
@@ -1751,6 +1753,75 @@ async def test_proposal_reports_current_advances_from_lease_and_effective_histor
         assert accepted.status_code == 201, accepted.text
         assert (accepted.json()["advance_payment"], accepted.json()["heating_advance_payment"]) == ("100.00", "0.00")
         assert (await api.get(f"/api/settlements/{run_id}")).json() == frozen
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("today,lease_heating,change_from,change_heating", [
+    ("2026-11-02", "0.00", "2026-12-01", "90.00"),
+    ("2027-08-01", "90.00", "2027-03-01", "0.00"),
+], ids=["scheduled-heating-before-future-acceptance", "backdated-acceptance-before-heating-removal"])
+async def test_proposal_current_is_the_rate_replaced_on_acceptance(
+    rent_world, rent_db, monkeypatch, today, lease_heating, change_from, change_heating,
+):
+    from app.services import settlement_service
+
+    class Today(date):
+        @classmethod
+        def today(cls):
+            return cls.fromisoformat(today)
+
+    monkeypatch.setattr(settlement_service, "date", Today)
+    world = rent_world
+    async with api_client(world) as api:
+        lease_url = f"/api/leases/{world['lease']}"
+        patched = await api.patch(lease_url, json={"heating_advance_payment": lease_heating})
+        assert patched.status_code == 200, patched.text
+        run_id, frozen = await _proposal_run(api, world, rent_db)
+        history_url = lease_url + "/rent-changes"
+        change = await api.post(history_url, json={"valid_from": change_from, "base_rent": "750.00",
+            "advance_payment": "150.00", "heating_advance_payment": change_heating})
+        assert change.status_code == 201, change.text
+        url = f"/api/settlements/{run_id}/advance-proposal"
+        for params in [{}, {"accept_from": "2027-01-01"}]:
+            response = await api.get(url, params=params)
+            assert response.status_code == 200, response.text
+            proposal = response.json()
+            assert (proposal["current_monthly_amount"], proposal["current_heating_monthly_amount"]) == ("150.00", "90.00")
+            assert proposal["accept_from"] == "2027-01-01"
+            assert (proposal["monthly_amount"], proposal["heating_monthly_amount"]) == ("100.00", "0.00")
+        accepted = await api.post(url, json={"valid_from": proposal["accept_from"]})
+        assert accepted.status_code == 201, accepted.text
+        row = accepted.json()
+        assert (row["valid_from"], row["advance_payment"], row["heating_advance_payment"]) == ("2027-01-01", "100.00", "0.00")
+        assert row["base_rent"] == ("750.00" if change_from < "2027-01-01" else "700.00")
+        history = (await api.get(history_url)).json()
+        assert len(history) == 2
+        assert [entry for entry in history if entry["id"] == row["id"]] == [row]
+        assert (await api.get(f"/api/settlements/{run_id}")).json() == frozen
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("change_from,expected", [
+    ("2026-12-31", ("180.00", "90.00")),
+    ("2027-01-01", ("180.00", "90.00")),
+    ("2027-01-02", ("150.00", "0.00")),
+], ids=["strictly-before", "on-acceptance-date", "strictly-after"])
+async def test_proposal_current_uses_history_through_acceptance_date(rent_world, rent_db, change_from, expected):
+    world = rent_world
+    async with api_client(world) as api:
+        run_id, _ = await _proposal_run(api, world, rent_db)
+        change = await api.post(f"/api/leases/{world['lease']}/rent-changes", json={
+            "valid_from": change_from, "base_rent": "750.00",
+            "advance_payment": "180.00", "heating_advance_payment": "90.00"})
+        assert change.status_code == 201, change.text
+        url = f"/api/settlements/{run_id}/advance-proposal"
+        response = await api.get(url, params={"accept_from": "2027-01-01"})
+        assert response.status_code == 200, response.text
+        proposal = response.json()
+        assert (proposal["current_monthly_amount"], proposal["current_heating_monthly_amount"]) == expected
+        assert proposal["accept_from"] == "2027-01-01"
+        assert (await api.get(url)).json() == proposal
+        assert (await api.get(url, params={"accept_from": "not-a-date"})).status_code == 422
 
 
 @pytest.mark.asyncio
