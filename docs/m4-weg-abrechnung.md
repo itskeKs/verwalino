@@ -752,10 +752,11 @@ allocation and WEMoG settlement-balance calculation; it changes neither.
   5,200 retains entries of 5,000, +500 and −300. Re-attesting an unchanged opening
   adds no entry and can refresh stale coverage; an explicit zero opening adjustment
   is refused with `RESERVE_AMOUNT_INVALID`. A missing reason returns
-  `RESERVE_CORRECTION_REASON_REQUIRED`. Direct opening adjustments without
-  `expected_opening_balance` use the signed difference. With that field, `amount`
-  is the corrected total: the service compares the seen opening with the current
-  ledger under the financial-input lock, then computes and stores the difference.
+  `RESERVE_CORRECTION_REASON_REQUIRED`. The override API uses `amount` only for a
+  signed difference. The alternative opening-total path sends `corrected_opening_balance` together with
+  `expected_opening_balance`, without `amount`: the service first checks opening
+  eligibility, compares the seen opening with the current ledger under the
+  financial-input lock, then computes and stores the difference.
   A stale opening returns 409 `RESERVE_OPENING_CONFLICT` and asks the manager to
   reload; it never appends a second correction from a stale browser delta.
   The attestation forms show the current
@@ -810,7 +811,28 @@ allocation and WEMoG settlement-balance calculation; it changes neither.
   `RESERVE_AMOUNT_INVALID`. If a later Storno removes the backing for an existing
   unit correction, draft computation/finalization refuses the unsupported contribution
   with the same cap code and a message naming the unit. The reversal and retained
-  correction history remain intact.
+  correction history remain intact. Before any compatible run of that exact period
+  has been finalized, the manager can reduce or delete the unit correction with a
+  mandatory reason (owner decision 2, 2026-11-02). This appends a negative
+  `CONTRIBUTION` referencing the original through `reverses_entry_id`; it never
+  changes or deletes a retained row. Success returns 201 and an audit event with
+  actor, reason, old and new remaining amounts. Repeated reductions use the
+  original amount plus its retained reversals. A positive remainder must be below
+  the current amount and at most raw headroom plus that current amount, from the
+  same headroom function (`RESERVE_CONTRIBUTION_EXCEEDS_BOOKED`, naming the limit).
+  Deleting releases the entire remainder even if other corrections still lack
+  backing; this lets each unsupported correction be reconciled in turn. Once all
+  are reconciled, raw headroom returns to zero and finalization is possible.
+  `POST .../reserve-ledger/overrides/{entry_id}/reduce` accepts `reduced_to` and
+  `reason`; `DELETE .../reserve-ledger/overrides/{entry_id}` accepts `reason` and
+  creates the full reversal. Both reject payment assignments, reversal rows and
+  other components (422), missing reasons (`RESERVE_CORRECTION_REASON_REQUIRED`),
+  foreign IDs (404) and finalized periods (409 `RESERVE_PERIOD_FINALIZED`). The
+  definer guard mirrors the limits; direct UPDATE/DELETE still fail with 23514
+  `reserve_ledger_append_only`. Counter-entries must use the original's exact
+  accounting scope, so a different draft scope cannot release a frozen original.
+  The separate payout Storno rule stays: first reconcile positive receipt
+  adjustments, then reverse the payout.
   Contribution refusal messages name the remaining amount from the same SQL
   headroom function as “Noch zuordenbar”; this does not change its formula.
   A composite organization/property/unit foreign key (`fk_reserve_entry_unit`) and the

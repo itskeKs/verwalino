@@ -45,7 +45,9 @@ async def finance_seeded(sweep, worker_tenant, scope_seed, store, migrator_sessi
     await _create_run(api, rental, "lease_a", "600.00")
     plan = await _create_and_finalize_plan(api, weg)
     period = {"period_start": "2025-01-01", "period_end": "2025-12-31"}
-    await post("/api/weg-settlements", json={"property_id": weg["property"], "economic_plan_id": plan, **period})
+    weg_run = await post("/api/weg-settlements", json={"property_id": weg["property"], "economic_plan_id": plan, **period})
+    await post(f"/api/weg-settlements/{weg_run['id']}/reserve-ledger/overrides", json={
+        'component': 'OPENING', 'amount': '1.00', 'reason': 'Isolation ledger entry'})
     await post("/api/weg-settlements/asset-reports", json={"property_id": weg["property"], **period})
 
     statement_account = await post("/api/bank-accounts", json={
@@ -245,6 +247,12 @@ PROBES: dict[str, Probe] = {
     "GET /api/weg-settlements/{run_id}/reserve-ledger": Probe(run(WEG)),
     "POST /api/weg-settlements/{run_id}/reserve-ledger/overrides": Probe(run(WEG), body={
         'component': 'ADJUSTMENT', 'amount': '1.00', 'reason': 'Foreign reserve probe'}),
+    "POST /api/weg-settlements/{run_id}/reserve-ledger/overrides/{entry_id}/reduce": Probe(
+        run(WEG, "x.id AS run_id,e.id AS entry_id", "JOIN reserve_ledger_entry e ON e.organization_id=x.organization_id AND e.settlement_run_id=x.id"),
+        body={'reduced_to': '0.00', 'reason': 'Foreign reduction probe'}),
+    "DELETE /api/weg-settlements/{run_id}/reserve-ledger/overrides/{entry_id}": Probe(
+        run(WEG, "x.id AS run_id,e.id AS entry_id", "JOIN reserve_ledger_entry e ON e.organization_id=x.organization_id AND e.settlement_run_id=x.id"),
+        body={'reason': 'Foreign deletion probe'}),
     "GET /api/weg-settlements/{run_id}/pdf": Probe(run(WEG)),
     "PATCH /api/weg-settlements/{run_id}/economic-plan": Probe(
         run(WEG, "x.id AS run_id, x.economic_plan_id AS expected_plan_id, x.economic_plan_id AS successor_id", WEG_PLAN),

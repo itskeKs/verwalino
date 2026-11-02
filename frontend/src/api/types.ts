@@ -1330,16 +1330,14 @@ export interface AssetReportComputeRequest {
 
 // --- M8 Meetings & Beschluss-Sammlung ---
 export type ReserveComponent = 'OPENING' | 'CONTRIBUTION' | 'WITHDRAWAL' | 'ADJUSTMENT' | 'FUNDING';
-export interface ReserveOverride {
-  expected_opening_balance?: string;
-  unit_id?: string;
-  component: ReserveComponent;
-  amount: string;
+export type ReserveOverride = {
   reason: string;
+  unit_id?: string;
   payment_id?: string;
   cost_entry_id?: string;
   register_entry_id?: string;
-}
+} & ({ component: ReserveComponent; amount: string; corrected_opening_balance?: never; expected_opening_balance?: never }
+  | { component: 'OPENING'; amount?: never; corrected_opening_balance: string; expected_opening_balance: string });
 export interface ReserveLedger {
   contribution_headroom?: { unit_id: string; unit_number: string; remaining: string }[];
   unlinked_payment_ids?: string[];
@@ -1355,7 +1353,7 @@ export interface ReserveLedger {
   booking_basis: string;
   entries: { kind: string; component?: ReserveComponent; date: string; amount: string; reason?: string;
     payment_note?: string | null; cost_document_number?: string | null; register_sequence_number?: number | null; owner_name?: string | null;
-    id?: string; payment_id?: string; cost_entry_id?: string; register_entry_id?: string; unit_id?: string; unit_number?: string; owner_profile_id?: string }[];
+    id?: string; reverses_entry_id?: string; current_amount?: string; payment_id?: string; cost_entry_id?: string; register_entry_id?: string; unit_id?: string; unit_number?: string; owner_profile_id?: string }[];
 }
 
 

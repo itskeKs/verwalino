@@ -252,9 +252,10 @@ def _run_out(run: SettlementRun, lines: list[SettlementLine]) -> WegRunOut:
 class ReserveOverrideRequest(BaseModel):
     model_config = ConfigDict(extra='forbid')
     component: Literal['OPENING', 'CONTRIBUTION', 'WITHDRAWAL', 'ADJUSTMENT', 'FUNDING']
-    amount: Decimal = Field(max_digits=14, decimal_places=2, allow_inf_nan=False)
+    amount: Decimal | None = Field(default=None, max_digits=14, decimal_places=2, allow_inf_nan=False)
+    corrected_opening_balance: Decimal | None = Field(default=None, max_digits=14, decimal_places=2, allow_inf_nan=False)
     expected_opening_balance: Decimal | None = Field(default=None, max_digits=14, decimal_places=2, allow_inf_nan=False)
-    reason: str = Field(max_length=2000)
+    reason: str = Field(default='', max_length=2000)
     payment_id: uuid.UUID | None = None
     cost_entry_id: uuid.UUID | None = None
     register_entry_id: uuid.UUID | None = None
@@ -293,6 +294,55 @@ async def reserve_override(run_id: uuid.UUID, body: ReserveOverrideRequest,
                  'message': 'Bitte prüfen Sie Rücklagenzeitraum, Auszahlung, Kostenbetrag und Beschlussverknüpfung.'}) from None
         raise
     return {'id': str(entry.id)}
+
+
+class ReserveCorrectionReason(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+    reason: str = Field(default='', max_length=2000)
+
+
+class ReserveContributionReduction(ReserveCorrectionReason):
+    reduced_to: Decimal = Field(max_digits=14, decimal_places=2, allow_inf_nan=False)
+
+
+async def _reduce_reserve_contribution(run_id, entry_id, reduced_to, reason, auth, db):
+    service = ReserveLedgerService(db, auth.organization_id, auth.user_id)
+    run = await service.subject(run_id, write=True, require_draft=False)
+    try:
+        async with db.begin_nested():
+            entry = await service.reduce_contribution(run, entry_id, reduced_to, reason)
+    except DBAPIError as exc:
+        _raise_reserve_opening_error(exc)
+        constraint = getattr(getattr(exc.orig, '__cause__', None), 'constraint_name', None)
+        if getattr(exc.orig, 'sqlstate', None) == '23514':
+            if constraint == 'reserve_contribution_exceeds_booked':
+                from app.services.reserve_ledger_service import CONTRIBUTION_EXCEEDS_BOOKED, _euro
+                original = await service.repo.get_by_id(entry_id)
+                if original is not None:
+                    current = await service.repo.current_contribution_amount(original)
+                    limit = min(current, await service.repo.contribution_headroom(run, original.unit_id) + current)
+                    raise HTTPException(422, {**CONTRIBUTION_EXCEEDS_BOOKED,
+                        'message': f'Sie können für diese Korrektur höchstens {_euro(limit)} beibehalten.'}) from None
+                raise HTTPException(422, CONTRIBUTION_EXCEEDS_BOOKED) from None
+            if constraint == 'reserve_correction_reason_required':
+                raise HTTPException(422, {'code': 'RESERVE_CORRECTION_REASON_REQUIRED',
+                    'message': 'Bitte begründen Sie die Rücklagenkorrektur.'}) from None
+            raise HTTPException(422, {'code': 'RESERVE_INPUT_INVALID',
+                'message': 'Bitte prüfen Sie den verbleibenden Korrekturbetrag und den Einheitenbezug.'}) from None
+        raise
+    return {'id': str(entry.id)}
+
+
+@router.post('/{run_id}/reserve-ledger/overrides/{entry_id}/reduce', status_code=201)
+async def reduce_reserve_contribution(run_id: uuid.UUID, entry_id: uuid.UUID, body: ReserveContributionReduction,
+        auth: AuthContext = Depends(require_write_dep), db: AsyncSession = Depends(get_db, scope='function')):
+    return await _reduce_reserve_contribution(run_id, entry_id, body.reduced_to, body.reason, auth, db)
+
+
+@router.delete('/{run_id}/reserve-ledger/overrides/{entry_id}', status_code=201)
+async def delete_reserve_contribution(run_id: uuid.UUID, entry_id: uuid.UUID, body: ReserveCorrectionReason = ReserveCorrectionReason(),
+        auth: AuthContext = Depends(require_write_dep), db: AsyncSession = Depends(get_db, scope='function')):
+    return await _reduce_reserve_contribution(run_id, entry_id, Decimal('0.00'), body.reason, auth, db)
 
 
 @router.get("", response_model=list[WegRunOut])

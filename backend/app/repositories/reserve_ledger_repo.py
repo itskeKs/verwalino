@@ -189,6 +189,11 @@ class ReserveLedgerRepository(TenantRepository[ReserveLedgerEntry]):
         return await self._session.scalar(select(Unit).where(Unit.organization_id == self._org_id,
             Unit.property_id == run.property_id, Unit.id == unit_id))
 
+    async def current_contribution_amount(self, entry):
+        reversed_amount = await self._session.scalar(select(func.coalesce(func.sum(ReserveLedgerEntry.amount), 0)).where(
+            ReserveLedgerEntry.organization_id == self._org_id, ReserveLedgerEntry.reverses_entry_id == entry.id))
+        return entry.amount + reversed_amount
+
     async def contribution_headroom(self, run, unit_id):
         return await self._session.scalar(text('SELECT reserve_contribution_headroom(:org,:run,:unit)'),
             {'org': self._org_id, 'run': run.id, 'unit': unit_id})

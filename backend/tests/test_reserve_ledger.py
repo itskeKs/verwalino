@@ -2586,7 +2586,7 @@ async def test_opening_total_correction_refuses_a_second_client_with_the_same_se
         assert report.status_code == 201, report.text
         w['run'] = report.json()['id']
     path = f"/api/weg-settlements/{w['run']}/reserve-ledger"
-    body = {'component': 'OPENING', 'amount': '400.00', 'expected_opening_balance': '0.00',
+    body = {'component': 'OPENING', 'corrected_opening_balance': '400.00', 'expected_opening_balance': '0.00',
         'reason': 'Correct total from bank evidence'}
     accepted = await api.post(path + '/overrides', json=body)
     assert accepted.status_code == 201, accepted.text
@@ -2597,7 +2597,7 @@ async def test_opening_total_correction_refuses_a_second_client_with_the_same_se
     assert refused.json()['detail'] == {'code': 'RESERVE_OPENING_CONFLICT',
         'message': 'Der Anfangsbestand wurde inzwischen geändert. Bitte laden Sie das Rücklagenbuch neu.'}
     assert (await api.get(path)).json() == before
-    accepted = await api.post(path + '/overrides', json={**body, 'amount': '300.00', 'expected_opening_balance': '400.00'})
+    accepted = await api.post(path + '/overrides', json={**body, 'corrected_opening_balance': '300.00', 'expected_opening_balance': '400.00'})
     assert accepted.status_code == 201, accepted.text
     after = (await api.get(path)).json()
     assert after['opening_balance'] == '300.00'
@@ -2611,3 +2611,288 @@ async def test_payout_storno_locks_the_cost_row_before_checking_adjustments(migr
     assert 'SELECT * INTO cost FROM public.cost_entry' in reversal
     assert 'FOR UPDATE;' in reversal
     assert 'reserve_funded_amount(OLD.organization_id,cost.id,OLD.id)' in reversal
+
+
+async def draft_unit_correction(api, seed, *, two_receipts=False):
+    w = _seed_weg(seed)
+    receipts = [await payment(api, w, '1300.00', kind='HAUSGELD_VORSCHUSS')
+                for _ in range(2 if two_receipts else 1)]
+    report = await api.post('/api/weg-settlements/asset-reports', json={
+        'property_id': w['property'], 'period_start': '2025-01-01', 'period_end': '2025-12-31'})
+    assert report.status_code == 201, report.text
+    w['run'], w['cash'] = report.json()['id'], receipts[0]
+    path = f"/api/weg-settlements/{w['run']}/reserve-ledger/overrides"
+    for cash in receipts:
+        assigned = await api.post(path, json={'component': 'CONTRIBUTION', 'payment_id': cash,
+            'amount': '100.00', 'reason': 'Partial assignment before plan'})
+        assert assigned.status_code == 201, assigned.text
+    w['plan'] = await _create_and_finalize_plan(api, w)
+    added = await api.post(path, json={'component': 'CONTRIBUTION', 'unit_id': w['u1'],
+        'amount': '800.00' if two_receipts else '500.00', 'reason': 'Reconciled unit share'})
+    assert added.status_code == 201, added.text
+    w['entry'] = added.json()['id']
+    return w, path + '/' + w['entry']
+
+
+@pytest.mark.asyncio
+async def test_delete_unbacked_contribution_correction_restores_headroom_and_finalization(client_a_admin, seed_data, app_rw_session):
+    api = client_a_admin
+    w, path = await draft_unit_correction(api, seed_data)
+    assert (await api.post(f"/api/payments/{w['cash']}/reverse")).status_code == 201
+    deleted = await api.request('DELETE', path, json={'reason': 'Remove correction after returned Hausgeld'})
+    assert deleted.status_code == 201, deleted.text
+    ledger = (await api.get(path.rsplit('/overrides/', 1)[0])).json()
+    assert ledger['contributions_total'] == '0.00'
+    original = next(row for row in ledger['entries'] if row.get('id') == w['entry'])
+    assert original['amount'] == '500.00' and original['current_amount'] == '0.00'
+    reversal = next(row for row in ledger['entries'] if row.get('id') == deleted.json()['id'])
+    assert reversal['amount'] == '-500.00' and reversal['reverses_entry_id'] == w['entry']
+    await app_rw_session.execute(text("SELECT set_config('app.current_org_id',:org,true),set_config('app.current_user_id',:actor,true)"),
+        {'org': str(seed_data['org_a_id']), 'actor': str(seed_data['user_a_admin_id'])})
+    assert await app_rw_session.scalar(text('SELECT reserve_contribution_headroom(:org,:run,:unit)'),
+        {'org': seed_data['org_a_id'], 'run': w['run'], 'unit': w['u1']}) == 0
+    audit = (await app_rw_session.execute(text("SELECT actor_user_id,payload_diff FROM audit_event WHERE action='reserve.contribution_reduced' AND entity_id=:run"), {'run': w['run']})).one()
+    assert audit.actor_user_id == seed_data['user_a_admin_id']
+    assert audit.payload_diff['old_amount'] == '500.00' and audit.payload_diff['new_amount'] == '0.00'
+    assert audit.payload_diff['reason'] == 'Remove correction after returned Hausgeld'
+    assert audit.payload_diff['reverses_entry_id'] == w['entry']
+    values = {'bank_balances': [
+        {'bank_account_id': w['bank_giro'], 'label': 'Giro', 'account_type': 'LAUFEND', 'balance': '0.00'},
+        {'bank_account_id': w['bank_ruecklage'], 'label': 'Reserve', 'account_type': 'RUECKLAGE', 'balance': '0.00'}],
+        'receivables': [], 'payables': []}
+    await attest_fixture(api, 'settlement', w['run'], values)
+    finalized = await api.post(f"/api/weg-settlements/asset-reports/{w['run']}/finalize", json=values)
+    assert finalized.status_code == 200, finalized.text
+
+
+@pytest.mark.asyncio
+async def test_reduce_contribution_correction_to_new_headroom_then_delete_remaining_amount(client_a_admin, seed_data):
+    api = client_a_admin
+    w, path = await draft_unit_correction(api, seed_data, two_receipts=True)
+    assert (await api.post(f"/api/payments/{w['cash']}/reverse")).status_code == 201
+    for amount in ('800.01', '500.01'):
+        refused = await api.post(path + '/reduce', json={'reduced_to': amount, 'reason': 'Reconcile after reversal'})
+        assert refused.status_code == 422, refused.text
+        assert refused.json()['detail']['code'] == 'RESERVE_CONTRIBUTION_EXCEEDS_BOOKED'
+        assert '500,00 €' in refused.json()['detail']['message']
+    reduced = await api.post(path + '/reduce', json={'reduced_to': '500.00', 'reason': 'Reconcile after reversal'})
+    assert reduced.status_code == 201, reduced.text
+    ledger = (await api.get(path.rsplit('/overrides/', 1)[0])).json()
+    assert ledger['contributions_total'] == '600.00'
+    assert next(row for row in ledger['entries'] if row.get('id') == w['entry'])['current_amount'] == '500.00'
+    reduced = await api.post(path + '/reduce', json={'reduced_to': '200.00', 'reason': 'Further reconciliation'})
+    assert reduced.status_code == 201, reduced.text
+    deleted = await api.request('DELETE', path, json={'reason': 'Remove remainder'})
+    assert deleted.status_code == 201, deleted.text
+    ledger = (await api.get(path.rsplit('/overrides/', 1)[0])).json()
+    assert [row['amount'] for row in ledger['entries'] if row.get('reverses_entry_id') == w['entry']] == ['-300.00', '-300.00', '-200.00']
+    assert ledger['contributions_total'] == '100.00'
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('operation', ['reduce', 'delete'])
+async def test_contribution_reduction_requires_reason_hides_foreign_ids_and_freezes_period(client_a_admin, client_b_admin, seed_data, operation):
+    api = client_a_admin
+    w, path = await draft_unit_correction(api, seed_data)
+    async def change(client, reason=None):
+        body = {} if reason is None else {'reason': reason}
+        if operation == 'reduce':
+            return await client.post(path + '/reduce', json={**body, 'reduced_to': '100.00'})
+        return await client.request('DELETE', path, json=body)
+    for reason in (None, '', ' '):
+        refused = await change(api, reason)
+        assert refused.status_code == 422, refused.text
+        assert refused.json()['detail']['code'] == 'RESERVE_CORRECTION_REASON_REQUIRED'
+    assert (await change(client_b_admin, 'Foreign correction')).status_code == 404
+    # A finalized WEG sibling freezes the same draft asset-report period.
+    sibling = await api.post('/api/weg-settlements', json={'property_id': w['property'], 'economic_plan_id': w['plan'],
+        'period_start': '2025-01-01', 'period_end': '2025-12-31'})
+    assert sibling.status_code == 201, sibling.text
+    await finalize(api, {**w, 'run': sibling.json()['id']})
+    refused = await change(api, 'Frozen correction')
+    assert refused.status_code == 409, refused.text
+    assert refused.json()['detail']['code'] == 'RESERVE_PERIOD_FINALIZED'
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('operation', ['reduce', 'delete'])
+async def test_contribution_reduction_refuses_other_ledger_components_and_payment_assignments(client_a_admin, seed_data, operation):
+    api = client_a_admin
+    w = await unit_correction_world(api, seed_data)
+    path = f"/api/weg-settlements/{w['run']}/reserve-ledger"
+    added = await api.post(path + '/overrides', json={'component': 'OPENING', 'amount': '100.00', 'reason': 'Opening'})
+    ledger = (await api.get(path)).json()
+    assignment = next(row['id'] for row in ledger['entries'] if row.get('payment_id') == w['cash'])
+    for entry in (added.json()['id'], assignment):
+        url = path + '/overrides/' + entry
+        refused = await api.post(url + '/reduce', json={'reduced_to': '1.00', 'reason': 'Wrong component'}) if operation == 'reduce' else await api.request('DELETE', url, json={'reason': 'Wrong component'})
+        assert refused.status_code == 422, refused.text
+        assert refused.json()['detail']['code'] == 'RESERVE_INPUT_INVALID'
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('operation', ['update', 'delete'])
+async def test_database_refuses_direct_mutation_of_contribution_original_as_app_rw(client_a_admin, seed_data, app_rw_session, operation):
+    w, _ = await draft_unit_correction(client_a_admin, seed_data)
+    await app_rw_session.execute(text("SELECT set_config('app.current_org_id',:org,true),set_config('app.current_user_id',:actor,true)"),
+        {'org': str(seed_data['org_a_id']), 'actor': str(seed_data['user_a_admin_id'])})
+    with pytest.raises(DBAPIError) as refused:
+        async with app_rw_session.begin_nested():
+            await app_rw_session.execute(text('UPDATE reserve_ledger_entry SET amount=0 WHERE id=:entry' if operation == 'update' else 'DELETE FROM reserve_ledger_entry WHERE id=:entry'), {'entry': w['entry']})
+    assert refused.value.orig.sqlstate == '23514'
+    assert refused.value.orig.__cause__.constraint_name == 'reserve_ledger_append_only'
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('case,constraint', [('above_headroom', 'reserve_contribution_exceeds_booked'),
+    ('increase', 'reserve_contribution_exceeds_booked'), ('blank_reason', 'reserve_correction_reason_required'),
+    ('not_contribution', 'reserve_contribution_reduction_invalid'), ('finalized', 'reserve_period_finalized')])
+async def test_database_mirrors_contribution_reduction_rules(client_a_admin, seed_data, app_rw_session, case, constraint):
+    api = client_a_admin
+    w, path = await draft_unit_correction(api, seed_data, two_receipts=True)
+    if case == 'finalized':
+        sibling = await api.post('/api/weg-settlements', json={'property_id': w['property'], 'economic_plan_id': w['plan'],
+            'period_start': '2025-01-01', 'period_end': '2025-12-31'})
+        await finalize(api, {**w, 'run': sibling.json()['id']})
+    else:
+        assert (await api.post(f"/api/payments/{w['cash']}/reverse")).status_code == 201
+    if case == 'not_contribution':
+        opening = await api.post(path.rsplit('/', 1)[0], json={'component': 'OPENING', 'amount': '100.00', 'reason': 'Opening'})
+        w['entry'] = opening.json()['id']
+    await app_rw_session.execute(text("SELECT set_config('app.current_org_id',:org,true),set_config('app.current_user_id',:actor,true)"),
+        {'org': str(seed_data['org_a_id']), 'actor': str(seed_data['user_a_admin_id'])})
+    with pytest.raises(DBAPIError) as refused:
+        async with app_rw_session.begin_nested():
+            await app_rw_session.execute(text("""INSERT INTO reserve_ledger_entry
+                (organization_id,property_id,settlement_run_id,entry_date,component,amount,reason,created_by,unit_id,reverses_entry_id)
+                VALUES (:org,:property,:run,'2025-12-31','CONTRIBUTION',:delta,:reason,:actor,:unit,:entry)"""),
+                {'org': seed_data['org_a_id'], 'actor': seed_data['user_a_admin_id'], 'property': w['property'],
+                 'run': w['run'], 'unit': w['u1'], 'entry': w['entry'],
+                 'delta': Decimal('0.01') if case == 'increase' else Decimal('-299.99'),
+                 'reason': ' ' if case == 'blank_reason' else 'Direct reduction'})
+    assert refused.value.orig.sqlstate == '23514'
+    assert refused.value.orig.__cause__.constraint_name == constraint
+
+
+@pytest.mark.asyncio
+async def test_opening_period_refusal_precedes_stale_opening_conflict(client_a_admin, seed_data):
+    api = client_a_admin
+    w = await reserve_world(api, seed_data)
+    later = await api.post('/api/weg-settlements/asset-reports', json={'property_id': w['property'],
+        'period_start': '2026-01-01', 'period_end': '2026-12-31'})
+    refused = await api.post(f"/api/weg-settlements/{later.json()['id']}/reserve-ledger/overrides", json={
+        'component': 'OPENING', 'corrected_opening_balance': '300.00', 'expected_opening_balance': '1.00', 'reason': 'Stale forbidden import'})
+    assert refused.status_code == 422, refused.text
+    assert refused.json()['detail']['code'] == 'RESERVE_OPENING_IMPORT_ONLY'
+
+
+@pytest.mark.asyncio
+async def test_payout_storno_maps_trigger_refusal_even_when_reread_finds_no_refusal(client_a_admin, seed_data, monkeypatch):
+    from unittest.mock import AsyncMock
+    from app.services.reserve_ledger_service import ReserveLedgerService
+    api = client_a_admin
+    w = await reserve_world(api, seed_data)
+    sources = await reserve_evidence(api, w)
+    cash = await payment(api, w, '1200.00', kind='RUECKLAGENENTNAHME', direction='OUT', evidence=sources)
+    added = await api.post(f"/api/weg-settlements/{w['run']}/reserve-ledger/overrides", json={
+        'component': 'ADJUSTMENT', 'amount': '200.00', 'reason': 'Reduce withdrawal',
+        **{k.removeprefix('reserve_'): v for k, v in sources.items()}})
+    assert added.status_code == 201, added.text
+    monkeypatch.setattr(ReserveLedgerService, 'require_payout_reversal', AsyncMock())
+    monkeypatch.setattr(ReserveLedgerService, 'payout_reversal_refusal', AsyncMock(return_value=None))
+    refused = await api.post(f'/api/payments/{cash}/reverse')
+    assert refused.status_code == 422, refused.text
+    assert refused.json()['detail']['code'] == 'RESERVE_ADJUSTMENT_EXCEEDS_WITHDRAWALS'
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('fields', [
+    {'amount': '300.00', 'expected_opening_balance': '0.00'},
+    {'corrected_opening_balance': '300.00'},
+    {'amount': '300.00', 'corrected_opening_balance': '300.00', 'expected_opening_balance': '0.00'},
+    {'component': 'CONTRIBUTION', 'corrected_opening_balance': '300.00', 'expected_opening_balance': '0.00'},
+])
+async def test_opening_override_accepts_only_an_unambiguous_delta_or_paired_total(client_a_admin, seed_data, fields):
+    api = client_a_admin
+    w = await reserve_world(api, seed_data)
+    response = await api.post(f"/api/weg-settlements/{w['run']}/reserve-ledger/overrides", json={
+        'component': 'OPENING', 'reason': 'Reviewed bank opening', **fields})
+    assert response.status_code == 422, response.text
+    assert response.json()['detail']['code'] == 'RESERVE_INPUT_INVALID'
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('operation', ['reduce', 'delete'])
+@pytest.mark.parametrize('finalized_parent', [False, True])
+async def test_contribution_reduction_hides_foreign_and_unknown_entries_before_frozen_conflict(
+        client_a_admin, client_b_admin, seed_data, operation, finalized_parent):
+    import uuid
+    api = client_a_admin
+    w, path = await draft_unit_correction(api, seed_data)
+    beta = _seed_weg({**seed_data, 'org_a_id': seed_data['org_b_id']})
+    foreign_run = await client_b_admin.post('/api/weg-settlements/asset-reports', json={
+        'property_id': beta['property'], 'period_start': '2025-01-01', 'period_end': '2025-12-31'})
+    assert foreign_run.status_code == 201, foreign_run.text
+    foreign = await client_b_admin.post(f"/api/weg-settlements/{foreign_run.json()['id']}/reserve-ledger/overrides",
+        json={'component': 'OPENING', 'amount': '100.00', 'reason': 'Foreign opening'})
+    assert foreign.status_code == 201, foreign.text
+    sibling = await api.post('/api/weg-settlements', json={'property_id': w['property'], 'economic_plan_id': w['plan'],
+        'period_start': '2025-01-01', 'period_end': '2025-12-31'})
+    assert sibling.status_code == 201, sibling.text
+    await finalize(api, {**w, 'run': sibling.json()['id']})
+    run_id = sibling.json()['id'] if finalized_parent else w['run']
+    responses = []
+    for entry in (foreign.json()['id'], str(uuid.uuid4())):
+        url = f'/api/weg-settlements/{run_id}/reserve-ledger/overrides/{entry}'
+        response = await api.post(url + '/reduce', json={'reduced_to': '1.00', 'reason': 'Foreign entry'}) if operation == 'reduce' else await api.request('DELETE', url, json={'reason': 'Foreign entry'})
+        assert response.status_code == 404, response.text
+        responses.append(response.json())
+    assert responses[0] == responses[1]
+
+
+@pytest.mark.asyncio
+async def test_database_refuses_reducing_a_frozen_original_through_another_scope(
+        client_a_admin, seed_data, migrator_session, app_rw_session):
+    from uuid import uuid4
+    api = client_a_admin
+    w, _ = await draft_unit_correction(api, seed_data)
+    sibling = await api.post('/api/weg-settlements', json={'property_id': w['property'], 'economic_plan_id': w['plan'],
+        'period_start': '2025-01-01', 'period_end': '2025-12-31'})
+    await finalize(api, {**w, 'run': sibling.json()['id']})
+    ids = {'org': seed_data['org_a_id'], 'actor': seed_data['user_a_admin_id'], 'property': w['property'],
+        'original_scope': uuid4(), 'destination_scope': uuid4(), 'destination': uuid4(), 'unit': w['u1']}
+    for key, whole in [('original_scope', False), ('destination_scope', True)]:
+        await migrator_session.execute(text("""INSERT INTO accounting_scope
+            (id,organization_id,property_id,scope_type,label,valid_from,whole_property,origin,created_by)
+            VALUES (:scope,:org,:property,'WEG','Reviewed reserve scope','2025-01-01',:whole,'REVIEWED',:actor)"""),
+            {**ids, 'scope': ids[key], 'whole': whole})
+        if not whole:
+            await migrator_session.execute(text('INSERT INTO accounting_scope_unit(organization_id,scope_id,property_id,unit_id) VALUES (:org,:original_scope,:property,:unit)'), ids)
+        await migrator_session.execute(text("""INSERT INTO scope_grant
+            (organization_id,scope_id,user_id,capabilities,granted_by,reason)
+            VALUES (:org,:scope,:actor,ARRAY['read','prepare','approve'],:actor,'Reviewed reserve scope')"""),
+            {**ids, 'scope': ids[key]})
+    await migrator_session.execute(text("""INSERT INTO accounting_scope_binding
+        (organization_id,property_id,scope_id,economic_plan_id,origin,reason,reviewed_by)
+        VALUES (:org,:property,:original_scope,:plan,'REVIEWED','Reviewed reserve plan',:actor)"""), {**ids, 'plan': w['plan']})
+    for run in (w['run'], sibling.json()['id']):
+        await migrator_session.execute(text("""INSERT INTO accounting_scope_binding
+            (organization_id,property_id,scope_id,settlement_run_id,origin,reason,reviewed_by)
+            VALUES (:org,:property,:original_scope,:run,'REVIEWED','Reviewed reserve period',:actor)"""), {**ids, 'run': run})
+    await migrator_session.execute(text("SELECT set_config('app.current_org_id',:org,true),set_config('app.current_user_id',:actor,true),set_config('app.current_scope_id',:scope,true)"),
+        {'org': str(ids['org']), 'actor': str(ids['actor']), 'scope': str(ids['destination_scope'])})
+    await migrator_session.execute(text("""INSERT INTO settlement_run
+        (id,organization_id,property_id,run_type,period_start,period_end,status,engine_version,advance_payments_source)
+        VALUES (:destination,:org,:property,'VERMOEGENSBERICHT','2025-01-01','2025-12-31','draft','0.1','MANUAL')"""), ids)
+    await migrator_session.commit()
+    await app_rw_session.execute(text("SELECT set_config('app.current_org_id',:org,true),set_config('app.current_user_id',:actor,true),set_config('app.current_scope_id','',true)"),
+        {'org': str(ids['org']), 'actor': str(ids['actor'])})
+    assert await app_rw_session.scalar(text("SELECT financial_scope_access(:org,'settlement_run',:run,'read')"), {**ids, 'run': w['run']}) is True
+    with pytest.raises(DBAPIError) as refused:
+        async with app_rw_session.begin_nested():
+            await app_rw_session.execute(text("""INSERT INTO reserve_ledger_entry
+                (organization_id,property_id,settlement_run_id,entry_date,component,amount,reason,created_by,unit_id,reverses_entry_id)
+                VALUES (:org,:property,:destination,'2025-12-31','CONTRIBUTION',-500,'Foreign scope reversal',:actor,:unit,:entry)"""),
+                {**ids, 'entry': w['entry']})
+    assert refused.value.orig.sqlstate == '23514'
+    assert refused.value.orig.__cause__.constraint_name == 'reserve_contribution_reduction_invalid'
