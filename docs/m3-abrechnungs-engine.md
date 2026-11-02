@@ -333,7 +333,7 @@ SDD §16: "All final settlement results … are stored as **immutable snapshots*
 | `tenant_profile_id` | `UUID NULL` FK→`tenant_profile` (`RESTRICT`) | denormalized addressee (audit/display). |
 | **Expected/actual (Soll/Ist) (§7):** | | |
 | `advance_payments_total` | `NUMERIC(14,2) NULL` | Sum of the operating cost advance payments made by the tenant in the period — **manually capturable in M3** (M6 replaces this with the real `Payment` sum). |
-| `heating_advance_payments_total` | `NUMERIC(14,2) NULL DEFAULT 0` | Heating advances; independent of operating-cost advances. Explicit unknown blocks computation. |
+| `heating_advance_payments_total` | `NUMERIC(14,2) NULL` | Heating advances; independent of operating-cost advances. Migration 0150 backfills existing rows with 0, then drops the default. NULL means unknown and blocks computation. |
 | `heating_advance_payments_source` | `String(12) NOT NULL DEFAULT 'MANUAL'` | Independent MANUAL/DERIVED heating source. |
 | `advance_payments_source` | `String(12) NOT NULL DEFAULT 'MANUAL'` | `MANUAL` (M3) \| `DERIVED` (M6, from payments). CHECK. Makes the origin audit-proof. |
 | `total_cost` | `NUMERIC(14,2) NULL` | Sum of the apportioned expected shares (redundant header value; must be == Σ `settlement_line.amount` of the expected lines). |

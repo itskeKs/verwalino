@@ -23,6 +23,46 @@ def test_heating_split_migration_is_the_next_release_revision():
 
 
 @pytest.mark.asyncio
+async def test_heating_split_downgrade_refuses_finalized_zero_heating_snapshot(rent_world):
+    import json
+    from datetime import date
+    from decimal import Decimal
+    from sqlalchemy.exc import DBAPIError
+    from app.engine.canonical import canonical_sha256
+    from app.engine.settlement import compute_bk_settlement
+    from app.engine.snapshot import build_snapshot_payload
+    from app.engine.types import LeasePeriodInput, PropertyInput, SettlementInput, UnitInput
+
+    w = rent_world
+    start, end = date(2026, 1, 1), date(2026, 12, 31)
+    inp = SettlementInput(start, end, PropertyInput(w['property'], 'Zero heating fixture', 'MIET'), w['lease'],
+        (UnitInput(w['unit'], '1', 'WOHNUNG', area=Decimal(100)),),
+        (LeasePeriodInput(w['lease'], w['unit'], w['tenant'], start, None),), (), (), Decimal('0.00'),
+        engine_version='m3.2.0', heating_advance_payments_total=Decimal('0.00'))
+    payload = build_snapshot_payload(inp, compute_bk_settlement(inp))
+    assert payload['inputs']['heating_advance_payments_total'] == '0.00'
+    assert payload['result']['heating_advance_payments_total'] == '0.00'
+    _, _, url = require_disposable_database_settings(settings)
+    engine = create_engine(url)
+    try:
+        with engine.connect() as connection, connection.begin() as transaction:
+            connection.execute(text("""INSERT INTO settlement_run(organization_id,property_id,lease_agreement_id,
+                run_type,period_start,period_end,advance_payments_total,advance_payments_source,
+                heating_advance_payments_total,status,engine_version,snapshot_payload,snapshot_sha256,
+                total_cost,balance,finalized_at,finalized_by)
+                VALUES (:org,:property,:lease,'BK_MIETER',:start,:end,0,'MANUAL',0,'finalized','m3.2.0',
+                    CAST(:payload AS jsonb),:sha,0,0,now(),:admin)"""),
+                {**w, 'start': start, 'end': end, 'payload': json.dumps(payload), 'sha': canonical_sha256(payload)})
+            connection.execute(text('SET CONSTRAINTS ALL IMMEDIATE'))
+            with pytest.raises(DBAPIError, match='Retain finalized split-engine snapshots; repair forward'):
+                with connection.begin_nested(), Operations.context(MigrationContext.configure(connection)):
+                    ScriptDirectory('migrations').get_revision('0150').module.downgrade()
+            transaction.rollback()
+    finally:
+        engine.dispose()
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize('populated', ['lease', 'history', 'payment', 'statement'])
 async def test_heating_split_downgrade_refuses_populated_heating_data(rent_world, populated):
     from sqlalchemy.exc import DBAPIError

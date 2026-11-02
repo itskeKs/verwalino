@@ -1,6 +1,7 @@
 import { HeatingInputs } from "../components/HeatingInputs";
 import { heatingPayload, useHeatingCandidates } from "../lib/heatingInputs";
 import { FinancialCoverageReview } from "../components/FinancialCoverageReview";
+import { parseGermanAmount } from "../lib/germanAmount";
 /**
  * Settlement detail page -- view, compute, preview, finalize, PDF download, correction.
  *
@@ -230,6 +231,7 @@ export function SettlementDetailPage() {
   // Advance payments edit
   const [editingAdvance, setEditingAdvance] = useState(false);
   const [advanceValue, setAdvanceValue] = useState("");
+  const [advanceErrors, setAdvanceErrors] = useState({ operating: false, heating: false });
   const [heatingAdvanceValue, setHeatingAdvanceValue] = useState("");
 
   // Structured inputs for compute
@@ -449,12 +451,19 @@ export function SettlementDetailPage() {
       setEditingAdvance(false);
       return;
     }
+    const operatingChanged = advanceValue !== (run?.advance_payments_total ?? "");
+    const heatingChanged = heatingAdvanceValue !== (run?.heating_advance_payments_total ?? "");
+    const operating = parseGermanAmount(advanceValue);
+    const heating = parseGermanAmount(heatingAdvanceValue);
+    const errors = { operating: operatingChanged && operating === null, heating: heatingChanged && heating === null };
+    setAdvanceErrors(errors);
+    if (errors.operating || errors.heating) return;
     setActionLoading(true);
     setActionError(null);
     try {
       const updated = await setAdvancePayments(runId, {
-        ...(advanceValue !== (run?.advance_payments_total ?? "") ? { advance_payments_total: advanceValue.replace(",", ".") } : {}),
-        ...(heatingAdvanceValue !== (run?.heating_advance_payments_total ?? "") ? { heating_advance_payments_total: heatingAdvanceValue.replace(",", ".") } : {}),
+        ...(operatingChanged && operating !== null ? { advance_payments_total: operating } : {}),
+        ...(heatingChanged && heating !== null ? { heating_advance_payments_total: heating } : {}),
       });
       setRun(updated);
       setEditingAdvance(false);
@@ -1044,7 +1053,7 @@ export function SettlementDetailPage() {
                     <button
                       className="btn btn--small"
                       style={{ marginLeft: "0.5rem" }}
-                      onClick={() => setEditingAdvance(true)}
+                      onClick={() => { setAdvanceErrors({ operating: false, heating: false }); setEditingAdvance(true); }}
                     >
                       Aendern
                     </button>
@@ -1130,13 +1139,19 @@ export function SettlementDetailPage() {
                 inputMode="decimal"
                 placeholder="0.00"
                 value={advanceValue}
+                aria-invalid={advanceErrors.operating}
+                aria-describedby={advanceErrors.operating ? "operating-advance-error" : undefined}
                 onChange={(e) => setAdvanceValue(e.target.value)}
               />
             </label>
             <label>Heizkosten-Vorauszahlung (EUR)
               <input type="text" inputMode="decimal" value={heatingAdvanceValue}
+                aria-invalid={advanceErrors.heating}
+                aria-describedby={advanceErrors.heating ? "heating-advance-error" : undefined}
                 onChange={(e) => setHeatingAdvanceValue(e.target.value)} />
             </label>
+            {advanceErrors.operating && <p id="operating-advance-error" role="alert" className="error-text">Bitte geben Sie die Betriebskosten-Vorauszahlung als gültigen EUR-Betrag ein.</p>}
+            {advanceErrors.heating && <p id="heating-advance-error" role="alert" className="error-text">Bitte geben Sie die Heizkosten-Vorauszahlung als gültigen EUR-Betrag ein.</p>}
             <div className="form-actions">
               <button
                 className="btn btn--primary"

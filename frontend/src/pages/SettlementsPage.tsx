@@ -32,6 +32,7 @@ import type {
 import { ApiError } from "../api/client";
 import { useAuth } from "../auth/useAuth";
 import { AccountingScopeSelector } from "../components/AccountingScopeSelector";
+import { parseGermanAmount } from "../lib/germanAmount";
 
 const STATUS_OPTIONS: { value: string; label: string }[] = [
   { value: "", label: "Alle Status" },
@@ -90,6 +91,7 @@ export function SettlementsPage() {
   const [showForm, setShowForm] = useState(false);
   const [form, setForm] = useState<SettlementRunCreate>(makeEmptyForm());
   const [saving, setSaving] = useState(false);
+  const [advanceErrors, setAdvanceErrors] = useState({ operating: false, heating: false });
 
   const statusFilter = searchParams.get("status") ?? "";
   const propertyFilter = searchParams.get("property_id") ?? "";
@@ -179,6 +181,7 @@ export function SettlementsPage() {
     setShowBatch(false);
     setBatchResult(null);
     setForm(makeEmptyForm());
+    setAdvanceErrors({ operating: false, heating: false });
     setShowForm(true);
   }
 
@@ -236,12 +239,20 @@ export function SettlementsPage() {
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
+    const operating = form.advance_payments_total == null ? null : parseGermanAmount(form.advance_payments_total);
+    const heating = form.heating_advance_payments_total == null ? null : parseGermanAmount(form.heating_advance_payments_total);
+    const errors = {
+      operating: form.advance_payments_total != null && operating === null,
+      heating: form.heating_advance_payments_total != null && heating === null,
+    };
+    setAdvanceErrors(errors);
+    if (errors.operating || errors.heating) return;
     setSaving(true);
     setError(null);
     try {
       const created = await createSettlement({ ...form,
-        advance_payments_total: form.advance_payments_total?.replace(",", ".") ?? null,
-        heating_advance_payments_total: form.heating_advance_payments_total?.replace(",", ".") ?? null,
+        advance_payments_total: operating,
+        heating_advance_payments_total: heating,
       });
       setShowForm(false);
       navigate(`/abrechnungen/${created.id}`);
@@ -426,6 +437,8 @@ export function SettlementsPage() {
                 inputMode="decimal"
                 placeholder="0.00"
                 value={form.advance_payments_total ?? ""}
+                aria-invalid={advanceErrors.operating}
+                aria-describedby={advanceErrors.operating ? "operating-advance-error" : undefined}
                 onChange={(e) =>
                   setForm({
                     ...form,
@@ -436,8 +449,12 @@ export function SettlementsPage() {
             </label>
             <label>Heizkosten-Vorauszahlung (EUR)
               <input type="text" inputMode="decimal" value={form.heating_advance_payments_total ?? ""}
+                aria-invalid={advanceErrors.heating}
+                aria-describedby={advanceErrors.heating ? "heating-advance-error" : undefined}
                 onChange={(e) => setForm({ ...form, heating_advance_payments_total: e.target.value || null })} />
             </label>
+            {advanceErrors.operating && <p id="operating-advance-error" role="alert" className="error-text">Bitte geben Sie die Betriebskosten-Vorauszahlung als gültigen EUR-Betrag ein.</p>}
+            {advanceErrors.heating && <p id="heating-advance-error" role="alert" className="error-text">Bitte geben Sie die Heizkosten-Vorauszahlung als gültigen EUR-Betrag ein.</p>}
             <label>
               Abrechnungstyp
               <input type="text" value="BK (Betriebskosten)" disabled />

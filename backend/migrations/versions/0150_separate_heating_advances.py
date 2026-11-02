@@ -61,6 +61,10 @@ def upgrade():
 def downgrade():
     op.execute("""LOCK TABLE lease_agreement,lease_rent_change,payment,settlement_run IN ACCESS EXCLUSIVE MODE NOWAIT;
         DO $$ BEGIN
+          IF EXISTS(SELECT 1 FROM settlement_run
+            WHERE status='finalized' AND snapshot_payload->>'engine_version'='m3.2.0') THEN
+            RAISE EXCEPTION 'Retain finalized split-engine snapshots; repair forward' USING ERRCODE='23514';
+          END IF;
           IF EXISTS(SELECT 1 FROM lease_agreement WHERE heating_advance_payment > 0)
             OR EXISTS(SELECT 1 FROM lease_rent_change WHERE heating_advance_payment > 0)
             OR EXISTS(SELECT 1 FROM payment WHERE payment_type='HK_VORAUSZAHLUNG')

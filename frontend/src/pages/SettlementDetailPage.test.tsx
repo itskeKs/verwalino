@@ -551,6 +551,38 @@ async function showConsumption() {
   return screen.findByLabelText(/^Verbrauch \(1/);
 }
 describe("T31 meter consumption prefill", () => {
+  it('normalizes both German advance amounts when saving the statement', async () => {
+    const save = vi.spyOn(api, 'setAdvancePayments').mockResolvedValue({ ...consumptionDraft,
+      advance_payments_total: '1080.00', heating_advance_payments_total: '1080.00' });
+    showProposal();
+    fireEvent.click(await screen.findByRole('button', { name: 'Aendern' }));
+    for (const field of ['Betriebskosten', 'Heizkosten']) {
+      fireEvent.change(screen.getByLabelText(`${field}-Vorauszahlung (EUR)`), { target: { value: '1.080,00' } });
+    }
+    fireEvent.click(screen.getByRole('button', { name: 'Speichern' }));
+    await waitFor(() => expect(save).toHaveBeenCalledExactlyOnceWith('run-1', {
+      advance_payments_total: '1080.00', heating_advance_payments_total: '1080.00',
+    }));
+  });
+
+  it.each([
+    ['Betriebskosten', '1,080.00'], ['Betriebskosten', 'abc'],
+    ['Heizkosten', '1,080.00'], ['Heizkosten', 'abc'],
+  ])('rejects invalid %s advance %s locally with a German field error', async (field, value) => {
+    const save = vi.spyOn(api, 'setAdvancePayments').mockResolvedValue(consumptionDraft);
+    showProposal();
+    fireEvent.click(await screen.findByRole('button', { name: 'Aendern' }));
+    const input = screen.getByLabelText(`${field}-Vorauszahlung (EUR)`);
+    fireEvent.change(input, { target: { value } });
+    fireEvent.click(screen.getByRole('button', { name: 'Speichern' }));
+    expect(await screen.findByRole('alert')).toHaveTextContent(
+      `Bitte geben Sie die ${field}-Vorauszahlung als gültigen EUR-Betrag ein.`,
+    );
+    expect(input).toHaveAttribute('aria-invalid', 'true');
+    expect(input).toHaveValue(value);
+    expect(save).not.toHaveBeenCalled();
+  });
+
   it('renders both component results and the overall balance in the existing EUR format', async () => {
     const labels = ['Betriebskosten abzüglich Vorauszahlungen', 'Heizkosten abzüglich Vorauszahlungen'];
     vi.mocked(api.getSettlement).mockResolvedValueOnce({ ...consumptionDraft, total_cost: '2900.00', balance: '20.00',

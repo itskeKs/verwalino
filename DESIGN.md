@@ -336,6 +336,12 @@ block “Geleistete Vorauszahlungen” instead; heating cost lines in any fiscal
 window require both blocks, even if their amount is zero. Non-apportionable heating
 positions do not require both blocks. Both snapshot keys remain present.
 Statement totals start unknown (empty fields); “Aus Zahlungen ableiten” derives both.
+The create form and detail editor share `parseGermanAmount` in `lib/germanAmount.ts`:
+both advance fields accept German amounts such as `1.080,00` and API decimals such as
+`1080.00`, sent as cent-exact decimal strings. Invalid input (for example `1,080.00`
+or `abc`) stays in the field and prevents submission, with the linked German error
+“Bitte geben Sie die Betriebskosten-Vorauszahlung als gültigen EUR-Betrag ein.” or
+“Bitte geben Sie die Heizkosten-Vorauszahlung als gültigen EUR-Betrag ein.”
 The detail page retains its existing decimal-string `EUR` amounts; the advance
 proposal retains its existing German decimal-string `EUR` format. The advance proposal
 uses its own payload, including the lease's advances valid on the acceptance date, and shows the previous amounts.
