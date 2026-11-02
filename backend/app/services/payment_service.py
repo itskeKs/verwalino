@@ -464,6 +464,10 @@ class PaymentService:
                 status_code=409, detail="A Storno row cannot itself be reversed"
             )
 
+        if original.payment_type == 'RUECKLAGENENTNAHME':
+            from app.services.reserve_ledger_service import ReserveLedgerService
+            await ReserveLedgerService(self._session, self._org_id, self._user_id).require_payout_reversal(original)
+
         now = datetime.now(timezone.utc)
         opposite = "OUT" if original.direction == "IN" else "IN"
         storno = Payment(

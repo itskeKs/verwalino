@@ -11,7 +11,7 @@ from app.models.audit_event import AuditEvent
 from app.models.reserve_ledger_entry import ReserveLedgerEntry
 from app.repositories.audit_repo import AuditRepository
 from app.repositories.reserve_ledger_repo import ReserveLedgerRepository
-from app.repositories.settlement_repo import SettlementRunRepository
+from app.repositories.settlement_repo import SettlementLineRepository, SettlementRunRepository
 from app.services.financial_scope_service import FinancialScopeService
 
 ZERO = Decimal('0.00')
@@ -19,6 +19,15 @@ OPENING_IMPORT_ONLY = {'code': 'RESERVE_OPENING_IMPORT_ONLY', 'message': 'Ein Im
 OPENING_IMPORT_EXISTS = {'code': 'RESERVE_OPENING_IMPORT_EXISTS', 'message': 'Nach dem Import eines Anfangsbestands können Sie keinen früheren oder abweichenden, überlappenden Abrechnungszeitraum anlegen.'}
 DERIVED_TOTAL_READ_ONLY = {'code': 'RESERVE_DERIVED_TOTAL_READ_ONLY', 'message': 'Zuführungen und Entnahmen werden aus Buchungen abgeleitet; Korrekturen erfolgen mit Bezug im Rücklagenbuch.'}
 CONTRIBUTION_EXCEEDS_BOOKED = {'code': 'RESERVE_CONTRIBUTION_EXCEEDS_BOOKED', 'message': 'Die Zuführungskorrektur darf den Rücklagenanteil des gebuchten Hausgelds der Einheit nicht überschreiten.'}
+
+
+def _euro(amount):
+    return format(max(ZERO, amount), ',.2f').translate(str.maketrans({',': '.', '.': ','})) + ' €'
+
+
+def _adjustment_exceeds_withdrawals(allowed):
+    return {'code': 'RESERVE_ADJUSTMENT_EXCEEDS_WITHDRAWALS',
+            'message': f'Sie können die Entnahmen dieses Kostenbelegs noch um höchstens {_euro(allowed)} vermindern.'}
 
 
 def _raise_reserve_opening_error(exc: DBAPIError):
@@ -228,10 +237,20 @@ class ReserveLedgerService:
                 'message': 'Bitte verknüpfen Sie einen bestätigten Kostenbeleg und einen angenommenen Beschluss aus der Beschluss-Sammlung vor dem Buchen.'})
         if payment:
             withdrawal_amount = payment.amount
-        if withdrawal_amount is not None and withdrawal_amount + await self.repo.funded_amount(
-                cost_id, payment.id if payment else None) > cost.gross_amount:
-            raise HTTPException(422, {'code': 'RESERVE_PAYOUT_EVIDENCE_REQUIRED',
-                'message': 'Die aktiven Rücklagenentnahmen dürfen den bestätigten Kostenbetrag nicht überschreiten.'})
+        if withdrawal_amount is not None:
+            funded = await self.repo.funded_amount(cost_id, payment.id if payment else None)
+            if withdrawal_amount < ZERO and -withdrawal_amount > funded:
+                raise HTTPException(422, _adjustment_exceeds_withdrawals(funded))
+            if withdrawal_amount > ZERO and withdrawal_amount > cost.gross_amount - funded:
+                raise HTTPException(422, {'code': 'RESERVE_PAYOUT_EVIDENCE_REQUIRED',
+                    'message': f'Sie können diesem Kostenbeleg noch höchstens {_euro(cost.gross_amount - funded)} als Rücklagenentnahme zuordnen.'})
+
+    async def require_payout_reversal(self, payment):
+        cost_id = await self.repo.payout_cost(payment)
+        if cost_id:
+            remaining = await self.repo.funded_amount(cost_id, payment.id)
+            if remaining < ZERO:
+                raise HTTPException(422, _adjustment_exceeds_withdrawals(remaining + payment.amount))
 
     async def add(self, run, component, amount, reason, payment_id=None, cost_entry_id=None, register_entry_id=None, unit_id=None):
         ledger = await self.read(run)
@@ -257,8 +276,10 @@ class ReserveLedgerService:
                 raise HTTPException(404, {'code': 'RESERVE_NOT_FOUND', 'message': 'Rücklagenabrechnung nicht gefunden.'})
             if amount <= ZERO:
                 raise HTTPException(422, {'code': 'RESERVE_AMOUNT_INVALID', 'message': 'Bitte geben Sie für eine Zuführungskorrektur einen Betrag größer als null ein.'})
-            if amount > await self.repo.contribution_headroom(run, unit_id):
-                raise HTTPException(422, CONTRIBUTION_EXCEEDS_BOOKED)
+            remaining = await self.repo.contribution_headroom(run, unit_id)
+            if amount > remaining:
+                raise HTTPException(422, {**CONTRIBUTION_EXCEEDS_BOOKED,
+                    'message': f'Sie können dieser Einheit noch höchstens {_euro(remaining)} als Zuführung zuordnen.'})
         elif component == 'FUNDING':
             await self.require_evidence(run.property_id, cost_entry_id, register_entry_id)
             sources = await self.repo.funding_sources(payment_id, cost_entry_id, register_entry_id)
@@ -269,11 +290,12 @@ class ReserveLedgerService:
                 raise HTTPException(422, {'code': 'RESERVE_PAYOUT_EVIDENCE_REQUIRED', 'message': 'Die Verknüpfung muss den unveränderbaren Buchungsbelegen entsprechen.'})
             if (payment.status != 'booked' or payment.direction != 'OUT' or payment.payment_type != 'RUECKLAGENENTNAHME'
                     or payment.reverses_id
-                    or cost.status != 'confirmed' or cost.superseded_by_id or cost.gross_amount < payment.amount
+                    or cost.status != 'confirmed' or cost.superseded_by_id
                     or not any(row.get('payment_id') == str(payment.id) for row in ledger['entries'])):
                 raise HTTPException(422, {'code': 'RESERVE_PAYOUT_EVIDENCE_REQUIRED', 'message': 'Bitte wählen Sie eine aktive Auszahlung und einen bestätigten Kostenbeleg.'})
             if any(e.payment_id == payment_id for e in await self.repo.entries(run)):
                 raise HTTPException(409, {'code': 'RESERVE_PAYMENT_ALREADY_ASSIGNED', 'message': 'Diese Auszahlung ist bereits der Rücklage zugeordnet.'})
+            await self.require_evidence(run.property_id, cost_entry_id, register_entry_id, payment=payment)
             amount = ZERO
         elif component == 'CONTRIBUTION' and payment_id and not any((cost_entry_id, register_entry_id)):
             unassigned = next((row for row in ledger['entries']
@@ -287,11 +309,11 @@ class ReserveLedgerService:
             # The immutable organization/payment unique key permits exactly one
             # assignment, so its total cannot grow through another draft or race.
         elif component in ('WITHDRAWAL', 'ADJUSTMENT') and payment_id is None:
-            await self.require_evidence(run.property_id, cost_entry_id, register_entry_id,
-                withdrawal_amount=amount if component == 'WITHDRAWAL' else abs(amount) if component == 'ADJUSTMENT' else None)
-            if component in ('WITHDRAWAL', 'CONTRIBUTION') and amount <= ZERO:
+            if component == 'WITHDRAWAL' and amount <= ZERO:
                 raise HTTPException(422, {'code': 'RESERVE_AMOUNT_INVALID',
                     'message': 'Bitte geben Sie für eine Entnahme- oder Zuführungskorrektur einen Betrag größer als null ein.'})
+            await self.require_evidence(run.property_id, cost_entry_id, register_entry_id,
+                withdrawal_amount=amount if component == 'WITHDRAWAL' else -amount)
         elif any((payment_id, cost_entry_id, register_entry_id)):
             raise HTTPException(422, {'code': 'RESERVE_FUNDING_LINKS_INVALID', 'message': 'Belegverknüpfungen sind nur für eine finanzierte Entnahme zulässig.'})
         entry = await self.repo.create(ReserveLedgerEntry(
@@ -304,6 +326,12 @@ class ReserveLedgerService:
             action='reserve.override_added', payload_diff={'entry_id': str(entry.id), 'component': component,
                 'amount': format(amount, '.2f'), 'reason': reason.strip(),
                 **({'unit_id': str(unit_id)} if unit_id else {})}))
+        await SettlementLineRepository(self.session, self.org_id).delete_for_run(run.id)
+        run.snapshot_payload = None
+        run.snapshot_sha256 = None
+        run.total_cost = None
+        run.balance = None
+        await SettlementRunRepository(self.session, self.org_id).update(run)
         return entry
 
     async def require_opening_period(self, run, ledger):

@@ -164,6 +164,11 @@ class ReserveLedgerRepository(TenantRepository[ReserveLedgerEntry]):
         return await self._session.scalar(text('SELECT reserve_funded_amount(:org,:cost,:payment)'),
             {'org': self._org_id, 'cost': cost_id, 'payment': exclude_payment_id})
 
+    async def payout_cost(self, payment):
+        return payment.reserve_cost_entry_id or await self._session.scalar(select(ReserveLedgerEntry.cost_entry_id).where(
+            ReserveLedgerEntry.organization_id == self._org_id, ReserveLedgerEntry.payment_id == payment.id,
+            ReserveLedgerEntry.component == 'FUNDING'))
+
     async def plan_cells(self, plan):
         return await self._session.scalar(text('SELECT reserve_plan_cells(CAST(:payload AS jsonb),:total,:starts)'),
             {'payload': json.dumps(plan.snapshot_payload), 'total': plan.reserve_contribution_total, 'starts': plan.period_start})

@@ -833,7 +833,7 @@ date and amount columns stay compact, while movement labels and reasons wrap.
 Rows retain the server's date, creation timestamp and ID order across reloads.
 Only a finalized run shows “Finalisierter Rücklagenstand · unveränderbarer
 Snapshot.” A draft that reads a frozen sibling ledger keeps its draft wording
-and has no ledger correction action.
+and keeps the ledger correction control disabled with its finalized-period reason.
 Computed WEG and asset-report lines place late cash after the opening balance
 and wrap long labels within their cells.
 Money uses German grouping/comma decimals with `€`, dates `DD.MM.YYYY`.
@@ -847,7 +847,9 @@ Both detail pages display contributions and withdrawals in the ledger; neither
 offers editable derived-total fields. Their opening forms show “Aktueller Anfangsbestand” above the opening input
 and ask for the corrected total plus a reason. The earliest draft can be
 re-attested; each signed difference remains a “Korrektur Anfangsbestand” row
-with its reason. The correction dialog continues to accept a signed difference.
+with its reason. The correction dialog also asks for the corrected total, prefills
+the current opening and previews the read-only signed difference (for example,
+“Differenz: +500,00 €”); only that difference is saved.
 The opening option and its dialog use “Anfangsbestand korrigieren”
 and explains that the difference and reason remain recorded in the ledger.
 Import wording is reserved for the first-import instructions on the calculation form.
@@ -860,13 +862,17 @@ same rule. “Anfangsbestand” permits the existing first-year import. “Zufü
 requires “Einheit *” from the property's units, a positive amount and “Begründung *”,
 without cost or resolution selectors. The selected unit shows “Noch zuordenbar: … €”
 using the server's remaining booked-Hausgeld allowance. An excessive correction
-shows “Die Zuführungskorrektur darf den Rücklagenanteil des gebuchten Hausgelds der
-Einheit nicht überschreiten.” and retains the unit, amount and reason. There is no
+shows “Sie können dieser Einheit noch höchstens … € als Zuführung zuordnen.”,
+using the same remaining allowance, and retains the unit, amount and reason. There is no
 “Allgemeine Zuführungskorrektur”. Payment-specific Hausgeld assignments retain
 “Gebuchte Zuführung” and their existing cash proof. The dialog preserves useful inputs after refusal. A successful
-change refreshes the ledger and invalidates the displayed coverage review;
+change refetches the run and ledger and invalidates the displayed coverage review;
 saving a corrected opening target also refreshes the ledger. Finalized ledger
-snapshots have no correction action. Negative balances and missing funding
+snapshots keep “Korrektur erfassen” visible and disabled, with the explanation
+“Die Rücklage dieses Zeitraums ist finalisiert.” The correction form uses German
+application validation (`noValidate`). Its content scrolls within the viewport,
+its actions stay fixed below the scrolling fields, and its close target is at
+least 44 × 44 px, including at 360 px with an error visible. Negative balances and missing funding
 links have explicit German feedback; unlinked cash payouts block computation.
 Hausgeld without a determinable reserve ratio appears as “Ohne Planbezug” with
 its full signed payment amount and blocks computation. A covering finalized plan
@@ -943,3 +949,8 @@ field bounds and console health.
 | Opening correction wording before / after | [before](docs/assets/reserve-ledger/round13c-opening-before-1280.png) · [after](docs/assets/reserve-ledger/round13c-opening-after-1280.png) | [before](docs/assets/reserve-ledger/round13c-opening-before-360.png) · [after](docs/assets/reserve-ledger/round13c-opening-after-360.png) |
 | Manual payout refusal | [after](docs/assets/reserve-ledger/round13c-payout-refusal-1280.png) | [after](docs/assets/reserve-ledger/round13c-payout-refusal-360.png) |
 | Booked payout evidence | [after](docs/assets/reserve-ledger/round13c-payout-detail-1280.png) | [after](docs/assets/reserve-ledger/round13c-payout-detail-360.png) |
+| WEG opening total and difference | [before](docs/assets/reserve-ledger/round16-weg-opening-before-1280.png) · [after](docs/assets/reserve-ledger/round16-weg-opening-after-1280.png) | [before](docs/assets/reserve-ledger/round16-weg-opening-before-360.png) · [after](docs/assets/reserve-ledger/round16-weg-opening-after-360.png) |
+| Asset-report opening total and difference | [before](docs/assets/reserve-ledger/round16-asset-opening-before-1280.png) · [after](docs/assets/reserve-ledger/round16-asset-opening-after-1280.png) | [before](docs/assets/reserve-ledger/round16-asset-opening-before-360.png) · [after](docs/assets/reserve-ledger/round16-asset-opening-after-360.png) |
+| WEG correction with error | — | [before](docs/assets/reserve-ledger/round16-weg-error-before-360.png) · [after](docs/assets/reserve-ledger/round16-weg-error-after-360.png) |
+| Asset-report correction with error | — | [before](docs/assets/reserve-ledger/round16-asset-error-before-360.png) · [after](docs/assets/reserve-ledger/round16-asset-error-after-360.png) |
+| Withdrawal correction with scrolling fields and error | — | [after](docs/assets/reserve-ledger/round16-withdrawal-error-after-360.png) |

@@ -52,3 +52,25 @@ it('does not offer editable derived reserve totals', async () => {
   expect(screen.queryByLabelText('Rücklage Zuführung')).not.toBeInTheDocument();
   expect(screen.queryByLabelText('Rücklage Entnahmen')).not.toBeInTheDocument();
 });
+
+it('refetches the computation table after a reserve correction', async () => {
+  let corrected = false;
+  const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
+    if (init?.method === 'POST') { corrected = true; return json({ id: 'correction' }, 201); }
+    if (url.endsWith('/reserve-ledger')) return json({ opening_balance: '0.00', contributions_total: '0.00', withdrawals_total: '0.00', overrides_total: '0.00', closing_balance: '0.00', planned_contributions_total: '0.00', entries: [], frozen: false, booking_basis: 'CASH' });
+    if (url === '/api/properties' || url.includes('/bank-accounts')) return json([]);
+    return json({ id: 'run-1', property_id: 'property-1', status: 'draft', engine_version: 'test', lines: corrected ? [] : [
+      { id: 'line', line_type: 'RESERVE_OPENING', label: 'Vorheriger Anfangsbestand', amount: '0.00' },
+    ] });
+  });
+  vi.stubGlobal('fetch', fetchMock);
+  render(<MemoryRouter initialEntries={['/report/run-1']}><Routes><Route path="/report/:runId" element={<AssetReportDetailPage />} /></Routes></MemoryRouter>);
+  await screen.findByText(/Vorheriger Anfangsbestand/);
+  fireEvent.click(screen.getByRole('button', { name: 'Korrektur erfassen' }));
+  fireEvent.change(screen.getByLabelText('Art'), { target: { value: 'OPENING' } });
+  fireEvent.change(screen.getByLabelText(/^(Betrag|Korrigierter Anfangsbestand)/), { target: { value: '500,00' } });
+  fireEvent.change(screen.getByLabelText('Begründung *'), { target: { value: 'Bankunterlagen geprüft' } });
+  fireEvent.click(screen.getByRole('button', { name: 'Speichern' }));
+  await waitFor(() => expect(fetchMock.mock.calls.filter(([url]) => url === '/api/weg-settlements/run-1')).toHaveLength(2));
+  expect(screen.queryByText(/Vorheriger Anfangsbestand/)).not.toBeInTheDocument();
+});

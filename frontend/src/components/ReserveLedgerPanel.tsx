@@ -1,6 +1,6 @@
 import { ReserveEvidenceFields } from './ReserveEvidenceFields';
 import { reserveCostOptions, reserveResolutionOptions } from '../lib/reserveEvidence';
-import { useEffect, useState } from 'react';
+import { useEffect, useId, useState } from 'react';
 import { addReserveOverride, getReserveLedger, listCostEntries, listPayments, listRegisterEntries } from '../api/endpoints';
 import type { CostEntry, Payment, RegisterEntry, ReserveComponent, ReserveLedger, ReserveOverride } from '../api/types';
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from './ui/dialog';
@@ -11,6 +11,16 @@ const labels: Record<string, string> = { PLANNED: 'Geplant (Soll)', CONTRIBUTION
   OVERRIDE: 'Begründete Korrektur', OPENING: 'Anfangsbestand', ADJUSTMENT: 'Sonstige Korrektur', FUNDING: 'Finanzierte Entnahme verknüpfen',
   LATE_CASH: 'Nachträgliche Buchungen zum abgeschlossenen Jahr', UNASSIGNED: 'Ohne Planbezug' };
 const componentLabels: Record<string, string> = { ...labels, CONTRIBUTION: 'Zuführungskorrektur', PAYMENT_ASSIGNMENT: 'Gebuchte Zuführung', WITHDRAWAL: 'Entnahmekorrektur', OPENING: 'Korrektur Anfangsbestand' };
+const normalizeAmount = (raw: string) => (/^-?\d{1,3}(?:\.\d{3})+,\d{1,2}$/.test(raw.trim()) ? raw.trim().replaceAll('.', '') : raw.trim()).replace(',', '.');
+const validAmount = (amount: string) => /^-?\d+(\.\d{1,2})?$/.test(amount);
+const cents = (amount: string) => {
+  const [whole, fraction = ''] = amount.replace('-', '').split('.');
+  return (BigInt(whole) * 100n + BigInt(fraction.padEnd(2, '0'))) * (amount.startsWith('-') ? -1n : 1n);
+};
+const decimalAmount = (value: bigint) => {
+  const absolute = value < 0n ? -value : value;
+  return `${value < 0n ? '-' : ''}${absolute / 100n}.${String(absolute % 100n).padStart(2, '0')}`;
+};
 
 export function ReserveLedgerPanel({ runId, propertyId, status, onChanged, onOpeningLoaded, disabled = false, refreshKey = 0 }: {
   runId: string; propertyId: string; status: string; onChanged: () => void; disabled?: boolean; refreshKey?: number;
@@ -30,6 +40,10 @@ export function ReserveLedgerPanel({ runId, propertyId, status, onChanged, onOpe
   const [unit, setUnit] = useState('');
   const [cost, setCost] = useState('');
   const [register, setRegister] = useState('');
+  const lockReasonId = useId();
+  const normalized = normalizeAmount(amount);
+  const openingDifference = ledger && validAmount(normalized) ? decimalAmount(cents(normalized) - cents(ledger.opening_balance)) : null;
+  const locked = status !== 'draft' || ledger?.frozen;
 
   useEffect(() => {
     let active = true;
@@ -51,15 +65,19 @@ export function ReserveLedgerPanel({ runId, propertyId, status, onChanged, onOpe
 
   async function save(event: React.FormEvent) {
     event.preventDefault(); setFormError('');
-    const raw = amount.trim();
-    const normalized = (/^-?\d{1,3}(?:\.\d{3})+,\d{1,2}$/.test(raw) ? raw.replaceAll('.', '') : raw).replace(',', '.');
-    if (!reason.trim() || (component !== 'FUNDING' && !/^-?\d+(\.\d{1,2})?$/.test(normalized))) {
+    if (!reason.trim() || (component !== 'FUNDING' && !validAmount(normalized))) {
       setFormError('Bitte geben Sie einen Betrag mit höchstens zwei Nachkommastellen und eine Begründung ein.'); return;
+    }
+    if (component === 'CONTRIBUTION' && !unit) {
+      setFormError('Bitte wählen Sie für die Zuführungskorrektur eine Einheit.'); return;
+    }
+    if ((component === 'FUNDING' || component === 'PAYMENT_ASSIGNMENT') && !payment) {
+      setFormError('Bitte wählen Sie eine gebuchte Zahlung.'); return;
     }
     if ((component === 'FUNDING' || component === 'WITHDRAWAL' || component === 'ADJUSTMENT') && (!cost || !register)) {
       setFormError('Bitte verknüpfen Sie einen bestätigten Kostenbeleg und einen Beschluss aus der Beschluss-Sammlung.'); return;
     }
-    const body: ReserveOverride = { component: component === 'PAYMENT_ASSIGNMENT' ? 'CONTRIBUTION' : component, amount: component === 'FUNDING' ? '0.00' : normalized, reason: reason.trim() };
+    const body: ReserveOverride = { component: component === 'PAYMENT_ASSIGNMENT' ? 'CONTRIBUTION' : component, amount: component === 'FUNDING' ? '0.00' : component === 'OPENING' ? openingDifference! : normalized, reason: reason.trim() };
     if (component === 'WITHDRAWAL' || component === 'ADJUSTMENT') Object.assign(body, { cost_entry_id: cost, register_entry_id: register });
     if (component === 'FUNDING') Object.assign(body, { payment_id: payment, cost_entry_id: cost, register_entry_id: register });
     else if (component === 'PAYMENT_ASSIGNMENT') body.payment_id = payment;
@@ -106,13 +124,17 @@ export function ReserveLedgerPanel({ runId, propertyId, status, onChanged, onOpe
           </tr>)}</tbody></table>
       </div>
       {ledger.entries.length === 0 && <p>Keine Einzelbewegungen in diesem Rücklagenstand.</p>}
-      {status === 'draft' && !ledger.frozen && <button className="btn btn--secondary" disabled={disabled} onClick={() => setOpen(true)}>Korrektur erfassen</button>}
+      <button className="btn btn--secondary" disabled={disabled || locked} aria-describedby={locked ? lockReasonId : undefined} onClick={() => {
+        if (component === 'OPENING') setAmount(ledger.opening_balance.replace('.', ','));
+        setOpen(true);
+      }}>Korrektur erfassen</button>
+      {locked && <p id={lockReasonId}>Die Rücklage dieses Zeitraums ist finalisiert.</p>}
     </>}
-    <Dialog open={open} onOpenChange={value => { if (!saving) setOpen(value); }}><DialogContent style={{ maxHeight: '90vh', overflowY: 'auto', width: 'calc(100% - 2rem)' }}>
+    <Dialog open={open} onOpenChange={value => { if (!saving) setOpen(value); }}><DialogContent className="reserve-correction-dialog">
       <DialogTitle>{component === 'OPENING' ? 'Anfangsbestand korrigieren' : 'Rücklagenkorrektur'}</DialogTitle>
-      <DialogDescription>Erfassen Sie eine begründete Differenz. Positive Entnahmen vermindern den Bestand; sonstige Korrekturen werden mit Vorzeichen addiert.</DialogDescription>
-      <form onSubmit={save}><fieldset disabled={saving || disabled} className="form-grid" style={{ gridTemplateColumns: 'minmax(0, 1fr)' }}>
-        <label>Art<select aria-label="Art" value={component} onChange={e => { setComponent(e.target.value as typeof component); setPayment(''); setUnit(''); setFormError(''); setCost(''); setRegister(''); }}>
+      <DialogDescription>{component === 'OPENING' ? 'Geben Sie den korrigierten Gesamtbestand ein. Die Differenz wird mit Ihrer Begründung im Rücklagenbuch festgehalten.' : 'Erfassen Sie eine begründete Differenz. Positive sonstige Korrekturen vermindern belegte Entnahmen; negative erhöhen sie.'}</DialogDescription>
+      <form noValidate onSubmit={save}><fieldset disabled={saving || disabled} className="form-grid" style={{ gridTemplateColumns: 'minmax(0, 1fr)' }}>
+        <label>Art<select aria-label="Art" value={component} onChange={e => { setComponent(e.target.value as typeof component); setAmount(e.target.value === 'OPENING' ? ledger?.opening_balance.replace('.', ',') ?? '' : ''); setPayment(''); setUnit(''); setFormError(''); setCost(''); setRegister(''); }}>
           {(['ADJUSTMENT', 'OPENING', 'CONTRIBUTION', 'WITHDRAWAL', 'FUNDING'] as const).map(kind => <option key={kind} value={kind}>{kind === 'OPENING' ? 'Anfangsbestand korrigieren' : componentLabels[kind]}</option>)}
           {ledger?.entries.some(entry => entry.kind === 'UNASSIGNED') && <option value="PAYMENT_ASSIGNMENT">Gebuchte Zuführung</option>}
         </select></label>
@@ -133,15 +155,17 @@ export function ReserveLedgerPanel({ runId, propertyId, status, onChanged, onOpe
           <label>Gebuchte Auszahlung *<select aria-label="Gebuchte Auszahlung *" required value={payment} onChange={e => setPayment(e.target.value)}><option value="">Bitte wählen</option>{sources.payments.map(p => <option key={p.id} value={p.id}>{day(p.value_date)} · {euro(p.amount)}{p.note ? ` · ${p.note}` : ''}</option>)}</select></label>
           <label>Bestätigter Kostenbeleg *<select aria-label="Bestätigter Kostenbeleg *" required value={cost} onChange={e => setCost(e.target.value)}><option value="">Bitte wählen</option>{reserveCostOptions(sources.costs, cost).map(c => <option key={c.id} value={c.id}>{c.document_number || day(c.invoice_date)} · {euro(c.gross_amount)}</option>)}</select></label>
           <label>Beschluss-Sammlung *<select aria-label="Beschluss-Sammlung *" required value={register} onChange={e => setRegister(e.target.value)}><option value="">Bitte wählen</option>{reserveResolutionOptions(sources.register, register).map(r => <option key={r.id} value={r.id}>Nr. {r.sequence_number} · {r.wording.slice(0, 120)}</option>)}</select></label>
-        </> : <p>Finanzierungsbelege werden geladen…</p> : <label>Betrag *<input required inputMode="decimal" value={amount} onChange={e => setAmount(e.target.value)} /></label>}
+        </> : <p>Finanzierungsbelege werden geladen…</p> : <label>{component === 'OPENING' ? 'Korrigierter Anfangsbestand (gesamt) *' : 'Betrag *'}<input required inputMode="decimal" value={amount} onChange={e => setAmount(e.target.value)} /></label>}
         {(component === 'WITHDRAWAL' || component === 'ADJUSTMENT') &&
           <ReserveEvidenceFields propertyId={propertyId} cost={cost} register={register} onChange={(cost, register) => { setCost(cost); setRegister(register); }} />}
-        {component === 'OPENING' && <p>Anfangsbestand korrigieren: Dies ist nur im ersten Rücklagenjahr vor der Finalisierung zulässig. Aktueller Anfangsbestand: {ledger && euro(ledger.opening_balance)}. Geben Sie hier die begründete Differenz ein. Sie wird mit Ihrer Begründung im Rücklagenbuch festgehalten.</p>}
+        {component === 'OPENING' && <><p>Anfangsbestand korrigieren: Dies ist nur im ersten Rücklagenjahr vor der Finalisierung zulässig. Aktueller Anfangsbestand: {ledger && euro(ledger.opening_balance)}.</p>
+          <p aria-live="polite">Differenz: {openingDifference === null ? 'Bitte geben Sie einen gültigen Gesamtbestand ein.' : `${cents(openingDifference) > 0n ? '+' : ''}${euro(openingDifference)}`}</p></>}
         <label>Begründung *<textarea required maxLength={2000} value={reason} onChange={e => setReason(e.target.value)} /></label>
         {formError && <p role="alert" className="error-text">{formError}</p>}
-        <div className="form-actions"><button className="btn btn--primary" disabled={component === 'FUNDING' && !sources} type="submit">{saving ? 'Speichern…' : 'Speichern'}</button>
-          <button className="btn btn--secondary" type="button" onClick={() => setOpen(false)}>Abbrechen</button></div>
-      </fieldset></form>
+      </fieldset>
+        <div className="form-actions"><button className="btn btn--primary" disabled={saving || disabled || (component === 'FUNDING' && !sources)} type="submit">{saving ? 'Speichern…' : 'Speichern'}</button>
+          <button className="btn btn--secondary" disabled={saving} type="button" onClick={() => setOpen(false)}>Abbrechen</button></div>
+      </form>
     </DialogContent></Dialog>
   </section>;
 }

@@ -62,6 +62,16 @@ Feature: Maintenance reserve ledger
     When I correct the unit contribution by 300 euros
     Then only 200 euros remain assignable and a further 300 euros is refused
 
+  Scenario: A positive adjustment only reduces existing receipt withdrawals
+    Given a WEG with a finalized reserve plan and a booked reserve contribution
+    When I correct a receipt without withdrawals by plus one euro
+    Then the adjustment is refused without increasing the reserve balance
+
+  @browser
+  Scenario: Opening correction totals and errors remain usable on desktop and mobile
+    Given a WEG with a finalized reserve plan and a booked reserve contribution
+    Then the opening correction dialog fits the viewport with an error and visible actions
+
   Scenario: Derived reserve totals cannot be attested
     Given a WEG with a finalized reserve plan and a booked reserve contribution
     When I attest a derived contribution or withdrawal total

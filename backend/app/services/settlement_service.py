@@ -668,7 +668,7 @@ class SettlementService:
             heating_advance_payments_total=original.heating_advance_payments_total,
             heating_advance_payments_source=original.heating_advance_payments_source,
             status="draft",
-            engine_version=ENGINE_VERSION,
+            engine_version=original.engine_version,
         )
         await scope.prepare_new(new_run)
         new_run = await self._runs.create(new_run)

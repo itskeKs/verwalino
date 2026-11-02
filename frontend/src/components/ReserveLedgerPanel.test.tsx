@@ -107,11 +107,12 @@ it('keeps the reason and amount after refusal and flags an overdrawn balance', a
   expect(screen.getByLabelText('Begründung *')).toHaveValue('Beleg geprüft');
 });
 
-it('shows the frozen ledger without an override action', async () => {
+it('keeps the finalized correction control disabled with its German reason', async () => {
   vi.stubGlobal('fetch', vi.fn(async () => json({ ...ledger, frozen: true })));
   render(<ReserveLedgerPanel runId="run-1" propertyId="property-1" status="finalized" onChanged={() => {}} />);
   await screen.findByText(/Finalisierter Rücklagenstand/);
-  expect(screen.queryByRole('button', { name: 'Korrektur erfassen' })).not.toBeInTheDocument();
+  expect(screen.getByRole('button', { name: 'Korrektur erfassen' })).toBeDisabled();
+  expect(screen.getByRole('button', { name: 'Korrektur erfassen' })).toHaveAccessibleDescription('Die Rücklage dieses Zeitraums ist finalisiert.');
 });
 
 it('does not call a computed draft a finalized snapshot when its ledger is frozen', async () => {
@@ -121,18 +122,36 @@ it('does not call a computed draft a finalized snapshot when its ledger is froze
   view.rerender(<ReserveLedgerPanel runId="run-1" propertyId="property-1" status="draft" refreshKey={1} onChanged={() => {}} />);
   await screen.findByText(/21\.000,00/);
   expect(screen.queryByText(/Finalisierter Rücklagenstand/)).not.toBeInTheDocument();
-  expect(screen.queryByRole('button', { name: 'Korrektur erfassen' })).not.toBeInTheDocument();
+  expect(screen.getByRole('button', { name: 'Korrektur erfassen' })).toBeDisabled();
 });
 
-it('names the opening correction and explains its audited difference', async () => {
-  vi.stubGlobal('fetch', vi.fn(async () => json(ledger)));
+it.each([['20500,00', '+500,00', '500.00'], ['19.700,00', '-300,00', '-300.00']])('asks for opening total %s and stores only the audited difference', async (total, preview, delta) => {
+  const fetchMock = vi.fn(async (_url: string, init?: RequestInit) => init?.method === 'POST' ? json({ id: 'opening-1' }, 201) : json(ledger));
+  vi.stubGlobal('fetch', fetchMock);
   render(<ReserveLedgerPanel runId="run-1" propertyId="property-1" status="draft" onChanged={() => {}} />);
   fireEvent.click(await screen.findByRole('button', { name: 'Korrektur erfassen' }));
   fireEvent.change(screen.getByLabelText('Art'), { target: { value: 'OPENING' } });
   expect(screen.getByRole('option', { name: 'Anfangsbestand korrigieren' })).toHaveValue('OPENING');
   expect(screen.getByRole('dialog')).toHaveAccessibleName('Anfangsbestand korrigieren');
-  expect(screen.getByText(/Geben Sie hier die begründete Differenz ein/)).toHaveTextContent('Anfangsbestand korrigieren');
-  expect(screen.queryByText(/Ein Import des Anfangsbestands/)).not.toBeInTheDocument();
+  const input = screen.getByLabelText('Korrigierter Anfangsbestand (gesamt) *');
+  expect(input).toHaveValue('20000,00');
+  expect(screen.getByText(/Differenz:/)).toHaveTextContent('Differenz: 0,00');
+  fireEvent.change(input, { target: { value: total } });
+  expect(screen.getByText(/Differenz:/)).toHaveTextContent(`Differenz: ${preview}`);
+  fireEvent.change(screen.getByLabelText('Begründung *'), { target: { value: 'Bankunterlagen geprüft' } });
+  fireEvent.click(screen.getByRole('button', { name: 'Speichern' }));
+  await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(expect.any(String), expect.objectContaining({ body: JSON.stringify({
+    component: 'OPENING', amount: delta, reason: 'Bankunterlagen geprüft',
+  }) })));
+});
+
+it('uses the app German message instead of native validation for empty correction inputs', async () => {
+  vi.stubGlobal('fetch', vi.fn(async (url: string) => sourceJson(url, ledger)));
+  render(<ReserveLedgerPanel runId="run-1" propertyId="property-1" status="draft" onChanged={() => {}} />);
+  fireEvent.click(await screen.findByRole('button', { name: 'Korrektur erfassen' }));
+  expect(screen.getByRole('button', { name: 'Speichern' }).closest('form')).toHaveAttribute('novalidate');
+  fireEvent.click(screen.getByRole('button', { name: 'Speichern' }));
+  expect(await screen.findByRole('alert')).toHaveTextContent('Bitte geben Sie einen Betrag mit höchstens zwei Nachkommastellen und eine Begründung ein.');
 });
 
 
@@ -176,7 +195,7 @@ it('filters funding evidence and retains selected values after sources become in
 
 
 it('requires a unit and reason, shows remaining headroom and retains inputs on refusal', async () => {
-  const message = 'Die Zuführungskorrektur darf den Rücklagenanteil des gebuchten Hausgelds der Einheit nicht überschreiten.';
+  const message = 'Sie können dieser Einheit noch höchstens 1.234,56 € als Zuführung zuordnen.';
   const fetchMock = vi.fn(async (_url: string, init?: RequestInit) => init?.method === 'POST'
     ? json({ detail: { code: 'RESERVE_CONTRIBUTION_EXCEEDS_BOOKED', message } }, 422)
     : json({ ...ledger, contribution_headroom: [{ unit_id: 'unit-1', unit_number: 'Wohnung Änne Groß mit langem Namen', remaining: '1234.56' }] }));
@@ -200,4 +219,22 @@ it('requires a unit and reason, shows remaining headroom and retains inputs on r
   expect(fetchMock).toHaveBeenCalledWith(expect.any(String), expect.objectContaining({ body: JSON.stringify({
     component: 'CONTRIBUTION', amount: '1234.57', reason: 'Hausgeld geprüft', unit_id: 'unit-1',
   }) }));
+});
+
+it.each([
+  ['ADJUSTMENT', 'RESERVE_ADJUSTMENT_EXCEEDS_WITHDRAWALS', 'Sie können die Entnahmen dieses Kostenbelegs noch um höchstens 1.000,00 € vermindern.'],
+  ['WITHDRAWAL', 'RESERVE_PAYOUT_EVIDENCE_REQUIRED', 'Sie können diesem Kostenbeleg noch höchstens 300,00 € als Rücklagenentnahme zuordnen.'],
+])('shows the German allowed amount for %s refusals and keeps the evidence', async (component, code, message) => {
+  vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => init?.method === 'POST'
+    ? json({ detail: { code, message } }, 422) : sourceJson(url, ledger)));
+  render(<ReserveLedgerPanel runId="run-1" propertyId="property-1" status="draft" onChanged={() => {}} />);
+  fireEvent.click(await screen.findByRole('button', { name: 'Korrektur erfassen' }));
+  fireEvent.change(screen.getByLabelText('Art'), { target: { value: component } });
+  await chooseEvidence();
+  fireEvent.change(screen.getByLabelText('Betrag *'), { target: { value: '1000,01' } });
+  fireEvent.change(screen.getByLabelText('Begründung *'), { target: { value: 'Belegte Entnahmen geprüft' } });
+  fireEvent.click(screen.getByRole('button', { name: 'Speichern' }));
+  expect(await screen.findByRole('alert')).toHaveTextContent(message);
+  expect(screen.getByLabelText('Bestätigter Kostenbeleg *')).toHaveValue('cost-1');
+  expect(screen.getByLabelText('Beschluss-Sammlung *')).toHaveValue('register-1');
 });

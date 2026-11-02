@@ -190,7 +190,7 @@ def upgrade():
         WHERE p.organization_id=org AND COALESCE(p.reserve_cost_entry_id,e.cost_entry_id) IN (SELECT id FROM cost_chain)
           AND p.status='booked' AND p.reverses_id IS NULL AND p.reversed_by_id IS NULL
           AND p.id IS DISTINCT FROM excluded_payment),0)
-        + COALESCE((SELECT sum(CASE WHEN e.component='ADJUSTMENT' THEN abs(e.amount) ELSE e.amount END)
+        + COALESCE((SELECT sum(CASE WHEN e.component='ADJUSTMENT' THEN -e.amount ELSE e.amount END)
           FROM public.reserve_ledger_entry e WHERE e.organization_id=org AND e.cost_entry_id IN (SELECT id FROM cost_chain)
             AND e.payment_id IS NULL AND e.component IN ('WITHDRAWAL','ADJUSTMENT')),0)
     $$;
@@ -412,8 +412,13 @@ def upgrade():
           IF NEW.component='WITHDRAWAL' AND NEW.amount<=0 THEN
             RAISE EXCEPTION 'Reserve cash correction must be positive'
               USING ERRCODE='23514',CONSTRAINT='reserve_amount_invalid'; END IF;
-          IF NEW.component IN ('WITHDRAWAL','ADJUSTMENT')
-            AND abs(NEW.amount)+public.reserve_funded_amount(NEW.organization_id,cost.id,NULL)>cost.gross_amount THEN
+          IF NEW.component='ADJUSTMENT' AND NEW.amount>0
+            AND NEW.amount>public.reserve_funded_amount(NEW.organization_id,cost.id,NULL) THEN
+            RAISE EXCEPTION 'Reserve adjustment exceeds active withdrawals'
+              USING ERRCODE='23514',CONSTRAINT='reserve_adjustment_exceeds_withdrawals'; END IF;
+          IF (NEW.component='WITHDRAWAL' OR (NEW.component='ADJUSTMENT' AND NEW.amount<0))
+            AND (CASE WHEN NEW.component='ADJUSTMENT' THEN -NEW.amount ELSE NEW.amount END)
+              +public.reserve_funded_amount(NEW.organization_id,cost.id,NULL)>cost.gross_amount THEN
             RAISE EXCEPTION 'Active reserve withdrawals exceed confirmed cost amount'
               USING ERRCODE='23514',CONSTRAINT='reserve_payout_evidence_required'; END IF;
         END IF;
@@ -496,6 +501,12 @@ def upgrade():
         IF NEW.reserve_cost_entry_id IS DISTINCT FROM OLD.reserve_cost_entry_id
           OR NEW.reserve_register_entry_id IS DISTINCT FROM OLD.reserve_register_entry_id THEN
           RAISE EXCEPTION 'GoBD: booked reserve evidence is immutable'; END IF;
+        IF OLD.payment_type='RUECKLAGENENTNAHME' AND OLD.reversed_by_id IS NULL AND NEW.reversed_by_id IS NOT NULL
+          AND public.reserve_funded_amount(OLD.organization_id,COALESCE(OLD.reserve_cost_entry_id,
+            (SELECT e.cost_entry_id FROM public.reserve_ledger_entry e WHERE e.organization_id=OLD.organization_id
+              AND e.payment_id=OLD.id AND e.component='FUNDING')),OLD.id)<0 THEN
+          RAISE EXCEPTION 'Reserve adjustment exceeds active withdrawals'
+            USING ERRCODE='23514',CONSTRAINT='reserve_adjustment_exceeds_withdrawals'; END IF;
         RETURN NEW;
       END IF;
       IF NEW.payment_type='RUECKLAGENENTNAHME' AND NEW.status='booked' AND NEW.reverses_id IS NULL THEN
