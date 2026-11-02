@@ -150,7 +150,7 @@ def upgrade():
       FOREIGN KEY(organization_id,property_id) REFERENCES property(organization_id,id),
       FOREIGN KEY(organization_id,settlement_run_id) REFERENCES settlement_run(organization_id,id),
       FOREIGN KEY(organization_id,payment_id) REFERENCES payment(organization_id,id),
-      FOREIGN KEY(organization_id,unit_id) REFERENCES unit(organization_id,id),
+      CONSTRAINT fk_reserve_entry_unit FOREIGN KEY(organization_id,property_id,unit_id) REFERENCES unit(organization_id,property_id,id),
       FOREIGN KEY(organization_id,cost_entry_id) REFERENCES cost_entry(organization_id,id),
       FOREIGN KEY(organization_id,register_entry_id) REFERENCES resolution_register_entry(organization_id,id),
       CHECK((unit_id IS NULL OR (component='CONTRIBUTION' AND payment_id IS NULL)) AND ((component='FUNDING' AND payment_id IS NOT NULL AND cost_entry_id IS NOT NULL AND register_entry_id IS NOT NULL AND amount=0)

@@ -792,7 +792,7 @@ allocation and WEMoG settlement-balance calculation; it changes neither.
   unit correction, draft computation/finalization refuses the unsupported contribution
   with the same cap code and a message naming the unit. The reversal and retained
   correction history remain intact.
-  A composite organization/unit foreign key and the
+  A composite organization/property/unit foreign key (`fk_reserve_entry_unit`) and the
   trigger protect direct writes. Free contribution corrections, including the
   former cost-and-resolution path, are refused. Legacy balances enter only through
   the existing first-year opening import.

@@ -2142,6 +2142,29 @@ async def test_database_enforces_unit_contribution_cap_as_app_rw(client_a_admin,
 
 
 @pytest.mark.asyncio
+async def test_unit_contribution_foreign_key_requires_the_entry_property(client_a_admin, seed_data, migrator_session):
+    w = await unit_correction_world(client_a_admin, seed_data)
+    other = _seed_weg(seed_data)
+    await migrator_session.execute(text("SELECT set_config('app.current_org_id',:org,true),set_config('app.current_user_id',:actor,true)"),
+        {'org': str(seed_data['org_a_id']), 'actor': str(seed_data['user_a_admin_id'])})
+    point = await migrator_session.begin_nested()
+    try:
+        # Isolate the FK from the earlier ledger guard; rollback restores the trigger.
+        await migrator_session.execute(text('ALTER TABLE reserve_ledger_entry DISABLE TRIGGER guard_reserve_ledger'))
+        with pytest.raises(DBAPIError) as refused:
+            async with migrator_session.begin_nested():
+                await migrator_session.execute(text("""INSERT INTO reserve_ledger_entry
+                    (organization_id,property_id,settlement_run_id,entry_date,component,amount,reason,created_by,unit_id)
+                    VALUES (:org,:property,:run,'2025-12-31','CONTRIBUTION',1,'Unit of another property',:actor,:unit)"""),
+                    {'org': seed_data['org_a_id'], 'property': w['property'], 'run': w['run'],
+                     'actor': seed_data['user_a_admin_id'], 'unit': other['u1']})
+        assert refused.value.orig.sqlstate == '23503'
+        assert refused.value.orig.__cause__.constraint_name == 'fk_reserve_entry_unit'
+    finally:
+        await point.rollback()
+
+
+@pytest.mark.asyncio
 async def test_random_unit_cash_ratios_use_the_canonical_sql_and_exact_reversals(migrator_session):
     import json
     from fractions import Fraction

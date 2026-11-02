@@ -16,8 +16,12 @@ class ReserveLedgerEntry(Base, UUIDPrimaryKeyMixin):
         ['organization_id', column], [f'{target}.organization_id', f'{target}.id'],
         ondelete='RESTRICT') for column, target in (
             ('property_id', 'property'), ('settlement_run_id', 'settlement_run'),
-            ('payment_id', 'payment'), ('unit_id', 'unit'), ('cost_entry_id', 'cost_entry'),
-            ('register_entry_id', 'resolution_register_entry')))
+            ('payment_id', 'payment'), ('cost_entry_id', 'cost_entry'),
+            ('register_entry_id', 'resolution_register_entry'))) + (
+        ForeignKeyConstraint(
+            ['organization_id', 'property_id', 'unit_id'],
+            ['unit.organization_id', 'unit.property_id', 'unit.id'],
+            name='fk_reserve_entry_unit', ondelete='RESTRICT'),)
 
     organization_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey('organization.id'), nullable=False)
     property_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
