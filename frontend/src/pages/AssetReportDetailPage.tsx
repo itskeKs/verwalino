@@ -160,7 +160,7 @@ export function AssetReportDetailPage() {
       </div>
 
       <ReserveLedgerPanel key={`ledger-${run.id}`} runId={run.id} propertyId={run.property_id} status={run.status} disabled={busy} refreshKey={ledgerRefresh} onOpeningLoaded={setCurrentOpening}
-        onChanged={() => { setLedgerVersion(v => v + 1); setRun({ ...run, lines: [] }); }} />
+        onChanged={() => { setLedgerVersion(v => v + 1); void run_(() => getWegRun(run.id)); }} />
       {isDraft && (
         <div className="card" style={{ marginBottom: "1rem" }}>
           <h2>Vermögenswerte erfassen</h2>

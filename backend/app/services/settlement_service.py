@@ -620,7 +620,7 @@ class SettlementService:
             advance_payments_total=original.advance_payments_total,
             advance_payments_source=original.advance_payments_source,
             status="draft",
-            engine_version=ENGINE_VERSION,
+            engine_version=original.engine_version,
         )
         await scope.prepare_new(new_run)
         new_run = await self._runs.create(new_run)

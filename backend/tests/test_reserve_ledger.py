@@ -1593,7 +1593,7 @@ async def test_whole_property_weg_scopes_share_the_first_period_rule(migrator_se
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize('component,amount', [('WITHDRAWAL', '1000000.00'), ('ADJUSTMENT', '50000.00'),
+@pytest.mark.parametrize('component,amount', [('WITHDRAWAL', '1000000.00'),
                                             ('ADJUSTMENT', '-50000.00')])
 async def test_typed_correction_cannot_exceed_confirmed_cost(client_a_admin, seed_data, component, amount):
     api = client_a_admin
@@ -1646,7 +1646,7 @@ async def test_booking_includes_typed_corrections_in_cost_cap(client_a_admin, se
     w = await reserve_world(api, seed_data)
     evidence = await reserve_evidence(api, w)
     response = await api.post(f"/api/weg-settlements/{w['run']}/reserve-ledger/overrides", json={
-        'component': 'ADJUSTMENT', 'amount': '3000.00', 'reason': 'Documented correction',
+        'component': 'ADJUSTMENT', 'amount': '-3000.00', 'reason': 'Documented correction',
         **{k.removeprefix('reserve_'): v for k, v in evidence.items()}})
     assert response.status_code == 201, response.text
     draft = await api.post('/api/payments', json={'bank_account_id': w['bank_giro'], 'direction': 'OUT',
@@ -1670,7 +1670,7 @@ async def test_booking_includes_typed_corrections_in_cost_cap(client_a_admin, se
     ('sign', 'WITHDRAWAL', '-1.00', 'reserve_amount_invalid'),
     ('cap', 'ADJUSTMENT', '-50000.00', 'reserve_payout_evidence_required'),
     ('payout', 'WITHDRAWAL', '1200.00', 'reserve_payout_evidence_required'),
-    ('correction', 'ADJUSTMENT', '1200.00', 'reserve_payout_evidence_required'),
+    ('correction', 'ADJUSTMENT', '-1200.00', 'reserve_payout_evidence_required'),
     ('valid', 'WITHDRAWAL', '1000.00', None),
 ])
 async def test_database_mirrors_opening_and_correction_limits(client_a_admin, seed_data, migrator_session,
@@ -1921,9 +1921,212 @@ async def test_unit_contribution_corrections_consume_only_remaining_booked_headr
     refused = await api.post(path + '/overrides', json=body)
     assert refused.status_code == 422, refused.text
     assert refused.json()['detail']['code'] == 'RESERVE_CONTRIBUTION_EXCEEDS_BOOKED'
+    assert refused.json()['detail']['message'] == 'Sie können dieser Einheit noch höchstens 200,00 € als Zuführung zuordnen.'
     final = await api.post(path + '/overrides', json={**body, 'amount': '200.00'})
     assert final.status_code == 201, final.text
     assert (await api.get(path)).json()['contributions_total'] == '600.00'
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('paid,adjusted,requested,allowed', [
+    ('0.00', None, '1.00', '0,00'), ('1200.00', '200.00', '1000.01', '1.000,00'),
+])
+async def test_positive_adjustment_cannot_exceed_active_withdrawals(
+        client_a_admin, seed_data, app_rw_session, paid, adjusted, requested, allowed):
+    api = client_a_admin
+    w = await reserve_world(api, seed_data)
+    sources = await reserve_evidence(api, w)
+    evidence = {k.removeprefix('reserve_'): v for k, v in sources.items()}
+    path = f"/api/weg-settlements/{w['run']}/reserve-ledger"
+    if Decimal(paid):
+        await payment(api, w, paid, kind='RUECKLAGENENTNAHME', direction='OUT', evidence=sources)
+    if adjusted:
+        accepted = await api.post(path + '/overrides', json={
+            'component': 'ADJUSTMENT', 'amount': adjusted, 'reason': 'Reduce evidenced withdrawal', **evidence})
+        assert accepted.status_code == 201, accepted.text
+    before = (await api.get(path)).json()
+    refused = await api.post(path + '/overrides', json={
+        'component': 'ADJUSTMENT', 'amount': requested, 'reason': 'Cannot create free contributions', **evidence})
+    assert refused.status_code == 422, refused.text
+    assert refused.json()['detail'] == {'code': 'RESERVE_ADJUSTMENT_EXCEEDS_WITHDRAWALS',
+        'message': f'Sie können die Entnahmen dieses Kostenbelegs noch um höchstens {allowed} € vermindern.'}
+    assert (await api.get(path)).json() == before
+    await app_rw_session.execute(text("SELECT set_config('app.current_user_id',:actor,true), set_config('app.current_org_id',:org,true)"),
+        {'actor': str(seed_data['user_a_admin_id']), 'org': str(seed_data['org_a_id'])})
+    with pytest.raises(DBAPIError) as refusal:
+        async with app_rw_session.begin_nested():
+            await app_rw_session.execute(text("""INSERT INTO reserve_ledger_entry
+                (organization_id,property_id,settlement_run_id,entry_date,component,amount,reason,cost_entry_id,register_entry_id,created_by)
+                VALUES (:org,:property,:run,'2025-02-01','ADJUSTMENT',:amount,'Direct correction',:cost,:register,:actor)"""),
+                {'org': seed_data['org_a_id'], 'property': w['property'], 'run': w['run'],
+                 'amount': Decimal(requested), 'cost': evidence['cost_entry_id'],
+                 'register': evidence['register_entry_id'], 'actor': seed_data['user_a_admin_id']})
+    assert refusal.value.orig.sqlstate == '23514'
+    assert refusal.value.orig.__cause__.constraint_name == 'reserve_adjustment_exceeds_withdrawals'
+
+
+@pytest.mark.asyncio
+async def test_adjustment_net_withdrawals_follow_the_receipt_correction_chain(client_a_admin, seed_data, app_rw_session):
+    from uuid import UUID
+    from app.repositories.reserve_ledger_repo import ReserveLedgerRepository
+    api = client_a_admin
+    w = await reserve_world(api, seed_data)
+    sources = await reserve_evidence(api, w)
+    await payment(api, w, '1200.00', kind='RUECKLAGENENTNAHME', direction='OUT', evidence=sources)
+    corrected = await api.post(f"/api/cost-entries/{w['ce_garten']}/correction", json={'document_number': 'RE-corrected'})
+    assert corrected.status_code == 201, corrected.text
+    current = corrected.json()['id']
+    assert (await api.post(f'/api/cost-entries/{current}/confirm')).status_code == 200
+    path = f"/api/weg-settlements/{w['run']}/reserve-ledger/overrides"
+    for component, amount in [('WITHDRAWAL', '100.00'), ('ADJUSTMENT', '-50.00'), ('ADJUSTMENT', '200.00')]:
+        accepted = await api.post(path, json={'component': component, 'amount': amount, 'reason': 'Receipt chain correction',
+            'cost_entry_id': current, 'register_entry_id': sources['reserve_register_entry_id']})
+        assert accepted.status_code == 201, accepted.text
+    await app_rw_session.execute(text("SELECT set_config('app.current_user_id',:actor,true), set_config('app.current_org_id',:org,true)"),
+        {'actor': str(seed_data['user_a_admin_id']), 'org': str(seed_data['org_a_id'])})
+    repo = ReserveLedgerRepository(app_rw_session, seed_data['org_a_id'])
+    for receipt in (w['ce_garten'], current):
+        assert await repo.funded_amount(UUID(receipt)) == Decimal('1150.00')
+    refused = await api.post(path, json={'component': 'ADJUSTMENT', 'amount': '1150.01', 'reason': 'One cent too much',
+        'cost_entry_id': current, 'register_entry_id': sources['reserve_register_entry_id']})
+    assert refused.status_code == 422, refused.text
+    accepted = await api.post(path, json={'component': 'ADJUSTMENT', 'amount': '1150.00', 'reason': 'Reduce net withdrawals to zero',
+        'cost_entry_id': current, 'register_entry_id': sources['reserve_register_entry_id']})
+    assert accepted.status_code == 201, accepted.text
+
+
+@pytest.mark.asyncio
+async def test_positive_adjustment_can_reduce_a_receipt_whose_corrected_gross_is_lower(client_a_admin, seed_data):
+    api = client_a_admin
+    w = await reserve_world(api, seed_data)
+    sources = await reserve_evidence(api, w)
+    await payment(api, w, '1200.00', kind='RUECKLAGENENTNAHME', direction='OUT', evidence=sources)
+    corrected = await api.post(f"/api/cost-entries/{w['ce_garten']}/correction", json={'gross_amount': '500.00'})
+    assert corrected.status_code == 201, corrected.text
+    current = corrected.json()['id']
+    assert (await api.post(f'/api/cost-entries/{current}/confirm')).status_code == 200
+    response = await api.post(f"/api/weg-settlements/{w['run']}/reserve-ledger/overrides", json={
+        'component': 'ADJUSTMENT', 'amount': '200.00', 'reason': 'Reduce retained withdrawal',
+        'cost_entry_id': current, 'register_entry_id': sources['reserve_register_entry_id']})
+    assert response.status_code == 201, response.text
+
+
+@pytest.mark.asyncio
+async def test_storno_cannot_make_receipt_net_withdrawals_negative_after_adjustment(client_a_admin, seed_data, migrator_session):
+    api = client_a_admin
+    w = await reserve_world(api, seed_data)
+    sources = await reserve_evidence(api, w)
+    cash = await payment(api, w, '1200.00', kind='RUECKLAGENENTNAHME', direction='OUT', evidence=sources)
+    response = await api.post(f"/api/weg-settlements/{w['run']}/reserve-ledger/overrides", json={
+        'component': 'ADJUSTMENT', 'amount': '200.00', 'reason': 'Reduce withdrawal',
+        **{k.removeprefix('reserve_'): v for k, v in sources.items()}})
+    assert response.status_code == 201, response.text
+    refused = await api.post(f'/api/payments/{cash}/reverse')
+    assert refused.status_code == 422, refused.text
+    assert refused.json()['detail']['code'] == 'RESERVE_ADJUSTMENT_EXCEEDS_WITHDRAWALS'
+    assert 'höchstens 1.000,00 €' in refused.json()['detail']['message']
+    with pytest.raises(DBAPIError) as refusal:
+        async with migrator_session.begin_nested():
+            await migrator_session.execute(text('UPDATE payment SET reversed_by_id=id WHERE id=CAST(:id AS uuid)'), {'id': cash})
+    assert refusal.value.orig.sqlstate == '23514'
+    assert refusal.value.orig.__cause__.constraint_name == 'reserve_adjustment_exceeds_withdrawals'
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('component', ['WITHDRAWAL', 'ADJUSTMENT', 'PAYOUT'])
+async def test_withdrawal_cap_message_names_the_remaining_cost(client_a_admin, seed_data, component):
+    api = client_a_admin
+    w = await reserve_world(api, seed_data)
+    sources = await reserve_evidence(api, w)
+    await payment(api, w, '3700.00', kind='RUECKLAGENENTNAHME', direction='OUT', evidence=sources)
+    if component == 'PAYOUT':
+        draft = await api.post('/api/payments', json={'bank_account_id': w['bank_giro'], 'direction': 'OUT',
+            'amount': '300.01', 'value_date': '2025-02-01', 'payment_type': 'RUECKLAGENENTNAHME', **sources})
+        assert draft.status_code == 201, draft.text
+        refused = await api.post(f"/api/payments/{draft.json()['id']}/book")
+    else:
+        refused = await api.post(f"/api/weg-settlements/{w['run']}/reserve-ledger/overrides", json={
+            'component': component, 'amount': '-300.01' if component == 'ADJUSTMENT' else '300.01',
+            'reason': 'Exceeds remaining receipt cap', **{k.removeprefix('reserve_'): v for k, v in sources.items()}})
+    assert refused.status_code == 422, refused.text
+    assert refused.json()['detail']['message'] == 'Sie können diesem Kostenbeleg noch höchstens 300,00 € als Rücklagenentnahme zuordnen.'
+
+
+@pytest.mark.asyncio
+async def test_funding_cap_refusal_message_uses_the_shared_remaining_receipt_amount(client_a_admin, seed_data, monkeypatch):
+    from app.repositories.reserve_ledger_repo import ReserveLedgerRepository
+    api = client_a_admin
+    w = await reserve_world(api, seed_data)
+    sources = await reserve_evidence(api, w)
+    cash = await payment(api, w, '1200.00', kind='RUECKLAGENENTNAHME', direction='OUT', evidence=sources)
+    original = ReserveLedgerRepository.funding_sources
+    async def legacy_sources(self, *args):
+        payment, cost, register = await original(self, *args)
+        # Model the retained legacy payout, without changing its stored evidence.
+        payment.__dict__['reserve_cost_entry_id'] = None
+        payment.__dict__['reserve_register_entry_id'] = None
+        cost.__dict__['gross_amount'] = Decimal('1000.00')
+        return payment, cost, register
+    monkeypatch.setattr(ReserveLedgerRepository, 'funding_sources', legacy_sources)
+    response = await api.post(f"/api/weg-settlements/{w['run']}/reserve-ledger/overrides", json={
+        'component': 'FUNDING', 'amount': '0.00', 'reason': 'Link retained payout', 'payment_id': cash,
+        **{k.removeprefix('reserve_'): v for k, v in sources.items()}})
+    assert response.status_code == 422, response.text
+    assert response.json()['detail']['message'] == 'Sie können diesem Kostenbeleg noch höchstens 1.000,00 € als Rücklagenentnahme zuordnen.'
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('family', ['', '/asset-reports'])
+async def test_correction_draft_retains_superseded_engine_version_until_computed(client_a_admin, seed_data, family, monkeypatch):
+    from app.services import weg_settlement_service
+    api = client_a_admin
+    w = await reserve_world(api, seed_data)
+    if family:
+        created = await api.post('/api/weg-settlements/asset-reports', json={'property_id': w['property'],
+            'period_start': '2025-01-01', 'period_end': '2025-12-31'})
+        assert created.status_code == 201, created.text
+        w['run'] = created.json()['id']
+        values = {'bank_balances': [{'bank_account_id': w[key], 'label': key, 'account_type': kind, 'balance': '0.00'}
+            for key, kind in [('bank_giro', 'LAUFEND'), ('bank_ruecklage', 'RUECKLAGE')]], 'receivables': [], 'payables': []}
+    else:
+        values = paid(w)
+    monkeypatch.setattr(weg_settlement_service, 'ENGINE_VERSION', 'm4.1.0')
+    await attest_fixture(api, 'settlement', w['run'], values)
+    original = await api.post(f"/api/weg-settlements{family}/{w['run']}/finalize", json=values)
+    assert original.status_code == 200, original.text
+    monkeypatch.setattr(weg_settlement_service, 'ENGINE_VERSION', 'm4.2.0')
+    corrected = await api.post(f"/api/settlements/{w['run']}/correction")
+    assert corrected.status_code == 201, corrected.text
+    assert corrected.json()['engine_version'] == original.json()['engine_version'] == 'm4.1.0'
+    current = corrected.json()['id']
+    await attest_fixture(api, 'settlement', current, values)
+    computed = await api.post(f'/api/weg-settlements{family}/{current}/compute', json=values)
+    assert computed.status_code == 200, computed.text
+    assert computed.json()['engine_version'] == 'm4.2.0'
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('family', ['', '/asset-reports'])
+async def test_correction_invalidates_stored_draft_computation_before_refetch(client_a_admin, seed_data, family):
+    api = client_a_admin
+    w = await reserve_world(api, seed_data)
+    if family:
+        created = await api.post('/api/weg-settlements/asset-reports', json={'property_id': w['property'],
+            'period_start': '2025-01-01', 'period_end': '2025-12-31'})
+        w['run'] = created.json()['id']
+        values = {'bank_balances': [{'bank_account_id': w[key], 'label': key, 'account_type': kind, 'balance': '0.00'}
+            for key, kind in [('bank_giro', 'LAUFEND'), ('bank_ruecklage', 'RUECKLAGE')]], 'receivables': [], 'payables': []}
+    else:
+        values = paid(w)
+    await attest_fixture(api, 'settlement', w['run'], values)
+    computed = await api.post(f"/api/weg-settlements{family}/{w['run']}/compute", json=values)
+    assert computed.status_code == 200 and computed.json()['lines'], computed.text
+    response = await api.post(f"/api/weg-settlements/{w['run']}/reserve-ledger/overrides", json={
+        'component': 'OPENING', 'amount': '500.00', 'reason': 'Correct after computing'})
+    assert response.status_code == 201, response.text
+    refreshed = (await api.get(f"/api/weg-settlements/{w['run']}")).json()
+    assert refreshed['lines'] == []
+    assert refreshed['total_cost'] is None and refreshed['balance'] is None
 
 
 @pytest.mark.asyncio

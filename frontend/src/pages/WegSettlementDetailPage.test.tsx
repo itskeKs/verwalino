@@ -178,3 +178,18 @@ it('does not offer editable derived reserve totals', async () => {
   await screen.findByLabelText('Rücklagen-Anfangsbestand');
   expect(screen.queryByLabelText('Rücklagen-Entnahmen (Jahr)')).not.toBeInTheDocument();
 });
+
+it('refetches the computation table after a reserve correction', async () => {
+  const run = { ...draft(), lines: [frozenLine('old', seller, '181.00')] };
+  const fetchMock = install([run]); show();
+  await screen.findByText('Festgeschriebener Anteil old');
+  run.lines = [];
+  vi.spyOn(endpoints, 'addReserveOverride').mockResolvedValue({ id: 'correction' });
+  fireEvent.click(screen.getByRole('button', { name: 'Korrektur erfassen' }));
+  fireEvent.change(screen.getByLabelText('Art'), { target: { value: 'OPENING' } });
+  fireEvent.change(screen.getByLabelText(/^(Betrag|Korrigierter Anfangsbestand)/), { target: { value: '500,00' } });
+  fireEvent.change(screen.getByLabelText('Begründung *'), { target: { value: 'Bankunterlagen geprüft' } });
+  fireEvent.click(screen.getByRole('button', { name: 'Speichern' }));
+  await waitFor(() => expect(fetchMock.mock.calls.filter(([url]) => url === `/api/weg-settlements/${runId}`)).toHaveLength(2));
+  expect(screen.queryByText('Festgeschriebener Anteil old')).not.toBeInTheDocument();
+});

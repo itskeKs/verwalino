@@ -181,7 +181,7 @@ export function WegSettlementDetailPage() {
       </div>
 
       <ReserveLedgerPanel key={run.id} runId={run.id} propertyId={run.property_id} status={run.status} disabled={busy || planBusy} refreshKey={ledgerRefresh} onOpeningLoaded={setCurrentOpening}
-        onChanged={() => { setLedgerVersion(v => v + 1); setRun({ ...run, lines: [], total_cost: null, balance: null }); }} />
+        onChanged={() => { setLedgerVersion(v => v + 1); void run_(() => getWegRun(run.id)); }} />
       {isDraft && (
         <fieldset disabled={busy || planBusy} className="card" style={{ marginBottom: "1rem" }}>
           <h2>Berechnung & begründete Rücklagenwerte</h2>

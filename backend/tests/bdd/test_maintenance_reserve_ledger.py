@@ -10,6 +10,98 @@ from tests.financial_coverage_helpers import attest_fixture
 scenarios(str(Path(__file__).resolve().parents[3] / 'features/maintenance_reserve_ledger.feature'))
 
 
+@when('I correct a receipt without withdrawals by plus one euro')
+def positive_adjustment(world, reserve_scenario):
+    from tests.financial_coverage_helpers import reserve_evidence
+    w = reserve_scenario
+    category = next(row for row in world.act('GET', '/api/cost-categories').json() if row['code'] == 'GARTENPFLEGE')
+    cost = create(world, '/api/cost-entries', {'property_id': w['property'], 'accounting_scope_id': w['scope'],
+        'cost_category_id': category['id'], 'cost_category_plan_version': category['plan_version'],
+        'document_number': 'RE-without-payout', 'invoice_date': '2025-02-01',
+        'service_period_from': '2025-01-01', 'service_period_to': '2025-12-31',
+        'gross_amount': '1200.00', 'tenant_apportionable': 'UMLAGEFAEHIG', 'source': 'MANUAL'})
+    assert world.act('POST', f"/api/cost-entries/{cost['id']}/confirm").status_code == 200
+    w['ce_garten'] = cost['id']
+    evidence = world.run(reserve_evidence(world.actor, w))
+    w['adjustment_refusal'] = world.act('POST', f"/api/weg-settlements/{w['run']}/reserve-ledger/overrides", json={
+        'component': 'ADJUSTMENT', 'amount': '1.00', 'reason': 'Receipt has no withdrawals',
+        **{key.removeprefix('reserve_'): value for key, value in evidence.items()}})
+
+
+@then('the adjustment is refused without increasing the reserve balance')
+def positive_adjustment_refused(world, reserve_scenario):
+    w = reserve_scenario
+    refused = w['adjustment_refusal']
+    assert refused.status_code == 422, refused.text
+    assert refused.json()['detail']['code'] == 'RESERVE_ADJUSTMENT_EXCEEDS_WITHDRAWALS'
+    ledger = world.act('GET', f"/api/weg-settlements/{w['run']}/reserve-ledger").json()
+    assert ledger['closing_balance'] == '6000.00'
+
+
+@then('the opening correction dialog fits the viewport with an error and visible actions')
+def opening_correction_viewport(world, reserve_scenario, browser_world, tmp_path):
+    import os
+    from playwright.async_api import expect
+    w = reserve_scenario
+    directory = Path(__file__).resolve().parents[3] / 'docs/assets/reserve-ledger' if os.environ.get('VERWALINO_CAPTURE_DESIGN') == '1' else tmp_path
+    created = world.act('POST', f"/api/weg-settlements/{w['run']}/reserve-ledger/overrides", json={
+        'component': 'OPENING', 'amount': '5000.00', 'reason': 'Bank-confirmed opening'})
+    assert created.status_code == 201, created.text
+    report = create(world, '/api/weg-settlements/asset-reports', {'property_id': w['property'], 'accounting_scope_id': w['scope'],
+        'period_start': '2025-01-01', 'period_end': '2025-12-31'})
+
+    async def inspect():
+        page = browser_world.page
+        errors = []
+        page.on('pageerror', lambda error: errors.append(str(error)))
+        page.on('console', lambda message: errors.append(message.text) if message.type == 'error' else None)
+        for kind, route in [('weg', f"/weg-abrechnungen/{w['run']}"), ('asset', f"/vermoegensberichte/{report['id']}")]:
+            for width in (1280, 360):
+                await page.set_viewport_size({'width': width, 'height': 800})
+                await browser_world.visit(route)
+                assert page.url.endswith(route) and await page.title()
+                await page.get_by_role('button', name='Korrektur erfassen', exact=True).click()
+                await page.get_by_label('Art', exact=True).select_option('OPENING')
+                amount = page.get_by_role('dialog').locator('input')
+                await expect(amount).to_have_value('5000,00')
+                await amount.fill('5500,00')
+                await expect(page.get_by_text('Differenz:', exact=False)).to_contain_text('+500,00')
+                await page.get_by_label('Begründung *', exact=True).fill('Anfangsbestand anhand vollständiger Bankunterlagen berichtigt')
+                await page.screenshot(path=str(directory / f'round16-{kind}-opening-after-{width}.png'), animations='disabled')
+                if width == 360:
+                    await amount.fill('ungültig')
+                    await page.get_by_role('button', name='Speichern', exact=True).click()
+                    await expect(page.get_by_role('dialog').get_by_role('alert')).to_be_visible()
+                    await page.screenshot(path=str(directory / f'round16-{kind}-error-after-{width}.png'), animations='disabled')
+                    await expect(page.get_by_role('button', name='Speichern', exact=True)).to_be_in_viewport()
+                    await expect(page.get_by_role('button', name='Abbrechen', exact=True)).to_be_in_viewport()
+                    dialog = page.get_by_role('dialog')
+                    assert await dialog.evaluate('(el) => el.scrollHeight <= el.clientHeight')
+                    assert await dialog.locator('form').evaluate('(el) => el.noValidate')
+                    close = await page.get_by_role('button', name='Schließen', exact=True).bounding_box()
+                    assert close['width'] >= 44 and close['height'] >= 44, close
+                assert await page.evaluate('document.documentElement.scrollWidth <= window.innerWidth')
+                assert await page.locator('vite-error-overlay').count() == 0
+                await page.get_by_role('button', name='Abbrechen', exact=True).click()
+        await page.get_by_role('button', name='Korrektur erfassen', exact=True).click()
+        await page.get_by_label('Art', exact=True).select_option('WITHDRAWAL')
+        await page.get_by_label('Betrag *', exact=True).fill('1200,00')
+        await page.get_by_label('Begründung *').fill('Belegte Entnahmekorrektur anhand vollständiger Bankunterlagen geprüft')
+        await page.get_by_role('button', name='Speichern', exact=True).click()
+        refusal = page.get_by_role('dialog').get_by_role('alert')
+        await expect(refusal).to_have_text('Bitte verknüpfen Sie einen bestätigten Kostenbeleg und einen Beschluss aus der Beschluss-Sammlung.')
+        await refusal.scroll_into_view_if_needed()
+        await expect(page.get_by_role('button', name='Speichern', exact=True)).to_be_in_viewport()
+        await expect(page.get_by_role('button', name='Abbrechen', exact=True)).to_be_in_viewport()
+        fields = page.get_by_role('dialog').locator('fieldset')
+        assert await fields.evaluate('(el) => el.scrollHeight > el.clientHeight')
+        await page.screenshot(path=str(directory / 'round16-withdrawal-error-after-360.png'), animations='disabled')
+        await page.get_by_label('Art', exact=True).scroll_into_view_if_needed()
+        await expect(page.get_by_role('button', name='Speichern', exact=True)).to_be_in_viewport()
+        assert not errors, errors
+    browser_world.run(inspect())
+
+
 def imported_payout(world, w):
     statement = ('Buchungstag;Wertstellung;Betrag;Name;IBAN;Verwendungszweck;Währung\n'
         '02.02.2025;03.02.2025;-1200,00;Gartenservice;;Reparatur;EUR\n').encode()
@@ -593,7 +685,7 @@ def unit_correction_form(world, reserve_scenario, browser_world, tmp_path):
         await page.get_by_label('Betrag *', exact=True).fill('500,01')
         await page.get_by_label('Begründung *', exact=True).fill('Gebuchtes Hausgeld der Einheit anhand der Bankunterlagen geprüft')
         await page.get_by_role('button', name='Speichern', exact=True).click()
-        await expect(page.get_by_role('alert').last).to_have_text('Die Zuführungskorrektur darf den Rücklagenanteil des gebuchten Hausgelds der Einheit nicht überschreiten.')
+        await expect(page.get_by_role('alert').last).to_have_text('Sie können dieser Einheit noch höchstens 500,00 € als Zuführung zuordnen.')
         await expect(page.get_by_label('Betrag *', exact=True)).to_have_value('500,01')
         for width in (1280, 360):
             await page.set_viewport_size({'width': width, 'height': 1000})

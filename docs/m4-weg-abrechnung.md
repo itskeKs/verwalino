@@ -694,6 +694,15 @@ allocation and WEMoG settlement-balance calculation; it changes neither.
   and block computation. No wording parsing or inferred payment date is used. Excluding funded costs
   from owner cost distribution remains follow-up #191; this change does not
   alter that distribution.
+  A positive `ADJUSTMENT` only reduces this receipt chain's active net withdrawals
+  (booked payouts plus withdrawal corrections and negative adjustments, minus
+  earlier positive adjustments); it cannot create a contribution. Excess returns
+  `RESERVE_ADJUSTMENT_EXCEEDS_WITHDRAWALS` with the allowed reduction in German.
+  Negative adjustments add withdrawals within the existing gross receipt cap.
+  A Storno that would leave the receipt chain with negative net withdrawals is
+  refused with the same reduction limit; reconcile its positive adjustments first.
+  The service and database guards use the same signed SQL total. Withdrawal and
+  payout cap refusals also name the remaining amount in German.
 - Cash refunds and reversal rows have their own signed value-date entries.
   Original bookings remain in their original cash period, even when reversed
   later. The existing Storno operation keeps the original value date; a real
@@ -792,6 +801,8 @@ allocation and WEMoG settlement-balance calculation; it changes neither.
   unit correction, draft computation/finalization refuses the unsupported contribution
   with the same cap code and a message naming the unit. The reversal and retained
   correction history remain intact.
+  Contribution refusal messages name the remaining amount from the same SQL
+  headroom function as “Noch zuordenbar”; this does not change its formula.
   A composite organization/property/unit foreign key (`fk_reserve_entry_unit`) and the
   trigger protect direct writes. Free contribution corrections, including the
   former cost-and-resolution path, are refused. Legacy balances enter only through
@@ -848,6 +859,15 @@ Ledger reads add current, access-controlled owner names, payment notes, cost
 document numbers and resolution register numbers for links to the source records;
 the retained snapshot and its amounts remain unchanged. Typed withdrawal
 adjustments appear as “Entnahmekorrektur”, distinct from funded cash withdrawals.
+The opening correction dialog accepts a corrected total, prefills the current
+opening and previews the signed difference; the stored entry remains that
+difference. A correction clears the active draft's stored computation so both
+detail pages refetch its run and ledger without displaying old result lines;
+the manager reviews the inputs and computes again.
+Finalized correction controls remain visible and disabled with a German reason.
+An uncomputed correction draft inherits its superseded run's engine version;
+computation replaces it with the engine version actually used (M4 for WEG and
+asset reports), rather than assigning the generic M3 version on draft creation.
 Migration **0149**, based on **0148**, supplies the append-only ledger, RLS,
 source locks, computation-source checks and payout constraints after the
 organization-deletion and retention migrations.
