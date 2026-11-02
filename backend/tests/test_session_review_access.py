@@ -267,7 +267,7 @@ def _chain_0131_projection(head):
     return projected
 
 
-async def test_revision_chain_0149_0131_0149_preserves_full_state_and_issued_pdf(rent_world, client_a_admin, seed_data):
+async def test_revision_chain_head_0131_head_preserves_full_state_and_issued_pdf(rent_world, rent_db, client_a_admin, seed_data):
     """Rollback-only whole-chain rehearsal, not a production downgrade strategy."""
     import os
     from pathlib import Path
@@ -279,6 +279,7 @@ async def test_revision_chain_0149_0131_0149_preserves_full_state_and_issued_pdf
     from sqlalchemy.engine import make_url
     from sqlalchemy.exc import DBAPIError
 
+    from app.deployment import TARGET
     from tests.conftest import MIGRATOR_SYNC_URL
     from tests.test_letters import contract_body, create_template, issue_body
     from tests.test_reserve_ledger import reserve_world, finalize
@@ -286,6 +287,12 @@ async def test_revision_chain_0149_0131_0149_preserves_full_state_and_issued_pdf
 
     # Include 0149-only statement rows even when this rehearsal runs alone.
     reserve = await reserve_world(client_a_admin, seed_data)
+    # A pre-split WEG run acquires zero on upgrade; freeze that fixture value.
+    seeded = await rent_db.execute(text("""UPDATE settlement_run SET heating_advance_payments_total=0
+        WHERE id=CAST(:id AS uuid) AND status='draft' AND heating_advance_payments_total IS NULL"""),
+        {'id': reserve['run']})
+    assert seeded.rowcount == 1
+    await rent_db.commit()
     evidence = {key.removeprefix('reserve_'): value for key, value in (await reserve_evidence(client_a_admin, reserve)).items()}
     adjustment = await client_a_admin.post(f"/api/weg-settlements/{reserve['run']}/reserve-ledger/overrides", json={
         'component': 'ADJUSTMENT', 'amount': '1.00', 'reason': 'Synthetic retained statement evidence', **evidence})
@@ -361,9 +368,9 @@ async def test_revision_chain_0149_0131_0149_preserves_full_state_and_issued_pdf
     config = Config()
     config.set_main_option('script_location', str(Path(__file__).parents[1] / 'migrations'))
     scripts = ScriptDirectory.from_config(config)
-    assert scripts.get_heads() == ['0149']
-    assert [r.revision for r in scripts.iterate_revisions('0149', '0131')] == [
-        f'{number:04}' for number in range(149, 131, -1)
+    assert scripts.get_heads() == [TARGET]
+    assert [r.revision for r in scripts.iterate_revisions(TARGET, '0131')] == [
+        f'{number:04}' for number in range(int(TARGET), 131, -1)
     ]
     engine = create_engine(MIGRATOR_SYNC_URL)
     try:
@@ -420,7 +427,7 @@ async def test_revision_chain_0149_0131_0149_preserves_full_state_and_issued_pdf
                         historical.rollback()
                     return projected
 
-                assert version() == ('0149',)
+                assert version() == (TARGET,)
                 retained = _chain_snapshot(connection)
                 reserve_line_types = ('RESERVE_LATE_CASH', 'RESERVE_ADJUSTMENT')
                 assert any(row['line_type'] == 'RESERVE_ADJUSTMENT' for row in retained['data']['settlement_line'])
@@ -520,7 +527,7 @@ async def test_revision_chain_0149_0131_0149_preserves_full_state_and_issued_pdf
                 down = _chain_snapshot(connection)
                 down['data'].pop('alembic_version')
                 assert down == old
-                migrate('0149', downgrade=False)
+                migrate(TARGET, downgrade=False)
                 connection.execute(text('SET CONSTRAINTS ALL IMMEDIATE'))
                 assert _chain_snapshot(connection) == head
                 for table, rows in corpus.items():
