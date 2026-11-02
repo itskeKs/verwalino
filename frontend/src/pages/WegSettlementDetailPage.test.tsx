@@ -185,7 +185,8 @@ it('refetches the computation table after a reserve correction', async () => {
   await screen.findByText('Festgeschriebener Anteil old');
   run.lines = [];
   vi.spyOn(endpoints, 'addReserveOverride').mockResolvedValue({ id: 'correction' });
-  fireEvent.click(screen.getByRole('button', { name: 'Korrektur erfassen' }));
+  // The panel renders after the ledger loads; wait instead of reading it synchronously.
+  fireEvent.click(await screen.findByRole('button', { name: 'Korrektur erfassen' }));
   fireEvent.change(screen.getByLabelText('Art'), { target: { value: 'OPENING' } });
   fireEvent.change(screen.getByLabelText(/^(Betrag|Korrigierter Anfangsbestand)/), { target: { value: '500,00' } });
   fireEvent.change(screen.getByLabelText('Begründung *'), { target: { value: 'Bankunterlagen geprüft' } });
