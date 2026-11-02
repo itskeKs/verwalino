@@ -298,7 +298,8 @@ def _finish_result(inp, cost_lines, computation, vacancy_attr, heating_costs, to
     sort_order = len(cost_lines)
     advance = _money(inp.advance_payments_total)
     heating_advance = _money(inp.heating_advance_payments_total)
-    heating_ids = {pos.cost_entry_id for pos in inp.cost_positions
+    heating_ids = {pos.cost_entry_id for window in (inp.allocation_inputs or (inp,))
+        for pos in window.cost_positions
         if pos.heating is not None or pos.category_code in HEATING_CATEGORY_CODES}
     heating_cost = (sum((result.heating_cost_total for result in period_results), Decimal('0.00'))
         if period_results else sum((line.amount for line in cost_lines if line.cost_entry_id in heating_ids), Decimal('0.00')))

@@ -332,11 +332,14 @@ manual edits retain each component's own source. Computed statements and PDFs
 show “Betriebskosten abzüglich Vorauszahlungen”, “Heizkosten abzüglich
 Vorauszahlungen” and the overall balance. When the heating advance total is zero
 and there are no heating positions, the page and PDF retain the single block
-“Geleistete Vorauszahlungen” instead; both snapshot keys remain present.
+“Geleistete Vorauszahlungen” instead; heating positions in any fiscal allocation
+window require both blocks, even if their amount is zero. Both snapshot keys remain present.
 Statement totals start unknown (empty fields); “Aus Zahlungen ableiten” derives both.
 The detail page retains its existing decimal-string `EUR` amounts; the advance
-proposal retains its existing German `€` format. The advance proposal shows both
-monthly amounts and accepts them in one rent change. Existing form grids,
+proposal retains its existing German decimal-string `EUR` format. The advance proposal
+follows the statement's block decision: a single block shows only the operating
+advance and basis with “Nur die Vorauszahlung wird geändert.”; otherwise it shows both
+monthly amounts and bases. Acceptance creates one rent change. Existing form grids,
 wrapping labels and horizontally scrollable tables apply at 360 px. Lease and
 rent-account form controls stay within their grid cells with long tenant names.
 
@@ -624,7 +627,7 @@ or inline expressions, with the variants below. The inconsistencies are tracked 
 | What | Contract | Implemented by |
 |---|---|---|
 | Money | `1.234,56 €`: `.` thousands, `,` decimals, always two, sign first (`-1.234,56 €`), no float arithmetic | `euros()` in `components/DashboardKpis.tsx`, `money()` in `pages/BankTransactionsPage.tsx` (both `€`) |
-| Money, deviating | same grouping but suffix ` EUR`; `OpenItemsPage.tsx` uses ungrouped `toFixed(2)` plus ` EUR` (`1234.56 EUR`) | `money()` in `pages/ReportsPage.tsx`, `formatCents()` in `pages/PaymentsPage.tsx` and `pages/CostEntriesPage.tsx`; ` EUR` appears 93 times in 30 files, `€` in 2. `displayCents()` in `api/allocationProposals.ts` prints `1234,56` without grouping or suffix. |
+| Money, deviating | same grouping but suffix ` EUR`; `OpenItemsPage.tsx` uses ungrouped `toFixed(2)` plus ` EUR` (`1234.56 EUR`) | `money()` in `pages/ReportsPage.tsx`, `formatCents()` in `pages/PaymentsPage.tsx` and `pages/CostEntriesPage.tsx`, `formatProposalMoney()` in `pages/SettlementDetailPage.tsx`; ` EUR` appears 93 times in 30 files, `€` in 2. `displayCents()` in `api/allocationProposals.ts` prints `1234,56` without grouping or suffix. |
 | Date | `TT.MM.JJJJ`, e.g. `05.03.2026`, from the ISO API value | `formatDate()` in `pages/DashboardPage.tsx`, `FristenmonitorPage.tsx`, `MandatePage.tsx`; `date()` in `BankTransactionsPage.tsx`; `dateLabel()` in `DashboardKpis.tsx` |
 | Date, deviating | `toLocaleDateString("de-DE")` or `Intl.DateTimeFormat("de-DE")` prints `5.3.2026` (no zero padding) | `MandateDetailPage.tsx`, `AttachmentsPanel.tsx`; `components/knowledge/PropertyDocuments.tsx` uses `Intl.DateTimeFormat` |
 | Date and time | `new Date(x).toLocaleString("de-DE")` gives `5.3.2026, 15:03:09` (no zero padding, with seconds) | 45 `toLocaleString` calls, all `de-DE`; used for receipts and history |

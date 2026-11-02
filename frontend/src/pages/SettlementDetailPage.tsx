@@ -96,7 +96,7 @@ function formatProposalMoney(value: string): string {
   const match = /^(-?)(\d+)(?:\.(\d{1,2}))?$/.exec(value);
   if (!match) return "Nicht verfügbar";
   const integer = match[2].replace(/^0+(?=\d)/, "").replace(/\B(?=(\d{3})+(?!\d))/g, ".");
-  return `${match[1]}${integer},${(match[3] ?? "").padEnd(2, "0")} €`;
+  return `${match[1]}${integer},${(match[3] ?? "").padEnd(2, "0")} EUR`;
 }
 
 function isProposalDate(value: string): boolean {
@@ -111,7 +111,7 @@ function nextProposalDate(periodEnd: string): string {
   return isProposalDate(next) ? next : "";
 }
 
-function AdvanceProposalSection({ runId }: { runId: string }) {
+function AdvanceProposalSection({ runId, singleAdvanceBlock }: { runId: string; singleAdvanceBlock: boolean }) {
   const { session } = useAuth();
   const canApply = session?.role === "OWNER_ADMIN" || session?.role === "CLERK";
   const [proposal, setProposal] = useState<AdvanceProposal | null>(null);
@@ -178,15 +178,16 @@ function AdvanceProposalSection({ runId }: { runId: string }) {
       </>}
       {proposal && <>
         <p>Betriebskosten-Vorauszahlung: <strong>{formatProposalMoney(proposal.monthly_amount)}</strong> monatlich</p>
-        <p>Heizkosten-Vorauszahlung: <strong>{formatProposalMoney(proposal.heating_monthly_amount)}</strong> monatlich</p>
+        {!singleAdvanceBlock && <p>Heizkosten-Vorauszahlung: <strong>{formatProposalMoney(proposal.heating_monthly_amount)}</strong> monatlich</p>}
         <p>Grundlage Betriebskosten: {formatProposalMoney(proposal.tenant_cost)} Mieteranteil / {proposal.months.replace(".", ",")} Monate
           {" "}({proposal.period_start} bis {proposal.period_end}).</p>
-        <p>Grundlage Heizkosten: {formatProposalMoney(proposal.heating_tenant_cost)} Mieteranteil / {proposal.months.replace(".", ",")} Monate.</p>
-        <p>Beide Vorauszahlungen werden geändert. Die Kaltmiete bleibt die am gewählten Tag gültige Rate.
+        {!singleAdvanceBlock && <p>Grundlage Heizkosten: {formatProposalMoney(proposal.heating_tenant_cost)} Mieteranteil / {proposal.months.replace(".", ",")} Monate.</p>}
+        <p>{singleAdvanceBlock ? "Nur die Vorauszahlung wird geändert." : "Beide Vorauszahlungen werden geändert."} Die Kaltmiete bleibt die am gewählten Tag gültige Rate.
           Der ursprüngliche Mietvertrag und die finalisierte Abrechnung bleiben unverändert.</p>
         {applyError && <p role="alert">{applyError}</p>}
         {result && <p role="status">Miethistorie ergänzt: ab {result.valid_from}, Kaltmiete {formatProposalMoney(result.base_rent)},
-          {" "}Betriebskosten-Vorauszahlung {formatProposalMoney(result.advance_payment)}, Heizkosten-Vorauszahlung {formatProposalMoney(result.heating_advance_payment)} monatlich.</p>}
+          {" "}Betriebskosten-Vorauszahlung {formatProposalMoney(result.advance_payment)}
+          {!singleAdvanceBlock && <>, Heizkosten-Vorauszahlung {formatProposalMoney(result.heating_advance_payment)}</>} monatlich.</p>}
         {canApply && !result && <form onSubmit={handleApply} noValidate>
           <label>Übernehmen ab
             <input type="date" value={validFrom} onChange={(event) => setValidFrom(event.target.value)} disabled={saving} required />
@@ -241,7 +242,7 @@ export function SettlementDetailPage() {
   const [showPreview, setShowPreview] = useState(false);
 
   const singleAdvanceBlock = run?.lines.some(line =>
-    line.line_type === "ADVANCE_PAYMENT" && line.label === "Geleistete Vorauszahlungen");
+    line.line_type === "ADVANCE_PAYMENT" && line.label === "Geleistete Vorauszahlungen") ?? false;
   const isDraft = run?.status === "draft";
   const isFinalized = run?.status === "finalized";
 
@@ -1107,7 +1108,7 @@ export function SettlementDetailPage() {
       </div>
 
       {run.id === runId && isFinalized && !run.superseded_by_id && run.run_type === "BK_MIETER" && (
-        <AdvanceProposalSection key={run.id} runId={run.id} />
+        <AdvanceProposalSection key={run.id} runId={run.id} singleAdvanceBlock={singleAdvanceBlock} />
       )}
 
       {/* Advance payment edit */}

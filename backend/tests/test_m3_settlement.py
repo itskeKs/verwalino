@@ -142,6 +142,43 @@ def test_statement_and_pdf_keep_single_block_only_without_heating(heating):
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize('amount', ['0.00', '1000.00'])
+async def test_heating_in_later_fiscal_window_keeps_two_advance_blocks(client_a_admin, amount):
+    import subprocess
+    from tests.settlement_period_support import create, period_property, statement
+
+    api = client_a_admin
+    data = await period_property(api, month=4)
+    categories = (await api.get('/api/cost-categories')).json()
+    category = next(row for row in categories if row['code'] == 'MESSDIENST')
+    cost = await create(api, '/api/cost-entries', {
+        'property_id': data['property']['id'], 'cost_category_id': category['id'],
+        'invoice_date': '2026-04-01', 'service_period_from': '2026-04-01',
+        'service_period_to': '2027-03-31', 'gross_amount': amount,
+        'tenant_distribution_key': 'WOHNFLAECHE', 'tenant_apportionable': 'UMLAGEFAEHIG'})
+    assert (await api.post(f"/api/cost-entries/{cost['id']}/confirm")).status_code == 200
+    run = await create(api, '/api/settlements', {
+        **statement(data, '2026-01-01', '2026-12-31'),
+        'advance_payments_total': '0.00', 'heating_advance_payments_total': '0.00'})
+    await attest_fixture(api, 'settlement', run['id'], {
+        'advance_payments_total': '0.00', 'advance_payments_source': 'MANUAL',
+        'heating_advance_payments_total': '0.00', 'heating_advance_payments_source': 'MANUAL'})
+    response = await api.post(f"/api/settlements/{run['id']}/compute", json={})
+    assert response.status_code == 200, response.text
+    computed = response.json()
+    assert any(line['cost_category_code'] == 'MESSDIENST' for line in computed['lines'])
+    advances = [line['label'] for line in computed['lines'] if line['line_type'] == 'ADVANCE_PAYMENT']
+    assert advances == ['Betriebskosten-Vorauszahlungen', 'Heizkosten-Vorauszahlungen']
+    response = await api.post(f"/api/settlements/{run['id']}/finalize", json={})
+    assert response.status_code == 200, response.text
+    pdf = await api.get(f"/api/settlements/{run['id']}/pdf")
+    assert pdf.status_code == 200, pdf.text
+    content = subprocess.run(['pdftotext', '-', '-'], input=pdf.content, capture_output=True, check=True).stdout.decode()
+    assert 'Heizkosten-Vorauszahlungen' in content
+    assert 'Geleistete Vorauszahlungen' not in content
+
+
+@pytest.mark.asyncio
 async def test_derived_component_totals_have_independent_sources_and_coverage(client_a_admin):
     from tests.settlement_period_support import create, period_property, statement
     api = client_a_admin
