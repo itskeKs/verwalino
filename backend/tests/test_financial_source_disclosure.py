@@ -127,7 +127,7 @@ async def test_each_pdf_family_checks_source_export_before_render(client_a_admin
             renderer = 'app.api.weg_settlements.render_weg_jahresabrechnung_pdf'
         else:
             endpoint = '/api/weg-settlements/asset-reports'
-            values = {'reserve_override_reason':'Reviewed synthetic reserve totals','reserve_opening_balance':'0.00','reserve_withdrawals_total':'0.00','reserve_contributions_total':'0.00',
+            values = {'reserve_override_reason':'Reviewed synthetic opening balance','reserve_opening_balance':'0.00',
                 'receivables':[],'payables':[], 'bank_balances':[
                     {'bank_account_id':m4_seed['bank_giro'],'label':'Giro','account_type':'LAUFEND','balance':'0.00'},
                     {'bank_account_id':m4_seed['bank_ruecklage'],'label':'Reserve','account_type':'RUECKLAGE','balance':'0.00'}]}

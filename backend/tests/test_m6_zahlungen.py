@@ -805,7 +805,7 @@ class TestWegSpitzeUnberuehrtByPayments:
         })
         assert r.status_code == 201, r.text
         run_id = r.json()["id"]
-        body = {"reserve_override_reason": "Reviewed synthetic reserve totals", "reserve_opening_balance": "0.00", "reserve_withdrawals_total": "0.00"}
+        body = {"reserve_override_reason": "Reviewed synthetic opening balance", "reserve_opening_balance": "0.00"}
         body["paid_advances"] = paid_advances if paid_advances is not None else [
             {"owner_profile_id": str(m6_seed["owner"]), "paid_total": "0.00"}]
         await attest_fixture(client, "settlement", run_id, body)

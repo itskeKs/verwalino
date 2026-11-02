@@ -34,6 +34,11 @@ it("keeps missing reserve/account values blank and sends an explicitly reviewed 
   fireEvent.click(screen.getByRole("button", { name: "Datengrundlage speichern" }));
   await screen.findByRole("status");
   expect(bodies[1]).toMatchObject({ values: { reserve_opening_balance: "0.00", bank_balances: [{ balance: "0.00" }], receivables: [], payables: [] }, confirmed_complete: true });
+  expect(bodies[1].values).toEqual({
+    reserve_opening_balance: "0.00", reserve_override_reason: "Geprüfter Nullbestand",
+    bank_balances: [{ bank_account_id: "bank-1", label: "Giro", account_type: "LAUFEND", balance: "0.00" }],
+    receivables: [], payables: [],
+  });
 });
 
 

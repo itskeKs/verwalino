@@ -101,6 +101,7 @@ it("uses both coverage owners despite seller-only plan lines and sends two expli
     { owner_profile_id: seller, paid_total: "0" }, { owner_profile_id: buyer, paid_total: "0" },
   ] };
   expect(JSON.parse(coverage[1]!.body as string)).toMatchObject({ subject_kind: "settlement", subject_id: runId, values });
+  expect(JSON.parse(coverage[1]!.body as string).values).toEqual(values);
   fireEvent.click(screen.getByRole("button", { name: "Berechnen" }));
   await waitFor(() => expect(fetchMock.mock.calls.some(([url]) => url.endsWith("/compute"))).toBe(true));
   const compute = fetchMock.mock.calls.find(([url]) => url.endsWith("/compute"))!;
