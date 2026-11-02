@@ -177,6 +177,60 @@ def reserve_scenario(world, seed_data):
     return w
 
 
+@then('draft reserve captions and opening corrections remain accurate after computation')
+def draft_reserve_wording(world, reserve_scenario, browser_world, tmp_path):
+    from playwright.async_api import expect
+    w = reserve_scenario
+    observed_titles = []
+    observed_captions = []
+    errors = []
+
+    async def inspect_correction():
+        page = browser_world.page
+        page.on('pageerror', lambda error: errors.append(str(error)))
+        page.on('console', lambda message: errors.append(message.text) if message.type == 'error' else None)
+        await browser_world.visit(f"/weg-abrechnungen/{w['run']}")
+        await page.get_by_role('button', name='Korrektur erfassen', exact=True).click()
+        await page.get_by_label('Art', exact=True).select_option('OPENING')
+        for width in (1280, 360):
+            await page.set_viewport_size({'width': width, 'height': 1000})
+            await page.screenshot(path=str(tmp_path / f'round13c-opening-{width}.png'), animations='disabled')
+        observed_titles.append(await page.get_by_role('dialog').inner_text())
+        await page.get_by_role('button', name='Abbrechen', exact=True).click()
+
+    browser_world.run(inspect_correction())
+    sibling = create(world, '/api/weg-settlements', {'property_id': w['property'], 'accounting_scope_id': w['scope'],
+        'economic_plan_id': world.act('GET', f"/api/weg-settlements/{w['run']}").json()['economic_plan_id'],
+        'period_start': '2025-01-01', 'period_end': '2025-12-31'})
+    finalize(world, w)
+    values = {'paid_advances': [{'owner_profile_id': w['owner_a'], 'paid_total': '0.00'}]}
+    world.run(attest_fixture(world.actor, 'settlement', sibling['id'], values))
+
+    async def inspect_computed():
+        page = browser_world.page
+        await browser_world.visit(f"/weg-abrechnungen/{sibling['id']}")
+        await page.get_by_label('Tatsächlich gezahltes Hausgeld · Mustereigentümer mit langem Nachnamen', exact=True).fill('0.00')
+        await page.get_by_label('Rücklagen-Anfangsbestand', exact=True).fill('')
+        ledger = page.get_by_role('region', name='Rücklagenbuch', exact=True)
+        async with page.expect_response(lambda response: response.url.endswith(f"/{sibling['id']}/compute")) as computed:
+            await page.get_by_role('button', name='Berechnen', exact=True).click()
+        response = await computed.value
+        assert response.status == 200, await response.text()
+        await expect(page.get_by_text('Noch nicht berechnet.', exact=False)).to_have_count(0)
+        for width in (1280, 360):
+            await page.set_viewport_size({'width': width, 'height': 1000})
+            await ledger.scroll_into_view_if_needed()
+            await page.screenshot(path=str(tmp_path / f'round13c-draft-{width}.png'), animations='disabled')
+            observed_captions.append(await ledger.inner_text())
+            assert await ledger.evaluate('(element) => element.scrollWidth <= element.clientWidth')
+        assert await page.locator('vite-error-overlay').count() == 0
+
+    browser_world.run(inspect_computed())
+    assert 'Anfangsbestand korrigieren' in observed_titles[0], str(tmp_path)
+    assert all('Finalisierter Rücklagenstand' not in caption for caption in observed_captions), str(tmp_path)
+    assert not errors, errors
+
+
 @when('I review its reserve ledger and record the imported opening balance')
 def review(world, reserve_scenario):
     client_a_admin = world.actor
@@ -329,7 +383,7 @@ def payout_refused(world, reserve_scenario):
 
 
 @then('payment and correction forms require cost receipt and resolution on desktop and mobile')
-def evidence_forms(world, reserve_scenario, browser_world, request):
+def evidence_forms(world, reserve_scenario, browser_world, request, tmp_path):
     from playwright.async_api import expect
     from tests.bdd.report import artifact_directory, attach_artifact
     w = reserve_scenario
@@ -359,7 +413,7 @@ def evidence_forms(world, reserve_scenario, browser_world, request):
         'payment_type': 'RUECKLAGENENTNAHME', 'amount': '1200.00', 'period_year': 2025, 'period_month': 2}]})
     assert assigned.status_code == 200, assigned.text
     payout = assigned.json()['payments'][0]['id']
-    directory = artifact_directory(request.node)
+    directory = artifact_directory(request.node) or tmp_path
 
     async def inspect():
         page = browser_world.page
@@ -384,6 +438,12 @@ def evidence_forms(world, reserve_scenario, browser_world, request):
             await page.get_by_label('Bankkonto *', exact=True).select_option(w['bank_giro'])
             await page.get_by_label('Zahlungstyp *', exact=True).select_option('RUECKLAGENENTNAHME')
             await expect(page.get_by_label('Bestätigter Kostenbeleg *', exact=True)).to_be_enabled()
+            await page.get_by_label('Betrag *', exact=True).fill('1200.00')
+            await page.get_by_role('button', name='Anlegen', exact=True).click()
+            refusal = page.get_by_role('alert')
+            await expect(refusal).to_contain_text('Bitte verknüpfen Sie einen bestätigten Kostenbeleg und einen Beschluss aus der Beschluss-Sammlung.')
+            await refusal.scroll_into_view_if_needed()
+            await capture('round13c-payout-refusal', width)
             await expect(page.get_by_label('Beschluss-Sammlung *', exact=True)).to_have_attribute('required', '')
             await page.get_by_label('Bestätigter Kostenbeleg *', exact=True).select_option(cost['id'])
             await page.get_by_label('Beschluss-Sammlung *', exact=True).select_option(register['id'])
@@ -420,6 +480,13 @@ def evidence_forms(world, reserve_scenario, browser_world, request):
         page.once('dialog', lambda dialog: dialog.accept())
         await page.get_by_role('button', name='Buchen', exact=True).click()
         await expect(page.get_by_role('button', name='Buchen', exact=True)).to_have_count(0)
+        await expect(page.get_by_role('link', name=cost['document_number'], exact=True)).to_have_attribute('href', f"/kosten/{cost['id']}")
+        await expect(page.get_by_role('link', name=f"Beschluss Nr. {register['sequence_number']} · {resolution['wording']}", exact=True)).to_have_attribute(
+            'href', f"/beschluss-sammlung?property_id={w['property']}#beschluss-{register['id']}")
+        for width in (1280, 360):
+            await page.set_viewport_size({'width': width, 'height': 1000})
+            await page.get_by_role('heading', name='Details', exact=True).scroll_into_view_if_needed()
+            await capture('round13c-payout-detail', width)
         assert not errors, errors
 
     async def capture(name, width):
@@ -436,7 +503,7 @@ def evidence_forms(world, reserve_scenario, browser_world, request):
         })""")
         if directory:
             filename = directory / f'{name}-{width}.png'
-            await page.screenshot(path=str(filename), full_page=False)
+            await page.screenshot(path=str(filename), full_page=False, animations='disabled')
             attach_artifact(request.node, filename)
 
     browser_world.run(inspect())

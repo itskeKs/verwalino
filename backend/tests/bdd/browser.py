@@ -57,7 +57,7 @@ def browser_app(seed_data, request):
     # The selected journeys do not need workers, SMTP, or extraction providers.
     env = {key: value for key, value in os.environ.items() if not key.startswith("HV_") and key != "USER"}
     env.update({key: os.environ[key] for key in (
-        "HV_DATABASE_URL", "HV_DATABASE_URL_MIGRATOR", "HV_DATABASE_URL_SYNC",
+        "HV_DATABASE_URL", "HV_DATABASE_URL_MIGRATOR", "HV_DATABASE_URL_SYNC", "HV_DATABASE_URL_REVIEW",
     )})
     env.update(HV_DECLARATION_IMPORT_ENABLED="false", HV_INVOICE_EXTRACTION_ENABLED="false")
     env["HV_DEPLOYMENT_MODE"] = get_deployment_policy().deployment_mode

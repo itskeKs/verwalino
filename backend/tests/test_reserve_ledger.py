@@ -1320,6 +1320,75 @@ async def test_unchanged_opening_reattestation_refreshes_stale_cash_coverage(cli
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize('sibling_type', ['WEG_JAHRESABRECHNUNG', 'VERMOEGENSBERICHT'])
+async def test_draft_with_finalized_sibling_accepts_unchanged_opening_and_non_reserve_attestation(
+        client_a_admin, seed_data, sibling_type):
+    api = client_a_admin
+    w = await reserve_world(api, seed_data)
+    body = {'property_id': w['property'], 'period_start': '2025-01-01', 'period_end': '2025-12-31'}
+    route = '/api/weg-settlements'
+    if sibling_type == 'WEG_JAHRESABRECHNUNG':
+        body['economic_plan_id'] = w['plan']
+    else:
+        route += '/asset-reports'
+    sibling = await api.post(route, json=body)
+    assert sibling.status_code == 201, sibling.text
+    sibling_id = sibling.json()['id']
+    original_path = f"/api/weg-settlements/{w['run']}/reserve-ledger"
+    imported = await api.post(original_path + '/overrides', json={
+        'component': 'OPENING', 'amount': '5000.00', 'reason': 'Bank-confirmed initial balance'})
+    assert imported.status_code == 201, imported.text
+    await finalize(api, w)
+    frozen = (await api.get(original_path)).json()
+    if sibling_type == 'WEG_JAHRESABRECHNUNG':
+        values = paid(w)
+    else:
+        accounts = (await api.get('/api/bank-accounts')).json()
+        values = {'bank_balances': [{'bank_account_id': account['id'], 'account_type': account['account_type'],
+            'label': account['label'], 'balance': '0.00'} for account in accounts if account['property_id'] == w['property']],
+            'receivables': [], 'payables': []}
+    for include_opening in (True, False):
+        reviewed = {**values, **({'reserve_opening_balance': '5000.00',
+            'reserve_override_reason': 'Unchanged bank-confirmed balance'} if include_opening else {})}
+        first = await attest_fixture(api, 'settlement', sibling_id, reviewed)
+        repeated = await attest_fixture(api, 'settlement', sibling_id, reviewed)
+        assert first['id'] == repeated['id']
+        computed = await api.post(f'{route}/{sibling_id}/compute', json=reviewed)
+        assert computed.status_code == 200, computed.text
+    refused = await api.post('/api/financial-input-coverage', json={
+        'subject_kind': 'settlement', 'subject_id': sibling_id,
+        'values': {**values, 'reserve_opening_balance': '5001.00', 'reserve_override_reason': 'Actual change'},
+        'confirmed_complete': True, 'reason': 'Reviewed period', 'source_document_ids': []})
+    assert refused.status_code == 409, refused.text
+    assert refused.json()['detail']['code'] == 'RESERVE_PERIOD_FINALIZED'
+    assert (await api.get(original_path)).json() == frozen
+
+
+@pytest.mark.asyncio
+async def test_same_day_ledger_entries_keep_creation_order_across_reads(client_a_admin, seed_data, monkeypatch):
+    from datetime import datetime
+    from uuid import UUID
+    from app.services import reserve_ledger_service as module
+    api = client_a_admin
+    w = await reserve_world(api, seed_data)
+    entry_class = module.ReserveLedgerEntry
+    identifiers = iter([UUID(int=3), UUID(int=2), UUID(int=1)])
+    timestamps = iter([datetime(2025, 1, 1, hour) for hour in (1, 2, 2)])
+    monkeypatch.setattr(module, 'ReserveLedgerEntry', lambda **values: entry_class(
+        **values, id=next(identifiers), created_at=next(timestamps)))
+    path = f"/api/weg-settlements/{w['run']}/reserve-ledger"
+    for reason in ('First correction', 'Second correction', 'Same timestamp, lower ID'):
+        response = await api.post(path + '/overrides', json={
+            'component': 'OPENING', 'amount': '100.00', 'reason': reason})
+        assert response.status_code == 201, response.text
+    for _ in range(2):
+        response = await api.get(path)
+        assert response.status_code == 200, response.text
+        assert [row['reason'] for row in response.json()['entries'] if row['kind'] == 'OVERRIDE'] == [
+            'First correction', 'Same timestamp, lower ID', 'Second correction']
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize('database_backstop', [False, True])
 async def test_correction_period_keeps_finalized_opening_but_accepts_evidenced_corrections(
         client_a_admin, seed_data, migrator_session, database_backstop):

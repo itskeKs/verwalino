@@ -372,7 +372,7 @@ export function PaymentsPage() {
       <button type="button" className="btn" disabled={!currentDataset || downloading} onClick={() => void downloadCsv()}>CSV herunterladen</button>
       {downloading && <p>CSV wird geladen…</p>}
       {downloadError && <p role="alert" className="error-text">{downloadError} Bitte CSV herunterladen erneut versuchen.</p>}
-      {error && <p className="error-text">{error} <button type="button" onClick={reload}>Liste erneut laden</button></p>}
+      {error && <p role="alert" className="error-text">{error} <button type="button" onClick={reload}>Liste erneut laden</button></p>}
       {currentDataset && <div>
         <p>Listensaldo: <output aria-label="Listensaldo">{formatCents(payments.reduce((total, payment) => total + (payment.direction === "OUT" ? -amountCents(payment.amount) : amountCents(payment.amount)), 0n))}</output></p>
         <p>Eingänge minus Ausgänge aller angezeigten Zeilen, einschließlich Entwürfen, verworfenen Zahlungen und Stornos je Filter. Kein tatsächlicher Kontostand.</p>
@@ -381,7 +381,7 @@ export function PaymentsPage() {
       {showForm && (
         <div className="card" style={{ marginBottom: "1rem" }}>
           <h2>Neue Zahlung anlegen</h2>
-          <form onSubmit={handleSubmit} className={`form-grid ${form.payment_type === 'RUECKLAGENENTNAHME' ? 'reserve-payment-form' : ''}`}>
+          <form onSubmit={handleSubmit} noValidate={form.payment_type === 'RUECKLAGENENTNAHME'} className={`form-grid ${form.payment_type === 'RUECKLAGENENTNAHME' ? 'reserve-payment-form' : ''}`}>
             <label>
               Bankkonto *
               <select

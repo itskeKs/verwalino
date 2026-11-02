@@ -79,7 +79,7 @@ export function ReserveLedgerPanel({ runId, propertyId, status, onChanged, onOpe
     {error && <p role="alert">{error} <button className="btn btn--secondary" onClick={() => setVersion(v => v + 1)}>Erneut laden</button></p>}
     {!ledger && !error && <p>Rücklagenbuch wird geladen…</p>}
     {ledger && <>
-      {ledger.frozen && <p>Finalisierter Rücklagenstand · unveränderbarer Snapshot{ledger.booking_basis === 'LEGACY_SNAPSHOT' ? ' (historische manuelle Erfassung)' : ''}.</p>}
+      {status === 'finalized' && <p>Finalisierter Rücklagenstand · unveränderbarer Snapshot{ledger.booking_basis === 'LEGACY_SNAPSHOT' ? ' (historische manuelle Erfassung)' : ''}.</p>}
       {ledger.overdrawn && <p role="alert" className="error-text">Die Rücklage ist überzogen. Bitte prüfen Sie die Finanzierung und die Belege.</p>}
       {ledger.entries.some(entry => entry.kind === 'UNASSIGNED') && <p role="alert">Zahlungen ohne Planbezug sind noch nicht der Rücklage zugeordnet. Bitte ergänzen Sie einen finalisierten Wirtschaftsplan oder erfassen Sie eine begründete Zuordnung vor der Berechnung.</p>}
       {!!ledger.unlinked_payment_ids?.some(id => !ledger.entries.some(entry => entry.payment_id === id && entry.kind === 'UNASSIGNED')) && <p role="alert">Für Rücklagenentnahmen fehlen Kostenbeleg und Beschluss. Bitte verknüpfen Sie diese vor der Berechnung.</p>}
@@ -109,11 +109,11 @@ export function ReserveLedgerPanel({ runId, propertyId, status, onChanged, onOpe
       {status === 'draft' && !ledger.frozen && <button className="btn btn--secondary" disabled={disabled} onClick={() => setOpen(true)}>Korrektur erfassen</button>}
     </>}
     <Dialog open={open} onOpenChange={value => { if (!saving) setOpen(value); }}><DialogContent style={{ maxHeight: '90vh', overflowY: 'auto', width: 'calc(100% - 2rem)' }}>
-      <DialogTitle>Rücklagenkorrektur</DialogTitle>
+      <DialogTitle>{component === 'OPENING' ? 'Anfangsbestand korrigieren' : 'Rücklagenkorrektur'}</DialogTitle>
       <DialogDescription>Erfassen Sie eine begründete Differenz. Positive Entnahmen vermindern den Bestand; sonstige Korrekturen werden mit Vorzeichen addiert.</DialogDescription>
       <form onSubmit={save}><fieldset disabled={saving || disabled} className="form-grid" style={{ gridTemplateColumns: 'minmax(0, 1fr)' }}>
         <label>Art<select aria-label="Art" value={component} onChange={e => { setComponent(e.target.value as typeof component); setPayment(''); setUnit(''); setFormError(''); setCost(''); setRegister(''); }}>
-          {(['ADJUSTMENT', 'OPENING', 'CONTRIBUTION', 'WITHDRAWAL', 'FUNDING'] as const).map(kind => <option key={kind} value={kind}>{componentLabels[kind]}</option>)}
+          {(['ADJUSTMENT', 'OPENING', 'CONTRIBUTION', 'WITHDRAWAL', 'FUNDING'] as const).map(kind => <option key={kind} value={kind}>{kind === 'OPENING' ? 'Anfangsbestand korrigieren' : componentLabels[kind]}</option>)}
           {ledger?.entries.some(entry => entry.kind === 'UNASSIGNED') && <option value="PAYMENT_ASSIGNMENT">Gebuchte Zuführung</option>}
         </select></label>
         {component === 'CONTRIBUTION' && <><label>Einheit *<select required value={unit} onChange={e => setUnit(e.target.value)}>
@@ -136,7 +136,7 @@ export function ReserveLedgerPanel({ runId, propertyId, status, onChanged, onOpe
         </> : <p>Finanzierungsbelege werden geladen…</p> : <label>Betrag *<input required inputMode="decimal" value={amount} onChange={e => setAmount(e.target.value)} /></label>}
         {(component === 'WITHDRAWAL' || component === 'ADJUSTMENT') &&
           <ReserveEvidenceFields propertyId={propertyId} cost={cost} register={register} onChange={(cost, register) => { setCost(cost); setRegister(register); }} />}
-        {component === 'OPENING' && <p>Ein Import des Anfangsbestands ist nur im ersten Rücklagenjahr vor der Finalisierung zulässig. Aktueller Anfangsbestand: {ledger && euro(ledger.opening_balance)}. Geben Sie hier die begründete Differenz ein.</p>}
+        {component === 'OPENING' && <p>Anfangsbestand korrigieren: Dies ist nur im ersten Rücklagenjahr vor der Finalisierung zulässig. Aktueller Anfangsbestand: {ledger && euro(ledger.opening_balance)}. Geben Sie hier die begründete Differenz ein. Sie wird mit Ihrer Begründung im Rücklagenbuch festgehalten.</p>}
         <label>Begründung *<textarea required maxLength={2000} value={reason} onChange={e => setReason(e.target.value)} /></label>
         {formError && <p role="alert" className="error-text">{formError}</p>}
         <div className="form-actions"><button className="btn btn--primary" disabled={component === 'FUNDING' && !sources} type="submit">{saving ? 'Speichern…' : 'Speichern'}</button>

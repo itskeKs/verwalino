@@ -114,6 +114,27 @@ it('shows the frozen ledger without an override action', async () => {
   expect(screen.queryByRole('button', { name: 'Korrektur erfassen' })).not.toBeInTheDocument();
 });
 
+it('does not call a computed draft a finalized snapshot when its ledger is frozen', async () => {
+  vi.stubGlobal('fetch', vi.fn(async () => json({ ...ledger, frozen: true })));
+  const view = render(<ReserveLedgerPanel runId="run-1" propertyId="property-1" status="draft" refreshKey={0} onChanged={() => {}} />);
+  await screen.findByText(/21\.000,00/);
+  view.rerender(<ReserveLedgerPanel runId="run-1" propertyId="property-1" status="draft" refreshKey={1} onChanged={() => {}} />);
+  await screen.findByText(/21\.000,00/);
+  expect(screen.queryByText(/Finalisierter Rücklagenstand/)).not.toBeInTheDocument();
+  expect(screen.queryByRole('button', { name: 'Korrektur erfassen' })).not.toBeInTheDocument();
+});
+
+it('names the opening correction and explains its audited difference', async () => {
+  vi.stubGlobal('fetch', vi.fn(async () => json(ledger)));
+  render(<ReserveLedgerPanel runId="run-1" propertyId="property-1" status="draft" onChanged={() => {}} />);
+  fireEvent.click(await screen.findByRole('button', { name: 'Korrektur erfassen' }));
+  fireEvent.change(screen.getByLabelText('Art'), { target: { value: 'OPENING' } });
+  expect(screen.getByRole('option', { name: 'Anfangsbestand korrigieren' })).toHaveValue('OPENING');
+  expect(screen.getByRole('dialog')).toHaveAccessibleName('Anfangsbestand korrigieren');
+  expect(screen.getByText(/Geben Sie hier die begründete Differenz ein/)).toHaveTextContent('Anfangsbestand korrigieren');
+  expect(screen.queryByText(/Ein Import des Anfangsbestands/)).not.toBeInTheDocument();
+});
+
 
 it('requires cost and resolution for typed withdrawal corrections', async () => {
   vi.stubGlobal('fetch', vi.fn(async (url: string) => json(url.includes('reserve-ledger') ? ledger : [])));

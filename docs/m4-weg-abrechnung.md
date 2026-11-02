@@ -746,6 +746,9 @@ allocation and WEMoG settlement-balance calculation; it changes neither.
   (the same scope or whole-property WEG scopes with the same mandate) has been finalized,
   including a superseded run, correction drafts refuse further opening imports
   while evidence-backed withdrawal and adjustment corrections remain available.
+  A draft that reads a finalized sibling's ledger can still compute, re-attest
+  the unchanged opening and attest non-reserve inputs. Only an actual opening
+  difference is refused; these operations never append to the frozen ledger.
   The earliest period is
   the smallest `period_start` among non-superseded WEG annual settlement and
   asset-report runs for the property in the same scope, including whole-property
@@ -785,6 +788,8 @@ allocation and WEMoG settlement-balance calculation; it changes neither.
   the existing first-year opening import.
 - Corrections apply only to their exact start/end period. Funding links remain
   payment-specific across periods so later reversals retain their evidence.
+  Live ledger rows use the entry/value date, creation timestamp and ID as their
+  stable order. The display preserves that order; retained snapshots are unchanged.
   Only `reserve_opening_balance` is an attestable reserve target total, accompanied
   by `reserve_override_reason`. Attestation appends its signed difference from the
   ledger opening; repeating it adds no second adjustment. Both WEG annual runs

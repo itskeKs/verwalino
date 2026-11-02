@@ -6,6 +6,20 @@ import { PaymentDetailPage } from './PaymentDetailPage';
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); vi.restoreAllMocks(); });
 const json = (value: unknown) => new Response(JSON.stringify(value), { status: 200, headers: { 'Content-Type': 'application/json' } });
 
+it('shows the booked payout receipt and resolution wording with read-only links', async () => {
+  vi.stubGlobal('fetch', vi.fn(async (url: string) => json(url === '/api/payments/payout' ? {
+    id: 'payout', property_id: 'property', bank_account_id: 'bank', payment_type: 'RUECKLAGENENTNAHME',
+    amount: '1200.00', direction: 'OUT', value_date: '2025-02-01', status: 'booked',
+    reserve_cost_entry_id: 'cost', reserve_register_entry_id: 'resolution',
+  } : url === '/api/cost-entries/cost' ? { id: 'cost', document_number: 'RE-Ä-123' }
+    : url === '/api/meetings/register/property' ? [{ id: 'resolution', sequence_number: 42, wording: 'Dachreparatur aus der Erhaltungsrücklage finanzieren' }] : [])));
+  render(<MemoryRouter initialEntries={['/zahlungen/payout']}><Routes><Route path="/zahlungen/:paymentId" element={<PaymentDetailPage />} /></Routes></MemoryRouter>);
+  expect(await screen.findByRole('link', { name: 'RE-Ä-123' })).toHaveAttribute('href', '/kosten/cost');
+  expect(screen.getByRole('link', { name: 'Beschluss Nr. 42 · Dachreparatur aus der Erhaltungsrücklage finanzieren' }))
+    .toHaveAttribute('href', '/beschluss-sammlung?property_id=property#beschluss-resolution');
+  expect(screen.queryByLabelText('Bestätigter Kostenbeleg *')).not.toBeInTheDocument();
+});
+
 it('links both references on an imported payout draft before booking', async () => {
   let payment = { id: 'payout', bank_transaction_id: 'transaction', property_id: 'property', bank_account_id: 'bank', payment_type: 'RUECKLAGENENTNAHME',
     amount: '1200.00', direction: 'OUT', value_date: '2026-01-03', status: 'draft',

@@ -192,13 +192,16 @@ class ReserveLedgerService:
                          'amount': format(entry.amount, '.2f'), 'reason': entry.reason, 'id': str(entry.id),
                          **({'unit_id': str(entry.unit_id)} if entry.unit_id else {}),
                          **({'cost_entry_id': str(entry.cost_entry_id), 'register_entry_id': str(entry.register_entry_id)} if entry.cost_entry_id else {})})
+        created_at = {str(source.id): source.created_at.isoformat() for source in [*entries, *payments]
+                      if getattr(source, 'created_at', None) is not None}
         return {**reserve_totals(opening, contributions, withdrawals, overrides, late_cash),
                 'planned_contributions_total': format(money(plan.reserve_contribution_total), '.2f') if plan else None,
                 'economic_plan_id': str(plan.id) if plan else None, 'economic_plan_sha256': plan.snapshot_sha256 if plan else None,
                 'booking_basis': 'CASH', 'frozen': False,
                 'unlinked_payment_ids': unlinked,
                 'opening_source_run_id': str(prior.id) if prior else None,
-                'entries': sorted(rows, key=lambda row: (row['date'], row['kind'], row.get('id', ''), row.get('payment_id', ''), row.get('unit_id', ''), row.get('owner_profile_id', '')))}
+                'entries': sorted(rows, key=lambda row: (row['date'], created_at.get(row.get('id') or row.get('payment_id'), ''),
+                    row.get('id') or row.get('payment_id', ''), row['kind'], row.get('unit_id', ''), row.get('owner_profile_id', '')))}
 
     async def read_display(self, run):
         ledger = await self.read(run)
@@ -317,13 +320,14 @@ class ReserveLedgerService:
             value = getattr(values, field, None)
             if value is None:
                 continue
+            delta = money(value) - Decimal(ledger[total])
+            if not delta:
+                continue
             if ledger['frozen'] and component == 'OPENING':
                 raise HTTPException(409, {'code': 'RESERVE_PERIOD_FINALIZED', 'message': 'Die Rücklage dieses Zeitraums ist finalisiert.'})
             reason = values.reserve_override_reason
             if not reason or not reason.strip():
                 raise HTTPException(422, {'code': 'RESERVE_CORRECTION_REASON_REQUIRED', 'message': 'Manuelle Rücklagenwerte benötigen eine Begründung.'})
-            delta = money(value) - Decimal(ledger[total])
-            if delta:
-                await self.add(run, component, delta, reason)
-                ledger = await self.read(run)
+            await self.add(run, component, delta, reason)
+            ledger = await self.read(run)
         return ledger

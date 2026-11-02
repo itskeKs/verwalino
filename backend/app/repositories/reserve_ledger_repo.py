@@ -61,7 +61,7 @@ class ReserveLedgerRepository(TenantRepository[ReserveLedgerEntry]):
             ReserveLedgerEntry.property_id == run.property_id,
             or_(ReserveLedgerEntry.payment_id.is_not(None), and_(
                 SettlementRun.period_start == run.period_start, SettlementRun.period_end == run.period_end)))
-            .order_by(ReserveLedgerEntry.entry_date, ReserveLedgerEntry.id))).all())
+            .order_by(ReserveLedgerEntry.entry_date, ReserveLedgerEntry.created_at, ReserveLedgerEntry.id))).all())
 
     async def payments(self, run, start=None):
         return list((await self._session.scalars(select(Payment).where(
@@ -69,7 +69,7 @@ class ReserveLedgerRepository(TenantRepository[ReserveLedgerEntry]):
             Payment.status == 'booked', Payment.cancelled_at.is_(None),
             Payment.payment_type.in_(('HAUSGELD_VORSCHUSS', 'RUECKLAGENANTEIL', 'RUECKLAGENENTNAHME')),
             Payment.value_date.between(start or run.period_start, run.period_end))
-            .order_by(Payment.value_date, Payment.id))).all())
+            .order_by(Payment.value_date, Payment.created_at, Payment.id))).all())
 
     async def plans(self, run):
         return list((await self._session.scalars(select(EconomicPlan).where(
