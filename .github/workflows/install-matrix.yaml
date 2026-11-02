@@ -73,7 +73,7 @@ jobs:
           registry_dir="$RUNNER_TEMP/install-registry"
           mkdir "$registry_dir"
           openssl req -newkey rsa:2048 -nodes -x509 -days 1 \
-            -subj '/CN=ghcr.io' -addext 'subjectAltName=DNS:ghcr.io' \
+            -subj '/CN=ghcr.io' -addext 'subjectAltName=DNS:ghcr.io,DNS:localhost' \
             -keyout "$registry_dir/domain.key" -out "$registry_dir/domain.crt"
           docker pull registry:3
           docker run --detach --name install-matrix-registry \
@@ -81,14 +81,23 @@ jobs:
             --mount "type=bind,src=$registry_dir,dst=/certs,readonly" \
             --env REGISTRY_HTTP_TLS_CERTIFICATE=/certs/domain.crt \
             --env REGISTRY_HTTP_TLS_KEY=/certs/domain.key registry:3
-          sudo mkdir -p /etc/docker/certs.d/ghcr.io
+          sudo mkdir -p /etc/docker/certs.d/ghcr.io /etc/docker/certs.d/localhost:443
           sudo cp "$registry_dir/domain.crt" /etc/docker/certs.d/ghcr.io/ca.crt
+          sudo cp "$registry_dir/domain.crt" /etc/docker/certs.d/localhost:443/ca.crt
           printf '127.0.0.1 ghcr.io # install-matrix-registry\n' | sudo tee -a /etc/hosts
           curl --fail --silent --show-error --max-time 5 --retry 10 --retry-connrefused \
             --retry-delay 1 --cacert "$registry_dir/domain.crt" https://ghcr.io/v2/
-          docker push "$IMAGE:install-matrix"
-          reference=$(docker image inspect --format '{{index .RepoDigests 0}}' "$IMAGE:install-matrix")
-          export DIGEST="${reference##*@}"
+          # Push through loopback: the daemon can retain real GHCR connections
+          # after the hosts edit. The installer still pulls via ghcr.io; both
+          # names serve the same repository and content-addressed manifest.
+          docker tag "$IMAGE:install-matrix" "localhost:443/${IMAGE#*/}:install-matrix"
+          docker push "localhost:443/${IMAGE#*/}:install-matrix"
+          DIGEST=$(curl --fail --silent --show-error --head --max-time 5 \
+            --cacert "$registry_dir/domain.crt" \
+            --header 'Accept: application/vnd.docker.distribution.manifest.v2+json, application/vnd.oci.image.manifest.v1+json' \
+            "https://ghcr.io/v2/${IMAGE#*/}/manifests/install-matrix" \
+            | awk 'tolower($1) == "docker-content-digest:" {gsub("\r", "", $2); print $2}')
+          export DIGEST
           bash scripts/build-release-bundle.sh "$RUNNER_TEMP/release-assets"
           # Deliberately unsigned checkout assets; the installer still checks all
           # payload hashes. Real release signing remains in release-image.yaml.
@@ -125,4 +134,4 @@ jobs:
             docker rm --force install-matrix-registry
           fi
           sudo sed -i '/# install-matrix-registry$/d' /etc/hosts
-          sudo rm -f /etc/docker/certs.d/ghcr.io/ca.crt
+          sudo rm -f /etc/docker/certs.d/ghcr.io/ca.crt /etc/docker/certs.d/localhost:443/ca.crt
