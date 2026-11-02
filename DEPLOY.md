@@ -257,7 +257,7 @@ read, rotate, provision and clean up requests and refuse tenant-context calls.
 SMTP failure keeps the pending request,
 returns the same response and permits retry after the cooldown; SMTP acceptance
 is not proof of recipient delivery. Hosted signup acceptance submits over real SMTP
-to a digest-pinned Mailpit service in the test compose and CI backend job. Its shared
+to a digest-pinned Mailpit service in the test compose and in every CI backend shard. Its shared
 BDD fixture reads back recipient, sender, subject and the link's token through the
 HTTP API, then confirms with the emailed token. Missing Mailpit fails acceptance;
 FakeSMTP remains in unit tests. See [test setup](features/README.md#running).

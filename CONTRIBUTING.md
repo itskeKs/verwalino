@@ -134,7 +134,8 @@ Pytest includes these stderr diagnostics with the named failure; synthetic conte
 verify the dump, but do not identify the holder from the historical CI hangs.
 Keep targeted runs short (`timeout 1500 make test-backend PYTEST_ARGS="…"`); a legitimately
 longer test needs an explicit `@pytest.mark.timeout(...)` with a reason.
-CI retains its 75-minute backend job limit.
+CI runs four backend shards with a 30-minute limit each; local `make test` still
+runs the whole backend suite in one process.
 
 Hosted signup acceptance sends real SMTP to the local Mailpit inbox. Start it once with
 `docker compose -f infra/docker-compose.declaration-test.yml up -d mailpit` and leave it
@@ -144,7 +145,7 @@ running for other worktrees. `scripts/test-env.sh` (sourced by the Make targets)
 `VERWALINO_MAILPIT_API=http://127.0.0.1:8025`. SMTP and the unauthenticated UI/API bind
 only to loopback. Run `make test-bdd-hosted` for signup acceptance; its fixture clears the
 shared inbox before each mail scenario, polls briefly, and fails if Mailpit is unavailable.
-CI provides the same digest-pinned Mailpit image in the backend job. The browser scenarios
+CI provides the same digest-pinned Mailpit image in each backend shard. The browser scenarios
 do not send mail and need no Mailpit container. Mail-service unit tests keep FakeSMTP.
 
 If the shared database holds a migration revision unknown to the checkout, the session fixture
@@ -189,10 +190,48 @@ changed. CI (`.github/workflows/tests-on-pr.yaml`) must be green:
 
 | Job | What it proves |
 |---|---|
-| `backend` | ruff and the full backend suite with BDD scenarios against Postgres 16 with RLS |
+| `backend-shards` | four disjoint pytest selections, plus hosted BDD selections, each against its own Postgres 16 and Mailpit |
+| `backend-checks` | ruff, installer/Caddy checks and the collection contract, alongside the shards without a database |
+| `backend` (`Backend (ruff, pytest)`) | required summary: fails unless every shard and `backend-checks` succeeded, including cancellation or skipped jobs |
 | `frontend` | eslint, TypeScript, vitest |
 | `browser` | locked Chromium, real UI journeys (`make test-browser`) |
 | `docs` | no broken relative links; paired rule parity and Codex hook contracts |
+
+Backend CI uses `pytest-split --splits 4 --group N --splitting-algorithm least_duration`
+with committed timings in `backend/.test_durations`. Each matrix job runs on a separate
+GitHub-hosted VM, so the existing compose project, container name and loopback ports
+remain isolated without changing the disposable-database guard. Every process rehearses
+migrations and retains the transaction rollback guard from #181. `-p no:randomly` is
+explicit: each shard preserves the relative order of its selected tests, but has its own
+predecessors. The single full-suite ordered window used to investigate #180 no longer
+describes CI; reproduce a shard with its selection and the same committed timings.
+
+The parallel `backend-checks` job collects the full suite once and each shard once with
+`pytest --collect-only -q`. `scripts/backend_test_shards.py check 4` compares node-ID
+multisets: the union must equal the full collection and no node may occur twice. Collection
+loads conftest configuration but does not execute the session migration fixture or connect
+to Postgres. To run the contract locally without a database:
+
+```sh
+source scripts/test-env.sh
+cd backend
+uv run --locked --extra dev --extra ops --extra ocr python ../scripts/backend_test_shards.py check 4
+```
+
+Every successful CI run, including pushes to `main`, records setup/call/teardown timings
+per shard and uploads the merged `backend-test-durations` artifact. Hosted BDD reruns use
+the original timings and do not overwrite those measurements. New tests use the mean
+stored duration until refreshed. After major suite changes or visible imbalance, download
+the artifact from a successful main run and commit it as the refreshed baseline:
+
+```sh
+gh run download RUN_ID -R itskeKs/verwalino -n backend-test-durations -D backend
+git diff -- backend/.test_durations
+```
+
+The workflow has read-only repository permissions and never commits the refresh itself.
+Use a temporary download directory if a local timings file already exists, then copy the
+downloaded `.test_durations` to `backend/.test_durations` before reviewing the diff.
 
 ## Where things live
 
