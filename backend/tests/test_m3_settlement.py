@@ -255,7 +255,8 @@ async def test_pre_split_finalized_snapshot_keeps_its_digest_and_pdf(client_a_ad
         'financial_input_coverage': {'id': coverage_id, 'source_revision': '0' * 64}}
     if heating_key == 'json_null':
         payload['inputs']['heating_advance_payments_total'] = None
-    digest = sha256_hex(canonical_json(payload))
+    snapshot_bytes = canonical_json(payload)
+    digest = sha256_hex(snapshot_bytes)
     run_id = str(uuid.uuid4())
     import psycopg2
     with psycopg2.connect(SYNC_URL) as conn, conn.cursor() as cur:
@@ -286,7 +287,7 @@ async def test_pre_split_finalized_snapshot_keeps_its_digest_and_pdf(client_a_ad
             FROM settlement_run r WHERE id=%s""", (run_id,))
         actual_parent, legacy_parent = cur.fetchone()
         assert actual_parent == legacy_parent
-    assert saved == payload
+    assert canonical_json(saved) == snapshot_bytes
     assert sha256_hex(canonical_json(saved)) == sha == digest
     for field, value in [('heating_advance_payments_total', '90'), ('heating_advance_payments_source', "'DERIVED'")]:
         with psycopg2.connect(SYNC_URL) as conn:
