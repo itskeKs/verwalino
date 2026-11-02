@@ -339,6 +339,19 @@ Statement totals start unknown (empty fields); “Aus Zahlungen ableiten” deri
 The detail page retains its existing decimal-string `EUR` amounts; the advance
 proposal retains its existing German decimal-string `EUR` format. The advance proposal
 uses its own payload, including the lease's advances valid on the acceptance date, and shows the previous amounts.
+
+Screenshots (test database, synthetic data; before = main, after = this change):
+lease form [1280 before](docs/assets/advance-split/lease-before-1280.png) /
+[after](docs/assets/advance-split/lease-after-1280.png), [360 before](docs/assets/advance-split/lease-before-360.png) /
+[after](docs/assets/advance-split/lease-after-360.png); rent account [1280 before](docs/assets/advance-split/rent-account-before-1280.png) /
+[after](docs/assets/advance-split/rent-account-after-1280.png), [360 before](docs/assets/advance-split/rent-account-before-360.png) /
+[after](docs/assets/advance-split/rent-account-after-360.png); statement with two blocks [1280 before](docs/assets/advance-split/statement-before-1280.png) /
+[after](docs/assets/advance-split/round2-anna-1280.png), [360 before](docs/assets/advance-split/statement-before-360.png) /
+[after](docs/assets/advance-split/round2-anna-360.png); statement with the single block
+[1280](docs/assets/advance-split/round2-bernd-1280.png) / [360](docs/assets/advance-split/round2-bernd-360.png);
+proposal for a lease without heating [1280 before](docs/assets/advance-split/round3-bernd-before-1280.png) /
+[after](docs/assets/advance-split/round3-bernd-after-1280.png), [360 before](docs/assets/advance-split/round3-bernd-before-360.png) /
+[after](docs/assets/advance-split/round3-bernd-after-360.png).
 The date defaults to the day after the settlement period ends. Changing it refetches the
 proposal; acceptance stays disabled until the returned `accept_from` matches the selected date.
 Only when the proposed and current heating advances are both zero does it show just the
