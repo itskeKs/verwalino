@@ -908,6 +908,18 @@ reserve payouts neutral with no tenant or owner target. The payment
 detail and bank-assignment vocabulary use the same German name. This type does
 not create a tenant or owner receivable.
 
+Draft unit contribution corrections offer “Korrektur verringern / löschen” beside
+an original with a positive remaining amount. The dialog shows the unit and
+remaining correction, accepts “Verbleibender Korrekturbetrag” and a mandatory
+“Begründung”, and offers separate reduce/delete actions. Deletion creates a
+retained counter-entry; the original and every reduction remain visible with
+“Verbleibende Korrektur” and “Verringerung einer Zuführungskorrektur”. Finalized
+periods and fully reversed originals offer no reduction control. Refusals show
+the German server message and preserve the amount and reason. The same shared
+panel and scrollable dialog apply to both reserve pages at 1280 and 360 px.
+The opening-total payload uses `corrected_opening_balance` with the seen opening;
+`amount` remains a signed difference.
+
 Each retained screenshot is linked below. WEG and asset-report before/after
 captures show the next open period before and after a late 999.00 € receipt.
 All records and account/owner names are synthetic and were created only on the
@@ -959,3 +971,5 @@ field bounds and console health.
 | Withdrawal correction with scrolling fields and error | — | [after](docs/assets/reserve-ledger/round16-withdrawal-error-after-360.png) |
 | WEG opening total request | [before](docs/assets/reserve-ledger/round16-weg-opening-after-1280.png) · [after](docs/assets/reserve-ledger/round17-weg-opening-after-1280.png) | [before](docs/assets/reserve-ledger/round16-weg-opening-after-360.png) · [after](docs/assets/reserve-ledger/round17-weg-opening-after-360.png) |
 | Asset-report opening total request | [before](docs/assets/reserve-ledger/round16-asset-opening-after-1280.png) · [after](docs/assets/reserve-ledger/round17-asset-opening-after-1280.png) | [before](docs/assets/reserve-ledger/round16-asset-opening-after-360.png) · [after](docs/assets/reserve-ledger/round17-asset-opening-after-360.png) |
+| WEG contribution reduction | [before](docs/assets/reserve-ledger/round18-weg-contribution-before-1280.png) · [after](docs/assets/reserve-ledger/round18-weg-contribution-after-1280.png) | [before](docs/assets/reserve-ledger/round18-weg-contribution-before-360.png) · [after](docs/assets/reserve-ledger/round18-weg-contribution-after-360.png) |
+| Asset-report contribution reduction | [before](docs/assets/reserve-ledger/round18-asset-contribution-before-1280.png) · [after](docs/assets/reserve-ledger/round18-asset-contribution-after-1280.png) | [before](docs/assets/reserve-ledger/round18-asset-contribution-before-360.png) · [after](docs/assets/reserve-ledger/round18-asset-contribution-after-360.png) |

@@ -145,7 +145,7 @@ def upgrade():
       component varchar(16) NOT NULL CHECK(component IN ('OPENING','CONTRIBUTION','WITHDRAWAL','ADJUSTMENT','FUNDING')),
       amount numeric(14,2) NOT NULL CHECK(amount <> 'NaN'::numeric),
       reason varchar(2000) NOT NULL CHECK(length(btrim(reason)) BETWEEN 1 AND 2000),
-      payment_id uuid, cost_entry_id uuid, register_entry_id uuid, unit_id uuid,
+      payment_id uuid, cost_entry_id uuid, register_entry_id uuid, unit_id uuid, reverses_entry_id uuid,
       created_by uuid NOT NULL REFERENCES "user"(id), created_at timestamptz NOT NULL DEFAULT now(),
       FOREIGN KEY(organization_id,property_id) REFERENCES property(organization_id,id),
       FOREIGN KEY(organization_id,settlement_run_id) REFERENCES settlement_run(organization_id,id),
@@ -158,6 +158,8 @@ def upgrade():
          OR (component='OPENING' AND payment_id IS NULL AND cost_entry_id IS NULL AND register_entry_id IS NULL)
          OR (component='CONTRIBUTION' AND payment_id IS NULL AND unit_id IS NOT NULL AND cost_entry_id IS NULL AND register_entry_id IS NULL)
          OR (component IN ('WITHDRAWAL','ADJUSTMENT') AND payment_id IS NULL AND cost_entry_id IS NOT NULL AND register_entry_id IS NOT NULL))),
+      UNIQUE(organization_id,id),
+      FOREIGN KEY(organization_id,reverses_entry_id) REFERENCES reserve_ledger_entry(organization_id,id),
       UNIQUE(organization_id,payment_id));
     CREATE INDEX ix_reserve_property_date ON reserve_ledger_entry(organization_id,property_id,entry_date);
     ALTER TABLE reserve_ledger_entry ENABLE ROW LEVEL SECURITY;
@@ -172,7 +174,16 @@ def upgrade():
       AND financial_scope_access(organization_id,'settlement_run',settlement_run_id,'prepare')
       AND property_financial_disclosure_access(organization_id,property_id,'read'));
     REVOKE ALL ON reserve_ledger_entry FROM PUBLIC,app_rw,app_worker,app_review;
-    GRANT SELECT,INSERT ON reserve_ledger_entry TO app_rw;
+    -- Mutations reach the append-only guard and fail with a structured 23514.
+    CREATE POLICY reserve_no_update ON reserve_ledger_entry FOR UPDATE USING (
+      organization_id=NULLIF(current_setting('app.current_org_id',true),'')::uuid
+      AND financial_scope_access(organization_id,'settlement_run',settlement_run_id,'prepare')
+      AND property_financial_disclosure_access(organization_id,property_id,'read'));
+    CREATE POLICY reserve_no_delete ON reserve_ledger_entry FOR DELETE USING (
+      organization_id=NULLIF(current_setting('app.current_org_id',true),'')::uuid
+      AND financial_scope_access(organization_id,'settlement_run',settlement_run_id,'prepare')
+      AND property_financial_disclosure_access(organization_id,property_id,'read'));
+    GRANT SELECT,INSERT,UPDATE,DELETE ON reserve_ledger_entry TO app_rw;
     -- Invoker rights preserve RLS for service reads; guards already run as definer.
     -- VOLATILE sees writes serialized by financial-inputs, including this statement.
     CREATE FUNCTION reserve_funded_amount(org uuid,cost uuid,excluded_payment uuid) RETURNS numeric
@@ -349,17 +360,22 @@ def upgrade():
     CREATE FUNCTION guard_reserve_ledger() RETURNS trigger
     LANGUAGE plpgsql SECURITY DEFINER SET search_path=pg_catalog,pg_temp SET row_security=off AS $$
     DECLARE parent public.settlement_run; sphere uuid; cash public.payment; cost public.cost_entry;
+      original public.reserve_ledger_entry; original_run public.settlement_run; remaining numeric; target numeric; allowed numeric;
     BEGIN
-      IF TG_OP<>'INSERT' THEN RAISE EXCEPTION 'GoBD: reserve ledger is append-only'; END IF;
+      IF TG_OP<>'INSERT' THEN RAISE EXCEPTION 'GoBD: reserve ledger is append-only'
+        USING ERRCODE='23514',CONSTRAINT='reserve_ledger_append_only'; END IF;
       SELECT * INTO parent FROM public.settlement_run WHERE organization_id=NEW.organization_id AND id=NEW.settlement_run_id;
       sphere:=public.financial_scope_id(NEW.organization_id,'settlement_run',parent.id);
+      IF parent.status='finalized' THEN
+        RAISE EXCEPTION 'GoBD: reserve period is finalized'
+          USING ERRCODE='23514',CONSTRAINT='reserve_period_finalized'; END IF;
       IF parent.property_id IS DISTINCT FROM NEW.property_id OR parent.status<>'draft'
         OR parent.run_type NOT IN ('WEG_JAHRESABRECHNUNG','VERMOEGENSBERICHT')
         OR NEW.entry_date NOT BETWEEN parent.period_start AND parent.period_end
         OR NEW.created_by IS DISTINCT FROM NULLIF(current_setting('app.current_user_id',true),'')::uuid
         OR public.property_source_security_mode(NEW.organization_id)='PAUSED' THEN
         RAISE EXCEPTION 'Reserve ledger requires current writable period' USING ERRCODE='23514'; END IF;
-      IF NEW.component='OPENING' AND EXISTS(SELECT 1 FROM public.settlement_run r
+      IF (NEW.component='OPENING' OR NEW.reverses_entry_id IS NOT NULL) AND EXISTS(SELECT 1 FROM public.settlement_run r
         WHERE r.organization_id=NEW.organization_id AND r.property_id=parent.property_id
           AND r.status='finalized' AND r.period_start=parent.period_start AND r.period_end=parent.period_end
           AND r.run_type IN ('WEG_JAHRESABRECHNUNG','VERMOEGENSBERICHT')
@@ -373,7 +389,8 @@ def upgrade():
         AND r.run_type IN ('WEG_JAHRESABRECHNUNG','VERMOEGENSBERICHT')
         AND r.period_start<=NEW.entry_date AND r.period_end>=NEW.entry_date
         AND public.financial_scope_id(r.organization_id,'settlement_run',r.id) IS NOT DISTINCT FROM sphere) THEN
-        RAISE EXCEPTION 'GoBD: reserve period is finalized' USING ERRCODE='23514'; END IF;
+        RAISE EXCEPTION 'GoBD: reserve period is finalized'
+          USING ERRCODE='23514',CONSTRAINT='reserve_period_finalized'; END IF;
       IF NEW.component='OPENING' AND EXISTS(SELECT 1 FROM public.settlement_run r
         WHERE r.organization_id=NEW.organization_id AND r.property_id=NEW.property_id
           AND (r.period_start<parent.period_start OR (
@@ -387,7 +404,36 @@ def upgrade():
         RAISE EXCEPTION 'Reserve opening import is limited to first ledger year' USING ERRCODE='23514',CONSTRAINT='reserve_opening_import_only'; END IF;
       IF NEW.component='OPENING' AND NEW.amount=0 THEN
         RAISE EXCEPTION 'Reserve opening has no change' USING ERRCODE='23514',CONSTRAINT='reserve_amount_invalid'; END IF;
-      IF NEW.component='CONTRIBUTION' AND NEW.payment_id IS NULL THEN
+      IF NEW.reason IS NULL OR length(btrim(NEW.reason))=0 THEN
+        RAISE EXCEPTION 'Reserve correction requires a reason'
+          USING ERRCODE='23514',CONSTRAINT='reserve_correction_reason_required'; END IF;
+      IF NEW.reverses_entry_id IS NOT NULL THEN
+        SELECT * INTO original FROM public.reserve_ledger_entry
+          WHERE organization_id=NEW.organization_id AND id=NEW.reverses_entry_id;
+        SELECT * INTO original_run FROM public.settlement_run
+          WHERE organization_id=NEW.organization_id AND id=original.settlement_run_id;
+        IF original.id IS NULL OR original.reverses_entry_id IS NOT NULL OR original.component<>'CONTRIBUTION'
+          OR original.unit_id IS NULL OR original.payment_id IS NOT NULL
+          OR NEW.component<>'CONTRIBUTION' OR NEW.unit_id IS DISTINCT FROM original.unit_id
+          OR NEW.payment_id IS NOT NULL OR NEW.cost_entry_id IS NOT NULL OR NEW.register_entry_id IS NOT NULL
+          OR original.property_id IS DISTINCT FROM NEW.property_id
+          OR original_run.period_start IS DISTINCT FROM parent.period_start
+          OR original_run.period_end IS DISTINCT FROM parent.period_end
+          OR public.financial_scope_id(NEW.organization_id,'settlement_run',original_run.id) IS DISTINCT FROM sphere
+          OR NOT public.financial_scope_access(NEW.organization_id,'settlement_run',original_run.id,'read') THEN
+          RAISE EXCEPTION 'Only a unit contribution correction in this period can be reduced'
+            USING ERRCODE='23514',CONSTRAINT='reserve_contribution_reduction_invalid'; END IF;
+        SELECT original.amount+COALESCE(sum(e.amount),0) INTO remaining FROM public.reserve_ledger_entry e
+          WHERE e.organization_id=NEW.organization_id AND e.reverses_entry_id=original.id;
+        target:=remaining+NEW.amount;
+        allowed:=LEAST(remaining,public.reserve_contribution_headroom(NEW.organization_id,parent.id,NEW.unit_id)+remaining);
+        IF NEW.amount>0 OR (target>0 AND target>allowed) THEN
+          RAISE EXCEPTION 'Reserve contribution exceeds booked unit Hausgeld share'
+            USING ERRCODE='23514',CONSTRAINT='reserve_contribution_exceeds_booked'; END IF;
+        IF NEW.amount=0 OR remaining<=0 OR target<0 THEN
+          RAISE EXCEPTION 'Reserve reduction must lower the remaining amount to at least zero'
+            USING ERRCODE='23514',CONSTRAINT='reserve_amount_invalid'; END IF;
+      ELSIF NEW.component='CONTRIBUTION' AND NEW.payment_id IS NULL THEN
         IF NEW.unit_id IS NULL OR NEW.cost_entry_id IS NOT NULL OR NEW.register_entry_id IS NOT NULL
           OR NOT EXISTS(SELECT 1 FROM public.unit u WHERE u.organization_id=NEW.organization_id
             AND u.id=NEW.unit_id AND u.property_id=parent.property_id) THEN

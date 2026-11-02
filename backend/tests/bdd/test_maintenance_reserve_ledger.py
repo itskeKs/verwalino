@@ -621,6 +621,7 @@ def unit_contribution(world, reserve_scenario):
     response = world.act('POST', f"/api/weg-settlements/{w['run']}/reserve-ledger/overrides", json={
         'component': 'CONTRIBUTION', 'unit_id': w['u1'], 'amount': '300.00', 'reason': 'Reconciled unit cash'})
     assert response.status_code == 201, response.text
+    w['correction'] = response.json()['id']
 
 
 @then('only 200 euros remain assignable and a further 300 euros is refused')
@@ -699,4 +700,85 @@ def unit_correction_form(world, reserve_scenario, browser_world, tmp_path):
         await expect(page.get_by_role('combobox', name='Einheit *', exact=True)).to_be_visible()
         await page.get_by_role('combobox', name='Einheit *', exact=True).select_option(w['u1'])
         await expect(page.get_by_text('Noch zuordenbar:', exact=False)).to_contain_text('200,00')
+    browser_world.run(inspect())
+
+
+@when('the Hausgeld is reversed and I delete the contribution correction with a reason')
+def delete_unbacked_contribution(world, reserve_scenario):
+    w = reserve_scenario
+    assert world.act('POST', f"/api/payments/{w['cash']}/reverse").status_code == 201
+    response = world.act('DELETE', f"/api/weg-settlements/{w['run']}/reserve-ledger/overrides/{w['correction']}",
+        json={'reason': 'Returned Hausgeld reconciled'})
+    assert response.status_code == 201, response.text
+    w['reversal'] = response.json()['id']
+
+
+@then('the retained reversal restores the reserve balance and the period can be finalized')
+def contribution_release_finalizes(world, reserve_scenario):
+    w = reserve_scenario
+    ledger = world.act('GET', f"/api/weg-settlements/{w['run']}/reserve-ledger").json()
+    assert ledger['contributions_total'] == '0.00'
+    row = next(row for row in ledger['entries'] if row.get('id') == w['reversal'])
+    assert row['amount'] == '-300.00' and row['reverses_entry_id'] == w['correction']
+    values = {'bank_balances': [
+        {'bank_account_id': w['bank_giro'], 'label': 'Giro', 'account_type': 'LAUFEND', 'balance': '0.00'},
+        {'bank_account_id': w['bank_ruecklage'], 'label': 'Reserve', 'account_type': 'RUECKLAGE', 'balance': '0.00'}],
+        'receivables': [], 'payables': []}
+    world.run(attest_fixture(world.actor, 'settlement', w['run'], values))
+    response = world.act('POST', f"/api/weg-settlements/asset-reports/{w['run']}/finalize", json=values)
+    assert response.status_code == 200, response.text
+
+
+@then('reducing and deleting the contribution correction remains usable on both reserve pages')
+def contribution_reduction_forms(world, reserve_scenario, browser_world, tmp_path):
+    import os
+    from playwright.async_api import expect
+    w = reserve_scenario
+    directory = Path(__file__).resolve().parents[3] / 'docs/assets/reserve-ledger' if os.environ.get('VERWALINO_CAPTURE_DESIGN') == '1' else tmp_path
+    routes = [('weg', f"/weg-abrechnungen/{w['weg_run']}"), ('asset', f"/vermoegensberichte/{w['run']}")]
+
+    async def inspect():
+        page = browser_world.page
+        errors = []
+        page.on('pageerror', lambda error: errors.append(str(error)))
+        if os.environ.get('VERWALINO_RESERVE_CAPTURE_BEFORE') == '1':
+            for kind, route in routes:
+                for width in (1280, 360):
+                    await page.set_viewport_size({'width': width, 'height': 800})
+                    await browser_world.visit(route)
+                    panel = page.get_by_role('region', name='Rücklagenbuch')
+                    await expect(panel.get_by_text('Einheit: Wohnung 1', exact=False).last).to_be_visible()
+                    await panel.scroll_into_view_if_needed()
+                    await page.screenshot(path=str(directory / f'round18-{kind}-contribution-before-{width}.png'), animations='disabled')
+        for kind, route in routes:
+            for width in (1280, 360):
+                await page.set_viewport_size({'width': width, 'height': 800})
+                await browser_world.visit(route)
+                panel = page.get_by_role('region', name='Rücklagenbuch')
+                await panel.get_by_role('button', name='Korrektur verringern / löschen', exact=True).click()
+                dialog = page.get_by_role('dialog')
+                await expect(dialog).to_have_accessible_name('Korrektur verringern / löschen')
+                await dialog.get_by_role('button', name='Korrektur verringern', exact=True).click()
+                await expect(dialog.get_by_role('alert')).to_have_text('Bitte begründen Sie die Rücklagenkorrektur.')
+                await page.screenshot(path=str(directory / f'round18-{kind}-contribution-after-{width}.png'), animations='disabled')
+                await expect(dialog.get_by_role('button', name='Korrektur löschen', exact=True)).to_be_in_viewport()
+                assert await page.evaluate('document.documentElement.scrollWidth <= window.innerWidth')
+                assert await dialog.evaluate('(el) => el.scrollWidth <= el.clientWidth')
+                await dialog.get_by_label('Begründung *', exact=True).fill('Hausgeld und verbleibende Korrektur abgeglichen')
+                await dialog.get_by_label('Verbleibender Korrekturbetrag *', exact=True).fill('200,00' if width == 1280 else '100,00')
+                # Exercise one reduction per page; other visits check the same remaining original.
+                if kind == 'weg':
+                    await dialog.get_by_role('button', name='Korrektur verringern', exact=True).click()
+                    await expect(dialog).not_to_be_visible()
+                    await expect(panel.get_by_text('Verbleibende Korrektur:', exact=False)).to_contain_text('200,00' if width == 1280 else '100,00')
+                else:
+                    await dialog.get_by_role('button', name='Abbrechen', exact=True).click()
+        await panel.get_by_role('button', name='Korrektur verringern / löschen', exact=True).click()
+        dialog = page.get_by_role('dialog')
+        await dialog.get_by_label('Begründung *', exact=True).fill('Verbleibende Korrektur vollständig aufgehoben')
+        await dialog.get_by_role('button', name='Korrektur löschen', exact=True).click()
+        await expect(dialog).not_to_be_visible()
+        await expect(panel.get_by_role('button', name='Korrektur verringern / löschen', exact=True)).to_have_count(0)
+        await expect(panel.get_by_text('Verbleibende Korrektur:', exact=False)).to_contain_text('0,00')
+        assert not errors, errors
     browser_world.run(inspect())

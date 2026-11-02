@@ -1,7 +1,7 @@
 import { ReserveEvidenceFields } from './ReserveEvidenceFields';
 import { reserveCostOptions, reserveResolutionOptions } from '../lib/reserveEvidence';
 import { useEffect, useId, useState } from 'react';
-import { addReserveOverride, getReserveLedger, listCostEntries, listPayments, listRegisterEntries } from '../api/endpoints';
+import { addReserveOverride, deleteReserveContribution, reduceReserveContribution, getReserveLedger, listCostEntries, listPayments, listRegisterEntries } from '../api/endpoints';
 import type { CostEntry, Payment, RegisterEntry, ReserveComponent, ReserveLedger, ReserveOverride } from '../api/types';
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from './ui/dialog';
 
@@ -35,6 +35,10 @@ export function ReserveLedgerPanel({ runId, propertyId, status, onChanged, onOpe
   const [reason, setReason] = useState('');
   const [saving, setSaving] = useState(false);
   const [formError, setFormError] = useState('');
+  const [reduction, setReduction] = useState<ReserveLedger['entries'][number] | null>(null);
+  const [reducedTo, setReducedTo] = useState('');
+  const [reductionReason, setReductionReason] = useState('');
+  const [reductionError, setReductionError] = useState('');
   const [sources, setSources] = useState<{ payments: Payment[]; costs: CostEntry[]; register: RegisterEntry[] } | null>(null);
   const [payment, setPayment] = useState('');
   const [unit, setUnit] = useState('');
@@ -77,8 +81,9 @@ export function ReserveLedgerPanel({ runId, propertyId, status, onChanged, onOpe
     if ((component === 'FUNDING' || component === 'WITHDRAWAL' || component === 'ADJUSTMENT') && (!cost || !register)) {
       setFormError('Bitte verknüpfen Sie einen bestätigten Kostenbeleg und einen Beschluss aus der Beschluss-Sammlung.'); return;
     }
-    const body: ReserveOverride = { component: component === 'PAYMENT_ASSIGNMENT' ? 'CONTRIBUTION' : component, amount: component === 'FUNDING' ? '0.00' : normalized, reason: reason.trim() };
-    if (component === 'OPENING') body.expected_opening_balance = ledger!.opening_balance;
+    const body: ReserveOverride = component === 'OPENING'
+      ? { component, corrected_opening_balance: normalized, reason: reason.trim(), expected_opening_balance: ledger!.opening_balance }
+      : { component: component === 'PAYMENT_ASSIGNMENT' ? 'CONTRIBUTION' : component, amount: component === 'FUNDING' ? '0.00' : normalized, reason: reason.trim() };
     if (component === 'WITHDRAWAL' || component === 'ADJUSTMENT') Object.assign(body, { cost_entry_id: cost, register_entry_id: register });
     if (component === 'FUNDING') Object.assign(body, { payment_id: payment, cost_entry_id: cost, register_entry_id: register });
     else if (component === 'PAYMENT_ASSIGNMENT') body.payment_id = payment;
@@ -89,6 +94,25 @@ export function ReserveLedgerPanel({ runId, propertyId, status, onChanged, onOpe
       if (component === 'PAYMENT_ASSIGNMENT') setComponent('CONTRIBUTION');
       setOpen(false); setAmount(''); setReason(''); setPayment(''); setUnit(''); setVersion(v => v + 1); onChanged();
     } catch (err) { setFormError(err instanceof Error ? err.message : 'Korrektur konnte nicht gespeichert werden.'); }
+    finally { setSaving(false); }
+  }
+
+  async function reduce(remove: boolean) {
+    setReductionError('');
+    if (!reductionReason.trim()) {
+      setReductionError('Bitte begründen Sie die Rücklagenkorrektur.'); return;
+    }
+    const target = normalizeAmount(reducedTo);
+    if (!remove && !validAmount(target)) {
+      setReductionError('Bitte geben Sie einen Betrag mit höchstens zwei Nachkommastellen ein.'); return;
+    }
+    if (!reduction?.id || locked) return;
+    setSaving(true);
+    try {
+      if (remove) await deleteReserveContribution(runId, reduction.id, reductionReason.trim());
+      else await reduceReserveContribution(runId, reduction.id, target, reductionReason.trim());
+      setReduction(null); setVersion(v => v + 1); onChanged();
+    } catch (err) { setReductionError(err instanceof Error ? err.message : 'Korrektur konnte nicht verringert werden.'); }
     finally { setSaving(false); }
   }
 
@@ -115,11 +139,17 @@ export function ReserveLedgerPanel({ runId, propertyId, status, onChanged, onOpe
           <tbody>{ledger.entries.map((entry, index) => <tr key={entry.id ?? `${entry.kind}-${entry.date}-${index}`}>
             <td style={{ whiteSpace: 'nowrap' }}>{day(entry.date)}</td>
             <td style={{ overflowWrap: 'anywhere' }}>{labels[entry.kind] ?? entry.kind}{entry.component && ` · ${(entry.kind === 'OVERRIDE' ? componentLabels : labels)[entry.component] ?? entry.component}`}
+              {entry.reverses_entry_id && <div>Verringerung einer Zuführungskorrektur</div>}
+              {entry.current_amount !== undefined && <div>Verbleibende Korrektur: {euro(entry.current_amount)}</div>}
               {entry.reason && <div style={{ overflowWrap: 'anywhere' }}>{entry.reason}</div>}
               {entry.owner_name && <div>Eigentümer: {entry.owner_name}</div>}
               {entry.payment_id && <div><a className="link" href={`/zahlungen/${entry.payment_id}`}>Zahlung: {entry.payment_note || `${day(entry.date)} · ${euro(entry.amount)}`}</a></div>}
               {entry.unit_id && <div>Einheit: {entry.unit_number ?? 'Nicht verfügbar'}</div>}
               {entry.cost_entry_id && <div><a className="link" href={`/kosten/${entry.cost_entry_id}`}>Kostenbeleg: {entry.cost_document_number || 'Beleg öffnen'}</a></div>}
+              {!locked && entry.id && entry.current_amount !== undefined && cents(entry.current_amount) > 0n &&
+                <button className="btn btn--secondary" disabled={disabled} onClick={() => {
+                  setReduction(entry); setReducedTo(entry.current_amount!.replace('.', ',')); setReductionReason(''); setReductionError('');
+                }}>Korrektur verringern / löschen</button>}
               {entry.register_entry_id && <div><a className="link" href={`/beschluss-sammlung?property_id=${propertyId}#beschluss-${entry.register_entry_id}`}>Beschluss{entry.register_sequence_number ? ` Nr. ${entry.register_sequence_number}` : ' öffnen'}</a></div>}
             </td><td style={{ whiteSpace: 'nowrap', fontFamily: 'var(--mono)' }}>{euro(entry.amount)}</td>
           </tr>)}</tbody></table>
@@ -131,6 +161,25 @@ export function ReserveLedgerPanel({ runId, propertyId, status, onChanged, onOpe
       }}>Korrektur erfassen</button>
       {locked && <p id={lockReasonId}>Die Rücklage dieses Zeitraums ist finalisiert.</p>}
     </>}
+    <Dialog open={reduction !== null} onOpenChange={value => { if (!saving && !value) setReduction(null); }}>
+      <DialogContent className="reserve-correction-dialog">
+        <DialogTitle>Korrektur verringern / löschen</DialogTitle>
+        <DialogDescription>Die Verringerung wird mit Ihrer Begründung als Gegenbuchung festgehalten. Beim Löschen wird der verbleibende Korrekturbetrag vollständig aufgehoben.</DialogDescription>
+        <form noValidate onSubmit={event => { event.preventDefault(); void reduce(false); }}>
+          <fieldset disabled={saving || disabled} className="form-grid" style={{ gridTemplateColumns: 'minmax(0, 1fr)' }}>
+            <p>Einheit: {reduction?.unit_number}. Verbleibende Korrektur: {euro(reduction?.current_amount ?? '0.00')}.</p>
+            <label>Verbleibender Korrekturbetrag *<input required inputMode="decimal" value={reducedTo} onChange={event => setReducedTo(event.target.value)} /></label>
+            <label>Begründung *<textarea required maxLength={2000} value={reductionReason} onChange={event => setReductionReason(event.target.value)} /></label>
+            {reductionError && <p role="alert" className="error-text">{reductionError}</p>}
+          </fieldset>
+          <div className="form-actions">
+            <button className="btn btn--primary" disabled={saving || disabled} type="submit">Korrektur verringern</button>
+            <button className="btn btn--danger" disabled={saving || disabled} type="button" onClick={() => void reduce(true)}>Korrektur löschen</button>
+            <button className="btn btn--secondary" disabled={saving} type="button" onClick={() => setReduction(null)}>Abbrechen</button>
+          </div>
+        </form>
+      </DialogContent>
+    </Dialog>
     <Dialog open={open} onOpenChange={value => { if (!saving) setOpen(value); }}><DialogContent className="reserve-correction-dialog">
       <DialogTitle>{component === 'OPENING' ? 'Anfangsbestand korrigieren' : 'Rücklagenkorrektur'}</DialogTitle>
       <DialogDescription>{component === 'OPENING' ? 'Geben Sie den korrigierten Gesamtbestand ein. Die Differenz wird mit Ihrer Begründung im Rücklagenbuch festgehalten.' : 'Erfassen Sie eine begründete Differenz. Positive sonstige Korrekturen vermindern belegte Entnahmen; negative erhöhen sie.'}</DialogDescription>

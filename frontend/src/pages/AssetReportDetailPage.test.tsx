@@ -66,7 +66,8 @@ it('refetches the computation table after a reserve correction', async () => {
   vi.stubGlobal('fetch', fetchMock);
   render(<MemoryRouter initialEntries={['/report/run-1']}><Routes><Route path="/report/:runId" element={<AssetReportDetailPage />} /></Routes></MemoryRouter>);
   await screen.findByText(/Vorheriger Anfangsbestand/);
-  fireEvent.click(screen.getByRole('button', { name: 'Korrektur erfassen' }));
+  // The panel renders after the ledger loads; wait instead of reading it synchronously.
+  fireEvent.click(await screen.findByRole('button', { name: 'Korrektur erfassen' }));
   fireEvent.change(screen.getByLabelText('Art'), { target: { value: 'OPENING' } });
   fireEvent.change(screen.getByLabelText(/^(Betrag|Korrigierter Anfangsbestand)/), { target: { value: '500,00' } });
   fireEvent.change(screen.getByLabelText('Begründung *'), { target: { value: 'Bankunterlagen geprüft' } });

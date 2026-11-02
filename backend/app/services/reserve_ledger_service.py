@@ -47,7 +47,7 @@ class ReserveLedgerService:
         self.repo = ReserveLedgerRepository(session, org_id)
         self.scope = FinancialScopeService(session, org_id, user_id)
 
-    async def subject(self, run_id, write=False):
+    async def subject(self, run_id, write=False, *, require_draft=True):
         await self.scope.lock_inputs()
         run = await SettlementRunRepository(self.session, self.org_id).get_by_id(run_id)
         if run is None or run.run_type not in ('WEG_JAHRESABRECHNUNG', 'VERMOEGENSBERICHT'):
@@ -56,7 +56,7 @@ class ReserveLedgerService:
                                computation=run.status == 'draft')
         if not await self.repo.require_sources(run):
             raise HTTPException(404, {'code': 'RESERVE_SOURCES_NOT_FOUND', 'message': 'Rücklagenquellen nicht zugänglich.'})
-        if write and run.status != 'draft':
+        if write and require_draft and run.status != 'draft':
             raise HTTPException(409, {'code': 'RESERVE_PERIOD_FINALIZED', 'message': 'Die Rücklage dieses Zeitraums ist finalisiert.'})
         return run
 
@@ -186,6 +186,10 @@ class ReserveLedgerService:
                              'reason': (link.reason if link else payment.note) if backed else 'Kostenbeleg und Beschluss noch nicht verknüpft'})
                 if not backed and not (payment.reversed_by_id in payment_ids or payment.reverses_id in payment_ids):
                     unlinked.append(str(payment.id))
+        reversed_amounts = {}
+        for entry in entries:
+            if entry.reverses_entry_id:
+                reversed_amounts[entry.reverses_entry_id] = reversed_amounts.get(entry.reverses_entry_id, ZERO) + entry.amount
         for entry in entries:
             if entry.payment_id or not run.period_start <= entry.entry_date <= run.period_end:
                 continue
@@ -199,6 +203,9 @@ class ReserveLedgerService:
                 overrides += entry.amount
             rows.append({'kind': 'OVERRIDE', 'component': entry.component, 'date': str(entry.entry_date),
                          'amount': format(entry.amount, '.2f'), 'reason': entry.reason, 'id': str(entry.id),
+                         **({'reverses_entry_id': str(entry.reverses_entry_id)} if entry.reverses_entry_id else {}),
+                         **({'current_amount': format(entry.amount + reversed_amounts.get(entry.id, ZERO), '.2f')}
+                            if entry.component == 'CONTRIBUTION' and entry.unit_id and not entry.reverses_entry_id else {}),
                          **({'unit_id': str(entry.unit_id)} if entry.unit_id else {}),
                          **({'cost_entry_id': str(entry.cost_entry_id), 'register_entry_id': str(entry.register_entry_id)} if entry.cost_entry_id else {})})
         created_at = {str(source.id): source.created_at.isoformat() for source in [*entries, *payments]
@@ -259,29 +266,31 @@ class ReserveLedgerService:
                     'message': f'Der Storno ist nicht möglich: Die positiven Korrekturen des Belegs ({_euro(-remaining)}) '
                         'übersteigen die verbleibenden Entnahmen. Bitte gleichen Sie die Korrekturen zuerst aus.'}
 
-    async def add(self, run, component, amount, reason, payment_id=None, cost_entry_id=None, register_entry_id=None, unit_id=None,
-                  expected_opening_balance=None):
+    async def add(self, run, component, amount=None, reason='', payment_id=None, cost_entry_id=None, register_entry_id=None, unit_id=None,
+                  expected_opening_balance=None, corrected_opening_balance=None):
         ledger = await self.read(run)
         if ledger['frozen']:
             raise HTTPException(409, {'code': 'RESERVE_PERIOD_FINALIZED', 'message': 'Die Rücklage dieses Zeitraums ist finalisiert.'})
         if not reason.strip():
             raise HTTPException(422, {'code': 'RESERVE_CORRECTION_REASON_REQUIRED', 'message': 'Bitte begründen Sie die Rücklagenkorrektur.'})
+        if component == 'OPENING':
+            await self.require_opening_period(run, ledger)
+        total_path = corrected_opening_balance is not None
+        if (total_path and (component != 'OPENING' or expected_opening_balance is None or amount is not None)
+                or not total_path and (expected_opening_balance is not None or amount is None)):
+            raise HTTPException(422, {'code': 'RESERVE_INPUT_INVALID',
+                'message': 'Bitte geben Sie entweder eine Differenz oder einen korrigierten Anfangsbestand mit bisherigem Bestand ein.'})
         try:
-            amount = money(amount)
+            amount = money(corrected_opening_balance if total_path else amount)
         except ValueError:
             raise HTTPException(422, {'code': 'RESERVE_AMOUNT_INVALID', 'message': 'Bitte geben Sie einen endlichen Betrag ein.'}) from None
-        if expected_opening_balance is not None:
-            if component != 'OPENING':
-                raise HTTPException(422, {'code': 'RESERVE_INPUT_INVALID', 'message': 'Der bisherige Anfangsbestand ist nur für eine Anfangsbestandskorrektur zulässig.'})
+        if total_path:
             if money(expected_opening_balance) != Decimal(ledger['opening_balance']):
                 raise HTTPException(409, {'code': 'RESERVE_OPENING_CONFLICT',
                     'message': 'Der Anfangsbestand wurde inzwischen geändert. Bitte laden Sie das Rücklagenbuch neu.'})
-            # With a seen opening, amount is the corrected total; retain only its delta.
             amount -= Decimal(ledger['opening_balance'])
-        if component == 'OPENING':
-            await self.require_opening_period(run, ledger)
-            if amount == ZERO:
-                raise HTTPException(422, {'code': 'RESERVE_AMOUNT_INVALID', 'message': 'Keine Änderung des Anfangsbestands.'})
+        if component == 'OPENING' and amount == ZERO:
+            raise HTTPException(422, {'code': 'RESERVE_AMOUNT_INVALID', 'message': 'Keine Änderung des Anfangsbestands.'})
         if unit_id is not None and (component != 'CONTRIBUTION' or payment_id or cost_entry_id or register_entry_id):
             raise HTTPException(422, {'code': 'RESERVE_INPUT_INVALID', 'message': 'Der Einheitenbezug ist nur für eine Zuführungskorrektur zulässig.'})
         if component == 'CONTRIBUTION' and payment_id is None:
@@ -345,13 +354,46 @@ class ReserveLedgerService:
             action='reserve.override_added', payload_diff={'entry_id': str(entry.id), 'component': component,
                 'amount': format(amount, '.2f'), 'reason': reason.strip(),
                 **({'unit_id': str(unit_id)} if unit_id else {})}))
+        await self.invalidate_computation(run)
+        return entry
+
+    async def reduce_contribution(self, run, entry_id, reduced_to, reason):
+        original = next((entry for entry in await self.repo.entries(run) if entry.id == entry_id), None)
+        if original is None:
+            raise HTTPException(404, {'code': 'RESERVE_NOT_FOUND', 'message': 'Rücklagenkorrektur nicht gefunden.'})
+        if (await self.read(run))['frozen'] or await self.repo.has_finalized_opening_period(run):
+            raise HTTPException(409, {'code': 'RESERVE_PERIOD_FINALIZED', 'message': 'Die Rücklage dieses Zeitraums ist finalisiert.'})
+        if original.component != 'CONTRIBUTION' or original.unit_id is None or original.payment_id or original.reverses_entry_id:
+            raise HTTPException(422, {'code': 'RESERVE_INPUT_INVALID', 'message': 'Sie können nur eine Zuführungskorrektur mit Einheitenbezug verringern oder löschen.'})
+        if not reason.strip():
+            raise HTTPException(422, {'code': 'RESERVE_CORRECTION_REASON_REQUIRED', 'message': 'Bitte begründen Sie die Rücklagenkorrektur.'})
+        current = await self.repo.current_contribution_amount(original)
+        target = money(reduced_to)
+        limit = min(current, await self.repo.contribution_headroom(run, original.unit_id) + current)
+        if target > current or target > ZERO and target > limit:
+            raise HTTPException(422, {**CONTRIBUTION_EXCEEDS_BOOKED,
+                'message': f'Sie können für diese Korrektur höchstens {_euro(limit)} beibehalten.'})
+        if target < ZERO or target == current or current <= ZERO:
+            raise HTTPException(422, {'code': 'RESERVE_AMOUNT_INVALID', 'message': 'Bitte verringern Sie den verbleibenden Korrekturbetrag oder löschen Sie die Korrektur.'})
+        entry = await self.repo.create(ReserveLedgerEntry(
+            property_id=run.property_id, settlement_run_id=run.id, entry_date=run.period_end,
+            component='CONTRIBUTION', amount=target-current, reason=reason.strip(), created_by=self.user_id,
+            unit_id=original.unit_id, reverses_entry_id=original.id))
+        await AuditRepository(self.session, self.org_id).create(AuditEvent(
+            actor_user_id=self.user_id, entity_type='settlement_run', entity_id=run.id,
+            action='reserve.contribution_reduced', payload_diff={
+                'entry_id': str(entry.id), 'reverses_entry_id': str(original.id),
+                'old_amount': format(current, '.2f'), 'new_amount': format(target, '.2f'), 'reason': reason.strip()}))
+        await self.invalidate_computation(run)
+        return entry
+
+    async def invalidate_computation(self, run):
         await SettlementLineRepository(self.session, self.org_id).delete_for_run(run.id)
         run.snapshot_payload = None
         run.snapshot_sha256 = None
         run.total_cost = None
         run.balance = None
         await SettlementRunRepository(self.session, self.org_id).update(run)
-        return entry
 
     async def require_opening_period(self, run, ledger):
         if await self.repo.has_finalized_opening_period(run):

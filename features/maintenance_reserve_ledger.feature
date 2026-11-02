@@ -10,6 +10,8 @@ Feature: Maintenance reserve ledger
   refunds, net of reversals), less the signed contributions already credited to the unit.
   Both totals are floored at zero before subtraction; direct reserve payments enter neither.
   Displayed headroom is at least zero; a negative raw headroom prevents computation and finalization.
+  Draft unit corrections can be reduced or deleted with a reason and retained reversal;
+  finalization freezes them. A positive remainder stays within its new booked limit.
 
   Scenario: Booked reserve contributions fund the annual reserve development
     Given a WEG with a finalized reserve plan and a booked reserve contribution
@@ -81,3 +83,16 @@ Feature: Maintenance reserve ledger
   Scenario: A unit contribution correction shows its cap on desktop and mobile
     Given a WEG with partially assigned Hausgeld and a finalized reserve plan
     Then the unit correction shows remaining headroom and preserves inputs after refusal
+
+
+  Scenario: Deleting an unbacked draft contribution correction releases finalization
+    Given a WEG with partially assigned Hausgeld and a finalized reserve plan
+    When I correct the unit contribution by 300 euros
+    And the Hausgeld is reversed and I delete the contribution correction with a reason
+    Then the retained reversal restores the reserve balance and the period can be finalized
+
+  @browser
+  Scenario: Draft contribution corrections can be reduced and deleted on desktop and mobile
+    Given a WEG with partially assigned Hausgeld and a finalized reserve plan
+    When I correct the unit contribution by 300 euros
+    Then reducing and deleting the contribution correction remains usable on both reserve pages

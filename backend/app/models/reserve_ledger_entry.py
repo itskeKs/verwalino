@@ -3,7 +3,7 @@ import uuid
 from datetime import date, datetime
 from decimal import Decimal
 
-from sqlalchemy import Date, ForeignKey, ForeignKeyConstraint, Numeric, String, func
+from sqlalchemy import Date, ForeignKey, ForeignKeyConstraint, Numeric, String, UniqueConstraint, func
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -21,7 +21,10 @@ class ReserveLedgerEntry(Base, UUIDPrimaryKeyMixin):
         ForeignKeyConstraint(
             ['organization_id', 'property_id', 'unit_id'],
             ['unit.organization_id', 'unit.property_id', 'unit.id'],
-            name='fk_reserve_entry_unit', ondelete='RESTRICT'),)
+            name='fk_reserve_entry_unit', ondelete='RESTRICT'),
+        ForeignKeyConstraint(['organization_id', 'reverses_entry_id'],
+            ['reserve_ledger_entry.organization_id', 'reserve_ledger_entry.id'], ondelete='RESTRICT'),
+        UniqueConstraint('organization_id', 'id'),)
 
     organization_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey('organization.id'), nullable=False)
     property_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
@@ -30,6 +33,7 @@ class ReserveLedgerEntry(Base, UUIDPrimaryKeyMixin):
     component: Mapped[str] = mapped_column(String(16), nullable=False)
     amount: Mapped[Decimal] = mapped_column(Numeric(14, 2), nullable=False)
     reason: Mapped[str] = mapped_column(String(2000), nullable=False)
+    reverses_entry_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True))
     payment_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True))
     unit_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True))
     cost_entry_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True))

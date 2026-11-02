@@ -90,11 +90,11 @@ excluded from shared-count sampling.
 No external network or model call is involved.
 Browser app processes inherit the
 selected mode too; `@browser` remains a separate opt-in tag. Browser scenarios do not
-send mail, so only CI's backend job provisions the same digest-pinned Mailpit service.
+send mail, so only CI's backend shards provision the same digest-pinned Mailpit service.
 
-**CI integration:** PR CI runs the selfhost backend suite, then the hosted API
-scenarios sequentially in the same backend job against the same disposable
-Postgres and Mailpit services. The nightly runs selfhost mode and uses
+**CI integration:** PR CI runs the selfhost backend suite in four duration-balanced
+shards; each shard then runs its slice of the hosted API scenarios against its own
+disposable Postgres and Mailpit services (see CONTRIBUTING, CI). The nightly runs selfhost mode and uses
 the self-host installer, which starts a selfhost server; changing the pytest
 process's mode only selects tags and cannot change that server's policy. A
 nightly run in both modes, including a server started with

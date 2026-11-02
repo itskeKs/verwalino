@@ -671,7 +671,7 @@ and never derive their origin from request headers. The public routing hostname
 also configures deployment routing; no second public URL setting is introduced.
 Failed mail submission retains pending state and the generic response. The
 `self_service_signup.feature` journey submits over real SMTP to the digest-pinned
-Mailpit service in the test compose and CI backend job. A shared BDD fixture clears
+Mailpit service in the test compose and each isolated CI backend shard. A shared BDD fixture clears
 the inbox, reads messages over Mailpit's HTTP API, and checks recipient, sender,
 subject and the confirmation link's token before confirming with that emailed token.
 An unavailable Mailpit API fails acceptance; FakeSMTP remains in unit tests.

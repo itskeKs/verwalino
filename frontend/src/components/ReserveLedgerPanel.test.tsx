@@ -141,7 +141,7 @@ it.each([['20500,00', '+500,00', '20500.00'], ['19.700,00', '-300,00', '19700.00
   fireEvent.change(screen.getByLabelText('Begründung *'), { target: { value: 'Bankunterlagen geprüft' } });
   fireEvent.click(screen.getByRole('button', { name: 'Speichern' }));
   await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(expect.any(String), expect.objectContaining({ body: JSON.stringify({
-    component: 'OPENING', amount: normalized, reason: 'Bankunterlagen geprüft', expected_opening_balance: '20000.00',
+    component: 'OPENING', corrected_opening_balance: normalized, reason: 'Bankunterlagen geprüft', expected_opening_balance: '20000.00',
   }) })));
 });
 
@@ -237,4 +237,52 @@ it.each([
   expect(await screen.findByRole('alert')).toHaveTextContent(message);
   expect(screen.getByLabelText('Bestätigter Kostenbeleg *')).toHaveValue('cost-1');
   expect(screen.getByLabelText('Beschluss-Sammlung *')).toHaveValue('register-1');
+});
+
+
+it.each(['reduce', 'delete'])('audits a draft contribution %s with a mandatory reason', async operation => {
+  const changed = vi.fn();
+  const fetchMock = vi.fn(async (_url: string, init?: RequestInit) => init?.method === 'POST' || init?.method === 'DELETE'
+    ? json({ id: 'reversal-1' }, 201) : json({ ...ledger, entries: [
+      { id: 'correction-1', kind: 'OVERRIDE', component: 'CONTRIBUTION', date: '2025-12-31',
+        amount: '800.00', current_amount: '500.00', unit_id: 'unit-1', unit_number: 'Änne Groß mit langem Namen', reason: 'Hausgeld geprüft' },
+    ] }));
+  vi.stubGlobal('fetch', fetchMock);
+  render(<ReserveLedgerPanel runId="run-1" propertyId="property-1" status="draft" onChanged={changed} />);
+  fireEvent.click(await screen.findByRole('button', { name: 'Korrektur verringern / löschen' }));
+  expect(screen.getByLabelText('Verbleibender Korrekturbetrag *')).toHaveValue('500,00');
+  fireEvent.click(screen.getByRole('button', { name: operation === 'delete' ? 'Korrektur löschen' : 'Korrektur verringern' }));
+  expect(await screen.findByRole('alert')).toHaveTextContent('Bitte begründen Sie die Rücklagenkorrektur.');
+  fireEvent.change(screen.getByLabelText('Begründung *'), { target: { value: 'Hausgeld storniert und abgeglichen' } });
+  fireEvent.change(screen.getByLabelText('Verbleibender Korrekturbetrag *'), { target: { value: '200,00' } });
+  fireEvent.click(screen.getByRole('button', { name: operation === 'delete' ? 'Korrektur löschen' : 'Korrektur verringern' }));
+  await waitFor(() => expect(changed).toHaveBeenCalledOnce());
+  expect(fetchMock).toHaveBeenCalledWith(`/api/weg-settlements/run-1/reserve-ledger/overrides/correction-1${operation === 'reduce' ? '/reduce' : ''}`,
+    expect.objectContaining({ method: operation === 'reduce' ? 'POST' : 'DELETE', body: JSON.stringify(operation === 'reduce'
+      ? { reduced_to: '200.00', reason: 'Hausgeld storniert und abgeglichen' } : { reason: 'Hausgeld storniert und abgeglichen' }) }));
+});
+
+it('hides contribution reduction controls on finalized and reversed entries', async () => {
+  vi.stubGlobal('fetch', vi.fn(async () => json({ ...ledger, frozen: true, entries: [
+    { id: 'original', kind: 'OVERRIDE', component: 'CONTRIBUTION', date: '2025-12-31', amount: '500.00', current_amount: '500.00', unit_id: 'unit-1' },
+  ] })));
+  render(<ReserveLedgerPanel runId="run-1" propertyId="property-1" status="finalized" onChanged={() => {}} />);
+  await screen.findByText('Begründete Korrektur · Zuführungskorrektur');
+  expect(screen.queryByRole('button', { name: 'Korrektur verringern / löschen' })).not.toBeInTheDocument();
+});
+
+it('retains the reduced amount and reason after a booked-headroom refusal', async () => {
+  const message = 'Sie können für diese Korrektur höchstens 200,00 € beibehalten.';
+  vi.stubGlobal('fetch', vi.fn(async (_url: string, init?: RequestInit) => init?.method === 'POST'
+    ? json({ detail: { code: 'RESERVE_CONTRIBUTION_EXCEEDS_BOOKED', message } }, 422)
+    : json({ ...ledger, entries: [{ id: 'correction-1', kind: 'OVERRIDE', component: 'CONTRIBUTION',
+      date: '2025-12-31', amount: '500.00', current_amount: '500.00', unit_id: 'unit-1', unit_number: '1' }] })));
+  render(<ReserveLedgerPanel runId="run-1" propertyId="property-1" status="draft" onChanged={() => {}} />);
+  fireEvent.click(await screen.findByRole('button', { name: 'Korrektur verringern / löschen' }));
+  fireEvent.change(screen.getByLabelText('Verbleibender Korrekturbetrag *'), { target: { value: '300,00' } });
+  fireEvent.change(screen.getByLabelText('Begründung *'), { target: { value: 'Hausgeld abgeglichen' } });
+  fireEvent.click(screen.getByRole('button', { name: 'Korrektur verringern' }));
+  expect(await screen.findByRole('alert')).toHaveTextContent(message);
+  expect(screen.getByLabelText('Verbleibender Korrekturbetrag *')).toHaveValue('300,00');
+  expect(screen.getByLabelText('Begründung *')).toHaveValue('Hausgeld abgeglichen');
 });

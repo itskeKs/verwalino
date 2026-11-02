@@ -535,8 +535,9 @@ async def reverse_payment(
         if (getattr(exc.orig, 'sqlstate', None), constraint) == ('23514', 'reserve_adjustment_exceeds_withdrawals'):
             original = await PaymentRepository(db, auth.organization_id).get_by_id(payment_id)
             detail = await ReserveLedgerService(db, auth.organization_id, auth.user_id).payout_reversal_refusal(original)
-            if detail:
-                raise HTTPException(422, detail) from None
+            raise HTTPException(422, detail or {
+                'code': 'RESERVE_ADJUSTMENT_EXCEEDS_WITHDRAWALS',
+                'message': 'Der Storno ist nicht möglich. Bitte gleichen Sie die positiven Korrekturen des Belegs zuerst aus.'}) from None
         raise
     return _to_out(storno)
 
