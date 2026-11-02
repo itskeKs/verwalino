@@ -209,8 +209,10 @@ class ReserveLedgerService:
                 'contribution_headroom': [] if ledger['frozen'] else await self.repo.contribution_options(run)}
 
     async def require_contribution_backing(self, run):
-        if await self.repo.has_unsupported_contributions(run):
-            raise HTTPException(422, CONTRIBUTION_EXCEEDS_BOOKED)
+        unit_number = await self.repo.unsupported_contribution_unit(run)
+        if unit_number is not None:
+            raise HTTPException(422, {**CONTRIBUTION_EXCEEDS_BOOKED,
+                'message': f'Die Zuführungskorrektur der Einheit {unit_number} überschreitet den Rücklagenanteil ihres gebuchten Hausgelds.'})
 
     async def require_evidence(self, property_id, cost_id, register_id, *, complete=True, payment=None, withdrawal_amount=None):
         with self.session.no_autoflush:

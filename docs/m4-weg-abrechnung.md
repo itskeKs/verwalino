@@ -769,10 +769,14 @@ allocation and WEMoG settlement-balance calculation; it changes neither.
   Booked evidence references stay frozen after cost corrections or resolution challenges.
 - A contribution correction requires `unit_id` belonging to the same property,
   a positive amount and a mandatory reason, with no payment, cost or resolution
-  references. Its cap is the reserve share of Hausgeld actually booked for that
-  unit in the exact run period, minus the contributions already credited to it:
-  automatic rows, earlier unit corrections and payment-specific assignments.
-  Only booked IN Hausgeld contributes headroom; reversed receipts do not.
+  references. Its cap is the reserve share of booked net Hausgeld for that unit
+  in the exact run period (IN receipts minus OUT refunds, net of Storno), floored
+  at zero. Already credited contributions are summed with their signs and then
+  floored at zero too: automatic rows (including negative refund rows), earlier
+  unit corrections and payment-specific assignments of that unit's Hausgeld.
+  Raw headroom is the cap minus this credited total and may be negative. The API
+  displays at least zero; the service and database guard refuse any correction
+  above the raw headroom. Direct reserve payments enter neither aggregate.
   Frozen plan cells and the cash ratio use the same SQL helpers for automatic
   contributions, displayed headroom and the definer ledger guard. Plan selection is
   shared too: use the exact current plan or, for a partial-period asset report,
@@ -781,7 +785,8 @@ allocation and WEMoG settlement-balance calculation; it changes neither.
   `RESERVE_CONTRIBUTION_EXCEEDS_BOOKED`; nonpositive corrections return
   `RESERVE_AMOUNT_INVALID`. If a later Storno removes the backing for an existing
   unit correction, draft computation/finalization refuses the unsupported contribution
-  with the same cap code. The reversal and retained correction history remain intact.
+  with the same cap code and a message naming the unit. The reversal and retained
+  correction history remain intact.
   A composite organization/unit foreign key and the
   trigger protect direct writes. Free contribution corrections, including the
   former cost-and-resolution path, are refused. Legacy balances enter only through

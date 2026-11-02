@@ -6,6 +6,10 @@ Feature: Maintenance reserve ledger
   Finalization freezes opening imports for that exact period, including correction
   drafts after supersession; evidenced withdrawal and adjustment corrections remain possible.
   An opening import requires the earliest period and no overlapping, different reserve period.
+  Unit corrections use the reserve share of booked net Hausgeld (receipts minus
+  refunds, net of reversals), less the signed contributions already credited to the unit.
+  Both totals are floored at zero before subtraction; direct reserve payments enter neither.
+  Displayed headroom is at least zero; a negative raw headroom prevents computation and finalization.
 
   Scenario: Booked reserve contributions fund the annual reserve development
     Given a WEG with a finalized reserve plan and a booked reserve contribution

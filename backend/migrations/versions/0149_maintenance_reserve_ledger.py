@@ -274,7 +274,7 @@ def upgrade():
           ON a.organization_id=org AND a.component='CONTRIBUTION' AND a.payment_id=COALESCE(p.reverses_id,p.id)
         WHERE p.organization_id=org AND p.property_id=r.property_id AND p.status='booked' AND p.cancelled_at IS NULL
           AND p.value_date BETWEEN r.period_start AND r.period_end
-          AND p.payment_type IN ('HAUSGELD_VORSCHUSS','RUECKLAGENANTEIL')
+          AND p.payment_type='HAUSGELD_VORSCHUSS'
       ), movements AS (
         SELECT p.*,b.planned,b.owners,
           (SELECT jsonb_agg(jsonb_build_object('unit_id',c->>'unit_id','annual_advance',c->>'amount'))
@@ -284,18 +284,16 @@ def upgrade():
         CROSS JOIN LATERAL (SELECT public.reserve_plan_cells(source.snapshot_payload,source.reserve_contribution_total,source.period_start) planned,
           source.snapshot_payload->'result'->'owners' owners) b
       ) SELECT
-        COALESCE((SELECT sum(s.amount) FROM movements p CROSS JOIN LATERAL
-          public.reserve_unit_cash(p.amount,p.units,p.planned,p.owners) s
-          WHERE p.direction='IN' AND p.payment_type='HAUSGELD_VORSCHUSS' AND s.unit_id=unit::text
-            AND p.reverses_id IS NULL AND p.reversed_by_id IS NULL),0)
-        -COALESCE((SELECT sum(s.amount) FROM movements p CROSS JOIN LATERAL public.reserve_unit_cash(
-          CASE WHEN p.payment_type='RUECKLAGENANTEIL' THEN p.signed ELSE COALESCE(p.assigned,p.signed) END,
-          p.units,p.planned,CASE WHEN p.assigned IS NOT NULL OR p.payment_type='RUECKLAGENANTEIL'
-            THEN p.reserve_owners ELSE p.owners END) s WHERE s.unit_id=unit::text),0)
-        -COALESCE((SELECT sum(e.amount) FROM public.reserve_ledger_entry e JOIN public.settlement_run r
+        GREATEST(0,COALESCE((SELECT sum(s.amount) FROM movements p CROSS JOIN LATERAL
+          public.reserve_unit_cash(p.signed,p.units,p.planned,p.owners) s
+          WHERE s.unit_id=unit::text),0))
+        -GREATEST(0,COALESCE((SELECT sum(s.amount) FROM movements p CROSS JOIN LATERAL public.reserve_unit_cash(
+          COALESCE(p.assigned,p.signed),p.units,p.planned,
+          CASE WHEN p.assigned IS NOT NULL THEN p.reserve_owners ELSE p.owners END) s WHERE s.unit_id=unit::text),0)
+        +COALESCE((SELECT sum(e.amount) FROM public.reserve_ledger_entry e JOIN public.settlement_run r
           ON r.organization_id=e.organization_id AND r.id=e.settlement_run_id CROSS JOIN parent p
           WHERE e.organization_id=org AND e.property_id=p.property_id AND e.unit_id=unit AND e.component='CONTRIBUTION'
-            AND r.period_start=p.period_start AND r.period_end=p.period_end),0)
+            AND r.period_start=p.period_start AND r.period_end=p.period_end),0))
     $$;
     REVOKE ALL ON FUNCTION reserve_plan_cells(jsonb,numeric,date),reserve_hausgeld_share(numeric,text[],jsonb,jsonb),
       reserve_unit_cash(numeric,text[],jsonb,jsonb),reserve_contribution_headroom(uuid,uuid,uuid),

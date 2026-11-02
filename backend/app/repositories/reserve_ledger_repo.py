@@ -188,13 +188,15 @@ class ReserveLedgerRepository(TenantRepository[ReserveLedgerEntry]):
         return await self._session.scalar(text('SELECT reserve_contribution_headroom(:org,:run,:unit)'),
             {'org': self._org_id, 'run': run.id, 'unit': unit_id})
 
-    async def has_unsupported_contributions(self, run):
-        return await self._session.scalar(text('''SELECT EXISTS(
-            SELECT 1 FROM reserve_ledger_entry e JOIN settlement_run r
+    async def unsupported_contribution_unit(self, run):
+        return await self._session.scalar(text('''SELECT u.number
+            FROM reserve_ledger_entry e JOIN settlement_run r
               ON r.organization_id=e.organization_id AND r.id=e.settlement_run_id
+            JOIN unit u ON u.organization_id=e.organization_id AND u.id=e.unit_id
             WHERE e.organization_id=:org AND e.property_id=:property AND e.unit_id IS NOT NULL
               AND r.period_start=:starts AND r.period_end=:ends
-              AND reserve_contribution_headroom(:org,:run,e.unit_id)<0)'''),
+              AND reserve_contribution_headroom(:org,:run,e.unit_id)<0
+            ORDER BY u.number,u.id LIMIT 1'''),
             {'org': self._org_id, 'run': run.id, 'property': run.property_id,
              'starts': run.period_start, 'ends': run.period_end})
 
