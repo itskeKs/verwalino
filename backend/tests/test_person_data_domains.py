@@ -200,7 +200,7 @@ async def test_contact_migration_preserves_evidence_and_cannot_enable_source_acc
     from alembic.operations import Operations
     from sqlalchemy import create_engine
     from sqlalchemy.exc import DBAPIError
-    from tests.conftest import MIGRATOR_SYNC_URL
+    from tests.conftest import MIGRATOR_SYNC_URL,clear_disposable_source_context
     await domain_fixture(client_a_admin)
     migration=importlib.import_module('migrations.versions.0068_person_data_domains')
     engine=create_engine(MIGRATOR_SYNC_URL)
@@ -211,7 +211,8 @@ async def test_contact_migration_preserves_evidence_and_cannot_enable_source_acc
                     migration.downgrade()
             transaction=connection.begin_nested()
             try:
-                connection.execute(text('TRUNCATE person_data_grant,person_data_domain'))
+                with connection.connection.cursor() as cursor:
+                    clear_disposable_source_context(cursor)
                 with Operations.context(MigrationContext.configure(connection)):
                     migration.downgrade()
                     migration.upgrade()
