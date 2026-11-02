@@ -30,10 +30,20 @@ class BackendShardTests(unittest.TestCase):
             first, second = [Path(directory) / name for name in ("one.json", "two.json")]
             first.write_text(json.dumps({"a": 1.25}))
             second.write_text(json.dumps({"b": 2.5}))
-            self.assertEqual(merge_durations([first, second]), {"a": 1.25, "b": 2.5})
+            self.assertEqual(merge_durations([first, second], expected=2), {"a": 1.25, "b": 2.5})
             second.write_text(json.dumps({"a": 3}))
             with self.assertRaises(ValueError):
-                merge_durations([first, second])
+                merge_durations([first, second], expected=2)
+
+    def test_merge_rejects_a_missing_or_surplus_shard_file(self):
+        with tempfile.TemporaryDirectory() as directory:
+            first, second = [Path(directory) / name for name in ("one.json", "two.json")]
+            first.write_text(json.dumps({"a": 1.25}))
+            second.write_text(json.dumps({"b": 2.5}))
+            with self.assertRaises(ValueError):
+                merge_durations([first], expected=2)
+            with self.assertRaises(ValueError):
+                merge_durations([first, second], expected=1)
 
 
 if __name__ == "__main__":
