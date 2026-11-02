@@ -17,6 +17,9 @@ from datetime import date
 from decimal import Decimal
 
 import pytest
+import pytest_asyncio
+
+from tests.test_rent_changes import rent_db, rent_world, api_client  # noqa: F401
 
 SYNC_URL = os.environ.get(
     "HV_DATABASE_URL_SYNC",
@@ -26,10 +29,31 @@ SYNC_URL = os.environ.get(
 REF = "2026-06-02"
 
 
-@pytest.fixture(scope="session")
-def m9_fristen_seed(seed_data):
+@pytest_asyncio.fixture
+async def client_a_admin(rent_world):
+    async with api_client(rent_world) as client:
+        yield client
+
+
+@pytest_asyncio.fixture
+async def client_a_readonly(rent_world):
+    async with api_client(rent_world, "reader") as client:
+        yield client
+
+
+@pytest_asyncio.fixture
+async def client_b_admin(rent_world):
+    async with api_client(rent_world, foreign=True) as client:
+        yield client
+
+
+@pytest.fixture
+def m9_fristen_seed(seed_data, rent_world):
     import psycopg2
 
+    # The legacy organization-wide view requires an unclassified organization.
+    seed_data = {**seed_data, "org_a_id": rent_world["org"],
+                 "user_a_admin_id": rent_world["admin"]}
     org_a = str(seed_data["org_a_id"])
     ids = {
         "prop": uuid.uuid4(),

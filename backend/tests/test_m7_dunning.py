@@ -996,10 +996,23 @@ class TestDunningAPI:
         assert r.json()["id"] == dunning_id
 
     @pytest.mark.asyncio
-    async def test_escalation_1_to_2(self, client_a_admin, m7_seed):
+    async def test_escalation_1_to_2(self, isolated_batch_seed):
         """After one issued notice, the next should be level 2."""
-        # First dunning (already issued in the test above covers it, but let us
-        # be explicit with a fresh create + issue cycle)
+        client_a_admin, m7_seed = isolated_batch_seed
+        first = await client_a_admin.post(
+            "/api/dunning/tenant",
+            json={
+                "tenant_profile_id": str(m7_seed["tenant_m7"]),
+                "lease_agreement_id": str(m7_seed["lease_m7"]),
+                "period_start": "2025-01-01",
+                "period_end": "2025-06-30",
+                "reference_date": "2025-07-01",
+            },
+        )
+        assert first.status_code == 201, first.text
+        assert first.json()["level"] == 1
+        issued = await client_a_admin.post(f"/api/dunning/{first.json()['id']}/issue")
+        assert issued.status_code == 200, issued.text
         r = await client_a_admin.post(
             "/api/dunning/tenant",
             json={
@@ -1012,9 +1025,7 @@ class TestDunningAPI:
         )
         assert r.status_code == 201
         data = r.json()
-        # Level depends on how many issued notices exist for this tenant.
-        # At least 1 from the previous test -> level >= 2.
-        assert data["level"] >= 2
+        assert data["level"] == 2
 
     @pytest.mark.asyncio
     async def test_pdf_only_for_issued(self, client_a_admin, m7_seed):

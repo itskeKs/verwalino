@@ -1,7 +1,6 @@
 # Quality gate for pull requests and main: backend (ruff + pytest against
 # Postgres), frontend (eslint + tsc + vitest), Markdown links and agent rules.
-# Every step runs the same Makefile target a developer runs locally, so this
-# file only adds the CI environment (test services, toolchains, caches).
+# Tests use the local Makefile targets; CI selects disjoint backend shards.
 
 name: Tests on PR
 
@@ -24,10 +23,14 @@ defaults:
     shell: bash
 
 jobs:
-  backend:
-    name: Backend (ruff, pytest)
+  backend-shards:
+    name: Backend shard ${{ matrix.shard }}/4
     runs-on: ubuntu-latest
-    timeout-minutes: 75
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4]
     services:
       mailpit:
         image: axllent/mailpit:v1.32.0@sha256:0790692be935ea4420d085694f7985b1f692ca6a8771ab0e0bd8ba75ac180498
@@ -79,11 +82,69 @@ jobs:
       # application roles and publishes 127.0.0.1:55432, the only address the
       # destructive test harness accepts (backend/app/core/declaration_test_database.py).
       # Tests such as test_deployment_upgrade.py address the container by that name.
+      # Each matrix job has its own hosted VM, Postgres and Mailpit: fixed names
+      # and ports never share a host or database across shards.
       - name: Start test database
         run: docker compose -f infra/docker-compose.declaration-test.yml up -d --wait postgres
 
+      - name: Backend tests (pytest shard)
+        run: |
+          cp backend/.test_durations backend/test-durations-${{ matrix.shard }}.json
+          make test-backend PYTEST_ARGS="-q -p no:randomly --splits 4 --group ${{ matrix.shard }} --splitting-algorithm least_duration --durations-path test-durations-${{ matrix.shard }}.json --store-durations --clean-durations"
+
+      - name: Upload shard duration measurements
+        if: always() && hashFiles(format('backend/test-durations-{0}.json', matrix.shard)) != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: backend-test-durations-${{ matrix.shard }}
+          path: backend/test-durations-${{ matrix.shard }}.json
+          if-no-files-found: error
+
+      - name: Hosted API scenarios (Postgres and Mailpit)
+        env:
+          HV_DEPLOYMENT_MODE: hosted
+        run: make test-bdd-hosted PYTEST_ARGS="-q -p no:randomly --splits 4 --group ${{ matrix.shard }} --splitting-algorithm least_duration"
+
+  # Installer contracts take about ten minutes. Run them beside pytest, not
+  # before one shard. Collection loads configuration but executes no DB fixtures.
+  backend-checks:
+    name: Backend checks (ruff, installer, collection)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      UV_LOCKED: "1"
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Install system libraries
+        run: >-
+          sudo apt-get update && sudo apt-get install -y --no-install-recommends
+          libpango-1.0-0 libpangocairo-1.0-0 libpangoft2-1.0-0 libcairo2
+          libgdk-pixbuf-2.0-0 libffi8 fonts-dejavu-core shared-mime-info
+          poppler-utils qpdf tesseract-ocr tesseract-ocr-deu
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v7
+        with:
+          version: "0.11.7"
+          python-version: "3.12"
+          enable-cache: true
+          cache-dependency-glob: backend/uv.lock
+
+      - name: Install backend dependencies
+        working-directory: backend
+        run: uv sync --locked --extra dev --extra ops --extra ocr
+
       - name: Lint (ruff)
         run: make lint-backend
+
+      - name: Verify every backend test belongs to exactly one shard
+        run: |
+          python3 -B scripts/test-backend-shards.py
+          source scripts/test-env.sh
+          cd backend
+          uv run --locked --extra dev --extra ops --extra ocr python ../scripts/backend_test_shards.py check 4
 
       - name: Installer contract tests
         run: make test-installer
@@ -98,13 +159,43 @@ jobs:
             --mount "type=bind,src=$PWD/infra/Caddyfile.site,dst=/etc/caddy/Caddyfile.site,readonly" \
             caddy:2.10.2-alpine caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile
 
-      - name: Backend tests (pytest, whole suite)
-        run: make test-backend
-
-      - name: Hosted API scenarios (Postgres and Mailpit)
+  # Keep the branch-protection context stable and fail closed on failed,
+  # skipped or cancelled dependencies, covering ruff and every test shard.
+  backend:
+    name: Backend (ruff, pytest)
+    needs: [backend-shards, backend-checks]
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Require all backend shards
         env:
-          HV_DEPLOYMENT_MODE: hosted
-        run: make test-bdd-hosted
+          SHARD_RESULT: ${{ needs.backend-shards.result }}
+          CHECK_RESULT: ${{ needs.backend-checks.result }}
+        run: test "$SHARD_RESULT" = success && test "$CHECK_RESULT" = success
+
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Download shard duration measurements
+        uses: actions/download-artifact@v4
+        with:
+          pattern: backend-test-durations-*
+          path: ${{ runner.temp }}/backend-durations
+          merge-multiple: true
+
+      # Main runs publish a complete refresh candidate, never write to the
+      # repository. A maintainer reviews and commits the downloaded file.
+      - name: Merge duration measurements
+        run: python3 scripts/backend_test_shards.py merge --expected 4 backend/.test_durations "${{ runner.temp }}"/backend-durations/test-durations-*.json
+
+      - name: Upload duration refresh candidate
+        uses: actions/upload-artifact@v4
+        with:
+          name: backend-test-durations
+          path: backend/.test_durations
+          include-hidden-files: true
+          if-no-files-found: error
 
   frontend:
     name: Frontend (eslint, tsc, vitest)

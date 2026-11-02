@@ -40,6 +40,7 @@ dev = [
     "ruff>=0.8,<1",
     "pytest-bdd>=8,<9",
     "pytest-playwright>=0.7,<1",
+    "pytest-split>=0.11,<1",
 ]
 ocr = [
     "pytesseract>=0.3,<1",
