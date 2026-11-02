@@ -609,6 +609,7 @@ export interface IndexmietePreview {
   previous_base_rent: string;
   base_rent: string;
   advance_payment: string;
+  heating_advance_payment: string;
 }
 
 export interface IndexmieteCreate extends IndexmieteInput {
@@ -752,8 +753,9 @@ export function getSettlement(id: string): Promise<SettlementRun> {
   return api.get<SettlementRun>(`/api/settlements/${id}`);
 }
 
-export function getAdvanceProposal(id: string): Promise<AdvanceProposal> {
-  return api.get<AdvanceProposal>(`/api/settlements/${id}/advance-proposal`);
+export function getAdvanceProposal(id: string, acceptFrom?: string): Promise<AdvanceProposal> {
+  const query = acceptFrom ? `?${new URLSearchParams({ accept_from: acceptFrom })}` : "";
+  return api.get<AdvanceProposal>(`/api/settlements/${id}/advance-proposal${query}`);
 }
 
 export function applyAdvanceProposal(

@@ -19,7 +19,7 @@ async def record_change(browser_world):
     page = browser_world.page
     await page.get_by_role("button", name="Miete ändern ab", exact=False).click()
     dialog = page.get_by_role("dialog", name="Miete ändern", exact=True)
-    for label, value in (("Gültig ab", "2026-04-01"), ("Kaltmiete (EUR)", "750.00"), ("Vorauszahlung (EUR)", "150.00")):
+    for label, value in (("Gültig ab", "2026-04-01"), ("Kaltmiete (EUR)", "750.00"), ("Betriebskosten-Vorauszahlung (EUR)", "150.00")):
         await field(dialog, label).fill(value)
     await button(dialog, "Mietänderung speichern").click()
     await expect(dialog).not_to_be_visible()
@@ -32,7 +32,7 @@ async def history(browser_world):
     await page.reload()
     table = page.get_by_role("table", name="Miethistorie:", exact=False)
     row = table.get_by_role("row").filter(has=page.get_by_role("cell", name="2026-04-01", exact=True))
-    await expect(row.get_by_role("cell")).to_have_text(["2026-04-01", "750.00", "150.00", "Mietänderung"])
+    await expect(row.get_by_role("cell")).to_have_text(["2026-04-01", "750.00", "150.00", "0.00", "Mietänderung"])
     original = page.get_by_role("row").filter(has=page.get_by_role("cell", name=browser_world.world.data["people"][0].name, exact=True))
     await expect(original.get_by_role("cell", name="700.00", exact=True)).to_be_visible()
     await expect(original.get_by_role("cell", name="150.00", exact=True)).to_be_visible()
@@ -46,7 +46,7 @@ async def changed_ledger(browser_world):
     # Representative boundary months plus the full 24-row year.
     for period, amount in (("2026/01", "700.00"), ("2026/03", "700.00"), ("2026/04", "750.00"), ("2026/12", "750.00")):
         await ledger_row(browser_world, period, "Kaltmiete", [amount, "0.00", amount])
-        await ledger_row(browser_world, period, "NK-Vorauszahlung", ["150.00", "0.00", "150.00"])
+        await ledger_row(browser_world, period, "Betriebskosten-Vorauszahlung", ["150.00", "0.00", "150.00"])
     table = browser_world.page.get_by_role("table").filter(has=browser_world.page.get_by_role("columnheader", name="Offen", exact=True))
     await expect(table.locator("tbody tr")).to_have_count(24)
 

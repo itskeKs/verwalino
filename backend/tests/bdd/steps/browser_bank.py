@@ -122,7 +122,7 @@ async def january_assigned(browser_world):
 async def january_paid(browser_world):
     await ledger(browser_world, end="2026-01-31")
     await ledger_row(browser_world, "2026/01", "Kaltmiete", ["700.00", "700.00", "0.00"])
-    await ledger_row(browser_world, "2026/01", "NK-Vorauszahlung", ["150.00", "150.00", "0.00"])
+    await ledger_row(browser_world, "2026/01", "Betriebskosten-Vorauszahlung", ["150.00", "150.00", "0.00"])
 
 
 @when("the manager splits the February receipt into 500 EUR rent and 100 EUR advance payment")
@@ -173,5 +173,5 @@ async def empty_new_filter(browser_world):
 async def february_partial(browser_world):
     await ledger(browser_world, start="2026-02-01", end="2026-02-28")
     await ledger_row(browser_world, "2026/02", "Kaltmiete", ["700.00", "500.00", "200.00"])
-    await ledger_row(browser_world, "2026/02", "NK-Vorauszahlung", ["150.00", "100.00", "50.00"])
+    await ledger_row(browser_world, "2026/02", "Betriebskosten-Vorauszahlung", ["150.00", "100.00", "50.00"])
     await browser_world.row("Saldo", "250.00 EUR")

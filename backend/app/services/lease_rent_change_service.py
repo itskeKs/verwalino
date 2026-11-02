@@ -23,8 +23,17 @@ class LeaseRentChangeService:
     def __init__(self, session, org_id, user_id):
         self.session, self.org_id, self.user_id = session, org_id, user_id
 
+    async def rate_on(self, lease, valid_from: date):
+        """Resolve the full rate in effect on a date, including that day's change."""
+        source = lease
+        for change in await LeaseRentChangeRepository(self.session, self.org_id).list_for_lease(lease.id):
+            if change.valid_from <= valid_from:
+                source = change
+        return source
+
     async def create(self, lease_id: uuid.UUID, valid_from: date,
-                     advance_payment: Decimal, *, base_rent: Decimal | None = None):
+                     advance_payment: Decimal, *, base_rent: Decimal | None = None,
+                     heating_advance_payment: Decimal | None = None):
         # All callers serialize financial inputs BEFORE locking a contract.
         await FinancialScopeService(self.session, self.org_id, self.user_id).lock_inputs()
         lease = await LeaseAgreementRepository(self.session, self.org_id).get_by_id_for_update(lease_id)
@@ -33,14 +42,14 @@ class LeaseRentChangeService:
         await require_history_prepare(self.session, self.org_id, "lease_agreement", lease)
         if valid_from < lease.valid_from or (lease.valid_to is not None and valid_from >= lease.valid_to):
             raise HTTPException(422, "Rent change must be within the lease period")
+        source = await self.rate_on(lease, valid_from)
         if base_rent is None:
-            base_rent = lease.base_rent
-            for change in await LeaseRentChangeRepository(self.session, self.org_id).list_for_lease(lease_id):
-                if change.valid_from <= valid_from:
-                    base_rent = change.base_rent
+            base_rent = source.base_rent
+        if heating_advance_payment is None:
+            heating_advance_payment = source.heating_advance_payment
         row = LeaseRentChange(
             id=uuid.uuid4(), lease_agreement_id=lease.id, valid_from=valid_from,
-            base_rent=base_rent, advance_payment=advance_payment,
+            base_rent=base_rent, advance_payment=advance_payment, heating_advance_payment=heating_advance_payment,
         )
         try:
             async with self.session.begin_nested():
@@ -54,6 +63,7 @@ class LeaseRentChangeService:
             action="lease.rent_change_created", payload_diff={
                 "rent_change_id": str(row.id), "valid_from": row.valid_from.isoformat(),
                 "base_rent": f"{row.base_rent:.2f}", "advance_payment": f"{row.advance_payment:.2f}",
+                "heating_advance_payment": f"{row.heating_advance_payment:.2f}",
             },
         ))
         return row
@@ -99,7 +109,7 @@ class LeaseRentChangeService:
             planned.append((effective, rent))
         rows = []
         for effective, rent in planned:
-            rows.append(await self.create(lease_id, effective, advance, base_rent=rent))
+            rows.append(await self.create(lease_id, effective, advance, base_rent=rent, heating_advance_payment=source.heating_advance_payment))
         return rows
 
     async def calculate_index(self, lease_id: uuid.UUID, *, old_index: Decimal, new_index: Decimal,
@@ -129,6 +139,7 @@ class LeaseRentChangeService:
                 previous_base = change.base_rent
         try:
             return calculate_index_rent(base_rent=source.base_rent, advance_payment=source.advance_payment,
+                                        heating_advance_payment=source.heating_advance_payment,
                                         previous_valid_from=base_from, old_index=old_index,
                                         new_index=new_index, declaration_received_on=declaration_received_on)
         except ValueError as exc:
@@ -142,7 +153,8 @@ class LeaseRentChangeService:
         if (preview.base_rent, preview.advance_payment, preview.previous_valid_from) != (
                 expected_base_rent, expected_advance_payment, expected_previous_valid_from):
             raise HTTPException(409, "Index rent preview is stale; calculate again")
-        row = await self.create(lease_id, preview.valid_from, preview.advance_payment, base_rent=preview.base_rent)
+        row = await self.create(lease_id, preview.valid_from, preview.advance_payment, base_rent=preview.base_rent,
+                                heating_advance_payment=preview.heating_advance_payment)
         await AuditRepository(self.session, self.org_id).create(AuditEvent(
             actor_user_id=self.user_id, entity_type="lease_agreement", entity_id=lease_id,
             action="lease.index_rent_created", payload_diff={

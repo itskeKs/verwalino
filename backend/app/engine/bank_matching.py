@@ -16,7 +16,7 @@ from decimal import Decimal, InvalidOperation
 from typing import Literal
 
 from app.engine.bank_import import BankImportRow
-from app.engine.mietkonto import OpenItem, PT_HAUSGELD_VORSCHUSS, PT_KALTMIETE, PT_NK_VORAUSZAHLUNG
+from app.engine.mietkonto import OpenItem, PT_HK_VORAUSZAHLUNG, PT_HAUSGELD_VORSCHUSS, PT_KALTMIETE, PT_NK_VORAUSZAHLUNG
 from app.engine.rounding import CENT
 
 Confidence = Literal["HIGH", "MEDIUM", "LOW"]
@@ -126,11 +126,13 @@ def _component_hint(purpose: str | None) -> set[str] | None:
     words = _words(purpose)
     result: set[str] = set()
     if words & {"warmmiete", "miete"}:
-        result.update({PT_KALTMIETE, PT_NK_VORAUSZAHLUNG})
+        result.update({PT_KALTMIETE, PT_NK_VORAUSZAHLUNG, PT_HK_VORAUSZAHLUNG})
     if "kaltmiete" in words:
         result.add(PT_KALTMIETE)
     if words & {"nk", "nebenkosten", "betriebskosten"}:
         result.add(PT_NK_VORAUSZAHLUNG)
+    if words & {"heizkosten", "heizung", "hk"}:
+        result.add(PT_HK_VORAUSZAHLUNG)
     if "hausgeld" in words:
         result.add(PT_HAUSGELD_VORSCHUSS)
     return result or None
@@ -163,7 +165,7 @@ def _suggestion(
         return None
     name_conflict = bool(iban_match and bank_name and target_name and not name_match)
     year, month, explicit = period
-    allowed = {PT_KALTMIETE, PT_NK_VORAUSZAHLUNG} if target.lease_agreement_id else {PT_HAUSGELD_VORSCHUSS}
+    allowed = {PT_KALTMIETE, PT_NK_VORAUSZAHLUNG, PT_HK_VORAUSZAHLUNG} if target.lease_agreement_id else {PT_HAUSGELD_VORSCHUSS}
     hint = _component_hint(transaction.purpose)
     if hint is not None:
         allowed &= hint
@@ -224,7 +226,7 @@ def suggest_matches(
     }:
         return ()
     hint = _component_hint(transaction.purpose)
-    if hint and PT_HAUSGELD_VORSCHUSS in hint and hint & {PT_KALTMIETE, PT_NK_VORAUSZAHLUNG}:
+    if hint and PT_HAUSGELD_VORSCHUSS in hint and hint & {PT_KALTMIETE, PT_NK_VORAUSZAHLUNG, PT_HK_VORAUSZAHLUNG}:
         return ()
     period = matching_period(transaction)
     if period is None:

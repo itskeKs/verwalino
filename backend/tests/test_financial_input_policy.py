@@ -6,7 +6,7 @@ from tests.test_m4_weg import m4_seed
 
 async def draft(client, seed, amount):
     response = await client.post("/api/settlements", json={
-        "property_id": seed["property"], "lease_agreement_id": seed["lease_a"],
+        'heating_advance_payments_total': '0.00', "property_id": seed["property"], "lease_agreement_id": seed["lease_a"],
         "period_start": "2025-01-01", "period_end": "2025-12-31",
         "advance_payments_total": amount,
     })
@@ -23,6 +23,22 @@ async def attest(client, kind, subject_id, values):
 
 
 @pytest.mark.asyncio
+async def test_unknown_heating_total_is_not_silently_replaced_with_zero(client_a_admin, m3_seed):
+    response = await client_a_admin.post('/api/settlements', json={
+        'property_id': m3_seed['property'], 'lease_agreement_id': m3_seed['lease_a'],
+        'period_start': '2025-01-01', 'period_end': '2025-06-30',
+        'advance_payments_total': '0.00', 'heating_advance_payments_total': None})
+    assert response.status_code == 201, response.text
+    assert response.json()['heating_advance_payments_total'] is None
+    run_id = response.json()['id']
+    coverage = await attest(client_a_admin, 'settlement', run_id, {
+        'advance_payments_total': '0.00', 'advance_payments_source': 'MANUAL',
+        'heating_advance_payments_total': None, 'heating_advance_payments_source': 'MANUAL'})
+    assert coverage.status_code == 422, coverage.text
+    assert coverage.json()['detail']['code'] == 'financial_inputs_incomplete'
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("amount", [None, "0.00", "1200.00"])
 async def test_unattested_amount_is_unknown_on_every_rental_path(client_a_admin, m3_seed, amount):
     run_id = await draft(client_a_admin, m3_seed, amount)
@@ -36,7 +52,7 @@ async def test_unattested_amount_is_unknown_on_every_rental_path(client_a_admin,
 @pytest.mark.parametrize("amount", ["0.00", "1200.00"])
 async def test_known_amount_and_explicit_zero_finalize_with_evidence(client_a_admin, client_b_admin, m3_seed, amount):
     run_id = await draft(client_a_admin, m3_seed, amount)
-    values = {"advance_payments_total": amount, "advance_payments_source": "MANUAL"}
+    values = {'heating_advance_payments_total': '0.00', 'heating_advance_payments_source': "MANUAL", "advance_payments_total": amount, "advance_payments_source": "MANUAL"}
     foreign = await attest(client_b_admin, "settlement", run_id, values)
     assert foreign.status_code == 404
     coverage = await attest(client_a_admin, "settlement", run_id, values)
@@ -50,7 +66,7 @@ async def test_known_amount_and_explicit_zero_finalize_with_evidence(client_a_ad
 async def test_changed_amount_requires_new_declaration(client_a_admin, m3_seed):
     run_id = await draft(client_a_admin, m3_seed, "1200.00")
     response = await attest(client_a_admin, "settlement", run_id,
-        {"advance_payments_total": "1200.00", "advance_payments_source": "MANUAL"})
+        {'heating_advance_payments_total': '0.00', 'heating_advance_payments_source': "MANUAL", "advance_payments_total": "1200.00", "advance_payments_source": "MANUAL"})
     assert response.status_code == 201
     await client_a_admin.patch(f"/api/settlements/{run_id}/advance-payments", json={"advance_payments_total": "1000.00"})
     result = await client_a_admin.post(f"/api/settlements/{run_id}/finalize", json=_extras_for_exit(m3_seed))
@@ -74,7 +90,7 @@ async def test_plan_and_asset_omission_cannot_finalize(client_a_admin, m4_seed):
 async def test_readonly_cannot_attest_and_parallel_retry_reuses_evidence(client_a_admin, client_a_readonly, m3_seed):
     import asyncio
     run_id = await draft(client_a_admin, m3_seed, "0.00")
-    values = {"advance_payments_total": "0.00", "advance_payments_source": "MANUAL"}
+    values = {'heating_advance_payments_total': '0.00', 'heating_advance_payments_source': "MANUAL", "advance_payments_total": "0.00", "advance_payments_source": "MANUAL"}
     assert (await attest(client_a_readonly, "settlement", run_id, values)).status_code == 403
     first, second = await asyncio.gather(attest(client_a_admin, "settlement", run_id, values),
                                          attest(client_a_admin, "settlement", run_id, values))
@@ -89,7 +105,7 @@ async def test_coverage_is_append_only_tenant_scoped_and_frozen(client_a_admin, 
     from sqlalchemy.exc import DBAPIError
     from app.engine.canonical import canonical_json, sha256_hex
     run_id = await draft(client_a_admin, m3_seed, "0.00")
-    values = {"advance_payments_total": "0.00", "advance_payments_source": "MANUAL"}
+    values = {'heating_advance_payments_total': '0.00', 'heating_advance_payments_source': "MANUAL", "advance_payments_total": "0.00", "advance_payments_source": "MANUAL"}
     coverage = await attest(client_a_admin, "settlement", run_id, values)
     finalized = await client_a_admin.post(f"/api/settlements/{run_id}/finalize", json=_extras_for_exit(m3_seed))
     assert finalized.status_code == 200, finalized.text
@@ -159,7 +175,7 @@ async def test_reversal_invalidates_derived_total_and_requires_rederivation(clie
     derived_url = f"/api/settlements/{run_id}/advance-payments-derived"
     derived = await client_a_admin.patch(derived_url, params={"period_year": 2025})
     assert derived.status_code == 200, derived.text
-    values = {"advance_payments_total": derived.json()["advance_payments_total"], "advance_payments_source": "DERIVED"}
+    values = {'heating_advance_payments_total': '0.00', 'heating_advance_payments_source': "DERIVED", "advance_payments_total": derived.json()["advance_payments_total"], "advance_payments_source": "DERIVED"}
     assert (await attest(client_a_admin, "settlement", run_id, values)).status_code == 201
     assert (await client_a_admin.post(f"/api/payments/{payment_id}/reverse")).status_code == 201
     for response in [await client_a_admin.post(f"/api/settlements/{run_id}/finalize", json={}),
@@ -189,7 +205,7 @@ async def test_derived_subperiod_accepts_matching_year_and_blocks_wrong_year_but
     manual = await client_a_admin.patch(f"/api/settlements/{run_id}/advance-payments", json={"advance_payments_total": "0.00"})
     assert manual.status_code == 200, manual.text
     assert manual.json()["advance_payments_source"] == "MANUAL"
-    assert (await attest(client_a_admin, "settlement", run_id, {"advance_payments_total": "0.00", "advance_payments_source": "MANUAL"})).status_code == 201
+    assert (await attest(client_a_admin, "settlement", run_id, {'heating_advance_payments_total': '0.00', 'heating_advance_payments_source': "DERIVED", "advance_payments_total": "0.00", "advance_payments_source": "MANUAL"})).status_code == 201
     final = await client_a_admin.post(f"/api/settlements/{run_id}/finalize", json={})
     assert final.status_code == 200, final.text
 
@@ -278,7 +294,7 @@ async def test_rollback_switch_preserves_final_read_and_blocks_all_compute_famil
     from tests.test_m4_weg import _create_and_finalize_plan
     from tests.financial_coverage_helpers import weg_values
     final_id = await draft(client_a_admin, m3_seed, "0.00")
-    values = {"advance_payments_total": "0.00", "advance_payments_source": "MANUAL"}
+    values = {'heating_advance_payments_total': '0.00', 'heating_advance_payments_source': "MANUAL", "advance_payments_total": "0.00", "advance_payments_source": "MANUAL"}
     assert (await attest(client_a_admin, "settlement", final_id, values)).status_code == 201
     final = await client_a_admin.post(f"/api/settlements/{final_id}/finalize", json=_extras_for_exit(m3_seed))
     assert final.status_code == 200

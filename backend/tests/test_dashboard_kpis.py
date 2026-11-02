@@ -13,6 +13,25 @@ from tests.test_rent_changes import rent_db, rent_world, api_client, post_change
 ROOT = '/api/reports/dashboard-kpis'
 
 
+@pytest.mark.asyncio
+async def test_dashboard_uses_effective_heating_while_deadlines_keep_original_contract(rent_world):
+    w = rent_world
+    async with api_client(w) as api:
+        response = await api.post(f"/api/leases/{w['lease']}/rent-changes", json={
+            'valid_from': '2026-10-01', 'base_rent': '750.00', 'advance_payment': '150.00',
+            'heating_advance_payment': '90.00'})
+        assert response.status_code == 201, response.text
+        response = await api.get(ROOT, params=query(w))
+        assert response.status_code == 200, response.text
+        assert response.json()['expected_rent'] == '990.00'
+        response = await api.get('/api/fristen', params={'reference_date': '2026-10-31'})
+        assert response.status_code == 200, response.text
+        overdue = next(row for row in response.json() if row['kind'] == 'OFFENE_POSTEN')
+        # Deadlines retain the original contract: 20 rent/BK items per lease.
+        # The heating-only history change is included by the dashboard above.
+        assert overdue['detail'].startswith('40 '), overdue
+
+
 def query(world, **values):
     return {'property_id': str(world['property']), 'year': 2026, 'month': 10, **values}
 

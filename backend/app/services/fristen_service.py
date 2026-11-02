@@ -220,6 +220,7 @@ class FristenService:
                     valid_to=inc_to,
                     base_rent=lease.base_rent,
                     advance_payment=lease.advance_payment,
+                    heating_advance_payment=lease.heating_advance_payment,
                 )
                 charges = tenant_expected_charges(lc, period_start, period_end)
                 payments = await self._payments.list_for_lease(lease.id)

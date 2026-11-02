@@ -26,7 +26,7 @@ import uuid
 import json
 from calendar import monthrange
 from dataclasses import asdict, dataclass, field, replace
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP, localcontext
 from fractions import Fraction
 from types import SimpleNamespace
@@ -45,6 +45,7 @@ from app.services.lease_rent_change_service import LeaseRentChangeService
 from app.services.heating_input_service import HeatingConfig, HeatingSliceOverride, HeatingInputService, property_period_run
 from app.engine.settlement import EngineValidationError, compute_bk_settlement
 from app.engine.snapshot import build_snapshot_payload
+from app.engine.types import HEATING_CATEGORY_CODES
 from app.engine.meter_consumption import MeterReadingInput, MeterConsumptionError, split_consumption
 from app.repositories.meter_repo import MeterRepository, MeterReadingRepository
 from app.services.render_names import (
@@ -72,12 +73,13 @@ from app.models.property import Property
 from app.models.settlement_line import SettlementLine
 from app.models.settlement_run import SettlementRun
 from app.repositories.audit_repo import AuditRepository
+from app.repositories.lease_agreement_repo import LeaseAgreementRepository
 from app.repositories.settlement_repo import (
     SettlementLineRepository,
     SettlementRunRepository,
 )
 
-ENGINE_VERSION = "m3.1.0"
+ENGINE_VERSION = "m3.2.0"
 
 
 class SettlementPeriodConflict(HTTPException):
@@ -178,6 +180,25 @@ class SettlementService:
         self._meter_sources: list[dict] = []
 
     async def advance_proposal(self, run_id: uuid.UUID, *, accept_from: date | None = None):
+        run, proposal = await self._load_advance_proposal(run_id, ScopeCapability.READ)
+        accept_from = accept_from if accept_from is not None else run.period_end + timedelta(days=1)
+        lease = await LeaseAgreementRepository(self._session, self._org_id).get_by_id(run.lease_agreement_id)
+        if lease is None:
+            raise HTTPException(404, "Lease agreement not found")
+        current = await LeaseRentChangeService(self._session, self._org_id, self._user_id).rate_on(lease, accept_from)
+        proposal["accept_from"] = accept_from.isoformat()
+        proposal["current_monthly_amount"] = f"{current.advance_payment:.2f}"
+        proposal["current_heating_monthly_amount"] = f"{current.heating_advance_payment:.2f}"
+        return proposal
+
+    async def accept_advance_proposal(self, run_id: uuid.UUID, *, accept_from: date):
+        run, proposal = await self._load_advance_proposal(run_id, ScopeCapability.PREPARE)
+        return await LeaseRentChangeService(self._session, self._org_id, self._user_id).create(
+            run.lease_agreement_id, accept_from, Decimal(proposal["monthly_amount"]),
+            heating_advance_payment=Decimal(proposal["heating_monthly_amount"]),
+        )
+
+    async def _load_advance_proposal(self, run_id: uuid.UUID, capability: ScopeCapability):
         scope = FinancialScopeService(self._session, self._org_id, self._user_id)
         # Serialize with corrections, ACL/source changes and T23 writes. Re-read
         # under the lock so a concurrent correction cannot accept a stale run.
@@ -185,15 +206,10 @@ class SettlementService:
         run = await self._runs.get_by_id(run_id)
         if run is None:
             raise HTTPException(404, "Settlement run not found")
-        await scope.enter(run, capability=ScopeCapability.READ if accept_from is None else ScopeCapability.PREPARE)
+        await scope.enter(run, capability=capability)
         if run.status != "finalized" or run.superseded_by_id is not None or run.run_type != "BK_MIETER":
             raise HTTPException(409, "Advance proposal requires an active finalized BK settlement")
-        proposal = self._advance_proposal(run)
-        if accept_from is None:
-            return proposal
-        return await LeaseRentChangeService(self._session, self._org_id, self._user_id).create(
-            run.lease_agreement_id, accept_from, Decimal(proposal["monthly_amount"]),
-        )
+        return run, self._advance_proposal(run)
 
     @staticmethod
     def _advance_proposal(run: SettlementRun) -> dict:
@@ -218,6 +234,33 @@ class SettlementService:
             cost = Decimal(payload["result"]["total_cost"])
             if not cost.is_finite() or cost < 0 or cost != run.total_cost or start > end:
                 raise ValueError("Invalid finalized cost or tenancy")
+            if 'heating_cost_total' in payload['result']:
+                heating_cost = Decimal(payload['result']['heating_cost_total'])
+            else:
+                # Pre-split statements still contain their immutable cost
+                # lines and configured heating pools. Never infer from live
+                # costs, or turn an unavailable split into heating zero.
+                frozen_lines = payload['result']['lines']
+                if not isinstance(frozen_lines, list):
+                    raise ValueError('Missing frozen cost lines')
+                heating_ids = {pool['cost_entry_id'] for pool in payload.get('heating_costs', [])}
+                heating_cost = frozen_total = Decimal('0.00')
+                for line in frozen_lines:
+                    if not isinstance(line, dict):
+                        raise ValueError('Invalid frozen cost line')
+                    if line['line_type'] != 'COST':
+                        continue
+                    amount = Decimal(line['amount'])
+                    if not amount.is_finite() or amount < 0:
+                        raise ValueError('Invalid frozen cost amount')
+                    frozen_total += amount
+                    if line['category_code'] in HEATING_CATEGORY_CODES or line.get('cost_entry_id') in heating_ids:
+                        heating_cost += amount
+                if frozen_total != cost:
+                    raise ValueError('Incomplete frozen cost lines')
+            if not heating_cost.is_finite() or not 0 <= heating_cost <= cost:
+                raise ValueError("Invalid frozen heating cost")
+            operating_cost = cost - heating_cost
             # Calendar weights remain exact even across different partial
             # months. Only the DTO renders a repeating fraction as a Decimal.
             month_weight = Fraction(0)
@@ -232,15 +275,16 @@ class SettlementService:
                 context.prec = 28
                 context.rounding = ROUND_HALF_UP
                 months = Decimal(month_weight.numerator) / Decimal(month_weight.denominator)
-                amount = _money(cost * Decimal(month_weight.denominator) / Decimal(month_weight.numerator))
-            if amount >= Decimal("1000000000000"):
+                amount = _money(operating_cost * Decimal(month_weight.denominator) / Decimal(month_weight.numerator))
+                heating_amount = _money(heating_cost * Decimal(month_weight.denominator) / Decimal(month_weight.numerator))
+            if max(amount, heating_amount) >= Decimal("1000000000000"):
                 raise ValueError("Proposed advance exceeds rental amount storage")
         except (KeyError, TypeError, ValueError, InvalidOperation, OverflowError) as exc:
             raise HTTPException(409, "Frozen settlement lacks a valid advance proposal basis") from exc
         return {
             "lease_agreement_id": str(run.lease_agreement_id),
-            "tenant_cost": f"{cost:.2f}", "months": format(months, "f"),
-            "monthly_amount": f"{amount:.2f}",
+            "tenant_cost": f"{operating_cost:.2f}", "heating_tenant_cost": f"{heating_cost:.2f}", "months": format(months, "f"),
+            "monthly_amount": f"{amount:.2f}", "heating_monthly_amount": f"{heating_amount:.2f}",
             "period_start": period_start, "period_end": period_end,
         }
 
@@ -277,11 +321,11 @@ class SettlementService:
         period_start: date,
         period_end: date,
         advance_payments_total: Decimal | None = None,
+        heating_advance_payments_total: Decimal | None = None,
         management_mandate_id: uuid.UUID | None = None,
         accounting_scope_id: uuid.UUID | None = None,
     ) -> SettlementRun:
         """Create a draft BK_MIETER run for one lease/addressee."""
-        from app.repositories.lease_agreement_repo import LeaseAgreementRepository
 
         lease_repo = LeaseAgreementRepository(self._session, self._org_id)
         lease = await lease_repo.get_by_id(lease_agreement_id)
@@ -301,6 +345,8 @@ class SettlementService:
             lease_agreement_id=lease_agreement_id,
             tenant_profile_id=lease.tenant_profile_id,
             advance_payments_total=advance_payments_total,
+            heating_advance_payments_total=heating_advance_payments_total,
+            heating_advance_payments_source="MANUAL",
             advance_payments_source="MANUAL",
             status="draft",
             engine_version=ENGINE_VERSION,
@@ -396,12 +442,16 @@ class SettlementService:
         return created, skipped, errors
 
     async def set_advance_payments(
-        self, run_id: uuid.UUID, amount: Decimal
+        self, run_id: uuid.UUID, amount: Decimal | None = None, *, heating_amount: Decimal | None = None
     ) -> SettlementRun:
         """Set the manual advance-payment total on a draft run (section 7.2)."""
         run = await self._get_draft_or_404(run_id)
-        run.advance_payments_total = amount
-        run.advance_payments_source = "MANUAL"
+        if amount is not None:
+            run.advance_payments_total = amount
+            run.advance_payments_source = "MANUAL"
+        if heating_amount is not None:
+            run.heating_advance_payments_total = heating_amount
+            run.heating_advance_payments_source = "MANUAL"
         await self._runs.update(run)
         await self._audit.create(
             AuditEvent(
@@ -409,7 +459,8 @@ class SettlementService:
                 entity_type="settlement_run",
                 entity_id=run.id,
                 action="settlement.advance_payments_set",
-                payload_diff={"advance_payments_total": str(amount)},
+                payload_diff={key: str(value) if isinstance(value, Decimal) else value
+                    for key, value in rental_values(run).items()},
             )
         )
         return run
@@ -417,17 +468,7 @@ class SettlementService:
     async def set_advance_payments_derived(
         self, run_id: uuid.UUID, period_year: int
     ) -> SettlementRun:
-        """Derive the BK advance-payment total from booked NK payments (M6 §6.2).
-
-        Minimal-additive bridge (advance_payments_source MANUAL -> DERIVED): the
-        M3 engine is UNCHANGED -- it still reads run.advance_payments_total; this
-        only fills that value from the booked, non-reversed NK_VORAUSZAHLUNG
-        payments of THIS lease + settlement period. The reference year must
-        belong to the period, including for cross-year periods. The pure
-        derivation is bit-identical to the MANUAL value (I6-E). MANUAL stays the
-        default/fallback; this path is opt-in. E6-8: derived fresh on demand;
-        finalize then freezes whatever value is current into the snapshot.
-        """
+        """Derive both component totals from active bookings within the lease period."""
         from app.services.payment_service import PaymentService
 
         run = await self._get_draft_or_404(run_id)
@@ -443,6 +484,9 @@ class SettlementService:
         total = await pay_svc.derive_nk_advance_total_for_period(
             run.lease_agreement_id, run.period_start, run.period_end
         )
+        run.heating_advance_payments_total = await pay_svc.derive_nk_advance_total_for_period(
+            run.lease_agreement_id, run.period_start, run.period_end, payment_type="HK_VORAUSZAHLUNG")
+        run.heating_advance_payments_source = "DERIVED"
         run.advance_payments_total = total
         run.advance_payments_source = "DERIVED"
         await self._runs.update(run)
@@ -455,6 +499,8 @@ class SettlementService:
                 payload_diff={
                     "advance_payments_total": str(total),
                     "advance_payments_source": "DERIVED",
+                    "heating_advance_payments_total": str(run.heating_advance_payments_total),
+                    "heating_advance_payments_source": "DERIVED",
                     "period_year": str(period_year),
                 },
             )
@@ -619,6 +665,8 @@ class SettlementService:
             tenant_profile_id=original.tenant_profile_id,
             advance_payments_total=original.advance_payments_total,
             advance_payments_source=original.advance_payments_source,
+            heating_advance_payments_total=original.heating_advance_payments_total,
+            heating_advance_payments_source=original.heating_advance_payments_source,
             status="draft",
             engine_version=ENGINE_VERSION,
         )
@@ -688,6 +736,9 @@ class SettlementService:
         if inp.advance_payments_source == "DERIVED":
             payload["inputs"]["advance_payment_credits"] = [
                 {"year": c.year, "month": c.month, "amount": str(c.amount)} for c in self._advance_credits]
+        if inp.heating_advance_payments_source == "DERIVED":
+            payload["inputs"]["heating_advance_payment_credits"] = [
+                {"year": c.year, "month": c.month, "amount": str(c.amount)} for c in self._heating_advance_credits]
         if self._meter_sources:
             payload["inputs"]["meter_consumption_sources"] = self._meter_sources
         payload['extra_inputs'] = self._extra_payload
@@ -790,7 +841,14 @@ class SettlementService:
         else:
             excluded = await payments.uncredited_nk_advance_total(
                 run.lease_agreement_id, run.period_start, run.period_end)
-        inp = replace(inp, uncredited_advance_payments_total=excluded)
+        self._heating_advance_credits = ()
+        if run.heating_advance_payments_source == "DERIVED":
+            self._heating_advance_credits, heating_excluded = await payments.nk_advance_credits_for_period(
+                run.lease_agreement_id, run.period_start, run.period_end, payment_type="HK_VORAUSZAHLUNG")
+        else:
+            heating_excluded = await payments.uncredited_nk_advance_total(
+                run.lease_agreement_id, run.period_start, run.period_end, payment_type="HK_VORAUSZAHLUNG")
+        inp = replace(inp, uncredited_advance_payments_total=excluded + heating_excluded)
         try:
             result = compute_bk_settlement(inp)
         except (EngineValidationError, DistributionError, PeriodOverlapError) as exc:
@@ -831,12 +889,14 @@ class SettlementService:
                     for c in extras.heating_inputs if c.cost_entry_id in ids]
                 context = SimpleNamespace(property_id=run.property_id, lease_agreement_id=run.lease_agreement_id,
                     period_start=start, period_end=end, advance_payments_total=Decimal(0),
+                    heating_advance_payments_total=Decimal(0), heating_advance_payments_source=run.heating_advance_payments_source,
                     advance_payments_source=run.advance_payments_source)
                 parts.append(await self._load_engine_input(context, replace(extras, heating_inputs=heating)))
                 sources.extend(self._meter_sources)
             self._meter_sources = sources
             return replace(parts[0], period_start=run.period_start, period_end=run.period_end,
-                advance_payments_total=run.advance_payments_total, allocation_inputs=tuple(parts))
+                advance_payments_total=run.advance_payments_total, heating_advance_payments_total=run.heating_advance_payments_total,
+                allocation_inputs=tuple(parts))
 
         units = await self._runs.units_for_property(run.property_id)
         leases = await self._runs.leases_for_property(run.property_id)
@@ -913,7 +973,7 @@ class SettlementService:
                 tenant_profile_id=l.tenant_profile_id,
                 valid_from=l.valid_from,
                 valid_to=db_exclusive_to_engine_inclusive(l.valid_to),
-                advance_payment=l.advance_payment,
+                advance_payment=l.advance_payment, heating_advance_payment=l.heating_advance_payment,
             )
             for l in leases
         )
@@ -992,6 +1052,8 @@ class SettlementService:
             cost_positions=tuple(position_inputs),
             advance_payments_total=run.advance_payments_total,
             advance_payments_source=run.advance_payments_source,
+            heating_advance_payments_total=run.heating_advance_payments_total,
+            heating_advance_payments_source=run.heating_advance_payments_source,
             engine_version=ENGINE_VERSION,
         )
 

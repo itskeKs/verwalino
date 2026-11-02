@@ -51,6 +51,7 @@ from app.engine.rounding import CENT, annual_advance_share_for_period, distribut
 # truth. The engine never invents a type.
 PT_KALTMIETE = "KALTMIETE"
 PT_NK_VORAUSZAHLUNG = "NK_VORAUSZAHLUNG"
+PT_HK_VORAUSZAHLUNG = "HK_VORAUSZAHLUNG"
 PT_HAUSGELD_VORSCHUSS = "HAUSGELD_VORSCHUSS"
 PT_RUECKLAGENANTEIL = "RUECKLAGENANTEIL"
 PT_SONDERZAHLUNG = "SONDERZAHLUNG"
@@ -100,9 +101,10 @@ class RentChangeInput:
     valid_from: date
     base_rent: Decimal
     advance_payment: Decimal
+    heating_advance_payment: Decimal = Decimal('0.00')
 
     def __post_init__(self) -> None:
-        for name in ("base_rent", "advance_payment"):
+        for name in ("base_rent", "advance_payment", "heating_advance_payment"):
             value = getattr(self, name)
             if not isinstance(value, Decimal):
                 raise TypeError(f"{name} must be Decimal")
@@ -125,6 +127,7 @@ class LeaseChargeInput:
     base_rent: Decimal
     advance_payment: Decimal
     rent_changes: tuple[RentChangeInput, ...] = ()
+    heating_advance_payment: Decimal = Decimal('0.00')
 
 
 @dataclass(frozen=True)
@@ -195,8 +198,8 @@ def deposit_statement(expected_amount: Decimal, payments: list[PaymentInput]) ->
 class ExpectedCharge:
     """One monthly Soll position (m6 section 2.3).
 
-    For a tenant: split per component (KALTMIETE vs NK_VORAUSZAHLUNG) because
-    only NK flows into the BK abrechnung (section 6.2). For an owner: the
+    For a tenant: split rent, operating advances and heating advances so
+    each advance credits its matching statement component (section 6.2). For an owner: the
     HAUSGELD_VORSCHUSS monthly Soll. `days_occupied`/`days_in_month` document a
     tag-exact partial month (full month => equal); they are nachrichtlich, the
     amount is already the final cent value.
@@ -263,8 +266,8 @@ def tenant_expected_charges(
 ) -> list[ExpectedCharge]:
     """Monthly tenant Soll over [period_start, period_end] (m6 section 2.1).
 
-    Two ExpectedCharge per occupied month: KALTMIETE (base_rent) and
-    NK_VORAUSZAHLUNG (advance_payment). The lease is clamped to its own
+    Rent and operating charges per occupied month, plus HK_VORAUSZAHLUNG
+    when the heating rate is positive. The lease is clamped to its own
     tag-inclusive [valid_from, valid_to]; a month the lease does not touch
     yields no charge. A month the lease only partially covers is tag-exact
     (section 2.1, provisional assumption F6-4: tagegenau, consistent with M3).
@@ -273,7 +276,7 @@ def tenant_expected_charges(
     of input order. Base rates apply before the first change. Each component's
     rate-days are summed before its single monthly rounding.
 
-    Deterministic order: chronological months, KALTMIETE before NK per month.
+    Deterministic order: chronological months, KALTMIETE, then NK, then HK per month.
     """
     changes = sorted(lease.rent_changes, key=lambda change: change.valid_from)
     for previous, current in zip(changes, changes[1:]):
@@ -296,6 +299,7 @@ def tenant_expected_charges(
         segment_start = occ_start
         rent_segments: list[tuple[Decimal, int]] = []
         nk_segments: list[tuple[Decimal, int]] = []
+        hk_segments: list[tuple[Decimal, int]] = []
         for change in changes:
             if change.valid_from <= occ_start:
                 rate = change
@@ -306,13 +310,16 @@ def tenant_expected_charges(
             days = change.valid_from.toordinal() - segment_start.toordinal()
             rent_segments.append((rate.base_rent, days))
             nk_segments.append((rate.advance_payment, days))
+            hk_segments.append((rate.heating_advance_payment, days))
             segment_start = change.valid_from
             rate = change
         days = day_count(segment_start, occ_end)
         rent_segments.append((rate.base_rent, days))
         nk_segments.append((rate.advance_payment, days))
+        hk_segments.append((rate.heating_advance_payment, days))
         rent = _sum_rate_segments(rent_segments, days_in_month)
         nk = _sum_rate_segments(nk_segments, days_in_month)
+        hk = _sum_rate_segments(hk_segments, days_in_month)
         charges.append(
             ExpectedCharge(
                 period_year=year,
@@ -335,6 +342,11 @@ def tenant_expected_charges(
                 days_in_month=days_in_month,
             )
         )
+        if any(amount > 0 for amount, days in hk_segments if days > 0):
+            charges.append(ExpectedCharge(period_year=year, period_month=month,
+                payment_type=PT_HK_VORAUSZAHLUNG, amount=hk,
+                lease_agreement_id=lease.lease_agreement_id,
+                days_occupied=days_occupied, days_in_month=days_in_month))
     return charges
 
 

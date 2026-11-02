@@ -240,8 +240,8 @@ async def test_paid_hausgeld_and_finalized_periods_survive_property_change(clien
     assert answer.status_code == 200, answer.text
     assert Decimal(answer.json()[0]["paid_total"]) == Decimal("400.00")
     # Finalize a tenant run as well and prove no historical dates/hash are rewritten.
-    bk = await create(api, "/api/settlements", {**statement(april), "advance_payments_total": "0.00"})
-    await attest_fixture(api, "settlement", bk["id"], {"advance_payments_total": "0.00", "advance_payments_source": "MANUAL"})
+    bk = await create(api, "/api/settlements", {**statement(april), 'heating_advance_payments_total': '0.00', "advance_payments_total": "0.00"})
+    await attest_fixture(api, "settlement", bk["id"], {'heating_advance_payments_total': '0.00', 'heating_advance_payments_source': "MANUAL", "advance_payments_total": "0.00", "advance_payments_source": "MANUAL"})
     answer = await api.post(f"/api/settlements/{bk['id']}/finalize", json={})
     assert answer.status_code == 200, answer.text
     frozen_bk = answer.json()

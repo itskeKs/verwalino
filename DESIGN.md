@@ -317,6 +317,58 @@ New screens follow these page structures and use a German noun as their `h1`.
   open as a card above the list; small edits of master data open `MasterDataEditor` as a dialog.
   Selects, checkboxes and file inputs are the native elements.
 
+### Separate tenant advances
+
+Lease and rent-change forms label the two monthly amounts
+“Betriebskosten-Vorauszahlung (EUR)” and “Heizkosten-Vorauszahlung (EUR)”.
+Heating defaults to zero. Original contracts and full effective-dated history
+show both advances; date changes prefill both from the same historical rate.
+Index and stepped rent preserve both advances.
+
+Tenant payment labels use “Betriebskosten-Vorauszahlung” and
+“Heizkosten-Vorauszahlung”. Statements show both totals and their individual
+MANUAL/DERIVED sources. The existing derivation action loads both components;
+manual edits retain each component's own source. Computed statements and PDFs
+show “Betriebskosten abzüglich Vorauszahlungen”, “Heizkosten abzüglich
+Vorauszahlungen” and the overall balance. When the heating advance total is zero
+and there are no allocated tenant heating cost lines, the page and PDF retain the single
+block “Geleistete Vorauszahlungen” instead; heating cost lines in any fiscal allocation
+window require both blocks, even if their amount is zero. Non-apportionable heating
+positions do not require both blocks. Both snapshot keys remain present.
+Statement totals start unknown (empty fields); “Aus Zahlungen ableiten” derives both.
+The create form and detail editor share `parseGermanAmount` in `lib/germanAmount.ts`:
+both advance fields accept German amounts such as `1.080,00` and API decimals such as
+`1080.00`, sent as cent-exact decimal strings. Invalid input (for example `1,080.00`
+or `abc`) stays in the field and prevents submission, with the linked German error
+“Bitte geben Sie die Betriebskosten-Vorauszahlung als gültigen EUR-Betrag ein.” or
+“Bitte geben Sie die Heizkosten-Vorauszahlung als gültigen EUR-Betrag ein.”
+The detail page retains its existing decimal-string `EUR` amounts; the advance
+proposal retains its existing German decimal-string `EUR` format. The advance proposal
+uses its own payload, including the lease's advances valid on the acceptance date, and shows the previous amounts.
+
+Screenshots (test database, synthetic data; before = main, after = this change):
+lease form [1280 before](docs/assets/advance-split/lease-before-1280.png) /
+[after](docs/assets/advance-split/lease-after-1280.png), [360 before](docs/assets/advance-split/lease-before-360.png) /
+[after](docs/assets/advance-split/lease-after-360.png); rent account [1280 before](docs/assets/advance-split/rent-account-before-1280.png) /
+[after](docs/assets/advance-split/rent-account-after-1280.png), [360 before](docs/assets/advance-split/rent-account-before-360.png) /
+[after](docs/assets/advance-split/rent-account-after-360.png); statement with two blocks [1280 before](docs/assets/advance-split/statement-before-1280.png) /
+[after](docs/assets/advance-split/round2-anna-1280.png), [360 before](docs/assets/advance-split/statement-before-360.png) /
+[after](docs/assets/advance-split/round2-anna-360.png); statement with the single block
+[1280](docs/assets/advance-split/round2-bernd-1280.png) / [360](docs/assets/advance-split/round2-bernd-360.png);
+proposal for a lease without heating [1280 before](docs/assets/advance-split/round3-bernd-before-1280.png) /
+[after](docs/assets/advance-split/round3-bernd-after-1280.png), [360 before](docs/assets/advance-split/round3-bernd-before-360.png) /
+[after](docs/assets/advance-split/round3-bernd-after-360.png).
+The date defaults to the day after the settlement period ends. Changing it refetches the
+proposal; acceptance stays disabled until the returned `accept_from` matches the selected date.
+Only when the proposed and current heating advances are both zero does it show just the
+operating advance and basis with “Nur die Betriebskosten-Vorauszahlung wird geändert.”
+Otherwise it shows both monthly amounts and bases with “Beide Vorauszahlungen werden geändert.”,
+including a heating reduction to zero and legacy statements with a single advance block.
+Acceptance creates one rent change and the success message names both written advances,
+including heating zero. Existing form grids,
+wrapping labels and horizontally scrollable tables apply at 360 px. Lease and
+rent-account form controls stay within their grid cells with long tenant names.
+
 ### Property settlement periods
 
 Statement summaries display non-financial notice lines across both columns,

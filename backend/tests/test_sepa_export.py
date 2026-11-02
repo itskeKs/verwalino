@@ -89,6 +89,20 @@ async def configure(api, w):
 
 
 @pytest.mark.asyncio
+async def test_sepa_collects_rent_and_both_effective_advances(sepa_world):
+    w = sepa_world
+    async with api_client(w) as api:
+        await configure(api, w)
+        changed = await api.post(f"/api/leases/{w['lease']}/rent-changes", json={
+            'valid_from': '2026-10-01', 'base_rent': '750.00', 'advance_payment': '150.00',
+            'heating_advance_payment': '90.00'})
+        assert changed.status_code == 201, changed.text
+        response = await api.post('/api/payments/sepa/preview', json=export_body(w))
+        assert response.status_code == 200, response.text
+        assert response.json()['total'] == response.json()['rows'][0]['amount'] == '990.00'
+
+
+@pytest.mark.asyncio
 async def test_sepa_october_persisted_mandate_real_xsds_and_no_booking(sepa_world, rent_db):
     w = sepa_world
     async with api_client(w) as api:

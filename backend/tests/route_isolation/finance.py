@@ -220,7 +220,7 @@ PROBES: dict[str, Probe] = {
     "GET /api/settlements/{run_id}/heating-consumption": Probe(
         run(BK, "x.id AS run_id, c.id AS cost_entry_id", "JOIN cost_entry c ON c.organization_id = x.organization_id")),
     "GET /api/settlements/{run_id}/pdf": Probe(run(BK)),
-    "PATCH /api/settlements/{run_id}/advance-payments": Probe(run(BK), body={"advance_payments_total": "10.00"}),
+    "PATCH /api/settlements/{run_id}/advance-payments": Probe(run(BK), body={"advance_payments_total": "10.00", "heating_advance_payments_total": "20.00"}),
     "PATCH /api/settlements/{run_id}/advance-payments-derived": Probe(run(BK), query={"period_year": 2025}),
     "POST /api/settlements": Probe(
         other("u.property_id AS property_id, x.id AS lease_agreement_id",

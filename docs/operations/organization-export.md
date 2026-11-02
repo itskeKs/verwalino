@@ -484,7 +484,7 @@ not an immutable field; a separate minimization policy remains an owner decision
 | `scope_payment_reconciliation` | `reason`, `request_digest` | Retained source, scope or review evidence and its technical provenance. |
 | `scope_payment_reconciliation_item` | `source_digest` | Retained source, scope or review evidence and its technical provenance. |
 | `settlement_line` | `cost_category_code`, `distribution_key`, `label`, `line_type`, `note` | Frozen voucher content, accounting classifications and computation provenance. |
-| `settlement_run` | `advance_payments_source`, `engine_version`, `run_type`, `snapshot_payload`, `snapshot_sha256`, `status` | Frozen voucher content, accounting classifications and computation provenance. |
+| `settlement_run` | `advance_payments_source`, `heating_advance_payments_source`, `engine_version`, `run_type`, `snapshot_payload`, `snapshot_sha256`, `status` | Frozen voucher content, accounting classifications and computation provenance. |
 | `source_partition_revision` | `content_sha256`, `reason`, `request_digest` | Retained source, scope or review evidence and its technical provenance. |
 | `source_security_authorization` | `previous_mode`, `target_mode` | Retained source, scope or review evidence and its technical provenance. |
 | `source_security_transition` | `assessment_digest`, `manifest_digest`, `previous_mode`, `reason`, `request_digest`, `target_mode` | Retained source, scope or review evidence and its technical provenance. |

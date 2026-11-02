@@ -30,7 +30,7 @@ import { DunningBatch } from "../components/DunningBatch";
 
 const PAYMENT_TYPE_LABELS: Record<string, string> = {
   KALTMIETE: "Kaltmiete",
-  NK_VORAUSZAHLUNG: "NK-Vorauszahlung",
+  NK_VORAUSZAHLUNG: "Betriebskosten-Vorauszahlung", HK_VORAUSZAHLUNG: "Heizkosten-Vorauszahlung",
   KAUTION: "Kaution",
   HAUSGELD_VORSCHUSS: "Hausgeld-Vorschuss",
   RUECKLAGENANTEIL: "Ruecklagenanteil",

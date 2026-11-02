@@ -35,7 +35,9 @@ def normalize_values(value):
 
 
 def rental_values(run):
-    return {"advance_payments_total": run.advance_payments_total, "advance_payments_source": run.advance_payments_source}
+    return {"advance_payments_total": run.advance_payments_total, "advance_payments_source": run.advance_payments_source,
+        "heating_advance_payments_total": run.heating_advance_payments_total,
+        "heating_advance_payments_source": run.heating_advance_payments_source}
 
 
 def incomplete(code, component):
@@ -71,6 +73,8 @@ class FinancialInputPolicy:
         if any(values.get(key) is not None for key in reserve_fields) and not values.get('reserve_override_reason', '').strip():
             raise HTTPException(422, {'code': 'RESERVE_CORRECTION_REASON_REQUIRED', 'message': 'Manuelle Rücklagenwerte benötigen eine Begründung.'})
         if kind != "economic_plan" and subject.run_type == "BK_MIETER":
+            if subject.heating_advance_payments_total is None:
+                incomplete("unknown_heating_advance_payments", "heating_advance_payments")
             if subject.advance_payments_total is None:
                 incomplete("unknown_advance_payments", "advance_payments")
         return values
@@ -93,6 +97,12 @@ class FinancialInputPolicy:
                 subject.lease_agreement_id, subject.period_start, subject.period_end)
             if current != subject.advance_payments_total:
                 incomplete("derived_total_stale", "advance_payments")
+        if kind == "settlement" and subject.run_type == "BK_MIETER" and subject.heating_advance_payments_source == "DERIVED":
+            from app.services.payment_service import PaymentService
+            current = await PaymentService(self.session, self.org_id, self.user_id).derive_nk_advance_total_for_period(
+                subject.lease_agreement_id, subject.period_start, subject.period_end, payment_type="HK_VORAUSZAHLUNG")
+            if current != subject.heating_advance_payments_total:
+                incomplete("derived_total_stale", "heating_advance_payments")
         if kind == "settlement" and subject.run_type == "WEG_JAHRESABRECHNUNG":
             plan = await self.repo.linked_plan(subject.economic_plan_id)
             if not plan or plan["status"] != "finalized" or plan["superseded_by_id"] is not None:

@@ -49,7 +49,8 @@ _LEVEL_LABELS = {
 # Payment type display labels (German).
 _TYPE_LABELS = {
     "KALTMIETE": "Kaltmiete",
-    "NK_VORAUSZAHLUNG": "Nebenkostenvorauszahlung",
+    "NK_VORAUSZAHLUNG": "Betriebskosten-Vorauszahlung",
+    "HK_VORAUSZAHLUNG": "Heizkosten-Vorauszahlung",
     "HAUSGELD_VORSCHUSS": "Hausgeldvorschuss",
     "RUECKLAGENANTEIL": "Ruecklagenanteil",
     "SONDERZAHLUNG": "Sonderzahlung",
