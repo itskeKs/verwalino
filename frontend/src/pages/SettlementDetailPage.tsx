@@ -111,7 +111,7 @@ function nextProposalDate(periodEnd: string): string {
   return isProposalDate(next) ? next : "";
 }
 
-function AdvanceProposalSection({ runId, singleAdvanceBlock }: { runId: string; singleAdvanceBlock: boolean }) {
+function AdvanceProposalSection({ runId }: { runId: string }) {
   const { session } = useAuth();
   const canApply = session?.role === "OWNER_ADMIN" || session?.role === "CLERK";
   const [proposal, setProposal] = useState<AdvanceProposal | null>(null);
@@ -124,6 +124,8 @@ function AdvanceProposalSection({ runId, singleAdvanceBlock }: { runId: string; 
   const [result, setResult] = useState<LeaseRentChange | null>(null);
   const busy = useRef(false);
   const mounted = useRef(false);
+  const singleAdvanceBlock = proposal !== null && [proposal.heating_monthly_amount, proposal.heating_tenant_cost]
+    .every(value => /^0+(?:\.0+)?$/.test(value));
 
   useEffect(() => {
     mounted.current = true;
@@ -186,8 +188,8 @@ function AdvanceProposalSection({ runId, singleAdvanceBlock }: { runId: string; 
           Der ursprüngliche Mietvertrag und die finalisierte Abrechnung bleiben unverändert.</p>
         {applyError && <p role="alert">{applyError}</p>}
         {result && <p role="status">Miethistorie ergänzt: ab {result.valid_from}, Kaltmiete {formatProposalMoney(result.base_rent)},
-          {" "}Betriebskosten-Vorauszahlung {formatProposalMoney(result.advance_payment)}
-          {!singleAdvanceBlock && <>, Heizkosten-Vorauszahlung {formatProposalMoney(result.heating_advance_payment)}</>} monatlich.</p>}
+          {" "}Betriebskosten-Vorauszahlung {formatProposalMoney(result.advance_payment)},
+          {" "}Heizkosten-Vorauszahlung {formatProposalMoney(result.heating_advance_payment)} monatlich.</p>}
         {canApply && !result && <form onSubmit={handleApply} noValidate>
           <label>Übernehmen ab
             <input type="date" value={validFrom} onChange={(event) => setValidFrom(event.target.value)} disabled={saving} required />
@@ -1108,7 +1110,7 @@ export function SettlementDetailPage() {
       </div>
 
       {run.id === runId && isFinalized && !run.superseded_by_id && run.run_type === "BK_MIETER" && (
-        <AdvanceProposalSection key={run.id} runId={run.id} singleAdvanceBlock={singleAdvanceBlock} />
+        <AdvanceProposalSection key={run.id} runId={run.id} />
       )}
 
       {/* Advance payment edit */}

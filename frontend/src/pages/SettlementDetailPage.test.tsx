@@ -246,32 +246,47 @@ describe("T28 monthly advance proposal", () => {
     expect(JSON.parse(posts()[0][1].body)).toEqual({ valid_from: "2027-01-01" });
   });
 
-  it.each([true, false])("follows the engine's single advance block decision: %s", async (single) => {
+  it.each([
+    ["legacy heating costs", "Geleistete Vorauszahlungen", "83.33", "1000.00"],
+    ["nonzero heating basis rounded to zero", "Geleistete Vorauszahlungen", "0.00", "0.01"],
+    ["nonzero heating advance", "Geleistete Vorauszahlungen", "83.33", "0.00"],
+    ["Bernd without heating", "Geleistete Vorauszahlungen", "0.00", "0.00"],
+    ["split statement without heating proposal", "Betriebskosten-Vorauszahlungen", "0.00", "0.00"],
+  ])("shows the proposal payload and every accepted value for %s", async (_case, label, heatingAmount, heatingBasis) => {
     vi.mocked(api.getSettlement).mockResolvedValue({ ...finalized, lines: [{
       id: "advance-1", cost_entry_id: null, line_type: "ADVANCE_PAYMENT", cost_category_code: null,
-      label: single ? "Geleistete Vorauszahlungen" : "Betriebskosten-Vorauszahlungen",
+      label,
       distribution_key: null, total_amount: null, distribution_base_total: null, distribution_base_share: null,
       time_share_days: null, time_share_total_days: null, amount: "1800.00", sort_order: 1, note: null,
     }] });
+    fetchProposal.mockImplementation(async (_url: string, options?: RequestInit) => new Response(JSON.stringify(
+      options?.method === "POST" ? { ...applied, advance_payment: "158.33", heating_advance_payment: heatingAmount }
+        : { ...proposal, monthly_amount: "158.33", tenant_cost: "1900.00",
+          heating_monthly_amount: heatingAmount, heating_tenant_cost: heatingBasis },
+    ), { status: options?.method === "POST" ? 201 : 200 }));
     showProposal();
     const region = await screen.findByRole("region", { name: "Vorauszahlungsvorschlag" });
-    await within(region).findByText(/100,00/);
-    expect(region).toHaveTextContent("Betriebskosten-Vorauszahlung");
-    expect(region).toHaveTextContent("Grundlage Betriebskosten:");
-    if (single) {
+    await within(region).findByText("158,33 EUR");
+    expect(region).toHaveTextContent("Betriebskosten-Vorauszahlung: 158,33 EUR monatlich");
+    expect(region).toHaveTextContent("Grundlage Betriebskosten: 1.900,00 EUR Mieteranteil / 12 Monate");
+    if (heatingAmount === "0.00" && heatingBasis === "0.00") {
       expect(region).not.toHaveTextContent("Heizkosten-Vorauszahlung");
       expect(region).not.toHaveTextContent("Grundlage Heizkosten");
       expect(region).toHaveTextContent("Nur die Vorauszahlung wird geändert.");
     } else {
-      expect(region).toHaveTextContent("Heizkosten-Vorauszahlung");
-      expect(region).toHaveTextContent("Grundlage Heizkosten");
+      expect(region).toHaveTextContent(`Heizkosten-Vorauszahlung: ${heatingAmount.replace(".", ",")} EUR monatlich`);
+      const formattedBasis = heatingBasis === "1000.00" ? "1.000,00" : heatingBasis.replace(".", ",");
+      expect(region).toHaveTextContent(`Grundlage Heizkosten: ${formattedBasis} EUR Mieteranteil / 12 Monate`);
       expect(region).toHaveTextContent("Beide Vorauszahlungen werden geändert.");
     }
     accept();
-    expect(await within(region).findByRole("status")).toHaveTextContent("Miethistorie ergänzt");
+    const status = await within(region).findByRole("status");
+    expect(status).toHaveTextContent("Miethistorie ergänzt");
+    expect(status).toHaveTextContent("Kaltmiete 725,00 EUR");
+    expect(status).toHaveTextContent("Betriebskosten-Vorauszahlung 158,33 EUR");
+    expect(status).toHaveTextContent(`Heizkosten-Vorauszahlung ${heatingAmount.replace(".", ",")} EUR`);
     expect(posts()).toHaveLength(1);
     expect(JSON.parse(posts()[0][1].body)).toEqual({ valid_from: "2027-01-01" });
-    if (single) expect(region).not.toHaveTextContent("Heizkosten-Vorauszahlung");
   });
 
   it.each(["OWNER_ADMIN", "CLERK"])("offers basis, date and acceptance to %s without changing lease or snapshot", async (role) => {
@@ -524,7 +539,7 @@ describe("T31 meter consumption prefill", () => {
     await showConsumption();
     const row = (await screen.findByText(notice)).closest("tr")!;
     expect(row).toHaveTextContent(notice);
-    expect(row).not.toHaveTextContent("0.00 €");
+    expect(row).not.toHaveTextContent("0.00 EUR");
   });
   beforeEach(() => {
     vi.clearAllMocks();

@@ -107,7 +107,7 @@ async def test_omitted_heating_total_blocks_finalization_until_derived(client_a_
     assert finalized.json()['balance'] == '20.00'
 
 
-@pytest.mark.parametrize('heating', ['none', 'zero_position', 'advance'])
+@pytest.mark.parametrize('heating', ['none', 'non_apportionable_position', 'zero_position', 'position', 'advance'])
 def test_statement_and_pdf_keep_single_block_only_without_heating(heating):
     from dataclasses import replace
     from types import SimpleNamespace
@@ -117,14 +117,19 @@ def test_statement_and_pdf_keep_single_block_only_without_heating(heating):
     from tests.engine.test_golden import TestGolden1FlaecheTrivial, _U
     inp = TestGolden1FlaecheTrivial()._scenario(_U(21))
     inp = replace(inp, heating_advance_payments_total=Decimal('0.00'))
-    if heating == 'zero_position':
+    heating_id = uuid.uuid4()
+    split_advances = heating not in ('none', 'non_apportionable_position')
+    if heating in ('non_apportionable_position', 'zero_position', 'position'):
         inp = replace(inp, cost_positions=(*inp.cost_positions,
-            replace(inp.cost_positions[0], cost_entry_id=uuid.uuid4(), category_code='MESSDIENST', gross_amount=Decimal('0.00'))))
+            replace(inp.cost_positions[0], cost_entry_id=heating_id, category_code='MESSDIENST',
+                gross_amount=Decimal('0.00' if heating == 'zero_position' else '1000.00'),
+                tenant_apportionable='NICHT_UMLAGEFAEHIG' if heating == 'non_apportionable_position' else 'UMLAGEFAEHIG')))
     elif heating == 'advance':
         inp = replace(inp, heating_advance_payments_total=Decimal('90.00'))
     result = compute_bk_settlement(inp)
     labels = [line.label for line in result.lines]
-    if heating == 'none':
+    assert any(line.cost_entry_id == heating_id for line in result.lines) == (heating in ('zero_position', 'position'))
+    if not split_advances:
         assert 'Geleistete Vorauszahlungen' in labels
         assert 'Heizkosten-Vorauszahlungen' not in labels
         assert 'Betriebskosten abzüglich Vorauszahlungen' not in labels
@@ -134,8 +139,8 @@ def test_statement_and_pdf_keep_single_block_only_without_heating(heating):
     run = SimpleNamespace(total_cost=result.total_cost, period_start=inp.period_start,
         period_end=inp.period_end, snapshot_sha256=None, snapshot_payload={})
     html = build_settlement_html(run, result.lines)
-    assert ('Geleistete Vorauszahlungen' in html) == (heating == 'none')
-    assert ('Heizkosten-Vorauszahlungen' in html) == (heating != 'none')
+    assert ('Geleistete Vorauszahlungen' in html) == (not split_advances)
+    assert ('Heizkosten-Vorauszahlungen' in html) == split_advances
     snapshot = build_snapshot_payload(inp, result)
     assert snapshot['inputs']['heating_advance_payments_total'] == str(inp.heating_advance_payments_total)
     assert snapshot['result']['heating_advance_payments_total'] == str(result.heating_advance_payments_total)

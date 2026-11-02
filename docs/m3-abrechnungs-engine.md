@@ -965,8 +965,8 @@ Implemented BK behavior: `POST /api/settlements/{id}/finalize` ends the DB trans
 ## Separate operating and heating advances (#67)
 
 Both advance totals start unknown and block finalization until they are entered or
-derived and attested. When the heating total is zero and there are no heating
-positions, the statement and PDF retain the single “Geleistete Vorauszahlungen”
+derived and attested. When the heating total is zero and there are no allocated
+tenant heating cost lines, the statement and PDF retain the single “Geleistete Vorauszahlungen”
 block; otherwise they show both component blocks. Snapshots always retain both totals.
 
 `HEATING_CATEGORY_CODES` in `engine/types.py` is the single documented set:
@@ -977,8 +977,9 @@ change the HeizkostenV allocation. Both component results use the existing
 cent-exact allocated tenant shares. The overall balance is total cost minus
 both advance totals; heating advance zero preserves the former overall result.
 The single advance block applies only when the heating advance is zero and no
-heating positions occur in any fiscal allocation window, including zero-amount
-positions. Page and PDF follow the engine's stored advance-line labels.
+allocated tenant heating cost lines occur in any fiscal allocation window, including
+zero-amount lines. Non-apportionable heating positions do not require two blocks.
+Page and PDF follow the engine's stored advance-line labels.
 
 New snapshots freeze both advance totals/sources, the heating tenant-cost share
 and the component result lines. Old finalized payloads remain unchanged: readers
@@ -988,8 +989,10 @@ version. Corrections copy both totals and sources into the new draft.
 
 The advance proposal divides the frozen operating and heating tenant-cost
 shares separately by the same exact calendar-month weight. Accepting creates
-one full rent-change row, preserving the effective base rent. For a statement with
-the single advance block, the page shows only the operating proposal and basis;
-acceptance keeps the heating advance at zero. Old snapshots
+one full rent-change row, preserving the effective base rent. The page shows both
+proposals and bases whenever the proposed heating amount or its cost basis is nonzero,
+even if the stored statement has a legacy single advance block. Only when both are
+zero does the proposal show just the operating amount and basis; acceptance then
+writes heating zero. The success message names both written advances. Old snapshots
 without a heating subtotal derive the split from frozen cost lines and heating
 pools; an incomplete frozen basis refuses the proposal.

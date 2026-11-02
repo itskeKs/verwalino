@@ -331,15 +331,19 @@ MANUAL/DERIVED sources. The existing derivation action loads both components;
 manual edits retain each component's own source. Computed statements and PDFs
 show “Betriebskosten abzüglich Vorauszahlungen”, “Heizkosten abzüglich
 Vorauszahlungen” and the overall balance. When the heating advance total is zero
-and there are no heating positions, the page and PDF retain the single block
-“Geleistete Vorauszahlungen” instead; heating positions in any fiscal allocation
-window require both blocks, even if their amount is zero. Both snapshot keys remain present.
+and there are no allocated tenant heating cost lines, the page and PDF retain the single
+block “Geleistete Vorauszahlungen” instead; heating cost lines in any fiscal allocation
+window require both blocks, even if their amount is zero. Non-apportionable heating
+positions do not require both blocks. Both snapshot keys remain present.
 Statement totals start unknown (empty fields); “Aus Zahlungen ableiten” derives both.
 The detail page retains its existing decimal-string `EUR` amounts; the advance
 proposal retains its existing German decimal-string `EUR` format. The advance proposal
-follows the statement's block decision: a single block shows only the operating
-advance and basis with “Nur die Vorauszahlung wird geändert.”; otherwise it shows both
-monthly amounts and bases. Acceptance creates one rent change. Existing form grids,
+uses its own payload: only when both the heating monthly amount and heating cost basis
+are zero does it show just the operating advance and basis with “Nur die Vorauszahlung
+wird geändert.” Otherwise it shows both monthly amounts and bases with “Beide Vorauszahlungen
+werden geändert.”, including for legacy statements with a single advance block.
+Acceptance creates one rent change and the success message names both written advances,
+including heating zero. Existing form grids,
 wrapping labels and horizontally scrollable tables apply at 360 px. Lease and
 rent-account form controls stay within their grid cells with long tenant names.
 
