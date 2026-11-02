@@ -77,7 +77,8 @@ export function ReserveLedgerPanel({ runId, propertyId, status, onChanged, onOpe
     if ((component === 'FUNDING' || component === 'WITHDRAWAL' || component === 'ADJUSTMENT') && (!cost || !register)) {
       setFormError('Bitte verknüpfen Sie einen bestätigten Kostenbeleg und einen Beschluss aus der Beschluss-Sammlung.'); return;
     }
-    const body: ReserveOverride = { component: component === 'PAYMENT_ASSIGNMENT' ? 'CONTRIBUTION' : component, amount: component === 'FUNDING' ? '0.00' : component === 'OPENING' ? openingDifference! : normalized, reason: reason.trim() };
+    const body: ReserveOverride = { component: component === 'PAYMENT_ASSIGNMENT' ? 'CONTRIBUTION' : component, amount: component === 'FUNDING' ? '0.00' : normalized, reason: reason.trim() };
+    if (component === 'OPENING') body.expected_opening_balance = ledger!.opening_balance;
     if (component === 'WITHDRAWAL' || component === 'ADJUSTMENT') Object.assign(body, { cost_entry_id: cost, register_entry_id: register });
     if (component === 'FUNDING') Object.assign(body, { payment_id: payment, cost_entry_id: cost, register_entry_id: register });
     else if (component === 'PAYMENT_ASSIGNMENT') body.payment_id = payment;

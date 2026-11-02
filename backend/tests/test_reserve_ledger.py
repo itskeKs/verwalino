@@ -2012,7 +2012,8 @@ async def test_positive_adjustment_can_reduce_a_receipt_whose_corrected_gross_is
 
 
 @pytest.mark.asyncio
-async def test_storno_cannot_make_receipt_net_withdrawals_negative_after_adjustment(client_a_admin, seed_data, migrator_session):
+@pytest.mark.parametrize('boundary', ['service', 'trigger'])
+async def test_storno_cannot_make_receipt_net_withdrawals_negative_after_adjustment(client_a_admin, seed_data, migrator_session, monkeypatch, boundary):
     api = client_a_admin
     w = await reserve_world(api, seed_data)
     sources = await reserve_evidence(api, w)
@@ -2021,10 +2022,19 @@ async def test_storno_cannot_make_receipt_net_withdrawals_negative_after_adjustm
         'component': 'ADJUSTMENT', 'amount': '200.00', 'reason': 'Reduce withdrawal',
         **{k.removeprefix('reserve_'): v for k, v in sources.items()}})
     assert response.status_code == 201, response.text
+    if boundary == 'trigger':
+        from unittest.mock import AsyncMock
+        from app.services.reserve_ledger_service import ReserveLedgerService
+        monkeypatch.setattr(ReserveLedgerService, 'require_payout_reversal', AsyncMock())
     refused = await api.post(f'/api/payments/{cash}/reverse')
     assert refused.status_code == 422, refused.text
     assert refused.json()['detail']['code'] == 'RESERVE_ADJUSTMENT_EXCEEDS_WITHDRAWALS'
-    assert 'höchstens 1.000,00 €' in refused.json()['detail']['message']
+    assert refused.json()['detail']['message'] == (
+        'Der Storno ist nicht möglich: Die positiven Korrekturen des Belegs (200,00 €) '
+        'übersteigen die verbleibenden Entnahmen. Bitte gleichen Sie die Korrekturen zuerst aus.')
+    original = await api.get(f'/api/payments/{cash}')
+    assert original.status_code == 200, original.text
+    assert original.json()['reversed_by_id'] is None
     with pytest.raises(DBAPIError) as refusal:
         async with migrator_session.begin_nested():
             await migrator_session.execute(text('UPDATE payment SET reversed_by_id=id WHERE id=CAST(:id AS uuid)'), {'id': cash})
@@ -2528,3 +2538,76 @@ async def test_partial_period_unit_correction_uses_the_covering_frozen_plan(clie
         'amount': '500.00', 'reason': 'Reconcile booked first-half Hausgeld against annual plan'})
     assert accepted.status_code == 201, accepted.text
     assert (await api.get(path)).json()['contributions_total'] == '600.00'
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('boundary', ['api', 'database'])
+async def test_zero_adjustment_is_refused_without_invalidating_computation(client_a_admin, seed_data, app_rw_session, boundary):
+    api = client_a_admin
+    w = await reserve_world(api, seed_data)
+    sources = await reserve_evidence(api, w)
+    values = paid(w)
+    await attest_fixture(api, 'settlement', w['run'], values)
+    computed = await api.post(f"/api/weg-settlements/{w['run']}/compute", json=values)
+    assert computed.status_code == 200, computed.text
+    before = (await api.get(f"/api/weg-settlements/{w['run']}")).json()
+    path = f"/api/weg-settlements/{w['run']}/reserve-ledger"
+    ledger = (await api.get(path)).json()
+    if boundary == 'api':
+        refused = await api.post(path + '/overrides', json={'component': 'ADJUSTMENT', 'amount': '0.00',
+            'reason': 'No change', **{k.removeprefix('reserve_'): v for k, v in sources.items()}})
+        assert refused.status_code == 422, refused.text
+        assert refused.json()['detail']['code'] == 'RESERVE_AMOUNT_INVALID'
+    else:
+        await app_rw_session.execute(text("SELECT set_config('app.current_org_id',:org,true),set_config('app.current_user_id',:actor,true)"),
+            {'org': str(seed_data['org_a_id']), 'actor': str(seed_data['user_a_admin_id'])})
+        with pytest.raises(DBAPIError) as refused:
+            async with app_rw_session.begin_nested():
+                await app_rw_session.execute(text("""INSERT INTO reserve_ledger_entry
+                    (organization_id,property_id,settlement_run_id,entry_date,component,amount,reason,cost_entry_id,register_entry_id,created_by)
+                    VALUES (:org,:property,:run,'2025-02-01','ADJUSTMENT',0,'No change',:cost,:register,:actor)"""),
+                    {'org': seed_data['org_a_id'], 'property': w['property'], 'run': w['run'],
+                     'cost': sources['reserve_cost_entry_id'], 'register': sources['reserve_register_entry_id'],
+                     'actor': seed_data['user_a_admin_id']})
+        assert refused.value.orig.sqlstate == '23514'
+        assert refused.value.orig.__cause__.constraint_name == 'reserve_amount_invalid'
+    assert (await api.get(path)).json() == ledger
+    assert (await api.get(f"/api/weg-settlements/{w['run']}")).json() == before
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('family', ['', '/asset-reports'])
+async def test_opening_total_correction_refuses_a_second_client_with_the_same_seen_opening(client_a_admin, seed_data, family):
+    api = client_a_admin
+    w = await reserve_world(api, seed_data)
+    if family:
+        report = await api.post('/api/weg-settlements/asset-reports', json={
+            'property_id': w['property'], 'period_start': '2025-01-01', 'period_end': '2025-12-31'})
+        assert report.status_code == 201, report.text
+        w['run'] = report.json()['id']
+    path = f"/api/weg-settlements/{w['run']}/reserve-ledger"
+    body = {'component': 'OPENING', 'amount': '400.00', 'expected_opening_balance': '0.00',
+        'reason': 'Correct total from bank evidence'}
+    accepted = await api.post(path + '/overrides', json=body)
+    assert accepted.status_code == 201, accepted.text
+    before = (await api.get(path)).json()
+    assert before['opening_balance'] == '400.00'
+    refused = await api.post(path + '/overrides', json=body)
+    assert refused.status_code == 409, refused.text
+    assert refused.json()['detail'] == {'code': 'RESERVE_OPENING_CONFLICT',
+        'message': 'Der Anfangsbestand wurde inzwischen geändert. Bitte laden Sie das Rücklagenbuch neu.'}
+    assert (await api.get(path)).json() == before
+    accepted = await api.post(path + '/overrides', json={**body, 'amount': '300.00', 'expected_opening_balance': '400.00'})
+    assert accepted.status_code == 201, accepted.text
+    after = (await api.get(path)).json()
+    assert after['opening_balance'] == '300.00'
+    assert [row['amount'] for row in after['entries'] if row.get('component') == 'OPENING'] == ['400.00', '-100.00']
+
+
+@pytest.mark.asyncio
+async def test_payout_storno_locks_the_cost_row_before_checking_adjustments(migrator_session):
+    definition = await migrator_session.scalar(text("SELECT pg_get_functiondef('guard_reserve_payment_evidence()'::regprocedure)"))
+    reversal = definition.split("IF OLD.payment_type='RUECKLAGENENTNAHME'")[1].split('RETURN NEW;')[0]
+    assert 'SELECT * INTO cost FROM public.cost_entry' in reversal
+    assert 'FOR UPDATE;' in reversal
+    assert 'reserve_funded_amount(OLD.organization_id,cost.id,OLD.id)' in reversal

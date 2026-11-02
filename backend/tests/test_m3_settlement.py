@@ -898,6 +898,26 @@ class TestM3ExitEndToEnd:
         assert orig.json()["status"] == "finalized"
 
     @pytest.mark.asyncio
+    @pytest.mark.parametrize('action', ['compute', 'finalize'])
+    async def test_bk_correction_inherits_engine_version_until_current_computation(self, client_a_admin, m3_seed, monkeypatch, action):
+        from app.services import settlement_service
+        monkeypatch.setattr(settlement_service, 'ENGINE_VERSION', 'm3.1.0')
+        run_id = await _create_run(client_a_admin, m3_seed, 'lease_a', '700.00')
+        extras = _extras_for_exit(m3_seed)
+        original = await client_a_admin.post(f'/api/settlements/{run_id}/finalize', json=extras)
+        assert original.status_code == 200, original.text
+        monkeypatch.setattr(settlement_service, 'ENGINE_VERSION', 'm3.2.0')
+        corrected = await client_a_admin.post(f'/api/settlements/{run_id}/correction')
+        assert corrected.status_code == 201, corrected.text
+        assert corrected.json()['engine_version'] == original.json()['engine_version'] == 'm3.1.0'
+        current = corrected.json()['id']
+        await attest_fixture(client_a_admin, 'settlement', current,
+            {'advance_payments_total': '700.00', 'advance_payments_source': 'MANUAL'})
+        computed = await client_a_admin.post(f'/api/settlements/{current}/{action}', json=extras)
+        assert computed.status_code == 200, computed.text
+        assert computed.json()['engine_version'] == 'm3.2.0'
+
+    @pytest.mark.asyncio
     async def test_identical_results_retain_distinct_attestation_hashes(self, client_a_admin, m3_seed):
         """Same arithmetic, distinct evidence; persisted hashes remain stable."""
         extras = _extras_for_exit(m3_seed)

@@ -246,13 +246,21 @@ class ReserveLedgerService:
                     'message': f'Sie können diesem Kostenbeleg noch höchstens {_euro(cost.gross_amount - funded)} als Rücklagenentnahme zuordnen.'})
 
     async def require_payout_reversal(self, payment):
+        detail = await self.payout_reversal_refusal(payment)
+        if detail:
+            raise HTTPException(422, detail)
+
+    async def payout_reversal_refusal(self, payment):
         cost_id = await self.repo.payout_cost(payment)
         if cost_id:
             remaining = await self.repo.funded_amount(cost_id, payment.id)
             if remaining < ZERO:
-                raise HTTPException(422, _adjustment_exceeds_withdrawals(remaining + payment.amount))
+                return {'code': 'RESERVE_ADJUSTMENT_EXCEEDS_WITHDRAWALS',
+                    'message': f'Der Storno ist nicht möglich: Die positiven Korrekturen des Belegs ({_euro(-remaining)}) '
+                        'übersteigen die verbleibenden Entnahmen. Bitte gleichen Sie die Korrekturen zuerst aus.'}
 
-    async def add(self, run, component, amount, reason, payment_id=None, cost_entry_id=None, register_entry_id=None, unit_id=None):
+    async def add(self, run, component, amount, reason, payment_id=None, cost_entry_id=None, register_entry_id=None, unit_id=None,
+                  expected_opening_balance=None):
         ledger = await self.read(run)
         if ledger['frozen']:
             raise HTTPException(409, {'code': 'RESERVE_PERIOD_FINALIZED', 'message': 'Die Rücklage dieses Zeitraums ist finalisiert.'})
@@ -262,6 +270,14 @@ class ReserveLedgerService:
             amount = money(amount)
         except ValueError:
             raise HTTPException(422, {'code': 'RESERVE_AMOUNT_INVALID', 'message': 'Bitte geben Sie einen endlichen Betrag ein.'}) from None
+        if expected_opening_balance is not None:
+            if component != 'OPENING':
+                raise HTTPException(422, {'code': 'RESERVE_INPUT_INVALID', 'message': 'Der bisherige Anfangsbestand ist nur für eine Anfangsbestandskorrektur zulässig.'})
+            if money(expected_opening_balance) != Decimal(ledger['opening_balance']):
+                raise HTTPException(409, {'code': 'RESERVE_OPENING_CONFLICT',
+                    'message': 'Der Anfangsbestand wurde inzwischen geändert. Bitte laden Sie das Rücklagenbuch neu.'})
+            # With a seen opening, amount is the corrected total; retain only its delta.
+            amount -= Decimal(ledger['opening_balance'])
         if component == 'OPENING':
             await self.require_opening_period(run, ledger)
             if amount == ZERO:
@@ -309,6 +325,9 @@ class ReserveLedgerService:
             # The immutable organization/payment unique key permits exactly one
             # assignment, so its total cannot grow through another draft or race.
         elif component in ('WITHDRAWAL', 'ADJUSTMENT') and payment_id is None:
+            if component == 'ADJUSTMENT' and amount == ZERO:
+                raise HTTPException(422, {'code': 'RESERVE_AMOUNT_INVALID',
+                    'message': 'Bitte geben Sie für eine sonstige Korrektur einen Betrag ungleich null ein.'})
             if component == 'WITHDRAWAL' and amount <= ZERO:
                 raise HTTPException(422, {'code': 'RESERVE_AMOUNT_INVALID',
                     'message': 'Bitte geben Sie für eine Entnahme- oder Zuführungskorrektur einen Betrag größer als null ein.'})

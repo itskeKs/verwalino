@@ -698,9 +698,14 @@ allocation and WEMoG settlement-balance calculation; it changes neither.
   (booked payouts plus withdrawal corrections and negative adjustments, minus
   earlier positive adjustments); it cannot create a contribution. Excess returns
   `RESERVE_ADJUSTMENT_EXCEEDS_WITHDRAWALS` with the allowed reduction in German.
-  Negative adjustments add withdrawals within the existing gross receipt cap.
+  Zero adjustments are refused with `RESERVE_AMOUNT_INVALID` by the service and
+  database. Negative adjustments add withdrawals within the existing gross receipt cap.
   A Storno that would leave the receipt chain with negative net withdrawals is
-  refused with the same reduction limit; reconcile its positive adjustments first.
+  refused with `RESERVE_ADJUSTMENT_EXCEEDS_WITHDRAWALS`; the German message names
+  the excess positive corrections and asks the manager to reconcile them first.
+  The reverse API maps a database-trigger refusal to the same 422 response and
+  message as the service. The payment trigger locks the cost row with `FOR UPDATE`
+  before checking the remaining withdrawals, as do the ledger and booking guards.
   The service and database guards use the same signed SQL total. Withdrawal and
   payout cap refusals also name the remaining amount in German.
 - Cash refunds and reversal rows have their own signed value-date entries.
@@ -747,8 +752,13 @@ allocation and WEMoG settlement-balance calculation; it changes neither.
   5,200 retains entries of 5,000, +500 and −300. Re-attesting an unchanged opening
   adds no entry and can refresh stale coverage; an explicit zero opening adjustment
   is refused with `RESERVE_AMOUNT_INVALID`. A missing reason returns
-  `RESERVE_CORRECTION_REASON_REQUIRED`. Direct opening adjustments use the signed
-  difference, never another target total. The attestation forms show the current
+  `RESERVE_CORRECTION_REASON_REQUIRED`. Direct opening adjustments without
+  `expected_opening_balance` use the signed difference. With that field, `amount`
+  is the corrected total: the service compares the seen opening with the current
+  ledger under the financial-input lock, then computes and stores the difference.
+  A stale opening returns 409 `RESERVE_OPENING_CONFLICT` and asks the manager to
+  reload; it never appends a second correction from a stale browser delta.
+  The attestation forms show the current
   opening beside the corrected-total input and reason. Finalization freezes this
   import history (`RESERVE_PERIOD_FINALIZED`); later years cannot import another
   opening. Once any run of the same property and exact period in a compatible scope
@@ -860,14 +870,15 @@ document numbers and resolution register numbers for links to the source records
 the retained snapshot and its amounts remain unchanged. Typed withdrawal
 adjustments appear as “Entnahmekorrektur”, distinct from funded cash withdrawals.
 The opening correction dialog accepts a corrected total, prefills the current
-opening and previews the signed difference; the stored entry remains that
-difference. A correction clears the active draft's stored computation so both
+opening and previews the signed difference. It submits the corrected total and
+the opening it saw; only the server-computed difference is stored. A correction clears the active draft's stored computation so both
 detail pages refetch its run and ledger without displaying old result lines;
 the manager reviews the inputs and computes again.
 Finalized correction controls remain visible and disabled with a German reason.
 An uncomputed correction draft inherits its superseded run's engine version;
-computation replaces it with the engine version actually used (M4 for WEG and
-asset reports), rather than assigning the generic M3 version on draft creation.
+computation replaces it with the engine version actually used (M3 for
+Betriebskosten, M4 for WEG and asset reports). Betriebskosten compute and finalize
+take the version from the same engine input used by their snapshot.
 Migration **0149**, based on **0148**, supplies the append-only ledger, RLS,
 source locks, computation-source checks and payout constraints after the
 organization-deletion and retention migrations.

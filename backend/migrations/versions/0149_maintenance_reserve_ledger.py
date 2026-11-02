@@ -409,6 +409,9 @@ def upgrade():
           RAISE EXCEPTION 'Reserve correction requires confirmed cost AND accepted registered resolution'
             USING ERRCODE='23514',CONSTRAINT='reserve_payout_evidence_required'; END IF;
         IF NEW.payment_id IS NULL THEN
+          IF NEW.component='ADJUSTMENT' AND NEW.amount=0 THEN
+            RAISE EXCEPTION 'Reserve adjustment must be nonzero'
+              USING ERRCODE='23514',CONSTRAINT='reserve_amount_invalid'; END IF;
           IF NEW.component='WITHDRAWAL' AND NEW.amount<=0 THEN
             RAISE EXCEPTION 'Reserve cash correction must be positive'
               USING ERRCODE='23514',CONSTRAINT='reserve_amount_invalid'; END IF;
@@ -501,12 +504,15 @@ def upgrade():
         IF NEW.reserve_cost_entry_id IS DISTINCT FROM OLD.reserve_cost_entry_id
           OR NEW.reserve_register_entry_id IS DISTINCT FROM OLD.reserve_register_entry_id THEN
           RAISE EXCEPTION 'GoBD: booked reserve evidence is immutable'; END IF;
-        IF OLD.payment_type='RUECKLAGENENTNAHME' AND OLD.reversed_by_id IS NULL AND NEW.reversed_by_id IS NOT NULL
-          AND public.reserve_funded_amount(OLD.organization_id,COALESCE(OLD.reserve_cost_entry_id,
+        IF OLD.payment_type='RUECKLAGENENTNAHME' AND OLD.reversed_by_id IS NULL AND NEW.reversed_by_id IS NOT NULL THEN
+          SELECT * INTO cost FROM public.cost_entry WHERE organization_id=OLD.organization_id
+            AND id=COALESCE(OLD.reserve_cost_entry_id,
             (SELECT e.cost_entry_id FROM public.reserve_ledger_entry e WHERE e.organization_id=OLD.organization_id
-              AND e.payment_id=OLD.id AND e.component='FUNDING')),OLD.id)<0 THEN
-          RAISE EXCEPTION 'Reserve adjustment exceeds active withdrawals'
-            USING ERRCODE='23514',CONSTRAINT='reserve_adjustment_exceeds_withdrawals'; END IF;
+              AND e.payment_id=OLD.id AND e.component='FUNDING')) FOR UPDATE;
+          IF public.reserve_funded_amount(OLD.organization_id,cost.id,OLD.id)<0 THEN
+            RAISE EXCEPTION 'Reserve adjustment exceeds active withdrawals'
+              USING ERRCODE='23514',CONSTRAINT='reserve_adjustment_exceeds_withdrawals'; END IF;
+        END IF;
         RETURN NEW;
       END IF;
       IF NEW.payment_type='RUECKLAGENENTNAHME' AND NEW.status='booked' AND NEW.reverses_id IS NULL THEN

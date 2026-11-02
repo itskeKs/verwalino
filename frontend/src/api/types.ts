@@ -1346,6 +1346,7 @@ export interface AssetReportComputeRequest {
 // --- M8 Meetings & Beschluss-Sammlung ---
 export type ReserveComponent = 'OPENING' | 'CONTRIBUTION' | 'WITHDRAWAL' | 'ADJUSTMENT' | 'FUNDING';
 export interface ReserveOverride {
+  expected_opening_balance?: string;
   unit_id?: string;
   component: ReserveComponent;
   amount: string;

@@ -125,7 +125,7 @@ it('does not call a computed draft a finalized snapshot when its ledger is froze
   expect(screen.getByRole('button', { name: 'Korrektur erfassen' })).toBeDisabled();
 });
 
-it.each([['20500,00', '+500,00', '500.00'], ['19.700,00', '-300,00', '-300.00']])('asks for opening total %s and stores only the audited difference', async (total, preview, delta) => {
+it.each([['20500,00', '+500,00', '20500.00'], ['19.700,00', '-300,00', '19700.00']])('sends opening total %s and the seen opening while previewing the difference', async (total, preview, normalized) => {
   const fetchMock = vi.fn(async (_url: string, init?: RequestInit) => init?.method === 'POST' ? json({ id: 'opening-1' }, 201) : json(ledger));
   vi.stubGlobal('fetch', fetchMock);
   render(<ReserveLedgerPanel runId="run-1" propertyId="property-1" status="draft" onChanged={() => {}} />);
@@ -141,7 +141,7 @@ it.each([['20500,00', '+500,00', '500.00'], ['19.700,00', '-300,00', '-300.00']]
   fireEvent.change(screen.getByLabelText('Begründung *'), { target: { value: 'Bankunterlagen geprüft' } });
   fireEvent.click(screen.getByRole('button', { name: 'Speichern' }));
   await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(expect.any(String), expect.objectContaining({ body: JSON.stringify({
-    component: 'OPENING', amount: delta, reason: 'Bankunterlagen geprüft',
+    component: 'OPENING', amount: normalized, reason: 'Bankunterlagen geprüft', expected_opening_balance: '20000.00',
   }) })));
 });
 
