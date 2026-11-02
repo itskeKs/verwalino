@@ -1985,6 +1985,28 @@ async def test_refunded_partial_hausgeld_assignment_cannot_fund_a_unit_correctio
 
 
 @pytest.mark.asyncio
+async def test_matching_hausgeld_refund_keeps_an_accepted_unit_contribution_correction_backed(client_a_admin, seed_data):
+    api = client_a_admin
+    w = await unit_correction_world(api, seed_data)
+    path = f"/api/weg-settlements/{w['run']}/reserve-ledger"
+    accepted = await api.post(path + '/overrides', json={'component': 'CONTRIBUTION', 'unit_id': w['u1'],
+        'amount': '500.00', 'reason': 'Remaining booked reserve share'})
+    assert accepted.status_code == 201, accepted.text
+    await payment(api, w, '1300.00', kind='HAUSGELD_VORSCHUSS', direction='OUT')
+    ledger = (await api.get(path)).json()
+    assert ledger['contributions_total'] == '0.00'
+    assert next(u for u in ledger['contribution_headroom'] if u['unit_id'] == w['u1'])['remaining'] == '0.00'
+    values = {'bank_balances': [
+        {'bank_account_id': w['bank_giro'], 'label': 'Giro', 'account_type': 'LAUFEND', 'balance': '0.00'},
+        {'bank_account_id': w['bank_ruecklage'], 'label': 'Reserve', 'account_type': 'RUECKLAGE', 'balance': '0.00'},
+    ], 'receivables': [], 'payables': []}
+    await attest_fixture(api, 'settlement', w['run'], values)
+    finalized = await api.post(f"/api/weg-settlements/asset-reports/{w['run']}/finalize", json=values)
+    assert finalized.status_code == 200, finalized.text
+    assert finalized.json()['status'] == 'finalized'
+
+
+@pytest.mark.asyncio
 async def test_refund_storno_restores_backing_for_an_accepted_unit_contribution_correction(client_a_admin, seed_data):
     api = client_a_admin
     w = await unit_correction_world(api, seed_data)
@@ -2192,6 +2214,55 @@ async def test_storno_cannot_finalize_a_unit_correction_without_booked_backing(c
     # Automatic credit consumes all replacement cash, so the old correction is still unsupported.
     refused = await api.post(f"/api/weg-settlements/asset-reports/{w['run']}/finalize", json=values)
     assert refused.status_code == 422, refused.text
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('boundary', ['finalize', 'database'])
+async def test_post_storno_refund_cannot_restore_backing_for_a_unit_correction(client_a_admin, seed_data, app_rw_session, boundary):
+    api = client_a_admin
+    w = await unit_correction_world(api, seed_data)
+    path = f"/api/weg-settlements/{w['run']}/reserve-ledger"
+    accepted = await api.post(path + '/overrides', json={'component': 'CONTRIBUTION', 'unit_id': w['u1'],
+        'amount': '500.00', 'reason': 'Remaining booked reserve share'})
+    assert accepted.status_code == 201, accepted.text
+    reversed_receipt = await api.post(f"/api/payments/{w['cash']}/reverse", json={'note': 'Returned receipt'})
+    assert reversed_receipt.status_code == 201, reversed_receipt.text
+    values = {'bank_balances': [
+        {'bank_account_id': w['bank_giro'], 'label': 'Giro', 'account_type': 'LAUFEND', 'balance': '0.00'},
+        {'bank_account_id': w['bank_ruecklage'], 'label': 'Reserve', 'account_type': 'RUECKLAGE', 'balance': '0.00'},
+    ], 'receivables': [], 'payables': []}
+    await attest_fixture(api, 'settlement', w['run'], values)
+    refused = await api.post(f"/api/weg-settlements/asset-reports/{w['run']}/finalize", json=values)
+    assert refused.status_code == 422, refused.text
+    assert refused.json()['detail']['code'] == 'RESERVE_CONTRIBUTION_EXCEEDS_BOOKED'
+    assert 'Einheit 1' in refused.json()['detail']['message']
+    refund = await payment(api, w, '1300.00', kind='HAUSGELD_VORSCHUSS', direction='OUT')
+    ledger = (await api.get(path)).json()
+    assert ledger['contributions_total'] == '-100.00'
+    assert {row['payment_id']: row['amount'] for row in ledger['entries'] if row.get('payment_id')} == {
+        w['cash']: '100.00', reversed_receipt.json()['id']: '-100.00', refund: '-600.00'}
+    assert next(u for u in ledger['contribution_headroom'] if u['unit_id'] == w['u1'])['remaining'] == '0.00'
+    if boundary == 'finalize':
+        values['bank_balances'][0]['balance'] = '-1300.00'
+        await attest_fixture(api, 'settlement', w['run'], values)
+        refused = await api.post(f"/api/weg-settlements/asset-reports/{w['run']}/finalize", json=values)
+        assert refused.status_code == 422, refused.text
+        assert refused.json()['detail']['code'] == 'RESERVE_CONTRIBUTION_EXCEEDS_BOOKED'
+        assert 'Einheit 1' in refused.json()['detail']['message']
+    else:
+        await app_rw_session.execute(text("SELECT set_config('app.current_org_id',:org,true),set_config('app.current_user_id',:actor,true)"),
+            {'org': str(seed_data['org_a_id']), 'actor': str(seed_data['user_a_admin_id'])})
+        with pytest.raises(DBAPIError) as refused:
+            async with app_rw_session.begin_nested():
+                await app_rw_session.execute(text("""INSERT INTO reserve_ledger_entry
+                    (organization_id,property_id,settlement_run_id,entry_date,component,amount,reason,created_by,unit_id)
+                    VALUES (:org,:property,:run,'2025-12-31','CONTRIBUTION',0.01,'Post-Storno refund cap',:actor,:unit)"""),
+                    {'org': seed_data['org_a_id'], 'property': w['property'], 'run': w['run'],
+                     'actor': seed_data['user_a_admin_id'], 'unit': w['u1']})
+        assert refused.value.orig.sqlstate == '23514'
+        assert refused.value.orig.__cause__.constraint_name == 'reserve_contribution_exceeds_booked'
+        assert await app_rw_session.scalar(text('SELECT reserve_contribution_headroom(:org,:run,:unit)'),
+            {'org': seed_data['org_a_id'], 'run': w['run'], 'unit': w['u1']}) == Decimal('-500.00')
 
 
 @pytest.mark.asyncio

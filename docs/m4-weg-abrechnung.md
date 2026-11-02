@@ -774,9 +774,13 @@ allocation and WEMoG settlement-balance calculation; it changes neither.
   at zero. Already credited contributions are summed with their signs and then
   floored at zero too: automatic rows (including negative refund rows), earlier
   unit corrections and payment-specific assignments of that unit's Hausgeld.
-  Raw headroom is the cap minus this credited total and may be negative. The API
-  displays at least zero; the service and database guard refuse any correction
-  above the raw headroom. Direct reserve payments enter neither aggregate.
+  Raw headroom is `LEAST(GREATEST(0, S) - GREATEST(0, D + C), S - D - C)`,
+  where `S` is the signed booked Hausgeld reserve share, `D` is its signed derived
+  credit (using a payment-specific assignment when present), and `C` is the unit's
+  contribution corrections. The API displays `GREATEST(0, raw)`, the amount accepted
+  right now: IN 1,300 with 100 assigned followed by OUT 650 shows 300 even though
+  500 can be corrected in two steps; the service and database guard refuse any
+  correction above raw headroom. Direct reserve payments enter neither aggregate.
   Frozen plan cells and the cash ratio use the same SQL helpers for automatic
   contributions, displayed headroom and the definer ledger guard. Plan selection is
   shared too: use the exact current plan or, for a partial-period asset report,
