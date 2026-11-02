@@ -769,11 +769,12 @@ allocation and WEMoG settlement-balance calculation; it changes neither.
   Booked evidence references stay frozen after cost corrections or resolution challenges.
 - A contribution correction requires `unit_id` belonging to the same property,
   a positive amount and a mandatory reason, with no payment, cost or resolution
-  references. Its cap is the reserve share of booked net Hausgeld for that unit
-  in the exact run period (IN receipts minus OUT refunds, net of Storno), floored
-  at zero. Already credited contributions are summed with their signs and then
-  floored at zero too: automatic rows (including negative refund rows), earlier
-  unit corrections and payment-specific assignments of that unit's Hausgeld.
+  references. Its cap derives from the reserve share of booked net Hausgeld for that
+  unit in the exact run period (IN receipts minus OUT refunds, net of Storno) and
+  from what is already credited to the unit, summed with signs: automatic rows
+  (including negative refund rows), earlier unit corrections and payment-specific
+  assignments of that unit's Hausgeld. The zero floors below apply only to the
+  first term of the formula; the second term keeps the signed difference.
   Raw headroom is `LEAST(GREATEST(0, S) - GREATEST(0, D + C), S - D - C)`,
   where `S` is the signed booked Hausgeld reserve share, `D` is its signed derived
   credit (using a payment-specific assignment when present), and `C` is the unit's
