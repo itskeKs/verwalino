@@ -44,6 +44,25 @@ with socket.socket() as port_probe:
     TEST_PORT = str(port_probe.getsockname()[1])
 
 
+class FormatIsolationTests(unittest.TestCase):
+    def test_format_target_excludes_the_regular_database_fixture_tree(self):
+        result = subprocess.run(['make', '-n', 'test-selfhost-format'], cwd=ROOT,
+                                check=True, capture_output=True, text=True)
+        command = result.stdout.split('pytest ', 1)[1]
+        self.assertIn('--noconftest', command)
+        self.assertIn('tests/test_selfhost_backup_format.py', command)
+        self.assertNotIn('tests/test_reserve_ledger.py', command)
+
+    def test_format_mode_rejects_a_regular_test_session_before_fixtures(self):
+        result = subprocess.run([
+            '/bin/bash', '-c', '. ./scripts/test-env.sh; export VERWALINO_FORMAT_TEST=1; '
+            'cd backend; exec "$@"', 'format-session-guard', sys.executable, '-m', 'pytest',
+            '--collect-only', '-q', 'tests/test_selfhost_backup_format.py',
+        ], cwd=ROOT, capture_output=True, text=True, timeout=30)
+        self.assertEqual(result.returncode, 4, result.stdout + result.stderr)
+        self.assertIn('Format rehearsal requires --noconftest', result.stderr)
+
+
 class SelfHostTests(unittest.TestCase):
     bash = PATH_BASH
 
@@ -2684,7 +2703,8 @@ class Bash32UpdateRestoreTests(SelfHostTests):
 
 
 def load_tests(loader, tests, pattern):
-    suite = loader.loadTestsFromTestCase(SelfHostTests)
+    suite = loader.loadTestsFromTestCase(FormatIsolationTests)
+    suite.addTests(loader.loadTestsFromTestCase(SelfHostTests))
     suite.addTests(loader.loadTestsFromTestCase(InstallMatrixWorkflowTests))
     suite.addTests(loader.loadTestsFromTestCase(StackContractTests))
     suite.addTests(loader.loadTestsFromTestCase(SiteExtensionTests))

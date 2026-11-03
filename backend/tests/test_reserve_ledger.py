@@ -1,5 +1,4 @@
 """Reserve API and frozen annual statements, on synthetic WEG records."""
-import os
 import pytest
 from datetime import date
 from decimal import Decimal
@@ -64,105 +63,6 @@ async def test_replica_superuser_cannot_mutate_reserve_history(client_a_admin, s
         assert cursor.fetchone() == ('origin',)
         cursor.execute('SELECT count(*) FROM reserve_ledger_entry WHERE settlement_run_id=%s', (w['run'],))
         assert cursor.fetchone() == (1,)
-
-
-@pytest.mark.asyncio
-@pytest.mark.skipif(os.environ.get('VERWALINO_FORMAT_TEST') != '1',
-                    reason='Opt-in restore rehearsal: run make test-selfhost-format')
-async def test_reserve_pair_survives_backup_restore_with_replica_guard(client_a_admin, seed_data):
-    import psycopg2
-    import subprocess
-    import tempfile
-    import uuid
-    from contextlib import closing
-    from sqlalchemy.engine import make_url
-    from app import deployment
-    from app.core.config import settings
-    from app.core.declaration_test_database import require_disposable_database_settings
-    from app.selfhost_backup import pack, verify
-
-    _, _, url = require_disposable_database_settings(settings)
-    port = subprocess.run(['docker', 'port', 'infra-postgres-1', '5432'],
-                          check=True, capture_output=True, text=True).stdout.strip()
-    assert port == '127.0.0.1:55432'
-
-    def docker(*args, **kwargs):
-        return subprocess.run(['docker', 'exec', '-i', 'infra-postgres-1', *args],
-                              check=True, capture_output=True, **kwargs)
-
-    w = await unit_correction_world(client_a_admin, seed_data)
-    assert (await client_a_admin.put(f"/api/units/{w['u1']}", json={'number': '3'})).status_code == 200
-    path = f"/api/weg-settlements/{w['run']}/reserve-ledger"
-    original = await client_a_admin.post(path + '/overrides', json={
-        'component': 'CONTRIBUTION', 'unit_id': w['u1'], 'amount': '300.00',
-        'reason': 'Reconcile unit 3 contribution for restore rehearsal'})
-    assert original.status_code == 201, original.text
-    original_id = original.json()['id']
-    counter = await client_a_admin.post(path + f'/overrides/{original_id}/reduce', json={
-        'reduced_to': '100.00', 'reason': 'Correct unit 3 contribution to 100 euros'})
-    assert counter.status_code == 201, counter.text
-    pair = [original_id, counter.json()['id']]
-    rows_sql = """SELECT e.id::text,e.organization_id::text,e.property_id::text,
-        e.settlement_run_id::text,e.unit_id::text,e.reverses_entry_id::text,e.amount,u.number
-        FROM reserve_ledger_entry e LEFT JOIN unit u ON u.id=e.unit_id
-        AND u.organization_id=e.organization_id WHERE e.id=ANY(%s::uuid[]) ORDER BY e.amount DESC"""
-    with closing(psycopg2.connect(url)) as source, source.cursor() as cursor:
-        cursor.execute(rows_sql, (pair,))
-        expected = cursor.fetchall()
-    context = (str(seed_data['org_a_id']), str(w['property']), str(w['run']), str(w['u1']))
-    assert expected == [(pair[0], *context, None, Decimal('300.00'), '3'),
-                        (pair[1], *context, pair[0], Decimal('-200.00'), '3')]
-
-    destination = 'selfhost_reserve_' + uuid.uuid4().hex
-    created = False
-    try:
-        with tempfile.TemporaryDirectory(prefix='verwalino-226-') as directory:
-            work = Path(directory)
-            documents = work / 'documents'
-            documents.mkdir()
-            (documents / 'synthetic.txt').write_text('Synthetic unit 3 reserve backup')
-            (work / 'db.dump').write_bytes(docker('pg_dump', '-U', 'app_migrator',
-                '-d', make_url(url).database, '-Fc').stdout)
-            pack(work, documents, deployment.TARGET, 'verwalino:local', 'a' * 64)
-            staging = work / 'restore'
-            staging.mkdir()
-            (staging / 'archive.tar').write_bytes((work / 'archive.tar').read_bytes())
-            assert verify(staging, deployment.TARGET, 'a' * 64)['schema_head'] == deployment.TARGET
-            docker('createdb', '-U', 'app_migrator', '-T', 'template0', destination)
-            created = True
-            restored_url = make_url(url).set(database=destination).render_as_string(hide_password=False)
-            with closing(psycopg2.connect(restored_url)) as restored, restored.cursor() as cursor:
-                cursor.execute("SELECT current_database(),pg_get_userbyid(datdba) FROM pg_database WHERE datname=current_database()")
-                assert cursor.fetchone() == (destination, 'app_migrator')
-                cursor.execute("SELECT count(*) FROM pg_class WHERE relnamespace='public'::regnamespace AND relkind='r'")
-                assert cursor.fetchone() == (0,)
-            docker('pg_restore', '-U', 'app_migrator', '-d', destination,
-                   '--exit-on-error', '--single-transaction', input=(staging / 'db.dump').read_bytes())
-            with closing(psycopg2.connect(restored_url)) as restored, restored.cursor() as cursor:
-                cursor.execute('SELECT version_num FROM alembic_version')
-                assert cursor.fetchone() == (deployment.TARGET,)
-                cursor.execute(rows_sql, (pair,))
-                actual = cursor.fetchall()
-                assert actual == expected
-                assert sum(row[6] for row in actual) == Decimal('100.00')
-                cursor.execute("SELECT tgenabled::text FROM pg_trigger WHERE tgrelid='reserve_ledger_entry'::regclass AND tgname='guard_reserve_ledger'")
-                assert cursor.fetchone() == ('A',)
-                cursor.execute('SELECT rolsuper FROM pg_roles WHERE rolname=current_user')
-                assert cursor.fetchone() == (True,)
-                cursor.execute("SET LOCAL session_replication_role='replica'")
-                cursor.execute('SHOW session_replication_role')
-                assert cursor.fetchone() == ('replica',)
-                with pytest.raises(psycopg2.errors.CheckViolation) as refused:
-                    cursor.execute('DELETE FROM reserve_ledger_entry WHERE id=ANY(%s::uuid[])', (pair,))
-                assert refused.value.pgcode == '23514'
-                assert refused.value.diag.constraint_name == 'reserve_ledger_append_only'
-                assert 'GoBD: reserve ledger is append-only' in refused.value.diag.message_primary
-                restored.rollback()
-                cursor.execute(rows_sql, (pair,))
-                assert cursor.fetchall() == expected
-    finally:
-        if created:
-            docker('dropdb', '-U', 'app_migrator', destination)
 
 
 @pytest.mark.asyncio

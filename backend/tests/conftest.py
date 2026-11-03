@@ -357,6 +357,8 @@ def pytest_timeout_set_timer(item, settings):
 
 def pytest_sessionstart(session):
     """Verify an external target before any scenario can create records."""
+    if os.environ.get('VERWALINO_FORMAT_TEST') == '1':
+        raise pytest.UsageError('Format rehearsal requires --noconftest; use make test-selfhost-format')
     url = target_url()
     if not url:
         return

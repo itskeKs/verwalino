@@ -908,7 +908,13 @@ format and command behavior; a complete running self-host installation restore
 has not yet been accepted.
 Run the opt-in rehearsal with `make test-selfhost-format`: it sets
 `VERWALINO_FORMAT_TEST=1`, acquires `/tmp/verwalino-testdb.lock` itself and uses
-only its own scratch databases in `infra-postgres-1` at `127.0.0.1:55432`.
+only its own freshly created, initially empty source and restore databases in
+`infra-postgres-1` at `127.0.0.1:55432`. The separate `--noconftest` process
+excludes the normal migration, seeding and application-engine fixtures. Format
+mode is refused by the regular test session before fixtures; the scratch harness
+rejects connections and dump/restore commands for any database it did not create.
+The source receives the released migrations and synthetic records; both owned
+databases are dropped on exit. The shared database is neither reset nor seeded.
 Ordinary test runs skip it with a reason; it also skips when Docker is missing.
 
 Declaration import/Q&A, SMTP and the ordinary invoice worker are disabled in
