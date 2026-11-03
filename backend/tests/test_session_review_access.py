@@ -267,7 +267,7 @@ def _chain_0131_projection(head):
     return projected
 
 
-async def test_revision_chain_0149_0131_0149_preserves_full_state_and_issued_pdf(rent_world, client_a_admin, seed_data):
+async def test_revision_chain_head_0131_head_preserves_full_state_and_issued_pdf(rent_world, rent_db, client_a_admin, seed_data):
     """Rollback-only whole-chain rehearsal, not a production downgrade strategy."""
     import os
     from pathlib import Path
@@ -279,13 +279,20 @@ async def test_revision_chain_0149_0131_0149_preserves_full_state_and_issued_pdf
     from sqlalchemy.engine import make_url
     from sqlalchemy.exc import DBAPIError
 
+    from app.deployment import TARGET
     from tests.conftest import MIGRATOR_SYNC_URL
     from tests.test_letters import contract_body, create_template, issue_body
     from tests.test_reserve_ledger import reserve_world, finalize
-    from tests.financial_coverage_helpers import reserve_evidence
+    from tests.financial_coverage_helpers import attest_fixture, reserve_evidence
 
     # Include 0149-only statement rows even when this rehearsal runs alone.
     reserve = await reserve_world(client_a_admin, seed_data)
+    # A pre-split WEG run acquires zero on upgrade; freeze that fixture value.
+    seeded = await rent_db.execute(text("""UPDATE settlement_run SET heating_advance_payments_total=0
+        WHERE id=CAST(:id AS uuid) AND status='draft' AND heating_advance_payments_total IS NULL"""),
+        {'id': reserve['run']})
+    assert seeded.rowcount == 1
+    await rent_db.commit()
     evidence = {key.removeprefix('reserve_'): value for key, value in (await reserve_evidence(client_a_admin, reserve)).items()}
     adjustment = await client_a_admin.post(f"/api/weg-settlements/{reserve['run']}/reserve-ledger/overrides", json={
         # A positive adjustment needs active withdrawals on the receipt (round 16);
@@ -304,6 +311,21 @@ async def test_revision_chain_0149_0131_0149_preserves_full_state_and_issued_pdf
     assert os.environ.get('HV_DECLARATION_TEST_DATABASE_PROFILE', 'local') == 'local'
     w = rent_world
     async with api_client(w) as admin:
+        # WEG uses its own engine; include a real split-engine tenant snapshot
+        # so the first downgrade boundary is exercised even in an isolated run.
+        statement = await admin.post('/api/settlements', json={
+            'property_id': str(w['property']), 'lease_agreement_id': str(w['lease']),
+            'period_start': '2026-01-01', 'period_end': '2026-01-31',
+            'advance_payments_total': '0.00', 'heating_advance_payments_total': '0.00',
+        })
+        assert statement.status_code == 201, statement.text
+        statement_id = statement.json()['id']
+        await attest_fixture(admin, 'settlement', statement_id, {
+            'advance_payments_total': '0.00', 'advance_payments_source': 'MANUAL',
+            'heating_advance_payments_total': '0.00', 'heating_advance_payments_source': 'MANUAL',
+        })
+        finalized = await admin.post(f'/api/settlements/{statement_id}/finalize', json={})
+        assert finalized.status_code == 200, finalized.text
         template = await create_template(admin)
         issued = await admin.post('/api/letters/issue', json=issue_body(w, template))
         assert issued.status_code == 201, issued.text
@@ -364,9 +386,9 @@ async def test_revision_chain_0149_0131_0149_preserves_full_state_and_issued_pdf
     config = Config()
     config.set_main_option('script_location', str(Path(__file__).parents[1] / 'migrations'))
     scripts = ScriptDirectory.from_config(config)
-    assert scripts.get_heads() == ['0149']
-    assert [r.revision for r in scripts.iterate_revisions('0149', '0131')] == [
-        f'{number:04}' for number in range(149, 131, -1)
+    assert scripts.get_heads() == [TARGET]
+    assert [r.revision for r in scripts.iterate_revisions(TARGET, '0131')] == [
+        f'{number:04}' for number in range(int(TARGET), 131, -1)
     ]
     engine = create_engine(MIGRATOR_SYNC_URL)
     try:
@@ -423,33 +445,67 @@ async def test_revision_chain_0149_0131_0149_preserves_full_state_and_issued_pdf
                         historical.rollback()
                     return projected
 
-                assert version() == ('0149',)
+                assert version() == (TARGET,)
                 retained = _chain_snapshot(connection)
+                with pytest.raises(DBAPIError, match='Retain finalized split-engine snapshots; repair forward') as refusal:
+                    with connection.begin_nested():
+                        migrate(scripts.get_revision(TARGET).down_revision, downgrade=True)
+                assert refusal.value.orig.pgcode == '23514', str(refusal.value.orig)
+                assert _chain_snapshot(connection) == retained
+                split_runs = [uuid.UUID(row['id']) for row in retained['data']['settlement_run']
+                              if row['status'] == 'finalized'
+                              and (row['snapshot_payload'] or {}).get('engine_version') == 'm3.2.0']
+                assert uuid.UUID(statement_id) in split_runs
                 reserve_line_types = ('RESERVE_LATE_CASH', 'RESERVE_ADJUSTMENT')
                 assert any(row['line_type'] == 'RESERVE_ADJUSTMENT' for row in retained['data']['settlement_line'])
                 generation = connection.scalar(text('SELECT session_version FROM public."user" WHERE id=:id'), {'id': w['reader']})
-                # Neutralize only 0149 evidence and its direct dependents in this
-                # rollback-only migrator TX. Keep all legacy payment/binding rows
-                # throughout the chain; FK checks remain enabled during cleanup.
+                # Exclude split-engine originals, heating inputs and reserve evidence
+                # only in this rollback-only migrator TX. The final rollback restores every row;
+                # FK checks remain enabled while removing their dependents.
                 cleanup_tables = ('reserve_ledger_entry', 'scope_payment_reconciliation_item',
-                                  'accounting_scope_binding', 'payment', 'settlement_line')
+                                  'accounting_scope_binding', 'payment', 'settlement_line',
+                                  'allocation_correction_context', 'allocation_correction_completion',
+                                  'allocation_correction_impact', 'financial_computation_receipt',
+                                  'coverage_declaration', 'settlement_run', 'lease_agreement', 'lease_rent_change')
                 for table in cleanup_tables:
                     connection.execute(text(f'ALTER TABLE public.{table} DISABLE TRIGGER USER'))
                 connection.execute(text('DELETE FROM public.reserve_ledger_entry'))
                 connection.execute(text("""DELETE FROM public.scope_payment_reconciliation_item
                     WHERE binding_id IN (SELECT b.id FROM public.accounting_scope_binding b
                       JOIN public.payment p ON p.organization_id=b.organization_id AND p.id=b.payment_id
-                      WHERE p.payment_type='RUECKLAGENENTNAHME')"""))
+                      WHERE p.payment_type IN ('RUECKLAGENENTNAHME','HK_VORAUSZAHLUNG'))"""))
                 connection.execute(text("""DELETE FROM public.accounting_scope_binding
-                    WHERE payment_id IN (SELECT id FROM public.payment WHERE payment_type='RUECKLAGENENTNAHME')"""))
-                connection.execute(text("DELETE FROM public.payment WHERE payment_type='RUECKLAGENENTNAHME'"))
+                    WHERE payment_id IN (SELECT id FROM public.payment
+                      WHERE payment_type IN ('RUECKLAGENENTNAHME','HK_VORAUSZAHLUNG'))"""))
+                connection.execute(text("DELETE FROM public.payment WHERE payment_type IN ('RUECKLAGENENTNAHME','HK_VORAUSZAHLUNG')"))
                 connection.execute(text("""DELETE FROM public.settlement_line
                     WHERE line_type IN ('RESERVE_LATE_CASH','RESERVE_ADJUSTMENT')"""))
+                for table, predicate in (
+                    ('allocation_correction_completion', '''impact_id IN (
+                        SELECT id FROM public.allocation_correction_impact WHERE settlement_run_id=ANY(:runs))
+                        OR computation_id IN (
+                        SELECT id FROM public.financial_computation_receipt WHERE settlement_run_id=ANY(:runs))'''),
+                    ('allocation_correction_context', '''impact_id IN (
+                        SELECT id FROM public.allocation_correction_impact WHERE settlement_run_id=ANY(:runs))'''),
+                    *((table, 'settlement_run_id=ANY(:runs)') for table in (
+                        'allocation_correction_impact', 'financial_computation_receipt',
+                        'coverage_declaration', 'accounting_scope_binding', 'settlement_line')),
+                    ('settlement_run', 'id=ANY(:runs)'),
+                ):
+                    connection.execute(text(f'DELETE FROM public.{table} WHERE {predicate}'), {'runs': split_runs})
+                # Only columns absent before the split are reset, including nullable
+                # draft totals, so the real downgrade/upgrade can round-trip them.
+                for table in ('lease_agreement', 'lease_rent_change'):
+                    connection.execute(text(f'UPDATE public.{table} SET heating_advance_payment=0 WHERE heating_advance_payment<>0'))
+                connection.execute(text("""UPDATE public.settlement_run
+                    SET heating_advance_payments_total=0,heating_advance_payments_source='MANUAL'
+                    WHERE heating_advance_payments_total IS DISTINCT FROM 0 OR heating_advance_payments_source<>'MANUAL'"""))
                 for table in cleanup_tables:
                     connection.execute(text(f'ALTER TABLE public.{table} ENABLE TRIGGER USER'))
                 without_reserves = _chain_snapshot(connection)
                 assert without_reserves['data']['settlement_line'] == [
-                    row for row in retained['data']['settlement_line'] if row['line_type'] not in reserve_line_types]
+                    row for row in retained['data']['settlement_line']
+                    if row['line_type'] not in reserve_line_types and uuid.UUID(row['settlement_run_id']) not in split_runs]
                 corpus = {
                     table: [row for row in retained['data'][table] if row['organization_id'] == str(w['org'])]
                     for table in ('payment', 'accounting_scope_binding')
@@ -523,7 +579,7 @@ async def test_revision_chain_0149_0131_0149_preserves_full_state_and_issued_pdf
                 down = _chain_snapshot(connection)
                 down['data'].pop('alembic_version')
                 assert down == old
-                migrate('0149', downgrade=False)
+                migrate(TARGET, downgrade=False)
                 connection.execute(text('SET CONSTRAINTS ALL IMMEDIATE'))
                 assert _chain_snapshot(connection) == head
                 for table, rows in corpus.items():

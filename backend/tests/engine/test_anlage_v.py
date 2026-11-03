@@ -52,7 +52,7 @@ def test_unknown_categories_are_listed_with_original_labels_and_signed_amounts()
 
 
 @pytest.mark.parametrize('code,line', [
-    ('KALTMIETE', 'rent'), ('NK_VORAUSZAHLUNG', 'levies'),
+    ('KALTMIETE', 'rent'), ('NK_VORAUSZAHLUNG', 'levies'), ('HK_VORAUSZAHLUNG', 'levies'),
     ('KAUTION', None), ('HAUSGELD_VORSCHUSS', None), ('RUECKLAGENANTEIL', None),
     ('SONDERZAHLUNG', None), ('NACHZAHLUNG', None), ('OTHER', None),
 ])

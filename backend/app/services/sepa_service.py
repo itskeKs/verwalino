@@ -224,7 +224,8 @@ class SepaService:
             for lease,_ in targets:
                 changes=await LeaseRentChangeRepository(self.db,self.org).list_for_lease(lease.id)
                 charge=LeaseChargeInput(lease.id,lease.valid_from,db_exclusive_to_engine_inclusive(lease.valid_to),
-                    lease.base_rent,lease.advance_payment,tuple(RentChangeInput(c.valid_from,c.base_rent,c.advance_payment) for c in changes))
+                    lease.base_rent,lease.advance_payment,tuple(RentChangeInput(c.valid_from,c.base_rent,c.advance_payment,c.heating_advance_payment) for c in changes),
+                    heating_advance_payment=lease.heating_advance_payment)
                 values=tenant_expected_charges(charge,body.period_start,body.period_end)
                 entry=totals.setdefault(lease.tenant_profile_id,{'amount':Decimal('0.00'),'lease_ids':[]})
                 entry['amount']+=sum((v.amount for v in values),Decimal('0.00'))

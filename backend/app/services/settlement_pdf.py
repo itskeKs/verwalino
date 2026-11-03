@@ -166,8 +166,6 @@ def build_settlement_html(
             f"</tr>"
         )
 
-    advance = next((l for l in ordered if l.line_type == "ADVANCE_PAYMENT"), None)
-    balance = next((l for l in ordered if l.line_type == "BALANCE"), None)
 
     summary_rows = []
     summary_rows.append(
@@ -175,21 +173,16 @@ def build_settlement_html(
         f"<td colspan='5'>Summe umlagefaehige Kosten (Ihr Anteil)</td>"
         f"<td class='num'>{_eur(run.total_cost)}</td></tr>"
     )
-    if advance is not None:
-        summary_rows.append(
-            f"<tr class='summary'>"
-            f"<td colspan='5'>abzueglich {_esc(advance.label)}</td>"
-            f"<td class='num'>{_eur(advance.amount)}</td></tr>"
-        )
-    if balance is not None:
-        summary_rows.append(
-            f"<tr class='balance'>"
-            f"<td colspan='5'>{_esc(balance.label)}</td>"
-            f"<td class='num'>{_eur(balance.amount)}</td></tr>"
-        )
-
-    for notice in (line for line in ordered if line.line_type == "SUBTOTAL"):
-        summary_rows.append(f"<tr><td colspan='6'>{_esc(notice.label)}</td></tr>")
+    for line in ordered:
+        if line.line_type not in {'ADVANCE_PAYMENT', 'SUBTOTAL', 'BALANCE'}:
+            continue
+        if line.line_type == 'SUBTOTAL' and line.note is None:
+            summary_rows.append(f"<tr><td colspan='6'>{_esc(line.label)}</td></tr>")
+        else:
+            prefix = 'abzüglich ' if line.line_type == 'ADVANCE_PAYMENT' else ''
+            style = 'balance' if line.line_type == 'BALANCE' else 'summary'
+            summary_rows.append(f"<tr class='{style}'><td colspan='5'>{prefix}{_esc(line.label)}</td>"
+                f"<td class='num'>{_eur(line.amount)}</td></tr>")
 
     integrity = ""
     if run.snapshot_sha256:

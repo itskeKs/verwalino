@@ -77,6 +77,7 @@ def build_category_mapping(rows: Iterable[CategoryMapping]) -> MappingProxyType[
 DEFAULT_CATEGORY_MAPPING = build_category_mapping([
     CategoryMapping('KALTMIETE', 'rent', '[§/fachlich] Wohnraummiete als Vorschlag; andere Nutzungen, Angehörige und Vorjahresmieten gesondert prüfen.'),
     CategoryMapping('NK_VORAUSZAHLUNG', 'levies', '[§/fachlich] Laufende Umlagen; Abrechnungserstattungen und Nachzahlungen gesondert prüfen.'),
+    CategoryMapping('HK_VORAUSZAHLUNG', 'levies', '[§/fachlich] Laufende Umlagen; Abrechnungserstattungen und Nachzahlungen gesondert prüfen.'),
     CategoryMapping('KAUTION', None, '[§/fachlich] Ausgeschlossen: verwahrte Kaution, keine Miete; eine spätere Verrechnung ist gesondert zu prüfen.'),
     CategoryMapping('HAUSGELD_VORSCHUSS', None, '[§/fachlich] Ausgeschlossen: WEG-Eigentümervorschuss, keine Vermietungseinnahme.'),
     CategoryMapping('RUECKLAGENANTEIL', None, '[§/fachlich] Ausgeschlossen: Rücklagenzuführung, keine Vermietungseinnahme.'),

@@ -45,7 +45,7 @@ def credited(world):
 def finalize_statement(world):
     run_id = world.data["period_run"]["id"]
     world.run(attest_fixture(world.actor, "settlement", run_id,
-        {"advance_payments_total": "200.00", "advance_payments_source": "DERIVED"}))
+        {'heating_advance_payments_total': '0.00', 'heating_advance_payments_source': "DERIVED", "advance_payments_total": "200.00", "advance_payments_source": "DERIVED"}))
     answer = world.act("POST", f"/api/settlements/{run_id}/finalize", json={})
     assert answer.status_code == 200, world.describe_response()
 
@@ -89,7 +89,7 @@ def successive_tenants(world, period_data_cleanup):
 
 def finalize_tenant_statement(world, data, start, end):
     run = world.run(create(world.actor, "/api/settlements", {
-        **statement(data, start, end), "advance_payments_total": "0.00",
+        **statement(data, start, end), 'heating_advance_payments_total': '0.00', "advance_payments_total": "0.00",
     }))
     finalize_zero_advance_statement(world, run["id"])
     return world.response.json()
@@ -97,7 +97,7 @@ def finalize_tenant_statement(world, data, start, end):
 
 def finalize_zero_advance_statement(world, run_id):
     world.run(attest_fixture(world.actor, "settlement", run_id, {
-        "advance_payments_total": "0.00", "advance_payments_source": "MANUAL",
+        'heating_advance_payments_total': '0.00', 'heating_advance_payments_source': "MANUAL", "advance_payments_total": "0.00", "advance_payments_source": "MANUAL",
     }))
     answer = world.act("POST", f"/api/settlements/{run_id}/finalize", json={})
     assert answer.status_code == 200, world.describe_response()
@@ -195,7 +195,7 @@ async def clipped_picker_widths(browser_world, request):
 def repeat_former_tenant_statement(world):
     world.data["repeated_tenant_statement"] = world.run(create(world.actor, "/api/settlements", {
         **statement(world.data["successive_tenants"]["A"], "2025-01-01", "2025-09-30"),
-        "advance_payments_total": "0.00",
+        'heating_advance_payments_total': '0.00', "advance_payments_total": "0.00",
     }))
 
 
@@ -256,7 +256,7 @@ def adjacent_yearly_advance_statements(world):
         derived = world.act("PATCH", f"/api/settlements/{run['id']}/advance-payments-derived", params={"period_year": 2025})
         assert derived.status_code == 200, world.describe_response()
         world.run(attest_fixture(world.actor, "settlement", run["id"], {
-            "advance_payments_total": derived.json()["advance_payments_total"], "advance_payments_source": "DERIVED",
+            'heating_advance_payments_total': '0.00', 'heating_advance_payments_source': "DERIVED", "advance_payments_total": derived.json()["advance_payments_total"], "advance_payments_source": "DERIVED",
         }))
         final = world.act("POST", f"/api/settlements/{run['id']}/finalize", json={})
         assert final.status_code == 200, world.describe_response()
@@ -276,7 +276,7 @@ def finalize_derived_statement(world, data, start, end):
     derived = world.act("PATCH", f"/api/settlements/{run['id']}/advance-payments-derived", params={"period_year": 2025})
     assert derived.status_code == 200, world.describe_response()
     world.run(attest_fixture(world.actor, "settlement", run["id"], {
-        "advance_payments_total": derived.json()["advance_payments_total"], "advance_payments_source": "DERIVED"}))
+        'heating_advance_payments_total': '0.00', 'heating_advance_payments_source': "DERIVED", "advance_payments_total": derived.json()["advance_payments_total"], "advance_payments_source": "DERIVED"}))
     final = world.act("POST", f"/api/settlements/{run['id']}/finalize", json={})
     assert final.status_code == 200, world.describe_response()
     return final.json()
@@ -325,7 +325,7 @@ def compute_notice_draft(world):
     answer = world.act("PATCH", f"/api/settlements/{run['id']}/advance-payments-derived", params={"period_year": 2025})
     assert answer.status_code == 200, world.describe_response()
     world.run(attest_fixture(world.actor, "settlement", run["id"], {
-        "advance_payments_total": answer.json()["advance_payments_total"], "advance_payments_source": "DERIVED"}))
+        'heating_advance_payments_total': '0.00', 'heating_advance_payments_source': "DERIVED", "advance_payments_total": answer.json()["advance_payments_total"], "advance_payments_source": "DERIVED"}))
     answer = world.act("POST", f"/api/settlements/{run['id']}/compute", json={})
     assert answer.status_code == 200, world.describe_response()
 
@@ -393,7 +393,7 @@ def finalize_lease_bounded_advances(world, total):
     assert answer.status_code == 200, world.describe_response()
     assert Decimal(answer.json()["advance_payments_total"]) == Decimal(total)
     world.run(attest_fixture(world.actor, "settlement", run["id"], {
-        "advance_payments_total": total, "advance_payments_source": "DERIVED"}))
+        'heating_advance_payments_total': '0.00', 'heating_advance_payments_source': "DERIVED", "advance_payments_total": total, "advance_payments_source": "DERIVED"}))
     answer = world.act("POST", f"/api/settlements/{run['id']}/finalize", json={})
     assert answer.status_code == 200, world.describe_response()
 
@@ -486,6 +486,7 @@ def legacy_statement(world, period_data_cleanup, status):
     data = world.run(period_property(world.actor, month=1))
     run = world.run(create(world.actor, "/api/settlements", {
         **statement(data, "2025-01-01", "2025-12-31"), "advance_payments_total": "0.00",
+        "heating_advance_payments_total": "0.00",
     }))
     # Seed the historical oversized span before freezing; the edit guard now
     # prevents constructing this legacy state by shortening after finalization.

@@ -29,6 +29,25 @@ SYNC_URL = os.environ.get(
 REF = "2026-06-02"
 
 
+@pytest.mark.asyncio
+async def test_deadline_heating_charge_preserves_existing_rent_history_policy(monkeypatch):
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+    from app.services.fristen_service import FristenService
+    from app.repositories.lease_rent_change_repo import LeaseRentChangeRepository
+
+    lease = SimpleNamespace(id=uuid.uuid4(), valid_from=date(2026, 1, 1), valid_to=None,
+        base_rent=Decimal('750.00'), advance_payment=Decimal('150.00'), heating_advance_payment=Decimal('90.00'))
+    # Deadline counts previously used the original lease, regardless of history.
+    monkeypatch.setattr(LeaseRentChangeRepository, 'list_for_lease', AsyncMock(return_value=[
+        SimpleNamespace(valid_from=date(2026, 1, 1), base_rent=Decimal('0.00'),
+            advance_payment=Decimal('0.00'), heating_advance_payment=Decimal('0.00'))]))
+    service = FristenService(None, uuid.uuid4())
+    service._repo = SimpleNamespace(all_leases=AsyncMock(return_value=[lease]))
+    service._payments = SimpleNamespace(list_for_lease=AsyncMock(return_value=[]))
+    assert await service._overdue_count(date(2026, 1, 31)) == 3
+
+
 @pytest_asyncio.fixture
 async def client_a_admin(rent_world):
     async with api_client(rent_world) as client:

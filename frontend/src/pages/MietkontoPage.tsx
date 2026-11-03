@@ -32,7 +32,7 @@ import { ApiError } from "../api/client";
 
 const PAYMENT_TYPE_LABELS: Record<string, string> = {
   KALTMIETE: "Kaltmiete",
-  NK_VORAUSZAHLUNG: "NK-Vorauszahlung",
+  NK_VORAUSZAHLUNG: "Betriebskosten-Vorauszahlung", HK_VORAUSZAHLUNG: "Heizkosten-Vorauszahlung",
   KAUTION: "Kaution",
   HAUSGELD_VORSCHUSS: "Hausgeld-Vorschuss",
   RUECKLAGENANTEIL: "Ruecklagenanteil",
@@ -183,7 +183,7 @@ export function MietkontoPage() {
       {/* Selection form */}
       <div className="card" style={{ marginBottom: "1.5rem" }}>
         <h2>Kontoauszug abrufen</h2>
-        <fieldset disabled={querying} className="form-grid" style={{ border: 0, padding: 0, margin: 0, minWidth: 0 }} onChangeCapture={() => { setResult(null); setError(null); }}>
+        <fieldset disabled={querying} className="form-grid [&>*]:min-w-0 [&_input]:min-w-0 [&_select]:min-w-0" style={{ border: 0, padding: 0, margin: 0, minWidth: 0 }} onChangeCapture={() => { setResult(null); setError(null); }}>
           <label>
             Ansicht
             <select

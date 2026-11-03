@@ -708,11 +708,12 @@ class TestDerivedEqualsManualExit:
         }
         if advance is not None:
             body["advance_payments_total"] = advance
+            body["heating_advance_payments_total"] = "0.00"
         r = await client.post("/api/settlements", json=body)
         assert r.status_code == 201, r.text
         if advance is not None:
             await attest_fixture(client, "settlement", r.json()["id"],
-                {"advance_payments_total": advance, "advance_payments_source": "MANUAL"})
+                {'heating_advance_payments_total': '0.00', 'heating_advance_payments_source': "MANUAL", "advance_payments_total": advance, "advance_payments_source": "MANUAL"})
         return r.json()["id"]
 
     @pytest.mark.asyncio
@@ -756,7 +757,7 @@ class TestDerivedEqualsManualExit:
         assert r.json()["advance_payments_total"] == "1800.00"  # NK only, not KALTMIETE
 
         await attest_fixture(client_a_admin, "settlement", run_derived,
-            {"advance_payments_total": "1800.00", "advance_payments_source": "DERIVED"})
+            {'heating_advance_payments_total': '0.00', 'heating_advance_payments_source': "DERIVED", "advance_payments_total": "1800.00", "advance_payments_source": "DERIVED"})
         fin_d = await client_a_admin.post(f"/api/settlements/{run_derived}/finalize", json={})
         assert fin_d.status_code == 200, fin_d.text
         d = fin_d.json()

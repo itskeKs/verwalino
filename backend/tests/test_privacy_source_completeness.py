@@ -24,7 +24,7 @@ def m3_seed(seed_data):
 
 async def retained_rental(api,seed,m3):
     run=await draft(api,m3,'0.00')
-    assert (await attest(api,'settlement',run,{'advance_payments_total':'0.00','advance_payments_source':'MANUAL'})).status_code==201
+    assert (await attest(api,'settlement',run,{'heating_advance_payments_total': '0.00', 'heating_advance_payments_source': 'MANUAL', 'advance_payments_total':'0.00','advance_payments_source':'MANUAL'})).status_code==201
     result=await api.post(f'/api/settlements/{run}/finalize',json=_extras_for_exit(m3))
     assert result.status_code==200,result.text
     await bind_output(seed,m3['property'],run,kind='settlement_run',scope_type='MIET')

@@ -497,12 +497,12 @@ async def test_handover_of_a_finalized_lease_preserves_the_settlement(rent_world
     from tests.financial_coverage_helpers import attest_fixture
     w = rent_world
     async with api_client(w) as api:
-        response = await api.post('/api/settlements', json={'property_id': str(w['property']),
+        response = await api.post('/api/settlements', json={'heating_advance_payments_total': '0.00', 'property_id': str(w['property']),
             'lease_agreement_id': str(w['lease']), 'period_start': '2026-01-01',
             'period_end': '2026-01-31', 'advance_payments_total': '0.00'})
         assert response.status_code == 201, response.text
         run_id = response.json()['id']
-        await attest_fixture(api, 'settlement', run_id, {'advance_payments_total': '0.00', 'advance_payments_source': 'MANUAL'})
+        await attest_fixture(api, 'settlement', run_id, {'heating_advance_payments_total': '0.00', 'heating_advance_payments_source': 'MANUAL', 'advance_payments_total': '0.00', 'advance_payments_source': 'MANUAL'})
         response = await api.post(f'/api/settlements/{run_id}/finalize', json={})
         assert response.status_code == 200, response.text
         finalized = response.json()

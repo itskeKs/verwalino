@@ -781,12 +781,12 @@ async def test_due_erasure_with_computed_drafts_bound_finance_and_dunning(rent_w
                 headers={'Idempotency-Key': str(uuid.uuid4())})
             assert grant.status_code == 201, grant.text
         created = await api.post('/api/settlements', json={
-            'property_id': str(w['property']), 'lease_agreement_id': str(w['lease']),
+            'heating_advance_payments_total': '0.00', 'property_id': str(w['property']), 'lease_agreement_id': str(w['lease']),
             'period_start': '2026-01-01', 'period_end': '2026-12-31', 'advance_payments_total': '0.00'})
         assert created.status_code == 201, created.text
         run = uuid.UUID(created.json()['id'])
         coverage = await attest(api, 'settlement', str(run),
-            {'advance_payments_total': '0.00', 'advance_payments_source': 'MANUAL'})
+            {'heating_advance_payments_total': '0.00', 'heating_advance_payments_source': 'MANUAL', 'advance_payments_total': '0.00', 'advance_payments_source': 'MANUAL'})
         assert coverage.status_code == 201, coverage.text
         computed = await api.post(f'/api/settlements/{run}/compute', json={})
         assert computed.status_code == 200, computed.text

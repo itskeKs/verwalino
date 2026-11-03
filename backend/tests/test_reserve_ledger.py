@@ -912,7 +912,7 @@ async def test_reserve_migration_roundtrip_below_oldest_affected_revision(migrat
             with Operations.context(MigrationContext.configure(connection)):
                 for revision in revisions:
                     revision.module.downgrade()
-                    if revision.revision == TARGET:
+                    if revision.revision == '0149':
                         assert connection.scalar(text("SELECT to_regclass('reserve_ledger_entry')")) is None
                         assert connection.scalar(text("SELECT to_regprocedure('recheck_reserve_computations()')")) is None
                         assert 'RUECKLAGENENTNAHME' not in connection.scalar(text("SELECT pg_get_constraintdef(oid) FROM pg_constraint WHERE conrelid='payment'::regclass AND conname='ck_payment_ck_payment_type'"))

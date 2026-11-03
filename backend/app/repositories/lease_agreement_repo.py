@@ -80,7 +80,8 @@ class LeaseAgreementRepository(TenantRepository[LeaseAgreement]):
             SettlementRun.organization_id == self._org_id,
             SettlementRun.lease_agreement_id == lease_id,
             SettlementRun.status == "finalized", SettlementRun.superseded_by_id.is_(None),
-            SettlementRun.advance_payments_source == "DERIVED",
+            or_(SettlementRun.advance_payments_source == "DERIVED",
+                SettlementRun.heating_advance_payments_source == "DERIVED"),
             SettlementRun.period_end > last_day,
         )
         return (await self._session.execute(stmt)).scalars().all()

@@ -515,6 +515,7 @@ def test_half_year_consumption_invoices_keep_their_own_cost_periods():
 
 
 def test_in_period_snapshot_bytes_match_f3869e1_for_963_runs():
+    """Guard new computations, with split keys added to the f3869e1 fixture set."""
     import hashlib
     import json
     from tests.engine.settlement_scenarios import in_period_fingerprints
@@ -523,7 +524,7 @@ def test_in_period_snapshot_bytes_match_f3869e1_for_963_runs():
     assert len(records) == 963
     assert (
         hashlib.sha256(json.dumps(records).encode()).hexdigest()
-        == "b0a354c6c3df5eb71372980ebd0ff20ff968701a9069e6d9eb3e5586a568a8cf"
+        == "bdad47674051958a43649c26d5c940f8164c7e7a14cd384e90798087198b2f73"
     )
 
 
