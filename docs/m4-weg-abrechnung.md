@@ -845,7 +845,13 @@ allocation and WEMoG settlement-balance calculation; it changes neither.
   are reconciled, raw headroom returns to zero and finalization is possible.
   `POST .../reserve-ledger/overrides/{entry_id}/reduce` accepts `reduced_to` and
   `reason`; `DELETE .../reserve-ledger/overrides/{entry_id}` accepts `reason` and
-  creates the full reversal. Both reject payment assignments, reversal rows and
+  creates the full reversal. Both use `ReserveLedgerService.reduce_contribution`:
+  deleting a 300.00 EUR correction appends -300.00 EUR and records exactly one
+  `reserve.contribution_reduced` event with old amount 300.00, new amount 0.00,
+  actor, reason and both entry references. A direct SQL counter-entry is outside
+  the supported application path and creates no such event; the guard still
+  enforces ledger integrity. See the [audit boundary](architecture.md#contribution-reduction-audit-path).
+  Both reject payment assignments, reversal rows and
   other components (422), missing reasons (`RESERVE_CORRECTION_REASON_REQUIRED`),
   foreign IDs (404) and finalized periods (409 `RESERVE_PERIOD_FINALIZED`). The
   reduction handler preserves that finalization response for the database guard

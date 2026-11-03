@@ -53,6 +53,30 @@ and property financial disclosure access for `read`. A row that passes only
 locking query. A lock on a qualifying row can delay a competing lock, update
 or delete without changing any ledger values.
 
+### Contribution reduction audit path
+
+The supported application paths for reducing a unit contribution correction are
+`POST /api/weg-settlements/{run_id}/reserve-ledger/overrides/{entry_id}/reduce`
+(with `reduced_to` and `reason`) and
+`DELETE /api/weg-settlements/{run_id}/reserve-ledger/overrides/{entry_id}`
+(with `reason`, reducing the remainder to zero). The shared reserve panel on
+annual settlements and asset reports uses these endpoints. Both call
+`ReserveLedgerService.reduce_contribution`, which appends the counter-entry,
+writes exactly one `reserve.contribution_reduced` event, and invalidates the
+draft computation in the same transaction. The event retains the actor, reason,
+original and counter-entry IDs, and old/new remaining amounts; no retained
+ledger row is updated or deleted.
+
+Direct SQL INSERT is not a supported application path for these corrections.
+The `app_rw` INSERT privilege lets the service persist ledger entries; it does
+not make arbitrary SQL equivalent to an application operation. A direct
+counter-entry of -300.00 against a 300.00 correction leaves 0.00 and retains its
+reason and original reference, but `guard_reserve_ledger` does not emit
+`reserve.contribution_reduced` or invalidate a draft computation. RLS,
+tenant-bound foreign keys, reason/amount/scope/finalization checks and append-only
+protection still apply. Use the service-backed endpoints for audited product
+corrections. See the [reserve correction rules](m4-weg-abrechnung.md#maintenance-reserve-ledger-36).
+
 ## Portable Operation (2026-10-23)
 
 `scripts/self-host.sh` and `infra/docker-compose.yml` provide the portable

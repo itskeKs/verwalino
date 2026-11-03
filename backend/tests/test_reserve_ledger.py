@@ -2,6 +2,7 @@
 import pytest
 from datetime import date
 from decimal import Decimal
+from pathlib import Path
 from sqlalchemy import text
 from sqlalchemy.exc import DBAPIError
 
@@ -2757,6 +2758,94 @@ async def draft_unit_correction(api, seed, *, two_receipts=False):
     assert added.status_code == 201, added.text
     w['entry'] = added.json()['id']
     return w, path + '/' + w['entry']
+
+
+def test_direct_zero_counter_entry_audit_boundary_is_documented():
+    architecture = (Path(__file__).resolve().parents[2] / 'docs/architecture.md').read_text()
+    _, heading, section = architecture.partition('### Contribution reduction audit path')
+    assert heading, 'Document the service audit and direct INSERT boundary'
+    section = ' '.join(section.split('\n## ', 1)[0].split())
+    for contract in (
+        'ReserveLedgerService.reduce_contribution',
+        'reserve.contribution_reduced',
+        'POST /api/weg-settlements/{run_id}/reserve-ledger/overrides/{entry_id}/reduce',
+        'DELETE /api/weg-settlements/{run_id}/reserve-ledger/overrides/{entry_id}',
+        'Direct SQL INSERT is not a supported application path',
+        '300.00', '-300.00', '0.00',
+        'does not emit `reserve.contribution_reduced`',
+    ):
+        assert contract in section
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('operation', ['delete', 'reduce', 'direct_insert'])
+async def test_zero_contribution_counter_entry_is_audited_only_through_the_service(
+        client_a_admin, client_b_admin, seed_data, app_rw_session, operation):
+    api = client_a_admin
+    w = await unit_correction_world(api, seed_data)
+    path = f"/api/weg-settlements/{w['run']}/reserve-ledger"
+    added = await api.post(path + '/overrides', json={
+        'component': 'CONTRIBUTION', 'unit_id': w['u1'], 'amount': '300.00',
+        'reason': 'Reconcile booked unit reserve share'})
+    assert added.status_code == 201, added.text
+    original_id = added.json()['id']
+    assert (await api.post(f"/api/payments/{w['cash']}/reverse")).status_code == 201
+    before = (await api.get(path)).json()
+    assert before['contributions_total'] == '300.00'
+    assert next(row for row in before['entries'] if row.get('id') == original_id)['current_amount'] == '300.00'
+
+    await app_rw_session.execute(text("SELECT set_config('app.current_org_id',:org,true),set_config('app.current_user_id',:actor,true)"),
+        {'org': str(seed_data['org_a_id']), 'actor': str(seed_data['user_a_admin_id'])})
+    assert await app_rw_session.scalar(text('SELECT current_user')) == 'app_rw'
+    audit_query = text('SELECT id,action,actor_user_id,payload_diff FROM audit_event WHERE entity_id=:run')
+    prior_events = (await app_rw_session.execute(audit_query, {'run': w['run']})).all()
+    assert not any(row.action == 'reserve.contribution_reduced' for row in prior_events)
+    reason = 'Remove correction after returned Hausgeld'
+    if operation == 'direct_insert':
+        async with app_rw_session.bind.begin() as connection:
+            await connection.execute(text("SELECT set_config('app.current_org_id',:org,true),set_config('app.current_user_id',:actor,true)"),
+                {'org': str(seed_data['org_a_id']), 'actor': str(seed_data['user_a_admin_id'])})
+            counter_id = str(await connection.scalar(text("""INSERT INTO reserve_ledger_entry
+                (organization_id,property_id,settlement_run_id,entry_date,component,amount,reason,created_by,unit_id,reverses_entry_id)
+                VALUES (:org,:property,:run,'2025-12-31','CONTRIBUTION',-300.00,:reason,:actor,:unit,:entry)
+                RETURNING id"""), {'org': seed_data['org_a_id'], 'actor': seed_data['user_a_admin_id'],
+                'property': w['property'], 'run': w['run'], 'unit': w['u1'], 'entry': original_id, 'reason': reason}))
+    else:
+        url = path + '/overrides/' + original_id
+        response = await api.request('DELETE', url, json={'reason': reason}) if operation == 'delete' else await api.post(
+            url + '/reduce', json={'reduced_to': '0.00', 'reason': reason})
+        assert response.status_code == 201, response.text
+        counter_id = response.json()['id']
+
+    await app_rw_session.execute(text("SELECT set_config('app.current_org_id',:org,true),set_config('app.current_user_id',:actor,true)"),
+        {'org': str(seed_data['org_a_id']), 'actor': str(seed_data['user_a_admin_id'])})
+    events = (await app_rw_session.execute(audit_query, {'run': w['run']})).all()
+    new_events = [row for row in events if row.id not in {event.id for event in prior_events}]
+    if operation == 'direct_insert':
+        assert new_events == []
+        assert not any(row.action == 'reserve.contribution_reduced' for row in events)
+    else:
+        assert len(new_events) == 1
+        audit = new_events[0]
+        assert audit.action == 'reserve.contribution_reduced'
+        assert audit.actor_user_id == seed_data['user_a_admin_id']
+        assert audit.payload_diff == {'entry_id': counter_id, 'reverses_entry_id': original_id,
+            'old_amount': '300.00', 'new_amount': '0.00', 'reason': reason}
+
+    ledger = (await api.get(path)).json()
+    assert ledger['contributions_total'] == ledger['closing_balance'] == '0.00'
+    original = next(row for row in ledger['entries'] if row.get('id') == original_id)
+    assert original['amount'] == '300.00' and original['current_amount'] == '0.00'
+    counters = [row for row in ledger['entries'] if row.get('reverses_entry_id') == original_id]
+    assert len(counters) == 1
+    assert counters[0]['id'] == counter_id and counters[0]['amount'] == '-300.00'
+    assert counters[0]['reason'] == reason and counters[0]['unit_id'] == w['u1']
+    assert (await client_b_admin.get(path)).status_code == 404
+    await app_rw_session.execute(text("SELECT set_config('app.current_org_id',:org,true),set_config('app.current_user_id',:actor,true)"),
+        {'org': str(seed_data['org_b_id']), 'actor': str(seed_data['user_b_admin_id'])})
+    assert (await app_rw_session.execute(audit_query, {'run': w['run']})).all() == []
+    assert await app_rw_session.scalar(text('SELECT count(*) FROM reserve_ledger_entry WHERE id IN (:original,:counter)'),
+        {'original': original_id, 'counter': counter_id}) == 0
 
 
 @pytest.mark.asyncio
