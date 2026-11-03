@@ -19,6 +19,7 @@ import {
 } from "../api/endpoints";
 import type { WegRun, AssetItemIn, AssetReportComputeRequest, Property, BankAccount } from "../api/types";
 import { ApiError } from "../api/client";
+import { formatEuro } from "../lib/utils";
 
 const STATUS_LABELS: Record<string, string> = { draft: "Entwurf", finalized: "Finalisiert" };
 const STATUS_CSS: Record<string, string> = { draft: "badge--draft", finalized: "badge--confirmed" };
@@ -29,7 +30,6 @@ const RESERVE_LABELS: Record<string, string> = {
   RESERVE_WITHDRAWAL: "Entnahmen",
   RESERVE_CLOSING: "Endbestand",
 };
-const euro = new Intl.NumberFormat('de-DE', { style: 'currency', currency: 'EUR' });
 const LINE_LABELS: Record<string, string> = {
   BANK_BALANCE: "Bankkonto",
   RECEIVABLE: "Forderung",
@@ -218,7 +218,7 @@ export function AssetReportDetailPage() {
               {run.lines.map((l, index) => {
                 const isClosing = l.line_type === "RESERVE_CLOSING";
                 const reserveLabel = RESERVE_LABELS[l.line_type];
-                const note = l.line_type === "RESERVE_CONTRIBUTION" && l.note ? "Summe der Zuführungen im Zeitraum" : l.note;
+                const note = reserveLabel ? l.note?.replace(/\bZufuehrungen\b/g, "Zuführungen") : l.note;
                 return (
                   <Fragment key={l.id}>
                     {index === firstReserveIndex && <tr><th colSpan={2}>Erhaltungsrücklage</th></tr>}
@@ -229,7 +229,7 @@ export function AssetReportDetailPage() {
                           ? <span style={{ color: "var(--text-muted)" }}> — {l.label}</span> : null}
                         {note ? <div style={{ fontSize: "0.78rem", color: "var(--text-muted)", fontStyle: "italic" }}>{note}</div> : null}
                       </td>
-                      <td style={{ fontFamily: "var(--mono)", textAlign: "right" }}>{reserveLabel ? euro.format(Number(l.amount)) : `${l.amount} EUR`}</td>
+                      <td style={{ fontFamily: "var(--mono)", textAlign: "right" }}>{formatEuro(l.amount)}</td>
                     </tr>
                   </Fragment>
                 );

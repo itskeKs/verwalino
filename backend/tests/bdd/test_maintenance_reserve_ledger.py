@@ -354,6 +354,7 @@ def draft_reserve_wording(world, reserve_scenario, browser_world, tmp_path):
 
 @when('I finalize an asset report with an opening of 3000 euros')
 def finalize_plain_asset_report(world, reserve_scenario):
+    from tests.financial_coverage_helpers import reserve_evidence
     w = reserve_scenario
     report = create(world, '/api/weg-settlements/asset-reports', {
         'property_id': w['property'], 'accounting_scope_id': w['scope'],
@@ -366,11 +367,24 @@ def finalize_plain_asset_report(world, reserve_scenario):
         'receivables': [{'label': 'Hausgeld Müller', 'amount': '100.00'}],
         'payables': [{'label': 'Rechnung Dachreparatur', 'amount': '250.00'}]}
     world.run(attest_fixture(world.actor, 'settlement', report['id'], values))
+    category = next(row for row in world.act('GET', '/api/cost-categories').json() if row['code'] == 'GARTENPFLEGE')
+    cost = create(world, '/api/cost-entries', {'property_id': w['property'], 'accounting_scope_id': w['scope'],
+        'cost_category_id': category['id'], 'cost_category_plan_version': category['plan_version'],
+        'document_number': 'RE-asset-report-correction', 'invoice_date': '2025-02-01',
+        'service_period_from': '2025-01-01', 'service_period_to': '2025-12-31',
+        'gross_amount': '50.00', 'tenant_apportionable': 'UMLAGEFAEHIG', 'source': 'MANUAL'})
+    assert world.act('POST', f"/api/cost-entries/{cost['id']}/confirm").status_code == 200
+    evidence = world.run(reserve_evidence(world.actor, {**w, 'ce_garten': cost['id']}))
+    response = world.act('POST', f"/api/weg-settlements/{report['id']}/reserve-ledger/overrides", json={
+        'component': 'ADJUSTMENT', 'amount': '-50.00', 'reason': 'Begründete Rücklagenkorrektur',
+        **{key.removeprefix('reserve_'): value for key, value in evidence.items()}})
+    assert response.status_code == 201, response.text
+    world.run(attest_fixture(world.actor, 'settlement', report['id'], values))
     response = world.act('POST', f"/api/weg-settlements/asset-reports/{report['id']}/finalize", json=values)
     assert response.status_code == 200, response.text
 
 
-@then('the asset report shows four plain reserve labels and German amounts on desktop and mobile')
+@then('the asset report shows four plain reserve labels and every amount in German format on desktop and mobile')
 def plain_asset_report(world, reserve_scenario, browser_world, tmp_path):
     import os
     import re
@@ -402,15 +416,16 @@ def plain_asset_report(world, reserve_scenario, browser_world, tmp_path):
             await page.set_viewport_size({'width': width, 'height': 1000})
             await expect(table.get_by_role('columnheader', name='Erhaltungsrücklage', exact=True)).to_be_visible()
             for label, amount in [('Anfangsbestand', '3.000,00 €'), ('Zuführungen', '6.000,00 €'),
-                                  ('Entnahmen', '0,00 €'), ('Endbestand', '9.000,00 €')]:
+                                  ('Entnahmen', '0,00 €'), ('Endbestand', '8.950,00 €')]:
                 row = table.get_by_role('row').filter(has_text=re.compile(f'^{label}'))
                 await expect(row).to_have_count(1)
                 await expect(row.get_by_role('cell').last).to_have_text(amount)
             text = await table.inner_text()
             assert 'Erhaltungsruecklage' not in text and 'Zufuehrung' not in text
             assert 'RESERVE_' not in text
-            await expect(table.get_by_role('row').filter(has_text='Hausgeld Müller')).to_contain_text('100.00 EUR')
-            await expect(table.get_by_role('row').filter(has_text='Rechnung Dachreparatur')).to_contain_text('250.00 EUR')
+            for label, amount in [('WEG Girokonto', '9.000,00 €'), ('Hausgeld Müller', '100,00 €'),
+                                  ('Rechnung Dachreparatur', '250,00 €'), ('Begründete Rücklagenkorrekturen', '-50,00 €')]:
+                await expect(table.get_by_role('row').filter(has_text=label).get_by_role('cell').last).to_have_text(amount)
             assert await page.evaluate('document.documentElement.scrollWidth <= window.innerWidth')
 
     browser_world.run(inspect())

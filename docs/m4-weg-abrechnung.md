@@ -909,9 +909,13 @@ rows, overdrawn/missing-link feedback and a reasoned correction dialog. Manual
 bank key-date balances, receivables and payables remain administrator inputs.
 In the asset report's displayed holdings table, the four reserve development rows
 are grouped under “Erhaltungsrücklage”: “Anfangsbestand”, “Zuführungen”, “Entnahmen”
-and “Endbestand”, each with German currency formatting such as `3.000,00 €`.
+and “Endbestand”. All holdings amounts use the reserve ledger's shared German
+currency formatter, such as `3.000,00 €` and `-50,00 €`, including bank balances,
+receivables, payables and signed reserve adjustments.
 Stored internal reserve labels are not repeated. The closing explanation remains
-visible; other positions and the PDF are unchanged.
+visible; labels, notes, order and values of other positions and the PDF are unchanged.
+Reserve notes display legacy `Zufuehrungen` as `Zuführungen` while preserving the
+rest of their stored wording, including historical closing formulas.
 Ledger reads add current, access-controlled owner names, payment notes, cost
 document numbers and resolution register numbers for links to the source records;
 the retained snapshot and its amounts remain unchanged. Typed withdrawal

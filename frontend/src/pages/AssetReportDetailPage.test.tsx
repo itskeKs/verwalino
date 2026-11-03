@@ -5,12 +5,12 @@ import { AssetReportDetailPage } from "./AssetReportDetailPage";
 const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } });
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); vi.restoreAllMocks(); });
 
-it('shows four plain reserve labels and German amounts in a finalized report while preserving other positions', async () => {
+it('shows plain reserve labels and German amounts for every position in a finalized report', async () => {
   const lines = [
     { line_type: 'RESERVE_OPENING', label: 'Erhaltungsruecklage Anfangsbestand', amount: '3000.00' },
-    { line_type: 'RESERVE_CONTRIBUTION', label: 'Zufuehrung Erhaltungsruecklage', amount: '1234.56', note: 'Summe der Zufuehrungen im Zeitraum' },
+    { line_type: 'RESERVE_CONTRIBUTION', label: 'Zufuehrung Erhaltungsruecklage', amount: '1234.56', note: 'Summe der Zufuehrungen im Zeitraum · Nachweis geprüft' },
     { line_type: 'RESERVE_WITHDRAWAL', label: 'Entnahme Erhaltungsruecklage', amount: '0.00' },
-    { line_type: 'RESERVE_CLOSING', label: 'Erhaltungsruecklage Endbestand', amount: '4184.56' },
+    { line_type: 'RESERVE_CLOSING', label: 'Erhaltungsruecklage Endbestand', amount: '4184.56', note: 'Endbestand = Anfangsbestand + Zufuehrungen - Entnahmen' },
     { line_type: 'BANK_BALANCE', label: 'Bankkonto Giro (LAUFEND)', amount: '4234.56', note: 'Stichtagssaldo (Verwalter-Angabe, kein Buchungssaldo)' },
     { line_type: 'RECEIVABLE', label: 'Hausgeld Müller', amount: '100.00' },
     { line_type: 'PAYABLE', label: 'Rechnung Dachreparatur', amount: '250.00' },
@@ -28,10 +28,32 @@ it('shows four plain reserve labels and German amounts in a finalized report whi
     expect(within(cell.closest('tr')!).getAllByRole('cell')[1]).toHaveTextContent(amount);
   }
   expect(table).not.toHaveTextContent(/Erhaltungsruecklage|Zufuehrung|RESERVE_/);
-  expect(within(table).getByRole('row', { name: /Bankkonto.*— Bankkonto Giro \(LAUFEND\).*4234.56 EUR/ })).toHaveTextContent('Stichtagssaldo (Verwalter-Angabe, kein Buchungssaldo)');
-  expect(within(table).getByRole('row', { name: /Forderung.*— Hausgeld Müller 100.00 EUR/ })).toBeInTheDocument();
-  expect(within(table).getByRole('row', { name: /Verbindlichkeit.*— Rechnung Dachreparatur 250.00 EUR/ })).toBeInTheDocument();
-  expect(within(table).getByRole('row', { name: 'Begründete Rücklagenkorrekturen -50.00 EUR' })).toBeInTheDocument();
+  expect(within(table).getByText('Endbestand = Anfangsbestand + Zuführungen - Entnahmen', { exact: true })).toBeInTheDocument();
+  expect(within(table).getByText('Summe der Zuführungen im Zeitraum · Nachweis geprüft', { exact: true })).toBeInTheDocument();
+  const bank = within(table).getByRole('row', { name: /Bankkonto.*— Bankkonto Giro \(LAUFEND\)/ });
+  expect(bank).toHaveTextContent('Stichtagssaldo (Verwalter-Angabe, kein Buchungssaldo)');
+  expect(within(bank).getAllByRole('cell')[1]).toHaveTextContent('4.234,56 €');
+  for (const [label, amount] of [[/Forderung.*— Hausgeld Müller/, '100,00 €'], [/Verbindlichkeit.*— Rechnung Dachreparatur/, '250,00 €'], [/Begründete Rücklagenkorrekturen/, '-50,00 €']] as const) {
+    expect(within(within(table).getByRole('row', { name: label })).getAllByRole('cell')[1]).toHaveTextContent(amount);
+  }
+  expect(within(table).getAllByRole('row').slice(2).map(row => within(row).getAllByRole('cell')[1].textContent?.replace(/\s/g, ' '))).toEqual([
+    '3.000,00 €', '1.234,56 €', '0,00 €', '4.184,56 €', '4.234,56 €', '100,00 €', '250,00 €', '-50,00 €',
+  ]);
+});
+
+it.each([
+  ['999999999999.99', '999.999.999.999,99 €'],
+  ['-999999999999.99', '-999.999.999.999,99 €'],
+  ['0.01', '0,01 €'],
+  ['-0.01', '-0,01 €'],
+])('preserves cents when displaying the API amount %s', async (amount, expected) => {
+  vi.stubGlobal('fetch', vi.fn(async (url: string) => json(
+    url === '/api/properties' || url.includes('/bank-accounts') ? []
+    : url.endsWith('/reserve-ledger') ? { entries: [], frozen: true }
+    : { id: 'run-1', status: 'finalized', property_id: 'property-1', lines: [{ id: 'line-1', line_type: 'BANK_BALANCE', label: 'Bankkonto', amount }] })));
+  render(<MemoryRouter initialEntries={['/report/run-1']}><Routes><Route path="/report/:runId" element={<AssetReportDetailPage />} /></Routes></MemoryRouter>);
+  const table = (await screen.findByRole('heading', { name: 'Vermögensaufstellung' })).parentElement!;
+  expect(within(within(table).getByRole('row', { name: /^Bankkonto/ })).getAllByRole('cell')[1]).toHaveTextContent(expected);
 });
 
 it('keeps delete and ledger identities distinct without React console errors', async () => {

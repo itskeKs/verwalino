@@ -648,10 +648,14 @@ Use the money and date contracts below; carry amounts as decimal strings.
 
 In the asset report's “Vermögensaufstellung”, the four reserve development rows
 appear under “Erhaltungsrücklage” as “Anfangsbestand”, “Zuführungen”, “Entnahmen”
-and “Endbestand”. Their amounts use the same German currency formatting as the
-reserve ledger (`3.000,00 €`), without repeating the stored internal labels.
+and “Endbestand”, without repeating the stored internal labels. Every amount in
+the holdings table uses the same shared German currency formatter as the
+reserve ledger (`3.000,00 €`), including bank balances, receivables, payables and
+signed reserve adjustments.
 The closing row remains bold and retains its calculation explanation. Other
-report positions retain their existing labels, notes and amount display.
+report positions retain their existing labels, notes, order and values.
+The four reserve notes display the legacy word `Zufuehrungen` as `Zuführungen`,
+preserving all other stored wording, including shorter historical closing formulas.
 
 Synthetic finalized report from the test database (1280 and 360 px):
 
@@ -660,13 +664,13 @@ Synthetic finalized report from the test database (1280 and 360 px):
 | Before | [View](docs/assets/design/asset-report-reserve/before-1280.png) | [View](docs/assets/design/asset-report-reserve/before-360.png) |
 | After | [View](docs/assets/design/asset-report-reserve/asset-report-1280.png) | [View](docs/assets/design/asset-report-reserve/asset-report-360.png) |
 
-`frontend/src/lib/` holds no formatting helper (`utils.ts` is only `cn`; `costVocabulary.ts`,
-`heatingInputs.ts`, `settlementInputNeeds.ts` are domain helpers). Formatting uses file-local functions
-or inline expressions, with the variants below. The inconsistencies are tracked in #48.
+`frontend/src/lib/utils.ts` provides `formatEuro()` for the reserve ledger and
+asset-report holdings table. Other readers still use file-local functions or
+inline expressions, with the variants below. The inconsistencies are tracked in #48.
 
 | What | Contract | Implemented by |
 |---|---|---|
-| Money | `1.234,56 €`: `.` thousands, `,` decimals, always two, sign first (`-1.234,56 €`), no float arithmetic | `euros()` in `components/DashboardKpis.tsx`, `money()` in `pages/BankTransactionsPage.tsx` (both `€`) |
+| Money | `1.234,56 €`: `.` thousands, `,` decimals, always two, sign first (`-1.234,56 €`), no float arithmetic | Shared `formatEuro()` in `lib/utils.ts` for `ReserveLedgerPanel` and `AssetReportDetailPage`; file-local `euros()` in `components/DashboardKpis.tsx`, `money()` in `pages/BankTransactionsPage.tsx` |
 | Money, deviating | same grouping but suffix ` EUR`; `OpenItemsPage.tsx` uses ungrouped `toFixed(2)` plus ` EUR` (`1234.56 EUR`) | `money()` in `pages/ReportsPage.tsx`, `formatCents()` in `pages/PaymentsPage.tsx` and `pages/CostEntriesPage.tsx`, `formatProposalMoney()` in `pages/SettlementDetailPage.tsx`; ` EUR` appears 93 times in 30 files, `€` in 2. `displayCents()` in `api/allocationProposals.ts` prints `1234,56` without grouping or suffix. |
 | Date | `TT.MM.JJJJ`, e.g. `05.03.2026`, from the ISO API value | `formatDate()` in `pages/DashboardPage.tsx`, `FristenmonitorPage.tsx`, `MandatePage.tsx`; `date()` in `BankTransactionsPage.tsx`; `dateLabel()` in `DashboardKpis.tsx` |
 | Date, deviating | `toLocaleDateString("de-DE")` or `Intl.DateTimeFormat("de-DE")` prints `5.3.2026` (no zero padding) | `MandateDetailPage.tsx`, `AttachmentsPanel.tsx`; `components/knowledge/PropertyDocuments.tsx` uses `Intl.DateTimeFormat` |

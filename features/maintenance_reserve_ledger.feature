@@ -24,7 +24,7 @@ Feature: Maintenance reserve ledger
   Scenario: A finalized asset report shows plain German reserve lines
     Given a WEG with a finalized reserve plan and a booked reserve contribution
     When I finalize an asset report with an opening of 3000 euros
-    Then the asset report shows four plain reserve labels and German amounts on desktop and mobile
+    Then the asset report shows four plain reserve labels and every amount in German format on desktop and mobile
 
   @browser
   Scenario: Late closed-year cash is visible in the next open reserve period
