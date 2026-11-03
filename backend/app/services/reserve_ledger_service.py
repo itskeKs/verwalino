@@ -357,6 +357,11 @@ class ReserveLedgerService:
         await self.invalidate_computation(run)
         return entry
 
+    async def contribution_reduction_limit(self, run, original, current):
+        limit = min(current, await self.repo.contribution_headroom(run, original.unit_id) + current)
+        return limit, {**CONTRIBUTION_EXCEEDS_BOOKED,
+            'message': f'Sie können für diese Korrektur höchstens {_euro(limit)} beibehalten.'}
+
     async def reduce_contribution(self, run, entry_id, reduced_to, reason):
         original = next((entry for entry in await self.repo.entries(run) if entry.id == entry_id), None)
         if original is None:
@@ -369,10 +374,9 @@ class ReserveLedgerService:
             raise HTTPException(422, {'code': 'RESERVE_CORRECTION_REASON_REQUIRED', 'message': 'Bitte begründen Sie die Rücklagenkorrektur.'})
         current = await self.repo.current_contribution_amount(original)
         target = money(reduced_to)
-        limit = min(current, await self.repo.contribution_headroom(run, original.unit_id) + current)
+        limit, detail = await self.contribution_reduction_limit(run, original, current)
         if target > current or target > ZERO and target > limit:
-            raise HTTPException(422, {**CONTRIBUTION_EXCEEDS_BOOKED,
-                'message': f'Sie können für diese Korrektur höchstens {_euro(limit)} beibehalten.'})
+            raise HTTPException(422, detail)
         if target < ZERO or target == current or current <= ZERO:
             raise HTTPException(422, {'code': 'RESERVE_AMOUNT_INVALID', 'message': 'Bitte verringern Sie den verbleibenden Korrekturbetrag oder löschen Sie die Korrektur.'})
         entry = await self.repo.create(ReserveLedgerEntry(
