@@ -18,7 +18,7 @@ export function reduceReserveContribution(runId: string, entryId: string, reduce
 }
 
 export function deleteReserveContribution(runId: string, entryId: string, reason: string): Promise<{ id: string }> {
-  return api.delete(`/api/weg-settlements/${runId}/reserve-ledger/overrides/${entryId}`, { body: JSON.stringify({ reason }) });
+  return api.post(`/api/weg-settlements/${runId}/reserve-ledger/overrides/${entryId}/delete`, { reason });
 }
 
 import type { Task, TaskInput, TaskFilters, TaskPage, User, UserRole, PropertyYearReport, PropertyYearReportQuery, AnlageVSummary } from "./types";

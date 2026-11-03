@@ -174,7 +174,7 @@ def foreign_reserve_correction(world):
     beta = world.administrator_of('Verwaltung Beta')
     world.data['reserve_refusals'] = [
         world.send(beta, 'POST', path + '/reduce', json={'reduced_to': '100.00', 'reason': 'Foreign reduction'}),
-        world.send(beta, 'DELETE', path, json={'reason': 'Foreign deletion'})]
+        world.send(beta, 'POST', path + '/delete', json={'reason': 'Foreign deletion'})]
 
 
 @then('the reserve contribution correction is not found and remains unchanged')

@@ -848,8 +848,9 @@ allocation and WEMoG settlement-balance calculation; it changes neither.
   backing; this lets each unsupported correction be reconciled in turn. Once all
   are reconciled, raw headroom returns to zero and finalization is possible.
   `POST .../reserve-ledger/overrides/{entry_id}/reduce` accepts `reduced_to` and
-  `reason`; `DELETE .../reserve-ledger/overrides/{entry_id}` accepts `reason` and
-  creates the full reversal. Both use `ReserveLedgerService.reduce_contribution`:
+  `reason`; `POST .../reserve-ledger/overrides/{entry_id}/delete` accepts `reason` and
+  creates the full reversal with status 201, without relying on a DELETE body.
+  Both use `ReserveLedgerService.reduce_contribution`:
   deleting a 300.00 EUR correction appends -300.00 EUR and records exactly one
   `reserve.contribution_reduced` event with old amount 300.00, new amount 0.00,
   actor, reason and both entry references. A direct SQL counter-entry is outside

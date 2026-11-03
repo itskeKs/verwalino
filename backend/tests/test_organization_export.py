@@ -229,3 +229,35 @@ def test_source_identity_uses_latest_local_receipt_and_ignores_imported_history(
         receipt('future', '2030-01-01T12:00:00+00:00', 'imported', imported=True),
     ]}
     assert source_identity_maps(snapshot)['organization'] == {'target': 'latest'}
+
+
+async def test_export_retains_a_post_deleted_reserve_correction_and_its_audit(rent_world, export_store):
+    from tests.test_reserve_ledger import unit_correction_world
+    w = rent_world
+    async with api_client(w) as api:
+        reserve = await unit_correction_world(api, {
+            'org_a_id': w['org'], 'user_a_admin_id': w['admin']})
+        path = f"/api/weg-settlements/{reserve['run']}/reserve-ledger/overrides"
+        added = await api.post(path, json={'component': 'CONTRIBUTION', 'unit_id': reserve['u1'],
+            'amount': '300.00', 'reason': 'Reconcile booked unit reserve share'})
+        assert added.status_code == 201, added.text
+        original_id = added.json()['id']
+        deleted = await api.post(path + f'/{original_id}/delete', json={'reason': 'Fehlbuchung'})
+        assert deleted.status_code == 201, deleted.text
+        counter_id = deleted.json()['id']
+        exported = await api.post('/api/organizations/export')
+        assert exported.status_code == 200, exported.text
+        files = unpack(exported.content)
+        entries = [json.loads(line) for line in files['entities/reserve_ledger_entry.jsonl'].splitlines()]
+        original = next(row for row in entries if row['id'] == original_id)
+        counter = next(row for row in entries if row['id'] == counter_id)
+        assert original['amount'] == '300.00'
+        assert counter['amount'] == '-300.00' and counter['reason'] == 'Fehlbuchung'
+        assert counter['reverses_entry_id'] == original_id
+        events = [json.loads(line) for line in files['entities/audit_event.jsonl'].splitlines()]
+        reductions = [e for e in events if e['action'] == 'reserve.contribution_reduced'
+            and e['entity_id'] == reserve['run']]
+        assert len(reductions) == 1
+        assert reductions[0]['actor_user_id'] == str(w['admin'])
+        assert reductions[0]['payload_diff'] == {'entry_id': counter_id, 'reverses_entry_id': original_id,
+            'old_amount': '300.00', 'new_amount': '0.00', 'reason': 'Fehlbuchung'}

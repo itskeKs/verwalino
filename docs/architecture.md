@@ -58,8 +58,12 @@ or delete without changing any ledger values.
 The supported application paths for reducing a unit contribution correction are
 `POST /api/weg-settlements/{run_id}/reserve-ledger/overrides/{entry_id}/reduce`
 (with `reduced_to` and `reason`) and
-`DELETE /api/weg-settlements/{run_id}/reserve-ledger/overrides/{entry_id}`
-(with `reason`, reducing the remainder to zero). The shared reserve panel on
+`POST /api/weg-settlements/{run_id}/reserve-ledger/overrides/{entry_id}/delete`
+(with `reason`, reducing the remainder to zero). Both return 201 for the new
+counter-entry. The delete action uses a POST body so intermediaries that discard
+DELETE bodies cannot lose the reason. An absent or blank reason returns 422
+`RESERVE_CORRECTION_REASON_REQUIRED`; the former DELETE route is not registered.
+The shared reserve panel on
 annual settlements and asset reports uses these endpoints. Both call
 `ReserveLedgerService.reduce_contribution`, which appends the counter-entry,
 writes exactly one `reserve.contribution_reduced` event, and invalidates the
