@@ -47,6 +47,22 @@ user does, what they then see with concrete values, and who checks. It is writte
 change, and the PR is merged only once it has passed. A change to a core journey updates
 [journeys.md](journeys.md) in the same PR.
 
+## Runs and rounds per PR
+
+This section is the maintainer brief and the review checklist for a PR's acceptance and review
+rounds ([AGENTS.md](../../AGENTS.md), "Work comes from issues").
+
+- **Two blind runs at most per PR.** A repeated run checks only the steps that changed since the
+  previous run, not the whole journey again.
+- **Count the rounds.** Every verifier or review round on the PR is numbered. After the third
+  round the scope is frozen. Limit further review to verifying fixes for the four blocker
+  categories below.
+- **What still blocks after the freeze.** The PR merges when CI is green and no finding remains in
+  the four blocker categories: wrong money amount, organization isolation, GoBD immutability,
+  GDPR.
+- **Everything else is a follow-up.** A finding outside those four categories, from a review or a
+  blind run, becomes an issue with a user check of its own; it does not start another round or run.
+
 ## Mandatory last step: cleanup
 
 After every run, including a failed or abandoned run, the launching session must remove the

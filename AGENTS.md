@@ -52,6 +52,10 @@ enforcement; every baseline and safety rule here stays in force.
   response fields, parameters, configuration keys, endpoints or options the issue does not name,
   and do not refactor neighbours in passing. One issue, one branch, one PR. `Closes #N` only when
   every acceptance box is done; otherwise `Refs #N` plus what remains.
+- Cut before coding: an issue that touches more than one domain mechanism (for example a ledger
+  plus its evidence rules plus an import) is split into issues of one mechanism each, one PR per
+  issue, before the first branch is created. The session that notices the size proposes the cut in
+  the issue and waits for the owner's word only if the cut changes the acceptance.
 - Red first: the scenario and the unit tests fail without the change, then the smallest change
   turns them green, then refactor with the tests still green.
 - A finding outside the scope becomes a new issue (or a line in the PR description), not extra code.
@@ -60,6 +64,12 @@ enforcement; every baseline and safety rule here stays in force.
   GoBD, auth, backup and restore) gets a parallel,
   blind cross-review by independent reviewers before the merge (`.coddy/crossreview.json`);
   that is recommended, not a chain.
+- Three rounds, then freeze: after the third verifier or review round on a PR its scope is frozen.
+  The PR merges when CI is green and no finding remains in the four blocker categories (wrong
+  money amount, organization isolation, GoBD immutability, GDPR). Every other finding becomes a
+  follow-up issue with a user check, not another round. Blind acceptance runs at most twice per
+  PR; a repeated run checks only the changed steps
+  ([docs/acceptance/README.md](docs/acceptance/README.md#runs-and-rounds-per-pr)).
 - Whoever creates a git worktree for an issue or a review round removes it and deletes its local
   branch as soon as the PR is merged or closed (`git worktree remove DIR && git branch -D BRANCH`,
   after checking the merge landed, the tree is clean and nothing runs there). Before starting a
