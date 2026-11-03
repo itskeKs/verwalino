@@ -7,7 +7,7 @@ import { FinancialCorrectionControls } from "../components/FinancialCorrectionCo
  * payables inputs (clearly labelled "Verwalter-Angabe"), compute, finalize, PDF.
  * Reserve closing = opening + contributions - withdrawals (auto).
  */
-import { useEffect, useRef, useState } from "react";
+import { Fragment, useEffect, useRef, useState } from "react";
 import { useParams, Link } from "react-router-dom";
 import {
   getWegRun,
@@ -23,11 +23,14 @@ import { ApiError } from "../api/client";
 const STATUS_LABELS: Record<string, string> = { draft: "Entwurf", finalized: "Finalisiert" };
 const STATUS_CSS: Record<string, string> = { draft: "badge--draft", finalized: "badge--confirmed" };
 
+const RESERVE_LABELS: Record<string, string> = {
+  RESERVE_OPENING: "Anfangsbestand",
+  RESERVE_CONTRIBUTION: "Zuführungen",
+  RESERVE_WITHDRAWAL: "Entnahmen",
+  RESERVE_CLOSING: "Endbestand",
+};
+const euro = new Intl.NumberFormat('de-DE', { style: 'currency', currency: 'EUR' });
 const LINE_LABELS: Record<string, string> = {
-  RESERVE_OPENING: "Erhaltungsrücklage Anfangsbestand",
-  RESERVE_CONTRIBUTION: "Zuführung",
-  RESERVE_WITHDRAWAL: "Entnahme",
-  RESERVE_CLOSING: "Erhaltungsrücklage Endbestand",
   BANK_BALANCE: "Bankkonto",
   RECEIVABLE: "Forderung",
   PAYABLE: "Verbindlichkeit",
@@ -125,6 +128,7 @@ export function AssetReportDetailPage() {
 
   if (loading) return <p>Lade...</p>;
   if (!run) return <p className="error-text">{error ?? "Vermögensbericht nicht gefunden."}</p>;
+  const firstReserveIndex = run.lines.findIndex(line => RESERVE_LABELS[line.line_type]);
 
   return (
     <div>
@@ -211,18 +215,23 @@ export function AssetReportDetailPage() {
           <table className="data-table">
             <thead><tr><th>Position</th><th style={{ textAlign: "right" }}>Betrag</th></tr></thead>
             <tbody>
-              {run.lines.map((l) => {
+              {run.lines.map((l, index) => {
                 const isClosing = l.line_type === "RESERVE_CLOSING";
+                const reserveLabel = RESERVE_LABELS[l.line_type];
+                const note = l.line_type === "RESERVE_CONTRIBUTION" && l.note ? "Summe der Zuführungen im Zeitraum" : l.note;
                 return (
-                  <tr key={l.id} style={isClosing ? { fontWeight: 700 } : undefined}>
-                    <td>
-                      {LINE_LABELS[l.line_type] ?? l.label}
-                      {l.label && LINE_LABELS[l.line_type] && l.label !== LINE_LABELS[l.line_type]
-                        ? <span style={{ color: "var(--text-muted)" }}> — {l.label}</span> : null}
-                      {l.note ? <div style={{ fontSize: "0.78rem", color: "var(--text-muted)", fontStyle: "italic" }}>{l.note}</div> : null}
-                    </td>
-                    <td style={{ fontFamily: "var(--mono)", textAlign: "right" }}>{l.amount} EUR</td>
-                  </tr>
+                  <Fragment key={l.id}>
+                    {index === firstReserveIndex && <tr><th colSpan={2}>Erhaltungsrücklage</th></tr>}
+                    <tr style={isClosing ? { fontWeight: 700 } : undefined}>
+                      <td>
+                        {reserveLabel ?? LINE_LABELS[l.line_type] ?? l.label}
+                        {!reserveLabel && l.label && LINE_LABELS[l.line_type] && l.label !== LINE_LABELS[l.line_type]
+                          ? <span style={{ color: "var(--text-muted)" }}> — {l.label}</span> : null}
+                        {note ? <div style={{ fontSize: "0.78rem", color: "var(--text-muted)", fontStyle: "italic" }}>{note}</div> : null}
+                      </td>
+                      <td style={{ fontFamily: "var(--mono)", textAlign: "right" }}>{reserveLabel ? euro.format(Number(l.amount)) : `${l.amount} EUR`}</td>
+                    </tr>
+                  </Fragment>
                 );
               })}
             </tbody>

@@ -1,9 +1,38 @@
 import { afterEach, expect, it, vi } from "vitest";
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { AssetReportDetailPage } from "./AssetReportDetailPage";
 const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } });
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); vi.restoreAllMocks(); });
+
+it('shows four plain reserve labels and German amounts in a finalized report while preserving other positions', async () => {
+  const lines = [
+    { line_type: 'RESERVE_OPENING', label: 'Erhaltungsruecklage Anfangsbestand', amount: '3000.00' },
+    { line_type: 'RESERVE_CONTRIBUTION', label: 'Zufuehrung Erhaltungsruecklage', amount: '1234.56', note: 'Summe der Zufuehrungen im Zeitraum' },
+    { line_type: 'RESERVE_WITHDRAWAL', label: 'Entnahme Erhaltungsruecklage', amount: '0.00' },
+    { line_type: 'RESERVE_CLOSING', label: 'Erhaltungsruecklage Endbestand', amount: '4184.56' },
+    { line_type: 'BANK_BALANCE', label: 'Bankkonto Giro (LAUFEND)', amount: '4234.56', note: 'Stichtagssaldo (Verwalter-Angabe, kein Buchungssaldo)' },
+    { line_type: 'RECEIVABLE', label: 'Hausgeld Müller', amount: '100.00' },
+    { line_type: 'PAYABLE', label: 'Rechnung Dachreparatur', amount: '250.00' },
+    { line_type: 'RESERVE_ADJUSTMENT', label: 'Begründete Rücklagenkorrekturen', amount: '-50.00' },
+  ].map((line, index) => ({ ...line, id: String(index) }));
+  vi.stubGlobal('fetch', vi.fn(async (url: string) => json(
+    url === '/api/properties' || url.includes('/bank-accounts') ? []
+    : url.endsWith('/reserve-ledger') ? { entries: [], frozen: true }
+    : { id: 'run-1', status: 'finalized', property_id: 'property-1', lines })));
+  render(<MemoryRouter initialEntries={['/report/run-1']}><Routes><Route path="/report/:runId" element={<AssetReportDetailPage />} /></Routes></MemoryRouter>);
+  const table = (await screen.findByRole('heading', { name: 'Vermögensaufstellung' })).parentElement!;
+  expect(within(table).getAllByRole('columnheader', { name: 'Erhaltungsrücklage' })).toHaveLength(1);
+  for (const [label, amount] of [['Anfangsbestand', '3.000,00 €'], ['Zuführungen', '1.234,56 €'], ['Entnahmen', '0,00 €'], ['Endbestand', '4.184,56 €']]) {
+    const cell = within(table).getByText(label, { exact: true });
+    expect(within(cell.closest('tr')!).getAllByRole('cell')[1]).toHaveTextContent(amount);
+  }
+  expect(table).not.toHaveTextContent(/Erhaltungsruecklage|Zufuehrung|RESERVE_/);
+  expect(within(table).getByRole('row', { name: /Bankkonto.*— Bankkonto Giro \(LAUFEND\).*4234.56 EUR/ })).toHaveTextContent('Stichtagssaldo (Verwalter-Angabe, kein Buchungssaldo)');
+  expect(within(table).getByRole('row', { name: /Forderung.*— Hausgeld Müller 100.00 EUR/ })).toBeInTheDocument();
+  expect(within(table).getByRole('row', { name: /Verbindlichkeit.*— Rechnung Dachreparatur 250.00 EUR/ })).toBeInTheDocument();
+  expect(within(table).getByRole('row', { name: 'Begründete Rücklagenkorrekturen -50.00 EUR' })).toBeInTheDocument();
+});
 
 it('keeps delete and ledger identities distinct without React console errors', async () => {
   const errors = vi.spyOn(console, 'error');
@@ -132,7 +161,7 @@ it('refetches the computation table after a reserve correction', async () => {
   });
   vi.stubGlobal('fetch', fetchMock);
   render(<MemoryRouter initialEntries={['/report/run-1']}><Routes><Route path="/report/:runId" element={<AssetReportDetailPage />} /></Routes></MemoryRouter>);
-  await screen.findByText(/Vorheriger Anfangsbestand/);
+  await screen.findByRole('heading', { name: 'Vermögensaufstellung' });
   // The panel renders after the ledger loads; wait instead of reading it synchronously.
   fireEvent.click(await screen.findByRole('button', { name: 'Korrektur erfassen' }));
   fireEvent.change(screen.getByLabelText('Art'), { target: { value: 'OPENING' } });
@@ -140,5 +169,5 @@ it('refetches the computation table after a reserve correction', async () => {
   fireEvent.change(screen.getByLabelText('Begründung *'), { target: { value: 'Bankunterlagen geprüft' } });
   fireEvent.click(screen.getByRole('button', { name: 'Speichern' }));
   await waitFor(() => expect(fetchMock.mock.calls.filter(([url]) => url === '/api/weg-settlements/run-1')).toHaveLength(2));
-  expect(screen.queryByText(/Vorheriger Anfangsbestand/)).not.toBeInTheDocument();
+  expect(screen.queryByRole('heading', { name: 'Vermögensaufstellung' })).not.toBeInTheDocument();
 });

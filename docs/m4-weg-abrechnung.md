@@ -907,6 +907,11 @@ marked as legacy, without rewriting them.
 The WEG and asset-report detail pages show planned/actual totals, dated ledger
 rows, overdrawn/missing-link feedback and a reasoned correction dialog. Manual
 bank key-date balances, receivables and payables remain administrator inputs.
+In the asset report's displayed holdings table, the four reserve development rows
+are grouped under “Erhaltungsrücklage”: “Anfangsbestand”, “Zuführungen”, “Entnahmen”
+and “Endbestand”, each with German currency formatting such as `3.000,00 €`.
+Stored internal reserve labels are not repeated. The closing explanation remains
+visible; other positions and the PDF are unchanged.
 Ledger reads add current, access-controlled owner names, payment notes, cost
 document numbers and resolution register numbers for links to the source records;
 the retained snapshot and its amounts remain unchanged. Typed withdrawal

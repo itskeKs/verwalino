@@ -646,6 +646,20 @@ admin-only nav group.
 
 Use the money and date contracts below; carry amounts as decimal strings.
 
+In the asset report's “Vermögensaufstellung”, the four reserve development rows
+appear under “Erhaltungsrücklage” as “Anfangsbestand”, “Zuführungen”, “Entnahmen”
+and “Endbestand”. Their amounts use the same German currency formatting as the
+reserve ledger (`3.000,00 €`), without repeating the stored internal labels.
+The closing row remains bold and retains its calculation explanation. Other
+report positions retain their existing labels, notes and amount display.
+
+Synthetic finalized report from the test database (1280 and 360 px):
+
+| | Desktop | 360 px |
+|---|---|---|
+| Before | [View](docs/assets/design/asset-report-reserve/before-1280.png) | [View](docs/assets/design/asset-report-reserve/before-360.png) |
+| After | [View](docs/assets/design/asset-report-reserve/asset-report-1280.png) | [View](docs/assets/design/asset-report-reserve/asset-report-360.png) |
+
 `frontend/src/lib/` holds no formatting helper (`utils.ts` is only `cn`; `costVocabulary.ts`,
 `heatingInputs.ts`, `settlementInputNeeds.ts` are domain helpers). Formatting uses file-local functions
 or inline expressions, with the variants below. The inconsistencies are tracked in #48.

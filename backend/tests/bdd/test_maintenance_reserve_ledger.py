@@ -352,6 +352,70 @@ def draft_reserve_wording(world, reserve_scenario, browser_world, tmp_path):
     assert not errors, errors
 
 
+@when('I finalize an asset report with an opening of 3000 euros')
+def finalize_plain_asset_report(world, reserve_scenario):
+    w = reserve_scenario
+    report = create(world, '/api/weg-settlements/asset-reports', {
+        'property_id': w['property'], 'accounting_scope_id': w['scope'],
+        'period_start': '2025-01-01', 'period_end': '2025-12-31'})
+    w['plain_report'] = report['id']
+    values = {'reserve_opening_balance': '3000.00',
+        'reserve_override_reason': 'Bankbestätigter Anfangsbestand',
+        'bank_balances': [{'bank_account_id': w['bank_giro'], 'label': 'WEG Girokonto',
+            'account_type': 'LAUFEND', 'balance': '9000.00'}],
+        'receivables': [{'label': 'Hausgeld Müller', 'amount': '100.00'}],
+        'payables': [{'label': 'Rechnung Dachreparatur', 'amount': '250.00'}]}
+    world.run(attest_fixture(world.actor, 'settlement', report['id'], values))
+    response = world.act('POST', f"/api/weg-settlements/asset-reports/{report['id']}/finalize", json=values)
+    assert response.status_code == 200, response.text
+
+
+@then('the asset report shows four plain reserve labels and German amounts on desktop and mobile')
+def plain_asset_report(world, reserve_scenario, browser_world, tmp_path):
+    import os
+    import re
+    from playwright.async_api import expect
+
+    directory = tmp_path
+    if os.getenv('VERWALINO_CAPTURE_DESIGN') == '1':
+        directory = Path(__file__).resolve().parents[3] / 'docs/assets/design/asset-report-reserve'
+        directory.mkdir(parents=True, exist_ok=True)
+
+    async def inspect():
+        page = browser_world.page
+        await browser_world.visit(f"/vermoegensberichte/{reserve_scenario['plain_report']}")
+        await expect(page.get_by_role('button', name='PDF herunterladen')).to_be_visible()
+        assert page.url.endswith(f"/vermoegensberichte/{reserve_scenario['plain_report']}")
+        assert await page.title() == 'Hausverwaltung'
+        await page.get_by_role('link').filter(has_text='Alle Vermögensberichte').click()
+        await expect(page.get_by_role('heading', name='Vermögensberichte', exact=True)).to_be_visible()
+        await page.go_back()
+        await expect(page.get_by_role('button', name='PDF herunterladen')).to_be_visible()
+        table = page.locator('.card').filter(has=page.get_by_role('heading', name='Vermögensaufstellung', exact=True))
+        await expect(table).to_be_visible()
+        # Capture both widths before assertions so the red run also records the baseline.
+        for width in (1280, 360):
+            await page.set_viewport_size({'width': width, 'height': 1000})
+            await table.scroll_into_view_if_needed()
+            await page.screenshot(path=str(directory / f'asset-report-{width}.png'), animations='disabled')
+        for width in (1280, 360):
+            await page.set_viewport_size({'width': width, 'height': 1000})
+            await expect(table.get_by_role('columnheader', name='Erhaltungsrücklage', exact=True)).to_be_visible()
+            for label, amount in [('Anfangsbestand', '3.000,00 €'), ('Zuführungen', '6.000,00 €'),
+                                  ('Entnahmen', '0,00 €'), ('Endbestand', '9.000,00 €')]:
+                row = table.get_by_role('row').filter(has_text=re.compile(f'^{label}'))
+                await expect(row).to_have_count(1)
+                await expect(row.get_by_role('cell').last).to_have_text(amount)
+            text = await table.inner_text()
+            assert 'Erhaltungsruecklage' not in text and 'Zufuehrung' not in text
+            assert 'RESERVE_' not in text
+            await expect(table.get_by_role('row').filter(has_text='Hausgeld Müller')).to_contain_text('100.00 EUR')
+            await expect(table.get_by_role('row').filter(has_text='Rechnung Dachreparatur')).to_contain_text('250.00 EUR')
+            assert await page.evaluate('document.documentElement.scrollWidth <= window.innerWidth')
+
+    browser_world.run(inspect())
+
+
 @when('I review its reserve ledger and record the imported opening balance')
 def review(world, reserve_scenario):
     client_a_admin = world.actor
