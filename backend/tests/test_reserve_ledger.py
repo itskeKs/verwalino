@@ -28,6 +28,44 @@ async def reserve_world(api, seed):
 
 
 @pytest.mark.asyncio
+async def test_reserve_append_only_guard_is_always_enabled(migrator_session):
+    assert await migrator_session.scalar(text("""SELECT tgenabled::text FROM pg_trigger
+        WHERE tgrelid='public.reserve_ledger_entry'::regclass
+        AND tgname='guard_reserve_ledger'""")) == 'A'
+    retained = (await migrator_session.execute(text("""SELECT pk,disposition,retain_when
+        FROM organization_retention_catalog() WHERE entity='reserve_ledger_entry'"""))).one()
+    assert tuple(retained) == (['id'], 'retain', 'true')
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('operation', ['DELETE FROM', 'UPDATE'])
+async def test_replica_superuser_cannot_mutate_reserve_history(client_a_admin, seed_data, operation):
+    import psycopg2
+    from contextlib import closing
+    from app.core.config import settings
+    from app.core.declaration_test_database import require_disposable_database_settings
+
+    w = await unit_correction_world(client_a_admin, seed_data)
+    _, _, url = require_disposable_database_settings(settings)
+    with closing(psycopg2.connect(url)) as connection, connection.cursor() as cursor:
+        cursor.execute('SELECT current_user,session_user,rolsuper FROM pg_roles WHERE rolname=current_user')
+        assert cursor.fetchone() == ('app_migrator', 'app_migrator', True)
+        cursor.execute("SET LOCAL session_replication_role='replica'")
+        cursor.execute('SHOW session_replication_role')
+        assert cursor.fetchone() == ('replica',)
+        assignment = ' SET reason=reason' if operation == 'UPDATE' else ''
+        with pytest.raises(psycopg2.errors.CheckViolation) as refused:
+            cursor.execute(f'{operation} reserve_ledger_entry{assignment} WHERE settlement_run_id=%s', (w['run'],))
+        assert refused.value.pgcode == '23514'
+        assert refused.value.diag.constraint_name == 'reserve_ledger_append_only'
+        connection.rollback()
+        cursor.execute('SHOW session_replication_role')
+        assert cursor.fetchone() == ('origin',)
+        cursor.execute('SELECT count(*) FROM reserve_ledger_entry WHERE settlement_run_id=%s', (w['run'],))
+        assert cursor.fetchone() == (1,)
+
+
+@pytest.mark.asyncio
 async def test_reserve_ledger_foreign_keys_match_database_columns_and_delete_actions(migrator_session):
     from app.models.reserve_ledger_entry import ReserveLedgerEntry
 
@@ -80,6 +118,10 @@ async def test_reducing_300_to_100_retains_minus_200_and_refuses_direct_delete_a
     assert counters[0]['amount'] == '-200.00'
 
     assert await app_rw_session.scalar(text('SELECT current_user')) == 'app_rw'
+    with pytest.raises(DBAPIError) as mode_refused:
+        async with app_rw_session.begin_nested():
+            await app_rw_session.execute(text("SET LOCAL session_replication_role='replica'"))
+    assert mode_refused.value.orig.sqlstate == '42501'
     await app_rw_session.execute(text("SELECT set_config('app.current_org_id',:org,true),set_config('app.current_user_id',:actor,true)"),
         {'org': str(seed_data['org_a_id']), 'actor': str(seed_data['user_a_admin_id'])})
     with pytest.raises(DBAPIError) as refused:
@@ -1283,7 +1325,7 @@ async def test_database_only_releases_unbooked_unbacked_import_without_ledger(cl
             VALUES (:org,:property,:run,'2025-02-03','CONTRIBUTION',0,'Historical retained reference',:payment,:actor)"""),
             {'org': seed_data['org_a_id'], 'property': w['property'], 'run': w['run'], 'payment': draft, 'actor': seed_data['user_a_admin_id']})
         await migrator_session.execute(text('SET CONSTRAINTS ALL IMMEDIATE'))
-        await migrator_session.execute(text('ALTER TABLE reserve_ledger_entry ENABLE TRIGGER guard_reserve_ledger'))
+        await migrator_session.execute(text('ALTER TABLE reserve_ledger_entry ENABLE ALWAYS TRIGGER guard_reserve_ledger'))
     if case == 'booking_stamp':
         await migrator_session.execute(text("UPDATE payment SET booked_at=now() WHERE id=CAST(:id AS uuid)"), {'id': draft})
     if case != 'without_reset':

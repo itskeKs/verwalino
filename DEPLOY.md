@@ -908,7 +908,13 @@ format and command behavior; a complete running self-host installation restore
 has not yet been accepted.
 Run the opt-in rehearsal with `make test-selfhost-format`: it sets
 `VERWALINO_FORMAT_TEST=1`, acquires `/tmp/verwalino-testdb.lock` itself and uses
-only its own scratch databases in `infra-postgres-1` at `127.0.0.1:55432`.
+only its own freshly created, initially empty source and restore databases in
+`infra-postgres-1` at `127.0.0.1:55432`. The separate `--noconftest` process
+excludes the normal migration, seeding and application-engine fixtures. Format
+mode is refused by the regular test session before fixtures; the scratch harness
+rejects connections and dump/restore commands for any database it did not create.
+The source receives the released migrations and synthetic records; both owned
+databases are dropped on exit. The shared database is neither reset nor seeded.
 Ordinary test runs skip it with a reason; it also skips when Docker is missing.
 
 Declaration import/Q&A, SMTP and the ordinary invoice worker are disabled in
@@ -1609,11 +1615,11 @@ remove `/srv/verwalino/logs/.deploy.lock` once no deploy is running. A stale `/s
 (a run was killed) is removed by hand once no backup is running. Never
 run `docker compose down -v` or delete the volumes.
 
-## Migration compatibility: 0029–0154
+## Migration compatibility: 0029–0155
 
 | Revisions | Effect on existing data and runtime compatibility |
 | --- | --- |
-| 0029–0122 | Adds financial, declaration, source custody and review data structures and guards. The 0028 runtime cannot interpret the new schema or enforce its later security rules. The 0028→0154 rehearsal preserves all old columns and rows with synthetic organization, user, document, draft/failed import and failed extraction-run data, but does not prove every live-data combination. |
+| 0029–0122 | Adds financial, declaration, source custody and review data structures and guards. The 0028 runtime cannot interpret the new schema or enforce its later security rules. The 0028→0155 rehearsal preserves all old columns and rows with synthetic organization, user, document, draft/failed import and failed extraction-run data, but does not prove every live-data combination. |
 | 0123 | Adds nullable replacement evidence and changes exception-completion functions/outcomes. Existing rows retain their old disposition; old clients cannot interpret new replacement outcomes. Downgrade refuses retained evidence. |
 | 0124–0125 | Adds bank transactions and a nullable payment link, then enforces tenant/account coherence and immutable booked links. A 0122 database has no pre-existing links; inconsistent intermediate data is not silently repaired. |
 | 0126–0127 | Adds append-only rent history and frozen special levies; replaces financial/source/report adapters. No old financial rows are rewritten. Older runtimes do not understand the new obligations/history. Their downgrades can drop populated new tables; they are not a safe recovery path. |
@@ -1635,14 +1641,15 @@ run `docker compose down -v` or delete the volumes.
 | 0151 (parent 0150) | Allows deletion of empty WEG annual and asset-report drafts. A statement-level financial-inputs lock precedes row locks; the database refuses retained bookings, reserve entries, scope bindings and financial evidence. The retention catalog keeps settlement runs conditional and includes these dependencies. Existing frozen snapshots and rows are untouched; downgrade restores the previous catalog and removes only the new deletion functions/triggers. |
 | 0152 (parent 0151) | Repairs draft-deletion statement locking: runtime sessions require a valid organization principal before locking only that organization. Visible drafts remain creatable/readable without full source access; deletion metadata then reports a generic access restriction instead of revealing hidden dependencies. Downgrade restores the 0151 function bodies without changing financial rows or snapshots. |
 | 0153 (parent 0152) | Classifies bank transactions as dependency-only conditional retention. Existing FK closure retains precisely the bank lines and accounts needed by immutable payments/evidence; no new voucher or person deadline is seeded. The erasure service neutralizes counterparty name/IBAN/purpose while leaving own-account metadata, payment bytes, bank links and import hashes unchanged. No account or evidence guard changes. Upgrade changes no rows; downgrade restores the exact previous catalog, ownership and grants. |
-| 0154 (head; parent 0153) | Allows reasoned positive unit-contribution counter-entries up to the original amount and the currently booked backing. Updates only the reserve guard; existing ledger rows, audit events, ownership, grants and RLS remain intact. The shared financial-input lock serializes the cap with bookings. Downgrade restores the prior guard exactly when no positive counter-entry exists, otherwise refuses without rewriting history. |
+| 0154 (parent 0153) | Allows reasoned positive unit-contribution counter-entries up to the original amount and the currently booked backing. Updates only the reserve guard; existing ledger rows, audit events, ownership, grants and RLS remain intact. The shared financial-input lock serializes the cap with bookings. Downgrade restores the prior guard exactly when no positive counter-entry exists, otherwise refuses without rewriting history. |
+| 0155 (head; parent 0154) | Sets only `reserve_ledger_entry.guard_reserve_ledger` to `ENABLE ALWAYS`, retaining append-only UPDATE/DELETE protection in replica sessions. Other triggers, data, rights and retention classification are unchanged. Downgrade restores ordinary `ENABLE TRIGGER`. The opt-in backup/restore rehearsal preserves the 300.00/-200.00 unit-correction pair and its 100.00 remainder, then checks the restored guard in replica mode. |
 
 DDL uses the existing PostgreSQL/Alembic transaction; 0123 also takes financial
 and ACL locks with NOWAIT table locks. Contention or unexpected data/function
 definitions must abort, not trigger repair/deletion. A rollback-only synthetic
-0028→0154 rehearsal compares every old table column/row and retained RLS flags;
-the 0122→0154, 0139→0154 and accepted-source 0140→0154, 0141→0154 and
-0142→0154, 0143→0154, 0144→0154, 0145→0154, 0146→0154, 0147→0154, 0148→0154, 0149→0154, 0150→0154, 0151→0154, 0152→0154 and 0153→0154 (accepted sources) rehearsals also
+0028→0155 rehearsal compares every old table column/row and retained RLS flags;
+the 0122→0155, 0139→0155 and accepted-source 0140→0155, 0141→0155 and
+0142→0155, 0143→0155, 0144→0155, 0145→0155, 0146→0155, 0147→0155, 0148→0155, 0149→0155, 0150→0155, 0151→0155, 0152→0155, 0153→0155 and 0154→0155 (accepted sources) rehearsals also
 compare existing ACLs, allowing only the explicit organization INSERT revocation;
 it does not prove live data validity or cross-version runtime compatibility.
 
@@ -1664,10 +1671,10 @@ When adding a migration, update these together in the same release:
 
 ## Deployment boundary and accepted head
 
-The reviewed code targets **0154**. `backend/app/deployment.py` retains `TARGET`,
+The reviewed code targets **0155**. `backend/app/deployment.py` retains `TARGET`,
 `SUPPORTED`, `release_head()` and the read-only schema/role/runtime checks used
-by the migration rehearsals. Those checks accept measured **0028 → 0154**,
-**0122 → 0154**, **0139 → 0154**, **0140 → 0154**, **0141 → 0154**, **0142 → 0154**, **0143 → 0154**, **0144 → 0154**, **0145 → 0154**, **0146 → 0154**, **0147 → 0154**, **0148 → 0154**, **0149 → 0154**, **0150 → 0154**, **0151 → 0154**, **0152 → 0154**, **0153 → 0154** (accepted sources), or **0154 → 0154**; unknown,
+by the migration rehearsals. Those checks accept measured **0028 → 0155**,
+**0122 → 0155**, **0139 → 0155**, **0140 → 0155**, **0141 → 0155**, **0142 → 0155**, **0143 → 0155**, **0144 → 0155**, **0145 → 0155**, **0146 → 0155**, **0147 → 0155**, **0148 → 0155**, **0149 → 0155**, **0150 → 0155**, **0151 → 0155**, **0152 → 0155**, **0153 → 0155**, **0154 → 0155** (accepted sources), or **0155 → 0155**; unknown,
 missing, multiple or intermediate revisions are rejected. These are code and
 rehearsal boundaries, not a measurement of a running installation.
 
