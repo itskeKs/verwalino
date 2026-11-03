@@ -911,8 +911,11 @@ class TestM3ExitEndToEnd:
         assert corrected.status_code == 201, corrected.text
         assert corrected.json()['engine_version'] == original.json()['engine_version'] == 'm3.1.0'
         current = corrected.json()['id']
+        assert corrected.json()['heating_advance_payments_total'] == '0.00'
+        assert corrected.json()['heating_advance_payments_source'] == 'MANUAL'
         await attest_fixture(client_a_admin, 'settlement', current,
-            {'advance_payments_total': '700.00', 'advance_payments_source': 'MANUAL'})
+            {'advance_payments_total': '700.00', 'advance_payments_source': 'MANUAL',
+             'heating_advance_payments_total': '0.00', 'heating_advance_payments_source': 'MANUAL'})
         computed = await client_a_admin.post(f'/api/settlements/{current}/{action}', json=extras)
         assert computed.status_code == 200, computed.text
         assert computed.json()['engine_version'] == 'm3.2.0'

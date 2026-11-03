@@ -40,18 +40,20 @@ async def test_unknown_heating_total_is_not_silently_replaced_with_zero(client_a
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize('source', ['MANUAL', 'DERIVED'])
-async def test_legacy_attestation_accepts_known_heating_zero_and_retains_full_evidence(client_a_admin, m3_seed, app_rw_session, source):
+async def test_heating_zero_requires_explicit_attestation_and_retains_full_evidence(client_a_admin, m3_seed, app_rw_session, source):
     import uuid
     from sqlalchemy import text
     run_id = await draft(client_a_admin, m3_seed, '0.00')
     if source == 'DERIVED':
         derived = await client_a_admin.patch(f'/api/settlements/{run_id}/advance-payments-derived', params={'period_year': 2025})
         assert derived.status_code == 200, derived.text
-    legacy_values = {'advance_payments_total': '0.00', 'advance_payments_source': source}
-    coverage = await attest(client_a_admin, 'settlement', run_id, legacy_values)
-    assert coverage.status_code == 201, coverage.text
-    full_values = {**legacy_values, 'heating_advance_payments_total': '0.00',
+    operating_values = {'advance_payments_total': '0.00', 'advance_payments_source': source}
+    omitted = await attest(client_a_admin, 'settlement', run_id, operating_values)
+    assert omitted.status_code == 409, omitted.text
+    full_values = {**operating_values, 'heating_advance_payments_total': '0.00',
         'heating_advance_payments_source': source}
+    coverage = await attest(client_a_admin, 'settlement', run_id, full_values)
+    assert coverage.status_code == 201, coverage.text
     assert coverage.json()['values'] == {**full_values, 'advance_payments_total': '0',
         'heating_advance_payments_total': '0'}
     retry = await attest(client_a_admin, 'settlement', run_id, full_values)
@@ -87,7 +89,13 @@ async def test_attestation_rejects_missing_or_changed_heating_inputs(client_a_ad
 
 
 @pytest.mark.asyncio
-async def test_correction_attestation_preserves_nonzero_heating_and_requires_both_totals(client_a_admin, m3_seed):
+@pytest.mark.parametrize('action', ['compute', 'finalize'])
+async def test_correction_attestation_preserves_nonzero_heating_and_requires_both_totals(client_a_admin, m3_seed, app_rw_session, action):
+    import uuid
+    from decimal import Decimal
+    from sqlalchemy import text
+    from app.engine.canonical import canonical_json, sha256_hex
+
     run_id = await draft(client_a_admin, m3_seed, '700.00')
     updated = await client_a_admin.patch(f'/api/settlements/{run_id}/advance-payments',
         json={'heating_advance_payments_total': '90.00'})
@@ -97,6 +105,11 @@ async def test_correction_attestation_preserves_nonzero_heating_and_requires_bot
     assert (await attest(client_a_admin, 'settlement', run_id, values)).status_code == 201
     original = await client_a_admin.post(f'/api/settlements/{run_id}/finalize', json=_extras_for_exit(m3_seed))
     assert original.status_code == 200, original.text
+    await app_rw_session.execute(text("SELECT set_config('app.current_org_id', :org, true)"),
+        {'org': str(m3_seed['org_a_id'])})
+    snapshot_query = text('SELECT snapshot_payload, snapshot_sha256 FROM settlement_run WHERE id=:id')
+    original_snapshot = (await app_rw_session.execute(snapshot_query, {'id': uuid.UUID(run_id)})).one()
+    assert sha256_hex(canonical_json(original_snapshot.snapshot_payload)) == original_snapshot.snapshot_sha256
     correction = await client_a_admin.post(f'/api/settlements/{run_id}/correction')
     assert correction.status_code == 201, correction.text
     assert correction.json()['heating_advance_payments_total'] == '90.00'
@@ -106,9 +119,16 @@ async def test_correction_attestation_preserves_nonzero_heating_and_requires_bot
         {'advance_payments_total': '700.00', 'advance_payments_source': 'MANUAL'})
     assert legacy.status_code == 409, legacy.text
     assert (await attest(client_a_admin, 'settlement', current, values)).status_code == 201
-    computed = await client_a_admin.post(f'/api/settlements/{current}/compute', json=_extras_for_exit(m3_seed))
+    computed = await client_a_admin.post(f'/api/settlements/{current}/{action}', json=_extras_for_exit(m3_seed))
     assert computed.status_code == 200, computed.text
     assert computed.json()['balance'] == original.json()['balance']
+    assert Decimal(computed.json()['balance']) == Decimal(computed.json()['total_cost']) - Decimal('700.00') - Decimal('90.00')
+    assert (await app_rw_session.execute(snapshot_query, {'id': uuid.UUID(run_id)})).one() == original_snapshot
+    correction_snapshot = (await app_rw_session.execute(snapshot_query, {'id': uuid.UUID(current)})).one()
+    assert correction_snapshot.snapshot_payload['financial_input_coverage']['values'] == {
+        **values, 'advance_payments_total': '700', 'heating_advance_payments_total': '90'}
+    if action == 'finalize':
+        assert sha256_hex(canonical_json(correction_snapshot.snapshot_payload)) == correction_snapshot.snapshot_sha256
 
 
 @pytest.mark.asyncio
