@@ -28,6 +28,72 @@ async def reserve_world(api, seed):
 
 
 @pytest.mark.asyncio
+async def test_reserve_ledger_foreign_keys_match_database_columns_and_delete_actions(migrator_session):
+    from app.models.reserve_ledger_entry import ReserveLedgerEntry
+
+    rows = (await migrator_session.execute(text("""
+        SELECT c.confdeltype::text AS confdeltype,
+            array_agg(source.attname ORDER BY key.ordinality) AS local_columns,
+            array_agg(target.relname || '.' || referenced.attname ORDER BY key.ordinality) AS target_columns
+        FROM pg_constraint c
+        JOIN pg_class target ON target.oid = c.confrelid
+        CROSS JOIN LATERAL unnest(c.conkey, c.confkey) WITH ORDINALITY AS key(local_num, target_num, ordinality)
+        JOIN pg_attribute source ON source.attrelid = c.conrelid AND source.attnum = key.local_num
+        JOIN pg_attribute referenced ON referenced.attrelid = c.confrelid AND referenced.attnum = key.target_num
+        WHERE c.conrelid = 'reserve_ledger_entry'::regclass AND c.contype = 'f'
+        GROUP BY c.oid, target.relname
+    """))).mappings().all()
+    actions = {'a': 'NO ACTION', 'r': 'RESTRICT', 'c': 'CASCADE', 'n': 'SET NULL', 'd': 'SET DEFAULT'}
+    database = {(tuple(row['local_columns']), tuple(row['target_columns'])):
+                actions[row['confdeltype']] for row in rows}
+    constraints = ReserveLedgerEntry.__table__.foreign_key_constraints
+    model = {(tuple(element.parent.name for element in constraint.elements),
+              tuple(element.target_fullname for element in constraint.elements)):
+             constraint.ondelete or 'NO ACTION' for constraint in constraints}
+    assert len(database) == len(rows)
+    assert len(model) == len(constraints)
+    assert database.keys() == model.keys()
+    mismatches = [f'{local} -> {target}: database={database[(local, target)]}, model={model[(local, target)]}'
+                  for local, target in sorted(database) if database[(local, target)] != model[(local, target)]]
+    assert not mismatches, '\n'.join(mismatches)
+
+
+@pytest.mark.asyncio
+async def test_reducing_300_to_100_retains_minus_200_and_refuses_direct_delete_as_app_rw(
+        client_a_admin, seed_data, app_rw_session):
+    api = client_a_admin
+    w = await unit_correction_world(api, seed_data)
+    path = f"/api/weg-settlements/{w['run']}/reserve-ledger"
+    added = await api.post(path + '/overrides', json={'component': 'CONTRIBUTION', 'unit_id': w['u1'],
+        'amount': '300.00', 'reason': 'Reconcile booked unit contribution'})
+    assert added.status_code == 201, added.text
+    original = added.json()['id']
+    reduced = await api.post(path + f'/overrides/{original}/reduce', json={
+        'reduced_to': '100.00', 'reason': 'Correct contribution to 100 euros'})
+    assert reduced.status_code == 201, reduced.text
+    ledger = (await api.get(path)).json()
+    row = next(row for row in ledger['entries'] if row.get('id') == original)
+    assert row['amount'] == '300.00'
+    assert row['current_amount'] == '100.00'
+    counters = [row for row in ledger['entries'] if row.get('reverses_entry_id') == original]
+    assert len(counters) == 1
+    assert counters[0]['amount'] == '-200.00'
+
+    assert await app_rw_session.scalar(text('SELECT current_user')) == 'app_rw'
+    await app_rw_session.execute(text("SELECT set_config('app.current_org_id',:org,true),set_config('app.current_user_id',:actor,true)"),
+        {'org': str(seed_data['org_a_id']), 'actor': str(seed_data['user_a_admin_id'])})
+    with pytest.raises(DBAPIError) as refused:
+        async with app_rw_session.begin_nested():
+            await app_rw_session.execute(text('DELETE FROM reserve_ledger_entry WHERE id=:entry'), {'entry': original})
+    assert refused.value.orig.sqlstate == '23514'
+    assert refused.value.orig.__cause__.constraint_name == 'reserve_ledger_append_only'
+    retained = (await app_rw_session.execute(text('SELECT id,amount FROM reserve_ledger_entry WHERE id IN (:original,:counter)'),
+        {'original': original, 'counter': counters[0]['id']})).all()
+    assert {str(row.id): row.amount for row in retained} == {
+        original: Decimal('300.00'), counters[0]['id']: Decimal('-200.00')}
+
+
+@pytest.mark.asyncio
 async def test_ledger_separates_planned_from_cash_and_requires_override_reason(client_a_admin, seed_data):
     api = client_a_admin
     w = await reserve_world(api, seed_data)
