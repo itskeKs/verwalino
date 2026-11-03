@@ -34,6 +34,25 @@ stack does not start this worker and disables automatic extraction.
 Operating details and release boundaries: [DEPLOY.md](../DEPLOY.md).
 No schema/RLS change.
 
+## Maintenance reserve ledger privileges
+
+`reserve_ledger_entry` is append-only. Migration `0149` revokes all table
+privileges from `PUBLIC`, `app_rw`, `app_worker` and `app_review`, then grants
+`SELECT`, `INSERT`, `UPDATE` and `DELETE` to `app_rw`. Migration `0070` grants
+`app_rw` to `app_worker` with `INHERIT TRUE`, so the worker has the same table
+privileges. `app_review` has none. The update and delete grants let attempts
+that pass row-level security (RLS) reach the `guard_reserve_ledger` trigger.
+For each such row, the trigger rejects the change with SQLSTATE `23514` and
+constraint `reserve_ledger_append_only`.
+
+With the `UPDATE` privilege, `SELECT … FOR UPDATE` can lock rows that pass
+both the `reserve_read` and `reserve_no_update` policies. They require a match
+on the current organization, settlement scope access for `read` and `prepare`,
+and property financial disclosure access for `read`. A row that passes only
+`reserve_read` is visible to an ordinary `SELECT` and is filtered out of the
+locking query. A lock on a qualifying row can delay a competing lock, update
+or delete without changing any ledger values.
+
 ## Portable Operation (2026-10-23)
 
 `scripts/self-host.sh` and `infra/docker-compose.yml` provide the portable
