@@ -106,6 +106,7 @@ def build_snapshot_payload(inp: SettlementInput, result: EngineResult) -> dict:
                     "from": l.valid_from.isoformat(),
                     "to": l.valid_to.isoformat() if l.valid_to else None,
                     "advance_payment": _m(l.advance_payment),
+                    "heating_advance_payment": _m(l.heating_advance_payment),
                 }
                 for l in leases
             ],
@@ -155,6 +156,8 @@ def build_snapshot_payload(inp: SettlementInput, result: EngineResult) -> dict:
             ],
             "advance_payments_total": _m(inp.advance_payments_total),
             "advance_payments_source": inp.advance_payments_source,
+            "heating_advance_payments_total": _m(inp.heating_advance_payments_total),
+            "heating_advance_payments_source": inp.heating_advance_payments_source,
         },
         "computation": [
             {
@@ -205,6 +208,8 @@ def build_snapshot_payload(inp: SettlementInput, result: EngineResult) -> dict:
             ],
             "total_cost": _m(result.total_cost),
             "advance_payments_total": _m(result.advance_payments_total),
+            "heating_advance_payments_total": _m(result.heating_advance_payments_total),
+            "heating_cost_total": _m(result.heating_cost_total),
             "balance": _m(result.balance),
         },
     }

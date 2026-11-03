@@ -199,7 +199,7 @@ it("retains the existing single-create payload and detail navigation", async () 
   vi.mocked(api.post).mockResolvedValueOnce(created[0]);
   fireEvent.click(within(form).getByRole("button", { name: "Anlegen" }));
   await screen.findByText("Einzelabrechnung geöffnet");
-  expect(api.post).toHaveBeenCalledExactlyOnceWith("/api/settlements", { property_id: "property-1", lease_agreement_id: "lease-1", period_start: "2025-07-01", period_end: "2026-06-30", advance_payments_total: null, management_mandate_id: null, accounting_scope_id: null });
+  expect(api.post).toHaveBeenCalledExactlyOnceWith("/api/settlements", { property_id: "property-1", lease_agreement_id: "lease-1", period_start: "2025-07-01", period_end: "2026-06-30", advance_payments_total: null, heating_advance_payments_total: null, management_mandate_id: null, accounting_scope_id: null });
 });
 
 it.each(["Objekt *", "Mietvertrag *"])("explicitly labels the single-create select %s", async label => {
@@ -211,6 +211,49 @@ it.each(["Objekt *", "Mietvertrag *"])("explicitly labels the single-create sele
   const select = within(form).getByRole("combobox", { name: label });
   expect(select).toHaveAttribute("aria-label", label);
   expect(within(form).getByLabelText(label, { exact: true })).toBe(select);
+});
+
+it('normalizes both German advance amounts before creating the statement', async () => {
+  show();
+  await screen.findByRole('option', { name: 'Sonnenhof' });
+  fireEvent.click(screen.getByRole('button', { name: '+ Neue Abrechnung' }));
+  const form = screen.getByRole('heading', { name: 'Neue Abrechnung anlegen' }).parentElement!.querySelector('form')!;
+  expect(within(form).getByLabelText('Betriebskosten-Vorauszahlung (EUR)')).toHaveValue('');
+  expect(within(form).getByLabelText('Heizkosten-Vorauszahlung (EUR)')).toHaveValue('');
+  fireEvent.change(within(form).getByLabelText(/^Objekt/), { target: { value: 'property-1' } });
+  fireEvent.change(within(form).getByLabelText(/^Mietvertrag/), { target: { value: 'lease-1' } });
+  fireEvent.change(within(form).getByLabelText('Abrechnungszeitraum von *'), { target: { value: '2026-01-01' } });
+  fireEvent.change(within(form).getByLabelText('Abrechnungszeitraum bis *'), { target: { value: '2026-12-31' } });
+  fireEvent.change(within(form).getByLabelText('Betriebskosten-Vorauszahlung (EUR)'), { target: { value: '1.080,00' } });
+  fireEvent.change(within(form).getByLabelText('Heizkosten-Vorauszahlung (EUR)'), { target: { value: '1.080,00' } });
+  vi.mocked(api.post).mockResolvedValueOnce(created[0]);
+  fireEvent.click(within(form).getByRole('button', { name: 'Anlegen' }));
+  await waitFor(() => expect(api.post).toHaveBeenCalledWith('/api/settlements', expect.objectContaining({
+    advance_payments_total: '1080.00', heating_advance_payments_total: '1080.00',
+  })));
+});
+
+it.each([
+  ['Betriebskosten', '1,080.00'], ['Betriebskosten', 'abc'],
+  ['Heizkosten', '1,080.00'], ['Heizkosten', 'abc'],
+])('rejects invalid %s advance %s locally with a German field error', async (field, value) => {
+  show();
+  await screen.findByRole('option', { name: 'Sonnenhof' });
+  fireEvent.click(screen.getByRole('button', { name: '+ Neue Abrechnung' }));
+  const form = screen.getByRole('heading', { name: 'Neue Abrechnung anlegen' }).parentElement!.querySelector('form')!;
+  fireEvent.change(within(form).getByLabelText(/^Objekt/), { target: { value: 'property-1' } });
+  fireEvent.change(within(form).getByLabelText(/^Mietvertrag/), { target: { value: 'lease-1' } });
+  fireEvent.change(within(form).getByLabelText('Abrechnungszeitraum von *'), { target: { value: '2026-01-01' } });
+  fireEvent.change(within(form).getByLabelText('Abrechnungszeitraum bis *'), { target: { value: '2026-12-31' } });
+  const input = within(form).getByLabelText(`${field}-Vorauszahlung (EUR)`);
+  fireEvent.change(input, { target: { value } });
+  fireEvent.click(within(form).getByRole('button', { name: 'Anlegen' }));
+  expect(await within(form).findByRole('alert')).toHaveTextContent(
+    `Bitte geben Sie die ${field}-Vorauszahlung als gültigen EUR-Betrag ein.`,
+  );
+  expect(input).toHaveAttribute('aria-invalid', 'true');
+  expect(input).toHaveValue(value);
+  expect(api.post).not.toHaveBeenCalled();
 });
 
 it("offers and prefills the selected lease's clipped span and reclips on a lease change", async () => {

@@ -201,11 +201,11 @@ PROBES: dict[str, Probe] = {
     "POST /api/leases/{lease_id}/handover": Probe(row("lease_agreement", lease_id="id"), body={
         'request_id': str(uuid.uuid4()), 'date': '2026-01-02', 'type': 'Einzug', 'parties': 'Synthetic parties',
         'signatures': 'Synthetic names', 'readings': [], 'keys': [], 'notes': ''}),
-    "PATCH /api/leases/{lease_id}": Probe(row("lease_agreement", lease_id="id")),
+    "PATCH /api/leases/{lease_id}": Probe(row("lease_agreement", lease_id="id"), body={"heating_advance_payment": "90.00"}),
     "POST /api/leases": Probe(UNIT_AND_TENANT, body={
         "unit_id": "{unit_id}", "tenant_profile_id": "{tenant_profile_id}", "valid_from": "2026-01-01",
-        "base_rent": "700.00", "advance_payment": "150.00"}),
-    "POST /api/leases/{lease_id}/rent-changes": Probe(row("lease_agreement", lease_id="id")),
+        "base_rent": "700.00", "advance_payment": "150.00", "heating_advance_payment": "90.00"}),
+    "POST /api/leases/{lease_id}/rent-changes": Probe(row("lease_agreement", lease_id="id"), body={"valid_from": "2026-03-01", "base_rent": "750.00", "advance_payment": "150.00", "heating_advance_payment": "90.00"}),
     "POST /api/leases/{lease_id}/rent-changes/index": Probe(row("lease_agreement", lease_id="id")),
     "POST /api/leases/{lease_id}/rent-changes/index/preview": Probe(row("lease_agreement", lease_id="id")),
     "POST /api/leases/{lease_id}/rent-changes/staffel": Probe(row("lease_agreement", lease_id="id"), body={

@@ -122,10 +122,14 @@ class LeaseOut(BaseModel):
     valid_to: date | None
     base_rent: str
     advance_payment: str
+    heating_advance_payment: str
     deposit: str | None
     notes: str
 
     model_config = {"from_attributes": True}
+
+
+RentAmount = Annotated[Decimal, Field(ge=0, max_digits=14, decimal_places=2, allow_inf_nan=False)]
 
 
 class LeaseCreate(BaseModel):
@@ -135,6 +139,7 @@ class LeaseCreate(BaseModel):
     valid_to: date | None = None
     base_rent: str
     advance_payment: str
+    heating_advance_payment: RentAmount = Decimal('0.00')
     deposit: str | None = None
     notes: str = ""
 
@@ -183,6 +188,7 @@ async def create_lease(
         valid_to=inclusive_last_day_to_db_exclusive(body.valid_to),
         base_rent=Decimal(body.base_rent),
         advance_payment=Decimal(body.advance_payment),
+        heating_advance_payment=Decimal(body.heating_advance_payment),
         deposit=Decimal(body.deposit) if body.deposit else None,
         notes=body.notes,
     )
@@ -204,6 +210,7 @@ class LeaseUpdate(BaseModel):
     notes: str | None = None
     base_rent: str | None = None
     advance_payment: str | None = None
+    heating_advance_payment: RentAmount | None = None
     deposit: str | None = None
 
 
@@ -225,7 +232,7 @@ async def update_lease(
         raise HTTPException(status_code=404, detail="Lease agreement not found")
 
     await require_history_prepare(db, auth.organization_id, "lease_agreement", existing)
-    amount_fields = {"base_rent", "advance_payment", "deposit"}
+    amount_fields = {"base_rent", "advance_payment", "heating_advance_payment", "deposit"}
     changes_amount = any(
         getattr(body, field) is not None
         and Decimal(getattr(body, field)) != getattr(existing, field)
@@ -264,15 +271,13 @@ async def update_lease(
     return _to_out(existing)
 
 
-RentAmount = Annotated[Decimal, Field(ge=0, max_digits=14, decimal_places=2, allow_inf_nan=False)]
-
-
 class RentChangeCreate(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     valid_from: date
     base_rent: RentAmount
     advance_payment: RentAmount
+    heating_advance_payment: RentAmount = Field(default=Decimal("0.00"), description="Omitted values preserve the effective heating advance.")
 
 
 IndexValue = Annotated[Decimal, Field(gt=0, lt=Decimal("1000000000000"),
@@ -298,6 +303,7 @@ class IndexRentPreview(BaseModel):
     previous_base_rent: str
     base_rent: str
     advance_payment: str
+    heating_advance_payment: str
 
 
 class RentChangeOut(BaseModel):
@@ -306,6 +312,7 @@ class RentChangeOut(BaseModel):
     valid_from: date
     base_rent: str
     advance_payment: str
+    heating_advance_payment: str
     created_at: datetime
 
 
@@ -313,7 +320,8 @@ def _rent_change_out(row: LeaseRentChange) -> RentChangeOut:
     return RentChangeOut(
         id=str(row.id), lease_agreement_id=str(row.lease_agreement_id),
         valid_from=row.valid_from, base_rent=f"{row.base_rent:.2f}",
-        advance_payment=f"{row.advance_payment:.2f}", created_at=row.created_at,
+        advance_payment=f"{row.advance_payment:.2f}",
+        heating_advance_payment=f"{row.heating_advance_payment:.2f}", created_at=row.created_at,
     )
 
 
@@ -338,6 +346,7 @@ async def create_rent_change(
 ):
     row = await LeaseRentChangeService(db, auth.organization_id, auth.user_id).create(
         lease_id, body.valid_from, body.advance_payment, base_rent=body.base_rent,
+        heating_advance_payment=body.heating_advance_payment if 'heating_advance_payment' in body.model_fields_set else None,
     )
     return _rent_change_out(row)
 
@@ -369,7 +378,8 @@ async def preview_index_rent(
     )
     return IndexRentPreview(valid_from=result.valid_from, previous_valid_from=result.previous_valid_from,
                             previous_base_rent=f"{result.previous_base_rent:.2f}",
-                            base_rent=f"{result.base_rent:.2f}", advance_payment=f"{result.advance_payment:.2f}")
+                            base_rent=f"{result.base_rent:.2f}", advance_payment=f"{result.advance_payment:.2f}",
+                            heating_advance_payment=f"{result.heating_advance_payment:.2f}")
 
 
 @router.post("/{lease_id}/rent-changes/index", response_model=RentChangeOut, status_code=201)
@@ -398,6 +408,7 @@ def _to_out(la: LeaseAgreement) -> LeaseOut:
         valid_to=db_exclusive_to_api_inclusive(la.valid_to),
         base_rent=str(la.base_rent),
         advance_payment=str(la.advance_payment),
+        heating_advance_payment=str(la.heating_advance_payment),
         deposit=str(la.deposit) if la.deposit is not None else None,
         notes=la.notes,
     )

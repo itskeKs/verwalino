@@ -18,7 +18,7 @@ import uuid
 from datetime import date
 from decimal import Decimal
 
-from sqlalchemy import Date, ForeignKey, ForeignKeyConstraint, Numeric, String, UniqueConstraint
+from sqlalchemy import CheckConstraint, Date, ForeignKey, ForeignKeyConstraint, Numeric, String, UniqueConstraint
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -28,6 +28,7 @@ from app.models.base import Base, UUIDPrimaryKeyMixin, TimestampMixin
 class LeaseAgreement(Base, UUIDPrimaryKeyMixin, TimestampMixin):
     __tablename__ = "lease_agreement"
     __table_args__ = (
+        CheckConstraint("heating_advance_payment >= 0 AND heating_advance_payment < 'Infinity'::numeric", name="heating_advance_finite_nonnegative"),
         UniqueConstraint("organization_id", "id", name="uq_lease_agreement_org_id"),
         ForeignKeyConstraint(["organization_id", "unit_id"], ["unit.organization_id", "unit.id"],
             name="fk_lease_agreement_unit_id_tenant", ondelete="RESTRICT"),
@@ -60,6 +61,7 @@ class LeaseAgreement(Base, UUIDPrimaryKeyMixin, TimestampMixin):
     # Money fields -- NUMERIC(14,2), never float (I4)
     base_rent: Mapped[Decimal] = mapped_column(Numeric(14, 2), nullable=False)
     advance_payment: Mapped[Decimal] = mapped_column(Numeric(14, 2), nullable=False)
+    heating_advance_payment: Mapped[Decimal] = mapped_column(Numeric(14, 2), nullable=False, default=Decimal('0.00'), server_default='0')
     deposit: Mapped[Decimal | None] = mapped_column(Numeric(14, 2), nullable=True)
 
     notes: Mapped[str] = mapped_column(String(2000), nullable=False, default="")

@@ -552,6 +552,7 @@ export interface LeaseRecord {
   valid_to: string | null;
   base_rent: string;
   advance_payment: string;
+  heating_advance_payment: string;
   deposit: string | null;
   notes: string;
 }
@@ -562,6 +563,7 @@ export interface LeaseRentChange {
   valid_from: string;
   base_rent: string;
   advance_payment: string;
+  heating_advance_payment: string;
   created_at: string;
 }
 
@@ -569,6 +571,7 @@ export interface LeaseRentChangeCreate {
   valid_from: string;
   base_rent: string;
   advance_payment: string;
+  heating_advance_payment: string;
 }
 
 export interface LeaseCreate {
@@ -578,6 +581,7 @@ export interface LeaseCreate {
   valid_to?: string | null;
   base_rent: string;
   advance_payment: string;
+  heating_advance_payment: string;
   deposit?: string | null;
   notes?: string;
 }
@@ -587,6 +591,7 @@ export interface LeaseUpdate {
   notes?: string;
   base_rent?: string;
   advance_payment?: string;
+  heating_advance_payment?: string;
   deposit?: string | null;
 }
 
@@ -779,6 +784,8 @@ export interface SettlementRun {
   tenant_profile_id: string | null;
   advance_payments_total: string | null;
   advance_payments_source: string;
+  heating_advance_payments_total: string | null;
+  heating_advance_payments_source: string;
   total_cost: string | null;
   balance: string | null;
   status: SettlementStatus;
@@ -792,6 +799,11 @@ export interface SettlementRun {
 }
 
 export interface AdvanceProposal {
+  accept_from: string;
+  heating_tenant_cost: string;
+  heating_monthly_amount: string;
+  current_monthly_amount: string;
+  current_heating_monthly_amount: string;
   lease_agreement_id: string;
   tenant_cost: string;
   months: string;
@@ -811,6 +823,7 @@ export interface SettlementRunCreate {
   period_start: string;
   period_end: string;
   advance_payments_total?: string | null;
+  heating_advance_payments_total?: string | null;
   management_mandate_id?: string | null;
 }
 
@@ -828,7 +841,8 @@ export interface SettlementBatchResult {
 }
 
 export interface AdvancePaymentsUpdate {
-  advance_payments_total: string;
+  advance_payments_total?: string;
+  heating_advance_payments_total?: string;
 }
 
 export interface ExternalAmountIn {
@@ -1087,6 +1101,7 @@ export type PaymentDirection = "IN" | "OUT";
 export type PaymentType =
   | "KALTMIETE"
   | "NK_VORAUSZAHLUNG"
+  | "HK_VORAUSZAHLUNG"
   | "KAUTION"
   | "HAUSGELD_VORSCHUSS"
   | "RUECKLAGENANTEIL"

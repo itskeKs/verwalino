@@ -333,9 +333,11 @@ SDD §16: "All final settlement results … are stored as **immutable snapshots*
 | `tenant_profile_id` | `UUID NULL` FK→`tenant_profile` (`RESTRICT`) | denormalized addressee (audit/display). |
 | **Expected/actual (Soll/Ist) (§7):** | | |
 | `advance_payments_total` | `NUMERIC(14,2) NULL` | Sum of the operating cost advance payments made by the tenant in the period — **manually capturable in M3** (M6 replaces this with the real `Payment` sum). |
+| `heating_advance_payments_total` | `NUMERIC(14,2) NULL` | Heating advances; independent of operating-cost advances. Migration 0150 backfills existing rows with 0, then drops the default. NULL means unknown and blocks computation. |
+| `heating_advance_payments_source` | `String(12) NOT NULL DEFAULT 'MANUAL'` | Independent MANUAL/DERIVED heating source. |
 | `advance_payments_source` | `String(12) NOT NULL DEFAULT 'MANUAL'` | `MANUAL` (M3) \| `DERIVED` (M6, from payments). CHECK. Makes the origin audit-proof. |
 | `total_cost` | `NUMERIC(14,2) NULL` | Sum of the apportioned expected shares (redundant header value; must be == Σ `settlement_line.amount` of the expected lines). |
-| `balance` | `NUMERIC(14,2) NULL` | `total_cost − advance_payments_total`; > 0 = additional payment due, < 0 = credit (§7). |
+| `balance` | `NUMERIC(14,2) NULL` | `total_cost − advance_payments_total − heating_advance_payments_total`; > 0 = additional payment due, < 0 = credit (§7). |
 | **Snapshot/immutability (ADR-0003):** | | |
 | `status` | `String(12) NOT NULL DEFAULT 'draft'` | `draft` \| `finalized`. CHECK. Freeze condition: `finalized`. |
 | `snapshot_payload` | `JSONB NULL` | **Canonical, complete** calculation basis + result (§1.7). NULL in a fresh `draft` before the first calculation; set from the first calculation; frozen from `finalized`. |
@@ -760,7 +762,9 @@ period. Whole calendar months count as one, partial months as occupied days/cale
 of the month. Calendar weights stay exactly rational; money stays Decimal and is
 commercially rounded to the cent once. Example: January through 05.02.2024,
 0.17 EUR / (1 + 5/29) = 0.15 EUR. A missing, negative, or incoherent historical basis
-results in 409, no zero assumption.
+results in 409, no zero assumption. The optional ISO-date query `accept_from` defaults to
+the day after the settlement period ends and is returned in the payload. Both current
+advances are the rates valid on that date, resolved by the same rent-history lookup as POST.
 
 The detail page shows the amount and basis; readers see no adoption control. POST to the
 same URL accepts only `valid_from` and, after live role, scope, and history-prepare checks,
@@ -959,3 +963,45 @@ Implemented BK behavior: `POST /api/settlements/{id}/finalize` ends the DB trans
 - **Exact PDF layout / objection-deadline texts:** SDD §18 (§8.1).
 - **§ 35a EStG disclosure** in owner settlements: M4/SDD §18.
 - **Final legal sign-off:** tax advisor/attorney specializing in the field — not replaceable by this document.
+
+## Separate operating and heating advances (#67)
+
+Both advance totals start unknown and block finalization until they are entered or
+derived and attested. When the heating total is zero and there are no allocated
+tenant heating cost lines, the statement and PDF retain the single “Geleistete Vorauszahlungen”
+block; otherwise they show both component blocks. Snapshots always retain both totals.
+
+`HEATING_CATEGORY_CODES` in `engine/types.py` is the single documented set:
+`HEIZUNG_ZENTRAL`, `WARMWASSER_ZENTRAL`, `MESSDIENST`, `CO2_KOSTEN`.
+A position in this set, or carrying a heating configuration, belongs to heating;
+all other billable positions belong to operating costs. Classification does not
+change the HeizkostenV allocation. Both component results use the existing
+cent-exact allocated tenant shares. The overall balance is total cost minus
+both advance totals; heating advance zero preserves the former overall result.
+The single advance block applies only when the heating advance is zero and no
+allocated tenant heating cost lines occur in any fiscal allocation window, including
+zero-amount lines. Non-apportionable heating positions do not require two blocks.
+An allocated tenant heating cost line exists only when allocation produces a tenant cost line for the position: an explicit zero-amount line counts, but a distribution key that produces no line does not.
+Page and PDF follow the engine's stored advance-line labels.
+
+New snapshots freeze both advance totals/sources, the heating tenant-cost share
+and the component result lines. Old finalized payloads remain unchanged: readers
+use the stored lines and canonical bytes without adding missing heating keys,
+so their SHA-256 and PDF remain valid. New computations use the bumped engine
+version. Corrections copy both totals and sources into the new draft.
+
+The advance proposal divides the frozen operating and heating tenant-cost
+shares separately by the same exact calendar-month weight. Accepting creates
+one full rent-change row, preserving the effective base rent. The proposal payload
+includes both current advances from the rent-history rate valid on the acceptance date,
+falling back to the lease. The page passes its selected date to GET and refetches on date
+changes; acceptance stays disabled until a matching proposal returns. It shows previous
+amounts and both proposals and bases whenever
+the proposed heating advance is nonzero or differs from the current heating advance,
+including a reduction to zero and legacy statements with a single advance block.
+Only when the proposed and current heating advances are both zero does the proposal
+show just the operating amount and basis with “Nur die Betriebskosten-Vorauszahlung
+wird geändert.”; acceptance then writes unchanged heating zero. Otherwise it says
+“Beide Vorauszahlungen werden geändert.” The success message names both written advances. Old snapshots
+without a heating subtotal derive the split from frozen cost lines and heating
+pools; an incomplete frozen basis refuses the proposal.

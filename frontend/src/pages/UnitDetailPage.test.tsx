@@ -25,14 +25,14 @@ vi.mock("../api/endpoints", async (importOriginal) => ({
   createOwnership: vi.fn(), createLease: vi.fn(), patchLease: vi.fn(),
 }));
 
-const original: LeaseRecord = { id: "lease", unit_id: "unit", tenant_profile_id: "tenant", valid_from: "2025-01-01", valid_to: null, base_rent: "700.00", advance_payment: "150.00", deposit: null, notes: "Notiz" };
-const march = { id: "change", lease_agreement_id: "lease", valid_from: "2026-03-15", base_rent: "725.00", advance_payment: "175.00", created_at: "2026-01-01T12:00:00Z" };
+const original: LeaseRecord = { id: "lease", unit_id: "unit", tenant_profile_id: "tenant", valid_from: "2025-01-01", valid_to: null, base_rent: "700.00", advance_payment: "150.00", heating_advance_payment: "0.00", deposit: null, notes: "Notiz" };
+const march = { id: "change", lease_agreement_id: "lease", valid_from: "2026-03-15", base_rent: "725.00", advance_payment: "175.00", heating_advance_payment: "0.00", created_at: "2026-01-01T12:00:00Z" };
 const staffelRows = [
   { ...march, id: "staffel-1", valid_from: "2027-01-31", base_rent: "750.00" },
   { ...march, id: "staffel-2", valid_from: "2028-01-31", base_rent: "775.00" },
   { ...march, id: "staffel-3", valid_from: "2029-01-31", base_rent: "800.00" },
 ];
-const indexPreview = { valid_from: "2027-01-01", previous_valid_from: "2026-01-01", previous_base_rent: "600.00", base_rent: "627.27", advance_payment: "150.00" };
+const indexPreview = { valid_from: "2027-01-01", previous_valid_from: "2026-01-01", previous_base_rent: "600.00", base_rent: "627.27", advance_payment: "150.00", heating_advance_payment: "0.00" };
 const indexInput = { old_index: "110", new_index: "115", declaration_received_on: "2026-11-15" };
 let history: typeof march[];
 let failure: number | "network" | null;
@@ -54,6 +54,19 @@ function date(value: string) { fireEvent.change(screen.getByLabelText("Gültig a
 function money(label: string, value: string) { fireEvent.change(screen.getByLabelText(label, { exact: true }), { target: { value } }); }
 function save() { fireEvent.click(screen.getByRole("button", { name: "Mietänderung speichern" })); }
 function posts() { return fetchMock.mock.calls.filter(([, options]) => options?.method === "POST"); }
+
+it('submits separate advances in one effective-dated rent change', async () => {
+  show();
+  const dialog = await openChange();
+  date('2026-04-01');
+  money('Betriebskosten-Vorauszahlung (EUR)', '150,00');
+  money('Heizkosten-Vorauszahlung (EUR)', '90,00');
+  save();
+  await waitFor(() => expect(dialog).not.toBeInTheDocument());
+  expect(JSON.parse(posts()[0][1].body as string)).toMatchObject({
+    advance_payment: '150.00', heating_advance_payment: '90.00', valid_from: '2026-04-01',
+  });
+});
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
 beforeEach(() => {
   vi.resetAllMocks(); history = []; failure = null;
@@ -84,7 +97,7 @@ beforeEach(() => {
   vi.mocked(endpoints.listOwnership).mockResolvedValue([]);
   vi.mocked(endpoints.listLeases).mockResolvedValue([{
     id: "lease", unit_id: "unit", tenant_profile_id: "tenant", valid_from: "2025-01-01",
-    valid_to: null, base_rent: "500.00", advance_payment: "100.00", deposit: null, notes: "Notiz",
+    valid_to: null, base_rent: "500.00", advance_payment: "100.00", heating_advance_payment: "0.00", deposit: null, notes: "Notiz",
   }]);
   vi.mocked(endpoints.listOwnerProfiles).mockResolvedValue([]);
   vi.mocked(endpoints.listTenantProfiles).mockResolvedValue([]);
@@ -273,12 +286,12 @@ it("loads dated history with a clear original-contract source", async () => {
 it("posts April 750/150 exactly, keeps original lease money and persists on reload", async () => {
   vi.mocked(endpoints.listLeases).mockResolvedValue([original]);
   const view = show(); await openChange(); date("2026-04-01");
-  expect(screen.getByLabelText("Vorauszahlung (EUR)", { exact: true })).toHaveValue("150.00");
+  expect(screen.getByLabelText("Betriebskosten-Vorauszahlung (EUR)", { exact: true })).toHaveValue("150.00");
   money("Kaltmiete (EUR)", "750,00"); save();
   await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
   expect(posts()).toHaveLength(1);
   expect(posts()[0][0]).toBe("/api/leases/lease/rent-changes");
-  expect(JSON.parse(posts()[0][1].body)).toEqual({ valid_from: "2026-04-01", base_rent: "750.00", advance_payment: "150.00" });
+  expect(JSON.parse(posts()[0][1].body)).toEqual({ valid_from: "2026-04-01", base_rent: "750.00", advance_payment: "150.00", heating_advance_payment: "0.00" });
   expect(original.base_rent).toBe("700.00"); expect(original.advance_payment).toBe("150.00");
   expect(endpoints.patchLease).not.toHaveBeenCalled(); expect(endpoints.createLease).not.toHaveBeenCalled();
   expect(await screen.findByText("2026-04-01")).toBeVisible();
@@ -287,12 +300,12 @@ it("posts April 750/150 exactly, keeps original lease money and persists on relo
 
 it("prefills the full rate at the chosen date, preserving NK on a subsequent change", async () => {
   vi.mocked(endpoints.listLeases).mockResolvedValue([original]);
-  history = [march, { ...march, id: "later", valid_from: "2026-06-01", base_rent: "800.00", advance_payment: "200.00" }];
+  history = [march, { ...march, id: "later", valid_from: "2026-06-01", base_rent: "800.00", advance_payment: "200.00", heating_advance_payment: "0.00" }];
   show(); await openChange(); date("2026-02-01");
   expect(screen.getByLabelText("Kaltmiete (EUR)", { exact: true })).toHaveValue("700.00");
   date("2026-04-01");
   expect(screen.getByLabelText("Kaltmiete (EUR)", { exact: true })).toHaveValue("725.00");
-  expect(screen.getByLabelText("Vorauszahlung (EUR)", { exact: true })).toHaveValue("175.00");
+  expect(screen.getByLabelText("Betriebskosten-Vorauszahlung (EUR)", { exact: true })).toHaveValue("175.00");
   money("Kaltmiete (EUR)", "750"); save();
   await waitFor(() => expect(posts()).toHaveLength(1));
   expect(JSON.parse(posts()[0][1].body).advance_payment).toBe("175.00");
@@ -300,10 +313,10 @@ it("prefills the full rate at the chosen date, preserving NK on a subsequent cha
 
 it.each([409, 422, 403, 404, "network"] as const)("preserves inputs and retries after POST failure %s", async status => {
   failure = status; show(); await openChange(); date("2026-04-01");
-  money("Kaltmiete (EUR)", "750,25"); money("Vorauszahlung (EUR)", "175,10"); save();
+  money("Kaltmiete (EUR)", "750,25"); money("Betriebskosten-Vorauszahlung (EUR)", "175,10"); save();
   expect(await within(screen.getByRole("dialog")).findByRole("alert")).toBeVisible();
   expect(screen.getByLabelText("Kaltmiete (EUR)", { exact: true })).toHaveValue("750,25");
-  expect(screen.getByLabelText("Vorauszahlung (EUR)", { exact: true })).toHaveValue("175,10");
+  expect(screen.getByLabelText("Betriebskosten-Vorauszahlung (EUR)", { exact: true })).toHaveValue("175,10");
   failure = null; save();
   await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument()); expect(posts()).toHaveLength(2);
 });
@@ -326,7 +339,7 @@ it.each(["", "2024-12-31", "2026-05-01", "2026-02-30"])("rejects invalid or out-
 
 it("accepts the inclusive lease end and a zero advance", async () => {
   vi.mocked(endpoints.listLeases).mockResolvedValue([{ ...original, valid_to: "2026-04-30" }]);
-  show(); await openChange(); date("2026-04-30"); money("Vorauszahlung (EUR)", "0"); save();
+  show(); await openChange(); date("2026-04-30"); money("Betriebskosten-Vorauszahlung (EUR)", "0"); save();
   await waitFor(() => expect(posts()).toHaveLength(1)); expect(JSON.parse(posts()[0][1].body).advance_payment).toBe("0.00");
 });
 
@@ -347,9 +360,9 @@ it("locks double submission synchronously until completion", async () => {
 });
 
 it("couples the selected contract and its history exactly", async () => {
-  vi.mocked(endpoints.listLeases).mockResolvedValue([original, { ...original, id: "lease-two", base_rent: "900.00", advance_payment: "250.00" }]);
+  vi.mocked(endpoints.listLeases).mockResolvedValue([original, { ...original, id: "lease-two", base_rent: "900.00", advance_payment: "250.00", heating_advance_payment: "0.00" }]);
   show(); await openChange(1); date("2026-04-01");
-  expect(screen.getByLabelText("Vorauszahlung (EUR)", { exact: true })).toHaveValue("250.00"); save();
+  expect(screen.getByLabelText("Betriebskosten-Vorauszahlung (EUR)", { exact: true })).toHaveValue("250.00"); save();
   await waitFor(() => expect(posts()).toHaveLength(1)); expect(posts()[0][0]).toBe("/api/leases/lease-two/rent-changes");
   expect(fetchMock.mock.calls.some(([url]) => url === "/api/leases/lease/rent-changes")).toBe(true);
 });
@@ -371,39 +384,39 @@ it("cancels without mutation", async () => {
 });
 
 it("never prefills another contract's history", async () => {
-  vi.mocked(endpoints.listLeases).mockResolvedValue([original, { ...original, id: "lease-two", valid_from: "2026-01-01", base_rent: "900.00", advance_payment: "250.00" }]);
-  const secondChange = { ...march, id: "second-change", lease_agreement_id: "lease-two", base_rent: "950.00", advance_payment: "275.00" };
+  vi.mocked(endpoints.listLeases).mockResolvedValue([original, { ...original, id: "lease-two", valid_from: "2026-01-01", base_rent: "900.00", advance_payment: "250.00", heating_advance_payment: "0.00" }]);
+  const secondChange = { ...march, id: "second-change", lease_agreement_id: "lease-two", base_rent: "950.00", advance_payment: "275.00", heating_advance_payment: "0.00" };
   fetchMock.mockImplementation(async (url: string, options?: RequestInit) => {
     if (options?.method === "POST") return new Response(JSON.stringify({ ...secondChange, ...JSON.parse(options.body as string), id: "new-second-change" }), { status: 201 });
     return new Response(JSON.stringify(url.includes("lease-two") ? [secondChange] : [march]), { status: 200 });
   });
   show(); await openChange(1); date("2026-04-01");
   expect(screen.getByLabelText("Kaltmiete (EUR)", { exact: true })).toHaveValue("950.00");
-  expect(screen.getByLabelText("Vorauszahlung (EUR)", { exact: true })).toHaveValue("275.00");
+  expect(screen.getByLabelText("Betriebskosten-Vorauszahlung (EUR)", { exact: true })).toHaveValue("275.00");
   save(); await waitFor(() => expect(posts()).toHaveLength(1));
   expect(posts()[0][0]).toBe("/api/leases/lease-two/rent-changes");
-  expect(JSON.parse(posts()[0][1].body)).toEqual({ valid_from: "2026-04-01", base_rent: "950.00", advance_payment: "275.00" });
+  expect(JSON.parse(posts()[0][1].body)).toEqual({ valid_from: "2026-04-01", base_rent: "950.00", advance_payment: "275.00", heating_advance_payment: "0.00" });
 });
 
 it.each(["", "-0.01", "0.001", "Infinity"])("rejects invalid advance %s without POST", async value => {
-  show(); await openChange(); date("2026-04-01"); money("Vorauszahlung (EUR)", value); save();
+  show(); await openChange(); date("2026-04-01"); money("Betriebskosten-Vorauszahlung (EUR)", value); save();
   expect(await within(screen.getByRole("dialog")).findByRole("alert")).toBeVisible(); expect(posts()).toHaveLength(0);
 });
 
 it("normalizes cent amounts exactly without floating-point rounding", async () => {
   show("CLERK"); await openChange(); date("2026-04-01");
-  money("Kaltmiete (EUR)", "000750,29"); money("Vorauszahlung (EUR)", "0.01"); save();
+  money("Kaltmiete (EUR)", "000750,29"); money("Betriebskosten-Vorauszahlung (EUR)", "0.01"); save();
   await waitFor(() => expect(posts()).toHaveLength(1));
-  expect(JSON.parse(posts()[0][1].body)).toEqual({ valid_from: "2026-04-01", base_rent: "750.29", advance_payment: "0.01" });
+  expect(JSON.parse(posts()[0][1].body)).toEqual({ valid_from: "2026-04-01", base_rent: "750.29", advance_payment: "0.01", heating_advance_payment: "0.00" });
 });
 
 it("accepts the full Numeric(14,2) API bound without truncation", async () => {
   show(); await openChange(); date("2026-04-01");
   money("Kaltmiete (EUR)", "999999999999.99");
-  money("Vorauszahlung (EUR)", "999999999999,99"); save();
+  money("Betriebskosten-Vorauszahlung (EUR)", "999999999999,99"); save();
   await waitFor(() => expect(posts()).toHaveLength(1));
   expect(JSON.parse(posts()[0][1].body)).toEqual({
-    valid_from: "2026-04-01", base_rent: "999999999999.99", advance_payment: "999999999999.99",
+    valid_from: "2026-04-01", base_rent: "999999999999.99", advance_payment: "999999999999.99", heating_advance_payment: "0.00",
   });
 });
 

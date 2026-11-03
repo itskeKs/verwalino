@@ -62,9 +62,9 @@ pending; registration stays closed and legal review remains with #26. See the
 | Contacts, tenant/owner profile | ✅ | `api/persons.py`, `api/tenant_profiles.py`, `api/owner_profiles.py`, `pages/PersonDetailPage.tsx` |
 | Vendors | ✅ edit/end with contact source right | `api/vendors.py`, T55, [usage](operations/selector-pages.md) |
 | Ownership with share | ✅ end ownership ("Eigentum beenden") and new owner from the next day | `api/ownership.py` (`PATCH /{id}`), `pages/UnitDetailPage.tsx`, T26, [usage](operations/tenancies-and-rent.md) |
-| Create lease (base rent, operating cost advance, deposit) | ✅ | `api/leases.py`, `pages/UnitDetailPage.tsx` |
+| Create lease (base rent, operating and heating advances, deposit) | ✅ | `api/leases.py`, `pages/UnitDetailPage.tsx` |
 | Change/end lease, tenant change | ✅ end and note always editable; amounts locked (409) once payments are booked or a settlement is final | `api/leases.py` (`PATCH /{id}`), `pages/UnitDetailPage.tsx`, T04 |
-| Rent change with effective date | ✅ | `models/lease_rent_change.py`, `api/leases.py` (`/rent-changes`), `engine/mietkonto.py`, T23, T24, [usage](operations/tenancies-and-rent.md) |
+| Rent change with effective date | ✅ full base rent and separate operating/heating rates | `models/lease_rent_change.py`, `api/leases.py` (`/rent-changes`), `engine/mietkonto.py`, T23, T24, [usage](operations/tenancies-and-rent.md) |
 | Graduated (Staffel) / index rent | ✅ | `api/leases.py` (`/rent-changes/staffel`, `/rent-changes/index`), `engine/index_rent.py`, T43, T44, [usage](operations/tenancies-and-rent.md) |
 | Security deposit management | 🟡 target, paid and refunded tracked; no installments, no recording of interest credits | `engine/mietkonto.py` (`deposit_statement`), `api/payments.py` (`/deposits`), `pages/DepositsPage.tsx`, T25, [usage](operations/tenancies-and-rent.md) |
 | Lease template, handover protocol | ✅ lease-filled contract starting point with legal-review caveat; move-in/out protocol records unit readings and retains an immutable PDF | #37, `services/lease_document_service.py`, `components/LeaseDocuments.tsx`, [usage](operations/tasks-and-documents.md#lease-contracts-and-handovers-37) |
@@ -98,13 +98,14 @@ pending; registration stays closed and legal review remains with #26. See the
 
 | Feature | Status | Location |
 | --- | --- | --- |
-| Property settlement period | 🟡 month-based offers, lease-clipped single/batch statements and offers, short-window service-day cost shares, plan dates and prior actuals; NK advances credited over lease-covered months/days, day splits only between statements of the same lease; frozen-credit remainder after late end edits, bucket-aware DERIVED end guard and legacy check, outside-lease payment notice once on the statement containing the relevant lease boundary; single nonidentical overlaps with finalized periods rejected within the acting user's visibility; batch skips finalized coverage of the clipped span; identical repeats allowed; cross-scope database constraint pending | `engine/periods.py`, `engine/distribution.py`, `engine/rounding.py`, `services/payment_service.py`, `api/properties.py` (`/settlement-periods`), `pages/SettlementsPage.tsx`, issues #68, #122, #136 |
+| Property settlement period | 🟡 month-based offers, lease-clipped single/batch statements and offers, short-window service-day cost shares, plan dates and prior actuals; NK/HK advances credited separately over lease-covered months/days, day splits only between statements of the same lease; frozen-credit remainder after late end edits, bucket-aware DERIVED end guard and legacy check, outside-lease payment notice once on the statement containing the relevant lease boundary; single nonidentical overlaps with finalized periods rejected within the acting user's visibility; batch skips finalized coverage of the clipped span; identical repeats allowed; cross-scope database constraint pending | `engine/periods.py`, `engine/distribution.py`, `engine/rounding.py`, `services/payment_service.py`, `api/properties.py` (`/settlement-periods`), `pages/SettlementsPage.tsx`, issues #68, #122, #136 |
 | Operating cost statement per lease: compute, finalize, PDF, correction | ✅ | `api/settlements.py`, `services/settlement_service.py`, `services/settlement_pdf.py` |
 | Keys area/MEA/units, pro rata, vacancy | ✅ | `engine/distribution.py` |
 | Keys consumption/persons/external/manual | ✅ inputs shown and sent with the database key names | `pages/SettlementDetailPage.tsx`, `lib/costVocabulary.ts`, T03 |
-| Advance payments from payments | ✅ any period, including across the year boundary | `services/settlement_service.py` (`set_advance_payments_derived`), `services/payment_service.py` (`derive_nk_advance_total_for_period`), `api/settlements.py` (`/advance-payments-derived`), T08 |
+| Separate operating and heating advances per lease | ✅ full rent-change history, day-exact ledger charges, bank hints, SEPA, dashboard and dunning | `models/lease_agreement.py`, `engine/mietkonto.py`, `features/advance_split.feature`, #67 |
+| Advance payments from payments | ✅ separate NK/HK totals and sources for any period, including across the year boundary | `services/settlement_service.py` (`set_advance_payments_derived`), `services/payment_service.py` (`derive_nk_advance_total_for_period`), `api/settlements.py` (`/advance-payments-derived`), T08 |
 | Batch run per property | ✅ drafts for all leases, existing ones skipped | `api/settlements.py` (`POST /batch`), `pages/SettlementsPage.tsx`, T27, [usage](operations/statements.md) |
-| Suggestion for a new advance payment | ✅ accepting appends a rent change | `api/settlements.py` (`/advance-proposal`), `pages/SettlementDetailPage.tsx` ("Vorauszahlungsvorschlag"), T28, [usage](operations/statements.md) |
+| Suggestion for a new advance payment | ✅ separate operating/heating proposals; accepting appends one rent change | `api/settlements.py` (`/advance-proposal`), `pages/SettlementDetailPage.tsx` ("Vorauszahlungsvorschlag"), T28, [usage](operations/statements.md) |
 | Heating costs per HeizkostenV | ✅ full-period basic/consumption split, interim/day split within unit, or external billing | `engine/heizkosten.py`, `engine/heating_settlement.py`, `services/heating_input_service.py`, `components/HeatingInputs.tsx`, T45, T46, [usage](operations/statements.md) |
 | Consumption from meters | ✅ property-year weights with invoice-period pools; either occupant-boundary date accepted, ambiguous readings require manual input, missing interim readings use days with a reason | `engine/meter_consumption.py`, `api/settlements.py` (`/consumption-suggestions`, `/heating-consumption`), T31, [usage](operations/meters.md) |
 
@@ -147,7 +148,6 @@ pending; registration stays closed and legal review remains with #26. See the
 ## Gaps
 
 - Photos (Properties and units): no photo upload or display for properties or units (#39).
-- Advance payments (People and tenancies): a lease has one combined advance; operating-cost and heating advances are not separate (#67).
 - Security deposit management (People and tenancies): no installments with due dates (#70) and no booking of interest credits (#38).
 - VAT-liable letting (People and tenancies): no VAT on rent, advances and statements for units with the VAT option (#71); no input VAT apportionment (#72).
 - Bank retrieval PSD2/FinTS (Tenant ledger, bank and payments): no automatic bank statement retrieval; import is by CSV/CAMT file only (#40).

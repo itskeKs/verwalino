@@ -17,7 +17,7 @@ from app.services.payment_service import OWNER_TYPES, TENANT_TYPES
 
 router = APIRouter(prefix="/api/bank-transactions", tags=["bank-transactions"])
 Status = Literal["NEU", "ZUGEORDNET", "IGNORIERT"]
-PaymentType = Literal["KALTMIETE", "NK_VORAUSZAHLUNG", "KAUTION", "HAUSGELD_VORSCHUSS", "RUECKLAGENANTEIL", "RUECKLAGENENTNAHME", "SONDERZAHLUNG", "NACHZAHLUNG"]
+PaymentType = Literal["KALTMIETE", "NK_VORAUSZAHLUNG", "HK_VORAUSZAHLUNG", "KAUTION", "HAUSGELD_VORSCHUSS", "RUECKLAGENANTEIL", "RUECKLAGENENTNAHME", "SONDERZAHLUNG", "NACHZAHLUNG"]
 
 
 class AssignmentLine(BaseModel):

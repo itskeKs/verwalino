@@ -51,6 +51,10 @@ APPORTIONABLE_AMOUNT_REQUIRED = frozenset(
 # tenant_apportionable values handled via direct per-unit external amounts.
 EXTERNAL_APPORTIONABLE = frozenset({"UMLAGEFAEHIG_EXTERN_PRUEFEN"})
 
+# Tenant statement classification (#67). A configured heating position also
+# belongs to heating, even when its category is outside this fixed set.
+HEATING_CATEGORY_CODES = frozenset({'HEIZUNG_ZENTRAL', 'WARMWASSER_ZENTRAL', 'MESSDIENST', 'CO2_KOSTEN'})
+
 
 @dataclass(frozen=True)
 class UnitInput:
@@ -88,6 +92,7 @@ class LeasePeriodInput:
     valid_to: date | None
     advance_payment: Decimal | None = None
     tenant_name: str = ""
+    heating_advance_payment: Decimal | None = None
 
 
 @dataclass(frozen=True)
@@ -186,6 +191,8 @@ class SettlementInput:
     engine_version: str = "m3.1.0"
     allocation_inputs: tuple[SettlementInput, ...] = ()
     uncredited_advance_payments_total: Decimal = Decimal("0.00")
+    heating_advance_payments_total: Decimal = Decimal('0.00')
+    heating_advance_payments_source: str = 'MANUAL'
 
 
 # ---------------------------------------------------------------------------
@@ -243,6 +250,8 @@ class EngineResult:
     heating_costs: tuple[HeatingAllocationResult, ...] = ()
     period_results: tuple[EngineResult, ...] = ()
     period_inputs: tuple[SettlementInput, ...] = ()
+    heating_cost_total: Decimal = Decimal('0.00')
+    heating_advance_payments_total: Decimal = Decimal('0.00')
 
 
 @dataclass(frozen=True)

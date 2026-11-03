@@ -263,12 +263,12 @@ function AccountTransactions({ id }: { id: string }) {
 }
 
 const PAYMENT_TYPES: Record<BankAssignmentLine["payment_type"], string> = {
-  KALTMIETE: "Kaltmiete", NK_VORAUSZAHLUNG: "NK-Vorauszahlung", KAUTION: "Kaution",
+  KALTMIETE: "Kaltmiete", NK_VORAUSZAHLUNG: "Betriebskosten-Vorauszahlung", HK_VORAUSZAHLUNG: "Heizkosten-Vorauszahlung", KAUTION: "Kaution",
   HAUSGELD_VORSCHUSS: "Hausgeld-Vorschuss", RUECKLAGENANTEIL: "Rücklagenanteil",
   RUECKLAGENENTNAHME: "Rücklagenentnahme",
   SONDERZAHLUNG: "Sonder-/Nachzahlung", NACHZAHLUNG: "Nachzahlung",
 };
-const TENANT_TYPES = new Set(["KALTMIETE", "NK_VORAUSZAHLUNG", "KAUTION"]);
+const TENANT_TYPES = new Set(["KALTMIETE", "NK_VORAUSZAHLUNG", "HK_VORAUSZAHLUNG", "KAUTION"]);
 const OWNER_TYPES = new Set(["HAUSGELD_VORSCHUSS", "RUECKLAGENANTEIL", "SONDERZAHLUNG"]);
 
 // No Number/parseFloat conversion: bank and user decimal strings stay exact.
