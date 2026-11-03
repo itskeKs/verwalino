@@ -271,6 +271,30 @@ async def test_finance_routes_keep_organizations_apart(sweep, finance_seeded):
     await run_area(sweep, "finance")
 
 
+@pytest.mark.parametrize("route", [
+    "POST /api/weg-settlements",
+    "PATCH /api/weg-settlements/{run_id}/economic-plan",
+])
+async def test_weg_plan_probes_skip_planless_runs(migrator_session, route):
+    # Allocation-correction fixtures can leave a smaller UUID without a plan.
+    # Shadow the lookup tables without persisting another planless run.
+    ids = {name: uuid.UUID(int=value) for name, value in {
+        "planless": 1, "org": 4, "run": 11, "property": 12, "plan": 13, "b": 20,
+    }.items()}
+    lookup = """WITH settlement_run(id,organization_id,run_type,economic_plan_id,property_id) AS (
+        VALUES (CAST(:planless AS uuid),CAST(:org AS uuid),'WEG_JAHRESABRECHNUNG',NULL::uuid,CAST(:property AS uuid)),
+               (:run,:org,'WEG_JAHRESABRECHNUNG',:plan,:property)
+      ), economic_plan(id,organization_id) AS (
+        VALUES (CAST(:plan AS uuid),CAST(:org AS uuid))
+      ) """ + finance.PROBES[route].ids
+    selected = (await migrator_session.execute(text(lookup), ids)).mappings().one()
+    if route.startswith("POST"):
+        assert selected["economic_plan_id"] == ids["plan"]
+    else:
+        assert selected["run_id"] == ids["run"]
+        assert selected["expected_plan_id"] == selected["successor_id"] == ids["plan"]
+
+
 async def test_document_routes_keep_organizations_apart(sweep, documents_seeded):
     await run_area(sweep, "documents")
 

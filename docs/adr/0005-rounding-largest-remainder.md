@@ -142,3 +142,22 @@ appear on the statement containing the lease end. Each side appears once, includ
 when the statements are clipped to the lease or split within a month. A statement
 containing both boundaries combines both totals. Other statements do not repeat
 the notice. It does not alter statement costs, credited advances or the balance.
+
+## Amendment — 2026-10-31: reserve cash within combined Hausgeld
+
+A deliberate exception applies to the reserve component of each booked Hausgeld
+payment: multiply the signed cash amount by the unit's frozen annual reserve
+share divided by its total annual Hausgeld, then round that single component
+commercially to cents (`ROUND_HALF_UP`). This is not a distribution of a fixed
+reserve total across receipts: cash arrives independently and a reversal must
+cancel its original component exactly. Do not redistribute fractions across
+payments with `distribute_amount`. Planning still uses largest remainder for
+owner/unit shares and monthly rates. See [M4](../m4-weg-abrechnung.md#maintenance-reserve-ledger-36).
+
+For `n` payments, the property sum can differ from the sum of their exact ratio
+components by up to `n × 0.005 €` (strictly less when no component is exactly a
+half-cent; HALF_UP can attain the bound at ties). At a reserve/Hausgeld ratio
+of `6000/13000`, twelve payments of 433.33 € produce 2,400.00 € of rounded reserve
+components, versus 2,399.98 € when their exact components are summed and rounded
+once. One hundred payments of 0.01 € produce 0.00 €, versus 0.46 € when summed
+before rounding. These differences are retained, not silently redistributed.

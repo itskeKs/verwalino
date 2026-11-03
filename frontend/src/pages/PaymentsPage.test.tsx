@@ -49,6 +49,31 @@ it("explicitly names Eigentuemer after switching to an owner payment type", asyn
   fireEvent.change(type, { target: { value: "HAUSGELD_VORSCHUSS" } });
   expectExplicitSelect("Eigentuemer");
 });
+it('offers a reserve withdrawal without an owner or tenant counterparty', async () => {
+  await openCreate();
+  fireEvent.change(expectExplicitSelect('Zahlungstyp *'), { target: { value: 'RUECKLAGENENTNAHME' } });
+  expect(screen.getByLabelText('Zahlungstyp *', { exact: true })).toHaveValue('RUECKLAGENENTNAHME');
+  expect(await screen.findByLabelText('Bestätigter Kostenbeleg *')).toBeInTheDocument();
+  expect(screen.getByLabelText('Beschluss-Sammlung *')).toBeInTheDocument();
+  expect(screen.queryByLabelText('Eigentuemer', { exact: true })).not.toBeInTheDocument();
+  expect(screen.queryByLabelText('Mieter', { exact: true })).not.toBeInTheDocument();
+});
+it('shows the German app refusal when a manual reserve payout has no evidence', async () => {
+  const fetchMock = vi.mocked(fetch);
+  const original = fetchMock.getMockImplementation()!;
+  fetchMock.mockImplementation((url, init) => String(url).includes('/cost-entries') || String(url).includes('/meetings/register/')
+    ? Promise.resolve(json([])) : original(url, init));
+  await openCreate();
+  fireEvent.change(screen.getByLabelText('Bankkonto *', { exact: true }), { target: { value: 'deposit-account' } });
+  fireEvent.change(screen.getByLabelText('Zahlungstyp *', { exact: true }), { target: { value: 'RUECKLAGENENTNAHME' } });
+  fireEvent.change(screen.getByLabelText('Betrag *', { exact: true }), { target: { value: '1200.00' } });
+  fireEvent.change(screen.getByLabelText('Wertstellungsdatum *', { exact: true }), { target: { value: '2025-02-01' } });
+  await waitFor(() => expect(screen.getByLabelText('Bestätigter Kostenbeleg *')).toBeEnabled());
+  await userEvent.click(screen.getByRole('button', { name: 'Anlegen' }));
+  expect(await screen.findByRole('alert')).toHaveTextContent('Bitte verknüpfen Sie einen bestätigten Kostenbeleg und einen Beschluss aus der Beschluss-Sammlung.');
+  expect(screen.getByLabelText('Betrag *', { exact: true })).toHaveValue('1200.00');
+  expect(fetchMock.mock.calls.some(([, init]) => init?.method === 'POST')).toBe(false);
+});
 it.each(["IN", "OUT"])("supports KAUTION %s through the existing payment fields", async direction => {
   await openCreate();
   fireEvent.change(expectExplicitSelect("Bankkonto *"), { target: { value: "deposit-account" } });

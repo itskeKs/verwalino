@@ -475,3 +475,18 @@ it("beschriftet die Zielart-Combobox exakt ohne Mietvertrags- und Eigentümeropt
   expect(select).toHaveAccessibleName("Zielart");
   expect(select).toHaveAttribute("aria-label", "Zielart");
 });
+
+
+it('keeps a reserve payout without evidence as a draft and explains the next step', async () => {
+  const fetchMock = assignmentSetup({ ...transaction, amount: '-200.01', suggestions: [] }, 'OWNER_ADMIN', async () =>
+    json({ id: 'tx', status: 'ZUGEORDNET', payments: [{ id: 'payout', status: 'draft' }] }));
+  await screen.findByText('Heizung');
+  fireEvent.click(screen.getByRole('button', { name: /Aufteilen/ }));
+  fireEvent.change(await screen.findByLabelText('Zahlungsart'), { target: { value: 'RUECKLAGENENTNAHME' } });
+  fireEvent.change(screen.getByLabelText('Betrag (EUR)'), { target: { value: '200,01' } });
+  expect(screen.queryByLabelText('Mietvertrag')).not.toBeInTheDocument();
+  expect(screen.queryByLabelText('Eigentümer')).not.toBeInTheDocument();
+  fireEvent.click(screen.getByRole('button', { name: 'Als Entwurf übernehmen' }));
+  expect(await screen.findByText(/Rücklagenentnahme als Entwurf übernommen/)).toBeInTheDocument();
+  expect(JSON.parse(posts(fetchMock)[0][1]!.body as string).lines[0]).toMatchObject({ payment_type: 'RUECKLAGENENTNAHME', amount: '200.01' });
+});

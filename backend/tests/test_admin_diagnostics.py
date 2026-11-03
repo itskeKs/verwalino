@@ -1,5 +1,7 @@
 """Authenticated manual downloads, organization isolation and no uploads."""
 import json
+
+from app.deployment import TARGET
 import logging
 
 from fastapi import Depends
@@ -27,7 +29,7 @@ async def test_administrator_downloads_matching_manifest_and_audit_line(client_a
     assert response.headers['Cache-Control'] == 'no-store'
     members = unpack_bundle(response.content)
     assert json.loads(members['manifest.json'])['app_version'] == app.version
-    assert json.loads(members['manifest.json'])['release_target'] == '0148'
+    assert json.loads(members['manifest.json'])['release_target'] == TARGET
     assert json.loads(members['containers.json']) is None
     database = json.loads(members['database.json'])
     assert database['scope'] == 'organization'

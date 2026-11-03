@@ -152,7 +152,7 @@ async def test_real_annual_weg_settlement_is_181_and_184_days(client_a_admin, ow
     })
     assert response.status_code == 201, response.text
     run = response.json()["id"]
-    values = {"reserve_opening_balance": "0.00", "reserve_withdrawals_total": "0.00",
+    values = {"reserve_override_reason": "Reviewed synthetic opening balance", "reserve_opening_balance": "0.00",
               "paid_advances": [{"owner_profile_id": w[owner], "paid_total": "0.00"}
                                 for owner in ("seller", "buyer")]}
     await attest_fixture(api, "settlement", run, values)
@@ -424,7 +424,7 @@ async def test_input_owners_include_buyer_missing_from_frozen_plan(client_a_admi
     response = await api.get(f"/api/weg-settlements/{run}/input-owners")
     assert response.status_code == 200, response.text
     assert response.json() == sorted([w["seller"], w["buyer"]])
-    values = {"reserve_opening_balance": "0.00", "reserve_withdrawals_total": "0.00",
+    values = {"reserve_override_reason": "Reviewed synthetic opening balance", "reserve_opening_balance": "0.00",
               "paid_advances": [{"owner_profile_id": w["seller"], "paid_total": "0.00"}]}
     incomplete = await api.post("/api/financial-input-coverage", json={
         "subject_kind": "settlement", "subject_id": run, "values": values,

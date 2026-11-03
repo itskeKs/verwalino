@@ -90,3 +90,8 @@ Feature: Organization isolation
     And the archive is imported into an empty organization
     And the destination administrator confirms and revokes deletion
     Then the source organization still has its original records and session
+
+  Scenario: Another organization's reserve contribution correction cannot be reduced or deleted
+    Given an audited draft reserve contribution correction belongs to Verwaltung Alpha
+    When Verwaltung Beta tries to reduce and delete that contribution correction
+    Then the reserve contribution correction is not found and remains unchanged

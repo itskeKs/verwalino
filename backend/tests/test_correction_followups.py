@@ -61,7 +61,7 @@ async def corrected_report(api,ids,finalized=False,extra_parent=False):
       'accounting_scope_id':str(ids['scope']),'period_start':'2026-01-01','period_end':'2026-12-31'})
     assert created.status_code==201,created.text
     target=created.json()['id'];url='/api/weg-settlements/asset-reports/'+target
-    values={'reserve_opening_balance':'0.00','reserve_withdrawals_total':'0.00','reserve_contributions_total':'0.00',
+    values={'reserve_override_reason':'Reviewed synthetic opening balance','reserve_opening_balance':'0.00',
       'bank_balances':[{'bank_account_id':str(ids['bank']),'label':'Synthetic account','account_type':'LAUFEND','balance':'0.00'}],
       'receivables':[],'payables':[]}
     await declare(api,target,values,old['source_document_id'])

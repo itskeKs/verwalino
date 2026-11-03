@@ -3,6 +3,24 @@
  */
 
 import { api, uploadFormData } from "./client";
+import type { ReserveLedger, ReserveOverride } from './types';
+
+export function getReserveLedger(runId: string): Promise<ReserveLedger> {
+  return api.get<ReserveLedger>(`/api/weg-settlements/${runId}/reserve-ledger`);
+}
+
+export function addReserveOverride(runId: string, body: ReserveOverride): Promise<{ id: string }> {
+  return api.post(`/api/weg-settlements/${runId}/reserve-ledger/overrides`, body);
+}
+
+export function reduceReserveContribution(runId: string, entryId: string, reducedTo: string, reason: string): Promise<{ id: string }> {
+  return api.post(`/api/weg-settlements/${runId}/reserve-ledger/overrides/${entryId}/reduce`, { reduced_to: reducedTo, reason });
+}
+
+export function deleteReserveContribution(runId: string, entryId: string, reason: string): Promise<{ id: string }> {
+  return api.delete(`/api/weg-settlements/${runId}/reserve-ledger/overrides/${entryId}`, { body: JSON.stringify({ reason }) });
+}
+
 import type { Task, TaskInput, TaskFilters, TaskPage, User, UserRole, PropertyYearReport, PropertyYearReportQuery, AnlageVSummary } from "./types";
 
 import type { Attachment, AttachmentFilters, AttachmentPage, AttachmentUpload } from "./types";
