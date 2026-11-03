@@ -933,7 +933,11 @@ remaining correction, accepts “Verbleibender Korrekturbetrag” and a mandator
 retained counter-entry; the original and every reduction remain visible with
 “Verbleibende Korrektur” and “Verringerung einer Zuführungskorrektur”. Finalized
 periods and fully reversed originals offer no reduction control. Refusals show
-the German server message and preserve the amount and reason. The same shared
+the German server message and preserve the amount and reason. If no positive
+remainder can be kept, the message says “Für diese Korrektur ist kein positiver
+Restbetrag mehr möglich. Bitte verwenden Sie „Korrektur löschen“.”, naming the
+visible delete action; a positive limit keeps “Sie können für diese Korrektur
+höchstens … € beibehalten.” The same shared
 panel and scrollable dialog apply to both reserve pages at 1280 and 360 px.
 The opening-total payload uses `corrected_opening_balance` with the seen opening;
 `amount` remains a signed difference.
@@ -1034,3 +1038,14 @@ navigating. All four cases have no console errors or horizontal overflow.
 | Asset protected immediately after import | [view](docs/assets/design/draft-deletion/rework/asset-imported-1280.png) | [view](docs/assets/design/draft-deletion/rework/asset-imported-360.png) |
 | WEG eligible before saving coverage | [view](docs/assets/design/draft-deletion/rework/weg-eligible-1280.png) | [view](docs/assets/design/draft-deletion/rework/weg-eligible-360.png) |
 | WEG protected immediately after import | [view](docs/assets/design/draft-deletion/rework/weg-imported-1280.png) | [view](docs/assets/design/draft-deletion/rework/weg-imported-360.png) |
+
+### Contribution correction without remaining backing
+
+The refusal keeps the entered 100,00 € and reason while directing the manager to
+“Korrektur löschen”. These captures use a synthetic 300,00 € correction after
+its backing Hausgeld was reversed, on both pages and at both viewport widths.
+
+| Page | Desktop (1280 px) | 360 px |
+| --- | --- | --- |
+| WEG settlement | [before](docs/assets/design/reserve-correction-deletion/weg-before-1280.png) · [after](docs/assets/design/reserve-correction-deletion/weg-after-1280.png) | [before](docs/assets/design/reserve-correction-deletion/weg-before-360.png) · [after](docs/assets/design/reserve-correction-deletion/weg-after-360.png) |
+| Asset report | [before](docs/assets/design/reserve-correction-deletion/asset-before-1280.png) · [after](docs/assets/design/reserve-correction-deletion/asset-after-1280.png) | [before](docs/assets/design/reserve-correction-deletion/asset-before-360.png) · [after](docs/assets/design/reserve-correction-deletion/asset-after-360.png) |

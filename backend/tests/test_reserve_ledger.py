@@ -2881,8 +2881,13 @@ async def test_delete_unbacked_contribution_correction_restores_headroom_and_fin
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize('refusal_path', ['service', 'guard'])
+@pytest.mark.parametrize('remaining_assignment,headroom,limit,target,message', [
+    ('400.00', '-100.00', '200.00', '250.00', 'Sie können für diese Korrektur höchstens 200,00 € beibehalten.'),
+    ('600.00', '-300.00', '0.00', '100.00', 'Für diese Korrektur ist kein positiver Restbetrag mehr möglich. Bitte verwenden Sie „Korrektur löschen“.'),
+    ('700.00', '-400.00', '-100.00', '100.00', 'Für diese Korrektur ist kein positiver Restbetrag mehr möglich. Bitte verwenden Sie „Korrektur löschen“.'),
+], ids=['positive', 'zero', 'negative'])
 async def test_contribution_reduction_uses_the_same_limit_and_detail_for_both_refusal_paths(
-        client_a_admin, seed_data, app_rw_session, monkeypatch, refusal_path):
+        client_a_admin, seed_data, app_rw_session, monkeypatch, refusal_path, remaining_assignment, headroom, limit, target, message):
     from app.repositories.reserve_ledger_repo import ReserveLedgerRepository
     from app.services.reserve_ledger_service import ReserveLedgerService
 
@@ -2894,7 +2899,7 @@ async def test_contribution_reduction_uses_the_same_limit_and_detail_for_both_re
     assert report.status_code == 201, report.text
     w['run'] = report.json()['id']
     path = f"/api/weg-settlements/{w['run']}/reserve-ledger"
-    for cash, amount in zip(receipts, ('100.00', '400.00'), strict=True):
+    for cash, amount in zip(receipts, ('100.00', remaining_assignment), strict=True):
         assigned = await api.post(path + '/overrides', json={
             'component': 'CONTRIBUTION', 'payment_id': cash, 'amount': amount,
             'reason': 'Partial assignment before plan'})
@@ -2910,10 +2915,10 @@ async def test_contribution_reduction_uses_the_same_limit_and_detail_for_both_re
     await app_rw_session.execute(text("SELECT set_config('app.current_org_id',:org,true)"),
         {'org': str(seed_data['org_a_id'])})
     assert await app_rw_session.scalar(text('SELECT reserve_contribution_headroom(:org,:run,:unit)'),
-        {'org': seed_data['org_a_id'], 'run': w['run'], 'unit': w['u1']}) == Decimal('-100.00')
+        {'org': seed_data['org_a_id'], 'run': w['run'], 'unit': w['u1']}) == Decimal(headroom)
     await app_rw_session.rollback()
 
-    headroom = ReserveLedgerRepository.contribution_headroom
+    read_headroom = ReserveLedgerRepository.contribution_headroom
     headroom_reads, calculations = [], []
     reduction_limit = getattr(ReserveLedgerService, 'contribution_reduction_limit', None)
 
@@ -2923,9 +2928,9 @@ async def test_contribution_reduction_uses_the_same_limit_and_detail_for_both_re
         return result
 
     async def observed_headroom(repo, *args):
-        remaining = await headroom(repo, *args)
+        remaining = await read_headroom(repo, *args)
         headroom_reads.append(remaining)
-        # Simulate a stale service read; the real INSERT guard still sees -100.
+        # Simulate a stale service read; the real INSERT guard sees the current backing.
         if refusal_path == 'guard' and len(headroom_reads) == 1:
             return Decimal('0.00')
         return remaining
@@ -2933,15 +2938,15 @@ async def test_contribution_reduction_uses_the_same_limit_and_detail_for_both_re
     monkeypatch.setattr(ReserveLedgerService, 'contribution_reduction_limit', observed_limit, raising=False)
     monkeypatch.setattr(ReserveLedgerRepository, 'contribution_headroom', observed_headroom)
     refused = await api.post(path + f"/overrides/{added.json()['id']}/reduce", json={
-        'reduced_to': '250.00', 'reason': 'Reconcile after Hausgeld reversal'})
+        'reduced_to': target, 'reason': 'Reconcile after Hausgeld reversal'})
     expected_detail = {'code': 'RESERVE_CONTRIBUTION_EXCEEDS_BOOKED',
-        'message': 'Sie können für diese Korrektur höchstens 200,00 € beibehalten.'}
+        'message': message}
     assert refused.status_code == 422, refused.text
     assert refused.json() == {'detail': expected_detail}
     expected_reads = 2 if refusal_path == 'guard' else 1
-    assert headroom_reads == [Decimal('-100.00')] * expected_reads
+    assert headroom_reads == [Decimal(headroom)] * expected_reads
     assert len(calculations) == expected_reads
-    assert calculations[-1] == (Decimal('200.00'), expected_detail)
+    assert calculations[-1] == (Decimal(limit), expected_detail)
     assert (await api.get(path)).json() == before
 
 

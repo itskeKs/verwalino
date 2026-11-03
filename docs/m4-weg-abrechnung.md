@@ -839,7 +839,11 @@ allocation and WEMoG settlement-balance calculation; it changes neither.
   actor, reason, old and new remaining amounts. Repeated reductions use the
   original amount plus its retained reversals. A positive remainder must be below
   the current amount and at most raw headroom plus that current amount, from the
-  same headroom function (`RESERVE_CONTRIBUTION_EXCEEDS_BOOKED`, naming the limit).
+  same headroom function (`RESERVE_CONTRIBUTION_EXCEEDS_BOOKED`, naming a positive
+  limit). When no positive remainder is possible, the same response on the service
+  and database-guard paths says “Für diese Korrektur ist kein positiver Restbetrag
+  mehr möglich. Bitte verwenden Sie „Korrektur löschen“.” The named action is
+  available in the reduction dialog and retains the reason and counter-entry.
   Deleting releases the entire remainder even if other corrections still lack
   backing; this lets each unsupported correction be reconciled in turn. Once all
   are reconciled, raw headroom returns to zero and finalization is possible.
