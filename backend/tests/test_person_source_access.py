@@ -27,6 +27,42 @@ async def audience(api,person,actor,caps=('read',)):
     return domain,response.json()['id']
 
 
+async def test_preparation_contact_writes_without_actor_keep_organization_isolation(seed_data):
+    person = uuid.uuid4()
+    async with get_tenant_session(seed_data['org_a_id']) as db:
+        await db.execute(text("SELECT set_config('app.current_user_id','',true)"))
+        assert await db.scalar(text('SELECT property_source_security_mode(:org)'), {'org': seed_data['org_a_id']}) == 'PREPARATION'
+        await db.execute(text("INSERT INTO person(id,organization_id,first_name,last_name) VALUES(:id,:org,'Initial','Preparation contact')"),
+            {'id': person, 'org': seed_data['org_a_id']})
+        await db.execute(text("UPDATE person SET first_name='Changed' WHERE id=:id"), {'id': person})
+        with pytest.raises(DBAPIError) as refused:
+            async with db.begin_nested():
+                await db.execute(text("INSERT INTO person(organization_id,last_name) VALUES(:org,'Foreign write')"),
+                    {'org': seed_data['org_b_id']})
+        assert refused.value.orig.sqlstate == '42501'
+        await db.execute(text("SELECT set_config('app.current_org_id',:org,true)"), {'org': str(seed_data['org_b_id'])})
+        assert await db.scalar(text('SELECT count(*) FROM person WHERE id=:id'), {'id': person}) == 0
+        assert (await db.execute(text("UPDATE person SET first_name='Foreign change' WHERE id=:id"), {'id': person})).rowcount == 0
+        assert (await db.execute(text('DELETE FROM person WHERE id=:id'), {'id': person})).rowcount == 0
+        await db.execute(text("SELECT set_config('app.current_org_id',:org,true)"), {'org': str(seed_data['org_a_id'])})
+        assert await db.scalar(text('SELECT first_name FROM person WHERE id=:id'), {'id': person}) == 'Changed'
+        assert (await db.execute(text('DELETE FROM person WHERE id=:id'), {'id': person})).rowcount == 1
+
+
+@pytest.mark.parametrize('mode', ['ENFORCED', 'PAUSED'])
+async def test_strict_contact_writes_still_require_an_actor(seed_data, mode):
+    async with synthetic_enforcement(seed_data):
+        if mode == 'PAUSED':
+            await change_mode(seed_data, mode)
+        async with get_tenant_session(seed_data['org_a_id']) as db:
+            await db.execute(text("SELECT set_config('app.current_user_id','',true)"))
+            with pytest.raises(DBAPIError) as refused:
+                async with db.begin_nested():
+                    await db.execute(text("INSERT INTO person(organization_id,last_name) VALUES(:org,'Missing actor')"),
+                        {'org': seed_data['org_a_id']})
+            assert refused.value.orig.sqlstate == '42501'
+
+
 async def test_creator_custody_and_publication_never_restore_revoked_access(client_a_admin,client_a_clerk,seed_data):
     person=await contact(client_a_clerk)
     async with synthetic_enforcement(seed_data):

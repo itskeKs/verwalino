@@ -89,6 +89,11 @@ statements acquire the existing tenant `financial-inputs` lock after the shared
 ACL lock and before tuple locks. This serializes ordinary contact-name changes
 with erasure without upgrading an already-held shared ACL lock. Other tables'
 statement-lock behavior, runtime privileges and frozen hashes are unchanged.
+Migration `0158` preserves the existing `PREPARATION` contact-write contract:
+an organization-bound runtime write does not additionally require an actor in
+that mode. The statement helper still takes the same ACL/financial locks. Its
+actor prerequisite continues in strict modes; existing RLS and the special
+privacy command's live-administrator/eligibility checks remain unchanged.
 
 All nine foreign keys on `reserve_ledger_entry` use PostgreSQL's default
 `NO ACTION` deletion rule, as created by migration `0149`; the ORM leaves

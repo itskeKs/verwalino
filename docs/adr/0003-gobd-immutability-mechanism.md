@@ -180,3 +180,14 @@ revoked, and snapshots/digests, money, IDs and references remain untouched.
 Upgrade rewrites no existing rows. Downgrade restores the preceding matcher,
 erasure trigger and statement-lock helper exactly and removes the two private
 lookup/pattern helpers, preserving already anonymized text.
+
+## Amendment — 2026-11-03: preserve preparation-mode contact authorization
+
+Migration `0158` corrects the general person statement helper's actor prerequisite
+introduced by `0157`. Existing organization-bound runtime contact writes in
+`PREPARATION` remain permitted without an actor, as defined by the contact RLS
+policy. The same shared ACL and financial locks still serialize those writes
+with erasure. Strict-mode principal checks, existing RLS, privacy-command
+authorization, immutable guards and runtime grants are unchanged. No general
+person policy is added. Upgrade changes only this predicate; downgrade restores
+the exact `0157` helper, without changing any data or financial evidence.

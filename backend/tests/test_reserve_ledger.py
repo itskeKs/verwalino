@@ -118,8 +118,9 @@ async def test_person_erasure_fits_an_accepted_maximum_length_reason_without_tru
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize('operation', ['insert', 'update', 'delete'])
+@pytest.mark.parametrize('with_actor', [True, False])
 async def test_person_identity_writes_wait_for_the_existing_erasure_financial_lock(
-        isolated_reserve_admin, migrator_session, app_rw_session, operation):
+        isolated_reserve_admin, migrator_session, app_rw_session, operation, with_actor):
     from sqlalchemy.ext.asyncio import async_sessionmaker
     api, seed = isolated_reserve_admin
     person = await api.post('/api/persons', json={'first_name': 'Maria Anna', 'last_name': 'Beispiel'})
@@ -133,7 +134,7 @@ async def test_person_identity_writes_wait_for_the_existing_erasure_financial_lo
     }
     async with async_sessionmaker(app_rw_session.bind).begin() as db:
         await db.execute(text("SELECT set_config('app.current_org_id',:org,true),set_config('app.current_user_id',:actor,true)"),
-            {'org': str(seed['org_a_id']), 'actor': str(seed['user_a_admin_id'])})
+            {'org': str(seed['org_a_id']), 'actor': str(seed['user_a_admin_id']) if with_actor else ''})
         await db.execute(text("SET LOCAL lock_timeout='100ms'"))
         with pytest.raises(DBAPIError) as refused:
             async with db.begin_nested():
