@@ -36,6 +36,25 @@ No schema/RLS change.
 
 ## Maintenance reserve ledger privileges
 
+### Correction reasons and individual person erasure
+
+Correction reasons are stored as trimmed free text in `reserve_ledger_entry.reason`
+and copied into the audit payloads of `reserve.override_added` and
+`reserve.contribution_reduced`. Individual person erasure does not scrub either
+copy, including when the person's master data is anonymized. Existing
+`reserve_override_reason` values also remain unchanged. A reason such as
+“Rückzahlung an Anna Beispiel” therefore retains that name in the ledger and
+audit export after individual person anonymization.
+
+Both correction dialogs display “Bitte keine personenbezogenen Daten eintragen.”
+below “Begründung *”. This is guidance when entering free text; it neither detects
+nor removes personal data. Any person-specific scrubbing and the necessary narrow
+exception to ledger immutability remain an open owner decision in #222. The
+organization-erasure audit-payload decision does not decide individual person
+erasure; see [ADR-0012](adr/0012-gdpr-erasure-vs-gobd-retention.md).
+
+### Append-only privileges
+
 `reserve_ledger_entry` is append-only. Migration `0149` revokes all table
 privileges from `PUBLIC`, `app_rw`, `app_worker` and `app_review`, then grants
 `SELECT`, `INSERT`, `UPDATE` and `DELETE` to `app_rw`. Migration `0070` grants
