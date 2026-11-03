@@ -155,7 +155,7 @@ class PaymentRepository(TenantRepository[Payment]):
         return result.scalars().all()
 
     async def derived_for_hausgeld(
-        self, owner_profile_id: uuid.UUID, period_year: int, *, property_id: uuid.UUID | None = None,
+        self, owner_profile_id: uuid.UUID, period_year: int,
     ) -> Sequence[Payment]:
         """booked, active HAUSGELD_VORSCHUSS payments for one owner + year (§6.3)."""
         await self.require_computation_context(owner_id=owner_profile_id)
@@ -165,8 +165,6 @@ class PaymentRepository(TenantRepository[Payment]):
             .where(Payment.owner_profile_id == owner_profile_id)
             .where(Payment.period_year == period_year)
         )
-        if property_id is not None:
-            stmt = stmt.where(Payment.property_id == property_id)
         result = await self._session.execute(stmt)
         return result.scalars().all()
 

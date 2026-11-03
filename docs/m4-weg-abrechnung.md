@@ -261,10 +261,16 @@ The engine sums **three subtotals** per owner (`SUBTOTAL` lines): Σ allocable, 
 
 - **Expected advance payments (resolution-relevant):** from the linked `economic_plan` (§1.5), per owner/unit, copied into the snapshot. This is the **authoritative** quantity for the settlement balance.
 - **Actual payments:** new annual settlements derive net booked, non-reversed
-  `HAUSGELD_VORSCHUSS` payments of the owner, property and assigned settlement period,
-  including refunds. Drafts, reversed originals and reversal rows do not count.
+  `HAUSGELD_VORSCHUSS` payments of the owner and property, using the same period
+  selection and signed Ist as the owner ledger. An explicit period year/month takes
+  precedence over the value date (December 2026 assigned to a January 2027 receipt
+  still belongs to December). Without an assigned year, the value date selects the
+  period. Refunds reduce the paid total; drafts, reversed originals and reversal rows
+  do not count.
   Payments stay with their assigned owner after an ownership change; there is no transfer
   of a predecessor's arrears. Manual coverage entries cannot create paid amounts.
+  A successor with only booked payments is included even with no cost or plan lines:
+  costs, plan Soll and Spitze remain zero, while the payment remains their own credit.
 - **Displayed account balance:** `account_balance = plan_soll − paid` (positive arrears,
   negative credit). `payment_amount = abrechnungsspitze + account_balance`. These are
   informational amounts, not a new fee, claim, resolution or dunning action.
@@ -275,7 +281,7 @@ The engine sums **three subtotals** per owner (`SUBTOTAL` lines): Σ allocable, 
   and state that only the Spitze is resolved and arrears arise from the plan.
 - Example (#204): costs 6,400.00, plan 7,200.00, paid 6,600.00 → resolved Spitze
   −800.00, arrears +600.00, resulting payment −200.00 (credit to the owner).
-- Engine `m4.3.0` stores `plan_soll`, `paid`, `account_balance` and `payment_amount`
+- Engine `m4.3.1` stores `plan_soll`, `paid`, `account_balance` and `payment_amount`
   in the existing hashed per-owner result. The API and PDF read those frozen values;
   later bookings do not rewrite finalized results. No database migration or new ledger
   position is required. Existing finalized snapshots without these fields retain their

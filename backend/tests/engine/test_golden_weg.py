@@ -85,6 +85,27 @@ def test_owner_change_never_transfers_payments_to_the_successor():
     assert (new.abrechnungsspitze, new.account_balance, new.payment_amount) == (Decimal('40'), Decimal('-100'), Decimal('-60'))
 
 
+def test_payment_only_successor_keeps_credit_without_changing_original_owners():
+    inp = TestGolden2Abrechnungsspitze()._scenario()
+    inp = replace(inp,
+        owner_periods=(inp.owner_periods[0], replace(inp.owner_periods[1], valid_to=date(2025, 6, 30)),
+            replace(inp.owner_periods[1], owner_profile_id=_U(23), valid_from=date(2025, 7, 1))),
+        cost_positions=tuple(replace(p, service_period_to=date(2025, 6, 30)) for p in inp.cost_positions),
+        paid_advances=(OwnerAdvanceInput(_U(21), Decimal('5000.00')), OwnerAdvanceInput(_U(22), Decimal('4000.00'))))
+    original = compute_weg_jahresabrechnung(inp)
+    inp = replace(inp, paid_advances=(*inp.paid_advances, OwnerAdvanceInput(_U(23), Decimal('1900.00'))))
+    result = compute_weg_jahresabrechnung(inp)
+    successor = next((o for o in result.owners if o.owner_profile_id == _U(23)), None)
+    assert successor is not None, 'An owner with only booked payments must have a result'
+    assert (successor.owner_cost_total, successor.plan_advance, successor.abrechnungsspitze) == (Decimal('0.00'),) * 3
+    assert (successor.paid_advances, successor.account_balance, successor.payment_amount) == (Decimal('1900.00'), Decimal('-1900.00'), Decimal('-1900.00'))
+    assert successor.reserve_notice is None
+    assert tuple(o for o in result.owners if o.owner_profile_id != _U(23)) == original.owners
+    assert result.abrechnungsspitze_total == original.abrechnungsspitze_total
+    saved = build_weg_snapshot_payload(inp, result)['result']['owners']
+    assert next(o['payment_amount'] for o in saved if o['owner_profile_id'] == str(_U(23))) == '-1900.00'
+
+
 @pytest.mark.parametrize('funded, expected', [
     ('0.00', ('4200.00', '2800.00')),
     ('400.00', ('3960.00', '2640.00')),

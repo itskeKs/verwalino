@@ -1284,18 +1284,20 @@ async def test_weg_balance_reads_booked_payments_and_freezes_them(client_a_admin
 
 
 @pytest.mark.asyncio
-async def test_legacy_weg_pdf_and_digest_are_not_upgraded_on_read(client_a_admin, m4_seed, app_rw_session, monkeypatch):
+@pytest.mark.parametrize('engine_version,has_balance', [('m4.2.0', False), ('m4.3.0', True)])
+async def test_legacy_weg_pdf_and_digest_are_not_upgraded_on_read(client_a_admin, m4_seed, app_rw_session, monkeypatch, engine_version, has_balance):
     from app.engine.canonical import canonical_json, sha256_hex
     from app.services import weg_settlement_service as service
     from tests.test_reserve_ledger import pdf_text
     original_builder = service.build_weg_snapshot_payload
     def legacy_builder(inp, result):
         payload = original_builder(inp, result)
-        for owner in payload['result']['owners']:
-            for key in ('plan_soll', 'paid', 'account_balance', 'payment_amount'):
-                owner.pop(key)
+        if not has_balance:
+            for owner in payload['result']['owners']:
+                for key in ('plan_soll', 'paid', 'account_balance', 'payment_amount'):
+                    owner.pop(key)
         return payload
-    monkeypatch.setattr(service, 'ENGINE_VERSION', 'm4.2.0')
+    monkeypatch.setattr(service, 'ENGINE_VERSION', engine_version)
     monkeypatch.setattr(service, 'build_weg_snapshot_payload', legacy_builder)
     plan = await _create_and_finalize_plan(client_a_admin, m4_seed)
     response = await client_a_admin.post('/api/weg-settlements', json={'property_id': m4_seed['property'],
@@ -1303,18 +1305,20 @@ async def test_legacy_weg_pdf_and_digest_are_not_upgraded_on_read(client_a_admin
     assert response.status_code == 201, response.text
     run = response.json()['id']
     frozen = (await finalize_weg_fixture(client_a_admin, run, m4_seed)).json()
+    original_pdf = (await client_a_admin.get(f'/api/weg-settlements/{run}/pdf')).content
     monkeypatch.undo()
     response = await client_a_admin.get(f'/api/weg-settlements/{run}/pdf')
     assert response.status_code == 200 and response.content.startswith(b'%PDF')
-    assert 'Zahlbetrag' not in pdf_text(response.content)
+    assert response.content == original_pdf
+    assert ('Zahlbetrag' in pdf_text(response.content)) == has_balance
     reloaded = (await client_a_admin.get(f'/api/weg-settlements/{run}')).json()
-    assert reloaded['owner_results'] == []
-    assert reloaded['engine_version'] == 'm4.2.0'
+    assert reloaded['owner_results'] == frozen['owner_results']
+    assert reloaded['engine_version'] == engine_version
     assert reloaded['snapshot_sha256'] == frozen['snapshot_sha256']
     await app_rw_session.execute(text("SELECT set_config('app.current_org_id', :org, true)"), {'org': str(m4_seed['org_a_id'])})
     payload = (await app_rw_session.execute(text('SELECT snapshot_payload FROM settlement_run WHERE id=:id'), {'id': run})).scalar_one()
     assert sha256_hex(canonical_json(payload)) == frozen['snapshot_sha256']
-    assert all('payment_amount' not in o for o in payload['result']['owners'])
+    assert all(('payment_amount' in o) == has_balance for o in payload['result']['owners'])
 
 
 @pytest.mark.asyncio

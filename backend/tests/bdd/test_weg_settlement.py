@@ -13,6 +13,10 @@ scenarios(str(Path(__file__).resolve().parents[3] / 'features/weg_settlement.fea
 
 @given("Anna Berg's WEG plan is 7200 euros and her cost share is 6400 euros", target_fixture='weg_balance')
 def weg_balance(world, seed_data):
+    return create_balance_world(world, seed_data)
+
+
+def create_balance_world(world, seed_data, *, cost_period_end='2026-12-31'):
     world.actor = world.administrator_of('Verwaltung Alpha')
     world.actor_organization = 'Verwaltung Alpha'
     user = str(seed_data['user_a_admin_id'])
@@ -21,10 +25,11 @@ def weg_balance(world, seed_data):
         'data_audience': {'label': 'Gartenstraße', 'reason': 'Synthetic settlement',
             'grants': [{'user_id': user, 'capabilities': ['read', 'prepare', 'approve', 'export'],
                         'reason': 'Synthetic settlement'}]}}, keyed=True)
-    owners = []
+    owners, units = [], []
     for number, mea, name in [('1', '600', 'Anna Berg'), ('2', '400', 'Berta Vollständig')]:
         unit = create(world, '/api/units', {'property_id': home['id'], 'number': number,
             'usage_type': 'WOHNUNG', 'mea': mea, 'area': '100'})
+        units.append(unit['id'])
         person = create_person(world, 'Verwaltung Alpha', name)
         owner = create(world, '/api/owner-profiles', {'person_id': person.id})
         create(world, '/api/ownership', {'unit_id': unit['id'], 'owner_profile_id': owner['id'],
@@ -40,7 +45,7 @@ def weg_balance(world, seed_data):
     cost = create(world, '/api/cost-entries', {**basis, 'cost_category_id': category['id'],
         'cost_category_plan_version': category['plan_version'], 'document_number': 'RE-GARTEN',
         'invoice_date': '2026-02-01', 'service_period_from': '2026-01-01',
-        'service_period_to': '2026-12-31', 'gross_amount': '10666.67',
+        'service_period_to': cost_period_end, 'gross_amount': '10666.67',
         'owner_distribution_key': 'MEA',
         'tenant_apportionable': 'NICHT_UMLAGEFAEHIG', 'source': 'MANUAL'})
     assert world.act('POST', f"/api/cost-entries/{cost['id']}/confirm").status_code == 200
@@ -53,7 +58,65 @@ def weg_balance(world, seed_data):
     assert response.status_code == 200, response.text
     run = create(world, '/api/weg-settlements', {**basis, 'economic_plan_id': plan['id'],
         'period_start': '2026-01-01', 'period_end': '2026-12-31'})
-    return {'run': run['id'], 'property': home['id'], 'bank': account['id'], 'owners': owners}
+    return {'run': run['id'], 'property': home['id'], 'bank': account['id'], 'owners': owners,
+            'units': units, 'plan': plan['id'], 'scope': scope['id']}
+
+
+def owner_ledger(world, w, owner):
+    response = world.look(world.actor, f'/api/payments/mietkonto/owner/{owner}?'
+        f"period_start=2026-01-01&period_end=2026-12-31&economic_plan_id={w['plan']}&accounting_scope_id={w['scope']}")
+    assert response.status_code == 200, response.text
+    return response.json()
+
+
+@given('Anna has booked 6600 euros of Hausgeld without an assigned year')
+def yearless_hausgeld(world, weg_balance):
+    w = weg_balance
+    for owner, amount in zip(w['owners'], ('6600.00', '4800.00')):
+        payment = create(world, '/api/payments', {'bank_account_id': w['bank'], 'direction': 'IN',
+            'owner_profile_id': owner, 'amount': amount, 'value_date': '2026-12-01',
+            'payment_type': 'HAUSGELD_VORSCHUSS'})
+        response = world.act('POST', f"/api/payments/{payment['id']}/book")
+        assert response.status_code == 200, response.text
+    w['ledger_before'] = owner_ledger(world, w, w['owners'][0])
+    assert {key: w['ledger_before'][key] for key in ('soll_total', 'ist_total', 'balance')} == {
+        'soll_total': '7200.00', 'ist_total': '6600.00', 'balance': '600.00'}
+    w['payments_before'] = world.act('GET', '/api/payments').json()
+
+
+@given('a successor owns unit 2 from July after the plan was finalized and all costs belong to January through June',
+       target_fixture='weg_balance')
+def payment_only_successor(world, seed_data):
+    w = create_balance_world(world, seed_data, cost_period_end='2026-06-30')
+    response = world.act('GET', f"/api/ownership?unit_id={w['units'][1]}")
+    assert response.status_code == 200, response.text
+    old = next(row for row in response.json() if row['owner_profile_id'] == w['owners'][1])
+    response = world.act('PATCH', f"/api/ownership/{old['id']}", json={'valid_to': '2026-06-30'})
+    assert response.status_code == 200, response.text
+    person = create_person(world, 'Verwaltung Alpha', 'Clara Nachfolgerin')
+    owner = create(world, '/api/owner-profiles', {'person_id': person.id})
+    create(world, '/api/ownership', {'unit_id': w['units'][1], 'owner_profile_id': owner['id'],
+        'valid_from': '2026-07-01'})
+    w['successor'] = owner['id']
+    w['owners'].append(owner['id'])
+    return w
+
+
+@given('the successor has booked 1900 euros for December 2026 with a January 2027 value date')
+def cross_year_successor_payment(world, weg_balance):
+    w = weg_balance
+    payment = create(world, '/api/payments', {'bank_account_id': w['bank'], 'direction': 'IN',
+        'owner_profile_id': w['successor'], 'amount': '1900.00', 'value_date': '2027-01-05',
+        'payment_type': 'HAUSGELD_VORSCHUSS', 'period_year': 2026, 'period_month': 12})
+    response = world.act('POST', f"/api/payments/{payment['id']}/book")
+    assert response.status_code == 200, response.text
+    derived = world.act('POST', f"/api/weg-settlements/{w['run']}/paid-advances-derived")
+    assert derived.status_code == 200, derived.text
+    assert next(row['paid_total'] for row in derived.json() if row['owner_profile_id'] == w['successor']) == '1900.00'
+    w['ledger_before'] = owner_ledger(world, w, w['successor'])
+    assert {key: w['ledger_before'][key] for key in ('soll_total', 'ist_total', 'balance')} == {
+        'soll_total': '0.00', 'ist_total': '1900.00', 'balance': '-1900.00'}
+    w['payments_before'] = world.act('GET', '/api/payments').json()
 
 
 @given('Anna has booked 6600 euros of Hausgeld and the second owner has paid in full')
@@ -114,6 +177,39 @@ def balance_pdf(world, weg_balance):
 @then('finalization has not changed the booked Hausgeld payments')
 def unchanged_payments(world, weg_balance):
     assert world.act('GET', '/api/payments').json() == weg_balance['payments_before']
+
+
+@then("the owner's ledger is unchanged by finalization")
+def unchanged_owner_ledger(world, weg_balance):
+    w = weg_balance
+    assert owner_ledger(world, w, w.get('successor', w['owners'][0])) == w['ledger_before']
+
+
+@then("the finalized statement and PDF show the successor's 1900 euro credit with unit and ownership dates")
+def successor_credit(world, weg_balance):
+    w = weg_balance
+    result = world.look(world.actor, f"/api/weg-settlements/{w['run']}").json()
+    owner = next((row for row in result['owner_results'] if row['owner_profile_id'] == w['successor']), None)
+    assert owner is not None, 'The finalized statement omitted the successor with a booked payment'
+    assert {key: owner[key] for key in ('owner_cost_total', 'plan_soll', 'abrechnungsspitze',
+                                      'paid', 'account_balance', 'payment_amount')} == {
+        'owner_cost_total': '0.00', 'plan_soll': '0.00', 'abrechnungsspitze': '0.00',
+        'paid': '1900.00', 'account_balance': '-1900.00', 'payment_amount': '-1900.00'}
+    assert owner['ownership_periods'] == [{'unit_number': '2', 'valid_from': '2026-07-01', 'valid_to': '2026-12-31'}]
+    originals = {row['owner_profile_id']: row for row in result['owner_results'] if row['owner_profile_id'] != w['successor']}
+    for oid, cost, plan, spitze in zip(w['owners'][:2], ('6400.00', '4266.67'), ('7200.00', '4800.00'), ('-800.00', '-533.33')):
+        assert originals[oid]['owner_cost_total'] == cost
+        assert originals[oid]['plan_soll'] == plan and originals[oid]['abrechnungsspitze'] == spitze
+        assert originals[oid]['paid'] == '0.00'
+    response = world.look(world.actor, f"/api/weg-settlements/{w['run']}/pdf")
+    assert response.status_code == 200, response.text
+    content = pdf_text(response.content)
+    assert 'Clara Nachfolgerin' in content
+    block = content.split('Clara Nachfolgerin', 1)[1]
+    end = min((block.index(name) for name in ('Anna Berg', 'Berta Vollständig') if name in block), default=len(block))
+    block = block[:end]
+    for expected in ('Hausgeld gezahlt', '1.900,00', '-1.900,00', 'Zahlbetrag', 'Einheit 2: 01.07.2026 bis 31.12.2026'):
+        assert expected in block
 
 
 @then('the Einzelabrechnung shows all four amounts and the payment without horizontal scrolling')
