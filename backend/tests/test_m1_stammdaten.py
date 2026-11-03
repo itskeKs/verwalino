@@ -285,10 +285,10 @@ async def test_parent_foreign_keys_roundtrip_and_reject_existing_invalid_referen
                 point.rollback()
     finally:
         engine.dispose()
-        async with AsyncSession(migrator_session.bind) as cleanup:
-            await cleanup.execute(text("DELETE FROM settlement_run WHERE id=:id"),
-                                  {"id": uuid.UUID(foreign_report.json()["id"])})
-            await cleanup.commit()
+        cleanup = await client_b_admin.delete(
+            f"/api/weg-settlements/asset-reports/{foreign_report.json()['id']}"
+        )
+        assert cleanup.status_code == 204, cleanup.text
 
 
 class TestOwnershipExclude:
