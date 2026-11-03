@@ -23,22 +23,6 @@ transactions with the existing principal/source RLS, lease and fencing checks;
 PDF/XML/OCR runs outside the DB transaction in the time-limited child process.
 Proposals change neither costs nor manual inputs or approvals.
 
-## Maintenance reserve ledger privileges
-
-`reserve_ledger_entry` is append-only. Migration `0149` revokes all table
-privileges from `PUBLIC`, `app_rw`, `app_worker` and `app_review`, then grants
-`SELECT`, `INSERT`, `UPDATE` and `DELETE` to `app_rw`. `app_worker` inherits
-`app_rw` with `INHERIT` as established by migration `0070`, so it has the same
-effective privileges; `app_review` has none. RLS scopes access, and the
-`guard_reserve_ledger` trigger rejects every `UPDATE` or `DELETE` with SQLSTATE
-`23514` (`reserve_ledger_append_only`). These grants route attempted mutations
-through the database guard rather than making ledger rows mutable.
-
-The `UPDATE` privilege also permits `SELECT … FOR UPDATE` for rows visible to
-the role under RLS. This does not change the ledger, but it takes row locks that
-conflict with concurrent updates and deletes, and can therefore cause lock
-waiting or contention while the append-only guard continues to reject writes.
-
 The dedicated healthcheck verifies local OCR, storage and DB role without queue consumption
 or a provider call. SIGTERM lets a running bounded extraction run out, without
 adopting results after an abort; the existing lease recovery applies.
@@ -49,6 +33,25 @@ volume; no provider, web, review or migrator credentials. The portable and hoste
 stack does not start this worker and disables automatic extraction.
 Operating details and release boundaries: [DEPLOY.md](../DEPLOY.md).
 No schema/RLS change.
+
+## Maintenance reserve ledger privileges
+
+`reserve_ledger_entry` is append-only. Migration `0149` revokes all table
+privileges from `PUBLIC`, `app_rw`, `app_worker` and `app_review`, then grants
+`SELECT`, `INSERT`, `UPDATE` and `DELETE` to `app_rw`. Migration `0070` grants
+`app_rw` to `app_worker` with `INHERIT TRUE`, so the worker has the same table
+privileges. `app_review` has none. The update and delete grants let attempts
+that pass row-level security (RLS) reach the `guard_reserve_ledger` trigger.
+For each such row, the trigger rejects the change with SQLSTATE `23514` and
+constraint `reserve_ledger_append_only`.
+
+With the `UPDATE` privilege, `SELECT … FOR UPDATE` can lock rows that pass
+both the `reserve_read` and `reserve_no_update` policies. They require a match
+on the current organization, settlement scope access for `read` and `prepare`,
+and property financial disclosure access for `read`. A row that passes only
+`reserve_read` is visible to an ordinary `SELECT` and is filtered out of the
+locking query. A lock on a qualifying row can delay a competing lock, update
+or delete without changing any ledger values.
 
 ## Portable Operation (2026-10-23)
 
