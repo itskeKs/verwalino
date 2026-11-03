@@ -449,6 +449,12 @@ async def test_revision_chain_head_0131_head_preserves_full_state_and_issued_pdf
                 retained = _chain_snapshot(connection)
                 with pytest.raises(DBAPIError, match='Retain finalized split-engine snapshots; repair forward') as refusal:
                     with connection.begin_nested():
+                        # Isolate the older guard from 0154's restoration refusal;
+                        # this savepoint restores the synthetic rows and triggers.
+                        connection.execute(text('ALTER TABLE public.reserve_ledger_entry DISABLE TRIGGER USER'))
+                        connection.execute(text('''DELETE FROM public.reserve_ledger_entry
+                            WHERE reverses_entry_id IS NOT NULL AND amount>0'''))
+                        connection.execute(text('ALTER TABLE public.reserve_ledger_entry ENABLE TRIGGER USER'))
                         migrate('0150', downgrade=True)
                         migrate('0149', downgrade=True)
                 assert refusal.value.orig.pgcode == '23514', str(refusal.value.orig)

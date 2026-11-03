@@ -45,6 +45,12 @@ that pass row-level security (RLS) reach the `guard_reserve_ledger` trigger.
 For each such row, the trigger rejects the change with SQLSTATE `23514` and
 constraint `reserve_ledger_append_only`.
 
+All nine foreign keys on `reserve_ledger_entry` use PostgreSQL's default
+`NO ACTION` deletion rule, as created by migration `0149`; the ORM leaves
+`ondelete` unset to match. The reserve ledger tests compare every foreign key's
+ordered source and target columns and `pg_constraint.confdeltype` with the model,
+including the organization, property and unit scope columns.
+
 With the `UPDATE` privilege, `SELECT … FOR UPDATE` can lock rows that pass
 both the `reserve_read` and `reserve_no_update` policies. They require a match
 on the current organization, settlement scope access for `read` and `prepare`,
