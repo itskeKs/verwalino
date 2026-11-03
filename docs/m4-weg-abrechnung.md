@@ -364,6 +364,26 @@ A new optional column `settlement_line.addressee_owner_profile_id` `UUID NULL` F
 
 For allocable/mixed cost categories, the **owner** settlement usually distributes the **`gross_amount`** (the owner bears the total costs proportionally by MEA; whether/how much they can pass on to their tenant as landlord is the separate tenant sphere M3). M4 does **not** use `apportionable_tenant_amount` for the owner distribution. For `GEMISCHT_PRUEFEN` (caretaker, Hausmeister), the WEG bears the total costs; the split into allocable/non-allocable is relevant for the **tenant** operating cost statement, not for the WEG-internal MEA distribution. **This assumption must be domain-accepted** (special cases: agreed deviating cost bearing, § 16 II WEG).
 
+**Reserve-financed costs (#191):** Before owner distribution, deduct the receipt's
+net evidenced reserve financing from its owner-relevant total. With 7,000.00 EUR
+of costs including a 1,000.00 EUR repair paid from reserves, the distributable
+cost is 6,000.00 EUR: 3,600.00 / 2,400.00 EUR at 600/400 MEA. The reserve ledger
+still records the 1,000.00 EUR withdrawal. The linked economic plan's Soll stays
+unchanged; the lower actual cost flows into the settlement balance and PDF.
+The existing receipt-chain financing rule sums booked, unreversed payouts
+(including legacy `FUNDING` links) and signed evidenced withdrawal/adjustment
+corrections. Draft payments do not finance costs. A corrected cost retains the
+financing of its predecessors, without rewriting booked evidence references.
+This is the financing known when computing the cost, independently of the cash
+period in which the reserve ledger reports the payout.
+
+The snapshot retains the original gross amount and the deducted
+`reserve_funded_amount` for financed positions; unfinanced positions retain their
+existing snapshot shape. Fully financed positions have zero owner cost, while
+simple partial financing distributes only the remainder with the existing key
+and cent rounding. Finalized statements, hashes, lines and PDFs are never
+recomputed by this fix. See [ADR-0013](adr/0013-reserve-financed-owner-costs.md).
+
 ### 4.6 [DECISION E4-4] One Run per Owner vs. One Run with All Owners
 
 **Recommendation: one `WEG_JAHRESABRECHNUNG` run per WEG (property-wide), with per-owner lines** (`addressee_owner_profile_id`). Rationale: The WEG annual settlement is, domain-wise, **one** overall document for the community (total costs, total distribution, reserve development), from which the **individual settlement** per owner is generated as a view/PDF. This deliberately differs from M3 (there: one run **per tenant**, because each tenant receives a separate document to be delivered to them and there is no "overall operating cost document"). On an **owner change during the year**, the unit gets two owner line groups (seller/buyer, day-accurate) in the same run. The per-owner PDF filters on `addressee_owner_profile_id`. **Confirm.**
@@ -521,10 +541,10 @@ Each golden test checks **not only the final total** but the **individual line a
 
 ### 9.2 Property-Based Invariants (Hypothesis, over Random Inputs)
 
-- **I4-A "Σ owner shares == total costs":** per item `Σ over owners distribute_amount(...) == G` exactly (ADR-0005, mirrored to owners).
+- **I4-A "Σ owner shares == total costs":** per item `Σ over owners distribute_amount(...) == G − net reserve financing` exactly (ADR-0005, mirrored to owners; §4.5).
 - **I4-B "MEA sums coherent":** Σ of the MEA weights used == total MEA basis; for co-ownership, `Σ mea_share` of a unit consistent with the unit MEA (within tolerance, F4-7).
 - **I4-C "Settlement balance == actual − expected":** for random actual costs + plan Soll, per owner `settlement balance == owner_cost_total − plan_advance` exactly; **and** `Σ settlement balances == Σ actual costs − Σ expected advances` (no drift across owners).
-- **I4-D "Reserve development consistent":** `closing balance == opening balance + Σ contribution − Σ withdrawal` exactly; reserve contribution **never** appears in `OWNER_COST_TOTAL`.
+- **I4-D "Reserve development consistent":** `closing balance == opening balance + Σ contribution − Σ withdrawal` exactly; reserve contribution **never** appears in `OWNER_COST_TOTAL`. Evidenced reserve financing is also excluded from owner costs (§4.5), without removing the withdrawal from the ledger.
 - **I4-E "Owner time shares == 1":** for random `ownership_history` decompositions of a unit, the owner time factors sum exactly to 1 over the period (ADR-0004, mirrored).
 - **I4-F "Reserve/non-allocable never in tenant operating costs":** in no `BK_MIETER` run does a `RESERVE_*` or `NICHT_UMLAGEFAEHIG` item appear (mirror of M3 I-F, secures the sphere separation §7).
 - **I4-G "Plan monthly installments sum-exact":** `Σ over 12 monthly installments == annual advance` exactly per owner.

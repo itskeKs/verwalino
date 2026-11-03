@@ -13,6 +13,7 @@ Pure-function tests -- no DB, no server.
 from __future__ import annotations
 
 import uuid
+from dataclasses import replace
 from datetime import date
 from decimal import Decimal
 
@@ -47,6 +48,60 @@ def _cost_line(owner_result, category_code):
     return next(
         ln for ln in owner_result.cost_lines if ln.category_code == category_code
     )
+
+
+@pytest.mark.parametrize('funded, expected', [
+    ('0.00', ('4200.00', '2800.00')),
+    ('400.00', ('3960.00', '2640.00')),
+    ('1000.00', ('3600.00', '2400.00')),
+])
+def test_reserve_financing_is_deducted_before_owner_distribution(funded, expected):
+    inp = TestGolden2Abrechnungsspitze()._scenario()
+    ordinary = replace(inp.cost_positions[0], gross_amount=Decimal('6000.00'))
+    repair = replace(ordinary, cost_entry_id=_U(51), category_code='REPARATUR',
+                     gross_amount=Decimal('1000.00'), reserve_funded_amount=Decimal(funded))
+    inp = replace(inp, cost_positions=(ordinary, repair),
+                  reserve=ReserveInput(opening_balance=Decimal('5000.00'),
+                                       withdrawals_total=Decimal(funded)))
+    result = compute_weg_jahresabrechnung(inp)
+    assert result.cost_total == Decimal('7000.00') - Decimal(funded)
+    for owner_id, total in zip((_U(21), _U(22)), expected):
+        owner = _owner_result(result, owner_id)
+        assert owner.owner_cost_total == Decimal(total)
+        assert owner.subtotal_umlagefaehig == Decimal(total)
+        assert owner.abrechnungsspitze == Decimal(total) - next(
+            a.plan_advance_total for a in inp.plan_advances if a.owner_profile_id == owner_id)
+        assert _cost_line(owner, 'REPARATUR').total_amount == Decimal('1000.00') - Decimal(funded)
+    assert result.reserve.closing_balance == Decimal('5000.00') - Decimal(funded)
+    payload = build_weg_snapshot_payload(inp, result)
+    position = next(p for p in payload['inputs']['cost_positions'] if p['category_code'] == 'REPARATUR')
+    assert position['gross_amount'] == '1000.00'
+    assert position.get('reserve_funded_amount', '0.00') == funded
+    assert ('reserve_funded_amount' in position) is (Decimal(funded) != 0)
+
+
+@pytest.mark.parametrize('key', ['MANUELLER_BETRAG', 'EXTERNE_ABRECHNUNG'])
+def test_financing_preserves_direct_owner_weights(key):
+    from app.engine.types import ExternalAmountInput, ManualAmountInput
+    inp = TestGolden2Abrechnungsspitze()._scenario()
+    pos = replace(inp.cost_positions[0], gross_amount=Decimal('1000.00'),
+        owner_distribution_key=key, reserve_funded_amount=Decimal('400.00'),
+        manual_amounts=tuple(ManualAmountInput(unit_id=unit.id, amount=Decimal(amount))
+                            for unit, amount in zip(inp.units, ('700.00', '300.00'))),
+        external_amounts=tuple(ExternalAmountInput(unit_id=unit.id, tenant_amount=Decimal(amount))
+                              for unit, amount in zip(inp.units, ('700.00', '300.00'))))
+    result = compute_weg_jahresabrechnung(replace(inp, cost_positions=(pos,)))
+    assert _owner_result(result, _U(21)).owner_cost_total == Decimal('420.00')
+    assert _owner_result(result, _U(22)).owner_cost_total == Decimal('180.00')
+    assert result.cost_total == Decimal('600.00')
+
+
+@pytest.mark.parametrize('funded', ['-0.01', '10000.01'])
+def test_invalid_financing_cannot_create_a_negative_owner_cost(funded):
+    inp = TestGolden2Abrechnungsspitze()._scenario()
+    pos = replace(inp.cost_positions[0], reserve_funded_amount=Decimal(funded))
+    with pytest.raises(WegValidationError, match='invalid reserve financing'):
+        compute_weg_jahresabrechnung(replace(inp, cost_positions=(pos,)))
 
 
 # ===========================================================================

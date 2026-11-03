@@ -128,15 +128,15 @@ def _participates(unit: UnitInput, key: str) -> bool:
 def _effective_total(pos: WegCostPositionInput) -> Decimal:
     """The owner-relevant total to distribute (m4 section 4.5, [F4-3]).
 
-    The owner sphere distributes the GROSS amount (the owner bears the full cost
-    by MEA). For direct keys the per-unit amounts sum to the total.
+    Evidenced reserve financing is deducted before distribution. For direct
+    keys the original per-unit amounts provide the distribution weights.
     """
     key = pos.owner_distribution_key
     if key == "EXTERNE_ABRECHNUNG":
-        return sum((e.tenant_amount for e in pos.external_amounts), Decimal(0))
+        return sum((e.tenant_amount for e in pos.external_amounts), Decimal(0)) - pos.reserve_funded_amount
     if key == "MANUELLER_BETRAG":
-        return sum((m.amount for m in pos.manual_amounts), Decimal(0))
-    return pos.gross_amount
+        return sum((m.amount for m in pos.manual_amounts), Decimal(0)) - pos.reserve_funded_amount
+    return pos.gross_amount - pos.reserve_funded_amount
 
 
 def _co_owner_shares(
@@ -195,6 +195,10 @@ def _validate(inp: WegSettlementInput) -> None:
         raise WegValidationError("WEG settlement has no units")
 
     for pos in inp.cost_positions:
+        if pos.reserve_funded_amount < 0 or (pos.reserve_funded_amount and _effective_total(pos) < 0):
+            raise WegValidationError(
+                f"Cost position {pos.category_code} ({pos.cost_entry_id}) has invalid reserve financing"
+            )
         if (
             day_count(
                 max(pos.service_period_from, inp.period_start),
@@ -284,7 +288,7 @@ def _distribute_one_position(
         for uid, amt in items:
             per_unit[uid] = per_unit.get(uid, Decimal(0)) + amt
         s = sum(per_unit.values(), Decimal(0))
-        if s != total:
+        if s != total + pos.reserve_funded_amount:
             raise DistributionError(
                 f"Position {pos.category_code} ({pos.cost_entry_id}): sum of "
                 f"per-unit {key} amounts ({s}) != effective total ({total})."

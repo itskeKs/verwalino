@@ -67,6 +67,7 @@ from app.models.settlement_line import SettlementLine
 from app.models.settlement_run import SettlementRun
 from app.repositories.audit_repo import AuditRepository
 from app.repositories.bank_account_repo import BankAccountRepository
+from app.repositories.reserve_ledger_repo import ReserveLedgerRepository
 from app.repositories.economic_plan_repo import (
     EconomicPlanLineRepository,
     EconomicPlanRepository,
@@ -608,6 +609,9 @@ class WegSettlementService:
             for o in ownership
         )
 
+        funded = await ReserveLedgerRepository(self._session, self._org_id).funded_amounts(
+            [entry.id for entry, category in entries if category is not None and not category.reserve_relevant]
+        )
         position_inputs = []
         for entry, category in entries:
             if category is None:
@@ -630,6 +634,7 @@ class WegSettlementService:
                     owner_distribution_key=owner_key,
                     cost_group=category.cost_group,
                     reserve_relevant=category.reserve_relevant,
+                    reserve_funded_amount=funded.get(entry.id, Decimal('0.00')),
                 )
             )
 

@@ -293,7 +293,7 @@ class WegCostPositionInput:
     """A WEG cost position to distribute over owners (m4 section 4).
 
     The owner sphere reads `owner_distribution_key` (NOT tenant_distribution_key)
-    and distributes the `gross_amount` (the owner bears the full cost share by
+    and distributes the `gross_amount` less evidenced reserve financing (by
     MEA; what a letting owner may pass on to a tenant is the separate M3 sphere
     -- m4 section 4.5, [F4-3]). A position whose category is `reserve_relevant`
     is treated as a RESERVE CONTRIBUTION (Vermoegensbildung), NOT as cost, and
@@ -318,6 +318,8 @@ class WegCostPositionInput:
     # still distributes to owners by the delivered per-unit amounts).
     external_amounts: tuple[ExternalAmountInput, ...] = ()
     manual_amounts: tuple[ManualAmountInput, ...] = ()
+    # Net evidenced reserve financing of this cost's correction chain.
+    reserve_funded_amount: Decimal = Decimal("0.00")
 
 
 @dataclass(frozen=True)

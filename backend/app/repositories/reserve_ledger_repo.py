@@ -164,6 +164,15 @@ class ReserveLedgerRepository(TenantRepository[ReserveLedgerEntry]):
         return await self._session.scalar(text('SELECT reserve_funded_amount(:org,:cost,:payment)'),
             {'org': self._org_id, 'cost': cost_id, 'payment': exclude_payment_id})
 
+    async def funded_amounts(self, cost_ids):
+        """Read net financing in one round trip, reusing the receipt-chain rule."""
+        if not cost_ids:
+            return {}
+        rows = await self._session.execute(select(
+            CostEntry.id, func.reserve_funded_amount(self._org_id, CostEntry.id, None)
+        ).where(CostEntry.organization_id == self._org_id, CostEntry.id.in_(cost_ids)))
+        return dict(rows.all())
+
     async def payout_cost(self, payment):
         return payment.reserve_cost_entry_id or await self._session.scalar(select(ReserveLedgerEntry.cost_entry_id).where(
             ReserveLedgerEntry.organization_id == self._org_id, ReserveLedgerEntry.payment_id == payment.id,
