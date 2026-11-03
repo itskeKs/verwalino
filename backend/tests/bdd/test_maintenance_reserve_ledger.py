@@ -744,6 +744,83 @@ def unit_contribution_cap(world, reserve_scenario):
     assert refused.json()['detail']['code'] == 'RESERVE_CONTRIBUTION_EXCEEDS_BOOKED'
 
 
+@when('I reduce the correction to 100 euros and restore it with a reason')
+def restore_unit_contribution(world, reserve_scenario):
+    w = reserve_scenario
+    path = f"/api/weg-settlements/{w['run']}/reserve-ledger/overrides/{w['correction']}/reduce"
+    for amount, reason in [('100.00', 'Wrong correction selected'), ('300.00', 'Versehentlich verringert')]:
+        response = world.act('POST', path, json={'reduced_to': amount, 'reason': reason})
+        assert response.status_code == 201, response.text
+
+
+@then('the correction is 300 euros and both counter-entries remain visible')
+def restored_unit_contribution(world, reserve_scenario):
+    w = reserve_scenario
+    ledger = world.look(world.actor, f"/api/weg-settlements/{w['run']}/reserve-ledger").json()
+    assert next(row for row in ledger['entries'] if row.get('id') == w['correction'])['current_amount'] == '300.00'
+    assert [row['amount'] for row in ledger['entries'] if row.get('reverses_entry_id') == w['correction']] == ['-200.00', '200.00']
+
+
+@then('I can restore an accidental reduction and see when nothing remains to delete on both reserve pages')
+def restore_contribution_forms(world, reserve_scenario, browser_world, tmp_path):
+    import os
+    from playwright.async_api import expect
+    w = reserve_scenario
+    directory = Path(__file__).resolve().parents[3] / 'docs/assets/design/reserve-correction-restoration' if os.environ.get('VERWALINO_CAPTURE_DESIGN') == '1' else tmp_path
+
+    async def inspect():
+        page = browser_world.page
+        errors = []
+        page.on('pageerror', lambda error: errors.append(str(error)))
+        for kind, route in [('weg', f"/weg-abrechnungen/{w['weg_run']}"), ('asset', f"/vermoegensberichte/{w['run']}")]:
+            for width in (1280, 360):
+                await page.set_viewport_size({'width': width, 'height': 800})
+                await browser_world.visit(route)
+                panel = page.get_by_role('region', name='Rücklagenbuch')
+                change = panel.get_by_role('button', name='Korrektur ändern / löschen', exact=True)
+                dialog = page.get_by_role('dialog')
+
+                async def open_correction(amount, reason):
+                    await change.click()
+                    await dialog.get_by_label('Verbleibender Korrekturbetrag *', exact=True).fill(amount)
+                    await dialog.get_by_role('textbox', name='Begründung *', exact=True).fill(reason)
+
+                await open_correction('100,00', 'Falsche Korrektur gewählt')
+                await dialog.get_by_role('button', name='Korrektur speichern', exact=True).click()
+                await expect(dialog).not_to_be_visible()
+                await expect(panel.get_by_text('Verbleibende Korrektur:', exact=False)).to_contain_text('100,00')
+                await open_correction('400,00', 'Versehentlich verringert')
+                await dialog.get_by_role('button', name='Korrektur speichern', exact=True).click()
+                await expect(dialog.get_by_role('alert')).to_have_text('Sie können für diese Korrektur höchstens 300,00 € beibehalten.')
+                await expect(dialog.get_by_label('Verbleibender Korrekturbetrag *', exact=True)).to_have_value('400,00')
+                await expect(dialog.get_by_role('textbox', name='Begründung *', exact=True)).to_have_value('Versehentlich verringert')
+                assert await page.evaluate('document.documentElement.scrollWidth <= window.innerWidth')
+                assert await dialog.evaluate('(el) => el.scrollWidth <= el.clientWidth')
+                await expect(dialog.get_by_role('button', name='Korrektur speichern', exact=True)).to_be_in_viewport()
+                await expect(dialog.get_by_role('button', name='Korrektur löschen', exact=True)).to_be_in_viewport()
+                await page.screenshot(path=str(directory / f'{kind}-after-{width}.png'), animations='disabled')
+                await dialog.get_by_label('Verbleibender Korrekturbetrag *', exact=True).fill('300,00')
+                await dialog.get_by_role('button', name='Korrektur speichern', exact=True).click()
+                await expect(dialog).not_to_be_visible()
+                await expect(panel.get_by_text('Verbleibende Korrektur:', exact=False)).to_contain_text('300,00')
+                await expect(panel.get_by_text('Wiederherstellung einer Zuführungskorrektur', exact=True).last).to_be_visible()
+                await open_correction('0,00', 'Korrektur vollständig aufgehoben')
+                await dialog.get_by_role('button', name='Korrektur löschen', exact=True).click()
+                await expect(dialog).not_to_be_visible()
+                await open_correction('0,00', 'Erneut aufheben')
+                await dialog.get_by_role('button', name='Korrektur löschen', exact=True).click()
+                await expect(dialog.get_by_role('alert')).to_have_text('Diese Korrektur ist bereits vollständig aufgehoben. Es ist kein Restbetrag mehr vorhanden.')
+                await page.screenshot(path=str(directory / f'{kind}-zero-{width}.png'), animations='disabled')
+                # The same rule permits restoration from zero, ready for the next viewport.
+                await dialog.get_by_label('Verbleibender Korrekturbetrag *', exact=True).fill('300,00')
+                await dialog.get_by_role('textbox', name='Begründung *', exact=True).fill('Versehentlich verringert')
+                await dialog.get_by_role('button', name='Korrektur speichern', exact=True).click()
+                await expect(dialog).not_to_be_visible()
+        assert not errors, errors
+
+    browser_world.run(inspect())
+
+
 @when('I attest a derived contribution or withdrawal total')
 def derived_attestation(world, reserve_scenario):
     reserve_scenario['refusals'] = [world.act('POST', '/api/financial-input-coverage', json={
@@ -864,10 +941,10 @@ def contribution_reduction_forms(world, reserve_scenario, browser_world, tmp_pat
                 await page.set_viewport_size({'width': width, 'height': 800})
                 await browser_world.visit(route)
                 panel = page.get_by_role('region', name='Rücklagenbuch')
-                await panel.get_by_role('button', name='Korrektur verringern / löschen', exact=True).click()
+                await panel.get_by_role('button', name='Korrektur ändern / löschen', exact=True).click()
                 dialog = page.get_by_role('dialog')
-                await expect(dialog).to_have_accessible_name('Korrektur verringern / löschen')
-                await dialog.get_by_role('button', name='Korrektur verringern', exact=True).click()
+                await expect(dialog).to_have_accessible_name('Korrektur ändern / löschen')
+                await dialog.get_by_role('button', name='Korrektur speichern', exact=True).click()
                 await expect(dialog.get_by_role('alert')).to_have_text('Bitte begründen Sie die Rücklagenkorrektur.')
                 await page.screenshot(path=str(directory / f'round18-{kind}-contribution-after-{width}.png'), animations='disabled')
                 await expect(dialog.get_by_role('button', name='Korrektur löschen', exact=True)).to_be_in_viewport()
@@ -877,17 +954,17 @@ def contribution_reduction_forms(world, reserve_scenario, browser_world, tmp_pat
                 await dialog.get_by_label('Verbleibender Korrekturbetrag *', exact=True).fill('200,00' if width == 1280 else '100,00')
                 # Exercise one reduction per page; other visits check the same remaining original.
                 if kind == 'weg':
-                    await dialog.get_by_role('button', name='Korrektur verringern', exact=True).click()
+                    await dialog.get_by_role('button', name='Korrektur speichern', exact=True).click()
                     await expect(dialog).not_to_be_visible()
                     await expect(panel.get_by_text('Verbleibende Korrektur:', exact=False)).to_contain_text('200,00' if width == 1280 else '100,00')
                 else:
                     await dialog.get_by_role('button', name='Abbrechen', exact=True).click()
-        await panel.get_by_role('button', name='Korrektur verringern / löschen', exact=True).click()
+        await panel.get_by_role('button', name='Korrektur ändern / löschen', exact=True).click()
         dialog = page.get_by_role('dialog')
         await dialog.get_by_label('Begründung *', exact=True).fill('Verbleibende Korrektur vollständig aufgehoben')
         await dialog.get_by_role('button', name='Korrektur löschen', exact=True).click()
         await expect(dialog).not_to_be_visible()
-        await expect(panel.get_by_role('button', name='Korrektur verringern / löschen', exact=True)).to_have_count(0)
+        await expect(panel.get_by_role('button', name='Korrektur ändern / löschen', exact=True)).to_have_count(1)
         await expect(panel.get_by_text('Verbleibende Korrektur:', exact=False)).to_contain_text('0,00')
         assert not errors, errors
     browser_world.run(inspect())
@@ -919,14 +996,14 @@ def unbacked_correction_action(world, reserve_scenario, browser_world, tmp_path)
                 await page.set_viewport_size({'width': width, 'height': 800})
                 await browser_world.visit(route)
                 panel = page.get_by_role('region', name='Rücklagenbuch')
-                await panel.get_by_role('button', name='Korrektur verringern / löschen', exact=True).click()
+                await panel.get_by_role('button', name='Korrektur ändern / löschen', exact=True).click()
                 dialog = page.get_by_role('dialog')
                 amount = dialog.get_by_label('Verbleibender Korrekturbetrag *', exact=True)
                 reason = dialog.get_by_role('textbox', name='Begründung *', exact=True)
                 await amount.fill('100,00')
                 await reason.fill('Nach Hausgeld-Storno verbleibende Korrektur abstimmen')
                 async with page.expect_response(lambda response: response.url.endswith('/reduce')) as pending:
-                    await dialog.get_by_role('button', name='Korrektur verringern', exact=True).click()
+                    await dialog.get_by_role('button', name='Korrektur speichern', exact=True).click()
                 response = await pending.value
                 assert response.status == 422, await response.text()
                 assert (await response.json())['detail']['code'] == 'RESERVE_CONTRIBUTION_EXCEEDS_BOOKED'
@@ -942,12 +1019,12 @@ def unbacked_correction_action(world, reserve_scenario, browser_world, tmp_path)
                 await dialog.get_by_role('button', name='Abbrechen', exact=True).click()
         assert not errors, errors
         assert messages == [message] * 4
-        await panel.get_by_role('button', name='Korrektur verringern / löschen', exact=True).click()
+        await panel.get_by_role('button', name='Korrektur ändern / löschen', exact=True).click()
         dialog = page.get_by_role('dialog')
         await dialog.get_by_role('textbox', name='Begründung *', exact=True).fill('Nicht mehr gedeckte Korrektur vollständig aufheben')
         await dialog.get_by_role('button', name='Korrektur löschen', exact=True).click()
         await expect(dialog).not_to_be_visible()
-        await expect(panel.get_by_role('button', name='Korrektur verringern / löschen', exact=True)).to_have_count(0)
+        await expect(panel.get_by_role('button', name='Korrektur ändern / löschen', exact=True)).to_have_count(1)
         await expect(panel.get_by_text('Verbleibende Korrektur:', exact=False)).to_contain_text('0,00')
 
     browser_world.run(inspect())

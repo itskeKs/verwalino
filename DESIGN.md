@@ -926,21 +926,38 @@ reserve payouts neutral with no tenant or owner target. The payment
 detail and bank-assignment vocabulary use the same German name. This type does
 not create a tenant or owner receivable.
 
-Draft unit contribution corrections offer “Korrektur verringern / löschen” beside
-an original with a positive remaining amount. The dialog shows the unit and
+Draft unit contribution corrections offer “Korrektur ändern / löschen” beside
+an original, including one whose remaining amount is zero. The dialog shows the unit and
 remaining correction, accepts “Verbleibender Korrekturbetrag” and a mandatory
-“Begründung”, and offers separate reduce/delete actions. Deletion creates a
+“Begründung”, and offers “Korrektur speichern” and “Korrektur löschen”. The
+description explains that each change appends a new counter-entry and restoration
+stays within the original amount and booked Hausgeld backing. Deletion creates a
 retained counter-entry; the original and every reduction remain visible with
-“Verbleibende Korrektur” and “Verringerung einer Zuführungskorrektur”. Finalized
-periods and fully reversed originals offer no reduction control. Refusals show
+“Verbleibende Korrektur” and “Verringerung einer Zuführungskorrektur”. Positive
+counter-entries show “Wiederherstellung einer Zuführungskorrektur”. Finalized
+periods offer no change control. Refusals show
 the German server message and preserve the amount and reason. If no positive
 remainder can be kept, the message says “Für diese Korrektur ist kein positiver
 Restbetrag mehr möglich. Bitte verwenden Sie „Korrektur löschen“.”, naming the
 visible delete action; a positive limit keeps “Sie können für diese Korrektur
 höchstens … € beibehalten.” The same shared
 panel and scrollable dialog apply to both reserve pages at 1280 and 360 px.
+Deleting an already-zero correction reports “Diese Korrektur ist bereits vollständig
+aufgehoben. Es ist kein Restbetrag mehr vorhanden.” and preserves the reason.
+The same dialog can restore the correction from zero with a new reason.
 The opening-total payload uses `corrected_opening_balance` with the seen opening;
 `amount` remains a signed difference.
+
+Restoration and zero-remainder feedback use synthetic records on both reserve pages:
+
+| State | Desktop | 360 px |
+| --- | --- | --- |
+| WEG before restoration | [view](docs/assets/design/reserve-correction-restoration/weg-before-1280.png) | [view](docs/assets/design/reserve-correction-restoration/weg-before-360.png) |
+| WEG restoration cap | [view](docs/assets/design/reserve-correction-restoration/weg-after-1280.png) | [view](docs/assets/design/reserve-correction-restoration/weg-after-360.png) |
+| WEG already zero | [view](docs/assets/design/reserve-correction-restoration/weg-zero-1280.png) | [view](docs/assets/design/reserve-correction-restoration/weg-zero-360.png) |
+| Asset report before restoration | [view](docs/assets/design/reserve-correction-restoration/asset-before-1280.png) | [view](docs/assets/design/reserve-correction-restoration/asset-before-360.png) |
+| Asset report restoration cap | [view](docs/assets/design/reserve-correction-restoration/asset-after-1280.png) | [view](docs/assets/design/reserve-correction-restoration/asset-after-360.png) |
+| Asset report already zero | [view](docs/assets/design/reserve-correction-restoration/asset-zero-1280.png) | [view](docs/assets/design/reserve-correction-restoration/asset-zero-360.png) |
 
 Each retained screenshot is linked below. WEG and asset-report before/after
 captures show the next open period before and after a late 999.00 € receipt.

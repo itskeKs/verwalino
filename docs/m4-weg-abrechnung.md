@@ -836,14 +836,23 @@ allocation and WEMoG settlement-balance calculation; it changes neither.
   mandatory reason (owner decision 2, 2026-11-02). This appends a negative
   `CONTRIBUTION` referencing the original through `reverses_entry_id`; it never
   changes or deletes a retained row. Success returns 201 and an audit event with
-  actor, reason, old and new remaining amounts. Repeated reductions use the
-  original amount plus its retained reversals. A positive remainder must be below
-  the current amount and at most raw headroom plus that current amount, from the
+  actor, reason, old and new remaining amounts. Repeated changes use the
+  original amount plus all its retained counter-entries. Owner decision #223
+  also permits restoring a reduced correction, including from zero, with a new
+  positive, reasoned counter-entry. A positive remainder must be at most the
+  original amount and at most raw headroom plus the current amount, from the
   same headroom function (`RESERVE_CONTRIBUTION_EXCEEDS_BOOKED`, naming a positive
   limit). When no positive remainder is possible, the same response on the service
   and database-guard paths says “Für diese Korrektur ist kein positiver Restbetrag
   mehr möglich. Bitte verwenden Sie „Korrektur löschen“.” The named action is
   available in the reduction dialog and retains the reason and counter-entry.
+  Thus 300.00 → 100.00 → 300.00 keeps the original 300.00, the -200.00
+  reduction and a new +200.00 with reason “Versehentlich verringert”; 400.00
+  is refused even when raw headroom would cover it. If current booked backing
+  allows only 200.00, restoration stops at 200.00 instead. The existing financial
+  lock serializes changes with Hausgeld bookings/reversals, including direct
+  inserts protected by the guard. Migration 0154 changes no retained rows or
+  audit evidence; its downgrade refuses existing positive counter-entries.
   Deleting releases the entire remainder even if other corrections still lack
   backing; this lets each unsupported correction be reconciled in turn. Once all
   are reconciled, raw headroom returns to zero and finalization is possible.
@@ -853,7 +862,9 @@ allocation and WEMoG settlement-balance calculation; it changes neither.
   Both use `ReserveLedgerService.reduce_contribution`:
   deleting a 300.00 EUR correction appends -300.00 EUR and records exactly one
   `reserve.contribution_reduced` event with old amount 300.00, new amount 0.00,
-  actor, reason and both entry references. A direct SQL counter-entry is outside
+  actor, reason and both entry references. Increases instead record one
+  `reserve.contribution_restored` event with the same reference/payload structure;
+  earlier reduction events remain unchanged. A direct SQL counter-entry is outside
   the supported application path and creates no such event; the guard still
   enforces ledger integrity. See the [audit boundary](architecture.md#contribution-reduction-audit-path).
   Both reject payment assignments, reversal rows and
@@ -862,8 +873,10 @@ allocation and WEMoG settlement-balance calculation; it changes neither.
   reduction handler preserves that finalization response for the database guard
   too, with “Die Rücklage dieses Zeitraums ist finalisiert.” A database refusal
   named `reserve_amount_invalid` returns 422 `RESERVE_AMOUNT_INVALID` and asks
-  the manager to reduce the remaining amount or delete the correction, just as
-  service validation does; it is not reported as a generic input error.
+  for a different nonnegative amount. Deleting at zero uses
+  `reserve_correction_already_zero` and the same API code with “Diese Korrektur
+  ist bereits vollständig aufgehoben. Es ist kein Restbetrag mehr vorhanden.”
+  Both messages also apply to service validation.
   The definer guard mirrors the limits; direct UPDATE/DELETE still fail with 23514
   `reserve_ledger_append_only`. Counter-entries must use the original's exact
   accounting scope, so a different draft scope cannot release a frozen original.
