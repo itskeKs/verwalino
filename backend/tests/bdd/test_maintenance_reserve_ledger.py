@@ -892,6 +892,52 @@ def contribution_reduction_forms(world, reserve_scenario, browser_world, tmp_pat
     browser_world.run(inspect())
 
 
+@then('both correction dialogs show the personal data hint on both reserve pages')
+def correction_reason_privacy_hint(world, reserve_scenario, browser_world, tmp_path):
+    import os
+    from playwright.async_api import expect
+    w = reserve_scenario
+    directory = Path(__file__).resolve().parents[3] / 'docs/assets/design/reserve-reason-hint' if os.environ.get('VERWALINO_CAPTURE_DESIGN') == '1' else tmp_path
+    directory.mkdir(parents=True, exist_ok=True)
+    phase = 'before' if os.environ.get('VERWALINO_RESERVE_CAPTURE_BEFORE') == '1' else 'after'
+    hint_text = 'Bitte keine personenbezogenen Daten eintragen.'
+
+    async def inspect():
+        page = browser_world.page
+        errors, missing = [], []
+        page.on('console', lambda message: errors.append(message.text) if message.type == 'error' else None)
+        for kind, route in [('weg', f"/weg-abrechnungen/{w['weg_run']}"), ('asset', f"/vermoegensberichte/{w['run']}")]:
+            for width in (1280, 360):
+                await page.set_viewport_size({'width': width, 'height': 800})
+                await browser_world.visit(route)
+                assert page.url.endswith(route) and await page.title()
+                panel = page.get_by_role('region', name='Rücklagenbuch')
+                await expect(panel.get_by_text('Verbleibende Korrektur:', exact=False)).to_contain_text('300,00')
+                for action, name in [('Korrektur erfassen', 'create'), ('Korrektur verringern / löschen', 'reduce')]:
+                    await panel.get_by_role('button', name=action, exact=True).click()
+                    dialog = page.get_by_role('dialog')
+                    if name == 'create':
+                        await dialog.get_by_label('Art', exact=True).select_option('CONTRIBUTION')
+                    reason = dialog.get_by_role('textbox', name='Begründung *', exact=True)
+                    await reason.scroll_into_view_if_needed()
+                    await reason.fill('Hausgeld anhand der Bankunterlagen abgeglichen')
+                    hint = dialog.get_by_text(hint_text, exact=True)
+                    if await hint.count():
+                        await hint.scroll_into_view_if_needed()
+                        await expect(hint).to_be_in_viewport()
+                        await expect(reason).to_have_accessible_description(hint_text)
+                    else:
+                        missing.append((kind, width, action))
+                    await expect(dialog.get_by_role('button', name='Abbrechen', exact=True)).to_be_in_viewport()
+                    assert await page.evaluate('document.documentElement.scrollWidth <= window.innerWidth')
+                    assert await page.locator('vite-error-overlay').count() == 0
+                    await page.screenshot(path=str(directory / f'{kind}-{name}-{phase}-{width}.png'), animations='disabled')
+                    await dialog.get_by_role('button', name='Abbrechen', exact=True).click()
+        assert not errors, errors
+        assert not missing, f'Missing personal data hint: {missing}'
+    browser_world.run(inspect())
+
+
 @when('the backing Hausgeld is reversed')
 def reverse_correction_backing(world, reserve_scenario):
     response = world.act('POST', f"/api/payments/{reserve_scenario['cash']}/reverse")

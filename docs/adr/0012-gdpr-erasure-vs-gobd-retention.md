@@ -81,7 +81,16 @@ event, actor structure and timestamps remain. The narrow immutability exception
 and hash treatment are defined in the
 [ADR-0003 amendment](0003-gobd-immutability-mechanism.md#amendment--2026-10-31-personal-audit-payloads-during-organization-erasure).
 This resolves the audit-payload question for organization erasure. M9's individual
-person operation still anonymizes master data only; **frozen voucher snapshots
+person operation still anonymizes master data only. In particular, individual
+person erasure leaves `reserve_ledger_entry.reason`, its copies in the audit
+payloads of `reserve.override_added` and `reserve.contribution_reduced`, and
+existing `reserve_override_reason` values unchanged. A name typed into a reason
+survives even when the person's master data is anonymized. Both reserve correction
+dialogs advise “Bitte keine personenbezogenen Daten eintragen.”; this prevents
+neither entry nor retention of names. Person-specific reason/audit scrubbing
+remains an open owner decision in #222, requiring a separate narrow immutability
+exception because the reserve ledger rejects updates. The organization-erasure
+decision above does not authorize that exception. **Frozen voucher snapshots
 remain untouched**. Other retained original/evidence content follows the
 [operator inventory](../operations/organization-export.md).
 

@@ -60,6 +60,22 @@ async function chooseEvidence() {
 }
 const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } });
 
+it.each(['Korrektur erfassen', 'Korrektur verringern / löschen'])('warns against personal data below the reason in %s', async action => {
+  vi.stubGlobal('fetch', vi.fn(async () => json({ ...ledger, entries: [
+    { id: 'correction-1', kind: 'OVERRIDE', component: 'CONTRIBUTION', date: '2025-12-31',
+      amount: '300.00', current_amount: '300.00', unit_id: 'unit-3', unit_number: 'Einheit 3', reason: 'Hausgeld abgeglichen' },
+  ] })));
+  render(<ReserveLedgerPanel runId="run-1" propertyId="property-1" status="draft" onChanged={() => {}} />);
+  fireEvent.click(await screen.findByRole('button', { name: action }));
+  const dialog = within(screen.getByRole('dialog'));
+  const reason = dialog.getByLabelText('Begründung *', { exact: true });
+  const hint = dialog.getByText('Bitte keine personenbezogenen Daten eintragen.');
+  expect(hint).toBeVisible();
+  expect(reason).toHaveAccessibleDescription(hint.textContent!);
+  expect(reason.closest('label')?.nextElementSibling).toBe(hint);
+  expect(reason).toHaveAttribute('maxlength', '2000');
+});
+
 it('shows unassigned Hausgeld at its full amount and saves an audited payment assignment', async () => {
   let assigned = false;
   const fetchMock = vi.fn(async (_url: string, init?: RequestInit) => {
