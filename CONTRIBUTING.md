@@ -4,7 +4,7 @@ The software is German; everything about it — docs, issues, code comments, com
 Rules for coding agents, which apply to people too, are in [AGENTS.md](AGENTS.md).
 
 Every session removes its own leftovers when the task ends and checks for them before the next
-task. Follow [Session cleanup](AGENTS.md#session-cleanup) for worktrees, disposable stacks,
+task. Follow [Worktrees and cleanup](AGENTS.md#worktrees-and-cleanup) for worktrees, disposable stacks,
 temporary files and background processes; leave other sessions, shared services and production
 untouched. Report cleanup in one line, never in a repository file.
 

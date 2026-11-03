@@ -13,8 +13,8 @@ What exists today: [feature-status.md](feature-status.md).
 ## How work is tracked
 
 - Every piece of work is a GitHub issue written as a spec
-  ([template](../.github/ISSUE_TEMPLATE/task.md)): What → Why → Proposed change → Acceptance →
-  Out of scope. One issue, one PR; `Closes #N` only when every acceptance box is done.
+  ([template](../.github/ISSUE_TEMPLATE/task.md)): What → Why → Proposed change → User check →
+  Acceptance → Out of scope. One issue, one PR; `Closes #N` only when every acceptance box is done.
 - Order comes from milestones (below) and, inside a milestone, from the list order here.
 - Read one issue with `gh issue view N -R itskeKs/verwalino`; list a milestone with
   `gh issue list -R itskeKs/verwalino --milestone "<title>"`.

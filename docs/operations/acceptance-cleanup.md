@@ -3,7 +3,7 @@
 The session that starts an acceptance or verifier run removes its resources after the run,
 including failure or abandonment. This is the final step of the
 [acceptance brief](../acceptance/README.md#mandatory-last-step-cleanup); the ownership and
-shared-resource limits are in [Session cleanup](../../AGENTS.md#session-cleanup).
+shared-resource limits are in [Worktrees and cleanup](../../AGENTS.md#worktrees-and-cleanup).
 These commands document cleanup, not authorization to start a stack.
 
 Use this procedure only for your separately authorized disposable portable project `verwalino`
