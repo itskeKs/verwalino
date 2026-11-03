@@ -334,6 +334,8 @@ def build_weg_snapshot_payload(
                     "cost_entry_id": str(p.cost_entry_id),
                     "category_code": p.category_code,
                     "gross_amount": _m(p.gross_amount),
+                    **({"reserve_funded_amount": _m(p.reserve_funded_amount)}
+                       if p.reserve_funded_amount else {}),
                     "service_period": {
                         "from": p.service_period_from.isoformat(),
                         "to": p.service_period_to.isoformat(),

@@ -189,6 +189,95 @@ async def finalize(api, w):
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize('financing, funded', [
+    ('draft', '0.00'), ('split', '1000.00'), ('reversed', '0.00'),
+    ('corrected', '1000.00'), ('adjusted', '800.00'),
+])
+async def test_owner_costs_use_net_reserve_financing_of_the_active_receipt_chain(
+        client_a_admin, seed_data, migrator_session, financing, funded):
+    api = client_a_admin
+    w = await reserve_world(api, seed_data)
+    evidence = await reserve_evidence(api, w)
+    if financing == 'draft':
+        draft = await api.post('/api/payments', json={'bank_account_id': w['bank_giro'],
+            'direction': 'OUT', 'amount': '1000.00', 'value_date': '2025-02-01',
+            'payment_type': 'RUECKLAGENENTNAHME', **evidence})
+        assert draft.status_code == 201, draft.text
+    else:
+        cash = await payment(api, w, '400.00' if financing == 'split' else '1000.00',
+                             kind='RUECKLAGENENTNAHME', direction='OUT', evidence=evidence)
+        if financing == 'split':
+            await payment(api, w, '600.00', kind='RUECKLAGENENTNAHME', direction='OUT', evidence=evidence)
+        elif financing == 'reversed':
+            response = await api.post(f'/api/payments/{cash}/reverse', json={'note': 'Repair payout cancelled'})
+            assert response.status_code == 201, response.text
+        elif financing == 'adjusted':
+            response = await api.post(f"/api/weg-settlements/{w['run']}/reserve-ledger/overrides", json={
+                'component': 'ADJUSTMENT', 'amount': '200.00', 'reason': 'Correct receipt financing',
+                **{k.removeprefix('reserve_'): v for k, v in evidence.items()}})
+            assert response.status_code == 201, response.text
+    receipt = w['ce_garten']
+    if financing == 'corrected':
+        response = await api.post(f'/api/cost-entries/{receipt}/correction', json={
+            'document_number': 'RE-corrected-with-frozen-financing'})
+        assert response.status_code == 201, response.text
+        receipt = response.json()['id']
+        assert (await api.post(f'/api/cost-entries/{receipt}/confirm')).status_code == 200
+    statement = await finalize(api, w)
+    expected = Decimal('7000.00') - Decimal(funded)
+    assert Decimal(statement['total_cost']) == expected
+    for key, share in [('owner_a', Decimal('0.6')), ('owner_b', Decimal('0.4'))]:
+        line = next(row for row in statement['lines'] if row['line_type'] == 'OWNER_COST_TOTAL'
+                    and row['addressee_owner_profile_id'] == w[key])
+        assert Decimal(line['amount']) == expected * share
+    payload = await migrator_session.scalar(text('SELECT snapshot_payload FROM settlement_run WHERE id=CAST(:id AS uuid)'),
+        {'id': w['run']})
+    position = next(row for row in payload['inputs']['cost_positions'] if row['cost_entry_id'] == receipt)
+    assert position['gross_amount'] == '4000.00'
+    assert position.get('reserve_funded_amount', '0.00') == funded
+    ledger = (await api.get(f"/api/weg-settlements/{w['run']}/reserve-ledger")).json()
+    assert ledger['withdrawals_total'] == ('1000.00' if financing == 'adjusted' else funded)
+    assert ledger['overrides_total'] == ('200.00' if financing == 'adjusted' else '0.00')
+
+
+@pytest.mark.asyncio
+async def test_finalized_unfinanced_statement_keeps_its_amounts_hash_and_pdf_after_late_financing(
+        client_a_admin, seed_data, migrator_session):
+    api = client_a_admin
+    w = await reserve_world(api, seed_data)
+    statement = await finalize(api, w)
+    assert statement['total_cost'] == '7000.00'
+    payload = await migrator_session.scalar(text('SELECT snapshot_payload FROM settlement_run WHERE id=CAST(:id AS uuid)'),
+        {'id': w['run']})
+    assert all('reserve_funded_amount' not in row for row in payload['inputs']['cost_positions'])
+    before_pdf = pdf_text((await api.get(f"/api/weg-settlements/{w['run']}/pdf")).content)
+    await payment(api, w, '1000.00', kind='RUECKLAGENENTNAHME', direction='OUT')
+    assert (await api.get(f"/api/weg-settlements/{w['run']}")).json() == statement
+    assert pdf_text((await api.get(f"/api/weg-settlements/{w['run']}/pdf")).content) == before_pdf
+    assert (await api.post(f"/api/weg-settlements/{w['run']}/compute", json=paid(w))).status_code == 409
+    assert await migrator_session.scalar(text('SELECT snapshot_payload FROM settlement_run WHERE id=CAST(:id AS uuid)'),
+        {'id': w['run']}) == payload
+
+
+@pytest.mark.asyncio
+async def test_receipt_financing_batch_does_not_expose_foreign_or_missing_costs(
+        client_a_admin, client_b_admin, seed_data, app_rw_session):
+    import uuid
+    from app.repositories.reserve_ledger_repo import ReserveLedgerRepository
+    w = await reserve_world(client_a_admin, seed_data)
+    await payment(client_a_admin, w, '1000.00', kind='RUECKLAGENENTNAHME', direction='OUT')
+    await app_rw_session.execute(text("SELECT set_config('app.current_org_id',:org,true)"),
+        {'org': str(seed_data['org_b_id'])})
+    await app_rw_session.execute(text("SELECT set_config('app.current_user_id',:actor,true)"),
+        {'actor': str(seed_data['user_b_admin_id'])})
+    repo = ReserveLedgerRepository(app_rw_session, seed_data['org_b_id'])
+    assert await repo.funded_amounts([uuid.UUID(w['ce_garten']), uuid.uuid4()]) == {}
+    for action in ('compute', 'finalize'):
+        response = await client_b_admin.post(f"/api/weg-settlements/{w['run']}/{action}", json=paid(w))
+        assert response.status_code == 404
+
+
+@pytest.mark.asyncio
 async def test_hausgeld_uses_only_its_frozen_reserve_share_and_reversal_net_cash(client_a_admin, seed_data):
     api = client_a_admin
     w = await reserve_world(api, seed_data)
