@@ -46,7 +46,7 @@ from app.services.weg_settlement_service import (
     WegComputeExtras,
     WegSettlementService,
 )
-from app.services.reserve_ledger_service import ReserveLedgerService, _raise_reserve_opening_error
+from app.services.reserve_ledger_service import CONTRIBUTION_EXCEEDS_BOOKED, ReserveLedgerService, _raise_reserve_opening_error
 
 router = APIRouter(prefix="/api/weg-settlements", tags=["weg-settlements"])
 
@@ -290,7 +290,6 @@ async def reserve_override(run_id: uuid.UUID, body: ReserveOverrideRequest,
         if code in {'23514', '23505', '23503'}:
             constraint = getattr(getattr(exc.orig, '__cause__', None), 'constraint_name', None)
             if constraint == 'reserve_contribution_exceeds_booked':
-                from app.services.reserve_ledger_service import CONTRIBUTION_EXCEEDS_BOOKED
                 raise HTTPException(422, CONTRIBUTION_EXCEEDS_BOOKED) from None
             if constraint == 'reserve_assignment_amount':
                 raise HTTPException(422, {'code': 'RESERVE_ASSIGNMENT_EXCEEDS_PAYMENT',
@@ -326,13 +325,11 @@ async def _reduce_reserve_contribution(run_id, entry_id, reduced_to, reason, aut
                 raise HTTPException(422, {'code': 'RESERVE_AMOUNT_INVALID',
                     'message': 'Bitte verringern Sie den verbleibenden Korrekturbetrag oder löschen Sie die Korrektur.'}) from None
             if constraint == 'reserve_contribution_exceeds_booked':
-                from app.services.reserve_ledger_service import CONTRIBUTION_EXCEEDS_BOOKED, _euro
                 original = await service.repo.get_by_id(entry_id)
                 if original is not None:
                     current = await service.repo.current_contribution_amount(original)
-                    limit = min(current, await service.repo.contribution_headroom(run, original.unit_id) + current)
-                    raise HTTPException(422, {**CONTRIBUTION_EXCEEDS_BOOKED,
-                        'message': f'Sie können für diese Korrektur höchstens {_euro(limit)} beibehalten.'}) from None
+                    _, detail = await service.contribution_reduction_limit(run, original, current)
+                    raise HTTPException(422, detail) from None
                 raise HTTPException(422, CONTRIBUTION_EXCEEDS_BOOKED) from None
             if constraint == 'reserve_correction_reason_required':
                 raise HTTPException(422, {'code': 'RESERVE_CORRECTION_REASON_REQUIRED',

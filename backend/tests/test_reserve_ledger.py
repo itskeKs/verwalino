@@ -2880,6 +2880,72 @@ async def test_delete_unbacked_contribution_correction_restores_headroom_and_fin
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize('refusal_path', ['service', 'guard'])
+async def test_contribution_reduction_uses_the_same_limit_and_detail_for_both_refusal_paths(
+        client_a_admin, seed_data, app_rw_session, monkeypatch, refusal_path):
+    from app.repositories.reserve_ledger_repo import ReserveLedgerRepository
+    from app.services.reserve_ledger_service import ReserveLedgerService
+
+    api = client_a_admin
+    w = _seed_weg(seed_data)
+    receipts = [await payment(api, w, '1300.00', kind='HAUSGELD_VORSCHUSS') for _ in range(2)]
+    report = await api.post('/api/weg-settlements/asset-reports', json={
+        'property_id': w['property'], 'period_start': '2025-01-01', 'period_end': '2025-12-31'})
+    assert report.status_code == 201, report.text
+    w['run'] = report.json()['id']
+    path = f"/api/weg-settlements/{w['run']}/reserve-ledger"
+    for cash, amount in zip(receipts, ('100.00', '400.00'), strict=True):
+        assigned = await api.post(path + '/overrides', json={
+            'component': 'CONTRIBUTION', 'payment_id': cash, 'amount': amount,
+            'reason': 'Partial assignment before plan'})
+        assert assigned.status_code == 201, assigned.text
+    w['plan'] = await _create_and_finalize_plan(api, w)
+    added = await api.post(path + '/overrides', json={
+        'component': 'CONTRIBUTION', 'unit_id': w['u1'], 'amount': '300.00',
+        'reason': 'Reconcile booked unit reserve share'})
+    assert added.status_code == 201, added.text
+    assert (await api.post(f'/api/payments/{receipts[0]}/reverse')).status_code == 201
+    before = (await api.get(path)).json()
+    assert next(row for row in before['entries'] if row.get('id') == added.json()['id'])['current_amount'] == '300.00'
+    await app_rw_session.execute(text("SELECT set_config('app.current_org_id',:org,true)"),
+        {'org': str(seed_data['org_a_id'])})
+    assert await app_rw_session.scalar(text('SELECT reserve_contribution_headroom(:org,:run,:unit)'),
+        {'org': seed_data['org_a_id'], 'run': w['run'], 'unit': w['u1']}) == Decimal('-100.00')
+    await app_rw_session.rollback()
+
+    headroom = ReserveLedgerRepository.contribution_headroom
+    headroom_reads, calculations = [], []
+    reduction_limit = getattr(ReserveLedgerService, 'contribution_reduction_limit', None)
+
+    async def observed_limit(service, *args):
+        result = await reduction_limit(service, *args)
+        calculations.append(result)
+        return result
+
+    async def observed_headroom(repo, *args):
+        remaining = await headroom(repo, *args)
+        headroom_reads.append(remaining)
+        # Simulate a stale service read; the real INSERT guard still sees -100.
+        if refusal_path == 'guard' and len(headroom_reads) == 1:
+            return Decimal('0.00')
+        return remaining
+
+    monkeypatch.setattr(ReserveLedgerService, 'contribution_reduction_limit', observed_limit, raising=False)
+    monkeypatch.setattr(ReserveLedgerRepository, 'contribution_headroom', observed_headroom)
+    refused = await api.post(path + f"/overrides/{added.json()['id']}/reduce", json={
+        'reduced_to': '250.00', 'reason': 'Reconcile after Hausgeld reversal'})
+    expected_detail = {'code': 'RESERVE_CONTRIBUTION_EXCEEDS_BOOKED',
+        'message': 'Sie können für diese Korrektur höchstens 200,00 € beibehalten.'}
+    assert refused.status_code == 422, refused.text
+    assert refused.json() == {'detail': expected_detail}
+    expected_reads = 2 if refusal_path == 'guard' else 1
+    assert headroom_reads == [Decimal('-100.00')] * expected_reads
+    assert len(calculations) == expected_reads
+    assert calculations[-1] == (Decimal('200.00'), expected_detail)
+    assert (await api.get(path)).json() == before
+
+
+@pytest.mark.asyncio
 async def test_reduce_contribution_correction_to_new_headroom_then_delete_remaining_amount(client_a_admin, seed_data):
     api = client_a_admin
     w, path = await draft_unit_correction(api, seed_data, two_receipts=True)
