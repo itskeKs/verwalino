@@ -455,6 +455,7 @@ async def test_revision_chain_head_0131_head_preserves_full_state_and_issued_pdf
                         connection.execute(text('''DELETE FROM public.reserve_ledger_entry
                             WHERE reverses_entry_id IS NOT NULL AND amount>0'''))
                         connection.execute(text('ALTER TABLE public.reserve_ledger_entry ENABLE TRIGGER USER'))
+                        connection.execute(text('ALTER TABLE public.reserve_ledger_entry ENABLE ALWAYS TRIGGER guard_reserve_ledger'))
                         migrate('0150', downgrade=True)
                         migrate('0149', downgrade=True)
                 assert refusal.value.orig.pgcode == '23514', str(refusal.value.orig)
@@ -510,7 +511,10 @@ async def test_revision_chain_head_0131_head_preserves_full_state_and_issued_pdf
                     WHERE heating_advance_payments_total IS DISTINCT FROM 0 OR heating_advance_payments_source<>'MANUAL'"""))
                 for table in cleanup_tables:
                     connection.execute(text(f'ALTER TABLE public.{table} ENABLE TRIGGER USER'))
+                # Bulk ENABLE restores origin mode; retain 0155's ALWAYS guard.
+                connection.execute(text('ALTER TABLE public.reserve_ledger_entry ENABLE ALWAYS TRIGGER guard_reserve_ledger'))
                 without_reserves = _chain_snapshot(connection)
+                assert without_reserves['triggers'] == retained['triggers']
                 assert without_reserves['data']['settlement_line'] == [
                     row for row in retained['data']['settlement_line']
                     if row['line_type'] not in reserve_line_types and uuid.UUID(row['settlement_run_id']) not in split_runs]
