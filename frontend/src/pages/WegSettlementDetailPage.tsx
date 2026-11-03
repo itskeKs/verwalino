@@ -157,7 +157,7 @@ export function WegSettlementDetailPage() {
         </span>
       </h1>
 
-      <WegDraftDelete key={run.id} run={run} disabled={busy || planBusy} />
+      <WegDraftDelete key={`delete-${run.id}`} run={run} disabled={busy || planBusy} />
 
       {actionError && (
         <div className="card" style={{ marginBottom: "1rem", background: "#ffebee", borderColor: "#ef9a9a" }}>
@@ -206,7 +206,7 @@ export function WegSettlementDetailPage() {
               <textarea rows={3} value={reserveReason} maxLength={2000} onChange={e => setReserveReason(e.target.value)} />
             </label>
           </div>
-      {run.status === "draft" && <FinancialCoverageReview key={ledgerVersion} kind="settlement" subjectId={run.id} values={req()} onSaved={() => setLedgerRefresh(v => v + 1)} />}
+      {run.status === "draft" && <FinancialCoverageReview key={ledgerVersion} kind="settlement" subjectId={run.id} values={req()} onSaved={() => { void run_(() => getWegRun(run.id)); }} />}
           <div className="form-actions" style={{ marginTop: "1rem" }}>
             <button className="btn btn--primary" disabled={busy} onClick={() => runId && run_(() => computeWegRun(runId, req()))}>
               {busy ? "Berechnen..." : "Berechnen"}

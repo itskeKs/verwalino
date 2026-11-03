@@ -3,7 +3,43 @@ import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/re
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { AssetReportDetailPage } from "./AssetReportDetailPage";
 const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } });
-afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
+afterEach(() => { cleanup(); vi.unstubAllGlobals(); vi.restoreAllMocks(); });
+
+it('keeps delete and ledger identities distinct without React console errors', async () => {
+  const errors = vi.spyOn(console, 'error');
+  vi.stubGlobal('fetch', vi.fn(async (url: string) => json(
+    url === '/api/properties' || url.includes('/bank-accounts') ? []
+    : url.endsWith('/reserve-ledger') ? { entries: [], frozen: false }
+    : { id: 'run-keys', status: 'draft', property_id: 'property-1', lines: [], delete_restriction: null })));
+  render(<MemoryRouter initialEntries={['/report/run-keys']}><Routes><Route path="/report/:runId" element={<AssetReportDetailPage />} /></Routes></MemoryRouter>);
+  await screen.findByRole('button', { name: 'Entwurf löschen' });
+  expect(errors).not.toHaveBeenCalled();
+});
+
+it('refreshes deletion eligibility after saving a reserve opening declaration', async () => {
+  let protectedOpening = false;
+  const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
+    if (url === '/api/financial-input-coverage' && init?.method === 'POST') {
+      protectedOpening = true; return json({ id: 'coverage' }, 201);
+    }
+    if (url === '/api/properties' || url.includes('/bank-accounts')) return json([]);
+    if (url.endsWith('/reserve-ledger')) return json({ entries: [], frozen: false,
+      opening_balance: protectedOpening ? '12500.00' : '0.00' });
+    return json({ id: 'run-1', run_type: 'VERMOEGENSBERICHT', status: 'draft', property_id: 'property-1', lines: [],
+      delete_restriction: protectedOpening ? { code: 'SETTLEMENT_DELETE_HAS_LEDGER', message: 'Entwürfe mit Rücklagenbuch-Einträgen können nicht gelöscht werden.' } : null });
+  });
+  vi.stubGlobal('fetch', fetchMock);
+  render(<MemoryRouter initialEntries={['/report/run-1']}><Routes><Route path="/report/:runId" element={<AssetReportDetailPage />} /></Routes></MemoryRouter>);
+  expect(await screen.findByRole('button', { name: 'Entwurf löschen' })).toBeInTheDocument();
+  fireEvent.change(screen.getByLabelText('Rücklage Anfangsbestand'), { target: { value: '12500.00' } });
+  fireEvent.change(screen.getByLabelText('Begründung der Rücklagenwerte'), { target: { value: 'Bankbestätigter Anfangsbestand' } });
+  fireEvent.change(screen.getByLabelText('Grundlage der Prüfung'), { target: { value: 'Kontostände vollständig geprüft' } });
+  fireEvent.click(screen.getByRole('checkbox'));
+  fireEvent.click(screen.getByRole('button', { name: 'Datengrundlage speichern' }));
+  await screen.findByText('Entwürfe mit Rücklagenbuch-Einträgen können nicht gelöscht werden.');
+  expect(screen.queryByRole('button', { name: 'Entwurf löschen' })).not.toBeInTheDocument();
+  await waitFor(() => expect(screen.getByText(/Aktueller Anfangsbestand:/)).toHaveTextContent('12.500,00'));
+});
 
 it('confirms an empty draft deletion and returns to the report list', async () => {
   const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {

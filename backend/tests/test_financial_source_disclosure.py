@@ -10,8 +10,38 @@ from tests.test_property_source_access import grant
 from tests.test_property_source_enforcement import synthetic_enforcement, change_mode
 from tests.test_scoped_account_statements import mutate
 from tests.contact_source_fixtures import grant_property_contacts
+from tests.test_invoice_extraction_worker import worker_tenant  # noqa: F401
 
 pytestmark = pytest.mark.asyncio
+
+
+async def test_delete_metadata_preserves_pristine_visibility_without_disclosing_hidden_results(worker_tenant):
+    from tests.test_reserve_ledger import reserve_world, finalize
+    from tests.test_weg_draft_deletion import asset_draft
+    from tests.financial_coverage_helpers import attest_fixture
+    api, seed = worker_tenant
+    w = await reserve_world(api, seed)
+    frozen = w['run']
+    await finalize(api, w)
+    computed = await asset_draft(api, w, 2025)
+    values = {'bank_balances': [{'bank_account_id': w[key], 'label': key, 'account_type': kind, 'balance': '0.00'}
+        for key, kind in [('bank_giro', 'LAUFEND'), ('bank_ruecklage', 'RUECKLAGE')]], 'receivables': [], 'payables': []}
+    await attest_fixture(api, 'settlement', computed, values)
+    response = await api.post(f'/api/weg-settlements/asset-reports/{computed}/compute', json=values)
+    assert response.status_code == 200, response.text
+    pristine = await asset_draft(api, w, 2026)
+    for run in (frozen, computed, pristine):
+        await bind_output(seed, w['property'], run, kind='settlement_run', linked_plan=w['plan'] if run == frozen else None)
+    async with synthetic_enforcement(seed):
+        async with get_tenant_session(seed['org_a_id']) as db:
+            await db.execute(text("SELECT set_config('app.current_user_id',:actor,true)"), {'actor': str(seed['user_a_admin_id'])})
+            for run, visible, reason in (
+                (pristine, 1, 'SETTLEMENT_DELETE_SOURCE_ACCESS_REQUIRED'),
+                (frozen, 0, 'NOT_FOUND'), (computed, 0, 'NOT_FOUND'), (str(uuid.uuid4()), 0, 'NOT_FOUND'),
+            ):
+                args = {'org': seed['org_a_id'], 'run': uuid.UUID(run)}
+                assert await db.scalar(text('SELECT count(*) FROM settlement_run WHERE id=:run'), args) == visible
+                assert await db.scalar(text('SELECT weg_draft_delete_reason(:org,:run)'), args) == reason
 
 
 async def bind_output(seed, property_id, subject, *, kind='economic_plan', scope_type='WEG', linked_plan=None, caps=None):

@@ -997,3 +997,22 @@ Synthetic records on the shared test database, 1280 × 900 and 360 × 900:
 | WEG draft after | [view](docs/assets/design/draft-deletion/weg-after-1280.png) | [view](docs/assets/design/draft-deletion/weg-after-360.png) |
 | Opening import of 12,500 euros and ledger refusal | [view](docs/assets/design/draft-deletion/asset-imported-1280.png) | [view](docs/assets/design/draft-deletion/asset-imported-360.png) |
 | Booked 2024 Hausgeld refusal | [view](docs/assets/design/draft-deletion/asset-booking-refusal-1280.png) | [view](docs/assets/design/draft-deletion/asset-booking-refusal-360.png) |
+
+
+Saving the input-coverage declaration on either reserve detail page refreshes
+its run metadata as well as the ledger, replacing the delete action immediately
+when the saved opening creates protected evidence. Delete-control keys are
+namespaced per run, separate from the reserve panel; repeated monthly plan rows
+use distinct rendered identities even when they share a source row ID.
+
+Same-screen coverage-save verification after the deletion rework: each pair uses
+a fresh synthetic report. The opening import uses the report's input fields and
+“Datengrundlage speichern”; the after image is captured without reloading or
+navigating. All four cases have no console errors or horizontal overflow.
+
+| State | Desktop | 360 px |
+| --- | --- | --- |
+| Asset eligible before saving coverage | [view](docs/assets/design/draft-deletion/rework/asset-eligible-1280.png) | [view](docs/assets/design/draft-deletion/rework/asset-eligible-360.png) |
+| Asset protected immediately after import | [view](docs/assets/design/draft-deletion/rework/asset-imported-1280.png) | [view](docs/assets/design/draft-deletion/rework/asset-imported-360.png) |
+| WEG eligible before saving coverage | [view](docs/assets/design/draft-deletion/rework/weg-eligible-1280.png) | [view](docs/assets/design/draft-deletion/rework/weg-eligible-360.png) |
+| WEG protected immediately after import | [view](docs/assets/design/draft-deletion/rework/weg-imported-1280.png) | [view](docs/assets/design/draft-deletion/rework/weg-imported-360.png) |

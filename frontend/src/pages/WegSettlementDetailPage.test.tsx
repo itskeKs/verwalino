@@ -71,6 +71,37 @@ it('shows the current opening beside the corrected balance input and reason', as
 const paymentLabel = (name: string) => `Tatsächlich gezahltes Hausgeld · ${name}`;
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); vi.restoreAllMocks(); });
 
+it('keeps delete and ledger identities distinct without React console errors', async () => {
+  const errors = vi.spyOn(console, 'error');
+  install(); show();
+  await screen.findByRole('button', { name: 'Entwurf löschen' });
+  expect(errors).not.toHaveBeenCalled();
+});
+
+it('refreshes deletion eligibility after saving a reserve opening declaration', async () => {
+  let protectedOpening = false;
+  const fetchMock = install();
+  const original = fetchMock.getMockImplementation()!;
+  fetchMock.mockImplementation(async (url: string, init?: RequestInit) => {
+    if (url === '/api/financial-input-coverage' && init?.method === 'POST') protectedOpening = true;
+    const response = await original(url, init);
+    if (url === `/api/weg-settlements/${runId}`) return json({ ...draft(), delete_restriction: protectedOpening
+      ? { code: 'SETTLEMENT_DELETE_HAS_LEDGER', message: 'Entwürfe mit Rücklagenbuch-Einträgen können nicht gelöscht werden.' } : null });
+    if (url.endsWith('/reserve-ledger')) return json({ ...await response.json(), opening_balance: protectedOpening ? '12500.00' : '0.00' });
+    return response;
+  });
+  show();
+  expect(await screen.findByRole('button', { name: 'Entwurf löschen' })).toBeInTheDocument();
+  fireEvent.change(screen.getByLabelText('Rücklagen-Anfangsbestand'), { target: { value: '12500.00' } });
+  fireEvent.change(screen.getByLabelText('Begründung der Rücklagenwerte'), { target: { value: 'Bankbestätigter Anfangsbestand' } });
+  fireEvent.change(screen.getByLabelText('Grundlage der Prüfung'), { target: { value: 'Kontostände vollständig geprüft' } });
+  fireEvent.click(screen.getByRole('checkbox'));
+  fireEvent.click(screen.getByRole('button', { name: 'Datengrundlage speichern' }));
+  await screen.findByText('Entwürfe mit Rücklagenbuch-Einträgen können nicht gelöscht werden.');
+  expect(screen.queryByRole('button', { name: 'Entwurf löschen' })).not.toBeInTheDocument();
+  await waitFor(() => expect(screen.getByText(/Aktueller Anfangsbestand:/)).toHaveTextContent('12.500,00'));
+});
+
 it('deletes an empty annual draft after confirmation', async () => {
   install();
   const remove = vi.spyOn(endpoints, 'deleteWegDraft').mockResolvedValue();

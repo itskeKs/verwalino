@@ -82,6 +82,7 @@ from app.services.reserve_ledger_service import ReserveLedgerService
 ENGINE_VERSION = "m4.2.0"
 
 DELETE_MESSAGES = {
+    'SETTLEMENT_DELETE_SOURCE_ACCESS_REQUIRED': 'Zum Löschen dieses Entwurfs benötigen Sie Zugriff auf alle Finanzquellen des Objekts.',
     'SETTLEMENT_DELETE_NOT_DRAFT': 'Nur nicht ersetzte Entwürfe können gelöscht werden.',
     'SETTLEMENT_DELETE_HAS_BOOKINGS': 'Entwürfe mit Buchungen können nicht gelöscht werden.',
     'SETTLEMENT_DELETE_HAS_LEDGER': 'Entwürfe mit Rücklagenbuch-Einträgen können nicht gelöscht werden.',

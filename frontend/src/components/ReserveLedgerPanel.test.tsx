@@ -2,7 +2,18 @@ import { afterEach, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { ReserveLedgerPanel } from './ReserveLedgerPanel';
 
-afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
+afterEach(() => { cleanup(); vi.unstubAllGlobals(); vi.restoreAllMocks(); });
+
+it('keeps distinct monthly plan rows with the same source id free of React key warnings', async () => {
+  const errors = vi.spyOn(console, 'error');
+  vi.stubGlobal('fetch', vi.fn(async () => json({ ...ledger, entries: [
+    { id: 'plan-line-1', kind: 'PLANNED', date: '2025-01-01', amount: '250.00', owner_name: 'Änne Groß' },
+    { id: 'plan-line-1', kind: 'PLANNED', date: '2025-02-01', amount: '250.00', owner_name: 'Änne Groß' },
+  ] })));
+  render(<ReserveLedgerPanel runId="run-1" propertyId="property-1" status="draft" onChanged={() => {}} />);
+  await screen.findByText('01.02.2025');
+  expect(errors).not.toHaveBeenCalled();
+});
 
 it('distinguishes withdrawal corrections from funded cash and links readable evidence', async () => {
   vi.stubGlobal('fetch', vi.fn(async () => json({ ...ledger, entries: [

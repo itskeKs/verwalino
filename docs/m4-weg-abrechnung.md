@@ -963,3 +963,15 @@ writes. Replacement draft lines may be removed with an eligible run; retained
 financial evidence is never removed to make deletion succeed. Deletion records
 an audit event. Migration 0151 keeps the retention catalog conditional for draft
 runs and retains drafts carrying these financial dependencies.
+
+
+Migration 0152 confines runtime deletion locks to the authenticated organization;
+missing or invalid runtime organization/user context is refused before locking.
+The existing operator erasure context requires an explicit target organization,
+the `app_migrator` login and `app.organization_erasure=on`; it takes the same
+target-only locks before deleting rows, without requiring a runtime user.
+A scope-visible draft remains creatable and readable without complete property
+or contact-source access. Its deletion metadata then reports only the generic
+German access restriction, without disclosing hidden bookings or other evidence.
+Saving a reserve opening through the input-coverage declaration refreshes both
+the ledger and the draft's deletion eligibility immediately on both pages.

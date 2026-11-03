@@ -58,6 +58,25 @@ async def reserve_erasure_db(rent_db, export_store):
         await rent_db.rollback()
 
 
+async def test_operator_erasure_removes_an_empty_weg_draft_without_a_runtime_actor(rent_world, rent_db, export_store):
+    from app.services.organization_deletion_service import run_deletion
+    w = rent_world
+    async with api_client(w) as api:
+        prop = await api.post('/api/properties', json={'name': 'Disposable empty WEG draft', 'management_type': 'WEG'})
+        assert prop.status_code == 201, prop.text
+        draft = await api.post('/api/weg-settlements/asset-reports', json={'property_id': prop.json()['id'],
+            'period_start': '2025-01-01', 'period_end': '2025-12-31'})
+        assert draft.status_code == 201, draft.text
+        assert (await api.post('/api/organizations/deletion')).status_code == 200
+        assert (await api.post('/api/organizations/deletion/confirm', json={'organization_name': 'T23 synthetic'})).status_code == 200
+    async with rent_db.begin():
+        await rent_db.execute(text("SELECT set_config('app.current_user_id','',true)"))
+        assert await run_deletion(rent_db, w['org'], now=datetime.now(timezone.utc) + timedelta(days=8))
+    assert await rent_db.scalar(text('SELECT count(*) FROM settlement_run WHERE id=:run'), {'run': draft.json()['id']}) == 0
+    assert await rent_db.scalar(text('SELECT status FROM organization_deletion WHERE organization_id=:org'), w) == 'deleted_pending_retention'
+    await rent_db.rollback()
+
+
 @pytest.mark.parametrize('scoped', [False, True], ids=['unscoped', 'immutable-scope-bindings'])
 async def test_erasure_keeps_payment_retention_conditional_with_or_without_scope_bindings(
         rent_world, reserve_erasure_db, app_rw_session, scoped):

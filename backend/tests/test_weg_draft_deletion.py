@@ -250,3 +250,82 @@ async def test_retention_catalog_keeps_empty_weg_drafts_conditional(client_a_adm
     assert await migrator_session.scalar(query, {'run': run}) is False
     await payment(client_a_admin, w, '100.00', kind='HAUSGELD_VORSCHUSS')
     assert await migrator_session.scalar(query, {'run': run}) is True
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('context,targeted', [
+    ('missing', False), ('missing', True), ('missing_actor', False), ('foreign', False),
+    ('spoofed_erasure', False), ('authorized', False),
+])
+async def test_noop_runtime_delete_never_locks_foreign_tenant_financial_inputs(
+        client_a_admin, client_b_admin, seed_data, context, targeted):
+    import asyncpg
+    run = await asset_draft(client_a_admin, _seed_weg(seed_data))
+    await asset_draft(client_b_admin, _seed_weg({**seed_data, 'org_a_id': seed_data['org_b_id']}))
+    deleter = await asyncpg.connect(os.environ['HV_DATABASE_URL'].replace('postgresql+asyncpg://', 'postgresql://'))
+    observer = await asyncpg.connect(os.environ['HV_DATABASE_URL_SYNC'])
+    try:
+        async with deleter.transaction():
+            if context != 'missing':
+                await deleter.execute("SELECT set_config('app.current_org_id',$1,true)",
+                    str(seed_data['org_b_id'] if context == 'foreign' else seed_data['org_a_id']))
+            if context in ('foreign', 'authorized'):
+                await deleter.execute("SELECT set_config('app.current_user_id',$1,true)", str(seed_data['user_a_admin_id']))
+            if context == 'spoofed_erasure':
+                await deleter.execute("SET LOCAL app.organization_erasure='on'")
+            refused = False
+            try:
+                if targeted:
+                    await deleter.execute('DELETE FROM settlement_run WHERE id=$1', uuid.UUID(run))
+                else:
+                    await deleter.execute('DELETE FROM settlement_run WHERE false')
+            except asyncpg.InsufficientPrivilegeError:
+                refused = True
+            async with observer.transaction():
+                assert await observer.fetchval("SELECT pg_try_advisory_xact_lock(hashtextextended('financial-inputs:'||$1,0))", str(seed_data['org_b_id'])), context
+                own_available = await observer.fetchval("SELECT pg_try_advisory_xact_lock(hashtextextended('financial-inputs:'||$1,0))", str(seed_data['org_a_id']))
+                assert own_available is (context != 'authorized'), context
+            assert refused is (context != 'authorized'), context
+    finally:
+        await deleter.close()
+        await observer.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('erasure_flag', [False, True])
+async def test_unscoped_migrator_delete_refuses_before_parent_or_financial_locks(client_a_admin, seed_data, erasure_flag):
+    import asyncpg
+    run = await asset_draft(client_a_admin, _seed_weg(seed_data))
+    deleter = await asyncpg.connect(os.environ['HV_DATABASE_URL_SYNC'])
+    writer = await asyncpg.connect(os.environ['HV_DATABASE_URL_SYNC'])
+    deletion = None
+    try:
+        if erasure_flag:
+            await deleter.execute("SET app.organization_erasure='on'")
+        async with writer.transaction():
+            await writer.execute("SELECT pg_advisory_xact_lock(hashtextextended('financial-inputs:'||$1,0))", str(seed_data['org_a_id']))
+            deletion = asyncio.create_task(deleter.execute('DELETE FROM settlement_run WHERE id=$1', uuid.UUID(run)))
+            try:
+                for _ in range(300):
+                    waiting = await writer.fetchval("SELECT EXISTS(SELECT 1 FROM pg_locks WHERE pid=$1 AND locktype='advisory' AND NOT granted)", deleter.get_server_pid())
+                    if deletion.done() or waiting:
+                        break
+                    await asyncio.sleep(0.01)
+                parent_available = True
+                try:
+                    async with writer.transaction():
+                        await writer.fetchval('SELECT id FROM settlement_run WHERE id=$1 FOR KEY SHARE NOWAIT', uuid.UUID(run))
+                except asyncpg.LockNotAvailableError:
+                    parent_available = False
+                assert parent_available, 'Unscoped deletion locked the parent before waiting for financial inputs'
+                assert not waiting
+                with pytest.raises(asyncpg.InsufficientPrivilegeError):
+                    await asyncio.wait_for(deletion, timeout=5)
+                assert await writer.fetchval("SELECT pg_try_advisory_xact_lock(hashtextextended('financial-inputs:'||$1,0))", str(seed_data['org_b_id']))
+            finally:
+                if not deletion.done():
+                    deletion.cancel()
+                    await asyncio.gather(deletion, return_exceptions=True)
+    finally:
+        await deleter.close()
+        await writer.close()
