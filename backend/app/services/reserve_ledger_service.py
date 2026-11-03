@@ -360,7 +360,8 @@ class ReserveLedgerService:
     async def contribution_reduction_limit(self, run, original, current):
         limit = min(current, await self.repo.contribution_headroom(run, original.unit_id) + current)
         return limit, {**CONTRIBUTION_EXCEEDS_BOOKED,
-            'message': f'Sie können für diese Korrektur höchstens {_euro(limit)} beibehalten.'}
+            'message': ('Für diese Korrektur ist kein positiver Restbetrag mehr möglich. Bitte verwenden Sie „Korrektur löschen“.'
+                if limit <= ZERO else f'Sie können für diese Korrektur höchstens {_euro(limit)} beibehalten.')}
 
     async def reduce_contribution(self, run, entry_id, reduced_to, reason):
         original = next((entry for entry in await self.repo.entries(run) if entry.id == entry_id), None)

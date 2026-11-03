@@ -107,3 +107,10 @@ Feature: Maintenance reserve ledger
     Given an empty asset report for 2020 precedes the first real report for 2025
     When I delete the accidentally opened 2020 draft
     Then the 2020 report disappears and I can import 12500 euros for 2025 with a reason
+
+  @browser
+  Scenario: An unbacked contribution correction explains how to delete it
+    Given a WEG with partially assigned Hausgeld and a finalized reserve plan
+    When I correct the unit contribution by 300 euros
+    And the backing Hausgeld is reversed
+    Then keeping 100 euros directs me to delete the correction on desktop and mobile

@@ -890,3 +890,69 @@ def contribution_reduction_forms(world, reserve_scenario, browser_world, tmp_pat
         await expect(panel.get_by_text('Verbleibende Korrektur:', exact=False)).to_contain_text('0,00')
         assert not errors, errors
     browser_world.run(inspect())
+
+
+@when('the backing Hausgeld is reversed')
+def reverse_correction_backing(world, reserve_scenario):
+    response = world.act('POST', f"/api/payments/{reserve_scenario['cash']}/reverse")
+    assert response.status_code == 201, response.text
+
+
+@then('keeping 100 euros directs me to delete the correction on desktop and mobile')
+def unbacked_correction_action(world, reserve_scenario, browser_world, tmp_path):
+    import os
+    from playwright.async_api import expect
+    w = reserve_scenario
+    directory = Path(__file__).resolve().parents[3] / 'docs/assets/design/reserve-correction-deletion' if os.environ.get('VERWALINO_CAPTURE_DESIGN') == '1' else tmp_path
+    directory.mkdir(parents=True, exist_ok=True)
+    path = f"/api/weg-settlements/{w['run']}/reserve-ledger"
+    before = world.act('GET', path).json()
+    message = 'Für diese Korrektur ist kein positiver Restbetrag mehr möglich. Bitte verwenden Sie „Korrektur löschen“.'
+
+    async def inspect():
+        page = browser_world.page
+        errors, messages = [], []
+        page.on('pageerror', lambda error: errors.append(str(error)))
+        for kind, route in [('weg', f"/weg-abrechnungen/{w['weg_run']}"), ('asset', f"/vermoegensberichte/{w['run']}")]:
+            for width in (1280, 360):
+                await page.set_viewport_size({'width': width, 'height': 800})
+                await browser_world.visit(route)
+                panel = page.get_by_role('region', name='Rücklagenbuch')
+                await panel.get_by_role('button', name='Korrektur verringern / löschen', exact=True).click()
+                dialog = page.get_by_role('dialog')
+                amount = dialog.get_by_label('Verbleibender Korrekturbetrag *', exact=True)
+                reason = dialog.get_by_role('textbox', name='Begründung *', exact=True)
+                await amount.fill('100,00')
+                await reason.fill('Nach Hausgeld-Storno verbleibende Korrektur abstimmen')
+                async with page.expect_response(lambda response: response.url.endswith('/reduce')) as pending:
+                    await dialog.get_by_role('button', name='Korrektur verringern', exact=True).click()
+                response = await pending.value
+                assert response.status == 422, await response.text()
+                assert (await response.json())['detail']['code'] == 'RESERVE_CONTRIBUTION_EXCEEDS_BOOKED'
+                alert = dialog.get_by_role('alert')
+                await expect(alert).to_be_visible()
+                messages.append(await alert.inner_text())
+                await expect(amount).to_have_value('100,00')
+                await expect(reason).to_have_value('Nach Hausgeld-Storno verbleibende Korrektur abstimmen')
+                await expect(dialog.get_by_role('button', name='Korrektur löschen', exact=True)).to_be_in_viewport()
+                assert await page.evaluate('document.documentElement.scrollWidth <= window.innerWidth')
+                assert await dialog.evaluate('(el) => el.scrollWidth <= el.clientWidth')
+                await page.screenshot(path=str(directory / f'{kind}-after-{width}.png'), animations='disabled')
+                await dialog.get_by_role('button', name='Abbrechen', exact=True).click()
+        assert not errors, errors
+        assert messages == [message] * 4
+        await panel.get_by_role('button', name='Korrektur verringern / löschen', exact=True).click()
+        dialog = page.get_by_role('dialog')
+        await dialog.get_by_role('textbox', name='Begründung *', exact=True).fill('Nicht mehr gedeckte Korrektur vollständig aufheben')
+        await dialog.get_by_role('button', name='Korrektur löschen', exact=True).click()
+        await expect(dialog).not_to_be_visible()
+        await expect(panel.get_by_role('button', name='Korrektur verringern / löschen', exact=True)).to_have_count(0)
+        await expect(panel.get_by_text('Verbleibende Korrektur:', exact=False)).to_contain_text('0,00')
+
+    browser_world.run(inspect())
+    ledger = world.act('GET', path).json()
+    original = next(row for row in ledger['entries'] if row.get('id') == w['correction'])
+    assert original['amount'] == '300.00' and original['current_amount'] == '0.00'
+    assert len(ledger['entries']) == len(before['entries']) + 1
+    reversal = next(row for row in ledger['entries'] if row.get('reverses_entry_id') == w['correction'])
+    assert reversal['amount'] == '-300.00'
