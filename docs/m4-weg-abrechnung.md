@@ -848,7 +848,12 @@ allocation and WEMoG settlement-balance calculation; it changes neither.
   creates the full reversal. Both reject payment assignments, reversal rows and
   other components (422), missing reasons (`RESERVE_CORRECTION_REASON_REQUIRED`),
   foreign IDs (404) and finalized periods (409 `RESERVE_PERIOD_FINALIZED`). The
-  definer guard mirrors the limits; direct UPDATE/DELETE still fail with 23514
+  reduction handler preserves that finalization response for the database guard
+  too, with “Die Rücklage dieses Zeitraums ist finalisiert.” A database refusal
+  named `reserve_amount_invalid` returns 422 `RESERVE_AMOUNT_INVALID` and asks
+  the manager to reduce the remaining amount or delete the correction, just as
+  service validation does; it is not reported as a generic input error.
+  The definer guard mirrors the limits; direct UPDATE/DELETE still fail with 23514
   `reserve_ledger_append_only`. Counter-entries must use the original's exact
   accounting scope, so a different draft scope cannot release a frozen original.
   The separate payout Storno rule stays: first reconcile positive receipt

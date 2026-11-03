@@ -322,6 +322,9 @@ async def _reduce_reserve_contribution(run_id, entry_id, reduced_to, reason, aut
         _raise_reserve_opening_error(exc)
         constraint = getattr(getattr(exc.orig, '__cause__', None), 'constraint_name', None)
         if getattr(exc.orig, 'sqlstate', None) == '23514':
+            if constraint == 'reserve_amount_invalid':
+                raise HTTPException(422, {'code': 'RESERVE_AMOUNT_INVALID',
+                    'message': 'Bitte verringern Sie den verbleibenden Korrekturbetrag oder löschen Sie die Korrektur.'}) from None
             if constraint == 'reserve_contribution_exceeds_booked':
                 from app.services.reserve_ledger_service import CONTRIBUTION_EXCEEDS_BOOKED, _euro
                 original = await service.repo.get_by_id(entry_id)
