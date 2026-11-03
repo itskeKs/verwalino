@@ -2769,7 +2769,7 @@ def test_direct_zero_counter_entry_audit_boundary_is_documented():
         'ReserveLedgerService.reduce_contribution',
         'reserve.contribution_reduced',
         'POST /api/weg-settlements/{run_id}/reserve-ledger/overrides/{entry_id}/reduce',
-        'DELETE /api/weg-settlements/{run_id}/reserve-ledger/overrides/{entry_id}',
+        'POST /api/weg-settlements/{run_id}/reserve-ledger/overrides/{entry_id}/delete',
         'Direct SQL INSERT is not a supported application path',
         '300.00', '-300.00', '0.00',
         'does not emit `reserve.contribution_reduced`',
@@ -2800,7 +2800,7 @@ async def test_zero_contribution_counter_entry_is_audited_only_through_the_servi
     audit_query = text('SELECT id,action,actor_user_id,payload_diff FROM audit_event WHERE entity_id=:run')
     prior_events = (await app_rw_session.execute(audit_query, {'run': w['run']})).all()
     assert not any(row.action == 'reserve.contribution_reduced' for row in prior_events)
-    reason = 'Remove correction after returned Hausgeld'
+    reason = 'Fehlbuchung'
     if operation == 'direct_insert':
         async with app_rw_session.bind.begin() as connection:
             await connection.execute(text("SELECT set_config('app.current_org_id',:org,true),set_config('app.current_user_id',:actor,true)"),
@@ -2812,7 +2812,7 @@ async def test_zero_contribution_counter_entry_is_audited_only_through_the_servi
                 'property': w['property'], 'run': w['run'], 'unit': w['u1'], 'entry': original_id, 'reason': reason}))
     else:
         url = path + '/overrides/' + original_id
-        response = await api.request('DELETE', url, json={'reason': reason}) if operation == 'delete' else await api.post(
+        response = await api.post(url + '/delete', json={'reason': reason}) if operation == 'delete' else await api.post(
             url + '/reduce', json={'reduced_to': '0.00', 'reason': reason})
         assert response.status_code == 201, response.text
         counter_id = response.json()['id']
@@ -2853,7 +2853,7 @@ async def test_delete_unbacked_contribution_correction_restores_headroom_and_fin
     api = client_a_admin
     w, path = await draft_unit_correction(api, seed_data)
     assert (await api.post(f"/api/payments/{w['cash']}/reverse")).status_code == 201
-    deleted = await api.request('DELETE', path, json={'reason': 'Remove correction after returned Hausgeld'})
+    deleted = await api.post(path + '/delete', json={'reason': 'Remove correction after returned Hausgeld'})
     assert deleted.status_code == 201, deleted.text
     ledger = (await api.get(path.rsplit('/overrides/', 1)[0])).json()
     assert ledger['contributions_total'] == '0.00'
@@ -2967,7 +2967,7 @@ async def test_reduce_contribution_correction_to_new_headroom_then_delete_remain
     assert next(row for row in ledger['entries'] if row.get('id') == w['entry'])['current_amount'] == '500.00'
     reduced = await api.post(path + '/reduce', json={'reduced_to': '200.00', 'reason': 'Further reconciliation'})
     assert reduced.status_code == 201, reduced.text
-    deleted = await api.request('DELETE', path, json={'reason': 'Remove remainder'})
+    deleted = await api.post(path + '/delete', json={'reason': 'Remove remainder'})
     assert deleted.status_code == 201, deleted.text
     ledger = (await api.get(path.rsplit('/overrides/', 1)[0])).json()
     assert [row['amount'] for row in ledger['entries'] if row.get('reverses_entry_id') == w['entry']] == ['-300.00', '-300.00', '-200.00']
@@ -3035,7 +3035,11 @@ async def test_contribution_reduction_requires_reason_hides_foreign_ids_and_free
         body = {} if reason is None else {'reason': reason}
         if operation == 'reduce':
             return await client.post(path + '/reduce', json={**body, 'reduced_to': '100.00'})
-        return await client.request('DELETE', path, json=body)
+        return await client.post(path + '/delete', json=body)
+    if operation == 'delete':
+        refused = await api.post(path + '/delete')
+        assert refused.status_code == 422, refused.text
+        assert refused.json()['detail']['code'] == 'RESERVE_CORRECTION_REASON_REQUIRED'
     for reason in (None, '', ' '):
         refused = await change(api, reason)
         assert refused.status_code == 422, refused.text
@@ -3062,7 +3066,7 @@ async def test_contribution_reduction_refuses_other_ledger_components_and_paymen
     assignment = next(row['id'] for row in ledger['entries'] if row.get('payment_id') == w['cash'])
     for entry in (added.json()['id'], assignment):
         url = path + '/overrides/' + entry
-        refused = await api.post(url + '/reduce', json={'reduced_to': '1.00', 'reason': 'Wrong component'}) if operation == 'reduce' else await api.request('DELETE', url, json={'reason': 'Wrong component'})
+        refused = await api.post(url + '/reduce', json={'reduced_to': '1.00', 'reason': 'Wrong component'}) if operation == 'reduce' else await api.post(url + '/delete', json={'reason': 'Wrong component'})
         assert refused.status_code == 422, refused.text
         assert refused.json()['detail']['code'] == 'RESERVE_INPUT_INVALID'
 
@@ -3181,7 +3185,7 @@ async def test_contribution_reduction_hides_foreign_and_unknown_entries_before_f
     responses = []
     for entry in (foreign.json()['id'], str(uuid.uuid4())):
         url = f'/api/weg-settlements/{run_id}/reserve-ledger/overrides/{entry}'
-        response = await api.post(url + '/reduce', json={'reduced_to': '1.00', 'reason': 'Foreign entry'}) if operation == 'reduce' else await api.request('DELETE', url, json={'reason': 'Foreign entry'})
+        response = await api.post(url + '/reduce', json={'reduced_to': '1.00', 'reason': 'Foreign entry'}) if operation == 'reduce' else await api.post(url + '/delete', json={'reason': 'Foreign entry'})
         assert response.status_code == 404, response.text
         responses.append(response.json())
     assert responses[0] == responses[1]
@@ -3233,3 +3237,11 @@ async def test_database_refuses_reducing_a_frozen_original_through_another_scope
                 {**ids, 'entry': w['entry']})
     assert refused.value.orig.sqlstate == '23514'
     assert refused.value.orig.__cause__.constraint_name == 'reserve_contribution_reduction_invalid'
+
+
+def test_contribution_deletion_uses_only_the_post_action_route():
+    from tests.test_route_isolation_sweep import app_routes
+    routes = app_routes()
+    base = '/api/weg-settlements/{run_id}/reserve-ledger/overrides/{entry_id}'
+    assert 'POST ' + base + '/delete' in routes
+    assert 'DELETE ' + base not in routes

@@ -346,7 +346,7 @@ async def reduce_reserve_contribution(run_id: uuid.UUID, entry_id: uuid.UUID, bo
     return await _reduce_reserve_contribution(run_id, entry_id, body.reduced_to, body.reason, auth, db)
 
 
-@router.delete('/{run_id}/reserve-ledger/overrides/{entry_id}', status_code=201)
+@router.post('/{run_id}/reserve-ledger/overrides/{entry_id}/delete', status_code=201)
 async def delete_reserve_contribution(run_id: uuid.UUID, entry_id: uuid.UUID, body: ReserveCorrectionReason = ReserveCorrectionReason(),
         auth: AuthContext = Depends(require_write_dep), db: AsyncSession = Depends(get_db, scope='function')):
     return await _reduce_reserve_contribution(run_id, entry_id, Decimal('0.00'), body.reason, auth, db)

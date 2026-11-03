@@ -815,8 +815,8 @@ def unit_correction_form(world, reserve_scenario, browser_world, tmp_path):
 def delete_unbacked_contribution(world, reserve_scenario):
     w = reserve_scenario
     assert world.act('POST', f"/api/payments/{w['cash']}/reverse").status_code == 201
-    response = world.act('DELETE', f"/api/weg-settlements/{w['run']}/reserve-ledger/overrides/{w['correction']}",
-        json={'reason': 'Returned Hausgeld reconciled'})
+    response = world.act('POST', f"/api/weg-settlements/{w['run']}/reserve-ledger/overrides/{w['correction']}/delete",
+        json={'reason': 'Fehlbuchung'})
     assert response.status_code == 201, response.text
     w['reversal'] = response.json()['id']
 
@@ -828,6 +828,7 @@ def contribution_release_finalizes(world, reserve_scenario):
     assert ledger['contributions_total'] == '0.00'
     row = next(row for row in ledger['entries'] if row.get('id') == w['reversal'])
     assert row['amount'] == '-300.00' and row['reverses_entry_id'] == w['correction']
+    assert row['reason'] == 'Fehlbuchung'
     values = {'bank_balances': [
         {'bank_account_id': w['bank_giro'], 'label': 'Giro', 'account_type': 'LAUFEND', 'balance': '0.00'},
         {'bank_account_id': w['bank_ruecklage'], 'label': 'Reserve', 'account_type': 'RUECKLAGE', 'balance': '0.00'}],

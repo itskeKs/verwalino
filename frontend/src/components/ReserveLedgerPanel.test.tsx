@@ -253,7 +253,7 @@ it.each([
 
 it.each(['reduce', 'delete'])('audits a draft contribution %s with a mandatory reason', async operation => {
   const changed = vi.fn();
-  const fetchMock = vi.fn(async (_url: string, init?: RequestInit) => init?.method === 'POST' || init?.method === 'DELETE'
+  const fetchMock = vi.fn(async (_url: string, init?: RequestInit) => init?.method === 'POST'
     ? json({ id: 'reversal-1' }, 201) : json({ ...ledger, entries: [
       { id: 'correction-1', kind: 'OVERRIDE', component: 'CONTRIBUTION', date: '2025-12-31',
         amount: '800.00', current_amount: '500.00', unit_id: 'unit-1', unit_number: 'Änne Groß mit langem Namen', reason: 'Hausgeld geprüft' },
@@ -268,8 +268,8 @@ it.each(['reduce', 'delete'])('audits a draft contribution %s with a mandatory r
   fireEvent.change(screen.getByLabelText('Verbleibender Korrekturbetrag *'), { target: { value: '200,00' } });
   fireEvent.click(screen.getByRole('button', { name: operation === 'delete' ? 'Korrektur löschen' : 'Korrektur verringern' }));
   await waitFor(() => expect(changed).toHaveBeenCalledOnce());
-  expect(fetchMock).toHaveBeenCalledWith(`/api/weg-settlements/run-1/reserve-ledger/overrides/correction-1${operation === 'reduce' ? '/reduce' : ''}`,
-    expect.objectContaining({ method: operation === 'reduce' ? 'POST' : 'DELETE', body: JSON.stringify(operation === 'reduce'
+  expect(fetchMock).toHaveBeenCalledWith(`/api/weg-settlements/run-1/reserve-ledger/overrides/correction-1/${operation}`,
+    expect.objectContaining({ method: 'POST', body: JSON.stringify(operation === 'reduce'
       ? { reduced_to: '200.00', reason: 'Hausgeld storniert und abgeglichen' } : { reason: 'Hausgeld storniert und abgeglichen' }) }));
 });
 

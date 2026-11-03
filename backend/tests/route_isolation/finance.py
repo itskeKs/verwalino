@@ -252,7 +252,7 @@ PROBES: dict[str, Probe] = {
     "POST /api/weg-settlements/{run_id}/reserve-ledger/overrides/{entry_id}/reduce": Probe(
         run(WEG, "x.id AS run_id,e.id AS entry_id", "JOIN reserve_ledger_entry e ON e.organization_id=x.organization_id AND e.settlement_run_id=x.id"),
         body={'reduced_to': '0.00', 'reason': 'Foreign reduction probe'}),
-    "DELETE /api/weg-settlements/{run_id}/reserve-ledger/overrides/{entry_id}": Probe(
+    "POST /api/weg-settlements/{run_id}/reserve-ledger/overrides/{entry_id}/delete": Probe(
         run(WEG, "x.id AS run_id,e.id AS entry_id", "JOIN reserve_ledger_entry e ON e.organization_id=x.organization_id AND e.settlement_run_id=x.id"),
         body={'reason': 'Foreign deletion probe'}),
     "GET /api/weg-settlements/{run_id}/pdf": Probe(run(WEG)),
