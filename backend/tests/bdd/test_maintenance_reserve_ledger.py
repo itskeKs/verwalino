@@ -352,6 +352,85 @@ def draft_reserve_wording(world, reserve_scenario, browser_world, tmp_path):
     assert not errors, errors
 
 
+@when('I finalize an asset report with an opening of 3000 euros')
+def finalize_plain_asset_report(world, reserve_scenario):
+    from tests.financial_coverage_helpers import reserve_evidence
+    w = reserve_scenario
+    report = create(world, '/api/weg-settlements/asset-reports', {
+        'property_id': w['property'], 'accounting_scope_id': w['scope'],
+        'period_start': '2025-01-01', 'period_end': '2025-12-31'})
+    w['plain_report'] = report['id']
+    values = {'reserve_opening_balance': '3000.00',
+        'reserve_override_reason': 'Bankbestätigter Anfangsbestand',
+        'bank_balances': [{'bank_account_id': w['bank_giro'], 'label': 'WEG Girokonto',
+            'account_type': 'LAUFEND', 'balance': '9000.00'}],
+        'receivables': [{'label': 'Hausgeld Müller', 'amount': '100.00'}],
+        'payables': [{'label': 'Rechnung Dachreparatur', 'amount': '250.00'}]}
+    world.run(attest_fixture(world.actor, 'settlement', report['id'], values))
+    category = next(row for row in world.act('GET', '/api/cost-categories').json() if row['code'] == 'GARTENPFLEGE')
+    cost = create(world, '/api/cost-entries', {'property_id': w['property'], 'accounting_scope_id': w['scope'],
+        'cost_category_id': category['id'], 'cost_category_plan_version': category['plan_version'],
+        'document_number': 'RE-asset-report-correction', 'invoice_date': '2025-02-01',
+        'service_period_from': '2025-01-01', 'service_period_to': '2025-12-31',
+        'gross_amount': '50.00', 'tenant_apportionable': 'UMLAGEFAEHIG', 'source': 'MANUAL'})
+    assert world.act('POST', f"/api/cost-entries/{cost['id']}/confirm").status_code == 200
+    evidence = world.run(reserve_evidence(world.actor, {**w, 'ce_garten': cost['id']}))
+    response = world.act('POST', f"/api/weg-settlements/{report['id']}/reserve-ledger/overrides", json={
+        'component': 'ADJUSTMENT', 'amount': '-50.00', 'reason': 'Begründete Rücklagenkorrektur',
+        **{key.removeprefix('reserve_'): value for key, value in evidence.items()}})
+    assert response.status_code == 201, response.text
+    world.run(attest_fixture(world.actor, 'settlement', report['id'], values))
+    response = world.act('POST', f"/api/weg-settlements/asset-reports/{report['id']}/finalize", json=values)
+    assert response.status_code == 200, response.text
+
+
+@then('the asset report shows four plain reserve labels and every amount in German format on desktop and mobile')
+def plain_asset_report(world, reserve_scenario, browser_world, tmp_path):
+    import os
+    import re
+    from playwright.async_api import expect
+
+    directory = tmp_path
+    if os.getenv('VERWALINO_CAPTURE_DESIGN') == '1':
+        directory = Path(__file__).resolve().parents[3] / 'docs/assets/design/asset-report-reserve'
+        directory.mkdir(parents=True, exist_ok=True)
+
+    async def inspect():
+        page = browser_world.page
+        await browser_world.visit(f"/vermoegensberichte/{reserve_scenario['plain_report']}")
+        await expect(page.get_by_role('button', name='PDF herunterladen')).to_be_visible()
+        assert page.url.endswith(f"/vermoegensberichte/{reserve_scenario['plain_report']}")
+        assert await page.title() == 'Hausverwaltung'
+        await page.get_by_role('link').filter(has_text='Alle Vermögensberichte').click()
+        await expect(page.get_by_role('heading', name='Vermögensberichte', exact=True)).to_be_visible()
+        await page.go_back()
+        await expect(page.get_by_role('button', name='PDF herunterladen')).to_be_visible()
+        table = page.locator('.card').filter(has=page.get_by_role('heading', name='Vermögensaufstellung', exact=True))
+        await expect(table).to_be_visible()
+        # Capture both widths before assertions so the red run also records the baseline.
+        for width in (1280, 360):
+            await page.set_viewport_size({'width': width, 'height': 1000})
+            await table.scroll_into_view_if_needed()
+            await page.screenshot(path=str(directory / f'asset-report-{width}.png'), animations='disabled')
+        for width in (1280, 360):
+            await page.set_viewport_size({'width': width, 'height': 1000})
+            await expect(table.get_by_role('columnheader', name='Erhaltungsrücklage', exact=True)).to_be_visible()
+            for label, amount in [('Anfangsbestand', '3.000,00 €'), ('Zuführungen', '6.000,00 €'),
+                                  ('Entnahmen', '0,00 €'), ('Endbestand', '8.950,00 €')]:
+                row = table.get_by_role('row').filter(has_text=re.compile(f'^{label}'))
+                await expect(row).to_have_count(1)
+                await expect(row.get_by_role('cell').last).to_have_text(amount)
+            text = await table.inner_text()
+            assert 'Erhaltungsruecklage' not in text and 'Zufuehrung' not in text
+            assert 'RESERVE_' not in text
+            for label, amount in [('WEG Girokonto', '9.000,00 €'), ('Hausgeld Müller', '100,00 €'),
+                                  ('Rechnung Dachreparatur', '250,00 €'), ('Begründete Rücklagenkorrekturen', '-50,00 €')]:
+                await expect(table.get_by_role('row').filter(has_text=label).get_by_role('cell').last).to_have_text(amount)
+            assert await page.evaluate('document.documentElement.scrollWidth <= window.innerWidth')
+
+    browser_world.run(inspect())
+
+
 @when('I review its reserve ledger and record the imported opening balance')
 def review(world, reserve_scenario):
     client_a_admin = world.actor

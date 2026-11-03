@@ -4,8 +4,8 @@ import { useEffect, useId, useState } from 'react';
 import { addReserveOverride, deleteReserveContribution, reduceReserveContribution, getReserveLedger, listCostEntries, listPayments, listRegisterEntries } from '../api/endpoints';
 import type { CostEntry, Payment, RegisterEntry, ReserveComponent, ReserveLedger, ReserveOverride } from '../api/types';
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from './ui/dialog';
+import { formatEuro as euro } from '../lib/utils';
 
-const euro = (amount: string) => new Intl.NumberFormat('de-DE', { style: 'currency', currency: 'EUR' }).format(Number(amount));
 const day = (value: string) => value.split('-').reverse().join('.');
 const labels: Record<string, string> = { PLANNED: 'Geplant (Soll)', CONTRIBUTION: 'Gebuchte Zuführung', WITHDRAWAL: 'Finanzierte Entnahme',
   OVERRIDE: 'Begründete Korrektur', OPENING: 'Anfangsbestand', ADJUSTMENT: 'Sonstige Korrektur', FUNDING: 'Finanzierte Entnahme verknüpfen',
