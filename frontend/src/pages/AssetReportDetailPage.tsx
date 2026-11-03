@@ -1,4 +1,5 @@
 import { ReserveLedgerPanel } from "../components/ReserveLedgerPanel";
+import { WegDraftDelete } from "../components/WegDraftDelete";
 import { FinancialCoverageReview } from "../components/FinancialCoverageReview";
 import { FinancialCorrectionControls } from "../components/FinancialCorrectionControls";
 /**
@@ -136,6 +137,8 @@ export function AssetReportDetailPage() {
           {STATUS_LABELS[run.status] ?? run.status}
         </span>
       </h1>
+
+      <WegDraftDelete key={run.id} run={run} disabled={busy} />
 
       {actionError && (
         <div className="card" style={{ marginBottom: "1rem", background: "#ffebee", borderColor: "#ef9a9a" }}>

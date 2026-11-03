@@ -15,7 +15,7 @@ from datetime import date
 from decimal import Decimal, InvalidOperation
 from typing import Literal
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Response
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 from sqlalchemy import text
@@ -156,6 +156,7 @@ class WegRunOut(BaseModel):
     finalized_at: str | None
     superseded_by_id: str | None
     lines: list[WegLineOut] = []
+    delete_restriction: dict[str, str] | None = None
 
 
 def _dec(value: str | None, field: str) -> Decimal | None:
@@ -226,7 +227,7 @@ def _line_out(ln: SettlementLine) -> WegLineOut:
     )
 
 
-def _run_out(run: SettlementRun, lines: list[SettlementLine]) -> WegRunOut:
+def _run_out(run: SettlementRun, lines: list[SettlementLine], *, delete_restriction=None) -> WegRunOut:
     return WegRunOut(
         id=str(run.id),
         organization_id=str(run.organization_id),
@@ -243,7 +244,13 @@ def _run_out(run: SettlementRun, lines: list[SettlementLine]) -> WegRunOut:
         finalized_at=str(run.finalized_at) if run.finalized_at else None,
         superseded_by_id=str(run.superseded_by_id) if run.superseded_by_id else None,
         lines=[_line_out(ln) for ln in lines],
+        delete_restriction=delete_restriction,
     )
+
+
+async def _checked_run_out(db, auth, run, lines):
+    restriction = await WegSettlementService(db, auth.organization_id, auth.user_id).delete_restriction(run.id)
+    return _run_out(run, lines, delete_restriction=restriction)
 
 
 # ---------------------------------------------------------------------------
@@ -382,7 +389,22 @@ async def get_weg_run(
         raise HTTPException(status_code=404, detail="WEG settlement run not found")
     lines_repo = SettlementLineRepository(db, auth.organization_id)
     lines = await lines_repo.list_for_run(run_id)
-    return _run_out(run, list(lines))
+    restriction = await WegSettlementService(db, auth.organization_id, auth.user_id).delete_restriction(run_id)
+    return _run_out(run, list(lines), delete_restriction=restriction)
+
+
+@router.delete('/{run_id}', status_code=204)
+async def delete_weg_draft(run_id: uuid.UUID, auth: AuthContext = Depends(require_write_dep),
+                           db: AsyncSession = Depends(get_db)):
+    await WegSettlementService(db, auth.organization_id, auth.user_id).delete_empty_draft(run_id)
+    return Response(status_code=204)
+
+
+@router.delete('/asset-reports/{run_id}', status_code=204)
+async def delete_asset_report_draft(run_id: uuid.UUID, auth: AuthContext = Depends(require_write_dep),
+                                   db: AsyncSession = Depends(get_db)):
+    await WegSettlementService(db, auth.organization_id, auth.user_id).delete_empty_draft(run_id, asset_report=True)
+    return Response(status_code=204)
 
 
 # ---------------------------------------------------------------------------
@@ -421,7 +443,7 @@ async def select_plan_successor(run_id: uuid.UUID, body: PlanSuccessorSelection,
     run = await WegSettlementService(db, auth.organization_id, auth.user_id).select_plan_successor(
         run_id, body.expected_plan_id, body.successor_id, body.reason.strip())
     lines = await SettlementLineRepository(db, auth.organization_id).list_for_run(run.id)
-    return _run_out(run, list(lines))
+    return await _checked_run_out(db, auth, run, list(lines))
 
 
 @router.post("", response_model=WegRunOut, status_code=201)
@@ -443,7 +465,7 @@ async def create_weg_run(
     except DBAPIError as exc:
         _raise_reserve_opening_error(exc)
         raise
-    return _run_out(run, [])
+    return await _checked_run_out(db, auth, run, [])
 
 
 @router.post("/{run_id}/compute", response_model=WegRunOut)
@@ -457,7 +479,7 @@ async def compute_weg_run(
     run, _result = await svc.compute_weg(run_id, _weg_extras(body))
     lines_repo = SettlementLineRepository(db, auth.organization_id)
     lines = await lines_repo.list_for_run(run_id)
-    return _run_out(run, list(lines))
+    return await _checked_run_out(db, auth, run, list(lines))
 
 
 @router.post("/{run_id}/finalize", response_model=WegRunOut)
@@ -472,7 +494,7 @@ async def finalize_weg_run(
     run = await svc.finalize_weg(run_id, _weg_extras(body))
     lines_repo = SettlementLineRepository(db, auth.organization_id)
     lines = await lines_repo.list_for_run(run_id)
-    return _run_out(run, list(lines))
+    return await _checked_run_out(db, auth, run, list(lines))
 
 
 # ---------------------------------------------------------------------------
@@ -527,7 +549,7 @@ async def create_asset_report(
     except DBAPIError as exc:
         _raise_reserve_opening_error(exc)
         raise
-    return _run_out(run, [])
+    return await _checked_run_out(db, auth, run, [])
 
 
 @router.post("/asset-reports/{run_id}/compute", response_model=WegRunOut)
@@ -541,7 +563,7 @@ async def compute_asset_report(
     run, _result = await svc.compute_asset_report(run_id, _report_inputs(body))
     lines_repo = SettlementLineRepository(db, auth.organization_id)
     lines = await lines_repo.list_for_run(run_id)
-    return _run_out(run, list(lines))
+    return await _checked_run_out(db, auth, run, list(lines))
 
 
 @router.post("/asset-reports/{run_id}/finalize", response_model=WegRunOut)
@@ -556,7 +578,7 @@ async def finalize_asset_report(
     run = await svc.finalize_asset_report(run_id, _report_inputs(body))
     lines_repo = SettlementLineRepository(db, auth.organization_id)
     lines = await lines_repo.list_for_run(run_id)
-    return _run_out(run, list(lines))
+    return await _checked_run_out(db, auth, run, list(lines))
 
 
 # ---------------------------------------------------------------------------

@@ -5,6 +5,37 @@ import { AssetReportDetailPage } from "./AssetReportDetailPage";
 const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } });
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
 
+it('confirms an empty draft deletion and returns to the report list', async () => {
+  const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
+    if (init?.method === 'DELETE') return new Response(null, { status: 204 });
+    if (url === '/api/properties' || url.includes('/bank-accounts')) return json([]);
+    if (url.endsWith('/reserve-ledger')) return json({ entries: [], frozen: false });
+    return json({ id: 'run-1', run_type: 'VERMOEGENSBERICHT', status: 'draft', property_id: 'property-1', lines: [], delete_restriction: null });
+  });
+  vi.stubGlobal('fetch', fetchMock);
+  const confirm = vi.spyOn(window, 'confirm').mockReturnValue(false);
+  render(<MemoryRouter initialEntries={['/report/run-1']}><Routes><Route path="/report/:runId" element={<AssetReportDetailPage />} /><Route path="/vermoegensberichte" element={<p>Berichtsliste</p>} /></Routes></MemoryRouter>);
+  fireEvent.click(await screen.findByRole('button', { name: 'Entwurf löschen' }));
+  expect(confirm).toHaveBeenCalled();
+  expect(fetchMock.mock.calls.filter(([, init]) => init?.method === 'DELETE')).toHaveLength(0);
+  confirm.mockReturnValue(true);
+  fireEvent.click(screen.getByRole('button', { name: 'Entwurf löschen' }));
+  await screen.findByText('Berichtsliste');
+  expect(fetchMock).toHaveBeenCalledWith('/api/weg-settlements/asset-reports/run-1', expect.objectContaining({ method: 'DELETE' }));
+  confirm.mockRestore();
+});
+
+it('shows the German deletion refusal and hides the action for a booked draft', async () => {
+  vi.stubGlobal('fetch', vi.fn(async (url: string) => json(
+    url === '/api/properties' || url.includes('/bank-accounts') ? []
+    : url.endsWith('/reserve-ledger') ? { entries: [], frozen: false }
+    : { id: 'run-1', run_type: 'VERMOEGENSBERICHT', status: 'draft', property_id: 'property-1', lines: [], delete_restriction: {
+      code: 'SETTLEMENT_DELETE_HAS_BOOKINGS', message: 'Entwürfe mit Buchungen können nicht gelöscht werden.' } })));
+  render(<MemoryRouter initialEntries={['/report/run-1']}><Routes><Route path="/report/:runId" element={<AssetReportDetailPage />} /></Routes></MemoryRouter>);
+  await screen.findByText('Entwürfe mit Buchungen können nicht gelöscht werden.');
+  expect(screen.queryByRole('button', { name: 'Entwurf löschen' })).not.toBeInTheDocument();
+});
+
 it("keeps missing reserve/account values blank and sends an explicitly reviewed zero", async () => {
   const bodies: Record<string, unknown>[] = [];
   vi.stubGlobal("fetch", vi.fn(async (url: string, init?: RequestInit) => {

@@ -877,6 +877,10 @@ export function getWegRun(id: string): Promise<WegRun> {
   return api.get<WegRun>(`/api/weg-settlements/${id}`);
 }
 
+export function deleteWegDraft(id: string, assetReport = false): Promise<void> {
+  return api.delete(`/api/weg-settlements/${assetReport ? 'asset-reports/' : ''}${id}`);
+}
+
 export function getWegInputOwners(id: string): Promise<string[]> {
   return api.get<string[]>(`/api/weg-settlements/${id}/input-owners`);
 }

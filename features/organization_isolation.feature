@@ -8,6 +8,11 @@ Feature: Organization isolation
     And each organization has a property, a person and a bank account of its own
     And an administrator of "Verwaltung Alpha" is signed in
 
+  Scenario: Another organization's empty annual drafts cannot be deleted
+    Given an empty asset report belongs to Verwaltung Alpha
+    When Verwaltung Beta tries to delete the empty annual draft
+    Then the annual draft is not found and remains available to Verwaltung Alpha
+
   Scenario: Another organization cannot read or change separate lease advances
     Given a lease with 750 euros rent, 150 euros operating and 90 euros heating advance
     When another organization requests the lease's advance history and statement actions

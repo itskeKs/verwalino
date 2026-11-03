@@ -1300,6 +1300,7 @@ export interface WegRun {
   finalized_at: string | null;
   superseded_by_id: string | null;
   lines: WegLine[];
+  delete_restriction: { code: string; message: string } | null;
 }
 
 export interface WegRunCreate {

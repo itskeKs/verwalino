@@ -239,6 +239,8 @@ PROBES: dict[str, Probe] = {
     "POST /api/special-levies": Probe(SCOPE, body={
         "property_id": "{property_id}", "accounting_scope_id": "{accounting_scope_id}", "amount": "100.00", "due_date": "2025-06-01"}),
     # app/api/weg_settlements.py
+    "DELETE /api/weg-settlements/{run_id}": Probe(run(WEG)),
+    "DELETE /api/weg-settlements/asset-reports/{run_id}": Probe(run(REPORT)),
     "GET /api/weg-settlements": Probe(PROPERTY, status=200, because=NO_MATCH),
     "GET /api/weg-settlements/asset-reports/{run_id}/pdf": Probe(run(REPORT)),
     "GET /api/weg-settlements/{run_id}": Probe(run(WEG)),
