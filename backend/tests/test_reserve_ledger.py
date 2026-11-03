@@ -10,6 +10,7 @@ from tests.test_m4_weg import _seed_weg, _create_and_finalize_plan
 from tests.financial_coverage_helpers import attest_fixture, reserve_evidence
 from tests.test_financial_scope_boundary import scope_seed as scope_seed
 from tests.test_m9_dsgvo import m9_dsgvo_seed as m9_dsgvo_seed
+from tests.test_rent_changes import rent_db as rent_db, rent_world as rent_world, api_client
 from tests.test_invoice_extraction_worker import worker_tenant as worker_tenant
 from tests.test_ownership_change import (
     ownership_world as ownership_world, ownership_client, create_owner, end_owner,
@@ -48,6 +49,131 @@ async def reserve_erasure_rows(db, org):
     return {r['id']: r for r in ledger}, {r['id']: r for r in audit}
 
 
+@pytest.fixture
+async def isolated_reserve_admin(seed_data, rent_world):
+    seed = {**seed_data, 'org_a_id': rent_world['org'], 'user_a_admin_id': rent_world['admin']}
+    async with api_client(rent_world) as api:
+        yield api, seed
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('command', ['request-deletion', 'anonymize'])
+async def test_person_erasure_preserves_a_known_longer_person_name_in_both_copies(
+        isolated_reserve_admin, migrator_session, command):
+    api, seed = isolated_reserve_admin
+    w = await reserve_erasure_case(api, seed)
+    maria = await api.post('/api/persons', json={'first_name': 'Maria Anna', 'last_name': 'Beispiel'})
+    assert maria.status_code == 201, maria.text
+    path = f"/api/weg-settlements/{w['run']}/reserve-ledger/overrides"
+    for reason in ['Rückzahlung an Maria Anna Beispiel',
+                   'Rückzahlung an Anna Beispiel; Rückzahlung an MARIA\tANNA BEISPIEL; 300,00 €']:
+        entry = await api.post(path, json={'component': 'OPENING', 'amount': '300.00', 'reason': reason})
+        assert entry.status_code == 201, entry.text
+    frozen = await finalize(api, w)
+    before = await reserve_erasure_rows(migrator_session, seed['org_a_id'])
+    response = await api.post(f"/api/dsgvo/persons/{w['person']}/{command}")
+    assert response.status_code == 200, response.text
+    assert response.json()['applied'] == 'ANONYMIZED'
+    expected_ledger, expected_audit = before
+    for row in expected_ledger.values():
+        row['reason'] = row['reason'].replace('an Anna Beispiel', 'an Gelöscht')
+    for row in expected_audit.values():
+        row['payload_diff']['reason'] = row['payload_diff']['reason'].replace('an Anna Beispiel', 'an Gelöscht')
+    assert await reserve_erasure_rows(migrator_session, seed['org_a_id']) == (expected_ledger, expected_audit)
+    person = (await api.get('/api/persons/' + maria.json()['id'])).json()
+    assert (person['first_name'], person['last_name']) == ('Maria Anna', 'Beispiel')
+    assert (await api.get(f"/api/weg-settlements/{w['run']}")).json()['snapshot_sha256'] == frozen['snapshot_sha256']
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('command', ['request-deletion', 'anonymize'])
+async def test_person_erasure_fits_an_accepted_maximum_length_reason_without_truncating_context(
+        isolated_reserve_admin, migrator_session, command):
+    api, seed = isolated_reserve_admin
+    w = await reserve_world(api, seed)
+    person = await api.post('/api/persons', json={'first_name': 'Li', 'last_name': 'Wu'})
+    assert person.status_code == 201, person.text
+    reason = 'Rückzahlung an Li Wu; ' + 'x' * 1978
+    assert len(reason) == 2000
+    entry = await api.post(f"/api/weg-settlements/{w['run']}/reserve-ledger/overrides", json={
+        'component': 'OPENING', 'amount': '300.00', 'reason': reason})
+    assert entry.status_code == 201, entry.text
+    before = await reserve_erasure_rows(migrator_session, seed['org_a_id'])
+    response = await api.post(f"/api/dsgvo/persons/{person.json()['id']}/{command}")
+    assert response.status_code == 200, response.text
+    assert response.json()['applied'] == 'ANONYMIZED'
+    after = await reserve_erasure_rows(migrator_session, seed['org_a_id'])
+    scrubbed = after[0][entry.json()['id']]['reason']
+    assert len(scrubbed) <= 2000
+    assert 'Li Wu' not in scrubbed
+    assert scrubbed.startswith('Rückzahlung an ')
+    assert scrubbed.endswith('; ' + 'x' * 1978)
+    expected_ledger, expected_audit = before
+    expected_ledger[entry.json()['id']]['reason'] = scrubbed
+    for row in expected_audit.values():
+        if row['payload_diff']['entry_id'] == entry.json()['id']:
+            row['payload_diff']['reason'] = scrubbed
+    assert after == (expected_ledger, expected_audit)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('operation', ['insert', 'update', 'delete'])
+async def test_person_identity_writes_wait_for_the_existing_erasure_financial_lock(
+        isolated_reserve_admin, migrator_session, app_rw_session, operation):
+    from sqlalchemy.ext.asyncio import async_sessionmaker
+    api, seed = isolated_reserve_admin
+    person = await api.post('/api/persons', json={'first_name': 'Maria Anna', 'last_name': 'Beispiel'})
+    assert person.status_code == 201, person.text
+    await migrator_session.execute(text("SELECT pg_advisory_xact_lock(hashtextextended('financial-inputs:'||CAST(:org AS text),0))"),
+        {'org': str(seed['org_a_id'])})
+    statements = {
+        'insert': "INSERT INTO person(organization_id,first_name,last_name,street,zip_code,city) VALUES (:org,'Maria Anna','Beispiel','','','')",
+        'update': 'UPDATE person SET first_name=first_name WHERE id=CAST(:person AS uuid)',
+        'delete': 'DELETE FROM person WHERE id=CAST(:person AS uuid)',
+    }
+    async with async_sessionmaker(app_rw_session.bind).begin() as db:
+        await db.execute(text("SELECT set_config('app.current_org_id',:org,true),set_config('app.current_user_id',:actor,true)"),
+            {'org': str(seed['org_a_id']), 'actor': str(seed['user_a_admin_id'])})
+        await db.execute(text("SET LOCAL lock_timeout='100ms'"))
+        with pytest.raises(DBAPIError) as refused:
+            async with db.begin_nested():
+                await db.execute(text(statements[operation]), {'org': seed['org_a_id'], 'person': person.json()['id']})
+        assert refused.value.orig.sqlstate == '55P03'
+
+
+@pytest.mark.asyncio
+async def test_person_erasure_prepares_known_names_once_for_many_contacts_and_reasons(
+        isolated_reserve_admin, migrator_session):
+    from sqlalchemy.ext.asyncio import async_sessionmaker
+    api, seed = isolated_reserve_admin
+    w = await reserve_erasure_case(api, seed)
+    async with async_sessionmaker(migrator_session.bind).begin() as db:
+        await db.execute(text("""INSERT INTO person(organization_id,first_name,last_name,street,zip_code,city)
+            SELECT :org,'Contact '||n,'Other '||n,'','','' FROM generate_series(1,1000) n"""), {'org': seed['org_a_id']})
+    for _ in range(20):
+        entry = await api.post(f"/api/weg-settlements/{w['run']}/reserve-ledger/overrides", json={
+            'component': 'OPENING', 'amount': '300.00', 'reason': 'Rückzahlung an Anna Beispiel'})
+        assert entry.status_code == 201, entry.text
+    async with migrator_session.begin_nested() as instrumentation:
+        await migrator_session.execute(text('CREATE TEMP TABLE reserve_erasure_lookups(calls integer) ON COMMIT DROP'))
+        await migrator_session.execute(text('ALTER FUNCTION prepare_person_reserve_erasure(uuid) RENAME TO reserve_erasure_test_original'))
+        await migrator_session.execute(text("""CREATE FUNCTION public.prepare_person_reserve_erasure(org uuid) RETURNS jsonb
+            LANGUAGE plpgsql AS $$ BEGIN INSERT INTO pg_temp.reserve_erasure_lookups VALUES(1);
+            RETURN public.reserve_erasure_test_original(org); END $$"""))
+        await migrator_session.execute(text('REVOKE ALL ON FUNCTION prepare_person_reserve_erasure(uuid) FROM PUBLIC,app_rw,app_worker,app_review'))
+        await migrator_session.execute(text("SELECT set_config('app.current_org_id',:org,true),set_config('app.current_user_id',:actor,true)"),
+            {'org': str(seed['org_a_id']), 'actor': str(seed['user_a_admin_id'])})
+        assert await migrator_session.scalar(text("SELECT apply_person_privacy(:org,CAST(:person AS uuid),'ANONYMIZE')"),
+            {'org': seed['org_a_id'], 'person': w['person']}) == 'ANONYMIZED'
+        assert await migrator_session.scalar(text('SELECT count(*) FROM pg_temp.reserve_erasure_lookups')) == 1
+        ledger, audit = await reserve_erasure_rows(migrator_session, seed['org_a_id'])
+        assert len(ledger) == len(audit) == 21
+        assert {row['reason'] for row in ledger.values()} == {'Rückzahlung an Gelöscht'}
+        assert {row['payload_diff']['reason'] for row in audit.values()} == {'Rückzahlung an Gelöscht'}
+        assert not await migrator_session.scalar(text("SELECT NULLIF(current_setting('app.person_reserve_erasure_names',true),'') IS NOT NULL"))
+        await instrumentation.rollback()
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize('command', ['request-deletion', 'anonymize'])
 async def test_person_erasure_scrubs_only_linked_reserve_reasons_and_keeps_frozen_statement(
@@ -84,11 +210,11 @@ async def test_person_erasure_includes_reductions_and_restorations_but_not_simil
         client_a_admin, client_b_admin, seed_data, migrator_session):
     api = client_a_admin
     person = (await api.post('/api/persons', json={'first_name': 'Anna', 'last_name': 'Beispiel'})).json()['id']
-    for first, last in [('Anna', 'Beispieldorf'), ('Anna', 'Beispiel-Sommer'), ('Hanna', 'Beispiel')]:
+    for first, last in [('Anna', 'Beispieldorf'), ('Anna', 'Beispiel-Sommer'), ('Hanna', 'Beispiel'), ('Maria Anna', 'Beispiel')]:
         assert (await api.post('/api/persons', json={'first_name': first, 'last_name': last})).status_code == 201
     w = await unit_correction_world(api, seed_data)
     path = f"/api/weg-settlements/{w['run']}/reserve-ledger/overrides"
-    reason = 'Rückzahlung an Anna Beispiel; Anna Beispieldorf; Anna Beispiel-Sommer; Hanna Beispiel; 300,00 €'
+    reason = 'Rückzahlung an Anna Beispiel; Anna Beispieldorf; Anna Beispiel-Sommer; Hanna Beispiel; Maria Anna Beispiel; 300,00 €'
     entry = await api.post(path, json={'component': 'CONTRIBUTION', 'unit_id': w['u1'], 'amount': '300.00', 'reason': reason})
     assert entry.status_code == 201, entry.text
     correction = path + '/' + entry.json()['id']

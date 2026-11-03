@@ -159,3 +159,24 @@ organization-erasure path keeps its existing behavior. Downgrade removes this
 exception and restores the preceding function definitions without recovering
 erased personal text or rewriting financial data. See
 [ADR-0012 §4](0012-gdpr-erasure-vs-gobd-retention.md#4-anonymization-anonymize).
+
+## Amendment — 2026-11-03: name boundaries and bounded reason replacements
+
+Migration `0157` refines the same individual-erasure exception without expanding
+its writable columns, audit selection or privileges. Complete longer identities
+of other known, non-anonymized contacts in the same organization protect their
+original text spans: erasing Anna Beispiel must preserve Maria Anna Beispiel.
+The matcher consumes original spans, preferring longer matches, and preserves
+unrelated bytes. When `Gelöscht` would exceed the existing 2,000-character reason
+limit, only identifying spans receive the one-character marker `*`. No suffix or
+other surrounding text is truncated, and both persisted copies remain identical.
+
+Known overlapping identities are prepared once inside the protected erasure
+trigger and the private context is restored afterward. Person writes reuse the
+existing organization financial lock at statement level, after the shared ACL
+lock and before row locks, so concurrent contact changes cannot invalidate that
+lookup. The reserve guard remains `ENABLE ALWAYS`, runtime UPDATE remains
+revoked, and snapshots/digests, money, IDs and references remain untouched.
+Upgrade rewrites no existing rows. Downgrade restores the preceding matcher,
+erasure trigger and statement-lock helper exactly and removes the two private
+lookup/pattern helpers, preserving already anonymized text.

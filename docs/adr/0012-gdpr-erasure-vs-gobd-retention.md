@@ -100,6 +100,14 @@ defines the nested-trigger guard exception; the
 [reserve architecture](../architecture.md#maintenance-reserve-ledger-privileges)
 lists the exact writers and copy-matching conditions.
 
+Migration `0157` protects a different known contact's complete longer identity
+when it contains the target name (Maria Anna Beispiel while erasing Anna Beispiel).
+The same-organization lookup happens once after existing eligibility checks and
+under the financial lock shared with contact writes; original protected spans
+and surrounding text remain unchanged. If `Gelöscht` would overflow the accepted
+2,000-character reason, only the identifying spans use `*`. Both copies stay
+consistent. This changes neither eligibility nor the retained financial content.
+
 ### 5. Purge after retention expiry
 
 A person with `deletion_requested_at` and a binding becomes **purgeable** as soon as `retention_until < today` holds for **all** bindings: then §4 (anonymization) applies subsequently. The purge is a separate, deliberate operation (no automatism in the MVP).

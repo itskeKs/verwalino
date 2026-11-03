@@ -53,6 +53,14 @@ sets the person context and invokes a nested person trigger before master data
 changes. Complete names (first and last together, or company name) are matched
 literally, case-insensitively, with normalized whitespace and boundaries that
 preserve longer and hyphenated names; individual name fragments are unchanged.
+Migration `0157` additionally protects complete longer names already stored for
+other, non-anonymized contacts in the same organization. For example, erasing
+Anna Beispiel preserves Maria Anna Beispiel, including when both names occur in
+one reason. Literal, case-insensitive matches consume original text spans from
+left to right, preferring the longest match; protected name spans remain verbatim.
+If replacing identifying spans with `Gelöscht` would exceed the reason column's
+2,000-character limit, only those spans use `*` instead. No surrounding text is
+shortened. Ledger and linked audit reasons use the same deterministic result.
 Matches in that organization's live `reserve_ledger_entry.reason` become
 `Gelöscht`. Only exact copies in `payload_diff.reason` of
 `reserve.override_added`, `reserve.contribution_reduced` and
@@ -72,6 +80,15 @@ erasure does not enter this individual command. Finalized snapshots, their
 digests and their frozen presentation (including any frozen reason) stay intact;
 an organization export exposes the scrubbed live ledger and linked audit copies
 alongside the unchanged snapshots. This is no general free-text anonymization.
+
+The known-name lookup runs once per actual individual erasure, scoped by the
+existing organization index. Only overlapping longer identities enter private
+transaction-local context, restored immediately after both copies are updated;
+per-row guard checks do not rescan the contact list. Person INSERT/UPDATE/DELETE
+statements acquire the existing tenant `financial-inputs` lock after the shared
+ACL lock and before tuple locks. This serializes ordinary contact-name changes
+with erasure without upgrading an already-held shared ACL lock. Other tables'
+statement-lock behavior, runtime privileges and frozen hashes are unchanged.
 
 All nine foreign keys on `reserve_ledger_entry` use PostgreSQL's default
 `NO ACTION` deletion rule, as created by migration `0149`; the ORM leaves
