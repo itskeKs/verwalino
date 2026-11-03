@@ -317,6 +317,7 @@ row instead.
 
 | Table | Scrubbed columns |
 | --- | --- |
+| `bank_transaction` | `counterparty_name`, `counterparty_iban`, `purpose` |
 | `tenant_profile`, `lease_agreement`, `owner_profile` | `notes` |
 | `vendor` | `notes`, `tax_id`, `vat_id` |
 | `owners_meeting` | `protocol_text`, `invitation_text` |
@@ -360,6 +361,88 @@ Expiry does not automatically purge immutable evidence: that remains a separate
 operator/legal decision under [ADR-0012](../adr/0012-gdpr-erasure-vs-gobd-retention.md).
 Its provisional retention durations still require the documented domain sign-off.
 
+### Retained imported bank dependencies
+
+Migration 0153 classifies `bank_transaction` as `conditional` with `retain_when`
+`false`: it seeds no independent voucher or person deadline. The existing
+recursive FK closure retains a bank line only when retained evidence needs it,
+including booked payments and drafts kept by immutable `accounting_scope_binding`
+rows. Its account remains a required parent. Unreferenced lines are erased.
+The existing composite `ON DELETE RESTRICT` FK keeps organization, account and
+line coherent. Erasure neither clears a payment's bank reference nor rewrites a
+payment or scope binding. Their bytes and hashes stay unchanged; bank IDs,
+dates, amounts, status and `import_hash` also stay unchanged. Bank free-text
+fields in the scrub table above become `Gelöscht`, even for counterparties absent
+from person master data or still bound to an unexpired voucher. This uses the
+existing mutable-field and entity-payload
+scrubber; these fields are not frozen voucher content. The refusal “Imported
+payment draft follows retained bank movement” remains accurate.
+
+The property's own bank account is an existing structural dependency and stays
+byte-for-byte unchanged, including IBAN/BIC, label and bank name. Its existing
+used-account, scope and source guards remain unchanged. No account scrub is
+needed to scrub the imported counterparty fields; these are different records.
+Migration downgrade restores the exact previous catalog, owner and grants.
+No payment or scope-binding guard changes.
+
+**Operator user check, using synthetic data only:**
+
+1. Hold `/tmp/verwalino-testdb.lock` for a manual test-stack run, source
+   `scripts/test-env.sh` and use only `infra-postgres-1` on `127.0.0.1:55432`.
+   Create two isolated organizations and a rental lease starting 2026-01-01 in
+   each. Record their UUIDs. Do not use the unfiltered operator CLI on shared
+   test data. Use disposable local document storage for this run.
+2. In each organization create a `LAUFEND` account with label `Private account
+   holder`, IBAN `DE89370400440532013000`, BIC `COBADEFFXXX` and bank name
+   `Private bank contact`. Import this UTF-8 semicolon CSV through
+   `POST /api/bank-accounts/{account_id}/imports?dry_run=false` (multipart `file`):
+
+   ```csv
+   Buchungstag;Wertstellung;Betrag;Name;IBAN;Verwendungszweck;Währung
+   01.02.2026;01.02.2026;700,00;Unregistered Payer;DE89370400440532013000;Private rent reference;EUR
+   03.02.2026;03.02.2026;15,00;Unlinked Payer;;Private unassigned reference;EUR
+   ```
+
+3. Find the 700.00 line with `GET /api/bank-transactions?bank_account_id=...`.
+   Assign it through `POST /api/bank-transactions/{id}/assign`, with one `lines`
+   item: `payment_type=KALTMIETE`, `amount="700.00"`, the organization's tenant
+   profile and lease UUIDs, `period_year=2026`, `period_month=2`. This assignment
+   already books the rent payment. Leave the 15.00 line unassigned. Save the full
+   payment row, its retained hash, both bank rows and the account row as a
+   before-comparison, scoped to these UUIDs.
+4. For the first organization only, request `POST /api/organizations/deletion`
+   and confirm its exact name through `/api/organizations/deletion/confirm`.
+   Run the existing operator erasure for that UUID after its seven-day deadline.
+   In the disposable test harness, call `run_deletion` with test time eight days
+   ahead instead of waiting; do not alter the stored deadline or database clock.
+5. Inspect only the recorded UUIDs as the operator: the booked payment and its
+   hash are identical; its bank line exists in the same organization/account,
+   with unchanged amount/dates/status/import hash. All three counterparty/purpose
+   fields are `Gelöscht`; the own-account row is unchanged. The unassigned
+   15.00 line is absent. The second organization's bank/account rows, including
+   its unassigned line, are byte-for-byte unchanged. The former first owner
+   receives 401 from `/api/auth/session`.
+6. For the draft variant, use a reviewed WEG account scope, import an outgoing
+   1200.00 line and assign `RUECKLAGENENTNAHME` without payout evidence. The
+   scope-bound draft and its immutable binding survive unchanged; its bank
+   line undergoes the same scrubbing and its own-account row remains unchanged.
+   An unscoped unsupported payout draft and its otherwise unneeded bank line are
+   erased instead.
+
+The deterministic executable counterpart creates these isolated organizations,
+imports/assigns through HTTP and executes the real erasure with that later test
+time. It also checks the FK refusal, draft refusal text, full voucher hashes,
+foreign unlinked rows and the existing scope-bound/cancelled-draft behavior:
+
+```sh
+make test-backend PYTEST_ARGS="-q tests/test_organization_deletion.py tests/bdd/test_organization_deletion.py -k 'erasure_scrubs_imported_bank_dependencies or erasure_keeps_payment_retention_conditional or imported_rent_vouchers'"
+```
+
+This Make target owns the shared test-DB lock itself; stop a manual stack and
+release its lock before running it. It uses synthetic fixtures and temporary
+storage and needs no production access. Independent blind acceptance on the PR
+state remains the maintainer's pre-merge check.
+
 ### Catalog survivor contract
 
 The catalog test covers **every** text/varchar/JSON column of retained roots,
@@ -401,8 +484,8 @@ not an immutable field; a separate minimization policy remains an owner decision
 | `assignment_proposal` | `blockers`, `method`, `reason`, `request_digest`, `state` | Retained source, scope or review evidence and its technical provenance; `blockers` is an array of structured blocker codes. |
 | `attachment` | `archive_reason`, `content_sha256`, `mime_type`, `original_filename`, `storage_backend`, `storage_uri`, `title` | Retained original content, metadata and storage identity. |
 | `audit_event` | `action`, `entity_type`, `prev_event_hash` | Technical operation/status/error codes, keys and digests; personal event payloads are scrubbed separately. |
-| `bank_account` | `account_type`, `bank_name`, `bic`, `iban`, `label` | Required account identity of retained financial records. |
-| `bank_transaction` | `counterparty_iban`, `counterparty_name`, `import_hash`, `purpose`, `status` | Retained bank evidence and reconciliation context. |
+| `bank_account` | `account_type`, `bank_name`, `bic`, `iban`, `label` | Required own-account identity of retained financial records; unchanged by bank-line erasure. |
+| `bank_transaction` | `import_hash`, `status` | Technical import digest and reconciliation status; counterparty and purpose fields are scrubbed. |
 | `context_decision` | `comparison_note`, `method`, `quotation`, `request_digest`, `snapshot`, `snapshot_digest`, `xml_path` | Retained source, scope or review evidence and its technical provenance. |
 | `cost_entry` | `document_number`, `owner_distribution_key`, `source`, `status`, `tenant_apportionable`, `tenant_distribution_key` | Frozen voucher content, accounting classifications and computation provenance. |
 | `coverage_declaration` | `component`, `reason`, `source_document_ids`, `source_revision`, `state`, `values` | Retained source, scope or review evidence and its technical provenance. |
