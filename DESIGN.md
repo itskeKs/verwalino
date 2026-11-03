@@ -1066,3 +1066,23 @@ its backing Hausgeld was reversed, on both pages and at both viewport widths.
 | --- | --- | --- |
 | WEG settlement | [before](docs/assets/design/reserve-correction-deletion/weg-before-1280.png) · [after](docs/assets/design/reserve-correction-deletion/weg-after-1280.png) | [before](docs/assets/design/reserve-correction-deletion/weg-before-360.png) · [after](docs/assets/design/reserve-correction-deletion/weg-after-360.png) |
 | Asset report | [before](docs/assets/design/reserve-correction-deletion/asset-before-1280.png) · [after](docs/assets/design/reserve-correction-deletion/asset-after-1280.png) | [before](docs/assets/design/reserve-correction-deletion/asset-before-360.png) · [after](docs/assets/design/reserve-correction-deletion/asset-after-360.png) |
+
+
+### WEG annual statement: Spitze and Hausgeld (#204)
+
+Each owner block starts with its actual cost share and a wrapping definition list:
+“Abrechnungsspitze (beschlossen, § 28 Abs. 2 WEG)”, “Hausgeld-Soll laut Wirtschaftsplan”,
+“Hausgeld gezahlt”, “Rückstand / Guthaben aus Hausgeld” and the bold “Zahlbetrag”.
+Use German EUR formatting, explicit payment/credit direction and tabular numerals.
+Labels wrap above amounts when needed at 360 px; the five amounts require no horizontal
+scrolling. The explanation identifies the linked plan, booked and non-reversed payments
+(including refunds), unit and owner dates. It distinguishes the resolved Spitze from
+arrears owed under the plan. Manual declarations do not replace bookings. The old summary
+rows are replaced by this block only when the snapshot contains the new result fields;
+legacy finalized statements retain their original rows. Reuse `settlement-detail` to wrap
+identifiers and keep the existing detail tables within the phone viewport.
+
+| WEG owner balance | 1280 px | 360 px |
+| --- | --- | --- |
+| Before | [view](docs/assets/design/weg-owner-balance/before-1280.png) | [view](docs/assets/design/weg-owner-balance/before-360.png) |
+| After | [view](docs/assets/design/weg-owner-balance/after-1280.png) | [view](docs/assets/design/weg-owner-balance/after-360.png) |

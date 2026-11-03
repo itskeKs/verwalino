@@ -50,6 +50,41 @@ def _cost_line(owner_result, category_code):
     )
 
 
+@pytest.mark.parametrize('cost,plan,paid,spitze,balance,payment', [
+    ('6400.00', '7200.00', '6600.00', '-800.00', '600.00', '-200.00'),
+    ('8000.00', '7200.00', '7500.00', '800.00', '-300.00', '500.00'),
+    ('6400.00', '7200.00', '7200.00', '-800.00', '0.00', '-800.00'),
+    ('6400.01', '7200.02', '6600.03', '-800.01', '599.99', '-200.02'),
+])
+def test_owner_payment_amount_keeps_the_resolved_spitze(cost, plan, paid, spitze, balance, payment):
+    inp = TestGolden2Abrechnungsspitze()._scenario()
+    inp = replace(inp, units=(inp.units[0],), owner_periods=(inp.owner_periods[0],),
+        cost_positions=(replace(inp.cost_positions[0], gross_amount=Decimal(cost)),),
+        plan_advances=(OwnerAdvanceInput(_U(21), Decimal(plan)),),
+        paid_advances=(OwnerAdvanceInput(_U(21), Decimal(paid)),))
+    result = compute_weg_jahresabrechnung(inp)
+    owner = result.owners[0]
+    assert owner.abrechnungsspitze == Decimal(spitze)
+    assert owner.account_balance == Decimal(balance)
+    assert owner.payment_amount == Decimal(payment)
+    saved = build_weg_snapshot_payload(inp, result)['result']['owners'][0]
+    assert {key: saved[key] for key in ('plan_soll', 'paid', 'account_balance', 'payment_amount')} == {
+        'plan_soll': plan, 'paid': paid, 'account_balance': balance, 'payment_amount': payment}
+
+
+def test_owner_change_never_transfers_payments_to_the_successor():
+    inp = TestGolden2Abrechnungsspitze()._scenario()
+    inp = replace(inp, units=(inp.units[0],), owner_periods=(
+        replace(inp.owner_periods[0], valid_to=date(2025, 6, 30)),
+        replace(inp.owner_periods[0], owner_profile_id=_U(22), valid_from=date(2025, 7, 1)),),
+        cost_positions=(replace(inp.cost_positions[0], gross_amount=Decimal('3650.00')),),
+        plan_advances=(OwnerAdvanceInput(_U(21), Decimal('1800.00')), OwnerAdvanceInput(_U(22), Decimal('1800.00'))),
+        paid_advances=(OwnerAdvanceInput(_U(21), Decimal('1600.00')), OwnerAdvanceInput(_U(22), Decimal('1900.00'))))
+    old, new = compute_weg_jahresabrechnung(inp).owners
+    assert (old.abrechnungsspitze, old.account_balance, old.payment_amount) == (Decimal('10'), Decimal('200'), Decimal('210'))
+    assert (new.abrechnungsspitze, new.account_balance, new.payment_amount) == (Decimal('40'), Decimal('-100'), Decimal('-60'))
+
+
 @pytest.mark.parametrize('funded, expected', [
     ('0.00', ('4200.00', '2800.00')),
     ('400.00', ('3960.00', '2640.00')),
@@ -605,3 +640,11 @@ class TestWegFailLoud:
         )
         with pytest.raises(WegValidationError, match="owner_distribution_key"):
             compute_weg_jahresabrechnung(inp)
+
+
+def test_refund_only_hausgeld_is_a_negative_payment_not_an_unpaid_zero():
+    inp = TestGolden2Abrechnungsspitze()._scenario()
+    inp = replace(inp, paid_advances=(OwnerAdvanceInput(_U(21), Decimal('-50.01')),))
+    owner = _owner_result(compute_weg_jahresabrechnung(inp), _U(21))
+    assert owner.account_balance == Decimal('5550.01')
+    assert owner.payment_amount == Decimal('6050.01')

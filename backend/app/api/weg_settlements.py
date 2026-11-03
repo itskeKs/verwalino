@@ -38,6 +38,7 @@ from app.services.render_names import (
 )
 from app.services.vermoegensbericht_pdf import render_vermoegensbericht_pdf
 from app.services.weg_jahresabrechnung_pdf import render_weg_jahresabrechnung_pdf
+from app.services.weg_owner_balance import owner_balance_results
 from app.services.weg_settlement_service import (
     AssetItemEntry,
     AssetReportInputs,
@@ -143,6 +144,23 @@ class WegLineOut(BaseModel):
     note: str | None
 
 
+class OwnerBalancePeriodOut(BaseModel):
+    unit_number: str
+    valid_from: str
+    valid_to: str
+
+
+class OwnerBalanceOut(BaseModel):
+    owner_profile_id: str
+    owner_cost_total: str
+    abrechnungsspitze: str
+    plan_soll: str
+    paid: str
+    account_balance: str
+    payment_amount: str
+    ownership_periods: list[OwnerBalancePeriodOut]
+
+
 class WegRunOut(BaseModel):
     id: str
     organization_id: str
@@ -159,6 +177,7 @@ class WegRunOut(BaseModel):
     finalized_at: str | None
     superseded_by_id: str | None
     lines: list[WegLineOut] = []
+    owner_results: list[OwnerBalanceOut] = []
     delete_restriction: dict[str, str] | None = None
 
 
@@ -232,6 +251,7 @@ def _line_out(ln: SettlementLine) -> WegLineOut:
 
 def _run_out(run: SettlementRun, lines: list[SettlementLine], *, delete_restriction=None) -> WegRunOut:
     return WegRunOut(
+        owner_results=owner_balance_results(run.snapshot_payload),
         id=str(run.id),
         organization_id=str(run.organization_id),
         property_id=str(run.property_id),

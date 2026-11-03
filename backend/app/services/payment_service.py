@@ -820,14 +820,17 @@ class PaymentService:
         return derive_advance_total([_to_payment_input(p) for p in rows], filt)
 
     async def derive_hausgeld_total_for_period(
-        self, owner_profile_id: uuid.UUID, period_start: date, period_end: date
+        self, owner_profile_id: uuid.UUID, period_start: date, period_end: date,
+        *, property_id: uuid.UUID | None = None,
     ) -> Decimal:
-        """Paid Hausgeld with the same month/day proration as NK advances."""
+        """Net booked Hausgeld with the same period attribution as NK advances."""
         rows = []
         for year in range(period_start.year, period_end.year + 1):
-            rows.extend(await self._repo.derived_for_hausgeld(owner_profile_id, year))
-        inputs = [_to_payment_input(p) for p in rows]
-        return sum((derive_advance_total_for_period(inputs, AdvanceFilter(
-            types=frozenset({"HAUSGELD_VORSCHUSS"}), year=year,
-            owner_profile_id=owner_profile_id,
-        ), period_start, period_end) for year in range(period_start.year, period_end.year + 1)), Decimal("0.00"))
+            rows.extend(await self._repo.derived_for_hausgeld(owner_profile_id, year, property_id=property_id))
+        return sum((sign * derive_advance_total_for_period(
+            [_to_payment_input(p) for p in rows if p.direction == direction], AdvanceFilter(
+                types=frozenset({"HAUSGELD_VORSCHUSS"}), year=year,
+                owner_profile_id=owner_profile_id,
+            ), period_start, period_end)
+            for direction, sign in (("IN", 1), ("OUT", -1))
+            for year in range(period_start.year, period_end.year + 1)), Decimal("0.00"))

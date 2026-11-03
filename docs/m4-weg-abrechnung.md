@@ -245,7 +245,7 @@ The settlement discloses, per owner, in a **structured** way (in `settlement_lin
 | **Settlement balance (additional payment/credit)** | `settlement_line(line_type='ABRECHNUNGSSPITZE')` (new) + payload `abrechnungsspitze` | = proportional actual costs − expected advance payments (§2.1). **The amount relevant for the resolution.** |
 | **Owner's reserve contribution** | `settlement_line(line_type='RESERVE_CONTRIBUTION')` (new) | disclosed separately, **not a cost item** (§3). |
 | **Reserve development** (property-wide) | dedicated `RESERVE_*` lines (§3.3) | Opening/contribution/withdrawal/closing. |
-| **(For information) advance payments actually made / payment status** | `settlement_line(line_type='ADVANCE_PAYMENT')` optional + payload | **separate** from the balance (§2.1); in M4 **manual** (§2.4), M6 `DERIVED`. |
+| **(For information) advance payments actually made / payment status** | `settlement_line(line_type='ADVANCE_PAYMENT')` optional + payload | **separate** from the balance (§2.1); derived from booked Hausgeld (§2.4); older snapshots retain their captured values. |
 
 ### 2.3 Separation of Allocable / Non-Allocable / Reserve (SDD §6.3, §7.3, §11)
 
@@ -257,10 +257,29 @@ Unlike the operating cost tenant settlement (which shows only allocable costs (u
 
 The engine sums **three subtotals** per owner (`SUBTOTAL` lines): Σ allocable, Σ non-allocable, Σ reserve contribution — exactly as SDD §11 requires for owner settlements.
 
-### 2.4 Origin of the Expected Advance Payments and (for Information) the Actual Payments — M4 Plan Soll + Manual
+### 2.4 Origin of Expected Advances, Booked Hausgeld and the Payment Amount
 
 - **Expected advance payments (resolution-relevant):** from the linked `economic_plan` (§1.5), per owner/unit, copied into the snapshot. This is the **authoritative** quantity for the settlement balance.
-- **Actual payments (for information):** payments do not exist yet (M6). As in M3, a **manually captured** amount per owner is kept (`advance_payments_source='MANUAL'`), which is shown **for information only** (payment status) — it does **not** flow into the resolution-relevant balance (§2.1). From M6 `DERIVED` from real `Payment`s.
+- **Actual payments:** new annual settlements derive net booked, non-reversed
+  `HAUSGELD_VORSCHUSS` payments of the owner, property and assigned settlement period,
+  including refunds. Drafts, reversed originals and reversal rows do not count.
+  Payments stay with their assigned owner after an ownership change; there is no transfer
+  of a predecessor's arrears. Manual coverage entries cannot create paid amounts.
+- **Displayed account balance:** `account_balance = plan_soll − paid` (positive arrears,
+  negative credit). `payment_amount = abrechnungsspitze + account_balance`. These are
+  informational amounts, not a new fee, claim, resolution or dunning action.
+- The page and PDF label the four financial figures “Abrechnungsspitze (beschlossen,
+  § 28 Abs. 2 WEG)”, “Hausgeld-Soll laut Wirtschaftsplan”, “Hausgeld gezahlt”,
+  “Rückstand / Guthaben aus Hausgeld”, followed by “Zahlbetrag”. They explain the plan
+  and booked-payment sources, show the unit and ownership dates within the period,
+  and state that only the Spitze is resolved and arrears arise from the plan.
+- Example (#204): costs 6,400.00, plan 7,200.00, paid 6,600.00 → resolved Spitze
+  −800.00, arrears +600.00, resulting payment −200.00 (credit to the owner).
+- Engine `m4.3.0` stores `plan_soll`, `paid`, `account_balance` and `payment_amount`
+  in the existing hashed per-owner result. The API and PDF read those frozen values;
+  later bookings do not rewrite finalized results. No database migration or new ledger
+  position is required. Existing finalized snapshots without these fields retain their
+  original PDF path and digest; reads never backfill them.
 
 ### 2.5 Lifecycle, Snapshot, Correction — Identical to M3
 

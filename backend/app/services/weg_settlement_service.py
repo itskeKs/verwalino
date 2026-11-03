@@ -79,7 +79,7 @@ from app.repositories.settlement_repo import (
 
 from app.services.reserve_ledger_service import ReserveLedgerService
 
-ENGINE_VERSION = "m4.2.0"
+ENGINE_VERSION = "m4.3.0"
 
 DELETE_MESSAGES = {
     'SETTLEMENT_DELETE_SOURCE_ACCESS_REQUIRED': 'Zum Löschen dieses Entwurfs benötigen Sie Zugriff auf alle Finanzquellen des Objekts.',
@@ -568,18 +568,13 @@ class WegSettlementService:
         self, economic_plan_id: uuid.UUID, period_year: int,
         period_start: date | None = None, period_end: date | None = None,
     ) -> list["ManualOwnerAdvance"]:
-        """Derive the (nachrichtliche) paid_advances per owner from payments (§6.3).
+        """Read net booked Hausgeld by assigned owner, object and period.
 
-        Minimal-additive bridge (MANUAL -> DERIVED): builds the SAME
-        ManualOwnerAdvance list the clerk would enter by hand, summing the
-        booked, non-reversed HAUSGELD_VORSCHUSS payments per owner (the pure
-        derivation in payment_service). It is passed as
-        WegComputeExtras.paid_advances into the UNCHANGED compute path.
-
-        CRITICAL (I6-D): paid_advances is ONLY the nachrichtliche Zahlungsstand;
-        the WEG engine's Abrechnungsspitze is Ist-Kosten - Soll(Plan) and NEVER
-        reads paid_advances -- so this bridge cannot move the Spitze. The set of
-        owners is taken from the plan's OWNER_ADVANCE lines (the WEG members).
+        Reuse the existing advance request shape for the coverage workflow and
+        the engine. Plan owners and owners active within the period both belong
+        to the roster, including a successor with no OWNER_ADVANCE plan line.
+        These payments affect only account_balance/payment_amount; the Spitze
+        remains actual costs minus the unchanged plan Soll.
         """
         from app.services.payment_service import PaymentService
 
@@ -593,11 +588,16 @@ class WegSettlementService:
             raise HTTPException(422, "Reference year must belong to the settlement period")
         pay_svc = PaymentService(self._session, self._org_id, self._user_id)
         plan_advances = await self._plan_advances_per_owner(economic_plan_id)
+        ownership = await self._runs.ownership_for_property(plan.property_id)
+        owner_ids = {adv.owner_profile_id for adv in plan_advances} | {
+            row.owner_profile_id for row in ownership
+            if row.valid_from <= end and (row.valid_to is None or row.valid_to > start)
+        }
         result: list[ManualOwnerAdvance] = []
-        for adv in plan_advances:
-            total = await pay_svc.derive_hausgeld_total_for_period(adv.owner_profile_id, start, end)
+        for owner_id in sorted(owner_ids, key=str):
+            total = await pay_svc.derive_hausgeld_total_for_period(owner_id, start, end, property_id=plan.property_id)
             result.append(
-                ManualOwnerAdvance(owner_profile_id=adv.owner_profile_id, paid_total=total)
+                ManualOwnerAdvance(owner_profile_id=owner_id, paid_total=total)
             )
         return result
 
@@ -690,9 +690,11 @@ class WegSettlementService:
         provided_owners = [p.owner_profile_id for p in extras.paid_advances]
         if set(provided_owners) != expected_owners or len(provided_owners) != len(set(provided_owners)):
             incomplete("owner_payment_coverage_missing", "paid_advances")
+        # The payment amount reads booked ledger truth, never a manual declaration.
+        booked = await self.derive_paid_advances(run.economic_plan_id, run.period_start.year, run.period_start, run.period_end)
         paid = tuple(
             OwnerAdvanceInput(owner_profile_id=p.owner_profile_id, plan_advance_total=p.paid_total)
-            for p in extras.paid_advances
+            for p in booked
         )
 
         return WegSettlementInput(

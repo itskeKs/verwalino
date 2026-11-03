@@ -497,6 +497,8 @@ def compute_weg_jahresabrechnung(inp: WegSettlementInput) -> WegResult:
         owner_cost_total = _money(uml + nicht)
         plan_advance = plan_by_owner.get(owner_id, Decimal("0.00"))
         spitze = _money(owner_cost_total - plan_advance)
+        paid = paid_by_owner.get(owner_id)
+        account_balance = _money(plan_advance - paid) if paid is not None else None
         plan_advances_total += plan_advance
         abr_total += spitze
         owners.append(
@@ -510,6 +512,8 @@ def compute_weg_jahresabrechnung(inp: WegSettlementInput) -> WegResult:
                 plan_advance=plan_advance,
                 abrechnungsspitze=spitze,
                 paid_advances=paid_by_owner.get(owner_id),
+                account_balance=account_balance,
+                payment_amount=_money(spitze + account_balance) if account_balance is not None else None,
                 reserve_notice='Rücklagenzahlung ohne Kosten- oder Planposition. Bitte prüfen Sie die Eigentümerzuordnung.'
                     if owner_id not in billed_owner_ids else None,
             )

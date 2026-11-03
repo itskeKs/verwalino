@@ -61,6 +61,22 @@ function show() {
   </Routes></MemoryRouter>);
 }
 
+it("shows the frozen Hausgeld balance separately from the resolved Spitze", async () => {
+  const run = { ...draft(), status: "finalized" as const,
+    lines: [frozenLine("seller", seller, "6400.00")],
+    owner_results: [{ owner_profile_id: seller, owner_cost_total: "6400.00", plan_soll: "7200.00",
+      paid: "6600.00", abrechnungsspitze: "-800.00", account_balance: "600.00", payment_amount: "-200.00",
+      ownership_periods: [{ unit_number: "1", valid_from: "2026-01-01", valid_to: "2026-06-30" }] }] };
+  install([run]); show();
+  expect(await screen.findByText("Abrechnungsspitze (beschlossen, § 28 Abs. 2 WEG)")).toBeVisible();
+  for (const text of ["Hausgeld-Soll laut Wirtschaftsplan", "Hausgeld gezahlt", "Rückstand / Guthaben aus Hausgeld", "Zahlbetrag",
+    "-800,00 €", "7.200,00 €", "6.600,00 €", "600,00 €", "-200,00 €", "Guthaben zugunsten des Eigentümers"]) {
+    expect(screen.getByText(text)).toBeVisible();
+  }
+  expect(screen.getByText(/Einheit 1: 01.01.2026 bis 30.06.2026/)).toBeVisible();
+  expect(screen.getByText(/Nur die Abrechnungsspitze ist beschlossen/)).toBeVisible();
+});
+
 it('shows the current opening beside the corrected balance input and reason', async () => {
   install(); show();
   expect(await screen.findByText(/Aktueller Anfangsbestand: 0,00/)).toBeInTheDocument();
