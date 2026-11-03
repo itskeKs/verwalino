@@ -23,6 +23,22 @@ transactions with the existing principal/source RLS, lease and fencing checks;
 PDF/XML/OCR runs outside the DB transaction in the time-limited child process.
 Proposals change neither costs nor manual inputs or approvals.
 
+## Maintenance reserve ledger privileges
+
+`reserve_ledger_entry` is append-only. Migration `0149` revokes all table
+privileges from `PUBLIC`, `app_rw`, `app_worker` and `app_review`, then grants
+`SELECT`, `INSERT`, `UPDATE` and `DELETE` to `app_rw`. `app_worker` inherits
+`app_rw` with `INHERIT` as established by migration `0070`, so it has the same
+effective privileges; `app_review` has none. RLS scopes access, and the
+`guard_reserve_ledger` trigger rejects every `UPDATE` or `DELETE` with SQLSTATE
+`23514` (`reserve_ledger_append_only`). These grants route attempted mutations
+through the database guard rather than making ledger rows mutable.
+
+The `UPDATE` privilege also permits `SELECT … FOR UPDATE` for rows visible to
+the role under RLS. This does not change the ledger, but it takes row locks that
+conflict with concurrent updates and deletes, and can therefore cause lock
+waiting or contention while the append-only guard continues to reject writes.
+
 The dedicated healthcheck verifies local OCR, storage and DB role without queue consumption
 or a provider call. SIGTERM lets a running bounded extraction run out, without
 adopting results after an abort; the existing lease recovery applies.
