@@ -2702,6 +2702,42 @@ async def test_payout_storno_locks_the_cost_row_before_checking_adjustments(migr
     assert 'reserve_funded_amount(OLD.organization_id,cost.id,OLD.id)' in reversal
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize('constraint,status,detail', [
+    ('reserve_period_finalized', 409, {'code': 'RESERVE_PERIOD_FINALIZED',
+        'message': 'Die Rücklage dieses Zeitraums ist finalisiert.'}),
+    ('reserve_amount_invalid', 422, {'code': 'RESERVE_AMOUNT_INVALID',
+        'message': 'Bitte verringern Sie den verbleibenden Korrekturbetrag oder löschen Sie die Korrektur.'}),
+])
+async def test_contribution_reduction_maps_named_database_guards(monkeypatch, constraint, status, detail):
+    from contextlib import nullcontext
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+    from uuid import uuid4
+    from fastapi import HTTPException
+    from app.api import weg_settlements as routes
+
+    class DriverError(Exception):
+        sqlstate = '23514'
+
+    driver = DriverError('Unrelated driver message')
+    driver.__cause__ = DriverError()
+    driver.__cause__.constraint_name = constraint
+    run_id, entry_id = uuid4(), uuid4()
+    run = SimpleNamespace(id=run_id)
+    failure = DBAPIError(None, None, driver)
+    service = SimpleNamespace(subject=AsyncMock(return_value=run),
+        reduce_contribution=AsyncMock(side_effect=failure))
+    monkeypatch.setattr(routes, 'ReserveLedgerService', lambda *args: service)
+    with pytest.raises(HTTPException) as refused:
+        await routes._reduce_reserve_contribution(run_id, entry_id, Decimal('100.00'), 'Reconcile correction',
+            SimpleNamespace(organization_id=uuid4(), user_id=uuid4()),
+            SimpleNamespace(begin_nested=nullcontext))
+    service.reduce_contribution.assert_awaited_once_with(run, entry_id, Decimal('100.00'), 'Reconcile correction')
+    assert refused.value.status_code == status
+    assert refused.value.detail == detail
+
+
 async def draft_unit_correction(api, seed, *, two_receipts=False):
     w = _seed_weg(seed)
     receipts = [await payment(api, w, '1300.00', kind='HAUSGELD_VORSCHUSS')
@@ -2776,6 +2812,58 @@ async def test_reduce_contribution_correction_to_new_headroom_then_delete_remain
     ledger = (await api.get(path.rsplit('/overrides/', 1)[0])).json()
     assert [row['amount'] for row in ledger['entries'] if row.get('reverses_entry_id') == w['entry']] == ['-300.00', '-300.00', '-200.00']
     assert ledger['contributions_total'] == '100.00'
+
+
+@pytest.mark.asyncio
+async def test_concurrent_finalization_refuses_reduction_with_the_finalized_message(client_a_admin, seed_data, monkeypatch):
+    import asyncio
+    from app.services.reserve_ledger_service import ReserveLedgerService
+    from app.services.weg_settlement_service import WegSettlementService
+
+    api = client_a_admin
+    w, path = await draft_unit_correction(api, seed_data)
+    sibling = await api.post('/api/weg-settlements', json={'property_id': w['property'], 'economic_plan_id': w['plan'],
+        'period_start': '2025-01-01', 'period_end': '2025-12-31'})
+    assert sibling.status_code == 201, sibling.text
+    sibling_id = sibling.json()['id']
+    await attest_fixture(api, 'settlement', sibling_id, paid(w))
+    finalized, reduction_started, release = asyncio.Event(), asyncio.Event(), asyncio.Event()
+    finalize_weg, subject = WegSettlementService.finalize_weg, ReserveLedgerService.subject
+
+    async def hold_finalization(service, *args, **kwargs):
+        run = await finalize_weg(service, *args, **kwargs)
+        finalized.set()
+        await asyncio.wait_for(release.wait(), 10)
+        return run
+
+    async def observe_reduction(service, *args, **kwargs):
+        if kwargs.get('require_draft') is False:
+            reduction_started.set()
+        return await subject(service, *args, **kwargs)
+
+    monkeypatch.setattr(WegSettlementService, 'finalize_weg', hold_finalization)
+    monkeypatch.setattr(ReserveLedgerService, 'subject', observe_reduction)
+    async with asyncio.TaskGroup() as tasks:
+        finalization = tasks.create_task(api.post(f'/api/weg-settlements/{sibling_id}/finalize', json=paid(w)))
+        try:
+            await asyncio.wait_for(finalized.wait(), 10)
+            reduction = tasks.create_task(api.post(path + '/reduce',
+                json={'reduced_to': '100.00', 'reason': 'Reconcile while colleague finalizes'}))
+            await asyncio.wait_for(reduction_started.wait(), 10)
+            assert not reduction.done()
+        finally:
+            release.set()
+    assert finalization.result().status_code == 200, finalization.result().text
+    refused = reduction.result()
+    assert refused.status_code == 409, refused.text
+    assert refused.json()['detail'] == {'code': 'RESERVE_PERIOD_FINALIZED',
+        'message': 'Die Rücklage dieses Zeitraums ist finalisiert.'}
+    ledger = (await api.get(path.rsplit('/overrides/', 1)[0])).json()
+    assert ledger['frozen'] is True
+    assert ledger['contributions_total'] == '600.00'
+    original = next(row for row in ledger['entries'] if row.get('id') == w['entry'])
+    assert original['current_amount'] == '500.00'
+    assert not any(row.get('reverses_entry_id') == w['entry'] for row in ledger['entries'])
 
 
 @pytest.mark.asyncio
