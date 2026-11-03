@@ -136,7 +136,7 @@ export function ReserveLedgerPanel({ runId, propertyId, status, onChanged, onOpe
       </dl>
       <div>
         <table className="data-table reserve-ledger-table"><thead><tr><th>Datum</th><th>Art / Beleg</th><th>Betrag</th></tr></thead>
-          <tbody>{ledger.entries.map((entry, index) => <tr key={entry.id ?? `${entry.kind}-${entry.date}-${index}`}>
+          <tbody>{ledger.entries.map((entry, index) => <tr key={`${entry.id ?? entry.kind}-${entry.date}-${index}`}>
             <td style={{ whiteSpace: 'nowrap' }}>{day(entry.date)}</td>
             <td style={{ overflowWrap: 'anywhere' }}>{labels[entry.kind] ?? entry.kind}{entry.component && ` · ${(entry.kind === 'OVERRIDE' ? componentLabels : labels)[entry.component] ?? entry.component}`}
               {entry.reverses_entry_id && <div>Verringerung einer Zuführungskorrektur</div>}

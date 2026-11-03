@@ -931,3 +931,47 @@ and the existing WEG, isolation and upgrade tests. The reference files named
 `fachreferenz.md` / `domain-reference.md` are absent from this checkout; the cash
 allocation, first-period import and negative-balance decisions above need owner
 review alongside the existing M4/ADR domain assumptions.
+
+
+## Empty WEG draft deletion (#199)
+
+Both WEG annual settlements and asset reports offer “Entwurf löschen” on the
+run detail page, with confirmation, only while the authoritative deletion check
+finds no dependency. Deleting an empty accidental 2020 asset-report draft removes
+it from the property's list; a 2025 draft can then import the reserve opening of
+12,500.00 euros with a reason under the unchanged earliest-period rule (#36).
+
+`DELETE /api/weg-settlements/{run_id}` serves both WEG run types;
+`DELETE /api/weg-settlements/asset-reports/{run_id}` serves asset reports only.
+Success returns an empty 204. Foreign/inaccessible runs return 404; read-only
+users cannot delete. BK runs keep their existing lifecycle.
+
+The detail response's `delete_restriction` is either null or a structured code
+and German message, also returned with a 409 refusal. Booked payments in the
+property and period (including retained reversals/cancellations), explicit
+payment references, reserve-ledger rows, immutable accounting-scope bindings,
+coverage declarations, computation receipts and allocation-correction evidence
+prevent deletion. Existing scope bindings remain immutable; their dependent FK
+is preserved even when the draft has no cash entries. Finalized runs, superseded
+runs and correction-chain targets cannot be deleted.
+
+The API and direct SQL use the same authoritative database dependency check,
+including rows hidden by source RLS. Deletion takes the existing financial-inputs
+lock before row/FK locks; a concurrent booking or reserve entry commits before
+the dependency check can allow deletion. The database also protects direct
+writes. Replacement draft lines may be removed with an eligible run; retained
+financial evidence is never removed to make deletion succeed. Deletion records
+an audit event. Migration 0151 keeps the retention catalog conditional for draft
+runs and retains drafts carrying these financial dependencies.
+
+
+Migration 0152 confines runtime deletion locks to the authenticated organization;
+missing or invalid runtime organization/user context is refused before locking.
+The existing operator erasure context requires an explicit target organization,
+the `app_migrator` login and `app.organization_erasure=on`; it takes the same
+target-only locks before deleting rows, without requiring a runtime user.
+A scope-visible draft remains creatable and readable without complete property
+or contact-source access. Its deletion metadata then reports only the generic
+German access restriction, without disclosing hidden bookings or other evidence.
+Saving a reserve opening through the input-coverage declaration refreshes both
+the ledger and the draft's deletion eligibility immediately on both pages.

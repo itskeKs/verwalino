@@ -639,8 +639,9 @@ class TestM3Immutability:
     async def test_delete_finalized_run_rejected(self, app_rw_session, m3_seed):
         session = app_rw_session
         await session.execute(
-            text("SELECT set_config('app.current_org_id', :o, true)"),
-            {"o": str(m3_seed["org_a_id"])},
+            text("SELECT set_config('app.current_org_id', :o, true), "
+                 "set_config('app.current_user_id', :actor, true)"),
+            {"o": str(m3_seed["org_a_id"]), "actor": str(m3_seed["user_a_admin_id"])},
         )
         run_id = uuid.uuid4()
         await session.execute(

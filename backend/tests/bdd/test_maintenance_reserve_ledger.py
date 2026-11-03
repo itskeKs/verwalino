@@ -10,6 +10,35 @@ from tests.financial_coverage_helpers import attest_fixture
 scenarios(str(Path(__file__).resolve().parents[3] / 'features/maintenance_reserve_ledger.feature'))
 
 
+@given('an empty asset report for 2020 precedes the first real report for 2025', target_fixture='stray_reserve_draft')
+def stray_reserve_draft(world, seed_data):
+    from tests.test_m4_weg import _seed_weg
+    from tests.test_weg_draft_deletion import asset_draft
+    world.actor = world.administrator_of('Verwaltung Alpha')
+    w = _seed_weg(seed_data)
+    w['stray'] = world.run(asset_draft(world.actor, w, 2020))
+    w['real'] = world.run(asset_draft(world.actor, w, 2025))
+    return w
+
+
+@when('I delete the accidentally opened 2020 draft')
+def delete_stray_reserve_draft(world, stray_reserve_draft):
+    response = world.act('DELETE', f"/api/weg-settlements/asset-reports/{stray_reserve_draft['stray']}")
+    assert response.status_code == 204, response.text
+
+
+@then('the 2020 report disappears and I can import 12500 euros for 2025 with a reason')
+def real_opening_import(world, stray_reserve_draft):
+    w = stray_reserve_draft
+    reports = world.act('GET', '/api/weg-settlements', params={'property_id': w['property'], 'run_type': 'VERMOEGENSBERICHT'})
+    assert w['stray'] not in [row['id'] for row in reports.json()]
+    path = f"/api/weg-settlements/{w['real']}/reserve-ledger"
+    response = world.act('POST', path + '/overrides', json={
+        'component': 'OPENING', 'amount': '12500.00', 'reason': 'Bankbestätigter Anfangsbestand 2025'})
+    assert response.status_code == 201, response.text
+    assert world.act('GET', path).json()['opening_balance'] == '12500.00'
+
+
 @when('I correct a receipt without withdrawals by plus one euro')
 def positive_adjustment(world, reserve_scenario):
     from tests.financial_coverage_helpers import reserve_evidence

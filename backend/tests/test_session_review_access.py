@@ -449,8 +449,10 @@ async def test_revision_chain_head_0131_head_preserves_full_state_and_issued_pdf
                 retained = _chain_snapshot(connection)
                 with pytest.raises(DBAPIError, match='Retain finalized split-engine snapshots; repair forward') as refusal:
                     with connection.begin_nested():
-                        migrate(scripts.get_revision(TARGET).down_revision, downgrade=True)
+                        migrate('0150', downgrade=True)
+                        migrate('0149', downgrade=True)
                 assert refusal.value.orig.pgcode == '23514', str(refusal.value.orig)
+                assert version() == (TARGET,)
                 assert _chain_snapshot(connection) == retained
                 split_runs = [uuid.UUID(row['id']) for row in retained['data']['settlement_run']
                               if row['status'] == 'finalized'

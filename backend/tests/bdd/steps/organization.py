@@ -22,6 +22,29 @@ from tests.bdd.steps.records import (
 REFUSED = (404,)  # existence of another organization's records is never revealed (architecture.md)
 
 
+@given('an empty asset report belongs to Verwaltung Alpha')
+def empty_annual_draft(world, seed_data):
+    from tests.test_m4_weg import _seed_weg
+    from tests.test_weg_draft_deletion import asset_draft
+    alpha = world.administrator_of('Verwaltung Alpha')
+    world.data['empty_annual_draft'] = world.run(asset_draft(alpha, _seed_weg(seed_data)))
+
+
+@when('Verwaltung Beta tries to delete the empty annual draft')
+def foreign_annual_delete(world):
+    run = world.data['empty_annual_draft']
+    beta = world.administrator_of('Verwaltung Beta')
+    world.data['annual_delete_refusals'] = [world.send(beta, 'DELETE', path) for path in (
+        f'/api/weg-settlements/{run}', f'/api/weg-settlements/asset-reports/{run}')]
+
+
+@then('the annual draft is not found and remains available to Verwaltung Alpha')
+def annual_draft_retained(world):
+    assert all(response.status_code == 404 for response in world.data['annual_delete_refusals'])
+    run = world.data['empty_annual_draft']
+    assert world.look(world.administrator_of('Verwaltung Alpha'), f'/api/weg-settlements/{run}').status_code == 200
+
+
 @given(parsers.parse('the organizations "{first}" and "{second}"'))
 def known_organizations(world, first, second):
     world.administrator_of(first)

@@ -973,3 +973,46 @@ field bounds and console health.
 | Asset-report opening total request | [before](docs/assets/reserve-ledger/round16-asset-opening-after-1280.png) · [after](docs/assets/reserve-ledger/round17-asset-opening-after-1280.png) | [before](docs/assets/reserve-ledger/round16-asset-opening-after-360.png) · [after](docs/assets/reserve-ledger/round17-asset-opening-after-360.png) |
 | WEG contribution reduction | [before](docs/assets/reserve-ledger/round18-weg-contribution-before-1280.png) · [after](docs/assets/reserve-ledger/round18-weg-contribution-after-1280.png) | [before](docs/assets/reserve-ledger/round18-weg-contribution-before-360.png) · [after](docs/assets/reserve-ledger/round18-weg-contribution-after-360.png) |
 | Asset-report contribution reduction | [before](docs/assets/reserve-ledger/round18-asset-contribution-before-1280.png) · [after](docs/assets/reserve-ledger/round18-asset-contribution-after-1280.png) | [before](docs/assets/reserve-ledger/round18-asset-contribution-before-360.png) · [after](docs/assets/reserve-ledger/round18-asset-contribution-after-360.png) |
+
+
+### Empty WEG draft deletion (#199)
+
+WEG annual-settlement and asset-report details share `WegDraftDelete`. An empty
+draft displays the destructive “Entwurf löschen” action below the title. Native
+confirmation asks “Diesen leeren Entwurf endgültig löschen?”. Successful deletion
+returns to the corresponding list. A draft with dependencies shows the server's
+German structured refusal message in place of the action. A conflict discovered
+after confirmation appears as an alert and removes the now-unavailable action;
+other failures preserve the page and allow retry. Finalized pages have no delete
+action. The server refreshes deletion eligibility after computation and reserve
+changes. Existing card and danger-button styles wrap at 360 px.
+
+Synthetic records on the shared test database, 1280 × 900 and 360 × 900:
+
+| State | Desktop | 360 px |
+| --- | --- | --- |
+| Asset draft before | [view](docs/assets/design/draft-deletion/asset-before-1280.png) | [view](docs/assets/design/draft-deletion/asset-before-360.png) |
+| Asset draft after | [view](docs/assets/design/draft-deletion/asset-after-1280.png) | [view](docs/assets/design/draft-deletion/asset-after-360.png) |
+| WEG draft before | [view](docs/assets/design/draft-deletion/weg-before-1280.png) | [view](docs/assets/design/draft-deletion/weg-before-360.png) |
+| WEG draft after | [view](docs/assets/design/draft-deletion/weg-after-1280.png) | [view](docs/assets/design/draft-deletion/weg-after-360.png) |
+| Opening import of 12,500 euros and ledger refusal | [view](docs/assets/design/draft-deletion/asset-imported-1280.png) | [view](docs/assets/design/draft-deletion/asset-imported-360.png) |
+| Booked 2024 Hausgeld refusal | [view](docs/assets/design/draft-deletion/asset-booking-refusal-1280.png) | [view](docs/assets/design/draft-deletion/asset-booking-refusal-360.png) |
+
+
+Saving the input-coverage declaration on either reserve detail page refreshes
+its run metadata as well as the ledger, replacing the delete action immediately
+when the saved opening creates protected evidence. Delete-control keys are
+namespaced per run, separate from the reserve panel; repeated monthly plan rows
+use distinct rendered identities even when they share a source row ID.
+
+Same-screen coverage-save verification after the deletion rework: each pair uses
+a fresh synthetic report. The opening import uses the report's input fields and
+“Datengrundlage speichern”; the after image is captured without reloading or
+navigating. All four cases have no console errors or horizontal overflow.
+
+| State | Desktop | 360 px |
+| --- | --- | --- |
+| Asset eligible before saving coverage | [view](docs/assets/design/draft-deletion/rework/asset-eligible-1280.png) | [view](docs/assets/design/draft-deletion/rework/asset-eligible-360.png) |
+| Asset protected immediately after import | [view](docs/assets/design/draft-deletion/rework/asset-imported-1280.png) | [view](docs/assets/design/draft-deletion/rework/asset-imported-360.png) |
+| WEG eligible before saving coverage | [view](docs/assets/design/draft-deletion/rework/weg-eligible-1280.png) | [view](docs/assets/design/draft-deletion/rework/weg-eligible-360.png) |
+| WEG protected immediately after import | [view](docs/assets/design/draft-deletion/rework/weg-imported-1280.png) | [view](docs/assets/design/draft-deletion/rework/weg-imported-360.png) |

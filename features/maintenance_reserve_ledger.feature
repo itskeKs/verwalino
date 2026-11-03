@@ -96,3 +96,8 @@ Feature: Maintenance reserve ledger
     Given a WEG with partially assigned Hausgeld and a finalized reserve plan
     When I correct the unit contribution by 300 euros
     Then reducing and deleting the contribution correction remains usable on both reserve pages
+
+  Scenario: Removing an accidentally opened empty year permits the first real reserve import
+    Given an empty asset report for 2020 precedes the first real report for 2025
+    When I delete the accidentally opened 2020 draft
+    Then the 2020 report disappears and I can import 12500 euros for 2025 with a reason

@@ -81,6 +81,15 @@ from app.services.reserve_ledger_service import ReserveLedgerService
 
 ENGINE_VERSION = "m4.2.0"
 
+DELETE_MESSAGES = {
+    'SETTLEMENT_DELETE_SOURCE_ACCESS_REQUIRED': 'Zum Löschen dieses Entwurfs benötigen Sie Zugriff auf alle Finanzquellen des Objekts.',
+    'SETTLEMENT_DELETE_NOT_DRAFT': 'Nur nicht ersetzte Entwürfe können gelöscht werden.',
+    'SETTLEMENT_DELETE_HAS_BOOKINGS': 'Entwürfe mit Buchungen können nicht gelöscht werden.',
+    'SETTLEMENT_DELETE_HAS_LEDGER': 'Entwürfe mit Rücklagenbuch-Einträgen können nicht gelöscht werden.',
+    'SETTLEMENT_DELETE_SCOPE_DEPENDENCY': 'Dieser Entwurf besitzt eine unveränderbare Zuordnung zu einem Abrechnungskreis und kann nicht gelöscht werden.',
+    'SETTLEMENT_DELETE_HAS_EVIDENCE': 'Dieser Entwurf wird von aufbewahrungspflichtigen Nachweisen verwendet und kann nicht gelöscht werden.',
+}
+
 
 @dataclass
 class ManualOwnerAdvance:
@@ -137,6 +146,30 @@ class WegSettlementService:
         self._plans = EconomicPlanRepository(session, org_id)
         self._plan_lines = EconomicPlanLineRepository(session, org_id)
         self._audit = AuditRepository(session, org_id)
+
+    async def delete_restriction(self, run_id: uuid.UUID) -> dict[str, str] | None:
+        code = await self._runs.weg_delete_reason(run_id)
+        if code == 'NOT_FOUND':
+            raise HTTPException(404, 'WEG settlement run not found')
+        return {'code': code, 'message': DELETE_MESSAGES[code]} if code is not None else None
+
+    async def delete_empty_draft(self, run_id: uuid.UUID, *, asset_report=False) -> None:
+        scope = FinancialScopeService(self._session, self._org_id, self._user_id)
+        await scope.lock_inputs()
+        run = await self._runs.get_by_id_for_update(run_id)
+        if run is None or run.run_type not in ('WEG_JAHRESABRECHNUNG', 'VERMOEGENSBERICHT') or (
+            asset_report and run.run_type != 'VERMOEGENSBERICHT'
+        ):
+            raise HTTPException(404, 'WEG settlement run not found')
+        await scope.enter(run, capability=ScopeCapability.PREPARE)
+        restriction = await self.delete_restriction(run_id)
+        if restriction is not None:
+            raise HTTPException(409, restriction)
+        await self._runs.delete(run)
+        await self._audit.create(AuditEvent(actor_user_id=self._user_id, entity_type='settlement_run',
+            entity_id=run_id, action='settlement.draft.deleted', payload_diff={
+                'run_type': run.run_type, 'property_id': str(run.property_id),
+                'period_start': run.period_start.isoformat(), 'period_end': run.period_end.isoformat()}))
 
     async def _plan_transition_run(self, run_id):
         scope = FinancialScopeService(self._session, self._org_id, self._user_id)

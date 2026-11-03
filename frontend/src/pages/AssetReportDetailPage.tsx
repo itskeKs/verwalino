@@ -1,4 +1,5 @@
 import { ReserveLedgerPanel } from "../components/ReserveLedgerPanel";
+import { WegDraftDelete } from "../components/WegDraftDelete";
 import { FinancialCoverageReview } from "../components/FinancialCoverageReview";
 import { FinancialCorrectionControls } from "../components/FinancialCorrectionControls";
 /**
@@ -137,6 +138,8 @@ export function AssetReportDetailPage() {
         </span>
       </h1>
 
+      <WegDraftDelete key={`delete-${run.id}`} run={run} disabled={busy} />
+
       {actionError && (
         <div className="card" style={{ marginBottom: "1rem", background: "#ffebee", borderColor: "#ef9a9a" }}>
           <strong>Fehler:</strong> {actionError}
@@ -182,7 +185,7 @@ export function AssetReportDetailPage() {
           </label>)}
           {itemEditor(receivables, setReceivables, "Forderungen")}
           {itemEditor(payables, setPayables, "Verbindlichkeiten")}
-      {run.status === "draft" && <FinancialCoverageReview key={ledgerVersion} kind="settlement" subjectId={run.id} values={req()} onSaved={() => setLedgerRefresh(v => v + 1)} />}
+      {run.status === "draft" && <FinancialCoverageReview key={ledgerVersion} kind="settlement" subjectId={run.id} values={req()} onSaved={() => { void run_(() => getWegRun(run.id)); }} />}
           <div className="form-actions" style={{ marginTop: "1rem" }}>
             <button className="btn btn--primary" disabled={busy} onClick={() => runId && run_(() => computeAssetReport(runId, req()))}>
               {busy ? "Berechnen..." : "Berechnen"}

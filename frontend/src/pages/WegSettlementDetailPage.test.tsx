@@ -28,7 +28,7 @@ const plan: EconomicPlan = {
 function draft(id = runId): WegRun {
   return { id, organization_id: "org", property_id: property.id, run_type: "WEG_JAHRESABRECHNUNG", period_start: "2026-01-01", period_end: "2026-12-31",
     economic_plan_id: plan.id, total_cost: null, balance: null, status: "draft", snapshot_sha256: null,
-    engine_version: "1", finalized_at: null, superseded_by_id: null, lines: [] };
+    engine_version: "1", finalized_at: null, superseded_by_id: null, lines: [], delete_restriction: null };
 }
 function frozenLine(id: string, owner: string, amount: string): WegLine {
   return { id, line_type: "COST", addressee_owner_profile_id: owner, cost_category_code: "WASSER", label: `Festgeschriebener Anteil ${id}`,
@@ -70,6 +70,62 @@ it('shows the current opening beside the corrected balance input and reason', as
 });
 const paymentLabel = (name: string) => `Tatsächlich gezahltes Hausgeld · ${name}`;
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); vi.restoreAllMocks(); });
+
+it('keeps delete and ledger identities distinct without React console errors', async () => {
+  const errors = vi.spyOn(console, 'error');
+  install(); show();
+  await screen.findByRole('button', { name: 'Entwurf löschen' });
+  expect(errors).not.toHaveBeenCalled();
+});
+
+it('refreshes deletion eligibility after saving a reserve opening declaration', async () => {
+  let protectedOpening = false;
+  const fetchMock = install();
+  const original = fetchMock.getMockImplementation()!;
+  fetchMock.mockImplementation(async (url: string, init?: RequestInit) => {
+    if (url === '/api/financial-input-coverage' && init?.method === 'POST') protectedOpening = true;
+    const response = await original(url, init);
+    if (url === `/api/weg-settlements/${runId}`) return json({ ...draft(), delete_restriction: protectedOpening
+      ? { code: 'SETTLEMENT_DELETE_HAS_LEDGER', message: 'Entwürfe mit Rücklagenbuch-Einträgen können nicht gelöscht werden.' } : null });
+    if (url.endsWith('/reserve-ledger')) return json({ ...await response.json(), opening_balance: protectedOpening ? '12500.00' : '0.00' });
+    return response;
+  });
+  show();
+  expect(await screen.findByRole('button', { name: 'Entwurf löschen' })).toBeInTheDocument();
+  fireEvent.change(screen.getByLabelText('Rücklagen-Anfangsbestand'), { target: { value: '12500.00' } });
+  fireEvent.change(screen.getByLabelText('Begründung der Rücklagenwerte'), { target: { value: 'Bankbestätigter Anfangsbestand' } });
+  fireEvent.change(screen.getByLabelText('Grundlage der Prüfung'), { target: { value: 'Kontostände vollständig geprüft' } });
+  fireEvent.click(screen.getByRole('checkbox'));
+  fireEvent.click(screen.getByRole('button', { name: 'Datengrundlage speichern' }));
+  await screen.findByText('Entwürfe mit Rücklagenbuch-Einträgen können nicht gelöscht werden.');
+  expect(screen.queryByRole('button', { name: 'Entwurf löschen' })).not.toBeInTheDocument();
+  await waitFor(() => expect(screen.getByText(/Aktueller Anfangsbestand:/)).toHaveTextContent('12.500,00'));
+});
+
+it('deletes an empty annual draft after confirmation', async () => {
+  install();
+  const remove = vi.spyOn(endpoints, 'deleteWegDraft').mockResolvedValue();
+  vi.spyOn(window, 'confirm').mockReturnValue(true);
+  render(<MemoryRouter initialEntries={[`/weg-abrechnungen/${runId}`]}><Routes>
+    <Route path="/weg-abrechnungen/:runId" element={<WegSettlementDetailPage />} />
+    <Route path="/weg-abrechnungen" element={<p>Abrechnungsliste</p>} />
+  </Routes></MemoryRouter>);
+  fireEvent.click(await screen.findByRole('button', { name: 'Entwurf löschen' }));
+  await screen.findByText('Abrechnungsliste');
+  expect(remove).toHaveBeenCalledWith(runId, false);
+});
+
+it('shows a concurrent booking refusal and removes the unavailable delete action', async () => {
+  const { ApiError } = await import('../api/client');
+  install();
+  vi.spyOn(endpoints, 'deleteWegDraft').mockRejectedValue(new ApiError(409,
+    'Entwürfe mit Buchungen können nicht gelöscht werden.', 'SETTLEMENT_DELETE_HAS_BOOKINGS'));
+  vi.spyOn(window, 'confirm').mockReturnValue(true);
+  show();
+  fireEvent.click(await screen.findByRole('button', { name: 'Entwurf löschen' }));
+  expect(await screen.findByRole('alert')).toHaveTextContent('Entwürfe mit Buchungen können nicht gelöscht werden.');
+  expect(screen.queryByRole('button', { name: 'Entwurf löschen' })).not.toBeInTheDocument();
+});
 
 it("reads the subject-bound input-owner IDs through the typed endpoint", async () => {
   const fetchMock = install();
