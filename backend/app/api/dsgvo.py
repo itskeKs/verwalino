@@ -6,7 +6,8 @@ Foreign / unknown person id -> 404. A retention-bound person cannot be
 anonymized (409) -- the service enforces the ADR-0012 invariant; a person with
 a live contractual relationship cannot be erased (409).
 
-These endpoints mutate ONLY the person row; they never alter a retained Beleg.
+Anonymization also scrubs complete names in live reserve correction reasons and
+their linked audit copies. Retained vouchers and frozen snapshots stay unchanged.
 """
 
 from __future__ import annotations

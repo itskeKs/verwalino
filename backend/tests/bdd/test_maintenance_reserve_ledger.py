@@ -10,6 +10,57 @@ from tests.financial_coverage_helpers import attest_fixture
 scenarios(str(Path(__file__).resolve().parents[3] / 'features/maintenance_reserve_ledger.feature'))
 
 
+@given('Anna Beispiel has no retention binding and appears in a 300 euro reserve correction', target_fixture='erasure_reserve')
+def erasure_reserve(world, seed_data, rent_world, export_client):
+    from tests.test_reserve_ledger import reserve_erasure_case, finalize
+    world.actor = export_client
+    seed = {**seed_data, 'org_a_id': rent_world['org'], 'user_a_admin_id': rent_world['admin']}
+    w = world.run(reserve_erasure_case(world.actor, seed))
+    w['before'] = world.act('GET', f"/api/weg-settlements/{w['run']}/reserve-ledger").json()
+    w['frozen'] = world.run(finalize(world.actor, w))
+    w['statement'] = world.act('GET', f"/api/weg-settlements/{w['run']}").json()
+    return w
+
+
+@when('I request erasure of Anna Beispiel')
+def erase_reserve_person(world, erasure_reserve):
+    response = world.act('POST', f"/api/dsgvo/persons/{erasure_reserve['person']}/request-deletion")
+    assert response.status_code == 200, response.text
+    assert response.json()['applied'] == 'ANONYMIZED'
+
+
+@then('the live correction and exported audit reason read "Rückzahlung an Gelöscht" for 300 euros')
+def exported_reserve_reason(world, erasure_reserve):
+    import json
+    from tests.test_organization_export import unpack
+    w = erasure_reserve
+    response = world.act('POST', '/api/organizations/export')
+    assert response.status_code == 200, response.text
+    files = unpack(response.content)
+    statements = [json.loads(line) for line in files['entities/settlement_run.jsonl'].splitlines()]
+    w['exported_statement'] = next(row for row in statements if row['id'] == w['run'])
+    ledger = [json.loads(line) for line in files['entities/reserve_ledger_entry.jsonl'].splitlines()]
+    entry = next(row for row in ledger if row['id'] == w['entry'])
+    assert entry['reason'] == 'Rückzahlung an Gelöscht'
+    from decimal import Decimal
+    assert Decimal(str(entry['amount'])) == Decimal('300.00')
+    audit = [json.loads(line) for line in files['entities/audit_event.jsonl'].splitlines()]
+    events = [row for row in audit if (row.get('payload_diff') or {}).get('entry_id') == w['entry']]
+    assert len(events) == 1
+    assert events[0]['payload_diff']['reason'] == 'Rückzahlung an Gelöscht'
+    assert events[0]['payload_diff']['amount'] == '300.00'
+
+
+@then('the finalized statement keeps its original contents and digest')
+def frozen_reserve_after_erasure(world, erasure_reserve):
+    from app.engine.canonical import canonical_json, sha256_hex
+    w = erasure_reserve
+    after = world.act('GET', f"/api/weg-settlements/{w['run']}").json()
+    assert after == w['statement']
+    assert after['snapshot_sha256'] == w['frozen']['snapshot_sha256']
+    assert sha256_hex(canonical_json(w['exported_statement']['snapshot_payload'])) == w['frozen']['snapshot_sha256']
+
+
 @given('an empty asset report for 2020 precedes the first real report for 2025', target_fixture='stray_reserve_draft')
 def stray_reserve_draft(world, seed_data):
     from tests.test_m4_weg import _seed_weg

@@ -42,8 +42,36 @@ privileges from `PUBLIC`, `app_rw`, `app_worker` and `app_review`, then grants
 `app_rw` to `app_worker` with `INHERIT TRUE`, so the worker has the same table
 privileges. `app_review` has none. The update and delete grants let attempts
 that pass row-level security (RLS) reach the `guard_reserve_ledger` trigger.
-For each such row, the trigger rejects the change with SQLSTATE `23514` and
+Until migration `0156`, each such UPDATE reaches the guard; DELETE still does.
+The trigger rejects unauthorized changes with SQLSTATE `23514` and
 constraint `reserve_ledger_append_only`.
+
+Migration `0156` adds one bounded individual-erasure exception, following the
+[owner decision](https://github.com/itskeKs/verwalino/issues/222#issuecomment-6611287519).
+Only the existing `apply_person_privacy` command's actual anonymization branch
+sets the person context and invokes a nested person trigger before master data
+changes. Complete names (first and last together, or company name) are matched
+literally, case-insensitively, with normalized whitespace and boundaries that
+preserve longer and hyphenated names; individual name fragments are unchanged.
+Matches in that organization's live `reserve_ledger_entry.reason` become
+`Gelöscht`. Only exact copies in `payload_diff.reason` of
+`reserve.override_added`, `reserve.contribution_reduced` and
+`reserve.contribution_restored` change: organization, settlement-run entity,
+entry ID and original reason must all match. Other payload keys and audit
+metadata, including `prev_event_hash`, are preserved.
+
+Both guards require nested trigger execution and the exact canonical text change;
+all other row fields must compare equal. Migration `0156` also revokes reserve
+UPDATE from `app_rw` (and thus its inheriting worker). This privilege boundary
+blocks even a caller-owned temporary trigger with forged person context; depth
+alone is insufficient provenance. Direct runtime UPDATE fails with `42501`;
+DELETE still reaches the append-only guard. Audit UPDATE remains revoked, helper
+execution is private, and the reserve guard remains `ENABLE ALWAYS`. Existing active-relationship, retention, authorization
+and organization checks still decide whether anonymization happens. Organization
+erasure does not enter this individual command. Finalized snapshots, their
+digests and their frozen presentation (including any frozen reason) stay intact;
+an organization export exposes the scrubbed live ledger and linked audit copies
+alongside the unchanged snapshots. This is no general free-text anonymization.
 
 All nine foreign keys on `reserve_ledger_entry` use PostgreSQL's default
 `NO ACTION` deletion rule, as created by migration `0149`; the ORM leaves

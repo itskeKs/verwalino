@@ -80,10 +80,25 @@ bindings, and former users' email addresses are scrubbed as well. The audit row,
 event, actor structure and timestamps remain. The narrow immutability exception
 and hash treatment are defined in the
 [ADR-0003 amendment](0003-gobd-immutability-mechanism.md#amendment--2026-10-31-personal-audit-payloads-during-organization-erasure).
-This resolves the audit-payload question for organization erasure. M9's individual
-person operation still anonymizes master data only; **frozen voucher snapshots
-remain untouched**. Other retained original/evidence content follows the
+This resolves the audit-payload question for organization erasure. **Frozen voucher
+snapshots remain untouched**. Other retained original/evidence content follows the
 [operator inventory](../operations/organization-export.md).
+
+**Owner decision, 2026-11-03 (individual reserve reasons, #256):** when the existing
+individual command actually anonymizes a person, migration `0156` replaces their
+complete name/company name in that organization's live reserve correction reasons
+with `Gelöscht`, and changes only the exact linked audit reason copies. Names are
+literal, case-insensitive matches with normalized whitespace and complete-name
+boundaries; fragments and longer/hyphenated other names remain unchanged. This
+does not decide general free-text erasure or new retention periods. Active or
+retention-bound persons are not scrubbed. Amounts, IDs, references, other payload
+fields and finalized snapshots/digests remain unchanged, including any frozen
+reason and its presentation. The authenticated organization export shows both
+scrubbed live rows and the preserved snapshots. The
+[ADR-0003 amendment](0003-gobd-immutability-mechanism.md#amendment--2026-11-03-individual-erasure-of-reserve-correction-reasons)
+defines the nested-trigger guard exception; the
+[reserve architecture](../architecture.md#maintenance-reserve-ledger-privileges)
+lists the exact writers and copy-matching conditions.
 
 ### 5. Purge after retention expiry
 
@@ -95,7 +110,7 @@ The purge is realized via the **guarded `anonymize` operation**: the pure functi
 
 ### 6. Reconciliation invariant (guaranteed DB-side by I2)
 
-**Retention-bound vouchers/snapshots are NEVER changed or deleted by the GDPR path.** This is not a new commitment but coincides with ADR-0003: `cost_entry` (confirmed), `invoice_document` (released), `settlement_run`/`settlement_line` (finalized), `payment` (booked), `dunning_notice` (issued) are immutable via trigger + revoked grants. The GDPR service does **not** touch these tables in a mutating way at all — it changes only `person` fields. Retention is thus the legal basis against the erasure claim, and the render-time resolution of bound documents remains correct until retention expires.
+**Retention-bound vouchers/snapshots are NEVER changed or deleted by the GDPR path.** This is not a new commitment but coincides with ADR-0003: `cost_entry` (confirmed), `invoice_document` (released), `settlement_run`/`settlement_line` (finalized), `payment` (booked), `dunning_notice` (issued) are immutable via trigger + revoked grants. Individual erasure changes person fields and the bounded live reserve reason/audit copies in §4, never these retained originals. Retention is thus the legal basis against the erasure claim, and the render-time resolution of bound documents remains correct until retention expires.
 
 ### 7. Access request / export (`export_person_data`)
 
@@ -134,11 +149,11 @@ Implementation of the polish item deferred in `roadmap.md` as "snapshot name fre
 - Finalized documents are **self-contained**: their render is immune to later master data changes/anonymization (§9) — render correctness no longer depends solely on the restriction of processing of the bound person, but additionally on the frozen name (defense-in-depth).
 - The decision "restrict vs. anonymize" is a **pure, tested function** — traceable and verifiable (golden/reconciliation tests).
 - Finalized documents of bound persons stay render-correct until retention expires.
-- No new DB mutation path on retention-bound tables → I2 remains untouched.
+- Retained financial originals stay immutable; §4 defines the bounded reserve reason/audit exception.
 
 **Negative / to note:**
 - The binding determination must be complete; a **forgotten** binding source would anonymize wrongly (hence conservatively broad, §1, and secured by tests).
 - The relevant `retention_until` is **provisional** (calendar-year end + 8 years) — a legal assumption, not a fact.
-- Remainders of PII outside `person` (free text, audit payload) are **not** part of this mechanic (§4 [§18/domain]).
+- Other PII outside `person` and the explicit §4 exceptions (free text, unrelated audit payload) remains outside this mechanic ([§18/domain]).
 
 **No self-certification:** This concept makes the erasure/retention conflict *transparent, traceable and auditable* and discloses all assumptions. Whether it is privacy-/audit-proof in a specific case must be signed off by the data protection officer and tax advisor/specialist attorney — in particular all points marked **[§18/domain]**.

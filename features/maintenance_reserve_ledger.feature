@@ -127,3 +127,9 @@ Feature: Maintenance reserve ledger
     When I correct the unit contribution by 300 euros
     And the backing Hausgeld is reversed
     Then keeping 100 euros directs me to delete the correction on desktop and mobile
+
+  Scenario: Erasing an eligible person cleans the reserve reason and its exported audit copy
+    Given Anna Beispiel has no retention binding and appears in a 300 euro reserve correction
+    When I request erasure of Anna Beispiel
+    Then the live correction and exported audit reason read "Rückzahlung an Gelöscht" for 300 euros
+    And the finalized statement keeps its original contents and digest

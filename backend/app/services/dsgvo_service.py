@@ -4,7 +4,8 @@ Boundary discipline (SDD section 16): this service loads ORM rows, builds the
 pure ``app.engine.dsgvo`` reconciliation inputs, lets the engine DECIDE
 (RESTRICT vs. ANONYMIZE_NOW), and applies the decision. It NEVER re-implements
 the retention preview. Effects use an authoritative database command that changes
-only the person row and canonical audit, never retained financial records.
+the person row, canonical audit and targeted reserve reason/audit copies, never
+retained voucher contents or frozen financial snapshots.
 
 Three operations:
   * request_deletion -- the Art. 17 entry point. Gathers retention bindings,

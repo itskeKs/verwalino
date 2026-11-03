@@ -128,3 +128,34 @@ after data: both linked rows and their 100.00 remainder survive, and the
 restored real guard still refuses replica-mode deletion. The portable restore
 procedure in [DEPLOY.md](../../DEPLOY.md) is unchanged. Run
 `make test-selfhost-format` for this opt-in rehearsal in the guarded test container.
+
+## Amendment — 2026-11-03: individual erasure of reserve correction reasons
+
+The [owner decision in #222](https://github.com/itskeKs/verwalino/issues/222#issuecomment-6611287519),
+implemented separately in #256, permits a narrowly targeted exception for an
+individual person who is actually anonymized under the existing retention rules.
+Migration `0156` changes only matching complete names in the live reserve reason
+and the exact corresponding audit `payload_diff.reason`. The three writers are
+`reserve.override_added`, `reserve.contribution_reduced` and
+`reserve.contribution_restored`. Organization, settlement run, entry ID and
+original reason identify the copies; all other columns and JSON fields remain.
+
+The authoritative privacy command establishes and restores transaction-local
+person context only in its anonymization branch. Its nested person trigger runs
+before the original identity disappears. Both immutable guards validate the
+canonical text replacement and require nested trigger execution, so setting a
+context variable alone does not authorize a direct UPDATE. Migration `0156`
+revokes reserve UPDATE from `app_rw` and its inheriting worker: a caller-owned
+temporary trigger cannot impersonate the privileged erasure writer. Audit UPDATE
+remains revoked, helper execution is private, and the reserve guard stays `ENABLE ALWAYS`.
+The existing `dsgvo.anonymized` event records the actual erasure. The old audit
+`prev_event_hash` is preserved rather than recalculated; it does not certify the
+changed payload bytes. No audit hash chain is introduced.
+
+Amounts, rows, IDs, references, finalized snapshots/digests and frozen renderings
+are untouched. Their frozen reasons may therefore retain the original name.
+Unrelated fields/events and other organizations are unchanged. The independent
+organization-erasure path keeps its existing behavior. Downgrade removes this
+exception and restores the preceding function definitions without recovering
+erased personal text or rewriting financial data. See
+[ADR-0012 §4](0012-gdpr-erasure-vs-gobd-retention.md#4-anonymization-anonymize).
