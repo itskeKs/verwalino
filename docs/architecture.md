@@ -55,7 +55,7 @@ or delete without changing any ledger values.
 
 ### Contribution reduction audit path
 
-The supported application paths for reducing a unit contribution correction are
+The supported application paths for changing a unit contribution correction are
 `POST /api/weg-settlements/{run_id}/reserve-ledger/overrides/{entry_id}/reduce`
 (with `reduced_to` and `reason`) and
 `POST /api/weg-settlements/{run_id}/reserve-ledger/overrides/{entry_id}/delete`
@@ -66,10 +66,25 @@ DELETE bodies cannot lose the reason. An absent or blank reason returns 422
 The shared reserve panel on
 annual settlements and asset reports uses these endpoints. Both call
 `ReserveLedgerService.reduce_contribution`, which appends the counter-entry,
-writes exactly one `reserve.contribution_reduced` event, and invalidates the
+writes exactly one `reserve.contribution_reduced` event for a reduction/deletion
+or `reserve.contribution_restored` for an increase, and invalidates the
 draft computation in the same transaction. The event retains the actor, reason,
 original and counter-entry IDs, and old/new remaining amounts; no retained
 ledger row is updated or deleted.
+
+Owner decision #223 permits restoration, including from zero, through a new
+reasoned counter-entry. The remaining amount may not exceed the original amount
+or raw `reserve_contribution_headroom` plus the current remainder. The existing
+headroom formula is unchanged. Service validation and migration `0154`'s guard
+apply this same cap under the organization financial-input lock; a concurrent
+Hausgeld booking/reversal cannot make the check and insert observe different
+backing. For example, 300.00 → 100.00 → 300.00 retains -200.00 and +200.00;
+400.00 is refused even with additional headroom. Lost backing can still cap the
+result at 200.00. Deleting an already-zero correction returns 422
+`RESERVE_AMOUNT_INVALID`: “Diese Korrektur ist bereits vollständig aufgehoben.
+Es ist kein Restbetrag mehr vorhanden.” The named database constraint is
+`reserve_correction_already_zero`. Existing reduction events, references and
+payloads remain unchanged; restoration never reassigns their audit evidence.
 
 Direct SQL INSERT is not a supported application path for these corrections.
 The `app_rw` INSERT privilege lets the service persist ledger entries; it does

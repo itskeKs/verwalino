@@ -2707,8 +2707,10 @@ async def test_payout_storno_locks_the_cost_row_before_checking_adjustments(migr
 @pytest.mark.parametrize('constraint,status,detail', [
     ('reserve_period_finalized', 409, {'code': 'RESERVE_PERIOD_FINALIZED',
         'message': 'Die Rücklage dieses Zeitraums ist finalisiert.'}),
+    ('reserve_correction_already_zero', 422, {'code': 'RESERVE_AMOUNT_INVALID',
+        'message': 'Diese Korrektur ist bereits vollständig aufgehoben. Es ist kein Restbetrag mehr vorhanden.'}),
     ('reserve_amount_invalid', 422, {'code': 'RESERVE_AMOUNT_INVALID',
-        'message': 'Bitte verringern Sie den verbleibenden Korrekturbetrag oder löschen Sie die Korrektur.'}),
+        'message': 'Bitte geben Sie einen anderen, nicht negativen Korrekturbetrag ein.'}),
 ])
 async def test_contribution_reduction_maps_named_database_guards(monkeypatch, constraint, status, detail):
     from contextlib import nullcontext
@@ -2758,6 +2760,178 @@ async def draft_unit_correction(api, seed, *, two_receipts=False):
     assert added.status_code == 201, added.text
     w['entry'] = added.json()['id']
     return w, path + '/' + w['entry']
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('path_kind', ['service', 'guard'])
+async def test_reduced_unit_correction_can_be_restored_only_to_its_original_amount(
+        client_a_admin, seed_data, app_rw_session, migrator_session, path_kind):
+    api = client_a_admin
+    w = await unit_correction_world(api, seed_data)
+    path = f"/api/weg-settlements/{w['run']}/reserve-ledger"
+    added = await api.post(path + '/overrides', json={'component': 'CONTRIBUTION', 'unit_id': w['u1'],
+        'amount': '300.00', 'reason': 'Reviewed booked Hausgeld'})
+    assert added.status_code == 201, added.text
+    original = added.json()['id']
+    correction = path + f'/overrides/{original}'
+    reduction = await api.post(correction + '/reduce', json={'reduced_to': '100.00', 'reason': 'Wrong correction selected'})
+    assert reduction.status_code == 201, reduction.text
+    before = (await api.get(path)).json()
+    assert next(u for u in before['contribution_headroom'] if u['unit_id'] == w['u1'])['remaining'] == '400.00'
+    query = text('SELECT id,action,actor_user_id,payload_diff FROM audit_event WHERE entity_id=:run ORDER BY id')
+    async def audit_events():
+        async with app_rw_session.bind.begin() as connection:
+            await connection.execute(text("SELECT set_config('app.current_org_id',:org,true)"),
+                {'org': str(seed_data['org_a_id'])})
+            return (await connection.execute(query, {'run': w['run']})).all()
+    prior_events = await audit_events()
+    assert any(event.action == 'reserve.contribution_reduced' for event in prior_events)
+    if path_kind == 'service':
+        restored = await api.post(correction + '/reduce', json={'reduced_to': '300.00', 'reason': 'Versehentlich verringert'})
+        assert restored.status_code == 201, restored.text
+        refused = await api.post(correction + '/reduce', json={'reduced_to': '400.00', 'reason': 'Exceeds original'})
+        assert refused.status_code == 422, refused.text
+        assert refused.json()['detail']['code'] == 'RESERVE_CONTRIBUTION_EXCEEDS_BOOKED'
+        assert '300,00 €' in refused.json()['detail']['message']
+    else:
+        insert = text("""INSERT INTO reserve_ledger_entry
+            (organization_id,property_id,settlement_run_id,entry_date,component,amount,reason,created_by,unit_id,reverses_entry_id)
+            VALUES (:org,:property,:run,'2025-12-31','CONTRIBUTION',:delta,'Versehentlich verringert',:actor,:unit,:original)""")
+        values = {'org': seed_data['org_a_id'], 'actor': seed_data['user_a_admin_id'],
+            'property': w['property'], 'run': w['run'], 'unit': w['u1'], 'original': original}
+        async with app_rw_session.bind.begin() as connection:
+            await connection.execute(text("SELECT set_config('app.current_org_id',:org,true),set_config('app.current_user_id',:actor,true)"),
+                {'org': str(seed_data['org_a_id']), 'actor': str(seed_data['user_a_admin_id'])})
+            await connection.execute(insert, {**values, 'delta': Decimal('200.00')})
+            with pytest.raises(DBAPIError) as refused:
+                async with connection.begin_nested():
+                    await connection.execute(insert, {**values, 'delta': Decimal('100.00')})
+            assert refused.value.orig.__cause__.constraint_name == 'reserve_contribution_exceeds_booked'
+    after = (await api.get(path)).json()
+    assert next(row for row in after['entries'] if row.get('id') == original)['current_amount'] == '300.00'
+    for row in before['entries']:
+        if row.get('id') != original:
+            assert row in after['entries']
+    assert next(row for row in after['entries'] if row.get('id') == original) == {
+        **next(row for row in before['entries'] if row.get('id') == original), 'current_amount': '300.00'}
+    assert [row['amount'] for row in after['entries'] if row.get('reverses_entry_id') == original] == ['-200.00', '200.00']
+    events = await audit_events()
+    assert all(event in events for event in prior_events)
+    if path_kind == 'service':
+        event = next(event for event in events if event.action == 'reserve.contribution_restored')
+        assert event.actor_user_id == seed_data['user_a_admin_id']
+        assert event.payload_diff == {'entry_id': restored.json()['id'], 'reverses_entry_id': original,
+            'old_amount': '100.00', 'new_amount': '300.00', 'reason': 'Versehentlich verringert'}
+    from alembic.migration import MigrationContext
+    from alembic.operations import Operations
+    from alembic.script import ScriptDirectory
+
+    def refuse_downgrade(session):
+        with Operations.context(MigrationContext.configure(session.connection())):
+            with pytest.raises(RuntimeError, match='restored reserve contribution'):
+                ScriptDirectory('migrations').get_revision('0154').module.downgrade()
+    await migrator_session.run_sync(refuse_downgrade)
+
+
+@pytest.mark.asyncio
+async def test_zero_remaining_correction_explains_that_nothing_remains_to_delete(client_a_admin, seed_data, app_rw_session):
+    api = client_a_admin
+    w, path = await draft_unit_correction(api, seed_data)
+    assert (await api.post(path + '/delete', json={'reason': 'Remove correction'})).status_code == 201
+    refused = await api.post(path + '/delete', json={'reason': 'Already removed'})
+    assert refused.status_code == 422, refused.text
+    assert refused.json()['detail'] == {'code': 'RESERVE_AMOUNT_INVALID',
+        'message': 'Diese Korrektur ist bereits vollständig aufgehoben. Es ist kein Restbetrag mehr vorhanden.'}
+    await app_rw_session.execute(text("SELECT set_config('app.current_org_id',:org,true),set_config('app.current_user_id',:actor,true)"),
+        {'org': str(seed_data['org_a_id']), 'actor': str(seed_data['user_a_admin_id'])})
+    with pytest.raises(DBAPIError) as refused:
+        async with app_rw_session.begin_nested():
+            await app_rw_session.execute(text("""INSERT INTO reserve_ledger_entry
+                (organization_id,property_id,settlement_run_id,entry_date,component,amount,reason,created_by,unit_id,reverses_entry_id)
+                VALUES (:org,:property,:run,'2025-12-31','CONTRIBUTION',0,'Already removed',:actor,:unit,:entry)"""),
+                {'org': seed_data['org_a_id'], 'actor': seed_data['user_a_admin_id'], 'property': w['property'],
+                 'run': w['run'], 'unit': w['u1'], 'entry': w['entry']})
+    assert refused.value.orig.__cause__.constraint_name == 'reserve_correction_already_zero'
+    await app_rw_session.rollback()
+    restored = await api.post(path + '/reduce', json={'reduced_to': '500.00', 'reason': 'Versehentlich verringert'})
+    assert restored.status_code == 201, restored.text
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('path_kind', ['service', 'guard'])
+async def test_concurrent_hausgeld_reversal_limits_restoration_to_the_booked_200_euros(
+        client_a_admin, seed_data, app_rw_session, monkeypatch, path_kind):
+    import asyncio
+    from app.services.payment_service import PaymentService
+    from app.services.reserve_ledger_service import ReserveLedgerService
+
+    api = client_a_admin
+    w = _seed_weg(seed_data)
+    receipts = [await payment(api, w, '1300.00', kind='HAUSGELD_VORSCHUSS') for _ in range(2)]
+    report = await api.post('/api/weg-settlements/asset-reports', json={
+        'property_id': w['property'], 'period_start': '2025-01-01', 'period_end': '2025-12-31'})
+    assert report.status_code == 201, report.text
+    w['run'] = report.json()['id']
+    path = f"/api/weg-settlements/{w['run']}/reserve-ledger"
+    for cash, amount in zip(receipts, ('100.00', '400.00'), strict=True):
+        assert (await api.post(path + '/overrides', json={'component': 'CONTRIBUTION',
+            'payment_id': cash, 'amount': amount, 'reason': 'Reviewed payment share'})).status_code == 201
+    w['plan'] = await _create_and_finalize_plan(api, w)
+    added = await api.post(path + '/overrides', json={'component': 'CONTRIBUTION', 'unit_id': w['u1'],
+        'amount': '300.00', 'reason': 'Reconcile booked reserve'})
+    assert added.status_code == 201, added.text
+    original = added.json()['id']
+    correction = path + f'/overrides/{original}/reduce'
+    assert (await api.post(correction, json={'reduced_to': '100.00', 'reason': 'Wrong correction selected'})).status_code == 201
+    reversed_cash, restoration_started, release = asyncio.Event(), asyncio.Event(), asyncio.Event()
+    reverse, subject = PaymentService.reverse_payment, ReserveLedgerService.subject
+
+    async def hold_reversal(service, *args, **kwargs):
+        result = await reverse(service, *args, **kwargs)
+        reversed_cash.set()
+        await asyncio.wait_for(release.wait(), 10)
+        return result
+
+    async def observe_restoration(service, *args, **kwargs):
+        restoration_started.set()
+        return await subject(service, *args, **kwargs)
+
+    async def direct_restoration():
+        await app_rw_session.execute(text("SELECT set_config('app.current_org_id',:org,true),set_config('app.current_user_id',:actor,true)"),
+            {'org': str(seed_data['org_a_id']), 'actor': str(seed_data['user_a_admin_id'])})
+        restoration_started.set()
+        with pytest.raises(DBAPIError) as refused:
+            async with app_rw_session.begin_nested():
+                await app_rw_session.execute(text("""INSERT INTO reserve_ledger_entry
+                    (organization_id,property_id,settlement_run_id,entry_date,component,amount,reason,created_by,unit_id,reverses_entry_id)
+                    VALUES (:org,:property,:run,'2025-12-31','CONTRIBUTION',200,'Versehentlich verringert',:actor,:unit,:entry)"""),
+                    {'org': seed_data['org_a_id'], 'actor': seed_data['user_a_admin_id'], 'property': w['property'],
+                     'run': w['run'], 'unit': w['u1'], 'entry': original})
+        assert refused.value.orig.__cause__.constraint_name == 'reserve_contribution_exceeds_booked'
+        await app_rw_session.rollback()
+
+    monkeypatch.setattr(PaymentService, 'reverse_payment', hold_reversal)
+    monkeypatch.setattr(ReserveLedgerService, 'subject', observe_restoration)
+    async with asyncio.TaskGroup() as tasks:
+        reversal = tasks.create_task(api.post(f'/api/payments/{receipts[0]}/reverse'))
+        try:
+            await asyncio.wait_for(reversed_cash.wait(), 10)
+            restoration = tasks.create_task(direct_restoration() if path_kind == 'guard' else
+                api.post(correction, json={'reduced_to': '300.00', 'reason': 'Versehentlich verringert'}))
+            await asyncio.wait_for(restoration_started.wait(), 10)
+            assert not restoration.done()
+        finally:
+            release.set()
+    assert reversal.result().status_code == 201, reversal.result().text
+    if path_kind == 'service':
+        assert restoration.result().status_code == 422, restoration.result().text
+        assert restoration.result().json()['detail'] == {'code': 'RESERVE_CONTRIBUTION_EXCEEDS_BOOKED',
+            'message': 'Sie können für diese Korrektur höchstens 200,00 € beibehalten.'}
+    accepted = await api.post(correction, json={'reduced_to': '200.00', 'reason': 'Restore only booked backing'})
+    assert accepted.status_code == 201, accepted.text
+    ledger = (await api.get(path)).json()
+    assert next(row for row in ledger['entries'] if row.get('id') == original)['current_amount'] == '200.00'
+    assert ledger['contributions_total'] == '600.00'
 
 
 def test_direct_zero_counter_entry_audit_boundary_is_documented():

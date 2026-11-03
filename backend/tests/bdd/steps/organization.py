@@ -164,6 +164,8 @@ def reserve_correction_for_isolation(world, seed_data):
     from tests.test_reserve_ledger import draft_unit_correction
     alpha = world.administrator_of('Verwaltung Alpha')
     w, path = world.run(draft_unit_correction(alpha, seed_data))
+    reduced = world.send(alpha, 'POST', path + '/reduce', json={'reduced_to': '100.00', 'reason': 'Reviewed reduction'})
+    assert reduced.status_code == 201, reduced.text
     world.data['reserve_correction'] = (w, path)
     world.data['reserve_ledger_before'] = world.look(alpha, path.rsplit('/overrides/', 1)[0]).json()
 
@@ -173,7 +175,7 @@ def foreign_reserve_correction(world):
     _, path = world.data['reserve_correction']
     beta = world.administrator_of('Verwaltung Beta')
     world.data['reserve_refusals'] = [
-        world.send(beta, 'POST', path + '/reduce', json={'reduced_to': '100.00', 'reason': 'Foreign reduction'}),
+        world.send(beta, 'POST', path + '/reduce', json={'reduced_to': '300.00', 'reason': 'Foreign restoration'}),
         world.send(beta, 'POST', path + '/delete', json={'reason': 'Foreign deletion'})]
 
 
