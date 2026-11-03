@@ -19,6 +19,15 @@ Feature: Organization deletion
     And the operator executes deletion after seven days
     Then the original remains unchanged and the former owner cannot sign in
 
+  Scenario: Imported rent vouchers retain anonymous bank dependencies after erasure
+    Given a separate organization has rental records and an original for export
+    And its administrator imports and books a synthetic rent payment
+    When its administrator requests the retention preview
+    And the administrator confirms the exact organization name
+    And the operator executes deletion after seven days
+    Then the imported voucher and own account are unchanged and its bank line is anonymized
+    And the original remains unchanged and the former owner cannot sign in
+
   @browser
   Scenario: Organization lifecycle controls work at desktop and phone width
     When the administrator reviews and cancels deletion in the browser
