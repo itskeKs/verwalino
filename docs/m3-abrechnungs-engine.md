@@ -541,7 +541,11 @@ The ordinary authorized statement view exposes saved vacancy attribution as
 person-days and owner amount. The Musterhaus result directly shows unit 2's
 59 person-days and 56.34 euros. The current accounting-scope unit set limits this
 disclosure even if a full-property frozen statement is later classified into a
-partial scope. Owner identities and live household values are not added. Old
+partial scope. Each displayed vacancy share also requires current read access
+to its original cost source through the ordinary cost-entry visibility rules;
+a readable statement alone does not disclose a separately restricted cost.
+This source read check is independent of a detail update's selected write scope.
+Owner identities and live household values are not added. Old
 snapshots without saved vacancy person-days and existing PDFs keep their rendering.
 
 ### 2.4 `VERBRAUCH` (consumption-based)

@@ -3091,6 +3091,51 @@ async def test_person_days_large_constant_households_persist_raw_bases(client_a_
 
 
 @pytest.mark.asyncio
+async def test_person_days_summaries_skip_vacancy_lookup_but_detail_preserves_it(client_a_admin, monkeypatch):
+    from tests.persons_key_support import persons_property, persons_run
+    from app.services.settlement_service import SettlementService
+
+    api = client_a_admin
+    data = await persons_property(api)
+    run = await persons_run(api, data)
+    url = f"/api/settlements/{run['id']}"
+    computed = await api.post(url + '/compute', json={})
+    assert computed.status_code == 200, computed.text
+    frozen = computed.json()['vacancy_attribution']
+    assert [(row['unit_number'], row['person_days'], row['amount']) for row in frozen] == [('2', 59, '56.34')]
+    lookups = []
+    original = SettlementService.vacancy_disclosure
+
+    async def observe_disclosure(service, saved_run):
+        lookups.append(str(saved_run.id))
+        return await original(service, saved_run)
+
+    monkeypatch.setattr(SettlementService, 'vacancy_disclosure', observe_disclosure)
+    listed = await api.get('/api/settlements', params={'property_id': data['property']['id']})
+    assert listed.status_code == 200, listed.text
+    summary, = listed.json()
+    assert summary['id'] == run['id']
+    assert 'vacancy_attribution' not in summary
+    assert lookups == []
+    preview = await api.post(url + '/preview', json={})
+    assert preview.status_code == 200, preview.text
+    assert 'vacancy_attribution' not in preview.json()
+    assert lookups == []
+    detail = await api.get(url)
+    assert detail.status_code == 200, detail.text
+    assert detail.json()['vacancy_attribution'] == frozen
+    assert lookups == [run['id']]
+    updated = await api.patch(url + '/advance-payments', json={'advance_payments_total': '0.00'})
+    assert updated.status_code == 200, updated.text
+    assert updated.json()['vacancy_attribution'] == frozen
+    assert lookups == [run['id'], run['id']]
+    finalized = await api.post(url + '/finalize', json={})
+    assert finalized.status_code == 200, finalized.text
+    assert finalized.json()['vacancy_attribution'] == frozen
+    assert lookups == [run['id'], run['id'], run['id']]
+
+
+@pytest.mark.asyncio
 async def test_person_days_statement_discloses_frozen_vacancy_without_live_recalculation(client_a_admin, client_b_admin, migrator_session):
     from tests.persons_key_support import persons_property, persons_run
     from app.engine.canonical import canonical_json
@@ -3116,6 +3161,66 @@ async def test_person_days_statement_discloses_frozen_vacancy_without_live_recal
     assert retained['snapshot_sha256'] == digest
     stored = await migrator_session.scalar(text('SELECT snapshot_payload FROM settlement_run WHERE id=:id'), {'id': uuid.UUID(run['id'])})
     assert canonical_json(stored) == before
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('action', ['finalize', 'compute'])
+@pytest.mark.parametrize('cost_scope', ['other', 'same', 'unbound'])
+async def test_person_days_frozen_vacancy_requires_readable_original_cost(client_a_admin, client_a_readonly, cost_scope, action):
+    from tests.persons_key_support import persons_property, persons_run
+
+    api = client_a_admin
+    data = await persons_property(api)
+    run = await persons_run(api, data)
+    url = f"/api/settlements/{run['id']}"
+    saved = await api.post(url + '/' + action, json={})
+    assert saved.status_code == 200, saved.text
+    original = saved.json()
+    admin_id = (await api.get('/api/auth/session')).json()['user_id']
+    reader_id = (await client_a_readonly.get('/api/auth/session')).json()['user_id']
+    scopes = {}
+    for name in ('S', 'T'):
+        scope = await api.post('/api/accounting-scopes', headers={'Idempotency-Key': str(uuid.uuid4())}, json={
+            'property_id': data['property']['id'], 'scope_type': 'MIET', 'label': f'Vacancy source {name}',
+            'valid_from': '2026-01-01', 'whole_property': True, 'units': []})
+        assert scope.status_code == 201, scope.text
+        scopes[name] = '/api/accounting-scopes/' + scope.json()['id']
+        principals = [(admin_id, ['read', 'prepare', 'confirm'])]
+        if name == 'S':
+            principals.append((reader_id, ['read']))
+        for principal, capabilities in principals:
+            granted = await api.post(scopes[name] + '/grants', headers={'Idempotency-Key': str(uuid.uuid4())}, json={
+                'user_id': principal, 'capabilities': capabilities, 'reason': 'Exact vacancy source audience'})
+            assert granted.status_code == 201, granted.text
+    binding = await api.post(scopes['S'] + '/bindings', json={
+        'resource_type': 'settlement_run', 'resource_id': run['id'], 'reason': 'Classify frozen statement'})
+    assert binding.status_code == 201, binding.text
+    if cost_scope != 'unbound':
+        binding = await api.post(scopes['T' if cost_scope == 'other' else 'S'] + '/bindings', json={
+            'resource_type': 'cost_entry', 'resource_id': data['cost']['id'], 'reason': 'Classify original cost source'})
+        assert binding.status_code == 201, binding.text
+    cost = await client_a_readonly.get(f"/api/cost-entries/{data['cost']['id']}")
+    assert cost.status_code == (404 if cost_scope == 'other' else 200), cost.text
+    detail = await client_a_readonly.get(url)
+    assert detail.status_code == 200, detail.text
+    retained = detail.json()
+    assert retained['snapshot_sha256'] == original['snapshot_sha256']
+    assert retained['lines'] == original['lines']
+    if cost_scope == 'other':
+        assert retained.get('vacancy_attribution', []) == []
+    else:
+        assert retained['vacancy_attribution'] == original['vacancy_attribution']
+        assert [(r['unit_number'], r['person_days'], r['amount']) for r in retained['vacancy_attribution']] == [('2', 59, '56.34')]
+    if action == 'compute':
+        # A detail write selects S internally. Source visibility must still
+        # match an ordinary read rather than inherit that narrower write scope.
+        assert (await api.get(f"/api/cost-entries/{data['cost']['id']}")).status_code == 200
+        before_update = await api.get(url)
+        assert before_update.status_code == 200, before_update.text
+        assert before_update.json()['vacancy_attribution'] == original['vacancy_attribution']
+        updated = await api.patch(url + '/advance-payments', json={'advance_payments_total': '0.00'})
+        assert updated.status_code == 200, updated.text
+        assert updated.json().get('vacancy_attribution', []) == original['vacancy_attribution']
 
 
 @pytest.mark.asyncio

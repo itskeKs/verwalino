@@ -75,6 +75,7 @@ from app.models.property import Property
 from app.models.settlement_line import SettlementLine
 from app.models.settlement_run import SettlementRun
 from app.repositories.audit_repo import AuditRepository
+from app.repositories.cost_entry_repo import CostEntryRepository
 from app.repositories.lease_agreement_repo import LeaseAgreementRepository
 from app.repositories.settlement_repo import (
     SettlementLineRepository,
@@ -84,10 +85,11 @@ from app.repositories.settlement_repo import (
 ENGINE_VERSION = "m3.4.0"
 
 
-def frozen_vacancy_attribution(run: SettlementRun, allowed_units: set[str]) -> list[dict]:
+def frozen_vacancy_attribution(run: SettlementRun, allowed_units: set[str], allowed_costs: set[str]) -> list[dict]:
     """Project only retained person-day results from an authorized run.
 
-    The caller supplies unit IDs read under the statement's exact current scope.
+    The caller supplies readable source IDs and unit IDs read under the
+    statement's exact current scope.
     No owner identity or live household/master data is added to that disclosure.
     Older snapshots without saved person-days keep their existing rendering.
     """
@@ -102,7 +104,8 @@ def frozen_vacancy_attribution(run: SettlementRun, allowed_units: set[str]) -> l
                    if line.get('cost_entry_id')})
     return [dict(unit_number=units[v['unit_id']], cost_label=labels[v['cost_entry_id']],
                  days=v['days'], person_days=v['person_days'], amount=v['amount'])
-            for v in attribution if v['unit_id'] in allowed_units and v['unit_id'] in units and v['cost_entry_id'] in labels]
+            for v in attribution if v['unit_id'] in allowed_units and v['unit_id'] in units
+            and v['cost_entry_id'] in allowed_costs and v['cost_entry_id'] in labels]
 
 
 class SettlementPeriodConflict(HTTPException):
@@ -203,14 +206,28 @@ class SettlementService:
         self._meter_sources: list[dict] = []
 
     async def vacancy_disclosure(self, run: SettlementRun) -> list[dict]:
-        if not any(v.get('person_days') is not None for v in (run.snapshot_payload or {}).get('vacancy_attribution', [])):
+        attribution = [v for v in (run.snapshot_payload or {}).get('vacancy_attribution', [])
+                       if v.get('person_days') is not None]
+        if not attribution:
             return []
+        # Source read grants are independent of a detail write's selected scope.
+        # RLS still checks the live actor and each original source's exact grant.
+        selected = await self._session.scalar(text("SELECT current_setting('app.current_scope_id',true)"))
+        if selected:
+            await self._session.execute(text("SELECT set_config('app.current_scope_id','',true)"))
+        readable = await CostEntryRepository(self._session, self._org_id).readable_ids(
+            {uuid.UUID(v['cost_entry_id']) for v in attribution})
+        # Restore only after a successful read; on failure the request rolls back
+        # SET LOCAL rather than issuing SQL in a possibly aborted transaction.
+        if selected:
+            await self._session.execute(text("SELECT set_config('app.current_scope_id',:scope,true)"),
+                                        {'scope': selected})
         # A finalized legacy output can later receive a partial classification.
         # Select that exact current scope before applying unit/source RLS; the
         # frozen property's wider input universe is not a disclosure grant.
         async with FinancialScopeService(self._session, self._org_id, self._user_id).using(run):
             allowed = {str(u.id) for u in await self._runs.units_for_property(run.property_id)}
-            return frozen_vacancy_attribution(run, allowed)
+            return frozen_vacancy_attribution(run, allowed, {str(entry_id) for entry_id in readable})
 
     async def advance_proposal(self, run_id: uuid.UUID, *, accept_from: date | None = None):
         run, proposal = await self._load_advance_proposal(run_id, ScopeCapability.READ)
