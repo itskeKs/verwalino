@@ -159,6 +159,15 @@ and the tenant ledger 2027 after explicit adoption: 700/100 instead of 700/150.
 
 ## Economic plan from prior-year actuals
 
+In calculated and finalized plans, **Hausgeld-Vorschüsse je Eigentümer** identifies
+the unit beneath each owner's name using its current number and location. An owner
+with several units keeps one row per unit and the existing annual/monthly amounts.
+These labels come from the current unit lookup, not the finalized snapshot. If the
+current number or lookup is unavailable, the row explicitly says that its label is
+unavailable and shows the stored unit ID; a row without a unit reference says
+`Einheit nicht zugeordnet`. Lookup failure does not hide the stored plan amounts.
+At 360 px, scroll the table within its card to reach the monetary columns.
+
 T54 introduced this workflow.
 
 Under **Wirtschaftspläne → Plan aus Vorjahres-Ist** (economic plans → plan from prior-year actuals), select property, target year, and – for

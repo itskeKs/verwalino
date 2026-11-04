@@ -13,6 +13,15 @@ scenarios(str(Path(__file__).resolve().parents[3] / "features/economic_plan_tabl
 
 @given("eight equal WEG units with long owner names and five-digit planned costs", target_fixture="table_plan")
 def table_plan(world, seed_data):
+    return create_table_plan(world, seed_data)
+
+
+@given("one WEG owner holds Vorderhaus and Hinterhaus with unequal shares", target_fixture="table_plan")
+def two_unit_plan(world, seed_data):
+    return create_table_plan(world, seed_data, shared_owner=True)
+
+
+def create_table_plan(world, seed_data, shared_owner=False):
     world.actor = world.administrator_of("Verwaltung Alpha")
     world.actor_organization = "Verwaltung Alpha"
     user = str(seed_data["user_a_admin_id"])
@@ -22,11 +31,17 @@ def table_plan(world, seed_data):
         "name": "WEG Mustergarten", "management_type": "WEG", "mea_denominator": 1000,
         "data_audience": {"label": "Mustergarten", "reason": "Synthetic economic plan", "grants": grants},
     }, keyed=True)
-    for number in range(1, 9):
-        unit = create(world, "/api/units", {"property_id": home["id"], "number": f"Wohnung {number:02}",
-            "usage_type": "WOHNUNG", "mea": "125", "area": "100"})
-        person = create_person(world, "Verwaltung Alpha", f"Friedrich-Wilhelm Muster-Beispielhausen-{number:02}")
-        owner = create(world, "/api/owner-profiles", {"person_id": person.id})
+    owner = None
+    units = []
+    unit_specs = [("01", "Vorderhaus", "250"), ("02", "Hinterhaus", "750")] if shared_owner else [
+        (f"Wohnung {number:02}", "", "125") for number in range(1, 9)]
+    for number, location, mea in unit_specs:
+        unit = create(world, "/api/units", {"property_id": home["id"], "number": number,
+            "location": location, "usage_type": "WOHNUNG", "mea": mea, "area": "100"})
+        units.append(unit)
+        if not shared_owner or owner is None:
+            person = create_person(world, "Verwaltung Alpha", f"Friedrich-Wilhelm Muster-Beispielhausen-{len(units):02}")
+            owner = create(world, "/api/owner-profiles", {"person_id": person.id})
         create(world, "/api/ownership", {"unit_id": unit["id"], "owner_profile_id": owner["id"],
             "valid_from": "2020-01-01"})
     scope = create(world, "/api/accounting-scopes", {"property_id": home["id"], "scope_type": "WEG",
@@ -37,7 +52,8 @@ def table_plan(world, seed_data):
     plan = create(world, "/api/economic-plans", {"property_id": home["id"], "accounting_scope_id": scope["id"],
         "plan_year": 2026, "period_start": "2026-01-01", "period_end": "2026-12-31"})
     category = next(row for row in world.act("GET", "/api/cost-categories").json() if row["code"] == "GRUNDSTEUER")
-    return {"id": plan["id"], "category": category}
+    return {"id": plan["id"], "category": category, "units": units, "shared_owner": shared_owner,
+            "cost": "1200.00" if shared_owner else "12345.67", "reserve": "0" if shared_owner else "12345.67"}
 
 
 @when(parsers.parse("I calculate and display their {state} economic plan"))
@@ -50,8 +66,8 @@ def display_plan(browser_world, world, table_plan, state):
         await b.visit(f"/wirtschaftsplaene/{w['id']}")
         await b.page.get_by_role("button", name="+ Position", exact=True).click()
         await b.page.get_by_role("combobox", name="Kategorie 1", exact=True).select_option(w["category"]["code"])
-        await b.page.get_by_label(f"{w['category']['label']} – Jahresbetrag", exact=True).fill("12345.67")
-        await b.page.get_by_label("Rücklagenzuführung (Jahr)", exact=True).fill("12345.67")
+        await b.page.get_by_label(f"{w['category']['label']} – Jahresbetrag", exact=True).fill(w["cost"])
+        await b.page.get_by_label("Rücklagenzuführung (Jahr)", exact=True).fill(w["reserve"])
         await b.page.get_by_label("Grundlage der Prüfung", exact=True).fill("Synthetic fixture: complete period records checked")
         await b.page.get_by_role("checkbox").check()
         await b.page.get_by_role("button", name="Datengrundlage speichern", exact=True).click()
@@ -68,6 +84,10 @@ def display_plan(browser_world, world, table_plan, state):
     assert response.status_code == 200, response.text
     w.update(state=state, saved=response.json())
     owners = [line for line in w["saved"]["lines"] if line["owner_profile_id"]]
+    if w["shared_owner"]:
+        assert {line["unit_id"]: (line["planned_amount"], line["monthly_amount"]) for line in owners} == {
+            w["units"][0]["id"]: ("300.00", "25.00"), w["units"][1]["id"]: ("900.00", "75.00")}
+        return
     # 24,691.34 / 8: two shares of 3,086.41 and six of 3,086.42.
     assert sorted(line["planned_amount"] for line in owners) == ["3086.41"] * 2 + ["3086.42"] * 6
     assert [line["monthly_amount"] for line in owners] == ["257.21"] * 8
@@ -165,6 +185,56 @@ def contained_tables(browser_world, world, table_plan):
                 await capture(width, "-costs")
                 await tables[1].locator("..").evaluate("el => { el.scrollLeft = el.scrollWidth; }")
                 await capture(width, "-cost-amounts")
+        assert not failures, "\n".join(failures)
+        assert not console_errors and not b.errors, (console_errors, b.errors)
+
+    b.run(check())
+    assert world.act("GET", f"/api/economic-plans/{w['id']}").json() == w["saved"], "Viewing changed the saved plan"
+
+
+@then("each unit identifies its own annual and monthly advance on desktop and phone")
+def identified_advances(browser_world, world, table_plan):
+    b, w = browser_world, table_plan
+
+    async def check():
+        console_errors = []
+        b.page.on("console", lambda message: console_errors.append(message.text) if message.type == "error" else None)
+        table = b.page.get_by_role("heading", name="Hausgeld-Vorschüsse je Eigentümer", exact=True).locator("..").locator("table")
+        failures = []
+        expected = [("01 – Vorderhaus", "300.00 EUR", "25.00 EUR"), ("02 – Hinterhaus", "900.00 EUR", "75.00 EUR")]
+        for width in (1280, 360):
+            await b.page.set_viewport_size({"width": width, "height": 900})
+            if width == 360:
+                await b.page.wait_for_function("document.querySelector('aside').getBoundingClientRect().right <= 0")
+            await table.evaluate("el => el.closest('.card').scrollIntoView({block: 'start'})")
+            phase = os.environ.get("VERWALINO_CAPTURE_UNIT_IDENTITY")
+            if phase in ("before", "after"):
+                directory = Path(__file__).resolve().parents[3] / "docs/assets/design/economic-plan-unit-identity"
+                directory.mkdir(parents=True, exist_ok=True)
+                await b.page.screenshot(path=str(directory / f"{w['state']}-{phase}-{width}.png"), animations="disabled")
+            assert b.page.url.endswith(f"/wirtschaftsplaene/{w['id']}") and await b.page.title()
+            assert await table.locator("tbody tr").count() == 2
+            for label, annual, monthly in expected:
+                row = table.locator("tbody tr").filter(has=b.page.get_by_text(annual, exact=True))
+                assert await row.count() == 1
+                await expect(row).to_contain_text("Friedrich-Wilhelm Muster-Beispielhausen-01")
+                await expect(row).to_contain_text(monthly)
+                if f"Einheit {label}" not in await row.inner_text():
+                    failures.append(f"{width}: {label} is not associated with {annual} / {monthly}")
+                await expect(row).to_be_visible()
+            geometry = await b.page.locator("main").evaluate("el => ({width: el.clientWidth, content: el.scrollWidth})")
+            assert geometry["content"] <= geometry["width"], geometry
+            if width == 360:
+                await table.locator("..").evaluate("el => { el.scrollLeft = el.scrollWidth; }")
+                for amount in await table.locator("tbody td").filter(has_text="EUR").all():
+                    assert await amount.evaluate("""el => {
+                        const range = document.createRange(); range.selectNodeContents(el);
+                        const box = range.getBoundingClientRect(), clip = el.closest('table').parentElement.getBoundingClientRect();
+                        return box.left >= clip.left && box.right <= clip.right + 1;
+                    }"""), "A unit's complete amount is unreachable"
+                if phase in ("before", "after"):
+                    await b.page.screenshot(path=str(directory / f"{w['state']}-amounts-{phase}-{width}.png"), animations="disabled")
+                await table.locator("..").evaluate("el => { el.scrollLeft = 0; }")
         assert not failures, "\n".join(failures)
         assert not console_errors and not b.errors, (console_errors, b.errors)
 
