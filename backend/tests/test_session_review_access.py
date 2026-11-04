@@ -280,6 +280,7 @@ async def test_revision_chain_head_0131_head_preserves_full_state_and_issued_pdf
     from sqlalchemy.exc import DBAPIError
 
     from app.deployment import TARGET
+    from app.models.base import Base
     from tests.conftest import MIGRATOR_SYNC_URL
     from tests.test_letters import contract_body, create_template, issue_body
     from tests.test_reserve_ledger import reserve_world, finalize
@@ -311,6 +312,10 @@ async def test_revision_chain_head_0131_head_preserves_full_state_and_issued_pdf
     assert os.environ.get('HV_DECLARATION_TEST_DATABASE_PROFILE', 'local') == 'local'
     w = rent_world
     async with api_client(w) as admin:
+        household = await admin.put(f"/api/units/{w['unit']}/household", json=[
+            {'valid_from': '2026-01-01', 'persons': 2, 'is_vacancy': False},
+        ])
+        assert household.status_code == 200, household.text
         # Rehearse the historical split-engine boundary with its original version.
         # WEG uses its own engine and cannot supply this tenant snapshot.
         with monkeypatch.context() as historical:
@@ -390,7 +395,7 @@ async def test_revision_chain_head_0131_head_preserves_full_state_and_issued_pdf
     config.set_main_option('script_location', str(Path(__file__).parents[1] / 'migrations'))
     scripts = ScriptDirectory.from_config(config)
     assert scripts.get_heads() == [TARGET]
-    expected_ancestry = [f'{number:04}' for number in range(131, 156)] + ['0159', '0160', '0161', '0162', '0163']
+    expected_ancestry = [f'{number:04}' for number in range(131, 156)] + ['0159', '0160', '0161', '0162', '0163', '0164']
     assert [r.revision for r in scripts.iterate_revisions(TARGET, '0131')] == expected_ancestry[:0:-1]
     engine = create_engine(MIGRATOR_SYNC_URL)
     try:
@@ -427,7 +432,7 @@ async def test_revision_chain_head_0131_head_preserves_full_state_and_issued_pdf
                     # env.py creates its own engine; configure the Alembic runtime
                     # directly so every real revision/version-table step uses this TX.
                     with EnvironmentContext(config, scripts, fn=steps) as env:
-                        env.configure(connection=connection, transaction_per_migration=False,
+                        env.configure(connection=connection, target_metadata=Base.metadata, transaction_per_migration=False,
                                       version_table_schema='public', on_version_apply=applied)
                         assert env.get_context().bind is connection
                         env.run_migrations()
@@ -450,6 +455,14 @@ async def test_revision_chain_head_0131_head_preserves_full_state_and_issued_pdf
 
                 assert version() == (TARGET,)
                 retained = _chain_snapshot(connection)
+                assert any(row['unit_id'] == str(w['unit']) for row in retained['data']['unit_household'])
+                with pytest.raises(RuntimeError, match='Cannot discard saved household history; repair forward'):
+                    with connection.begin_nested():
+                        migrate('0163', downgrade=True)
+                assert _chain_snapshot(connection) == retained
+                # Older revisions have no household table. Project only inside
+                # this rollback-only TX; the final snapshot proves restoration.
+                connection.execute(text('TRUNCATE public.unit_household'))
                 # Prove the new provenance guards before projecting their
                 # unsupported evidence away in this rollback-only rehearsal.
                 successor_contexts = connection.execute(text("""SELECT c.dunning_notice_id

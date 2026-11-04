@@ -2928,7 +2928,7 @@ async def test_degree_day_snapshot_freezes_exact_weights_and_ignores_later_readi
         payload, digest = (await rent_db.execute(text(
             'SELECT snapshot_payload, snapshot_sha256 FROM settlement_run WHERE id=:id'),
             {'id': uuid.UUID(w['run'])})).one()
-        assert payload['engine_version'] == 'm3.3.0'
+        assert payload['engine_version'] == 'm3.4.0'
         heat = next(p for p in payload['heating_costs'] if p['kind'] == 'HEATING')
         own = sorted((r for r in heat['rows'] if r['unit_id'] == str(w['unit'])), key=lambda r:r['period_from'])
         assert [r['meter_source']['split'] for r in own] == [

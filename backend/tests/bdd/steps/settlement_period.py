@@ -523,11 +523,17 @@ def legacy_draft_error(world):
     assert world.response.json()["detail"]["code"] == "settlement_period_conflict"
 
 
-@given("a person-based cost source for that property")
+@given("a person-based cost source and dated households for that property")
 def person_based_cost(world):
     data = world.data["successive_tenants"]["A"]
     confirmed_period_cost(world, data, "MUELLBESEITIGUNG", "1234.56",
                           "2025-01-01", "2025-12-31", "PERSONENZAHL")
+    world.data["household_units"] = [meter["unit_id"] for meter in world.data["water_meters"]]
+    for unit_id in world.data["household_units"]:
+        answer = world.act("PUT", f"/api/units/{unit_id}/household", json=[
+            {"valid_from": "2025-01-01", "persons": 2, "is_vacancy": False},
+        ])
+        assert answer.status_code == 200, world.describe_response()
     world.data["manual_run"] = world.run(create(world.actor, "/api/settlements", statement(data, "2025-01-01", "2025-12-31")))
 
 
@@ -542,30 +548,46 @@ async def open_manual_inputs(browser_world):
     await page.get_by_role("button", name="Strukturierte Eingaben anzeigen", exact=True).click()
 
 
-@then("manual consumption and persons explain the property-year basis on desktop and mobile")
+@then("annual consumption and saved household history are accessible on desktop and mobile")
 @browser_step
 async def manual_input_hints(browser_world, request):
+    import re
+
     from playwright.async_api import expect
     from tests.bdd.report import artifact_directory, attach_artifact
 
     page = browser_world.page
     assert "/abrechnungen/" in page.url
     assert await page.title() == "Hausverwaltung"
-    await expect(page.get_by_role("heading", name="Verbrauch / Personenzahl", exact=True)).to_be_visible()
+    await expect(page.get_by_role("heading", name="Verbrauch", exact=True)).to_be_visible()
     directory = artifact_directory(request.node)
     for width in (1280, 360):
         await page.set_viewport_size({"width": width, "height": 1000})
         if width == 360:
             await page.wait_for_function("document.querySelector('aside').getBoundingClientRect().right <= 0")
-        await page.get_by_role("heading", name="Verbrauch / Personenzahl", exact=True).scroll_into_view_if_needed()
+        await page.get_by_role("heading", name="Verbrauch", exact=True).scroll_into_view_if_needed()
+        await expect(page.get_by_text("Verbrauch der Einheit im gesamten Objekt-Abrechnungsjahr eingeben, auch bei gekürztem Mietzeitraum.", exact=True)).to_be_visible()
+        await expect(page.get_by_role("heading", name="Personenzahl", exact=True)).to_be_visible()
+        await expect(page.get_by_text("Personenzahlen und Leerstand in der Haushaltshistorie jeder Einheit pflegen. Die Abrechnung verwendet die gespeicherten Personentage.", exact=True)).to_be_visible()
+        await expect(page.get_by_label(re.compile(r"^Personenzahl \("))).to_have_count(0)
+        await expect(page.get_by_role("link", name=re.compile(r"^Haushalt für Einheit .* bearbeiten$"))).to_have_count(2)
+        field = page.get_by_role("textbox", name="Verbrauch (1)", exact=True)
+        await field.fill("1000")
+        await expect(field).to_have_value("1000")
         if directory:
             capture = directory / f"settlement-inputs-{width}.png"
             await page.screenshot(path=str(capture), full_page=True, animations="disabled")
             attach_artifact(request.node, capture)
         assert await page.evaluate("document.documentElement.scrollWidth <= window.innerWidth")
-    await expect(page.get_by_text("Verbrauch der Einheit im gesamten Objekt-Abrechnungsjahr eingeben, auch bei gekürztem Mietzeitraum.", exact=True)).to_be_visible()
-    await expect(page.get_by_text("Personenzahlen je Einheit für das gesamte Objekt-Abrechnungsjahr in allen zugehörigen Abrechnungen gleich eingeben.", exact=True)).to_be_visible()
-    field = page.get_by_role("textbox", name="Verbrauch (1)", exact=True)
-    await field.fill("1000")
-    await expect(field).to_have_value("1000")
+        property_id = browser_world.world.data["successive_tenants"]["A"]["property"]["id"]
+        for number, unit_id in enumerate(browser_world.world.data["household_units"], start=1):
+            link = page.get_by_role("link", name=f"Haushalt für Einheit {number} bearbeiten", exact=True)
+            path = f"/objekte/{property_id}/einheiten/{unit_id}"
+            await expect(link).to_have_attribute("href", path)
+            await link.click()
+            await expect(page).to_have_url(re.compile(re.escape(path) + "$"))
+            await expect(page.get_by_role("heading", name="Personen im Haushalt", exact=True)).to_be_visible()
+            await expect(page.get_by_text("2 Personen ab 01.01.2025", exact=True)).to_be_visible()
+            await page.go_back()
+            await page.get_by_role("button", name="Strukturierte Eingaben anzeigen", exact=True).click()
     assert not browser_world.errors
