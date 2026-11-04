@@ -53,7 +53,7 @@ async def payment(session, ids, amount, *, kind='KALTMIETE', direction='IN', day
     await session.execute(text("""INSERT INTO payment(id,organization_id,property_id,bank_account_id,amount,direction,value_date,payment_type,tenant_profile_id,owner_profile_id,period_year,period_month,status,reverses_id)
         VALUES (:id,:org,:property,:bank,:amount,:direction,CAST(:day AS date),:kind,:tenant_id,:owner_id,2025,1,:status,:reverses)"""),
         {**ids, 'id': key, 'amount': Decimal(amount), 'direction': direction, 'day': date.fromisoformat(day), 'kind': kind, 'status': status, 'reverses': reverses,
-         'tenant_id': ids['tenant'] if kind in ('KALTMIETE','NK_VORAUSZAHLUNG','KAUTION','NACHZAHLUNG') else None,
+         'tenant_id': ids['tenant'] if kind in ('KALTMIETE','NK_VORAUSZAHLUNG','HK_VORAUSZAHLUNG','KAUTION','NACHZAHLUNG') else None,
          'owner_id': ids['owner'] if kind in ('HAUSGELD_VORSCHUSS','RUECKLAGENANTEIL','SONDERZAHLUNG') else None})
     if extra:
         for column, value in extra.items():
@@ -239,7 +239,7 @@ async def test_report_preserves_cents_under_low_outer_decimal_precision(migrator
 
 async def test_all_types_large_aggregates_and_original_apportionability(migrator_session, scope_seed):
     ids = await fixture(migrator_session, scope_seed, bound=False)
-    types = ['KALTMIETE','NK_VORAUSZAHLUNG','HAUSGELD_VORSCHUSS','RUECKLAGENANTEIL','SONDERZAHLUNG','NACHZAHLUNG','KAUTION']
+    types = ['KALTMIETE','NK_VORAUSZAHLUNG','HK_VORAUSZAHLUNG','HAUSGELD_VORSCHUSS','RUECKLAGENANTEIL','SONDERZAHLUNG','NACHZAHLUNG','KAUTION']
     for kind in types:
         await payment(migrator_session, ids, '0.01', kind=kind)
     for _ in range(2):
@@ -253,9 +253,9 @@ async def test_all_types_large_aggregates_and_original_apportionability(migrator
         assert response.status_code == 200, response.text
         body = response.json()
         assert {row['payment_type'] for row in body['income']} == set(types)
-        assert body['income_total'] == '2000000000000.05'
+        assert body['income_total'] == '2000000000000.02'
         assert body['expense_total'] == '2000000000000.00'
-        assert body['balance'] == '0.05'
+        assert body['balance'] == '0.02'
         assert {row['tenant_apportionability']:row['amount'] for row in body['expenses']} == {
             'UMLAGEFAEHIG':'1999999999999.98','NICHT_UMLAGEFAEHIG':'0.01','TEILWEISE_PRUEFEN':'0.01'}
 
@@ -390,8 +390,55 @@ async def test_anlage_v_summary_keeps_unmapped_exclusions_and_reconciles_without
         assert {row['code'] for row in summary['unmapped']} == {'KAUTION', 'ERHALTUNGSRUECKLAGE'}
         assert [(row['mapped_total'], row['unmapped_total'], row['report_total'], row['difference'])
                 for row in summary['reconciliation']] == [
-                    ('1384.56', '1800.00', '3184.56', '0.00'), ('100.03', '20.00', '120.03', '0.00')]
+                    ('1384.56', '0.00', '1384.56', '0.00'), ('100.03', '20.00', '120.03', '0.00')]
     assert await snapshot(ids) == before
+
+
+@pytest.mark.parametrize('management_type', ['MIET', 'SEV', 'WEG', 'MISCH'])
+@pytest.mark.parametrize('kind,expected_line,rental_income,weg_income', [
+    ('KALTMIETE', 'rent', True, True),
+    ('NK_VORAUSZAHLUNG', 'levies', True, True),
+    ('HK_VORAUSZAHLUNG', 'levies', True, True),
+    ('NACHZAHLUNG', 'levies', True, True),
+    ('KAUTION', None, False, False),
+    ('HAUSGELD_VORSCHUSS', None, False, True),
+    ('RUECKLAGENANTEIL', None, False, True),
+    ('SONDERZAHLUNG', None, False, True),
+])
+async def test_every_payment_type_and_management_type_share_the_income_rule(
+    monkeypatch, management_type, kind, expected_line, rental_income, weg_income,
+):
+    from types import SimpleNamespace
+    from app.engine.anlage_v import map_property_year
+    from app.services.report_service import ReportService
+    from app.repositories.payment_repo import PaymentRepository
+    from app.repositories.cost_entry_repo import CostEntryRepository
+
+    async def income(*args):
+        return [SimpleNamespace(payment_type=kind, amount=Decimal('10.01'))]
+
+    async def expenses(*args):
+        return []
+
+    monkeypatch.setattr(PaymentRepository, 'property_year_totals', income)
+    monkeypatch.setattr(CostEntryRepository, 'property_year_totals', expenses)
+    prop = SimpleNamespace(id=uuid.uuid4(), name='Synthetic year', management_type=management_type)
+    report = await ReportService(None, uuid.uuid4(), uuid.uuid4())._year_totals(
+        prop, None, 2026, date(2026, 1, 1), date(2026, 12, 31))
+    counts = weg_income if management_type == 'WEG' else rental_income
+    expected = '10.01' if counts else '0.00'
+    assert report.income_total == report.balance == expected
+    assert [(row.payment_type, row.amount) for row in report.income] == [(kind, '10.01')]
+    summary = map_property_year(report)
+    reconciliation = summary.reconciliation[0]
+    assert reconciliation.report_total == expected
+    assert reconciliation.difference == '0.00'
+    assert reconciliation.mapped_total == ('10.01' if expected_line else '0.00')
+    assert reconciliation.unmapped_total == ('10.01' if counts and not expected_line else '0.00')
+    if expected_line:
+        assert next(row.amount for row in summary.lines if row.key == expected_line) == '10.01'
+    else:
+        assert [(row.code, row.amount) for row in summary.unmapped] == [(kind, '10.01')]
 
 
 async def test_anlage_v_summary_foreign_unknown_and_unauthenticated_requests_keep_report_guards(migrator_session, scope_seed, seed_data):
@@ -431,3 +478,50 @@ async def test_anlage_v_summary_reuses_live_authority_and_complete_sources(migra
         }
         await mutate(text(statements[change]), ids)
         assert (await api.get(ANLAGE_V, params=query(ids))).status_code == expected
+
+
+@pytest.mark.parametrize('management_type,expected,unassigned', [
+    ('MIET', '160.00', '0.00'), ('MISCH', '160.00', '0.00'), ('WEG', '625.00', '465.00'),
+])
+async def test_owner_receipts_and_refunds_count_only_for_weg_in_reports_and_both_csvs(
+    migrator_session, scope_seed, management_type, expected, unassigned,
+):
+    import csv
+    import io
+
+    # Legacy, unclassified bookings can contain types from either management mode.
+    # Classified scopes correctly refuse such mixed inputs before report generation.
+    ids = await fixture(migrator_session, scope_seed, bound=False, management_type=management_type,
+                        scope_type='WEG' if management_type == 'WEG' else 'MIET')
+    for kind, amount in [('KALTMIETE', '100.00'), ('NK_VORAUSZAHLUNG', '20.00'),
+                         ('HK_VORAUSZAHLUNG', '10.00'), ('NACHZAHLUNG', '30.00'),
+                         ('KAUTION', '2250.00'), ('HAUSGELD_VORSCHUSS', '400.00'),
+                         ('RUECKLAGENANTEIL', '50.00'), ('SONDERZAHLUNG', '25.00')]:
+        await payment(migrator_session, ids, amount, kind=kind)
+    await payment(migrator_session, ids, '250.00', kind='KAUTION', direction='OUT')
+    await payment(migrator_session, ids, '10.00', kind='HAUSGELD_VORSCHUSS', direction='OUT')
+    await ready(migrator_session, ids)
+    await grant(ids, ['read', 'export'])
+    async with client(ids) as api:
+        response = await report(api, ids)
+        assert response.status_code == 200, response.text
+        body = response.json()
+        assert body['income_total'] == body['balance'] == expected
+        assert next(row['amount'] for row in body['income'] if row['payment_type'] == 'KAUTION') == '2000.00'
+        response = await api.get(ANLAGE_V, params=query(ids))
+        assert response.status_code == 200, response.text
+        summary = response.json()
+        assert [(row['mapped_total'], row['unmapped_total'], row['report_total'], row['difference'])
+                for row in summary['reconciliation']][0] == ('160.00', unassigned, expected, '0.00')
+        assert next(row['amount'] for row in summary['lines'] if row['key'] == 'levies') == '60.00'
+        for path, column, total_label in [('/api/reports/property-year.csv', 2, 'Einnahmen gesamt'),
+                                          (ANLAGE_V + '.csv', 4, 'Jahresübersicht gesamt')]:
+            response = await api.get(path, params=query(ids))
+            assert response.status_code == 200, response.text
+            rows = list(csv.reader(io.StringIO(response.content.decode('utf-8-sig')), delimiter=';'))
+            assert next(row[-1] for row in rows if row[column] == total_label) == expected.replace('.', ',')
+            if column == 2:
+                deposit = next(row for row in rows if row[3] == 'KAUTION')
+                assert deposit[2] == 'Durchlaufend' and deposit[-1] == '2000,00'
+                owner = next(row for row in rows if row[3] == 'HAUSGELD_VORSCHUSS')
+                assert owner[2] == ('Einnahmen' if management_type == 'WEG' else 'Durchlaufend')

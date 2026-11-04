@@ -657,6 +657,10 @@ do not assert tax completeness. A real CSV link uses the same displayed selectio
 and reports export errors inline. Loading and retry belong to the panel, leaving
 the overview visible; changing property, year or scope removes the old panel and
 suppresses late responses/downloads. The existing year-overview CSV stays separate.
+The income table labels deposits "Kaution (durchlaufend)" and tenant backpayments
+"Nachzahlung (Mieter)". The server's income total excludes trust deposits while
+retaining their original row amounts. The unassigned list retains these amounts;
+its reconciliation total excludes non-income rows, as the server note explains.
 
 Every async region provides loading, empty, error and success copy using the patterns below.
 Failed requests preserve the user's input.
@@ -1266,3 +1270,11 @@ identifiers and keep the existing detail tables within the phone viewport.
 | --- | --- | --- |
 | Before | [view](docs/assets/design/weg-owner-balance/before-1280.png) | [view](docs/assets/design/weg-owner-balance/before-360.png) |
 | After | [view](docs/assets/design/weg-owner-balance/after-1280.png) | [view](docs/assets/design/weg-owner-balance/after-360.png) |
+
+
+Annual income correction (#169), synthetic journey 5 receipts through 31 October 2026:
+
+| View | Before | After |
+| --- | --- | --- |
+| Desktop | [Income with deposit](docs/assets/design/reports-income-before-1280.png) | [Income excluding deposit](docs/assets/design/reports-income-1280.png) |
+| 360 px | [Income with deposit](docs/assets/design/reports-income-before-360.png) | [Income excluding deposit](docs/assets/design/reports-income-360.png) |

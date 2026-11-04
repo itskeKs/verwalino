@@ -18,7 +18,8 @@ def year_report(income=(), expenses=()):
                      tenant_apportionability="MANUELL_PRUEFEN", amount=amount) for code, amount in expenses]
     with localcontext() as context:
         context.prec = 100
-        received = sum((Decimal(row['amount']) for row in income), Decimal('0.00'))
+        received = sum((Decimal(row['amount']) for row in income
+                        if row['payment_type'] not in {'KAUTION', 'HAUSGELD_VORSCHUSS', 'RUECKLAGENANTEIL', 'SONDERZAHLUNG'}), Decimal('0.00'))
         spent = sum((Decimal(row['amount']) for row in expenses), Decimal('0.00'))
         return PropertyYearReport(property_id=uuid4(), property_name='Sonnenhof', year=2025,
             period_start=date(2025, 1, 1), period_end=date(2025, 12, 31), accounting_scope_id=None,
@@ -54,7 +55,7 @@ def test_unknown_categories_are_listed_with_original_labels_and_signed_amounts()
 @pytest.mark.parametrize('code,line', [
     ('KALTMIETE', 'rent'), ('NK_VORAUSZAHLUNG', 'levies'), ('HK_VORAUSZAHLUNG', 'levies'),
     ('KAUTION', None), ('HAUSGELD_VORSCHUSS', None), ('RUECKLAGENANTEIL', None),
-    ('SONDERZAHLUNG', None), ('NACHZAHLUNG', None), ('OTHER', None),
+    ('SONDERZAHLUNG', None), ('NACHZAHLUNG', 'levies'), ('OTHER', None),
 ])
 def test_income_types_do_not_turn_deposits_or_owner_funds_into_rent(code, line):
     summary = map_property_year(year_report(income=[(code, '10.01')]))
@@ -65,7 +66,8 @@ def test_income_types_do_not_turn_deposits_or_owner_funds_into_rent(code, line):
         assert summary.unmapped[0].code == code
         assert summary.unmapped[0].amount == '10.01'
         assert all(row.amount == '0.00' for row in summary.lines)
-    assert summary.reconciliation[0].report_total == '10.01'
+    assert summary.reconciliation[0].report_total == (
+        '0.00' if code in {'KAUTION', 'HAUSGELD_VORSCHUSS', 'RUECKLAGENANTEIL', 'SONDERZAHLUNG'} else '10.01')
     assert summary.reconciliation[0].difference == '0.00'
 
 
@@ -88,7 +90,7 @@ def test_totals_reconcile_to_every_report_cent_even_with_low_outer_precision():
         context.prec = 100
         for row, total in zip(summary.reconciliation, [report.income_total, report.expense_total]):
             mapped = sum((Decimal(line.amount) for line in summary.lines if line.section == row.section), Decimal(0))
-            unmapped = sum((Decimal(item.amount) for item in summary.unmapped if item.section == row.section), Decimal(0))
+            unmapped = sum((Decimal(item.amount) for item in summary.unmapped if item.section == row.section and item.code != 'KAUTION'), Decimal(0))
             assert mapped + unmapped == Decimal(total)
             assert Decimal(row.mapped_total) == mapped
             assert Decimal(row.unmapped_total) == unmapped
