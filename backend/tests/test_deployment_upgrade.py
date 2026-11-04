@@ -16,10 +16,10 @@ from app.core.declaration_test_database import require_disposable_database_setti
 from tests.test_rent_changes import rent_db, rent_world  # noqa: F401
 
 
-def test_always_guard_migration_is_the_next_release_revision():
-    revision = ScriptDirectory('migrations').get_revision('0155')
-    assert revision.down_revision == '0154'
-    assert deployment.TARGET == '0155'
+def test_person_retention_migration_is_the_next_release_revision():
+    revision = ScriptDirectory('migrations').get_revision('0159')
+    assert revision.down_revision == '0155'
+    assert deployment.TARGET == '0159'
 
 
 @pytest.mark.asyncio
@@ -108,7 +108,7 @@ def test_reject_unknown_or_ambiguous_database_version(heads):
 
 def test_release_graph_is_exact_and_linear(tmp_path):
     graph = ScriptDirectory('migrations')
-    assert deployment.release_head(graph) == '0155'
+    assert deployment.release_head(graph) == '0159'
     (tmp_path / 'versions').mkdir()
     (tmp_path / 'versions' / 'unexpected.py').write_text(
         "revision='0156'\ndown_revision=None\nbranch_labels=None\ndepends_on=None\n")
@@ -116,7 +116,7 @@ def test_release_graph_is_exact_and_linear(tmp_path):
         deployment.release_head(ScriptDirectory(str(tmp_path)))
 
 
-@pytest.mark.parametrize('schema', ['0028', '0122', '0139', '0140', '0141', '0142', '0143', '0144', '0145', '0146', '0147', '0148', '0149', '0150', '0151', '0152', '0153', '0154', '0155'])  # accepted sources plus target
+@pytest.mark.parametrize('schema', ['0028', '0122', '0139', '0140', '0141', '0142', '0143', '0144', '0145', '0146', '0147', '0148', '0149', '0150', '0151', '0152', '0153', '0154', '0155', '0159'])  # accepted sources plus target
 def test_measured_release_schema_is_a_supported_upgrade_source(schema):
     assert deployment.supported_schema((schema,)) == schema
 
@@ -190,7 +190,7 @@ def rehearse_initial_upgrade(starting_schema='0122'):
     _, _, url = require_disposable_database_settings(settings)
     engine = create_engine(url)
     graph = ScriptDirectory('migrations')
-    revisions = list(graph.iterate_revisions('0155', starting_schema))
+    revisions = list(graph.iterate_revisions('0159', starting_schema))
     try:
         with engine.connect() as connection:
             transaction = connection.begin()
@@ -260,6 +260,14 @@ def rehearse_initial_upgrade(starting_schema='0122'):
                     expected_security = connection.execute(text("SELECT c.relname,c.relrowsecurity,c.relforcerowsecurity,c.relacl::text FROM pg_class c WHERE c.relnamespace='public'::regnamespace AND c.relname=ANY(:tables) ORDER BY c.relname"), {'tables': tables}).all()
                     expected.rollback()
                 for revision in reversed(revisions):
+                    if revision.revision == '0159' and starting_schema == '0155':
+                        retained_signatures = ['privacy_retention_facts(uuid,uuid)',
+                            'privacy_financial_context_complete(uuid,uuid,text)', 'organization_retention_plan(uuid)']
+                        def person_retention_contract(signatures):
+                            return [tuple(connection.execute(text("""SELECT pg_get_functiondef(oid),proacl::text,
+                                proowner,proconfig FROM pg_proc WHERE oid=CAST(:signature AS regprocedure)"""),
+                                {'signature': signature}).one()) for signature in signatures]
+                        previous_person_retention = person_retention_contract(retained_signatures)
                     if revision.revision == '0155':
                         def always_guard_contract():
                             triggers = {(row[0], row[1]): tuple(row[2:]) for row in connection.execute(text("""
@@ -333,6 +341,17 @@ def rehearse_initial_upgrade(starting_schema='0122'):
                             return [connection.scalar(text("SELECT pg_get_functiondef(CAST(:s AS regprocedure))"), {"s": signature}) for signature in signatures]
                         before_split = split_definitions()
                     revision.module.upgrade()
+                    if revision.revision == '0159' and starting_schema == '0155':
+                        shared_signatures = retained_signatures + ['person_retention_categories()',
+                            'person_retention_bindings(uuid,uuid,text)', 'person_retention_view(uuid,uuid,text)']
+                        upgraded_person_retention = person_retention_contract(shared_signatures)
+                        with connection.begin_nested() as person_rehearsal:
+                            revision.module.downgrade()
+                            assert person_retention_contract(retained_signatures) == previous_person_retention
+                            assert connection.scalar(text("SELECT to_regprocedure('person_retention_categories()')")) is None
+                            revision.module.upgrade()
+                            assert person_retention_contract(shared_signatures) == upgraded_person_retention
+                            person_rehearsal.rollback()
                     if revision.revision == '0155':
                         upgraded_always_contract = always_guard_contract()
                         key = ('reserve_ledger_entry', 'guard_reserve_ledger')
@@ -478,16 +497,16 @@ def rehearse_initial_upgrade(starting_schema='0122'):
         engine.dispose()
 
 
-@pytest.mark.parametrize('starting_schema', ['0122', '0139', '0140', '0141', '0142', '0143', '0144', '0145', '0146', '0147', '0148', '0149', '0150', '0151', '0152', '0153', '0154'])  # accepted sources
-def test_upgrade_to_0155_preserves_existing_rows_and_security(run_migrations, starting_schema):
+@pytest.mark.parametrize('starting_schema', ['0122', '0139', '0140', '0141', '0142', '0143', '0144', '0145', '0146', '0147', '0148', '0149', '0150', '0151', '0152', '0153', '0154', '0155'])  # accepted sources
+def test_upgrade_to_0159_preserves_existing_rows_and_security(run_migrations, starting_schema):
     # The actual rehearsal ran before any retained domain-test originals existed.
     # Its SQL/data/security assertions fail fixture setup if preservation fails.
-    assert run_migrations[f'upgrade_{starting_schema}_to_0155_tables'] > 50
-    assert deployment.database_check('preflight') == '0155'
+    assert run_migrations[f'upgrade_{starting_schema}_to_0159_tables'] > 50
+    assert deployment.database_check('preflight') == '0159'
 
 
-def test_upgrade_0028_to_0155_preserves_existing_rows_and_rls(run_migrations):
-    assert run_migrations['upgrade_0028_to_0155_tables'] > 20
+def test_upgrade_0028_to_0159_preserves_existing_rows_and_rls(run_migrations):
+    assert run_migrations['upgrade_0028_to_0159_tables'] > 20
 
 
 def test_document_archive_restore_is_exact_and_refuses_overwrite(tmp_path):
@@ -600,7 +619,7 @@ def test_cli_preflight_and_actual_runtime_credentials_are_read_only():
            'CI', 'HV_DECLARATION_TEST_DATABASE_PROFILE') if name in os.environ}
     env['HV_DATABASE_URL_WORKER'] = runtime.set(username='app_worker', password='worker_secret').render_as_string(hide_password=False)
     env.setdefault('HV_DATABASE_URL_REVIEW', runtime.set(username='app_review', password='review_secret').render_as_string(hide_password=False))
-    for arguments, expected in [(['preflight'], '0155'), (['runtime', 'app_rw'], ''),
+    for arguments, expected in [(['preflight'], '0159'), (['runtime', 'app_rw'], ''),
                                 (['runtime', 'app_review'], ''), (['runtime', 'app_worker'], '')]:
         result = subprocess.run([sys.executable, '-m', 'app.deployment', *arguments],
                                 env=env, capture_output=True, text=True)

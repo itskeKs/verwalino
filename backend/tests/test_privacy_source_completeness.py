@@ -90,12 +90,12 @@ async def test_expiry_during_retention_discovery_cannot_turn_hidden_output_into_
             json={'user_id':str(seed_data['user_a_admin_id']),'capabilities':['read'],'reason':'Short retention review',
                   'expires_at':(datetime.now(timezone.utc)+timedelta(seconds=2)).isoformat()})
         assert granted.status_code==201,granted.text
-        original=DsgvoRepository.finalized_bk_runs_for_tenants
-        async def expire_before_rows(repo,tenant_ids):
+        original=DsgvoRepository.retention_bindings
+        async def expire_before_rows(repo,person_id,*,capability='read'):
             await repo._session.execute(text('SELECT pg_sleep(GREATEST(0,EXTRACT(EPOCH FROM expires_at-clock_timestamp()))+0.02) FROM property_data_grant WHERE id=:grant'),
                 {'grant':uuid.UUID(granted.json()['id'])})
-            return await original(repo,tenant_ids)
-        monkeypatch.setattr(DsgvoRepository,'finalized_bk_runs_for_tenants',expire_before_rows)
+            return await original(repo,person_id,capability=capability)
+        monkeypatch.setattr(DsgvoRepository,'retention_bindings',expire_before_rows)
         async with synthetic_enforcement(seed_data),get_tenant_session(seed_data['org_a_id']) as db:
             await db.execute(text("SELECT set_config('app.current_user_id',:actor,true)"),{'actor':str(seed_data['user_a_admin_id'])})
             with pytest.raises(HTTPException) as denied:

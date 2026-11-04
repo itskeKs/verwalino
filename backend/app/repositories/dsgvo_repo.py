@@ -2,13 +2,9 @@
 
 No mutation here. Person is fetched as a managed ORM instance; the service refreshes
 it after the authoritative database privacy command. All other methods only READ the
-records that may bind a person to statutory retention (ADR-0012 section 1):
-
-  * vendor -> confirmed cost entries (Belege)        BINDING_COST_ENTRY_VENDOR
-  * tenant_profile -> finalized BK runs              BINDING_SETTLEMENT_ADDRESSEE
-  * owner_profile  -> finalized WEG runs (via line)  BINDING_FINALIZED_OWNERSHIP
-  * owner_profile  -> finalized Wirtschaftsplaene     BINDING_FINALIZED_OWNERSHIP
-  * tenant/owner   -> issued dunning notices          BINDING_DUNNING
+authoritative SQL bindings through the capability-checked read/export adapter.
+The category, association and deadline definitions live in the database, shared
+with the individual command and organization retention classification.
 
 Plus ``has_active_lease`` / ``has_active_ownership``: a LIVE (current or future)
 contractual relationship -- ongoing processing purpose (Art. 6 I b DSGVO) -- which
@@ -21,25 +17,18 @@ from __future__ import annotations
 
 import uuid
 from datetime import date
-from typing import Sequence
 
 from sqlalchemy import func, or_, select, text
+from sqlalchemy.exc import DBAPIError
 from fastapi import HTTPException
 
-from app.models.cost_entry import CostEntry
-from app.models.dunning_notice import DunningNotice
-from app.models.economic_plan import EconomicPlan
-from app.models.economic_plan_line import EconomicPlanLine
-from app.models.invoice_document import InvoiceDocument
-from app.repositories.document_cost_link import cost_source_predicate
 from app.models.lease_agreement import LeaseAgreement
 from app.models.owner_profile import OwnerProfile
 from app.models.ownership_history import OwnershipHistory
 from app.models.person import Person
-from app.models.settlement_line import SettlementLine
-from app.models.settlement_run import SettlementRun
 from app.models.tenant_profile import TenantProfile
 from app.models.vendor import Vendor
+from app.engine.dsgvo import RetentionBinding
 
 
 class DsgvoRepository:
@@ -86,116 +75,20 @@ class DsgvoRepository:
     # ------------------------------------------------------------------
     # Retention bindings
     # ------------------------------------------------------------------
-    async def confirmed_cost_entries_for_vendors(
-        self, vendor_ids: list[uuid.UUID]
-    ) -> Sequence[CostEntry]:
-        """All CONFIRMED cost entries booked against the person's vendors.
-
-        Superseded entries are intentionally INCLUDED: a corrected-away original
-        is still a retained Beleg of the GoBD trail. Binding more (not fewer) is
-        the conservative, invariant-preserving direction (ADR-0012 section 6).
-        """
-        if not vendor_ids:
-            return []
-        stmt = (
-            select(CostEntry)
-            .where(CostEntry.organization_id == self._org_id)
-            .where(CostEntry.vendor_id.in_(vendor_ids))
-            .where(CostEntry.status == "confirmed")
-        )
-        result = await self._session.execute(stmt)
-        return result.scalars().all()
-
-    async def max_retention_for_cost_entry(
-        self, cost_entry_id: uuid.UUID
-    ) -> date | None:
-        """The latest retention_until of the cost entry's invoice documents."""
-        stmt = (
-            select(func.max(InvoiceDocument.retention_until))
-            .where(InvoiceDocument.organization_id == self._org_id)
-            .where(cost_source_predicate(self._org_id, cost_entry_id))
-            .where(InvoiceDocument.retention_until.is_not(None))
-        )
-        return (await self._session.execute(stmt)).scalar_one()
-
-    async def finalized_bk_runs_for_tenants(
-        self, tenant_ids: list[uuid.UUID]
-    ) -> Sequence[SettlementRun]:
-        if not tenant_ids:
-            return []
-        stmt = (
-            select(SettlementRun)
-            .where(SettlementRun.organization_id == self._org_id)
-            .where(SettlementRun.status == "finalized")
-            .where(SettlementRun.run_type == "BK_MIETER")
-            .where(SettlementRun.tenant_profile_id.in_(tenant_ids))
-        )
-        result = await self._session.execute(stmt)
-        return result.scalars().all()
-
-    async def finalized_weg_runs_for_owners(
-        self, owner_ids: list[uuid.UUID]
-    ) -> Sequence[SettlementRun]:
-        """Finalized WEG runs that carry a line addressed to one of the owners."""
-        if not owner_ids:
-            return []
-        stmt = (
-            select(SettlementRun)
-            .join(SettlementLine, SettlementLine.settlement_run_id == SettlementRun.id)
-            .where(SettlementRun.organization_id == self._org_id)
-            .where(SettlementRun.status == "finalized")
-            .where(
-                SettlementRun.run_type.in_(
-                    ["WEG_JAHRESABRECHNUNG", "VERMOEGENSBERICHT"]
-                )
-            )
-            .where(SettlementLine.addressee_owner_profile_id.in_(owner_ids))
-            .distinct()
-        )
-        result = await self._session.execute(stmt)
-        return result.scalars().all()
-
-    async def finalized_plans_for_owners(
-        self, owner_ids: list[uuid.UUID]
-    ) -> Sequence[EconomicPlan]:
-        """Finalized Wirtschaftsplaene that carry a line for one of the owners."""
-        if not owner_ids:
-            return []
-        stmt = (
-            select(EconomicPlan)
-            .join(
-                EconomicPlanLine,
-                EconomicPlanLine.economic_plan_id == EconomicPlan.id,
-            )
-            .where(EconomicPlan.organization_id == self._org_id)
-            .where(EconomicPlan.status == "finalized")
-            .where(EconomicPlanLine.owner_profile_id.in_(owner_ids))
-            .distinct()
-        )
-        result = await self._session.execute(stmt)
-        return result.scalars().all()
-
-    async def issued_dunning(
-        self,
-        tenant_ids: list[uuid.UUID],
-        owner_ids: list[uuid.UUID],
-    ) -> Sequence[DunningNotice]:
-        """Issued dunning notices addressed to the person's tenant/owner profiles."""
-        conds = []
-        if tenant_ids:
-            conds.append(DunningNotice.tenant_profile_id.in_(tenant_ids))
-        if owner_ids:
-            conds.append(DunningNotice.owner_profile_id.in_(owner_ids))
-        if not conds:
-            return []
-        stmt = (
-            select(DunningNotice)
-            .where(DunningNotice.organization_id == self._org_id)
-            .where(DunningNotice.status == "issued")
-            .where(or_(*conds))
-        )
-        result = await self._session.execute(stmt)
-        return result.scalars().all()
+    async def retention_bindings(self, person_id: uuid.UUID, *, capability='read') -> list[RetentionBinding]:
+        try:
+            # A clock-expired grant must leave a controlled refusal and a usable
+            # transaction, even when admission passed immediately beforehand.
+            async with self._session.begin_nested():
+                rows = (await self._session.execute(text(
+                    'SELECT * FROM person_retention_view(:org,:person,:capability)'),
+                    {'org': self._org_id, 'person': person_id, 'capability': capability})).mappings().all()
+        except DBAPIError as error:
+            if getattr(error.orig, 'sqlstate', None) == '42501':
+                raise HTTPException(409, 'Complete financial and source access is required to review retention or export this person') from error
+            raise
+        return [RetentionBinding(kind=row['kind'], entity_type=row['entity_type'],
+            entity_id=row['entity'], retention_until=row['until_date']) for row in rows]
 
     # ------------------------------------------------------------------
     # Live contractual relationship (blocks erasure)

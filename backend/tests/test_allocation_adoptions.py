@@ -188,7 +188,6 @@ async def test_adoption_atomic_failure_and_exact_concurrent_retry(migrator_sessi
 async def test_adoption_scope_recipient_reads_all_member_sources_but_not_private_intake(migrator_session,scope_seed,store,client_b_admin):
     from app.core.db import get_tenant_session
     from app.repositories.invoice_document_repo import InvoiceDocumentRepository
-    from app.repositories.dsgvo_repo import DsgvoRepository
     from sqlalchemy.exc import DBAPIError
     ids=await fixture(migrator_session,scope_seed);await confirm_grant(ids);await confirm_grant(ids,'actor')
     async with client(ids) as api,client(ids,'actor') as recipient:
@@ -206,8 +205,11 @@ async def test_adoption_scope_recipient_reads_all_member_sources_but_not_private
                 await db.execute(text("SELECT set_config('app.current_user_id',:actor,true)"),{'actor':str(ids['actor'])})
                 repo=InvoiceDocumentRepository(db,ids['org'])
                 assert str((await repo.get_active_for_cost_entry(key)).id)==source
-                assert [str(d.id) for d in await repo.list_by_cost_entry(key)]==[source]
-                assert str(await DsgvoRepository(db,ids['org']).max_retention_for_cost_entry(key))=='2034-12-31'
+                documents=await repo.list_by_cost_entry(key)
+                assert [str(d.id) for d in documents]==[source]
+            retention_sql=await read_value("SELECT until_sql FROM person_retention_categories() WHERE entity_type='cost_entry'",{})
+            deadline=await read_value(f'SELECT {retention_sql} FROM cost_entry t WHERE t.id=:cost',{'cost':key})
+            assert str(deadline)=='2034-12-31'
         assert (await client_b_admin.get('/api/allocation-sets/'+adopted['id'])).status_code==404
         for sql in ('SELECT duplicate_snapshot FROM allocation_set WHERE organization_id=:org','SELECT allocation_line_id FROM document_cost_link WHERE organization_id=:org','SELECT id FROM allocation_integrity_attestation WHERE organization_id=:org'):
             with pytest.raises(DBAPIError,match='permission denied'):
@@ -372,6 +374,7 @@ async def test_adoption_retained_evidence_blocks_downgrade_and_empty_roundtrip_r
                     db.execute(text('DELETE FROM '+table+' WHERE organization_id=:org'),ids)
             point=db.begin_nested()
             try:
+                importlib.import_module('migrations.versions.0159_person_retention_bindings').downgrade()
                 db.execute(text('TRUNCATE allocation_integrity_attestation CASCADE'))
                 db.execute(text('TRUNCATE exception_completion CASCADE'))
                 db.execute(text('TRUNCATE financial_computation_attestation CASCADE'))
