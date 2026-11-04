@@ -480,6 +480,11 @@ cover the absolute bank amount cent-exactly; German decimal input is validated w
 floating-point arithmetic. Errors keep the inputs, 409 becomes visible, reload
 follows only on success. READ_ONLY gets no mutation actions. "Alle" ("All") also keeps
 processed rows; account filter and pagination remain server-side.
+The split dialog aligns labels above fields in a responsive form grid. Lease/owner
+targets and notes use the full row width; long lease labels cannot widen the dialog.
+The explanation stays readable, and booking/cancellation share the bottom action row,
+reachable by scrolling on a narrow screen. The Sparkasse journey checks this with
+synthetic transactions at 1280, 800 and 360 px.
 The browser scenarios in `features/bank_assignment.feature` set up master data and
 import receipts through the API, then accept suggestions, split and ignore receipts
 through the UI. They assert January's 850=700+150 is fully paid and its receipt appears

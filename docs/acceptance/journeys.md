@@ -94,6 +94,11 @@ what Verwalino does not assign by itself.
 suggestion, duplicate detection and refusal of a statement for another account in
 [sparkasse_statement.feature](../../features/journeys/sparkasse_statement.feature);
 manual “60,00” cost entry in [money_inputs.feature](../../features/journeys/money_inputs.feature).
+The Sparkasse twin also opens Anna's April split with a long dwelling label at
+1280, 800 and 360 px: the explanation remains complete, labels sit above fields,
+target and note span the row, and both bottom actions remain reachable. It corrects
+an over-allocation without losing inputs and books 650.00 EUR base rent plus
+150.00 EUR operating advance against her 800.00 EUR receipt.
 The remaining assignment and ledger checks still require blind acceptance.
 
 ## Journey 3: Dunning letter to Anna

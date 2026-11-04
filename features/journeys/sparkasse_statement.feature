@@ -21,3 +21,20 @@ Feature: Sparkasse statement
     Given a rental bank account ready for a statement
     When the manager previews the original Sparkasse statement in "Kontoauszug"
     Then the browser refuses the foreign account statement in German and lists no transactions
+
+  Scenario Outline: A long lease label leaves the split dialog readable and editable
+    Given an administrator of "Verwaltung Alpha" is signed in
+    And Anna Beispiel's rental account and the January to October Sparkasse statement
+    And Anna's dwelling has a long descriptive name
+    When the manager previews the original Sparkasse statement in "Kontoauszug"
+    And the manager confirms the Sparkasse statement
+    And the manager opens Anna's April split at <width> px
+    Then the split explanation and labelled fields fit the dialog
+    When the manager corrects the split to 650 EUR rent and 150 EUR advance with a note
+    Then Anna's April receipt remains assigned after reload
+
+    Examples:
+      | width |
+      | 1280  |
+      | 800   |
+      | 360   |

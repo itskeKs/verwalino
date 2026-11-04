@@ -321,6 +321,19 @@ New screens follow these page structures and use a German noun as their `h1`.
   open as a card above the list; small edits of master data open `MasterDataEditor` as a dialog.
   Selects, checkboxes and file inputs are the native elements.
 
+The “Umsatz aufteilen” dialog uses the same form grid. Each split row is a
+full-width card with labels above its fields, two columns from 768 px and one
+column below. The lease/owner target and note span the row. Fieldsets may shrink
+so long lease options cannot widen the dialog or clip its explanation. Add/remove
+controls stay with the rows; submit and “Abbrechen” share the bottom action row.
+The scrollable dialog keeps all fields and actions reachable at 360 px.
+
+| Split dialog | 1280 px | 800 px | 360 px |
+|---|---|---|---|
+| Before | [Desktop](docs/assets/design/split-dialog/before-1280.png) | [Tablet](docs/assets/design/split-dialog/before-800.png) | [Phone](docs/assets/design/split-dialog/before-360.png) |
+| After | [Desktop](docs/assets/design/split-dialog/after-1280.png) | [Tablet](docs/assets/design/split-dialog/after-800.png) | [Phone](docs/assets/design/split-dialog/after-360.png) |
+| Bottom actions | [Desktop](docs/assets/design/split-dialog/after-actions-1280.png) | [Tablet](docs/assets/design/split-dialog/after-actions-800.png) | [Phone](docs/assets/design/split-dialog/after-actions-360.png) |
+
 ### Separate tenant advances
 
 Lease and rent-change forms label the two monthly amounts
