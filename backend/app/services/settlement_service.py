@@ -84,6 +84,27 @@ from app.repositories.settlement_repo import (
 ENGINE_VERSION = "m3.4.0"
 
 
+def frozen_vacancy_attribution(run: SettlementRun, allowed_units: set[str]) -> list[dict]:
+    """Project only retained person-day results from an authorized run.
+
+    The caller supplies unit IDs read under the statement's exact current scope.
+    No owner identity or live household/master data is added to that disclosure.
+    Older snapshots without saved person-days keep their existing rendering.
+    """
+    payload = run.snapshot_payload or {}
+    attribution = [v for v in payload.get('vacancy_attribution', []) if v.get('person_days') is not None]
+    if not attribution:
+        return []
+    inputs = payload.get('inputs', {})
+    units = {u['id']: u['number'] for u in inputs.get('units', [])}
+    labels = {p['cost_entry_id']: p['category_code'] for p in inputs.get('cost_positions', [])}
+    labels.update({line['cost_entry_id']: line['label'] for line in payload.get('result', {}).get('lines', [])
+                   if line.get('cost_entry_id')})
+    return [dict(unit_number=units[v['unit_id']], cost_label=labels[v['cost_entry_id']],
+                 days=v['days'], person_days=v['person_days'], amount=v['amount'])
+            for v in attribution if v['unit_id'] in allowed_units and v['unit_id'] in units and v['cost_entry_id'] in labels]
+
+
 class SettlementPeriodConflict(HTTPException):
     def __init__(self, message="Abrechnungszeitraum überschneidet eine finalisierte Abrechnung dieses Mietvertrags."):
         super().__init__(409, {
@@ -180,6 +201,16 @@ class SettlementService:
         self._lines = SettlementLineRepository(session, org_id)
         self._audit = AuditRepository(session, org_id)
         self._meter_sources: list[dict] = []
+
+    async def vacancy_disclosure(self, run: SettlementRun) -> list[dict]:
+        if not any(v.get('person_days') is not None for v in (run.snapshot_payload or {}).get('vacancy_attribution', [])):
+            return []
+        # A finalized legacy output can later receive a partial classification.
+        # Select that exact current scope before applying unit/source RLS; the
+        # frozen property's wider input universe is not a disclosure grant.
+        async with FinancialScopeService(self._session, self._org_id, self._user_id).using(run):
+            allowed = {str(u.id) for u in await self._runs.units_for_property(run.property_id)}
+            return frozen_vacancy_attribution(run, allowed)
 
     async def advance_proposal(self, run_id: uuid.UUID, *, accept_from: date | None = None):
         run, proposal = await self._load_advance_proposal(run_id, ScopeCapability.READ)

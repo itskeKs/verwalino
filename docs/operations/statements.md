@@ -203,3 +203,17 @@ Anna / Bernd / owner. Constant counts keep their previous relative shares.
 Existing finalized statements retain their frozen values and rendering after
 household edits. Upgrading to migration 0164 does not infer a history from older
 per-statement values; enter the history before making new persons-key calculations.
+
+
+The saved statement view includes “Leerstand – Eigentümeranteile” when its
+snapshot contains vacancy person-days. It directly lists each permitted unit's
+saved person-days and owner amount, including unit 2's 59 person-days and
+56.34 euros in the example above. These are stored results, rather than a
+subtraction from tenant amounts. Unit numbers also come from the snapshot;
+later household edits do not change them. A partial accounting scope discloses
+only its units. Existing PDFs remain unchanged.
+
+Migration 0165 retains larger raw person-day numerators and denominators. For
+two constant 1,370-person households in 2026, both preview and saved/finalized
+statements show 625.00 euros with bases 500,050 / 1,000,100. No input cap or quota
+normalization is required.

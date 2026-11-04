@@ -11,11 +11,11 @@ BERND_HOUSEHOLD = [
 ]
 
 
-async def persons_property(api, *, save_households=True):
+async def persons_property(api, *, save_households=True, bernd_from='2026-03-01'):
     data = await period_property(api, month=1)
     second = await create(api, '/api/units', {'property_id': data['property']['id'], 'number': '2', 'usage_type': 'WOHNUNG', 'area': '50'})
     bernd = await create(api, '/api/leases', {'unit_id': second['id'], 'tenant_profile_id': data['tenant']['id'],
-        'valid_from': '2026-03-01', 'base_rent': '700', 'advance_payment': '0'})
+        'valid_from': bernd_from, 'base_rent': '700', 'advance_payment': '0'})
     await create(api, '/api/ownership', {'unit_id': second['id'], 'owner_profile_id': data['owner']['id'], 'valid_from': '2020-01-01'})
     category = next(c for c in (await api.get('/api/cost-categories')).json() if c['code'] == 'GARTENPFLEGE')
     cost = await create(api, '/api/cost-entries', {'property_id': data['property']['id'], 'cost_category_id': category['id'],

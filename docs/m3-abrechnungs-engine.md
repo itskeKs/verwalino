@@ -368,8 +368,8 @@ A `settlement_line` is **one reported item** of the settlement: usually one cost
 | `label` | `String(255) NOT NULL` | Display name of the line. |
 | `distribution_key` | `String(20) NULL` | **Applied** distribution key (BGH requirement: "apportionment key per item"). CHECK against the §8 vocabulary. |
 | `total_amount` | `NUMERIC(14,2) NULL` | **Total costs of the cost category** in the period (BGH requirement), before distribution. |
-| `distribution_base_total` | `NUMERIC(12,6) NULL` | Denominator of the key (e.g., total living area, total MEA, sum of consumption) — makes the calculation path traceable. |
-| `distribution_base_share` | `NUMERIC(12,6) NULL` | Numerator of the addressee (e.g., their living area/their consumption). |
+| `distribution_base_total` | `NUMERIC(28,6) NULL` | Denominator of the key (e.g., total living area, total MEA, sum of consumption) — makes the calculation path traceable. |
+| `distribution_base_share` | `NUMERIC(28,6) NULL` | Numerator of the addressee (e.g., their living area/their consumption). |
 | `time_share_days` | `INTEGER NULL` | occupied days (ADR-0004) — for intra-year items. |
 | `time_share_total_days` | `INTEGER NULL` | Days of the service period (denominator of the time apportionment). |
 | `amount` | `NUMERIC(14,2) NOT NULL` | **The rounded amount attributed to the addressee** (ADR-0005). For `BALANCE` the balance (signed). |
@@ -525,6 +525,24 @@ one. Existing finalized runs retain their original payload, digest and rendering
 they do not reread today's household rows. Old `unit_metrics[].person_count` is
 retained for reading frozen inputs, but is ignored by new M3 computations. The
 unchanged M4 owner/plan persons-key input remains separate existing debt.
+
+Migration `0165` widens both existing persisted bases from `NUMERIC(12,6)` to
+`NUMERIC(28,6)`, retaining the six-place scale and all raw values. Two constant
+households of 1,370 persons each have 500,050 / 1,000,100 person-days and receive
+625.00 euros each from a 1,250.00-euro pool in preview, compute and finalization.
+No person-count cap, normalized quota or additional rounding is introduced.
+Downgrade refuses values whose absolute magnitude reaches 1,000,000, before any
+narrowing, under the same table lock. The revision also installs the existing
+organization lifecycle guard on `unit_household`, including writes made by a
+previously authorized database session during cooling-off.
+
+The ordinary authorized statement view exposes saved vacancy attribution as
+“Leerstand – Eigentümeranteile”: frozen unit number, cost label, vacancy days,
+person-days and owner amount. The Musterhaus result directly shows unit 2's
+59 person-days and 56.34 euros. The current accounting-scope unit set limits this
+disclosure even if a full-property frozen statement is later classified into a
+partial scope. Owner identities and live household values are not added. Old
+snapshots without saved vacancy person-days and existing PDFs keep their rendering.
 
 ### 2.4 `VERBRAUCH` (consumption-based)
 

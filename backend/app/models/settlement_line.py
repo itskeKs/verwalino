@@ -63,13 +63,13 @@ class SettlementLine(Base, UUIDPrimaryKeyMixin):
 
     distribution_key: Mapped[str | None] = mapped_column(String(20), nullable=True)
 
-    # Money NUMERIC(14,2); quota/base NUMERIC(12,6) -- never float (I4).
+    # Money NUMERIC(14,2); raw quota/base NUMERIC(28,6) -- never float (I4).
     total_amount: Mapped[Decimal | None] = mapped_column(Numeric(14, 2), nullable=True)
     distribution_base_total: Mapped[Decimal | None] = mapped_column(
-        Numeric(12, 6), nullable=True
+        Numeric(28, 6), nullable=True
     )
     distribution_base_share: Mapped[Decimal | None] = mapped_column(
-        Numeric(12, 6), nullable=True
+        Numeric(28, 6), nullable=True
     )
     time_share_days: Mapped[int | None] = mapped_column(SmallInteger, nullable=True)
     time_share_total_days: Mapped[int | None] = mapped_column(

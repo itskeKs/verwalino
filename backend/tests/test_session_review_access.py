@@ -395,7 +395,7 @@ async def test_revision_chain_head_0131_head_preserves_full_state_and_issued_pdf
     config.set_main_option('script_location', str(Path(__file__).parents[1] / 'migrations'))
     scripts = ScriptDirectory.from_config(config)
     assert scripts.get_heads() == [TARGET]
-    expected_ancestry = [f'{number:04}' for number in range(131, 156)] + ['0159', '0160', '0161', '0162', '0163', '0164']
+    expected_ancestry = [f'{number:04}' for number in range(131, 156)] + ['0159', '0160', '0161', '0162', '0163', '0164', '0165']
     assert [r.revision for r in scripts.iterate_revisions(TARGET, '0131')] == expected_ancestry[:0:-1]
     engine = create_engine(MIGRATOR_SYNC_URL)
     try:
@@ -456,15 +456,30 @@ async def test_revision_chain_head_0131_head_preserves_full_state_and_issued_pdf
                 assert version() == (TARGET,)
                 retained = _chain_snapshot(connection)
                 assert any(row['unit_id'] == str(w['unit']) for row in retained['data']['unit_household'])
+                wide_lines = connection.execute(text('''SELECT id FROM settlement_line
+                    WHERE abs(distribution_base_total)>=1000000 OR abs(distribution_base_share)>=1000000''')).scalars().all()
+                if wide_lines:
+                    with pytest.raises(RuntimeError, match='Cannot narrow stored settlement bases; repair forward'):
+                        with connection.begin_nested():
+                            migrate('0164', downgrade=True)
+                    assert _chain_snapshot(connection) == retained
+                    # Older releases cannot represent these raw bases. Project
+                    # only inside this transaction; the final rollback compares
+                    # every original row, snapshot, guard and schema definition.
+                    connection.execute(text('ALTER TABLE settlement_line DISABLE TRIGGER USER'))
+                    connection.execute(text('DELETE FROM settlement_line WHERE id=ANY(:ids)'), {'ids': wide_lines})
+                    connection.execute(text('ALTER TABLE settlement_line ENABLE TRIGGER USER'))
+                before_household_projection = _chain_snapshot(connection)
                 with pytest.raises(RuntimeError, match='Cannot discard saved household history; repair forward'):
                     with connection.begin_nested():
                         migrate('0163', downgrade=True)
-                assert _chain_snapshot(connection) == retained
+                assert _chain_snapshot(connection) == before_household_projection
                 # Older revisions have no household table. Project only inside
                 # this rollback-only TX; the final snapshot proves restoration.
                 connection.execute(text('TRUNCATE public.unit_household'))
                 # Prove the new provenance guards before projecting their
                 # unsupported evidence away in this rollback-only rehearsal.
+                before_successor_projection = _chain_snapshot(connection)
                 successor_contexts = connection.execute(text("""SELECT c.dunning_notice_id
                     FROM public.dunning_scope_context c JOIN public.dunning_notice n
                       ON n.id=c.dunning_notice_id AND n.organization_id=c.organization_id
@@ -476,7 +491,7 @@ async def test_revision_chain_head_0131_head_preserves_full_state_and_issued_pdf
                     with pytest.raises(RuntimeError, match='Cannot remove dated successor dunning provenance'):
                         with connection.begin_nested():
                             migrate('0162', downgrade=True)
-                    assert _chain_snapshot(connection) == retained
+                    assert _chain_snapshot(connection) == before_successor_projection
                     connection.execute(text('ALTER TABLE public.dunning_scope_context DISABLE TRIGGER USER'))
                     connection.execute(text('DELETE FROM public.dunning_scope_context WHERE dunning_notice_id=ANY(:ids)'),
                                        {'ids': successor_contexts})
@@ -567,7 +582,8 @@ async def test_revision_chain_head_0131_head_preserves_full_state_and_issued_pdf
                 assert without_reserves['triggers'] == retained['triggers']
                 assert without_reserves['data']['settlement_line'] == [
                     row for row in retained['data']['settlement_line']
-                    if row['line_type'] not in reserve_line_types and uuid.UUID(row['settlement_run_id']) not in split_runs]
+                    if row['line_type'] not in reserve_line_types and uuid.UUID(row['settlement_run_id']) not in split_runs
+                    and uuid.UUID(row['id']) not in wide_lines]
                 corpus = {
                     table: [row for row in retained['data'][table] if row['organization_id'] == str(w['org'])]
                     for table in ('payment', 'accounting_scope_binding')

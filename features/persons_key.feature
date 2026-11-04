@@ -23,3 +23,16 @@ Feature: Dated household sizes distribute costs by person-days
       | width |
       | 1280  |
       | 360   |
+
+  @browser
+  Scenario Outline: A frozen statement explicitly shows the owner's vacancy result at <width> pixels
+    Given an administrator of "Verwaltung Alpha" is signed in
+    And Anna has two persons from January and three from June, while Bernd moves in alone in March
+    When the manager calculates both 2026 persons-key statements for 1250 euros
+    And the manager opens Anna's finalized statement at <width> pixels
+    Then the statement displays unit 2's 59 vacancy person-days and 56.34 euros for the owner
+
+    Examples:
+      | width |
+      | 1280  |
+      | 360   |

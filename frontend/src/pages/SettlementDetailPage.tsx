@@ -20,6 +20,7 @@ import { parseGermanAmount } from "../lib/germanAmount";
  */
 
 import { useEffect, useState, useCallback, useRef } from "react";
+import { formatEuro } from "../lib/utils";
 import { useParams, Link, useNavigate } from "react-router-dom";
 import {
   getSettlement,
@@ -1299,6 +1300,16 @@ export function SettlementDetailPage() {
           </div>
         </div>
       )}
+
+      {!!run.vacancy_attribution?.length && <section className="card" aria-label="Leerstand – Eigentümeranteile">
+        <h2>Leerstand – Eigentümeranteile</h2>
+        <p className="hint">Aus der gespeicherten Berechnung. Diese Anteile verbleiben beim Eigentümer.</p>
+        <ul className="space-y-3">{run.vacancy_attribution.map((share, index) => <li key={index}>
+          <strong>Einheit {share.unit_number} · {share.cost_label}</strong>
+          <div>{share.person_days.toLocaleString('de-DE')} Personentage · {share.days.toLocaleString('de-DE')} Tage</div>
+          <div className="font-semibold tabular-nums">{formatEuro(share.amount)} (Eigentümer)</div>
+        </li>)}</ul>
+      </section>}
 
       {/* Computed lines (persisted) */}
       <div className="card">

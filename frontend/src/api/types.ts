@@ -796,6 +796,7 @@ export interface SettlementRun {
   superseded_by_id: string | null;
   lines: SettlementLine[];
   extra_inputs?: ComputeRequest | null;
+  vacancy_attribution?: { unit_number: string; cost_label: string; days: number; person_days: number; amount: string }[];
 }
 
 export interface AdvanceProposal {

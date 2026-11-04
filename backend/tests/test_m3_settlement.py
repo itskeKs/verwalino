@@ -3054,3 +3054,100 @@ async def test_person_days_finalized_snapshot_retains_owner_person_days_and_dige
     assert (await api.get(url)).json()['total_cost'] == '901.45'
     pdf = await api.get(url + '/pdf')
     assert pdf.status_code == 200 and pdf.content.startswith(b'%PDF-')
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('action', ['compute', 'finalize'])
+@pytest.mark.parametrize('bernd', [False, True])
+async def test_person_days_large_constant_households_persist_raw_bases(client_a_admin, migrator_session, action, bernd):
+    from tests.persons_key_support import persons_property, persons_run
+    from app.engine.canonical import canonical_sha256
+    api = client_a_admin
+    data = await persons_property(api, save_households=False, bernd_from='2026-01-01')
+    for unit in (data['unit'], data['second']):
+        response = await api.put(f"/api/units/{unit['id']}/household", json=[
+            {'valid_from': '2026-01-01', 'persons': 1370, 'is_vacancy': False}])
+        assert response.status_code == 200, response.text
+    runs = [await persons_run(api, data, bernd=target) for target in (False, True)]
+    for run in runs:
+        preview = await api.post(f"/api/settlements/{run['id']}/preview", json={})
+        assert preview.status_code == 200, preview.text
+        assert preview.json()['total_cost'] == '625.00'
+    run = runs[int(bernd)]
+    response = await api.post(f"/api/settlements/{run['id']}/{action}", json={})
+    assert response.status_code == 200, response.text
+    assert response.json()['total_cost'] == '625.00'
+    line = response.json()['lines'][0]
+    assert (Decimal(line['distribution_base_share']), Decimal(line['distribution_base_total'])) == (Decimal(500050), Decimal(1000100))
+    saved = (await migrator_session.execute(text('''SELECT distribution_base_share,distribution_base_total,amount
+        FROM settlement_line WHERE settlement_run_id=:run AND line_type='COST' '''), {'run': uuid.UUID(run['id'])})).one()
+    assert tuple(saved) == (Decimal('500050.000000'), Decimal('1000100.000000'), Decimal('625.00'))
+    payload, digest = (await migrator_session.execute(text('SELECT snapshot_payload,snapshot_sha256 FROM settlement_run WHERE id=:run'),
+        {'run': uuid.UUID(run['id'])})).one()
+    frozen = payload['result']['lines'][0]
+    assert (frozen['distribution_base_share'], frozen['distribution_base_total']) == ('500050.000000', '1000100.000000')
+    if action == 'finalize':
+        assert canonical_sha256(payload) == digest == response.json()['snapshot_sha256']
+
+
+@pytest.mark.asyncio
+async def test_person_days_statement_discloses_frozen_vacancy_without_live_recalculation(client_a_admin, client_b_admin, migrator_session):
+    from tests.persons_key_support import persons_property, persons_run
+    from app.engine.canonical import canonical_json
+    api = client_a_admin
+    data = await persons_property(api)
+    run = await persons_run(api, data)
+    url = f"/api/settlements/{run['id']}"
+    finalized = await api.post(url + '/finalize', json={})
+    assert finalized.status_code == 200, finalized.text
+    payload, digest = (await migrator_session.execute(text('SELECT snapshot_payload,snapshot_sha256 FROM settlement_run WHERE id=:id'),
+        {'id': uuid.UUID(run['id'])})).one()
+    before = canonical_json(payload)
+    assert (await client_b_admin.get(url)).status_code == 404
+    visible = (await api.get(url)).json()['vacancy_attribution']
+    assert len(visible) == 1
+    assert visible[0]['unit_number'] == '2'
+    assert visible[0]['person_days'] == 59 and visible[0]['amount'] == '56.34'
+    assert set(visible[0]) == {'unit_number', 'cost_label', 'days', 'person_days', 'amount'}
+    assert (await api.put(f"/api/units/{data['second']['id']}/household", json=[])).status_code == 200
+    assert (await api.put(f"/api/units/{data['second']['id']}", json={'number': 'Changed after finalization'})).status_code == 200
+    retained = (await api.get(url)).json()
+    assert retained['vacancy_attribution'] == visible
+    assert retained['snapshot_sha256'] == digest
+    stored = await migrator_session.scalar(text('SELECT snapshot_payload FROM settlement_run WHERE id=:id'), {'id': uuid.UUID(run['id'])})
+    assert canonical_json(stored) == before
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('whole_property', [False, True])
+async def test_person_days_frozen_vacancy_obeys_later_partial_scope_classification(client_a_admin, client_a_readonly, whole_property):
+    from tests.persons_key_support import persons_property, persons_run
+    api = client_a_admin
+    data = await persons_property(api)
+    run = await persons_run(api, data)
+    url = f"/api/settlements/{run['id']}"
+    finalized = await api.post(url + '/finalize', json={})
+    assert finalized.status_code == 200, finalized.text
+    scope = await api.post('/api/accounting-scopes', headers={'Idempotency-Key': str(uuid.uuid4())}, json={
+        'property_id': data['property']['id'], 'scope_type': 'MIET', 'label': 'Later reviewed classification',
+        'valid_from': '2026-01-01', 'whole_property': whole_property,
+        'units': [] if whole_property else [{'unit_id': data['unit']['id']}]})
+    assert scope.status_code == 201, scope.text
+    path = f"/api/accounting-scopes/{scope.json()['id']}"
+    for principal, capabilities in [(api, ['read', 'prepare']), (client_a_readonly, ['read'])]:
+        identity = (await principal.get('/api/auth/session')).json()
+        granted = await api.post(path + '/grants', headers={'Idempotency-Key': str(uuid.uuid4())}, json={
+            'user_id': identity['user_id'], 'capabilities': capabilities, 'reason': 'Reviewed statement audience'})
+        assert granted.status_code == 201, granted.text
+    binding = await api.post(path + '/bindings', json={
+        'resource_type': 'settlement_run', 'resource_id': run['id'], 'reason': 'Classify the existing frozen statement'})
+    assert binding.status_code == 201, binding.text
+    visible = await client_a_readonly.get(url)
+    assert visible.status_code == 200, visible.text
+    rows = visible.json().get('vacancy_attribution', [])
+    if whole_property:
+        assert [(r['unit_number'], r['person_days'], r['amount']) for r in rows] == [('2', 59, '56.34')]
+    else:
+        assert rows == []
+        assert '56.34' not in visible.text
+    assert visible.json()['snapshot_sha256'] == finalized.json()['snapshot_sha256']

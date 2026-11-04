@@ -1748,3 +1748,29 @@ async def test_deletion_admission_bounds_acl_before_live_principal_check(rent_wo
         assert observed == ['30s'] * 3
     finally:
         event.remove(engine.sync_engine, 'begin', unlimited)
+
+
+async def test_household_lifecycle_guard_blocks_a_previously_authorized_writer(rent_world, rent_db):
+    from app.core.db import get_tenant_session
+    from sqlalchemy.exc import DBAPIError
+    w = rent_world
+    await rent_db.execute(text('''INSERT INTO unit_household(organization_id,unit_id,valid_from,persons,is_vacancy)
+        VALUES (:org,:unit,'2026-01-01',1,false)'''), w)
+    await rent_db.commit()
+    try:
+        async with get_tenant_session(w['org']) as db:
+            await db.execute(text("SELECT set_config('app.current_user_id',:actor,true)"), {'actor': str(w['admin'])})
+            assert await db.scalar(text('SELECT persons FROM unit_household WHERE unit_id=:unit'), w) == 1
+            await rent_db.execute(text('''INSERT INTO organization_deletion(organization_id,status,execute_after)
+                VALUES (:org,'cooling_off',now()+interval '7 days')'''), w)
+            await rent_db.commit()
+            for sql in ("INSERT INTO unit_household(organization_id,unit_id,valid_from,persons,is_vacancy) VALUES (:org,:unit,'2027-01-01',2,false)",
+                        'DELETE FROM unit_household WHERE unit_id=:unit'):
+                with pytest.raises(DBAPIError) as refused:
+                    async with db.begin_nested():
+                        await db.execute(text(sql), w)
+                assert refused.value.orig.sqlstate == 'P0023'
+            assert await db.scalar(text('SELECT count(*) FROM unit_household WHERE unit_id=:unit'), w) == 1
+    finally:
+        await rent_db.execute(text('DELETE FROM organization_deletion WHERE organization_id=:org'), w)
+        await rent_db.commit()

@@ -766,3 +766,18 @@ describe("T31 meter consumption prefill", () => {
     });
   });
 });
+
+it('shows the frozen owner vacancy result directly without deriving a remainder', async () => {
+  vi.mocked(api.getSettlement).mockResolvedValue({ ...finalized, vacancy_attribution: [
+    { unit_number: '2', cost_label: 'Gartenpflege', days: 59, person_days: 59, amount: '56.34' },
+  ] } as SettlementRun);
+  vi.mocked(api.listCostEntries).mockResolvedValue([]);
+  render(<AuthCtx.Provider value={auth('OWNER_ADMIN')}><MemoryRouter initialEntries={['/abrechnungen/run-1']}>
+    <Routes><Route path='/abrechnungen/:runId' element={<SettlementDetailPage />} /></Routes>
+  </MemoryRouter></AuthCtx.Provider>);
+  const section = await screen.findByRole('region', { name: 'Leerstand – Eigentümeranteile' });
+  expect(section).toHaveTextContent('Einheit 2');
+  expect(section).toHaveTextContent('59 Personentage');
+  expect(section).toHaveTextContent('56,34');
+  expect(section).toHaveTextContent('€');
+});

@@ -1364,3 +1364,20 @@ browser harness (API :18000, Vite :13000).
 |---|---|---|
 | Before | [Desktop](docs/assets/design/persons-statement-before-1280.png) | [Phone](docs/assets/design/persons-statement-before-360.png) |
 | After | [Desktop](docs/assets/design/persons-statement-after-1280.png) | [Phone](docs/assets/design/persons-statement-after-360.png) |
+
+
+### Frozen vacancy attribution
+
+A computed/finalized tenant statement with saved vacancy person-days shows a
+“Leerstand – Eigentümeranteile” card. A short paragraph identifies the saved
+calculation and the owner's share. Each list item shows the frozen unit and cost
+label, German-formatted person-days/days, and the owner amount in euros. The list
+wraps at 360 px; no unrelated cost-table layout changes. The statement's current
+accounting-scope unit set limits the rows. The card uses stored results without
+showing owner identities or rereading household values. Snapshots without saved
+person-day attribution and existing PDFs retain their old rendering.
+
+| Vacancy attribution | Desktop | 360 px |
+|---|---|---|
+| Before | [Desktop](docs/assets/design/persons-vacancy-before-1280.png) | [Phone](docs/assets/design/persons-vacancy-before-360.png) |
+| After | [Desktop](docs/assets/design/persons-vacancy-after-1280.png) | [Phone](docs/assets/design/persons-vacancy-after-360.png) |

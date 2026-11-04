@@ -36,10 +36,11 @@ def persons_totals(world):
 @then("the owner's 59 vacancy person-days cost 56.34 euros and all shares total 1250 euros")
 def persons_owner(world):
     runs = world.data['persons_runs']
-    total_days = Decimal(runs[0]['lines'][0]['distribution_base_total'])
-    occupied_days = sum(Decimal(r['lines'][0]['distribution_base_share']) for r in runs)
-    assert total_days - occupied_days == 59
-    assert Decimal('1250.00') - sum(Decimal(r['total_cost']) for r in runs) == Decimal('56.34')
+    response = world.act('GET', f"/api/settlements/{runs[0]['id']}")
+    assert response.status_code == 200, world.describe_response()
+    vacancy = response.json()['vacancy_attribution']
+    assert [(row['unit_number'], row['person_days'], row['amount']) for row in vacancy] == [('2', 59, '56.34')]
+    assert sum(Decimal(r['total_cost']) for r in runs) + sum(Decimal(v['amount']) for v in vacancy) == Decimal('1250.00')
 
 
 
@@ -127,3 +128,36 @@ def persons_editor_statement(world, browser_world):
             root = Path(__file__).resolve().parents[4] / 'docs/assets/design'
             await page.screenshot(path=str(root / f'persons-statement-after-{page.viewport_size["width"]}.png'), full_page=True)
     browser_world.run(verify())
+
+
+@when(parsers.parse("the manager opens Anna's finalized statement at {width:d} pixels"))
+def open_frozen_vacancy(world, browser_world, width):
+    async def open_statement():
+        from playwright.async_api import expect
+        page = browser_world.page
+        await page.set_viewport_size({'width': width, 'height': 1000})
+        await page.goto(f"/abrechnungen/{world.data['persons_runs'][0]['id']}")
+        heading = page.get_by_role('heading', name='Abrechnungsergebnis', exact=True)
+        await expect(heading).to_be_visible()
+        await heading.scroll_into_view_if_needed()
+    browser_world.run(open_statement())
+
+
+@then("the statement displays unit 2's 59 vacancy person-days and 56.34 euros for the owner")
+def visible_vacancy(world, browser_world):
+    async def read_statement():
+        from playwright.async_api import expect
+        section = browser_world.page.get_by_role('region', name='Leerstand – Eigentümeranteile', exact=True)
+        await expect(section).to_be_visible()
+        row = section.get_by_role('listitem').filter(has_text='Einheit 2')
+        await expect(row).to_contain_text('59 Personentage')
+        await expect(row).to_contain_text('56,34')
+        await expect(row).to_contain_text('€')
+        await section.scroll_into_view_if_needed()
+        assert await browser_world.page.evaluate('document.documentElement.scrollWidth <= innerWidth')
+        import os
+        from pathlib import Path
+        if os.environ.get('VERWALINO_CAPTURE_DESIGN'):
+            width = browser_world.page.viewport_size['width']
+            await browser_world.page.screenshot(path=str(Path(__file__).resolve().parents[4] / 'docs/assets/design' / f'persons-vacancy-after-{width}.png'))
+    browser_world.run(read_statement())
