@@ -9,6 +9,7 @@ from sqlalchemy.exc import DBAPIError
 from tests.test_m4_weg import _seed_weg, _create_and_finalize_plan
 from tests.financial_coverage_helpers import attest_fixture, reserve_evidence
 from tests.test_rent_changes import rent_db as rent_db, rent_world as rent_world, api_client
+from tests.test_organization_export import export_store as export_store
 from tests.person_retention_support import repayment_recipient
 from tests.test_financial_scope_boundary import scope_seed as scope_seed
 from tests.test_invoice_extraction_worker import worker_tenant as worker_tenant
@@ -54,7 +55,7 @@ async def retained_anna(api, property_id):
 @pytest.mark.asyncio
 @pytest.mark.parametrize('command', ['request-deletion', 'anonymize'])
 async def test_real_repayment_retains_anna_while_incidental_eva_is_anonymized(
-        isolated_reserve_admin, rent_world, migrator_session, command):
+        export_store, isolated_reserve_admin, rent_world, migrator_session, command):
     from app.engine.canonical import canonical_json, sha256_hex
     api, seed = isolated_reserve_admin
     w = await reserve_erasure_case(api, seed)
