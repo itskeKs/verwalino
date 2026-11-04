@@ -177,7 +177,7 @@ def _to_out(n: DunningNotice) -> DunningOut:
         interest_snapshot=n.interest_snapshot,
         included_items=n.included_items,
         status="cancelled" if n.cancelled_at else n.status,
-        issued_at=str(n.issued_at) if n.issued_at else None,
+        issued_at=n.issued_at.isoformat() if n.issued_at else None,
         issued_by=str(n.issued_by) if n.issued_by else None,
         note=n.note,
     )
