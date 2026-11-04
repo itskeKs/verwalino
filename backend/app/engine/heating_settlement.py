@@ -1,13 +1,15 @@
 """Connect the pure T45 allocator to BK tenant/vacancy cells (§9b).
 
 Grundkosten use area/volume × occupied days; full-period consumption is split
-by interim readings or, when missing, by days within the unit. Vacancy retains gross owner cost.
+by interim readings or the heat degree-day/hot-water day fallback within the unit.
+Vacancy retains gross owner cost.
 """
 from dataclasses import replace
-from decimal import Decimal
+from decimal import Decimal, localcontext
+from fractions import Fraction
 
 from app.engine.distribution import Cell
-from app.engine.heizkosten import calculate_heating_costs
+from app.engine.heizkosten import calculate_heating_costs, degree_day_weight
 from app.engine.periods import CoverPeriod, KIND_TENANT, KIND_VACANCY, day_count, time_factor
 from app.engine.rounding import day_share_for_period, DistributionError
 from app.engine.types import (
@@ -38,25 +40,46 @@ def distribute_heating_position(pos: CostPositionInput, *, period_start=None, pe
     for unit_id in dict.fromkeys(s.unit_id for s in heating.slices):
         annual = [s for s in heating.slices if s.unit_id == unit_id]
         selected = [s for s in annual if max(start, s.period_from) <= min(end, s.period_to)]
-        quantities = [(s.consumption * time_factor(s.period_from, s.period_to, start, end)
-                       if s.consumption is not None else Decimal(0)) for s in selected]
-        annual_total = sum((s.consumption or Decimal(0) for s in annual), Decimal(0))
-        source_total = sum(quantities, Decimal(0))
+        exact = any(s.consumption_weight is not None for s in annual)
+
+        def full_quantity(s):
+            if exact:
+                return s.consumption_weight if s.consumption_weight is not None else Fraction(s.consumption or 0)
+            return s.consumption or Decimal(0)
+
+        def source_fraction(s):
+            a, b = max(start, s.period_from), min(end, s.period_to)
+            if s.consumption_split_method == "DEGREE_DAYS":
+                return degree_day_weight(a, b) / degree_day_weight(s.period_from, s.period_to)
+            if exact:
+                return Fraction(day_count(a, b), day_count(s.period_from, s.period_to))
+            return time_factor(s.period_from, s.period_to, start, end)
+
+        quantities = [full_quantity(s) * source_fraction(s) for s in selected]
+        annual_total = sum(full_quantity(s) for s in annual)
+        source_total = sum(quantities)
         delimited = len(selected) != len(annual) or any(
             s.period_from < start or s.period_to > end for s in selected)
         for s, quantity in zip(selected, quantities):
             a, b = max(start, s.period_from), min(end, s.period_to)
-            consumption = s.consumption
+            consumption, weight = s.consumption, s.consumption_weight
             if consumption is not None and delimited:
-                fraction = quantity / source_total if source_total else Decimal(day_count(a, b)) / overlap
+                fraction = (quantity / source_total if source_total else
+                            Fraction(day_count(a, b), overlap) if exact else Decimal(day_count(a, b)) / overlap)
                 consumption = annual_total * fraction
-            slices.append(replace(s, period_from=a, period_to=b, consumption=consumption))
+                if exact:
+                    weight = consumption
+                    with localcontext() as context:
+                        context.prec = 50
+                        consumption = Decimal(weight.numerator) / Decimal(weight.denominator)
+            slices.append(replace(s, period_from=a, period_to=b, consumption=consumption,
+                                  consumption_weight=weight))
     total = day_share_for_period(total, pos.service_period_from, pos.service_period_to, start, end)
     pool = HeatingCostPoolInput(
         heating.kind, total, heating.consumption_fraction, heating.base_key,
         heating.consumption_recorded, heating.mandatory_seventy_percent,
-        tuple(HeatingUnitInput(s.id, s.base_quantity * day_count(s.period_from,s.period_to), s.consumption)
-              for s in slices),
+        tuple(HeatingUnitInput(s.id, s.base_quantity * day_count(s.period_from,s.period_to), s.consumption,
+                               s.consumption_weight) for s in slices),
     )
     try:
         result = calculate_heating_costs((pool,), context='TENANT').pools[0]

@@ -107,6 +107,9 @@ def _heating_html(run: SettlementRun) -> str:
                                                  for k in ('start_reading','end_reading') if source.get(k)))
             if source.get('reason'):
                 provenance += '; ' + source['reason']
+            if source.get('split'):
+                from app.engine.meter_consumption import split_weight_note
+                provenance += ' ' + split_weight_note(source['split']) + '.'
             statement_period = (f"<br/>Davon {_esc(r['statement_from'])} – {_esc(r['statement_to'])}: "
                                 if r.get('statement_from') else '')
             rows.append(f"""<tr><td>{_esc(r['period_from'])} – {_esc(r['period_to'])}</td>

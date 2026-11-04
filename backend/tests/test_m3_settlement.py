@@ -242,7 +242,7 @@ async def test_manual_heating_totals_keep_the_same_sign_as_operating_totals(clie
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize('heating_key', ['absent', 'json_null'])
+@pytest.mark.parametrize('heating_key', ['absent', 'json_null', 'pre_degree_days'])
 async def test_pre_split_finalized_snapshot_keeps_its_digest_and_pdf(client_a_admin, m3_seed, heating_key):
     """Retain the literal pre-split payload: readers must never fill new keys."""
     import json
@@ -255,6 +255,23 @@ async def test_pre_split_finalized_snapshot_keeps_its_digest_and_pdf(client_a_ad
         'financial_input_coverage': {'id': coverage_id, 'source_revision': '0' * 64}}
     if heating_key == 'json_null':
         payload['inputs']['heating_advance_payments_total'] = None
+    if heating_key == 'pre_degree_days':
+        # Literal predecessor trace: no new method or rational-weight fields.
+        payload['engine_version'] = 'm3.2.0'
+        payload['heating_costs'] = [{
+            'kind': 'HEATING', 'method': 'CONSUMPTION', 'base_key': 'AREA',
+            'consumption_fraction': '0.50', 'total_amount': '4000.00',
+            'base_cost_total': '2000.00', 'consumption_cost_total': '2000.00',
+            'base_total_quantity': '25550.000000', 'consumption_total_quantity': '1000.000000',
+            'rows': [{'lease_agreement_id': m3_seed['lease_a'],
+                'period_from': '2025-01-01', 'period_to': '2025-06-30',
+                'weighted_base_quantity': '12670.000000', 'consumption': '495.890411',
+                'base_amount': '991.78', 'consumption_amount': '991.78',
+                'gross_amount': '1983.56', 'reduction_amount': '0.00', 'amount_due': '1983.56',
+                'meter_source': {'source': 'METER', 'reason':
+                    'Zwischenablesung fehlt: Aufteilung des Einheitsverbrauchs nach Tagen. '
+                    'Periodenbasis: 2025-01-01 → 2025-12-31; Tagesanteil 181/365.'}}],
+        }]
     snapshot_bytes = canonical_json(payload)
     digest = sha256_hex(snapshot_bytes)
     run_id = str(uuid.uuid4())
@@ -279,6 +296,15 @@ async def test_pre_split_finalized_snapshot_keeps_its_digest_and_pdf(client_a_ad
     response = await client_a_admin.get(f'/api/settlements/{run_id}/pdf')
     assert response.status_code == 200, response.text
     assert response.content.startswith(b'%PDF-')
+    if heating_key == 'pre_degree_days':
+        import subprocess
+        content = subprocess.run(['pdftotext', '-', '-'], input=response.content,
+            capture_output=True, check=True).stdout.decode()
+        compact = ' '.join(content.split())
+        assert 'Aufteilung des Einheitsverbrauchs nach Tagen.' in compact
+        assert 'Tagesanteil 181/365' in compact and '991,78' in compact
+        assert 'Gradtagszahlen' not in compact
+        assert (await client_a_admin.get(f'/api/settlements/{run_id}/pdf')).content == response.content
     with psycopg2.connect(SYNC_URL) as conn, conn.cursor() as cur:
         cur.execute('SELECT snapshot_payload,snapshot_sha256 FROM settlement_run WHERE id=%s', (run_id,))
         saved, sha = cur.fetchone()
@@ -2584,7 +2610,7 @@ async def test_clipped_water_run_uses_annual_readings_of_unchanged_other_units(c
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("interim,expected", [(False, "146.29"), (True, "129.51")])
+@pytest.mark.parametrize("interim,expected", [(False, "161.54"), (True, "129.51")])
 async def test_clipped_heating_keeps_building_period_pool_and_uses_only_own_interim(heiz_world, rent_db, interim, expected):
     w = heiz_world
     await rent_db.execute(text("UPDATE lease_agreement SET valid_to='2026-07-01' WHERE id=:lease"), w)
@@ -2852,7 +2878,7 @@ async def test_heating_preserves_exact_slice_when_a_later_slice_cannot_be_resolv
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("interim", [False, True])
-async def test_heating_day_fallback_labels_its_enclosing_readings_and_day_share(heiz_world, rent_db, interim):
+async def test_heating_fallback_labels_its_enclosing_readings_and_degree_day_share(heiz_world, rent_db, interim):
     w = heiz_world
     await rent_db.execute(text("UPDATE lease_agreement SET valid_to='2026-07-01' WHERE id=:lease"), w)
     await rent_db.commit()
@@ -2868,10 +2894,59 @@ async def test_heating_day_fallback_labels_its_enclosing_readings_and_day_share(
             'cost_entry_id':str(w['heat']), 'meter_type':'HEIZUNG', 'base_key':'AREA'})
         assert response.status_code == 200, response.text
         own = sorted((r for r in response.json() if r['unit_id'] == str(w['unit'])), key=lambda r:r['period_from'])
-        for row, days in zip(own[1:] if interim else own, [92, 92] if interim else [181, 184]):
-            total, denominator = (60, 184) if interim else (100, 365)
-            assert abs(Decimal(row['consumption']) - Decimal(total) * days / denominator) < Decimal('1e-25')
+        from fractions import Fraction
+        weights = [Fraction(1310, 23), Fraction(360)] if interim else [Fraction(13410, 23), Fraction(9590, 23)]
+        denominator = sum(weights)
+        for row, weight in zip(own[1:] if interim else own, weights):
+            share = weight / denominator
+            expected = Decimal(60 if interim else 100) * share.numerator / share.denominator
+            assert abs(Decimal(row['consumption']) - expected) < Decimal('1e-25')
             assert row['start_reading']['reading_date'] == ('2026-06-30' if interim else '2026-01-01')
             assert row['end_reading']['reading_date'] == '2026-12-31'
             assert ('Abschnittsbasis' if interim else 'Periodenbasis') in row['reason']
-            assert f'{days}/{denominator}' in row['reason']
+            assert f'Gradtagsanteil {weight} von {denominator} ‰' in row['reason']
+
+
+@pytest.mark.asyncio
+async def test_degree_day_snapshot_freezes_exact_weights_and_ignores_later_readings(heiz_world, rent_db):
+    from app.engine.canonical import canonical_json, sha256_hex
+
+    w = heiz_world
+    await rent_db.execute(text("UPDATE lease_agreement SET valid_to='2026-07-01' WHERE id=:lease"), w)
+    await rent_db.commit()
+    async with api_client(w) as api:
+        incoming = await api.post('/api/leases', json={'unit_id': str(w['unit']),
+            'tenant_profile_id': str(w['tenant']), 'valid_from': '2026-07-01',
+            'base_rent': '700.00', 'advance_payment': '0.00'})
+        assert incoming.status_code == 201, incoming.text
+        await attest_fixture(api, 'settlement', w['run'], {
+            'heating_advance_payments_total': '0.00', 'heating_advance_payments_source': 'MANUAL',
+            'advance_payments_total': '0.00', 'advance_payments_source': 'MANUAL'})
+        url = f"/api/settlements/{w['run']}"
+        result = await api.post(url + '/finalize', json=_heiz_body(w))
+        assert result.status_code == 200, result.text
+        payload, digest = (await rent_db.execute(text(
+            'SELECT snapshot_payload, snapshot_sha256 FROM settlement_run WHERE id=:id'),
+            {'id': uuid.UUID(w['run'])})).one()
+        assert payload['engine_version'] == 'm3.3.0'
+        heat = next(p for p in payload['heating_costs'] if p['kind'] == 'HEATING')
+        own = sorted((r for r in heat['rows'] if r['unit_id'] == str(w['unit'])), key=lambda r:r['period_from'])
+        assert [r['meter_source']['split'] for r in own] == [
+            {'method': 'DEGREE_DAYS', 'weight': '13410/23', 'total_weight': '1000', 'quantity': '1341/23'},
+            {'method': 'DEGREE_DAYS', 'weight': '9590/23', 'total_weight': '1000', 'quantity': '959/23'}]
+        water = next(p for p in payload['heating_costs'] if p['kind'] == 'HOT_WATER')
+        assert all(r['meter_source'].get('split', {}).get('method') == 'DAYS'
+                   for r in water['rows'] if r['unit_id'] == str(w['unit']))
+        snapshot_bytes = canonical_json(payload)
+        assert sha256_hex(snapshot_bytes) == digest == result.json()['snapshot_sha256']
+        pdf = await api.get(url + '/pdf')
+        assert pdf.status_code == 200, pdf.text
+        # A newly available exact interim reading cannot rewrite a final run.
+        added = await api.post(f"/api/meters/{w['meters'][0]}/readings",
+            json={'reading_date': '2026-06-30', 'value': '140'})
+        assert added.status_code == 201, added.text
+        assert (await api.get(url + '/pdf')).content == pdf.content
+        saved = await rent_db.scalar(text('SELECT snapshot_payload FROM settlement_run WHERE id=:id'),
+            {'id': uuid.UUID(w['run'])})
+        assert canonical_json(saved) == snapshot_bytes
+        assert sha256_hex(canonical_json(saved)) == digest

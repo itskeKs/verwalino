@@ -109,7 +109,8 @@ readings across these dates or on the same day count as one counter value, selec
 in stable date/ID order. Conflicting values require manual entry with a clear
 reason. Property-period opening/closing readings never compete as interim readings.
 Exact interim readings split its consumption;
-missing interim readings split the known unit consumption by days, by analogy to
+missing interim readings for ordinary consumption keys split the known unit
+consumption by days, by analogy to
 §9b HeizkostenV. Other units need only their own period readings. Manual period
 consumption without interim readings uses the same day fallback, with a reason
 shown in suggestions and frozen in the automatic source snapshot. Interim readings
@@ -131,7 +132,9 @@ interim pattern never changes these building shares. Heating keeps its separate
 base/consumption pools as described in §5.1, delimited by the invoice service period.
 Annual slice quantities set each unit's consumption weight; their source-period
 intersections set occupant proportions within that unit (day fallback if those
-quantities sum to zero). A December-only heating invoice cannot charge a departed
+quantities sum to zero). For automatic heating fallback slices, intersections retain
+the exact degree-day proportions rather than prorating their quantities by days.
+A December-only heating invoice cannot charge a departed
 September tenant. Day-split consumption quantities remain unrounded Decimal strings
 in snapshots (up to the engine's 50-digit precision); these are calculation evidence,
 not money or display precision. Only monetary allocation is rounded to cents.
@@ -656,13 +659,28 @@ area/heated area or explicit volume × days; under
 costs use the building's full-period consumption denominator. Exact interim readings
 split the changed unit's consumption-dependent share. The final reading of the previous
 user is the opening reading of the subsequent user. Without an interim reading, known
-unit-period consumption is split by degree-days if available, otherwise by days; the
-current engine has no degree-day inputs, so it uses days. Basic costs always split by
-days. This does not estimate missing unit-period consumption under §9a: missing or
+unit-period heating consumption is split by the fixed degree-day table selected in
+[issue #200](https://github.com/itskeKs/verwalino/issues/200#issuecomment-6625008327).
+Hot-water consumption and basic costs always split by days. The documented constant
+in `engine/heizkosten.py` follows the
+[published table](https://www.ista.com/de/kontakt-service/fachwissen/gradtagszahlentabelle/):
+January 170, February 150, March 130, April 80, May 40, September 30, October 80,
+November 120 and December 160 per mille. June–August share 40 per mille over 92 days.
+Each non-summer month uses its actual calendar length, including leap February;
+partial months and the summer block retain exact rational day weights. No regional
+configuration or rounded monthly summer thirds are used. Between usable measured
+boundaries, only occupants lacking an exact interim reading share the segment's
+known consumption by these weights. An exact interim reading retains priority.
+For a 1 July 2026 change, January–June has 13410/23 per mille out of 1000:
+a EUR 2,000 heating consumption pool allocates EUR 1,166.09 / EUR 833.91, while
+a EUR 400 hot-water consumption pool allocates EUR 198.36 / EUR 201.64.
+Only allocated monetary results are rounded to cents. This does not estimate missing
+unit-period consumption under §9a: missing or
 ambiguous period readings still require transparent manual values. Heating suggestions
-retain independently measured slices when another slice cannot be resolved. A day-based
+retain independently measured slices when another slice cannot be resolved. A fallback
 slice shows the enclosing readings as its period or segment basis and explicitly states
-its day share; those readings are not presented as a direct slice measurement. A 10,000-euro pool
+its degree-day or day share; those readings are not presented as a direct slice
+measurement. A 10,000-euro pool
 with 70% consumption and the 600/400/1,000 quantities from §3 gives A/B/C
 3,221.92 / 1,778.08 / 5,000.00 euros, totaling exactly 10,000.00 euros. Vacancy
 retains the gross owner share; only for tenants, in the explicitly chosen
@@ -671,7 +689,15 @@ non-consumption-based mode, is the §12 deduction reported.
 Compute stores `extra_inputs` in the draft, preview does not. A missing request body uses
 the stored intent, explicit empty arrays remove it. Automatic sources are read afresh every
 time; Finalize freezes the intent, measured values/IDs, base/consumption pools, bases, and
-gross/reduction/payable amount before the hash. The renderer reads only this data. GET
+gross/reduction/payable amount before the hash. The renderer reads only this data.
+From engine version `m3.3.0`, fallback
+sources additionally freeze `split.method` (`DEGREE_DAYS` or `DAYS`) and the exact
+rational `weight`, `total_weight` and segment `quantity` strings. Rational quantities
+remain exact through source-period restriction and the central largest-remainder
+ranking, including tied remainders; Decimal-only allocation retains its existing path. PDF position notes show these stored
+shares with “Aufteilung nach Gradtagszahlen (§ 9b HeizkostenV)” for heat. Older
+finalized payloads retain their original day notes, canonical bytes and digests;
+rendering never fills in the new fields or recalculates them. GET
 `/{run_id}/heating-consumption` is live-, source-, and financial-scope-protected and
 blocked for final runs. No new schema, no implicit combined heating-system pool, and no
 change to existing metering-service/CO2 snapshots.
@@ -946,7 +972,7 @@ would wait for request cleanup and mask the race.
 | **M3-A5** | **No** automatic commercial advance deduction in M3; commercial use participates by key; advance deduction manual if needed. | Automatic advance deduction is its own building block. | Tax advisor/attorney specializing in the field (§6.3) |
 | **M3-A6** | Advance payment total **manual** on the run (`advance_payments_source='MANUAL'`); M6 replaces it with `DERIVED`. | M6 connection prepared via the `source` discriminator. | (Roadmap M6) |
 | **M3-A7** | Number of persons (`PERSONENZAHL` key) as a per-lease value, constant over the lease period (M1 does not model this time-dependently). | A time-dependent number of persons would need a model extension. | Product (§2.3) |
-| **M3-A8** | External values and unit-period consumption must be **complete & plausible**; missing → escalation. Missing interim readings split known consumption by days (§3). | Substitute/estimation procedure (HeizkostenV) is its own professional building block. | Tax advisor/metering service (§2.4/§5) |
+| **M3-A8** | External values and unit-period consumption must be **complete & plausible**; missing → escalation. Missing interim readings split known heating consumption by degree days (§5.1), hot water/ordinary consumption by days (§3). | Substitute/estimation procedure (HeizkostenV) is its own professional building block. | Tax advisor/metering service (§2.4/§5) |
 
 ---
 
