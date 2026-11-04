@@ -753,6 +753,31 @@ Representative captures are listed below, including the
 [reset in dark mode](docs/assets/design/mail/password_reset-600-dark.png), and
 [self-hosted footer](docs/assets/design/mail/signup_confirmation-selfhost-600-light.png).
 
+### Missing financial records
+
+The payment, economic-plan and WEG settlement detail views display exactly
+“Zahlung nicht gefunden.”, “Wirtschaftsplan nicht gefunden.” and
+“WEG-Abrechnung nicht gefunden.” for missing records. The WEG input-owner
+companion read uses the same missing-run text. These six detail/list pages render
+API failures through `ApiError.message`, without the “ApiError:” class prefix.
+The existing German 401 notices, inline error styles and non-API fallbacks remain.
+
+The following before/after captures use the running local API and frontend with
+the disposable test database and synthetic organizations. Detail requests use
+the genuinely absent all-zero UUID. To exercise list-load failures, the browser
+replays that detail endpoint's actual 404 response for the corresponding list GET;
+this is a presentation check, not a claim that a normal list request returns 404.
+Desktop is 1280 px and phone is 360 px. No production data is used.
+
+| View | Desktop before / after | 360 px before / after |
+|---|---|---|
+| Missing payment | [before](docs/assets/design/missing-weg-objects/before-zahlungen-missing-1280.png) · [after](docs/assets/design/missing-weg-objects/after-zahlungen-missing-1280.png) | [before](docs/assets/design/missing-weg-objects/before-zahlungen-missing-360.png) · [after](docs/assets/design/missing-weg-objects/after-zahlungen-missing-360.png) |
+| Missing economic plan | [before](docs/assets/design/missing-weg-objects/before-wirtschaftsplaene-missing-1280.png) · [after](docs/assets/design/missing-weg-objects/after-wirtschaftsplaene-missing-1280.png) | [before](docs/assets/design/missing-weg-objects/before-wirtschaftsplaene-missing-360.png) · [after](docs/assets/design/missing-weg-objects/after-wirtschaftsplaene-missing-360.png) |
+| Missing WEG settlement | [before](docs/assets/design/missing-weg-objects/before-weg-abrechnungen-missing-1280.png) · [after](docs/assets/design/missing-weg-objects/after-weg-abrechnungen-missing-1280.png) | [before](docs/assets/design/missing-weg-objects/before-weg-abrechnungen-missing-360.png) · [after](docs/assets/design/missing-weg-objects/after-weg-abrechnungen-missing-360.png) |
+| Payment list load failure | [before](docs/assets/design/missing-weg-objects/before-zahlungen-list-1280.png) · [after](docs/assets/design/missing-weg-objects/after-zahlungen-list-1280.png) | [before](docs/assets/design/missing-weg-objects/before-zahlungen-list-360.png) · [after](docs/assets/design/missing-weg-objects/after-zahlungen-list-360.png) |
+| Economic-plan list load failure | [before](docs/assets/design/missing-weg-objects/before-wirtschaftsplaene-list-1280.png) · [after](docs/assets/design/missing-weg-objects/after-wirtschaftsplaene-list-1280.png) | [before](docs/assets/design/missing-weg-objects/before-wirtschaftsplaene-list-360.png) · [after](docs/assets/design/missing-weg-objects/after-wirtschaftsplaene-list-360.png) |
+| WEG list load failure | [before](docs/assets/design/missing-weg-objects/before-weg-abrechnungen-list-1280.png) · [after](docs/assets/design/missing-weg-objects/after-weg-abrechnungen-list-1280.png) | [before](docs/assets/design/missing-weg-objects/before-weg-abrechnungen-list-360.png) · [after](docs/assets/design/missing-weg-objects/after-weg-abrechnungen-list-360.png) |
+
 ## Screenshots
 
 Settlement structured inputs state that manual consumption and person counts refer

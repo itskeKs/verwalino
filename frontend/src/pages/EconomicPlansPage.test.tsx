@@ -1,7 +1,7 @@
 import { afterEach, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
-import { api } from "../api/client";
+import { api, ApiError } from "../api/client";
 import type { Property } from "../api/types";
 import { EconomicPlansPage } from "./EconomicPlansPage";
 
@@ -73,4 +73,18 @@ it.each([
   await waitFor(() => expect(api.post).toHaveBeenCalledWith("/api/economic-plans", expect.objectContaining({
     property_id: "april", period_start: start, period_end: end,
   })));
+});
+
+it.each([
+  [new ApiError(404, "Wirtschaftspläne konnten nicht geladen werden."), "Wirtschaftspläne konnten nicht geladen werden."],
+  [new ApiError(401, "Unauthorized"), "Nicht authentifiziert."],
+  [new Error("Synthetic network failure"), "Error: Synthetic network failure"],
+])("renders load errors without the API class prefix and preserves auth and fallback: %s", async (error, expected) => {
+  const get = vi.spyOn(api, "get").mockRejectedValue(error);
+  try {
+    render(<MemoryRouter><EconomicPlansPage /></MemoryRouter>);
+    const rendered = await screen.findByText(expected, { exact: true });
+    expect(rendered.firstChild?.textContent?.trim()).toBe(expected);
+    expect(screen.queryByText(/ApiError:/)).not.toBeInTheDocument();
+  } finally { get.mockRestore(); }
 });

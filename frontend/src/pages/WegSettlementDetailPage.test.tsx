@@ -1,3 +1,4 @@
+import { api, ApiError } from "../api/client";
 import { afterEach, expect, it, vi } from "vitest";
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { Link, MemoryRouter, Route, Routes } from "react-router-dom";
@@ -265,4 +266,24 @@ it('refetches the computation table after a reserve correction', async () => {
   fireEvent.click(screen.getByRole('button', { name: 'Speichern' }));
   await waitFor(() => expect(fetchMock.mock.calls.filter(([url]) => url === `/api/weg-settlements/${runId}`)).toHaveLength(2));
   expect(screen.queryByText('Festgeschriebener Anteil old')).not.toBeInTheDocument();
+});
+
+it.each([
+  [new ApiError(404, "WEG-Abrechnung nicht gefunden."), "WEG-Abrechnung nicht gefunden."],
+  [new ApiError(401, "Unauthorized"), "Nicht authentifiziert."],
+  [new Error("Synthetic network failure"), "Error: Synthetic network failure"],
+])("renders load errors without the API class prefix and preserves auth and fallback: %s", async (error, expected) => {
+  const get = vi.spyOn(api, "get").mockRejectedValue(error);
+  try {
+    show();
+    const rendered = await screen.findByText(expected, { exact: true });
+    expect(rendered.firstChild?.textContent?.trim()).toBe(expected);
+    expect(screen.queryByText(/ApiError:/)).not.toBeInTheDocument();
+  } finally { get.mockRestore(); }
+});
+
+it("renders a missing input-owner companion read as the same German missing run", async () => {
+  install([draft()], () => json({ detail: "WEG-Abrechnung nicht gefunden." }, 404));
+  show();
+  expect((await screen.findByRole("alert")).textContent).toBe("WEG-Abrechnung nicht gefunden.");
 });

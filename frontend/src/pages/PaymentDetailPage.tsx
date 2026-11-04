@@ -132,7 +132,7 @@ export function PaymentDetailPage() {
         if (err instanceof ApiError && err.status === 401) {
           setError("Nicht authentifiziert.");
         } else {
-          setError(String(err));
+          setError(err instanceof ApiError ? err.message : String(err));
         }
       })
       .finally(() => setLoading(false));

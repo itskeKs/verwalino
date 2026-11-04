@@ -82,7 +82,7 @@ export function EconomicPlanDetailPage() {
         })) : []);
         setReserve(stored ? stored.reserve_contribution_total : pl.status === "finalized" ? pl.reserve_contribution_total : "");
       })
-      .catch((err) => { if (current) setError(err instanceof ApiError && err.status === 401 ? "Nicht authentifiziert." : String(err)); })
+      .catch((err) => { if (current) setError(err instanceof ApiError ? (err.status === 401 ? "Nicht authentifiziert." : err.message) : String(err)); })
       .finally(() => { if (current) setLoading(false); });
     return () => { current = false; };
   }, [planId]);

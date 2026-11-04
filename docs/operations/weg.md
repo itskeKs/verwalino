@@ -2,6 +2,20 @@
 
 Special levies and PDF invitations to owners' meetings.
 
+## Missing economic plans and annual settlements
+
+A missing economic-plan detail shows “Wirtschaftsplan nicht gefunden.”; a missing
+WEG settlement detail shows “WEG-Abrechnung nicht gefunden.”. The settlement's
+input-owner read uses the same explanation when its run is missing. These reads
+retain HTTP 404 and the existing `detail` string, including for foreign organizations.
+The plan and WEG list/create pages and detail views display `ApiError.message`,
+so the text appears without the technical “ApiError:” prefix. Existing German
+sign-in notices and non-API error fallbacks remain unchanged.
+The [missing-record journey twin](../../features/journeys/missing_weg_objects.feature)
+checks the visible detail explanations at 1280 px and 360 px; the
+[organization-isolation feature](../../features/organization_isolation.feature)
+checks that foreign financial records remain indistinguishable from missing ones.
+
 ## Special levies backend (Sonderumlagen)
 
 `POST /api/special-levies` creates a one-time special levy with `property_id`,

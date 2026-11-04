@@ -75,7 +75,7 @@ export function WegSettlementDetailPage() {
         setRun(r); setProperties(pr); setOwnerProfiles(op); setPersons(per);
         setPaidOwners(inputOwners);
       })
-      .catch((err) => { if (active) setError(err instanceof ApiError && err.status === 401 ? "Nicht authentifiziert." : String(err)); })
+      .catch((err) => { if (active) setError(err instanceof ApiError ? (err.status === 401 ? "Nicht authentifiziert." : err.message) : String(err)); })
       .finally(() => { if (active) setLoading(false); });
     return () => { active = false; pageGeneration.current += 1; };
   }, [runId, generation]);

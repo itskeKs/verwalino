@@ -2,8 +2,46 @@
 
 from pathlib import Path
 
-from pytest_bdd import scenarios
+from pytest_bdd import given, when, then, scenarios
 
 FEATURE = Path(__file__).resolve().parents[3] / "features" / "organization_isolation.feature"
 
 scenarios(str(FEATURE))
+
+
+@given("a payment, economic plan and annual WEG settlement belong to Verwaltung Alpha", target_fixture="financial_details")
+def financial_details(world, seed_data):
+    from tests.bdd.test_weg_settlement import create_balance_world
+    from tests.bdd.steps.browser_setup import create
+
+    records = create_balance_world(world, seed_data)
+    payment = create(world, "/api/payments", {"bank_account_id": records["bank"],
+        "owner_profile_id": records["owners"][0], "direction": "IN", "amount": "600.00",
+        "value_date": "2026-01-05", "payment_type": "HAUSGELD_VORSCHUSS"})
+    return [
+        (f"/api/payments/{payment['id']}", "/api/payments/", "Zahlung nicht gefunden."),
+        (f"/api/economic-plans/{records['plan']}", "/api/economic-plans/", "Wirtschaftsplan nicht gefunden."),
+        (f"/api/weg-settlements/{records['run']}", "/api/weg-settlements/", "WEG-Abrechnung nicht gefunden."),
+        (f"/api/weg-settlements/{records['run']}/input-owners", "/api/weg-settlements/", "WEG-Abrechnung nicht gefunden."),
+    ]
+
+
+@when("Verwaltung Beta opens those financial details and their input-owner list", target_fixture="foreign_financial_responses")
+def foreign_financial_responses(world, financial_details):
+    foreign = world.administrator_of("Verwaltung Beta")
+    original = world.administrator_of("Verwaltung Alpha")
+    responses = []
+    for path, prefix, message in financial_details:
+        missing = prefix + "00000000-0000-0000-0000-000000000000"
+        if path.endswith("/input-owners"):
+            missing += "/input-owners"
+        assert world.look(original, path).status_code == 200
+        responses.append((world.look(foreign, path), world.look(foreign, missing), message))
+    return responses
+
+
+@then("the foreign financial records have the same German explanation as missing records")
+def foreign_financial_explanations(foreign_financial_responses):
+    for foreign, missing, message in foreign_financial_responses:
+        assert foreign.status_code == missing.status_code == 404
+        assert foreign.json() == missing.json() == {"detail": message}
