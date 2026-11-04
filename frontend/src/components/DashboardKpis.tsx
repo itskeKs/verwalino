@@ -87,7 +87,7 @@ function KpiSelection({ properties, requiresScope }: Props) {
   return <Card role="region" aria-label="Mietkennzahlen">
     <CardHeader><CardTitle>Mietkennzahlen</CardTitle></CardHeader>
     <CardContent className="space-y-4">
-      <div className="form-grid">
+      <div className="form-grid [&>label]:min-w-0">
         <label>Objekt für Mietkennzahlen
           <select value={propertyId} disabled={!properties} onChange={event => {
             invalidate(); setPropertyId(event.target.value); setScopeId(null); setScopeValid(true);

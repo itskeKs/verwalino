@@ -1194,6 +1194,7 @@ The task UI adopts property/unit contexts without automatic
 saving; the dashboard reads open tasks with a local, inclusive
 seven-day limit. Due-task text and pagination wrap within the dashboard card on
 phones, and reload, completion and pagination use the shared button style.
+The dashboard rent KPI form keeps long property choices inside the card at 360 px.
 Property details keep wide unit rows in their own horizontal scroll container;
 unit actions wrap and document upload fields fit the card at 360 px.
 This operational data is not made dependent on the selection of a

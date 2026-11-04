@@ -23,6 +23,14 @@ def long_rows(world, seed_data):
             "capabilities": ["read", "prepare", "approve", "export"], "reason": "Synthetic responsive check",
         }]},
     }, keyed=True)
+    create(world, "/api/properties", {
+        "name": "Mietobjekt am langen Sonnenhof mit Vorderhaus und Seitenflügel 01234567",
+        "management_type": "MIET",
+        "data_audience": {"label": "Long property option", "reason": "Synthetic responsive check", "grants": [{
+            "user_id": str(seed_data["user_a_admin_id"]),
+            "capabilities": ["read", "prepare", "approve", "export"], "reason": "Synthetic responsive check",
+        }]},
+    }, keyed=True)
     for index in range(12):
         create(world, "/api/units", {
             "property_id": home["id"], "number": f"Gartenflügelwohnung{index + 1:02d}",
@@ -79,6 +87,8 @@ def open_pages(browser_world, width, tmp_path):
         region = page.get_by_role("region", name="Fällige Aufgaben", exact=True)
         task_row = region.get_by_role("listitem").filter(has_text=d["responsive_task"]["title"])
         await expect(task_row).to_be_visible()
+        await page.get_by_role("region", name="Mietkennzahlen", exact=True).scroll_into_view_if_needed()
+        await capture("dashboard-kpis")
         await region.scroll_into_view_if_needed()
         await capture("dashboard")
         await check_width("Dashboard")
