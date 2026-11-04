@@ -503,6 +503,24 @@ and use the existing `.btn` style for reload, completion and pagination.
 The dashboard's rent KPI form allows its labels to shrink so long property options
 stay within the card, including before a property is selected.
 
+The dunning notice detail puts `Hauptforderung` and `Zinsen` first in its frozen
+interest table, and `Offen`, `Soll`, `Ist` before period and type in its arrears
+table. Monetary cells stay unbroken; principal, interest and open amounts are
+readable in the initial table viewport at 360 px. Remaining descriptive columns
+use the existing horizontal scroll containers. Desktop keeps the complete tables.
+Both `Ausgestellt am` locations show the persisted instant as `TT.MM.JJJJ, HH:MM`
+in `Europe/Berlin`, using the existing German `toLocaleString` options pattern
+with two-digit day, month, hour and minute. The API supplies ISO with a timezone.
+This changes display only; frozen values and PDFs retain their stored contents.
+
+Synthetic issued notices from the shared test database; the captures show the
+actual issue times on 4 November 2026, not the fixed November 1 unit-test instant:
+
+| Dunning notice detail | 1280 px | 360 px |
+|---|---|---|
+| Before | [View](docs/assets/design/dunning-notice/before-1280.png) | [View](docs/assets/design/dunning-notice/before-360.png) |
+| After | [View](docs/assets/design/dunning-notice/after-1280.png) | [View](docs/assets/design/dunning-notice/after-360.png) |
+
 The WEG settlement detail follows this contract: `settlement-detail` wraps long owner
 names and the complete snapshot SHA-256. Each individual statement uses its own
 `overflow-x-auto` container, natural column widths and unbroken monetary values;

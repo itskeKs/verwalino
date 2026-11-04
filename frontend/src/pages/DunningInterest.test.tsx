@@ -57,6 +57,33 @@ it("shows frozen interest, rates, reference date and item days without recalcula
   expect(within(row).getByText("60")).toBeVisible(); expect(within(row).getByText("2026-01-01")).toBeVisible();
 });
 
+it("puts complete principal, interest and open amounts before descriptive columns", async () => {
+  vi.mocked(api.get).mockImplementation(async url => url === "/api/dunning/notice" ? {
+    ...notice,
+    included_items: Array.from({ length: 12 }, (_, month) => ({ payment_type: "NK_VORAUSZAHLUNG", period_year: 2026, period_month: month + 1, soll: "1234.56", ist: "0.00", open_amount: "1234.56" })),
+    interest_snapshot: { ...notice.interest_snapshot, items: Array.from({ length: 12 }, (_, month) => ({ ...notice.interest_snapshot.items[0], period_month: month + 1, principal: "1234.56", interest: "15.22" })) },
+  } : []);
+  render(<MemoryRouter initialEntries={["/mahnungen/notice"]}><Routes><Route path="/mahnungen/:dunningId" element={<DunningNoticeDetailPage />} /></Routes></MemoryRouter>);
+  await screen.findByText("Eingefrorene Zinsberechnung");
+  const tables = screen.getAllByRole("table").filter(table => within(table).queryAllByRole("columnheader").length);
+  expect(within(tables[0]).getAllByRole("columnheader").map(cell => cell.textContent)).toEqual(["Hauptforderung", "Zinsen", "Typ", "Periode", "Fälligkeit", "Tage"]);
+  expect(within(tables[1]).getAllByRole("columnheader").map(cell => cell.textContent)).toEqual(["Offen", "Soll", "Ist", "Periode", "Typ"]);
+  expect(within(tables[0]).getAllByRole("cell").slice(0, 2).map(cell => cell.textContent)).toEqual(["1234.56 EUR", "15.22 EUR"]);
+  expect(within(tables[1]).getAllByRole("cell").slice(0, 3).map(cell => cell.textContent)).toEqual(["1234.56 EUR", "1234.56 EUR", "0.00 EUR"]);
+  for (const table of tables) expect(within(table).getAllByRole("row")).toHaveLength(13);
+});
+
+it.each([
+  ["2026-11-01T12:26:04.611054+00:00", "01.11.2026, 13:26"],
+  ["2026-07-01T12:26:04+00:00", "01.07.2026, 14:26"],
+])("formats the issued instant %s consistently in German time", async (issued_at, expected) => {
+  vi.mocked(api.get).mockImplementation(async url => url === "/api/dunning/notice" ? { ...notice, issued_at } : []);
+  render(<MemoryRouter initialEntries={["/mahnungen/notice"]}><Routes><Route path="/mahnungen/:dunningId" element={<DunningNoticeDetailPage />} /></Routes></MemoryRouter>);
+  expect(await screen.findByText(`Ausgestellt am: ${expected}`)).toBeVisible();
+  expect(screen.getByRole("row", { name: `Ausgestellt am ${expected}` })).toBeVisible();
+  expect(screen.queryByText(issued_at)).toBeNull();
+});
+
 function deferred<T>() {
   let resolve!: (value: T) => void;
   let reject!: (error: Error) => void;

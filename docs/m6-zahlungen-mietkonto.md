@@ -232,6 +232,13 @@ semantics. No official interest rate is invented and no delivery is claimed. Mig
 0129 protects the new amounts and provenance even against a direct SQL update and
 refuses a downgrade that would lose existing interest bases.
 
+The notice detail shows principal and interest first in the frozen calculation,
+and the open amount first in the arrears table, so these values are readable at
+360 px without scrolling sideways. Other table columns remain scrollable within
+their card. `Ausgestellt am` shows the stored issue instant as `TT.MM.JJJJ, HH:MM`
+in German time (`Europe/Berlin`); API responses carry ISO timestamps with timezone.
+The letter, frozen calculation and PDF are unchanged.
+
 Since T53, individual and selected tenant dunning notices use the same
 history-sensitive tenant ledger path. The non-writing dunning-run preview filters
 principal claims strictly greater than the explicitly chosen threshold. Confirmation

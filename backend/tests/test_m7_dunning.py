@@ -949,6 +949,21 @@ class TestDunningChecks:
 # API: create / issue / list / delete / PDF + RBAC
 # ===========================================================================
 class TestDunningAPI:
+    @pytest.mark.parametrize("issued_at", [None, datetime(2026, 11, 1, 12, 26, 4, 611054, tzinfo=_tz.utc)])
+    def test_issue_time_serializes_as_iso_with_timezone(self, issued_at):
+        from app.api.dunning import _to_out
+        from app.models.dunning_notice import DunningNotice
+
+        notice = DunningNotice(
+            id=uuid.uuid4(), organization_id=uuid.uuid4(), level=1,
+            issue_date=date(2026, 11, 1), due_date=date(2026, 11, 15),
+            principal_amount=Decimal("1234.56"), fee_amount=Decimal("0.00"),
+            interest_amount=Decimal("15.22"), total_amount=Decimal("1249.78"),
+            included_items=[], status="issued" if issued_at else "draft", issued_at=issued_at,
+        )
+        output = _to_out(notice)
+        assert output.issued_at == ("2026-11-01T12:26:04.611054+00:00" if issued_at else None)
+
     @pytest.mark.asyncio
     async def test_create_issue_list_flow(self, client_a_admin, m7_seed):
         """Golden: tenant with arrears -> dunning level 1 with correct amounts."""

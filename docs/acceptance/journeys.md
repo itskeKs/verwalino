@@ -124,7 +124,12 @@ The remaining assignment and ledger checks still require blind acceptance.
 
 **Checked by:** agent
 **Also at 360 px:** the dunning letter
-**Automated:** not yet
+**Automated:** [readable issued notice](../../features/journeys/dunning_notice.feature)
+checks four-digit principal, interest and open amounts without horizontal
+scrolling at 1280 and 360 px, plus the German issue-time display. The separate
+[interest/PDF scenario](../../features/dunning_interest.feature) checks frozen
+amounts and the downloaded PDF. The April due-date and split-rate expectations
+above remain outside these automated checks.
 
 ## Journey 4: Rent change for Anna
 
