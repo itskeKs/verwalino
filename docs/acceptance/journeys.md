@@ -63,13 +63,13 @@ shows a German field problem and keeps her input. A separate heating advance may
 - The overview shows one property, two units and two running tenancies with the amounts of the
   table.
 - **Additional check, deposit:** if Sabine mistakenly enters 2,400.00 € for Anna (more than three
-  net rents), Verwalino points out that at most 2,250.00 € is permitted. She then enters the
-  correct 2,250.00 €.
+  net rents), saving is refused with „Die Kaution darf höchstens drei Nettokaltmieten betragen
+  (2.250,00 €).“ and her input is kept. She then enters the correct 2,250.00 € and saves.
 - Sabine finds every step without having to guess. Where she hesitates, that is a finding.
 
 **Checked by:** agent
 **Also at 360 px:** no
-**Automated:** tenancy money entry only, in [money_inputs.feature](../../features/journeys/money_inputs.feature)
+**Automated:** tenancy money entry and deposit refusal/correction at 1280 and 360 px, in [money_inputs.feature](../../features/journeys/money_inputs.feature)
 
 ## Journey 2: Importing the bank statement and assigning the payments
 

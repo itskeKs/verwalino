@@ -26,6 +26,10 @@ not re-open the question.
 - Deposits: up to three instalments (§ 551 Abs. 2 BGB) shown as open items in the tenant ledger.
   Interest from the deposit account is recorded as a booking and included in the refund; the app
   does not calculate it (#31).
+  Residential units (`WOHNUNG`) reject an agreed deposit above three monthly net base rents
+  (§ 551 Abs. 1 BGB), excluding operating/heating advances. Exactly three rents is allowed;
+  other usage types are exempt. Create and deposit/base-rent edits return 422 without saving
+  any changes when the resulting pair exceeds the cap, including a rent reduction (#167).
 - VAT: a per-unit flag "VAT-liable letting" (§ 9 UStG); rent, advances and the operating cost
   statement show VAT for such units. Input VAT apportionment is a later issue (#32).
 - Access protection: the per-staff, per-property source access protection is to be activated

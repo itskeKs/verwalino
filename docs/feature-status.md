@@ -62,7 +62,7 @@ pending; registration stays closed and legal review remains with #26. See the
 | Contacts, tenant/owner profile | ✅ | `api/persons.py`, `api/tenant_profiles.py`, `api/owner_profiles.py`, `pages/PersonDetailPage.tsx` |
 | Vendors | ✅ edit/end with contact source right | `api/vendors.py`, T55, [usage](operations/selector-pages.md) |
 | Ownership with share | ✅ end ownership ("Eigentum beenden") and new owner from the next day | `api/ownership.py` (`PATCH /{id}`), `pages/UnitDetailPage.tsx`, T26, [usage](operations/tenancies-and-rent.md) |
-| Create lease (base rent, operating and heating advances, deposit) | ✅ | `api/leases.py`, `pages/UnitDetailPage.tsx` |
+| Create lease (base rent, operating and heating advances, deposit) | ✅ residential deposit capped at three net base rents on create and deposit/base-rent edits; other unit usage types exempt | `api/leases.py`, `engine/deposit.py`, `pages/UnitDetailPage.tsx`, #167 |
 | Change/end lease, tenant change | ✅ end and note always editable; amounts locked (409) once payments are booked or a settlement is final | `api/leases.py` (`PATCH /{id}`), `pages/UnitDetailPage.tsx`, T04 |
 | Rent change with effective date | ✅ full base rent and separate operating/heating rates | `models/lease_rent_change.py`, `api/leases.py` (`/rent-changes`), `engine/mietkonto.py`, T23, T24, [usage](operations/tenancies-and-rent.md) |
 | Graduated (Staffel) / index rent | ✅ | `api/leases.py` (`/rent-changes/staffel`, `/rent-changes/index`), `engine/index_rent.py`, T43, T44, [usage](operations/tenancies-and-rent.md) |
