@@ -51,8 +51,13 @@ function formatLegalMea(mea: string | null, property: Property): string {
 }
 
 export function PropertyDetailPage() {
-  const navigate = useNavigate();
   const { propertyId } = useParams<{ propertyId: string }>();
+  return <PropertyDetailPageContent key={propertyId} propertyId={propertyId} />;
+}
+
+function PropertyDetailPageContent({ propertyId }: { propertyId?: string }) {
+  const navigate = useNavigate();
+
   const { session } = useAuth();
   const isWrite = session?.role === "OWNER_ADMIN" || session?.role === "CLERK";
   const requestVersion = useRef(0);
@@ -64,6 +69,7 @@ export function PropertyDetailPage() {
   const [editUnitId, setEditUnitId] = useState<string | null>(null);
   const [unitForm, setUnitForm] = useState<UnitFormData>(EMPTY_UNIT_FORM);
   const [saving, setSaving] = useState(false);
+  const [success, setSuccess] = useState<string | null>(null);
   const [knowledge, setKnowledge] = useState<PropertyKnowledgeOverview | null>(null);
   const [meaDenominator, setMeaDenominator] = useState<string>("");
   const [confirmingMea, setConfirmingMea] = useState(false);
@@ -71,7 +77,6 @@ export function PropertyDetailPage() {
   const reload = useCallback(() => {
     if (!propertyId) return;
     const version = ++requestVersion.current;
-    setProperty(null);
     setLoading(true);
     setError(null);
     Promise.all([
@@ -87,6 +92,7 @@ export function PropertyDetailPage() {
       })
       .catch((err) => {
         if (version !== requestVersion.current) return;
+        if (err instanceof ApiError && [401, 403, 404].includes(err.status)) setProperty(null);
         if (err instanceof ApiError && err.status === 401) {
           setError("Nicht authentifiziert.");
         } else {
@@ -102,6 +108,7 @@ export function PropertyDetailPage() {
   async function handleConfirmMeaScale(e: React.FormEvent) {
     e.preventDefault();
     if (!propertyId || !property) return;
+    setSuccess(null);
     setConfirmingMea(true);
     setError(null);
     try {
@@ -111,6 +118,7 @@ export function PropertyDetailPage() {
         return;
       }
       await confirmMeaScale(propertyId, denominator);
+      setSuccess("MEA-Skala gespeichert.");
       setMeaDenominator("");
       reload();
     } catch (err) {
@@ -147,6 +155,7 @@ export function PropertyDetailPage() {
   async function handleUnitSubmit(e: React.FormEvent) {
     e.preventDefault();
     if (!propertyId) return;
+    setSuccess(null);
     setSaving(true);
     setError(null);
     try {
@@ -174,6 +183,7 @@ export function PropertyDetailPage() {
         if (unitForm.building_part) body.building_part = unitForm.building_part;
         await createUnit(body);
       }
+      setSuccess("Einheit gespeichert.");
       setShowUnitForm(false);
       setEditUnitId(null);
       reload();
@@ -188,12 +198,12 @@ export function PropertyDetailPage() {
     }
   }
 
-  if (loading) return <p>Lade...</p>;
+  if (loading && !property) return <p>Lade...</p>;
   if (error && !property) return <p className="error-text">{error}</p>;
   if (!property) return <p className="error-text">Objekt nicht gefunden.</p>;
 
   return (
-    <div>
+    <div style={{ overflowAnchor: "none" }}>
       <p style={{ marginBottom: "0.5rem" }}>
         <Link to="/objekte" className="link">&larr; Alle Objekte</Link>
       </p>
@@ -202,6 +212,7 @@ export function PropertyDetailPage() {
       {isWrite && <Link className="btn btn-primary" to={`/aufgaben?${new URLSearchParams({ property_id: property.id, create: "1" })}`}>Aufgabe anlegen</Link>}
 
       {error && <p className="error-text">{error}</p>}
+      {success && <p role="status" className="sticky top-0 z-10 bg-background py-2">{success}</p>}
 
       <div className="card" style={{ marginBottom: "1.5rem" }}>
         <h2>Objektdaten</h2>

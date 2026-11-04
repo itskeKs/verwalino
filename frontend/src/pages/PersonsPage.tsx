@@ -42,7 +42,7 @@ const EMPTY_FORM: PersonFormData = {
 export function PersonsPage() {
   const { session } = useAuth();
   const canWrite = session?.role === "OWNER_ADMIN" || session?.role === "CLERK";
-  const page = usePagedList<Person>("/api/persons/page");
+  const page = usePagedList<Person>("/api/persons/page", { keepOnReload: true });
   const persons = page.items;
   const reload = page.reload;
   const loading = page.loading;
@@ -51,6 +51,7 @@ export function PersonsPage() {
   const [editId, setEditId] = useState<string | null>(null);
   const [form, setForm] = useState<PersonFormData>(EMPTY_FORM);
   const [saving, setSaving] = useState(false);
+  const [success, setSuccess] = useState<string | null>(null);
 
   function openCreate() {
     if (!canWrite) return;
@@ -81,6 +82,7 @@ export function PersonsPage() {
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     if (!canWrite) return;
+    setSuccess(null);
     setSaving(true);
     setError(null);
     try {
@@ -102,6 +104,7 @@ export function PersonsPage() {
       } else {
         await createPerson(body);
       }
+      setSuccess("Person gespeichert.");
       setShowForm(false);
       setEditId(null);
       reload();
@@ -117,7 +120,7 @@ export function PersonsPage() {
   }
 
   return (
-    <div className="paged-list">
+    <div className="paged-list" style={{ overflowAnchor: "none" }}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "1rem" }}>
         <h1 style={{ margin: 0 }}>Personen</h1>
         {canWrite && <button className="btn btn--primary" onClick={openCreate}>
@@ -238,10 +241,11 @@ export function PersonsPage() {
         </div>
       )}
 
+      {success && <p role="status" className="sticky top-0 z-10 bg-background py-2">{success}</p>}
       {loading && persons.length === 0 ? (
         <p>Lade...</p>
       ) : persons.length === 0 ? (
-        <p className="empty-hint">Keine Personen vorhanden.</p>
+        !(error || page.error) && <p className="empty-hint">Keine Personen vorhanden.</p>
       ) : (
         <div className="card paged-table">
           <table className="data-table">

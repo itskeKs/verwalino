@@ -2,6 +2,16 @@
 
 Browser acceptance journeys for bank import/assignment, rent changes, deposits and dunning now live in the `@browser` features; see [the feature runner](../features/README.md#browser-features).
 
+The property, person and unit detail pages and the persons/bank account lists keep their
+loaded content during save refreshes and confirm successful writes with inline status text.
+Changed list values appear without a manual reload; errors retain useful input and loaded data.
+Bank assignment/ignore finish their database transaction before the success response, using
+the same function-scoped dependency as the existing writer guards. Their table stays visible
+during the subsequent refresh and reflects the confirmed status immediately. See the
+[save lifecycle design and screenshots](../DESIGN.md#master-data-save-lifecycle) and
+[executable browser journey](../features/save_lifecycle.feature).
+
+
 As of: 2026-06-02 · Version 0.1 (design, before implementation)
 Reference: [sdd-property-management-mvp.md](sdd-property-management-mvp.md) v0.2 §3 (non-goal: bank import), §5.4 (incoming payments — *note: the SDD numbers them §6.3/§6.7*), §6.3 (bank accounts), §6.7 (rent/payment management), §11 (PDF), §13 (`Payment`/`OpenItem`), §14 (chronology), §16, §17, §18 · [archived roadmap](archive/roadmap.md) M6 · [architecture.md](architecture.md) §2.6 (segregation of funds (Vermögenstrennung)), §5.1 (conventions), §5.3 (`bank_account` anchor), assumption A-4 · [m3-abrechnungs-engine.md](m3-abrechnungs-engine.md) §7 (`advance_payments_source` MANUAL→DERIVED) · [m4-weg-abrechnung.md](m4-weg-abrechnung.md) §2.4 (paid_advances, settlement balance (Abrechnungsspitze)) · ADRs: [0003](adr/0003-gobd-immutability-mechanism.md) (reused), [0005](adr/0005-rounding-largest-remainder.md) (reused), [0006](adr/0006-valid-to-convention.md) (reused), [0007](adr/0007-weg-settlement-balance-and-economic-plan.md) (monthly basis, balance) · **[0009-expected-actual-and-payment-receipt.md](adr/0009-expected-actual-and-payment-receipt.md) (new)** · **[0010-segregation-of-funds-payments.md](adr/0010-segregation-of-funds-payments.md) (new)**
 Status: **Draft for confirmation by the human — no application code, no migration, no commit**

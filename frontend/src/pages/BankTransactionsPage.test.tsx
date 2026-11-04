@@ -490,3 +490,39 @@ it('keeps a reserve payout without evidence as a draft and explains the next ste
   expect(await screen.findByText(/Rücklagenentnahme als Entwurf übernommen/)).toBeInTheDocument();
   expect(JSON.parse(posts(fetchMock)[0][1]!.body as string).lines[0]).toMatchObject({ payment_type: 'RUECKLAGENENTNAHME', amount: '200.01' });
 });
+
+
+it("retains transaction rows during the refresh after a real assignment", async () => {
+  let finish!: (value: Response) => void;
+  let saved = false;
+  const suggestion = { target_name: "Anna Beispiel", confidence: "HIGH", requires_review: false, unallocated_amount: "0.00", reasons: [], lines: [{ payment_type: "KALTMIETE", amount: "700.00", open_amount: "700.00", period_year: 2026, period_month: 1, lease_agreement_id: "lease", tenant_profile_id: "tenant" }] };
+  setup(async (url, options) => {
+    if (options?.method === "POST") { saved = true; return json({ id: "tx", status: "ZUGEORDNET", payments: [] }); }
+    if (isTransactionList(url)) return saved ? new Promise<Response>(resolve => { finish = resolve; }) : json({ items: [{ ...transaction, amount: "700.00", suggestions: [suggestion] }], next_offset: null });
+    return fallback(url);
+  }, "OWNER_ADMIN", "/bankkonten/a/umsaetze");
+  await screen.findByText("Heizung");
+  const table = screen.getByRole("table");
+  fireEvent.click(screen.getByRole("button", { name: "Vorschlag übernehmen" }));
+  await screen.findByText("Umsatz zugeordnet.");
+  expect(table).toBeInTheDocument();
+  await act(async () => finish(json({ items: [], next_offset: null })));
+  expect(await screen.findByText("Keine Umsätze vorhanden.")).toBeVisible();
+});
+
+
+it.each([403, 500])("handles post-save refresh failure %s without inventing empty results", async status => {
+  let saved = false;
+  setup(async (url, options) => {
+    if (options?.method === "POST") { saved = true; return json({ id: "tx", status: "IGNORIERT" }); }
+    if (isTransactionList(url)) return saved ? json({ detail: "Nachladen fehlgeschlagen" }, status) : json({ items: [transaction], next_offset: null });
+    return fallback(url);
+  }, "OWNER_ADMIN", "/bankkonten/a/umsaetze");
+  await screen.findByText("Heizung");
+  fireEvent.click(screen.getByRole("button", { name: "Ignorieren" }));
+  await screen.findByRole("alert");
+  expect(screen.getByRole("status")).toHaveTextContent("Umsatz ignoriert.");
+  expect(screen.queryByText("Keine Umsätze vorhanden.")).not.toBeInTheDocument();
+  if (status === 403) expect(screen.queryByText("Heizung")).not.toBeInTheDocument();
+  else { expect(screen.getByText("Heizung")).toBeVisible(); expect(screen.queryByRole("button", { name: "Ignorieren" })).not.toBeInTheDocument(); }
+});

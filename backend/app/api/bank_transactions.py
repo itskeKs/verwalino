@@ -115,7 +115,7 @@ async def assign_transaction(
     transaction_id: uuid.UUID,
     body: AssignmentIn,
     auth: AuthContext = Depends(require_write_dep),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
 ):
     transaction, payments = await BankImportService(db, auth.organization_id, auth.user_id).assign(
         transaction_id, [line.model_dump() for line in body.lines])
@@ -127,6 +127,6 @@ async def assign_transaction(
 async def ignore_transaction(
     transaction_id: uuid.UUID,
     auth: AuthContext = Depends(require_write_dep),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
 ):
     return await BankImportService(db, auth.organization_id, auth.user_id).ignore(transaction_id)

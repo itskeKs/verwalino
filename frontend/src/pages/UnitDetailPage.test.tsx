@@ -55,6 +55,19 @@ function money(label: string, value: string) { fireEvent.change(screen.getByLabe
 function save() { fireEvent.click(screen.getByRole("button", { name: "Mietänderung speichern" })); }
 function posts() { return fetchMock.mock.calls.filter(([, options]) => options?.method === "POST"); }
 
+it("keeps unit panels mounted while a saved lease refreshes", async () => {
+  let finish!: (value: never) => void;
+  show();
+  const panel = await screen.findByRole("region", { name: "Zähler" });
+  vi.mocked(endpoints.getUnit).mockReturnValueOnce(new Promise(resolve => { finish = resolve; }));
+  fireEvent.click(screen.getByRole("button", { name: "Bearbeiten / beenden" }));
+  fireEvent.change(screen.getByLabelText("Notizen"), { target: { value: "Neue Notiz" } });
+  fireEvent.click(screen.getByRole("button", { name: /^Speichern$/ }));
+  expect(await screen.findByRole("status")).toHaveTextContent("Mietvertrag gespeichert.");
+  expect(panel).toBeInTheDocument();
+  await act(async () => finish({ id: "unit", number: "1" } as never));
+});
+
 it('submits separate advances in one effective-dated rent change', async () => {
   show();
   const dialog = await openChange();

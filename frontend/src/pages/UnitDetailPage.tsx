@@ -77,10 +77,15 @@ interface LeaseFormData {
 }
 
 export function UnitDetailPage() {
+  const { propertyId, unitId } = useParams<{ propertyId: string; unitId: string }>();
+  return <UnitDetailPageContent key={propertyId + ":" + unitId} propertyId={propertyId} unitId={unitId} />;
+}
+
+function UnitDetailPageContent({ propertyId, unitId }: { propertyId?: string; unitId?: string }) {
   const navigate = useNavigate();
   const { session } = useAuth();
   const canWriteOwnership = session?.role === "OWNER_ADMIN" || session?.role === "CLERK";
-  const { propertyId, unitId } = useParams<{ propertyId: string; unitId: string }>();
+
   const requestVersion = useRef(0);
   const [unit, setUnit] = useState<Unit | null>(null);
   const [property, setProperty] = useState<Property | null>(null);
@@ -113,6 +118,7 @@ export function UnitDetailPage() {
   });
   const [leaseFormError, setLeaseFormError] = useState<string | null>(null);
   const [savingLease, setSavingLease] = useState(false);
+  const [leaseStatus, setLeaseStatus] = useState<string | null>(null);
   const [invalidLeaseAmount, setInvalidLeaseAmount] = useState<string | null>(null);
 
   const personName = useCallback((profilePersonId: string) => {
@@ -135,8 +141,6 @@ export function UnitDetailPage() {
   const reload = useCallback(() => {
     if (!unitId || !propertyId) return;
     const version = ++requestVersion.current;
-    setUnit(null);
-    setProperty(null);
     setLoading(true);
     setError(null);
     Promise.all([
@@ -160,6 +164,7 @@ export function UnitDetailPage() {
       })
       .catch((err) => {
         if (version !== requestVersion.current) return;
+        if (err instanceof ApiError && [401, 403, 404].includes(err.status)) setUnit(null);
         if (err instanceof ApiError && err.status === 401) {
           setError("Nicht authentifiziert.");
         } else {
@@ -178,6 +183,8 @@ export function UnitDetailPage() {
     ownerMutationLock.current = true;
     setSavingOwner(true);
     setOwnerFormError(null);
+    setOwnerStatus(null);
+    setLeaseStatus(null);
     try {
       const body: OwnershipCreate = {
         unit_id: unitId,
@@ -187,6 +194,7 @@ export function UnitDetailPage() {
       if (ownerForm.valid_to) body.valid_to = ownerForm.valid_to;
       if (ownerForm.mea_share) body.mea_share = ownerForm.mea_share;
       await createOwnership(body);
+      setOwnerStatus("Eigentum gespeichert.");
       setOwnerSuggestion(null);
       setShowOwnerForm(false);
       reload();
@@ -211,6 +219,8 @@ export function UnitDetailPage() {
     e.preventDefault();
     if (!unitId || !canWriteOwnership) return;
     setLeaseFormError(null);
+    setLeaseStatus(null);
+    setOwnerStatus(null);
     setInvalidLeaseAmount(null);
     const amounts = {
       base_rent: rentAmount(leaseForm.base_rent),
@@ -255,6 +265,7 @@ export function UnitDetailPage() {
       } else {
         await createLease(body);
       }
+      setLeaseStatus("Mietvertrag gespeichert.");
       setShowLeaseForm(false);
       reload();
     } catch (err) {
@@ -274,12 +285,12 @@ export function UnitDetailPage() {
     }
   }
 
-  if (loading) return <p>Lade...</p>;
+  if (loading && !unit) return <p>Lade...</p>;
   if (error && !unit) return <p className="error-text">{error}</p>;
   if (!unit || !property) return <p className="error-text">Einheit nicht gefunden.</p>;
 
   return (
-    <div>
+    <div style={{ overflowAnchor: "none" }}>
       <p style={{ marginBottom: "0.5rem" }}>
         <Link to={`/objekte/${propertyId}`} className="link">&larr; {property.name}</Link>
       </p>
@@ -320,7 +331,7 @@ export function UnitDetailPage() {
         </button>}
       </div>
 
-      {ownerStatus && <p role="status">{ownerStatus}</p>}
+      {ownerStatus && <p role="status" className="sticky top-0 z-10 bg-background py-2">{ownerStatus}</p>}
 
       {canWriteOwnership && showOwnerForm && (
         <div className="card" style={{ marginBottom: "1rem" }}>
@@ -406,6 +417,7 @@ export function UnitDetailPage() {
                     disabled={savingOwner}
                     onEnded={(ended, nextDay) => {
                       setOwnerships(previous => previous.map(row => row.id === ended.id ? ended : row));
+                      setLeaseStatus(null);
                       setOwnerStatus(`Eigentum bis einschließlich ${ended.valid_to} beendet. Neuen Eigentümer ab ${nextDay} bewusst auswählen und speichern.`);
                       setOwnerFormError(null);
                       setOwnerSuggestion({ valid_from: nextDay, mea_share: o.mea_share ?? "" });
@@ -437,6 +449,7 @@ export function UnitDetailPage() {
         </button>}
       </div>
 
+      {leaseStatus && <p role="status" className="sticky top-0 z-10 bg-background py-2">{leaseStatus}</p>}
       {canWriteOwnership && showLeaseForm && (
         <div className="card" style={{ marginBottom: "1rem" }}>
           <h2>{editingLease ? "Mietvertrag bearbeiten / beenden" : "Neuen Mietvertrag anlegen"}</h2>

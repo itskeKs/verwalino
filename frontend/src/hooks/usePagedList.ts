@@ -1,9 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { api } from "../api/client";
+import { api, ApiError } from "../api/client";
 
 export interface Page<T> { items: T[]; next_cursor: string | null }
 
-export function usePagedList<T extends { id: string }>(endpoint: string) {
+export function usePagedList<T extends { id: string }>(endpoint: string, { keepOnReload = false }: { keepOnReload?: boolean } = {}) {
   const [items, setItems] = useState<T[]>([]);
   const [query, setQuery] = useState("");
   const [nextCursor, setNextCursor] = useState<string | null>(null);
@@ -11,6 +11,8 @@ export function usePagedList<T extends { id: string }>(endpoint: string) {
   const [error, setError] = useState<string | null>(null);
   const [revision, setRevision] = useState(0);
   const request = useRef<AbortController | null>(null);
+  const previousFetch = useRef<typeof fetchPage | null>(null);
+  const loadedPages = useRef(1);
 
   const fetchPage = useCallback((controller: AbortController, cursor?: string) => {
     const url = new URL(endpoint, window.location.origin);
@@ -26,22 +28,38 @@ export function usePagedList<T extends { id: string }>(endpoint: string) {
       if (controller.signal.aborted) return;
       setLoading(true);
       setError(null);
-      setItems([]);
-      setNextCursor(null);
+      if (!keepOnReload || previousFetch.current !== fetchPage) {
+        setItems([]);
+        setNextCursor(null);
+        loadedPages.current = 1;
+      }
+      previousFetch.current = fetchPage;
       try {
-        const page = await fetchPage(controller);
+        let page = await fetchPage(controller);
+        const refreshed = [...page.items];
+        let count = 1;
+        // Refresh the pages already opened, so saving a later row cannot collapse the list.
+        while (keepOnReload && count < loadedPages.current && page.next_cursor && !controller.signal.aborted) {
+          page = await fetchPage(controller, page.next_cursor);
+          refreshed.push(...page.items);
+          count++;
+        }
         if (!controller.signal.aborted) {
-          setItems(page.items);
+          setItems([...new Map(refreshed.map(item => [item.id, item])).values()]);
           setNextCursor(page.next_cursor);
+          loadedPages.current = count;
         }
       } catch (e) {
-        if (!controller.signal.aborted) setError(String(e));
+        if (!controller.signal.aborted) {
+          if (e instanceof ApiError && [401, 403, 404].includes(e.status)) { setItems([]); setNextCursor(null); }
+          setError(String(e));
+        }
       } finally {
         if (!controller.signal.aborted) setLoading(false);
       }
     });
     return () => { controller.abort(); request.current?.abort(); };
-  }, [fetchPage, revision]);
+  }, [fetchPage, revision, keepOnReload]);
 
   const loadMore = useCallback(async () => {
     if (loading || !nextCursor) return;
@@ -55,6 +73,7 @@ export function usePagedList<T extends { id: string }>(endpoint: string) {
       const page = await fetchPage(controller, nextCursor);
       if (!controller.signal.aborted) {
         setItems(previous => [...new Map([...previous, ...page.items].map(item => [item.id, item])).values()]);
+        loadedPages.current++;
         setNextCursor(page.next_cursor);
       }
     } catch (e) {

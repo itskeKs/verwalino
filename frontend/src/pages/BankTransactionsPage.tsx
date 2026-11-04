@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { ApiError } from "../api/client";
 import { Link, useParams, useSearchParams } from "react-router-dom";
 import {
   getBankAccount, importBankTransactions, listBankMatchingTransactions,
@@ -92,7 +93,10 @@ function AccountTransactions({ id }: { id: string }) {
       setItems(result.items);
       setNextOffset(result.next_offset);
     }).catch(error => {
-      if (!cancelled) setListError(errorMessage(error));
+      if (!cancelled) {
+        if (error instanceof ApiError && [401, 403, 404].includes(error.status)) { setItems([]); setAccount(null); }
+        setListError(errorMessage(error));
+      }
     }).finally(() => {
       if (!cancelled) setLoading(false);
     });
@@ -151,14 +155,15 @@ function AccountTransactions({ id }: { id: string }) {
     setMutationError(null);
     setSuccess(null);
     try {
-      const result = lines ? await assignBankTransaction(item.id, lines) : null;
-      if (!lines) await ignoreBankTransaction(item.id);
+      const result = lines ? await assignBankTransaction(item.id, lines) : await ignoreBankTransaction(item.id);
       if (!mounted.current) return;
       setEditing(null);
-      setSuccess(result?.payments.some(payment => payment.status === 'draft')
+      setItems(current => current.map(row => row.id === item.id ? { ...row, status: result.status, suggestions: [] } : row));
+      setSuccess('payments' in result && result.payments.some(payment => payment.status === 'draft')
         ? 'Rücklagenentnahme als Entwurf übernommen. Bitte ergänzen Sie in der Zahlung den bestätigten Kostenbeleg und den Beschluss vor dem Buchen.'
         : lines ? "Umsatz zugeordnet." : "Umsatz ignoriert.");
-      resetList();
+      setListError(null);
+      setLoading(true);
       setRevision(value => value + 1);
     } catch (error) {
       if (mounted.current) setMutationError(errorMessage(error));
@@ -186,7 +191,7 @@ function AccountTransactions({ id }: { id: string }) {
   }
 
   return (
-    <div className="paged-list">
+    <div className="paged-list" style={{ overflowAnchor: "none" }}>
       <Link to="/bankkonten">← Bankkonten</Link>
       <h1>Umsätze{account ? ` – ${account.label}` : ""}</h1>
       {account?.iban && <p>{account.iban}</p>}
@@ -203,7 +208,7 @@ function AccountTransactions({ id }: { id: string }) {
         <label>Kontoauszug<input type="file" accept=".csv,text/csv,.xml,application/xml,text/xml,.zip,application/zip" disabled={busy && preview !== null} onChange={event => changeFile(event.target.files?.[0] ?? null)} /></label>
         <button type="button" className="btn" disabled={!file || busy} onClick={() => void runImport(true)}>{busy ? "Bitte warten…" : "Vorschau erstellen"}</button>
         {importError && <p role="alert" className="error-text">{importError}</p>}
-        {success && <p role="status">{success}</p>}
+        {success && <p role="status" className="sticky top-0 z-10 bg-background py-2">{success}</p>}
         {preview && <div>
           <h3>Importvorschau</h3>
           <p>{preview.count} Umsätze: {preview.new_count} neu, {preview.duplicate_count} Dubletten.</p>
@@ -221,7 +226,7 @@ function AccountTransactions({ id }: { id: string }) {
       </section>}
 
       {!editing && mutationError && <p role="alert" className="error-text">{mutationError}</p>}
-      {!showImport && success && <p role="status">{success}</p>}
+      {!showImport && success && <p role="status" className="sticky top-0 z-10 bg-background py-2">{success}</p>}
       {editing && canWrite && <SplitDialog transaction={editing} account={account} busy={mutating} error={mutationError}
         onClose={() => { if (!mutationLock.current) { setEditing(null); setMutationError(null); } }}
         onSubmit={lines => void mutate(editing, lines)} />}
@@ -234,10 +239,11 @@ function AccountTransactions({ id }: { id: string }) {
         <option value="">Alle</option>
         {Object.entries(STATUS_LABELS).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
       </select>
-      {loading ? <p>Lade Umsätze…</p> : listError ? <div>
+      {listError && <div>
         <p role="alert" className="error-text">{listError}</p>
         <button className="btn" onClick={() => { resetList(); setRevision(value => value + 1); }}>Erneut laden</button>
-      </div> : items.length === 0 ? <p className="empty-hint">Keine Umsätze vorhanden.</p> : <div className="card paged-table">
+      </div>}
+      {loading && items.length === 0 ? <p>Lade Umsätze…</p> : items.length === 0 ? !listError && <p className="empty-hint">Keine Umsätze vorhanden.</p> : <div className="card paged-table">
         <table className="data-table">
           <thead><tr><th>Buchung</th><th>Wertstellung</th><th>Gegenpartei</th><th>IBAN</th><th>Verwendungszweck</th><th>Betrag</th><th>Status</th><th>Vorschläge / Aktionen</th></tr></thead>
           <tbody>{items.map(item => <tr key={item.id}>

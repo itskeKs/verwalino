@@ -1,11 +1,31 @@
 import { afterEach, expect, it, vi } from "vitest";
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import { AuthCtx } from "../auth/useAuth";
 import { BankAccountsPage } from "./BankAccountsPage";
 
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
 const json = (data: unknown) => new Response(JSON.stringify(data), { status: 200, headers: { "Content-Type": "application/json" } });
+it("keeps the account table mounted while a confirmed edit refreshes", async () => {
+  let finish!: (value: Response) => void;
+  let saved = false;
+  const account = { id: "konto", label: "Hauskonto", property_name: "Testhaus", account_type: "LAUFEND" };
+  vi.stubGlobal("fetch", vi.fn(async (url: string, options?: RequestInit) => {
+    if (options?.method === "PATCH") { saved = true; return json({ ...account, label: "Neues Hauskonto" }); }
+    if (url.startsWith("/api/bank-accounts")) return saved ? new Promise<Response>(resolve => { finish = resolve; }) : json([account]);
+    return json({ items: [], next_cursor: null });
+  }));
+  render(<AuthCtx.Provider value={{ loading: false, session: { user_id: "u", organization_id: "o", role: "CLERK" }, login: vi.fn(), logout: vi.fn() }}><MemoryRouter><BankAccountsPage /></MemoryRouter></AuthCtx.Provider>);
+  await screen.findByText("Hauskonto");
+  const table = screen.getByRole("table");
+  fireEvent.click(screen.getByRole("button", { name: "Bankkonto bearbeiten" }));
+  fireEvent.change(screen.getByLabelText("Bezeichnung", { exact: true }), { target: { value: "Neues Hauskonto" } });
+  fireEvent.click(screen.getByRole("button", { name: "Änderungen speichern" }));
+  expect(await screen.findByRole("status")).toHaveTextContent("Bankkonto gespeichert.");
+  expect(table).toBeInTheDocument();
+  await act(async () => finish(json([{ ...account, label: "Neues Hauskonto" }])));
+  expect(await screen.findByText("Neues Hauskonto")).toBeVisible();
+});
 it("clears incompatible scope when switching between deposit and reserve accounts", async () => {
   vi.stubGlobal("fetch", vi.fn(async (input: string) => {
     const url = new URL(input, "http://test");
