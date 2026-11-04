@@ -1410,7 +1410,11 @@ async def test_documents_resolve_owners_on_their_key_date_and_freeze_them(
 
 
 @pytest.mark.asyncio
-async def test_asset_report_recipients_have_authoritative_retention_bindings(client_a_admin, client_b_admin, m4_seed):
+async def test_asset_report_recipients_have_authoritative_retention_bindings(worker_tenant, client_b_admin):
+    # The whole-organization planner must use this report's bounded corpus,
+    # independently of unrelated financial fixtures accumulated by the shard.
+    client_a_admin, seed = worker_tenant
+    m4_seed = _seed_weg(seed)
     response = await client_a_admin.post('/api/weg-settlements/asset-reports', json={
         'property_id': m4_seed['property'], 'period_start': '2025-01-01', 'period_end': '2025-12-31'})
     report_id = response.json()['id']

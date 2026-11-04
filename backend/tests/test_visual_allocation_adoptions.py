@@ -384,7 +384,9 @@ async def test_visual_mapping_and_actual_financial_followup_keep_source_semantic
     from tests.test_context_mappings import activation
     from tests.test_allocation_corrections import next_review
     from tests.test_correction_followups import declare
+    from tests.financial_coverage_helpers import add_report_recipient
     ids=await fixture(migrator_session,scope_seed)
+    await add_report_recipient(ids)
     out=io.BytesIO();pdf=canvas.Canvas(out)
     for page in range(3):
         pdf.drawString(40,800,'Objekt-ID: '+str(ids['property']) if page==0 else 'Other private invoice page')
