@@ -113,3 +113,55 @@ def account_is_empty(world):
 def account_holds(world, count):
     stored = _stored_transactions(world)
     assert len(stored) == count, f"The bank account holds {len(stored)} transactions, expected {count}."
+
+
+@given(parsers.parse('the Sparkasse statement "{filename}"'))
+def sparkasse_statement(world, filename):
+    world.data["statement"] = (filename, (STATEMENTS / filename).read_bytes())
+
+
+@given("Anna Beispiel's rental account and the January to October Sparkasse statement")
+def sparkasse_rental(world, seed_data):
+    from tests.bdd.steps.browser_setup import rental, bank_account
+
+    rental(world, seed_data, advance="150.00")
+    person = world.data["people"][0]
+    response = world.act("PUT", f"/api/persons/{person.id}", json={
+        "first_name": "Anna", "last_name": "Beispiel", "iban": "DE89370400440532013000",
+    })
+    assert response.status_code == 200, world.describe_response()
+    response = world.act("PATCH", f"/api/leases/{world.data['leases'][0]['id']}", json={"base_rent": "750.00"})
+    assert response.status_code == 200, world.describe_response()
+    account = bank_account(world)
+    response = world.act("PATCH", f"/api/bank-accounts/{account['id']}", json={"iban": "DE75512108001245126199"})
+    assert response.status_code == 200, world.describe_response()
+    world.data["account_id"] = account["id"]
+    sample = Path(__file__).resolve().parents[4] / "docs" / "acceptance" / "data" / "sparkasse-2026-01-10.csv"
+    world.data["statement"] = (sample.name, sample.read_bytes())
+
+
+def _anna_receipt(world):
+    rows = _stored_transactions(world)
+    matches = [row for row in rows if row["booking_date"] == "2026-04-07" and Decimal(row["amount"]) == Decimal("800.00")]
+    assert len(matches) == 1, matches
+    row = matches[0]
+    assert row["counterparty_name"] == "Anna Beispiel"
+    assert row["counterparty_iban"] == "DE89370400440532013000"
+    return row
+
+
+@then("Anna Beispiel's 800 EUR receipt on 07.04.2026 retains her name and IBAN")
+def anna_receipt(world):
+    _anna_receipt(world)
+
+
+@then("Anna's April receipt suggests her lease for the 800 EUR partial rent")
+def anna_rent_suggestion(world):
+    receipt = _anna_receipt(world)
+    response = world.look(world.actor, f"/api/bank-transactions?bank_account_id={world.data['account_id']}")
+    assert response.status_code == 200, response.text
+    row = next(row for row in response.json()["items"] if row["id"] == receipt["id"])
+    suggestion, = row["suggestions"]
+    assert suggestion["target_name"] == "Anna Beispiel"
+    assert suggestion["lines"]
+    assert all(line["lease_agreement_id"] == world.data["leases"][0]["id"] for line in suggestion["lines"])

@@ -74,8 +74,11 @@ shows a German field problem and keeps her input. A separate heating advance may
 ## Journey 2: Importing the bank statement and assigning the payments
 
 **Goal:** Sabine wants to know who has paid.
-**She does:** uploads the CSV and assigns what Verwalino does not assign by itself.
+**She does:** uploads the original Sparkasse CSV-CAMT without rewriting dates and assigns
+what Verwalino does not assign by itself.
 **Expected:**
+- The first import holds 31 transactions with counterparty names and IBANs.
+  Anna Beispiel's 800.00 € receipt on 07.04.2026 suggests her lease.
 - Anna: January to October all paid, only in April 800.00 € instead of 900.00 € →
   **100.00 € open**. The payment on 07.04. was **on time** (see journey 3), only too low.
 - Bernd: March to October paid in full, nothing open.
@@ -87,7 +90,10 @@ shows a German field problem and keeps her input. A separate heating advance may
 
 **Checked by:** agent
 **Also at 360 px:** no
-**Automated:** manual “60,00” cost entry only, in [money_inputs.feature](../../features/journeys/money_inputs.feature)
+**Automated:** original Sparkasse import, Anna's partial-rent suggestion and duplicate detection
+in [sparkasse_statement.feature](../../features/journeys/sparkasse_statement.feature);
+manual “60,00” cost entry in [money_inputs.feature](../../features/journeys/money_inputs.feature).
+The remaining assignment and ledger checks still require blind acceptance.
 
 ## Journey 3: Dunning letter to Anna
 

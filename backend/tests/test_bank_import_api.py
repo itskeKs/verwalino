@@ -306,3 +306,15 @@ async def test_imported_reserve_payout_stays_draft_until_both_references_exist(c
         'payment_type': 'RUECKLAGENENTNAHME', 'amount': '200.01', 'period_year': 2026, 'period_month': 1}]})
     assert retyped.status_code == 200, retyped.text
     assert retyped.json()['payments'][0]['id'] != draft['id']
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("dry_run", [True, False])
+async def test_sparkasse_row_account_cannot_target_another_iban(client_a_admin, import_accounts, dry_run):
+    response = await upload(
+        client_a_admin, import_accounts["a"],
+        content=(FIXTURES / "sparkasse_csv_camt.csv").read_text().replace('.26"', '.2026"').encode(), dry_run=dry_run,
+    )
+    assert response.status_code == 422, response.text
+    assert response.json()["detail"] == "IBAN im Kontoauszug stimmt nicht mit dem gewählten Bankkonto überein."
+    assert stored(import_accounts["a"]) == []
