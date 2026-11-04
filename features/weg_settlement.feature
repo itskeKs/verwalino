@@ -47,3 +47,15 @@ Feature: WEG settlement and the owner's Hausgeld balance
     And Anna has booked 6600 euros of Hausgeld and the second owner has paid in full
     When I finalize their WEG annual settlement
     Then the Einzelabrechnung shows all four amounts and the payment without horizontal scrolling
+
+  @browser
+  Scenario Outline: Long owner statements keep complete amounts inside their cards
+    Given Anna-Katharina Freifrau von Hohenzollern-Sigmaringen has Anna's WEG plan and costs
+    And Anna has booked 6600 euros of Hausgeld and the second owner has paid in full
+    When I prepare their <state> WEG annual settlement
+    Then the long owner's statement and whole snapshot hash fit desktop and a 360 pixel phone
+
+    Examples:
+      | state     |
+      | computed  |
+      | finalized |

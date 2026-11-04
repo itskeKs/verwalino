@@ -932,6 +932,9 @@ code {
   .settlement-detail .data-table { table-layout: fixed; }
   .settlement-detail .data-table th,
   .settlement-detail .data-table td { overflow-wrap: anywhere; }
+  .settlement-detail .weg-statement-table { table-layout: auto; }
+  .settlement-detail .weg-statement-table th,
+  .settlement-detail .weg-statement-table td { overflow-wrap: normal; }
 }
 
 /* Bounded master-data lists retain table columns inside the mobile viewport. */

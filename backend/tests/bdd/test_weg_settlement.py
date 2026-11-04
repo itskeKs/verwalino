@@ -2,7 +2,7 @@
 from pathlib import Path
 
 import pytest
-from pytest_bdd import given, when, then, scenario, scenarios
+from pytest_bdd import given, when, then, scenario, scenarios, parsers
 
 from tests.bdd.steps.browser_setup import create
 from tests.bdd.steps.records import create_person
@@ -125,7 +125,12 @@ def weg_balance(world, seed_data):
     return create_balance_world(world, seed_data)
 
 
-def create_balance_world(world, seed_data, *, cost_period_end='2026-12-31'):
+@given("Anna-Katharina Freifrau von Hohenzollern-Sigmaringen has Anna's WEG plan and costs", target_fixture='weg_balance')
+def long_owner_balance(world, seed_data):
+    return create_balance_world(world, seed_data, owner_name='Anna-Katharina Freifrau von Hohenzollern-Sigmaringen')
+
+
+def create_balance_world(world, seed_data, *, cost_period_end='2026-12-31', owner_name='Anna Berg'):
     world.actor = world.administrator_of('Verwaltung Alpha')
     world.actor_organization = 'Verwaltung Alpha'
     user = str(seed_data['user_a_admin_id'])
@@ -135,7 +140,7 @@ def create_balance_world(world, seed_data, *, cost_period_end='2026-12-31'):
             'grants': [{'user_id': user, 'capabilities': ['read', 'prepare', 'approve', 'export'],
                         'reason': 'Synthetic settlement'}]}}, keyed=True)
     owners, units = [], []
-    for number, mea, name in [('1', '600', 'Anna Berg'), ('2', '400', 'Berta Vollständig')]:
+    for number, mea, name in [('1', '600', owner_name), ('2', '400', 'Berta Vollständig')]:
         unit = create(world, '/api/units', {'property_id': home['id'], 'number': number,
             'usage_type': 'WOHNUNG', 'mea': mea, 'area': '100'})
         units.append(unit['id'])
@@ -358,3 +363,83 @@ def balance_browser(browser_world, weg_balance):
         await popup.close()
         assert not console_errors, console_errors
     b.run(check())
+
+
+@when(parsers.parse('I prepare their {state} WEG annual settlement'))
+def prepare_long_statement(world, weg_balance, state):
+    assert state in ('computed', 'finalized')
+    values = {'paid_advances': [{'owner_profile_id': owner, 'paid_total': amount}
+                              for owner, amount in zip(weg_balance['owners'], ('6600.00', '4800.00'))]}
+    world.run(attest_fixture(world.actor, 'settlement', weg_balance['run'], values))
+    action = 'compute' if state == 'computed' else 'finalize'
+    response = world.act('POST', f"/api/weg-settlements/{weg_balance['run']}/{action}", json=values)
+    assert response.status_code == 200, response.text
+    weg_balance.update(statement=response.json(), display_state=state)
+
+
+@then("the long owner's statement and whole snapshot hash fit desktop and a 360 pixel phone")
+def long_statement_browser(browser_world, world, weg_balance):
+    import os
+    from playwright.async_api import expect
+
+    b, w = browser_world, weg_balance
+    name = 'Anna-Katharina Freifrau von Hohenzollern-Sigmaringen'
+    failures = []
+    console_errors = []
+
+    async def check():
+        b.page.on('console', lambda message: console_errors.append(message.text) if message.type == 'error' else None)
+        await b.visit(f"/weg-abrechnungen/{w['run']}")
+        for width in (1280, 360):
+            await b.page.set_viewport_size({'width': width, 'height': 1000})
+            if width == 360:
+                await b.page.wait_for_function("document.querySelector('aside').getBoundingClientRect().right <= 0")
+            heading = b.page.get_by_role('heading', name=name, exact=True)
+            await expect(heading).to_be_visible()
+            card = heading.locator('..')
+            await expect(card.get_by_role('cell', name='6400.00 EUR', exact=True).first).to_be_visible()
+            await expect(card.get_by_role('region', name=f'Hausgeld-Abgleich · {name}')).to_contain_text('7.200,00')
+            if w['statement']['snapshot_sha256']:
+                digest = b.page.locator('code').filter(has_text=w['statement']['snapshot_sha256'])
+                await expect(digest).to_be_visible()
+                assert await digest.evaluate('''el => {
+                    const range = document.createRange();
+                    range.selectNodeContents(el);
+                    const card = el.closest('.card').getBoundingClientRect();
+                    return Array.from(range.getClientRects()).every(r => r.left >= card.left && r.right <= card.right);
+                }'''), 'Snapshot hash extends beyond its card'
+            if os.environ.get('VERWALINO_CAPTURE_DESIGN') == '1':
+                directory = Path(__file__).resolve().parents[3] / 'docs/assets/design/weg-statements'
+                directory.mkdir(parents=True, exist_ok=True)
+                if w['display_state'] == 'finalized':
+                    await digest.locator('..').locator('..').screenshot(path=str(directory / f'hash-after-{width}.png'))
+                height = await card.evaluate('el => Math.ceil(el.getBoundingClientRect().height) + 200')
+                await b.page.set_viewport_size({'width': width, 'height': max(1000, height)})
+                await card.screenshot(path=str(directory / f"{w['display_state']}-after-{width}.png"))
+                await b.page.set_viewport_size({'width': width, 'height': 1000})
+            if not await b.page.locator('main').evaluate('(el) => el.scrollWidth <= el.clientWidth'):
+                failures.append(f'{width}: main content overflows')
+            for table in await card.locator('table').all():
+                if not await table.locator('..').evaluate("el => ['auto', 'scroll'].includes(getComputedStyle(el).overflowX)"):
+                    failures.append(f'{width}: statement has no horizontal scroll container')
+                amount = table.get_by_role('cell', name='6400.00 EUR', exact=True).first
+                if await amount.evaluate('''el => new Set(Array.from(el.firstChild.textContent, (_, i) => {
+                    const range = document.createRange();
+                    range.setStart(el.firstChild, i); range.setEnd(el.firstChild, i + 1);
+                    return range.getBoundingClientRect().top;
+                })).size > 1'''):
+                    failures.append(f'{width}: amount breaks across lines')
+                await table.locator('..').evaluate('el => { el.scrollLeft = el.scrollWidth; }')
+                assert await amount.evaluate('''el => {
+                    const cell = el.getBoundingClientRect(), container = el.closest('table').parentElement.getBoundingClientRect();
+                    return cell.left >= container.left && cell.right <= container.right + 1;
+                }'''), 'Full amount cannot be reached inside the statement card'
+            if os.environ.get('VERWALINO_CAPTURE_DESIGN') == '1' and width == 360:
+                await b.page.set_viewport_size({'width': width, 'height': max(1000, height)})
+                await card.screenshot(path=str(directory / f"{w['display_state']}-amount-after-{width}.png"))
+                await b.page.set_viewport_size({'width': width, 'height': 1000})
+        assert not failures, failures
+        assert not console_errors and not b.errors, (console_errors, b.errors)
+
+    b.run(check())
+    assert world.look(world.actor, f"/api/weg-settlements/{w['run']}").json() == w['statement']
