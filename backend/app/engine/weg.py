@@ -480,12 +480,12 @@ def compute_weg_jahresabrechnung(inp: WegSettlementInput) -> WegResult:
     plan_by_owner = {a.owner_profile_id: _money(a.plan_advance_total) for a in inp.plan_advances}
     paid_by_owner = {a.owner_profile_id: _money(a.plan_advance_total) for a in inp.paid_advances}
 
-    # The complete set of owners = those with cost cells ∪ those with a plan
-    # advance (an owner with a plan but zero cost still gets a Spitze = -plan).
+    # Payment-only owners still need their own account balance and credit;
+    # this does not add any costs or plan Soll to their resolved Spitze.
     if inp.reserve_paid_contributions is not None:
         owner_reserve = {item.owner_profile_id: item.plan_advance_total for item in inp.reserve_paid_contributions}
     billed_owner_ids = set(owner_cost_lines) | set(plan_by_owner)
-    all_owner_ids = billed_owner_ids | set(owner_reserve)
+    all_owner_ids = billed_owner_ids | set(owner_reserve) | set(paid_by_owner)
 
     owners: list[OwnerResult] = []
     plan_advances_total = Decimal("0.00")
@@ -497,6 +497,8 @@ def compute_weg_jahresabrechnung(inp: WegSettlementInput) -> WegResult:
         owner_cost_total = _money(uml + nicht)
         plan_advance = plan_by_owner.get(owner_id, Decimal("0.00"))
         spitze = _money(owner_cost_total - plan_advance)
+        paid = paid_by_owner.get(owner_id)
+        account_balance = _money(plan_advance - paid) if paid is not None else None
         plan_advances_total += plan_advance
         abr_total += spitze
         owners.append(
@@ -510,8 +512,10 @@ def compute_weg_jahresabrechnung(inp: WegSettlementInput) -> WegResult:
                 plan_advance=plan_advance,
                 abrechnungsspitze=spitze,
                 paid_advances=paid_by_owner.get(owner_id),
+                account_balance=account_balance,
+                payment_amount=_money(spitze + account_balance) if account_balance is not None else None,
                 reserve_notice='Rücklagenzahlung ohne Kosten- oder Planposition. Bitte prüfen Sie die Eigentümerzuordnung.'
-                    if owner_id not in billed_owner_ids else None,
+                    if owner_id not in billed_owner_ids and owner_id in owner_reserve else None,
             )
         )
 

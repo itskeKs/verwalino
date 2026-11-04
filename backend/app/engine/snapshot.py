@@ -424,6 +424,10 @@ def build_weg_snapshot_payload(
                     "plan_advance": _m(o.plan_advance),
                     "abrechnungsspitze": _m(o.abrechnungsspitze),
                     "paid_advances": _m(o.paid_advances),
+                    "plan_soll": _m(o.plan_advance),
+                    "paid": _m(o.paid_advances),
+                    "account_balance": _m(o.account_balance),
+                    "payment_amount": _m(o.payment_amount),
                     "cost_lines": [
                         {
                             "line_type": ln.line_type,

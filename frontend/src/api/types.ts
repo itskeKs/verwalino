@@ -1284,6 +1284,17 @@ export interface WegLine {
   note: string | null;
 }
 
+export interface WegOwnerBalance {
+  owner_profile_id: string;
+  owner_cost_total: string;
+  abrechnungsspitze: string;
+  plan_soll: string;
+  paid: string;
+  account_balance: string;
+  payment_amount: string;
+  ownership_periods: { unit_number: string; valid_from: string; valid_to: string }[];
+}
+
 export interface WegRun {
   id: string;
   organization_id: string;
@@ -1300,6 +1311,7 @@ export interface WegRun {
   finalized_at: string | null;
   superseded_by_id: string | null;
   lines: WegLine[];
+  owner_results?: WegOwnerBalance[];
   delete_restriction: { code: string; message: string } | null;
 }
 

@@ -515,6 +515,8 @@ class OwnerResult:
     # Spitze (m4 section 2.1). None if not supplied.
     paid_advances: Decimal | None = None
     reserve_notice: str | None = None
+    account_balance: Decimal | None = None
+    payment_amount: Decimal | None = None
 
 
 @dataclass(frozen=True)

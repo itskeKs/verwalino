@@ -895,6 +895,11 @@ code {
 /* Frozen identifiers and long German titles must remain readable on phones. */
 .settlement-detail { min-width: 0; overflow-wrap: anywhere; }
 .settlement-detail .info-table { table-layout: fixed; }
+.weg-owner-balance { min-width: 0; margin-bottom: 1.5rem; }
+.weg-owner-balance dl > div { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 0.25rem 1rem; padding: 0.65rem 0; border-bottom: 1px solid hsl(var(--ui-border)); }
+.weg-owner-balance dt { flex: 1 1 14rem; }
+.weg-owner-balance dd { margin: 0; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.weg-owner-balance dl > div:last-child { font-weight: 700; }
 .reserve-ledger-table { table-layout: fixed; }
 .reserve-ledger-table th:first-child { width: 6.5rem; }
 .reserve-ledger-table th:last-child { width: 8rem; }
