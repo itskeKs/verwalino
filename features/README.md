@@ -100,6 +100,15 @@ process's mode only selects tags and cannot change that server's policy. A
 nightly run in both modes, including a server started with
 `HV_DEPLOYMENT_MODE=hosted`, is tracked in #103.
 
+The `save_lifecycle.feature` browser journey saves units, people, profiles, leases and bank
+accounts and assigns a receipt at desktop and 360 px. It pauses each real post-save read to
+check retained content and scroll, then verifies the new values without a manual reload.
+Its delayed-editor examples confirm contact-editor invalidation after a structured access refusal
+and a second bank edit against the last confirmed account data. The
+[`post_import_assignment` journey](journeys/post_import_assignment.feature) imports sixty receipts
+through the UI, assigns a lower row on the import page and requires a viewport-visible receipt
+without changing the statement's scroll position at 1280 and 360 px.
+
 ## How the step library is organised
 
 - `features/<name>.feature` - the spec.

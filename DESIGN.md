@@ -308,8 +308,12 @@ New screens follow these page structures and use a German noun as their `h1`.
 - **Detail page** (`PropertyDetailPage.tsx`, `MandateDetailPage.tsx`): back link ("← Alle Objekte";
   kit pages use an `ArrowLeft` icon link), `h1` (kit pages put a `Badge` beside it), action buttons, then
   stacked cards, each with an `h2` or `CardTitle`: key-value `info-table` first, then related lists and
-  panels, each with its own "+ Neue ..." action. Loading, error and not-found replace the whole page
-  (`if (loading) return <p>Lade...</p>`, `Objekt nicht gefunden.`).
+  panels, each with its own "+ Neue ..." action. Loading replaces the page only on its first load
+  (`if (loading && !data) return <p>Lade...</p>`). The property, person and unit detail pages retain
+  loaded data and mounted panels during a save refresh. These six save surfaces disable browser
+  scroll anchoring so closing an inline form does not pull the view to the top. A route
+  change starts a fresh detail state; a confirmed loss of access clears protected data. Refresh
+  errors stay inline beside the retained data. Initial errors and not-found replace the page.
 - **Form.** `.form-grid` (two columns, one below 768 px). A `<label>` wraps its control with the caption
   above it; required fields end in ` *` plus native `required`; `form-full-width` spans both columns.
   `.form-actions` at the end: submit first (`btn btn--primary`), then "Abbrechen". While saving, the form
@@ -805,6 +809,47 @@ Desktop is 1280 px and phone is 360 px. No production data is used.
 | Payment list load failure | [before](docs/assets/design/missing-weg-objects/before-zahlungen-list-1280.png) · [after](docs/assets/design/missing-weg-objects/after-zahlungen-list-1280.png) | [before](docs/assets/design/missing-weg-objects/before-zahlungen-list-360.png) · [after](docs/assets/design/missing-weg-objects/after-zahlungen-list-360.png) |
 | Economic-plan list load failure | [before](docs/assets/design/missing-weg-objects/before-wirtschaftsplaene-list-1280.png) · [after](docs/assets/design/missing-weg-objects/after-wirtschaftsplaene-list-1280.png) | [before](docs/assets/design/missing-weg-objects/before-wirtschaftsplaene-list-360.png) · [after](docs/assets/design/missing-weg-objects/after-wirtschaftsplaene-list-360.png) |
 | WEG list load failure | [before](docs/assets/design/missing-weg-objects/before-weg-abrechnungen-list-1280.png) · [after](docs/assets/design/missing-weg-objects/after-weg-abrechnungen-list-1280.png) | [before](docs/assets/design/missing-weg-objects/before-weg-abrechnungen-list-360.png) · [after](docs/assets/design/missing-weg-objects/after-weg-abrechnungen-list-360.png) |
+
+### Master-data save lifecycle
+
+Property units, person creation/editing and profile designation, unit ownership/lease saves,
+and bank account creation/editing confirm only successful write responses with inline
+`role="status"` receipts that stay at the top of the scrolling content while their page is open (for example “Einheit gespeichert.”, “Person gespeichert.”,
+“Mieterprofil gespeichert.”, “Mietvertrag gespeichert.” and “Bankkonto gespeichert.”).
+A failed write retains useful form inputs and its error; it does not create a receipt.
+The persons and bank account lists stay mounted during save refreshes. Search/filter changes
+start a new list. Transaction assignment retains the table during refresh and applies the
+server-confirmed status immediately, disabling the completed row's actions; the existing
+“Umsatz zugeordnet.” receipt and draft-only reserve receipt keep their meanings.
+The transaction receipt sits outside the import card, including on `?import=1`, so it remains
+visible while assigning a receipt further down a long imported statement. Confirmed access loss
+also closes the persons inline editor and transaction split dialog, discards their private state
+and invalidates late work; transient failures keep useful inputs. Bank account edits update their
+canonical row from the successful response before the next edit can open.
+
+
+Before/after captures use the real local browser and shared disposable test database with
+synthetic rental records at 1280 and 360 px. After captures follow the saves without a manual reload.
+
+| View | Desktop before / after | 360 px before / after |
+|---|---|---|
+| Property units | [before](docs/assets/design/save-lifecycle/before-property-1280.png) · [after](docs/assets/design/save-lifecycle/after-property-1280.png) | [before](docs/assets/design/save-lifecycle/before-property-360.png) · [after](docs/assets/design/save-lifecycle/after-property-360.png) |
+| Persons | [before](docs/assets/design/save-lifecycle/before-persons-1280.png) · [after](docs/assets/design/save-lifecycle/after-persons-1280.png) | [before](docs/assets/design/save-lifecycle/before-persons-360.png) · [after](docs/assets/design/save-lifecycle/after-persons-360.png) |
+| Person profiles | [before](docs/assets/design/save-lifecycle/before-person-1280.png) · [after](docs/assets/design/save-lifecycle/after-person-1280.png) | [before](docs/assets/design/save-lifecycle/before-person-360.png) · [after](docs/assets/design/save-lifecycle/after-person-360.png) |
+| Unit leases | [before](docs/assets/design/save-lifecycle/before-unit-1280.png) · [after](docs/assets/design/save-lifecycle/after-unit-1280.png) | [before](docs/assets/design/save-lifecycle/before-unit-360.png) · [after](docs/assets/design/save-lifecycle/after-unit-360.png) |
+| Bank accounts | [before](docs/assets/design/save-lifecycle/before-accounts-1280.png) · [after](docs/assets/design/save-lifecycle/after-accounts-1280.png) | [before](docs/assets/design/save-lifecycle/before-accounts-360.png) · [after](docs/assets/design/save-lifecycle/after-accounts-360.png) |
+| Transaction assignment | [before](docs/assets/design/save-lifecycle/before-assignment-1280.png) · [after](docs/assets/design/save-lifecycle/after-assignment-1280.png) | [before](docs/assets/design/save-lifecycle/before-assignment-360.png) · [after](docs/assets/design/save-lifecycle/after-assignment-360.png) |
+
+Delayed-refresh and post-import regression captures use the same synthetic test environment.
+Contact access-loss captures inject a synthetic HTTP 401 response into the delayed list read;
+they verify frontend invalidation, not a server-side permission change. Account follow-up edits
+and the sixty-receipt import/assignment use the real API. Each pair is desktop/360 px.
+
+| Case | Desktop before / after | 360 px before / after |
+|---|---|---|
+| Contact editor after access loss | [before](docs/assets/design/save-lifecycle/r1-before-persons-access-loss-1280.png) · [after](docs/assets/design/save-lifecycle/r1-after-persons-access-loss-1280.png) | [before](docs/assets/design/save-lifecycle/r1-before-persons-access-loss-360.png) · [after](docs/assets/design/save-lifecycle/r1-after-persons-access-loss-360.png) |
+| Account follow-up edit | [before](docs/assets/design/save-lifecycle/r1-before-accounts-followup-1280.png) · [after](docs/assets/design/save-lifecycle/r1-after-accounts-followup-1280.png) | [before](docs/assets/design/save-lifecycle/r1-before-accounts-followup-360.png) · [after](docs/assets/design/save-lifecycle/r1-after-accounts-followup-360.png) |
+| Assignment after importing a long statement | [before](docs/assets/design/save-lifecycle/r1-before-assignment-after-import-1280.png) · [after](docs/assets/design/save-lifecycle/r1-after-assignment-after-import-1280.png) | [before](docs/assets/design/save-lifecycle/r1-before-assignment-after-import-360.png) · [after](docs/assets/design/save-lifecycle/r1-after-assignment-after-import-360.png) |
 
 ## Screenshots
 

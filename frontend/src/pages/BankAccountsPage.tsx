@@ -13,7 +13,7 @@ import {
   createBankAccount,
   updateBankAccount,
 } from "../api/endpoints";
-import type { BankAccount, BankAccountCreate, BankAccountType } from "../api/types";
+import type { BankAccount, BankAccountCreate, BankAccountType, BankAccountUpdate } from "../api/types";
 import { PropertySelector } from "../components/PropertySelector";
 import { ApiError } from "../api/client";
 import { MasterDataEditor } from "../components/MasterDataEditor";
@@ -49,12 +49,19 @@ function makeEmptyForm(): BankAccountCreate {
 }
 
 export function BankAccountsPage() {
+  const [params] = useSearchParams();
+  return <BankAccounts key={params.get("property_id") ?? ""} />;
+}
+
+function BankAccounts() {
   const { session } = useAuth();
   const canImport = session?.role === "OWNER_ADMIN" || session?.role === "CLERK";
   const [searchParams, setSearchParams] = useSearchParams();
   const [accounts, setAccounts] = useState<BankAccount[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  const [loaded, setLoaded] = useState(false);
+  const [success, setSuccess] = useState<string | null>(null);
   const [showForm, setShowForm] = useState(false);
   const [form, setForm] = useState<BankAccountCreate>(makeEmptyForm());
   const [saving, setSaving] = useState(false);
@@ -69,9 +76,10 @@ export function BankAccountsPage() {
     setLoading(true);
     setError(null);
     listBankAccounts(propertyFilter || undefined)
-      .then(items => { if (version === requestVersion.current) setAccounts(items); })
+      .then(items => { if (version === requestVersion.current) { setAccounts(items); setLoaded(true); } })
       .catch((err) => {
         if (version !== requestVersion.current) return;
+        if (err instanceof ApiError && [401, 403, 404].includes(err.status)) setAccounts([]);
         if (err instanceof ApiError && err.status === 401) {
           setError("Nicht authentifiziert. Bitte erneut anmelden.");
         } else {
@@ -104,16 +112,25 @@ export function BankAccountsPage() {
     setShowForm(true);
   }
 
+  async function saveAccount(id: string, changes: BankAccountUpdate) {
+    setSuccess(null);
+    const saved = await updateBankAccount(id, changes);
+    setAccounts(current => current.map(account => account.id === id ? { ...account, ...saved } : account));
+    return saved;
+  }
+
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     if (!canImport || busyRef.current) return;
     busyRef.current = true;
     const version = requestVersion.current;
+    setSuccess(null);
     setSaving(true);
     setError(null);
     try {
       await createBankAccount(form);
       if (version !== requestVersion.current) return;
+      setSuccess("Bankkonto gespeichert.");
       setShowForm(false);
       reload();
     } catch (err) {
@@ -130,7 +147,7 @@ export function BankAccountsPage() {
   }
 
   return (
-    <div className="paged-list">
+    <div className="paged-list" style={{ overflowAnchor: "none" }}>
       <div
         style={{
           display: "flex",
@@ -250,10 +267,11 @@ export function BankAccountsPage() {
         </div>
       )}
 
-      {loading ? (
+      {success && <p role="status" className="sticky top-0 z-10 bg-background py-2">{success}</p>}
+      {loading && !loaded ? (
         <p>Lade...</p>
       ) : accounts.length === 0 ? (
-        <p className="empty-hint">Keine Bankkonten vorhanden.</p>
+        !error && <p className="empty-hint">Keine Bankkonten vorhanden.</p>
       ) : (
         <div className="card paged-table">
           <table className="data-table">
@@ -286,8 +304,8 @@ export function BankAccountsPage() {
                     {canImport && <MasterDataEditor key={`${propertyFilter}:${a.id}`} title="Bankkonto bearbeiten"
                       initial={{ label: a.label, iban: a.iban, bic: a.bic, bank_name: a.bank_name }}
                       fields={[{ key: "label", label: "Bezeichnung", maxLength: 255 }, { key: "iban", label: "IBAN", maxLength: 34, nullable: true }, { key: "bic", label: "BIC", maxLength: 11, nullable: true }, { key: "bank_name", label: "Bank", maxLength: 255, nullable: true }]}
-                      save={changes => updateBankAccount(a.id, changes)} onSaved={reload}
-                      active={a.is_active !== false} endLabel="Bankkonto beenden" setActive={is_active => updateBankAccount(a.id, { is_active })}
+                      save={changes => saveAccount(a.id, changes)} onSaved={() => { setSuccess("Bankkonto gespeichert."); reload(); }}
+                      active={a.is_active !== false} endLabel="Bankkonto beenden" setActive={is_active => saveAccount(a.id, { is_active })}
                       description="Bezeichnung und Bankdaten bearbeiten. Bereits verwendete IBAN/BIC können nicht geändert werden; eine Umbenennung ändert keine SEPA-Daten." />}
 
                     {canImport && a.is_active !== false && <Link className="btn" to={`/bankkonten/${a.id}/umsaetze?import=1`}>Kontoauszug importieren</Link>}

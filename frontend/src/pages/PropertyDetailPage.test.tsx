@@ -30,6 +30,23 @@ beforeEach(() => {
   vi.mocked(endpoints.getPropertyKnowledge).mockResolvedValue(null as never);
 });
 
+it("keeps the property and panels while a saved unit refreshes", async () => {
+  let finish!: (value: never) => void;
+  vi.spyOn(endpoints, "createUnit").mockResolvedValue({ id: "new-unit" } as never);
+  render(<AuthCtx.Provider value={{ loading: false, session: { user_id: "u", organization_id: "o", role: "CLERK" }, login: vi.fn(), logout: vi.fn() }}><MemoryRouter initialEntries={["/objekte/property"]}><Routes><Route path="/objekte/:propertyId" element={<PropertyDetailPage />} /></Routes></MemoryRouter></AuthCtx.Provider>);
+  const panel = await screen.findByRole("region", { name: "Zähler" });
+  vi.mocked(endpoints.getProperty).mockReturnValueOnce(new Promise(resolve => { finish = resolve; }));
+  vi.mocked(endpoints.listUnits).mockResolvedValue([{ id: "new-unit", number: "42", location: "Gartenflügel", usage_type: "WOHNUNG" }] as never);
+  fireEvent.click(screen.getByRole("button", { name: "+ Neue Einheit" }));
+  fireEvent.change(screen.getByLabelText("Nummer *"), { target: { value: "42" } });
+  fireEvent.click(screen.getByRole("button", { name: "Speichern" }));
+  expect(await screen.findByRole("status")).toHaveTextContent("Einheit gespeichert.");
+  expect(screen.getByRole("heading", { name: "T30 Haus" })).toBeVisible();
+  expect(panel).toBeInTheDocument();
+  await act(async () => finish({ id: "property", name: "T30 Haus", management_type: "MIET", fiscal_year_start_month: 1 } as never));
+  expect(await screen.findByRole("link", { name: "42" })).toBeVisible();
+});
+
 it.each([["OWNER_ADMIN", true], ["CLERK", true], ["READ_ONLY", false], ["UNKNOWN", false]] as const)(
   "binds the property meter panel without a unit and with role %s", async (role, canWrite) => {
     render(<AuthCtx.Provider value={{ loading: false, session: { user_id: "user", organization_id: "org", role }, login: vi.fn(), logout: vi.fn() }}>

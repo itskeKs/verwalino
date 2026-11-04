@@ -2,7 +2,7 @@
  * Persons list page -- shows all Personen with inline creation/editing.
  */
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { createPerson, updatePerson } from "../api/endpoints";
 import type { Person, PersonCreate } from "../api/types";
@@ -40,9 +40,15 @@ const EMPTY_FORM: PersonFormData = {
 };
 
 export function PersonsPage() {
+  const page = usePagedList<Person>("/api/persons/page", { keepOnReload: true });
+  return <Persons key={page.accessDenied ? "denied" : "available"} page={page} />;
+}
+
+function Persons({ page }: { page: ReturnType<typeof usePagedList<Person>> }) {
   const { session } = useAuth();
-  const canWrite = session?.role === "OWNER_ADMIN" || session?.role === "CLERK";
-  const page = usePagedList<Person>("/api/persons/page");
+  const canWrite = !page.accessDenied && (session?.role === "OWNER_ADMIN" || session?.role === "CLERK");
+  const active = useRef(false);
+  useEffect(() => { active.current = true; return () => { active.current = false; }; }, []);
   const persons = page.items;
   const reload = page.reload;
   const loading = page.loading;
@@ -51,6 +57,7 @@ export function PersonsPage() {
   const [editId, setEditId] = useState<string | null>(null);
   const [form, setForm] = useState<PersonFormData>(EMPTY_FORM);
   const [saving, setSaving] = useState(false);
+  const [success, setSuccess] = useState<string | null>(null);
 
   function openCreate() {
     if (!canWrite) return;
@@ -81,6 +88,7 @@ export function PersonsPage() {
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     if (!canWrite) return;
+    setSuccess(null);
     setSaving(true);
     setError(null);
     try {
@@ -102,22 +110,25 @@ export function PersonsPage() {
       } else {
         await createPerson(body);
       }
+      if (!active.current) return;
+      setSuccess("Person gespeichert.");
       setShowForm(false);
       setEditId(null);
       reload();
     } catch (err) {
+      if (!active.current) return;
       if (err instanceof ApiError) {
         setError(err.message);
       } else {
         setError(String(err));
       }
     } finally {
-      setSaving(false);
+      if (active.current) setSaving(false);
     }
   }
 
   return (
-    <div className="paged-list">
+    <div className="paged-list" style={{ overflowAnchor: "none" }}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "1rem" }}>
         <h1 style={{ margin: 0 }}>Personen</h1>
         {canWrite && <button className="btn btn--primary" onClick={openCreate}>
@@ -238,10 +249,11 @@ export function PersonsPage() {
         </div>
       )}
 
+      {success && <p role="status" className="sticky top-0 z-10 bg-background py-2">{success}</p>}
       {loading && persons.length === 0 ? (
         <p>Lade...</p>
       ) : persons.length === 0 ? (
-        <p className="empty-hint">Keine Personen vorhanden.</p>
+        !(error || page.error) && <p className="empty-hint">Keine Personen vorhanden.</p>
       ) : (
         <div className="card paged-table">
           <table className="data-table">
