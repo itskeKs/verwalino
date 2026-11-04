@@ -37,6 +37,7 @@ from app.engine.types import OwnerPeriodInput
 from app.engine.mietkonto import (
     AdvanceFilter,
     AdvanceCredit,
+    ExpectedCharge,
     LeaseChargeInput,
     RentChangeInput,
     MietkontoResult,
@@ -53,6 +54,7 @@ from app.engine.mietkonto import (
     tenant_expected_charges,
 )
 from app.models.audit_event import AuditEvent
+from app.models.economic_plan import EconomicPlan
 from app.services.financial_scope_service import FinancialScopeService
 from app.models.payment import Payment
 from app.services.special_levy_service import SpecialLevyService
@@ -601,6 +603,32 @@ class PaymentService:
         return account_statement(charges, [_to_payment_input(p) for p in scoped
                                            if p.payment_type != "KAUTION"])
 
+    async def owner_plan_charges(
+        self, plan: EconomicPlan, owner_profile_id: uuid.UUID,
+        period_start: date, period_end: date,
+    ) -> list[ExpectedCharge]:
+        """Dated advances for an authorized finalized plan, shared with dunning."""
+        lines = await self._plan_lines.list_for_plan(plan.id)
+        advance_lines = [
+            OwnerAdvanceChargeInput(
+                owner_profile_id=ln.owner_profile_id, unit_id=ln.unit_id,
+                monthly_amount=ln.monthly_amount,
+            )
+            for ln in lines
+            if ln.line_type == "OWNER_ADVANCE"
+            and ln.owner_profile_id is not None and ln.monthly_amount is not None
+        ]
+        history = [OwnerPeriodInput(o.unit_id, o.owner_profile_id, o.valid_from,
+            db_exclusive_to_engine_inclusive(o.valid_to), o.mea_share)
+            for o in await SettlementRunRepository(self._session, self._org_id).ownership_for_property(plan.property_id)]
+        try:
+            return owner_expected_charges(advance_lines, owner_profile_id,
+                max(period_start, plan.period_start), min(period_end, plan.period_end),
+                owner_periods=history, plan_start=plan.period_start)
+        except ValueError as exc:
+            raise HTTPException(422, {"code": "hausgeld_ownership_invalid",
+                "message": "Die Eigentumszeiträume oder Miteigentumsanteile für das Hausgeld sind unvollständig."}) from exc
+
     async def account_statement_for_owner(
         self,
         owner_profile_id: uuid.UUID,
@@ -638,27 +666,7 @@ class PaymentService:
             if sphere is not None and (period_start < plan.period_start or period_end > plan.period_end):
                 raise HTTPException(422, 'Report period is outside economic plan')
             if plan.status == "finalized":
-                lines = await self._plan_lines.list_for_plan(economic_plan_id)
-                advance_lines = [
-                    OwnerAdvanceChargeInput(
-                        owner_profile_id=ln.owner_profile_id,
-                        unit_id=ln.unit_id,
-                        monthly_amount=ln.monthly_amount,
-                    )
-                    for ln in lines
-                    if ln.line_type == "OWNER_ADVANCE"
-                    and ln.owner_profile_id is not None
-                    and ln.monthly_amount is not None
-                ]
-                history = [OwnerPeriodInput(o.unit_id, o.owner_profile_id, o.valid_from,
-                    db_exclusive_to_engine_inclusive(o.valid_to), o.mea_share)
-                    for o in await SettlementRunRepository(self._session, self._org_id).ownership_for_property(plan.property_id)]
-                try:
-                    charges = owner_expected_charges(advance_lines, owner_profile_id,
-                        max(period_start, plan.period_start), min(period_end, plan.period_end), owner_periods=history, plan_start=plan.period_start)
-                except ValueError as exc:
-                    raise HTTPException(422, {"code": "hausgeld_ownership_invalid",
-                        "message": "Die Eigentumszeiträume oder Miteigentumsanteile für das Hausgeld sind unvollständig."}) from exc
+                charges = await self.owner_plan_charges(plan, owner_profile_id, period_start, period_end)
 
         if sphere is not None and property_id is not None and sphere.property_id != property_id:
             raise HTTPException(422, 'Property differs from accounting scope')

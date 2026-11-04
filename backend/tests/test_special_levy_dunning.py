@@ -153,9 +153,10 @@ async def test_multiple_levies_and_actual_payment_matching(levy_db, levy_fixture
 
 @pytest.mark.asyncio
 async def test_plan_plus_levy_keeps_hausgeld_semantics(levy_db, levy_fixture):
-    ids = {**levy_fixture, 'plan': uuid.uuid4(), 'profile': levy_fixture['owners'][0]}
+    ids = {**levy_fixture, 'plan': uuid.uuid4(), 'profile': levy_fixture['owners'][0],
+           'unit': levy_fixture['units'][0]}
     await levy_db.execute(text("INSERT INTO economic_plan(id,organization_id,property_id,plan_year,period_start,period_end,status,engine_version) VALUES (:plan,:org,:property,2026,'2026-01-01','2026-12-31','draft','fixture')"), ids)
-    await levy_db.execute(text("INSERT INTO economic_plan_line(organization_id,economic_plan_id,line_type,owner_profile_id,label,planned_amount,monthly_amount,sort_order) VALUES (:org,:plan,'OWNER_ADVANCE',:profile,'Plan source',1200,100,1)"), ids)
+    await levy_db.execute(text("INSERT INTO economic_plan_line(organization_id,economic_plan_id,line_type,unit_id,owner_profile_id,label,planned_amount,monthly_amount,sort_order) VALUES (:org,:plan,'OWNER_ADVANCE',:unit,:profile,'Plan source',1200,100,1)"), ids)
     await levy_db.execute(text("INSERT INTO accounting_scope_binding(organization_id,property_id,scope_id,economic_plan_id,origin,reason,reviewed_by) VALUES (:org,:property,:scope,:plan,'REVIEWED','Plan fixture',:actor)"), ids)
     await levy_db.commit()
     async with client(ids) as api:

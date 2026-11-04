@@ -441,6 +441,23 @@ def dated_owner_ledgers(world, dated_owners):
         assert all(r['soll'] == '400.00' for r in ledger['open_items'])
 
 
+@then('their issued dunning notices each request only their six unpaid advances')
+def dated_owner_dunning(world, dated_owners):
+    w = dated_owners
+    for owner, months in [(w['owners'][1], list(range(1, 7))), (w['buyer'], list(range(7, 13)))]:
+        notice = create(world, '/api/dunning/owner', {
+            'owner_profile_id': owner, 'economic_plan_id': w['plan'],
+            'accounting_scope_id': w['scope'], 'period_start': '2026-01-01',
+            'period_end': '2026-12-31', 'reference_date': '2027-01-15'})
+        assert notice['principal_amount'] == '2400.00'
+        assert [r['period_month'] for r in notice['included_items']] == months
+        assert all(r['open_amount'] == '400.00' for r in notice['included_items'])
+        issued = world.act('POST', f"/api/dunning/{notice['id']}/issue")
+        assert issued.status_code == 200, issued.text
+        assert issued.json()['status'] == 'issued'
+        assert issued.json()['principal_amount'] == '2400.00'
+
+
 @then('the annual settlement still lists both ownership periods')
 def dated_annual_periods(world, dated_owners):
     w = dated_owners

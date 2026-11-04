@@ -404,16 +404,21 @@ def owner_expected_charges(
                         raise ValueError("Co-ownership requires positive shares for Hausgeld")
                     active = {o.owner_profile_id for o in owners}
                     rates = {oid: amount for oid, amount in previous.items() if oid in active}
-                    transferred = sum((amount for oid, amount in previous.items() if oid not in active), Decimal(0))
+                    departed = set(previous) - active
+                    transferred = sum((previous[oid] for oid in departed), Decimal(0))
                     successors = [o for o in owners if o.owner_profile_id not in previous]
-                    if bool(transferred) != bool(successors):
+                    # A sole remaining co-owner is an unambiguous full buyer.
+                    if departed and not successors and len(owners) == 1:
+                        successors = owners
+                    if bool(departed) != bool(successors):
                         raise ValueError("Ownership does not identify successors of the frozen advances")
-                    if len(set(previous) - active) > 1 and len(successors) > 1:
+                    if len(departed) > 1 and len(successors) > 1:
                         raise ValueError("Several concurrent transfers do not identify individual successors")
                     if successors:
                         parts = distribute_amount(transferred,
                             [o.mea_share if len(successors) > 1 else Decimal(1) for o in successors])
-                        rates.update((op.owner_profile_id, amount) for op, amount in zip(successors, parts))
+                        for op, amount in zip(successors, parts):
+                            rates[op.owner_profile_id] = rates.get(op.owner_profile_id, Decimal(0)) + amount
                     previous = rates
                     inherited_rates[unit] = rates
                     for oid, rate in rates.items():

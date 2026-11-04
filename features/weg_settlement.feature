@@ -53,6 +53,7 @@ Feature: WEG settlement and the owner's Hausgeld balance
     When I finalize the asset report for their whole year
     Then the plan names Karl at the year start and the report names Lena at the year end
     And Karl and Lena each owe six monthly Hausgeld advances of 400 euros
+    And their issued dunning notices each request only their six unpaid advances
     And the annual settlement still lists both ownership periods
 
   @browser

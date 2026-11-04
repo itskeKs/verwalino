@@ -182,6 +182,7 @@ monthly expected(owner, month) = economic_plan_line(OWNER_ADVANCE, owner).monthl
 - The source is the `OWNER_ADVANCE.monthly_amount` per owner already computed in M4 and rounded on a **monthly basis** (ADR-0007 E4-3b). M6 invents **nothing** here — it reads the finalized plan.
 - **Only finalized plans** yield a binding monthly Hausgeld expected amount (a `draft` plan is not a resolved expected amount). Without a finalized plan, no Hausgeld advance is invented. Since Phase 2 (T32), explicitly created, frozen special levies (Sonderumlagen) can be added independently of this as a one-time owner expected amount.
 - **Multiple units per owner:** The plan has one `OWNER_ADVANCE` row per (owner, unit); the owner's expected amount per month is the **sum** of the `monthly_amount` over their units (exact, no further rounding — cent + cent = cent, m3 §4.3).
+- **Dated ownership and dunning:** The account and owner dunning share the same calculation, limited to the finalized plan's period. The unit's frozen advances follow ownership dates; continuing co-owners keep their frozen cents and a full departing share passes to its unambiguous successor, including a sole remaining co-owner. Zero-rate shares stay zero. Ambiguous transfers are refused. For Karl through June and Lena from July at 400 EUR per month, each account and dunning principal is 2400 EUR for the year. The annual settlement's frozen plan basis remains unchanged.
 
 #### Special levies since Phase 2 (T32)
 

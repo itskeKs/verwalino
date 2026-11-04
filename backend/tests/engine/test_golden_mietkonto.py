@@ -678,3 +678,52 @@ def test_a_later_ledger_window_replays_transfers_from_the_plan_start():
     charges = owner_expected_charges(lines, _U(2), date(2026, 9, 1), date(2026, 12, 31),
         owner_periods=history, plan_start=date(2026, 1, 1))
     assert [(c.period_month, c.amount) for c in charges] == [(m, Decimal('400.00')) for m in range(9, 13)]
+
+
+@pytest.mark.parametrize('owner,monthly,months', [(1, '0.01', 12), (2, '0.00', 0), (3, '0.00', 0)])
+def test_a_zero_rate_coowner_passes_the_real_plan_rate_to_the_successor(owner, monthly, months):
+    from app.engine.types import OwnerPeriodInput, PropertyInput, UnitInput, WirtschaftsplanInput
+    from app.engine.wirtschaftsplan import compute_wirtschaftsplan
+
+    history = [OwnerPeriodInput(_U(10), _U(1), YEAR_START, None, Decimal('1')),
+               OwnerPeriodInput(_U(10), _U(2), YEAR_START, date(2025, 6, 30), Decimal('1')),
+               OwnerPeriodInput(_U(10), _U(3), date(2025, 7, 1), None, Decimal('1'))]
+    plan = compute_wirtschaftsplan(WirtschaftsplanInput(
+        plan_year=2025, period_start=YEAR_START, period_end=YEAR_END,
+        property=PropertyInput(_U(20), 'One-cent WEG', 'WEG'),
+        units=(UnitInput(_U(10), '1', 'WOHNUNG', mea=Decimal('1000')),),
+        owner_periods=tuple(history), planned_costs=(), reserve_contribution_total=Decimal('0.01')))
+    assert [(o.owner_profile_id, o.annual_advance, o.monthly_amount) for o in plan.owners] == [
+        (_U(1), Decimal('0.01'), Decimal('0.01')), (_U(2), Decimal('0.00'), Decimal('0.00'))]
+    lines = [OwnerAdvanceChargeInput(o.owner_profile_id, o.unit_id, o.monthly_amount) for o in plan.owners]
+    charges = owner_expected_charges(lines, _U(owner), YEAR_START, YEAR_END,
+        owner_periods=history, plan_start=YEAR_START)
+    assert len(charges) == months
+    assert all(c.amount == Decimal(monthly) for c in charges)
+
+
+@pytest.mark.parametrize('owner', [1, 2])
+def test_a_continuing_coowner_can_buy_the_whole_departing_share(owner):
+    from app.engine.types import OwnerPeriodInput
+
+    lines = [OwnerAdvanceChargeInput(_U(1), _U(10), Decimal('300.00')),
+             OwnerAdvanceChargeInput(_U(2), _U(10), Decimal('100.00'))]
+    history = [OwnerPeriodInput(_U(10), _U(1), YEAR_START, date(2025, 6, 30), Decimal('75')),
+               OwnerPeriodInput(_U(10), _U(2), YEAR_START, date(2025, 6, 30), Decimal('25')),
+               OwnerPeriodInput(_U(10), _U(1), date(2025, 7, 1), None, Decimal('100'))]
+    charges = owner_expected_charges(lines, _U(owner), YEAR_START, YEAR_END,
+        owner_periods=history, plan_start=YEAR_START)
+    expected = [(m, Decimal('300.00') if owner == 1 else Decimal('100.00')) for m in range(1, 7)]
+    if owner == 1:
+        expected.extend((m, Decimal('400.00')) for m in range(7, 13))
+    assert [(c.period_month, c.amount) for c in charges] == expected
+
+
+def test_a_departing_share_without_an_unambiguous_buyer_is_refused():
+    from app.engine.types import OwnerPeriodInput
+
+    lines = [OwnerAdvanceChargeInput(_U(oid), _U(10), Decimal('100.00')) for oid in (1, 2, 3)]
+    history = [OwnerPeriodInput(_U(10), _U(oid), YEAR_START,
+        date(2025, 6, 30) if oid == 3 else None, Decimal('1')) for oid in (1, 2, 3)]
+    with pytest.raises(ValueError, match='successors'):
+        owner_expected_charges(lines, _U(1), YEAR_START, YEAR_END, owner_periods=history)
