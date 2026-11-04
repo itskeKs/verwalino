@@ -29,6 +29,13 @@ takes over the loaded context but saves only after deliberate confirmation.
 The assignee is selected from actual organization members;
 Readonly members see no write actions.
 
+Tasks filters (`/aufgaben`), the Letters form (`/briefe`) and the Reports property
+selector (`/berichte`) fit a 360 px screen before and after choosing long property
+names. Native option lists retain the full names; Tab and the selection keys remain
+usable. The desktop layout keeps its existing columns. The browser regression in
+[`property_selectors.feature`](../../features/property_selectors.feature) exercises
+empty, long and short selections at 360 and 1280 px with synthetic properties.
+
 The dashboard shows open, dated tasks up to and including seven local
 calendar days into the future, regardless of their assignee. Undated and
 later-due tasks remain available in the task list. **Erledigen** (complete)

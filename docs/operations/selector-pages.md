@@ -2,6 +2,23 @@
 
 Master-data editing, ending, deletion, and paginated selection.
 
+## Native selectors in responsive forms
+
+At 360 px, native selectors keep their control, arrow and keyboard focus within
+the available panel width even when an option contains a long property name.
+The option list retains the complete label; the saved name is unchanged. At
+1280 px, standalone controls retain their natural width when it fits, and shared
+forms keep their two-column layout.
+
+This applies to Tasks, Letters, Reports, Costs, Special Levies, Meetings,
+Resolution Register, Payments account filters, the expanded cost-creation form,
+and document upload on person
+details. Payment account labels retain both the account and property name.
+The [browser regression](../../features/property_selectors.feature) checks all
+nine views and the expanded cost form before selection and after choosing long and short options with the
+keyboard at both widths, plus the existing new-property form's column layout.
+Synthetic [before/after captures](../../DESIGN.md) show the affected selectors.
+
 ## Bounded master-data selectors
 
 `GET /api/properties/page`, `/api/persons/page`, `/api/users/page` and
