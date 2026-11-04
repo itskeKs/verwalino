@@ -410,7 +410,7 @@ async def get_weg_run(
     runs_repo = SettlementRunRepository(db, auth.organization_id)
     run = await runs_repo.get_by_id(run_id)
     if run is None or run.run_type not in ("WEG_JAHRESABRECHNUNG", "VERMOEGENSBERICHT"):
-        raise HTTPException(status_code=404, detail="WEG settlement run not found")
+        raise HTTPException(status_code=404, detail="WEG-Abrechnung nicht gefunden.")
     lines_repo = SettlementLineRepository(db, auth.organization_id)
     lines = await lines_repo.list_for_run(run_id)
     restriction = await WegSettlementService(db, auth.organization_id, auth.user_id).delete_restriction(run_id)
@@ -442,7 +442,7 @@ async def input_owners(
 ):
     run = await SettlementRunRepository(db, auth.organization_id).get_by_id(run_id)
     if run is None or run.run_type != 'WEG_JAHRESABRECHNUNG':
-        raise HTTPException(404, 'WEG settlement run not found')
+        raise HTTPException(404, 'WEG-Abrechnung nicht gefunden.')
     await FinancialScopeService(db, auth.organization_id, auth.user_id).enter(
         run, capability=ScopeCapability.READ)
     # Draft visibility alone does not authorize disclosure of its complete sources.

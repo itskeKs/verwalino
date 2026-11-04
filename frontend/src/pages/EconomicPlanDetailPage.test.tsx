@@ -1,7 +1,7 @@
 import { afterEach, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { Link, MemoryRouter, Route, Routes } from "react-router-dom";
-import { api } from "../api/client";
+import { api, ApiError } from "../api/client";
 import { AuthCtx, type AuthContextValue } from "../auth/useAuth";
 import { EconomicPlanDetailPage } from "./EconomicPlanDetailPage";
 vi.mock("../components/FinancialCoverageReview", () => ({ FinancialCoverageReview: () => null }));
@@ -57,4 +57,18 @@ it("hydrates the next plan on route changes without leaking active edits", async
 it("does not expose draft write controls to read-only sessions", async () => {
   mocks(); show("READ_ONLY"); await screen.findByRole("heading", { name: /Wirtschaftsplan 2027/ });
   expect(screen.queryByRole("button", { name: "Berechnen" })).not.toBeInTheDocument(); expect(screen.queryByRole("button", { name: "Finalisieren" })).not.toBeInTheDocument();
+});
+
+it.each([
+  [new ApiError(404, "Wirtschaftsplan nicht gefunden."), "Wirtschaftsplan nicht gefunden."],
+  [new ApiError(401, "Unauthorized"), "Nicht authentifiziert."],
+  [new Error("Synthetic network failure"), "Error: Synthetic network failure"],
+])("renders load errors without the API class prefix and preserves auth and fallback: %s", async (error, expected) => {
+  const get = vi.spyOn(api, "get").mockRejectedValue(error);
+  try {
+    show();
+    const rendered = await screen.findByText(expected, { exact: true });
+    expect(rendered.firstChild?.textContent?.trim()).toBe(expected);
+    expect(screen.queryByText(/ApiError:/)).not.toBeInTheDocument();
+  } finally { get.mockRestore(); }
 });

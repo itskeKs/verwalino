@@ -2,6 +2,16 @@
 
 Bank-file import and assignment, CSV lists, dunning, and monthly rent figures.
 
+## Missing payments
+
+Opening a missing payment under `/zahlungen/:paymentId` shows exactly
+“Zahlung nicht gefunden.”. The detail API retains HTTP 404 with a `detail` string;
+a foreign organization's payment returns the same response. The payment list and
+detail load handlers display API messages without the “ApiError:” class prefix,
+while keeping their existing German sign-in notices and non-API fallbacks.
+The [missing-record journey twin](../../features/journeys/missing_weg_objects.feature)
+checks the detail error at desktop and phone widths.
+
 ## Bank transactions and file import
 
 Bank transactions are kept separate from booked payments: amounts are signed

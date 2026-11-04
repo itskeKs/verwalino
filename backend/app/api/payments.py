@@ -451,7 +451,7 @@ async def get_payment(
     repo = PaymentRepository(db, auth.organization_id)
     payment = await repo.get_by_id(payment_id)
     if payment is None:
-        raise HTTPException(status_code=404, detail="Payment not found")
+        raise HTTPException(status_code=404, detail="Zahlung nicht gefunden.")
     return _to_out(payment)
 
 

@@ -49,7 +49,7 @@ export function EconomicPlansPage() {
         setProperties(pr);
       })
       .catch((err) =>
-        setError(err instanceof ApiError && err.status === 401 ? "Nicht authentifiziert." : String(err)),
+        setError(err instanceof ApiError ? (err.status === 401 ? "Nicht authentifiziert." : err.message) : String(err)),
       )
       .finally(() => setLoading(false));
   }, []);

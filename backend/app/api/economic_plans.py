@@ -253,7 +253,7 @@ async def get_plan(
     repo = EconomicPlanRepository(db, auth.organization_id)
     plan = await repo.get_by_id(plan_id)
     if plan is None:
-        raise HTTPException(status_code=404, detail="Economic plan not found")
+        raise HTTPException(status_code=404, detail="Wirtschaftsplan nicht gefunden.")
     line_repo = EconomicPlanLineRepository(db, auth.organization_id)
     lines = await line_repo.list_for_plan(plan_id)
     return _plan_out(plan, list(lines))
