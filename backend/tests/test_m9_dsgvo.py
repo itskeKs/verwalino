@@ -23,12 +23,43 @@ import pytest
 from sqlalchemy import text
 
 from tests.test_rent_changes import rent_db, rent_world, api_client  # noqa: F401
-from tests.person_retention_support import repayment_recipient
+from tests.test_organization_export import export_store  # noqa: F401
+from tests.person_retention_support import repayment_recipient, manual_cost_recipient
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('invoice_year,service_year,until,retained', [
+    (2020, 2017, '2028-12-31', True), (2000, 1997, '2008-12-31', False)])
+@pytest.mark.parametrize('operation', ['status', 'request-deletion'])
+async def test_manual_invoice_and_service_years_share_the_existing_governing_deadline(
+        rent_world, export_store, invoice_year, service_year, until, retained, operation):
+    async with api_client(rent_world) as api:
+        person, cost = await manual_cost_recipient(api, rent_world['property'],
+            invoice_year=invoice_year, service_year=service_year)
+        preview = await api.post('/api/organizations/deletion')
+        assert preview.status_code == 200, preview.text
+        assert preview.json()['retention']['retained']['person'] == {
+            'count': 1, 'until': until, 'basis': 'GoBD / ADR-0012; required dependencies'}
+        assert preview.json()['retention']['erased']['person'] == (2 if retained else 3)
+        url = f"/api/dsgvo/persons/{person['id']}"
+        result = await (api.get(url + '/status') if operation == 'status' else api.post(url + '/request-deletion'))
+        assert result.status_code == 200, result.text
+        if operation == 'request-deletion':
+            assert result.json()['applied'] == ('RESTRICTED' if retained else 'ANONYMIZED')
+        assert result.json()['governing_retention_until'] == until
+        assert result.json()['decision'] == ('RESTRICT' if retained else 'ANONYMIZE_NOW')
+        disclosure = await api.get(url + '/export')
+        assert disclosure.status_code == 200, disclosure.text
+        assert disclosure.json()['retention_bindings'] == [{'kind': 'COST_ENTRY_VENDOR',
+            'entity_type': 'cost_entry', 'entity_id': cost['id'], 'retention_until': until}]
+        assert disclosure.json()['person']['last_name'] == (
+            'Anonymisiert' if operation == 'request-deletion' and not retained else person['last_name'])
+        assert (await api.get(f"/api/cost-entries/{cost['id']}")).json() == cost
 
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize('role', ['tenant', 'owner'])
-async def test_booked_repayment_alone_restricts_person_in_status_command_and_export(rent_world, rent_db, role):
+async def test_booked_repayment_alone_restricts_person_in_status_command_and_export(rent_world, rent_db, export_store, role):
     async with api_client(rent_world) as api:
         person, payment = await repayment_recipient(api, rent_world['property'], role=role)
         evidence = text('SELECT row_to_json(t)::text FROM payment t WHERE id=CAST(:id AS uuid)')
@@ -64,7 +95,7 @@ async def test_booked_repayment_alone_restricts_person_in_status_command_and_exp
 @pytest.mark.parametrize('role', ['tenant', 'owner'])
 @pytest.mark.parametrize('legacy', [False, True], ids=['stored-date', 'missing-date'])
 @pytest.mark.parametrize('value_date,retained', [('2026-02-01', True), ('2000-02-01', False)])
-async def test_historical_payment_dates_agree_with_organization_preview(rent_world, rent_db, role, legacy, value_date, retained):
+async def test_historical_payment_dates_agree_with_organization_preview(rent_world, rent_db, export_store, role, legacy, value_date, retained):
     async with api_client(rent_world) as api:
         person, payment = await repayment_recipient(api, rent_world['property'], role=role,
             value_date=value_date, book=not legacy)
@@ -87,7 +118,7 @@ async def test_historical_payment_dates_agree_with_organization_preview(rent_wor
 
 
 @pytest.mark.asyncio
-async def test_draft_payment_and_unbound_person_are_erasable(rent_world):
+async def test_draft_payment_and_unbound_person_are_erasable(rent_world, export_store):
     async with api_client(rent_world) as api:
         draft_person, _ = await repayment_recipient(api, rent_world['property'], book=False)
         solo = await api.post('/api/persons', json={'last_name': 'Unbound comparison'})
@@ -104,7 +135,7 @@ async def test_draft_payment_and_unbound_person_are_erasable(rent_world):
 
 
 @pytest.mark.asyncio
-async def test_payment_retention_keeps_role_isolation_and_hidden_financial_access(rent_world, rent_db):
+async def test_payment_retention_keeps_role_isolation_and_hidden_financial_access(rent_world, rent_db, export_store):
     w = rent_world
     async with api_client(w) as api, api_client(w, actor='clerk') as clerk, api_client(w, foreign=True) as foreign:
         person, payment = await repayment_recipient(api, w['property'])
@@ -143,9 +174,124 @@ async def test_retention_catalog_and_raw_facts_remain_private(rent_db):
         'economic_plan', 'economic_plan_line', 'dunning_notice', 'invoice_document', 'letter_document'}
     for role in ('app_rw', 'app_worker', 'app_review'):
         for signature in ('person_retention_categories()', 'person_retention_bindings(uuid,uuid,text)',
-                          'privacy_retention_facts(uuid,uuid)', 'privacy_retention_facts_before0159(uuid,uuid)'):
+                          'privacy_retention_facts(uuid,uuid)', 'privacy_retention_facts_before0159(uuid,uuid)',
+                          'retention_base_until(jsonb)', 'retention_source_until(text,jsonb)'):
             assert not await rent_db.scalar(text('SELECT has_function_privilege(:role,:signature,\'EXECUTE\')'),
                                            {'role': role, 'signature': signature})
+
+
+@pytest.mark.asyncio
+async def test_rental_addressee_keeps_the_existing_later_line_deadline(rent_world, rent_db, export_store):
+    w = rent_world
+    async with api_client(w) as api:
+        response = await api.post('/api/persons', json={'last_name': 'Retained rental addressee'})
+        assert response.status_code == 201, response.text
+        person = response.json()['id']
+        tenant = await api.post('/api/tenant-profiles', json={'person_id': person})
+        assert tenant.status_code == 201, tenant.text
+        run = await rent_db.scalar(text("""INSERT INTO settlement_run(organization_id,property_id,run_type,
+            tenant_profile_id,period_start,period_end,status,engine_version)
+            VALUES (:org,:property,'BK_MIETER',:tenant,'2017-01-01','2017-12-31','finalized','legacy') RETURNING id"""),
+            {**w, 'tenant': uuid.UUID(tenant.json()['id'])})
+        await rent_db.execute(text("""INSERT INTO settlement_line(organization_id,settlement_run_id,line_type,label,amount,created_at)
+            VALUES (:org,:run,'SUBTOTAL','Retained total',99,'2020-06-01')"""), {**w, 'run': run})
+        await rent_db.commit()
+        preview = await api.post('/api/organizations/deletion')
+        assert preview.status_code == 200, preview.text
+        assert preview.json()['retention']['retained']['person']['until'] == '2028-12-31'
+        state = await api.get(f'/api/dsgvo/persons/{person}/status')
+        assert state.status_code == 200, state.text
+        assert state.json()['bindings'] == [{'kind': 'SETTLEMENT_ADDRESSEE', 'entity_type': 'settlement_run',
+            'entity_id': str(run), 'retention_until': '2028-12-31'}]
+        erased = await api.post(f'/api/dsgvo/persons/{person}/request-deletion')
+        assert erased.status_code == 200, erased.text
+        assert erased.json()['applied'] == 'RESTRICTED'
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('family', ['weg', 'plan'])
+async def test_recipient_lines_use_their_own_evidence_dates_without_a_sibling_extension(
+        rent_world, rent_db, export_store, family):
+    from app.engine.canonical import canonical_sha256
+    w = rent_world
+    async with api_client(w) as api:
+        people, owners = [], []
+        for name in ('Expired line recipient', 'Retained line recipient'):
+            person = await api.post('/api/persons', json={'last_name': name})
+            assert person.status_code == 201, person.text
+            people.append(person.json())
+            owner = await api.post('/api/owner-profiles', json={'person_id': person.json()['id']})
+            assert owner.status_code == 201, owner.text
+            owners.append(uuid.UUID(owner.json()['id']))
+        root_table, line_table = ('settlement_run', 'settlement_line') if family == 'weg' else ('economic_plan', 'economic_plan_line')
+        fields = "run_type" if family == 'weg' else 'plan_year,reserve_contribution_total'
+        values = "'WEG_JAHRESABRECHNUNG'" if family == 'weg' else '2017,0'
+        root = await rent_db.scalar(text(f"""INSERT INTO {root_table}(organization_id,property_id,{fields},
+            period_start,period_end,status,engine_version,snapshot_payload,snapshot_sha256)
+            VALUES (:org,:property,{values},'2017-01-01','2017-12-31','finalized','legacy','{{}}',:sha) RETURNING id"""),
+            {**w, 'sha': canonical_sha256({})})
+        recipient = 'addressee_owner_profile_id' if family == 'weg' else 'owner_profile_id'
+        amount = 'amount' if family == 'weg' else 'planned_amount'
+        for owner, year in ((owners[0], 2017), (owners[1], 2019), (owners[1], 2020)):
+            await rent_db.execute(text(f"""INSERT INTO {line_table}(organization_id,{root_table}_id,{recipient},
+                line_type,label,{amount},created_at) VALUES (:org,:root,:owner,'SUBTOTAL','Retained source',99,:created)"""),
+                {**w, 'root': root, 'owner': owner, 'created': date(year, 6, 1)})
+        await rent_db.commit()
+        statement = text(f'SELECT row_to_json(t)::text FROM {line_table} t WHERE {root_table}_id=:root ORDER BY id')
+        before = (await rent_db.execute(statement, {'root': root})).scalars().all()
+        planned = (await rent_db.execute(text("SELECT identity,retention_until FROM organization_retention_plan(:org) WHERE entity='person'"), w)).all()
+        assert {row.identity['id']: row.retention_until.isoformat() for row in planned} == {
+            people[0]['id']: '2025-12-31', people[1]['id']: '2028-12-31'}
+        await rent_db.rollback()
+        for person, until, outcome in ((people[0], '2025-12-31', 'ANONYMIZED'), (people[1], '2028-12-31', 'RESTRICTED')):
+            url = f"/api/dsgvo/persons/{person['id']}"
+            status = await api.get(url + '/status')
+            assert status.status_code == 200, status.text
+            assert status.json()['bindings'] == [{'kind': 'FINALIZED_OWNERSHIP', 'entity_type': root_table,
+                'entity_id': str(root), 'retention_until': until}]
+            erased = await api.post(url + '/request-deletion')
+            assert erased.status_code == 200, erased.text
+            assert erased.json()['applied'] == outcome
+        assert (await rent_db.execute(statement, {'root': root})).scalars().all() == before
+        await rent_db.rollback()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('document_until,until', [(None, '2030-12-31'), ('2024-12-31', '2028-12-31'), ('2034-12-31', '2034-12-31')])
+async def test_cost_and_original_dates_use_the_same_latest_evidence_deadline(
+        rent_world, rent_db, export_store, document_until, until):
+    import hashlib
+    from app.core.storage import make_storage_key
+    w = rent_world
+    async with api_client(w) as api:
+        person, cost = await manual_cost_recipient(api, w['property'])
+        original = b'%PDF-1.4\nSynthetic retained invoice\n%%EOF'
+        digest = hashlib.sha256(original).hexdigest()
+        stored = export_store.put(make_storage_key(str(w['org']), digest), original, content_type='application/pdf')
+        document = uuid.uuid4()
+        await rent_db.execute(text("""INSERT INTO invoice_document(id,organization_id,cost_entry_id,uploaded_by,
+            storage_backend,storage_uri,original_filename,mime_type,content_byte_size,content_sha256,version,
+            chain_root_id,status,released_at,retention_until,created_at) VALUES (:doc,:org,:cost,:admin,'LOCAL_FS',
+            :uri,'Synthetic.pdf','application/pdf',:size,:sha,1,:doc,'active',now(),:until,'2022-06-01')"""),
+            {**w, 'doc': document, 'cost': uuid.UUID(cost['id']), 'uri': stored.uri, 'size': len(original),
+             'sha': digest, 'until': date.fromisoformat(document_until) if document_until else None})
+        await rent_db.commit()
+        original_row = await rent_db.scalar(text('SELECT row_to_json(d)::text FROM invoice_document d WHERE id=:doc'), {'doc': document})
+        await rent_db.rollback()
+        preview = await api.post('/api/organizations/deletion')
+        assert preview.status_code == 200, preview.text
+        assert preview.json()['retention']['retained']['person']['until'] == until
+        url = f"/api/dsgvo/persons/{person['id']}"
+        status = await api.get(url + '/status')
+        assert status.status_code == 200, status.text
+        assert status.json()['governing_retention_until'] == until
+        erased = await api.post(url + '/request-deletion')
+        assert erased.status_code == 200, erased.text
+        assert erased.json()['applied'] == 'RESTRICTED'
+        assert (await api.get(f"/api/cost-entries/{cost['id']}")).json() == cost
+        assert await rent_db.scalar(text('SELECT row_to_json(d)::text FROM invoice_document d WHERE id=:doc'), {'doc': document}) == original_row
+        assert hashlib.sha256(export_store.get(stored.uri)).hexdigest() == digest
+        await rent_db.rollback()
 
 
 @pytest.mark.asyncio
@@ -156,7 +302,7 @@ async def test_retention_catalog_and_raw_facts_remain_private(rent_db):
     ('plan', 'FINALIZED_OWNERSHIP', 'economic_plan'),
     ('dunning', 'DUNNING', 'dunning_notice'),
 ])
-async def test_original_categories_agree_in_disclosure_command_and_organization_plan(rent_world, rent_db, category, kind, entity):
+async def test_original_categories_agree_in_disclosure_command_and_organization_plan(rent_world, rent_db, export_store, category, kind, entity):
     w = rent_world
     async with api_client(w) as api:
         person = await api.post('/api/persons', json={'first_name': 'Retained', 'last_name': 'Original category'})

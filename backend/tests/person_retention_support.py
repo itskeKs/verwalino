@@ -20,3 +20,24 @@ async def repayment_recipient(api, property_id, *, role='tenant', value_date='20
         assert response.status_code == 200, response.text
         payment = response.json()
     return person, payment
+
+
+async def manual_cost_recipient(api, property_id, *, invoice_year=2020, service_year=2017):
+    async def create(path, body):
+        response = await api.post(path, json=body)
+        assert response.status_code == 201, response.text
+        return response.json()
+
+    person = await create('/api/persons', {'first_name': 'Udo', 'last_name': 'Rechnung'})
+    vendor = await create('/api/vendors', {'person_id': person['id']})
+    response = await api.get('/api/cost-categories')
+    assert response.status_code == 200, response.text
+    category = next(row for row in response.json() if row['code'] == 'GRUNDSTEUER' and row['plan_version'] == 1)
+    cost = await create('/api/cost-entries', {'property_id': str(property_id), 'vendor_id': vendor['id'],
+        'cost_category_id': category['id'], 'cost_category_plan_version': 1, 'source': 'MANUAL',
+        'invoice_date': f'{invoice_year}-06-01', 'service_period_from': f'{service_year}-01-01',
+        'service_period_to': f'{service_year}-12-31', 'gross_amount': '99.00',
+        'tenant_apportionable': 'NICHT_UMLAGEFAEHIG'})
+    confirmed = await api.post(f"/api/cost-entries/{cost['id']}/confirm")
+    assert confirmed.status_code == 200, confirmed.text
+    return person, confirmed.json()

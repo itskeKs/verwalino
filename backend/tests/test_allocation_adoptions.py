@@ -374,6 +374,7 @@ async def test_adoption_retained_evidence_blocks_downgrade_and_empty_roundtrip_r
                     db.execute(text('DELETE FROM '+table+' WHERE organization_id=:org'),ids)
             point=db.begin_nested()
             try:
+                importlib.import_module('migrations.versions.0160_shared_retention_deadlines').downgrade()
                 importlib.import_module('migrations.versions.0159_person_retention_bindings').downgrade()
                 db.execute(text('TRUNCATE allocation_integrity_attestation CASCADE'))
                 db.execute(text('TRUNCATE exception_completion CASCADE'))

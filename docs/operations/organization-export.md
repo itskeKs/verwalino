@@ -658,7 +658,13 @@ receipts remain operator-only.
 The private `person_retention_categories()` catalog (0159) defines the financial
 roots that propagate personal retention in the organization plan. Individual
 status/export and the database person-erasure command consume its direct
-bindings as well. A booked payment's structured tenant/owner recipient remains
+bindings as well. Revision 0160 also shares the evidence-date calculation,
+including the existing later-of-invoice/service rule and retained originals. A
+confirmed manual invoice dated in 2020 for services in 2017 retains its supplier
+through 2028 in both individual and organization decisions. Missing original
+retention dates keep the existing original-metadata fallback. Recipient-specific
+settlement/plan lines use their own dates and parent period, without inheriting
+a different recipient's later line. A booked payment's structured tenant/owner recipient remains
 readable during retention, including for outgoing repayments. Existing
 `retention_until` values govern; historical missing payment deadlines follow the
 existing value-date year-end rule. No payment row, amount, recipient link,
