@@ -132,16 +132,19 @@ class HeatingInputService:
                     except MeterConsumptionError:
                         if split_error is None:
                             first, last, _ = split.bases[index]
-                            annual = split.measured
-                            label = 'Periodenbasis' if (first, last) == (annual.start_reading, annual.end_reading) else 'Abschnittsbasis'
                             weight, total_weight = split.weights[index]
-                            method = "DEGREE_DAYS" if kind == "HEATING" else "DAYS"
                             item.update(consumption=str(quantities[index][2]),
                                 meter_id=str(matches[0].id), start_reading=reading(first),
-                                end_reading=reading(last),
-                                reason=f'{split.reason or "Aufteilung nach Tagen."} {label}: {first.reading_date} → {last.reading_date}.',
-                                split={'method': method, 'weight': str(weight), 'total_weight': str(total_weight),
-                                       'quantity': str(split.exact_quantity(index))})
+                                end_reading=reading(last))
+                            # Nearest annual readings can still measure one whole
+                            # occupant segment; only an actual split uses fallback weights.
+                            if weight != total_weight:
+                                annual = split.measured
+                                label = 'Periodenbasis' if (first, last) == (annual.start_reading, annual.end_reading) else 'Abschnittsbasis'
+                                method = "DEGREE_DAYS" if kind == "HEATING" else "DAYS"
+                                item.update(reason=f'{split.reason or "Aufteilung nach Tagen."} {label}: {first.reading_date} → {last.reading_date}.',
+                                    split={'method': method, 'weight': str(weight), 'total_weight': str(total_weight),
+                                           'quantity': str(split.exact_quantity(index))})
                         else:
                             item['reason']=split_error
                     else:
