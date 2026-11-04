@@ -4,6 +4,7 @@ import { Link, MemoryRouter, Route, Routes } from "react-router-dom";
 import { AuthCtx } from "../auth/useAuth";
 import { PropertyDetailPage } from "./PropertyDetailPage";
 import * as endpoints from "../api/endpoints";
+import type { ManagementType, MeaScaleStatus, Unit } from "../api/types";
 
 vi.mock("../components/AttachmentsPanel", () => ({
   AttachmentsPanel: ({ propertyId, unitId, personId, canWrite }: { propertyId?: string; unitId?: string; personId?: string; canWrite: boolean }) =>
@@ -28,6 +29,79 @@ beforeEach(() => {
   } as never);
   vi.mocked(endpoints.listUnits).mockResolvedValue([]);
   vi.mocked(endpoints.getPropertyKnowledge).mockResolvedValue(null as never);
+});
+
+function renderMeaProperty(managementType: ManagementType, mea: (string | null)[], status: MeaScaleStatus = "LEGACY_UNCONFIRMED", role = "CLERK") {
+  vi.mocked(endpoints.getProperty).mockResolvedValue({
+    id: "property", name: "Musterhaus", management_type: managementType,
+    fiscal_year_start_month: 1, mea_scale_status: status,
+    mea_denominator: status === "CONFIRMED" ? 1000 : null,
+  } as never);
+  vi.mocked(endpoints.listUnits).mockResolvedValue(mea.map((share, index): Unit => ({
+    id: `unit-${index}`, property_id: "property", number: String(index + 1),
+    location: "Gartenflügel", usage_type: "WOHNUNG", area: null, heated_area: null,
+    mea: share, building_part: "",
+  })));
+  return render(<AuthCtx.Provider value={{ loading: false, session: { user_id: "u", organization_id: "o", role }, login: vi.fn(), logout: vi.fn() }}>
+    <MemoryRouter initialEntries={["/objekte/property"]}><Routes><Route path="/objekte/:propertyId" element={<PropertyDetailPage />} /></Routes></MemoryRouter>
+  </AuthCtx.Provider>);
+}
+
+it.each([{ shares: [] }, { shares: [null, null] }])("hides MEA confirmation and the unit field for MIET without recorded shares ($shares)", async ({ shares }) => {
+  renderMeaProperty("MIET", shares);
+  await screen.findByRole("heading", { name: "Musterhaus" });
+  expect(screen.queryByRole("heading", { name: "MEA-Skala bestätigen" })).not.toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "+ Neue Einheit" }));
+  expect(screen.queryByLabelText("MEA (Miteigentumsanteil)")).not.toBeInTheDocument();
+});
+
+it.each<ManagementType>(["WEG", "MISCH", "SEV"])("shows German MEA confirmation and the unit field for %s without shares", async managementType => {
+  renderMeaProperty(managementType, [null]);
+  expect(await screen.findByRole("heading", { name: "MEA-Skala bestätigen" })).toBeVisible();
+  expect(screen.getByText("Skala noch nicht bestätigt")).toBeVisible();
+  expect(screen.queryByText("LEGACY_UNCONFIRMED")).not.toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "+ Neue Einheit" }));
+  expect(screen.getByLabelText("MEA (Miteigentumsanteil)")).toBeVisible();
+});
+
+it.each(["250.000000", "0.000000"])("keeps MEA confirmation and existing MIET share %s editable", async share => {
+  renderMeaProperty("MIET", [null, share]);
+  expect(await screen.findByRole("heading", { name: "MEA-Skala bestätigen" })).toBeVisible();
+  expect(screen.getByText(`${share} (Zähler/Skala unbestätigt)`)).toBeVisible();
+  fireEvent.click(screen.getAllByRole("button", { name: "Bearbeiten" })[1]);
+  expect(screen.getByLabelText("MEA (Miteigentumsanteil)")).toHaveValue(share);
+});
+
+it("keeps confirmed MIET shares editable without asking to confirm again", async () => {
+  renderMeaProperty("MIET", ["250.000000"], "CONFIRMED");
+  await screen.findByRole("heading", { name: "Musterhaus" });
+  expect(screen.queryByRole("heading", { name: "MEA-Skala bestätigen" })).not.toBeInTheDocument();
+  expect(screen.getByText("250.000000 / 1.000")).toBeVisible();
+  fireEvent.click(screen.getByRole("button", { name: "Bearbeiten" }));
+  expect(screen.getByLabelText("MEA (Miteigentumsanteil)")).toHaveValue("250.000000");
+});
+
+it("confirms the WEG scale through the existing action and refreshes the prompt", async () => {
+  renderMeaProperty("WEG", []);
+  vi.spyOn(endpoints, "confirmMeaScale").mockResolvedValue({} as never);
+  await screen.findByRole("heading", { name: "MEA-Skala bestätigen" });
+  vi.mocked(endpoints.getProperty).mockResolvedValue({
+    id: "property", name: "Musterhaus", management_type: "WEG", fiscal_year_start_month: 1,
+    mea_scale_status: "CONFIRMED", mea_denominator: 1000,
+  } as never);
+  fireEvent.change(screen.getByLabelText("Nenner *"), { target: { value: "1000" } });
+  fireEvent.click(screen.getByRole("button", { name: "MEA-Skala bestätigen" }));
+  expect(await screen.findByRole("status")).toHaveTextContent("MEA-Skala gespeichert.");
+  expect(endpoints.confirmMeaScale).toHaveBeenCalledWith("property", 1000);
+  expect(screen.queryByRole("heading", { name: "MEA-Skala bestätigen" })).not.toBeInTheDocument();
+});
+
+it("keeps MEA confirmation and unit editing unavailable to read-only users", async () => {
+  renderMeaProperty("WEG", ["250.000000"], "LEGACY_UNCONFIRMED", "READ_ONLY");
+  await screen.findByRole("heading", { name: "Musterhaus" });
+  expect(screen.queryByRole("heading", { name: "MEA-Skala bestätigen" })).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "+ Neue Einheit" })).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Bearbeiten" })).not.toBeInTheDocument();
 });
 
 it("keeps the property and panels while a saved unit refreshes", async () => {

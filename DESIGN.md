@@ -314,6 +314,10 @@ New screens follow these page structures and use a German noun as their `h1`.
   scroll anchoring so closing an inline form does not pull the view to the top. A route
   change starts a fresh detail state; a confirmed loss of access clears protected data. Refresh
   errors stay inline beside the retained data. Initial errors and not-found replace the page.
+  Property details offer the MEA scale confirmation and unit MEA field for WEG, MISCH and SEV;
+  MIET offers them only when an existing unit has a recorded MEA (including zero). Unset MEA
+  is not a recorded share. The confirmation card appears only for writers with an unconfirmed
+  scale, labelled “Skala noch nicht bestätigt”. Confirmed scales do not prompt again.
 - **Form.** `.form-grid` (two columns, one below 768 px). A `<label>` wraps its control with the caption
   above it; required fields end in ` *` plus native `required`; `form-full-width` spans both columns.
   `.form-actions` at the end: submit first (`btn btn--primary`), then "Abbrechen". While saving, the form
@@ -913,6 +917,21 @@ and the sixty-receipt import/assignment use the real API. Each pair is desktop/3
 | Assignment after importing a long statement | [before](docs/assets/design/save-lifecycle/r1-before-assignment-after-import-1280.png) · [after](docs/assets/design/save-lifecycle/r1-after-assignment-after-import-1280.png) | [before](docs/assets/design/save-lifecycle/r1-before-assignment-after-import-360.png) · [after](docs/assets/design/save-lifecycle/r1-after-assignment-after-import-360.png) |
 
 ## Screenshots
+
+Property MEA guidance uses new synthetic MIET and WEG properties on the disposable test
+database, showing the page top and new-unit card at 1280 and 360 CSS px. MIET has neither the scale
+confirmation nor the unit MEA field; WEG retains both and shows a German scale status.
+
+| MEA guidance | Desktop | 360 px |
+|---|---|---|
+| MIET before | [Desktop](docs/assets/design/mea-miet-before-1280.png) | [Phone](docs/assets/design/mea-miet-before-360.png) |
+| MIET after | [Desktop](docs/assets/design/mea-miet-1280.png) | [Phone](docs/assets/design/mea-miet-360.png) |
+| WEG before | [Desktop](docs/assets/design/mea-weg-before-1280.png) | [Phone](docs/assets/design/mea-weg-before-360.png) |
+| WEG after | [Desktop](docs/assets/design/mea-weg-1280.png) | [Phone](docs/assets/design/mea-weg-360.png) |
+| MIET unit before | [Desktop](docs/assets/design/mea-miet-unit-before-1280.png) | [Phone](docs/assets/design/mea-miet-unit-before-360.png) |
+| MIET unit after | [Desktop](docs/assets/design/mea-miet-unit-1280.png) | [Phone](docs/assets/design/mea-miet-unit-360.png) |
+| WEG unit before | [Desktop](docs/assets/design/mea-weg-unit-before-1280.png) | [Phone](docs/assets/design/mea-weg-unit-before-360.png) |
+| WEG unit after | [Desktop](docs/assets/design/mea-weg-unit-1280.png) | [Phone](docs/assets/design/mea-weg-unit-360.png) |
 
 The person privacy panel labels a `BOOKED_PAYMENT` binding as
 “Empfänger einer gebuchten Zahlung” in both the erasure preview and the
