@@ -325,6 +325,20 @@ New screens follow these page structures and use a German noun as their `h1`.
   open as a card above the list; small edits of master data open `MasterDataEditor` as a dialog.
   Selects, checkboxes and file inputs are the native elements.
 
+The Users page creation card follows `.form-grid`: two columns on desktop and
+one at the existing mobile breakpoint. Native email, name, initial-password and
+role controls have persistent wrapping labels; required captions are “E-Mail *”
+and “Startpasswort *”. The fieldset and labels can shrink, and controls fill their
+available width. “Benutzer anlegen” is a primary kit Button in `.form-actions`.
+The disabled fieldset and “Erstelle…” label identify pending creation. Errors
+retain all entries; a successful keyboard submission clears them and refreshes
+the user list with the selected role.
+
+| User creation | 1280 px | 360 px |
+|---|---|---|
+| Before | [Desktop](docs/assets/design/user-creation/before-1280.png) | [Phone](docs/assets/design/user-creation/before-360.png) |
+| After | [Desktop](docs/assets/design/user-creation/after-1280.png) | [Phone](docs/assets/design/user-creation/after-360.png) |
+
 The “Umsatz aufteilen” dialog uses the same form grid. Each split row is a
 full-width card with labels above its fields, two columns from 768 px and one
 column below. The lease/owner target and note span the row. Fieldsets may shrink
