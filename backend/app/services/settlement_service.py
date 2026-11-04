@@ -79,7 +79,7 @@ from app.repositories.settlement_repo import (
     SettlementRunRepository,
 )
 
-ENGINE_VERSION = "m3.2.0"
+ENGINE_VERSION = "m3.3.0"
 
 
 class SettlementPeriodConflict(HTTPException):
@@ -765,7 +765,9 @@ class SettlementService:
         if found is None or found[1] is None or found[1].code not in {'HEIZUNG_ZENTRAL','WARMWASSER_ZENTRAL'}:
             raise HTTPException(404,'Heating cost source not found')
         units = await self._runs.units_for_property(run.property_id)
-        return await HeatingInputService(self._session,self._org_id,self._runs).candidates(run,found[0],units,meter_type,base_key)
+        kind = 'HEATING' if found[1].code == 'HEIZUNG_ZENTRAL' else 'HOT_WATER'
+        return await HeatingInputService(self._session,self._org_id,self._runs).candidates(
+            run,found[0],units,meter_type,base_key,kind=kind)
 
     async def _consumption_candidates(self, run, units, entries):
         kinds = {category.code for entry, category in entries

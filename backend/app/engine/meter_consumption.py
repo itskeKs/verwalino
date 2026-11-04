@@ -9,9 +9,11 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import date, timedelta
 from decimal import Decimal, localcontext
+from fractions import Fraction
 from uuid import UUID
 
 from app.engine.periods import KIND_TENANT
+from app.engine.heizkosten import degree_day_weight
 
 
 class MeterConsumptionError(ValueError):
@@ -38,6 +40,19 @@ class MeterConsumptionSplit:
     periods: tuple[tuple[date, date, Decimal], ...]
     reason: str | None
     bases: tuple[tuple[MeterReadingInput, MeterReadingInput, int], ...]
+    weights: tuple[tuple[Fraction, Fraction], ...]
+
+    def exact_quantity(self, index: int) -> Fraction:
+        first, last, _ = self.bases[index]
+        weight, total_weight = self.weights[index]
+        return (Fraction(last.value) - Fraction(first.value)) * weight / total_weight
+
+
+def split_weight_note(split: dict) -> str:
+    """Describe frozen exact weights without re-reading the degree-day table."""
+    if split['method'] == 'DEGREE_DAYS':
+        return f"Gradtagsanteil {split['weight']} von {split['total_weight']} ‰"
+    return f"Tagesanteil {split['weight']}/{split['total_weight']}"
 
 
 def boundary_reading(readings: Sequence[MeterReadingInput]) -> MeterReadingInput:
@@ -88,13 +103,15 @@ def derive_consumption(
     return MeterConsumption(quantity, first, last)
 
 
-def split_consumption(readings, start, end, covers):
+def split_consumption(readings, start, end, covers, *, fallback="DAYS"):
     """Split a known unit-period quantity at available exact interim readings.
 
-    Between measured boundaries, missing occupant readings fall back to days.
+    Between measured boundaries, missing occupant readings use the chosen fallback.
     Only this unit's boundaries participate; another unit needs no interim reading.
     Each segment's last occupant receives the exact quantity remainder.
     """
+    if fallback not in {"DAYS", "DEGREE_DAYS"}:
+        raise ValueError("Unknown consumption split method")
     boundaries = [(c.end, c.end + timedelta(days=1)) for c in covers[:-1]]
     interim_dates = {day for previous, following in zip(covers, covers[1:])
                      if previous.kind == following.kind == KIND_TENANT
@@ -116,10 +133,13 @@ def split_consumption(readings, start, end, covers):
         if rows:
             cuts.append((first_day, boundary_reading(rows)))
         else:
-            reason = "Zwischenablesung fehlt: Aufteilung des Einheitsverbrauchs nach Tagen."
+            reason = ("Zwischenablesung fehlt: Aufteilung nach Gradtagszahlen (§ 9b HeizkostenV)."
+                      if fallback == "DEGREE_DAYS" else
+                      "Zwischenablesung fehlt: Aufteilung des Einheitsverbrauchs nach Tagen.")
     cuts.append((end + timedelta(days=1), measured.end_reading))
     amounts = [Decimal(0) for _ in covers]
     bases = [None for _ in covers]
+    weights = [None for _ in covers]
     with localcontext() as context:
         context.prec = 50
         for (a, first), (b, last) in zip(cuts, cuts[1:]):
@@ -128,13 +148,20 @@ def split_consumption(readings, start, end, covers):
             quantity = last.value - first.value
             if quantity < 0:
                 raise MeterConsumptionError("Handeingabe erforderlich: Zwischenablesung ist rückläufig.")
-            participants = [(i, max(0, (min(c.end + timedelta(days=1), b) - max(c.start, a)).days))
-                            for i, c in enumerate(covers)]
-            participants = [(i, days) for i, days in participants if days]
+            participants = [(i, max(c.start, a), min(c.end, b - timedelta(days=1)))
+                            for i, c in enumerate(covers) if max(c.start, a) < min(c.end + timedelta(days=1), b)]
+            weighted = [(i, degree_day_weight(first_day, last_day) if fallback == "DEGREE_DAYS"
+                         else Fraction((last_day - first_day).days + 1))
+                        for i, first_day, last_day in participants]
+            total_weight = sum((weight for _, weight in weighted), Fraction(0))
             left = quantity
-            for j, (i, days) in enumerate(participants):
-                part = left if j == len(participants) - 1 else quantity * days / (b-a).days
+            for j, (i, weight) in enumerate(weighted):
+                share = weight / total_weight
+                part = (left if j == len(weighted) - 1 else
+                        quantity * Decimal(share.numerator) / Decimal(share.denominator))
                 amounts[i] += part
                 bases[i] = (first, last, (b-a).days)
+                weights[i] = (weight, total_weight)
                 left -= part
-    return MeterConsumptionSplit(measured, tuple((c.start, c.end, amount) for c, amount in zip(covers, amounts)), reason, tuple(bases))
+    return MeterConsumptionSplit(measured, tuple((c.start, c.end, amount) for c, amount in zip(covers, amounts)),
+                                 reason, tuple(bases), tuple(weights))

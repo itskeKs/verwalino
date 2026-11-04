@@ -1,7 +1,8 @@
 """Resolve explicit BK heating intent within an already-authorized financial run.
 
 No money calculation here. Exact boundary readings avoid using the same annual
-quantity for successive tenants. Missing interim readings split known period consumption by days within the unit;
+quantity for successive tenants. Missing interim readings split known period consumption
+by degree days for heat and days for hot water within the unit;
 missing period consumption still requires explicit manual input.
 """
 from __future__ import annotations
@@ -10,12 +11,13 @@ import uuid
 from dataclasses import dataclass, field
 from datetime import date, timedelta
 from decimal import Decimal
+from fractions import Fraction
 from types import SimpleNamespace
 
 from fastapi import HTTPException
 
 from app.core.temporal import db_exclusive_to_engine_inclusive
-from app.engine.meter_consumption import MeterConsumptionError, MeterReadingInput, boundary_reading, derive_consumption, split_consumption
+from app.engine.meter_consumption import MeterConsumptionError, MeterReadingInput, boundary_reading, derive_consumption, split_consumption, split_weight_note
 from app.engine.periods import build_unit_cover, period_for_date, property_period_windows
 from app.engine.types import HeatingPositionInput, HeatingSliceInput, LeasePeriodInput, OwnerPeriodInput
 from app.repositories.meter_repo import MeterRepository, MeterReadingRepository
@@ -58,7 +60,15 @@ class HeatingInputService:
     def __init__(self, session, org_id, runs):
         self.session, self.org_id, self.runs = session, org_id, runs
 
-    async def candidates(self, run, entry, units, meter_type, base_key):
+    async def candidates(self, run, entry, units, meter_type, base_key, *, kind):
+        rows = await self._candidates(run, entry, units, meter_type, base_key, kind=kind)
+        for row in rows:
+            split = row.pop('split', None)
+            if split:
+                row['reason'] += ' ' + split_weight_note(split) + '.'
+        return rows
+
+    async def _candidates(self, run, entry, units, meter_type, base_key, *, kind):
         if base_key not in {'AREA','HEATED_AREA','VOLUME'} or not meter_type.strip():
             raise HTTPException(422, 'Heizkosten: Grundbasis und explizite Messart erforderlich')
         context = await property_period_run(self.session, self.org_id, run)
@@ -70,7 +80,7 @@ class HeatingInputService:
                 if entry.service_period_from > year_end or entry.service_period_to < year_start:
                     continue
                 part = SimpleNamespace(property_id=run.property_id, period_start=start, period_end=end)
-                rows.extend(await self.candidates(part, entry, units, meter_type, base_key))
+                rows.extend(await self._candidates(part, entry, units, meter_type, base_key, kind=kind))
             return rows
         leases = [LeasePeriodInput(l.id,l.unit_id,l.tenant_profile_id,l.valid_from,
                     db_exclusive_to_engine_inclusive(l.valid_to))
@@ -92,7 +102,8 @@ class HeatingInputService:
             period_readings = [MeterReadingInput(r.id,r.reading_date,r.value) for r in period_readings]
             split_error = None
             try:
-                split = split_consumption(period_readings, start, end, covers)
+                split = split_consumption(period_readings, start, end, covers,
+                    fallback="DEGREE_DAYS" if kind == "HEATING" else "DAYS")
                 quantities = split.periods
             except MeterConsumptionError as exc:
                 split_error = str(exc)
@@ -120,13 +131,17 @@ class HeatingInputService:
                         measured = derive_consumption([first, last], first.reading_date, last.reading_date)
                     except MeterConsumptionError:
                         if split_error is None:
-                            first, last, days = split.bases[index]
+                            first, last, _ = split.bases[index]
                             annual = split.measured
                             label = 'Periodenbasis' if (first, last) == (annual.start_reading, annual.end_reading) else 'Abschnittsbasis'
+                            weight, total_weight = split.weights[index]
+                            method = "DEGREE_DAYS" if kind == "HEATING" else "DAYS"
                             item.update(consumption=str(quantities[index][2]),
                                 meter_id=str(matches[0].id), start_reading=reading(first),
                                 end_reading=reading(last),
-                                reason=f'{split.reason or "Aufteilung nach Tagen."} {label}: {first.reading_date} → {last.reading_date}; Tagesanteil {cover.days}/{days}.')
+                                reason=f'{split.reason or "Aufteilung nach Tagen."} {label}: {first.reading_date} → {last.reading_date}.',
+                                split={'method': method, 'weight': str(weight), 'total_weight': str(total_weight),
+                                       'quantity': str(split.exact_quantity(index))})
                         else:
                             item['reason']=split_error
                     else:
@@ -139,7 +154,7 @@ class HeatingInputService:
         expected = {'HEIZUNG_ZENTRAL':'HEATING','WARMWASSER_ZENTRAL':'HOT_WATER'}
         if category is None or expected.get(category.code)!=config.kind or entry.tenant_apportionable=='NICHT_UMLAGEFAEHIG':
             raise HTTPException(422,'Heizkosten: Kostenquelle und getrennte Heiz-/Warmwasserart passen nicht zusammen')
-        candidates = await self.candidates(run,entry,units,config.meter_type,config.base_key)
+        candidates = await self._candidates(run,entry,units,config.meter_type,config.base_key,kind=config.kind)
         identities = {(r['unit_id'],r['period_from'],r['period_to']) for r in candidates}
         overrides = {}
         for supplied in config.slices:
@@ -159,9 +174,13 @@ class HeatingInputService:
             if base is None or (config.consumption_recorded and consumption is None):
                 raise HTTPException(422,f"Heizkosten Einheit {row['unit_label']}: Grundbasis/Verbrauch fehlt; {row['reason'] or 'Handeingabe erforderlich'}")
             identity=uuid.uuid5(entry.id,':'.join(key))
+            split = row.get('split', {})
+            exact = (Fraction(split['quantity']) if not manual and config.consumption_recorded
+                     and split.get('method') == 'DEGREE_DAYS' else None)
             slices.append(HeatingSliceInput(identity,uuid.UUID(row['unit_id']),date.fromisoformat(row['period_from']),
                 date.fromisoformat(row['period_to']),uuid.UUID(row['lease_agreement_id']) if row['lease_agreement_id'] else None,
-                uuid.UUID(row['owner_profile_id']) if row['owner_profile_id'] else None,base,consumption))
+                uuid.UUID(row['owner_profile_id']) if row['owner_profile_id'] else None,base,consumption,
+                split.get('method') if not manual and config.consumption_recorded else None, exact))
             sources[str(identity)] = ({'source':'MANUAL','consumption':str(consumption)} if manual
                 else {'source':'METER',**row} if config.consumption_recorded else {'source':'NON_CONSUMPTION'})
             sources[str(identity)]['base_source']='MANUAL' if supplied and supplied.base_quantity is not None else config.base_key

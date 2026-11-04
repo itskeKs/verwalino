@@ -44,9 +44,16 @@ building consumption, before selecting a lease's clipped statement. Exact interi
 readings ([§9b](https://www.gesetze-im-internet.de/heizkostenv/__9b.html)) split only
 the changed unit's consumption-dependent share; other units need no reading at that
 change date. Declared manual quantities remain supported (at most six decimal places).
-Missing interim readings split known unit-period consumption by degree-days if
-available, otherwise by days. The engine currently has no degree-day model, so the
-fallback is days; basic costs always split by days. Missing period consumption still
+Missing interim heat readings split known unit-period consumption by the fixed
+[degree-day table](../m3-abrechnungs-engine.md#51-principle-values-come-in-the-engine-only-distributesadopts):
+June–August share 40 per mille over 92 days; other months retain their published
+weights, including December 160. Hot water and basic costs always split by days.
+For a 1 July 2026 change without an interim reading, EUR 2,000 heating consumption
+costs split EUR 1,166.09 / EUR 833.91; EUR 400 hot-water consumption costs split
+EUR 198.36 / EUR 201.64. Suggestions and PDF notes name “Aufteilung nach
+Gradtagszahlen (§ 9b HeizkostenV)” with the exact weights. Finalization freezes
+the method and shares; older final statements keep their stored amounts and notes.
+Missing period consumption still
 returns 422 and is never replaced with zero or estimated building consumption.
 For a 10,000-euro pool, 70% consumption, two equally sized units each using 1,000,
 and A/B using 600/400 in the first unit, the statements are 3,221.92 / 1,778.08 /

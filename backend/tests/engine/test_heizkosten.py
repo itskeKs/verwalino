@@ -183,3 +183,31 @@ def test_heizkosten_deterministic_conservation_over_many_costs_and_weights():
         assert result == calculate(source)
         with pytest.raises(FrozenInstanceError):
             result.amount_due = D("99")
+
+
+@pytest.mark.parametrize("year", [2026, 2028])
+def test_degree_day_table_totals_one_thousand_including_the_shared_summer(year):
+    from datetime import date
+    from fractions import Fraction
+    from app.engine.heizkosten import degree_day_weight
+
+    assert degree_day_weight(date(year, 1, 1), date(year, 12, 31)) == 1000
+    assert degree_day_weight(date(year, 6, 1), date(year, 8, 31)) == 40
+    assert degree_day_weight(date(year, 7, 1), date(year, 7, 31)) == Fraction(40 * 31, 92)
+    assert degree_day_weight(date(year, 12, 1), date(year, 12, 31)) == 160
+
+
+@pytest.mark.parametrize("start,end,expected", [
+    ((2026, 1, 16), (2026, 1, 31), (170 * 16, 31)),
+    ((2026, 2, 1), (2026, 2, 1), (150, 28)),
+    ((2026, 2, 28), (2026, 2, 28), (150, 28)),
+    ((2028, 2, 29), (2028, 2, 29), (150, 29)),
+    ((2026, 6, 30), (2026, 7, 1), (80, 92)),
+    ((2026, 12, 31), (2027, 1, 1), (330, 31)),
+])
+def test_degree_day_weights_use_exact_calendar_days(start, end, expected):
+    from datetime import date
+    from fractions import Fraction
+    from app.engine.heizkosten import degree_day_weight
+
+    assert degree_day_weight(date(*start), date(*end)) == Fraction(*expected)
