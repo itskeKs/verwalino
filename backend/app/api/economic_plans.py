@@ -263,7 +263,7 @@ async def get_plan(
 async def create_plan(
     body: EconomicPlanCreate,
     auth: AuthContext = Depends(require_write_dep),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
 ):
     svc = EconomicPlanService(db, auth.organization_id, auth.user_id, session_version=auth.session_version)
     plan = await svc.create_draft(
@@ -285,7 +285,7 @@ async def compute_plan(
     plan_id: uuid.UUID,
     body: PlanComputeRequest | None = None,
     auth: AuthContext = Depends(require_write_dep),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
 ):
     svc = EconomicPlanService(db, auth.organization_id, auth.user_id, session_version=auth.session_version)
     plan, _result = await svc.compute(plan_id, _to_inputs(body))
@@ -313,7 +313,7 @@ async def finalize_plan(
 async def create_plan_correction(
     plan_id: uuid.UUID,
     auth: AuthContext = Depends(require_write_dep),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
 ):
     svc = EconomicPlanService(db, auth.organization_id, auth.user_id, session_version=auth.session_version)
     plan = await svc.create_correction_run(plan_id)
