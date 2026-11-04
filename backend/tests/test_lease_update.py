@@ -100,6 +100,35 @@ async def test_unbooked_amount_update_preserves_notes(client_a_admin, lease_seed
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("value", ["750,00", "NaN", "-1", "1e400", "0.001", "1000000000000"])
+@pytest.mark.parametrize("field", ["base_rent", "advance_payment", "heating_advance_payment", "deposit"])
+@pytest.mark.parametrize("operation", ["create", "update"])
+async def test_invalid_lease_amount_is_a_field_validation_error(client_a_admin, lease_seed, value, field, operation):
+    if operation == "create":
+        response = await client_a_admin.post("/api/leases", json={
+            "unit_id": lease_seed["unit"], "tenant_profile_id": lease_seed["tenant"],
+            "valid_from": "2025-01-01", "base_rent": "750.00", "advance_payment": "150.00", field: value,
+        })
+    else:
+        lease = await create_lease(client_a_admin, lease_seed)
+        response = await client_a_admin.patch(f"/api/leases/{lease['id']}", json={field: value})
+    assert response.status_code == 422, response.text
+    assert any(error["loc"] == ["body", field] for error in response.json()["detail"])
+
+
+@pytest.mark.asyncio
+async def test_canonical_lease_amounts_round_trip_with_separate_advances_and_zero_deposit(client_a_admin, lease_seed):
+    amounts = {"base_rent": "750.00", "advance_payment": "150.00",
+               "heating_advance_payment": "90.00", "deposit": "2250.00"}
+    lease = await create_lease(client_a_admin, lease_seed, **amounts)
+    assert {field: lease[field] for field in amounts} == amounts
+    response = await client_a_admin.patch(f"/api/leases/{lease['id']}", json={"deposit": "0.00"})
+    assert response.status_code == 200, response.text
+    listing = await client_a_admin.get("/api/leases", params={"unit_id": lease_seed["unit"]})
+    assert {field: listing.json()[0][field] for field in amounts} == {**amounts, "deposit": "0.00"}
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize('field', ['base_rent', 'heating_advance_payment'])
 async def test_finalized_lease_locks_amounts_but_not_end(client_a_admin, lease_seed, field):
     lease = await create_lease(client_a_admin, lease_seed)

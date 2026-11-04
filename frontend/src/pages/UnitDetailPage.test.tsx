@@ -326,7 +326,7 @@ it("loads history read-only without exposing the change action", async () => {
   expect(screen.queryByRole("button", { name: /^Miete ändern ab/ })).not.toBeInTheDocument();
 });
 
-it.each(["", "-1", "1e3", "1.001", "NaN", "1.234,56", "1000000000000"])("rejects invalid money %s without POST", async value => {
+it.each(["", "-1", "1e3", "1.001", "NaN", "1.23,56", "1000000000000"])("rejects invalid money %s without POST", async value => {
   show(); await openChange(); date("2026-04-01"); money("Kaltmiete (EUR)", value); save();
   expect(await within(screen.getByRole("dialog")).findByRole("alert")).toBeVisible(); expect(posts()).toHaveLength(0);
 });
@@ -853,4 +853,35 @@ it("T57 hides lease creation and edit/end for READ_ONLY while keeping dated hist
   expect(screen.queryByRole("button", { name: "Bearbeiten / beenden" })).not.toBeInTheDocument();
   expect(endpoints.createLease).not.toHaveBeenCalled();
   expect(endpoints.patchLease).not.toHaveBeenCalled();
+});
+
+it.each([false, true])("normalizes German lease money on save (editing=%s)", async editing => {
+  vi.mocked(endpoints.listTenantProfiles).mockResolvedValue([{ id: "tenant", person_id: "person" }] as never);
+  show();
+  fireEvent.click(await screen.findByRole("button", { name: editing ? "Bearbeiten / beenden" : "+ Mietvertrag" }));
+  if (!editing) {
+    fireEvent.change(screen.getByLabelText("Mieter *"), { target: { value: "tenant" } });
+    fireEvent.change(screen.getByLabelText("Vertragsbeginn *"), { target: { value: "2026-01-01" } });
+  }
+  for (const [label, value] of [["Kaltmiete (EUR) *", "750,00"], ["Betriebskosten-Vorauszahlung (EUR) *", "150,00"], ["Heizkosten-Vorauszahlung (EUR) *", "90,00"], ["Kaution (EUR)", "2.250,00"]]) {
+    fireEvent.change(screen.getByLabelText(label), { target: { value } });
+  }
+  fireEvent.click(screen.getByRole("button", { name: "Speichern" }));
+  const amounts = { base_rent: "750.00", advance_payment: "150.00", heating_advance_payment: "90.00", deposit: "2250.00" };
+  await waitFor(() => editing
+    ? expect(endpoints.patchLease).toHaveBeenCalledWith("lease", expect.objectContaining(amounts))
+    : expect(endpoints.createLease).toHaveBeenCalledWith(expect.objectContaining(amounts)));
+});
+
+it.each(["Kaltmiete (EUR) *", "Betriebskosten-Vorauszahlung (EUR) *", "Heizkosten-Vorauszahlung (EUR) *", "Kaution (EUR)"])("keeps invalid lease input and reports a German field error for %s", async label => {
+  show();
+  fireEvent.click(await screen.findByRole("button", { name: "Bearbeiten / beenden" }));
+  const input = screen.getByLabelText(label);
+  fireEvent.change(input, { target: { value: "abc" } });
+  fireEvent.click(screen.getByRole("button", { name: "Speichern" }));
+  expect(await screen.findByRole("alert")).toHaveTextContent(/gültigen EUR-Betrag/);
+  expect(input).toHaveValue("abc");
+  expect(input).toHaveAttribute("aria-invalid", "true");
+  expect(endpoints.patchLease).not.toHaveBeenCalled();
+  expect(endpoints.createLease).not.toHaveBeenCalled();
 });

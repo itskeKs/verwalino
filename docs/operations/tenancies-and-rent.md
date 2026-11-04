@@ -2,6 +2,23 @@
 
 Rent history, graduated and index-linked rent, security deposits, and ownership changes.
 
+## Entering tenancy amounts
+
+The new/edit tenancy form accepts decimal commas or dots and German grouped
+amounts such as “2.250,00”. Base rent, operating-cost advance, heating advance
+and the optional deposit are sent as exact decimal strings, for example
+“750.00”, “150.00”, “90.00” and “2250.00”. Empty deposits stay omitted; zero
+heating advances remain valid. Invalid entries keep the form open with a German
+message next to the affected field.
+
+Lease create/update requests use the existing rent-change amount contract:
+finite, non-negative amounts with at most two decimal places and twelve integer
+digits. Raw comma strings, “NaN”, negative amounts and overflow return HTTP 422
+with the affected field, before persistence. The API does not parse German
+notation. Booked/finalized amount locks and organization isolation still apply.
+The [money-input journey twin](../../features/journeys/money_inputs.feature)
+checks saving and reloading these amounts on desktop and at 360 px.
+
 ## Rent changes with effective date
 
 `GET /api/leases/{id}/rent-changes` returns the chronological history;

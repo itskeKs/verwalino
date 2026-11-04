@@ -137,10 +137,10 @@ class LeaseCreate(BaseModel):
     tenant_profile_id: str
     valid_from: date
     valid_to: date | None = None
-    base_rent: str
-    advance_payment: str
+    base_rent: RentAmount
+    advance_payment: RentAmount
     heating_advance_payment: RentAmount = Decimal('0.00')
-    deposit: str | None = None
+    deposit: RentAmount | None = None
     notes: str = ""
 
 
@@ -186,10 +186,10 @@ async def create_lease(
         tenant_profile_id=tenant_profile_id,
         valid_from=body.valid_from,
         valid_to=inclusive_last_day_to_db_exclusive(body.valid_to),
-        base_rent=Decimal(body.base_rent),
-        advance_payment=Decimal(body.advance_payment),
-        heating_advance_payment=Decimal(body.heating_advance_payment),
-        deposit=Decimal(body.deposit) if body.deposit else None,
+        base_rent=body.base_rent,
+        advance_payment=body.advance_payment,
+        heating_advance_payment=body.heating_advance_payment,
+        deposit=body.deposit,
         notes=body.notes,
     )
     await require_history_prepare(db, auth.organization_id, "lease_agreement", la)
@@ -208,10 +208,10 @@ async def create_lease(
 class LeaseUpdate(BaseModel):
     valid_to: date | None = None
     notes: str | None = None
-    base_rent: str | None = None
-    advance_payment: str | None = None
+    base_rent: RentAmount | None = None
+    advance_payment: RentAmount | None = None
     heating_advance_payment: RentAmount | None = None
-    deposit: str | None = None
+    deposit: RentAmount | None = None
 
 
 @router.patch("/{lease_id}", response_model=LeaseOut, status_code=200)
@@ -235,7 +235,7 @@ async def update_lease(
     amount_fields = {"base_rent", "advance_payment", "heating_advance_payment", "deposit"}
     changes_amount = any(
         getattr(body, field) is not None
-        and Decimal(getattr(body, field)) != getattr(existing, field)
+        and getattr(body, field) != getattr(existing, field)
         for field in amount_fields & body.model_fields_set
     )
     if changes_amount and (
@@ -261,7 +261,7 @@ async def update_lease(
     for field in amount_fields & body.model_fields_set:
         value = getattr(body, field)
         if value is not None:
-            setattr(existing, field, Decimal(value))
+            setattr(existing, field, value)
     try:
         await db.flush()
     except IntegrityError as exc:
