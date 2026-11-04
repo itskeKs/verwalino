@@ -69,10 +69,15 @@ shows a German field problem and keeps her input. A separate heating advance may
   net rents), saving is refused with „Die Kaution darf höchstens drei Nettokaltmieten betragen
   (2.250,00 €).“ and her input is kept. She then enters the correct 2,250.00 € and saves.
 - Sabine finds every step without having to guess. Where she hesitates, that is a finding.
+- With Anna and Bernd both unmarked, the empty new-tenancy selection explains the
+  route through “Personen” and “Rollen / Profile”. Sabine follows it, marks only
+  Anna as a tenant and returns through “Objekte” to the unit: Anna is selectable,
+  Bernd is absent and the hint is gone. The empty ownership form gives the
+  analogous route for the owner profile.
 
 **Checked by:** agent
 **Also at 360 px:** no
-**Automated:** tenancy money entry and deposit refusal/correction at 1280 and 360 px, in [money_inputs.feature](../../features/journeys/money_inputs.feature); new MIET/WEG MEA guidance at both widths in [property_mea.feature](../../features/journeys/property_mea.feature)
+**Automated:** tenancy money entry and deposit refusal/correction at 1280 and 360 px, in [money_inputs.feature](../../features/journeys/money_inputs.feature); new MIET/WEG MEA guidance at both widths in [property_mea.feature](../../features/journeys/property_mea.feature); empty tenant/owner selection, profile designation and return navigation at both widths in [profile_hints.feature](../../features/journeys/profile_hints.feature)
 
 ## Journey 2: Importing the bank statement and assigning the payments
 
