@@ -358,9 +358,9 @@ function DueTasks({ canWrite }: { canWrite: boolean }) {
     <p className="text-sm text-muted-foreground">Offene Aufgaben bis einschließlich {formatDate(dueUntil)} · alle zugänglichen Zuständigkeiten</p>
     {loading && <p role="status">Aufgaben werden geladen…</p>}
     {error && <p role="alert">Aufgaben: {error}</p>}
-    <button disabled={pending || loading} onClick={() => setRevision(n => n + 1)}>Aufgaben erneut laden</button>
-    {tasks && <ul>{tasks.map(task => <li key={task.id} className="flex items-center gap-3 py-3"><div className="flex-1"><p>{task.title}</p><p className="text-sm">Fällig am {task.due_date ? formatDate(task.due_date) : "—"}{task.property_name ? ` · ${task.property_name}` : ""}</p></div>{canWrite && <button disabled={pending || loading} onClick={() => void complete(task)}>Erledigen</button>}</li>)}</ul>}
+    <button className="btn" disabled={pending || loading} onClick={() => setRevision(n => n + 1)}>Aufgaben erneut laden</button>
+    {tasks && <ul>{tasks.map(task => <li key={task.id} className="flex flex-wrap items-center gap-3 py-3"><div className="min-w-0 flex-1 [overflow-wrap:anywhere]"><p>{task.title}</p><p className="text-sm">Fällig am {task.due_date ? formatDate(task.due_date) : "—"}{task.property_name ? ` · ${task.property_name}` : ""}</p></div>{canWrite && <button className="btn" disabled={pending || loading} onClick={() => void complete(task)}>Erledigen</button>}</li>)}</ul>}
     {tasks?.length === 0 && !loading && !error && <p>Keine fälligen Aufgaben in diesem Zeitraum.</p>}
-    <div className="flex gap-3"><button disabled={pending || loading || offset === 0} onClick={() => { setTasks(null); setOffset(Math.max(0, offset - 50)); }}>Vorherige Aufgaben</button><button disabled={pending || loading || nextOffset === null} onClick={() => { if (nextOffset !== null) { setTasks(null); setOffset(nextOffset); } }}>Weitere Aufgaben</button></div>
+    <div className="flex flex-wrap gap-3"><button className="btn" disabled={pending || loading || offset === 0} onClick={() => { setTasks(null); setOffset(Math.max(0, offset - 50)); }}>Vorherige Aufgaben</button><button className="btn" disabled={pending || loading || nextOffset === null} onClick={() => { if (nextOffset !== null) { setTasks(null); setOffset(nextOffset); } }}>Weitere Aufgaben</button></div>
   </CardContent></Card>;
 }

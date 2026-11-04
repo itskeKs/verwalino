@@ -1192,7 +1192,11 @@ existing tasks remain editable if the assignee is later deactivated.
 
 The task UI adopts property/unit contexts without automatic
 saving; the dashboard reads open tasks with a local, inclusive
-seven-day limit. This operational data is not made dependent on the selection of a
+seven-day limit. Due-task text and pagination wrap within the dashboard card on
+phones, and reload, completion and pagination use the shared button style.
+Property details keep wide unit rows in their own horizontal scroll container;
+unit actions wrap and document upload fields fit the card at 360 px.
+This operational data is not made dependent on the selection of a
 financial scope. The separate read path `/api/fristen/context`
 checks, under live/ACL and existing source rules, the admissibility of the
 organization-wide deadline monitor, without loading financial report rows.

@@ -3,8 +3,8 @@
 DESIGN.md is the authoritative frontend design contract for Verwalino: layout, tokens, UI kit
 components and their behaviour, states, copy and formats. Define visual changes here before CSS
 tweaks land. New screens follow this contract; changes to the look or copy update it in the same PR.
-Named implementation deviations remain documented below as known debt tracked in #48, #49, #50
-and #52. New work follows the contract.
+Named implementation deviations remain documented below as known debt tracked in #48, #49 and #50.
+New work follows the contract.
 
 Source files: `frontend/tailwind.config.cjs` (token mapping), `frontend/src/index.css` (tokens, global
 classes), `frontend/src/components/ui/` (UI kit), `frontend/src/components/AppShell.tsx`,
@@ -483,8 +483,10 @@ scroll sideways; wide tables stay within their own horizontal scroll container.
 
 Wide tables use `overflow-x-auto` (`MandatePage.tsx`) or `.paged-list .paged-table` (`index.css`). Long
 content uses `min-w-0` plus `truncate` (`DashboardPage.tsx`) or `overflow-wrap: anywhere`
-(`.settlement-detail`). Deviation: in the 360 px detail screenshot the units table
-and the document upload button extend beyond their card, so `main` scrolls sideways there.
+(`.settlement-detail`). Property details keep the units table in an `overflow-x-auto`
+container, wrap the unit actions, and allow upload fields to shrink; the upload action
+fits the card below 480 px. Dashboard due tasks wrap long text and pagination actions
+and use the existing `.btn` style for reload, completion and pagination.
 
 The WEG settlement detail follows this contract: `settlement-detail` wraps long owner
 names and the complete snapshot SHA-256. Each individual statement uses its own
@@ -893,6 +895,7 @@ synthetic browser-intercepted API responses, without starting a backend or acces
 | Hosted dashboard quota | `/`, free plan at 90% | [`dashboard-quota-1280.png`](docs/assets/design/dashboard-quota-1280.png) | [`dashboard-quota-360.png`](docs/assets/design/dashboard-quota-360.png) |
 | List | `/objekte` | [`list-objekte-desktop.png`](docs/assets/design/list-objekte-desktop.png) | [`list-objekte-360.png`](docs/assets/design/list-objekte-360.png) |
 | Detail | `/objekte/:id` | [`detail-objekt-desktop.png`](docs/assets/design/detail-objekt-desktop.png) | [`detail-objekt-360.png`](docs/assets/design/detail-objekt-360.png) |
+| Detail upload | `/objekte/:id`, documents card | [`detail-upload-desktop.png`](docs/assets/design/detail-upload-desktop.png) | [`detail-upload-360.png`](docs/assets/design/detail-upload-360.png) |
 | Hosted signup | `/signup` | [`signup-desktop.png`](docs/assets/design/signup-desktop.png) | [`signup-360.png`](docs/assets/design/signup-360.png) |
 | Signup confirmation, retryable password error | `/signup/confirm` | [`signup-confirm-desktop.png`](docs/assets/design/signup-confirm-desktop.png) | [`signup-confirm-360.png`](docs/assets/design/signup-confirm-360.png) |
 | Signup receipt | `/signup`, accepted request | — | [`signup-receipt-360.png`](docs/assets/design/signup-receipt-360.png) |
@@ -910,8 +913,14 @@ The hosted quota images use the running frontend with synthetic API responses.
 The signup and password recovery images use synthetic deployment metadata and
 captured API responses. These are visual/360 px geometry checks, not end-to-end proof.
 
+The property-detail and dashboard images focus on the units and due-task cards at
+360 and 1280 px, using twelve long synthetic unit rows and a long task title from
+`features/responsive_property_dashboard.feature`. The upload card is captured in
+`detail-upload-360.png` and `detail-upload-desktop.png`. Matching `issue-52-before-*`
+images preserve the baseline on the same data. These images use 1x device scale.
+
 The screenshots show the app as it is, including the deviations named above (legacy table, native file
-button, unstyled buttons on the dashboard task list, ASCII "Strasse").
+button, ASCII "Strasse").
 
 ### Property year mapping aid
 
