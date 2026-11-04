@@ -2,6 +2,16 @@
 
 Rent history, graduated and index-linked rent, security deposits, and ownership changes.
 
+## Selecting a tenant or owner
+
+The unit's new tenancy and ownership forms list people with the matching profile.
+If that list is empty, a German hint links to “Personen”. Open the person's page,
+find “Rollen / Profile”, and choose “Als Mieter kennzeichnen” or
+“Als Eigentuemer kennzeichnen”. Return via “Objekte” to the unit and reopen the
+form: the marked person is selectable; unmarked people remain absent. The hint
+disappears once a matching profile exists. These forms and their hints follow
+the existing admin/clerk write access; profile designation stays on the person's page.
+
 ## Entering tenancy amounts
 
 The new/edit tenancy form accepts decimal commas or dots and German grouped

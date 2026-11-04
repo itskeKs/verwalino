@@ -126,6 +126,43 @@ it.each([['OWNER_ADMIN', true], ['CLERK', true], ['READ_ONLY', false], ['UNKNOWN
   expect(panel).toHaveAttribute("data-can-write", String(canWrite));
 });
 
+it.each(['OWNER_ADMIN', 'CLERK'])("guides %s from empty tenant and owner lists to persons", async role => {
+  vi.mocked(endpoints.listPersons).mockResolvedValue([
+    { id: 'anna', first_name: 'Anna', last_name: 'Beispiel' },
+    { id: 'bernd', first_name: 'Bernd', last_name: 'Test' },
+  ] as never);
+  show(role);
+  fireEvent.click(await screen.findByRole('button', { name: '+ Mietvertrag' }));
+  const tenantHint = screen.getByText(/Noch keine Person als Mieter gekennzeichnet/);
+  expect(tenantHint).toHaveTextContent('Rollen / Profile → „Als Mieter kennzeichnen“');
+  expect(within(tenantHint).getByRole('link', { name: 'Personen' })).toHaveAttribute('href', '/personen');
+  expect(within(screen.getByRole('combobox', { name: 'Mieter *' })).getAllByRole('option')).toHaveLength(1);
+  fireEvent.click(screen.getByRole('button', { name: '+ Eigentum' }));
+  const ownerHint = screen.getByText(/Noch keine Person als Eigentümer gekennzeichnet/);
+  expect(ownerHint).toHaveTextContent('Rollen / Profile → „Als Eigentuemer kennzeichnen“');
+  expect(within(ownerHint).getByRole('link', { name: 'Personen' })).toHaveAttribute('href', '/personen');
+});
+
+it('omits each hint when its profile list is populated', async () => {
+  vi.mocked(endpoints.listPersons).mockResolvedValue([{ id: 'anna', first_name: 'Anna', last_name: 'Beispiel' }] as never);
+  vi.mocked(endpoints.listTenantProfiles).mockResolvedValue([{ id: 'tenant-anna', person_id: 'anna' }] as never);
+  vi.mocked(endpoints.listOwnerProfiles).mockResolvedValue([{ id: 'owner-anna', person_id: 'anna' }] as never);
+  show();
+  fireEvent.click(await screen.findByRole('button', { name: '+ Mietvertrag' }));
+  fireEvent.click(screen.getByRole('button', { name: '+ Eigentum' }));
+  expect(screen.queryByText(/Noch keine Person als/)).not.toBeInTheDocument();
+  expect(within(screen.getByRole('combobox', { name: 'Mieter *' })).getByRole('option', { name: 'Anna Beispiel' })).toBeInTheDocument();
+  expect(within(screen.getByRole('combobox', { name: 'Eigentuemer *' })).getByRole('option', { name: 'Anna Beispiel' })).toBeInTheDocument();
+});
+
+it.each(['READ_ONLY', 'UNKNOWN'])("keeps profile guidance inside write forms for %s", async role => {
+  show(role);
+  await screen.findByRole('region', { name: 'Zähler' });
+  expect(screen.queryByRole('button', { name: '+ Mietvertrag' })).not.toBeInTheDocument();
+  expect(screen.queryByRole('button', { name: '+ Eigentum' })).not.toBeInTheDocument();
+  expect(screen.queryByText(/Noch keine Person als/)).not.toBeInTheDocument();
+});
+
 it("creates a lease contract only after confirming its legal caveat", async () => {
   fetchMock.mockImplementation(async (url: string, options?: RequestInit) => {
     if (url.endsWith('/contract') && options?.method === 'POST') return new Response(JSON.stringify({

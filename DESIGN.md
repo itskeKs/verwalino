@@ -338,6 +338,26 @@ The scrollable dialog keeps all fields and actions reachable at 360 px.
 | After | [Desktop](docs/assets/design/split-dialog/after-1280.png) | [Tablet](docs/assets/design/split-dialog/after-800.png) | [Phone](docs/assets/design/split-dialog/after-360.png) |
 | Bottom actions | [Desktop](docs/assets/design/split-dialog/after-actions-1280.png) | [Tablet](docs/assets/design/split-dialog/after-actions-800.png) | [Phone](docs/assets/design/split-dialog/after-actions-360.png) |
 
+### Empty tenant and owner selections
+
+In the unit's new tenancy or ownership card, an empty profile list shows a
+muted `.empty-hint` above the form. A normal `.link` to “Personen” explains the
+next step under “Rollen / Profile”: “Als Mieter kennzeichnen” or
+“Als Eigentuemer kennzeichnen” (matching the existing person-page action).
+The German copy starts “Noch keine Person als Mieter gekennzeichnet.” or
+“Noch keine Person als Eigentümer gekennzeichnet.” It wraps within the card at
+360 px. The hint appears only in the existing write forms and disappears when
+the corresponding profile list is populated. Returning through “Objekte” to the
+unit reloads the profiles; profile creation remains on the person page.
+
+Synthetic Anna Beispiel and Bernd Test, both initially unmarked, on the shared
+test database at 1280 × 900 and 360 × 900:
+
+| Form | Desktop before / after | 360 px before / after |
+| --- | --- | --- |
+| New tenancy | [before](docs/assets/design/profile-hints/before-tenancy-1280.png) · [after](docs/assets/design/profile-hints/after-tenancy-1280.png) | [before](docs/assets/design/profile-hints/before-tenancy-360.png) · [after](docs/assets/design/profile-hints/after-tenancy-360.png) |
+| New ownership | [before](docs/assets/design/profile-hints/before-ownership-1280.png) · [after](docs/assets/design/profile-hints/after-ownership-1280.png) | [before](docs/assets/design/profile-hints/before-ownership-360.png) · [after](docs/assets/design/profile-hints/after-ownership-360.png) |
+
 ### Separate tenant advances
 
 Lease and rent-change forms label the two monthly amounts
