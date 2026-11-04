@@ -1,14 +1,123 @@
 """The issue #204 hand calculation through real HTTP and PDF output."""
 from pathlib import Path
 
-from pytest_bdd import given, when, then, scenarios
+import pytest
+from pytest_bdd import given, when, then, scenario, scenarios
 
 from tests.bdd.steps.browser_setup import create
 from tests.bdd.steps.records import create_person
 from tests.financial_coverage_helpers import attest_fixture
 from tests.test_reserve_ledger import pdf_text
+from tests.bdd.world import target_url
 
-scenarios(str(Path(__file__).resolve().parents[3] / 'features/weg_settlement.feature'))
+FEATURE = str(Path(__file__).resolve().parents[3] / 'features/weg_settlement.feature')
+
+
+@pytest.mark.skipif(bool(target_url()), reason='ASGI response-start observation needs the in-process app and test DB')
+@scenario(FEATURE, 'Saved WEG drafts are readable as soon as their success response starts')
+def test_saved_weg_drafts_are_readable_as_soon_as_their_success_response_starts():
+    pass
+
+
+scenarios(FEATURE)
+
+
+@when('I save ten 600 euro Hausgeld drafts dated 5 January 2026 and a new plan and annual settlement')
+def immediately_readable_saves(world, weg_balance, app_rw_session, seed_data):
+    from sqlalchemy import text
+    from tests.write_response_support import create_visible_draft
+
+    w = weg_balance
+    world.run(app_rw_session.execute(text("SELECT set_config('app.current_org_id', :org, true)"),
+                                     {'org': str(seed_data['org_a_id'])}))
+    world.run(app_rw_session.execute(text("SELECT set_config('app.current_user_id', :actor, true)"),
+                                     {'actor': str(seed_data['user_a_admin_id'])}))
+    for _ in range(10):
+        world.run(create_visible_draft(world.actor, app_rw_session, '/api/payments', {
+            'bank_account_id': w['bank'],
+            'owner_profile_id': w['owners'][0], 'direction': 'IN', 'amount': '600.00',
+            'value_date': '2026-01-05', 'payment_type': 'HAUSGELD_VORSCHUSS'}, 'payment'))
+    period = {'property_id': w['property'], 'accounting_scope_id': w['scope'],
+              'period_start': '2026-01-01', 'period_end': '2026-12-31'}
+    world.run(create_visible_draft(world.actor, app_rw_session, '/api/economic-plans',
+                                  {**period, 'plan_year': 2026}, 'economic_plan'))
+    world.run(create_visible_draft(world.actor, app_rw_session, '/api/weg-settlements',
+                                  {**period, 'economic_plan_id': w['plan']}, 'settlement_run'))
+    w['immediate_saves'] = 12
+
+
+@then('every new detail is readable before its save response is cleaned up')
+def all_saves_readable(weg_balance):
+    assert weg_balance['immediate_saves'] == 12
+
+
+@when('I save ten Hausgeld payments and a plan and annual settlement through the UI')
+def saved_details_browser(browser_world, world, weg_balance):
+    import re
+    from playwright.async_api import expect
+
+    b, w = browser_world, weg_balance
+    details = []
+
+    async def save_and_read(prefix):
+        pattern = re.compile(rf'{prefix}/[0-9a-f-]+$')
+        async with b.page.expect_response(lambda response: response.request.method == 'GET'
+                                         and pattern.search(response.url)) as first_detail:
+            await b.page.get_by_role('button', name='Anlegen', exact=True).click()
+        response = await first_detail.value
+        details.append(response.status)
+        assert response.status == 200, await response.text()
+        return (await response.json())['id']
+
+    async def payments_and_plan():
+        for _ in range(10):
+            await b.visit('/zahlungen')
+            await b.page.get_by_role('button', name='+ Neue Zahlung', exact=True).click()
+            await b.select('Bankkonto *', w['bank'])
+            await b.select('Zahlungstyp *', 'HAUSGELD_VORSCHUSS')
+            await b.select('Eigentuemer', w['owners'][0])
+            await b.page.get_by_label('Betrag *', exact=True).fill('600.00')
+            await b.page.get_by_label('Wertstellungsdatum *', exact=True).fill('2026-01-05')
+            await save_and_read('/api/payments')
+            await expect(b.page.get_by_role('button', name='Buchen', exact=True)).to_be_visible()
+            await expect(b.page.get_by_role('heading', name='Zahlung Entwurf')).to_be_visible()
+            await expect(b.page.get_by_role('row', name='Betrag 600.00 EUR', exact=True)).to_be_visible()
+
+        await b.visit('/wirtschaftsplaene')
+        await b.page.get_by_role('button', name='+ Neuer Wirtschaftsplan', exact=True).click()
+        await b.select('WEG-Objekt *', w['property'])
+        await b.page.get_by_label('Wirtschaftsjahr *', exact=True).fill('2026')
+        await b.select('Abrechnungskreis', w['scope'])
+        await b.page.get_by_label('Zeitraum von *', exact=True).fill('2026-01-01')
+        await b.page.get_by_label('Zeitraum bis *', exact=True).fill('2026-12-31')
+        plan = await save_and_read('/api/economic-plans')
+        await expect(b.page.get_by_role('heading', name='Wirtschaftsplan 2026 Entwurf')).to_be_visible()
+        return plan
+
+    plan = b.run(payments_and_plan())
+    # Finalization is a prerequisite for the settlement, not the UI behavior
+    # under test. Reuse the existing domain fixture and real API.
+    values = {'planned_costs': [{'category_code': 'GARTENPFLEGE', 'label': 'Bewirtschaftung',
+        'planned_amount': '12000.00', 'cost_group': 'UMLAGEFAEHIG'}], 'reserve_contribution_total': '0.00'}
+    world.run(attest_fixture(world.actor, 'economic_plan', plan, values))
+    finalized = world.act('POST', f'/api/economic-plans/{plan}/finalize', json=values)
+    assert finalized.status_code == 200, finalized.text
+
+    async def settlement():
+        await b.visit('/weg-abrechnungen')
+        await b.page.get_by_role('button', name='+ Neue WEG-Abrechnung', exact=True).click()
+        await b.select('WEG-Objekt *', w['property'])
+        await b.select('Wirtschaftsplan (Soll) *', plan)
+        await save_and_read('/api/weg-settlements')
+        await expect(b.page.get_by_role('heading', name='WEG-Jahresabrechnung Entwurf')).to_be_visible()
+
+    b.run(settlement())
+    w['first_ui_details'] = details
+
+
+@then('all first detail requests succeeded and every payment offered booking')
+def first_ui_details(weg_balance):
+    assert weg_balance['first_ui_details'] == [200] * 12
 
 
 @given("Anna Berg's WEG plan is 7200 euros and her cost share is 6400 euros", target_fixture='weg_balance')

@@ -898,7 +898,22 @@ financial values stay `null`.
 Under `/abrechnungen`, "BK-Sammellauf" (BK batch run) guides through property, period, and
 scope; result counts and list are refreshed, and the same period is repeatable.
 
-Implemented BK behavior: `POST /api/settlements/{id}/finalize` ends the DB transaction through `Depends(get_db, scope="function")` **before** the HTTP success response. Thus an immediately following PDF request already sees the finalized snapshot; drafts remain blocked with HTTP 409. The regression test checks the stored status from an independent DB session at `http.response.start`, since ASGITransport alone waits for the later request cleanup and thereby masks this race condition.
+Write transactions must complete **before** the HTTP success response starts. Use
+`Depends(get_db, scope="function")` on the inner session dependency, including inside
+`get_live_writer_db`, `get_live_publication_db` and `get_live_admin_db`; function scope
+on an outer helper alone does not move the inner transaction's cleanup. A failed
+handler, response validation or commit must roll back without sending success.
+`get_live_member_db` and direct read dependencies retain request scope, so reads and
+their streaming responses keep their existing session lifetime.
+
+Implemented coverage includes all mutations in the economic-plan, payment and WEG
+settlement routers and existing callers of the three shared write guards. Other
+direct write dependencies remain follow-up work, inventoried in the #260 PR.
+The existing BK finalize route also follows this rule: an immediate PDF request
+sees the finalized snapshot; drafts remain blocked with HTTP 409. Regression tests
+observe committed rows from an independent DB connection and request the new detail
+at `http.response.start`. An assertion only after an ASGITransport request completes
+would wait for request cleanup and mask the race.
 
 - [ ] `app/api/settlements.py`: `POST` (create run, `require_write_dep`), `POST /{id}/compute`, `PATCH /{id}/advance-payments`, `POST /{id}/finalize`, `POST /{id}/correction`, `GET` (list/detail, all roles read), `GET /{id}/pdf` (finalized → PDF stream). READ_ONLY: GET only. Foreign ID → **404** (not 403), as in M0/M2. Register the router in `app/main.py`.
 

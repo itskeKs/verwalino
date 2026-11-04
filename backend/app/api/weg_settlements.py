@@ -419,14 +419,14 @@ async def get_weg_run(
 
 @router.delete('/{run_id}', status_code=204)
 async def delete_weg_draft(run_id: uuid.UUID, auth: AuthContext = Depends(require_write_dep),
-                           db: AsyncSession = Depends(get_db)):
+                           db: AsyncSession = Depends(get_db, scope="function")):
     await WegSettlementService(db, auth.organization_id, auth.user_id).delete_empty_draft(run_id)
     return Response(status_code=204)
 
 
 @router.delete('/asset-reports/{run_id}', status_code=204)
 async def delete_asset_report_draft(run_id: uuid.UUID, auth: AuthContext = Depends(require_write_dep),
-                                   db: AsyncSession = Depends(get_db)):
+                                   db: AsyncSession = Depends(get_db, scope="function")):
     await WegSettlementService(db, auth.organization_id, auth.user_id).delete_empty_draft(run_id, asset_report=True)
     return Response(status_code=204)
 
@@ -461,7 +461,7 @@ async def plan_successor_preview(run_id: uuid.UUID, auth: AuthContext = Depends(
 
 @router.patch('/{run_id}/economic-plan', response_model=WegRunOut)
 async def select_plan_successor(run_id: uuid.UUID, body: PlanSuccessorSelection,
-                                auth: AuthContext = Depends(require_write_dep), db: AsyncSession = Depends(get_db)):
+                                auth: AuthContext = Depends(require_write_dep), db: AsyncSession = Depends(get_db, scope="function")):
     if not body.confirmed or not body.reason.strip():
         raise HTTPException(422, 'Explicit review and reason required')
     run = await WegSettlementService(db, auth.organization_id, auth.user_id).select_plan_successor(
@@ -474,7 +474,7 @@ async def select_plan_successor(run_id: uuid.UUID, body: PlanSuccessorSelection,
 async def create_weg_run(
     body: WegRunCreate,
     auth: AuthContext = Depends(require_write_dep),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
 ):
     svc = WegSettlementService(db, auth.organization_id, auth.user_id)
     try:
@@ -497,7 +497,7 @@ async def compute_weg_run(
     run_id: uuid.UUID,
     body: WegComputeRequest | None = None,
     auth: AuthContext = Depends(require_write_dep),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
 ):
     svc = WegSettlementService(db, auth.organization_id, auth.user_id)
     run, _result = await svc.compute_weg(run_id, _weg_extras(body))
@@ -533,7 +533,7 @@ class PaidAdvancesResult(BaseModel):
 async def derive_paid_advances_route(
     run_id: uuid.UUID,
     auth: AuthContext = Depends(require_write_dep),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
 ):
     """Derive paid advances per owner from actual payments (nachrichtlich)."""
     svc = WegSettlementService(db, auth.organization_id, auth.user_id)
@@ -559,7 +559,7 @@ async def derive_paid_advances_route(
 async def create_asset_report(
     body: AssetReportCreate,
     auth: AuthContext = Depends(require_write_dep),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
 ):
     svc = WegSettlementService(db, auth.organization_id, auth.user_id)
     try:
@@ -581,7 +581,7 @@ async def compute_asset_report(
     run_id: uuid.UUID,
     body: AssetReportComputeRequest | None = None,
     auth: AuthContext = Depends(require_write_dep),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
 ):
     svc = WegSettlementService(db, auth.organization_id, auth.user_id)
     run, _result = await svc.compute_asset_report(run_id, _report_inputs(body))

@@ -1,6 +1,17 @@
 Feature: WEG settlement and the owner's Hausgeld balance
   The resolved cost adjustment remains separate from payments owed under the plan.
 
+  Scenario: Saved WEG drafts are readable as soon as their success response starts
+    Given Anna Berg's WEG plan is 7200 euros and her cost share is 6400 euros
+    When I save ten 600 euro Hausgeld drafts dated 5 January 2026 and a new plan and annual settlement
+    Then every new detail is readable before its save response is cleaned up
+
+  @browser
+  Scenario: Saving opens the new payment, plan and annual settlement immediately
+    Given Anna Berg's WEG plan is 7200 euros and her cost share is 6400 euros
+    When I save ten Hausgeld payments and a plan and annual settlement through the UI
+    Then all first detail requests succeeded and every payment offered booking
+
   Scenario: A settlement credit offsets unpaid Hausgeld without changing the resolution
     Given Anna Berg's WEG plan is 7200 euros and her cost share is 6400 euros
     And Anna has booked 6600 euros of Hausgeld and the second owner has paid in full

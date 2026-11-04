@@ -259,6 +259,9 @@ Each skipped scenario records its reason in the report. Local runs continue to
 exercise both organizations, all isolation scenarios, first-run setup, the inbox
 review chain, deletion, export/import and password reset; PR CI retains this
 coverage through `make test-backend`.
+The response-start race scenario in `weg_settlement.feature` also requires the
+in-process ASGI app and an independent test DB connection; external targets skip
+only that scenario. The save-and-open browser scenario runs against either target.
 `make test-bdd`, `make test-browser` and `make test-scenarios-report` explicitly
 select the local stack even if target variables are inherited; use direct pytest
 for external targets.
