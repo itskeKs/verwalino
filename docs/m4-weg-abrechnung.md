@@ -445,6 +445,12 @@ data-basis attestation, cost change, finalization, or resolution.
 - **Monthly Hausgeld proposal** per owner (`monthly_amount`, §5.3).
 - **Share of allocable/non-allocable costs** and **reserve share separately** (via `cost_group` + `RESERVE_CONTRIBUTION`).
 
+The calculated and finalized detail views keep the owner advances and calculated
+costs in separate horizontal scroll containers on narrow screens. Monetary values
+remain unbroken, descriptive labels wrap, and the finalized snapshot hash wraps
+inside its card. This affects presentation only; calculated and frozen values are
+unchanged. See the [responsive design contract](../DESIGN.md#responsive-behaviour-down-to-360-px).
+
 The economic plan is **not** a WEG resolution — it produces proposals/documents for passing a resolution (SDD §10); the resolution is documented in M8 (resolution register, Beschluss-Sammlung).
 
 ### 5.3 [DECISION E4-3] Basis of the Advance Payments — Month-Based vs. Day-Accurate

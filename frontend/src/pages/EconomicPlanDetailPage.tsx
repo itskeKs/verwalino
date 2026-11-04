@@ -199,7 +199,7 @@ export function EconomicPlanDetailPage() {
         <div className="card" style={{ marginBottom: "1rem", background: "#fff8e1", borderColor: "#ffcc02" }}>
           <strong>GoBD:</strong> Finalisiert und unveränderbar. Änderungen nur als Korrektur.
           {plan.snapshot_sha256 && (
-            <div style={{ marginTop: "0.5rem", fontSize: "0.82rem" }}>Snapshot SHA-256: <code>{plan.snapshot_sha256}</code></div>
+            <div style={{ marginTop: "0.5rem", fontSize: "0.82rem" }}>Snapshot SHA-256: <code className="break-all">{plan.snapshot_sha256}</code></div>
           )}
         </div>
       )}
@@ -281,39 +281,43 @@ export function EconomicPlanDetailPage() {
       {ownerLines.length > 0 && (
         <div className="card" style={{ marginBottom: "1rem" }}>
           <h2>Hausgeld-Vorschüsse je Eigentümer</h2>
-          <table className="data-table">
-            <thead><tr><th>Eigentümer</th><th>Anteilsbasis</th><th style={{ textAlign: "right" }}>Jahresvorschuss</th><th style={{ textAlign: "right" }}>monatlich</th></tr></thead>
-            <tbody>
-              {ownerLines.map((l: EconomicPlanLine) => (
-                <tr key={l.id}>
-                  <td>{ownerName(l.owner_profile_id)}</td>
-                  <td style={{ fontFamily: "var(--mono)" }}>
-                    {l.distribution_base_share != null && l.distribution_base_total != null ? `${l.distribution_base_share} / ${l.distribution_base_total}` : "-"}
-                  </td>
-                  <td style={{ fontFamily: "var(--mono)", textAlign: "right" }}>{l.planned_amount} EUR</td>
-                  <td style={{ fontFamily: "var(--mono)", textAlign: "right", fontWeight: 600 }}>{l.monthly_amount ? `${l.monthly_amount} EUR` : "-"}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+          <div className="overflow-x-auto">
+            <table className="data-table">
+              <thead><tr><th>Eigentümer</th><th>Anteilsbasis</th><th style={{ textAlign: "right" }}>Jahresvorschuss</th><th style={{ textAlign: "right" }}>monatlich</th></tr></thead>
+              <tbody>
+                {ownerLines.map((l: EconomicPlanLine) => (
+                  <tr key={l.id}>
+                    <td className="whitespace-normal">{ownerName(l.owner_profile_id)}</td>
+                    <td style={{ fontFamily: "var(--mono)" }}>
+                      {l.distribution_base_share != null && l.distribution_base_total != null ? `${l.distribution_base_share} / ${l.distribution_base_total}` : "-"}
+                    </td>
+                    <td className="whitespace-nowrap" style={{ fontFamily: "var(--mono)", textAlign: "right" }}>{l.planned_amount} EUR</td>
+                    <td className="whitespace-nowrap" style={{ fontFamily: "var(--mono)", textAlign: "right", fontWeight: 600 }}>{l.monthly_amount ? `${l.monthly_amount} EUR` : "-"}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         </div>
       )}
 
       {costLines.length > 0 && (
         <div className="card">
           <h2>Geplante Kosten (berechnet)</h2>
-          <table className="data-table">
-            <thead><tr><th>Position</th><th>Verteilerschlüssel</th><th style={{ textAlign: "right" }}>Geplant</th></tr></thead>
-            <tbody>
-              {costLines.map((l) => (
-                <tr key={l.id}>
-                  <td>{l.label}{l.note ? <div style={{ fontSize: "0.78rem", color: "var(--text-muted)", fontStyle: "italic" }}>{l.note}</div> : null}</td>
-                  <td>{l.distribution_key ?? "-"}</td>
-                  <td style={{ fontFamily: "var(--mono)", textAlign: "right" }}>{l.planned_amount} EUR</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+          <div className="overflow-x-auto">
+            <table className="data-table">
+              <thead><tr><th>Position</th><th>Verteilerschlüssel</th><th style={{ textAlign: "right" }}>Geplant</th></tr></thead>
+              <tbody>
+                {costLines.map((l) => (
+                  <tr key={l.id}>
+                    <td className="whitespace-normal">{l.label}{l.note ? <div style={{ fontSize: "0.78rem", color: "var(--text-muted)", fontStyle: "italic" }}>{l.note}</div> : null}</td>
+                    <td>{l.distribution_key ?? "-"}</td>
+                    <td className="whitespace-nowrap" style={{ fontFamily: "var(--mono)", textAlign: "right" }}>{l.planned_amount} EUR</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         </div>
       )}
     </div>
