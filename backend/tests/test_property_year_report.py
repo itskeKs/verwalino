@@ -404,18 +404,25 @@ async def test_anlage_v_summary_keeps_unmapped_exclusions_and_reconciles_without
     ('HAUSGELD_VORSCHUSS', None, False, True),
     ('RUECKLAGENANTEIL', None, False, True),
     ('SONDERZAHLUNG', None, False, True),
+    ('RUECKLAGENENTNAHME', None, True, True),
 ])
 async def test_every_payment_type_and_management_type_share_the_income_rule(
     monkeypatch, management_type, kind, expected_line, rental_income, weg_income,
 ):
+    import csv
+    import io
     from types import SimpleNamespace
+    from app.api.reports import _render_property_year_csv
     from app.engine.anlage_v import map_property_year
     from app.services.report_service import ReportService
     from app.repositories.payment_repo import PaymentRepository
     from app.repositories.cost_entry_repo import CostEntryRepository
 
+    # The repository aggregates reserve withdrawals (OUT) as negative amounts.
+    amount = '-10.01' if kind == 'RUECKLAGENENTNAHME' else '10.01'
+
     async def income(*args):
-        return [SimpleNamespace(payment_type=kind, amount=Decimal('10.01'))]
+        return [SimpleNamespace(payment_type=kind, amount=Decimal(amount))]
 
     async def expenses(*args):
         return []
@@ -426,19 +433,22 @@ async def test_every_payment_type_and_management_type_share_the_income_rule(
     report = await ReportService(None, uuid.uuid4(), uuid.uuid4())._year_totals(
         prop, None, 2026, date(2026, 1, 1), date(2026, 12, 31))
     counts = weg_income if management_type == 'WEG' else rental_income
-    expected = '10.01' if counts else '0.00'
+    expected = amount if counts else '0.00'
     assert report.income_total == report.balance == expected
-    assert [(row.payment_type, row.amount) for row in report.income] == [(kind, '10.01')]
+    assert [(row.payment_type, row.amount) for row in report.income] == [(kind, amount)]
+    rows = list(csv.reader(io.StringIO(_render_property_year_csv(report).decode('utf-8-sig')), delimiter=';'))
+    assert (rows[1][2], rows[1][3], rows[1][-1]) == (
+        'Einnahmen' if counts else 'Durchlaufend', kind, amount.replace('.', ','))
     summary = map_property_year(report)
     reconciliation = summary.reconciliation[0]
     assert reconciliation.report_total == expected
     assert reconciliation.difference == '0.00'
-    assert reconciliation.mapped_total == ('10.01' if expected_line else '0.00')
-    assert reconciliation.unmapped_total == ('10.01' if counts and not expected_line else '0.00')
+    assert reconciliation.mapped_total == (amount if expected_line else '0.00')
+    assert reconciliation.unmapped_total == (amount if counts and not expected_line else '0.00')
     if expected_line:
-        assert next(row.amount for row in summary.lines if row.key == expected_line) == '10.01'
+        assert next(row.amount for row in summary.lines if row.key == expected_line) == amount
     else:
-        assert [(row.code, row.amount) for row in summary.unmapped] == [(kind, '10.01')]
+        assert [(row.code, row.amount) for row in summary.unmapped] == [(kind, amount)]
 
 
 async def test_anlage_v_summary_foreign_unknown_and_unauthenticated_requests_keep_report_guards(migrator_session, scope_seed, seed_data):
