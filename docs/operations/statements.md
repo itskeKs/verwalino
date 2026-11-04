@@ -44,9 +44,16 @@ building consumption, before selecting a lease's clipped statement. Exact interi
 readings ([§9b](https://www.gesetze-im-internet.de/heizkostenv/__9b.html)) split only
 the changed unit's consumption-dependent share; other units need no reading at that
 change date. Declared manual quantities remain supported (at most six decimal places).
-Missing interim readings split known unit-period consumption by degree-days if
-available, otherwise by days. The engine currently has no degree-day model, so the
-fallback is days; basic costs always split by days. Missing period consumption still
+Missing interim heat readings split known unit-period consumption by the fixed
+[degree-day table](../m3-abrechnungs-engine.md#51-principle-values-come-in-the-engine-only-distributesadopts):
+June–August share 40 per mille over 92 days; other months retain their published
+weights, including December 160. Hot water and basic costs always split by days.
+For a 1 July 2026 change without an interim reading, EUR 2,000 heating consumption
+costs split EUR 1,166.09 / EUR 833.91; EUR 400 hot-water consumption costs split
+EUR 198.36 / EUR 201.64. Suggestions and PDF notes name “Aufteilung nach
+Gradtagszahlen (§ 9b HeizkostenV)” with the exact weights. Finalization freezes
+the method and shares; older final statements keep their stored amounts and notes.
+Missing period consumption still
 returns 422 and is never replaced with zero or estimated building consumption.
 For a 10,000-euro pool, 70% consumption, two equally sized units each using 1,000,
 and A/B using 600/400 in the first unit, the statements are 3,221.92 / 1,778.08 /
@@ -78,8 +85,10 @@ active confirmed gross costs by invoice date. Drafts, reversal chains,
 superseded costs, and merely imported bank transactions do not count.
 
 The date basis and a domain note are included in the response. Security deposit and other
-payment types remain separately visible; no tax treatment is
-assumed. `TEILWEISE_PRUEFEN` remains its own flag. This is a
+payment types remain separately visible. Deposits never increase income or balance;
+`NACHZAHLUNG` is tenant backpayment income. House-money advances, reserve shares and
+owner special payments count as income only for WEG, not MIET, SEV or MISCH.
+The same mapping rule controls headline, reconciliation and both CSV exports. `TEILWEISE_PRUEFEN` remains its own flag. This is a
 verifiable basis, not a complete Anlage V or tax return.
 
 The **Anlage V** panel under **Berichte** maps this per-property year overview to
@@ -88,8 +97,11 @@ form detail lines via `GET /api/reports/property-year/anlage-v`.
 the same property, year and optional accounting scope. This is a
 "Zuordnungshilfe, keine Steuerberatung"; "Zeilennummern je Formularjahr prüfen"
 (check line numbers for each form year). The mapping ignores the Umlagefähigkeit
-split and lists `NACHZAHLUNG` under "Nicht zugeordnet": a Nachzahlung can come from
-a tenant or an owner, so its origin needs separate review.
+split and maps tenant `NACHZAHLUNG` to "Umlagen". Deposits remain visible under
+"Nicht zugeordnet" with their original amounts but contribute zero to the
+reconciliation totals. The same applies to owner receipts outside WEG; WEG receipts
+count as unassigned income. Thus mapped plus counted unassigned amounts equals the
+overview income. The overview CSV marks non-income rows as "Durchlaufend".
 
 The report requires full read/source permissions and, where applicable, an
 explicit homeowners' association (WEG)/MIET accounting scope covering the entire property and year. Missing

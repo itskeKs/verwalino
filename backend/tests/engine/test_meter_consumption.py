@@ -190,3 +190,42 @@ def test_untyped_values_are_not_coerced_or_rounded(value):
 def test_inverted_period_is_rejected():
     with pytest.raises(MeterConsumptionError, match="Handeingabe"):
         derive_consumption((reading(START, "10"), reading(END, "40")), END, START)
+
+
+@pytest.mark.parametrize("change,expected", [
+    (date(2026, 7, 1), (13410, 23)),
+    (date(2026, 2, 1), (170, 1)),
+    (date(2026, 1, 31), (5100, 31)),
+    (date(2026, 12, 31), (30840, 31)),
+])
+def test_heating_fallback_preserves_exact_degree_day_shares_until_money_allocation(change, expected):
+    from fractions import Fraction
+    from app.engine.meter_consumption import split_consumption
+    from app.engine.rounding import distribute_amount
+
+    result = split_consumption([reading(START, "0"), reading(END, "1000")],
+        START, END, changed_unit_covers(change), fallback="DEGREE_DAYS")
+    assert abs(result.periods[0][2] - Decimal(expected[0]) / expected[1]) < Decimal("1e-25")
+    assert sum(q for _, _, q in result.periods) == 1000
+    assert result.weights[0] == (Fraction(*expected), Fraction(1000))
+    assert "Aufteilung nach Gradtagszahlen (§ 9b HeizkostenV)" in result.reason
+    if change == date(2026, 7, 1):
+        assert distribute_amount(Decimal("2000.00"), [q for _, _, q in result.periods]) == [Decimal("1166.09"), Decimal("833.91")]
+
+
+@pytest.mark.parametrize("fallback", ["DAYS", "DEGREE_DAYS"])
+def test_real_interim_measurements_win_over_either_fallback(fallback):
+    from app.engine.meter_consumption import split_consumption
+
+    result = split_consumption([reading(START, "0"), reading(date(2026, 6, 30), "400"), reading(END, "1000")],
+        START, END, changed_unit_covers(date(2026, 7, 1)), fallback=fallback)
+    assert [q for _, _, q in result.periods] == [400, 600]
+    assert result.reason is None
+
+
+def test_known_zero_heating_consumption_is_zero_even_in_summer():
+    from app.engine.meter_consumption import split_consumption
+
+    result = split_consumption([reading(START, "10"), reading(END, "10")],
+        START, END, changed_unit_covers(date(2026, 7, 1)), fallback="DEGREE_DAYS")
+    assert [q for _, _, q in result.periods] == [0, 0]

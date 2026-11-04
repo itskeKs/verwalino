@@ -32,6 +32,15 @@ _RESERVE_TYPES = ("RESERVE_OPENING", "RESERVE_CONTRIBUTION", "RESERVE_WITHDRAWAL
 # Line types whose value is a manual Verwalter-Angabe (ADR-0008).
 _MANUAL_TYPES = ("BANK_BALANCE", "RECEIVABLE", "PAYABLE")
 
+# Translate only these historical engine notes at display time. Frozen lines
+# and their snapshots retain their original wording and checksums.
+_LEGACY_NOTES = {
+    ("RESERVE_OPENING", "Anfangsbestand (in dieser Ausbaustufe manuell erfasst)"):
+        "Anfangsbestand (Verwalter-Angabe)",
+    ("RESERVE_WITHDRAWAL", "Entnahmen im Zeitraum (in dieser Ausbaustufe manuell erfasst)"):
+        "Entnahmen im Zeitraum (Verwalter-Angabe)",
+}
+
 
 @dataclass
 class VermoegensberichtDisplayNames:
@@ -56,7 +65,8 @@ def _row(ln: SettlementLine, cls: str = "") -> str:
     manual = ""
     if ln.line_type in _MANUAL_TYPES:
         manual = "<span class='manual-tag'> (Verwalter-Angabe)</span>"
-    note = f"<div class='note'>{_esc(ln.note)}</div>" if ln.note else ""
+    display_note = _LEGACY_NOTES.get((ln.line_type, ln.note), ln.note)
+    note = f"<div class='note'>{_esc(display_note)}</div>" if display_note else ""
     return (
         f"<tr class='{cls}'><td>{_esc(ln.label)}{manual}{note}</td>"
         f"<td class='num'>{_eur(ln.amount)}</td></tr>"
@@ -139,15 +149,13 @@ def build_vermoegensbericht_html(
   {''.join(sections)}
 
   <div class="disclaimer">
-    Hinweis (ADR-0008, [§18/fachlich]): Der <strong>Stand der
+    Hinweis: Der <strong>Stand der
     Erhaltungsrücklage</strong> ist aus der Entwicklung (Anfangsbestand +
     Zuführungen - Entnahmen ± Korrekturen + nachträgliche Buchungen = Endbestand) abgeleitet. Die mit
     <em>(Verwalter-Angabe)</em> gekennzeichneten Werte (Bankkonten-Stichtagssalden,
     Forderungen/Verbindlichkeiten) sind <strong>manuelle Angaben der
     Verwaltung</strong> und <strong>kein automatischer Buchungssaldo</strong>
-    (kein Bankabgleich in dieser Ausbaustufe). Vollstaendigkeit und Eignung fuer
-    § 28 Abs. 4 WEG sind fachlich (Steuerberater/Fachanwalt fuer WEG-Recht)
-    abzustimmen.
+    (kein Bankabgleich).
   </div>
   {integrity}
 </body>

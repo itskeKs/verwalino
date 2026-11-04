@@ -11,9 +11,10 @@ import io
 import uuid
 from datetime import date
 from decimal import Decimal
+from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Header, Response
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -60,6 +61,10 @@ class CostEntryOut(BaseModel):
     model_config = {"from_attributes": True}
 
 
+CostAmount = Annotated[Decimal, Field(ge=0, max_digits=14, decimal_places=2, allow_inf_nan=False)]
+VatRate = Annotated[Decimal, Field(ge=0, max_digits=5, decimal_places=2, allow_inf_nan=False)]
+
+
 class CostEntryCreate(BaseModel):
     accounting_scope_id: uuid.UUID | None = None
     source_document_id: uuid.UUID | None = None
@@ -71,22 +76,22 @@ class CostEntryCreate(BaseModel):
     invoice_date: date
     service_period_from: date
     service_period_to: date
-    gross_amount: str
-    vat_amount: str | None = None
-    vat_rate: str | None = None
+    gross_amount: CostAmount
+    vat_amount: CostAmount | None = None
+    vat_rate: VatRate | None = None
     document_number: str | None = None
     owner_distribution_key: str | None = None
     tenant_distribution_key: str | None = None
     tenant_apportionable: str
-    apportionable_tenant_amount: str | None = None
+    apportionable_tenant_amount: CostAmount | None = None
     source: str = "MANUAL"
     status: str = "needs_review"
 
 
 class CostEntryUpdate(BaseModel):
-    gross_amount: str | None = None
-    vat_amount: str | None = None
-    vat_rate: str | None = None
+    gross_amount: CostAmount | None = None
+    vat_amount: CostAmount | None = None
+    vat_rate: VatRate | None = None
     invoice_date: date | None = None
     service_period_from: date | None = None
     service_period_to: date | None = None
@@ -97,13 +102,13 @@ class CostEntryUpdate(BaseModel):
     owner_distribution_key: str | None = None
     tenant_distribution_key: str | None = None
     tenant_apportionable: str | None = None
-    apportionable_tenant_amount: str | None = None
+    apportionable_tenant_amount: CostAmount | None = None
 
 
 class CostEntryCorrectionCreate(BaseModel):
-    gross_amount: str | None = None
-    vat_amount: str | None = None
-    vat_rate: str | None = None
+    gross_amount: CostAmount | None = None
+    vat_amount: CostAmount | None = None
+    vat_rate: VatRate | None = None
     invoice_date: date | None = None
     service_period_from: date | None = None
     service_period_to: date | None = None
@@ -114,7 +119,7 @@ class CostEntryCorrectionCreate(BaseModel):
     owner_distribution_key: str | None = None
     tenant_distribution_key: str | None = None
     tenant_apportionable: str | None = None
-    apportionable_tenant_amount: str | None = None
+    apportionable_tenant_amount: CostAmount | None = None
 
 
 @router.get("", response_model=list[CostEntryOut])
@@ -217,14 +222,14 @@ async def create_cost_entry(
         invoice_date=body.invoice_date,
         service_period_from=body.service_period_from,
         service_period_to=body.service_period_to,
-        gross_amount=Decimal(body.gross_amount),
-        vat_amount=Decimal(body.vat_amount) if body.vat_amount else None,
-        vat_rate=Decimal(body.vat_rate) if body.vat_rate else None,
+        gross_amount=body.gross_amount,
+        vat_amount=body.vat_amount,
+        vat_rate=body.vat_rate,
         document_number=body.document_number,
         owner_distribution_key=body.owner_distribution_key,
         tenant_distribution_key=body.tenant_distribution_key,
         tenant_apportionable=body.tenant_apportionable,
-        apportionable_tenant_amount=Decimal(body.apportionable_tenant_amount) if body.apportionable_tenant_amount else None,
+        apportionable_tenant_amount=body.apportionable_tenant_amount,
         status=body.status,
         source=body.source,
     )
@@ -246,9 +251,7 @@ async def update_cost_entry(
     updates = {}
     for field_name, value in body.model_dump(exclude_unset=True).items():
         if value is not None:
-            if field_name in ("gross_amount", "vat_amount", "vat_rate", "apportionable_tenant_amount"):
-                updates[field_name] = Decimal(value)
-            elif field_name in ("cost_category_id", "vendor_id"):
+            if field_name in ("cost_category_id", "vendor_id"):
                 updates[field_name] = uuid.UUID(value)
             else:
                 updates[field_name] = value
@@ -289,9 +292,7 @@ async def create_correction(
     corrections = {}
     for field_name, value in body.model_dump(exclude_unset=True).items():
         if value is not None:
-            if field_name in ("gross_amount", "vat_amount", "vat_rate", "apportionable_tenant_amount"):
-                corrections[field_name] = Decimal(value)
-            elif field_name in ("cost_category_id", "vendor_id"):
+            if field_name in ("cost_category_id", "vendor_id"):
                 corrections[field_name] = uuid.UUID(value)
             else:
                 corrections[field_name] = value

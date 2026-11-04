@@ -51,8 +51,13 @@ function formatLegalMea(mea: string | null, property: Property): string {
 }
 
 export function PropertyDetailPage() {
-  const navigate = useNavigate();
   const { propertyId } = useParams<{ propertyId: string }>();
+  return <PropertyDetailPageContent key={propertyId} propertyId={propertyId} />;
+}
+
+function PropertyDetailPageContent({ propertyId }: { propertyId?: string }) {
+  const navigate = useNavigate();
+
   const { session } = useAuth();
   const isWrite = session?.role === "OWNER_ADMIN" || session?.role === "CLERK";
   const requestVersion = useRef(0);
@@ -64,6 +69,7 @@ export function PropertyDetailPage() {
   const [editUnitId, setEditUnitId] = useState<string | null>(null);
   const [unitForm, setUnitForm] = useState<UnitFormData>(EMPTY_UNIT_FORM);
   const [saving, setSaving] = useState(false);
+  const [success, setSuccess] = useState<string | null>(null);
   const [knowledge, setKnowledge] = useState<PropertyKnowledgeOverview | null>(null);
   const [meaDenominator, setMeaDenominator] = useState<string>("");
   const [confirmingMea, setConfirmingMea] = useState(false);
@@ -71,7 +77,6 @@ export function PropertyDetailPage() {
   const reload = useCallback(() => {
     if (!propertyId) return;
     const version = ++requestVersion.current;
-    setProperty(null);
     setLoading(true);
     setError(null);
     Promise.all([
@@ -87,6 +92,7 @@ export function PropertyDetailPage() {
       })
       .catch((err) => {
         if (version !== requestVersion.current) return;
+        if (err instanceof ApiError && [401, 403, 404].includes(err.status)) setProperty(null);
         if (err instanceof ApiError && err.status === 401) {
           setError("Nicht authentifiziert.");
         } else {
@@ -102,6 +108,7 @@ export function PropertyDetailPage() {
   async function handleConfirmMeaScale(e: React.FormEvent) {
     e.preventDefault();
     if (!propertyId || !property) return;
+    setSuccess(null);
     setConfirmingMea(true);
     setError(null);
     try {
@@ -111,6 +118,7 @@ export function PropertyDetailPage() {
         return;
       }
       await confirmMeaScale(propertyId, denominator);
+      setSuccess("MEA-Skala gespeichert.");
       setMeaDenominator("");
       reload();
     } catch (err) {
@@ -147,6 +155,7 @@ export function PropertyDetailPage() {
   async function handleUnitSubmit(e: React.FormEvent) {
     e.preventDefault();
     if (!propertyId) return;
+    setSuccess(null);
     setSaving(true);
     setError(null);
     try {
@@ -174,6 +183,7 @@ export function PropertyDetailPage() {
         if (unitForm.building_part) body.building_part = unitForm.building_part;
         await createUnit(body);
       }
+      setSuccess("Einheit gespeichert.");
       setShowUnitForm(false);
       setEditUnitId(null);
       reload();
@@ -188,12 +198,14 @@ export function PropertyDetailPage() {
     }
   }
 
-  if (loading) return <p>Lade...</p>;
+  if (loading && !property) return <p>Lade...</p>;
   if (error && !property) return <p className="error-text">{error}</p>;
   if (!property) return <p className="error-text">Objekt nicht gefunden.</p>;
 
+  const showMea = property.management_type !== "MIET" || units.some(unit => unit.mea !== null);
+
   return (
-    <div>
+    <div style={{ overflowAnchor: "none" }}>
       <p style={{ marginBottom: "0.5rem" }}>
         <Link to="/objekte" className="link">&larr; Alle Objekte</Link>
       </p>
@@ -202,6 +214,7 @@ export function PropertyDetailPage() {
       {isWrite && <Link className="btn btn-primary" to={`/aufgaben?${new URLSearchParams({ property_id: property.id, create: "1" })}`}>Aufgabe anlegen</Link>}
 
       {error && <p className="error-text">{error}</p>}
+      {success && <p role="status" className="sticky top-0 z-10 bg-background py-2">{success}</p>}
 
       <div className="card" style={{ marginBottom: "1.5rem" }}>
         <h2>Objektdaten</h2>
@@ -217,11 +230,11 @@ export function PropertyDetailPage() {
         </table>
       </div>
 
-      {isWrite && property.mea_scale_status === "LEGACY_UNCONFIRMED" && (
+      {isWrite && showMea && property.mea_scale_status === "LEGACY_UNCONFIRMED" && (
         <div className="card" style={{ marginBottom: "1.5rem" }}>
           <h2>MEA-Skala bestätigen</h2>
           <p>
-            Bisheriger Status: <span className="badge badge--warning">LEGACY_UNCONFIRMED</span>.
+            Bisheriger Status: <span className="badge badge--warning">Skala noch nicht bestätigt</span>.
             Bitte geben Sie den Nenner der MEA-Skala ein (z.B. 1000 für 1000 Gesamteinheiten).
           </p>
           <form onSubmit={handleConfirmMeaScale} className="form-grid" style={{ gap: "0.5rem" }}>
@@ -253,14 +266,16 @@ export function PropertyDetailPage() {
         <Link className="btn" to={`/objekte/${propertyId}/wissen`}>Dokumente &amp; Wissen öffnen</Link>
       </section>
 
-      <AttachmentsPanel propertyId={property.id} canWrite={isWrite} />
+      <div className="[&_input]:min-w-0 [&_label]:min-w-0 max-[479px]:[&_button[type=submit]]:w-full">
+        <AttachmentsPanel propertyId={property.id} canWrite={isWrite} />
+      </div>
 
       <MeterPanel key={property.id} propertyId={property.id} canWrite={isWrite} />
 
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "1rem" }}>
+      <div className="flex flex-wrap items-center justify-between gap-2 mb-4">
         <h2 style={{ margin: 0 }}>Einheiten</h2>
         {isWrite && <div style={{ display: "flex", gap: "0.6rem", flexWrap: "wrap" }}>
-          <Link className="btn" to={`/objekte/${propertyId}/teilungserklaerung/import`}>
+          <Link className="btn btn--wrap max-w-full" to={`/objekte/${propertyId}/teilungserklaerung/import`}>
             Nachtrag oder Teilungserklärung einlesen
           </Link>
           <button className="btn btn--primary" onClick={openCreateUnit}>
@@ -319,7 +334,7 @@ export function PropertyDetailPage() {
                 onChange={(e) => setUnitForm({ ...unitForm, heated_area: e.target.value })}
               />
             </label>
-            <label>
+            {showMea && <label>
               MEA (Miteigentumsanteil)
               <input
                 type="text"
@@ -327,7 +342,7 @@ export function PropertyDetailPage() {
                 value={unitForm.mea}
                 onChange={(e) => setUnitForm({ ...unitForm, mea: e.target.value })}
               />
-            </label>
+            </label>}
             <label>
               Gebäudeteil
               <input
@@ -351,7 +366,7 @@ export function PropertyDetailPage() {
       {units.length === 0 ? (
         <p className="empty-hint">Keine Einheiten vorhanden.</p>
       ) : (
-        <div className="card">
+        <div className="card overflow-x-auto">
           <table className="data-table">
             <thead>
               <tr>

@@ -1425,3 +1425,40 @@ async def test_asset_report_recipients_have_authoritative_retention_bindings(cli
             cur.execute('SELECT entity FROM privacy_retention_facts(%s,%s) WHERE kind=%s',
                 (str(m4_seed['org_a_id']), m4_seed['person_b'], 'settlement_run'))
             assert report_id in {str(row[0]) for row in cur.fetchall()}
+@pytest.mark.parametrize("path, message", [
+    ("economic-plans", "Wirtschaftsplan nicht gefunden."),
+    ("payments", "Zahlung nicht gefunden."),
+    ("weg-settlements", "WEG-Abrechnung nicht gefunden."),
+    ("weg-settlements/{id}/input-owners", "WEG-Abrechnung nicht gefunden."),
+])
+async def test_missing_detail_has_exact_german_message(client_a_admin, client_unauth, path, message):
+    missing = "00000000-0000-0000-0000-000000000000"
+    path = path.format(id=missing) if "{id}" in path else f"{path}/{missing}"
+    response = await client_a_admin.get(f"/api/{path}")
+    assert response.status_code == 404
+    assert response.json() == {"detail": message}
+    assert (await client_unauth.get(f"/api/{path}")).status_code == 401
+
+
+@pytest.mark.asyncio
+async def test_foreign_details_match_missing_german_responses(client_a_admin, client_b_admin, m4_seed):
+    plan = await _create_and_finalize_plan(client_a_admin, m4_seed)
+    payment = await client_a_admin.post("/api/payments", json={
+        "bank_account_id": m4_seed["bank_giro"], "owner_profile_id": m4_seed["owner_a"],
+        "direction": "IN", "amount": "600.00", "value_date": "2026-01-05",
+        "payment_type": "HAUSGELD_VORSCHUSS"})
+    assert payment.status_code == 201, payment.text
+    run = await client_a_admin.post("/api/weg-settlements", json={
+        "property_id": m4_seed["property"], "economic_plan_id": plan,
+        "period_start": "2025-01-01", "period_end": "2025-12-31"})
+    assert run.status_code == 201, run.text
+    for path, record_id, message in [
+        ("economic-plans/{id}", plan, "Wirtschaftsplan nicht gefunden."),
+        ("payments/{id}", payment.json()["id"], "Zahlung nicht gefunden."),
+        ("weg-settlements/{id}", run.json()["id"], "WEG-Abrechnung nicht gefunden."),
+        ("weg-settlements/{id}/input-owners", run.json()["id"], "WEG-Abrechnung nicht gefunden."),
+    ]:
+        foreign = await client_b_admin.get("/api/" + path.format(id=record_id))
+        missing = await client_b_admin.get("/api/" + path.format(id=uuid.UUID(int=0)))
+        assert foreign.status_code == missing.status_code == 404
+        assert foreign.json() == missing.json() == {"detail": message}

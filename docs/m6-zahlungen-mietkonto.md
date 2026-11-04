@@ -2,6 +2,20 @@
 
 Browser acceptance journeys for bank import/assignment, rent changes, deposits and dunning now live in the `@browser` features; see [the feature runner](../features/README.md#browser-features).
 
+The property, person and unit detail pages and the persons/bank account lists keep their
+loaded content during save refreshes and confirm successful writes with inline status text.
+Changed list values appear without a manual reload; errors retain useful input and loaded data.
+Bank assignment/ignore finish their database transaction before the success response, using
+the same function-scoped dependency as the existing writer guards. Their table stays visible
+during the subsequent refresh and reflects the confirmed status immediately.
+A later account edit starts from the canonical successful response, including while its list read
+is pending. Confirmed contact/transaction access loss removes open private editors and invalidates
+late completions; transient failures retain useful input. Assignment feedback remains page-level
+and visible after importing a long statement without leaving the import page. See the
+[save lifecycle design and screenshots](../DESIGN.md#master-data-save-lifecycle) and
+[executable browser journey](../features/save_lifecycle.feature).
+
+
 As of: 2026-06-02 · Version 0.1 (design, before implementation)
 Reference: [sdd-property-management-mvp.md](sdd-property-management-mvp.md) v0.2 §3 (non-goal: bank import), §5.4 (incoming payments — *note: the SDD numbers them §6.3/§6.7*), §6.3 (bank accounts), §6.7 (rent/payment management), §11 (PDF), §13 (`Payment`/`OpenItem`), §14 (chronology), §16, §17, §18 · [archived roadmap](archive/roadmap.md) M6 · [architecture.md](architecture.md) §2.6 (segregation of funds (Vermögenstrennung)), §5.1 (conventions), §5.3 (`bank_account` anchor), assumption A-4 · [m3-abrechnungs-engine.md](m3-abrechnungs-engine.md) §7 (`advance_payments_source` MANUAL→DERIVED) · [m4-weg-abrechnung.md](m4-weg-abrechnung.md) §2.4 (paid_advances, settlement balance (Abrechnungsspitze)) · ADRs: [0003](adr/0003-gobd-immutability-mechanism.md) (reused), [0005](adr/0005-rounding-largest-remainder.md) (reused), [0006](adr/0006-valid-to-convention.md) (reused), [0007](adr/0007-weg-settlement-balance-and-economic-plan.md) (monthly basis, balance) · **[0009-expected-actual-and-payment-receipt.md](adr/0009-expected-actual-and-payment-receipt.md) (new)** · **[0010-segregation-of-funds-payments.md](adr/0010-segregation-of-funds-payments.md) (new)**
 Status: **Draft for confirmation by the human — no application code, no migration, no commit**
@@ -217,6 +231,13 @@ calls without an interest base and existing letters keep their interest-free
 semantics. No official interest rate is invented and no delivery is claimed. Migration
 0129 protects the new amounts and provenance even against a direct SQL update and
 refuses a downgrade that would lose existing interest bases.
+
+The notice detail shows principal and interest first in the frozen calculation,
+and the open amount first in the arrears table, so these values are readable at
+360 px without scrolling sideways. Other table columns remain scrollable within
+their card. `Ausgestellt am` shows the stored issue instant as `TT.MM.JJJJ, HH:MM`
+in German time (`Europe/Berlin`); API responses carry ISO timestamps with timezone.
+The letter, frozen calculation and PDF are unchanged.
 
 Since T53, individual and selected tenant dunning notices use the same
 history-sensitive tenant ledger path. The non-writing dunning-run preview filters
@@ -466,6 +487,11 @@ cover the absolute bank amount cent-exactly; German decimal input is validated w
 floating-point arithmetic. Errors keep the inputs, 409 becomes visible, reload
 follows only on success. READ_ONLY gets no mutation actions. "Alle" ("All") also keeps
 processed rows; account filter and pagination remain server-side.
+The split dialog aligns labels above fields in a responsive form grid. Lease/owner
+targets and notes use the full row width; long lease labels cannot widen the dialog.
+The explanation stays readable, and booking/cancellation share the bottom action row,
+reachable by scrolling on a narrow screen. The Sparkasse journey checks this with
+synthetic transactions at 1280, 800 and 360 px.
 The browser scenarios in `features/bank_assignment.feature` set up master data and
 import receipts through the API, then accept suggestions, split and ignore receipts
 through the UI. They assert January's 850=700+150 is fully paid and its receipt appears
@@ -485,8 +511,12 @@ automatically treated as fully allocable. Balance = income total − cost total;
 amounts remain Decimal-exact, even with large sums and a low outer precision context.
 
 The date basis used deliberately differs from the expected-amount period/service
-period. Security deposits remain reported separately and are not reinterpreted for tax
-purposes. The overview does not replace a complete Anlage V (rental income tax form)
+period. Security deposits remain separately visible as pass-through funds and never
+increase income or balance. Tenant backpayments (`NACHZAHLUNG`) count as income and
+map to Umlagen. `HAUSGELD_VORSCHUSS`, `RUECKLAGENANTEIL` and `SONDERZAHLUNG` count as
+income only for WEG properties, not MIET, SEV or MISCH. These rules live in the
+existing Anlage V category mapping and are shared by year totals and reconciliation.
+The existing SEV report admission restriction remains in force. The overview does not replace a complete Anlage V (rental income tax form)
 or EÜR (cash-basis profit statement). Complete source read permissions and, where
 applicable, an explicit whole-property/whole-year scope are required; partial access
 or unresolved classification does not yield seemingly complete totals. Existing
@@ -560,8 +590,11 @@ The overview's existing exclusions remain unchanged: unbooked/draft payments,
 reversed originals and reversal rows, cancelled payments, raw bank transactions,
 unconfirmed and superseded costs, and records outside the selected property,
 calendar year and complete authorized scope do not enter the mapping. Every amount
-that does enter is counted once: **mapped + unassigned = original report total**
-for each section, including explicit exclusions in unassigned. Refunds/credits keep
+eligible for the section total is counted once: **mapped + unassigned = report total**.
+The visible unassigned list also retains deposits and non-WEG owner receipts with
+their original amounts; those non-income rows are excluded from the income
+reconciliation's unassigned total. WEG owner receipts remain counted but unassigned
+for Anlage V. Excluded expense categories still count in expense reconciliation. Refunds/credits keep
 their signs. No redistribution or sub-cent rounding is needed; the source is already
 cent-exact. An inconsistent input total is refused. Tables are validated at import
 (duplicate categories cannot silently overwrite each other); organization-specific
@@ -616,10 +649,11 @@ compares this documentation exactly.
 | `KALTMIETE` | Mieteinnahmen für Wohnungen (ohne Umlagen) | [§/fachlich] Wohnraummiete als Vorschlag; andere Nutzungen, Angehörige und Vorjahresmieten gesondert prüfen. |
 | `NK_VORAUSZAHLUNG` | Einnahmen aus umgelegten Neben-/Betriebskosten (Umlagen) | [§/fachlich] Laufende Umlagen; Abrechnungserstattungen und Nachzahlungen gesondert prüfen. |
 | `HK_VORAUSZAHLUNG` | Einnahmen aus umgelegten Neben-/Betriebskosten (Umlagen) | [§/fachlich] Laufende Umlagen; Abrechnungserstattungen und Nachzahlungen gesondert prüfen. |
-| `KAUTION` | Nicht zugeordnet | [§/fachlich] Ausgeschlossen: verwahrte Kaution, keine Miete; eine spätere Verrechnung ist gesondert zu prüfen. |
-| `HAUSGELD_VORSCHUSS` | Nicht zugeordnet | [§/fachlich] Ausgeschlossen: WEG-Eigentümervorschuss, keine Vermietungseinnahme. |
-| `RUECKLAGENANTEIL` | Nicht zugeordnet | [§/fachlich] Ausgeschlossen: Rücklagenzuführung, keine Vermietungseinnahme. |
-| `SONDERZAHLUNG` | Nicht zugeordnet | [§/fachlich] Nicht als Miete angesetzt: Eigentümer-Sonderzahlung; Verwendungszweck gesondert prüfen. |
+| `NACHZAHLUNG` | Einnahmen aus umgelegten Neben-/Betriebskosten (Umlagen) | [§/fachlich] Nachzahlung des Mieters aus der Betriebskostenabrechnung als Umlage; Zufluss prüfen. |
+| `KAUTION` | Nicht zugeordnet | [§/fachlich] Durchlaufend: verwahrte Kaution, keine Einnahme; im Abgleich nicht mitgezählt. Eine spätere Verrechnung ist gesondert zu prüfen. |
+| `HAUSGELD_VORSCHUSS` | Nicht zugeordnet | [§/fachlich] Einnahme nur bei WEG-Verwaltung; kein Vermietungsertrag. Sonst im Abgleich nicht mitgezählt. |
+| `RUECKLAGENANTEIL` | Nicht zugeordnet | [§/fachlich] Einnahme nur bei WEG-Verwaltung; Rücklagenzuführung ist kein Vermietungsertrag. Sonst im Abgleich nicht mitgezählt. |
+| `SONDERZAHLUNG` | Nicht zugeordnet | [§/fachlich] Einnahme nur bei WEG-Verwaltung; Eigentümer-Sonderzahlung, keine Miete. Sonst im Abgleich nicht mitgezählt. |
 | `GRUNDSTEUER` | Grundsteuer | [§/fachlich] Nur vermietungsbezogene Grundsteuer; andere öffentliche Lasten prüfen. |
 | `KALTWASSER` | Wasserversorgung / Entwässerung | [§/fachlich] Vermietungsbezogene Wasserkosten; Abfluss und Umlage prüfen. |
 | `ENTWAESSERUNG` | Wasserversorgung / Entwässerung | [§/fachlich] Vermietungsbezogene Abwasserkosten; Abfluss und Umlage prüfen. |

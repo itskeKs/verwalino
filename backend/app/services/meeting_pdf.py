@@ -152,9 +152,7 @@ def build_niederschrift_html(
   {protocol_section}
 
   <div class="hint">
-    <em>[section 18/fachlich] Teilnehmerliste, Vollmachten, Stimmrechtsverhaeltnisse
-    und ggf. Unterschriften sind fachlich/juristisch abzustimmen. Dieses Dokument
-    ist ein automatisch erzeugter Protokollentwurf.</em>
+    <em>Dieses Dokument ist ein automatisch erzeugter Protokollentwurf.</em>
   </div>
 </body>
 </html>"""
@@ -240,7 +238,7 @@ def build_register_html(
 </head>
 <body>
   <h1>Beschluss-Sammlung</h1>
-  <div class="subtitle">gemaess WEG section 24 Abs. 7 ({count_text})</div>
+  <div class="subtitle">gemäß § 24 Abs. 7 WEG ({count_text})</div>
 
   <table class="meta">
     <tr><td class="label">Objekt / WEG</td><td>{property_display}</td></tr>
@@ -262,8 +260,8 @@ def build_register_html(
   </table>
 
   <div class="hint">
-    <em>[section 18/fachlich] Die Beschluss-Sammlung ist gemaess WEG section 24 Abs. 7
-    vom Verwalter zu fuehren und jedem Eigentuemer auf Verlangen Einsicht zu gewaehren.
+    <em>Die Beschluss-Sammlung ist gemäß § 24 Abs. 7 WEG
+    vom Verwalter zu führen und jedem Eigentümer auf Verlangen Einsicht zu gewähren.
     Anfechtungs- und Aufhebungsvermerke werden nachgetragen, wenn ein Beschluss
     gerichtlich angefochten oder aufgehoben wird.</em>
   </div>

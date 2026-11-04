@@ -182,7 +182,7 @@ export function PaymentsPage() {
         if (err instanceof ApiError && err.status === 401) {
           setError("Nicht authentifiziert. Bitte erneut anmelden.");
         } else {
-          setError(String(err));
+          setError(err instanceof ApiError ? err.message : String(err));
         }
       })
       .finally(() => { if (current()) setLoading(false); });

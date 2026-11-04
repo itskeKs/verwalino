@@ -8,6 +8,11 @@ Feature: Organization isolation
     And each organization has a property, a person and a bank account of its own
     And an administrator of "Verwaltung Alpha" is signed in
 
+  Scenario: Another organization's WEG financial details look missing
+    Given a payment, economic plan and annual WEG settlement belong to Verwaltung Alpha
+    When Verwaltung Beta opens those financial details and their input-owner list
+    Then the foreign financial records have the same German explanation as missing records
+
   Scenario: Another organization's empty annual drafts cannot be deleted
     Given an empty asset report belongs to Verwaltung Alpha
     When Verwaltung Beta tries to delete the empty annual draft

@@ -183,6 +183,7 @@ def pytest_collection_modifyitems(config, items):
                     "organization_deletion.feature": "needs direct database fixtures and the in-process deletion CLI",
                     "organization_export_import.feature": "needs direct database fixtures and in-process archive storage",
                     "password_reset.feature": "needs the Mailpit test mailbox",
+                    "profile_hints.feature": "needs a fresh organization seeded through the local database fixture",
                 }.get(Path(template.feature.filename).name)
                 if reason:
                     item.add_marker(pytest.mark.skip(reason=reason))
@@ -215,6 +216,7 @@ from tests.bdd.steps.browser_bank import *  # noqa: E402,F401,F403
 from tests.bdd.steps.browser_rent import *  # noqa: E402,F401,F403
 from tests.bdd.steps.browser_dunning import *  # noqa: E402,F401,F403
 from tests.bdd.steps.settlement_period import *  # noqa: E402,F401,F403
+from tests.bdd.steps.heating_settlement import *  # noqa: E402,F401,F403
 from tests.bdd.steps.advance_split import *  # noqa: E402,F401,F403
 from tests.bdd.steps.login_lockout import *  # noqa: E402,F401,F403
 from tests.bdd.mailpit import mailpit  # noqa: E402,F401
@@ -223,4 +225,5 @@ from tests.bdd.steps.signup import *  # noqa: E402,F401,F403
 from tests.bdd.steps.password_reset import *  # noqa: E402,F401,F403
 from tests.bdd.steps.quotas import *  # noqa: E402,F401,F403
 from tests.bdd.steps.organization_transfer import *  # noqa: E402,F401,F403
+from tests.bdd.steps.person_retention import *  # noqa: E402,F401,F403
 from tests.bdd.steps.source_access import *  # noqa: E402,F401,F403

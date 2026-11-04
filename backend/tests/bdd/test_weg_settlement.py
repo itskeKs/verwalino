@@ -1,14 +1,123 @@
 """The issue #204 hand calculation through real HTTP and PDF output."""
 from pathlib import Path
 
-from pytest_bdd import given, when, then, scenarios
+import pytest
+from pytest_bdd import given, when, then, scenario, scenarios, parsers
 
 from tests.bdd.steps.browser_setup import create
 from tests.bdd.steps.records import create_person
 from tests.financial_coverage_helpers import attest_fixture
 from tests.test_reserve_ledger import pdf_text
+from tests.bdd.world import target_url
 
-scenarios(str(Path(__file__).resolve().parents[3] / 'features/weg_settlement.feature'))
+FEATURE = str(Path(__file__).resolve().parents[3] / 'features/weg_settlement.feature')
+
+
+@pytest.mark.skipif(bool(target_url()), reason='ASGI response-start observation needs the in-process app and test DB')
+@scenario(FEATURE, 'Saved WEG drafts are readable as soon as their success response starts')
+def test_saved_weg_drafts_are_readable_as_soon_as_their_success_response_starts():
+    pass
+
+
+scenarios(FEATURE)
+
+
+@when('I save ten 600 euro Hausgeld drafts dated 5 January 2026 and a new plan and annual settlement')
+def immediately_readable_saves(world, weg_balance, app_rw_session, seed_data):
+    from sqlalchemy import text
+    from tests.write_response_support import create_visible_draft
+
+    w = weg_balance
+    world.run(app_rw_session.execute(text("SELECT set_config('app.current_org_id', :org, true)"),
+                                     {'org': str(seed_data['org_a_id'])}))
+    world.run(app_rw_session.execute(text("SELECT set_config('app.current_user_id', :actor, true)"),
+                                     {'actor': str(seed_data['user_a_admin_id'])}))
+    for _ in range(10):
+        world.run(create_visible_draft(world.actor, app_rw_session, '/api/payments', {
+            'bank_account_id': w['bank'],
+            'owner_profile_id': w['owners'][0], 'direction': 'IN', 'amount': '600.00',
+            'value_date': '2026-01-05', 'payment_type': 'HAUSGELD_VORSCHUSS'}, 'payment'))
+    period = {'property_id': w['property'], 'accounting_scope_id': w['scope'],
+              'period_start': '2026-01-01', 'period_end': '2026-12-31'}
+    world.run(create_visible_draft(world.actor, app_rw_session, '/api/economic-plans',
+                                  {**period, 'plan_year': 2026}, 'economic_plan'))
+    world.run(create_visible_draft(world.actor, app_rw_session, '/api/weg-settlements',
+                                  {**period, 'economic_plan_id': w['plan']}, 'settlement_run'))
+    w['immediate_saves'] = 12
+
+
+@then('every new detail is readable before its save response is cleaned up')
+def all_saves_readable(weg_balance):
+    assert weg_balance['immediate_saves'] == 12
+
+
+@when('I save ten Hausgeld payments and a plan and annual settlement through the UI')
+def saved_details_browser(browser_world, world, weg_balance):
+    import re
+    from playwright.async_api import expect
+
+    b, w = browser_world, weg_balance
+    details = []
+
+    async def save_and_read(prefix):
+        pattern = re.compile(rf'{prefix}/[0-9a-f-]+$')
+        async with b.page.expect_response(lambda response: response.request.method == 'GET'
+                                         and pattern.search(response.url)) as first_detail:
+            await b.page.get_by_role('button', name='Anlegen', exact=True).click()
+        response = await first_detail.value
+        details.append(response.status)
+        assert response.status == 200, await response.text()
+        return (await response.json())['id']
+
+    async def payments_and_plan():
+        for _ in range(10):
+            await b.visit('/zahlungen')
+            await b.page.get_by_role('button', name='+ Neue Zahlung', exact=True).click()
+            await b.select('Bankkonto *', w['bank'])
+            await b.select('Zahlungstyp *', 'HAUSGELD_VORSCHUSS')
+            await b.select('Eigentuemer', w['owners'][0])
+            await b.page.get_by_label('Betrag *', exact=True).fill('600.00')
+            await b.page.get_by_label('Wertstellungsdatum *', exact=True).fill('2026-01-05')
+            await save_and_read('/api/payments')
+            await expect(b.page.get_by_role('button', name='Buchen', exact=True)).to_be_visible()
+            await expect(b.page.get_by_role('heading', name='Zahlung Entwurf')).to_be_visible()
+            await expect(b.page.get_by_role('row', name='Betrag 600.00 EUR', exact=True)).to_be_visible()
+
+        await b.visit('/wirtschaftsplaene')
+        await b.page.get_by_role('button', name='+ Neuer Wirtschaftsplan', exact=True).click()
+        await b.select('WEG-Objekt *', w['property'])
+        await b.page.get_by_label('Wirtschaftsjahr *', exact=True).fill('2026')
+        await b.select('Abrechnungskreis', w['scope'])
+        await b.page.get_by_label('Zeitraum von *', exact=True).fill('2026-01-01')
+        await b.page.get_by_label('Zeitraum bis *', exact=True).fill('2026-12-31')
+        plan = await save_and_read('/api/economic-plans')
+        await expect(b.page.get_by_role('heading', name='Wirtschaftsplan 2026 Entwurf')).to_be_visible()
+        return plan
+
+    plan = b.run(payments_and_plan())
+    # Finalization is a prerequisite for the settlement, not the UI behavior
+    # under test. Reuse the existing domain fixture and real API.
+    values = {'planned_costs': [{'category_code': 'GARTENPFLEGE', 'label': 'Bewirtschaftung',
+        'planned_amount': '12000.00', 'cost_group': 'UMLAGEFAEHIG'}], 'reserve_contribution_total': '0.00'}
+    world.run(attest_fixture(world.actor, 'economic_plan', plan, values))
+    finalized = world.act('POST', f'/api/economic-plans/{plan}/finalize', json=values)
+    assert finalized.status_code == 200, finalized.text
+
+    async def settlement():
+        await b.visit('/weg-abrechnungen')
+        await b.page.get_by_role('button', name='+ Neue WEG-Abrechnung', exact=True).click()
+        await b.select('WEG-Objekt *', w['property'])
+        await b.select('Wirtschaftsplan (Soll) *', plan)
+        await save_and_read('/api/weg-settlements')
+        await expect(b.page.get_by_role('heading', name='WEG-Jahresabrechnung Entwurf')).to_be_visible()
+
+    b.run(settlement())
+    w['first_ui_details'] = details
+
+
+@then('all first detail requests succeeded and every payment offered booking')
+def first_ui_details(weg_balance):
+    assert weg_balance['first_ui_details'] == [200] * 12
 
 
 @given("Anna Berg's WEG plan is 7200 euros and her cost share is 6400 euros", target_fixture='weg_balance')
@@ -16,7 +125,12 @@ def weg_balance(world, seed_data):
     return create_balance_world(world, seed_data)
 
 
-def create_balance_world(world, seed_data, *, cost_period_end='2026-12-31', second_owner='Berta Vollständig'):
+@given("Anna-Katharina Freifrau von Hohenzollern-Sigmaringen has Anna's WEG plan and costs", target_fixture='weg_balance')
+def long_owner_balance(world, seed_data):
+    return create_balance_world(world, seed_data, owner_name='Anna-Katharina Freifrau von Hohenzollern-Sigmaringen')
+
+
+def create_balance_world(world, seed_data, *, cost_period_end='2026-12-31', owner_name='Anna Berg', second_owner='Berta Vollständig'):
     world.actor = world.administrator_of('Verwaltung Alpha')
     world.actor_organization = 'Verwaltung Alpha'
     user = str(seed_data['user_a_admin_id'])
@@ -26,7 +140,7 @@ def create_balance_world(world, seed_data, *, cost_period_end='2026-12-31', seco
             'grants': [{'user_id': user, 'capabilities': ['read', 'prepare', 'approve', 'export'],
                         'reason': 'Synthetic settlement'}]}}, keyed=True)
     owners, units = [], []
-    for number, mea, name in [('1', '600', 'Anna Berg'), ('2', '400', second_owner)]:
+    for number, mea, name in [('1', '600', owner_name), ('2', '400', second_owner)]:
         unit = create(world, '/api/units', {'property_id': home['id'], 'number': number,
             'usage_type': 'WOHNUNG', 'mea': mea, 'area': '100'})
         units.append(unit['id'])
@@ -348,3 +462,81 @@ def dated_document_browser(browser_world, dated_owners):
             await expect(region).to_contain_text('Eigentümer am ' + day)
             assert await region.evaluate('(e) => e.scrollWidth <= e.clientWidth')
     b.run(check())
+@when(parsers.parse('I prepare their {state} WEG annual settlement'))
+def prepare_long_statement(world, weg_balance, state):
+    assert state in ('computed', 'finalized')
+    values = {'paid_advances': [{'owner_profile_id': owner, 'paid_total': amount}
+                              for owner, amount in zip(weg_balance['owners'], ('6600.00', '4800.00'))]}
+    world.run(attest_fixture(world.actor, 'settlement', weg_balance['run'], values))
+    action = 'compute' if state == 'computed' else 'finalize'
+    response = world.act('POST', f"/api/weg-settlements/{weg_balance['run']}/{action}", json=values)
+    assert response.status_code == 200, response.text
+    weg_balance.update(statement=response.json(), display_state=state)
+
+
+@then("the long owner's statement and whole snapshot hash fit desktop and a 360 pixel phone")
+def long_statement_browser(browser_world, world, weg_balance):
+    import os
+    from playwright.async_api import expect
+
+    b, w = browser_world, weg_balance
+    name = 'Anna-Katharina Freifrau von Hohenzollern-Sigmaringen'
+    failures = []
+    console_errors = []
+
+    async def check():
+        b.page.on('console', lambda message: console_errors.append(message.text) if message.type == 'error' else None)
+        await b.visit(f"/weg-abrechnungen/{w['run']}")
+        for width in (1280, 360):
+            await b.page.set_viewport_size({'width': width, 'height': 1000})
+            if width == 360:
+                await b.page.wait_for_function("document.querySelector('aside').getBoundingClientRect().right <= 0")
+            heading = b.page.get_by_role('heading', name=name, exact=True)
+            await expect(heading).to_be_visible()
+            card = heading.locator('..')
+            await expect(card.get_by_role('cell', name='6400.00 EUR', exact=True).first).to_be_visible()
+            await expect(card.get_by_role('region', name=f'Hausgeld-Abgleich · {name}')).to_contain_text('7.200,00')
+            if w['statement']['snapshot_sha256']:
+                digest = b.page.locator('code').filter(has_text=w['statement']['snapshot_sha256'])
+                await expect(digest).to_be_visible()
+                assert await digest.evaluate('''el => {
+                    const range = document.createRange();
+                    range.selectNodeContents(el);
+                    const card = el.closest('.card').getBoundingClientRect();
+                    return Array.from(range.getClientRects()).every(r => r.left >= card.left && r.right <= card.right);
+                }'''), 'Snapshot hash extends beyond its card'
+            if os.environ.get('VERWALINO_CAPTURE_DESIGN') == '1':
+                directory = Path(__file__).resolve().parents[3] / 'docs/assets/design/weg-statements'
+                directory.mkdir(parents=True, exist_ok=True)
+                if w['display_state'] == 'finalized':
+                    await digest.locator('..').locator('..').screenshot(path=str(directory / f'hash-after-{width}.png'))
+                height = await card.evaluate('el => Math.ceil(el.getBoundingClientRect().height) + 200')
+                await b.page.set_viewport_size({'width': width, 'height': max(1000, height)})
+                await card.screenshot(path=str(directory / f"{w['display_state']}-after-{width}.png"))
+                await b.page.set_viewport_size({'width': width, 'height': 1000})
+            if not await b.page.locator('main').evaluate('(el) => el.scrollWidth <= el.clientWidth'):
+                failures.append(f'{width}: main content overflows')
+            for table in await card.locator('table').all():
+                if not await table.locator('..').evaluate("el => ['auto', 'scroll'].includes(getComputedStyle(el).overflowX)"):
+                    failures.append(f'{width}: statement has no horizontal scroll container')
+                amount = table.get_by_role('cell', name='6400.00 EUR', exact=True).first
+                if await amount.evaluate('''el => new Set(Array.from(el.firstChild.textContent, (_, i) => {
+                    const range = document.createRange();
+                    range.setStart(el.firstChild, i); range.setEnd(el.firstChild, i + 1);
+                    return range.getBoundingClientRect().top;
+                })).size > 1'''):
+                    failures.append(f'{width}: amount breaks across lines')
+                await table.locator('..').evaluate('el => { el.scrollLeft = el.scrollWidth; }')
+                assert await amount.evaluate('''el => {
+                    const cell = el.getBoundingClientRect(), container = el.closest('table').parentElement.getBoundingClientRect();
+                    return cell.left >= container.left && cell.right <= container.right + 1;
+                }'''), 'Full amount cannot be reached inside the statement card'
+            if os.environ.get('VERWALINO_CAPTURE_DESIGN') == '1' and width == 360:
+                await b.page.set_viewport_size({'width': width, 'height': max(1000, height)})
+                await card.screenshot(path=str(directory / f"{w['display_state']}-amount-after-{width}.png"))
+                await b.page.set_viewport_size({'width': width, 'height': 1000})
+        assert not failures, failures
+        assert not console_errors and not b.errors, (console_errors, b.errors)
+
+    b.run(check())
+    assert world.look(world.actor, f"/api/weg-settlements/{w['run']}").json() == w['statement']

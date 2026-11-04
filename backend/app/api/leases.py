@@ -36,6 +36,7 @@ from app.models.lease_rent_change import LeaseRentChange
 from app.repositories.lease_rent_change_repo import LeaseRentChangeRepository
 from app.services.lease_document_service import LeaseDocumentService
 from app.services.meter_service import ReadingCreate
+from app.engine.deposit import validate_deposit
 
 router = APIRouter(prefix="/api/leases", tags=["leases"])
 
@@ -137,10 +138,10 @@ class LeaseCreate(BaseModel):
     tenant_profile_id: str
     valid_from: date
     valid_to: date | None = None
-    base_rent: str
-    advance_payment: str
+    base_rent: RentAmount
+    advance_payment: RentAmount
     heating_advance_payment: RentAmount = Decimal('0.00')
-    deposit: str | None = None
+    deposit: RentAmount | None = None
     notes: str = ""
 
 
@@ -171,10 +172,15 @@ async def create_lease(
     repo = LeaseAgreementRepository(db, auth.organization_id)
     unit_id = uuid.UUID(body.unit_id)
     tenant_profile_id = uuid.UUID(body.tenant_profile_id)
-    if await UnitRepository(db, auth.organization_id).get_by_id(unit_id) is None:
+    unit = await UnitRepository(db, auth.organization_id).get_by_id(unit_id)
+    if unit is None:
         raise HTTPException(404, "Unit not found")
     if await TenantProfileRepository(db, auth.organization_id).get_by_id(tenant_profile_id) is None:
         raise HTTPException(404, "Tenant profile not found")
+    try:
+        validate_deposit(unit.usage_type, body.base_rent, body.deposit)
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
     # API write edge (ADR-0006): the user enters the INCLUSIVE last occupied day
     # ("endet 30.06." -> 2025-06-30); storage is HALF-OPEN [valid_from, valid_to)
     # so persist the EXCLUSIVE bound (last day + 1). valid_from is already the
@@ -186,10 +192,10 @@ async def create_lease(
         tenant_profile_id=tenant_profile_id,
         valid_from=body.valid_from,
         valid_to=inclusive_last_day_to_db_exclusive(body.valid_to),
-        base_rent=Decimal(body.base_rent),
-        advance_payment=Decimal(body.advance_payment),
-        heating_advance_payment=Decimal(body.heating_advance_payment),
-        deposit=Decimal(body.deposit) if body.deposit else None,
+        base_rent=body.base_rent,
+        advance_payment=body.advance_payment,
+        heating_advance_payment=body.heating_advance_payment,
+        deposit=body.deposit,
         notes=body.notes,
     )
     await require_history_prepare(db, auth.organization_id, "lease_agreement", la)
@@ -208,10 +214,10 @@ async def create_lease(
 class LeaseUpdate(BaseModel):
     valid_to: date | None = None
     notes: str | None = None
-    base_rent: str | None = None
-    advance_payment: str | None = None
+    base_rent: RentAmount | None = None
+    advance_payment: RentAmount | None = None
     heating_advance_payment: RentAmount | None = None
-    deposit: str | None = None
+    deposit: RentAmount | None = None
 
 
 @router.patch("/{lease_id}", response_model=LeaseOut, status_code=200)
@@ -235,7 +241,7 @@ async def update_lease(
     amount_fields = {"base_rent", "advance_payment", "heating_advance_payment", "deposit"}
     changes_amount = any(
         getattr(body, field) is not None
-        and Decimal(getattr(body, field)) != getattr(existing, field)
+        and getattr(body, field) != getattr(existing, field)
         for field in amount_fields & body.model_fields_set
     )
     if changes_amount and (
@@ -246,6 +252,16 @@ async def update_lease(
             status_code=409,
             detail="Cannot change amounts: has booked payments or finalized settlement",
         )
+    if any(getattr(body, field) is not None for field in {"base_rent", "deposit"} & body.model_fields_set):
+        unit = await UnitRepository(db, auth.organization_id).get_by_id(existing.unit_id)
+        if unit is None:
+            raise HTTPException(404, "Unit not found")
+        base_rent = body.base_rent if body.base_rent is not None else existing.base_rent
+        deposit = body.deposit if body.deposit is not None else existing.deposit
+        try:
+            validate_deposit(unit.usage_type, base_rent, deposit)
+        except ValueError as exc:
+            raise HTTPException(422, str(exc)) from exc
     if "valid_to" in body.model_fields_set:
         if body.valid_to is not None and body.valid_to < existing.valid_from:
             raise HTTPException(422, "Lease end must not precede its start")
@@ -261,7 +277,7 @@ async def update_lease(
     for field in amount_fields & body.model_fields_set:
         value = getattr(body, field)
         if value is not None:
-            setattr(existing, field, Decimal(value))
+            setattr(existing, field, value)
     try:
         await db.flush()
     except IntegrityError as exc:

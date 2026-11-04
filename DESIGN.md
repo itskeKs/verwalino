@@ -3,8 +3,8 @@
 DESIGN.md is the authoritative frontend design contract for Verwalino: layout, tokens, UI kit
 components and their behaviour, states, copy and formats. Define visual changes here before CSS
 tweaks land. New screens follow this contract; changes to the look or copy update it in the same PR.
-Named implementation deviations remain documented below as known debt tracked in #48, #49, #50
-and #52. New work follows the contract.
+Named implementation deviations remain documented below as known debt tracked in #48, #49 and #50.
+New work follows the contract.
 
 Source files: `frontend/tailwind.config.cjs` (token mapping), `frontend/src/index.css` (tokens, global
 classes), `frontend/src/components/ui/` (UI kit), `frontend/src/components/AppShell.tsx`,
@@ -308,14 +308,55 @@ New screens follow these page structures and use a German noun as their `h1`.
 - **Detail page** (`PropertyDetailPage.tsx`, `MandateDetailPage.tsx`): back link ("← Alle Objekte";
   kit pages use an `ArrowLeft` icon link), `h1` (kit pages put a `Badge` beside it), action buttons, then
   stacked cards, each with an `h2` or `CardTitle`: key-value `info-table` first, then related lists and
-  panels, each with its own "+ Neue ..." action. Loading, error and not-found replace the whole page
-  (`if (loading) return <p>Lade...</p>`, `Objekt nicht gefunden.`).
+  panels, each with its own "+ Neue ..." action. Loading replaces the page only on its first load
+  (`if (loading && !data) return <p>Lade...</p>`). The property, person and unit detail pages retain
+  loaded data and mounted panels during a save refresh. These six save surfaces disable browser
+  scroll anchoring so closing an inline form does not pull the view to the top. A route
+  change starts a fresh detail state; a confirmed loss of access clears protected data. Refresh
+  errors stay inline beside the retained data. Initial errors and not-found replace the page.
+  Property details offer the MEA scale confirmation and unit MEA field for WEG, MISCH and SEV;
+  MIET offers them only when an existing unit has a recorded MEA (including zero). Unset MEA
+  is not a recorded share. The confirmation card appears only for writers with an unconfirmed
+  scale, labelled “Skala noch nicht bestätigt”. Confirmed scales do not prompt again.
 - **Form.** `.form-grid` (two columns, one below 768 px). A `<label>` wraps its control with the caption
   above it; required fields end in ` *` plus native `required`; `form-full-width` spans both columns.
   `.form-actions` at the end: submit first (`btn btn--primary`), then "Abbrechen". While saving, the form
   is wrapped in `<fieldset disabled>` and the button label changes ("Speichern..."). Create and edit forms
   open as a card above the list; small edits of master data open `MasterDataEditor` as a dialog.
   Selects, checkboxes and file inputs are the native elements.
+
+The “Umsatz aufteilen” dialog uses the same form grid. Each split row is a
+full-width card with labels above its fields, two columns from 768 px and one
+column below. The lease/owner target and note span the row. Fieldsets may shrink
+so long lease options cannot widen the dialog or clip its explanation. Add/remove
+controls stay with the rows; submit and “Abbrechen” share the bottom action row.
+The scrollable dialog keeps all fields and actions reachable at 360 px.
+
+| Split dialog | 1280 px | 800 px | 360 px |
+|---|---|---|---|
+| Before | [Desktop](docs/assets/design/split-dialog/before-1280.png) | [Tablet](docs/assets/design/split-dialog/before-800.png) | [Phone](docs/assets/design/split-dialog/before-360.png) |
+| After | [Desktop](docs/assets/design/split-dialog/after-1280.png) | [Tablet](docs/assets/design/split-dialog/after-800.png) | [Phone](docs/assets/design/split-dialog/after-360.png) |
+| Bottom actions | [Desktop](docs/assets/design/split-dialog/after-actions-1280.png) | [Tablet](docs/assets/design/split-dialog/after-actions-800.png) | [Phone](docs/assets/design/split-dialog/after-actions-360.png) |
+
+### Empty tenant and owner selections
+
+In the unit's new tenancy or ownership card, an empty profile list shows a
+muted `.empty-hint` above the form. A normal `.link` to “Personen” explains the
+next step under “Rollen / Profile”: “Als Mieter kennzeichnen” or
+“Als Eigentuemer kennzeichnen” (matching the existing person-page action).
+The German copy starts “Noch keine Person als Mieter gekennzeichnet.” or
+“Noch keine Person als Eigentümer gekennzeichnet.” It wraps within the card at
+360 px. The hint appears only in the existing write forms and disappears when
+the corresponding profile list is populated. Returning through “Objekte” to the
+unit reloads the profiles; profile creation remains on the person page.
+
+Synthetic Anna Beispiel and Bernd Test, both initially unmarked, on the shared
+test database at 1280 × 900 and 360 × 900:
+
+| Form | Desktop before / after | 360 px before / after |
+| --- | --- | --- |
+| New tenancy | [before](docs/assets/design/profile-hints/before-tenancy-1280.png) · [after](docs/assets/design/profile-hints/after-tenancy-1280.png) | [before](docs/assets/design/profile-hints/before-tenancy-360.png) · [after](docs/assets/design/profile-hints/after-tenancy-360.png) |
+| New ownership | [before](docs/assets/design/profile-hints/before-ownership-1280.png) · [after](docs/assets/design/profile-hints/after-ownership-1280.png) | [before](docs/assets/design/profile-hints/before-ownership-360.png) · [after](docs/assets/design/profile-hints/after-ownership-360.png) |
 
 ### Separate tenant advances
 
@@ -479,8 +520,46 @@ scroll sideways; wide tables stay within their own horizontal scroll container.
 
 Wide tables use `overflow-x-auto` (`MandatePage.tsx`) or `.paged-list .paged-table` (`index.css`). Long
 content uses `min-w-0` plus `truncate` (`DashboardPage.tsx`) or `overflow-wrap: anywhere`
-(`.settlement-detail`). Deviation: in the 360 px detail screenshot the units table
-and the document upload button extend beyond their card, so `main` scrolls sideways there.
+(`.settlement-detail`). Property details keep the units table in an `overflow-x-auto`
+container, wrap the unit actions, and allow upload fields to shrink; the upload action
+fits the card below 480 px. Dashboard due tasks wrap long text and pagination actions
+and use the existing `.btn` style for reload, completion and pagination.
+The dashboard's rent KPI form allows its labels to shrink so long property options
+stay within the card, including before a property is selected.
+
+The dunning notice detail puts `Hauptforderung` and `Zinsen` first in its frozen
+interest table, and `Offen`, `Soll`, `Ist` before period and type in its arrears
+table. Monetary cells stay unbroken; principal, interest and open amounts are
+readable in the initial table viewport at 360 px. Remaining descriptive columns
+use the existing horizontal scroll containers. Desktop keeps the complete tables.
+Both `Ausgestellt am` locations show the persisted instant as `TT.MM.JJJJ, HH:MM`
+in `Europe/Berlin`, using the existing German `toLocaleString` options pattern
+with two-digit day, month, hour and minute. The API supplies ISO with a timezone.
+This changes display only; frozen values and PDFs retain their stored contents.
+
+Synthetic issued notices from the shared test database; the captures show the
+actual issue times on 4 November 2026, not the fixed November 1 unit-test instant:
+
+| Dunning notice detail | 1280 px | 360 px |
+|---|---|---|
+| Before | [View](docs/assets/design/dunning-notice/before-1280.png) | [View](docs/assets/design/dunning-notice/before-360.png) |
+| After | [View](docs/assets/design/dunning-notice/after-1280.png) | [View](docs/assets/design/dunning-notice/after-360.png) |
+
+The WEG settlement detail follows this contract: `settlement-detail` wraps long owner
+names and the complete snapshot SHA-256. Each individual statement uses its own
+`overflow-x-auto` container, natural column widths and unbroken monetary values;
+the table scrolls within the card at 360 px. The owner balance above it keeps its
+wrapping labels and fully visible amounts without horizontal scrolling.
+
+Synthetic long-owner statements from the test database, at 1280 px and 360 px wide
+(the capture height fits the entire owner card):
+
+| State | 1280 px | 360 px |
+| --- | --- | --- |
+| Computed before / after | [before](docs/assets/design/weg-statements/computed-before-1280.png) · [after](docs/assets/design/weg-statements/computed-after-1280.png) | [before](docs/assets/design/weg-statements/computed-before-360.png) · [after](docs/assets/design/weg-statements/computed-after-360.png) |
+| Finalized before / after | [before](docs/assets/design/weg-statements/finalized-before-1280.png) · [after](docs/assets/design/weg-statements/finalized-after-1280.png) | [before](docs/assets/design/weg-statements/finalized-before-360.png) · [after](docs/assets/design/weg-statements/finalized-after-360.png) |
+| Snapshot hash before / after | [before](docs/assets/design/weg-statements/hash-before-1280.png) · [after](docs/assets/design/weg-statements/hash-after-1280.png) | [before](docs/assets/design/weg-statements/hash-before-360.png) · [after](docs/assets/design/weg-statements/hash-after-360.png) |
+| Table scrolled to complete amounts | — | [computed](docs/assets/design/weg-statements/computed-amount-after-360.png) · [finalized](docs/assets/design/weg-statements/finalized-amount-after-360.png) |
 
 ## Components
 
@@ -602,6 +681,10 @@ do not assert tax completeness. A real CSV link uses the same displayed selectio
 and reports export errors inline. Loading and retry belong to the panel, leaving
 the overview visible; changing property, year or scope removes the old panel and
 suppresses late responses/downloads. The existing year-overview CSV stays separate.
+The income table labels deposits "Kaution (durchlaufend)" and tenant backpayments
+"Nachzahlung (Mieter)". The server's income total excludes trust deposits while
+retaining their original row amounts. The unassigned list retains these amounts;
+its reconciliation total excludes non-income rows, as the server note explains.
 
 Every async region provides loading, empty, error and success copy using the patterns below.
 Failed requests preserve the user's input.
@@ -641,6 +724,40 @@ admin-only nav group.
 - Page titles: each page renders its own `h1`; `document.title` is the static "Hausverwaltung".
 - Deviation: about 60 strings are written without umlauts ("Strasse", "waehlen", "Ruecklage",
   "Mietvertraege", "FLAECHE").
+
+### Lease and manual cost amount validation
+
+Lease create/edit and manual cost entry reuse the rent-change amount parser
+without floating-point conversion. Inputs accept decimal comma or dot and
+strict German grouping with a decimal comma (“2.250,00” → “2250.00”).
+Malformed grouping, negative values, non-finite values, more than two decimal
+places and amounts beyond twelve integer digits are refused before sending.
+The cost VAT percentage uses the same separators within its three-integer-digit
+storage bound. Both valid advances remain independent, including zero heating.
+Optional empty amounts stay absent/null; entered zero remains zero.
+
+A failed amount check keeps all inputs. The form shows a German alert naming
+the first invalid field, marks that input with `aria-invalid` and connects it to
+the alert with `aria-describedby`. For example, the lease says “Bitte geben Sie
+die Kaltmiete als gültigen EUR-Betrag ein.” and the cost form says “Bitte geben
+Sie den Bruttobetrag als gültigen EUR-Betrag ein.”. VAT rate uses “gültigen
+Prozentsatz”. Correcting and submitting revalidates the form.
+
+For a residential deposit above three net base rents, the server returns the
+existing form alert with “Die Kaution darf höchstens drei Nettokaltmieten betragen
+(2.250,00 €).” at 750 EUR rent. The form retains the entered 2,400 EUR so it can be
+corrected to the permitted 2,250 EUR and saved. This business refusal uses the
+existing server-error surface; commercial units are exempt.
+
+The running test stack supplies the synthetic money-input evidence below.
+“Before” is the failed save on main; “after” shows the reloaded lease form or
+saved cost list. Error images show the retained “abc” and its associated alert.
+
+| State | Lease 1280 / 360 px | Cost 1280 / 360 px |
+|---|---|---|
+| Before | [1280](docs/assets/design/money-inputs-lease-1280-before.png) / [360](docs/assets/design/money-inputs-lease-360-before.png) | [1280](docs/assets/design/money-inputs-cost-1280-before.png) / [360](docs/assets/design/money-inputs-cost-360-before.png) |
+| After | [1280](docs/assets/design/money-inputs-lease-1280.png) / [360](docs/assets/design/money-inputs-lease-360.png) | [1280](docs/assets/design/money-inputs-cost-1280.png) / [360](docs/assets/design/money-inputs-cost-360.png) |
+| Invalid | [1280](docs/assets/design/money-inputs-lease-invalid-1280.png) / [360](docs/assets/design/money-inputs-lease-invalid-360.png) | [1280](docs/assets/design/money-inputs-cost-invalid-1280.png) / [360](docs/assets/design/money-inputs-cost-invalid-360.png) |
 
 ### Number, money, date and size formats
 
@@ -753,7 +870,101 @@ Representative captures are listed below, including the
 [reset in dark mode](docs/assets/design/mail/password_reset-600-dark.png), and
 [self-hosted footer](docs/assets/design/mail/signup_confirmation-selfhost-600-light.png).
 
+### Missing financial records
+
+The payment, economic-plan and WEG settlement detail views display exactly
+“Zahlung nicht gefunden.”, “Wirtschaftsplan nicht gefunden.” and
+“WEG-Abrechnung nicht gefunden.” for missing records. The WEG input-owner
+companion read uses the same missing-run text. These six detail/list pages render
+API failures through `ApiError.message`, without the “ApiError:” class prefix.
+The existing German 401 notices, inline error styles and non-API fallbacks remain.
+
+The following before/after captures use the running local API and frontend with
+the disposable test database and synthetic organizations. Detail requests use
+the genuinely absent all-zero UUID. To exercise list-load failures, the browser
+replays that detail endpoint's actual 404 response for the corresponding list GET;
+this is a presentation check, not a claim that a normal list request returns 404.
+Desktop is 1280 px and phone is 360 px. No production data is used.
+
+| View | Desktop before / after | 360 px before / after |
+|---|---|---|
+| Missing payment | [before](docs/assets/design/missing-weg-objects/before-zahlungen-missing-1280.png) · [after](docs/assets/design/missing-weg-objects/after-zahlungen-missing-1280.png) | [before](docs/assets/design/missing-weg-objects/before-zahlungen-missing-360.png) · [after](docs/assets/design/missing-weg-objects/after-zahlungen-missing-360.png) |
+| Missing economic plan | [before](docs/assets/design/missing-weg-objects/before-wirtschaftsplaene-missing-1280.png) · [after](docs/assets/design/missing-weg-objects/after-wirtschaftsplaene-missing-1280.png) | [before](docs/assets/design/missing-weg-objects/before-wirtschaftsplaene-missing-360.png) · [after](docs/assets/design/missing-weg-objects/after-wirtschaftsplaene-missing-360.png) |
+| Missing WEG settlement | [before](docs/assets/design/missing-weg-objects/before-weg-abrechnungen-missing-1280.png) · [after](docs/assets/design/missing-weg-objects/after-weg-abrechnungen-missing-1280.png) | [before](docs/assets/design/missing-weg-objects/before-weg-abrechnungen-missing-360.png) · [after](docs/assets/design/missing-weg-objects/after-weg-abrechnungen-missing-360.png) |
+| Payment list load failure | [before](docs/assets/design/missing-weg-objects/before-zahlungen-list-1280.png) · [after](docs/assets/design/missing-weg-objects/after-zahlungen-list-1280.png) | [before](docs/assets/design/missing-weg-objects/before-zahlungen-list-360.png) · [after](docs/assets/design/missing-weg-objects/after-zahlungen-list-360.png) |
+| Economic-plan list load failure | [before](docs/assets/design/missing-weg-objects/before-wirtschaftsplaene-list-1280.png) · [after](docs/assets/design/missing-weg-objects/after-wirtschaftsplaene-list-1280.png) | [before](docs/assets/design/missing-weg-objects/before-wirtschaftsplaene-list-360.png) · [after](docs/assets/design/missing-weg-objects/after-wirtschaftsplaene-list-360.png) |
+| WEG list load failure | [before](docs/assets/design/missing-weg-objects/before-weg-abrechnungen-list-1280.png) · [after](docs/assets/design/missing-weg-objects/after-weg-abrechnungen-list-1280.png) | [before](docs/assets/design/missing-weg-objects/before-weg-abrechnungen-list-360.png) · [after](docs/assets/design/missing-weg-objects/after-weg-abrechnungen-list-360.png) |
+
+### Master-data save lifecycle
+
+Property units, person creation/editing and profile designation, unit ownership/lease saves,
+and bank account creation/editing confirm only successful write responses with inline
+`role="status"` receipts that stay at the top of the scrolling content while their page is open (for example “Einheit gespeichert.”, “Person gespeichert.”,
+“Mieterprofil gespeichert.”, “Mietvertrag gespeichert.” and “Bankkonto gespeichert.”).
+A failed write retains useful form inputs and its error; it does not create a receipt.
+The persons and bank account lists stay mounted during save refreshes. Search/filter changes
+start a new list. Transaction assignment retains the table during refresh and applies the
+server-confirmed status immediately, disabling the completed row's actions; the existing
+“Umsatz zugeordnet.” receipt and draft-only reserve receipt keep their meanings.
+The transaction receipt sits outside the import card, including on `?import=1`, so it remains
+visible while assigning a receipt further down a long imported statement. Confirmed access loss
+also closes the persons inline editor and transaction split dialog, discards their private state
+and invalidates late work; transient failures keep useful inputs. Bank account edits update their
+canonical row from the successful response before the next edit can open.
+
+
+Before/after captures use the real local browser and shared disposable test database with
+synthetic rental records at 1280 and 360 px. After captures follow the saves without a manual reload.
+
+| View | Desktop before / after | 360 px before / after |
+|---|---|---|
+| Property units | [before](docs/assets/design/save-lifecycle/before-property-1280.png) · [after](docs/assets/design/save-lifecycle/after-property-1280.png) | [before](docs/assets/design/save-lifecycle/before-property-360.png) · [after](docs/assets/design/save-lifecycle/after-property-360.png) |
+| Persons | [before](docs/assets/design/save-lifecycle/before-persons-1280.png) · [after](docs/assets/design/save-lifecycle/after-persons-1280.png) | [before](docs/assets/design/save-lifecycle/before-persons-360.png) · [after](docs/assets/design/save-lifecycle/after-persons-360.png) |
+| Person profiles | [before](docs/assets/design/save-lifecycle/before-person-1280.png) · [after](docs/assets/design/save-lifecycle/after-person-1280.png) | [before](docs/assets/design/save-lifecycle/before-person-360.png) · [after](docs/assets/design/save-lifecycle/after-person-360.png) |
+| Unit leases | [before](docs/assets/design/save-lifecycle/before-unit-1280.png) · [after](docs/assets/design/save-lifecycle/after-unit-1280.png) | [before](docs/assets/design/save-lifecycle/before-unit-360.png) · [after](docs/assets/design/save-lifecycle/after-unit-360.png) |
+| Bank accounts | [before](docs/assets/design/save-lifecycle/before-accounts-1280.png) · [after](docs/assets/design/save-lifecycle/after-accounts-1280.png) | [before](docs/assets/design/save-lifecycle/before-accounts-360.png) · [after](docs/assets/design/save-lifecycle/after-accounts-360.png) |
+| Transaction assignment | [before](docs/assets/design/save-lifecycle/before-assignment-1280.png) · [after](docs/assets/design/save-lifecycle/after-assignment-1280.png) | [before](docs/assets/design/save-lifecycle/before-assignment-360.png) · [after](docs/assets/design/save-lifecycle/after-assignment-360.png) |
+
+Delayed-refresh and post-import regression captures use the same synthetic test environment.
+Contact access-loss captures inject a synthetic HTTP 401 response into the delayed list read;
+they verify frontend invalidation, not a server-side permission change. Account follow-up edits
+and the sixty-receipt import/assignment use the real API. Each pair is desktop/360 px.
+
+| Case | Desktop before / after | 360 px before / after |
+|---|---|---|
+| Contact editor after access loss | [before](docs/assets/design/save-lifecycle/r1-before-persons-access-loss-1280.png) · [after](docs/assets/design/save-lifecycle/r1-after-persons-access-loss-1280.png) | [before](docs/assets/design/save-lifecycle/r1-before-persons-access-loss-360.png) · [after](docs/assets/design/save-lifecycle/r1-after-persons-access-loss-360.png) |
+| Account follow-up edit | [before](docs/assets/design/save-lifecycle/r1-before-accounts-followup-1280.png) · [after](docs/assets/design/save-lifecycle/r1-after-accounts-followup-1280.png) | [before](docs/assets/design/save-lifecycle/r1-before-accounts-followup-360.png) · [after](docs/assets/design/save-lifecycle/r1-after-accounts-followup-360.png) |
+| Assignment after importing a long statement | [before](docs/assets/design/save-lifecycle/r1-before-assignment-after-import-1280.png) · [after](docs/assets/design/save-lifecycle/r1-after-assignment-after-import-1280.png) | [before](docs/assets/design/save-lifecycle/r1-before-assignment-after-import-360.png) · [after](docs/assets/design/save-lifecycle/r1-after-assignment-after-import-360.png) |
+
 ## Screenshots
+
+Property MEA guidance uses new synthetic MIET and WEG properties on the disposable test
+database, showing the page top and new-unit card at 1280 and 360 CSS px. MIET has neither the scale
+confirmation nor the unit MEA field; WEG retains both and shows a German scale status.
+
+| MEA guidance | Desktop | 360 px |
+|---|---|---|
+| MIET before | [Desktop](docs/assets/design/mea-miet-before-1280.png) | [Phone](docs/assets/design/mea-miet-before-360.png) |
+| MIET after | [Desktop](docs/assets/design/mea-miet-1280.png) | [Phone](docs/assets/design/mea-miet-360.png) |
+| WEG before | [Desktop](docs/assets/design/mea-weg-before-1280.png) | [Phone](docs/assets/design/mea-weg-before-360.png) |
+| WEG after | [Desktop](docs/assets/design/mea-weg-1280.png) | [Phone](docs/assets/design/mea-weg-360.png) |
+| MIET unit before | [Desktop](docs/assets/design/mea-miet-unit-before-1280.png) | [Phone](docs/assets/design/mea-miet-unit-before-360.png) |
+| MIET unit after | [Desktop](docs/assets/design/mea-miet-unit-1280.png) | [Phone](docs/assets/design/mea-miet-unit-360.png) |
+| WEG unit before | [Desktop](docs/assets/design/mea-weg-unit-before-1280.png) | [Phone](docs/assets/design/mea-weg-unit-before-360.png) |
+| WEG unit after | [Desktop](docs/assets/design/mea-weg-unit-1280.png) | [Phone](docs/assets/design/mea-weg-unit-360.png) |
+
+The person privacy panel labels a `BOOKED_PAYMENT` binding as
+“Empfänger einer gebuchten Zahlung” in both the erasure preview and the
+on-screen disclosure. A retained outgoing repayment leaves the recipient's name
+readable after requesting erasure and reports processing restriction. The
+screenshots below use only synthetic test records; the before images show the
+untranslated category on the fixed backend, and the after images show its German
+label after the same request/disclosure flow. The existing layout is unchanged.
+
+| Person privacy | Desktop | 360 px |
+|---|---|---|
+| Before label | [Desktop](docs/assets/design/dsgvo-payment-before-desktop.png) | [Phone](docs/assets/design/dsgvo-payment-before-360.png) |
+| After label | [Desktop](docs/assets/design/dsgvo-payment-after-desktop.png) | [Phone](docs/assets/design/dsgvo-payment-after-360.png) |
 
 Settlement structured inputs state that manual consumption and person counts refer
 to the entire property settlement year, including for clipped lease statements.
@@ -776,9 +987,11 @@ synthetic browser-intercepted API responses, without starting a backend or acces
 | Declaration publication | `/teilungserklaerung/import/:id/review`, "Übernahme vorbereiten" | [Desktop](docs/assets/permissions/after-publication-desktop.png) | [Phone](docs/assets/permissions/after-publication-360.png) |
 | Emergency pause | `/berechtigungen` (paused) | [Desktop](docs/assets/permissions/paused-overview-desktop.png) | [Phone](docs/assets/permissions/paused-overview-360.png) |
 | Dashboard | `/` | [`dashboard-desktop.png`](docs/assets/design/dashboard-desktop.png) | [`dashboard-360.png`](docs/assets/design/dashboard-360.png) |
+| Dashboard rent KPI selector | `/`, long property option | [`dashboard-kpis-desktop.png`](docs/assets/design/dashboard-kpis-desktop.png) | [`dashboard-kpis-360.png`](docs/assets/design/dashboard-kpis-360.png) |
 | Hosted dashboard quota | `/`, free plan at 90% | [`dashboard-quota-1280.png`](docs/assets/design/dashboard-quota-1280.png) | [`dashboard-quota-360.png`](docs/assets/design/dashboard-quota-360.png) |
 | List | `/objekte` | [`list-objekte-desktop.png`](docs/assets/design/list-objekte-desktop.png) | [`list-objekte-360.png`](docs/assets/design/list-objekte-360.png) |
 | Detail | `/objekte/:id` | [`detail-objekt-desktop.png`](docs/assets/design/detail-objekt-desktop.png) | [`detail-objekt-360.png`](docs/assets/design/detail-objekt-360.png) |
+| Detail upload | `/objekte/:id`, documents card | [`detail-upload-desktop.png`](docs/assets/design/detail-upload-desktop.png) | [`detail-upload-360.png`](docs/assets/design/detail-upload-360.png) |
 | Hosted signup | `/signup` | [`signup-desktop.png`](docs/assets/design/signup-desktop.png) | [`signup-360.png`](docs/assets/design/signup-360.png) |
 | Signup confirmation, retryable password error | `/signup/confirm` | [`signup-confirm-desktop.png`](docs/assets/design/signup-confirm-desktop.png) | [`signup-confirm-360.png`](docs/assets/design/signup-confirm-360.png) |
 | Signup receipt | `/signup`, accepted request | — | [`signup-receipt-360.png`](docs/assets/design/signup-receipt-360.png) |
@@ -796,8 +1009,18 @@ The hosted quota images use the running frontend with synthetic API responses.
 The signup and password recovery images use synthetic deployment metadata and
 captured API responses. These are visual/360 px geometry checks, not end-to-end proof.
 
+The property-detail and dashboard images focus on the units and due-task cards at
+360 and 1280 px, using twelve long synthetic unit rows and a long task title from
+`features/responsive_property_dashboard.feature`. The upload card is captured in
+`detail-upload-360.png` and `detail-upload-desktop.png`. Matching `issue-52-before-*`
+images preserve the baseline on the same data. The dashboard KPI images show the
+form with a long property option; its baseline captures are
+[`issue-52-before-dashboard-kpis-desktop.png`](docs/assets/design/issue-52-before-dashboard-kpis-desktop.png)
+and [`issue-52-before-dashboard-kpis-360.png`](docs/assets/design/issue-52-before-dashboard-kpis-360.png).
+These images use 1x device scale.
+
 The screenshots show the app as it is, including the deviations named above (legacy table, native file
-button, unstyled buttons on the dashboard task list, ASCII "Strasse").
+button, ASCII "Strasse").
 
 ### Property year mapping aid
 
@@ -1104,3 +1327,9 @@ retain their existing display.
 PDF output: [unit 2 plan](docs/assets/design/dated-owner-documents/plan-pdf.png),
 [unit 2 asset report](docs/assets/design/dated-owner-documents/report-pdf.png).
 All examples use synthetic data on the disposable test database.
+Annual income correction (#169), synthetic journey 5 receipts through 31 October 2026:
+
+| View | Before | After |
+| --- | --- | --- |
+| Desktop | [Income with deposit](docs/assets/design/reports-income-before-1280.png) | [Income excluding deposit](docs/assets/design/reports-income-1280.png) |
+| 360 px | [Income with deposit](docs/assets/design/reports-income-before-360.png) | [Income excluding deposit](docs/assets/design/reports-income-360.png) |

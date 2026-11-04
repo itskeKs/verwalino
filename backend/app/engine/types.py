@@ -16,6 +16,7 @@ import uuid
 from dataclasses import dataclass
 from datetime import date
 from decimal import Decimal
+from fractions import Fraction
 
 
 # ---------------------------------------------------------------------------
@@ -615,6 +616,7 @@ class HeatingUnitInput:
     unit_id: uuid.UUID
     base_quantity: Decimal
     consumption: Decimal | None
+    consumption_weight: Fraction | None = None
 
 
 @dataclass(frozen=True)
@@ -681,6 +683,8 @@ class HeatingSliceInput:
     owner_profile_id: uuid.UUID | None
     base_quantity: Decimal
     consumption: Decimal | None
+    consumption_split_method: str | None = None
+    consumption_weight: Fraction | None = None
 
 
 @dataclass(frozen=True)

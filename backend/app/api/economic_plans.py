@@ -256,7 +256,7 @@ async def get_plan(
     repo = EconomicPlanRepository(db, auth.organization_id)
     plan = await repo.get_by_id(plan_id)
     if plan is None:
-        raise HTTPException(status_code=404, detail="Economic plan not found")
+        raise HTTPException(status_code=404, detail="Wirtschaftsplan nicht gefunden.")
     line_repo = EconomicPlanLineRepository(db, auth.organization_id)
     lines = await line_repo.list_for_plan(plan_id)
     return _plan_out(plan, list(lines))
@@ -266,7 +266,7 @@ async def get_plan(
 async def create_plan(
     body: EconomicPlanCreate,
     auth: AuthContext = Depends(require_write_dep),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
 ):
     svc = EconomicPlanService(db, auth.organization_id, auth.user_id, session_version=auth.session_version)
     plan = await svc.create_draft(
@@ -288,7 +288,7 @@ async def compute_plan(
     plan_id: uuid.UUID,
     body: PlanComputeRequest | None = None,
     auth: AuthContext = Depends(require_write_dep),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
 ):
     svc = EconomicPlanService(db, auth.organization_id, auth.user_id, session_version=auth.session_version)
     plan, _result = await svc.compute(plan_id, _to_inputs(body))
@@ -316,7 +316,7 @@ async def finalize_plan(
 async def create_plan_correction(
     plan_id: uuid.UUID,
     auth: AuthContext = Depends(require_write_dep),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
 ):
     svc = EconomicPlanService(db, auth.organization_id, auth.user_id, session_version=auth.session_version)
     plan = await svc.create_correction_run(plan_id)

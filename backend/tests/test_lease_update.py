@@ -1,11 +1,32 @@
 """T04: end/notes remain editable; financial history locks monetary changes."""
 
 import uuid
+from decimal import Decimal
 
 import psycopg2
 import pytest
 
 from tests.conftest import MIGRATOR_SYNC_URL
+
+
+DEPOSIT_CAP_MESSAGE = "Die Kaution darf höchstens drei Nettokaltmieten betragen (2.250,00 €)."
+
+
+@pytest.mark.parametrize("usage_type,deposit,rejected", [
+    ("WOHNUNG", "2400.00", True), ("WOHNUNG", "2250.01", True),
+    ("WOHNUNG", "2250.00", False), ("WOHNUNG", "2249.99", False),
+    ("WOHNUNG", None, False), ("GEWERBE", "2400.00", False),
+])
+def test_pure_deposit_cap_uses_only_residential_net_rent(usage_type, deposit, rejected):
+    from app.engine.deposit import validate_deposit
+
+    amount = Decimal(deposit) if deposit is not None else None
+    if rejected:
+        with pytest.raises(ValueError, match=r"2\.250,00 €") as error:
+            validate_deposit(usage_type, Decimal("750.00"), amount)
+        assert str(error.value) == DEPOSIT_CAP_MESSAGE
+    else:
+        validate_deposit(usage_type, Decimal("750.00"), amount)
 
 
 @pytest.fixture
@@ -100,6 +121,35 @@ async def test_unbooked_amount_update_preserves_notes(client_a_admin, lease_seed
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("value", ["750,00", "NaN", "-1", "1e400", "0.001", "1000000000000"])
+@pytest.mark.parametrize("field", ["base_rent", "advance_payment", "heating_advance_payment", "deposit"])
+@pytest.mark.parametrize("operation", ["create", "update"])
+async def test_invalid_lease_amount_is_a_field_validation_error(client_a_admin, lease_seed, value, field, operation):
+    if operation == "create":
+        response = await client_a_admin.post("/api/leases", json={
+            "unit_id": lease_seed["unit"], "tenant_profile_id": lease_seed["tenant"],
+            "valid_from": "2025-01-01", "base_rent": "750.00", "advance_payment": "150.00", field: value,
+        })
+    else:
+        lease = await create_lease(client_a_admin, lease_seed)
+        response = await client_a_admin.patch(f"/api/leases/{lease['id']}", json={field: value})
+    assert response.status_code == 422, response.text
+    assert any(error["loc"] == ["body", field] for error in response.json()["detail"])
+
+
+@pytest.mark.asyncio
+async def test_canonical_lease_amounts_round_trip_with_separate_advances_and_zero_deposit(client_a_admin, lease_seed):
+    amounts = {"base_rent": "750.00", "advance_payment": "150.00",
+               "heating_advance_payment": "90.00", "deposit": "2250.00"}
+    lease = await create_lease(client_a_admin, lease_seed, **amounts)
+    assert {field: lease[field] for field in amounts} == amounts
+    response = await client_a_admin.patch(f"/api/leases/{lease['id']}", json={"deposit": "0.00"})
+    assert response.status_code == 200, response.text
+    listing = await client_a_admin.get("/api/leases", params={"unit_id": lease_seed["unit"]})
+    assert {field: listing.json()[0][field] for field in amounts} == {**amounts, "deposit": "0.00"}
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize('field', ['base_rent', 'heating_advance_payment'])
 async def test_finalized_lease_locks_amounts_but_not_end(client_a_admin, lease_seed, field):
     lease = await create_lease(client_a_admin, lease_seed)
@@ -116,3 +166,57 @@ async def test_finalized_lease_locks_amounts_but_not_end(client_a_admin, lease_s
     response = await client_a_admin.patch(f"/api/leases/{lease['id']}", json={"valid_to": "2025-12-31"})
     assert response.status_code == 200, response.text
     assert response.json()["valid_to"] == "2025-12-31"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("operation", ["create", "update"])
+@pytest.mark.parametrize("usage_type,deposit,status", [
+    ("WOHNUNG", "2400.00", 422), ("WOHNUNG", "2250.01", 422),
+    ("WOHNUNG", "2250.00", 200), ("WOHNUNG", "2249.99", 200),
+    ("GEWERBE", "2400.00", 200),
+])
+async def test_deposit_cap_on_create_and_update_is_atomic(client_a_admin, lease_seed, operation, usage_type, deposit, status):
+    with psycopg2.connect(MIGRATOR_SYNC_URL) as conn:
+        with conn.cursor() as cur:
+            cur.execute("UPDATE unit SET usage_type=%s WHERE id=%s", (usage_type, lease_seed["unit"]))
+    if operation == "create":
+        response = await client_a_admin.post("/api/leases", json={
+            "unit_id": lease_seed["unit"], "tenant_profile_id": lease_seed["tenant"],
+            "valid_from": "2025-01-01", "base_rent": "750.00", "deposit": deposit,
+            "advance_payment": "150.00", "heating_advance_payment": "90.00",
+        })
+        expected_status = 201 if status == 200 else status
+    else:
+        await create_lease(client_a_admin, lease_seed, base_rent="750.00", deposit="1500.00")
+        existing = (await client_a_admin.get("/api/leases", params={"unit_id": lease_seed["unit"]})).json()[0]
+        response = await client_a_admin.patch(f"/api/leases/{existing['id']}", json={
+            "deposit": deposit, "notes": "Must change only on success", "valid_to": "2025-12-31",
+        })
+        expected_status = status
+    assert response.status_code == expected_status, response.text
+    stored = (await client_a_admin.get("/api/leases", params={"unit_id": lease_seed["unit"]})).json()
+    if status == 422:
+        assert response.json()["detail"] == DEPOSIT_CAP_MESSAGE
+        assert stored == ([] if operation == "create" else [existing])
+    else:
+        assert stored[0]["deposit"] == deposit
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("changes,status", [
+    ({"base_rent": "749.99"}, 422),
+    ({"base_rent": "750.00"}, 200),
+    ({"base_rent": "700.00", "deposit": "2100.00"}, 200),
+    ({"base_rent": "800.00", "deposit": "2400.00"}, 200),
+])
+async def test_lowering_rent_checks_the_resulting_deposit_pair(client_a_admin, lease_seed, changes, status):
+    lease = await create_lease(client_a_admin, lease_seed, base_rent="800.00", deposit="2250.00")
+    response = await client_a_admin.patch(f"/api/leases/{lease['id']}", json={**changes, "notes": "New note"})
+    assert response.status_code == status, response.text
+    stored = (await client_a_admin.get("/api/leases", params={"unit_id": lease_seed["unit"]})).json()[0]
+    if status == 422:
+        assert response.json()["detail"] == "Die Kaution darf höchstens drei Nettokaltmieten betragen (2.249,97 €)."
+        assert stored == lease
+    else:
+        assert stored["base_rent"] == changes["base_rent"]
+        assert stored["deposit"] == changes.get("deposit", lease["deposit"])

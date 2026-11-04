@@ -6,7 +6,10 @@ estimate, an exception assessment, or certification of a lawful cost pool.
 """
 from __future__ import annotations
 
+from calendar import monthrange
+from datetime import date
 from decimal import Decimal, ROUND_HALF_UP, localcontext
+from fractions import Fraction
 from uuid import UUID
 
 from app.engine.rounding import CENT, distribute_amount
@@ -20,6 +23,30 @@ from app.engine.types import (
 
 ZERO = Decimal("0.00")
 REDUCTION = Decimal("0.15")
+
+# Published VDI 2067 degree-day table, selected in issue #200:
+# https://www.ista.com/de/kontakt-service/fachwissen/gradtagszahlentabelle/
+# Each entry is (per mille, denominator in days). None uses the actual month
+# length, including leap February. June–August share ONE 40-per-mille block.
+DEGREE_DAY_TABLE = (
+    (170, None), (150, None), (130, None), (80, None), (40, None),
+    (40, 92), (40, 92), (40, 92), (30, None), (80, None),
+    (120, None), (160, None),
+)
+
+
+def degree_day_weight(start: date, end: date) -> Fraction:
+    """Inclusive calendar weight in per mille; never round daily weights."""
+    weight = Fraction(0)
+    while start <= end:
+        days_in_month = monthrange(start.year, start.month)[1]
+        through = min(end, date(start.year, start.month, days_in_month))
+        per_mille, denominator = DEGREE_DAY_TABLE[start.month - 1]
+        weight += Fraction(per_mille * ((through - start).days + 1), denominator or days_in_month)
+        if through == end:
+            break
+        start = date(start.year + (start.month == 12), start.month % 12 + 1, 1)
+    return weight
 
 
 def _quantity(value: Decimal, name: str) -> None:
@@ -56,6 +83,11 @@ def _validate_pool(pool: HeatingCostPoolInput) -> tuple[HeatingUnitInput, ...]:
         _quantity(unit.base_quantity, "Base quantity")
         if pool.consumption_recorded:
             _quantity(unit.consumption, "Recorded consumption")
+            if unit.consumption_weight is not None and (
+                not isinstance(unit.consumption_weight, Fraction)
+                or not 0 <= unit.consumption_weight < 10**18
+            ):
+                raise ValueError("Exact consumption weight must be a bounded nonnegative fraction")
         elif unit.consumption is not None:
             raise ValueError("Non-consumption accounting must not silently ignore supplied readings")
     if sum((u.base_quantity for u in pool.units), ZERO) == 0:
@@ -74,7 +106,8 @@ def _allocate_pool(pool: HeatingCostPoolInput, context: str) -> HeatingPoolResul
         )
         base_amounts = distribute_amount(base_total, bases)
         # A zero-cost pool may legitimately have recorded zero usage everywhere.
-        consumption_amounts = (distribute_amount(consumption_total, [u.consumption for u in units])
+        consumption_amounts = (distribute_amount(consumption_total, [
+            u.consumption_weight if u.consumption_weight is not None else u.consumption for u in units])
                                if pool.total_amount else [ZERO] * len(units))
     else:
         base_total, consumption_total = pool.total_amount, ZERO

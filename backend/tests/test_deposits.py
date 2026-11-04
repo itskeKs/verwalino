@@ -324,7 +324,7 @@ async def enforce_sources(api, w):
 async def test_enforced_property_and_label_sources_fail_closed(deposit_world, rent_db, revoked_source):
     w = deposit_world
     async with api_client(w) as api:
-        response = await api.patch(f"/api/leases/{w['hidden_lease']}", json={"deposit": "2600.00"})
+        response = await api.patch(f"/api/leases/{w['hidden_lease']}", json={"deposit": "2100.00"})
         assert response.status_code == 200, response.text
     await scoped_world(rent_db, w)
     async with api_client(w) as admin:
@@ -484,7 +484,7 @@ async def test_one_denied_lease_source_cannot_disappear_from_whole_property_repo
     async with api_client(w) as admin:
         response = await admin.post("/api/leases", json={
             "unit_id": str(extra), "tenant_profile_id": str(w["hidden_tenant"]),
-            "valid_from": "2026-01-01", "base_rent": "100.00", "advance_payment": "0.00", "deposit": "700.00"})
+            "valid_from": "2026-01-01", "base_rent": "250.00", "advance_payment": "0.00", "deposit": "700.00"})
         assert response.status_code == 201, response.text
         extra_lease = response.json()["id"]
     await scoped_world(rent_db, w, whole=True)

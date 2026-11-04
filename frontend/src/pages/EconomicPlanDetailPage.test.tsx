@@ -1,7 +1,7 @@
 import { afterEach, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { Link, MemoryRouter, Route, Routes } from "react-router-dom";
-import { api } from "../api/client";
+import { api, ApiError } from "../api/client";
 import { AuthCtx, type AuthContextValue } from "../auth/useAuth";
 import { EconomicPlanDetailPage } from "./EconomicPlanDetailPage";
 vi.mock("../components/FinancialCoverageReview", () => ({ FinancialCoverageReview: () => null }));
@@ -66,4 +66,17 @@ it("shows the frozen plan addressee and the plan-start date", async () => {
   const recipients = await screen.findByRole('region', { name: 'Dokumentempfänger' });
   expect(recipients).toHaveTextContent('Einheit 2: Karl Weiß');
   expect(recipients).toHaveTextContent('Eigentümer am 01.01.2026');
+});
+it.each([
+  [new ApiError(404, "Wirtschaftsplan nicht gefunden."), "Wirtschaftsplan nicht gefunden."],
+  [new ApiError(401, "Unauthorized"), "Nicht authentifiziert."],
+  [new Error("Synthetic network failure"), "Error: Synthetic network failure"],
+])("renders load errors without the API class prefix and preserves auth and fallback: %s", async (error, expected) => {
+  const get = vi.spyOn(api, "get").mockRejectedValue(error);
+  try {
+    show();
+    const rendered = await screen.findByText(expected, { exact: true });
+    expect(rendered.firstChild?.textContent?.trim()).toBe(expected);
+    expect(screen.queryByText(/ApiError:/)).not.toBeInTheDocument();
+  } finally { get.mockRestore(); }
 });

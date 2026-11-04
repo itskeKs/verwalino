@@ -12,7 +12,7 @@ const report: PropertyYearReport = {
   property_id: "p1", property_name: "Sonnenhof", year: 2026,
   period_start: "2026-01-01", period_end: "2026-12-31", accounting_scope_id: null,
   income_date_basis: "value_date", expense_date_basis: "invoice_date",
-  income: [{ payment_type: "KALTMIETE", amount: "700.00" }, { payment_type: "NK_VORAUSZAHLUNG", amount: "150.00" }, { payment_type: "SONDERZAHLUNG", amount: "-50.00" }],
+  income: [{ payment_type: "KALTMIETE", amount: "700.00" }, { payment_type: "NK_VORAUSZAHLUNG", amount: "150.00" }, { payment_type: "HK_VORAUSZAHLUNG", amount: "-50.00" }],
   expenses: [{ category_id: "secret-category-id", category_code: "WASSER", category_name: "Wasser", tenant_apportionability: "UMLAGEFAEHIG", amount: "100.00" }, { category_id: "other-id", category_code: "REPARATUR", category_name: "Reparatur", tenant_apportionability: "TEILWEISE_PRUEFEN", amount: "25.00" }],
   income_total: "800.00", expense_total: "125.00", balance: "675.00",
   footnote: "Serverhinweis: keine vollständige Steuererklärung und keine steuerliche Einordnung.",
@@ -49,6 +49,23 @@ async function choose() {
 async function load() { const user = await choose(); await user.click(screen.getByRole("button", { name: "Übersicht anzeigen" })); await screen.findByRole("table", { name: "Einnahmen" }); return user; }
 
 describe("Objekt-Jahresübersicht", () => {
+  it("uses the server income total while keeping the deposit separate and naming tenant backpayments", async () => {
+    vi.mocked(endpoints.getPropertyYearReport).mockResolvedValue({ ...report,
+      income: [...report.income, { payment_type: "KAUTION", amount: "2250.00" }, { payment_type: "NACHZAHLUNG", amount: "75.00" }],
+      income_total: "875.00", balance: "750.00" });
+    vi.mocked(endpoints.getAnlageVSummary).mockResolvedValue({ ...anlageV,
+      unmapped: [{ code: "KAUTION", label: "KAUTION", section: "Einnahmen", amount: "2250.00", note: "Durchlaufend, nicht in den Einnahmen enthalten." }],
+      reconciliation: [{ section: "Einnahmen", mapped_total: "875.00", unmapped_total: "0.00", report_total: "875.00", difference: "0.00" }] });
+    render(<ReportsPage />); await load();
+    const overview = screen.getByRole("region", { name: "Jahresübersicht" });
+    expect(within(overview).getByText("Kaution (durchlaufend)")).toBeVisible();
+    expect(within(overview).getByText("Nachzahlung (Mieter)")).toBeVisible();
+    expect(within(overview).getByText("2.250,00 EUR")).toBeVisible();
+    expect(within(overview).getByText("875,00 EUR")).toBeVisible();
+    const panel = await screen.findByRole("region", { name: "Anlage V" });
+    expect(within(panel).getByText("2.250,00 €")).toBeVisible();
+    expect(within(panel).getByRole("table", { name: "Abgleich mit der Jahresübersicht" })).toHaveTextContent("875,00 €0,00 €875,00 €0,00 €");
+  });
   it("shows Anlage V lines, unassigned amounts and server reconciliation with German euro formatting", async () => {
     render(<ReportsPage />); await load();
     const panel = await screen.findByRole("region", { name: "Anlage V" });
@@ -141,14 +158,14 @@ describe("Objekt-Jahresübersicht", () => {
     expect(screen.getByText(report.footnote)).toBeVisible();
     expect(endpoints.getPropertyYearReport).toHaveBeenCalledWith({ property_id: "p1", year: 2026 });
   });
-  it("keeps distinct historical payment types identifiable without inventing classifications", async () => {
+  it("names tenant backpayments and keeps unknown historical payment types identifiable", async () => {
     vi.mocked(endpoints.getPropertyYearReport).mockResolvedValue({ ...report,
       income: [{ payment_type: "NACHZAHLUNG", amount: "10.00" },
         { payment_type: "ALT_ERSTATTUNG", amount: "-2.00" }],
     });
     render(<ReportsPage />); await load();
     const income = screen.getByRole("table", { name: "Einnahmen" });
-    expect(within(income).getByText("Unbekannter Zahlungstyp (NACHZAHLUNG)")).toBeVisible();
+    expect(within(income).getByText("Nachzahlung (Mieter)")).toBeVisible();
     expect(within(income).getByText("Unbekannter Zahlungstyp (ALT_ERSTATTUNG)")).toBeVisible();
   });
   it("preserves large amounts, signed cents and server totals without client arithmetic", async () => {

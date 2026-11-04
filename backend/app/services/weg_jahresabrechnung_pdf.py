@@ -255,11 +255,8 @@ def build_weg_jahresabrechnung_html(
     gefuehrt.
   </div>
   <div class="disclaimer">
-    Hinweis (vorlaeufig, [§18/fachlich]): Das endgueltige Layout, der genaue
-    Beschlusswortlaut und ein etwaiger Ausweis haushaltsnaher Dienstleistungen
-    nach § 35a EStG sind fachlich abzustimmen. Diese Abrechnung ist vor
-    Beschlussfassung durch fachkundige Stelle (Steuerberater/Fachanwalt fuer
-    WEG-Recht) zu pruefen.
+    Diese Abrechnung ist vor Beschlussfassung durch eine fachkundige Stelle
+    (Steuerberater/Fachanwalt für WEG-Recht) zu prüfen.
   </div>
   {integrity}
 </body>

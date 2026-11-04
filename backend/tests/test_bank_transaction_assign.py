@@ -429,3 +429,58 @@ async def test_explicit_all_filter_keeps_processed_rows_and_pending_default(bank
     pending = await listing(api, ids)
     assert pending.status_code == 200, pending.text
     assert pending.json()['items'] == []
+
+
+@pytest.mark.parametrize('action,expected', [('assign', 'ZUGEORDNET'), ('ignore', 'IGNORIERT')])
+async def test_transaction_status_committed_before_success_response(bank_seed, bank_db, app_rw_session, action, expected):
+    api, ids = bank_seed
+    tid = await transaction(bank_db, ids)
+    await app_rw_session.execute(text("SELECT set_config('app.current_org_id', :org, true)"), {'org': str(ids['org'])})
+    observed, immediate = [], []
+
+    async def observe(scope, receive, send):
+        async def observe_send(message):
+            if message['type'] == 'http.response.start' and message['status'] == 200:
+                observed.append(await app_rw_session.scalar(text('SELECT status FROM bank_transaction WHERE id=:id'), {'id': uuid.UUID(tid)}))
+                immediate.append((await listing(api, ids, status=expected)).json()['items'])
+            await send(message)
+        await app(scope, receive, observe_send)
+
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=observe), base_url='http://test', cookies=api.cookies) as client:
+        response = await client.post(f'{BASE}/{tid}/{action}', json=split(ids) if action == 'assign' else None)
+    assert response.status_code == 200, response.text
+    assert observed == [expected], 'transaction status not committed at http.response.start'
+    assert [item['id'] for item in immediate[0]] == [tid]
+
+
+@pytest.mark.parametrize('kind', ['unit-create', 'unit-update', 'person-create', 'person-update', 'tenant-create', 'account-create', 'account-update', 'lease-create', 'lease-update'])
+async def test_named_master_data_write_visible_before_response(bank_seed, app_rw_session, kind):
+    api, ids = bank_seed
+    marker = f'Saved {uuid.uuid4().hex}'
+    method, path, body, query = {
+        'unit-create': ('POST', '/api/units', {'property_id': str(ids['property']), 'number': marker, 'usage_type': 'WOHNUNG'}, 'SELECT number FROM unit WHERE number=:marker'),
+        'unit-update': ('PUT', f"/api/units/{ids['unit']}", {'number': marker}, 'SELECT number FROM unit WHERE number=:marker'),
+        'person-create': ('POST', '/api/persons', {'last_name': marker}, 'SELECT last_name FROM person WHERE last_name=:marker'),
+        'person-update': ('PUT', f"/api/persons/{ids['person']}", {'last_name': marker}, 'SELECT last_name FROM person WHERE last_name=:marker'),
+        'tenant-create': ('POST', '/api/tenant-profiles', {'person_id': str(ids['owner_person'])}, 'SELECT CAST(person_id AS text) FROM tenant_profile WHERE person_id=CAST(:marker AS uuid)'),
+        'account-create': ('POST', '/api/bank-accounts', {'property_id': str(ids['property']), 'account_type': 'LAUFEND', 'label': marker}, 'SELECT label FROM bank_account WHERE label=:marker'),
+        'account-update': ('PATCH', f"/api/bank-accounts/{ids['bank']}", {'label': marker}, 'SELECT label FROM bank_account WHERE label=:marker'),
+        'lease-create': ('POST', '/api/leases', {'unit_id': str(ids['unit']), 'tenant_profile_id': str(ids['tenant']), 'valid_from': '2020-01-01', 'valid_to': '2020-12-31', 'base_rent': '700.00', 'advance_payment': '150.00', 'notes': marker}, 'SELECT notes FROM lease_agreement WHERE notes=:marker'),
+        'lease-update': ('PATCH', f"/api/leases/{ids['lease']}", {'notes': marker}, 'SELECT notes FROM lease_agreement WHERE notes=:marker'),
+    }[kind]
+    if kind == 'tenant-create':
+        marker = str(ids['owner_person'])
+    await app_rw_session.execute(text("SELECT set_config('app.current_org_id', :org, true)"), {'org': str(ids['org'])})
+    observed = []
+
+    async def observe(scope, receive, send):
+        async def observe_send(message):
+            if message['type'] == 'http.response.start' and message['status'] in (200, 201):
+                observed.append(await app_rw_session.scalar(text(query), {'marker': marker}))
+            await send(message)
+        await app(scope, receive, observe_send)
+
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=observe), base_url='http://test', cookies=api.cookies) as client:
+        response = await client.request(method, path, json=body)
+    assert response.status_code in (200, 201), response.text
+    assert observed == [marker], f'{kind}: saved value not committed at http.response.start'

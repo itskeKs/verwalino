@@ -55,6 +55,19 @@ function money(label: string, value: string) { fireEvent.change(screen.getByLabe
 function save() { fireEvent.click(screen.getByRole("button", { name: "Mietänderung speichern" })); }
 function posts() { return fetchMock.mock.calls.filter(([, options]) => options?.method === "POST"); }
 
+it("keeps unit panels mounted while a saved lease refreshes", async () => {
+  let finish!: (value: never) => void;
+  show();
+  const panel = await screen.findByRole("region", { name: "Zähler" });
+  vi.mocked(endpoints.getUnit).mockReturnValueOnce(new Promise(resolve => { finish = resolve; }));
+  fireEvent.click(screen.getByRole("button", { name: "Bearbeiten / beenden" }));
+  fireEvent.change(screen.getByLabelText("Notizen"), { target: { value: "Neue Notiz" } });
+  fireEvent.click(screen.getByRole("button", { name: /^Speichern$/ }));
+  expect(await screen.findByRole("status")).toHaveTextContent("Mietvertrag gespeichert.");
+  expect(panel).toBeInTheDocument();
+  await act(async () => finish({ id: "unit", number: "1" } as never));
+});
+
 it('submits separate advances in one effective-dated rent change', async () => {
   show();
   const dialog = await openChange();
@@ -111,6 +124,43 @@ it.each([['OWNER_ADMIN', true], ['CLERK', true], ['READ_ONLY', false], ['UNKNOWN
   expect(panel).toHaveAttribute("data-property", "property");
   expect(panel).toHaveAttribute("data-unit", "unit");
   expect(panel).toHaveAttribute("data-can-write", String(canWrite));
+});
+
+it.each(['OWNER_ADMIN', 'CLERK'])("guides %s from empty tenant and owner lists to persons", async role => {
+  vi.mocked(endpoints.listPersons).mockResolvedValue([
+    { id: 'anna', first_name: 'Anna', last_name: 'Beispiel' },
+    { id: 'bernd', first_name: 'Bernd', last_name: 'Test' },
+  ] as never);
+  show(role);
+  fireEvent.click(await screen.findByRole('button', { name: '+ Mietvertrag' }));
+  const tenantHint = screen.getByText(/Noch keine Person als Mieter gekennzeichnet/);
+  expect(tenantHint).toHaveTextContent('Rollen / Profile → „Als Mieter kennzeichnen“');
+  expect(within(tenantHint).getByRole('link', { name: 'Personen' })).toHaveAttribute('href', '/personen');
+  expect(within(screen.getByRole('combobox', { name: 'Mieter *' })).getAllByRole('option')).toHaveLength(1);
+  fireEvent.click(screen.getByRole('button', { name: '+ Eigentum' }));
+  const ownerHint = screen.getByText(/Noch keine Person als Eigentümer gekennzeichnet/);
+  expect(ownerHint).toHaveTextContent('Rollen / Profile → „Als Eigentuemer kennzeichnen“');
+  expect(within(ownerHint).getByRole('link', { name: 'Personen' })).toHaveAttribute('href', '/personen');
+});
+
+it('omits each hint when its profile list is populated', async () => {
+  vi.mocked(endpoints.listPersons).mockResolvedValue([{ id: 'anna', first_name: 'Anna', last_name: 'Beispiel' }] as never);
+  vi.mocked(endpoints.listTenantProfiles).mockResolvedValue([{ id: 'tenant-anna', person_id: 'anna' }] as never);
+  vi.mocked(endpoints.listOwnerProfiles).mockResolvedValue([{ id: 'owner-anna', person_id: 'anna' }] as never);
+  show();
+  fireEvent.click(await screen.findByRole('button', { name: '+ Mietvertrag' }));
+  fireEvent.click(screen.getByRole('button', { name: '+ Eigentum' }));
+  expect(screen.queryByText(/Noch keine Person als/)).not.toBeInTheDocument();
+  expect(within(screen.getByRole('combobox', { name: 'Mieter *' })).getByRole('option', { name: 'Anna Beispiel' })).toBeInTheDocument();
+  expect(within(screen.getByRole('combobox', { name: 'Eigentuemer *' })).getByRole('option', { name: 'Anna Beispiel' })).toBeInTheDocument();
+});
+
+it.each(['READ_ONLY', 'UNKNOWN'])("keeps profile guidance inside write forms for %s", async role => {
+  show(role);
+  await screen.findByRole('region', { name: 'Zähler' });
+  expect(screen.queryByRole('button', { name: '+ Mietvertrag' })).not.toBeInTheDocument();
+  expect(screen.queryByRole('button', { name: '+ Eigentum' })).not.toBeInTheDocument();
+  expect(screen.queryByText(/Noch keine Person als/)).not.toBeInTheDocument();
 });
 
 it("creates a lease contract only after confirming its legal caveat", async () => {
@@ -326,7 +376,7 @@ it("loads history read-only without exposing the change action", async () => {
   expect(screen.queryByRole("button", { name: /^Miete ändern ab/ })).not.toBeInTheDocument();
 });
 
-it.each(["", "-1", "1e3", "1.001", "NaN", "1.234,56", "1000000000000"])("rejects invalid money %s without POST", async value => {
+it.each(["", "-1", "1e3", "1.001", "NaN", "1.23,56", "1000000000000"])("rejects invalid money %s without POST", async value => {
   show(); await openChange(); date("2026-04-01"); money("Kaltmiete (EUR)", value); save();
   expect(await within(screen.getByRole("dialog")).findByRole("alert")).toBeVisible(); expect(posts()).toHaveLength(0);
 });
@@ -853,4 +903,35 @@ it("T57 hides lease creation and edit/end for READ_ONLY while keeping dated hist
   expect(screen.queryByRole("button", { name: "Bearbeiten / beenden" })).not.toBeInTheDocument();
   expect(endpoints.createLease).not.toHaveBeenCalled();
   expect(endpoints.patchLease).not.toHaveBeenCalled();
+});
+
+it.each([false, true])("normalizes German lease money on save (editing=%s)", async editing => {
+  vi.mocked(endpoints.listTenantProfiles).mockResolvedValue([{ id: "tenant", person_id: "person" }] as never);
+  show();
+  fireEvent.click(await screen.findByRole("button", { name: editing ? "Bearbeiten / beenden" : "+ Mietvertrag" }));
+  if (!editing) {
+    fireEvent.change(screen.getByLabelText("Mieter *"), { target: { value: "tenant" } });
+    fireEvent.change(screen.getByLabelText("Vertragsbeginn *"), { target: { value: "2026-01-01" } });
+  }
+  for (const [label, value] of [["Kaltmiete (EUR) *", "750,00"], ["Betriebskosten-Vorauszahlung (EUR) *", "150,00"], ["Heizkosten-Vorauszahlung (EUR) *", "90,00"], ["Kaution (EUR)", "2.250,00"]]) {
+    fireEvent.change(screen.getByLabelText(label), { target: { value } });
+  }
+  fireEvent.click(screen.getByRole("button", { name: "Speichern" }));
+  const amounts = { base_rent: "750.00", advance_payment: "150.00", heating_advance_payment: "90.00", deposit: "2250.00" };
+  await waitFor(() => editing
+    ? expect(endpoints.patchLease).toHaveBeenCalledWith("lease", expect.objectContaining(amounts))
+    : expect(endpoints.createLease).toHaveBeenCalledWith(expect.objectContaining(amounts)));
+});
+
+it.each(["Kaltmiete (EUR) *", "Betriebskosten-Vorauszahlung (EUR) *", "Heizkosten-Vorauszahlung (EUR) *", "Kaution (EUR)"])("keeps invalid lease input and reports a German field error for %s", async label => {
+  show();
+  fireEvent.click(await screen.findByRole("button", { name: "Bearbeiten / beenden" }));
+  const input = screen.getByLabelText(label);
+  fireEvent.change(input, { target: { value: "abc" } });
+  fireEvent.click(screen.getByRole("button", { name: "Speichern" }));
+  expect(await screen.findByRole("alert")).toHaveTextContent(/gültigen EUR-Betrag/);
+  expect(input).toHaveValue("abc");
+  expect(input).toHaveAttribute("aria-invalid", "true");
+  expect(endpoints.patchLease).not.toHaveBeenCalled();
+  expect(endpoints.createLease).not.toHaveBeenCalled();
 });

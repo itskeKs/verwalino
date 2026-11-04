@@ -100,6 +100,15 @@ process's mode only selects tags and cannot change that server's policy. A
 nightly run in both modes, including a server started with
 `HV_DEPLOYMENT_MODE=hosted`, is tracked in #103.
 
+The `save_lifecycle.feature` browser journey saves units, people, profiles, leases and bank
+accounts and assigns a receipt at desktop and 360 px. It pauses each real post-save read to
+check retained content and scroll, then verifies the new values without a manual reload.
+Its delayed-editor examples confirm contact-editor invalidation after a structured access refusal
+and a second bank edit against the last confirmed account data. The
+[`post_import_assignment` journey](journeys/post_import_assignment.feature) imports sixty receipts
+through the UI, assigns a lower row on the import page and requires a viewport-visible receipt
+without changing the statement's scroll position at 1280 and 360 px.
+
 ## How the step library is organised
 
 - `features/<name>.feature` - the spec.
@@ -255,10 +264,16 @@ run skips it too. The same applies to `organization_deletion.feature` (direct
 database fixtures and the in-process deletion CLI), `organization_export_import.feature`
 (direct database fixtures and in-process archive storage) and `password_reset.feature`
 (the Mailpit test mailbox).
+The four `journeys/profile_hints.feature` browser examples seed a fresh organization
+through the local database fixture and are skipped on external targets; they run
+against the local browser stack and in PR CI's browser job.
 Each skipped scenario records its reason in the report. Local runs continue to
 exercise both organizations, all isolation scenarios, first-run setup, the inbox
 review chain, deletion, export/import and password reset; PR CI retains this
 coverage through `make test-backend`.
+The response-start race scenario in `weg_settlement.feature` also requires the
+in-process ASGI app and an independent test DB connection; external targets skip
+only that scenario. The save-and-open browser scenario runs against either target.
 `make test-bdd`, `make test-browser` and `make test-scenarios-report` explicitly
 select the local stack even if target variables are inherited; use direct pytest
 for external targets.
@@ -362,4 +377,4 @@ grows with the fixes: a finding from a blind acceptance run first fails as a ste
 its journey, then the fix turns it green. Twins use the browser harness above and run with
 `make test-browser`, in CI on every PR; they do not replace the blind run, which checks that a
 user finds the way at all. A twin is written with the first issue that touches its journey, not
-in advance, so none exists yet.
+in advance.

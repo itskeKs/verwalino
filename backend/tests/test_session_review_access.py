@@ -267,7 +267,7 @@ def _chain_0131_projection(head):
     return projected
 
 
-async def test_revision_chain_head_0131_head_preserves_full_state_and_issued_pdf(rent_world, rent_db, client_a_admin, seed_data):
+async def test_revision_chain_head_0131_head_preserves_full_state_and_issued_pdf(rent_world, rent_db, client_a_admin, seed_data, monkeypatch):
     """Rollback-only whole-chain rehearsal, not a production downgrade strategy."""
     import os
     from pathlib import Path
@@ -311,21 +311,24 @@ async def test_revision_chain_head_0131_head_preserves_full_state_and_issued_pdf
     assert os.environ.get('HV_DECLARATION_TEST_DATABASE_PROFILE', 'local') == 'local'
     w = rent_world
     async with api_client(w) as admin:
-        # WEG uses its own engine; include a real split-engine tenant snapshot
-        # so the first downgrade boundary is exercised even in an isolated run.
-        statement = await admin.post('/api/settlements', json={
-            'property_id': str(w['property']), 'lease_agreement_id': str(w['lease']),
-            'period_start': '2026-01-01', 'period_end': '2026-01-31',
-            'advance_payments_total': '0.00', 'heating_advance_payments_total': '0.00',
-        })
-        assert statement.status_code == 201, statement.text
-        statement_id = statement.json()['id']
-        await attest_fixture(admin, 'settlement', statement_id, {
-            'advance_payments_total': '0.00', 'advance_payments_source': 'MANUAL',
-            'heating_advance_payments_total': '0.00', 'heating_advance_payments_source': 'MANUAL',
-        })
-        finalized = await admin.post(f'/api/settlements/{statement_id}/finalize', json={})
-        assert finalized.status_code == 200, finalized.text
+        # Rehearse the historical split-engine boundary with its original version.
+        # WEG uses its own engine and cannot supply this tenant snapshot.
+        with monkeypatch.context() as historical:
+            historical.setattr('app.services.settlement_service.ENGINE_VERSION', 'm3.2.0')
+            statement = await admin.post('/api/settlements', json={
+                'property_id': str(w['property']), 'lease_agreement_id': str(w['lease']),
+                'period_start': '2026-01-01', 'period_end': '2026-01-31',
+                'advance_payments_total': '0.00', 'heating_advance_payments_total': '0.00',
+            })
+            assert statement.status_code == 201, statement.text
+            statement_id = statement.json()['id']
+            await attest_fixture(admin, 'settlement', statement_id, {
+                'advance_payments_total': '0.00', 'advance_payments_source': 'MANUAL',
+                'heating_advance_payments_total': '0.00', 'heating_advance_payments_source': 'MANUAL',
+            })
+            finalized = await admin.post(f'/api/settlements/{statement_id}/finalize', json={})
+            assert finalized.status_code == 200, finalized.text
+            assert finalized.json()['engine_version'] == 'm3.2.0'
         template = await create_template(admin)
         issued = await admin.post('/api/letters/issue', json=issue_body(w, template))
         assert issued.status_code == 201, issued.text
@@ -387,9 +390,8 @@ async def test_revision_chain_head_0131_head_preserves_full_state_and_issued_pdf
     config.set_main_option('script_location', str(Path(__file__).parents[1] / 'migrations'))
     scripts = ScriptDirectory.from_config(config)
     assert scripts.get_heads() == [TARGET]
-    assert [r.revision for r in scripts.iterate_revisions(TARGET, '0131')] == [
-        f'{number:04}' for number in range(int(TARGET), 131, -1)
-    ]
+    expected_ancestry = [f'{number:04}' for number in range(131, 156)] + ['0159', '0160', '0161']
+    assert [r.revision for r in scripts.iterate_revisions(TARGET, '0131')] == expected_ancestry[:0:-1]
     engine = create_engine(MIGRATOR_SYNC_URL)
     try:
         with engine.connect() as connection:
@@ -431,9 +433,10 @@ async def test_revision_chain_head_0131_head_preserves_full_state_and_issued_pdf
                         env.run_migrations()
                     assert transaction.is_active and connection.in_transaction()
                     assert version() == (target,)
-                    stop, first = int(target), int(start[0])
-                    numbers = [n for n in (range(first - 1, stop - 1, -1) if downgrade else range(first + 1, stop + 1))]
-                    assert seen == [(f'{number:04}',) for number in numbers]
+                    first, stop = expected_ancestry.index(start[0]), expected_ancestry.index(target)
+                    versions = (expected_ancestry[stop:first][::-1] if downgrade
+                                else expected_ancestry[first + 1:stop + 1])
+                    assert seen == [(revision,) for revision in versions]
 
                 def projection_0131():
                     # The historical projection describes 0132–0139. Peel off

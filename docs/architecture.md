@@ -45,13 +45,47 @@ that pass row-level security (RLS) reach the `guard_reserve_ledger` trigger.
 For each such row, the trigger rejects the change with SQLSTATE `23514` and
 constraint `reserve_ledger_append_only`.
 
+Migration `0161` revokes runtime UPDATE on the ledger (also inherited by the
+worker), retaining SELECT/INSERT and the DELETE guard. Runtime UPDATE fails with
+`42501`; the guard remains `ENABLE ALWAYS`. Its only reason-update exception is
+the existing individual privacy command's actual anonymization branch. The
+authoritative shared retention facts from `0159`/`0160` still decide eligibility:
+a retained booked repayment to Anna Beispiel restricts her instead of erasing
+her identity or evidence. An unbound Eva Muster mentioned incidentally as
+“Abstimmung mit Eva Muster” can be anonymized, replacing the name with `Gelöscht`
+in the live reason and its exact corresponding audit copy. This follows the
+[owner clarification](https://github.com/itskeKs/verwalino/issues/222#issuecomment-6625055904).
+
+Only complete names/company names are matched, literally and case-insensitively,
+with normalized whitespace and word/hyphen boundaries. Known longer identities
+in the same organization (for example Maria Eva Muster) protect their original
+spans. If `Gelöscht` would exceed the 2,000-character reason limit, only the
+identifying spans use `*`; surrounding text is not truncated. Audit selection
+requires the same organization, settlement-run entity, entry ID and original
+reason for `reserve.override_added`, `reserve.contribution_reduced` and
+`reserve.contribution_restored`. Other JSON fields, metadata and historical
+`prev_event_hash` remain unchanged; the old hash does not certify modified bytes.
+
+Private person context is established/restored only around actual anonymization.
+A separate person statement trigger acquires the existing tenant financial lock
+after the existing shared ACL trigger, before tuple locks. It adds synchronization
+without a new contact policy: actorless PREPARATION writes remain permitted;
+strict-mode RLS/revocation and the special privacy checks remain authoritative.
+An unwritable strict context takes no financial lock. Known overlapping identities
+are prepared once per erasure, then cached/restored for canonical guard checks.
+Forged flags or runtime-owned nested triggers receive no UPDATE authority.
+
+Amounts, rows, references and frozen snapshots/digests are untouched. A finalized
+statement can retain the original frozen reason; exports show those unchanged
+snapshots alongside the cleaned live rows. This is no general free-text scrub.
+
 All nine foreign keys on `reserve_ledger_entry` use PostgreSQL's default
 `NO ACTION` deletion rule, as created by migration `0149`; the ORM leaves
 `ondelete` unset to match. The reserve ledger tests compare every foreign key's
 ordered source and target columns and `pg_constraint.confdeltype` with the model,
 including the organization, property and unit scope columns.
 
-With the `UPDATE` privilege, `SELECT … FOR UPDATE` can lock rows that pass
+Before `0161` revokes runtime UPDATE, `SELECT … FOR UPDATE` can lock rows that pass
 both the `reserve_read` and `reserve_no_update` policies. They require a match
 on the current organization, settlement scope access for `read` and `prepare`,
 and property financial disclosure access for `read`. A row that passes only
@@ -1192,7 +1226,12 @@ existing tasks remain editable if the assignee is later deactivated.
 
 The task UI adopts property/unit contexts without automatic
 saving; the dashboard reads open tasks with a local, inclusive
-seven-day limit. This operational data is not made dependent on the selection of a
+seven-day limit. Due-task text and pagination wrap within the dashboard card on
+phones, and reload, completion and pagination use the shared button style.
+The dashboard rent KPI form keeps long property choices inside the card at 360 px.
+Property details keep wide unit rows in their own horizontal scroll container;
+unit actions wrap and document upload fields fit the card at 360 px.
+This operational data is not made dependent on the selection of a
 financial scope. The separate read path `/api/fristen/context`
 checks, under live/ACL and existing source rules, the admissibility of the
 organization-wide deadline monitor, without loading financial report rows.
@@ -1488,6 +1527,28 @@ restriction versus anonymization. Immutable vouchers, originals and audit
 evidence plus required dependencies are retained, with hashes checked at erasure.
 Revision 0148 also reconciles expired person bindings in the preview; operator
 erasure anonymizes those personal fields while preserving immutable originals.
+Revision 0159 makes `person_retention_categories()` the private category source
+for individual disclosure/export, the authoritative person command and the
+organization plan's personal-data roots. Python reads direct bindings through
+`person_retention_view()` after person and complete financial/source admission;
+raw facts and the category catalog remain unavailable to runtime roles. Booked
+payments bind their structured tenant/owner recipient, including outgoing
+repayments and reversal rows. Their stored deadline governs; historical NULL
+payment deadlines use the existing value-date year-end rule, without modifying
+the booking. An expired payment permits anonymization; a draft alone does not
+bind the person. Individual operations leave financial rows and audit evidence
+unchanged. Revision 0160 shares the actual deadline path as well: the private
+`retention_base_until()` preserves the existing organization date precedence;
+`retention_source_until()` combines the governing dates of a voucher and its
+retained sources. A manual cost dated in 2020 for services in 2017 therefore
+binds its supplier through 2028 in both erasure paths, even without a document.
+Released originals with missing explicit deadlines keep the existing metadata
+fallback. Settlement/plan addressees use their own retained line dates and the
+parent period; another owner's line never extends that recipient's deadline.
+Multiple lines for one recipient produce one binding with the latest applicable
+date. The organization's additional generic FK dependencies and historical
+owner-name fallback remain private.
+
 Seven-day cooling-off is enforced in both HTTP authentication and database write
 triggers. Final erasure invalidates every account/session; retained records have
 an operator-only path described in [DEPLOY.md](../DEPLOY.md#organization-erasure-and-retained-record-access).

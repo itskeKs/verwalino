@@ -1,4 +1,6 @@
 """Statement review and rent assignment through the real browser controls."""
+from pathlib import Path
+
 from pytest_bdd import given, then, when
 from playwright.async_api import expect
 
@@ -166,6 +168,93 @@ async def empty_new_filter(browser_world):
     await field(browser_world.page, "Status").select_option("NEU")
     await expect(browser_world.page.get_by_text("Keine Umsätze vorhanden.", exact=True)).to_be_visible()
     await expect(transactions(browser_world).locator("tbody tr")).to_have_count(0)
+
+
+@when('the manager previews the original Sparkasse statement in "Kontoauszug"')
+@browser_step
+async def preview_sparkasse(browser_world):
+    await open_transactions(browser_world)
+    sample = Path(__file__).resolve().parents[4] / "docs" / "acceptance" / "data" / "sparkasse-2026-01-10.csv"
+    await field(browser_world.page, "Kontoauszug").set_input_files(sample)
+    await button(browser_world.page, "Vorschau erstellen").click()
+
+
+@then("the browser shows 31 new transactions and an empty transaction list")
+@browser_step
+async def sparkasse_preview(browser_world):
+    await expect(browser_world.page.get_by_text("31 Umsätze: 31 neu, 0 Dubletten.", exact=True)).to_be_visible()
+    await expect(browser_world.page.get_by_text("Keine Umsätze vorhanden.", exact=True)).to_be_visible()
+
+
+@when("the manager confirms the Sparkasse statement")
+@browser_step
+async def confirm_sparkasse(browser_world):
+    await button(browser_world.page, "Übernehmen").click()
+
+
+@then("the browser confirms 31 imported transactions")
+@browser_step
+async def sparkasse_imported(browser_world):
+    await expect(browser_world.page.get_by_role("status")).to_have_text("31 neue Umsätze importiert.")
+    await expect(transactions(browser_world).locator("tbody tr")).to_have_count(31)
+
+
+def anna_april_receipt(browser):
+    return transaction(browser, "Miete April").filter(has=browser.page.get_by_role("cell", name="Anna Beispiel", exact=True))
+
+
+@then("Anna's April receipt shows 800 EUR on 07.04.2026 with her name and IBAN")
+@browser_step
+async def sparkasse_anna_receipt(browser_world):
+    row = anna_april_receipt(browser_world)
+    await expect(row).to_have_count(1)
+    await expect(row.get_by_role("cell").nth(0)).to_have_text("07.04.2026")
+    for value in ("Anna Beispiel", "DE89370400440532013000", "800,00 €"):
+        await expect(row.get_by_role("cell", name=value, exact=True)).to_be_visible()
+
+
+@then("Anna's April receipt visibly suggests her lease")
+@browser_step
+async def sparkasse_anna_suggestion(browser_world):
+    page = browser_world.page
+    row = anna_april_receipt(browser_world)
+    await expect(row.locator("strong")).to_contain_text("Anna Beispiel")
+    await expect(button(row, "Vorschlag übernehmen")).to_be_visible()
+    await button(row, "Aufteilen").click()
+    dialog = page.get_by_role("dialog", name="Umsatz aufteilen", exact=True)
+    targets = field(dialog, "Mietvertrag")
+    await expect(targets).to_have_count(2)
+    for index in range(2):
+        await expect(targets.nth(index).locator("option:checked")).to_have_text(
+            "Anna Beispiel · Einheit Wohnung 1 · ab 2026-01-01 (laufend)"
+        )
+    await button(dialog, "Abbrechen").click()
+
+
+@then("the browser shows 31 duplicate transactions and no new transactions")
+@browser_step
+async def sparkasse_duplicates(browser_world):
+    await expect(browser_world.page.get_by_text("31 Umsätze: 0 neu, 31 Dubletten.", exact=True)).to_be_visible()
+
+
+@then("the browser confirms no imported transactions and still lists 31 after reload")
+@browser_step
+async def sparkasse_unchanged(browser_world):
+    await expect(browser_world.page.get_by_role("status")).to_have_text("0 neue Umsätze importiert.")
+    await browser_world.page.reload()
+    await field(browser_world.page, "Status").select_option("")
+    await expect(transactions(browser_world).locator("tbody tr")).to_have_count(31)
+
+
+@then("the browser refuses the foreign account statement in German and lists no transactions")
+@browser_step
+async def sparkasse_foreign_account(browser_world):
+    page = browser_world.page
+    await expect(page.get_by_role("alert")).to_have_text("IBAN im Kontoauszug stimmt nicht mit dem gewählten Bankkonto überein.")
+    await expect(button(page, "Übernehmen")).to_have_count(0)
+    await page.reload()
+    await field(page, "Status").select_option("")
+    await expect(page.get_by_text("Keine Umsätze vorhanden.", exact=True)).to_be_visible()
 
 
 @then("the February rent account shows 250 EUR still open")

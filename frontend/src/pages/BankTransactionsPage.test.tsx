@@ -1,5 +1,5 @@
 import { afterEach, expect, it, vi } from "vitest";
-import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { Link, MemoryRouter, Route, Routes } from "react-router-dom";
 import { AuthCtx, type AuthContextValue } from "../auth/useAuth";
 import { BankTransactionsPage } from "./BankTransactionsPage";
@@ -214,6 +214,49 @@ function assignmentSetup(item: unknown = warm, role = "OWNER_ADMIN", mutation?: 
   }, role, "/bankkonten/a/umsaetze");
 }
 const posts = (fetchMock: ReturnType<typeof assignmentSetup>) => fetchMock.mock.calls.filter(([, options]) => options?.method === "POST");
+
+it("lays out split rows as full-width form grids with shared actions at the bottom", async () => {
+  assignmentSetup();
+  fireEvent.click(await screen.findByRole("button", { name: "Aufteilen" }));
+  const dialog = await screen.findByRole("dialog", { name: "Umsatz aufteilen" });
+  await within(dialog).findAllByRole("option", { name: /Anna Muster.*2025-01-01/ });
+  const form = dialog.querySelector("form")!;
+  expect(form).toHaveClass("form-grid", "min-w-0");
+  expect(form.querySelector("fieldset")).toHaveClass("contents", "min-w-0");
+  for (const row of within(dialog).getAllByRole("group", { name: /Splitzeile/ })) {
+    expect(row).toHaveClass("form-grid", "form-full-width", "min-w-0");
+    for (const name of ["Mietvertrag", "Notiz"]) {
+      expect(within(row).getByLabelText(name).closest("label")).toHaveClass("form-full-width");
+    }
+  }
+  const submit = within(dialog).getByRole("button", { name: "Zuordnung buchen" });
+  const cancel = within(dialog).getByRole("button", { name: "Abbrechen" });
+  expect(submit.parentElement).toHaveClass("form-actions");
+  expect(cancel.parentElement).toBe(submit.parentElement);
+  expect(form.lastElementChild).toBe(submit.parentElement);
+});
+
+it("locks split fields and actions during a double submission and retains inputs after refusal", async () => {
+  let finish!: (response: Response) => void;
+  const fetchMock = assignmentSetup(warm, "OWNER_ADMIN", () => new Promise(resolve => { finish = resolve; }));
+  fireEvent.click(await screen.findByRole("button", { name: "Aufteilen" }));
+  await screen.findAllByRole("option", { name: /Anna Muster.*2025-01-01/ });
+  const note = screen.getAllByLabelText("Notiz")[0];
+  fireEvent.change(note, { target: { value: "April geprüft" } });
+  const submit = screen.getByRole("button", { name: "Zuordnung buchen" });
+  fireEvent.click(submit);
+  fireEvent.click(submit);
+  expect(posts(fetchMock)).toHaveLength(1);
+  for (const control of [submit, note, screen.getByRole("button", { name: "Abbrechen" }), screen.getByRole("button", { name: "Zeile hinzufügen" }), ...screen.getAllByLabelText("Betrag (EUR)")]) {
+    expect(control).toBeDisabled();
+  }
+  await act(async () => finish(json({ detail: "Buchung derzeit nicht möglich" }, 409)));
+  expect(await screen.findByRole("alert")).toHaveTextContent("Buchung derzeit nicht möglich");
+  expect(note).toHaveValue("April geprüft");
+  expect(note).toBeEnabled();
+  expect(screen.getAllByLabelText("Betrag (EUR)")[0]).toHaveValue("700.00");
+  expect(submit).toBeEnabled();
+});
 
 it("übernimmt Warmmiete über die globale Kontoliste mit exakt 700 KALT und 150 NK ohne Vorschlagsmetadaten", async () => {
   const fetchMock = assignmentSetup();
@@ -489,4 +532,94 @@ it('keeps a reserve payout without evidence as a draft and explains the next ste
   fireEvent.click(screen.getByRole('button', { name: 'Als Entwurf übernehmen' }));
   expect(await screen.findByText(/Rücklagenentnahme als Entwurf übernommen/)).toBeInTheDocument();
   expect(JSON.parse(posts(fetchMock)[0][1]!.body as string).lines[0]).toMatchObject({ payment_type: 'RUECKLAGENENTNAHME', amount: '200.01' });
+});
+
+
+it("retains transaction rows during the refresh after a real assignment", async () => {
+  let finish!: (value: Response) => void;
+  let saved = false;
+  const suggestion = { target_name: "Anna Beispiel", confidence: "HIGH", requires_review: false, unallocated_amount: "0.00", reasons: [], lines: [{ payment_type: "KALTMIETE", amount: "700.00", open_amount: "700.00", period_year: 2026, period_month: 1, lease_agreement_id: "lease", tenant_profile_id: "tenant" }] };
+  setup(async (url, options) => {
+    if (options?.method === "POST") { saved = true; return json({ id: "tx", status: "ZUGEORDNET", payments: [] }); }
+    if (isTransactionList(url)) return saved ? new Promise<Response>(resolve => { finish = resolve; }) : json({ items: [{ ...transaction, amount: "700.00", suggestions: [suggestion] }], next_offset: null });
+    return fallback(url);
+  }, "OWNER_ADMIN", "/bankkonten/a/umsaetze");
+  await screen.findByText("Heizung");
+  const table = screen.getByRole("table");
+  fireEvent.click(screen.getByRole("button", { name: "Vorschlag übernehmen" }));
+  await screen.findByText("Umsatz zugeordnet.");
+  await waitFor(() => expect(finish).toBeTypeOf("function"));
+  expect(table).toBeInTheDocument();
+  await act(async () => finish(json({ items: [], next_offset: null })));
+  expect(await screen.findByText("Keine Umsätze vorhanden.")).toBeVisible();
+});
+
+
+it.each([403, 500])("handles post-save refresh failure %s without inventing empty results", async status => {
+  let saved = false;
+  setup(async (url, options) => {
+    if (options?.method === "POST") { saved = true; return json({ id: "tx", status: "IGNORIERT" }); }
+    if (isTransactionList(url)) return saved ? json({ detail: "Nachladen fehlgeschlagen" }, status) : json({ items: [transaction], next_offset: null });
+    return fallback(url);
+  }, "OWNER_ADMIN", "/bankkonten/a/umsaetze");
+  await screen.findByText("Heizung");
+  fireEvent.click(screen.getByRole("button", { name: "Ignorieren" }));
+  await screen.findByRole("alert");
+  expect(screen.getByRole("status")).toHaveTextContent("Umsatz ignoriert.");
+  expect(screen.queryByText("Keine Umsätze vorhanden.")).not.toBeInTheDocument();
+  if (status === 403) expect(screen.queryByText("Heizung")).not.toBeInTheDocument();
+  else { expect(screen.getByText("Heizung")).toBeVisible(); expect(screen.queryByRole("button", { name: "Ignorieren" })).not.toBeInTheDocument(); }
+});
+
+
+async function openRetainedTransactionEditor(status: number, pendingSave = false) {
+  let refresh!: (value: Response) => void;
+  let finishSave!: (value: Response) => void;
+  let saved = false;
+  const items = ['A', 'B'].map(id => ({ ...warm, id, counterparty_name: `Privater Kontakt ${id}`, purpose: `Privater Umsatz ${id}` }));
+  const fetchMock = setup(async (url, options) => {
+    if (options?.method === 'POST') {
+      if (url.endsWith('/assign') && pendingSave) return new Promise<Response>(resolve => { finishSave = resolve; });
+      saved = true;
+      return json({ id: 'A', status: 'IGNORIERT' });
+    }
+    if (isTransactionList(url)) return saved ? new Promise<Response>(resolve => { refresh = resolve; }) : json({ items, next_offset: null });
+    const path = url.split('?')[0];
+    return path in targets ? json(targets[path]) : json({ id: 'a', property_id: 'property', label: 'Hauskonto', iban: 'DE123' });
+  }, 'OWNER_ADMIN', '/bankkonten/a/umsaetze');
+  await screen.findByText('Privater Umsatz A');
+  fireEvent.click(within(screen.getByText('Privater Umsatz A').closest('tr')!).getByRole('button', { name: 'Ignorieren' }));
+  await waitFor(() => expect(refresh).toBeTypeOf('function'));
+  fireEvent.click(within(screen.getByText('Privater Umsatz B').closest('tr')!).getByRole('button', { name: 'Aufteilen' }));
+  const dialog = await screen.findByRole('dialog', { name: 'Umsatz aufteilen' });
+  await within(dialog).findAllByRole('option', { name: /Anna Muster.*2025-01-01/ });
+  fireEvent.change(within(dialog).getAllByLabelText('Notiz')[0], { target: { value: 'Private Zuordnungsnotiz' } });
+  if (pendingSave) {
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Zuordnung buchen' }));
+    await waitFor(() => expect(finishSave).toBeTypeOf('function'));
+  }
+  await act(async () => refresh(json({ detail: 'Zugriff auf Umsätze nicht verfügbar' }, status)));
+  return { dialog, fetchMock, finishSave };
+}
+
+it.each([401, 403, 500])("handles a protected transaction dialog when the retained-list refresh returns %s", async status => {
+  const { dialog } = await openRetainedTransactionEditor(status);
+  if (status === 500) {
+    expect(dialog).toBeInTheDocument();
+    expect(within(dialog).getAllByLabelText('Notiz')[0]).toHaveValue('Private Zuordnungsnotiz');
+    expect(dialog).toHaveTextContent('Privater Kontakt B');
+  } else {
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+    expect(screen.queryByText(/Privater Kontakt B/)).not.toBeInTheDocument();
+    expect(screen.queryByDisplayValue('Private Zuordnungsnotiz')).not.toBeInTheDocument();
+  }
+});
+
+it.each([401, 403])("invalidates an outstanding assignment after access loss %s", async status => {
+  const { fetchMock, finishSave } = await openRetainedTransactionEditor(status, true);
+  const reads = fetchMock.mock.calls.filter(([, options]) => !options?.method).length;
+  await act(async () => finishSave(json({ id: 'B', status: 'ZUGEORDNET', payments: [] })));
+  expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+  expect(screen.queryByText('Umsatz zugeordnet.')).not.toBeInTheDocument();
+  expect(fetchMock.mock.calls.filter(([, options]) => !options?.method)).toHaveLength(reads);
 });

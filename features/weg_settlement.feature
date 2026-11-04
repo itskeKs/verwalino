@@ -1,6 +1,17 @@
 Feature: WEG settlement and the owner's Hausgeld balance
   The resolved cost adjustment remains separate from payments owed under the plan.
 
+  Scenario: Saved WEG drafts are readable as soon as their success response starts
+    Given Anna Berg's WEG plan is 7200 euros and her cost share is 6400 euros
+    When I save ten 600 euro Hausgeld drafts dated 5 January 2026 and a new plan and annual settlement
+    Then every new detail is readable before its save response is cleaned up
+
+  @browser
+  Scenario: Saving opens the new payment, plan and annual settlement immediately
+    Given Anna Berg's WEG plan is 7200 euros and her cost share is 6400 euros
+    When I save ten Hausgeld payments and a plan and annual settlement through the UI
+    Then all first detail requests succeeded and every payment offered booking
+
   Scenario: A settlement credit offsets unpaid Hausgeld without changing the resolution
     Given Anna Berg's WEG plan is 7200 euros and her cost share is 6400 euros
     And Anna has booked 6600 euros of Hausgeld and the second owner has paid in full
@@ -49,3 +60,14 @@ Feature: WEG settlement and the owner's Hausgeld balance
     Given Karl Weiß owns unit 2 until June and Lena Roth owns it from July
     When I finalize the asset report for their whole year
     Then both document pages show their dated addressees at desktop and phone widths
+  @browser
+  Scenario Outline: Long owner statements keep complete amounts inside their cards
+    Given Anna-Katharina Freifrau von Hohenzollern-Sigmaringen has Anna's WEG plan and costs
+    And Anna has booked 6600 euros of Hausgeld and the second owner has paid in full
+    When I prepare their <state> WEG annual settlement
+    Then the long owner's statement and whole snapshot hash fit desktop and a 360 pixel phone
+
+    Examples:
+      | state     |
+      | computed  |
+      | finalized |

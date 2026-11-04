@@ -16,6 +16,13 @@ def unpaid_rent(world, seed_data):
     rental(world, seed_data, advance="0.00")
 
 
+@given("an unpaid rental agreement for 1234.56 EUR rent and no advance payment")
+def unpaid_four_digit_rent(world, seed_data):
+    unpaid_rent(world, seed_data)
+    response = world.act("PATCH", f"/api/leases/{world.data['leases'][0]['id']}", json={"base_rent": "1234.56"})
+    assert response.status_code == 200, world.describe_response()
+
+
 @when('the manager creates a January notice as of 2 March 2026 with a base rate of "2,50"')
 @browser_step
 async def interest_notice(browser_world):
@@ -63,6 +70,43 @@ async def issued_interest(browser_world):
     await browser_world.page.reload()
     await expect(browser_world.page.get_by_text("Ausgestellt", exact=True).first).to_be_visible()
     await interest_amounts(browser_world)
+
+
+@then("the issued principal, interest and open amounts are readable without horizontal scrolling")
+@browser_step
+async def readable_issued_amounts(browser_world):
+    page = browser_world.page
+    await page.reload()
+    await expect(page.get_by_text("Ausgestellt", exact=True).first).to_be_visible()
+    for width in (1280, 360):
+        await page.set_viewport_size({"width": width, "height": 900})
+        if width == 360:
+            await page.wait_for_function("document.querySelector('aside').getBoundingClientRect().right <= 0")
+        for title, amounts in (
+            ("Eingefrorene Zinsberechnung", ["1234.56 EUR", "15.22 EUR"]),
+            ("Rueckstandsaufstellung", ["1234.56 EUR"]),
+        ):
+            card = page.locator(".card").filter(has=page.get_by_role("heading", name=title, exact=True))
+            table = card.get_by_role("table")
+            await table.scroll_into_view_if_needed()
+            # Read the initial table viewport: no horizontal scrolling to reach money.
+            await table.evaluate("table => { table.parentElement.scrollLeft = 0; }")
+            row = table.locator("tbody tr").first
+            for index, value in enumerate(amounts):
+                cell = row.get_by_role("cell").nth(index)
+                await expect(cell).to_have_text(value)
+                fits = await cell.evaluate("cell => { const box = cell.getBoundingClientRect(); const clip = cell.closest('table').parentElement.getBoundingClientRect(); return box.left >= clip.left && box.right <= clip.right && box.right <= innerWidth && cell.scrollWidth <= cell.clientWidth; }")
+                assert fits, f"{title}: {value} is clipped at {width} px"
+        assert await page.evaluate("document.documentElement.scrollWidth <= innerWidth"), f"Page overflows at {width} px"
+
+
+@then("the issue time is displayed in German date and minute format")
+@browser_step
+async def readable_issue_time(browser_world):
+    row = browser_world.page.get_by_role("row").filter(has=browser_world.page.get_by_role("cell", name="Ausgestellt am", exact=True))
+    await expect(row.get_by_role("cell").nth(1)).to_have_text(re.compile(r"^\d{2}\.\d{2}\.\d{4}, \d{2}:\d{2}$"))
+    value = await row.get_by_role("cell").nth(1).inner_text()
+    await expect(browser_world.page.get_by_text(f"Ausgestellt am: {value}", exact=True)).to_be_visible()
 
 
 @then('"PDF herunterladen" opens a PDF with the tenant and the reviewed interest')
