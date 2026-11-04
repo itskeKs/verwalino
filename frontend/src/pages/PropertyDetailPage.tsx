@@ -264,14 +264,16 @@ function PropertyDetailPageContent({ propertyId }: { propertyId?: string }) {
         <Link className="btn" to={`/objekte/${propertyId}/wissen`}>Dokumente &amp; Wissen öffnen</Link>
       </section>
 
-      <AttachmentsPanel propertyId={property.id} canWrite={isWrite} />
+      <div className="[&_input]:min-w-0 [&_label]:min-w-0 max-[479px]:[&_button[type=submit]]:w-full">
+        <AttachmentsPanel propertyId={property.id} canWrite={isWrite} />
+      </div>
 
       <MeterPanel key={property.id} propertyId={property.id} canWrite={isWrite} />
 
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "1rem" }}>
+      <div className="flex flex-wrap items-center justify-between gap-2 mb-4">
         <h2 style={{ margin: 0 }}>Einheiten</h2>
         {isWrite && <div style={{ display: "flex", gap: "0.6rem", flexWrap: "wrap" }}>
-          <Link className="btn" to={`/objekte/${propertyId}/teilungserklaerung/import`}>
+          <Link className="btn btn--wrap max-w-full" to={`/objekte/${propertyId}/teilungserklaerung/import`}>
             Nachtrag oder Teilungserklärung einlesen
           </Link>
           <button className="btn btn--primary" onClick={openCreateUnit}>
@@ -362,7 +364,7 @@ function PropertyDetailPageContent({ propertyId }: { propertyId?: string }) {
       {units.length === 0 ? (
         <p className="empty-hint">Keine Einheiten vorhanden.</p>
       ) : (
-        <div className="card">
+        <div className="card overflow-x-auto">
           <table className="data-table">
             <thead>
               <tr>

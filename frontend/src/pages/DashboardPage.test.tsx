@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import { AuthCtx } from "../auth/useAuth";
 import * as endpoints from "../api/endpoints";
@@ -24,6 +24,14 @@ beforeEach(() => {
   vi.spyOn(endpoints, "updateTask").mockResolvedValue({ ...task, completed: true });
 });
 afterEach(() => { cleanup(); vi.restoreAllMocks(); });
+it("uses shared button styling for due-task actions including pagination", async () => {
+  show();
+  await screen.findByText(task.title);
+  const region = within(screen.getByRole("region", { name: "Fällige Aufgaben" }));
+  for (const name of ["Aufgaben erneut laden", "Erledigen", "Vorherige Aufgaben", "Weitere Aufgaben"]) {
+    expect(region.getByRole("button", { name })).toHaveClass("btn");
+  }
+});
 it("shows tomorrow through seven calendar days inclusive, and removes only after server success", async () => {
   show(); expect(await screen.findByText(task.title)).toBeVisible();
   const through = new Date(); through.setDate(through.getDate() + 7);
