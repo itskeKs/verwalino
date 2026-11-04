@@ -909,3 +909,10 @@ reversal/correction function.
 - **Exact due-date rules** (§ 556b BGB, Hausgeld due date): [§18/domain] (§2.1).
 - **Second RLS axis (full mandate-bound DB isolation):** deliberately not in the MVP (ADR-0010 option C) — door left open, not blocked.
 - **Final legal sign-off:** tax advisor/specialist lawyer — cannot be replaced by this document.
+
+Migration 0163 admits dated Hausgeld successors in the database dunning-context
+guard only through a unit represented in the linked finalized plan and the same
+organization and bound WEG scope. Ownership must overlap the claim period.
+Original plan recipients remain admissible for earlier claims. Existing notices,
+plan snapshots and amounts are not rewritten; a downgrade cannot discard an
+existing successor-backed context.

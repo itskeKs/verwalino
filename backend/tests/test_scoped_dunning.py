@@ -1,5 +1,6 @@
 """Dunning snapshots retain exact scope through creation, issue, export and privacy."""
 import uuid
+from datetime import date
 
 import pytest
 from sqlalchemy import text
@@ -261,3 +262,67 @@ async def test_inherited_selector_scope_requires_requested_live_capability(migra
     await grant(ids, ['read', 'prepare'])
     async with client(ids) as api:
         assert (await api.get(path, params={'capability': 'prepare'})).status_code == 200
+
+
+async def test_raw_dated_successor_guard_keeps_plan_scope_period_and_recipient_boundaries(migrator_session, scope_seed):
+    from sqlalchemy.ext.asyncio import create_async_engine
+    from sqlalchemy.exc import DBAPIError
+    from tests.conftest import MIGRATOR_URL
+    ids = await statement_fixture(migrator_session, scope_seed, 'owner')
+    ids.update(plan=uuid.uuid4(), buyer=uuid.uuid4(), outsider=uuid.uuid4(), draft=uuid.uuid4())
+    for owner in ('buyer', 'outsider'):
+        await mutate(text('INSERT INTO owner_profile(id,organization_id,person_id) VALUES (:id,:org,:person)'),
+                     {**ids, 'id': ids[owner]})
+    await mutate(text("INSERT INTO ownership_history(organization_id,unit_id,owner_profile_id,valid_from,valid_to) VALUES (:org,:unit,:profile,'2020-01-01','2025-07-01'),(:org,:unit,:buyer,'2025-07-01',NULL)"), ids)
+    for source in ('plan', 'draft'):
+        await mutate(text("INSERT INTO economic_plan(id,organization_id,property_id,plan_year,period_start,period_end,status,engine_version) VALUES (:id,:org,:property,2025,'2025-01-01','2025-12-31','draft','fixture')"), {**ids, 'id': ids[source]})
+        await mutate(text("INSERT INTO economic_plan_line(organization_id,economic_plan_id,line_type,unit_id,owner_profile_id,label,planned_amount,monthly_amount) VALUES (:org,:id,'OWNER_ADVANCE',:unit,:profile,'Original advance',4800,400)"), {**ids, 'id': ids[source]})
+        await mutate(text("INSERT INTO accounting_scope_binding(organization_id,property_id,scope_id,economic_plan_id,origin,reason,reviewed_by) VALUES (:org,:property,:scope,:id,'REVIEWED','Direct guard source',:actor)"), {**ids, 'id': ids[source]})
+    await mutate(text("UPDATE economic_plan SET status='finalized',finalized_at=now(),finalized_by=:actor,snapshot_payload='{}',snapshot_sha256=:sha WHERE id=:plan"), {**ids, 'sha': 'a'*64})
+    engine = create_async_engine(MIGRATOR_URL)
+    try:
+        for owner, source, scope, start, accepted in [
+            ('buyer', 'plan', 'scope', '2025-07-01', True),
+            ('profile', 'plan', 'scope', '2025-01-01', True),
+            ('outsider', 'plan', 'scope', '2025-07-01', False),
+            ('buyer', 'draft', 'scope', '2025-07-01', False),
+            ('buyer', 'plan', 'second_scope', '2025-07-01', False),
+            ('buyer', 'plan', 'scope', '2024-12-01', False),
+            ('buyer', 'plan', 'scope', '2025-01-01', False),
+        ]:
+            async with engine.connect() as connection:
+                transaction = await connection.begin()
+                try:
+                    params = {**ids, 'notice': uuid.uuid4(), 'owner': ids[owner], 'selected': ids[scope],
+                              'source': ids[source], 'start': date.fromisoformat(start),
+                              'end': date(2025, 6, 30) if owner == 'buyer' and start == '2025-01-01' else date(2025, 12, 31)}
+                    await connection.execute(text("INSERT INTO dunning_notice(id,organization_id,owner_profile_id,level,issue_date,due_date,principal_amount,fee_amount,total_amount,included_items,status) VALUES (:notice,:org,:owner,1,'2026-01-15','2026-01-30',2400,0,2400,'[]','draft')"), params)
+                    await connection.execute(text("INSERT INTO dunning_scope_context(organization_id,dunning_notice_id,scope_id,economic_plan_id,period_start,period_end,created_by,reason,origin) VALUES (:org,:notice,:selected,:source,:start,:end,:actor,'Direct successor guard','PREPARED')"), params)
+                    if accepted:
+                        await connection.execute(text('SET CONSTRAINTS ALL IMMEDIATE'))
+                        from importlib import import_module
+                        from alembic.migration import MigrationContext
+                        from alembic.operations import Operations
+                        def check_downgrade(sync):
+                            module = import_module('migrations.versions.0163_dated_successor_dunning')
+                            before = sync.scalar(text("SELECT pg_get_functiondef('validate_dunning_context()'::regprocedure)"))
+                            with Operations.context(MigrationContext.configure(sync)):
+                                if owner == 'buyer':
+                                    with pytest.raises(RuntimeError, match='successor dunning provenance'):
+                                        module.downgrade()
+                                else:
+                                    module.downgrade()
+                                    restored = sync.scalar(text("SELECT pg_get_functiondef('validate_dunning_context()'::regprocedure)"))
+                                    assert module.DATED not in restored and module.ORIGINAL in restored
+                                    module.upgrade()
+                            assert sync.scalar(text("SELECT pg_get_functiondef('validate_dunning_context()'::regprocedure)")) == before
+                        await connection.run_sync(check_downgrade)
+
+                    else:
+                        with pytest.raises(DBAPIError) as denied:
+                            await connection.execute(text('SET CONSTRAINTS ALL IMMEDIATE'))
+                        assert denied.value.orig.sqlstate == '23514'
+                finally:
+                    await transaction.rollback()
+    finally:
+        await engine.dispose()
