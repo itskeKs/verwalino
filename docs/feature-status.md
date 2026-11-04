@@ -49,7 +49,7 @@ pending; registration stays closed and legal review remains with #26. See the
 | Year built, total area | ✅ optional, stored explicitly | `models/property.py` (`construction_year`, `total_area`), `pages/PropertyDetailPage.tsx`, T55, [usage](operations/selector-pages.md) |
 | Photos | ❌ | – |
 | Units (type, area, heated area) | ✅ | `api/units.py`, `pages/PropertyDetailPage.tsx` |
-| Record MEA (co-ownership share) | ✅ scale confirmed by hand ("MEA-Skala bestätigen") or via declaration import; units need a confirmed scale (409 otherwise) | `api/properties.py` (`POST /{id}/mea-scale/confirm`), `api/units.py`, `pages/PropertyDetailPage.tsx`, T05 |
+| Record MEA (co-ownership share) | ✅ scale confirmed by hand ("MEA-Skala bestätigen") or via declaration import; units need a confirmed scale (409 otherwise). Property details offer confirmation and the unit MEA field for WEG/MISCH/SEV, and for MIET only with an existing recorded unit MEA (including zero); unconfirmed status reads "Skala noch nicht bestätigt" | `api/properties.py` (`POST /{id}/mea-scale/confirm`), `api/units.py`, `pages/PropertyDetailPage.tsx`, T05 |
 | Declaration of division (Teilungserklärung) import (AI, review) | ✅ needs feature flag and OpenAI key | `api/declaration_imports.py`, `workers/declaration_import.py`, `pages/DeclarationImportPage.tsx` |
 | Property knowledge with sources | ✅ | `services/property_knowledge_service.py`, `pages/PropertyKnowledgePage.tsx` |
 | Meters, meter readings | ✅ | `api/meters.py`, `models/meter.py`, `components/MeterPanel.tsx`, T29, T30, [usage](operations/meters.md) |
@@ -62,7 +62,7 @@ pending; registration stays closed and legal review remains with #26. See the
 | Contacts, tenant/owner profile | ✅ | `api/persons.py`, `api/tenant_profiles.py`, `api/owner_profiles.py`, `pages/PersonDetailPage.tsx` |
 | Vendors | ✅ edit/end with contact source right | `api/vendors.py`, T55, [usage](operations/selector-pages.md) |
 | Ownership with share | ✅ end ownership ("Eigentum beenden") and new owner from the next day | `api/ownership.py` (`PATCH /{id}`), `pages/UnitDetailPage.tsx`, T26, [usage](operations/tenancies-and-rent.md) |
-| Create lease (base rent, operating and heating advances, deposit) | ✅ | `api/leases.py`, `pages/UnitDetailPage.tsx` |
+| Create lease (base rent, operating and heating advances, deposit) | ✅ residential deposit capped at three net base rents on create and deposit/base-rent edits; other unit usage types exempt | `api/leases.py`, `engine/deposit.py`, `pages/UnitDetailPage.tsx`, #167 |
 | Change/end lease, tenant change | ✅ end and note always editable; amounts locked (409) once payments are booked or a settlement is final | `api/leases.py` (`PATCH /{id}`), `pages/UnitDetailPage.tsx`, T04 |
 | Rent change with effective date | ✅ full base rent and separate operating/heating rates | `models/lease_rent_change.py`, `api/leases.py` (`/rent-changes`), `engine/mietkonto.py`, T23, T24, [usage](operations/tenancies-and-rent.md) |
 | Graduated (Staffel) / index rent | ✅ | `api/leases.py` (`/rent-changes/staffel`, `/rent-changes/index`), `engine/index_rent.py`, T43, T44, [usage](operations/tenancies-and-rent.md) |
@@ -77,7 +77,7 @@ pending; registration stays closed and legal review remains with #26. See the
 | Expected charges (Sollstellung) for rent/operating costs, day-accurate | ✅ derived live, including rent history | `engine/mietkonto.py` (`tenant_expected_charges`) |
 | Record, book, reverse payment | ✅ drafts editable | `api/payments.py`, `pages/PaymentDetailPage.tsx`, T07 |
 | Tenant/owner ledger (Mietkonto), open items | ✅ | `api/payments.py` (`/mietkonto/*`, `/open-items`), `pages/MietkontoPage.tsx`, `pages/OpenItemsPage.tsx` |
-| Bank statement import CSV/CAMT | ✅ CSV (generic plus DKB profiles) and CAMT.053 (.001.02/.08, XML/ZIP), preview, duplicate detection | `engine/bank_import.py`, `services/bank_import_service.py`, `api/bank_accounts.py` (`POST /{id}/imports`), `pages/BankTransactionsPage.tsx`, T15–T19, [usage](operations/bank-and-payments.md) |
+| Bank statement import CSV/CAMT | ✅ CSV (generic, DKB and Sparkasse CSV-CAMT profiles) and CAMT.053 (.001.02/.08, XML/ZIP), preview, duplicate detection | `engine/bank_import.py`, `services/bank_import_service.py`, `api/bank_accounts.py` (`POST /{id}/imports`), `pages/BankTransactionsPage.tsx`, T15–T19, [usage](operations/bank-and-payments.md) |
 | Bank retrieval PSD2/FinTS | ❌ | – |
 | Match suggestions, split booking | ✅ apply suggestion, split, ignore | `engine/bank_matching.py`, `api/bank_transactions.py` (`/assign`, `/ignore`), `pages/BankTransactionsPage.tsx`, T20–T22, [usage](operations/bank-and-payments.md) |
 | SEPA direct debit | ✅ pain.008 for monthly rent, creditor ID and tenant mandates | `services/sepa_export.py`, `api/sepa.py`, `components/SepaExport.tsx`, T50, [usage](operations/tasks-and-documents.md) |

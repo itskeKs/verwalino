@@ -201,6 +201,10 @@ export function DunningNoticeDetailPage() {
   if (!notice) return <p className="error-text">Mahnung nicht gefunden.</p>;
 
   const includedItems = notice.included_items ?? [];
+  const issuedAt = notice.issued_at ? new Date(notice.issued_at).toLocaleString("de-DE", {
+    timeZone: "Europe/Berlin", day: "2-digit", month: "2-digit", year: "numeric",
+    hour: "2-digit", minute: "2-digit",
+  }) : null;
 
   return (
     <div>
@@ -258,7 +262,7 @@ export function DunningNoticeDetailPage() {
           Die gespeicherten Inhalte dürfen nicht nachträglich geändert werden. Die Ausstellung allein ist kein Zustellnachweis.
           {notice.issued_at && (
             <div style={{ marginTop: "0.25rem", fontSize: "0.82rem" }}>
-              Ausgestellt am: {notice.issued_at}
+              Ausgestellt am: {issuedAt}
             </div>
           )}
         </div>
@@ -298,7 +302,7 @@ export function DunningNoticeDetailPage() {
             {notice.issued_at && (
               <tr>
                 <td>Ausgestellt am</td>
-                <td>{notice.issued_at}</td>
+                <td>{issuedAt}</td>
               </tr>
             )}
             {notice.note && (
@@ -364,12 +368,12 @@ export function DunningNoticeDetailPage() {
         <p>Stichtag: <span>{notice.interest_snapshot.reference_date}</span></p>
         <p className="form-hint">Gespeicherte Werte dieser Mahnung; keine Neuberechnung mit heutigen Zinssätzen.</p>
         <div style={{ overflowX: "auto" }}><table className="data-table">
-          <thead><tr><th>Typ</th><th>Periode</th><th>Fälligkeit</th><th>Tage</th><th>Hauptforderung</th><th>Zinsen</th></tr></thead>
+          <thead><tr><th>Hauptforderung</th><th>Zinsen</th><th>Typ</th><th>Periode</th><th>Fälligkeit</th><th>Tage</th></tr></thead>
           <tbody>{notice.interest_snapshot.items.map((item, index) => <tr key={index}>
+            <td className="whitespace-nowrap">{item.principal} EUR</td><td className="whitespace-nowrap">{item.interest} EUR</td>
             <td>{PAYMENT_TYPE_LABELS[item.payment_type] ?? item.payment_type}</td>
             <td>{item.period_year === null ? "-" : `${item.period_year}${item.period_month === null ? "" : `/${String(item.period_month).padStart(2, "0")}`}`}</td>
             <td>{item.due_date}</td><td>{item.days}</td>
-            <td>{item.principal} EUR</td><td>{item.interest} EUR</td>
           </tr>)}</tbody>
         </table></div>
       </section>}
@@ -382,11 +386,11 @@ export function DunningNoticeDetailPage() {
             <table className="data-table">
               <thead>
                 <tr>
-                  <th>Periode</th>
-                  <th>Typ</th>
+                  <th style={{ textAlign: "right" }}>Offen</th>
                   <th style={{ textAlign: "right" }}>Soll</th>
                   <th style={{ textAlign: "right" }}>Ist</th>
-                  <th style={{ textAlign: "right" }}>Offen</th>
+                  <th>Periode</th>
+                  <th>Typ</th>
                 </tr>
               </thead>
               <tbody>
@@ -394,31 +398,8 @@ export function DunningNoticeDetailPage() {
                   const hasOpenAmount = /[1-9]/.test(item.open_amount);
                   return (
                     <tr key={idx}>
-                      <td>
-                        {item.period_year
-                          ? `${item.period_year}${item.period_month ? "/" + String(item.period_month).padStart(2, "0") : ""}`
-                          : "-"}
-                      </td>
-                      <td>
-                        {PAYMENT_TYPE_LABELS[item.payment_type] ?? item.payment_type}
-                      </td>
                       <td
-                        style={{
-                          textAlign: "right",
-                          fontFamily: "var(--mono)",
-                        }}
-                      >
-                        {item.soll} EUR
-                      </td>
-                      <td
-                        style={{
-                          textAlign: "right",
-                          fontFamily: "var(--mono)",
-                        }}
-                      >
-                        {item.ist} EUR
-                      </td>
-                      <td
+                        className="whitespace-nowrap"
                         style={{
                           textAlign: "right",
                           fontFamily: "var(--mono)",
@@ -427,6 +408,32 @@ export function DunningNoticeDetailPage() {
                         }}
                       >
                         {item.open_amount} EUR
+                      </td>
+                      <td
+                        className="whitespace-nowrap"
+                        style={{
+                          textAlign: "right",
+                          fontFamily: "var(--mono)",
+                        }}
+                      >
+                        {item.soll} EUR
+                      </td>
+                      <td
+                        className="whitespace-nowrap"
+                        style={{
+                          textAlign: "right",
+                          fontFamily: "var(--mono)",
+                        }}
+                      >
+                        {item.ist} EUR
+                      </td>
+                      <td>
+                        {item.period_year
+                          ? `${item.period_year}${item.period_month ? "/" + String(item.period_month).padStart(2, "0") : ""}`
+                          : "-"}
+                      </td>
+                      <td>
+                        {PAYMENT_TYPE_LABELS[item.payment_type] ?? item.payment_type}
                       </td>
                     </tr>
                   );

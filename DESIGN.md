@@ -314,12 +314,49 @@ New screens follow these page structures and use a German noun as their `h1`.
   scroll anchoring so closing an inline form does not pull the view to the top. A route
   change starts a fresh detail state; a confirmed loss of access clears protected data. Refresh
   errors stay inline beside the retained data. Initial errors and not-found replace the page.
+  Property details offer the MEA scale confirmation and unit MEA field for WEG, MISCH and SEV;
+  MIET offers them only when an existing unit has a recorded MEA (including zero). Unset MEA
+  is not a recorded share. The confirmation card appears only for writers with an unconfirmed
+  scale, labelled “Skala noch nicht bestätigt”. Confirmed scales do not prompt again.
 - **Form.** `.form-grid` (two columns, one below 768 px). A `<label>` wraps its control with the caption
   above it; required fields end in ` *` plus native `required`; `form-full-width` spans both columns.
   `.form-actions` at the end: submit first (`btn btn--primary`), then "Abbrechen". While saving, the form
   is wrapped in `<fieldset disabled>` and the button label changes ("Speichern..."). Create and edit forms
   open as a card above the list; small edits of master data open `MasterDataEditor` as a dialog.
   Selects, checkboxes and file inputs are the native elements.
+
+The “Umsatz aufteilen” dialog uses the same form grid. Each split row is a
+full-width card with labels above its fields, two columns from 768 px and one
+column below. The lease/owner target and note span the row. Fieldsets may shrink
+so long lease options cannot widen the dialog or clip its explanation. Add/remove
+controls stay with the rows; submit and “Abbrechen” share the bottom action row.
+The scrollable dialog keeps all fields and actions reachable at 360 px.
+
+| Split dialog | 1280 px | 800 px | 360 px |
+|---|---|---|---|
+| Before | [Desktop](docs/assets/design/split-dialog/before-1280.png) | [Tablet](docs/assets/design/split-dialog/before-800.png) | [Phone](docs/assets/design/split-dialog/before-360.png) |
+| After | [Desktop](docs/assets/design/split-dialog/after-1280.png) | [Tablet](docs/assets/design/split-dialog/after-800.png) | [Phone](docs/assets/design/split-dialog/after-360.png) |
+| Bottom actions | [Desktop](docs/assets/design/split-dialog/after-actions-1280.png) | [Tablet](docs/assets/design/split-dialog/after-actions-800.png) | [Phone](docs/assets/design/split-dialog/after-actions-360.png) |
+
+### Empty tenant and owner selections
+
+In the unit's new tenancy or ownership card, an empty profile list shows a
+muted `.empty-hint` above the form. A normal `.link` to “Personen” explains the
+next step under “Rollen / Profile”: “Als Mieter kennzeichnen” or
+“Als Eigentuemer kennzeichnen” (matching the existing person-page action).
+The German copy starts “Noch keine Person als Mieter gekennzeichnet.” or
+“Noch keine Person als Eigentümer gekennzeichnet.” It wraps within the card at
+360 px. The hint appears only in the existing write forms and disappears when
+the corresponding profile list is populated. Returning through “Objekte” to the
+unit reloads the profiles; profile creation remains on the person page.
+
+Synthetic Anna Beispiel and Bernd Test, both initially unmarked, on the shared
+test database at 1280 × 900 and 360 × 900:
+
+| Form | Desktop before / after | 360 px before / after |
+| --- | --- | --- |
+| New tenancy | [before](docs/assets/design/profile-hints/before-tenancy-1280.png) · [after](docs/assets/design/profile-hints/after-tenancy-1280.png) | [before](docs/assets/design/profile-hints/before-tenancy-360.png) · [after](docs/assets/design/profile-hints/after-tenancy-360.png) |
+| New ownership | [before](docs/assets/design/profile-hints/before-ownership-1280.png) · [after](docs/assets/design/profile-hints/after-ownership-1280.png) | [before](docs/assets/design/profile-hints/before-ownership-360.png) · [after](docs/assets/design/profile-hints/after-ownership-360.png) |
 
 ### Separate tenant advances
 
@@ -490,6 +527,24 @@ and use the existing `.btn` style for reload, completion and pagination.
 The dashboard's rent KPI form allows its labels to shrink so long property options
 stay within the card, including before a property is selected.
 
+The dunning notice detail puts `Hauptforderung` and `Zinsen` first in its frozen
+interest table, and `Offen`, `Soll`, `Ist` before period and type in its arrears
+table. Monetary cells stay unbroken; principal, interest and open amounts are
+readable in the initial table viewport at 360 px. Remaining descriptive columns
+use the existing horizontal scroll containers. Desktop keeps the complete tables.
+Both `Ausgestellt am` locations show the persisted instant as `TT.MM.JJJJ, HH:MM`
+in `Europe/Berlin`, using the existing German `toLocaleString` options pattern
+with two-digit day, month, hour and minute. The API supplies ISO with a timezone.
+This changes display only; frozen values and PDFs retain their stored contents.
+
+Synthetic issued notices from the shared test database; the captures show the
+actual issue times on 4 November 2026, not the fixed November 1 unit-test instant:
+
+| Dunning notice detail | 1280 px | 360 px |
+|---|---|---|
+| Before | [View](docs/assets/design/dunning-notice/before-1280.png) | [View](docs/assets/design/dunning-notice/before-360.png) |
+| After | [View](docs/assets/design/dunning-notice/after-1280.png) | [View](docs/assets/design/dunning-notice/after-360.png) |
+
 The WEG settlement detail follows this contract: `settlement-detail` wraps long owner
 names and the complete snapshot SHA-256. Each individual statement uses its own
 `overflow-x-auto` container, natural column widths and unbroken monetary values;
@@ -626,6 +681,10 @@ do not assert tax completeness. A real CSV link uses the same displayed selectio
 and reports export errors inline. Loading and retry belong to the panel, leaving
 the overview visible; changing property, year or scope removes the old panel and
 suppresses late responses/downloads. The existing year-overview CSV stays separate.
+The income table labels deposits "Kaution (durchlaufend)" and tenant backpayments
+"Nachzahlung (Mieter)". The server's income total excludes trust deposits while
+retaining their original row amounts. The unassigned list retains these amounts;
+its reconciliation total excludes non-income rows, as the server note explains.
 
 Every async region provides loading, empty, error and success copy using the patterns below.
 Failed requests preserve the user's input.
@@ -683,6 +742,12 @@ the alert with `aria-describedby`. For example, the lease says “Bitte geben Si
 die Kaltmiete als gültigen EUR-Betrag ein.” and the cost form says “Bitte geben
 Sie den Bruttobetrag als gültigen EUR-Betrag ein.”. VAT rate uses “gültigen
 Prozentsatz”. Correcting and submitting revalidates the form.
+
+For a residential deposit above three net base rents, the server returns the
+existing form alert with “Die Kaution darf höchstens drei Nettokaltmieten betragen
+(2.250,00 €).” at 750 EUR rent. The form retains the entered 2,400 EUR so it can be
+corrected to the permitted 2,250 EUR and saved. This business refusal uses the
+existing server-error surface; commercial units are exempt.
 
 The running test stack supplies the synthetic money-input evidence below.
 “Before” is the failed save on main; “after” shows the reloaded lease form or
@@ -872,6 +937,21 @@ and the sixty-receipt import/assignment use the real API. Each pair is desktop/3
 | Assignment after importing a long statement | [before](docs/assets/design/save-lifecycle/r1-before-assignment-after-import-1280.png) · [after](docs/assets/design/save-lifecycle/r1-after-assignment-after-import-1280.png) | [before](docs/assets/design/save-lifecycle/r1-before-assignment-after-import-360.png) · [after](docs/assets/design/save-lifecycle/r1-after-assignment-after-import-360.png) |
 
 ## Screenshots
+
+Property MEA guidance uses new synthetic MIET and WEG properties on the disposable test
+database, showing the page top and new-unit card at 1280 and 360 CSS px. MIET has neither the scale
+confirmation nor the unit MEA field; WEG retains both and shows a German scale status.
+
+| MEA guidance | Desktop | 360 px |
+|---|---|---|
+| MIET before | [Desktop](docs/assets/design/mea-miet-before-1280.png) | [Phone](docs/assets/design/mea-miet-before-360.png) |
+| MIET after | [Desktop](docs/assets/design/mea-miet-1280.png) | [Phone](docs/assets/design/mea-miet-360.png) |
+| WEG before | [Desktop](docs/assets/design/mea-weg-before-1280.png) | [Phone](docs/assets/design/mea-weg-before-360.png) |
+| WEG after | [Desktop](docs/assets/design/mea-weg-1280.png) | [Phone](docs/assets/design/mea-weg-360.png) |
+| MIET unit before | [Desktop](docs/assets/design/mea-miet-unit-before-1280.png) | [Phone](docs/assets/design/mea-miet-unit-before-360.png) |
+| MIET unit after | [Desktop](docs/assets/design/mea-miet-unit-1280.png) | [Phone](docs/assets/design/mea-miet-unit-360.png) |
+| WEG unit before | [Desktop](docs/assets/design/mea-weg-unit-before-1280.png) | [Phone](docs/assets/design/mea-weg-unit-before-360.png) |
+| WEG unit after | [Desktop](docs/assets/design/mea-weg-unit-1280.png) | [Phone](docs/assets/design/mea-weg-unit-360.png) |
 
 The person privacy panel labels a `BOOKED_PAYMENT` binding as
 “Empfänger einer gebuchten Zahlung” in both the erasure preview and the
@@ -1229,3 +1309,11 @@ identifiers and keep the existing detail tables within the phone viewport.
 | --- | --- | --- |
 | Before | [view](docs/assets/design/weg-owner-balance/before-1280.png) | [view](docs/assets/design/weg-owner-balance/before-360.png) |
 | After | [view](docs/assets/design/weg-owner-balance/after-1280.png) | [view](docs/assets/design/weg-owner-balance/after-360.png) |
+
+
+Annual income correction (#169), synthetic journey 5 receipts through 31 October 2026:
+
+| View | Before | After |
+| --- | --- | --- |
+| Desktop | [Income with deposit](docs/assets/design/reports-income-before-1280.png) | [Income excluding deposit](docs/assets/design/reports-income-1280.png) |
+| 360 px | [Income with deposit](docs/assets/design/reports-income-before-360.png) | [Income excluding deposit](docs/assets/design/reports-income-360.png) |

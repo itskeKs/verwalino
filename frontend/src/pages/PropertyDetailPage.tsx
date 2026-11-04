@@ -202,6 +202,8 @@ function PropertyDetailPageContent({ propertyId }: { propertyId?: string }) {
   if (error && !property) return <p className="error-text">{error}</p>;
   if (!property) return <p className="error-text">Objekt nicht gefunden.</p>;
 
+  const showMea = property.management_type !== "MIET" || units.some(unit => unit.mea !== null);
+
   return (
     <div style={{ overflowAnchor: "none" }}>
       <p style={{ marginBottom: "0.5rem" }}>
@@ -228,11 +230,11 @@ function PropertyDetailPageContent({ propertyId }: { propertyId?: string }) {
         </table>
       </div>
 
-      {isWrite && property.mea_scale_status === "LEGACY_UNCONFIRMED" && (
+      {isWrite && showMea && property.mea_scale_status === "LEGACY_UNCONFIRMED" && (
         <div className="card" style={{ marginBottom: "1.5rem" }}>
           <h2>MEA-Skala bestätigen</h2>
           <p>
-            Bisheriger Status: <span className="badge badge--warning">LEGACY_UNCONFIRMED</span>.
+            Bisheriger Status: <span className="badge badge--warning">Skala noch nicht bestätigt</span>.
             Bitte geben Sie den Nenner der MEA-Skala ein (z.B. 1000 für 1000 Gesamteinheiten).
           </p>
           <form onSubmit={handleConfirmMeaScale} className="form-grid" style={{ gap: "0.5rem" }}>
@@ -332,7 +334,7 @@ function PropertyDetailPageContent({ propertyId }: { propertyId?: string }) {
                 onChange={(e) => setUnitForm({ ...unitForm, heated_area: e.target.value })}
               />
             </label>
-            <label>
+            {showMea && <label>
               MEA (Miteigentumsanteil)
               <input
                 type="text"
@@ -340,7 +342,7 @@ function PropertyDetailPageContent({ propertyId }: { propertyId?: string }) {
                 value={unitForm.mea}
                 onChange={(e) => setUnitForm({ ...unitForm, mea: e.target.value })}
               />
-            </label>
+            </label>}
             <label>
               Gebäudeteil
               <input

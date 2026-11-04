@@ -201,7 +201,7 @@ PROBES: dict[str, Probe] = {
     "POST /api/leases/{lease_id}/handover": Probe(row("lease_agreement", lease_id="id"), body={
         'request_id': str(uuid.uuid4()), 'date': '2026-01-02', 'type': 'Einzug', 'parties': 'Synthetic parties',
         'signatures': 'Synthetic names', 'readings': [], 'keys': [], 'notes': ''}),
-    "PATCH /api/leases/{lease_id}": Probe(row("lease_agreement", lease_id="id"), body={"heating_advance_payment": "90.00"}),
+    "PATCH /api/leases/{lease_id}": Probe(row("lease_agreement", lease_id="id"), body={"deposit": "2100.00"}),
     "POST /api/leases": Probe(UNIT_AND_TENANT, body={
         "unit_id": "{unit_id}", "tenant_profile_id": "{tenant_profile_id}", "valid_from": "2026-01-01",
         "base_rent": "700.00", "advance_payment": "150.00", "heating_advance_payment": "90.00"}),

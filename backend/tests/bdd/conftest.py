@@ -183,6 +183,7 @@ def pytest_collection_modifyitems(config, items):
                     "organization_deletion.feature": "needs direct database fixtures and the in-process deletion CLI",
                     "organization_export_import.feature": "needs direct database fixtures and in-process archive storage",
                     "password_reset.feature": "needs the Mailpit test mailbox",
+                    "profile_hints.feature": "needs a fresh organization seeded through the local database fixture",
                 }.get(Path(template.feature.filename).name)
                 if reason:
                     item.add_marker(pytest.mark.skip(reason=reason))

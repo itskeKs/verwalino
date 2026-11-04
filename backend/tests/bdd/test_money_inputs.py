@@ -31,8 +31,32 @@ def cost_ready(world, seed_data):
     rental(world, seed_data)
 
 
-@when(parsers.parse("I save a tenancy with German rent and deposit at {width:d} px"))
-def save_tenancy(browser_world, width):
+@given("a commercial unit and tenant ready for a new tenancy")
+def commercial_tenancy_ready(world, seed_data):
+    tenancy_ready(world, seed_data)
+    response = world.act("PUT", f"/api/units/{world.data['units'][0]['id']}", json={"usage_type": "GEWERBE"})
+    assert response.status_code == 200, world.describe_response()
+
+
+@when("I save a commercial tenancy with 750 EUR rent and 2400 EUR deposit")
+def save_commercial_tenancy(browser_world):
+    save_tenancy(browser_world, 1280, commercial=True)
+
+
+@then("the reloaded commercial tenancy retains 2400 EUR deposit")
+def commercial_tenancy_persisted(browser_world):
+    b = browser_world
+
+    async def check():
+        await b.page.reload()
+        await button(b.page, "Bearbeiten / beenden").click()
+        await expect(field(b.page, "Kaltmiete (EUR) *")).to_have_value("750.00")
+        await expect(field(b.page, "Kaution (EUR)")).to_have_value("2400.00")
+    b.run(check())
+
+
+@when(parsers.parse("I correct an excessive deposit and save a tenancy with German amounts at {width:d} px"))
+def save_tenancy(browser_world, width, *, commercial=False):
     b = browser_world
 
     async def save():
@@ -43,8 +67,17 @@ def save_tenancy(browser_world, width):
         await b.page.get_by_role("combobox", name="Mieter *", exact=True).select_option(data["tenants"][0]["id"])
         for label, value in (("Vertragsbeginn *", "2026-01-01"), ("Kaltmiete (EUR) *", "750,00"),
                              ("Betriebskosten-Vorauszahlung (EUR) *", "150,00"),
-                             ("Heizkosten-Vorauszahlung (EUR) *", "90,00"), ("Kaution (EUR)", "2.250,00")):
+                             ("Heizkosten-Vorauszahlung (EUR) *", "90,00"), ("Kaution (EUR)", "2.400,00")):
             await field(b.page, label).fill(value)
+        if not commercial:
+            await button(b.page, "Speichern").click()
+            await expect(b.page.get_by_role("alert")).to_have_text(
+                "Die Kaution darf höchstens drei Nettokaltmieten betragen (2.250,00 €).")
+            await expect(field(b.page, "Kaution (EUR)")).to_have_value("2.400,00")
+            response = await b.context.request.get("/api/leases", params={"unit_id": data["units"][0]["id"]})
+            assert response.status == 200, await response.text()
+            assert await response.json() == []
+            await field(b.page, "Kaution (EUR)").fill("2.250,00")
         await button(b.page, "Speichern").click()
         try:
             await expect(b.page.get_by_role("heading", name="Neuen Mietvertrag anlegen", exact=True)).not_to_be_visible(timeout=3000)

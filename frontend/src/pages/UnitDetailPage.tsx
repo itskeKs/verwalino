@@ -336,6 +336,11 @@ function UnitDetailPageContent({ propertyId, unitId }: { propertyId?: string; un
       {canWriteOwnership && showOwnerForm && (
         <div className="card" style={{ marginBottom: "1rem" }}>
           <h2>Neues Eigentum anlegen</h2>
+          {ownerProfiles.length === 0 && (
+            <p className="empty-hint">
+              Noch keine Person als Eigentümer gekennzeichnet. Unter <Link to="/personen" className="link">Personen</Link> → Rollen / Profile → „Als Eigentuemer kennzeichnen“.
+            </p>
+          )}
           {ownerFormError && <p className="error-text">{ownerFormError}</p>}
           <form onSubmit={handleOwnerSubmit} className="form-grid">
             <label>
@@ -453,6 +458,11 @@ function UnitDetailPageContent({ propertyId, unitId }: { propertyId?: string; un
       {canWriteOwnership && showLeaseForm && (
         <div className="card" style={{ marginBottom: "1rem" }}>
           <h2>{editingLease ? "Mietvertrag bearbeiten / beenden" : "Neuen Mietvertrag anlegen"}</h2>
+          {!editingLease && tenantProfiles.length === 0 && (
+            <p className="empty-hint">
+              Noch keine Person als Mieter gekennzeichnet. Unter <Link to="/personen" className="link">Personen</Link> → Rollen / Profile → „Als Mieter kennzeichnen“.
+            </p>
+          )}
           {leaseFormError && <p id="lease-form-error" role="alert" className="error-text">{leaseFormError}</p>}
           <form onSubmit={handleLeaseSubmit} className="form-grid">
             <label>

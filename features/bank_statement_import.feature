@@ -26,3 +26,15 @@ Feature: Bank statement import
     Then no transaction is imported
     And 2 transactions are recognised as already imported
     And the bank account holds 2 transactions
+
+
+  Scenario: Sparkasse CSV-CAMT imports counterparties and recognises a repeated statement
+    Given a bank account with the IBAN "DE75512108001245126199"
+    And the Sparkasse statement "sparkasse_csv_camt.csv"
+    When the user imports the statement
+    Then 2 transactions are imported
+    And Anna Beispiel's 800 EUR receipt on 07.04.2026 retains her name and IBAN
+    When the user imports the statement
+    Then no transaction is imported
+    And 2 transactions are recognised as already imported
+    And the bank account holds 2 transactions

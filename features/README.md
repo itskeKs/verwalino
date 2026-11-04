@@ -264,6 +264,9 @@ run skips it too. The same applies to `organization_deletion.feature` (direct
 database fixtures and the in-process deletion CLI), `organization_export_import.feature`
 (direct database fixtures and in-process archive storage) and `password_reset.feature`
 (the Mailpit test mailbox).
+The four `journeys/profile_hints.feature` browser examples seed a fresh organization
+through the local database fixture and are skipped on external targets; they run
+against the local browser stack and in PR CI's browser job.
 Each skipped scenario records its reason in the report. Local runs continue to
 exercise both organizations, all isolation scenarios, first-run setup, the inbox
 review chain, deletion, export/import and password reset; PR CI retains this
@@ -374,4 +377,4 @@ grows with the fixes: a finding from a blind acceptance run first fails as a ste
 its journey, then the fix turns it green. Twins use the browser harness above and run with
 `make test-browser`, in CI on every PR; they do not replace the blind run, which checks that a
 user finds the way at all. A twin is written with the first issue that touches its journey, not
-in advance, so none exists yet.
+in advance.

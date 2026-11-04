@@ -232,6 +232,13 @@ semantics. No official interest rate is invented and no delivery is claimed. Mig
 0129 protects the new amounts and provenance even against a direct SQL update and
 refuses a downgrade that would lose existing interest bases.
 
+The notice detail shows principal and interest first in the frozen calculation,
+and the open amount first in the arrears table, so these values are readable at
+360 px without scrolling sideways. Other table columns remain scrollable within
+their card. `Ausgestellt am` shows the stored issue instant as `TT.MM.JJJJ, HH:MM`
+in German time (`Europe/Berlin`); API responses carry ISO timestamps with timezone.
+The letter, frozen calculation and PDF are unchanged.
+
 Since T53, individual and selected tenant dunning notices use the same
 history-sensitive tenant ledger path. The non-writing dunning-run preview filters
 principal claims strictly greater than the explicitly chosen threshold. Confirmation
@@ -480,6 +487,11 @@ cover the absolute bank amount cent-exactly; German decimal input is validated w
 floating-point arithmetic. Errors keep the inputs, 409 becomes visible, reload
 follows only on success. READ_ONLY gets no mutation actions. "Alle" ("All") also keeps
 processed rows; account filter and pagination remain server-side.
+The split dialog aligns labels above fields in a responsive form grid. Lease/owner
+targets and notes use the full row width; long lease labels cannot widen the dialog.
+The explanation stays readable, and booking/cancellation share the bottom action row,
+reachable by scrolling on a narrow screen. The Sparkasse journey checks this with
+synthetic transactions at 1280, 800 and 360 px.
 The browser scenarios in `features/bank_assignment.feature` set up master data and
 import receipts through the API, then accept suggestions, split and ignore receipts
 through the UI. They assert January's 850=700+150 is fully paid and its receipt appears
@@ -499,8 +511,12 @@ automatically treated as fully allocable. Balance = income total − cost total;
 amounts remain Decimal-exact, even with large sums and a low outer precision context.
 
 The date basis used deliberately differs from the expected-amount period/service
-period. Security deposits remain reported separately and are not reinterpreted for tax
-purposes. The overview does not replace a complete Anlage V (rental income tax form)
+period. Security deposits remain separately visible as pass-through funds and never
+increase income or balance. Tenant backpayments (`NACHZAHLUNG`) count as income and
+map to Umlagen. `HAUSGELD_VORSCHUSS`, `RUECKLAGENANTEIL` and `SONDERZAHLUNG` count as
+income only for WEG properties, not MIET, SEV or MISCH. These rules live in the
+existing Anlage V category mapping and are shared by year totals and reconciliation.
+The existing SEV report admission restriction remains in force. The overview does not replace a complete Anlage V (rental income tax form)
 or EÜR (cash-basis profit statement). Complete source read permissions and, where
 applicable, an explicit whole-property/whole-year scope are required; partial access
 or unresolved classification does not yield seemingly complete totals. Existing
@@ -574,8 +590,11 @@ The overview's existing exclusions remain unchanged: unbooked/draft payments,
 reversed originals and reversal rows, cancelled payments, raw bank transactions,
 unconfirmed and superseded costs, and records outside the selected property,
 calendar year and complete authorized scope do not enter the mapping. Every amount
-that does enter is counted once: **mapped + unassigned = original report total**
-for each section, including explicit exclusions in unassigned. Refunds/credits keep
+eligible for the section total is counted once: **mapped + unassigned = report total**.
+The visible unassigned list also retains deposits and non-WEG owner receipts with
+their original amounts; those non-income rows are excluded from the income
+reconciliation's unassigned total. WEG owner receipts remain counted but unassigned
+for Anlage V. Excluded expense categories still count in expense reconciliation. Refunds/credits keep
 their signs. No redistribution or sub-cent rounding is needed; the source is already
 cent-exact. An inconsistent input total is refused. Tables are validated at import
 (duplicate categories cannot silently overwrite each other); organization-specific
@@ -630,10 +649,11 @@ compares this documentation exactly.
 | `KALTMIETE` | Mieteinnahmen für Wohnungen (ohne Umlagen) | [§/fachlich] Wohnraummiete als Vorschlag; andere Nutzungen, Angehörige und Vorjahresmieten gesondert prüfen. |
 | `NK_VORAUSZAHLUNG` | Einnahmen aus umgelegten Neben-/Betriebskosten (Umlagen) | [§/fachlich] Laufende Umlagen; Abrechnungserstattungen und Nachzahlungen gesondert prüfen. |
 | `HK_VORAUSZAHLUNG` | Einnahmen aus umgelegten Neben-/Betriebskosten (Umlagen) | [§/fachlich] Laufende Umlagen; Abrechnungserstattungen und Nachzahlungen gesondert prüfen. |
-| `KAUTION` | Nicht zugeordnet | [§/fachlich] Ausgeschlossen: verwahrte Kaution, keine Miete; eine spätere Verrechnung ist gesondert zu prüfen. |
-| `HAUSGELD_VORSCHUSS` | Nicht zugeordnet | [§/fachlich] Ausgeschlossen: WEG-Eigentümervorschuss, keine Vermietungseinnahme. |
-| `RUECKLAGENANTEIL` | Nicht zugeordnet | [§/fachlich] Ausgeschlossen: Rücklagenzuführung, keine Vermietungseinnahme. |
-| `SONDERZAHLUNG` | Nicht zugeordnet | [§/fachlich] Nicht als Miete angesetzt: Eigentümer-Sonderzahlung; Verwendungszweck gesondert prüfen. |
+| `NACHZAHLUNG` | Einnahmen aus umgelegten Neben-/Betriebskosten (Umlagen) | [§/fachlich] Nachzahlung des Mieters aus der Betriebskostenabrechnung als Umlage; Zufluss prüfen. |
+| `KAUTION` | Nicht zugeordnet | [§/fachlich] Durchlaufend: verwahrte Kaution, keine Einnahme; im Abgleich nicht mitgezählt. Eine spätere Verrechnung ist gesondert zu prüfen. |
+| `HAUSGELD_VORSCHUSS` | Nicht zugeordnet | [§/fachlich] Einnahme nur bei WEG-Verwaltung; kein Vermietungsertrag. Sonst im Abgleich nicht mitgezählt. |
+| `RUECKLAGENANTEIL` | Nicht zugeordnet | [§/fachlich] Einnahme nur bei WEG-Verwaltung; Rücklagenzuführung ist kein Vermietungsertrag. Sonst im Abgleich nicht mitgezählt. |
+| `SONDERZAHLUNG` | Nicht zugeordnet | [§/fachlich] Einnahme nur bei WEG-Verwaltung; Eigentümer-Sonderzahlung, keine Miete. Sonst im Abgleich nicht mitgezählt. |
 | `GRUNDSTEUER` | Grundsteuer | [§/fachlich] Nur vermietungsbezogene Grundsteuer; andere öffentliche Lasten prüfen. |
 | `KALTWASSER` | Wasserversorgung / Entwässerung | [§/fachlich] Vermietungsbezogene Wasserkosten; Abfluss und Umlage prüfen. |
 | `ENTWAESSERUNG` | Wasserversorgung / Entwässerung | [§/fachlich] Vermietungsbezogene Abwasserkosten; Abfluss und Umlage prüfen. |

@@ -62,20 +62,31 @@ shows a German field problem and keeps her input. A separate heating advance may
 **Expected:**
 - The overview shows one property, two units and two running tenancies with the amounts of the
   table.
+- The new MIET property's details and new-unit form ask for no MEA setup while no unit has
+  a recorded MEA. A new WEG property's details offer “MEA-Skala bestätigen” with
+  “Skala noch nicht bestätigt” and its new-unit form offers “MEA (Miteigentumsanteil)”.
 - **Additional check, deposit:** if Sabine mistakenly enters 2,400.00 € for Anna (more than three
-  net rents), Verwalino points out that at most 2,250.00 € is permitted. She then enters the
-  correct 2,250.00 €.
+  net rents), saving is refused with „Die Kaution darf höchstens drei Nettokaltmieten betragen
+  (2.250,00 €).“ and her input is kept. She then enters the correct 2,250.00 € and saves.
 - Sabine finds every step without having to guess. Where she hesitates, that is a finding.
+- With Anna and Bernd both unmarked, the empty new-tenancy selection explains the
+  route through “Personen” and “Rollen / Profile”. Sabine follows it, marks only
+  Anna as a tenant and returns through “Objekte” to the unit: Anna is selectable,
+  Bernd is absent and the hint is gone. The empty ownership form gives the
+  analogous route for the owner profile.
 
 **Checked by:** agent
 **Also at 360 px:** no
-**Automated:** tenancy money entry only, in [money_inputs.feature](../../features/journeys/money_inputs.feature)
+**Automated:** tenancy money entry and deposit refusal/correction at 1280 and 360 px, in [money_inputs.feature](../../features/journeys/money_inputs.feature); new MIET/WEG MEA guidance at both widths in [property_mea.feature](../../features/journeys/property_mea.feature); empty tenant/owner selection, profile designation and return navigation at both widths in [profile_hints.feature](../../features/journeys/profile_hints.feature)
 
 ## Journey 2: Importing the bank statement and assigning the payments
 
 **Goal:** Sabine wants to know who has paid.
-**She does:** uploads the CSV and assigns what Verwalino does not assign by itself.
+**She does:** uploads the original Sparkasse CSV-CAMT without rewriting dates and assigns
+what Verwalino does not assign by itself.
 **Expected:**
+- The first import holds 31 transactions with counterparty names and IBANs.
+  Anna Beispiel's 800.00 € receipt on 07.04.2026 suggests her lease.
 - Anna: January to October all paid, only in April 800.00 € instead of 900.00 € →
   **100.00 € open**. The payment on 07.04. was **on time** (see journey 3), only too low.
 - Bernd: March to October paid in full, nothing open.
@@ -87,7 +98,16 @@ shows a German field problem and keeps her input. A separate heating advance may
 
 **Checked by:** agent
 **Also at 360 px:** no
-**Automated:** manual “60,00” cost entry only, in [money_inputs.feature](../../features/journeys/money_inputs.feature)
+**Automated through the browser:** original Sparkasse preview/import, Anna's partial-rent
+suggestion, duplicate detection and refusal of a statement for another account in
+[sparkasse_statement.feature](../../features/journeys/sparkasse_statement.feature);
+manual “60,00” cost entry in [money_inputs.feature](../../features/journeys/money_inputs.feature).
+The Sparkasse twin also opens Anna's April split with a long dwelling label at
+1280, 800 and 360 px: the explanation remains complete, labels sit above fields,
+target and note span the row, and both bottom actions remain reachable. It corrects
+an over-allocation without losing inputs and books 650.00 EUR base rent plus
+150.00 EUR operating advance against her 800.00 EUR receipt.
+The remaining assignment and ledger checks still require blind acceptance.
 
 ## Journey 3: Dunning letter to Anna
 
@@ -112,7 +132,12 @@ shows a German field problem and keeps her input. A separate heating advance may
 
 **Checked by:** agent
 **Also at 360 px:** the dunning letter
-**Automated:** not yet
+**Automated:** [readable issued notice](../../features/journeys/dunning_notice.feature)
+checks four-digit principal, interest and open amounts without horizontal
+scrolling at 1280 and 360 px, plus the German issue-time display. The separate
+[interest/PDF scenario](../../features/dunning_interest.feature) checks frozen
+amounts and the downloaded PDF. The April due-date and split-rate expectations
+above remain outside these automated checks.
 
 ## Journey 4: Rent change for Anna
 
@@ -156,7 +181,9 @@ same and only the split differs: a question left open for the owner to decide.
 
 **Checked by:** agent
 **Also at 360 px:** the annual overview
-**Automated:** not yet
+**Automated:** [annual income twin](../../features/journeys/annual_income.feature) covers
+receipts, the separate deposit, Anlage V income and both CSV totals at desktop and
+360 px. Expense coverage remains outside this twin.
 
 ## Journey 6: Creating an owners' association from the declaration of division
 

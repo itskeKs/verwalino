@@ -8,6 +8,14 @@ Feature: Anlage V summary
     Then rent, advances and water costs appear on their Anlage V lines
     And mapped and unassigned amounts match the property year overview
 
+  Scenario: A deposit stays visible without increasing income and a tenant backpayment counts as levies
+    Given a rental property with booked rent, advances and confirmed water costs
+    And a booked deposit of 2250 euros and a tenant backpayment of 75 euros
+    When the landlord opens the Anlage V summary for that year
+    Then the year overview and CSV show 1459.56 euros income excluding the deposit
+    And the deposit stays separate and the backpayment is included in levies
+    And mapped and unassigned amounts match the property year overview
+
   @browser
   Scenario: The landlord reads the mapping on wide and narrow screens and downloads it
     Given a rental property with booked rent, advances and confirmed water costs

@@ -48,6 +48,15 @@ This is a traceable open-source format example, not an assurance for
 every current DKB export variant or a determination of the bank actually used.
 For DKB 2023, the counterparty is chosen by incoming/outgoing direction; pending or
 contradictory transactions are rejected, old `Tagessaldo` rows are not booked.
+Sparkasse CSV-CAMT is recognised by its `Auftragskonto`,
+`Beguenstigter/Zahlungspflichtiger`, `Kontonummer/IBAN`, `Waehrung`, and `Info`
+headers, alongside the required date and amount columns. This profile also accepts
+`TT.MM.JJ` dates, preserves counterparty names and IBANs, requires `Waehrung` to be
+`EUR` and `Info` to be „Umsatz gebucht“, and checks every row's `Auftragskonto`
+against the selected bank account. Pending, unknown or empty statuses are refused.
+The [synthetic acceptance statement](../acceptance/data/sparkasse-2026-01-10.csv)
+has 31 transactions; its 800.00 EUR receipt on 07.04.2026 retains Anna Beispiel's
+name and IBAN for a lease suggestion. Uploading it again adds no transactions.
 Unknown/ambiguous formats and invalid rows abort the entire import
 with a clear message; no rounding or silent field truncation.
 
@@ -56,6 +65,14 @@ Multiple identical bookings are retained. Without a bank-side
 transaction ID, overlapping statements with a differing number of otherwise
 identical bookings cannot be distinguished unambiguously; this limit must not
 be presented as reliable cross-bank duplicate detection.
+
+For Sparkasse files imported before this profile was supported, manually expanding
+the years allowed an import but left the counterparty name and IBAN empty. Those
+fields are part of the import identity: importing the original statement now can
+create duplicates of those historical rows. Existing hashes are not rewritten and
+no retrospective matching is performed. Review earlier imports before uploading
+an overlapping statement; duplicate detection applies to repeated imports with
+the newly recognised profile.
 
 CAMT.053 is supported for `camt.053.001.02` and `.08` as XML or ZIP,
 with the same output as CSV. Only booked EUR transactions; `CRDT` is positive,

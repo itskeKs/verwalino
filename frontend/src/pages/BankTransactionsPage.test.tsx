@@ -215,6 +215,49 @@ function assignmentSetup(item: unknown = warm, role = "OWNER_ADMIN", mutation?: 
 }
 const posts = (fetchMock: ReturnType<typeof assignmentSetup>) => fetchMock.mock.calls.filter(([, options]) => options?.method === "POST");
 
+it("lays out split rows as full-width form grids with shared actions at the bottom", async () => {
+  assignmentSetup();
+  fireEvent.click(await screen.findByRole("button", { name: "Aufteilen" }));
+  const dialog = await screen.findByRole("dialog", { name: "Umsatz aufteilen" });
+  await within(dialog).findAllByRole("option", { name: /Anna Muster.*2025-01-01/ });
+  const form = dialog.querySelector("form")!;
+  expect(form).toHaveClass("form-grid", "min-w-0");
+  expect(form.querySelector("fieldset")).toHaveClass("contents", "min-w-0");
+  for (const row of within(dialog).getAllByRole("group", { name: /Splitzeile/ })) {
+    expect(row).toHaveClass("form-grid", "form-full-width", "min-w-0");
+    for (const name of ["Mietvertrag", "Notiz"]) {
+      expect(within(row).getByLabelText(name).closest("label")).toHaveClass("form-full-width");
+    }
+  }
+  const submit = within(dialog).getByRole("button", { name: "Zuordnung buchen" });
+  const cancel = within(dialog).getByRole("button", { name: "Abbrechen" });
+  expect(submit.parentElement).toHaveClass("form-actions");
+  expect(cancel.parentElement).toBe(submit.parentElement);
+  expect(form.lastElementChild).toBe(submit.parentElement);
+});
+
+it("locks split fields and actions during a double submission and retains inputs after refusal", async () => {
+  let finish!: (response: Response) => void;
+  const fetchMock = assignmentSetup(warm, "OWNER_ADMIN", () => new Promise(resolve => { finish = resolve; }));
+  fireEvent.click(await screen.findByRole("button", { name: "Aufteilen" }));
+  await screen.findAllByRole("option", { name: /Anna Muster.*2025-01-01/ });
+  const note = screen.getAllByLabelText("Notiz")[0];
+  fireEvent.change(note, { target: { value: "April geprüft" } });
+  const submit = screen.getByRole("button", { name: "Zuordnung buchen" });
+  fireEvent.click(submit);
+  fireEvent.click(submit);
+  expect(posts(fetchMock)).toHaveLength(1);
+  for (const control of [submit, note, screen.getByRole("button", { name: "Abbrechen" }), screen.getByRole("button", { name: "Zeile hinzufügen" }), ...screen.getAllByLabelText("Betrag (EUR)")]) {
+    expect(control).toBeDisabled();
+  }
+  await act(async () => finish(json({ detail: "Buchung derzeit nicht möglich" }, 409)));
+  expect(await screen.findByRole("alert")).toHaveTextContent("Buchung derzeit nicht möglich");
+  expect(note).toHaveValue("April geprüft");
+  expect(note).toBeEnabled();
+  expect(screen.getAllByLabelText("Betrag (EUR)")[0]).toHaveValue("700.00");
+  expect(submit).toBeEnabled();
+});
+
 it("übernimmt Warmmiete über die globale Kontoliste mit exakt 700 KALT und 150 NK ohne Vorschlagsmetadaten", async () => {
   const fetchMock = assignmentSetup();
   await screen.findByText("IBAN und Warmmiete passen");
@@ -505,6 +548,7 @@ it("retains transaction rows during the refresh after a real assignment", async 
   const table = screen.getByRole("table");
   fireEvent.click(screen.getByRole("button", { name: "Vorschlag übernehmen" }));
   await screen.findByText("Umsatz zugeordnet.");
+  await waitFor(() => expect(finish).toBeTypeOf("function"));
   expect(table).toBeInTheDocument();
   await act(async () => finish(json({ items: [], next_offset: null })));
   expect(await screen.findByText("Keine Umsätze vorhanden.")).toBeVisible();
