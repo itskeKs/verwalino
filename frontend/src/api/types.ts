@@ -923,7 +923,16 @@ export interface EconomicPlanLine {
   note: string | null;
 }
 
+export interface DocumentAddressee {
+  unit_id: string;
+  unit_number: string;
+  owner_profile_id: string;
+  owner_name: string;
+  key_date: string;
+}
+
 export interface EconomicPlan {
+  addressees?: DocumentAddressee[];
   id: string;
   organization_id: string;
   property_id: string;
@@ -1296,6 +1305,7 @@ export interface WegOwnerBalance {
 }
 
 export interface WegRun {
+  addressees?: DocumentAddressee[];
   id: string;
   organization_id: string;
   property_id: string;

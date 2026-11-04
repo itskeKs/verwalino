@@ -18,6 +18,7 @@ from decimal import Decimal
 from pathlib import Path
 
 from app.core.pdf import render_pdf
+from app.services.document_addressee_pdf import addressed_copies
 from app.models.settlement_line import SettlementLine
 from app.models.settlement_run import SettlementRun
 
@@ -67,6 +68,9 @@ def build_vermoegensbericht_html(
     lines: list[SettlementLine],
     names: VermoegensberichtDisplayNames | None = None,
 ) -> str:
+    addressed = addressed_copies(run, lines, names, build_vermoegensbericht_html, plan=False)
+    if addressed is not None:
+        return addressed
     dn = names or VermoegensberichtDisplayNames()
     ordered = sorted(lines, key=lambda l: l.sort_order)
 

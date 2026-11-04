@@ -1361,3 +1361,67 @@ async def test_weg_owner_change_keeps_each_owners_own_bookings(client_a_admin, m
     from tests.test_reserve_ledger import pdf_text
     content = pdf_text((await api.get(f'/api/weg-settlements/{run}/pdf')).content)
     assert '01.01.2025 bis 30.06.2025' in content and '01.07.2025 bis 31.12.2025' in content
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('transfer', ['2025-01-01', '2025-12-31', '2025-07-01'])
+async def test_documents_resolve_owners_on_their_key_date_and_freeze_them(
+    client_a_admin, client_b_admin, m4_seed, migrator_session, transfer,
+):
+    from tests.test_reserve_ledger import pdf_text
+    old, new, unit = m4_seed['owner_b'], m4_seed['owner_a'], m4_seed['u2']
+    with psycopg2.connect(SYNC_URL) as conn:
+        with conn.cursor() as cur:
+            cur.execute('UPDATE ownership_history SET valid_to=%s WHERE unit_id=%s', (transfer, unit))
+            cur.execute('INSERT INTO ownership_history (id, organization_id, unit_id, owner_profile_id, valid_from) '
+                'VALUES (%s,%s,%s,%s,%s)', (str(uuid.uuid4()), str(m4_seed['org_a_id']), unit, new, transfer))
+    plan_id = await _create_and_finalize_plan(client_a_admin, m4_seed)
+    response = await client_a_admin.post('/api/weg-settlements/asset-reports', json={
+        'property_id': m4_seed['property'], 'period_start': '2025-01-01', 'period_end': '2025-12-31'})
+    report_id = response.json()['id']
+    body = {'bank_balances': [{'bank_account_id': m4_seed['bank_giro'], 'label': 'Giro', 'account_type': 'LAUFEND', 'balance': '0.00'},
+        {'bank_account_id': m4_seed['bank_ruecklage'], 'label': 'Reserve', 'account_type': 'RUECKLAGE', 'balance': '0.00'}],
+        'receivables': [], 'payables': []}
+    await attest_fixture(client_a_admin, 'settlement', report_id, body)
+    response = await client_a_admin.post(f'/api/weg-settlements/asset-reports/{report_id}/finalize', json=body)
+    assert response.status_code == 200, response.text
+    frozen = []
+    for path, expected, key in [(f'economic-plans/{plan_id}', new if transfer == '2025-01-01' else old, '2025-01-01'),
+                                (f'weg-settlements/asset-reports/{report_id}', new, '2025-12-31')]:
+        resource = path.replace('weg-settlements/asset-reports/', 'weg-settlements/')
+        response = await client_a_admin.get('/api/' + resource)
+        assert response.status_code == 200, response.text
+        recipients = response.json()['addressees']
+        assert len(recipients) == 2  # One per unit, including the unchanged unit 1.
+        recipient = next(r for r in recipients if r['unit_id'] == unit)
+        assert recipient['owner_profile_id'] == expected and recipient['key_date'] == key
+        assert (await client_b_admin.get('/api/' + resource)).status_code == 404
+        assert (await client_b_admin.get('/api/' + path + '/pdf')).status_code == 404
+        pdf = (await client_a_admin.get('/api/' + path + '/pdf')).content
+        assert 'Eigentümer am ' + '.'.join(reversed(key.split('-'))) in pdf_text(pdf)
+        frozen.append((path, response.json(), pdf))
+    # Later master-data changes must not change finalized recipients or PDFs.
+    with psycopg2.connect(SYNC_URL) as conn:
+        with conn.cursor() as cur:
+            cur.execute("UPDATE person SET first_name='Changed' WHERE id=%s", (m4_seed['person_a'],))
+    for path, data, pdf in frozen:
+        assert (await client_a_admin.get('/api/' + path.replace('weg-settlements/asset-reports/', 'weg-settlements/'))).json() == data
+        assert (await client_a_admin.get('/api/' + path + '/pdf')).content == pdf
+
+
+@pytest.mark.asyncio
+async def test_asset_report_recipients_have_authoritative_retention_bindings(client_a_admin, m4_seed):
+    response = await client_a_admin.post('/api/weg-settlements/asset-reports', json={
+        'property_id': m4_seed['property'], 'period_start': '2025-01-01', 'period_end': '2025-12-31'})
+    report_id = response.json()['id']
+    body = {'bank_balances': [{'bank_account_id': m4_seed['bank_giro'], 'label': 'Giro', 'account_type': 'LAUFEND', 'balance': '0.00'},
+        {'bank_account_id': m4_seed['bank_ruecklage'], 'label': 'Reserve', 'account_type': 'RUECKLAGE', 'balance': '0.00'}],
+        'receivables': [], 'payables': []}
+    await attest_fixture(client_a_admin, 'settlement', report_id, body)
+    response = await client_a_admin.post(f'/api/weg-settlements/asset-reports/{report_id}/finalize', json=body)
+    assert response.status_code == 200, response.text
+    with psycopg2.connect(SYNC_URL) as conn:
+        with conn.cursor() as cur:
+            cur.execute('SELECT entity FROM privacy_retention_facts(%s,%s) WHERE kind=%s',
+                (str(m4_seed['org_a_id']), m4_seed['person_b'], 'settlement_run'))
+            assert report_id in {str(row[0]) for row in cur.fetchall()}

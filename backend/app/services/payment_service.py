@@ -33,6 +33,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.temporal import db_exclusive_to_engine_inclusive
+from app.engine.types import OwnerPeriodInput
 from app.engine.mietkonto import (
     AdvanceFilter,
     AdvanceCredit,
@@ -649,9 +650,15 @@ class PaymentService:
                     and ln.owner_profile_id is not None
                     and ln.monthly_amount is not None
                 ]
-                charges = owner_expected_charges(
-                    advance_lines, owner_profile_id, period_start, period_end
-                )
+                history = [OwnerPeriodInput(o.unit_id, o.owner_profile_id, o.valid_from,
+                    db_exclusive_to_engine_inclusive(o.valid_to), o.mea_share)
+                    for o in await SettlementRunRepository(self._session, self._org_id).ownership_for_property(plan.property_id)]
+                try:
+                    charges = owner_expected_charges(advance_lines, owner_profile_id,
+                        max(period_start, plan.period_start), min(period_end, plan.period_end), owner_periods=history, plan_start=plan.period_start)
+                except ValueError as exc:
+                    raise HTTPException(422, {"code": "hausgeld_ownership_invalid",
+                        "message": "Die Eigentumszeiträume oder Miteigentumsanteile für das Hausgeld sind unvollständig."}) from exc
 
         if sphere is not None and property_id is not None and sphere.property_id != property_id:
             raise HTTPException(422, 'Property differs from accounting scope')

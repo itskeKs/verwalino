@@ -58,3 +58,12 @@ it("does not expose draft write controls to read-only sessions", async () => {
   mocks(); show("READ_ONLY"); await screen.findByRole("heading", { name: /Wirtschaftsplan 2027/ });
   expect(screen.queryByRole("button", { name: "Berechnen" })).not.toBeInTheDocument(); expect(screen.queryByRole("button", { name: "Finalisieren" })).not.toBeInTheDocument();
 });
+
+it("shows the frozen plan addressee and the plan-start date", async () => {
+  mocks({ ...draft, status: 'finalized', addressees: [{ unit_id: 'unit-2', unit_number: '2',
+    owner_profile_id: 'karl', owner_name: 'Karl Weiß', key_date: '2026-01-01' }] });
+  show();
+  const recipients = await screen.findByRole('region', { name: 'Dokumentempfänger' });
+  expect(recipients).toHaveTextContent('Einheit 2: Karl Weiß');
+  expect(recipients).toHaveTextContent('Eigentümer am 01.01.2026');
+});
