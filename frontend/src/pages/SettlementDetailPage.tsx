@@ -294,11 +294,11 @@ export function SettlementDetailPage() {
       }));
     setManualAmounts(manuals.map(row => r.extra_inputs?.manual_amounts?.find(saved => saved.cost_entry_id === row.cost_entry_id && saved.unit_id === row.unit_id) ?? row));
 
-    // Unit metrics: if any entry needs consumption or person count
+    // New persons calculations use the unit history; retain old frozen extras for display.
     const hasConsumption = needsConsumption(entries);
-    const hasPersons = needsPersonCount(entries);
+    const hasPersons = r.status !== "draft" && needsPersonCount(entries);
     if (hasConsumption || hasPersons) {
-      setUnitMetrics(r.extra_inputs?.unit_metrics?.length ? r.extra_inputs.unit_metrics : [
+      setUnitMetrics(r.extra_inputs?.unit_metrics?.length ? r.extra_inputs.unit_metrics.map(row => ({ ...row, person_count: hasPersons ? row.person_count : null })) : [
         {
           unit_id: unitId,
           consumption: hasConsumption ? "" : null,
@@ -327,8 +327,7 @@ export function SettlementDetailPage() {
       setManualConsumptionIds(new Set(saved.filter(row => row.consumption != null).map(row => row.unit_id)));
       setUnitMetrics(previous => sources.length ? sources.map(source => ({
         unit_id: source.unit_id, consumption: saved.find(row => row.unit_id === source.unit_id)?.consumption ?? source.consumption ?? "",
-        person_count: needsPersonCount(entries)
-          ? previous.find(row => row.unit_id === source.unit_id)?.person_count ?? undefined : null,
+        person_count: null,
       })) : previous);
     } catch (err) {
       if (generation === loadGeneration.current) setConsumptionError(err instanceof ApiError ? err.message : String(err));
@@ -435,11 +434,11 @@ export function SettlementDetailPage() {
       external_amounts: externalAmounts.filter((e) => e.tenant_amount !== "" && !heatingConfigs.some(config => config.cost_entry_id === e.cost_entry_id)),
       manual_amounts: manualAmounts.filter((m) => m.amount !== "" && !heatingConfigs.some(config => config.cost_entry_id === m.cost_entry_id)),
       unit_metrics: unitMetrics
-        .filter((u) => (needsConsumption(genericEntries) && manualConsumptionIds.has(u.unit_id) && u.consumption) || u.person_count != null)
+        .filter((u) => needsConsumption(genericEntries) && manualConsumptionIds.has(u.unit_id) && u.consumption)
         .map((u) => ({
           ...u,
           consumption: needsConsumption(genericEntries) && manualConsumptionIds.has(u.unit_id) ? u.consumption?.replace(",", ".") || null : null,
-          person_count: u.person_count ?? null,
+          person_count: null,
         })),
     };
   }
@@ -723,12 +722,20 @@ export function SettlementDetailPage() {
     const hasExternals = visibleExternals.length > 0;
     const hasManuals = manualAmounts.length > 0;
     const hasMetrics = unitMetrics.length > 0;
+    const hasHouseholds = run?.status === "draft" && needsPersonCount(genericEntries);
 
-    if (!hasExternals && !hasManuals && !hasMetrics) return null;
+    if (!hasExternals && !hasManuals && !hasMetrics && !hasHouseholds) return null;
 
     return (
       <div className="card" style={{ marginBottom: "1rem" }}>
         <h2>Strukturierte Eingaben</h2>
+        {hasHouseholds && <>
+          <h3>Personenzahl</h3>
+          <p>Personenzahlen und Leerstand in der Haushaltshistorie jeder Einheit pflegen. Die Abrechnung verwendet die gespeicherten Personentage.</p>
+          <ul>{units.filter(unit => unit.property_id === run?.property_id).map(unit => <li key={unit.id}>
+            <Link className="link" to={`/objekte/${encodeURIComponent(unit.property_id)}/einheiten/${encodeURIComponent(unit.id)}`}>Haushalt für Einheit {unit.number} bearbeiten</Link>
+          </li>)}</ul>
+        </>}
         {needsConsumption(genericEntries) && consumptionLoading && <p>Zählerbasis wird geladen …</p>}
         {needsConsumption(genericEntries) && consumptionError && <p role="alert">{consumptionError} <button type="button" className="btn"
           onClick={handleConsumptionRetry}>Zählerbasis erneut laden</button></p>}
@@ -797,14 +804,14 @@ export function SettlementDetailPage() {
         {hasMetrics && (
           <>
             <h3 style={{ fontSize: "0.95rem", margin: "0.75rem 0 0.5rem" }}>
-              Verbrauch / Personenzahl
+              {run?.status === "draft" ? "Verbrauch" : "Verbrauch / Personenzahl"}
             </h3>
             {needsConsumption(genericEntries) && (
               <p id="settlement-consumption-period-hint" className="hint">
                 Verbrauch der Einheit im gesamten Objekt-Abrechnungsjahr eingeben, auch bei gekürztem Mietzeitraum.
               </p>
             )}
-            {needsPersonCount(genericEntries) && (
+            {run?.status !== "draft" && needsPersonCount(genericEntries) && (
               <p id="settlement-person-period-hint" className="hint">
                 Personenzahlen je Einheit für das gesamte Objekt-Abrechnungsjahr in allen zugehörigen Abrechnungen gleich eingeben.
               </p>
@@ -847,7 +854,7 @@ export function SettlementDetailPage() {
                         </small>)}
                     </label>
                   )}
-                  {m.person_count !== null && (
+                  {run?.status !== "draft" && m.person_count !== null && (
                     <label>
                       Personenzahl ({getUnitLabel(m.unit_id)})
                       <input

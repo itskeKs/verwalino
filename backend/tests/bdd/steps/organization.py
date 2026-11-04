@@ -184,3 +184,30 @@ def reserve_correction_unchanged(world):
     _, path = world.data['reserve_correction']
     assert all(response.status_code == 404 for response in world.data['reserve_refusals'])
     assert world.look(world.administrator_of('Verwaltung Alpha'), path.rsplit('/overrides/', 1)[0]).json() == world.data['reserve_ledger_before']
+
+
+@given("a unit with saved household history belongs to Verwaltung Alpha")
+def household_alpha(world):
+    from tests.settlement_period_support import create
+    from tests.persons_key_support import ANNA_HOUSEHOLD
+    parent = record_of(world, 'Verwaltung Alpha', kind_named('property'))
+    api = world.administrator_of('Verwaltung Alpha')
+    unit = world.run(create(api, '/api/units', {'property_id': parent.id, 'number': 'Household isolation', 'usage_type': 'WOHNUNG'}))
+    response = world.send(api, 'PUT', f"/api/units/{unit['id']}/household", json=ANNA_HOUSEHOLD)
+    assert response.status_code == 200, response.text
+    world.data['household_unit'] = unit['id']
+
+
+@when("Verwaltung Beta tries to read or replace that unit's households")
+def household_foreign(world):
+    beta = world.administrator_of('Verwaltung Beta')
+    url = f"/api/units/{world.data['household_unit']}/household"
+    world.data['household_refusals'] = [world.send(beta, 'GET', url), world.send(beta, 'PUT', url, json=[])]
+
+
+@then("the households are not found and Verwaltung Alpha retains its rows")
+def household_retained(world):
+    from tests.persons_key_support import ANNA_HOUSEHOLD
+    assert all(r.status_code == 404 for r in world.data['household_refusals'])
+    response = world.look(world.administrator_of('Verwaltung Alpha'), f"/api/units/{world.data['household_unit']}/household")
+    assert response.json() == ANNA_HOUSEHOLD

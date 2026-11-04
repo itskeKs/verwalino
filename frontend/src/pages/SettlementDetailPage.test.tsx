@@ -105,14 +105,14 @@ describe("SettlementDetailPage with database distribution keys", () => {
 
     await user.click(await screen.findByRole("button", { name: "Strukturierte Eingaben anzeigen" }));
     await user.type(await screen.findByLabelText(/^Verbrauch \(/), "30");
-    await user.type(screen.getByLabelText(/^Personenzahl \(/), "2");
+    expect(screen.queryByLabelText(/^Personenzahl \(/)).not.toBeInTheDocument();
     await user.type(screen.getByLabelText("heating"), "210.00");
     await user.type(screen.getByLabelText("manual"), "12.34");
     const expected = {
       heating_inputs: [],
       external_amounts: [{ cost_entry_id: "heating", unit_id: "unit-1", tenant_amount: "210.00" }],
       manual_amounts: [{ cost_entry_id: "manual", unit_id: "unit-1", amount: "12.34" }],
-      unit_metrics: [{ unit_id: "unit-1", consumption: "30", person_count: 2 }],
+      unit_metrics: [{ unit_id: "unit-1", consumption: "30", person_count: null }],
     };
     expect(screen.queryByRole("button", { name: "PDF herunterladen" })).toBeNull();
     await user.click(screen.getByRole("button", { name: "Berechnen" }));
@@ -686,7 +686,7 @@ describe("T31 meter consumption prefill", () => {
     ]);
     await showConsumption();
     expect(screen.getByText("Verbrauch der Einheit im gesamten Objekt-Abrechnungsjahr eingeben, auch bei gekürztem Mietzeitraum." )).toBeVisible();
-    expect(screen.getByText("Personenzahlen je Einheit für das gesamte Objekt-Abrechnungsjahr in allen zugehörigen Abrechnungen gleich eingeben." )).toBeVisible();
+    expect(screen.getByText("Personenzahlen und Leerstand in der Haushaltshistorie jeder Einheit pflegen. Die Abrechnung verwendet die gespeicherten Personentage." )).toBeVisible();
   });
   it("shows a day fallback reason alongside the actual meter basis", async () => {
     vi.mocked(api.getConsumptionSuggestions).mockResolvedValue(consumptionRows.map(row => ({

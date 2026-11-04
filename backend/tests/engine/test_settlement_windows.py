@@ -157,7 +157,7 @@ def test_delimited_heating_pool_uses_annual_unit_weights_but_only_service_period
 def build_scenario(s):
     """Use the reconciliation generator for all time/consumption/heating keys."""
     from app.engine.periods import build_unit_cover
-    from app.engine.types import ManualAmountInput
+    from app.engine.types import ManualAmountInput, HouseholdInput
 
     units = tuple(
         UnitInput(
@@ -167,7 +167,7 @@ def build_scenario(s):
             area=u["area"],
             heated_area=u["area"],
             mea=u["mea"],
-            person_count=i + 1,
+            household=(HouseholdInput(date.min, i + 1), HouseholdInput(date.min, i + 1, True)),
             consumption=D(i + 1) * 100,
         )
         for i, u in enumerate(s["units"])

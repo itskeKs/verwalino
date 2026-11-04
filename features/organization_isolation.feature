@@ -8,6 +8,11 @@ Feature: Organization isolation
     And each organization has a property, a person and a bank account of its own
     And an administrator of "Verwaltung Alpha" is signed in
 
+  Scenario: Another organization cannot read or replace household history
+    Given a unit with saved household history belongs to Verwaltung Alpha
+    When Verwaltung Beta tries to read or replace that unit's households
+    Then the households are not found and Verwaltung Alpha retains its rows
+
   Scenario: Another organization's WEG financial details look missing
     Given a payment, economic plan and annual WEG settlement belong to Verwaltung Alpha
     When Verwaltung Beta opens those financial details and their input-owner list

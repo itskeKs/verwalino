@@ -59,7 +59,7 @@ TENANT_TABLES = frozenset({
     # M0
     "user", "membership", "management_mandate", "audit_event",
     # M1 Stammdaten
-    "property", "unit", "person", "owner_profile", "tenant_profile",
+    "property", "unit", "unit_household", "person", "owner_profile", "tenant_profile",
     "vendor", "ownership_history", "lease_agreement", "lease_rent_change", "bank_account",
     "meter", "meter_reading",
     # M2 Kosten & GoBD-Belegfluss

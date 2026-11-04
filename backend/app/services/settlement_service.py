@@ -40,6 +40,7 @@ from app.core.temporal import db_exclusive_to_engine_inclusive
 from app.engine.canonical import canonical_json, sha256_hex
 from app.engine.periods import validate_settlement_period, period_for_date, build_unit_cover, property_period_windows
 from app.engine.rounding import DistributionError
+from app.engine.person_days import MissingHouseholdError
 from app.engine.mietkonto import _money
 from app.services.lease_rent_change_service import LeaseRentChangeService
 from app.services.heating_input_service import HeatingConfig, HeatingSliceOverride, HeatingInputService, property_period_run
@@ -64,6 +65,7 @@ from app.engine.types import (
     PropertyInput,
     SettlementInput,
     UnitInput,
+    HouseholdInput,
 )
 from app.models.audit_event import AuditEvent
 from app.services.financial_scope_service import FinancialScopeService
@@ -79,7 +81,7 @@ from app.repositories.settlement_repo import (
     SettlementRunRepository,
 )
 
-ENGINE_VERSION = "m3.3.0"
+ENGINE_VERSION = "m3.4.0"
 
 
 class SettlementPeriodConflict(HTTPException):
@@ -110,7 +112,7 @@ class ManualAmountEntry:
 
 @dataclass
 class UnitMetric:
-    """Per-unit consumption / person count for VERBRAUCH / PERSONENZAHL."""
+    """Consumption input plus legacy person-count data kept for frozen runs."""
 
     unit_id: uuid.UUID
     consumption: Decimal | None = None
@@ -855,6 +857,8 @@ class SettlementService:
         inp = replace(inp, uncredited_advance_payments_total=excluded + heating_excluded)
         try:
             result = compute_bk_settlement(inp)
+        except MissingHouseholdError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
         except (EngineValidationError, DistributionError, PeriodOverlapError) as exc:
             # Escalate fail-loud as a 422 (do not persist a wrong/partial run).
             # PeriodOverlapError: a genuine (EXCLUDE-bypassing) lease overlap is a
@@ -919,7 +923,7 @@ class SettlementService:
                    if e.service_period_from <= run.period_end and e.service_period_to >= run.period_start]
         generic_entries = [(e,c) for e,c in entries if e.id not in heating_configs]
 
-        # Per-unit metric overrides (consumption / person count).
+        # Only consumption uses per-run metric overrides.
         metric_by_unit = {m.unit_id: m for m in extras.unit_metrics}
         self._meter_sources = []
         needs_consumption = any(entry.tenant_distribution_key == "VERBRAUCH"
@@ -949,6 +953,11 @@ class SettlementService:
                     self._meter_sources.append(source)
                 consumptions[unit.id] = value
 
+        from app.repositories.unit_household_repo import UnitHouseholdRepository
+        household_by_unit = {}
+        for row in await UnitHouseholdRepository(self._session, self._org_id).for_units([u.id for u in units]):
+            household_by_unit.setdefault(row.unit_id, []).append(HouseholdInput(row.valid_from, row.persons, row.is_vacancy))
+
         def unit_input(u) -> UnitInput:
             m = metric_by_unit.get(u.id)
             return UnitInput(
@@ -958,7 +967,7 @@ class SettlementService:
                 area=u.area,
                 heated_area=u.heated_area,
                 mea=u.mea,
-                person_count=m.person_count if m else None,
+                household=tuple(household_by_unit.get(u.id, [])),
                 consumption=consumptions.get(u.id, m.consumption if m else None),
                 consumption_periods=self._consumption_periods.get(u.id, ()),
             )

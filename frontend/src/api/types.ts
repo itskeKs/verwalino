@@ -1826,3 +1826,9 @@ export interface SettlementPeriod {
   period_start: string;
   period_end: string;
 }
+
+export interface UnitHouseholdRow {
+  valid_from: string;
+  persons: number;
+  is_vacancy: boolean;
+}

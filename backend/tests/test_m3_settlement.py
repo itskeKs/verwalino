@@ -2950,3 +2950,107 @@ async def test_degree_day_snapshot_freezes_exact_weights_and_ignores_later_readi
             {'id': uuid.UUID(w['run'])})
         assert canonical_json(saved) == snapshot_bytes
         assert sha256_hex(canonical_json(saved)) == digest
+
+
+@pytest.mark.asyncio
+async def test_person_days_household_replace_all_and_exact_statement_amounts(client_a_admin):
+    from tests.persons_key_support import persons_property, persons_run, ANNA_HOUSEHOLD, BERND_HOUSEHOLD
+    api = client_a_admin
+    data = await persons_property(api)
+    assert (await api.get(f"/api/units/{data['unit']['id']}/household")).json() == ANNA_HOUSEHOLD
+    for bernd, amount, days in [(False, '901.45', '944.000000'), (True, '292.21', '306.000000')]:
+        run = await persons_run(api, data, bernd=bernd)
+        # Legacy per-run values must not override the authoritative history.
+        response = await api.post(f"/api/settlements/{run['id']}/compute", json={'unit_metrics': [
+            {'unit_id': data['unit']['id'], 'person_count': 999}, {'unit_id': data['second']['id'], 'person_count': 999}]})
+        assert response.status_code == 200, response.text
+        assert response.json()['total_cost'] == amount
+        assert response.json()['lines'][0]['distribution_base_share'] == days
+        assert response.json()['lines'][0]['distribution_base_total'] == '1309.000000'
+    response = await api.put(f"/api/units/{data['second']['id']}/household", json=BERND_HOUSEHOLD[:1])
+    assert response.status_code == 200
+    response = await api.post(f"/api/settlements/{run['id']}/compute", json={})
+    assert response.status_code == 422, response.text
+    assert response.json()['detail'] == 'Handeingabe erforderlich: Personenzahl für Einheit 2 ab 01.03.2026 fehlt.'
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('rows', [
+    [{'valid_from': '2026-01-01', 'persons': -1, 'is_vacancy': False}],
+    [{'valid_from': '2026-01-01', 'persons': 1.5, 'is_vacancy': False}],
+    [{'valid_from': '2026-01-01', 'persons': True, 'is_vacancy': False}],
+    [{'valid_from': '2026-01-01', 'persons': 1, 'is_vacancy': False}] * 2,
+])
+async def test_person_days_invalid_replace_all_preserves_saved_households(client_a_admin, rows):
+    from tests.persons_key_support import ANNA_HOUSEHOLD
+    from tests.settlement_period_support import period_property
+    api = client_a_admin
+    data = await period_property(api, month=1)
+    url = f"/api/units/{data['unit']['id']}/household"
+    assert (await api.put(url, json=ANNA_HOUSEHOLD)).status_code == 200
+    response = await api.put(url, json=rows)
+    assert response.status_code == 422, response.text
+    assert (await api.get(url)).json() == ANNA_HOUSEHOLD
+    assert (await api.put(url, json=[])).json() == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('year,rows,amount,days', [
+    (2026, [('02-01', 1), ('02-10', 2)], '783.33', '47.000000'),
+    (2024, [('02-01', 1), ('02-10', 2)], '785.26', '49.000000'),
+    (2026, [('02-01', 0)], '0.00', '0.000000'),
+    (2026, [('02-01', 1)], '625.00', '28.000000'),
+    (2026, [], None, None),
+])
+async def test_person_days_http_handles_midmonth_leap_zero_constant_and_missing(client_a_admin, year, rows, amount, days):
+    from tests.settlement_period_support import create, period_property, statement
+    from tests.financial_coverage_helpers import attest_fixture
+    api = client_a_admin
+    data = await period_property(api, month=1)
+    vacant = await create(api, '/api/units', {'property_id': data['property']['id'], 'number': 'Vacant', 'usage_type': 'WOHNUNG'})
+    for unit, household in [(data['unit'], [{'valid_from': f'{year}-{d}', 'persons': n, 'is_vacancy': False} for d, n in rows]),
+                             (vacant, [{'valid_from': f'{year}-02-01', 'persons': 1, 'is_vacancy': True}])]:
+        assert (await api.put(f"/api/units/{unit['id']}/household", json=household)).status_code == 200
+    end = f'{year}-02-{29 if year == 2024 else 28}'
+    start = f'{year}-02-01'
+    category = next(c for c in (await api.get('/api/cost-categories')).json() if c['code'] == 'GARTENPFLEGE')
+    cost = await create(api, '/api/cost-entries', {'property_id': data['property']['id'], 'cost_category_id': category['id'],
+        'invoice_date': end, 'service_period_from': start, 'service_period_to': end,
+        'gross_amount': '1250.00', 'tenant_distribution_key': 'PERSONENZAHL', 'tenant_apportionable': 'UMLAGEFAEHIG'})
+    assert (await api.post(f"/api/cost-entries/{cost['id']}/confirm")).status_code == 200
+    run = await create(api, '/api/settlements', {**statement(data, start, end),
+        'advance_payments_total': '0.00', 'heating_advance_payments_total': '0.00'})
+    await attest_fixture(api, 'settlement', run['id'], {'advance_payments_total': '0.00', 'advance_payments_source': 'MANUAL',
+        'heating_advance_payments_total': '0.00', 'heating_advance_payments_source': 'MANUAL'})
+    response = await api.post(f"/api/settlements/{run['id']}/compute", json={})
+    if amount is None:
+        assert response.status_code == 422, response.text
+        assert response.json()['detail'] == f'Handeingabe erforderlich: Personenzahl für Einheit 1 ab 01.02.{year} fehlt.'
+    else:
+        assert response.status_code == 200, response.text
+        assert response.json()['total_cost'] == amount
+        assert response.json()['lines'][0]['distribution_base_share'] == days
+
+
+@pytest.mark.asyncio
+async def test_person_days_finalized_snapshot_retains_owner_person_days_and_digest(client_a_admin, migrator_session):
+    from tests.persons_key_support import persons_property, persons_run
+    from app.engine.canonical import canonical_json, canonical_sha256
+    api = client_a_admin
+    data = await persons_property(api)
+    run = await persons_run(api, data)
+    url = f"/api/settlements/{run['id']}"
+    finalized = await api.post(url + '/finalize', json={})
+    assert finalized.status_code == 200, finalized.text
+    query = text('SELECT snapshot_payload,snapshot_sha256 FROM settlement_run WHERE id=:id')
+    payload, digest = (await migrator_session.execute(query, {'id': uuid.UUID(run['id'])})).one()
+    assert canonical_sha256(payload) == digest
+    assert [(v['days'], v['person_days'], v['amount']) for v in payload['vacancy_attribution']] == [(59, 59, '56.34')]
+    before = canonical_json(payload)
+    assert (await api.put(f"/api/units/{data['unit']['id']}/household", json=[])).status_code == 200
+    retained = (await migrator_session.execute(query, {'id': uuid.UUID(run['id'])})).one()
+    assert canonical_json(retained.snapshot_payload) == before
+    assert retained.snapshot_sha256 == digest
+    assert (await api.get(url)).json()['total_cost'] == '901.45'
+    pdf = await api.get(url + '/pdf')
+    assert pdf.status_code == 200 and pdf.content.startswith(b'%PDF-')

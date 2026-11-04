@@ -120,9 +120,9 @@ tenant-change reading cannot replace a missing year-end reading and manufacture 
 zero for the successor. Readings at a lease/vacancy boundary remain ordinary period
 reading candidates within the existing ±31-day tolerance. Missing or ambiguous period quantities require manual input
 with a reason; they are not estimated. Manual unit consumption always denotes the
-**whole property-year quantity**, including for clipped statements. Person counts
-are per-unit property-year weights and must be entered consistently in every run
-belonging to that property year.
+**whole property-year quantity**, including for clipped statements. From `m3.4.0`,
+person counts instead come from the saved unit household history (§2.3), shared
+by every new statement; per-run legacy person inputs no longer override them.
 
 For two units using 1,000 units each and a 1,000-euro water pool, A (January–September),
 B (October–December), and C (all year) receive 373.97 / 126.03 / 500.00 euros with
@@ -464,7 +464,7 @@ Every key reduces to **a weight vector** `wᵢ ≥ 0` over the units/addressees 
 | `WOHNFLAECHE` | `unit.area` | Σ areas | M1 `unit.area` |
 | `BEHEIZTE_FLAECHE` | `unit.heated_area` | Σ heated areas | M1 `unit.heated_area` |
 | `EINHEIT` | `1` per participating unit (per-unit head count) | Number of units | derived |
-| `PERSONENZAHL` | Number of persons in the unit in the period | Σ persons | **[OPEN/§18]** data source (see 2.3) |
+| `PERSONENZAHL` | Person-days in the actual occupied/vacancy slice | Σ person-days across participating units and slices | `unit_household` (§2.3) |
 | `VERBRAUCH` | Measured consumption of the unit (`meter_reading` difference) | Σ consumption | M1 `meter`/`meter_reading` |
 | `EXTERNE_ABRECHNUNG` | — (no weight; **direct** per-unit amount) | — | external values (§5) |
 | `MANUELLER_BETRAG` | — (no weight; **direct** per-unit amount) | — | manual input |
@@ -482,9 +482,49 @@ unit_share_i (exact) = G * wᵢ / Σw          (Decimal, unrounded)
 - **Missing base quantity** (`area`/`mea` is NULL) for a participating unit → **hard error/escalation**, **no** silent 0 (that would redistribute costs unnoticed). The engine validates before calculating (§2.6).
 - **MEA with co-ownership:** If a unit with multiple fractional owners participates (`ownership_history.mea_share`), the **owner** sphere (M4) is split further by `mea_share`. For the **tenant BK** (M3), the addressee is the unit's tenant; the unit's MEA is its weight (fractional ownership is irrelevant here, because the tenant uses the whole unit).
 
-### 2.3 `PERSONENZAHL` — key defined, data source open
+### 2.3 `PERSONENZAHL` — saved dated household sizes
 
-The distribution mathematics is identical to 2.2 (weight = number of persons in the unit). **[OPEN/§18]** is the **data source**: M1 does not model a time-dependent number of persons per unit/lease. Options: (a) a field on `lease_agreement` (number of persons, possibly with its own small history for intra-year changes), (b) a dedicated small temporal table. **Provisional assumption for M3 test cases:** the number of persons is a per-lease value (constant over the lease period); intra-year changes in the number of persons are **not** represented in M3. Clearly marked as an assumption; professional/product clarification before a productive person-count key. The engine accepts the number of persons as **input** (pure function), so the data-source decision does not touch the engine.
+From `m3.4.0` (#201), `unit_household` is the single source for new tenant
+statements. A row contains `valid_from`, an integer `persons ≥ 0`, and
+`is_vacancy`. Occupied and vacancy rows form independent streams; a value is
+valid from its date through the day before the next row in the same stream.
+No household names are stored. `GET /api/units/{id}/household` returns the rows;
+`PUT` atomically replaces the entire list, including deletion with `[]`.
+Duplicate dates within a stream and invalid counts are refused before replacement.
+The table has forced organization RLS and a composite organization/unit FK;
+writes require the unit's master-data preparation authority.
+
+For each cost's inclusive service period, integrate persons × days separately
+for every tenant/vacancy cover. The denominator is the sum of these person-days
+across all units. Distribute the cost once with the existing largest-remainder
+rule, preserving integer weights until cent rounding. Tenant changes with
+different household sizes therefore use each tenant's actual person-days, not
+a unit amount split uniformly by days. A clipped statement selects cumulative
+person-day-weighted cents from that balanced source cover, so adjacent statements
+reconcile even across a household change or a leap day.
+
+The editor offers **one person as an editable vacancy suggestion**. Saving is
+required before it can affect a calculation. Only the matching saved stream can
+supply a day: neither occupied nor vacancy values substitute for missing input
+in the other stream. Missing data blocks with
+“Handeingabe erforderlich: Personenzahl für Einheit 2 ab 01.03.2026 fehlt.”
+An explicitly saved zero is present input with zero weight. A total of zero
+person-days cannot distribute a cost. Vacancy shares stay with the owner.
+
+The 2026 Musterhaus example has unit 1 at two persons through May and three
+from June: **944 person-days**. Unit 2 has **306 occupied person-days** from
+March and **59 vacancy person-days**, total **1,309**. A 1,250-euro cost yields
+**901.45 / 292.21 / 56.34 euros** for Anna / Bernd / owner, exactly 1,250 euros.
+The position note and result snapshot retain the person-day numerator and
+denominator; snapshot inputs retain the dated rows and vacancy attribution
+also retains its person-days.
+
+Migration `0164` creates an empty history. There is no persisted unit person-count
+column, and potentially conflicting prior per-run values are not guessed into
+one. Existing finalized runs retain their original payload, digest and rendering;
+they do not reread today's household rows. Old `unit_metrics[].person_count` is
+retained for reading frozen inputs, but is ignored by new M3 computations. The
+unchanged M4 owner/plan persons-key input remains separate existing debt.
 
 ### 2.4 `VERBRAUCH` (consumption-based)
 
@@ -971,7 +1011,7 @@ would wait for request cleanup and mask the race.
 | **M3-A4** | Tenant share for CO2/heating arrives as **input** (`apportionable_tenant_amount`/external); the engine does **not** compute the tier model itself. | An own 10-tier calculation would be a delimited additional building block to be signed off professionally. | Tax advisor/metering service (§5) |
 | **M3-A5** | **No** automatic commercial advance deduction in M3; commercial use participates by key; advance deduction manual if needed. | Automatic advance deduction is its own building block. | Tax advisor/attorney specializing in the field (§6.3) |
 | **M3-A6** | Advance payment total **manual** on the run (`advance_payments_source='MANUAL'`); M6 replaces it with `DERIVED`. | M6 connection prepared via the `source` discriminator. | (Roadmap M6) |
-| **M3-A7** | Number of persons (`PERSONENZAHL` key) as a per-lease value, constant over the lease period (M1 does not model this time-dependently). | A time-dependent number of persons would need a model extension. | Product (§2.3) |
+| **M3-A7** | Superseded by saved dated household sizes in `m3.4.0` (#201). | Independent occupied/vacancy streams and person-days (§2.3). | Implemented |
 | **M3-A8** | External values and unit-period consumption must be **complete & plausible**; missing → escalation. Missing interim readings split known heating consumption by degree days (§5.1), hot water/ordinary consumption by days (§3). | Substitute/estimation procedure (HeizkostenV) is its own professional building block. | Tax advisor/metering service (§2.4/§5) |
 
 ---
@@ -990,7 +1030,7 @@ would wait for request cleanup and mask the race.
 | **O3-2** | CO2 10-tier: compute ourselves vs. adopt tenant share | [OPEN/§18] | provisionally **adopt** (`apportionable_tenant_amount`); own tier logic = separate building block requiring sign-off | before production use |
 | **O3-3** | Commercial advance deduction (different apportionment logic, VAT option) | [OPEN/§18] | provisionally **none** automatically; manual if needed; tax advisor/attorney specializing in the field | later round |
 | **O3-4** | Exact PDF structure of the BK statement (layout, objection-deadline notice) | [OPEN/§18] | data fully ready; layout with product/domain side | before production use |
-| **O3-5** | Data source/logic `PERSONENZAHL`, consumption substitute procedure | [OPEN/§18] | provisional assumptions (M3-A7/A8); clarify professionally | before production use of these keys |
+| **O3-5** | `PERSONENZAHL` source resolved by #201 (§2.3); consumption substitute procedure remains separate. | partly resolved | saved household history; M3-A8 remains | consumption follow-up |
 
 > **No self-certification (stance):** This design makes the distribution, the pro rata periods, the rounding, and the expected/actual calculation (Soll/Ist) **transparent, deterministic, and reproducible** (golden tests + property-based invariants as the objective yardstick). It **cannot** guarantee that a concrete BK statement withstands court or audit scrutiny in an individual case. The professional correctness of the rules (esp. CO2 tiers, commercial advance deduction, external heating costs, retention) must be signed off by a **tax advisor/attorney specializing in the field** before productive use.
 
