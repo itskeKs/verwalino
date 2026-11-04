@@ -966,8 +966,9 @@ label after the same request/disclosure flow. The existing layout is unchanged.
 | Before label | [Desktop](docs/assets/design/dsgvo-payment-before-desktop.png) | [Phone](docs/assets/design/dsgvo-payment-before-360.png) |
 | After label | [Desktop](docs/assets/design/dsgvo-payment-after-desktop.png) | [Phone](docs/assets/design/dsgvo-payment-after-360.png) |
 
-Settlement structured inputs state that manual consumption and person counts refer
-to the entire property settlement year, including for clipped lease statements.
+Settlement structured inputs state that manual consumption refers to the entire
+property settlement year, including for clipped lease statements. Draft persons-key
+statements link to each unit household editor; they do not offer per-run count overrides.
 Consumption suggestions display a day-fallback reason beside the actual reading
 basis when an interim measurement is missing.
 
@@ -1333,3 +1334,50 @@ Annual income correction (#169), synthetic journey 5 receipts through 31 October
 | --- | --- | --- |
 | Desktop | [Income with deposit](docs/assets/design/reports-income-before-1280.png) | [Income excluding deposit](docs/assets/design/reports-income-1280.png) |
 | 360 px | [Income with deposit](docs/assets/design/reports-income-before-360.png) | [Income excluding deposit](docs/assets/design/reports-income-360.png) |
+
+
+### Dated household editor
+
+Unit details include a “Personen im Haushalt” card with saved German dates and
+singular/plural counts (“2 Personen ab 01.01.2026”, “Leerstand: 1 Person ab
+01.01.2026”). “Haushalt bearbeiten” opens separate dated Belegung and Leerstand
+rows. “Belegung hinzufügen” starts with an empty count; “Leerstand hinzufügen”
+offers 1 as an editable suggestion. Only “Haushalt speichern” persists the whole
+list; removing all rows saves an empty history. A paragraph explains both
+independent validity streams and the owner's vacancy share. Readonly members see
+saved rows. Loading, read errors with retry, retained inputs after save failures,
+and a confirmed save status use the existing card/form/button/error patterns.
+Rows and action buttons wrap at 360 px.
+
+Draft statement inputs link to “Haushalt für Einheit … bearbeiten” and explain
+that saved person-days are used. New position notes show the unit's person-days
+and the building-wide denominator. Frozen older statement output is unchanged.
+The following captures use only synthetic records through the locked local
+browser harness (API :18000, Vite :13000).
+
+| Household history | Desktop | 360 px |
+|---|---|---|
+| Before | [Desktop](docs/assets/design/persons-household-before-1280.png) | [Phone](docs/assets/design/persons-household-before-360.png) |
+| After | [Desktop](docs/assets/design/persons-household-after-1280.png) | [Phone](docs/assets/design/persons-household-after-360.png) |
+
+| Persons statement | Desktop | 360 px |
+|---|---|---|
+| Before | [Desktop](docs/assets/design/persons-statement-before-1280.png) | [Phone](docs/assets/design/persons-statement-before-360.png) |
+| After | [Desktop](docs/assets/design/persons-statement-after-1280.png) | [Phone](docs/assets/design/persons-statement-after-360.png) |
+
+
+### Frozen vacancy attribution
+
+A computed/finalized tenant statement with saved vacancy person-days shows a
+“Leerstand – Eigentümeranteile” card. A short paragraph identifies the saved
+calculation and the owner's share. Each list item shows the frozen unit and cost
+label, German-formatted person-days/days, and the owner amount in euros. The list
+wraps at 360 px; no unrelated cost-table layout changes. The statement's current
+accounting-scope unit set limits the rows. The card uses stored results without
+showing owner identities or rereading household values. Snapshots without saved
+person-day attribution and existing PDFs retain their old rendering.
+
+| Vacancy attribution | Desktop | 360 px |
+|---|---|---|
+| Before | [Desktop](docs/assets/design/persons-vacancy-before-1280.png) | [Phone](docs/assets/design/persons-vacancy-before-360.png) |
+| After | [Desktop](docs/assets/design/persons-vacancy-after-1280.png) | [Phone](docs/assets/design/persons-vacancy-after-360.png) |

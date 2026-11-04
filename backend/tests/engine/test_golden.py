@@ -648,3 +648,107 @@ class TestGolden5ExitScenario:
         h2 = canonical_sha256(build_snapshot_payload(inp, r2))
         assert h1 == h2
         assert len(h1) == 64
+
+
+def persons_scenario(year=2026):
+    from app.engine.types import HouseholdInput
+    start, end = date(year, 1, 1), date(year, 12, 31)
+    inp = TestGolden1FlaecheTrivial()._scenario(_U(21))
+    return replace(inp, period_start=start, period_end=end,
+        units=(replace(inp.units[0], household=(HouseholdInput(start, 2), HouseholdInput(date(year, 6, 1), 3))),
+               replace(inp.units[1], household=(HouseholdInput(start, 1, True), HouseholdInput(date(year, 3, 1), 1)))),
+        lease_periods=(replace(inp.lease_periods[0], valid_from=start, valid_to=None),
+                       replace(inp.lease_periods[1], valid_from=date(year, 3, 1), valid_to=None)),
+        owner_periods=inp.owner_periods[:2],
+        cost_positions=(replace(inp.cost_positions[0], gross_amount=Decimal('1250.00'),
+            service_period_from=start, service_period_to=end, tenant_distribution_key='PERSONENZAHL'),))
+
+
+def test_person_days_include_household_changes_and_owner_vacancy_once():
+    inp = persons_scenario()
+    anna = compute_bk_settlement(inp)
+    bernd = compute_bk_settlement(replace(inp, target_lease_agreement_id=_U(22)))
+    line = anna.lines[0]
+    assert line.distribution_base_share == 944
+    assert line.distribution_base_total == 1309
+    assert '944' in line.note and 'Personentage' in line.note
+    assert bernd.lines[0].distribution_base_share == 306
+    assert (anna.total_cost, bernd.total_cost) == (Decimal('901.45'), Decimal('292.21'))
+    assert sum(v.amount for v in anna.vacancy_attribution) == Decimal('56.34')
+    assert anna.total_cost + bernd.total_cost + sum(v.amount for v in anna.vacancy_attribution) == Decimal('1250.00')
+    snapshot = build_snapshot_payload(inp, anna)
+    assert snapshot['inputs']['units'][0]['household'][1]['persons'] == 3
+    assert snapshot['result']['lines'][0]['distribution_base_share'] == '944.000000'
+
+
+@pytest.mark.parametrize('vacancy,missing_from', [(False, '01.03.2026'), (True, '01.01.2026')])
+def test_person_days_never_substitute_the_other_household_stream(vacancy, missing_from):
+    from app.engine.rounding import DistributionError
+    inp = persons_scenario()
+    unit = replace(inp.units[1], household=tuple(r for r in inp.units[1].household if r.is_vacancy != vacancy))
+    with pytest.raises(DistributionError, match=f'Handeingabe erforderlich: Personenzahl für Einheit 2 ab {missing_from} fehlt'):
+        compute_bk_settlement(replace(inp, units=(inp.units[0], unit)))
+
+
+@pytest.mark.parametrize('year,expected_days', [(2026, 47), (2024, 49)])
+def test_person_days_weight_mid_month_changes_and_leap_day(year, expected_days):
+    from app.engine.types import HouseholdInput
+    inp = persons_scenario(year)
+    start, end = date(year, 2, 1), date(year, 2, 29 if year == 2024 else 28)
+    inp = replace(inp, period_start=start, period_end=end,
+        units=(replace(inp.units[0], household=(HouseholdInput(start, 1), HouseholdInput(date(year, 2, 10), 2))),
+               replace(inp.units[1], household=(HouseholdInput(start, 1, True),))),
+        cost_positions=(replace(inp.cost_positions[0], service_period_from=start, service_period_to=end),))
+    result = compute_bk_settlement(inp)
+    assert result.lines[0].distribution_base_share == expected_days
+    assert result.lines[0].distribution_base_total == expected_days + (end - start).days + 1
+
+
+def test_person_days_split_successive_tenants_by_counts_not_just_days():
+    from app.engine.types import HouseholdInput
+    inp = persons_scenario()
+    unit = replace(inp.units[0], household=(HouseholdInput(inp.period_start, 1), HouseholdInput(date(2026, 7, 1), 3)))
+    leases = (replace(inp.lease_periods[0], valid_to=date(2026, 6, 30)),
+              replace(inp.lease_periods[1], unit_id=unit.id, valid_from=date(2026, 7, 1)))
+    inp = replace(inp, units=(unit,), lease_periods=leases)
+    first = compute_bk_settlement(inp)
+    second = compute_bk_settlement(replace(inp, target_lease_agreement_id=_U(22)))
+    assert first.lines[0].distribution_base_share == 181
+    assert second.lines[0].distribution_base_share == 552
+    assert (first.total_cost, second.total_cost) == (Decimal('308.66'), Decimal('941.34'))
+
+
+def test_person_days_explicit_zero_is_present_and_constant_counts_keep_the_ratio():
+    from app.engine.types import HouseholdInput
+    inp = persons_scenario()
+    inp = replace(inp, lease_periods=(inp.lease_periods[0], replace(inp.lease_periods[1], valid_from=inp.period_start)))
+    inp = replace(inp, units=tuple(replace(u, household=(HouseholdInput(inp.period_start, n),)) for u, n in zip(inp.units, (0, 2))))
+    assert compute_bk_settlement(inp).total_cost == 0
+    assert compute_bk_settlement(replace(inp, target_lease_agreement_id=_U(22))).total_cost == Decimal('1250.00')
+    inp = replace(inp, units=tuple(replace(u, household=(HouseholdInput(inp.period_start, n),)) for u, n in zip(inp.units, (2, 3))))
+    assert compute_bk_settlement(inp).total_cost == Decimal('500.00')
+
+
+@pytest.mark.parametrize('amount', ['1250.00', '1000.01', '-1000.01'])
+def test_person_days_short_windows_reconcile_across_a_household_change(amount):
+    inp = persons_scenario()
+    inp = replace(inp, cost_positions=(replace(inp.cost_positions[0], gross_amount=Decimal(amount)),))
+    full = compute_bk_settlement(inp)
+    first = compute_bk_settlement(replace(inp, period_end=date(2026, 4, 15)))
+    second = compute_bk_settlement(replace(inp, period_start=date(2026, 4, 16)))
+    assert first.total_cost + second.total_cost == full.total_cost
+    assert first.lines[0].distribution_base_share + second.lines[0].distribution_base_share == 944
+
+
+@pytest.mark.parametrize('counts,total,expected', [
+    ((1, 2, 3), '150.03', ('25.00', '50.01', '75.02')),
+    ((1, 4, 7), '100.00', ('8.33', '33.33', '58.34')),
+    ((1, 4, 7), '1000.00', ('83.33', '333.33', '583.34')),
+])
+def test_person_days_keep_exact_remainder_ties_for_three_constant_counts(counts, total, expected):
+    from app.engine.types import HouseholdInput
+    inp = TestGolden1FlaecheTrivial()._scenario(_U(21))
+    inp = replace(inp, units=tuple(replace(u, household=(HouseholdInput(YEAR_START, n),)) for u, n in zip(inp.units, counts)),
+        cost_positions=(replace(inp.cost_positions[0], tenant_distribution_key='PERSONENZAHL', gross_amount=Decimal(total)),))
+    assert [compute_bk_settlement(replace(inp, target_lease_agreement_id=lease.lease_agreement_id)).total_cost
+            for lease in inp.lease_periods] == [Decimal(value) for value in expected]

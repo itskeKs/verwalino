@@ -91,6 +91,10 @@ def build_snapshot_payload(inp: SettlementInput, result: EngineResult) -> dict:
                     "heated_area": _q(u.heated_area),
                     "mea": _q(u.mea),
                     "person_count": u.person_count,
+                    **({"household": [
+                        {"valid_from": r.valid_from.isoformat(), "persons": r.persons, "is_vacancy": r.is_vacancy}
+                        for r in sorted(u.household, key=lambda r: (r.is_vacancy, r.valid_from))
+                    ]} if u.household else {}),
                     "consumption": _q(u.consumption),
                     **({"consumption_periods": [
                         {"from": a.isoformat(), "to": b.isoformat(), "consumption": str(q)}
@@ -180,6 +184,7 @@ def build_snapshot_payload(inp: SettlementInput, result: EngineResult) -> dict:
                 "unit_id": str(v.unit_id),
                 "owner_profile_id": str(v.owner_profile_id) if v.owner_profile_id else None,
                 "days": v.days,
+                **({"person_days": v.person_days} if v.person_days is not None else {}),
                 "amount": _m(v.amount),
             }
             for v in sorted(
