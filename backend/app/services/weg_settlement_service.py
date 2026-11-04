@@ -79,7 +79,7 @@ from app.repositories.settlement_repo import (
 
 from app.services.reserve_ledger_service import ReserveLedgerService
 
-ENGINE_VERSION = "m4.3.1"
+ENGINE_VERSION = "m4.3.2"
 
 DELETE_MESSAGES = {
     'SETTLEMENT_DELETE_SOURCE_ACCESS_REQUIRED': 'Zum Löschen dieses Entwurfs benötigen Sie Zugriff auf alle Finanzquellen des Objekts.',

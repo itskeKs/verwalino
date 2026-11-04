@@ -823,8 +823,17 @@ class PaymentService:
         self, owner_profile_id: uuid.UUID, period_start: date, period_end: date,
         *, property_id: uuid.UUID | None = None,
     ) -> Decimal:
-        """Net booked Hausgeld using the owner's ledger period and Ist rules."""
+        """Prorate assigned Hausgeld; count yearless bookings on their value date."""
         rows = await self._repo.list_for_owner(owner_profile_id, property_id=property_id)
-        scoped = self._scope_payments_to_period(rows, period_start, period_end)
-        return account_statement([], [_to_payment_input(p) for p in scoped
-                                      if p.payment_type == 'HAUSGELD_VORSCHUSS']).ist_total
+        assigned = [_to_payment_input(p) for p in rows if p.period_year is not None]
+        assigned_total = sum((sign * derive_advance_total_for_period(
+            [p for p in assigned if p.direction == direction], AdvanceFilter(
+                types=frozenset({"HAUSGELD_VORSCHUSS"}), year=year,
+                owner_profile_id=owner_profile_id,
+            ), period_start, period_end)
+            for direction, sign in (("IN", 1), ("OUT", -1))
+            for year in range(period_start.year, period_end.year + 1)), Decimal("0.00"))
+        scoped = self._scope_payments_to_period(
+            [p for p in rows if p.period_year is None], period_start, period_end)
+        return assigned_total + account_statement([], [_to_payment_input(p) for p in scoped
+                                                       if p.payment_type == 'HAUSGELD_VORSCHUSS']).ist_total
