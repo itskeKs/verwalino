@@ -873,6 +873,19 @@ and the sixty-receipt import/assignment use the real API. Each pair is desktop/3
 
 ## Screenshots
 
+The person privacy panel labels a `BOOKED_PAYMENT` binding as
+“Empfänger einer gebuchten Zahlung” in both the erasure preview and the
+on-screen disclosure. A retained outgoing repayment leaves the recipient's name
+readable after requesting erasure and reports processing restriction. The
+screenshots below use only synthetic test records; the before images show the
+untranslated category on the fixed backend, and the after images show its German
+label after the same request/disclosure flow. The existing layout is unchanged.
+
+| Person privacy | Desktop | 360 px |
+|---|---|---|
+| Before label | [Desktop](docs/assets/design/dsgvo-payment-before-desktop.png) | [Phone](docs/assets/design/dsgvo-payment-before-360.png) |
+| After label | [Desktop](docs/assets/design/dsgvo-payment-after-desktop.png) | [Phone](docs/assets/design/dsgvo-payment-after-360.png) |
+
 Settlement structured inputs state that manual consumption and person counts refer
 to the entire property settlement year, including for clipped lease statements.
 Consumption suggestions display a day-fallback reason beside the actual reading

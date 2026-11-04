@@ -232,6 +232,8 @@ async def test_allocation_coverage_provenance_and_guarded_downgrade(migrator_ses
             try:
                 db.execute(text('TRUNCATE exception_case CASCADE'))
                 db.execute(text('TRUNCATE allocation_treatment_review CASCADE'))
+                importlib.import_module('migrations.versions.0160_shared_retention_deadlines').downgrade()
+                importlib.import_module('migrations.versions.0159_person_retention_bindings').downgrade()
                 db.execute(text('TRUNCATE allocation_integrity_attestation CASCADE'))
                 db.execute(text('TRUNCATE exception_completion CASCADE'))
                 db.execute(text('TRUNCATE financial_computation_attestation CASCADE'))

@@ -652,3 +652,26 @@ scrubbed row and records its post-scrub hash, preserving all non-payload fields.
 Historical `prev_event_hash` values stay; the marker records a deliberate payload
 discontinuity and does not certify an old hash against changed bytes. Retained
 receipts remain operator-only.
+
+## Person binding categories
+
+The private `person_retention_categories()` catalog (0159) defines the financial
+roots that propagate personal retention in the organization plan. Individual
+status/export and the database person-erasure command consume its direct
+bindings as well. Revision 0160 also shares the evidence-date calculation,
+including the existing later-of-invoice/service rule and retained originals. A
+confirmed manual invoice dated in 2020 for services in 2017 retains its supplier
+through 2028 in both individual and organization decisions. Missing original
+retention dates keep the existing original-metadata fallback. Recipient-specific
+settlement/plan lines use their own dates and parent period, without inheriting
+a different recipient's later line. A booked payment's structured tenant/owner recipient remains
+readable during retention, including for outgoing repayments. Existing
+`retention_until` values govern; historical missing payment deadlines follow the
+existing value-date year-end rule. No payment row, amount, recipient link,
+original, finalized snapshot or digest is rewritten by this reconciliation.
+Expired and absent bindings allow personal anonymization. Generic organization
+FK dependencies, retained source/letter roots and the legacy owner-name fallback
+remain additional operator-only dependencies. Individual disclosures still
+require complete person, financial and source access; hidden payments cannot be
+mistaken for absent retention. Incidental reserve free-text scrubbing is separate
+from this binding rule.

@@ -1493,6 +1493,28 @@ restriction versus anonymization. Immutable vouchers, originals and audit
 evidence plus required dependencies are retained, with hashes checked at erasure.
 Revision 0148 also reconciles expired person bindings in the preview; operator
 erasure anonymizes those personal fields while preserving immutable originals.
+Revision 0159 makes `person_retention_categories()` the private category source
+for individual disclosure/export, the authoritative person command and the
+organization plan's personal-data roots. Python reads direct bindings through
+`person_retention_view()` after person and complete financial/source admission;
+raw facts and the category catalog remain unavailable to runtime roles. Booked
+payments bind their structured tenant/owner recipient, including outgoing
+repayments and reversal rows. Their stored deadline governs; historical NULL
+payment deadlines use the existing value-date year-end rule, without modifying
+the booking. An expired payment permits anonymization; a draft alone does not
+bind the person. Individual operations leave financial rows and audit evidence
+unchanged. Revision 0160 shares the actual deadline path as well: the private
+`retention_base_until()` preserves the existing organization date precedence;
+`retention_source_until()` combines the governing dates of a voucher and its
+retained sources. A manual cost dated in 2020 for services in 2017 therefore
+binds its supplier through 2028 in both erasure paths, even without a document.
+Released originals with missing explicit deadlines keep the existing metadata
+fallback. Settlement/plan addressees use their own retained line dates and the
+parent period; another owner's line never extends that recipient's deadline.
+Multiple lines for one recipient produce one binding with the latest applicable
+date. The organization's additional generic FK dependencies and historical
+owner-name fallback remain private.
+
 Seven-day cooling-off is enforced in both HTTP authentication and database write
 triggers. Final erasure invalidates every account/session; retained records have
 an operator-only path described in [DEPLOY.md](../DEPLOY.md#organization-erasure-and-retained-record-access).

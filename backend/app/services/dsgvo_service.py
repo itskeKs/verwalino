@@ -27,13 +27,8 @@ from datetime import date
 from fastapi import HTTPException
 
 from app.engine.dsgvo import (
-    BINDING_COST_ENTRY_VENDOR,
-    BINDING_DUNNING,
-    BINDING_FINALIZED_OWNERSHIP,
-    BINDING_SETTLEMENT_ADDRESSEE,
     RetentionBinding,
     decide_deletion,
-    retention_from_year_end,
 )
 from app.repositories.dsgvo_repo import DsgvoRepository
 
@@ -135,69 +130,7 @@ class DsgvoService:
         return person
 
     async def _gather_bindings(self, person_id: uuid.UUID, *, capability='read') -> list[RetentionBinding]:
-        vendor_ids = await self._repo.vendor_ids(person_id)
-        tenant_ids = await self._repo.tenant_profile_ids(person_id)
-        owner_ids = await self._repo.owner_profile_ids(person_id)
-        bindings: list[RetentionBinding] = []
-
-        for ce in await self._repo.confirmed_cost_entries_for_vendors(vendor_ids):
-            ret = await self._repo.max_retention_for_cost_entry(ce.id)
-            if ret is None:
-                ret = retention_from_year_end(ce.service_period_to)
-            bindings.append(
-                RetentionBinding(
-                    kind=BINDING_COST_ENTRY_VENDOR,
-                    entity_type="cost_entry",
-                    entity_id=ce.id,
-                    retention_until=ret,
-                )
-            )
-
-        for run in await self._repo.finalized_bk_runs_for_tenants(tenant_ids):
-            bindings.append(
-                RetentionBinding(
-                    kind=BINDING_SETTLEMENT_ADDRESSEE,
-                    entity_type="settlement_run",
-                    entity_id=run.id,
-                    retention_until=retention_from_year_end(run.period_end),
-                )
-            )
-
-        for run in await self._repo.finalized_weg_runs_for_owners(owner_ids):
-            bindings.append(
-                RetentionBinding(
-                    kind=BINDING_FINALIZED_OWNERSHIP,
-                    entity_type="settlement_run",
-                    entity_id=run.id,
-                    retention_until=retention_from_year_end(run.period_end),
-                )
-            )
-
-        for plan in await self._repo.finalized_plans_for_owners(owner_ids):
-            bindings.append(
-                RetentionBinding(
-                    kind=BINDING_FINALIZED_OWNERSHIP,
-                    entity_type="economic_plan",
-                    entity_id=plan.id,
-                    retention_until=retention_from_year_end(plan.period_end),
-                )
-            )
-
-        for dn in await self._repo.issued_dunning(tenant_ids, owner_ids):
-            bindings.append(
-                RetentionBinding(
-                    kind=BINDING_DUNNING,
-                    entity_type="dunning_notice",
-                    entity_id=dn.id,
-                    retention_until=retention_from_year_end(dn.issue_date),
-                )
-            )
-
-        # ACL locking serializes revocation, but grants can expire while these
-        # ordinary RLS-filtered reads run. Recheck completeness before treating
-        # an empty/partial result as an erasure decision or exportable evidence.
-        await self._repo.require_complete_financial_context(person_id, capability=capability)
-        return bindings
+        return await self._repo.retention_bindings(person_id, capability=capability)
 
     async def _has_active_relationship(
         self, person_id: uuid.UUID, ref: date

@@ -27,6 +27,7 @@ const BINDING_LABELS: Record<string, string> = {
   SETTLEMENT_ADDRESSEE: "Adressat einer finalisierten Abrechnung",
   FINALIZED_OWNERSHIP: "Eigentümer in finalisierter WEG-Abrechnung/Plan",
   DUNNING: "Adressat einer ausgestellten Mahnung",
+  BOOKED_PAYMENT: "Empfänger einer gebuchten Zahlung",
 };
 
 interface Props {

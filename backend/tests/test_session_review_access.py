@@ -390,9 +390,8 @@ async def test_revision_chain_head_0131_head_preserves_full_state_and_issued_pdf
     config.set_main_option('script_location', str(Path(__file__).parents[1] / 'migrations'))
     scripts = ScriptDirectory.from_config(config)
     assert scripts.get_heads() == [TARGET]
-    assert [r.revision for r in scripts.iterate_revisions(TARGET, '0131')] == [
-        f'{number:04}' for number in range(int(TARGET), 131, -1)
-    ]
+    expected_ancestry = [f'{number:04}' for number in range(131, 156)] + ['0159', '0160']
+    assert [r.revision for r in scripts.iterate_revisions(TARGET, '0131')] == expected_ancestry[:0:-1]
     engine = create_engine(MIGRATOR_SYNC_URL)
     try:
         with engine.connect() as connection:
@@ -434,9 +433,10 @@ async def test_revision_chain_head_0131_head_preserves_full_state_and_issued_pdf
                         env.run_migrations()
                     assert transaction.is_active and connection.in_transaction()
                     assert version() == (target,)
-                    stop, first = int(target), int(start[0])
-                    numbers = [n for n in (range(first - 1, stop - 1, -1) if downgrade else range(first + 1, stop + 1))]
-                    assert seen == [(f'{number:04}',) for number in numbers]
+                    first, stop = expected_ancestry.index(start[0]), expected_ancestry.index(target)
+                    versions = (expected_ancestry[stop:first][::-1] if downgrade
+                                else expected_ancestry[first + 1:stop + 1])
+                    assert seen == [(revision,) for revision in versions]
 
                 def projection_0131():
                     # The historical projection describes 0132–0139. Peel off

@@ -234,6 +234,8 @@ async def test_treatment_sql_membership_coverage_and_guarded_downgrade(migrator_
             try:
                 db.execute(text('TRUNCATE allocation_treatment_review CASCADE'))
                 oid=db.scalar(text("SELECT 'access_coverage_manifest(uuid,jsonb)'::regprocedure::oid"))
+                importlib.import_module('migrations.versions.0160_shared_retention_deadlines').downgrade()
+                importlib.import_module('migrations.versions.0159_person_retention_bindings').downgrade()
                 db.execute(text('TRUNCATE allocation_integrity_attestation CASCADE'))
                 db.execute(text('TRUNCATE exception_completion CASCADE'))
                 db.execute(text('TRUNCATE financial_computation_attestation CASCADE'))

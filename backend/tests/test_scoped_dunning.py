@@ -196,6 +196,8 @@ async def test_scope_lookup_audit_privacy_immutability_and_downgrade_guard(migra
         assert created.status_code == 201, created.text
         ids['notice'] = uuid.UUID(created.json()['id'])
         assert (await api.post(f"/api/dunning/{ids['notice']}/issue")).status_code == 200
+        assert (await api.get(f"/api/dsgvo/persons/{ids['person']}/export")).status_code == 409
+        await grant(ids, ['read', 'export'], key='second_scope')
         assert (await api.get(f"/api/dsgvo/persons/{ids['person']}/export")).status_code == 200
     engine = create_async_engine(APP_RW_URL)
     try:

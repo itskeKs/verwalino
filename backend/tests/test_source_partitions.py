@@ -168,6 +168,8 @@ async def test_partition_changes_coverage_and_rollback_preserves_history(migrato
                 db.execute(text('TRUNCATE exception_case CASCADE'))
                 db.execute(text('TRUNCATE exception_case CASCADE'))
                 db.execute(text('TRUNCATE allocation_treatment_review CASCADE'))
+                importlib.import_module('migrations.versions.0160_shared_retention_deadlines').downgrade()
+                importlib.import_module('migrations.versions.0159_person_retention_bindings').downgrade()
                 db.execute(text('TRUNCATE allocation_integrity_attestation CASCADE'))
                 db.execute(text('TRUNCATE exception_completion CASCADE'))
                 db.execute(text('TRUNCATE financial_computation_attestation CASCADE'))
