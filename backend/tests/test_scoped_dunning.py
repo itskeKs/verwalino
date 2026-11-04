@@ -306,16 +306,50 @@ async def test_raw_dated_successor_guard_keeps_plan_scope_period_and_recipient_b
                         def check_downgrade(sync):
                             module = import_module('migrations.versions.0163_dated_successor_dunning')
                             before = sync.scalar(text("SELECT pg_get_functiondef('validate_dunning_context()'::regprocedure)"))
-                            with Operations.context(MigrationContext.configure(sync)):
-                                if owner == 'buyer':
-                                    with pytest.raises(RuntimeError, match='successor dunning provenance'):
+                            contexts_sql = text('SELECT to_jsonb(c) FROM dunning_scope_context c ORDER BY organization_id,dunning_notice_id')
+                            before_contexts = sync.execute(contexts_sql).all()
+                            functions_sql = text("""SELECT p.proname,pg_get_function_identity_arguments(p.oid),
+                                pg_get_functiondef(p.oid),p.proacl::text,pg_get_userbyid(p.proowner)
+                                FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace
+                                WHERE n.nspname='public' AND p.proname IN
+                                  ('validate_dunning_context','validate_dunning_context_before0163') ORDER BY 1,2""")
+                            before_functions = sync.execute(functions_sql).all()
+                            point = sync.begin_nested()
+                            try:
+                                with Operations.context(MigrationContext.configure(sync)):
+                                    unrelated = sync.execute(text("""SELECT c.dunning_notice_id
+                                        FROM dunning_scope_context c JOIN dunning_notice n
+                                          ON n.id=c.dunning_notice_id AND n.organization_id=c.organization_id
+                                        WHERE n.id<>:notice AND c.economic_plan_id IS NOT NULL
+                                          AND n.owner_profile_id IS NOT NULL
+                                          AND NOT EXISTS(SELECT 1 FROM economic_plan_line ln
+                                            WHERE ln.organization_id=c.organization_id AND ln.economic_plan_id=c.economic_plan_id
+                                              AND ln.owner_profile_id=n.owner_profile_id AND ln.line_type='OWNER_ADVANCE')"""),
+                                        {'notice': params['notice']}).scalars().all()
+                                    if unrelated:
+                                        with pytest.raises(RuntimeError, match='successor dunning provenance'):
+                                            module.downgrade()
+                                        assert sync.execute(contexts_sql).all() == before_contexts
+                                        assert sync.execute(functions_sql).all() == before_functions
+                                        # Isolate this probe from earlier scenarios only
+                                        # inside its rollback-only historical projection.
+                                        sync.execute(text('ALTER TABLE dunning_scope_context DISABLE TRIGGER USER'))
+                                        sync.execute(text('DELETE FROM dunning_scope_context WHERE dunning_notice_id=ANY(:ids)'),
+                                                     {'ids': unrelated})
+                                        sync.execute(text('ALTER TABLE dunning_scope_context ENABLE TRIGGER USER'))
+                                    if owner == 'buyer':
+                                        with pytest.raises(RuntimeError, match='successor dunning provenance'):
+                                            module.downgrade()
+                                    else:
                                         module.downgrade()
-                                else:
-                                    module.downgrade()
-                                    restored = sync.scalar(text("SELECT pg_get_functiondef('validate_dunning_context()'::regprocedure)"))
-                                    assert module.DATED not in restored and module.ORIGINAL in restored
-                                    module.upgrade()
-                            assert sync.scalar(text("SELECT pg_get_functiondef('validate_dunning_context()'::regprocedure)")) == before
+                                        restored = sync.scalar(text("SELECT pg_get_functiondef('validate_dunning_context()'::regprocedure)"))
+                                        assert module.DATED not in restored and module.ORIGINAL in restored
+                                        module.upgrade()
+                                assert sync.scalar(text("SELECT pg_get_functiondef('validate_dunning_context()'::regprocedure)")) == before
+                            finally:
+                                point.rollback()
+                            assert sync.execute(contexts_sql).all() == before_contexts
+                            assert sync.execute(functions_sql).all() == before_functions
                         await connection.run_sync(check_downgrade)
 
                     else:

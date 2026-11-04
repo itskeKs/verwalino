@@ -721,12 +721,47 @@ def test_report_retention_empty_downgrade_restores_functions_and_upgrade_is_reve
         with engine.connect() as connection, connection.begin():
             signatures = ('person_retention_categories()', 'retention_source_until(text,jsonb)', 'organization_retention_plan(uuid)')
             before = [connection.scalar(text('SELECT pg_get_functiondef(CAST(:signature AS regprocedure))'), {'signature': sig}) for sig in signatures]
+            snapshots_sql = text('SELECT to_jsonb(r) FROM settlement_run r ORDER BY id')
+            before_snapshots = connection.execute(snapshots_sql).all()
+            functions_sql = text("""SELECT p.proname,pg_get_function_identity_arguments(p.oid),
+                pg_get_functiondef(p.oid),p.proacl::text,pg_get_userbyid(p.proowner)
+                FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace
+                WHERE n.nspname='public' AND p.prokind IN ('f','p','w') ORDER BY 1,2""")
+            before_functions = connection.execute(functions_sql).all()
+            triggers_sql = text("""SELECT tgname,tgenabled,pg_get_triggerdef(oid)
+                FROM pg_trigger WHERE tgrelid='settlement_run'::regclass
+                AND NOT tgisinternal ORDER BY tgname""")
+            before_triggers = connection.execute(triggers_sql).all()
             module = import_module('migrations.versions.0162_report_recipient_retention')
-            with Operations.context(MigrationContext.configure(connection)):
-                module.downgrade()
-                module.upgrade()
-            after = [connection.scalar(text('SELECT pg_get_functiondef(CAST(:signature AS regprocedure))'), {'signature': sig}) for sig in signatures]
-            assert after == before
+            point = connection.begin_nested()
+            try:
+                with Operations.context(MigrationContext.configure(connection)):
+                    addressed_reports = connection.execute(text("""SELECT id FROM settlement_run
+                        WHERE status='finalized' AND run_type='VERMOEGENSBERICHT'
+                          AND jsonb_array_length(CASE WHEN jsonb_typeof(snapshot_payload->'addressees')='array'
+                            THEN snapshot_payload->'addressees' ELSE '[]'::jsonb END)>0""")).scalars().all()
+                    if addressed_reports:
+                        with pytest.raises(RuntimeError, match='Cannot remove retained asset-report recipient bindings'):
+                            module.downgrade()
+                        assert connection.execute(snapshots_sql).all() == before_snapshots
+                        assert connection.execute(functions_sql).all() == before_functions
+                        assert connection.execute(triggers_sql).all() == before_triggers
+                        # Earlier scenarios retain addressed reports. Only this
+                        # rollback-only historical projection omits the new key.
+                        connection.execute(text('ALTER TABLE settlement_run DISABLE TRIGGER USER'))
+                        connection.execute(text("UPDATE settlement_run SET snapshot_payload=snapshot_payload-'addressees' WHERE id=ANY(:ids)"),
+                                           {'ids': addressed_reports})
+                        connection.execute(text('ALTER TABLE settlement_run ENABLE TRIGGER USER'))
+                    module.downgrade()
+                    module.upgrade()
+                after = [connection.scalar(text('SELECT pg_get_functiondef(CAST(:signature AS regprocedure))'), {'signature': sig}) for sig in signatures]
+                assert after == before
+            finally:
+                point.rollback()
+            assert connection.execute(snapshots_sql).all() == before_snapshots
+            assert connection.execute(functions_sql).all() == before_functions
+            assert connection.execute(triggers_sql).all() == before_triggers
+            assert [connection.scalar(text('SELECT pg_get_functiondef(CAST(:signature AS regprocedure))'), {'signature': sig}) for sig in signatures] == before
     finally:
         engine.dispose()
 
