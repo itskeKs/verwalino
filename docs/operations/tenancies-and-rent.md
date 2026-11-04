@@ -110,6 +110,16 @@ Deployment constraints are documented under the
 
 ## Security deposits (Kautionen)
 
+For residential units (`WOHNUNG`), creating a lease or editing its deposit or original
+base rent refuses an agreed deposit above three monthly net base rents, excluding
+operating/heating advances ([§ 551 Abs. 1 BGB](https://www.gesetze-im-internet.de/bgb/__551.html)).
+At 750 EUR rent, 2,400 EUR is refused with „Die Kaution darf höchstens drei Nettokaltmieten
+betragen (2.250,00 €).“; 2,250 EUR and less are accepted. A rent reduction that puts the
+existing deposit above the new limit is refused too; rent and deposit can be corrected
+together. A refusal returns 422 and saves none of the submitted changes. Other unit usage
+types, including commercial (`GEWERBE`), are exempt. Existing financial-history locks
+still apply. Notes/end-only edits do not revalidate legacy deposit amounts.
+
 `/kautionen` shows per lease the agreed expected amount (Soll) from `lease.deposit`, booked
 deposits received, actual repayments, and the held balance. For this,
 `GET /api/payments/deposits` returns a complete authorized overview; for

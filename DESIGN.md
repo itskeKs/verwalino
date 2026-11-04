@@ -715,6 +715,12 @@ die Kaltmiete als gültigen EUR-Betrag ein.” and the cost form says “Bitte g
 Sie den Bruttobetrag als gültigen EUR-Betrag ein.”. VAT rate uses “gültigen
 Prozentsatz”. Correcting and submitting revalidates the form.
 
+For a residential deposit above three net base rents, the server returns the
+existing form alert with “Die Kaution darf höchstens drei Nettokaltmieten betragen
+(2.250,00 €).” at 750 EUR rent. The form retains the entered 2,400 EUR so it can be
+corrected to the permitted 2,250 EUR and saved. This business refusal uses the
+existing server-error surface; commercial units are exempt.
+
 The running test stack supplies the synthetic money-input evidence below.
 “Before” is the failed save on main; “after” shows the reloaded lease form or
 saved cost list. Error images show the retained “abc” and its associated alert.

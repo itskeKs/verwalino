@@ -36,6 +36,7 @@ from app.models.lease_rent_change import LeaseRentChange
 from app.repositories.lease_rent_change_repo import LeaseRentChangeRepository
 from app.services.lease_document_service import LeaseDocumentService
 from app.services.meter_service import ReadingCreate
+from app.engine.deposit import validate_deposit
 
 router = APIRouter(prefix="/api/leases", tags=["leases"])
 
@@ -171,10 +172,15 @@ async def create_lease(
     repo = LeaseAgreementRepository(db, auth.organization_id)
     unit_id = uuid.UUID(body.unit_id)
     tenant_profile_id = uuid.UUID(body.tenant_profile_id)
-    if await UnitRepository(db, auth.organization_id).get_by_id(unit_id) is None:
+    unit = await UnitRepository(db, auth.organization_id).get_by_id(unit_id)
+    if unit is None:
         raise HTTPException(404, "Unit not found")
     if await TenantProfileRepository(db, auth.organization_id).get_by_id(tenant_profile_id) is None:
         raise HTTPException(404, "Tenant profile not found")
+    try:
+        validate_deposit(unit.usage_type, body.base_rent, body.deposit)
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
     # API write edge (ADR-0006): the user enters the INCLUSIVE last occupied day
     # ("endet 30.06." -> 2025-06-30); storage is HALF-OPEN [valid_from, valid_to)
     # so persist the EXCLUSIVE bound (last day + 1). valid_from is already the
@@ -246,6 +252,16 @@ async def update_lease(
             status_code=409,
             detail="Cannot change amounts: has booked payments or finalized settlement",
         )
+    if any(getattr(body, field) is not None for field in {"base_rent", "deposit"} & body.model_fields_set):
+        unit = await UnitRepository(db, auth.organization_id).get_by_id(existing.unit_id)
+        if unit is None:
+            raise HTTPException(404, "Unit not found")
+        base_rent = body.base_rent if body.base_rent is not None else existing.base_rent
+        deposit = body.deposit if body.deposit is not None else existing.deposit
+        try:
+            validate_deposit(unit.usage_type, base_rent, deposit)
+        except ValueError as exc:
+            raise HTTPException(422, str(exc)) from exc
     if "valid_to" in body.model_fields_set:
         if body.valid_to is not None and body.valid_to < existing.valid_from:
             raise HTTPException(422, "Lease end must not precede its start")
