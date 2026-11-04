@@ -4,6 +4,7 @@ import { Link, MemoryRouter, Route, Routes } from "react-router-dom";
 import { AuthCtx } from "../auth/useAuth";
 import { PropertyDetailPage } from "./PropertyDetailPage";
 import * as endpoints from "../api/endpoints";
+import { ApiError } from "../api/client";
 import type { ManagementType, MeaScaleStatus, Unit } from "../api/types";
 
 vi.mock("../components/AttachmentsPanel", () => ({
@@ -46,6 +47,22 @@ function renderMeaProperty(managementType: ManagementType, mea: (string | null)[
     <MemoryRouter initialEntries={["/objekte/property"]}><Routes><Route path="/objekte/:propertyId" element={<PropertyDetailPage />} /></Routes></MemoryRouter>
   </AuthCtx.Provider>);
 }
+
+it.each([
+  [new ApiError(404, "Property not found"), "Objekt nicht gefunden."],
+  [new ApiError(404, "Synthetic missing record"), "Objekt nicht gefunden."],
+  [new ApiError(401, "Unauthorized"), "Nicht authentifiziert."],
+  [new Error("Synthetic network failure"), "Error: Synthetic network failure"],
+])("renders missing-property load errors in German and preserves auth and fallback: %s", async (error, expected) => {
+  vi.mocked(endpoints.getProperty).mockRejectedValue(error);
+  render(<AuthCtx.Provider value={{ loading: false, session: { user_id: "u", organization_id: "o", role: "CLERK" }, login: vi.fn(), logout: vi.fn() }}>
+    <MemoryRouter initialEntries={["/objekte/missing"]}><Routes><Route path="/objekte/:propertyId" element={<PropertyDetailPage />} /></Routes></MemoryRouter>
+  </AuthCtx.Provider>);
+  expect(await screen.findByText(expected, { exact: true })).toHaveTextContent(expected);
+  expect(screen.queryByText(/ApiError:/)).not.toBeInTheDocument();
+  expect(endpoints.getProperty).toHaveBeenCalledWith("missing");
+  expect(screen.queryByRole("heading", { name: "T30 Haus" })).not.toBeInTheDocument();
+});
 
 it.each([{ shares: [] }, { shares: [null, null] }])("hides MEA confirmation and the unit field for MIET without recorded shares ($shares)", async ({ shares }) => {
   renderMeaProperty("MIET", shares);

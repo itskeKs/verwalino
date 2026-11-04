@@ -1068,6 +1068,10 @@ sources. No implicit contact profiles, lease agreements or self-approvals.
 
 **`property`** (property, SDD §6.1): `organization_id` FK, `name`, address, **`management_type`** (`MIET`|`WEG`|`SEV`|`MISCH`), settlement period convention. RLS active.
 
+Property detail loading maps `ApiError.status === 404` to “Objekt nicht gefunden.”
+Missing and foreign-organization IDs retain identical HTTP 404 responses.
+The existing German 401 notice and `String(err)` fallback for other load errors remain.
+
 **`unit`** (unit, SDD §6.1): `organization_id`, `property_id` FK, `number`, `location`, **`area NUMERIC(10,2)`** (living/usable area), **`heated_area NUMERIC(10,2)`** (heated area), `usage_type` (Wohnung|Gewerbe|Stellplatz|Sonstige, i.e., residential|commercial|parking space|other), **`mea NUMERIC(12,6)`** (co-ownership share — exact, not float). Optional distribution peculiarities. RLS active.
 
 **`person`** (SDD §6.2): `organization_id`, contact data, optional bank data. **GDPR fields (Section 3.3):** `deletion_requested_at`, `processing_restricted`, `anonymized_at`. RLS active. Owner/tenant/vendor as separate logics (SDD §6.2) — either specializations of `person` (`owner_profile`, `tenant_profile`, `vendor`) or separate tables with a person reference; **[DECISION] for M1**, proposed here as 1:1 profiles, since one person can have several roles (e.g., owner *and* also a tenant themselves).
