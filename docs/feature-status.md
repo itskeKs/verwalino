@@ -113,14 +113,14 @@ pending; registration stays closed and legal review remains with #26. See the
 
 | Feature | Status | Location |
 | --- | --- | --- |
-| Economic plan, Hausgeld expected amounts, PDF | ✅ | `api/economic_plans.py`, `services/payment_service.py`, `services/wirtschaftsplan_pdf.py` |
+| Economic plan, Hausgeld expected amounts, PDF | ✅ plan-start addressees; dated transfer of the unit’s ongoing advances (#207) | `api/economic_plans.py`, `services/payment_service.py`, `services/wirtschaftsplan_pdf.py` |
 | Economic plan prefilled from the previous year | ✅ preview, then draft from last year's actual costs per category | `api/economic_plans.py` (`/previous/preview`, `/previous`), `components/PreviousPlan.tsx`, T54, [usage](operations/statements.md) |
 | Annual settlement, PDF | ✅ resolved Spitze plus frozen booked Hausgeld balance and resulting payment; owner/unit/period provenance (#204) | `api/weg_settlements.py`, `services/weg_jahresabrechnung_pdf.py` |
 | Adopt paid Hausgeld | ✅ | `api/weg_settlements.py` (`/paid-advances-derived`), `services/weg_settlement_service.py` (`derive_paid_advances`), `pages/WegSettlementDetailPage.tsx`, T09 |
 | Maintenance reserve (Erhaltungsrücklage) | ✅ cash ledger, dated owner/unit shares, explicit unassigned cash, booking-gated payouts (cost AND resolution), unit contribution corrections capped by booked Hausgeld with audited draft reductions/deletions after reversals, evidenced withdrawal corrections and adjustments bounded by net receipt withdrawals, audited draft opening totals with difference preview, release of unbacked imported payout drafts and frozen annual carry-over | `engine/reserve_ledger.py`, `services/reserve_ledger_service.py`, `components/ReserveLedgerPanel.tsx`. Open follow-ups: #191 (double burden), #211 (`bank_transaction` retention) |
 | Asset report (Vermögensbericht) § 28 Abs. 4 WEG | ✅ includes confirmed deletion of empty drafts; bookings, ledger and retained evidence refuse deletion (#199) | `engine/vermoegensbericht.py`, `services/vermoegensbericht_pdf.py`, `pages/AssetReportsPage.tsx` |
 | Special levy (Sonderumlage) | ✅ distributed by MEA as owner expected amount `SONDERZAHLUNG`, appears in the owner ledger and can be dunned | `models/special_levy.py`, `api/special_levies.py`, `services/special_levy_service.py`, `pages/SpecialLeviesPage.tsx`, T32, T33, [usage](operations/weg.md) |
-| Mid-year owner change | ✅ annual settlement is day-accurate per owner | `api/ownership.py`, `services/weg_settlement_service.py`, T26, [usage](operations/tenancies-and-rent.md) |
+| Mid-year owner change | ✅ annual settlement remains day-accurate; dated plan/report recipients, successor Hausgeld and shared recipient retention (#207) | `api/ownership.py`, `services/weg_settlement_service.py`, T26, [usage](operations/tenancies-and-rent.md) |
 | Owners' meeting, minutes, resolution register | ✅ | `api/meetings.py`, `pages/MeetingDetailPage.tsx`, `pages/ResolutionRegisterPage.tsx` |
 | Meeting invitation as PDF | ✅ one page per owner, hint for less than three weeks' notice (§ 24 Abs. 4 WEG) | `api/meetings.py` (`/{id}/invitation.pdf`), `services/meeting_pdf.py`, T34, [usage](operations/weg.md) |
 

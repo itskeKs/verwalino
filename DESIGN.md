@@ -1311,6 +1311,22 @@ identifiers and keep the existing detail tables within the phone viewport.
 | After | [view](docs/assets/design/weg-owner-balance/after-1280.png) | [view](docs/assets/design/weg-owner-balance/after-360.png) |
 
 
+Dated document recipients (#207): the economic-plan and asset-report detail pages
+show a “Dokumentempfänger” card after computation. Each entry identifies the unit,
+frozen owner name and “Eigentümer am DD.MM.YYYY”. The plan uses its period start;
+the report uses its period end. Concurrent co-owners remain separate entries.
+The existing multi-copy PDF download starts each recipient's copy on a new page.
+The card wraps long names at 360 px. Legacy final snapshots without recipients
+retain their existing display.
+
+| Document | Before desktop | Before 360 px | After desktop | After 360 px |
+| --- | --- | --- | --- | --- |
+| Plan | [view](docs/assets/design/dated-owner-documents/plan-before-1280.png) | [view](docs/assets/design/dated-owner-documents/plan-before-360.png) | [view](docs/assets/design/dated-owner-documents/plan-after-1280.png) | [view](docs/assets/design/dated-owner-documents/plan-after-360.png) |
+| Asset report | [view](docs/assets/design/dated-owner-documents/report-before-1280.png) | [view](docs/assets/design/dated-owner-documents/report-before-360.png) | [view](docs/assets/design/dated-owner-documents/report-after-1280.png) | [view](docs/assets/design/dated-owner-documents/report-after-360.png) |
+
+PDF output: [unit 2 plan](docs/assets/design/dated-owner-documents/plan-pdf.png),
+[unit 2 asset report](docs/assets/design/dated-owner-documents/report-pdf.png).
+All examples use synthetic data on the disposable test database.
 Annual income correction (#169), synthetic journey 5 receipts through 31 October 2026:
 
 | View | Before | After |

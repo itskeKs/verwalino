@@ -22,6 +22,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.exc import DBAPIError
 
+from app.schemas.document_addressee import DocumentAddressee
 from app.core.rbac import ScopeCapability
 from app.repositories.coverage_declaration_repo import CoverageDeclarationRepository
 from app.core.tenant import AuthContext, get_current_user, get_db, require_write_dep
@@ -162,6 +163,7 @@ class OwnerBalanceOut(BaseModel):
 
 
 class WegRunOut(BaseModel):
+    addressees: list[DocumentAddressee] = []
     id: str
     organization_id: str
     property_id: str
@@ -251,6 +253,7 @@ def _line_out(ln: SettlementLine) -> WegLineOut:
 
 def _run_out(run: SettlementRun, lines: list[SettlementLine], *, delete_restriction=None) -> WegRunOut:
     return WegRunOut(
+        addressees=(run.snapshot_payload or {}).get("addressees", []),
         owner_results=owner_balance_results(run.snapshot_payload),
         id=str(run.id),
         organization_id=str(run.organization_id),

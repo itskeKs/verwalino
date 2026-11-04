@@ -1,3 +1,4 @@
+import { DocumentAddressees } from "../components/DocumentAddressees";
 import { ReserveLedgerPanel } from "../components/ReserveLedgerPanel";
 import { WegDraftDelete } from "../components/WegDraftDelete";
 import { FinancialCoverageReview } from "../components/FinancialCoverageReview";
@@ -155,6 +156,8 @@ export function AssetReportDetailPage() {
           {run.snapshot_sha256 && <div style={{ marginTop: "0.5rem", fontSize: "0.82rem" }}>Snapshot SHA-256: <code>{run.snapshot_sha256}</code></div>}
         </div>
       )}
+
+      <DocumentAddressees addressees={run.addressees} />
 
       <div className="card" style={{ marginBottom: "1.5rem" }}>
         <h2>Übersicht</h2>

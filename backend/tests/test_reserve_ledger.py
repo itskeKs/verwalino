@@ -2078,6 +2078,7 @@ async def test_compatible_weg_scope_cannot_reimport_a_finalized_opening(
     from app.repositories.reserve_ledger_repo import ReserveLedgerRepository
     from app.services.reserve_ledger_service import ReserveLedgerService
     from tests.test_scope_grants import scope_fixture, bind
+    from tests.financial_coverage_helpers import add_report_recipient
 
     session = migrator_session
     api, _ = worker_tenant
@@ -2093,6 +2094,7 @@ async def test_compatible_weg_scope_cannot_reimport_a_finalized_opening(
             {**ids, 'scope': scope})
     await bind(session, ids)
     await session.commit()
+    await add_report_recipient(ids)
     body = {'property_id': str(ids['property']), 'period_start': '2025-01-01', 'period_end': '2025-12-31'}
     original = await api.post('/api/weg-settlements/asset-reports', json={**body, 'accounting_scope_id': str(ids['scope'])})
     assert original.status_code == 201, original.text

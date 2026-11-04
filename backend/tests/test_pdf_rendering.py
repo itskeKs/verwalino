@@ -243,3 +243,22 @@ class TestPdfRendererProtocol:
         """By default, the module uses WeasyPrintRenderer."""
         renderer = get_renderer()
         assert isinstance(renderer, WeasyPrintRenderer)
+
+
+@pytest.mark.parametrize('kind,expected', [
+    ('wirtschaftsplan', '65023c9dd39fc06f31b1663ef3c3e366e90683580129bdb568fe4a4dcc6b06b5'),
+    ('vermoegensbericht', '61b970ecfbc9dc3b7038c8063bc124393dad0709fa69fb457edf20b49748e6a4'),
+])
+def test_legacy_finalized_document_html_keeps_its_original_content(kind, expected):
+    from datetime import date
+    from hashlib import sha256
+    from types import SimpleNamespace
+    from app.services.wirtschaftsplan_pdf import build_wirtschaftsplan_html, WirtschaftsplanDisplayNames
+    from app.services.vermoegensbericht_pdf import build_vermoegensbericht_html, VermoegensberichtDisplayNames
+    # Digests captured from the original renderers, before dated addressees.
+    doc = SimpleNamespace(period_start=date(2025, 1, 1), period_end=date(2025, 12, 31), plan_year=2025,
+        snapshot_payload={'display_names': {'schema_version': 1, 'values': {}}},
+        snapshot_sha256='legacy-digest', engine_version='legacy')
+    render, names = ((build_wirtschaftsplan_html, WirtschaftsplanDisplayNames()) if kind == 'wirtschaftsplan'
+        else (build_vermoegensbericht_html, VermoegensberichtDisplayNames()))
+    assert sha256(render(doc, [], names).encode()).hexdigest() == expected

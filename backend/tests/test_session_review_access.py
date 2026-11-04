@@ -390,7 +390,7 @@ async def test_revision_chain_head_0131_head_preserves_full_state_and_issued_pdf
     config.set_main_option('script_location', str(Path(__file__).parents[1] / 'migrations'))
     scripts = ScriptDirectory.from_config(config)
     assert scripts.get_heads() == [TARGET]
-    expected_ancestry = [f'{number:04}' for number in range(131, 156)] + ['0159', '0160', '0161']
+    expected_ancestry = [f'{number:04}' for number in range(131, 156)] + ['0159', '0160', '0161', '0162', '0163']
     assert [r.revision for r in scripts.iterate_revisions(TARGET, '0131')] == expected_ancestry[:0:-1]
     engine = create_engine(MIGRATOR_SYNC_URL)
     try:
@@ -450,6 +450,40 @@ async def test_revision_chain_head_0131_head_preserves_full_state_and_issued_pdf
 
                 assert version() == (TARGET,)
                 retained = _chain_snapshot(connection)
+                # Prove the new provenance guards before projecting their
+                # unsupported evidence away in this rollback-only rehearsal.
+                successor_contexts = connection.execute(text("""SELECT c.dunning_notice_id
+                    FROM public.dunning_scope_context c JOIN public.dunning_notice n
+                      ON n.id=c.dunning_notice_id AND n.organization_id=c.organization_id
+                    WHERE c.economic_plan_id IS NOT NULL AND n.owner_profile_id IS NOT NULL
+                      AND NOT EXISTS(SELECT 1 FROM public.economic_plan_line ln
+                        WHERE ln.organization_id=c.organization_id AND ln.economic_plan_id=c.economic_plan_id
+                          AND ln.owner_profile_id=n.owner_profile_id AND ln.line_type='OWNER_ADVANCE')""")).scalars().all()
+                if successor_contexts:
+                    with pytest.raises(RuntimeError, match='Cannot remove dated successor dunning provenance'):
+                        with connection.begin_nested():
+                            migrate('0162', downgrade=True)
+                    assert _chain_snapshot(connection) == retained
+                    connection.execute(text('ALTER TABLE public.dunning_scope_context DISABLE TRIGGER USER'))
+                    connection.execute(text('DELETE FROM public.dunning_scope_context WHERE dunning_notice_id=ANY(:ids)'),
+                                       {'ids': successor_contexts})
+                    connection.execute(text('ALTER TABLE public.dunning_scope_context ENABLE TRIGGER USER'))
+                before_report_projection = _chain_snapshot(connection)
+                addressed_reports = [uuid.UUID(row['id']) for row in retained['data']['settlement_run']
+                    if row['status'] == 'finalized' and row['run_type'] == 'VERMOEGENSBERICHT'
+                    and (row['snapshot_payload'] or {}).get('addressees')]
+                if addressed_reports:
+                    with pytest.raises(RuntimeError, match='Cannot remove retained asset-report recipient bindings'):
+                        with connection.begin_nested():
+                            migrate('0161', downgrade=True)
+                    assert _chain_snapshot(connection) == before_report_projection
+                    # Keep financial rows and values; only the new recipient
+                    # key is absent in the historical fixture projection.
+                    connection.execute(text('ALTER TABLE public.settlement_run DISABLE TRIGGER USER'))
+                    connection.execute(text("UPDATE public.settlement_run SET snapshot_payload=snapshot_payload-'addressees' WHERE id=ANY(:ids)"),
+                                       {'ids': addressed_reports})
+                    connection.execute(text('ALTER TABLE public.settlement_run ENABLE TRIGGER USER'))
+                release_compatible = _chain_snapshot(connection)
                 with pytest.raises(DBAPIError, match='Retain finalized split-engine snapshots; repair forward') as refusal:
                     with connection.begin_nested():
                         # Isolate the older guard from 0154's restoration refusal;
@@ -463,7 +497,7 @@ async def test_revision_chain_head_0131_head_preserves_full_state_and_issued_pdf
                         migrate('0149', downgrade=True)
                 assert refusal.value.orig.pgcode == '23514', str(refusal.value.orig)
                 assert version() == (TARGET,)
-                assert _chain_snapshot(connection) == retained
+                assert _chain_snapshot(connection) == release_compatible
                 split_runs = [uuid.UUID(row['id']) for row in retained['data']['settlement_run']
                               if row['status'] == 'finalized'
                               and (row['snapshot_payload'] or {}).get('engine_version') == 'm3.2.0']

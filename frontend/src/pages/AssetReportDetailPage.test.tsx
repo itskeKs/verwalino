@@ -193,3 +193,15 @@ it('refetches the computation table after a reserve correction', async () => {
   await waitFor(() => expect(fetchMock.mock.calls.filter(([url]) => url === '/api/weg-settlements/run-1')).toHaveLength(2));
   expect(screen.queryByRole('heading', { name: 'Vermögensaufstellung' })).not.toBeInTheDocument();
 });
+
+it('shows the frozen report addressee and the reporting date', async () => {
+  vi.stubGlobal('fetch', vi.fn(async (url: string) => json(
+    url === '/api/properties' || url.includes('/bank-accounts') ? []
+    : url.endsWith('/reserve-ledger') ? { entries: [], frozen: true }
+    : { id: 'run-1', status: 'finalized', property_id: 'property-1', lines: [], addressees: [
+      { unit_id: 'unit-2', unit_number: '2', owner_profile_id: 'lena', owner_name: 'Lena Roth', key_date: '2026-12-31' }] })));
+  render(<MemoryRouter initialEntries={['/report/run-1']}><Routes><Route path="/report/:runId" element={<AssetReportDetailPage />} /></Routes></MemoryRouter>);
+  const recipients = await screen.findByRole('region', { name: 'Dokumentempfänger' });
+  expect(recipients).toHaveTextContent('Einheit 2: Lena Roth');
+  expect(recipients).toHaveTextContent('Eigentümer am 31.12.2026');
+});
