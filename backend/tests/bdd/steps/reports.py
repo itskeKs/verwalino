@@ -9,6 +9,76 @@ from tests.bdd.steps.browser_setup import bank_account, create, rental
 from tests.bdd.steps.records import PROPERTY, record_of
 
 
+@given('Gartenstraße 5 has a finalized asset report for 2026 with a declared bank balance of 500 euros')
+def recipient_asset_report(world, seed_data):
+    user = str(seed_data['user_a_admin_id'])
+    home = create(world, '/api/properties', {
+        'name': 'Gartenstraße 5', 'management_type': 'WEG',
+        'data_audience': {'label': 'Gartenstraße 5', 'reason': 'Synthetic recipient check',
+                          'grants': [{'user_id': user, 'capabilities': ['read', 'prepare', 'approve', 'export'],
+                                      'reason': 'Synthetic recipient check'}]},
+    }, keyed=True)
+    scope = create(world, '/api/accounting-scopes', {
+        'property_id': home['id'], 'scope_type': 'WEG', 'label': 'WEG Gartenstraße 5',
+        'valid_from': '2026-01-01', 'valid_to': '2026-12-31', 'whole_property': True,
+    }, keyed=True)
+    create(world, f"/api/accounting-scopes/{scope['id']}/grants", {
+        'user_id': user, 'capabilities': ['read', 'prepare', 'approve', 'confirm', 'export'],
+        'reason': 'Synthetic recipient check',
+    }, keyed=True)
+    bank = create(world, '/api/bank-accounts', {
+        'property_id': home['id'], 'accounting_scope_id': scope['id'],
+        'account_type': 'LAUFEND', 'label': 'Girokonto',
+    })
+    report = create(world, '/api/weg-settlements/asset-reports', {
+        'property_id': home['id'], 'accounting_scope_id': scope['id'],
+        'period_start': '2026-01-01', 'period_end': '2026-12-31',
+    })
+    values = {'reserve_opening_balance': '0.00', 'reserve_override_reason': 'Synthetic opening balance checked',
+              'receivables': [], 'payables': [],
+              'bank_balances': [{'bank_account_id': bank['id'], 'label': 'Girokonto',
+                                 'account_type': 'LAUFEND', 'balance': '500.00'}]}
+    create(world, '/api/financial-input-coverage', {
+        'subject_kind': 'settlement', 'subject_id': report['id'], 'values': values,
+        'confirmed_complete': True, 'reason': 'Synthetic period records checked', 'source_document_ids': [],
+    })
+    response = world.act('POST', f"/api/weg-settlements/asset-reports/{report['id']}/finalize", json=values)
+    assert response.status_code == 200, world.describe_response()
+    world.data['recipient_report'] = response.json()
+
+
+@when('the administrator downloads that asset report twice')
+def download_recipient_asset_report(world):
+    path = f"/api/weg-settlements/asset-reports/{world.data['recipient_report']['id']}/pdf"
+    responses = [world.act('GET', path) for _ in range(2)]
+    assert all(response.status_code == 200 for response in responses), world.describe_response()
+    assert responses[0].content == responses[1].content
+    world.data['recipient_pdf'] = responses[0].content
+
+
+@then('the report explains administrator statements without development notes')
+def recipient_explanations(world):
+    from io import BytesIO
+    import pdfplumber
+    from tests.test_pdf_rendering import AUTHOR_MARKERS
+
+    with pdfplumber.open(BytesIO(world.data['recipient_pdf'])) as pdf:
+        text = ' '.join(' '.join(page.extract_text().split()) for page in pdf.pages)
+    for marker in AUTHOR_MARKERS:
+        assert marker not in text, marker
+    for phrase in ('Gartenstraße 5', '31.12.2026', '500,00 EUR', '(Verwalter-Angabe)',
+                   'manuelle Angaben der Verwaltung', 'kein automatischer Buchungssaldo'):
+        assert phrase in text, phrase
+
+
+@then('downloading leaves the finalized report unchanged')
+def recipient_original_unchanged(world):
+    original = world.data['recipient_report']
+    response = world.act('GET', f"/api/weg-settlements/{original['id']}")
+    assert response.status_code == 200, world.describe_response()
+    assert response.json() == original
+
+
 @when(parsers.parse('the user opens the Anlage V {view} for the property of "{organization}"'))
 def open_foreign_anlage_v(world, view, organization):
     home = record_of(world, organization, PROPERTY)

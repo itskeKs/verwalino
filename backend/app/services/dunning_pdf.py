@@ -175,7 +175,7 @@ def build_dunning_html(
 
     interest_hint = (
         "Verzugszinsen werden anhand des angegebenen Basiszinssatzes ausgewiesen."
-        if snapshot is not None else "Verzugszinsen\n    sind im MVP nicht enthalten."
+        if snapshot is not None else "Verzugszinsen sind nicht enthalten."
     )
     return f"""<!DOCTYPE html>
 <html lang="de">
@@ -222,10 +222,7 @@ def build_dunning_html(
   {interest_section}
 
   <div class="hint">
-    <em>[section 18/fachlich] Der genaue Wortlaut, rechtliche Hinweise
-    (z. B. Verzugszinsen, Kuendigungsandrohung bei Stufe 3) und das
-    endgueltige Layout sind fachlich/juristisch abzustimmen. {interest_hint} Mahngebuehren sind provisorisch und muessen
-    angemessen/vertraglich vereinbart sein.</em>
+    <em>{interest_hint} Mahngebühren müssen angemessen/vertraglich vereinbart sein.</em>
   </div>
 </body>
 </html>"""

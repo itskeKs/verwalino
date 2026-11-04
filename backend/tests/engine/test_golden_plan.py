@@ -170,6 +170,11 @@ class TestVermoegensbericht:
         assert dev.withdrawals_total == Decimal("8000.00")
         assert dev.closing_balance == Decimal("18000.00")
 
+    def test_reserve_notes_describe_the_ledger_without_stage_wording(self):
+        lines = {line.line_type: line for line in build_vermoegensbericht(self._scenario()).lines}
+        assert lines["RESERVE_OPENING"].note == "Anfangsbestand laut Rücklagenbuch"
+        assert lines["RESERVE_WITHDRAWAL"].note == "Entnahmen laut Rücklagenbuch"
+
     def test_manual_lines_flagged(self):
         r = build_vermoegensbericht(self._scenario())
         bank = [ln for ln in r.lines if ln.line_type == "BANK_BALANCE"]

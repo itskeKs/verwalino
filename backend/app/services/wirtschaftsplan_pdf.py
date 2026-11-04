@@ -128,10 +128,9 @@ def build_wirtschaftsplan_html(
     Erhaltungsruecklage ist Vermoegensbildung und keine Kostenumlage.
   </div>
   <div class="disclaimer">
-    Hinweis (SDD section 10): Der Wirtschaftsplan ist eine <strong>Unterlage/ein
-    Vorschlag fuer die Beschlussfassung</strong> der Eigentuemerversammlung und
-    selbst <strong>kein Beschluss</strong>. Das endgueltige Layout ist fachlich
-    abzustimmen.
+    Hinweis: Der Wirtschaftsplan ist eine <strong>Unterlage/ein
+    Vorschlag für die Beschlussfassung</strong> der Eigentümerversammlung und
+    selbst <strong>kein Beschluss</strong>.
   </div>
   {integrity}
 </body>
