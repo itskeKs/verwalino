@@ -227,6 +227,14 @@ def followup_editors(browser_world, width, request):
         await page.set_viewport_size({'width': width, 'height': 900})
         await b.visit('/personen')
         row = page.get_by_role('row').filter(has=page.locator(f"a[href='/personen/{d['people'][0].id}']"))
+        other = page.get_by_role('row').filter(has=page.locator(f"a[href='/personen/{d['private_followup']['id']}']"))
+        await expect(row).to_be_visible()
+        # Earlier scenarios retain contacts, so the follow-up contact may be on a later page.
+        rows = page.locator('tbody tr')
+        while await other.count() == 0:
+            loaded = await rows.count()
+            await button(page, 'Weitere laden').click()
+            await expect(rows.nth(loaded)).to_be_attached()
         await button(row, 'Bearbeiten').click()
         await field(page, 'Telefon').fill('030 5551234')
         ready, release, completed = asyncio.Event(), asyncio.Event(), asyncio.Event()
@@ -248,7 +256,6 @@ def followup_editors(browser_world, width, request):
         try:
             await button(page, 'Speichern').click()
             await asyncio.wait_for(ready.wait(), timeout=10)
-            other = page.get_by_role('row').filter(has=page.locator(f"a[href='/personen/{d['private_followup']['id']}']"))
             await button(other, 'Bearbeiten').click()
             await expect(field(page, 'E-Mail')).to_have_value('bruno@example.invalid')
         finally:
