@@ -90,8 +90,9 @@ what Verwalino does not assign by itself.
 
 **Checked by:** agent
 **Also at 360 px:** no
-**Automated:** original Sparkasse import, Anna's partial-rent suggestion and duplicate detection
-in [sparkasse_statement.feature](../../features/journeys/sparkasse_statement.feature);
+**Automated through the browser:** original Sparkasse preview/import, Anna's partial-rent
+suggestion, duplicate detection and refusal of a statement for another account in
+[sparkasse_statement.feature](../../features/journeys/sparkasse_statement.feature);
 manual “60,00” cost entry in [money_inputs.feature](../../features/journeys/money_inputs.feature).
 The remaining assignment and ledger checks still require blind acceptance.
 
