@@ -548,6 +548,7 @@ it("retains transaction rows during the refresh after a real assignment", async 
   const table = screen.getByRole("table");
   fireEvent.click(screen.getByRole("button", { name: "Vorschlag übernehmen" }));
   await screen.findByText("Umsatz zugeordnet.");
+  await waitFor(() => expect(finish).toBeTypeOf("function"));
   expect(table).toBeInTheDocument();
   await act(async () => finish(json({ items: [], next_offset: null })));
   expect(await screen.findByText("Keine Umsätze vorhanden.")).toBeVisible();
