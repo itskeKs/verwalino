@@ -534,6 +534,15 @@ There is **no** artificial splitting of the property; the two runs are independe
 
 Three new PDFs via the **WeasyPrint** pipeline created in M0 and proven in M3 (`app/core/pdf.py`, `render_pdf`). **Strictly separate from the engine** (SDD §16): the PDF layer reads only the **finalized** result (lines + snapshot/display names), recomputes **nothing** (test: PDF values == line values, like M3 `settlement_pdf`).
 
+Recipient wording in these PDFs, dunning letters, meeting minutes and resolution-register
+extracts explains the document rather than referring to development specifications or layout
+approval. The economic plan remains a proposal for a resolution, not a resolution itself;
+manually declared asset values remain marked as “Verwalter-Angabe”, not booking balances.
+New reserve opening/withdrawal notes refer to the reserve ledger. When rendering historical
+asset reports, the two exact former “in dieser Ausbaustufe manuell erfasst” notes are displayed
+as administrator statements. Stored lines, finalized snapshots, checksums and retained original
+files are never rewritten for this wording change.
+
 ### 8.1 Hausgeld/Annual Settlement (per Owner)
 Formal WEG requirements (SDD §11): property + settlement period; owner + unit(s); **total costs per cost category** (property-wide); **applied key** per item; owner's **MEA share** per cost category; **separate subtotals** allocable/non-allocable/reserve; **expected advance payments** (plan); **settlement balance** (additional payment/credit, resolution-relevant, highlighted); **reserve development**; snapshot checksum/engine version (as in M3). Note that the subject of the resolution is the settlement balance (WEMoG).
 
