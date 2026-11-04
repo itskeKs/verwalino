@@ -173,7 +173,9 @@ same and only the split differs: a question left open for the owner to decide.
 
 **Checked by:** agent
 **Also at 360 px:** the annual overview
-**Automated:** not yet
+**Automated:** [annual income twin](../../features/journeys/annual_income.feature) covers
+receipts, the separate deposit, Anlage V income and both CSV totals at desktop and
+360 px. Expense coverage remains outside this twin.
 
 ## Journey 6: Creating an owners' association from the declaration of division
 

@@ -1,5 +1,7 @@
 """Property report journeys through the HTTP API."""
 from decimal import Decimal
+import csv
+import io
 
 from pytest_bdd import given, parsers, then, when
 from playwright.async_api import expect
@@ -91,6 +93,7 @@ def open_foreign_anlage_v(world, view, organization):
 def rental_year(world, seed_data):
     rental(world, seed_data)
     account = bank_account(world)
+    world.data['report_account'] = account
     for kind, amount in [('KALTMIETE', '1234.56'), ('NK_VORAUSZAHLUNG', '150.00')]:
         payment = create(world, '/api/payments', {
             'bank_account_id': account['id'],
@@ -124,6 +127,47 @@ def open_anlage_v(world):
     world.data['anlage_v'] = response.json()
 
 
+@given('a booked deposit of 2250 euros and a tenant backpayment of 75 euros')
+def deposit_and_backpayment(world):
+    deposit_account = bank_account(world, deposit=True)
+    for kind, amount, account in [('KAUTION', '2250.00', deposit_account),
+                                  ('NACHZAHLUNG', '75.00', world.data['report_account'])]:
+        payment = create(world, '/api/payments', {
+            'bank_account_id': account['id'], 'lease_agreement_id': world.data['leases'][0]['id'],
+            'tenant_profile_id': world.data['tenants'][0]['id'], 'payment_type': kind,
+            'direction': 'IN', 'amount': amount, 'value_date': '2026-06-01',
+            'period_year': 2026, 'period_month': 6,
+        })
+        response = world.act('POST', f"/api/payments/{payment['id']}/book")
+        assert response.status_code == 200, world.describe_response()
+
+
+@then('the year overview and CSV show 1459.56 euros income excluding the deposit')
+def deposit_excluded_from_headline(world):
+    response = world.act('GET', '/api/reports/property-year', params=world.data['report_query'])
+    assert response.status_code == 200, world.describe_response()
+    body = response.json()
+    assert body['income_total'] == '1459.56'
+    assert body['balance'] == '1359.53'
+    assert next(row['amount'] for row in body['income'] if row['payment_type'] == 'KAUTION') == '2250.00'
+    response = world.act('GET', '/api/reports/property-year.csv', params=world.data['report_query'])
+    assert response.status_code == 200, world.describe_response()
+    rows = list(csv.reader(io.StringIO(response.content.decode('utf-8-sig')), delimiter=';'))
+    assert next(row[-1] for row in rows if row[2] == 'Einnahmen gesamt') == '1459,56'
+    assert next(row[-1] for row in rows if row[3] == 'KAUTION') == '2250,00'
+
+
+@then('the deposit stays separate and the backpayment is included in levies')
+def deposit_and_backpayment_mapping(world):
+    summary = world.data['anlage_v']
+    assert next(row['amount'] for row in summary['lines'] if row['key'] == 'levies') == '225.00'
+    assert [(row['code'], row['amount']) for row in summary['unmapped']] == [('KAUTION', '2250.00')]
+    response = world.act('GET', '/api/reports/property-year/anlage-v.csv', params=world.data['report_query'])
+    assert response.status_code == 200, world.describe_response()
+    rows = list(csv.reader(io.StringIO(response.content.decode('utf-8-sig')), delimiter=';'))
+    assert next(row[-1] for row in rows if row[4] == 'Jahresübersicht gesamt' and row[2] == 'Einnahmen') == '1459,56'
+
+
 @then('rent, advances and water costs appear on their Anlage V lines')
 def mapped_lines(world):
     lines = {row['key']: row['amount'] for row in world.data['anlage_v']['lines']}
@@ -139,8 +183,7 @@ def matching_totals(world):
     for reconciliation, total in zip(summary['reconciliation'], [overview['income_total'], overview['expense_total']]):
         section = reconciliation['section']
         mapped = sum((Decimal(row['amount']) for row in summary['lines'] if row['section'] == section), Decimal(0))
-        unmapped = sum((Decimal(row['amount']) for row in summary['unmapped'] if row['section'] == section), Decimal(0))
-        assert mapped + unmapped == Decimal(total)
+        assert mapped + Decimal(reconciliation['unmapped_total']) == Decimal(total)
         assert reconciliation['difference'] == '0.00'
 
 
@@ -180,3 +223,71 @@ async def download_mapping(browser_world):
     download = await pending.value
     assert download.suggested_filename == 'anlage-v-2026.csv'
     assert await download.failure() is None
+
+
+@given('the journey 5 rental receipts through 31 October 2026 and a separate 2250 euro deposit')
+def journey_five_receipts(world, seed_data):
+    rental(world, seed_data, count=2)
+    account = bank_account(world)
+    deposit_account = bank_account(world, deposit=True)
+    for tenant, months, rent, advance in [(0, range(1, 11), '750.00', '150.00'),
+                                          (1, range(3, 11), '600.00', '120.00')]:
+        for month in months:
+            for kind, amount in [('KALTMIETE', '650.00' if tenant == 0 and month == 4 else rent),
+                                 ('NK_VORAUSZAHLUNG', advance)]:
+                book_report_payment(world, account, kind, amount, tenant=tenant, month=month)
+    book_report_payment(world, deposit_account, 'KAUTION', '2250.00')
+    world.data['report_query'] = {'property_id': world.data['property']['id'], 'year': 2026,
+                                 'accounting_scope_id': world.data['scope']['id']}
+
+
+def book_report_payment(world, account, kind, amount, *, tenant=0, month=1):
+    payment = create(world, '/api/payments', {
+        'bank_account_id': account['id'], 'lease_agreement_id': world.data['leases'][tenant]['id'],
+        'tenant_profile_id': world.data['tenants'][tenant]['id'], 'payment_type': kind,
+        'direction': 'IN', 'amount': amount, 'value_date': f'2026-{month:02d}-01',
+        'period_year': 2026, 'period_month': month,
+    })
+    response = world.act('POST', f"/api/payments/{payment['id']}/book")
+    assert response.status_code == 200, world.describe_response()
+
+
+@then('the overview shows 14660 euros income and the separate deposit on desktop and at 360 px')
+@browser_step
+async def journey_five_headline(browser_world):
+    import os
+    from pathlib import Path
+
+    page = browser_world.page
+    overview = page.get_by_role('region', name='Jahresübersicht', exact=True)
+    await expect(overview).to_be_visible()
+    await expect(page.get_by_role('region', name='Anlage V', exact=True).get_by_role('table', name='Abgleich mit der Jahresübersicht')).to_be_visible()
+    for width in (1280, 360):
+        await page.set_viewport_size({'width': width, 'height': 1000})
+        if os.environ.get('VERWALINO_CAPTURE_DESIGN') == '1':
+            directory = Path(__file__).resolve().parents[4] / 'docs/assets/design'
+            await page.screenshot(path=str(directory / f'reports-income-{width}.png'), full_page=True, animations='disabled')
+    for width in (1280, 360):
+        await page.set_viewport_size({'width': width, 'height': 1000})
+        await expect(overview.locator('dl')).to_contain_text('14.660,00 EUR')
+        await expect(overview.get_by_role('table', name='Einnahmen', exact=True)).to_contain_text('2.250,00 EUR')
+        panel = page.get_by_role('region', name='Anlage V', exact=True)
+        await expect(panel.get_by_role('table', name='Anlage V Einnahmen')).to_contain_text('12.200,00 €')
+        await expect(panel.get_by_role('table', name='Anlage V Einnahmen')).to_contain_text('2.460,00 €')
+        await expect(panel.get_by_role('table', name='Abgleich mit der Jahresübersicht')).to_contain_text('14.660,00 €')
+        assert await page.evaluate('document.documentElement.scrollWidth <= window.innerWidth')
+
+
+@then('the downloaded overview and Anlage V CSV both show 14660 euros income')
+@browser_step
+async def journey_five_csv(browser_world):
+    page = browser_world.page
+    for name, label, column in [('CSV herunterladen', 'Einnahmen gesamt', 2),
+                                ('Anlage V als CSV herunterladen', 'Jahresübersicht gesamt', 4)]:
+        async with page.expect_download() as pending:
+            await page.get_by_role('button' if column == 2 else 'link', name=name, exact=True).click()
+        download = await pending.value
+        assert await download.failure() is None
+        from pathlib import Path
+        rows = list(csv.reader(io.StringIO(Path(await download.path()).read_text(encoding='utf-8-sig')), delimiter=';'))
+        assert next(row[-1] for row in rows if row[column] == label) == '14660,00'

@@ -85,8 +85,10 @@ active confirmed gross costs by invoice date. Drafts, reversal chains,
 superseded costs, and merely imported bank transactions do not count.
 
 The date basis and a domain note are included in the response. Security deposit and other
-payment types remain separately visible; no tax treatment is
-assumed. `TEILWEISE_PRUEFEN` remains its own flag. This is a
+payment types remain separately visible. Deposits never increase income or balance;
+`NACHZAHLUNG` is tenant backpayment income. House-money advances, reserve shares and
+owner special payments count as income only for WEG, not MIET, SEV or MISCH.
+The same mapping rule controls headline, reconciliation and both CSV exports. `TEILWEISE_PRUEFEN` remains its own flag. This is a
 verifiable basis, not a complete Anlage V or tax return.
 
 The **Anlage V** panel under **Berichte** maps this per-property year overview to
@@ -95,8 +97,11 @@ form detail lines via `GET /api/reports/property-year/anlage-v`.
 the same property, year and optional accounting scope. This is a
 "Zuordnungshilfe, keine Steuerberatung"; "Zeilennummern je Formularjahr prüfen"
 (check line numbers for each form year). The mapping ignores the Umlagefähigkeit
-split and lists `NACHZAHLUNG` under "Nicht zugeordnet": a Nachzahlung can come from
-a tenant or an owner, so its origin needs separate review.
+split and maps tenant `NACHZAHLUNG` to "Umlagen". Deposits remain visible under
+"Nicht zugeordnet" with their original amounts but contribute zero to the
+reconciliation totals. The same applies to owner receipts outside WEG; WEG receipts
+count as unassigned income. Thus mapped plus counted unassigned amounts equals the
+overview income. The overview CSV marks non-income rows as "Durchlaufend".
 
 The report requires full read/source permissions and, where applicable, an
 explicit homeowners' association (WEG)/MIET accounting scope covering the entire property and year. Missing

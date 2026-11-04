@@ -14,7 +14,7 @@ from app.core.live_principal import get_live_member_db
 from app.core.rbac import ScopeCapability
 from app.core.storage import attachment_content_disposition
 from app.core.tenant import AuthContext, get_current_user
-from app.engine.anlage_v import AnlageVSummary, map_property_year
+from app.engine.anlage_v import AnlageVSummary, counts_as_income, map_property_year
 from app.services.authorization_service import AuthorizationService
 from app.services.report_service import PropertyYearReport, ReportService
 from app.services.dashboard_kpi_service import DashboardKpis, DashboardKpiService
@@ -67,7 +67,8 @@ def _render_property_year_csv(report: PropertyYearReport) -> bytes:
     writer.writerow(['Objekt', 'Jahr', 'Bereich', 'Zahlungstyp', 'Kategorie', 'Umlagefähigkeit', 'Betrag (EUR)'])
     name = _csv_text(report.property_name)
     for row in report.income:
-        writer.writerow([name, report.year, 'Einnahmen', _csv_text(row.payment_type), '', '', _csv_money(row.amount)])
+        section = 'Einnahmen' if counts_as_income(row.payment_type, report._management_type) else 'Durchlaufend'
+        writer.writerow([name, report.year, section, _csv_text(row.payment_type), '', '', _csv_money(row.amount)])
     for row in report.expenses:
         writer.writerow([name, report.year, 'Ausgaben', '', _csv_text(row.category_name),
                          _csv_text(row.tenant_apportionability), _csv_money(row.amount)])
