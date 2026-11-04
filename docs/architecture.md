@@ -45,13 +45,47 @@ that pass row-level security (RLS) reach the `guard_reserve_ledger` trigger.
 For each such row, the trigger rejects the change with SQLSTATE `23514` and
 constraint `reserve_ledger_append_only`.
 
+Migration `0161` revokes runtime UPDATE on the ledger (also inherited by the
+worker), retaining SELECT/INSERT and the DELETE guard. Runtime UPDATE fails with
+`42501`; the guard remains `ENABLE ALWAYS`. Its only reason-update exception is
+the existing individual privacy command's actual anonymization branch. The
+authoritative shared retention facts from `0159`/`0160` still decide eligibility:
+a retained booked repayment to Anna Beispiel restricts her instead of erasing
+her identity or evidence. An unbound Eva Muster mentioned incidentally as
+“Abstimmung mit Eva Muster” can be anonymized, replacing the name with `Gelöscht`
+in the live reason and its exact corresponding audit copy. This follows the
+[owner clarification](https://github.com/itskeKs/verwalino/issues/222#issuecomment-6625055904).
+
+Only complete names/company names are matched, literally and case-insensitively,
+with normalized whitespace and word/hyphen boundaries. Known longer identities
+in the same organization (for example Maria Eva Muster) protect their original
+spans. If `Gelöscht` would exceed the 2,000-character reason limit, only the
+identifying spans use `*`; surrounding text is not truncated. Audit selection
+requires the same organization, settlement-run entity, entry ID and original
+reason for `reserve.override_added`, `reserve.contribution_reduced` and
+`reserve.contribution_restored`. Other JSON fields, metadata and historical
+`prev_event_hash` remain unchanged; the old hash does not certify modified bytes.
+
+Private person context is established/restored only around actual anonymization.
+A separate person statement trigger acquires the existing tenant financial lock
+after the existing shared ACL trigger, before tuple locks. It adds synchronization
+without a new contact policy: actorless PREPARATION writes remain permitted;
+strict-mode RLS/revocation and the special privacy checks remain authoritative.
+An unwritable strict context takes no financial lock. Known overlapping identities
+are prepared once per erasure, then cached/restored for canonical guard checks.
+Forged flags or runtime-owned nested triggers receive no UPDATE authority.
+
+Amounts, rows, references and frozen snapshots/digests are untouched. A finalized
+statement can retain the original frozen reason; exports show those unchanged
+snapshots alongside the cleaned live rows. This is no general free-text scrub.
+
 All nine foreign keys on `reserve_ledger_entry` use PostgreSQL's default
 `NO ACTION` deletion rule, as created by migration `0149`; the ORM leaves
 `ondelete` unset to match. The reserve ledger tests compare every foreign key's
 ordered source and target columns and `pg_constraint.confdeltype` with the model,
 including the organization, property and unit scope columns.
 
-With the `UPDATE` privilege, `SELECT … FOR UPDATE` can lock rows that pass
+Before `0161` revokes runtime UPDATE, `SELECT … FOR UPDATE` can lock rows that pass
 both the `reserve_read` and `reserve_no_update` policies. They require a match
 on the current organization, settlement scope access for `read` and `prepare`,
 and property financial disclosure access for `read`. A row that passes only

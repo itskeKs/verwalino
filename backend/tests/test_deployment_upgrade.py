@@ -16,10 +16,10 @@ from app.core.declaration_test_database import require_disposable_database_setti
 from tests.test_rent_changes import rent_db, rent_world  # noqa: F401
 
 
-def test_person_retention_migration_is_the_next_release_revision():
-    revision = ScriptDirectory('migrations').get_revision('0160')
-    assert revision.down_revision == '0159'
-    assert deployment.TARGET == '0160'
+def test_eligible_reserve_erasure_is_the_next_release_revision():
+    revision = ScriptDirectory('migrations').get_revision('0161')
+    assert revision.down_revision == '0160'
+    assert deployment.TARGET == '0161'
 
 
 @pytest.mark.asyncio
@@ -108,7 +108,7 @@ def test_reject_unknown_or_ambiguous_database_version(heads):
 
 def test_release_graph_is_exact_and_linear(tmp_path):
     graph = ScriptDirectory('migrations')
-    assert deployment.release_head(graph) == '0160'
+    assert deployment.release_head(graph) == '0161'
     (tmp_path / 'versions').mkdir()
     (tmp_path / 'versions' / 'unexpected.py').write_text(
         "revision='0156'\ndown_revision=None\nbranch_labels=None\ndepends_on=None\n")
@@ -116,7 +116,7 @@ def test_release_graph_is_exact_and_linear(tmp_path):
         deployment.release_head(ScriptDirectory(str(tmp_path)))
 
 
-@pytest.mark.parametrize('schema', ['0028', '0122', '0139', '0140', '0141', '0142', '0143', '0144', '0145', '0146', '0147', '0148', '0149', '0150', '0151', '0152', '0153', '0154', '0155', '0159', '0160'])  # accepted sources plus target
+@pytest.mark.parametrize('schema', ['0028', '0122', '0139', '0140', '0141', '0142', '0143', '0144', '0145', '0146', '0147', '0148', '0149', '0150', '0151', '0152', '0153', '0154', '0155', '0159', '0160', '0161'])  # accepted sources plus target
 def test_measured_release_schema_is_a_supported_upgrade_source(schema):
     assert deployment.supported_schema((schema,)) == schema
 
@@ -190,7 +190,7 @@ def rehearse_initial_upgrade(starting_schema='0122'):
     _, _, url = require_disposable_database_settings(settings)
     engine = create_engine(url)
     graph = ScriptDirectory('migrations')
-    revisions = list(graph.iterate_revisions('0160', starting_schema))
+    revisions = list(graph.iterate_revisions('0161', starting_schema))
     try:
         with engine.connect() as connection:
             transaction = connection.begin()
@@ -257,9 +257,23 @@ def rehearse_initial_upgrade(starting_schema='0122'):
                 # Only organization INSERT is intentionally revoked by browser setup.
                 with connection.begin_nested() as expected:
                     connection.execute(text("REVOKE INSERT ON public.organization FROM app_rw"))
+                    if 'reserve_ledger_entry' in tables:
+                        connection.execute(text('REVOKE UPDATE ON public.reserve_ledger_entry FROM app_rw'))
                     expected_security = connection.execute(text("SELECT c.relname,c.relrowsecurity,c.relforcerowsecurity,c.relacl::text FROM pg_class c WHERE c.relnamespace='public'::regnamespace AND c.relname=ANY(:tables) ORDER BY c.relname"), {'tables': tables}).all()
                     expected.rollback()
                 for revision in reversed(revisions):
+                    if revision.revision == '0161' and starting_schema == '0160':
+                        def reason_erasure_contract():
+                            functions = connection.execute(text("""SELECT oid::regprocedure::text,pg_get_functiondef(oid),
+                                proacl::text,proowner,proconfig,prosecdef FROM pg_proc
+                                WHERE pronamespace='public'::regnamespace ORDER BY oid::regprocedure::text""")).all()
+                            triggers = connection.execute(text("""SELECT c.relname,t.tgname,t.tgenabled::text,pg_get_triggerdef(t.oid)
+                                FROM pg_trigger t JOIN pg_class c ON c.oid=t.tgrelid
+                                WHERE c.relnamespace='public'::regnamespace ORDER BY c.relname,t.tgname""")).all()
+                            relations = connection.execute(text("""SELECT relname,relacl::text,relowner,relrowsecurity,relforcerowsecurity
+                                FROM pg_class WHERE relnamespace='public'::regnamespace ORDER BY relname""")).all()
+                            return {row[0]: tuple(row[1:]) for row in functions}, triggers, relations
+                        previous_reason_erasure = reason_erasure_contract()
                     if revision.revision == '0160' and starting_schema == '0159':
                         deadline_signatures = ['person_retention_categories()',
                             'person_retention_bindings(uuid,uuid,text)', 'organization_retention_plan(uuid)']
@@ -349,6 +363,24 @@ def rehearse_initial_upgrade(starting_schema='0122'):
                             return [connection.scalar(text("SELECT pg_get_functiondef(CAST(:s AS regprocedure))"), {"s": signature}) for signature in signatures]
                         before_split = split_definitions()
                     revision.module.upgrade()
+                    if revision.revision == '0161' and starting_schema == '0160':
+                        upgraded_reason_erasure = reason_erasure_contract()
+                        changed = {'apply_person_privacy(uuid,uuid,text)', 'guard_reserve_ledger()', 'guard_audit_event_payload()'}
+                        added = {'reserve_erasure_name_pattern(text)', 'prepare_person_reserve_erasure(uuid)',
+                                 'person_reserve_erasure_text(uuid,text)', 'erase_person_reserve_reasons()', 'lock_person_reserve_names()'}
+                        assert upgraded_reason_erasure[0].keys() - previous_reason_erasure[0].keys() == added
+                        assert {key: value for key, value in upgraded_reason_erasure[0].items() if key not in changed | added} == {
+                            key: value for key, value in previous_reason_erasure[0].items() if key not in changed}
+                        for key in changed:
+                            assert upgraded_reason_erasure[0][key][1:] == previous_reason_erasure[0][key][1:]
+                        assert [row for row in upgraded_reason_erasure[1] if row[1] not in {
+                            'b_lock_person_reserve_names', 'z_erase_person_reserve_reasons'}] == previous_reason_erasure[1]
+                        with connection.begin_nested() as reason_rehearsal:
+                            revision.module.downgrade()
+                            assert reason_erasure_contract() == previous_reason_erasure
+                            revision.module.upgrade()
+                            assert reason_erasure_contract() == upgraded_reason_erasure
+                            reason_rehearsal.rollback()
                     if revision.revision == '0160' and starting_schema == '0159':
                         shared_deadline_signatures = deadline_signatures + ['retention_base_until(jsonb)',
                             'retention_source_until(text,jsonb)']
@@ -477,6 +509,8 @@ def rehearse_initial_upgrade(starting_schema='0122'):
 """
                         else:
                             continue
+                        if name == 'guard_audit_event_payload':
+                            clause = graph.get_revision('0161').module.AUDIT_EXCEPTION + clause
                         assert definition.count('    BEGIN\n') == 1, name
                         expected[name] = (definition.replace('    BEGIN\n', '    BEGIN\n' + clause, 1), grants, owner)
                     actual = {name: (definition, grants, owner) for name, definition, grants, owner in trigger_definitions()
@@ -516,16 +550,16 @@ def rehearse_initial_upgrade(starting_schema='0122'):
         engine.dispose()
 
 
-@pytest.mark.parametrize('starting_schema', ['0122', '0139', '0140', '0141', '0142', '0143', '0144', '0145', '0146', '0147', '0148', '0149', '0150', '0151', '0152', '0153', '0154', '0155', '0159'])  # accepted sources
-def test_upgrade_to_0160_preserves_existing_rows_and_security(run_migrations, starting_schema):
+@pytest.mark.parametrize('starting_schema', ['0122', '0139', '0140', '0141', '0142', '0143', '0144', '0145', '0146', '0147', '0148', '0149', '0150', '0151', '0152', '0153', '0154', '0155', '0159', '0160'])  # accepted sources
+def test_upgrade_to_0161_preserves_existing_rows_and_security(run_migrations, starting_schema):
     # The actual rehearsal ran before any retained domain-test originals existed.
     # Its SQL/data/security assertions fail fixture setup if preservation fails.
-    assert run_migrations[f'upgrade_{starting_schema}_to_0160_tables'] > 50
-    assert deployment.database_check('preflight') == '0160'
+    assert run_migrations[f'upgrade_{starting_schema}_to_0161_tables'] > 50
+    assert deployment.database_check('preflight') == '0161'
 
 
-def test_upgrade_0028_to_0160_preserves_existing_rows_and_rls(run_migrations):
-    assert run_migrations['upgrade_0028_to_0160_tables'] > 20
+def test_upgrade_0028_to_0161_preserves_existing_rows_and_rls(run_migrations):
+    assert run_migrations['upgrade_0028_to_0161_tables'] > 20
 
 
 def test_document_archive_restore_is_exact_and_refuses_overwrite(tmp_path):
@@ -638,7 +672,7 @@ def test_cli_preflight_and_actual_runtime_credentials_are_read_only():
            'CI', 'HV_DECLARATION_TEST_DATABASE_PROFILE') if name in os.environ}
     env['HV_DATABASE_URL_WORKER'] = runtime.set(username='app_worker', password='worker_secret').render_as_string(hide_password=False)
     env.setdefault('HV_DATABASE_URL_REVIEW', runtime.set(username='app_review', password='review_secret').render_as_string(hide_password=False))
-    for arguments, expected in [(['preflight'], '0160'), (['runtime', 'app_rw'], ''),
+    for arguments, expected in [(['preflight'], '0161'), (['runtime', 'app_rw'], ''),
                                 (['runtime', 'app_review'], ''), (['runtime', 'app_worker'], '')]:
         result = subprocess.run([sys.executable, '-m', 'app.deployment', *arguments],
                                 env=env, capture_output=True, text=True)

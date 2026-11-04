@@ -10,6 +10,94 @@ from tests.financial_coverage_helpers import attest_fixture
 scenarios(str(Path(__file__).resolve().parents[3] / 'features/maintenance_reserve_ledger.feature'))
 
 
+def privacy_export(world):
+    import json
+    from tests.test_organization_export import unpack
+    response = world.act('POST', '/api/organizations/export')
+    assert response.status_code == 200, response.text
+    files = unpack(response.content)
+    return {entity: {row['id']: row for row in
+        (json.loads(line) for line in files[f'entities/{entity}.jsonl'].splitlines())}
+        for entity in ('person', 'payment', 'reserve_ledger_entry', 'audit_event', 'settlement_run')}
+
+
+@given('a retained repayment to Anna and an incidental 300 euro reserve note about Eva', target_fixture='reserve_privacy_case')
+def reserve_privacy_case(world, seed_data, rent_world, export_client, monkeypatch):
+    from datetime import timedelta
+    from app.services import organization_export_service
+    from tests.test_reserve_ledger import reserve_erasure_case, retained_anna, finalize
+    monkeypatch.setattr(organization_export_service, 'EXPORT_INTERVAL', timedelta(0))
+    world.actor = export_client
+    seed = {**seed_data, 'org_a_id': rent_world['org'], 'user_a_admin_id': rent_world['admin']}
+    w = world.run(reserve_erasure_case(world.actor, seed))
+    w['anna'], w['payment'] = world.run(retained_anna(world.actor, rent_world['property']))
+    w['frozen'] = world.run(finalize(world.actor, w))
+    w['before_export'] = privacy_export(world)
+    return w
+
+
+@when('I request deletion of the actual repayment recipient Anna')
+def request_retained_anna(world, reserve_privacy_case):
+    person = reserve_privacy_case['anna']['id']
+    response = world.act('POST', f'/api/dsgvo/persons/{person}/request-deletion')
+    assert response.status_code == 200, response.text
+    assert response.json()['applied'] == 'RESTRICTED'
+    assert response.json()['bindings'] == [{'kind': 'BOOKED_PAYMENT', 'entity_type': 'payment',
+        'entity_id': reserve_privacy_case['payment']['id'],
+        'retention_until': reserve_privacy_case['payment']['retention_until']}]
+
+
+@then('Anna remains identifiable and the repayment evidence and reserve rows stay unchanged')
+def retained_repayment_export(world, reserve_privacy_case):
+    w = reserve_privacy_case
+    after = privacy_export(world)
+    person = after['person'][w['anna']['id']]
+    assert (person['first_name'], person['last_name']) == ('Anna', 'Beispiel')
+    assert person['processing_restricted'] and person['anonymized_at'] is None
+    assert after['payment'] == w['before_export']['payment']
+    assert after['reserve_ledger_entry'] == w['before_export']['reserve_ledger_entry']
+    w['after_export'] = after
+
+
+@when('I request deletion of the genuinely unbound incidental contact Eva')
+def request_incidental_eva(world, reserve_privacy_case):
+    response = world.act('POST', f"/api/dsgvo/persons/{reserve_privacy_case['person']}/request-deletion")
+    assert response.status_code == 200, response.text
+    assert response.json()['applied'] == 'ANONYMIZED'
+    assert response.json()['bindings'] == []
+
+
+@then('only Eva is removed from the live reserve reason and its exact audit copy for 300 euros')
+def incidental_reason_export(world, reserve_privacy_case):
+    from copy import deepcopy
+    from decimal import Decimal
+    w = reserve_privacy_case
+    after = privacy_export(world)
+    expected = deepcopy(w['before_export'])
+    expected['reserve_ledger_entry'][w['entry']]['reason'] = 'Abstimmung mit Gelöscht'
+    for event in expected['audit_event'].values():
+        if (event.get('payload_diff') or {}).get('entry_id') == w['entry']:
+            event['payload_diff']['reason'] = 'Abstimmung mit Gelöscht'
+    assert after['reserve_ledger_entry'] == expected['reserve_ledger_entry']
+    assert Decimal(str(after['reserve_ledger_entry'][w['entry']]['amount'])) == Decimal('300.00')
+    for identifier, event in expected['audit_event'].items():
+        if event['action'].startswith('reserve.'):
+            assert after['audit_event'][identifier] == event
+    assert after['person'][w['anna']['id']] == expected['person'][w['anna']['id']]
+    assert after['payment'] == expected['payment']
+    w['after_export'] = after
+
+
+@then('the complete finalized statement and its original digest remain identical')
+def preserved_privacy_snapshot(world, reserve_privacy_case):
+    from app.engine.canonical import canonical_sha256
+    w = reserve_privacy_case
+    before = w['before_export']['settlement_run'][w['run']]
+    after = w['after_export']['settlement_run'][w['run']]
+    assert after == before
+    assert canonical_sha256(after['snapshot_payload']) == before['snapshot_sha256'] == w['frozen']['snapshot_sha256']
+
+
 @given('an empty asset report for 2020 precedes the first real report for 2025', target_fixture='stray_reserve_draft')
 def stray_reserve_draft(world, seed_data):
     from tests.test_m4_weg import _seed_weg

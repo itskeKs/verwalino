@@ -143,7 +143,7 @@ pending; registration stays closed and legal review remains with #26. See the
 | Tenant portal | ❌ | – |
 | Year overview per property (Anlage V) | ✅ income/expense overview plus default Anlage V mapping aid, unassigned/excluded items, exact reconciliation and separate CSV; tax review required | `api/reports.py` (`/property-year`, `/property-year.csv`, `/property-year/anlage-v`, `/property-year/anlage-v.csv`), `services/report_service.py`, `engine/anlage_v.py`, `pages/ReportsPage.tsx`, [M6 §6.12](m6-zahlungen-mietkonto.md#anlage-v-mapping-aid-34), T38, T39, #34, [usage](operations/statements.md) |
 | CSV/DATEV export | ✅ CSV for payments, costs and year overview; DATEV EXTF batch with explicitly configured SKR03/SKR04 accounts | `api/payments.py` (`/export.csv`), `api/cost_entries.py` (`/export.csv`), `api/reports.py` (`/datev.csv`), `services/datev_export.py`, `components/DatevExport.tsx`, T39, T40, T49, [usage](operations/tasks-and-documents.md) |
-| GDPR (DSGVO) access/erasure | ✅ access on screen, shared retention categories, retained booked recipients restricted; expired/unbound people anonymized | `api/dsgvo.py`, `services/dsgvo_service.py`, `components/DsgvoPanel.tsx` |
+| GDPR (DSGVO) access/erasure | ✅ access on screen, shared retention categories, retained booked recipients restricted; expired/unbound people anonymized, including incidental reserve reason/audit names | `api/dsgvo.py`, `services/dsgvo_service.py`, `components/DsgvoPanel.tsx` |
 
 ## Gaps
 
