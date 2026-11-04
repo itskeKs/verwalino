@@ -568,6 +568,26 @@ At 360 px each table scrolls within its card while the page stays within the
 viewport. Desktop retains every column and value. Finalized plans also wrap the
 complete snapshot SHA-256 inside its card; the stored snapshot is unchanged.
 
+Each owner-advance row shows `Einheit {number} – {location}` below the owner's
+name (location omitted when empty). The existing unit reference is resolved against
+the property's current units in calculated and finalized views; these are current
+labels, not snapshot labels. Missing current numbers or lookup data show
+`Einheit (Bezeichnung nicht verfügbar; ID: …)` with the stored unit ID. A missing
+unit reference shows `Einheit nicht zugeordnet`. A failed unit lookup leaves the
+stored plan and amounts visible with the same unavailable-label fallback.
+
+Synthetic unit-identity views use one long-named owner with `01 – Vorderhaus`
+(250/1000 MEA) and `02 – Hinterhaus` (750/1000 MEA), 1200.00 EUR annual costs and
+zero reserve. The rows retain annual/monthly advances of 300.00/25.00 EUR and
+900.00/75.00 EUR respectively. Before views show revision
+`f354dc020b18af0406da8776f79b0fc82bdc025f`; after views show this change.
+
+| Unit identity state | 1280 px | 360 px |
+| --- | --- | --- |
+| Calculated | [before](docs/assets/design/economic-plan-unit-identity/calculated-before-1280.png) · [after](docs/assets/design/economic-plan-unit-identity/calculated-after-1280.png) | [before](docs/assets/design/economic-plan-unit-identity/calculated-before-360.png) · [after](docs/assets/design/economic-plan-unit-identity/calculated-after-360.png) |
+| Finalized | [before](docs/assets/design/economic-plan-unit-identity/finalized-before-1280.png) · [after](docs/assets/design/economic-plan-unit-identity/finalized-after-1280.png) | [before](docs/assets/design/economic-plan-unit-identity/finalized-before-360.png) · [after](docs/assets/design/economic-plan-unit-identity/finalized-after-360.png) |
+| Scrolled annual/monthly amounts | — | [calculated](docs/assets/design/economic-plan-unit-identity/calculated-amounts-after-360.png) · [finalized](docs/assets/design/economic-plan-unit-identity/finalized-amounts-after-360.png) |
+
 Synthetic test-database plans with eight units at 125/1000 MEA, long owner names,
 and 12345.67 EUR each for Grundsteuer and the reserve contribution:
 
