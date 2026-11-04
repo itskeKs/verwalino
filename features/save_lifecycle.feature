@@ -13,3 +13,15 @@ Feature: Save lifecycle
       | width |
       | 1280  |
       | 360   |
+
+
+  Scenario Outline: Editors respect lost access and the last confirmed account data
+    Given a rental bank account with a full rent receipt, a partial receipt and an unrelated receipt
+    And another private contact is available for editing
+    When the manager opens follow-up editors during delayed refreshes at <width> pixels
+    Then lost contact access closes the private form and the account retains its confirmed name
+
+    Examples:
+      | width |
+      | 1280  |
+      | 360   |

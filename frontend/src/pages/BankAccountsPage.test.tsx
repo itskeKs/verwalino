@@ -1,5 +1,5 @@
 import { afterEach, expect, it, vi } from "vitest";
-import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import { AuthCtx } from "../auth/useAuth";
 import { BankAccountsPage } from "./BankAccountsPage";
@@ -87,4 +87,28 @@ it.each(["OWNER_ADMIN", "CLERK", "READ_ONLY"])("verlinkt Kontoumsätze und schü
   } else {
     expect(screen.getByRole("link", { name: "Kontoauszug importieren" })).toHaveAttribute("href", "/bankkonten/konto/umsaetze?import=1");
   }
+});
+
+
+it("keeps the canonical account label during a second edit opened before refresh completes", async () => {
+  let refresh!: (value: Response) => void;
+  const account = { id: 'konto', label: 'Old label', property_name: 'Testhaus', account_type: 'LAUFEND', bank_name: null, iban: null, bic: null };
+  const canonical = { ...account, label: 'Confirmed new label' };
+  const changes: unknown[] = [];
+  vi.stubGlobal('fetch', vi.fn(async (url: string, options?: RequestInit) => {
+    if (options?.method === 'PATCH') { changes.push(JSON.parse(options.body as string)); return json(canonical); }
+    if (url.startsWith('/api/bank-accounts')) return changes.length ? new Promise<Response>(resolve => { refresh = resolve; }) : json([account]);
+    return json({ items: [], next_cursor: null });
+  }));
+  render(<AuthCtx.Provider value={{ loading: false, session: { user_id: 'u', organization_id: 'o', role: 'CLERK' }, login: vi.fn(), logout: vi.fn() }}><MemoryRouter><BankAccountsPage /></MemoryRouter></AuthCtx.Provider>);
+  fireEvent.click(await screen.findByRole('button', { name: 'Bankkonto bearbeiten' }));
+  fireEvent.change(screen.getByLabelText('Bezeichnung', { exact: true }), { target: { value: canonical.label } });
+  fireEvent.click(screen.getByRole('button', { name: 'Änderungen speichern' }));
+  await waitFor(() => expect(refresh).toBeTypeOf('function'));
+  fireEvent.click(screen.getByRole('button', { name: 'Bankkonto bearbeiten' }));
+  await act(async () => refresh(json([canonical])));
+  fireEvent.change(screen.getByLabelText('Bank', { exact: true }), { target: { value: 'New bank' } });
+  fireEvent.click(screen.getByRole('button', { name: 'Änderungen speichern' }));
+  await waitFor(() => expect(changes).toHaveLength(2));
+  expect(changes).toEqual([{ label: canonical.label }, { bank_name: 'New bank' }]);
 });

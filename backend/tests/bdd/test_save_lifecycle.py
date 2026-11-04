@@ -11,7 +11,10 @@ from tests.bdd.steps.browser_common import button, field
 from tests.bdd.steps.browser_setup import create
 from tests.bdd.report import artifact_directory, attach_artifact
 
-scenarios(str(Path(__file__).resolve().parents[3] / 'features/save_lifecycle.feature'))
+scenarios(
+    str(Path(__file__).resolve().parents[3] / 'features/save_lifecycle.feature'),
+    str(Path(__file__).resolve().parents[3] / 'features/journeys/post_import_assignment.feature'),
+)
 
 
 @given('the rental property has many units, contacts, accounts and past leases')
@@ -144,3 +147,159 @@ def save_named_pages(browser_world, width, request):
 @then('each saved page confirms the write and shows the new values without reloading')
 def saved_pages(world):
     assert len(world.data['save_receipts']) == 6
+
+
+@when(parsers.parse('the manager imports sixty receipts and assigns one lower in the list at {width:d} pixels'))
+def assign_imported_statement(browser_world, width, request):
+    b, d = browser_world, browser_world.world.data
+    directory = artifact_directory(request.node)
+
+    async def run():
+        page = b.page
+        await page.set_viewport_size({'width': width, 'height': 900})
+        await b.visit(f"/bankkonten/{d['account']['id']}/umsaetze?import=1")
+        content = 'Buchungstag;Wertstellung;Betrag;Name;Verwendungszweck\n' + ''.join(
+            f"05.03.2026;05.03.2026;700,00;Synthetischer Absender;Langer Auszug {index:02d}\n" for index in range(60))
+        await field(page, 'Kontoauszug').set_input_files({'name': 'langer-auszug.csv', 'mimeType': 'text/csv', 'buffer': content.encode()})
+        await button(page, 'Vorschau erstellen').click()
+        await expect(page.get_by_role('heading', name='Importvorschau', exact=True)).to_be_visible()
+        await button(page, 'Übernehmen').click()
+        await expect(page.get_by_role('status').filter(has_text='60 neue Umsätze importiert.')).to_be_visible()
+        rows = page.get_by_role('row').filter(has_text='Langer Auszug')
+        await expect(rows.nth(35)).to_be_visible()
+        purpose = await rows.nth(35).locator('td').nth(4).inner_text()
+        row = page.get_by_role('row').filter(has=page.get_by_role('cell', name=purpose, exact=True))
+        action = button(row, 'Aufteilen')
+        await action.scroll_into_view_if_needed()
+        before = await page.locator('main').evaluate('(element) => element.scrollTop')
+        assert before > 1000, 'the chosen receipt must be below the first viewport'
+        await action.click()
+        dialog = page.get_by_role('dialog', name='Umsatz aufteilen', exact=True)
+        await expect(dialog.get_by_label('Mietvertrag', exact=True).first.locator(f"option[value='{d['leases'][0]['id']}']")).to_have_count(1)
+        while await dialog.get_by_role('button', name='Zeile entfernen', exact=True).count() > 1:
+            await dialog.get_by_role('button', name='Zeile entfernen', exact=True).last.click()
+        await b.select('Zahlungsart', 'KALTMIETE', dialog)
+        await field(dialog, 'Betrag (EUR)').fill('700,00')
+        await b.select('Mietvertrag', d['leases'][0]['id'], dialog)
+        await button(dialog, 'Zuordnung buchen').click()
+        await expect(dialog).to_have_count(0)
+        await expect(row).to_have_count(0)
+        after = await page.locator('main').evaluate('(element) => element.scrollTop')
+        assert abs(after - before) <= 2, f'statement position changed: {before} -> {after}'
+        assert '?import=1' in page.url
+        if directory:
+            image = directory / f'assignment-after-import-{width}.png'
+            await page.screenshot(path=str(image), full_page=True)
+            attach_artifact(request.node, image)
+        await expect(page.get_by_role('status').filter(has_text='Umsatz zugeordnet.')).to_be_in_viewport()
+        d['import_assignment_visible'] = True
+    b.run(run())
+
+
+@then('the assignment is confirmed in the viewport at the retained statement position')
+def imported_assignment_visible(world):
+    assert world.data['import_assignment_visible'] is True
+
+
+@given('another private contact is available for editing')
+def private_followup_contact(world):
+    d = world.data
+    person = create(world, '/api/persons', {'first_name': 'Bruno', 'last_name': 'Vertraulich', 'email': 'bruno@example.invalid', 'iban': 'DE89370400440532013000'})
+    domain = create(world, '/api/person-data-domains', {'person_id': person['id'], 'reason_code': 'INITIAL_SETUP'}, keyed=True)
+    create(world, f"/api/person-data-domains/{domain['id']}/grants", {'user_id': d['user_id'], 'capabilities': ['read', 'prepare', 'export'], 'reason_code': 'TEAM_ACCESS'}, keyed=True)
+    d['private_followup'] = person
+
+
+@when(parsers.parse('the manager opens follow-up editors during delayed refreshes at {width:d} pixels'))
+def followup_editors(browser_world, width, request):
+    b, d = browser_world, browser_world.world.data
+    directory = artifact_directory(request.node)
+    results = {}
+
+    async def capture(name):
+        if directory:
+            image = directory / f'{name}-{width}.png'
+            await b.page.screenshot(path=str(image), full_page=True)
+            attach_artifact(request.node, image)
+
+    async def run():
+        page = b.page
+        await page.set_viewport_size({'width': width, 'height': 900})
+        await b.visit('/personen')
+        row = page.get_by_role('row').filter(has=page.locator(f"a[href='/personen/{d['people'][0].id}']"))
+        await button(row, 'Bearbeiten').click()
+        await field(page, 'Telefon').fill('030 5551234')
+        ready, release, completed = asyncio.Event(), asyncio.Event(), asyncio.Event()
+        pattern = re.compile(r'/api/persons/page(?:\?.*)?$')
+
+        async def denied_refresh(route):
+            if route.request.method != 'GET':
+                await route.fallback()
+                return
+            await route.fetch()
+            ready.set()
+            await release.wait()
+            try:
+                await route.fulfill(status=401, content_type='application/json', body='{"detail":"Zugriff auf Kontakte entzogen"}')
+            finally:
+                completed.set()
+
+        await page.route(pattern, denied_refresh)
+        try:
+            await button(page, 'Speichern').click()
+            await asyncio.wait_for(ready.wait(), timeout=10)
+            other = page.get_by_role('row').filter(has=page.locator(f"a[href='/personen/{d['private_followup']['id']}']"))
+            await button(other, 'Bearbeiten').click()
+            await expect(field(page, 'E-Mail')).to_have_value('bruno@example.invalid')
+        finally:
+            release.set()
+            if ready.is_set():
+                await asyncio.wait_for(completed.wait(), timeout=10)
+            await page.unroute(pattern, denied_refresh)
+        await expect(page.get_by_text('ApiError: Zugriff auf Kontakte entzogen', exact=True)).to_be_visible()
+        results['private_editor_closed'] = await field(page, 'E-Mail').count() == 0
+        await capture('persons-access-loss')
+
+        await b.visit('/bankkonten')
+        bank_row = page.get_by_role('row', include_hidden=True).filter(has=page.locator(f"a[href='/bankkonten/{d['account']['id']}/umsaetze']"))
+        await button(bank_row, 'Bankkonto bearbeiten').click()
+        await field(page, 'Bezeichnung').fill('Bestätigtes Konto Gartenflügel')
+        ready, release, completed = asyncio.Event(), asyncio.Event(), asyncio.Event()
+        pattern = re.compile(r'/api/bank-accounts(?:\?.*)?$')
+
+        async def delayed_refresh(route):
+            if route.request.method != 'GET':
+                await route.fallback()
+                return
+            response = await route.fetch()
+            ready.set()
+            await release.wait()
+            try:
+                await route.fulfill(response=response)
+            finally:
+                completed.set()
+
+        await page.route(pattern, delayed_refresh)
+        try:
+            await button(page, 'Änderungen speichern').click()
+            await asyncio.wait_for(ready.wait(), timeout=10)
+            await button(bank_row, 'Bankkonto bearbeiten').click()
+        finally:
+            release.set()
+            if ready.is_set():
+                await asyncio.wait_for(completed.wait(), timeout=10)
+            await page.unroute(pattern, delayed_refresh)
+        await expect(bank_row.get_by_text('Bestätigtes Konto Gartenflügel', exact=True)).to_have_count(1)
+        await field(page, 'Bank').fill('Neue Testbank')
+        await button(page, 'Änderungen speichern').click()
+        await expect(page.get_by_role('dialog', name='Bankkonto bearbeiten', exact=True)).to_have_count(0)
+        await expect(bank_row.get_by_role('cell', name='Neue Testbank', exact=True)).to_be_visible()
+        results['canonical_name_retained'] = await bank_row.get_by_text('Bestätigtes Konto Gartenflügel', exact=True).count() == 1
+        await capture('accounts-followup')
+    b.run(run())
+    d['followup_editor_results'] = results
+
+
+@then('lost contact access closes the private form and the account retains its confirmed name')
+def followup_editor_results(world):
+    assert world.data['followup_editor_results'] == {'private_editor_closed': True, 'canonical_name_retained': True}

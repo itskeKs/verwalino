@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { ApiError } from "../api/client";
 import { Link, useParams, useSearchParams } from "react-router-dom";
 import {
@@ -45,7 +45,8 @@ export function BankTransactionsPage() {
 
 function AccountTransactions({ id }: { id: string }) {
   const { session } = useAuth();
-  const canWrite = session?.role === "OWNER_ADMIN" || session?.role === "CLERK";
+  const [accessDenied, setAccessDenied] = useState(false);
+  const canWrite = !accessDenied && (session?.role === "OWNER_ADMIN" || session?.role === "CLERK");
   const [searchParams, setSearchParams] = useSearchParams();
   const [account, setAccount] = useState<BankAccount | null>(null);
   const [accountError, setAccountError] = useState<string | null>(null);
@@ -69,7 +70,23 @@ function AccountTransactions({ id }: { id: string }) {
   const importLock = useRef(false);
   const fileVersion = useRef(0);
   const mounted = useRef(false);
+  const accessVersion = useRef(0);
   const showImport = canWrite && searchParams.get("import") === "1";
+
+  const loseAccess = useCallback(() => {
+    accessVersion.current++;
+    fileVersion.current++;
+    setAccessDenied(true);
+    setEditing(null);
+    setItems([]);
+    setAccount(null);
+    setNextOffset(null);
+    setFile(null);
+    setPreview(null);
+    setBusy(false);
+    setMutating(false);
+    setMutationError(null);
+  }, []);
 
   useEffect(() => {
     mounted.current = true;
@@ -77,31 +94,35 @@ function AccountTransactions({ id }: { id: string }) {
   }, []);
 
   useEffect(() => {
+    if (accessDenied) return;
     let cancelled = false;
+    const version = accessVersion.current;
     getBankAccount(id).then(value => {
-      if (!cancelled) setAccount(value);
+      if (!cancelled && version === accessVersion.current) setAccount(value);
     }).catch(error => {
-      if (!cancelled) setAccountError(errorMessage(error));
+      if (!cancelled && version === accessVersion.current) setAccountError(errorMessage(error));
     });
     return () => { cancelled = true; };
-  }, [id]);
+  }, [id, accessDenied]);
 
   useEffect(() => {
     let cancelled = false;
+    const version = accessVersion.current;
     listBankMatchingTransactions(id, status === "" ? "ALL" : status, offset).then(result => {
-      if (cancelled) return;
+      if (cancelled || version !== accessVersion.current) return;
+      setAccessDenied(false);
       setItems(result.items);
       setNextOffset(result.next_offset);
     }).catch(error => {
-      if (!cancelled) {
-        if (error instanceof ApiError && [401, 403, 404].includes(error.status)) { setItems([]); setAccount(null); }
+      if (!cancelled && version === accessVersion.current) {
+        if (error instanceof ApiError && [401, 403, 404].includes(error.status)) loseAccess();
         setListError(errorMessage(error));
       }
     }).finally(() => {
       if (!cancelled) setLoading(false);
     });
     return () => { cancelled = true; };
-  }, [id, status, offset, revision]);
+  }, [id, status, offset, revision, loseAccess]);
 
   function resetList() {
     setLoading(true);
@@ -126,9 +147,10 @@ function AccountTransactions({ id }: { id: string }) {
     setSuccess(null);
     if (dryRun) setPreview(null);
     const version = fileVersion.current;
+    const access = accessVersion.current;
     try {
       const result = await importBankTransactions(id, file, dryRun);
-      if (!mounted.current) return;
+      if (!mounted.current || access !== accessVersion.current) return;
       if (dryRun) {
         if (version === fileVersion.current) setPreview(result);
       } else {
@@ -141,10 +163,10 @@ function AccountTransactions({ id }: { id: string }) {
         setRevision(value => value + 1);
       }
     } catch (error) {
-      if (mounted.current && version === fileVersion.current) setImportError(errorMessage(error));
+      if (mounted.current && access === accessVersion.current && version === fileVersion.current) setImportError(errorMessage(error));
     } finally {
       importLock.current = false;
-      if (mounted.current) setBusy(false);
+      if (mounted.current && access === accessVersion.current) setBusy(false);
     }
   }
 
@@ -154,9 +176,10 @@ function AccountTransactions({ id }: { id: string }) {
     setMutating(true);
     setMutationError(null);
     setSuccess(null);
+    const access = accessVersion.current;
     try {
       const result = lines ? await assignBankTransaction(item.id, lines) : await ignoreBankTransaction(item.id);
-      if (!mounted.current) return;
+      if (!mounted.current || access !== accessVersion.current) return;
       setEditing(null);
       setItems(current => current.map(row => row.id === item.id ? { ...row, status: result.status, suggestions: [] } : row));
       setSuccess('payments' in result && result.payments.some(payment => payment.status === 'draft')
@@ -166,10 +189,10 @@ function AccountTransactions({ id }: { id: string }) {
       setLoading(true);
       setRevision(value => value + 1);
     } catch (error) {
-      if (mounted.current) setMutationError(errorMessage(error));
+      if (mounted.current && access === accessVersion.current) setMutationError(errorMessage(error));
     } finally {
       mutationLock.current = false;
-      if (mounted.current) setMutating(false);
+      if (mounted.current && access === accessVersion.current) setMutating(false);
     }
   }
 
@@ -208,7 +231,6 @@ function AccountTransactions({ id }: { id: string }) {
         <label>Kontoauszug<input type="file" accept=".csv,text/csv,.xml,application/xml,text/xml,.zip,application/zip" disabled={busy && preview !== null} onChange={event => changeFile(event.target.files?.[0] ?? null)} /></label>
         <button type="button" className="btn" disabled={!file || busy} onClick={() => void runImport(true)}>{busy ? "Bitte warten…" : "Vorschau erstellen"}</button>
         {importError && <p role="alert" className="error-text">{importError}</p>}
-        {success && <p role="status" className="sticky top-0 z-10 bg-background py-2">{success}</p>}
         {preview && <div>
           <h3>Importvorschau</h3>
           <p>{preview.count} Umsätze: {preview.new_count} neu, {preview.duplicate_count} Dubletten.</p>
@@ -226,7 +248,7 @@ function AccountTransactions({ id }: { id: string }) {
       </section>}
 
       {!editing && mutationError && <p role="alert" className="error-text">{mutationError}</p>}
-      {!showImport && success && <p role="status" className="sticky top-0 z-10 bg-background py-2">{success}</p>}
+      {success && <p role="status" className="sticky top-0 z-10 bg-background py-2">{success}</p>}
       {editing && canWrite && <SplitDialog transaction={editing} account={account} busy={mutating} error={mutationError}
         onClose={() => { if (!mutationLock.current) { setEditing(null); setMutationError(null); } }}
         onSubmit={lines => void mutate(editing, lines)} />}

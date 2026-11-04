@@ -2,7 +2,7 @@
  * Persons list page -- shows all Personen with inline creation/editing.
  */
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { createPerson, updatePerson } from "../api/endpoints";
 import type { Person, PersonCreate } from "../api/types";
@@ -40,9 +40,15 @@ const EMPTY_FORM: PersonFormData = {
 };
 
 export function PersonsPage() {
-  const { session } = useAuth();
-  const canWrite = session?.role === "OWNER_ADMIN" || session?.role === "CLERK";
   const page = usePagedList<Person>("/api/persons/page", { keepOnReload: true });
+  return <Persons key={page.accessDenied ? "denied" : "available"} page={page} />;
+}
+
+function Persons({ page }: { page: ReturnType<typeof usePagedList<Person>> }) {
+  const { session } = useAuth();
+  const canWrite = !page.accessDenied && (session?.role === "OWNER_ADMIN" || session?.role === "CLERK");
+  const active = useRef(false);
+  useEffect(() => { active.current = true; return () => { active.current = false; }; }, []);
   const persons = page.items;
   const reload = page.reload;
   const loading = page.loading;
@@ -104,18 +110,20 @@ export function PersonsPage() {
       } else {
         await createPerson(body);
       }
+      if (!active.current) return;
       setSuccess("Person gespeichert.");
       setShowForm(false);
       setEditId(null);
       reload();
     } catch (err) {
+      if (!active.current) return;
       if (err instanceof ApiError) {
         setError(err.message);
       } else {
         setError(String(err));
       }
     } finally {
-      setSaving(false);
+      if (active.current) setSaving(false);
     }
   }
 

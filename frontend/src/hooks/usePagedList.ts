@@ -9,6 +9,7 @@ export function usePagedList<T extends { id: string }>(endpoint: string, { keepO
   const [nextCursor, setNextCursor] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [accessDenied, setAccessDenied] = useState(false);
   const [revision, setRevision] = useState(0);
   const request = useRef<AbortController | null>(null);
   const previousFetch = useRef<typeof fetchPage | null>(null);
@@ -45,13 +46,14 @@ export function usePagedList<T extends { id: string }>(endpoint: string, { keepO
           count++;
         }
         if (!controller.signal.aborted) {
+          setAccessDenied(false);
           setItems([...new Map(refreshed.map(item => [item.id, item])).values()]);
           setNextCursor(page.next_cursor);
           loadedPages.current = count;
         }
       } catch (e) {
         if (!controller.signal.aborted) {
-          if (e instanceof ApiError && [401, 403, 404].includes(e.status)) { setItems([]); setNextCursor(null); }
+          if (e instanceof ApiError && [401, 403, 404].includes(e.status)) { setAccessDenied(true); setItems([]); setNextCursor(null); }
           setError(String(e));
         }
       } finally {
@@ -77,12 +79,15 @@ export function usePagedList<T extends { id: string }>(endpoint: string, { keepO
         setNextCursor(page.next_cursor);
       }
     } catch (e) {
-      if (!controller.signal.aborted) setError(String(e));
+      if (!controller.signal.aborted) {
+        if (keepOnReload && e instanceof ApiError && [401, 403, 404].includes(e.status)) { setAccessDenied(true); setItems([]); setNextCursor(null); }
+        setError(String(e));
+      }
     } finally {
       if (!controller.signal.aborted) setLoading(false);
     }
-  }, [fetchPage, loading, nextCursor]);
+  }, [fetchPage, loading, nextCursor, keepOnReload]);
 
   const reload = useCallback(() => setRevision(value => value + 1), []);
-  return { items, query, setQuery, loading, error, nextCursor, loadMore, reload };
+  return { items, query, setQuery, loading, error, accessDenied, nextCursor, loadMore, reload };
 }

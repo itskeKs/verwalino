@@ -821,6 +821,12 @@ The persons and bank account lists stay mounted during save refreshes. Search/fi
 start a new list. Transaction assignment retains the table during refresh and applies the
 server-confirmed status immediately, disabling the completed row's actions; the existing
 “Umsatz zugeordnet.” receipt and draft-only reserve receipt keep their meanings.
+The transaction receipt sits outside the import card, including on `?import=1`, so it remains
+visible while assigning a receipt further down a long imported statement. Confirmed access loss
+also closes the persons inline editor and transaction split dialog, discards their private state
+and invalidates late work; transient failures keep useful inputs. Bank account edits update their
+canonical row from the successful response before the next edit can open.
+
 
 Before/after captures use the real local browser and shared disposable test database with
 synthetic rental records at 1280 and 360 px. After captures follow the saves without a manual reload.
@@ -833,6 +839,17 @@ synthetic rental records at 1280 and 360 px. After captures follow the saves wit
 | Unit leases | [before](docs/assets/design/save-lifecycle/before-unit-1280.png) · [after](docs/assets/design/save-lifecycle/after-unit-1280.png) | [before](docs/assets/design/save-lifecycle/before-unit-360.png) · [after](docs/assets/design/save-lifecycle/after-unit-360.png) |
 | Bank accounts | [before](docs/assets/design/save-lifecycle/before-accounts-1280.png) · [after](docs/assets/design/save-lifecycle/after-accounts-1280.png) | [before](docs/assets/design/save-lifecycle/before-accounts-360.png) · [after](docs/assets/design/save-lifecycle/after-accounts-360.png) |
 | Transaction assignment | [before](docs/assets/design/save-lifecycle/before-assignment-1280.png) · [after](docs/assets/design/save-lifecycle/after-assignment-1280.png) | [before](docs/assets/design/save-lifecycle/before-assignment-360.png) · [after](docs/assets/design/save-lifecycle/after-assignment-360.png) |
+
+Delayed-refresh and post-import regression captures use the same synthetic test environment.
+Contact access-loss captures inject a synthetic HTTP 401 response into the delayed list read;
+they verify frontend invalidation, not a server-side permission change. Account follow-up edits
+and the sixty-receipt import/assignment use the real API. Each pair is desktop/360 px.
+
+| Case | Desktop before / after | 360 px before / after |
+|---|---|---|
+| Contact editor after access loss | [before](docs/assets/design/save-lifecycle/r1-before-persons-access-loss-1280.png) · [after](docs/assets/design/save-lifecycle/r1-after-persons-access-loss-1280.png) | [before](docs/assets/design/save-lifecycle/r1-before-persons-access-loss-360.png) · [after](docs/assets/design/save-lifecycle/r1-after-persons-access-loss-360.png) |
+| Account follow-up edit | [before](docs/assets/design/save-lifecycle/r1-before-accounts-followup-1280.png) · [after](docs/assets/design/save-lifecycle/r1-after-accounts-followup-1280.png) | [before](docs/assets/design/save-lifecycle/r1-before-accounts-followup-360.png) · [after](docs/assets/design/save-lifecycle/r1-after-accounts-followup-360.png) |
+| Assignment after importing a long statement | [before](docs/assets/design/save-lifecycle/r1-before-assignment-after-import-1280.png) · [after](docs/assets/design/save-lifecycle/r1-after-assignment-after-import-1280.png) | [before](docs/assets/design/save-lifecycle/r1-before-assignment-after-import-360.png) · [after](docs/assets/design/save-lifecycle/r1-after-assignment-after-import-360.png) |
 
 ## Screenshots
 

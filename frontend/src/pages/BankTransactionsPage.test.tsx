@@ -1,5 +1,5 @@
 import { afterEach, expect, it, vi } from "vitest";
-import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { Link, MemoryRouter, Route, Routes } from "react-router-dom";
 import { AuthCtx, type AuthContextValue } from "../auth/useAuth";
 import { BankTransactionsPage } from "./BankTransactionsPage";
@@ -525,4 +525,57 @@ it.each([403, 500])("handles post-save refresh failure %s without inventing empt
   expect(screen.queryByText("Keine Umsätze vorhanden.")).not.toBeInTheDocument();
   if (status === 403) expect(screen.queryByText("Heizung")).not.toBeInTheDocument();
   else { expect(screen.getByText("Heizung")).toBeVisible(); expect(screen.queryByRole("button", { name: "Ignorieren" })).not.toBeInTheDocument(); }
+});
+
+
+async function openRetainedTransactionEditor(status: number, pendingSave = false) {
+  let refresh!: (value: Response) => void;
+  let finishSave!: (value: Response) => void;
+  let saved = false;
+  const items = ['A', 'B'].map(id => ({ ...warm, id, counterparty_name: `Privater Kontakt ${id}`, purpose: `Privater Umsatz ${id}` }));
+  const fetchMock = setup(async (url, options) => {
+    if (options?.method === 'POST') {
+      if (url.endsWith('/assign') && pendingSave) return new Promise<Response>(resolve => { finishSave = resolve; });
+      saved = true;
+      return json({ id: 'A', status: 'IGNORIERT' });
+    }
+    if (isTransactionList(url)) return saved ? new Promise<Response>(resolve => { refresh = resolve; }) : json({ items, next_offset: null });
+    const path = url.split('?')[0];
+    return path in targets ? json(targets[path]) : json({ id: 'a', property_id: 'property', label: 'Hauskonto', iban: 'DE123' });
+  }, 'OWNER_ADMIN', '/bankkonten/a/umsaetze');
+  await screen.findByText('Privater Umsatz A');
+  fireEvent.click(within(screen.getByText('Privater Umsatz A').closest('tr')!).getByRole('button', { name: 'Ignorieren' }));
+  await waitFor(() => expect(refresh).toBeTypeOf('function'));
+  fireEvent.click(within(screen.getByText('Privater Umsatz B').closest('tr')!).getByRole('button', { name: 'Aufteilen' }));
+  const dialog = await screen.findByRole('dialog', { name: 'Umsatz aufteilen' });
+  await within(dialog).findAllByRole('option', { name: /Anna Muster.*2025-01-01/ });
+  fireEvent.change(within(dialog).getAllByLabelText('Notiz')[0], { target: { value: 'Private Zuordnungsnotiz' } });
+  if (pendingSave) {
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Zuordnung buchen' }));
+    await waitFor(() => expect(finishSave).toBeTypeOf('function'));
+  }
+  await act(async () => refresh(json({ detail: 'Zugriff auf Umsätze nicht verfügbar' }, status)));
+  return { dialog, fetchMock, finishSave };
+}
+
+it.each([401, 403, 500])("handles a protected transaction dialog when the retained-list refresh returns %s", async status => {
+  const { dialog } = await openRetainedTransactionEditor(status);
+  if (status === 500) {
+    expect(dialog).toBeInTheDocument();
+    expect(within(dialog).getAllByLabelText('Notiz')[0]).toHaveValue('Private Zuordnungsnotiz');
+    expect(dialog).toHaveTextContent('Privater Kontakt B');
+  } else {
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+    expect(screen.queryByText(/Privater Kontakt B/)).not.toBeInTheDocument();
+    expect(screen.queryByDisplayValue('Private Zuordnungsnotiz')).not.toBeInTheDocument();
+  }
+});
+
+it.each([401, 403])("invalidates an outstanding assignment after access loss %s", async status => {
+  const { fetchMock, finishSave } = await openRetainedTransactionEditor(status, true);
+  const reads = fetchMock.mock.calls.filter(([, options]) => !options?.method).length;
+  await act(async () => finishSave(json({ id: 'B', status: 'ZUGEORDNET', payments: [] })));
+  expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+  expect(screen.queryByText('Umsatz zugeordnet.')).not.toBeInTheDocument();
+  expect(fetchMock.mock.calls.filter(([, options]) => !options?.method)).toHaveLength(reads);
 });

@@ -7,7 +7,11 @@ loaded content during save refreshes and confirm successful writes with inline s
 Changed list values appear without a manual reload; errors retain useful input and loaded data.
 Bank assignment/ignore finish their database transaction before the success response, using
 the same function-scoped dependency as the existing writer guards. Their table stays visible
-during the subsequent refresh and reflects the confirmed status immediately. See the
+during the subsequent refresh and reflects the confirmed status immediately.
+A later account edit starts from the canonical successful response, including while its list read
+is pending. Confirmed contact/transaction access loss removes open private editors and invalidates
+late completions; transient failures retain useful input. Assignment feedback remains page-level
+and visible after importing a long statement without leaving the import page. See the
 [save lifecycle design and screenshots](../DESIGN.md#master-data-save-lifecycle) and
 [executable browser journey](../features/save_lifecycle.feature).
 
