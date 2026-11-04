@@ -486,6 +486,22 @@ content uses `min-w-0` plus `truncate` (`DashboardPage.tsx`) or `overflow-wrap: 
 (`.settlement-detail`). Deviation: in the 360 px detail screenshot the units table
 and the document upload button extend beyond their card, so `main` scrolls sideways there.
 
+The WEG settlement detail follows this contract: `settlement-detail` wraps long owner
+names and the complete snapshot SHA-256. Each individual statement uses its own
+`overflow-x-auto` container, natural column widths and unbroken monetary values;
+the table scrolls within the card at 360 px. The owner balance above it keeps its
+wrapping labels and fully visible amounts without horizontal scrolling.
+
+Synthetic long-owner statements from the test database, at 1280 px and 360 px wide
+(the capture height fits the entire owner card):
+
+| State | 1280 px | 360 px |
+| --- | --- | --- |
+| Computed before / after | [before](docs/assets/design/weg-statements/computed-before-1280.png) · [after](docs/assets/design/weg-statements/computed-after-1280.png) | [before](docs/assets/design/weg-statements/computed-before-360.png) · [after](docs/assets/design/weg-statements/computed-after-360.png) |
+| Finalized before / after | [before](docs/assets/design/weg-statements/finalized-before-1280.png) · [after](docs/assets/design/weg-statements/finalized-after-1280.png) | [before](docs/assets/design/weg-statements/finalized-before-360.png) · [after](docs/assets/design/weg-statements/finalized-after-360.png) |
+| Snapshot hash before / after | [before](docs/assets/design/weg-statements/hash-before-1280.png) · [after](docs/assets/design/weg-statements/hash-after-1280.png) | [before](docs/assets/design/weg-statements/hash-before-360.png) · [after](docs/assets/design/weg-statements/hash-after-360.png) |
+| Table scrolled to complete amounts | — | [computed](docs/assets/design/weg-statements/computed-amount-after-360.png) · [finalized](docs/assets/design/weg-statements/finalized-amount-after-360.png) |
+
 ## Components
 
 New screens use the kit components and tokens. Reuse global classes only for what has no kit

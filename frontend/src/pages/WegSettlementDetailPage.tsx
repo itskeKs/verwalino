@@ -257,28 +257,30 @@ export function WegSettlementDetailPage() {
                 {o.ownership_periods.map((p, i) => <p key={i}>Einheit {p.unit_number}: {germanDate(p.valid_from)} bis {germanDate(p.valid_to)}</p>)}
               </section>
             ))}
-            <table className="data-table">
-              <thead><tr><th>Position</th><th>Schlüssel</th><th style={{ textAlign: "right" }}>Gesamt</th><th style={{ textAlign: "right" }}>Betrag</th></tr></thead>
-              <tbody>
-                {ownerLines(oid).filter(l => !run.owner_results?.some(o => o.owner_profile_id === oid) || !["PLAN_ADVANCE", "ABRECHNUNGSSPITZE", "ADVANCE_PAYMENT"].includes(l.line_type)).map((l) => {
-                  const isSummary = l.line_type !== "COST" && l.line_type !== "RESERVE_CONTRIBUTION";
-                  const isSpitze = l.line_type === "ABRECHNUNGSSPITZE";
-                  return (
-                    <tr key={l.id} style={isSummary ? { fontWeight: isSpitze ? 700 : 600 } : undefined}>
-                      <td>
-                        {LINE_LABELS[l.line_type] ?? l.label}
-                        {l.note ? <div style={{ fontSize: "0.78rem", color: "var(--text-muted)", fontStyle: "italic" }}>{l.note}</div> : null}
-                      </td>
-                      <td>{l.distribution_key ?? ""}</td>
-                      <td style={{ fontFamily: "var(--mono)", textAlign: "right" }}>{l.total_amount != null ? `${l.total_amount} EUR` : ""}</td>
-                      <td style={{ fontFamily: "var(--mono)", textAlign: "right", color: isSpitze ? spitzeColor(l.amount) : undefined }}>
-                        {l.amount} EUR
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
+            <div className="overflow-x-auto">
+              <table className="data-table weg-statement-table">
+                <thead><tr><th>Position</th><th>Schlüssel</th><th style={{ textAlign: "right" }}>Gesamt</th><th style={{ textAlign: "right" }}>Betrag</th></tr></thead>
+                <tbody>
+                  {ownerLines(oid).filter(l => !run.owner_results?.some(o => o.owner_profile_id === oid) || !["PLAN_ADVANCE", "ABRECHNUNGSSPITZE", "ADVANCE_PAYMENT"].includes(l.line_type)).map((l) => {
+                    const isSummary = l.line_type !== "COST" && l.line_type !== "RESERVE_CONTRIBUTION";
+                    const isSpitze = l.line_type === "ABRECHNUNGSSPITZE";
+                    return (
+                      <tr key={l.id} style={isSummary ? { fontWeight: isSpitze ? 700 : 600 } : undefined}>
+                        <td>
+                          {LINE_LABELS[l.line_type] ?? l.label}
+                          {l.note ? <div style={{ fontSize: "0.78rem", color: "var(--text-muted)", fontStyle: "italic" }}>{l.note}</div> : null}
+                        </td>
+                        <td>{l.distribution_key ?? ""}</td>
+                        <td className="whitespace-nowrap" style={{ fontFamily: "var(--mono)", textAlign: "right" }}>{l.total_amount != null ? `${l.total_amount} EUR` : ""}</td>
+                        <td className="whitespace-nowrap" style={{ fontFamily: "var(--mono)", textAlign: "right", color: isSpitze ? spitzeColor(l.amount) : undefined }}>
+                          {l.amount} EUR
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
           </div>
         ))
       )}

@@ -1,6 +1,6 @@
 import { api, ApiError } from "../api/client";
 import { afterEach, expect, it, vi } from "vitest";
-import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { Link, MemoryRouter, Route, Routes } from "react-router-dom";
 import * as endpoints from "../api/endpoints";
 import type { EconomicPlan, OwnerProfile, Person, Property, WegLine, WegRun } from "../api/types";
@@ -61,6 +61,28 @@ function show() {
     <Route path="/weg-abrechnungen/:runId" element={<WegSettlementDetailPage />} />
   </Routes></MemoryRouter>);
 }
+
+it.each(['draft', 'finalized'] as const)('contains every %s owner statement in its own horizontal scroll container', async status => {
+  const hash = '0123456789abcdef'.repeat(4);
+  const ownerName = 'Anna-Katharina Freifrau von Hohenzollern-Sigmaringen';
+  const fetchMock = install([{ ...draft(), status, snapshot_sha256: status === 'finalized' ? hash : null,
+    lines: [frozenLine('seller', seller, '7200.00'), frozenLine('buyer', buyer, '4800.00')] }]);
+  const original = fetchMock.getMockImplementation()!;
+  fetchMock.mockImplementation((url, init) => url === '/api/persons'
+    ? Promise.resolve(json(people.map(person => person.id === profiles[0].person_id
+      ? { ...person, first_name: 'Anna-Katharina', last_name: 'Freifrau von Hohenzollern-Sigmaringen' } : person)))
+    : original(url, init));
+  show();
+  const owner = await screen.findByRole('heading', { name: ownerName });
+  expect(owner.closest('.settlement-detail')).not.toBeNull();
+  for (const name of [ownerName, 'Berta Neu']) {
+    const heading = screen.getByRole('heading', { name });
+    const table = within(heading.parentElement!).getByRole('table');
+    expect(table.parentElement).toHaveClass('overflow-x-auto');
+  }
+  expect(within(owner.parentElement!).getByRole('cell', { name: '7200.00 EUR' })).toBeVisible();
+  if (status === 'finalized') expect(screen.getByText(hash)).toBeVisible();
+});
 
 it("shows the frozen Hausgeld balance separately from the resolved Spitze", async () => {
   const run = { ...draft(), status: "finalized" as const,
