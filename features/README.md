@@ -374,4 +374,4 @@ grows with the fixes: a finding from a blind acceptance run first fails as a ste
 its journey, then the fix turns it green. Twins use the browser harness above and run with
 `make test-browser`, in CI on every PR; they do not replace the blind run, which checks that a
 user finds the way at all. A twin is written with the first issue that touches its journey, not
-in advance, so none exists yet.
+in advance.

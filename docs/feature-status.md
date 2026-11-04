@@ -77,7 +77,7 @@ pending; registration stays closed and legal review remains with #26. See the
 | Expected charges (Sollstellung) for rent/operating costs, day-accurate | ✅ derived live, including rent history | `engine/mietkonto.py` (`tenant_expected_charges`) |
 | Record, book, reverse payment | ✅ drafts editable | `api/payments.py`, `pages/PaymentDetailPage.tsx`, T07 |
 | Tenant/owner ledger (Mietkonto), open items | ✅ | `api/payments.py` (`/mietkonto/*`, `/open-items`), `pages/MietkontoPage.tsx`, `pages/OpenItemsPage.tsx` |
-| Bank statement import CSV/CAMT | ✅ CSV (generic plus DKB profiles) and CAMT.053 (.001.02/.08, XML/ZIP), preview, duplicate detection | `engine/bank_import.py`, `services/bank_import_service.py`, `api/bank_accounts.py` (`POST /{id}/imports`), `pages/BankTransactionsPage.tsx`, T15–T19, [usage](operations/bank-and-payments.md) |
+| Bank statement import CSV/CAMT | ✅ CSV (generic, DKB and Sparkasse CSV-CAMT profiles) and CAMT.053 (.001.02/.08, XML/ZIP), preview, duplicate detection | `engine/bank_import.py`, `services/bank_import_service.py`, `api/bank_accounts.py` (`POST /{id}/imports`), `pages/BankTransactionsPage.tsx`, T15–T19, [usage](operations/bank-and-payments.md) |
 | Bank retrieval PSD2/FinTS | ❌ | – |
 | Match suggestions, split booking | ✅ apply suggestion, split, ignore | `engine/bank_matching.py`, `api/bank_transactions.py` (`/assign`, `/ignore`), `pages/BankTransactionsPage.tsx`, T20–T22, [usage](operations/bank-and-payments.md) |
 | SEPA direct debit | ✅ pain.008 for monthly rent, creditor ID and tenant mandates | `services/sepa_export.py`, `api/sepa.py`, `components/SepaExport.tsx`, T50, [usage](operations/tasks-and-documents.md) |

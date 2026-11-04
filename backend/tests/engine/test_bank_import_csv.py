@@ -160,3 +160,56 @@ def test_undecodable_text_is_not_replaced_silently():
 def test_database_field_limits_fail_without_truncation(field, value):
     with pytest.raises(BankImportError, match="Zeile 2"):
         parse_csv((HEADER + ROW.replace(field, value)).encode())
+
+
+@pytest.mark.parametrize("four_digit_year", [False, True])
+def test_sparkasse_csv_camt_preserves_dates_counterparties_and_signed_amounts(four_digit_year):
+    content = (FIXTURES / "sparkasse_csv_camt.csv").read_text()
+    if four_digit_year:
+        content = content.replace('.26"', '.2026"')
+    rows = parse_csv(content.encode(), account_iban="DE75512108001245126199")
+    assert len(rows) == 2
+    assert rows[0].booking_date == rows[0].value_date == date(2026, 4, 7)
+    assert rows[0].amount == Decimal("800.00")
+    assert rows[0].counterparty_name == "Anna Beispiel"
+    assert rows[0].counterparty_iban == "DE89370400440532013000"
+    assert rows[0].purpose == "Miete April"
+    assert rows[1].amount == Decimal("-60.00")
+    assert rows[1].counterparty_name == "Stadtwerke Musterstadt"
+    assert rows[1].counterparty_iban == "DE02120300000000202051"
+    assert rows == parse_csv(content.encode())
+
+
+@pytest.mark.parametrize("status", ["Umsatz vorgemerkt", "Unbekannt", ""])
+def test_sparkasse_rejects_every_unbooked_status(status):
+    content = (FIXTURES / "sparkasse_csv_camt.csv").read_text().replace('.26"', '.2026"')
+    with pytest.raises(BankImportError, match="Status.*Umsatz gebucht"):
+        parse_csv(content.replace("Umsatz gebucht", status).encode())
+
+
+@pytest.mark.parametrize("currency", ["USD", ""])
+def test_sparkasse_waehrung_requires_eur(currency):
+    content = (FIXTURES / "sparkasse_csv_camt.csv").read_text().replace('.26"', '.2026"')
+    with pytest.raises(BankImportError, match="Zeile 2.*EUR"):
+        parse_csv(content.replace('"EUR"', f'"{currency}"').encode())
+
+
+@pytest.mark.parametrize("row_index", [1, 2])
+def test_sparkasse_checks_every_rows_target_account(row_index):
+    lines = (FIXTURES / "sparkasse_csv_camt.csv").read_text().replace('.26"', '.2026"').splitlines()
+    lines[row_index] = lines[row_index].replace("DE75512108001245126199", "DE12500105170648489890")
+    content = "\n".join(lines)
+    with pytest.raises(BankImportError, match="IBAN.*gewählten Bankkonto"):
+        parse_csv(content.encode(), account_iban="DE75512108001245126199")
+
+
+def test_generic_csv_still_rejects_two_digit_years():
+    with pytest.raises(BankImportError, match="Buchungsdatum"):
+        parse_csv((HEADER + ROW.replace("02.01.2026", "02.01.26")).encode())
+
+
+@pytest.mark.parametrize("missing", ["Auftragskonto", "Beguenstigter/Zahlungspflichtiger", "Kontonummer/IBAN", "Info"])
+def test_partial_sparkasse_headers_do_not_enable_two_digit_years(missing):
+    content = (FIXTURES / "sparkasse_csv_camt.csv").read_text()
+    with pytest.raises(BankImportError, match="Buchungsdatum"):
+        parse_csv(content.replace(f'"{missing}"', '"Unknown"').encode())

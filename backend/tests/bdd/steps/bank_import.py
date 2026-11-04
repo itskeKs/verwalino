@@ -113,3 +113,23 @@ def account_is_empty(world):
 def account_holds(world, count):
     stored = _stored_transactions(world)
     assert len(stored) == count, f"The bank account holds {len(stored)} transactions, expected {count}."
+
+
+@given(parsers.parse('the Sparkasse statement "{filename}"'))
+def sparkasse_statement(world, filename):
+    world.data["statement"] = (filename, (STATEMENTS / filename).read_bytes())
+
+
+def _anna_receipt(world):
+    rows = _stored_transactions(world)
+    matches = [row for row in rows if row["booking_date"] == "2026-04-07" and Decimal(row["amount"]) == Decimal("800.00")]
+    assert len(matches) == 1, matches
+    row = matches[0]
+    assert row["counterparty_name"] == "Anna Beispiel"
+    assert row["counterparty_iban"] == "DE89370400440532013000"
+    return row
+
+
+@then("Anna Beispiel's 800 EUR receipt on 07.04.2026 retains her name and IBAN")
+def anna_receipt(world):
+    _anna_receipt(world)
