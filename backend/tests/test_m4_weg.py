@@ -1410,7 +1410,7 @@ async def test_documents_resolve_owners_on_their_key_date_and_freeze_them(
 
 
 @pytest.mark.asyncio
-async def test_asset_report_recipients_have_authoritative_retention_bindings(client_a_admin, m4_seed):
+async def test_asset_report_recipients_have_authoritative_retention_bindings(client_a_admin, client_b_admin, m4_seed):
     response = await client_a_admin.post('/api/weg-settlements/asset-reports', json={
         'property_id': m4_seed['property'], 'period_start': '2025-01-01', 'period_end': '2025-12-31'})
     report_id = response.json()['id']
@@ -1425,6 +1425,40 @@ async def test_asset_report_recipients_have_authoritative_retention_bindings(cli
             cur.execute('SELECT entity FROM privacy_retention_facts(%s,%s) WHERE kind=%s',
                 (str(m4_seed['org_a_id']), m4_seed['person_b'], 'settlement_run'))
             assert report_id in {str(row[0]) for row in cur.fetchall()}
+            cur.execute("SELECT retention_until FROM organization_retention_plan(%s) WHERE entity='person' AND identity->>'id'=%s",
+                (str(m4_seed['org_a_id']), m4_seed['person_b']))
+            assert cur.fetchone()[0] == date(2034, 12, 31)
+
+            cur.execute('UPDATE ownership_history SET valid_to=%s WHERE owner_profile_id=%s',
+                ('2026-01-01', m4_seed['owner_b']))
+    url = f"/api/dsgvo/persons/{m4_seed['person_b']}"
+    before_pdf = (await client_a_admin.get(f'/api/weg-settlements/asset-reports/{report_id}/pdf')).content
+    status = await client_a_admin.get(url + '/status')
+    assert status.status_code == 200, status.text
+    assert status.json()['decision'] == 'RESTRICT'
+    assert status.json()['governing_retention_until'] == '2034-12-31'
+    assert any(b['entity_id'] == report_id for b in status.json()['bindings'])
+    assert (await client_b_admin.get(url + '/status')).status_code == 404
+    deletion = await client_a_admin.post(url + '/request-deletion')
+    assert deletion.status_code == 200, deletion.text
+    assert deletion.json()['applied'] == 'RESTRICTED'
+    disclosure = await client_a_admin.get(url + '/export')
+    assert disclosure.status_code == 200, disclosure.text
+    assert disclosure.json()['person']['first_name'] == 'Berta'
+    assert (await client_a_admin.get(f'/api/weg-settlements/asset-reports/{report_id}/pdf')).content == before_pdf
+    from importlib import import_module
+    from alembic.migration import MigrationContext
+    from alembic.operations import Operations
+    from sqlalchemy import create_engine
+    engine = create_engine(SYNC_URL)
+    try:
+        with engine.connect() as connection, connection.begin(), Operations.context(MigrationContext.configure(connection)):
+            with pytest.raises(RuntimeError, match='Cannot remove retained'):
+                import_module('migrations.versions.0162_report_recipient_retention').downgrade()
+    finally:
+        engine.dispose()
+
+
 @pytest.mark.parametrize("path, message", [
     ("economic-plans", "Wirtschaftsplan nicht gefunden."),
     ("payments", "Zahlung nicht gefunden."),

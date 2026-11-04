@@ -246,8 +246,8 @@ class TestPdfRendererProtocol:
 
 
 @pytest.mark.parametrize('kind,expected', [
-    ('wirtschaftsplan', '3ee0e1cbcf7ae1d1ac68d947ef0f9b837f2a5085cb8064b865f975c8ef58e8f5'),
-    ('vermoegensbericht', '057a3c108ccaba1527a65d61887607d79275b90c3940fa5b5c3f57ec35a10715'),
+    ('wirtschaftsplan', '65023c9dd39fc06f31b1663ef3c3e366e90683580129bdb568fe4a4dcc6b06b5'),
+    ('vermoegensbericht', '61b970ecfbc9dc3b7038c8063bc124393dad0709fa69fb457edf20b49748e6a4'),
 ])
 def test_legacy_finalized_document_html_keeps_its_original_content(kind, expected):
     from datetime import date

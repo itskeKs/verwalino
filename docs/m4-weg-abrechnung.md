@@ -433,7 +433,11 @@ existing exclusive-to-inclusive storage conversion. Newly computed documents
 store their unit, owner, name and key date in the existing snapshot; finalization
 hashes and freezes those values. The page and PDF use that frozen list. Old
 finalized snapshots without it keep their original rendering and digest; reads
-do not backfill new recipients.
+do not backfill new recipients. Migration 0162 adds new report recipients to
+both individual and organization retention through the existing shared catalog,
+recipient extractor and source deadlines. Report-line evidence dates extend the
+same deadline in both paths. An ended ownership alone does not permit erasing a
+retained report recipient; frozen names and documents remain unchanged.
 
 The live Hausgeld account follows dated ownership using only the unit's frozen
 plan advances. Continuing co-owners keep their original rounded monthly amounts;

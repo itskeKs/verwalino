@@ -19,7 +19,7 @@ from tests.test_rent_changes import rent_db, rent_world  # noqa: F401
 def test_eligible_reserve_erasure_is_the_next_release_revision():
     revision = ScriptDirectory('migrations').get_revision('0161')
     assert revision.down_revision == '0160'
-    assert deployment.TARGET == '0161'
+    assert deployment.TARGET == '0162'
 
 
 @pytest.mark.asyncio
@@ -108,7 +108,7 @@ def test_reject_unknown_or_ambiguous_database_version(heads):
 
 def test_release_graph_is_exact_and_linear(tmp_path):
     graph = ScriptDirectory('migrations')
-    assert deployment.release_head(graph) == '0161'
+    assert deployment.release_head(graph) == '0162'
     (tmp_path / 'versions').mkdir()
     (tmp_path / 'versions' / 'unexpected.py').write_text(
         "revision='0156'\ndown_revision=None\nbranch_labels=None\ndepends_on=None\n")
@@ -116,7 +116,7 @@ def test_release_graph_is_exact_and_linear(tmp_path):
         deployment.release_head(ScriptDirectory(str(tmp_path)))
 
 
-@pytest.mark.parametrize('schema', ['0028', '0122', '0139', '0140', '0141', '0142', '0143', '0144', '0145', '0146', '0147', '0148', '0149', '0150', '0151', '0152', '0153', '0154', '0155', '0159', '0160', '0161'])  # accepted sources plus target
+@pytest.mark.parametrize('schema', ['0028', '0122', '0139', '0140', '0141', '0142', '0143', '0144', '0145', '0146', '0147', '0148', '0149', '0150', '0151', '0152', '0153', '0154', '0155', '0159', '0160', '0161', '0162'])  # accepted sources plus target
 def test_measured_release_schema_is_a_supported_upgrade_source(schema):
     assert deployment.supported_schema((schema,)) == schema
 
@@ -190,7 +190,7 @@ def rehearse_initial_upgrade(starting_schema='0122'):
     _, _, url = require_disposable_database_settings(settings)
     engine = create_engine(url)
     graph = ScriptDirectory('migrations')
-    revisions = list(graph.iterate_revisions('0161', starting_schema))
+    revisions = list(graph.iterate_revisions('0162', starting_schema))
     try:
         with engine.connect() as connection:
             transaction = connection.begin()
@@ -550,16 +550,16 @@ def rehearse_initial_upgrade(starting_schema='0122'):
         engine.dispose()
 
 
-@pytest.mark.parametrize('starting_schema', ['0122', '0139', '0140', '0141', '0142', '0143', '0144', '0145', '0146', '0147', '0148', '0149', '0150', '0151', '0152', '0153', '0154', '0155', '0159', '0160'])  # accepted sources
-def test_upgrade_to_0161_preserves_existing_rows_and_security(run_migrations, starting_schema):
+@pytest.mark.parametrize('starting_schema', ['0122', '0139', '0140', '0141', '0142', '0143', '0144', '0145', '0146', '0147', '0148', '0149', '0150', '0151', '0152', '0153', '0154', '0155', '0159', '0160', '0161'])  # accepted sources
+def test_upgrade_to_0162_preserves_existing_rows_and_security(run_migrations, starting_schema):
     # The actual rehearsal ran before any retained domain-test originals existed.
     # Its SQL/data/security assertions fail fixture setup if preservation fails.
-    assert run_migrations[f'upgrade_{starting_schema}_to_0161_tables'] > 50
-    assert deployment.database_check('preflight') == '0161'
+    assert run_migrations[f'upgrade_{starting_schema}_to_0162_tables'] > 50
+    assert deployment.database_check('preflight') == '0162'
 
 
-def test_upgrade_0028_to_0161_preserves_existing_rows_and_rls(run_migrations):
-    assert run_migrations['upgrade_0028_to_0161_tables'] > 20
+def test_upgrade_0028_to_0162_preserves_existing_rows_and_rls(run_migrations):
+    assert run_migrations['upgrade_0028_to_0162_tables'] > 20
 
 
 def test_document_archive_restore_is_exact_and_refuses_overwrite(tmp_path):
@@ -672,7 +672,7 @@ def test_cli_preflight_and_actual_runtime_credentials_are_read_only():
            'CI', 'HV_DECLARATION_TEST_DATABASE_PROFILE') if name in os.environ}
     env['HV_DATABASE_URL_WORKER'] = runtime.set(username='app_worker', password='worker_secret').render_as_string(hide_password=False)
     env.setdefault('HV_DATABASE_URL_REVIEW', runtime.set(username='app_review', password='review_secret').render_as_string(hide_password=False))
-    for arguments, expected in [(['preflight'], '0161'), (['runtime', 'app_rw'], ''),
+    for arguments, expected in [(['preflight'], '0162'), (['runtime', 'app_rw'], ''),
                                 (['runtime', 'app_review'], ''), (['runtime', 'app_worker'], '')]:
         result = subprocess.run([sys.executable, '-m', 'app.deployment', *arguments],
                                 env=env, capture_output=True, text=True)
@@ -703,5 +703,29 @@ def test_quiescence_rejects_another_database_client():
             connection.execute(text('SELECT 1'))
             with pytest.raises(ValueError, match='clients'):
                 deployment.database_check('quiescent')
+    finally:
+        engine.dispose()
+
+
+def test_report_recipients_are_the_next_release_revision():
+    revision = ScriptDirectory('migrations').get_revision('0162')
+    assert revision.down_revision == '0161'
+    assert deployment.TARGET == '0162'
+
+
+def test_report_retention_empty_downgrade_restores_functions_and_upgrade_is_reversible(run_migrations):
+    from importlib import import_module
+    _, _, url = require_disposable_database_settings(settings)
+    engine = create_engine(url)
+    try:
+        with engine.connect() as connection, connection.begin():
+            signatures = ('person_retention_categories()', 'retention_source_until(text,jsonb)', 'organization_retention_plan(uuid)')
+            before = [connection.scalar(text('SELECT pg_get_functiondef(CAST(:signature AS regprocedure))'), {'signature': sig}) for sig in signatures]
+            module = import_module('migrations.versions.0162_report_recipient_retention')
+            with Operations.context(MigrationContext.configure(connection)):
+                module.downgrade()
+                module.upgrade()
+            after = [connection.scalar(text('SELECT pg_get_functiondef(CAST(:signature AS regprocedure))'), {'signature': sig}) for sig in signatures]
+            assert after == before
     finally:
         engine.dispose()

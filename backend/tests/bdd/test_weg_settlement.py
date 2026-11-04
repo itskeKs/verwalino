@@ -130,7 +130,7 @@ def long_owner_balance(world, seed_data):
     return create_balance_world(world, seed_data, owner_name='Anna-Katharina Freifrau von Hohenzollern-Sigmaringen')
 
 
-def create_balance_world(world, seed_data, *, cost_period_end='2026-12-31', owner_name='Anna Berg', second_owner='Berta Vollständig'):
+def create_balance_world(world, seed_data, *, cost_period_end='2026-12-31', owner_name='Anna Berg', second_owner='Berta Vollständig', scope_start='2026-01-01'):
     world.actor = world.administrator_of('Verwaltung Alpha')
     world.actor_organization = 'Verwaltung Alpha'
     user = str(seed_data['user_a_admin_id'])
@@ -150,7 +150,7 @@ def create_balance_world(world, seed_data, *, cost_period_end='2026-12-31', owne
             'valid_from': '2020-01-01'})
         owners.append(owner['id'])
     scope = create(world, '/api/accounting-scopes', {'property_id': home['id'], 'scope_type': 'WEG',
-        'label': 'WEG Gartenstraße', 'valid_from': '2026-01-01', 'whole_property': True}, keyed=True)
+        'label': 'WEG Gartenstraße', 'valid_from': scope_start, 'whole_property': True}, keyed=True)
     create(world, f"/api/accounting-scopes/{scope['id']}/grants", {'user_id': user,
         'capabilities': ['read', 'prepare', 'approve', 'confirm', 'export'], 'reason': 'Synthetic settlement'}, keyed=True)
     basis = {'property_id': home['id'], 'accounting_scope_id': scope['id']}
@@ -367,7 +367,7 @@ def balance_browser(browser_world, weg_balance):
 
 @given('Karl Weiß owns unit 2 until June and Lena Roth owns it from July', target_fixture='dated_owners')
 def dated_owners(world, seed_data):
-    w = create_balance_world(world, seed_data, second_owner='Karl Weiß')
+    w = create_balance_world(world, seed_data, second_owner='Karl Weiß', scope_start='2020-01-01')
     old = world.act('GET', f"/api/ownership?unit_id={w['units'][1]}").json()[0]
     response = world.act('PATCH', f"/api/ownership/{old['id']}", json={'valid_to': '2026-06-30'})
     assert response.status_code == 200, response.text
@@ -390,6 +390,21 @@ def dated_asset_report(world, dated_owners):
     response = world.act('POST', f"/api/weg-settlements/asset-reports/{report['id']}/finalize", json=values)
     assert response.status_code == 200, response.text
     w['report'] = report['id']
+    previous = create(world, '/api/weg-settlements/asset-reports', {'property_id': w['property'],
+        'accounting_scope_id': w['scope'], 'period_start': '2025-01-01', 'period_end': '2025-12-31'})
+    world.run(attest_fixture(world.actor, 'settlement', previous['id'], values))
+    response = world.act('POST', f"/api/weg-settlements/asset-reports/{previous['id']}/finalize", json=values)
+    assert response.status_code == 200, response.text
+    w['previous_report'] = previous['id']
+    plan = create(world, '/api/economic-plans', {'property_id': w['property'], 'accounting_scope_id': w['scope'],
+        'plan_year': 2027, 'period_start': '2027-01-01', 'period_end': '2027-12-31'})
+    plan_values = {'planned_costs': [{'category_code': 'GARTENPFLEGE', 'label': 'Bewirtschaftung',
+        'planned_amount': '12000.00', 'cost_group': 'UMLAGEFAEHIG'}], 'reserve_contribution_total': '0.00'}
+    world.run(attest_fixture(world.actor, 'economic_plan', plan['id'], plan_values))
+    response = world.act('POST', f"/api/economic-plans/{plan['id']}/finalize", json=plan_values)
+    assert response.status_code == 200, response.text
+    w['next_plan'] = plan['id']
+
     import os
     directory = os.environ.get('VERWALINO_207_SCREENSHOTS')
     if directory:
@@ -403,7 +418,9 @@ def dated_asset_report(world, dated_owners):
 def dated_document_recipients(world, dated_owners):
     w = dated_owners
     for path, name, key_date in [(f"economic-plans/{w['plan']}", 'Karl Weiß', '2026-01-01'),
-                                  (f"weg-settlements/asset-reports/{w['report']}", 'Lena Roth', '2026-12-31')]:
+                                  (f"weg-settlements/asset-reports/{w['report']}", 'Lena Roth', '2026-12-31'),
+                                  (f"economic-plans/{w['next_plan']}", 'Lena Roth', '2027-01-01'),
+                                  (f"weg-settlements/asset-reports/{w['previous_report']}", 'Karl Weiß', '2025-12-31')]:
         data = world.look(world.actor, '/api/' + path.replace('weg-settlements/asset-reports/', 'weg-settlements/')).json()
         recipients = [a for a in data['addressees'] if a['unit_id'] == w['units'][1]]
         assert len(recipients) == 1
@@ -447,20 +464,18 @@ def dated_document_browser(browser_world, dated_owners):
                                         ('report', f"/vermoegensberichte/{w['report']}", 'Lena Roth', '31.12.2026')]:
             for width in (1280, 360):
                 await b.page.set_viewport_size({'width': width, 'height': 1000})
-                await b.visit(path)
+                await b.visit('/wirtschaftsplaene' if label == 'plan' else '/vermoegensberichte')
+                await b.page.locator(f'a[href="{path}"]').click()
                 await expect(b.page.get_by_role('heading', name='Übersicht', exact=True)).to_be_visible()
                 await b.page.wait_for_timeout(400)
                 directory = os.environ.get('VERWALINO_207_SCREENSHOTS')
                 if directory:
                     Path(directory).mkdir(parents=True, exist_ok=True)
                     await b.page.screenshot(path=str(Path(directory) / f'{label}-{width}.png'), full_page=True)
-        for path, name, day in [(f"/wirtschaftsplaene/{w['plan']}", 'Karl Weiß', '01.01.2026'),
-                                (f"/vermoegensberichte/{w['report']}", 'Lena Roth', '31.12.2026')]:
-            await b.visit(path)
-            region = b.page.get_by_role('region', name='Dokumentempfänger')
-            await expect(region).to_contain_text(name)
-            await expect(region).to_contain_text('Eigentümer am ' + day)
-            assert await region.evaluate('(e) => e.scrollWidth <= e.clientWidth')
+                region = b.page.get_by_role('region', name='Dokumentempfänger')
+                await expect(region).to_contain_text(name)
+                await expect(region).to_contain_text('Eigentümer am ' + day)
+                assert await region.evaluate('(e) => e.scrollWidth <= e.clientWidth')
     b.run(check())
 @when(parsers.parse('I prepare their {state} WEG annual settlement'))
 def prepare_long_statement(world, weg_balance, state):
