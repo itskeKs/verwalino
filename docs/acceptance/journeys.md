@@ -7,8 +7,10 @@ interpretation can be disputed, the journey says so. Format and rules: [README.m
 The journeys build on each other: journey 0 puts Verwalino into operation, journey 1 creates the
 data that journeys 2 to 5 work with. Journey 6 stands alone.
 
-No automated twin exists yet. The twins come with the fixes of #163–#176; the twin of journey 6
-with #160.
+The [money-input twin](../../features/journeys/money_inputs.feature) covers the tenancy amounts
+of journey 1 and manual 60 EUR cost entry of journey 2 at 1280 and 360 px. It also checks German
+field feedback for invalid money. Other steps remain outside this focused twin; the remaining
+twins come with #163–#176 and the twin of journey 6 with #160.
 
 **Reference date:** The statement runs to October 2026 and the figures are those as of 31.10.2026.
 Rents for November and later that are already due on the day of the run (November: third working
@@ -55,6 +57,8 @@ creates her property-management organization and her account, and signs in.
 
 **Goal:** Sabine maps her house.
 **She does:** creates the Musterhaus with both units, both tenancies and Anna's deposit.
+She enters Anna's amounts as “750,00”, “150,00” and “2.250,00”; invalid “abc”
+shows a German field problem and keeps her input. A separate heating advance may be zero.
 **Expected:**
 - The overview shows one property, two units and two running tenancies with the amounts of the
   table.
@@ -65,7 +69,7 @@ creates her property-management organization and her account, and signs in.
 
 **Checked by:** agent
 **Also at 360 px:** no
-**Automated:** not yet
+**Automated:** tenancy money entry only, in [money_inputs.feature](../../features/journeys/money_inputs.feature)
 
 ## Journey 2: Importing the bank statement and assigning the payments
 
@@ -83,7 +87,7 @@ creates her property-management organization and her account, and signs in.
 
 **Checked by:** agent
 **Also at 360 px:** no
-**Automated:** not yet
+**Automated:** manual “60,00” cost entry only, in [money_inputs.feature](../../features/journeys/money_inputs.feature)
 
 ## Journey 3: Dunning letter to Anna
 

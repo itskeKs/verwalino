@@ -642,6 +642,34 @@ admin-only nav group.
 - Deviation: about 60 strings are written without umlauts ("Strasse", "waehlen", "Ruecklage",
   "Mietvertraege", "FLAECHE").
 
+### Lease and manual cost amount validation
+
+Lease create/edit and manual cost entry reuse the rent-change amount parser
+without floating-point conversion. Inputs accept decimal comma or dot and
+strict German grouping with a decimal comma (“2.250,00” → “2250.00”).
+Malformed grouping, negative values, non-finite values, more than two decimal
+places and amounts beyond twelve integer digits are refused before sending.
+The cost VAT percentage uses the same separators within its three-integer-digit
+storage bound. Both valid advances remain independent, including zero heating.
+Optional empty amounts stay absent/null; entered zero remains zero.
+
+A failed amount check keeps all inputs. The form shows a German alert naming
+the first invalid field, marks that input with `aria-invalid` and connects it to
+the alert with `aria-describedby`. For example, the lease says “Bitte geben Sie
+die Kaltmiete als gültigen EUR-Betrag ein.” and the cost form says “Bitte geben
+Sie den Bruttobetrag als gültigen EUR-Betrag ein.”. VAT rate uses “gültigen
+Prozentsatz”. Correcting and submitting revalidates the form.
+
+The running test stack supplies the synthetic money-input evidence below.
+“Before” is the failed save on main; “after” shows the reloaded lease form or
+saved cost list. Error images show the retained “abc” and its associated alert.
+
+| State | Lease 1280 / 360 px | Cost 1280 / 360 px |
+|---|---|---|
+| Before | [1280](docs/assets/design/money-inputs-lease-1280-before.png) / [360](docs/assets/design/money-inputs-lease-360-before.png) | [1280](docs/assets/design/money-inputs-cost-1280-before.png) / [360](docs/assets/design/money-inputs-cost-360-before.png) |
+| After | [1280](docs/assets/design/money-inputs-lease-1280.png) / [360](docs/assets/design/money-inputs-lease-360.png) | [1280](docs/assets/design/money-inputs-cost-1280.png) / [360](docs/assets/design/money-inputs-cost-360.png) |
+| Invalid | [1280](docs/assets/design/money-inputs-lease-invalid-1280.png) / [360](docs/assets/design/money-inputs-lease-invalid-360.png) | [1280](docs/assets/design/money-inputs-cost-invalid-1280.png) / [360](docs/assets/design/money-inputs-cost-invalid-360.png) |
+
 ### Number, money, date and size formats
 
 Use the money and date contracts below; carry amounts as decimal strings.

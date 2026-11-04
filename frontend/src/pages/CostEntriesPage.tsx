@@ -26,6 +26,7 @@ import type {
 } from "../api/types";
 import type { CostEntryListQuery } from "../api/endpoints";
 import { ApiError } from "../api/client";
+import { rentAmount } from "../lib/rentAmount";
 import { AccountingScopeSelector } from "../components/AccountingScopeSelector";
 import { SourceBadge } from "../components/SourceBadge";
 import {
@@ -107,6 +108,7 @@ export function CostEntriesPage() {
   const [showForm, setShowForm] = useState(false);
   const [form, setForm] = useState<CostEntryCreate>(makeEmptyForm());
   const [saving, setSaving] = useState(false);
+  const [amountError, setAmountError] = useState<{ field: string; message: string } | null>(null);
   const [loaded, setLoaded] = useState<{ query: CostEntryListQuery; key: string } | null>(null);
   const [downloading, setDownloading] = useState(false);
   const [downloadError, setDownloadError] = useState<string | null>(null);
@@ -243,18 +245,38 @@ export function CostEntriesPage() {
   }
 
   function openCreate() {
+    setAmountError(null);
     setForm(makeEmptyForm());
     setShowForm(true);
   }
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
-    setSaving(true);
+    setAmountError(null);
     setError(null);
+    const amounts = {
+      gross_amount: rentAmount(form.gross_amount),
+      vat_amount: form.vat_amount?.trim() ? rentAmount(form.vat_amount) : null,
+      vat_rate: form.vat_rate?.trim() ? rentAmount(form.vat_rate) : null,
+      apportionable_tenant_amount: form.apportionable_tenant_amount?.trim() ? rentAmount(form.apportionable_tenant_amount) : null,
+    };
+    for (const [field, label] of [
+      ["gross_amount", "den Bruttobetrag"], ["vat_amount", "den USt-Betrag"],
+      ["vat_rate", "den USt-Satz"], ["apportionable_tenant_amount", "den umlagefähigen Betrag"],
+    ] as const) {
+      if (field !== "gross_amount" && !form[field]?.trim()) continue;
+      if (amounts[field] === null || (field === "vat_rate" && amounts.vat_rate!.split(".")[0].length > 3)) {
+        setAmountError({ field, message: `Bitte geben Sie ${label} als gültigen ${field === "vat_rate" ? "Prozentsatz" : "EUR-Betrag"} ein.` });
+        return;
+      }
+    }
+    setSaving(true);
     try {
       // Convert UI values to DB values before sending
       const payload: CostEntryCreate = {
         ...form,
+        ...amounts,
+        gross_amount: amounts.gross_amount!,
         tenant_apportionable: toDbApportionability(form.tenant_apportionable),
         owner_distribution_key: form.owner_distribution_key
           ? toDbDistributionKey(form.owner_distribution_key)
@@ -343,6 +365,7 @@ export function CostEntriesPage() {
       {showForm && (
         <div className="card" style={{ marginBottom: "1rem" }}>
           <h2>Neue Kostenposition anlegen</h2>
+          {amountError && <p id="cost-amount-error" role="alert" className="error-text">{amountError.message}</p>}
           <form onSubmit={handleSubmit} className="form-grid">
             <label>
               Objekt *
@@ -435,6 +458,8 @@ export function CostEntriesPage() {
                 required
                 inputMode="decimal"
                 placeholder="0.00"
+                aria-invalid={amountError?.field === "gross_amount"}
+                aria-describedby={amountError?.field === "gross_amount" ? "cost-amount-error" : undefined}
                 value={form.gross_amount}
                 onChange={(e) =>
                   setForm({ ...form, gross_amount: e.target.value })
@@ -447,6 +472,8 @@ export function CostEntriesPage() {
                 type="text"
                 inputMode="decimal"
                 placeholder="0.00"
+                aria-invalid={amountError?.field === "vat_amount"}
+                aria-describedby={amountError?.field === "vat_amount" ? "cost-amount-error" : undefined}
                 value={form.vat_amount ?? ""}
                 onChange={(e) =>
                   setForm({
@@ -462,6 +489,8 @@ export function CostEntriesPage() {
                 type="text"
                 inputMode="decimal"
                 placeholder="19.00"
+                aria-invalid={amountError?.field === "vat_rate"}
+                aria-describedby={amountError?.field === "vat_rate" ? "cost-amount-error" : undefined}
                 value={form.vat_rate ?? ""}
                 onChange={(e) =>
                   setForm({
@@ -542,6 +571,8 @@ export function CostEntriesPage() {
                 type="text"
                 inputMode="decimal"
                 placeholder="0.00"
+                aria-invalid={amountError?.field === "apportionable_tenant_amount"}
+                aria-describedby={amountError?.field === "apportionable_tenant_amount" ? "cost-amount-error" : undefined}
                 value={form.apportionable_tenant_amount ?? ""}
                 onChange={(e) =>
                   setForm({
