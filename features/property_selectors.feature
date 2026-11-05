@@ -1,6 +1,7 @@
 @browser
 Feature: Property selectors
   Long property names remain available in native selectors without widening forms.
+  Cost filters and the expanded cost form retain saved costs for both properties.
 
   Background:
     Given an administrator of "Verwaltung Alpha" is signed in

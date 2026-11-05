@@ -7,6 +7,7 @@ import pytest
 from playwright.async_api import expect
 from pytest_bdd import given, parsers, then, when
 
+from tests.bdd.steps.browser_setup import create
 from tests.bdd.steps.records import create_bank_account, create_person, create_property
 
 LONG_NAME = 'WEG Wohnpark Friedrich-Wilhelm-Höfe mit Tiefgarage und Gemeinschaftsgarten'
@@ -73,9 +74,22 @@ def open_selector_page(browser_world, property_selector_records, screen, width):
         world.data['selector_labels'] = [f'{account.name} ({home.name})' for account, home in zip(accounts, properties)]
     else:
         world.data['selector_labels'] = [record.name for record in world.data['selector_properties']]
-    if screen == 'CostForm':
+    if screen in ('Costs', 'CostForm'):
         categories = world.act('GET', '/api/cost-categories')
         assert categories.status_code == 200, world.describe_response()
+        if 'costs' not in property_selector_records:
+            category = next(item for item in categories.json() if item['code'] == 'GARTENPFLEGE')
+            property_selector_records['costs'] = {
+                home.id: create(world, '/api/cost-entries', {
+                    'property_id': home.id, 'cost_category_id': category['id'],
+                    'cost_category_plan_version': category['plan_version'],
+                    'invoice_date': '2026-12-31', 'service_period_from': '2026-01-01',
+                    'service_period_to': '2026-12-31', 'gross_amount': '1250.00',
+                    'tenant_apportionable': 'UMLAGEFAEHIG',
+                })['id'] for home in property_selector_records['properties']
+            }
+        world.data['selector_costs'] = property_selector_records['costs']
+    if screen == 'CostForm':
         longest = max(categories.json(), key=lambda item: len(item['code'] + ' ' + item['label']))
         category_label = f'{longest["code"]} {longest["label"]}'
 
@@ -129,6 +143,14 @@ async def check_selector(browser):
         else:
             await expect(selector).to_have_value('')
         await expect(selector).to_be_enabled()
+        if screen in ('Costs', 'CostForm'):
+            await expect(main.get_by_role('button', name='CSV herunterladen', exact=True)).to_be_enabled()
+            for property_id, cost_id in browser.world.data['selector_costs'].items():
+                details = main.locator(f'a[href="/kosten/{cost_id}"]')
+                if screen == 'Costs' and record and property_id != record.id:
+                    await expect(details).to_have_count(0)
+                else:
+                    await expect(details).to_be_visible()
         alerts = await main.get_by_role('alert').all_text_contents()
         assert not alerts, f'{screen} {state} alerts: {alerts}'
         await expect(page.locator('vite-error-overlay')).to_have_count(0)

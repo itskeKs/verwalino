@@ -17,6 +17,9 @@ details. Payment account labels retain both the account and property name.
 The [browser regression](../../features/property_selectors.feature) checks all
 nine views and the expanded cost form before selection and after choosing long and short options with the
 keyboard at both widths, plus the existing new-property form's column layout.
+Costs and the expanded cost form use a saved gardening cost for each property;
+the checks wait for the matching rows after selection, keeping the table populated
+without relying on records from earlier scenarios.
 Synthetic [before/after captures](../../DESIGN.md) show the affected selectors.
 
 ## Bounded master-data selectors

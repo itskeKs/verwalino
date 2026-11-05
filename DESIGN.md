@@ -359,6 +359,9 @@ selection. Desktop is 1280 × 900 px and phone is 360 × 900 px.
 | Reports, long name | [before](docs/assets/design/property-selectors/before-reports-long-1280.png) · [after](docs/assets/design/property-selectors/after-reports-long-1280.png) | [before](docs/assets/design/property-selectors/before-reports-long-360.png) · [after](docs/assets/design/property-selectors/after-reports-long-360.png) |
 
 Additional affected selectors use the same synthetic records and keyboard checks.
+Costs and expanded cost-form after captures also include a saved `1250.00`
+gardening cost for each property. The table remains populated after filtering and
+scrolls within its card; the original before captures predate these cost fixtures.
 The Payments option combines the account label and full property name.
 
 | View, long selection | Desktop before / after | 360 px before / after |
@@ -572,6 +575,12 @@ fits the card below 480 px. Dashboard due tasks wrap long text and pagination ac
 and use the existing `.btn` style for reload, completion and pagination.
 The dashboard's rent KPI form allows its labels to shrink so long property options
 stay within the card, including before a property is selected.
+
+The populated `/kosten` list uses `card overflow-x-auto`: its seven columns remain
+available by scrolling within the card at 360 px. Dates, categories, properties,
+amounts, status, source and keyboard-reachable `Details` links retain their existing
+content. Filtering and opening the creation form keep this table containment.
+Creation-form selector sizing is tracked separately in #284.
 
 The dunning notice detail puts `Hauptforderung` and `Zinsen` first in its frozen
 interest table, and `Offen`, `Soll`, `Ist` before period and type in its arrears
@@ -1012,6 +1021,16 @@ and the sixty-receipt import/assignment use the real API. Each pair is desktop/3
 | Assignment after importing a long statement | [before](docs/assets/design/save-lifecycle/r1-before-assignment-after-import-1280.png) · [after](docs/assets/design/save-lifecycle/r1-after-assignment-after-import-1280.png) | [before](docs/assets/design/save-lifecycle/r1-before-assignment-after-import-360.png) · [after](docs/assets/design/save-lifecycle/r1-after-assignment-after-import-360.png) |
 
 ## Screenshots
+
+The cost list uses six synthetic costs for Aprilhaus and Maihaus, including a
+confirmed gardening cost dated `2026-12-31` for `1250.00`. The mobile before image
+shows the table widening the main page; the after image retains all columns in a
+scrollable card. Desktop keeps the same columns and values.
+
+| Cost table | 1280 px | 360 px |
+|---|---|---|
+| Before | [Desktop](docs/assets/design/cost-table-before-1280.png) | [Phone](docs/assets/design/cost-table-before-360.png) |
+| After | [Desktop](docs/assets/design/cost-table-after-1280.png) | [Phone](docs/assets/design/cost-table-after-360.png) |
 
 Property MEA guidance uses new synthetic MIET and WEG properties on the disposable test
 database, showing the page top and new-unit card at 1280 and 360 CSS px. MIET has neither the scale
