@@ -122,7 +122,7 @@ pending; registration stays closed and legal review remains with #26. See the
 | Asset report (Vermögensbericht) § 28 Abs. 4 WEG | ✅ includes confirmed deletion of empty drafts; bookings, ledger and retained evidence refuse deletion (#199) | `engine/vermoegensbericht.py`, `services/vermoegensbericht_pdf.py`, `pages/AssetReportsPage.tsx` |
 | Special levy (Sonderumlage) | ✅ distributed by MEA as owner expected amount `SONDERZAHLUNG`, appears in the owner ledger and can be dunned | `models/special_levy.py`, `api/special_levies.py`, `services/special_levy_service.py`, `pages/SpecialLeviesPage.tsx`, T32, T33, [usage](operations/weg.md) |
 | Mid-year owner change | ✅ annual settlement remains day-accurate; dated plan/report recipients, successor Hausgeld and shared recipient retention (#207) | `api/ownership.py`, `services/weg_settlement_service.py`, T26, [usage](operations/tenancies-and-rent.md) |
-| Owners' meeting, minutes, resolution register | ✅ | `api/meetings.py`, `pages/MeetingDetailPage.tsx`, `pages/ResolutionRegisterPage.tsx` |
+| Owners' meeting, minutes, resolution register | ✅ immutable meeting date and separate entry date in page and new PDF extracts | `api/meetings.py`, `pages/MeetingDetailPage.tsx`, `pages/ResolutionRegisterPage.tsx` |
 | Meeting invitation as PDF | ✅ one page per owner, hint for less than three weeks' notice (§ 24 Abs. 4 WEG) | `api/meetings.py` (`/{id}/invitation.pdf`), `services/meeting_pdf.py`, T34, [usage](operations/weg.md) |
 
 ## Dunning, deadlines, tasks

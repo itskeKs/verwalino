@@ -222,6 +222,7 @@ def build_register_html(
         rows.append(
             f"<tr>"
             f"<td class='num'>{e.sequence_number}</td>"
+            f"<td class='date'>{e.resolution_date.strftime('%d.%m.%Y')}</td>"
             f"<td class='date'>{e.entry_date.strftime('%d.%m.%Y')}</td>"
             f"<td>{_esc(e.location)}</td>"
             f"<td class='wording'>{_esc(e.wording)}{challenge}</td>"
@@ -249,7 +250,8 @@ def build_register_html(
     <thead>
       <tr>
         <th class="num">Nr.</th>
-        <th class="date">Datum</th>
+        <th class="date">Datum der Versammlung</th>
+        <th class="date">Eingetragen am</th>
         <th>Ort der Versammlung</th>
         <th>Wortlaut des Beschlusses</th>
       </tr>

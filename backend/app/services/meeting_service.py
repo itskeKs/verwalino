@@ -414,6 +414,7 @@ class MeetingService:
             organization_id=self._org_id,
             property_id=meeting.property_id,
             sequence_number=seq,
+            resolution_date=meeting.meeting_date,
             entry_date=date.today(),
             location=meeting.location,
             wording=resolution.wording,  # COPY, immutable

@@ -1434,3 +1434,19 @@ person-day attribution and existing PDFs retain their old rendering.
 |---|---|---|
 | Before | [Desktop](docs/assets/design/persons-vacancy-before-1280.png) | [Phone](docs/assets/design/persons-vacancy-before-360.png) |
 | After | [Desktop](docs/assets/design/persons-vacancy-after-1280.png) | [Phone](docs/assets/design/persons-vacancy-after-360.png) |
+
+### Resolution register dates
+
+The Beschluss-Sammlung table shows “Datum der Versammlung” first and “Eingetragen am”
+second, both as `DD.MM.YYYY`. The meeting date is the immutable copy made when the
+resolution is registered; the entry date remains visible independently. Existing
+horizontal table scrolling applies at 360 px; no editor is offered for either date.
+The matching new PDF extract uses the same labels and order, followed by the place
+and wording. Before/after images below use synthetic records on the shared test
+stack. The live entry uses the real registration day, not the fixed historic
+01.11.2026 value used in deterministic migration and PDF tests.
+
+| Register dates | Desktop | 360 px |
+| --- | --- | --- |
+| Before | [Desktop](docs/assets/design/register-dates-before-1280.png) | [Phone](docs/assets/design/register-dates-before-360.png) |
+| After | [Desktop](docs/assets/design/register-dates-after-1280.png) | [Phone](docs/assets/design/register-dates-after-360.png) |
