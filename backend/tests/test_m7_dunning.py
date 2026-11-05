@@ -1369,7 +1369,7 @@ async def test_t35_aggregated_open_item_overflow_returns_422(client_a_admin, m7_
     item = OpenItem(2025, 3, 'KALTMIETE', Decimal('1000000000000.00'), Decimal('0'), Decimal('1000000000000.00'))
     calls = []
 
-    def overflowing_statement(*args):
+    def overflowing_statement(*args, as_of=None):
         calls.append(args)
         return SimpleNamespace(open_items=[item])
 
