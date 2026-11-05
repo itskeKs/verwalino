@@ -84,6 +84,46 @@ def test_commercial_pdf_keeps_long_escaped_reasons_below_the_whole_position(reas
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize('length', ['earlier_long', 'maximum'])
+@pytest.mark.parametrize('compute_first', [True, False], ids=['compute_then_finalize', 'finalize_direct'])
+async def test_long_commercial_reason_persists_in_lines_snapshot_and_pdf(client_a_admin, migrator_session, length, compute_first):
+    import subprocess
+    from app.engine.canonical import canonical_sha256
+    from tests.commercial_preallocation_support import commercial_property, commercial_rule
+    data = await commercial_property(client_a_admin)
+    reason = 'Gastronomie <Sonderlast> & ' + 'Erhöhter Restmüllbedarf. ' * 70
+    if length == 'maximum':
+        ending = ' Schluss <Original> & vollständig.'
+        reason = (reason * 2)[:2000 - len(ending)] + ending
+        assert len(reason) == 2000
+    url = f"/api/settlements/{data['rows'][1]['run']['id']}"
+    body = {'commercial_preallocations': [commercial_rule(data, commercial_reason=reason)]}
+    if compute_first:
+        answer = await client_a_admin.post(url + '/compute', json=body)
+        assert answer.status_code == 200, answer.text
+        saved = await client_a_admin.get(url)
+        assert saved.status_code == 200, saved.text
+        assert reason in saved.json()['lines'][0]['note']
+    answer = await client_a_admin.post(url + '/finalize', json={} if compute_first else body)
+    assert answer.status_code == 200, answer.text
+    line = answer.json()['lines'][0]
+    assert reason in line['note'] and len(line['note']) > 500
+    assert await migrator_session.scalar(text('SELECT note FROM settlement_line WHERE id=:id'),
+        {'id': uuid.UUID(line['id'])}) == line['note']
+    payload, digest = (await migrator_session.execute(text(
+        'SELECT snapshot_payload,snapshot_sha256 FROM settlement_run WHERE id=:id'),
+        {'id': uuid.UUID(answer.json()['id'])})).one()
+    assert payload['result']['lines'][0]['note'] == line['note']
+    assert payload['inputs']['cost_positions'][0]['commercial_reason'] == reason
+    assert canonical_sha256(payload) == digest == answer.json()['snapshot_sha256']
+    pdf = await client_a_admin.get(url + '/pdf')
+    assert pdf.status_code == 200, pdf.text
+    content = subprocess.run(['pdftotext', '-', '-'], input=pdf.content, capture_output=True, check=True).stdout.decode()
+    assert ' '.join(reason.split()) in ' '.join(content.split())
+    assert (await client_a_admin.get(url + '/pdf')).content == pdf.content
+
+
+@pytest.mark.asyncio
 async def test_commercial_preallocation_rejects_blank_reason_and_foreign_source(client_a_admin, client_b_admin):
     from tests.commercial_preallocation_support import commercial_property, commercial_rule
     api = client_a_admin

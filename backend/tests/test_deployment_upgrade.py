@@ -19,7 +19,7 @@ from tests.test_rent_changes import rent_db, rent_world  # noqa: F401
 def test_eligible_reserve_erasure_is_the_next_release_revision():
     revision = ScriptDirectory('migrations').get_revision('0161')
     assert revision.down_revision == '0160'
-    assert deployment.TARGET == '0169'
+    assert deployment.TARGET == '0170'
 
 
 @pytest.mark.asyncio
@@ -38,6 +38,36 @@ async def test_commercial_preallocation_downgrade_preserves_saved_rules(client_a
                     ScriptDirectory('migrations').get_revision('0169').module.downgrade()
             assert connection.scalar(text('SELECT count(*) FROM commercial_preallocation WHERE cost_entry_id=:cost'),
                 {'cost': uuid.UUID(data['cost']['id'])}) == 1
+    finally:
+        engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_statement_note_downgrade_refuses_complete_long_explanation(client_a_admin):
+    from tests.commercial_preallocation_support import commercial_property, commercial_rule
+    data = await commercial_property(client_a_admin)
+    reason = 'Gastronomie <Sonderlast> & ' + 'ü' * 1973
+    assert len(reason) == 2000
+    response = await client_a_admin.post(f"/api/settlements/{data['rows'][0]['run']['id']}/finalize",
+        json={'commercial_preallocations': [commercial_rule(data, commercial_reason=reason)]})
+    assert response.status_code == 200, response.text
+    line = response.json()['lines'][0]
+    _, _, url = require_disposable_database_settings(settings)
+    engine = create_engine(url)
+    try:
+        with engine.connect() as connection, connection.begin():
+            before = connection.execute(text('SELECT snapshot_payload,snapshot_sha256 FROM settlement_run WHERE id=:id'),
+                {'id': uuid.UUID(response.json()['id'])}).one()
+            with pytest.raises(RuntimeError, match='Cannot narrow stored settlement notes; repair forward'):
+                with connection.begin_nested(), Operations.context(MigrationContext.configure(connection)):
+                    ScriptDirectory('migrations').get_revision('0170').module.downgrade()
+            assert connection.scalar(text('SELECT note FROM settlement_line WHERE id=:id'),
+                {'id': uuid.UUID(line['id'])}) == line['note']
+            assert reason in line['note']
+            assert connection.scalar(text("""SELECT data_type FROM information_schema.columns
+                WHERE table_schema='public' AND table_name='settlement_line' AND column_name='note'""")) == 'text'
+            assert connection.execute(text('SELECT snapshot_payload,snapshot_sha256 FROM settlement_run WHERE id=:id'),
+                {'id': uuid.UUID(response.json()['id'])}).one() == before
     finally:
         engine.dispose()
 
@@ -128,7 +158,7 @@ def test_reject_unknown_or_ambiguous_database_version(heads):
 
 def test_release_graph_is_exact_and_linear(tmp_path):
     graph = ScriptDirectory('migrations')
-    assert deployment.release_head(graph) == '0169'
+    assert deployment.release_head(graph) == '0170'
     (tmp_path / 'versions').mkdir()
     (tmp_path / 'versions' / 'unexpected.py').write_text(
         "revision='0156'\ndown_revision=None\nbranch_labels=None\ndepends_on=None\n")
@@ -136,7 +166,7 @@ def test_release_graph_is_exact_and_linear(tmp_path):
         deployment.release_head(ScriptDirectory(str(tmp_path)))
 
 
-@pytest.mark.parametrize('schema', ['0028', '0122', '0139', '0140', '0141', '0142', '0143', '0144', '0145', '0146', '0147', '0148', '0149', '0150', '0151', '0152', '0153', '0154', '0155', '0159', '0160', '0161', '0162', '0163', '0164', '0165', '0166', '0167', '0168', '0169'])  # accepted sources plus target
+@pytest.mark.parametrize('schema', ['0028', '0122', '0139', '0140', '0141', '0142', '0143', '0144', '0145', '0146', '0147', '0148', '0149', '0150', '0151', '0152', '0153', '0154', '0155', '0159', '0160', '0161', '0162', '0163', '0164', '0165', '0166', '0167', '0168', '0169', '0170'])  # accepted sources plus target
 def test_measured_release_schema_is_a_supported_upgrade_source(schema):
     assert deployment.supported_schema((schema,)) == schema
 
@@ -166,7 +196,7 @@ def test_preflight_rejects_unsafe_roles_without_repairing_them(statement):
         engine.dispose()
 
 
-def seed_pre_split_upgrade(connection, org, actor, *, household=False):
+def seed_pre_split_upgrade(connection, org, actor, *, household=False, notes=False):
     """Create an actual 0149 lease/history and finalized legacy snapshot."""
     import json
     from app.engine.canonical import canonical_sha256
@@ -190,6 +220,14 @@ def seed_pre_split_upgrade(connection, org, actor, *, household=False):
     if household:
         payload['inputs']['units'] = [{'id': ids['unit'], 'person_count': 2}]
         payload['extra_inputs'] = {'unit_metrics': [{'unit_id': ids['unit'], 'person_count': 2}]}
+    if notes:
+        boundary_note = ('Ältere <Begründung> & ' + 'vollständig ' * 50)[:500]
+        assert len(boundary_note) == 500
+        payload['result']['lines'] = [dict(line_type='COST', label='Legacy note fixture',
+            distribution_key='WOHNFLAECHE', total_amount='2900.00', distribution_base_total='70',
+            distribution_base_share='70', time_share_days=365, time_share_total_days=365,
+            amount=amount, sort_order=index, note=note)
+            for index, (amount, note) in enumerate((('2700.00', boundary_note), ('100.00', None), ('100.00', '')))]
     connection.execute(text("""INSERT INTO settlement_run(id,organization_id,property_id,lease_agreement_id,
         run_type,period_start,period_end,advance_payments_total,advance_payments_source,total_cost,balance,
         status,snapshot_payload,snapshot_sha256,engine_version,finalized_at,finalized_by)
@@ -200,6 +238,13 @@ def seed_pre_split_upgrade(connection, org, actor, *, household=False):
         VALUES (:coverage,:org,:run,:property,'2026-01-01','2026-12-31','BK_MIETER',1,'known',CAST(:inputs AS jsonb),
             '[]',:revision,'Pre-split upgrade fixture',:actor)"""), {**values,
         'payload': json.dumps(payload), 'sha': canonical_sha256(payload), 'inputs': json.dumps(payload['inputs']), 'revision': '0' * 64})
+    if notes:
+        connection.execute(text("""INSERT INTO settlement_line(organization_id,settlement_run_id,line_type,label,
+            distribution_key,total_amount,distribution_base_total,distribution_base_share,time_share_days,
+            time_share_total_days,amount,sort_order,note)
+            VALUES (:org,:run,:line_type,:label,:distribution_key,:total_amount,:distribution_base_total,
+                :distribution_base_share,:time_share_days,:time_share_total_days,:amount,:sort_order,:note)"""),
+            [{**values, **line} for line in payload['result']['lines']])
     # Existing installation rows are committed before a release. Drain our
     # rollback-only fixture's deferred events before rehearsing its ALTERs.
     connection.execute(text('SET CONSTRAINTS ALL IMMEDIATE'))
@@ -225,12 +270,28 @@ def legacy_household_render(connection, values):
         time_share_days=365, time_share_total_days=365)
     return canonical_json(run.snapshot_payload), run.snapshot_sha256, build_settlement_html(run, [line])
 
+
+def legacy_note_render(connection, values):
+    from types import SimpleNamespace
+    from app.engine.canonical import canonical_json, canonical_sha256
+    from app.services.settlement_pdf import build_settlement_html, render_settlement_pdf
+    row = connection.execute(text('SELECT * FROM settlement_run WHERE id=:run'), values).mappings().one()
+    lines = connection.execute(text('SELECT * FROM settlement_line WHERE settlement_run_id=:run ORDER BY sort_order'),
+        values).mappings().all()
+    run = SimpleNamespace(**row)
+    assert canonical_sha256(run.snapshot_payload) == run.snapshot_sha256
+    assert [line['note'] for line in lines] == [line['note'] for line in run.snapshot_payload['result']['lines']]
+    rendered_lines = [SimpleNamespace(**line) for line in lines]
+    return (lines, canonical_json(run.snapshot_payload), run.snapshot_sha256,
+        build_settlement_html(run, rendered_lines), render_settlement_pdf(run, rendered_lines))
+
+
 def rehearse_initial_upgrade(starting_schema='0122'):
     """Rehearse before the shared fixture reaches head or creates retained data."""
     _, _, url = require_disposable_database_settings(settings)
     engine = create_engine(url)
     graph = ScriptDirectory('migrations')
-    revisions = list(graph.iterate_revisions('0169', starting_schema))
+    revisions = list(graph.iterate_revisions('0170', starting_schema))
     try:
         with engine.connect() as connection:
             transaction = connection.begin()
@@ -281,6 +342,9 @@ def rehearse_initial_upgrade(starting_schema='0122'):
                 if starting_schema in ('0163', '0164'):
                     legacy_household, _ = seed_pre_split_upgrade(connection, org, actor, household=True)
                     legacy_household_view = legacy_household_render(connection, legacy_household)
+                if starting_schema == '0169':
+                    legacy_notes, legacy_note_parent = seed_pre_split_upgrade(connection, org, actor, notes=True)
+                    legacy_note_view = legacy_note_render(connection, legacy_notes)
                 # Compare every old column of every pre-upgrade table, including
                 # seeded users/memberships/mandates/audit, without normalizing data.
                 tables = connection.scalars(text("SELECT tablename FROM pg_tables WHERE schemaname='public' ORDER BY tablename")).all()
@@ -406,6 +470,19 @@ def rehearse_initial_upgrade(starting_schema='0122'):
                             return [connection.scalar(text("SELECT pg_get_functiondef(CAST(:s AS regprocedure))"), {"s": signature}) for signature in signatures]
                         before_split = split_definitions()
                     revision.module.upgrade()
+                    if (starting_schema, revision.revision) == ('0169', '0170'):
+                        note_type = text("""SELECT data_type,character_maximum_length FROM information_schema.columns
+                            WHERE table_schema='public' AND table_name='settlement_line' AND column_name='note'""")
+                        assert connection.execute(note_type).one() == ('text', None)
+                        assert legacy_note_render(connection, legacy_notes) == legacy_note_view
+                        revision.module.downgrade()
+                        assert connection.execute(note_type).one() == ('character varying', 500)
+                        assert legacy_note_render(connection, legacy_notes) == legacy_note_view
+                        revision.module.upgrade()
+                        assert connection.execute(note_type).one() == ('text', None)
+                        assert legacy_note_render(connection, legacy_notes) == legacy_note_view
+                        assert connection.scalar(text("SELECT financial_computation_state(:org,'settlement_run',:run)->>'parent_digest'"),
+                            legacy_notes) == legacy_note_parent
                     if (starting_schema, revision.revision) in {('0163', '0164'), ('0164', '0165')}:
                         assert not connection.scalar(text('SELECT EXISTS(SELECT 1 FROM unit_household)'))
                         assert legacy_household_render(connection, legacy_household) == legacy_household_view
@@ -596,16 +673,16 @@ def rehearse_initial_upgrade(starting_schema='0122'):
         engine.dispose()
 
 
-@pytest.mark.parametrize('starting_schema', ['0122', '0139', '0140', '0141', '0142', '0143', '0144', '0145', '0146', '0147', '0148', '0149', '0150', '0151', '0152', '0153', '0154', '0155', '0159', '0160', '0161', '0162', '0163', '0164', '0165', '0166', '0167', '0168'])  # accepted sources
-def test_upgrade_to_0169_preserves_existing_rows_and_security(run_migrations, starting_schema):
+@pytest.mark.parametrize('starting_schema', ['0122', '0139', '0140', '0141', '0142', '0143', '0144', '0145', '0146', '0147', '0148', '0149', '0150', '0151', '0152', '0153', '0154', '0155', '0159', '0160', '0161', '0162', '0163', '0164', '0165', '0166', '0167', '0168', '0169'])  # accepted sources
+def test_upgrade_to_0170_preserves_existing_rows_and_security(run_migrations, starting_schema):
     # The actual rehearsal ran before any retained domain-test originals existed.
     # Its SQL/data/security assertions fail fixture setup if preservation fails.
-    assert run_migrations[f'upgrade_{starting_schema}_to_0169_tables'] > 50
-    assert deployment.database_check('preflight') == '0169'
+    assert run_migrations[f'upgrade_{starting_schema}_to_0170_tables'] > 50
+    assert deployment.database_check('preflight') == '0170'
 
 
-def test_upgrade_0028_to_0169_preserves_existing_rows_and_rls(run_migrations):
-    assert run_migrations['upgrade_0028_to_0169_tables'] > 20
+def test_upgrade_0028_to_0170_preserves_existing_rows_and_rls(run_migrations):
+    assert run_migrations['upgrade_0028_to_0170_tables'] > 20
 
 
 def test_document_archive_restore_is_exact_and_refuses_overwrite(tmp_path):
@@ -718,7 +795,7 @@ def test_cli_preflight_and_actual_runtime_credentials_are_read_only():
            'CI', 'HV_DECLARATION_TEST_DATABASE_PROFILE') if name in os.environ}
     env['HV_DATABASE_URL_WORKER'] = runtime.set(username='app_worker', password='worker_secret').render_as_string(hide_password=False)
     env.setdefault('HV_DATABASE_URL_REVIEW', runtime.set(username='app_review', password='review_secret').render_as_string(hide_password=False))
-    for arguments, expected in [(['preflight'], '0169'), (['runtime', 'app_rw'], ''),
+    for arguments, expected in [(['preflight'], '0170'), (['runtime', 'app_rw'], ''),
                                 (['runtime', 'app_review'], ''), (['runtime', 'app_worker'], '')]:
         result = subprocess.run([sys.executable, '-m', 'app.deployment', *arguments],
                                 env=env, capture_output=True, text=True)
@@ -756,7 +833,7 @@ def test_quiescence_rejects_another_database_client():
 def test_report_recipients_are_the_next_release_revision():
     revision = ScriptDirectory('migrations').get_revision('0162')
     assert revision.down_revision == '0161'
-    assert deployment.TARGET == '0169'
+    assert deployment.TARGET == '0170'
 
 
 def test_report_retention_empty_downgrade_restores_functions_and_upgrade_is_reversible(run_migrations):
@@ -815,7 +892,7 @@ def test_report_retention_empty_downgrade_restores_functions_and_upgrade_is_reve
 def test_dated_successor_dunning_is_the_next_release_revision():
     revision = ScriptDirectory('migrations').get_revision('0163')
     assert revision.down_revision == '0162'
-    assert deployment.TARGET == '0169'
+    assert deployment.TARGET == '0170'
 
 
 @pytest.mark.parametrize('column', ['distribution_base_total', 'distribution_base_share'])
