@@ -12,7 +12,7 @@ import { AuthCtx } from "../auth/useAuth";
 import userEvent from "@testing-library/user-event";
 import { Link, MemoryRouter, Route, Routes } from "react-router-dom";
 import * as api from "../api/endpoints";
-import type { ConsumptionSuggestion, CostEntry, SettlementRun } from "../api/types";
+import type { CommercialPreallocationIn, ConsumptionSuggestion, CostEntry, SettlementRun } from "../api/types";
 import { ApiError } from "../api/client";
 
 vi.mock("../api/endpoints", async (importOriginal) => ({
@@ -27,6 +27,7 @@ vi.mock("../api/endpoints", async (importOriginal) => ({
   listCostCategories: vi.fn().mockResolvedValue([]),
   listCostEntries: vi.fn(),
   computeSettlement: vi.fn(),
+  previewSettlement: vi.fn(),
   finalizeSettlement: vi.fn(),
 }));
 vi.mock("../api/mail", () => ({ getMailDispatch: vi.fn().mockResolvedValue({ recipients: [], attempts: [] }), sendMailDispatch: vi.fn() }));
@@ -221,6 +222,144 @@ function deferred<T>() {
   const promise = new Promise<T>((res, rej) => { resolve = res; reject = rej; });
   return { promise, resolve, reject };
 }
+
+describe('commercial preallocation inputs', () => {
+  const reason = 'Gastronomie, Restmüll 2 × 1.100 l <Sonderlast> & Begründung';
+  const rule: CommercialPreallocationIn = {
+    cost_entry_id: '00000000-0000-0000-0000-000000000001',
+    commercial_share_percent: '50.00', commercial_amount: null, commercial_reason: reason,
+  };
+  function withRules(rules: CommercialPreallocationIn[]): SettlementRun {
+    return { ...finalized, status: 'draft', lines: [], extra_inputs: {
+      commercial_preallocations: rules, external_amounts: [], manual_amounts: [], unit_metrics: [],
+    } };
+  }
+  function draft(commercial = true, rules: CommercialPreallocationIn[] = []) {
+    vi.mocked(api.computeSettlement).mockReset();
+    vi.mocked(api.previewSettlement).mockReset();
+    vi.mocked(api.finalizeSettlement).mockReset();
+    vi.mocked(api.getSettlement).mockResolvedValue(withRules(rules));
+    vi.mocked(api.listCostEntries).mockResolvedValue((rules.length ? rules : [rule]).map(item => createCostEntry({
+      id: item.cost_entry_id, tenant_distribution_key: 'WOHNFLAECHE',
+      service_period_from: '2026-01-01', service_period_to: '2026-12-31',
+    })));
+    vi.mocked(api.listUnits).mockResolvedValue(commercial ? [{ id: 'shop', property_id: 'property-1', usage_type: 'GEWERBE', number: 'Laden' }] as never : []);
+    vi.mocked(api.computeSettlement).mockResolvedValue({ ...finalized, status: 'draft' });
+    showProposal();
+  }
+
+  it.each(['Berechnen', 'Finalisieren'])('does not replay a loaded rule on untouched %s', async action => {
+    draft(true, [rule]);
+    const current = { ...rule, commercial_share_percent: '40.00' };
+    vi.mocked(api.computeSettlement).mockResolvedValue(withRules([current]));
+    vi.mocked(api.finalizeSettlement).mockResolvedValue({ ...withRules([current]), status: 'finalized' });
+    vi.spyOn(window, 'confirm').mockReturnValue(true);
+    expect(await screen.findByLabelText('Gewerbeanteil (%)', { exact: true })).toHaveValue('50.00');
+    fireEvent.click(screen.getByRole('button', { name: action }));
+    const endpoint = action === 'Berechnen' ? api.computeSettlement : api.finalizeSettlement;
+    await waitFor(() => expect(endpoint).toHaveBeenCalledOnce());
+    expect(vi.mocked(endpoint).mock.calls[0][1]).not.toHaveProperty('commercial_preallocations');
+    if (action === 'Berechnen') {
+      await waitFor(() => expect(screen.getByLabelText('Gewerbeanteil (%)', { exact: true })).toHaveValue('40.00'));
+    }
+  });
+
+  it.each(['percentage', 'removal'])('does not replay a saved %s after a sibling changes the rule', async edit => {
+    draft(true, [rule]);
+    const mode = await screen.findByLabelText('Vorwegabzug', { exact: true });
+    const saved = { ...rule, commercial_share_percent: '45.00' };
+    if (edit === 'removal') fireEvent.change(mode, { target: { value: 'none' } });
+    else fireEvent.change(screen.getByLabelText('Gewerbeanteil (%)', { exact: true }), { target: { value: '45,00' } });
+    vi.mocked(api.computeSettlement).mockResolvedValueOnce(withRules(edit === 'removal' ? [] : [saved]));
+    fireEvent.click(screen.getByRole('button', { name: 'Berechnen' }));
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Berechnen' })).toBeEnabled());
+    expect(api.computeSettlement).toHaveBeenLastCalledWith('run-1', expect.objectContaining({
+      commercial_preallocations: [edit === 'removal'
+        ? { ...rule, commercial_share_percent: null, commercial_reason: null } : saved],
+    }));
+    expect(mode).toHaveValue(edit === 'removal' ? 'none' : 'percent');
+    const sibling = { ...rule, commercial_share_percent: '40.00' };
+    vi.mocked(api.computeSettlement).mockResolvedValueOnce(withRules([sibling]));
+    fireEvent.click(screen.getByRole('button', { name: 'Berechnen' }));
+    await waitFor(() => expect(api.computeSettlement).toHaveBeenCalledTimes(2));
+    expect(vi.mocked(api.computeSettlement).mock.calls[1][1]).not.toHaveProperty('commercial_preallocations');
+    await waitFor(() => expect(screen.getByLabelText('Gewerbeanteil (%)', { exact: true })).toHaveValue('40.00'));
+
+    vi.spyOn(window, 'confirm').mockReturnValue(true);
+    vi.mocked(api.finalizeSettlement).mockResolvedValue({ ...withRules([sibling]), status: 'finalized' });
+    fireEvent.click(screen.getByRole('button', { name: 'Finalisieren' }));
+    await waitFor(() => expect(api.finalizeSettlement).toHaveBeenCalledOnce());
+    expect(vi.mocked(api.finalizeSettlement).mock.calls[0][1]).not.toHaveProperty('commercial_preallocations');
+  });
+
+  it('sends only the edited position and retains its removal through preview and failed saves', async () => {
+    const untouched = { ...rule, cost_entry_id: '00000000-0000-0000-0000-000000000002' };
+    draft(true, [rule, untouched]);
+    const modes = await screen.findAllByLabelText('Vorwegabzug', { exact: true });
+    expect(modes).toHaveLength(2);
+    fireEvent.change(modes[0], { target: { value: 'none' } });
+    const removal = { ...rule, commercial_share_percent: null, commercial_reason: null };
+    vi.mocked(api.previewSettlement).mockResolvedValue(withRules([untouched]));
+    fireEvent.click(screen.getByRole('button', { name: 'Vorschau' }));
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Berechnen' })).toBeEnabled());
+    expect(api.previewSettlement).toHaveBeenLastCalledWith('run-1', expect.objectContaining({ commercial_preallocations: [removal] }));
+    expect(modes[0]).toHaveValue('none');
+
+    vi.mocked(api.computeSettlement).mockRejectedValueOnce(new ApiError(409, 'Regel bereits finalisiert'));
+    fireEvent.click(screen.getByRole('button', { name: 'Berechnen' }));
+    await screen.findByText('Regel bereits finalisiert');
+    vi.spyOn(window, 'confirm').mockReturnValue(true);
+    vi.mocked(api.finalizeSettlement).mockRejectedValueOnce(new ApiError(409, 'Finalisierung abgelehnt'));
+    fireEvent.click(screen.getByRole('button', { name: 'Finalisieren' }));
+    await screen.findByText('Finalisierung abgelehnt');
+    for (const endpoint of [api.computeSettlement, api.finalizeSettlement]) {
+      expect(endpoint).toHaveBeenLastCalledWith('run-1', expect.objectContaining({ commercial_preallocations: [removal] }));
+    }
+    vi.mocked(api.computeSettlement).mockResolvedValueOnce(withRules([untouched]));
+    fireEvent.click(screen.getByRole('button', { name: 'Berechnen' }));
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Berechnen' })).toBeEnabled());
+    expect(api.computeSettlement).toHaveBeenLastCalledWith('run-1', expect.objectContaining({ commercial_preallocations: [removal] }));
+    expect(modes[0]).toHaveValue('none');
+    expect(modes[1]).toHaveValue('percent');
+  });
+
+  it('refuses a blank reason, retains inputs on server refusal and sends exact percentage intent', async () => {
+    draft();
+    const mode = await screen.findByLabelText('Vorwegabzug', { exact: true });
+    fireEvent.change(mode, { target: { value: 'percent' } });
+    fireEvent.change(screen.getByLabelText('Gewerbeanteil (%)', { exact: true }), { target: { value: '50,00' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Berechnen' }));
+    expect(await screen.findByRole('alert')).toHaveTextContent('Begründung');
+    expect(api.computeSettlement).not.toHaveBeenCalled();
+    fireEvent.change(screen.getByLabelText('Begründung', { exact: true }), { target: { value: reason } });
+    vi.mocked(api.computeSettlement).mockRejectedValueOnce(new ApiError(409, 'Regel bereits finalisiert'));
+    fireEvent.click(screen.getByRole('button', { name: 'Berechnen' }));
+    await screen.findByText('Regel bereits finalisiert');
+    expect(screen.getByLabelText('Begründung', { exact: true })).toHaveValue(reason);
+    expect(api.computeSettlement).toHaveBeenLastCalledWith('run-1', expect.objectContaining({ commercial_preallocations: [{
+      cost_entry_id: '00000000-0000-0000-0000-000000000001', commercial_share_percent: '50.00', commercial_amount: null, commercial_reason: reason,
+    }] }));
+  });
+
+  it('supports a German fixed amount and explicit removal', async () => {
+    draft();
+    const mode = await screen.findByLabelText('Vorwegabzug', { exact: true });
+    fireEvent.change(mode, { target: { value: 'fixed' } });
+    fireEvent.change(screen.getByLabelText('Festbetrag (EUR)', { exact: true }), { target: { value: '600,00' } });
+    fireEvent.change(screen.getByLabelText('Begründung', { exact: true }), { target: { value: reason } });
+    fireEvent.click(screen.getByRole('button', { name: 'Berechnen' }));
+    await waitFor(() => expect(api.computeSettlement).toHaveBeenCalledWith('run-1', expect.objectContaining({ commercial_preallocations: [expect.objectContaining({ commercial_share_percent: null, commercial_amount: '600.00' })] })));
+    fireEvent.change(mode, { target: { value: 'none' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Berechnen' }));
+    await waitFor(() => expect(api.computeSettlement).toHaveBeenLastCalledWith('run-1', expect.objectContaining({ commercial_preallocations: [expect.objectContaining({ commercial_share_percent: null, commercial_amount: null, commercial_reason: null })] })));
+  });
+
+  it('offers no commercial fields for a property without a commercial unit', async () => {
+    draft(false);
+    await screen.findByRole('button', { name: 'Berechnen' });
+    expect(screen.queryByLabelText('Vorwegabzug', { exact: true })).not.toBeInTheDocument();
+  });
+});
 let fetchProposal: ReturnType<typeof vi.fn>;
 function posts() { return fetchProposal.mock.calls.filter(([, options]) => options?.method === "POST"); }
 function date(value: string) { fireEvent.change(screen.getByLabelText("Übernehmen ab", { exact: true }), { target: { value } }); }

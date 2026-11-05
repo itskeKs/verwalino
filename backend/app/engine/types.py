@@ -165,6 +165,9 @@ class CostPositionInput:
     external_amounts: tuple[ExternalAmountInput, ...] = ()
     manual_amounts: tuple[ManualAmountInput, ...] = ()
     heating: HeatingPositionInput | None = None
+    commercial_share_percent: Decimal | None = None
+    commercial_amount: Decimal | None = None
+    commercial_reason: str | None = None
 
 
 @dataclass(frozen=True)
