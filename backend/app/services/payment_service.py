@@ -626,10 +626,14 @@ class PaymentService:
         history = [OwnerPeriodInput(o.unit_id, o.owner_profile_id, o.valid_from,
             db_exclusive_to_engine_inclusive(o.valid_to), o.mea_share)
             for o in await SettlementRunRepository(self._session, self._org_id).ownership_for_property(plan.property_id)]
+        prop = await PropertyRepository(self._session, self._org_id).get_by_id(plan.property_id)
+        if prop is None:
+            raise HTTPException(404, 'Property not found')
         try:
             return owner_expected_charges(advance_lines, owner_profile_id,
                 max(period_start, plan.period_start), min(period_end, plan.period_end),
-                owner_periods=history, plan_start=plan.period_start)
+                owner_periods=history, plan_start=plan.period_start,
+                monthly_due_day=plan.monthly_due_day, federal_state=prop.federal_state)
         except ValueError as exc:
             raise HTTPException(422, {"code": "hausgeld_ownership_invalid",
                 "message": "Die Eigentumszeiträume oder Miteigentumsanteile für das Hausgeld sind unvollständig."}) from exc
@@ -641,7 +645,7 @@ class PaymentService:
         period_start: date,
         period_end: date,
         accounting_scope_id: uuid.UUID | None = None,
-        *, property_id: uuid.UUID | None = None,
+        *, property_id: uuid.UUID | None = None, as_of: date | None = None,
     ) -> MietkontoResult:
         """Hausgeld Soll/Ist/Saldo of one owner over a period (§2.2/§3.1).
 
@@ -682,7 +686,7 @@ class PaymentService:
 
         payments = await self._repo.list_for_owner(owner_profile_id, property_id=property_id)
         scoped = self._scope_payments_to_period(payments, period_start, period_end)
-        return account_statement(charges, [_to_payment_input(p) for p in scoped])
+        return account_statement(charges, [_to_payment_input(p) for p in scoped], as_of=as_of or date.today())
 
     @staticmethod
     def _scope_payments_to_period(payments, period_start: date, period_end: date):

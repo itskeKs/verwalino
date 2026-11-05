@@ -2,7 +2,7 @@
  * Mietkonto page -- Soll/Ist/Saldo + offene Posten per lease or owner.
  *
  * M6 Mietkonto: select a lease or owner, date range, then view the
- * account statement. Only the due tenant balance is labelled as arrears.
+ * account statement. Only the due balance is labelled as arrears.
  */
 
 import { useEffect, useState, useCallback } from "react";
@@ -24,7 +24,7 @@ import type {
   Person,
   Unit,
   Property,
-  MietkontoResult,
+  OwnerMietkontoResult,
   TenantMietkontoResult,
   EconomicPlan,
 } from "../api/types";
@@ -71,7 +71,7 @@ export function MietkontoPage() {
   });
 
   // Result
-  const [result, setResult] = useState<MietkontoResult | TenantMietkontoResult | null>(null);
+  const [result, setResult] = useState<OwnerMietkontoResult | TenantMietkontoResult | null>(null);
   const [querying, setQuerying] = useState(false);
 
   const loadLookups = useCallback(() => {
@@ -134,7 +134,7 @@ export function MietkontoPage() {
     if (viewMode === "lease" && !selectedLeaseId) return;
     if (viewMode === "owner" && !selectedOwnerId) return;
     if (!periodStart || !periodEnd) return;
-    if (viewMode === "lease" && !asOf) return;
+    if (!asOf) return;
 
     setQuerying(true);
     setError(null);
@@ -150,6 +150,7 @@ export function MietkontoPage() {
           periodEnd,
           selectedPlanId || undefined,
           scopeId || undefined,
+          asOf,
         );
         setResult(r);
       }
@@ -286,10 +287,10 @@ export function MietkontoPage() {
             />
           </label>
 
-          {viewMode === "lease" && <label>
+          <label>
             Fällig am *
             <input type="date" required value={asOf} onChange={(e) => setAsOf(e.target.value)} />
-          </label>}
+          </label>
 
           <div className="form-actions">
             <button
@@ -332,11 +333,10 @@ export function MietkontoPage() {
                     fontFamily: "var(--mono)",
                     fontWeight: 700,
                     fontSize: "1.05rem",
-                    color: viewMode === "lease" && parseFloat(result.balance) > 0 ? undefined : balanceColor(result.balance),
+                    color: parseFloat(result.balance) > 0 ? undefined : balanceColor(result.balance),
                   }}
                 >
                   {result.balance} EUR
-                  {viewMode === "owner" && parseFloat(result.balance) > 0 && " (Rueckstand)"}
                   {parseFloat(result.balance) < 0 && " (Guthaben)"}
                 </td>
               </tr>
@@ -384,6 +384,9 @@ export function MietkontoPage() {
                         {"is_due" in item && <span className="block text-xs text-muted-foreground">
                           {Number(item.open_amount) === 0 ? "ausgeglichen" : item.is_due ? "fällig" : "noch nicht fällig"}
                         </span>}
+                        {"due_date" in item && item.due_date && <span className="block text-xs text-muted-foreground">
+                          Fällig am {item.due_date.split("-").reverse().join(".")}
+                        </span>}
                       </td>
                       <td>
                         {PAYMENT_TYPE_LABELS[item.payment_type] ?? item.payment_type}
@@ -399,7 +402,7 @@ export function MietkontoPage() {
                           textAlign: "right",
                           fontFamily: "var(--mono)",
                           fontWeight: 600,
-                          color: viewMode === "lease" && parseFloat(item.open_amount) > 0 ? undefined : openAmountColor(item.open_amount),
+                          color: parseFloat(item.open_amount) > 0 ? undefined : openAmountColor(item.open_amount),
                         }}
                       >
                         {item.open_amount} EUR

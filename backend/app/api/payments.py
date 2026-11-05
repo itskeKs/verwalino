@@ -153,6 +153,14 @@ class TenantMietkontoOut(MietkontoOut):
     not_yet_due_balance: str
 
 
+class OwnerOpenItemOut(TenantOpenItemOut):
+    due_date: date | None
+
+
+class OwnerMietkontoOut(TenantMietkontoOut):
+    open_items: list[OwnerOpenItemOut]
+
+
 def _to_out(p: Payment) -> PaymentOut:
     return PaymentOut(
         reserve_cost_entry_id=str(p.reserve_cost_entry_id) if p.reserve_cost_entry_id else None,
@@ -252,21 +260,26 @@ async def lease_statement(
         due_balance=str(result.due_balance), not_yet_due_balance=str(result.not_yet_due_balance))
 
 
-@router.get("/mietkonto/owner/{owner_profile_id}", response_model=MietkontoOut)
+@router.get("/mietkonto/owner/{owner_profile_id}", response_model=OwnerMietkontoOut)
 async def owner_statement(
     owner_profile_id: uuid.UUID,
     period_start: date,
     period_end: date,
     economic_plan_id: uuid.UUID | None = None,
     accounting_scope_id: uuid.UUID | None = None,
+    as_of: date | None = None,
     auth: AuthContext = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
     svc = PaymentService(db, auth.organization_id, auth.user_id)
     result = await svc.account_statement_for_owner(
-        owner_profile_id, economic_plan_id, period_start, period_end, accounting_scope_id
+        owner_profile_id, economic_plan_id, period_start, period_end, accounting_scope_id, as_of=as_of
     )
-    return _mietkonto_out(result)
+    statement = _mietkonto_out(result).model_dump()
+    statement['open_items'] = [OwnerOpenItemOut(**row, is_due=item.is_due, due_date=item.due_date)
+        for row, item in zip(statement['open_items'], result.open_items)]
+    return OwnerMietkontoOut(**statement,
+        due_balance=str(result.due_balance), not_yet_due_balance=str(result.not_yet_due_balance))
 
 
 @router.get("/open-items", response_model=list[LeaseOpenItemsOut])

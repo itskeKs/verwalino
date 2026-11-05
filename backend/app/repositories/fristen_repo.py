@@ -12,11 +12,13 @@ import uuid
 from datetime import date
 from typing import Sequence
 
-from sqlalchemy import func, or_, select, text
+from sqlalchemy import func, or_, select, text, union
 from fastapi import HTTPException
 
 from app.models.cost_entry import CostEntry
 from app.models.economic_plan import EconomicPlan
+from app.models.economic_plan_line import EconomicPlanLine
+from app.models.ownership_history import OwnershipHistory
 from app.models.invoice_document import InvoiceDocument
 from app.models.lease_agreement import LeaseAgreement
 from app.models.property import Property
@@ -127,6 +129,30 @@ class FristenRepository:
         )
         result = await self._session.execute(stmt)
         return {row[0] for row in result.all()}
+
+    async def finalized_plans(self, reference_date: date, property_id=None) -> Sequence[EconomicPlan]:
+        """Active plans in the selected financial context that have begun."""
+        stmt = select(EconomicPlan).where(EconomicPlan.organization_id == self._org_id,
+            EconomicPlan.status == 'finalized', EconomicPlan.superseded_by_id.is_(None),
+            EconomicPlan.period_start <= reference_date)
+        if property_id is not None:
+            stmt = stmt.where(EconomicPlan.property_id == property_id)
+        return (await self._session.execute(stmt)).scalars().all()
+
+    async def plan_owner_ids(self, plan: EconomicPlan) -> Sequence[uuid.UUID]:
+        """Frozen recipients plus dated successors; never omit a buyer's debt."""
+        frozen = select(EconomicPlanLine.owner_profile_id).where(
+            EconomicPlanLine.organization_id == self._org_id,
+            EconomicPlanLine.economic_plan_id == plan.id,
+            EconomicPlanLine.line_type == 'OWNER_ADVANCE',
+            EconomicPlanLine.owner_profile_id.is_not(None))
+        dated = (select(OwnershipHistory.owner_profile_id)
+            .join(Unit, Unit.id == OwnershipHistory.unit_id)
+            .where(OwnershipHistory.organization_id == self._org_id,
+                Unit.organization_id == self._org_id, Unit.property_id == plan.property_id,
+                OwnershipHistory.valid_from <= plan.period_end,
+                or_(OwnershipHistory.valid_to.is_(None), OwnershipHistory.valid_to > plan.period_start)))
+        return (await self._session.execute(union(frozen, dated))).scalars().all()
 
     # ------------------------------------------------------------------
     # Retention anchor (nachrichtlich INFO)

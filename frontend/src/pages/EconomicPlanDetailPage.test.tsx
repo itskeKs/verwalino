@@ -18,6 +18,10 @@ function mocks(plan: object = draft) {
   });
 }
 afterEach(() => { cleanup(); vi.restoreAllMocks(); });
+it.each([1, 3, 28, 31, null])("shows resolved due day %s without changing historical values", async day => {
+  mocks({ ...draft, monthly_due_day: day }); show();
+  expect(await screen.findByText(`Fälligkeit: jeweils zum ${day ?? 1}. des Monats`)).toBeVisible();
+});
 it("rehydrates uncomputed stored rows and reserve on reload and computes exact category IDs/strings", async () => {
   mocks(); const post = vi.spyOn(api, "post").mockResolvedValue(draft);
   let view = show(); await screen.findByDisplayValue("7100.10");

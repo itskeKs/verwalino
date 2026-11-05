@@ -44,11 +44,41 @@ async def test_weg_monitor_omits_tenant_debt_and_out_of_term_plan_obligations(mi
         assert result.status_code == 200, result.text
         kinds = {row['kind'] for row in result.json()}
         assert {'WEG_JAHRESABRECHNUNG', 'WEG_VERMOEGENSBERICHT'} <= kinds
-        assert not kinds & {'BK_ABRECHNUNG', 'OFFENE_POSTEN', 'WIRTSCHAFTSPLAN'}
+        assert not kinds & {'BK_ABRECHNUNG', 'WIRTSCHAFTSPLAN'}
+        assert next(row for row in result.json() if row['kind'] == 'OFFENE_POSTEN')['status'] == 'OK'
         # The second WEG remains open; it has no costs but needs a next-year plan.
         second = await api.get('/api/fristen', params={'reference_date': '2026-12-31', 'accounting_scope_id': str(ids['second_scope'])})
         assert second.status_code == 200, second.text
-        assert {row['kind'] for row in second.json()} == {'WIRTSCHAFTSPLAN', 'BELEG_AUFBEWAHRUNG'}
+        assert {row['kind'] for row in second.json()} == {'WIRTSCHAFTSPLAN', 'BELEG_AUFBEWAHRUNG', 'OFFENE_POSTEN'}
+
+
+async def test_owner_monitor_and_ledger_share_due_dates_without_other_scope_debt(migrator_session, scope_seed):
+    ids = await statement_fixture(migrator_session, scope_seed, 'owner')
+    await mutate(text("INSERT INTO ownership_history(id,organization_id,unit_id,owner_profile_id,valid_from) VALUES (gen_random_uuid(),:org,:unit,:profile,'2020-01-01')"), ids)
+    for sphere, day, amount in [('scope', 3, '600.00'), ('second_scope', 1, '1800.00')]:
+        params = {**ids, 'plan': uuid.uuid4(), 'sphere': ids[sphere], 'day': day, 'amount': amount}
+        await mutate(text("""INSERT INTO economic_plan(id,organization_id,property_id,plan_year,period_start,period_end,monthly_due_day,status,engine_version)
+            VALUES (:plan,:org,:property,2025,'2025-07-01','2025-07-31',:day,'draft','fixture')"""), params)
+        await mutate(text("""INSERT INTO economic_plan_line(id,organization_id,economic_plan_id,line_type,owner_profile_id,unit_id,label,planned_amount,monthly_amount)
+            VALUES (gen_random_uuid(),:org,:plan,'OWNER_ADVANCE',:profile,:unit,'Resolved Hausgeld',CAST(:amount AS numeric),CAST(:amount AS numeric))"""), params)
+        await mutate(text("INSERT INTO accounting_scope_binding(organization_id,property_id,scope_id,economic_plan_id,origin,reason,reviewed_by) VALUES (:org,:property,:sphere,:plan,'REVIEWED','Resolved monthly due day',:actor)"), params)
+        await mutate(text("UPDATE economic_plan SET status='finalized' WHERE id=:plan"), params)
+        if sphere == 'scope':
+            ids['plan'] = params['plan']
+    async with client(ids) as api:
+        for cutoff, expected in [('2025-07-02', 'OK'), ('2025-07-04', 'DUE')]:
+            response = await api.get('/api/fristen', params={'reference_date': cutoff, 'accounting_scope_id': str(ids['scope'])})
+            assert response.status_code == 200, response.text
+            overdue = next(row for row in response.json() if row['kind'] == 'OFFENE_POSTEN')
+            assert overdue['status'] == expected
+            if expected == 'DUE':
+                assert overdue['detail'].startswith('1 ')
+            ledger = await api.get(f"/api/payments/mietkonto/owner/{ids['profile']}", params={
+                'period_start': '2025-07-01', 'period_end': '2025-07-31',
+                'accounting_scope_id': str(ids['scope']), 'economic_plan_id': str(ids['plan']), 'as_of': cutoff})
+            assert ledger.status_code == 200, ledger.text
+            assert ledger.json()['open_items'][0]['due_date'] == '2025-07-03'
+            assert ledger.json()['due_balance'] == ('600.00' if expected == 'DUE' else '0.00')
 
 
 async def test_monitor_live_scope_denial_and_invalid_reference_date(migrator_session, scope_seed):

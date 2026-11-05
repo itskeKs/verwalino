@@ -158,7 +158,7 @@ This gives the plan the **same immutability guarantee** (a resolved economic pla
 | `management_mandate_id` | `UUID NULL` FK→`management_mandate` (`RESTRICT`) | WEG mandate (segregation-of-funds anchor). |
 | `plan_year` | `INTEGER NOT NULL` | Fiscal year (usually calendar year; SDD §12). |
 | `period_start`/`period_end` | `DATE NOT NULL` | Plan period (usually 01.01.–31.12.). `CHECK (period_end >= period_start)`. |
-| `monthly_due_day` | `SMALLINT NULL` | Due day of the monthly Hausgeld (display/later Soll posting (Sollstellung) in M6); purely informational in M4. |
+| `monthly_due_day` | `SMALLINT NULL` | Resolved calendar day for monthly Hausgeld. New input accepts 1–28; omitted/null input defaults to 1. Frozen historical NULL is read as 1 without rewriting the plan. The field stays immutable after finalization. |
 | `reserve_contribution_total` | `NUMERIC(14,2) NOT NULL DEFAULT 0` | planned **total reserve contribution** for the year (not a cost allocation, §3). |
 | `status` | `String(12) NOT NULL DEFAULT 'draft'` | `draft`\|`finalized`. CHECK. Freeze condition `finalized`. |
 | `snapshot_payload` | `JSONB NULL` | canonical, complete plan basis + result (§5.4). |

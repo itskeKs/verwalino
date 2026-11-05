@@ -27,6 +27,32 @@ vi.mock("../components/AccountingScopeSelector", () => ({
 afterEach(() => {
   cleanup();
   vi.clearAllMocks();
+  vi.mocked(api.ownerStatement).mockReset();
+});
+
+it("classifies owner balances at the selected cutoff and displays the resolved due date", async () => {
+  vi.mocked(api.listOwnerProfiles).mockResolvedValueOnce([{ id: "owner-due", person_id: "anna", notes: "" }]);
+  vi.mocked(api.listPersons).mockResolvedValueOnce([{ id: "anna", first_name: "Anna", last_name: "Berg" }] as never);
+  vi.mocked(api.ownerStatement).mockResolvedValueOnce({
+    soll_total: "600.00", ist_total: "0.00", balance: "600.00",
+    due_balance: "0.00", not_yet_due_balance: "600.00", open_items: [{
+      period_year: 2026, period_month: 7, payment_type: "HAUSGELD_VORSCHUSS",
+      soll: "600.00", ist: "0.00", open_amount: "600.00", due_date: "2026-07-03", is_due: false,
+    }],
+  });
+  const user = userEvent.setup(); render(<MietkontoPage />);
+  await user.selectOptions(await screen.findByRole("combobox", { name: "Ansicht" }), "owner");
+  await user.selectOptions(screen.getByRole("combobox", { name: "Eigentuemer *" }), "owner-due");
+  fireEvent.change(screen.getByLabelText("Fällig am *"), { target: { value: "2026-07-02" } });
+  await user.click(screen.getByRole("button", { name: "Abrufen" }));
+  const saldo = (await screen.findByText("Saldo", { exact: true })).closest("tr")!;
+  expect(saldo).not.toHaveTextContent(/R[uü]e?ckstand/);
+  const july = screen.getByText("2026/07").closest("tr")!;
+  expect(july).toHaveTextContent("noch nicht fällig");
+  expect(july).toHaveTextContent("03.07.2026");
+  expect(api.ownerStatement).toHaveBeenLastCalledWith("owner-due", expect.any(String), expect.any(String), undefined, undefined, "2026-07-02");
+  fireEvent.change(screen.getByLabelText("Fällig am *"), { target: { value: "2026-07-04" } });
+  expect(screen.queryByText("Saldo", { exact: true })).not.toBeInTheDocument();
 });
 
 it("keeps the full-year balance and labels only the selected cutoff's due part as arrears", async () => {
@@ -118,13 +144,13 @@ it("gives native owner account selectors exact accessible names", async () => {
 it("loads frozen levy dues for an owner without an economic plan using an explicit READ scope", async () => {
   vi.mocked(api.listOwnerProfiles).mockResolvedValueOnce([{ id: "owner-levy", person_id: "person-levy", notes: "" }]);
   vi.mocked(api.listPersons).mockResolvedValueOnce([{ id: "person-levy", first_name: "Ada", last_name: "Besitzer" }] as never);
-  vi.mocked(api.ownerStatement).mockResolvedValueOnce({ soll_total: "3000.00", ist_total: "0.00", balance: "3000.00", open_items: [] });
+  vi.mocked(api.ownerStatement).mockResolvedValueOnce({ soll_total: "3000.00", ist_total: "0.00", balance: "3000.00", due_balance: "3000.00", not_yet_due_balance: "0.00", open_items: [] });
   const user = userEvent.setup(); render(<MietkontoPage />);
   await user.selectOptions(await screen.findByRole("combobox", { name: "Ansicht" }), "owner");
   await screen.findByRole("option", { name: "Ada Besitzer" });
   await user.selectOptions(screen.getByRole("combobox", { name: "Eigentuemer *" }), "owner-levy");
   await user.selectOptions(screen.getByRole("combobox", { name: "Abrechnungskreis read" }), "weg-scope");
   await user.click(screen.getByRole("button", { name: "Abrufen" }));
-  await waitFor(() => expect(api.ownerStatement).toHaveBeenCalledWith("owner-levy", expect.any(String), expect.any(String), undefined, "weg-scope"));
-  expect(await screen.findByText("3000.00 EUR (Rueckstand)")).toBeVisible();
+  await waitFor(() => expect(api.ownerStatement).toHaveBeenCalledWith("owner-levy", expect.any(String), expect.any(String), undefined, "weg-scope", expect.any(String)));
+  expect(await screen.findByText("3000.00 EUR (Rückstand)")).toBeVisible();
 });

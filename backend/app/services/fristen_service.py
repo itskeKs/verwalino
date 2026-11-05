@@ -100,6 +100,9 @@ class FristenService:
         overdue = None
         if sphere is None or sphere.scope_type == 'MIET':
             overdue = OverdueItemsInput(overdue_item_count=await self._overdue_count(reference_date, sphere))
+        if sphere is None or sphere.scope_type == 'WEG':
+            owner_count = await self._owner_overdue_count(reference_date, sphere)
+            overdue = OverdueItemsInput(overdue_item_count=(overdue.overdue_item_count if overdue else 0) + owner_count)
         # Upload-first sources have no complete accounting-scope classification
         # yet. Do not turn their RLS invisibility into a zero/partial retention count.
         earliest, doc_count = await self._repo.retention_anchor() if sphere is None else (None, 0)
@@ -199,8 +202,7 @@ class FristenService:
 
     # ------------------------------------------------------------------
     # Org-wide overdue open-item count (nachrichtlich; reuses the M6 engine).
-    # Tenant leases only [section 18/fachlich]; owner Hausgeld arrears are
-    # surfaced via the owner dunning workflow, not this aggregate.
+    # Tenant and owner paths both reuse the ledger's dates and dunning filter.
     # ------------------------------------------------------------------
     async def _overdue_count(self, reference_date: date, sphere=None) -> int:
         leases = await self._repo.all_leases()
@@ -244,6 +246,27 @@ class FristenService:
             except Exception as error:
                 # A malformed input cannot be silently omitted from a total.
                 raise HTTPException(409, 'Deadline overview cannot calculate all lease inputs') from error
+        return total
+
+    async def _owner_overdue_count(self, reference_date: date, sphere=None) -> int:
+        from app.services.payment_service import PaymentService
+
+        total = 0
+        payments = PaymentService(self._session, self._org_id, self._user_id)
+        plans = await self._repo.finalized_plans(reference_date, sphere.property_id if sphere else None)
+        periods = set()
+        for plan in plans:
+            key = (plan.property_id, plan.period_start, plan.period_end)
+            if key in periods:
+                raise HTTPException(409, {'code': 'hausgeld_plan_ambiguous',
+                    'message': 'Mehrere finalisierte Wirtschaftspläne gelten für denselben Zeitraum. Bitte klären Sie den gültigen Plan über eine Korrektur.'})
+            periods.add(key)
+        for plan in plans:
+            for owner in await self._repo.plan_owner_ids(plan):
+                result = await payments.account_statement_for_owner(owner, plan.id,
+                    plan.period_start, min(reference_date, plan.period_end),
+                    sphere.id if sphere else None, property_id=plan.property_id, as_of=reference_date)
+                total += len(find_overdue_items(list(result.open_items), reference_date, grace_days=0))
         return total
 
 
