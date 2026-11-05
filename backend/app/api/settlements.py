@@ -184,6 +184,25 @@ class HeatingConfigIn(BaseModel):
         return value
 
 
+class CommercialPreallocationIn(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+    cost_entry_id: uuid.UUID
+    commercial_share_percent: Annotated[Decimal, Field(ge=0, le=100, max_digits=5, decimal_places=2, allow_inf_nan=False)] | None = None
+    commercial_amount: Annotated[Decimal, Field(ge=0, max_digits=14, decimal_places=2, allow_inf_nan=False)] | None = None
+    commercial_reason: str | None = Field(default=None, max_length=2000)
+
+    @model_validator(mode='after')
+    def reasoned_rule(self):
+        values = (self.commercial_share_percent, self.commercial_amount)
+        if values == (None, None) and self.commercial_reason is None:
+            return self  # Explicitly remove this position's unfinalized rule.
+        if sum(value is not None for value in values) != 1:
+            raise ValueError('Vorwegabzug Gewerbe: genau einen Prozentsatz oder Festbetrag angeben.')
+        if not self.commercial_reason or not self.commercial_reason.strip():
+            raise ValueError('Vorwegabzug Gewerbe: eine Begründung ist erforderlich.')
+        return self
+
+
 class ComputeRequest(BaseModel):
     """Structured extra inputs for the engine (provisional source O3-1/O3-5)."""
 
@@ -192,6 +211,7 @@ class ComputeRequest(BaseModel):
     external_amounts: list[ExternalAmountIn] = []
     manual_amounts: list[ManualAmountIn] = []
     unit_metrics: list[UnitMetricIn] = []
+    commercial_preallocations: list[CommercialPreallocationIn] | None = Field(default=None, max_length=1000)
 
 
 class SettlementLineOut(BaseModel):
@@ -407,7 +427,9 @@ async def get_settlement(
     lines_repo = SettlementLineRepository(db, auth.organization_id)
     lines = await lines_repo.list_for_run(run_id)
     svc = SettlementService(db, auth.organization_id, auth.user_id)
-    return _run_out(run, list(lines), vacancy_attribution=await svc.vacancy_disclosure(run))
+    out = _run_out(run, list(lines), vacancy_attribution=await svc.vacancy_disclosure(run))
+    out.extra_inputs = await svc.current_extra_inputs(run)
+    return out
 
 
 @router.get("/{run_id}/consumption-suggestions", response_model=list[ConsumptionSuggestionOut])

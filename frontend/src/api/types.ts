@@ -901,11 +901,19 @@ export interface HeatingConsumptionCandidate {
   reason: string | null;
 }
 
+export interface CommercialPreallocationIn {
+  cost_entry_id: string;
+  commercial_share_percent: string | null;
+  commercial_amount: string | null;
+  commercial_reason: string | null;
+}
+
 export interface ComputeRequest {
   external_amounts: ExternalAmountIn[];
   manual_amounts: ManualAmountIn[];
   unit_metrics: UnitMetricIn[];
   heating_inputs?: HeatingConfig[];
+  commercial_preallocations?: CommercialPreallocationIn[];
 }
 
 // --- M4 WEG: Wirtschaftsplan (Economic Plan) ---

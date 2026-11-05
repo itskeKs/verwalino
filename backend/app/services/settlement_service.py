@@ -34,6 +34,7 @@ from types import SimpleNamespace
 from fastapi import HTTPException
 from app.core.rbac import ScopeCapability
 from sqlalchemy import text
+from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.temporal import db_exclusive_to_engine_inclusive
@@ -76,13 +77,14 @@ from app.models.settlement_line import SettlementLine
 from app.models.settlement_run import SettlementRun
 from app.repositories.audit_repo import AuditRepository
 from app.repositories.cost_entry_repo import CostEntryRepository
+from app.repositories.commercial_preallocation_repo import CommercialPreallocationRepository
 from app.repositories.lease_agreement_repo import LeaseAgreementRepository
 from app.repositories.settlement_repo import (
     SettlementLineRepository,
     SettlementRunRepository,
 )
 
-ENGINE_VERSION = "m3.4.0"
+ENGINE_VERSION = "m3.5.0"
 
 
 def frozen_vacancy_attribution(run: SettlementRun, allowed_units: set[str], allowed_costs: set[str]) -> list[dict]:
@@ -144,6 +146,14 @@ class UnitMetric:
 
 
 @dataclass
+class CommercialPreallocationEntry:
+    cost_entry_id: uuid.UUID
+    commercial_share_percent: Decimal | None = None
+    commercial_amount: Decimal | None = None
+    commercial_reason: str | None = None
+
+
+@dataclass
 class ComputeExtras:
     """Structured extra inputs for one compute (provisional source, O3-1/O3-5)."""
 
@@ -151,6 +161,7 @@ class ComputeExtras:
     manual_amounts: list[ManualAmountEntry] = field(default_factory=list)
     unit_metrics: list[UnitMetric] = field(default_factory=list)
     heating_inputs: list[HeatingConfig] = field(default_factory=list)
+    commercial_preallocations: list[CommercialPreallocationEntry] | None = None
 
 
 def decode_compute_extras(payload: dict) -> ComputeExtras:
@@ -159,6 +170,11 @@ def decode_compute_extras(payload: dict) -> ComputeExtras:
         return date.fromisoformat(value) if value is not None else None
 
     return ComputeExtras(
+        commercial_preallocations=[CommercialPreallocationEntry(uuid.UUID(e['cost_entry_id']),
+            Decimal(e['commercial_share_percent']) if e.get('commercial_share_percent') is not None else None,
+            Decimal(e['commercial_amount']) if e.get('commercial_amount') is not None else None,
+            e.get('commercial_reason')) for e in payload['commercial_preallocations']]
+            if payload.get('commercial_preallocations') is not None else None,
         external_amounts=[ExternalAmountEntry(uuid.UUID(e['cost_entry_id']),uuid.UUID(e['unit_id']),
             Decimal(e['tenant_amount']),day(e.get('period_from')),day(e.get('period_to')))
             for e in payload.get('external_amounts',[])],
@@ -573,6 +589,7 @@ class SettlementService:
         rather than persisting a partial/wrong result.
         """
         run = await self._get_draft_or_404(run_id)
+        await self._save_commercial_preallocations(run, extras)
         computation_basis = await begin_computation(self._session, self._org_id, run, 'compute')
         inp, result = await self._compute_engine(run, extras)
 
@@ -628,6 +645,7 @@ class SettlementService:
           run from commit. Any error -> rollback (no half-finalized run).
         """
         run = await self._get_draft_or_404(run_id)
+        await self._save_commercial_preallocations(run, extras)
         computation_basis = await begin_computation(self._session, self._org_id, run, 'finalize')
         if await self._runs.has_conflicting_period(run):
             raise SettlementPeriodConflict()
@@ -752,6 +770,62 @@ class SettlementService:
     # ------------------------------------------------------------------
     # internals
     # ------------------------------------------------------------------
+    @staticmethod
+    def _commercial_values(rule):
+        return {name: getattr(rule, name) for name in (
+            'commercial_share_percent', 'commercial_amount', 'commercial_reason')}
+
+    async def current_extra_inputs(self, run):
+        """Drafts read the shared position rules; finalized evidence stays literal."""
+        frozen = (run.snapshot_payload or {}).get('extra_inputs')
+        if run.status != 'draft':
+            return frozen
+        async with FinancialScopeService(self._session, self._org_id, self._user_id).using(run):
+            entries = await self._runs.active_cost_entries_for_period(run.property_id, run.period_start, run.period_end)
+            rules = await CommercialPreallocationRepository(self._session, self._org_id).for_costs([e.id for e, _ in entries])
+        values = [{'cost_entry_id': str(rule.cost_entry_id), **{key: str(value) if isinstance(value, Decimal) else value
+            for key, value in self._commercial_values(rule).items()}} for rule in rules.values()]
+        return {**(frozen or {}), 'commercial_preallocations': values}
+
+    async def _commercial_command_sources(self, run, extras):
+        commands = extras.commercial_preallocations or []
+        ids = [rule.cost_entry_id for rule in commands]
+        if len(ids) != len(set(ids)):
+            raise HTTPException(422, 'Vorwegabzug Gewerbe: eine Kostenposition darf nur einmal vorkommen.')
+        entries = await self._runs.active_cost_entries_for_period(run.property_id, run.period_start, run.period_end)
+        sources = {entry.id: entry for entry, _ in entries}
+        if not set(ids) <= sources.keys():
+            raise HTTPException(404, 'Kostenposition nicht gefunden.')
+        return sources
+
+    async def _save_commercial_preallocations(self, run, extras):
+        if extras is None or not extras.commercial_preallocations:
+            return
+        await FinancialScopeService(self._session, self._org_id, self._user_id).enter(
+            run, capability=ScopeCapability.PREPARE, computation=True)
+        sources = await self._commercial_command_sources(run, extras)
+        repo = CommercialPreallocationRepository(self._session, self._org_id)
+        existing = await repo.for_costs([rule.cost_entry_id for rule in extras.commercial_preallocations])
+        for rule in extras.commercial_preallocations:
+            values = self._commercial_values(rule)
+            old = existing.get(rule.cost_entry_id)
+            if old is not None and self._commercial_values(old) == values:
+                continue
+            if old is None and rule.commercial_share_percent is None and rule.commercial_amount is None:
+                continue
+            try:
+                await repo.save(sources[rule.cost_entry_id], values)
+            except DBAPIError as error:
+                if getattr(error.orig, 'sqlstate', None) == '42501':
+                    raise HTTPException(404, 'Kostenposition nicht gefunden.') from None
+                if getattr(error.orig, 'sqlstate', None) == 'P2020':
+                    raise HTTPException(409, {'code': 'commercial_preallocation_finalized', 'message':
+                        'Vorwegabzug Gewerbe bereits finalisiert. Die Regel dieser Kostenposition kann nicht mehr geändert werden.'}) from None
+                raise
+            await self._audit.create(AuditEvent(actor_user_id=self._user_id, entity_type='cost_entry',
+                entity_id=rule.cost_entry_id, action='settlement.commercial_preallocation_changed',
+                payload_diff={key: str(value) if isinstance(value, Decimal) else value for key, value in values.items()}))
+
     async def _get_draft_or_404(self, run_id: uuid.UUID) -> SettlementRun:
         scope = FinancialScopeService(self._session, self._org_id, self._user_id)
         run = await self._runs.get_by_id(run_id)
@@ -882,9 +956,16 @@ class SettlementService:
         self._coverage = await FinancialInputPolicy(self._session, self._org_id, self._user_id).require(run, "settlement", rental_values(run))
         if extras is None:
             extras = decode_compute_extras((run.snapshot_payload or {}).get('extra_inputs',{}))
+            # Saved extras are evidence of the last run, never a command to
+            # overwrite a position rule subsequently changed by another draft.
+            extras.commercial_preallocations = None
+        if extras.commercial_preallocations:
+            await self._commercial_command_sources(run, extras)
         self._extra_payload = json.loads(json.dumps(asdict(extras),default=str))
+        self._commercial_payload = {}
         self._heating_sources = {}
         inp = await self._load_engine_input(run, extras)
+        self._extra_payload['commercial_preallocations'] = list(self._commercial_payload.values())
         from app.services.payment_service import PaymentService
 
         payments = PaymentService(self._session, self._org_id, self._user_id)
@@ -1058,6 +1139,8 @@ class SettlementService:
             man_by_entry.setdefault(m.cost_entry_id, []).append(m)
 
         position_inputs = []
+        commercial_rules = await CommercialPreallocationRepository(self._session, self._org_id).for_costs([e.id for e, _ in entries])
+        commercial_rules.update({rule.cost_entry_id: rule for rule in extras.commercial_preallocations or []})
         for entry, category in entries:
             code = category.code if category is not None else "UNBEKANNT"
             label = category.label if category is not None else code
@@ -1075,6 +1158,11 @@ class SettlementService:
                 for m in man_by_entry.get(entry.id, [])
             )
             heating = None
+            rule = commercial_rules.get(entry.id)
+            commercial = self._commercial_values(rule) if rule is not None else {}
+            if rule is not None and (rule.commercial_share_percent is not None or rule.commercial_amount is not None):
+                self._commercial_payload[str(entry.id)] = {'cost_entry_id': str(entry.id), **{
+                    key: str(value) if isinstance(value, Decimal) else value for key, value in commercial.items()}}
             if entry.id in heating_configs:
                 if ext or man:
                     raise HTTPException(422,'Heizkosten intern und externe/manuelle Geldbeträge dürfen nicht kombiniert werden')
@@ -1096,6 +1184,7 @@ class SettlementService:
                     external_amounts=ext,
                     manual_amounts=man,
                     heating=heating,
+                    **commercial,
                 )
             )
 

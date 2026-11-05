@@ -115,6 +115,9 @@ def export_predicate(name, columns):
     elif name in {"payment", "cost_entry", "bank_account", "settlement_run", "economic_plan"}:
         checks.append(f"financial_scope_access(:org,'{name}',t.id,'export')")
         checks.append("property_financial_disclosure_access(:org,t.property_id,'export')")
+    elif name == 'commercial_preallocation':
+        checks.append("financial_scope_access(:org,'cost_entry',t.cost_entry_id,'export')")
+        checks.append("property_financial_disclosure_access(:org,t.property_id,'export')")
     elif name in {"lease_agreement", "ownership_history"}:
         checks.append(f"property_history_row_access(:org,'{name}',to_jsonb(t),'export')")
     elif name == "invoice_document":

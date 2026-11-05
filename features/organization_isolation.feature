@@ -13,6 +13,11 @@ Feature: Organization isolation
     When Verwaltung Beta tries to read or replace that unit's households
     Then the households are not found and Verwaltung Alpha retains its rows
 
+  Scenario: Another organization cannot read or change a commercial preallocation
+    Given a shop of 60 square metres and flats of 75 and 65 square metres with annual waste costs of 1200 euros
+    When Verwaltung Beta tries to open and calculate Alpha's commercial statement
+    Then the commercial statement is not found and Alpha's allocation rule is unchanged
+
   Scenario: Another organization's WEG financial details look missing
     Given a payment, economic plan and annual WEG settlement belong to Verwaltung Alpha
     When Verwaltung Beta opens those financial details and their input-owner list

@@ -18,7 +18,7 @@ import uuid
 from datetime import datetime
 from decimal import Decimal
 
-from sqlalchemy import ForeignKey, Numeric, SmallInteger, String, func
+from sqlalchemy import ForeignKey, Numeric, SmallInteger, String, Text, func
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -81,7 +81,7 @@ class SettlementLine(Base, UUIDPrimaryKeyMixin):
     sort_order: Mapped[int] = mapped_column(
         SmallInteger, nullable=False, default=0
     )
-    note: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    note: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     created_at: Mapped[datetime] = mapped_column(
         server_default=func.now(), nullable=False

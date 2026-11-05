@@ -367,7 +367,19 @@ data and booked payments are not overwritten, finalized settlements remain froze
 
 For drafts, `GET /api/weg-settlements/{id}/input-owners` returns the complete authorized
 owner set of the settlement period, with READ scope and disclosure checks. The UI uses the
-same set as the coverage validation, not merely the advance payment lines of the plan.
+same set as coverage validation and paid-Hausgeld derivation: owners whose ownership
+overlaps the period plus the original owners of the linked plan's OWNER_ADVANCE lines.
+The latter retain their frozen plan obligations even after a history correction. The shared
+roster comes from `CoverageDeclarationRepository.owner_ids`; the plan Soll allocation stays
+unchanged. Derivation returns `0.00` for an owner without booked payments and retains the
+net booked/reversed payment rules and the property's settlement period.
+
+An empty or whitespace-only paid amount is an unentered value, refused with the existing
+`owner_payment_coverage_missing` blocker in `financial_inputs_incomplete`. Invalid or non-finite
+amounts use `invalid_decimal`. Both responses include `field: paid_total`, `owner_profile_id`
+and a German message naming the owner and the Hausgeld amount to enter. Names are resolved
+only after checking the draft's financial source authority and roster membership. The page
+shows this message through the existing structured-error client.
 Payment details start as unknown; zero amounts require an explicit entry and completeness
 confirmation. A seller until 30.06.2026 and a buyer from 01.07. receive 181/184 EUR for
 actual annual costs of 365 EUR. This flow is verified in the browser, including voucher
