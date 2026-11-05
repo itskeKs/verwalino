@@ -317,3 +317,41 @@ class TestBuildMonitor:
         assert [(i.kind, i.reference, i.status) for i in m1] == [
             (i.kind, i.reference, i.status) for i in m2
         ]
+
+
+@pytest.mark.parametrize('year,month,expected', [
+    (2026, 4, date(2026, 4, 7)),
+    (2026, 1, date(2026, 1, 6)),
+    (2026, 8, date(2026, 8, 5)),
+    (2026, 12, date(2026, 12, 3)),
+    (2024, 4, date(2024, 4, 4)),
+])
+def test_rent_is_due_on_the_third_weekday_excluding_holidays(year, month, expected):
+    assert fristen.third_working_day(year, month, fristen.public_holidays(year)) == expected
+
+
+def test_bavarian_holidays_and_nationwide_fallback_are_distinct():
+    nationwide = fristen.public_holidays(2026)
+    bavaria = fristen.public_holidays(2026, 'BY')
+    assert date(2026, 1, 6) in bavaria - nationwide
+    assert date(2026, 6, 4) in bavaria - nationwide
+    assert fristen.third_working_day(2026, 1, bavaria) == date(2026, 1, 7)
+    assert fristen.third_working_day(2026, 6, bavaria) == date(2026, 6, 3)
+    assert {date(2026, 12, 25), date(2026, 12, 26)} <= nationwide
+    # Municipality-specific holidays cannot be derived from a state alone.
+    assert date(2026, 8, 15) not in bavaria
+
+
+@pytest.mark.parametrize('state,year,month,day,present', [
+    ('BE', 2018, 3, 8, False), ('BE', 2019, 3, 8, True),
+    ('MV', 2022, 3, 8, False), ('MV', 2023, 3, 8, True),
+    ('TH', 2018, 9, 20, False), ('TH', 2019, 9, 20, True),
+    ('NI', 2016, 10, 31, False), ('NI', 2017, 10, 31, True),
+    ('NI', 2018, 10, 31, True), (None, 2017, 10, 31, True),
+    (None, 2018, 10, 31, False), ('BE', 2020, 5, 8, True),
+    ('BE', 2021, 5, 8, False), ('BE', 2025, 5, 8, True),
+    ('BE', 2028, 6, 17, True), ('SN', 2026, 11, 18, True),
+    ('SL', 2026, 8, 15, True), ('BY', 2026, 8, 8, False),
+])
+def test_holidays_respect_state_and_dated_introductions(state, year, month, day, present):
+    assert (date(year, month, day) in fristen.public_holidays(year, state)) is present

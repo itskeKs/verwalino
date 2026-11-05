@@ -629,27 +629,48 @@ def _upgrade_test_database(alembic_cfg):
     upgraded_person_retention_tables = rehearse_initial_upgrade('0155')
     command.upgrade(alembic_cfg, '0159')
     upgraded_deadline_tables = rehearse_initial_upgrade('0159')
+    command.upgrade(alembic_cfg, '0160')
+    upgraded_reason_erasure_tables = rehearse_initial_upgrade('0160')
+    command.upgrade(alembic_cfg, '0161')
+    upgraded_report_recipient_tables = rehearse_initial_upgrade('0161')
+    command.upgrade(alembic_cfg, '0162')
+    upgraded_successor_dunning_tables = rehearse_initial_upgrade('0162')
+    command.upgrade(alembic_cfg, '0163')
+    upgraded_household_tables = rehearse_initial_upgrade('0163')
+    command.upgrade(alembic_cfg, '0164')
+    upgraded_person_day_bases = rehearse_initial_upgrade('0164')
+    command.upgrade(alembic_cfg, '0165')
+    upgraded_property_state = rehearse_initial_upgrade('0165')
+    command.upgrade(alembic_cfg, '0166')
+    upgraded_register_date = rehearse_initial_upgrade('0166')
     command.upgrade(alembic_cfg, "head")
-    return {'upgrade_0028_to_0160_tables': upgraded_0028_tables,
-            'upgrade_0122_to_0160_tables': upgraded_tables,
-            'upgrade_0139_to_0160_tables': upgraded_0139_tables,
-            'upgrade_0140_to_0160_tables': upgraded_parent_tables,
-            'upgrade_0141_to_0160_tables': upgraded_setup_tables,
-            'upgrade_0142_to_0160_tables': upgraded_throttle_tables,
-            'upgrade_0143_to_0160_tables': upgraded_lease_tables,
-            'upgrade_0144_to_0160_tables': upgraded_signup_tables,
-            'upgrade_0145_to_0160_tables': upgraded_reset_tables,
-            'upgrade_0146_to_0160_tables': upgraded_quota_tables,
-            'upgrade_0147_to_0160_tables': upgraded_lifecycle_tables,
-            'upgrade_0148_to_0160_tables': upgraded_retention_tables,
-            'upgrade_0149_to_0160_tables': upgraded_reserve_tables,
-            'upgrade_0150_to_0160_tables': upgraded_heating_tables,
-            'upgrade_0151_to_0160_tables': upgraded_draft_tables,
-            'upgrade_0152_to_0160_tables': upgraded_bank_tables,
-            'upgrade_0153_to_0160_tables': upgraded_restoration_tables,
-            'upgrade_0154_to_0160_tables': upgraded_always_guard_tables,
-            'upgrade_0155_to_0160_tables': upgraded_person_retention_tables,
-            'upgrade_0159_to_0160_tables': upgraded_deadline_tables}  # accepted source
+    return {'upgrade_0028_to_0167_tables': upgraded_0028_tables,
+            'upgrade_0122_to_0167_tables': upgraded_tables,
+            'upgrade_0139_to_0167_tables': upgraded_0139_tables,
+            'upgrade_0140_to_0167_tables': upgraded_parent_tables,
+            'upgrade_0141_to_0167_tables': upgraded_setup_tables,
+            'upgrade_0142_to_0167_tables': upgraded_throttle_tables,
+            'upgrade_0143_to_0167_tables': upgraded_lease_tables,
+            'upgrade_0144_to_0167_tables': upgraded_signup_tables,
+            'upgrade_0145_to_0167_tables': upgraded_reset_tables,
+            'upgrade_0146_to_0167_tables': upgraded_quota_tables,
+            'upgrade_0147_to_0167_tables': upgraded_lifecycle_tables,
+            'upgrade_0148_to_0167_tables': upgraded_retention_tables,
+            'upgrade_0149_to_0167_tables': upgraded_reserve_tables,
+            'upgrade_0150_to_0167_tables': upgraded_heating_tables,
+            'upgrade_0151_to_0167_tables': upgraded_draft_tables,
+            'upgrade_0152_to_0167_tables': upgraded_bank_tables,
+            'upgrade_0153_to_0167_tables': upgraded_restoration_tables,
+            'upgrade_0154_to_0167_tables': upgraded_always_guard_tables,
+            'upgrade_0155_to_0167_tables': upgraded_person_retention_tables,
+            'upgrade_0159_to_0167_tables': upgraded_deadline_tables,
+            'upgrade_0160_to_0167_tables': upgraded_reason_erasure_tables,
+            'upgrade_0161_to_0167_tables': upgraded_report_recipient_tables,
+            'upgrade_0162_to_0167_tables': upgraded_successor_dunning_tables,
+            'upgrade_0163_to_0167_tables': upgraded_household_tables,
+            'upgrade_0164_to_0167_tables': upgraded_person_day_bases,
+            'upgrade_0165_to_0167_tables': upgraded_property_state,
+            'upgrade_0166_to_0167_tables': upgraded_register_date}  # accepted source
 
 
 @pytest.fixture(scope="session", autouse=True)

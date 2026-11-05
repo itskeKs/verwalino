@@ -123,7 +123,7 @@ async def test_patch_end_persists_exclusive_bound_and_successor(client_a_admin, 
     assert response.json() == [{**seller, "valid_to": "2026-06-30"}, buyer]
 
 
-async def finalize_plan(api, w):
+async def finalize_plan(api, w, *, planned_amount="365.00"):
     response = await api.post("/api/economic-plans", json={
         "property_id": w["property"], "plan_year": 2026,
         "period_start": "2026-01-01", "period_end": "2026-12-31",
@@ -131,12 +131,73 @@ async def finalize_plan(api, w):
     assert response.status_code == 201, response.text
     plan = response.json()["id"]
     values = {"planned_costs": [{"category_code": "WEG_VERWALTERKOSTEN", "label": "Annual cost",
-               "planned_amount": "365.00", "cost_group": "NICHT_UMLAGEFAEHIG"}],
+               "planned_amount": planned_amount, "cost_group": "NICHT_UMLAGEFAEHIG"}],
               "reserve_contribution_total": "0.00"}
     await attest_fixture(api, "economic_plan", plan, values)
     response = await api.post(f"/api/economic-plans/{plan}/finalize", json=values)
     assert response.status_code == 200, response.text
     return plan
+
+
+@pytest.mark.parametrize('start,end,months', [
+    ('2025-01-01', '2027-12-31', {'seller': list(range(1, 7)), 'buyer': list(range(7, 13))}),
+    ('2026-09-01', '2026-12-31', {'seller': [], 'buyer': list(range(9, 13))}),
+])
+async def test_owner_dunning_uses_the_same_plan_window_and_transfers_as_the_account(
+    client_a_admin, ownership_world, start, end, months,
+):
+    w, api = ownership_world, client_a_admin
+    await create_owner(api, w, valid_to='2026-06-30')
+    await create_owner(api, w, 'buyer', valid_from='2026-07-01')
+    plan = await finalize_plan(api, w, planned_amount='4800.00')
+    for owner in ('seller', 'buyer'):
+        period = {'period_start': start, 'period_end': end, 'economic_plan_id': plan}
+        ledger = await api.get(f"/api/payments/mietkonto/owner/{w[owner]}", params=period)
+        assert ledger.status_code == 200, ledger.text
+        expected = Decimal('400.00') * len(months[owner])
+        assert Decimal(ledger.json()['soll_total']) == expected
+        assert [r['period_month'] for r in ledger.json()['open_items']] == months[owner]
+        notice = await api.post('/api/dunning/owner', json={**period,
+            'owner_profile_id': w[owner], 'reference_date': '2028-01-15'})
+        if not months[owner]:
+            assert notice.status_code == 422, notice.text
+            assert notice.json()['detail'] == 'No overdue items found for this owner in the given period'
+        else:
+            assert notice.status_code == 201, notice.text
+            assert Decimal(notice.json()['principal_amount']) == expected
+            assert [r['period_month'] for r in notice.json()['included_items']] == months[owner]
+
+
+async def test_owner_dunning_refuses_the_same_history_gap_as_the_account(client_a_admin, ownership_world):
+    w, api = ownership_world, client_a_admin
+    await create_owner(api, w, valid_to='2026-06-30')
+    plan = await finalize_plan(api, w, planned_amount='4800.00')
+    period = {'period_start': '2026-01-01', 'period_end': '2026-12-31', 'economic_plan_id': plan}
+    ledger = await api.get(f"/api/payments/mietkonto/owner/{w['seller']}", params=period)
+    notice = await api.post('/api/dunning/owner', json={**period,
+        'owner_profile_id': w['seller'], 'reference_date': '2027-01-15'})
+    for response in (ledger, notice):
+        assert response.status_code == 422, response.text
+        assert response.json()['detail']['code'] == 'hausgeld_ownership_invalid'
+    assert ledger.json()['detail'] == notice.json()['detail']
+    assert (await api.get('/api/dunning', params={'owner_profile_id': w['seller']})).json() == []
+
+
+async def test_owner_dunning_cannot_use_a_foreign_plan(
+    client_a_admin, client_b_admin, ownership_world,
+):
+    w, api = ownership_world, client_a_admin
+    await create_owner(api, w)
+    plan = await finalize_plan(api, w, planned_amount='4800.00')
+    person = await client_b_admin.post('/api/persons', json={'first_name': 'Synthetic', 'last_name': 'Beta'})
+    assert person.status_code == 201, person.text
+    owner = await client_b_admin.post('/api/owner-profiles', json={'person_id': person.json()['id']})
+    assert owner.status_code == 201, owner.text
+    body = {'owner_profile_id': owner.json()['id'], 'economic_plan_id': plan,
+        'period_start': '2026-01-01', 'period_end': '2026-12-31', 'reference_date': '2027-01-15'}
+    for plan_id in (plan, str(uuid.uuid4())):
+        response = await client_b_admin.post('/api/dunning/owner', json={**body, 'economic_plan_id': plan_id})
+        assert response.status_code == 404, response.text
 
 
 async def test_real_annual_weg_settlement_is_181_and_184_days(client_a_admin, ownership_world):

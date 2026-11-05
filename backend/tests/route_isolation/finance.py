@@ -184,7 +184,8 @@ PROBES: dict[str, Probe] = {
     "GET /api/payments": Probe(TENANT_PAYMENT, status=200, because=NO_MATCH),
     "GET /api/payments/deposits": Probe(SCOPE),
     "GET /api/payments/export.csv": Probe(TENANT_PAYMENT),
-    "GET /api/payments/mietkonto/lease/{lease_agreement_id}": Probe(row("lease_agreement", lease_agreement_id="id")),
+    "GET /api/payments/mietkonto/lease/{lease_agreement_id}": Probe(
+        row("lease_agreement", lease_agreement_id="id"), query={"as_of": "2026-11-01"}),
     "GET /api/payments/mietkonto/owner/{owner_profile_id}": Probe(
         row("owner_profile", owner_profile_id="id"), status=200,
         because="in preparation mode the owner is never looked up: the statement is built from the visible "

@@ -110,7 +110,8 @@ through the UI, assigns a lower row on the import page and requires a viewport-v
 without changing the statement's scroll position at 1280 and 360 px.
 The [`mobile_navigation` feature](mobile_navigation.feature) checks closed-drawer Tab focus,
 Escape, focus containment, route/close/backdrop dismissal, and static desktop navigation across
-767/768 px. Its synthetic captures use the existing `VERWALINO_CAPTURE_DESIGN=1` opt-in.
+767/768 px, including automatic focus after a closed mobile toggle disappears at 768 and 1280 px.
+Its synthetic captures use the existing `VERWALINO_CAPTURE_DESIGN=1` opt-in.
 
 ## How the step library is organised
 

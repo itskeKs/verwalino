@@ -25,6 +25,17 @@ Two styling layers coexist:
 Follow [Components](#components) for the permitted styling layers and their source files, and
 [Colour](#colour) for token use.
 
+The property creation/edit form offers an optional native select labelled
+“Bundesland”, with all sixteen states. “Nicht festgelegt – bundesweite Feiertage”
+represents an empty value. The adjacent hint explains that statewide holidays
+control rent due dates and municipality-only holidays are excluded. Existing
+form-grid spacing and responsive behaviour apply.
+
+| Property holiday context | Desktop | 360 px |
+| --- | --- | --- |
+| Before | [Desktop](docs/assets/design/rent-state-before-1280.png) | [Phone](docs/assets/design/rent-state-before-360.png) |
+| After | [Desktop](docs/assets/design/form-objekt-desktop.png) | [Phone](docs/assets/design/form-objekt-360.png) |
+
 ## Foundations
 
 ### Contract ownership and verification
@@ -206,7 +217,9 @@ focus to “Navigation umschalten”. Navigation links and the close button have
 focused links scroll into view even when Shift+Tab wraps to the last entry.
 From `md` the same navigation is static, outside the dialog. Crossing the breakpoint closes the
 mobile drawer; focus moves from disappearing navigation to the visible toggle, or from the mobile
-toggle/drawer to the active desktop link. The drawer retains its 200 ms slide; while closing it is
+toggle/drawer to the active desktop link. A focused closed toggle also transfers focus when it
+disappears: the shell remembers navigation focus and restores it after the new layout mounts.
+The drawer retains its 200 ms slide; while closing it is
 inert until unmounted. `AppShell.css`, `Sidebar.css` and `Topbar.css` exist but are imported nowhere;
 the shell uses utilities and the drawer keyframes in `index.css`.
 
@@ -308,8 +321,9 @@ Navigation entries are `NavItem`s in `GROUPS` (label = German noun, one lucide i
 
 New screens follow these page structures and use a German noun as their `h1`.
 
-- **Page header.** Either a date eyebrow plus greeting `h1` (dashboard: `text-sm muted` line, then
-  `h1 text-2xl`), or `h1` left and actions right (`flex justify-between`, wraps): secondary actions
+- **Page header.** Either a date eyebrow plus optional context line and greeting `h1` (dashboard:
+  date and available organization in muted `text-sm` lines, then `h1 text-2xl` “Guten Tag”), or `h1` left and actions
+  right (`flex justify-between`, wraps): secondary actions
   first, the single primary action last, labelled "+ Neues Objekt" (legacy) or an icon `Button` "Neues Mandat".
 - **List page** (`PropertiesPage.tsx`, `MandatePage.tsx`): header, optional import panel, `ListSearch`
   (explicit "Suchen" submit), error line, inline create/edit card, table card, "Weitere laden" for the
@@ -541,13 +555,17 @@ interest table, and `Offen`, `Soll`, `Ist` before period and type in its arrears
 table. Monetary cells stay unbroken; principal, interest and open amounts are
 readable in the initial table viewport at 360 px. Remaining descriptive columns
 use the existing horizontal scroll containers. Desktop keeps the complete tables.
+New rent and operating-advance interest rows show their frozen `Zinsbeginn` as
+`TT.MM.JJJJ` beneath the principal, visible without horizontal scrolling at
+360 px. Legacy rows without that stored date show no inferred start date.
 Both `Ausgestellt am` locations show the persisted instant as `TT.MM.JJJJ, HH:MM`
 in `Europe/Berlin`, using the existing German `toLocaleString` options pattern
 with two-digit day, month, hour and minute. The API supplies ISO with a timezone.
-This changes display only; frozen values and PDFs retain their stored contents.
+Existing frozen values and issued PDFs retain their stored contents. New rent
+and operating-advance PDFs also name the stored interest start explicitly.
 
-Synthetic issued notices from the shared test database; the captures show the
-actual issue times on 4 November 2026, not the fixed November 1 unit-test instant:
+Synthetic April notices from the shared test database; the captures show actual
+issue times on 5 November 2026 and the explicitly stored 8 April interest start:
 
 | Dunning notice detail | 1280 px | 360 px |
 |---|---|---|
@@ -808,6 +826,31 @@ inline expressions, with the variants below. The inconsistencies are tracked in 
 | Empty value | `—` (kit, newer pages), `-` (older tables), `–` (`BankTransactionsPage.tsx`) | `MandatePage.tsx`, `InvoiceDocumentsPage.tsx`, `BankTransactionsPage.tsx`, respectively |
 | Money input | accept `1234,56` and `1234.56`, send `1234.56` | `moneyInput`, `exactCents`, `normalizePlanAmount` (see above) |
 
+### Tenant rent account due-date split
+
+“Mietkonto” retains the full reporting period and adds the labelled date input
+“Fällig am *” for the tenant view, defaulting to the local current date. Changing
+it clears the previous result until “Abrufen” loads the selected cutoff.
+The legacy summary table keeps “Soll gesamt”, “Ist gesamt” and “Saldo”; a positive
+tenant Saldo has no arrears suffix or warning colour. Two rows follow:
+“davon fällig” (positive: “Rückstand”, destructive token; negative: “Guthaben”,
+emerald) and “noch nicht fällig” (neutral). Signed amounts retain the page's
+existing decimal-string `EUR` notation. The detail rows keep the same amounts
+and show the backend due classification
+below the period: “fällig” or “noch nicht fällig” for nonzero signed amounts,
+“ausgeglichen” for zero. Positive tenant open amounts remain neutral; credits
+never carry an arrears label.
+Owner view retains its existing summary and colours and has no cutoff input.
+
+The existing form grid wraps the date input at 360 px. Synthetic full-year
+900 EUR rent, 100 EUR unpaid in April, cutoff 01.11.2026:
+
+| | 1280 px | 360 px |
+|---|---|---|
+| Before | [View](docs/assets/design/rent-account-due/before-1280.png) | [View](docs/assets/design/rent-account-due/before-360.png) |
+| After | [View](docs/assets/design/rent-account-due/after-1280.png) | [View](docs/assets/design/rent-account-due/after-360.png) |
+| Future rows | [View](docs/assets/design/rent-account-due/future-1280.png) | [View](docs/assets/design/rent-account-due/future-360.png) |
+
 ## E-Mail
 
 Transactional mail uses `backend/app/mail/` and the website brand. The shared
@@ -959,6 +1002,11 @@ same. The current dashboard and property-list images below are refreshed on the 
 | First keyboard focus, 360 px | [Before](docs/assets/design/navigation-before-closed-focus-360.png) | [After](docs/assets/design/navigation-closed-focus-360.png) |
 | Open drawer, 360 px | [Before](docs/assets/design/navigation-before-open-360.png) | [After](docs/assets/design/navigation-open-360.png) |
 | Escape result, 360 px | [Before](docs/assets/design/navigation-before-escape-360.png) | [After](docs/assets/design/navigation-escape-360.png) |
+| Closed toggle resized to 1280 px | [Before](docs/assets/design/navigation-before-closed-resize-1280.png) | [After](docs/assets/design/navigation-closed-resize-1280.png) |
+
+The resize pair follows keyboard selection of “Objekte” at 360 px and widening the closed drawer
+to 1280 px. Before the correction focus fell to the page body; afterward the active “Objekte”
+navigation link receives visible focus without another keyboard or pointer action.
 
 Property MEA guidance uses new synthetic MIET and WEG properties on the disposable test
 database, showing the page top and new-unit card at 1280 and 360 CSS px. MIET has neither the scale
@@ -988,8 +1036,9 @@ label after the same request/disclosure flow. The existing layout is unchanged.
 | Before label | [Desktop](docs/assets/design/dsgvo-payment-before-desktop.png) | [Phone](docs/assets/design/dsgvo-payment-before-360.png) |
 | After label | [Desktop](docs/assets/design/dsgvo-payment-after-desktop.png) | [Phone](docs/assets/design/dsgvo-payment-after-360.png) |
 
-Settlement structured inputs state that manual consumption and person counts refer
-to the entire property settlement year, including for clipped lease statements.
+Settlement structured inputs state that manual consumption refers to the entire
+property settlement year, including for clipped lease statements. Draft persons-key
+statements link to each unit household editor; they do not offer per-run count overrides.
 Consumption suggestions display a day-fallback reason beside the actual reading
 basis when an interim measurement is missing.
 
@@ -1031,9 +1080,21 @@ The hosted quota images use the running frontend with synthetic API responses.
 The signup and password recovery images use synthetic deployment metadata and
 captured API responses. These are visual/360 px geometry checks, not end-to-end proof.
 
-The property-detail and dashboard images focus on the units and due-task cards at
-360 and 1280 px, using twelve long synthetic unit rows and a long task title from
-`features/responsive_property_dashboard.feature`. The upload card is captured in
+The dashboard images show the greeting and separate organization context for the
+fresh synthetic organization “Sabine Muster Hausverwaltung” at 1280 × 900 and
+360 × 900 px. The baseline captures use the dashboard source from `c8aeebe6`:
+[`issue-176-before-dashboard-desktop.png`](docs/assets/design/issue-176-before-dashboard-desktop.png)
+and [`issue-176-before-dashboard-360.png`](docs/assets/design/issue-176-before-dashboard-360.png).
+The matching current images are `dashboard-desktop.png` and `dashboard-360.png` in
+the table above. All four are unedited browser captures using the same deterministic
+synthetic organization identity and data in separately started, locked local test-harness
+runs. The exact “Guten Tag” heading assertion fails on the baseline; the corrected
+dashboard passes at both widths.
+
+The property-detail images focus on the units card at 360 and 1280 px, using twelve
+long synthetic unit rows from `features/responsive_property_dashboard.feature`.
+Earlier dashboard due-task captures from that feature remain in `issue-52-before-*`.
+The upload card is captured in
 `detail-upload-360.png` and `detail-upload-desktop.png`. Matching `issue-52-before-*`
 images preserve the baseline on the same data. The dashboard KPI images show the
 form with a long property option; its baseline captures are
@@ -1333,9 +1394,88 @@ identifiers and keep the existing detail tables within the phone viewport.
 | After | [view](docs/assets/design/weg-owner-balance/after-1280.png) | [view](docs/assets/design/weg-owner-balance/after-360.png) |
 
 
+Dated document recipients (#207): the economic-plan and asset-report detail pages
+show a “Dokumentempfänger” card after computation. Each entry identifies the unit,
+frozen owner name and “Eigentümer am DD.MM.YYYY”. The plan uses its period start;
+the report uses its period end. Concurrent co-owners remain separate entries.
+The existing multi-copy PDF download starts each recipient's copy on a new page.
+The card wraps long names at 360 px. Legacy final snapshots without recipients
+retain their existing display.
+
+| Document | Before desktop | Before 360 px | After desktop | After 360 px |
+| --- | --- | --- | --- | --- |
+| Plan | [view](docs/assets/design/dated-owner-documents/plan-before-1280.png) | [view](docs/assets/design/dated-owner-documents/plan-before-360.png) | [view](docs/assets/design/dated-owner-documents/plan-after-1280.png) | [view](docs/assets/design/dated-owner-documents/plan-after-360.png) |
+| Asset report | [view](docs/assets/design/dated-owner-documents/report-before-1280.png) | [view](docs/assets/design/dated-owner-documents/report-before-360.png) | [view](docs/assets/design/dated-owner-documents/report-after-1280.png) | [view](docs/assets/design/dated-owner-documents/report-after-360.png) |
+
+PDF output: [unit 2 plan](docs/assets/design/dated-owner-documents/plan-pdf.png),
+[unit 2 asset report](docs/assets/design/dated-owner-documents/report-pdf.png).
+All examples use synthetic data on the disposable test database.
 Annual income correction (#169), synthetic journey 5 receipts through 31 October 2026:
 
 | View | Before | After |
 | --- | --- | --- |
 | Desktop | [Income with deposit](docs/assets/design/reports-income-before-1280.png) | [Income excluding deposit](docs/assets/design/reports-income-1280.png) |
 | 360 px | [Income with deposit](docs/assets/design/reports-income-before-360.png) | [Income excluding deposit](docs/assets/design/reports-income-360.png) |
+
+
+### Dated household editor
+
+Unit details include a “Personen im Haushalt” card with saved German dates and
+singular/plural counts (“2 Personen ab 01.01.2026”, “Leerstand: 1 Person ab
+01.01.2026”). “Haushalt bearbeiten” opens separate dated Belegung and Leerstand
+rows. “Belegung hinzufügen” starts with an empty count; “Leerstand hinzufügen”
+offers 1 as an editable suggestion. Only “Haushalt speichern” persists the whole
+list; removing all rows saves an empty history. A paragraph explains both
+independent validity streams and the owner's vacancy share. Readonly members see
+saved rows. Loading, read errors with retry, retained inputs after save failures,
+and a confirmed save status use the existing card/form/button/error patterns.
+Rows and action buttons wrap at 360 px.
+
+Draft statement inputs link to “Haushalt für Einheit … bearbeiten” and explain
+that saved person-days are used. New position notes show the unit's person-days
+and the building-wide denominator. Frozen older statement output is unchanged.
+The following captures use only synthetic records through the locked local
+browser harness (API :18000, Vite :13000).
+
+| Household history | Desktop | 360 px |
+|---|---|---|
+| Before | [Desktop](docs/assets/design/persons-household-before-1280.png) | [Phone](docs/assets/design/persons-household-before-360.png) |
+| After | [Desktop](docs/assets/design/persons-household-after-1280.png) | [Phone](docs/assets/design/persons-household-after-360.png) |
+
+| Persons statement | Desktop | 360 px |
+|---|---|---|
+| Before | [Desktop](docs/assets/design/persons-statement-before-1280.png) | [Phone](docs/assets/design/persons-statement-before-360.png) |
+| After | [Desktop](docs/assets/design/persons-statement-after-1280.png) | [Phone](docs/assets/design/persons-statement-after-360.png) |
+
+
+### Frozen vacancy attribution
+
+A computed/finalized tenant statement with saved vacancy person-days shows a
+“Leerstand – Eigentümeranteile” card. A short paragraph identifies the saved
+calculation and the owner's share. Each list item shows the frozen unit and cost
+label, German-formatted person-days/days, and the owner amount in euros. The list
+wraps at 360 px; no unrelated cost-table layout changes. The statement's current
+accounting-scope unit set limits the rows. The card uses stored results without
+showing owner identities or rereading household values. Snapshots without saved
+person-day attribution and existing PDFs retain their old rendering.
+
+| Vacancy attribution | Desktop | 360 px |
+|---|---|---|
+| Before | [Desktop](docs/assets/design/persons-vacancy-before-1280.png) | [Phone](docs/assets/design/persons-vacancy-before-360.png) |
+| After | [Desktop](docs/assets/design/persons-vacancy-after-1280.png) | [Phone](docs/assets/design/persons-vacancy-after-360.png) |
+
+### Resolution register dates
+
+The Beschluss-Sammlung table shows “Datum der Versammlung” first and “Eingetragen am”
+second, both as `DD.MM.YYYY`. The meeting date is the immutable copy made when the
+resolution is registered; the entry date remains visible independently. Existing
+horizontal table scrolling applies at 360 px; no editor is offered for either date.
+The matching new PDF extract uses the same labels and order, followed by the place
+and wording. Before/after images below use synthetic records on the shared test
+stack. The live entry uses the real registration day, not the fixed historic
+01.11.2026 value used in deterministic migration and PDF tests.
+
+| Register dates | Desktop | 360 px |
+| --- | --- | --- |
+| Before | [Desktop](docs/assets/design/register-dates-before-1280.png) | [Phone](docs/assets/design/register-dates-before-360.png) |
+| After | [Desktop](docs/assets/design/register-dates-after-1280.png) | [Phone](docs/assets/design/register-dates-after-360.png) |

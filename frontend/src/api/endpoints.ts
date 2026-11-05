@@ -101,6 +101,7 @@ import type {
   DepositAccount,
   OpenItem,
   MietkontoResult,
+  TenantMietkontoResult,
   DunningNotice,
   DunningSettings,
   DunningCreateTenant,
@@ -1021,9 +1022,10 @@ export function leaseStatement(
   periodStart: string,
   periodEnd: string,
   accountingScopeId?: string,
-): Promise<MietkontoResult> {
-  return api.get<MietkontoResult>(
-    `/api/payments/mietkonto/lease/${leaseId}?period_start=${periodStart}&period_end=${periodEnd}${accountingScopeId ? `&accounting_scope_id=${encodeURIComponent(accountingScopeId)}` : ""}`,
+  asOf?: string,
+): Promise<TenantMietkontoResult> {
+  return api.get<TenantMietkontoResult>(
+    `/api/payments/mietkonto/lease/${leaseId}?period_start=${periodStart}&period_end=${periodEnd}${accountingScopeId ? `&accounting_scope_id=${encodeURIComponent(accountingScopeId)}` : ""}${asOf ? `&as_of=${encodeURIComponent(asOf)}` : ""}`,
   );
 }
 
@@ -1396,4 +1398,12 @@ export function getFristenContext(): Promise<{ requires_accounting_scope: boolea
 
 export function listSettlementPeriods(propertyId: string, year?: number) {
   return api.get<import("./types").SettlementPeriod[]>(`/api/properties/${propertyId}/settlement-periods${year === undefined ? "" : `?year=${year}`}`);
+}
+
+export function getUnitHousehold(id: string): Promise<import('./types').UnitHouseholdRow[]> {
+  return api.get(`/api/units/${encodeURIComponent(id)}/household`);
+}
+
+export function replaceUnitHousehold(id: string, rows: import('./types').UnitHouseholdRow[]): Promise<import('./types').UnitHouseholdRow[]> {
+  return api.put(`/api/units/${encodeURIComponent(id)}/household`, rows);
 }

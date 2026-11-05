@@ -137,6 +137,15 @@ def _clamp(
     return (start, end)
 
 
+def owner_at(
+    owner_periods: list[OwnerPeriodInput], unit_id: uuid.UUID, day: date,
+) -> list[OwnerPeriodInput]:
+    """Dated owners of a unit, inclusive at both bounds; retain co-ownership."""
+    return sorted((op for op in owner_periods if op.unit_id == unit_id
+        and op.valid_from <= day and (op.valid_to is None or day <= op.valid_to)),
+        key=lambda op: str(op.owner_profile_id))
+
+
 def _owner_at(
     owner_periods: list[OwnerPeriodInput],
     unit_id: uuid.UUID,
@@ -149,13 +158,7 @@ def _owner_at(
     owner_profile_id) -- the exact owner *charge* split is M4. None if no
     ownership record covers the day (data gap; carried as None, not invented).
     """
-    candidates = [
-        op
-        for op in owner_periods
-        if op.unit_id == unit_id
-        and op.valid_from <= day
-        and (op.valid_to is None or op.valid_to >= day)
-    ]
+    candidates = owner_at(owner_periods, unit_id, day)
     if not candidates:
         return None
     candidates.sort(key=lambda op: str(op.owner_profile_id))

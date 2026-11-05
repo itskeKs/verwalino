@@ -301,6 +301,8 @@ PROBES: dict[str, Probe] = {
     # app/api/tenant_profiles.py
     "GET /api/tenant-profiles": Probe(row("person", person_id="id"), status=200, because=EMPTY_FILTER),
     "POST /api/tenant-profiles": Probe(row("person", person_id="id")),
+    "GET /api/units/{unit_id}/household": Probe(row("unit", unit_id="id")),
+    "PUT /api/units/{unit_id}/household": Probe(row("unit", unit_id="id"), body=[{"valid_from": "2026-01-01", "persons": 1, "is_vacancy": False}]),
     # app/api/units.py
     "DELETE /api/units/{unit_id}": Probe(row("unit", unit_id="id")),
     "GET /api/units": Probe(row("property", property_id="id"), status=200, because=EMPTY_FILTER),

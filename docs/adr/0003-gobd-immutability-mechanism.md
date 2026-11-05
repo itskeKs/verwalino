@@ -128,3 +128,36 @@ after data: both linked rows and their 100.00 remainder survive, and the
 restored real guard still refuses replica-mode deletion. The portable restore
 procedure in [DEPLOY.md](../../DEPLOY.md) is unchanged. Run
 `make test-selfhost-format` for this opt-in rehearsal in the guarded test container.
+
+## Amendment — 2026-11-04: eligible incidental reserve reason erasure
+
+The [owner clarification](https://github.com/itskeKs/verwalino/issues/222#issuecomment-6625055904)
+requires two separate cases. A person who is the structured recipient of a
+retained booked repayment remains identifiable and is restricted. An otherwise
+unbound person mentioned incidentally in a reserve correction reason may be
+anonymized. The shared retention facts/deadlines from `0159`/`0160` govern both
+the existing command and its preview; `0161` adds no category list or deadline.
+
+Only the command's actual anonymization branch establishes private context for
+a nested person trigger. It may change complete identifying name spans in live
+`reserve_ledger_entry.reason` and the exact `payload_diff.reason` copies of
+`reserve.override_added`, `reserve.contribution_reduced` and
+`reserve.contribution_restored`. Organization, settlement run, entry ID and
+original reason must match; all other columns and JSON fields compare equal.
+Known longer identities remain intact. A one-character `*` replaces identifying
+spans if `Gelöscht` would overflow the accepted 2,000-character reason; no
+surrounding text is truncated.
+
+Runtime ledger UPDATE is revoked, helper execution is private, and the reserve
+guard remains `ENABLE ALWAYS`. A caller-controlled flag or nested temporary
+trigger cannot gain UPDATE authority. Person statement writes share the existing
+financial lock after the shared ACL lock, without changing contact policies;
+overlapping names are looked up once and private context is restored afterward.
+The organization-erasure path is unchanged.
+
+Money, IDs, references, retained originals and complete frozen snapshots/digests
+stay unchanged, including any name in a frozen reason. `dsgvo.anonymized` records
+the deliberate erasure; preserved `prev_event_hash` is not recomputed and does
+not certify changed payload bytes. Downgrade restores the preceding command,
+guards and UPDATE grant and removes the private functions/triggers, retaining
+already scrubbed text. See [ADR-0012 §4](0012-gdpr-erasure-vs-gobd-retention.md#4-anonymization-anonymize).

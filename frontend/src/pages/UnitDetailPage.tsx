@@ -45,6 +45,7 @@ import { useAuth } from "../auth/useAuth";
 import { AttachmentsPanel } from "../components/AttachmentsPanel";
 import { Dialog, DialogContent, DialogTitle, DialogDescription } from "../components/ui/dialog";
 import { Input } from "../components/ui/input";
+import { HouseholdPanel } from "../components/HouseholdPanel";
 import { MeterPanel } from "../components/MeterPanel";
 import { LeaseDocuments } from "../components/LeaseDocuments";
 
@@ -314,6 +315,8 @@ function UnitDetailPageContent({ propertyId, unitId }: { propertyId?: string; un
           </tbody>
         </table>
       </div>
+
+      <HouseholdPanel key={unit.id} unitId={unit.id} canWrite={canWriteOwnership} />
 
       <AttachmentsPanel propertyId={property.id} unitId={unit.id} canWrite={canWriteOwnership} />
 

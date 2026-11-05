@@ -153,13 +153,13 @@ class DashboardKpiService:
                 ) for row in histories[lease.id]),
             )
             lease_payments = assigned[lease.id]
-            current = account_statement(tenant_expected_charges(lease_input, start, end),
+            current = account_statement(tenant_expected_charges(lease_input, start, end, federal_state=prop.federal_state),
                 [p for p in lease_payments if (p.period_year, p.period_month) == (start.year, start.month)])
             expected += current.soll_total
             received += current.ist_total
             if lease.valid_from <= end:
                 cumulative = account_statement(
-                    tenant_expected_charges(lease_input, lease.valid_from, end),
+                    tenant_expected_charges(lease_input, lease.valid_from, end, federal_state=prop.federal_state),
                     [p for p in lease_payments if (p.period_year, p.period_month)
                      >= (lease.valid_from.year, lease.valid_from.month)])
                 if cumulative.balance > zero:

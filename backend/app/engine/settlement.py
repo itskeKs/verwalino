@@ -232,6 +232,7 @@ def compute_bk_settlement(inp: SettlementInput) -> EngineResult:
                         owner_profile_id=c.cover.owner_profile_id,
                         days=c.time_days,
                         amount=c.amount,
+                        person_days=int(c.key_base_share) if pos.tenant_distribution_key == 'PERSONENZAHL' else None,
                     )
                 )
 
@@ -248,12 +249,17 @@ def compute_bk_settlement(inp: SettlementInput) -> EngineResult:
         # is the normal case; if multiple, days are summed, share is the sum).
         rep = target_cells[0]
         tenant_days = sum(c.time_days for c in target_cells)
-        measured_split = pos.tenant_distribution_key == "VERBRAUCH" and any(
-            u.id == rep.unit_id and u.consumption_periods for u in units)
+        persons_split = pos.tenant_distribution_key == "PERSONENZAHL"
+        measured_split = persons_split or (pos.tenant_distribution_key == "VERBRAUCH" and any(
+            u.id == rep.unit_id and u.consumption_periods for u in units))
         base_share = sum((c.key_base_share for c in target_cells), Decimal(0)) if measured_split else rep.key_base_share
         time_days = None if measured_split else tenant_days
         time_total = None if measured_split else rep.time_total_days
         note = "Verbrauchsaufteilung innerhalb der Einheit: Zwischenablesungen, sonst Tage" if measured_split else _position_note(pos)
+        if persons_split:
+            own_days = format(int(base_share), ',').replace(',', '.')
+            total_days = format(int(rep.key_base_total), ',').replace(',', '.')
+            note = f"Personentage für Einheit {next(u.number for u in units if u.id == rep.unit_id)}: {own_days} von {total_days}"
 
         cost_lines.append(
             ResultLine(

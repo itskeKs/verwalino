@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 import uuid
+from datetime import date
 from decimal import Decimal
 
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 from fastapi.responses import Response
 from app.services.master_delete_service import MasterDeleteService, master_delete_writer_db
@@ -20,6 +21,7 @@ from app.core.tenant import (
 )
 from app.repositories.unit_repo import UnitRepository
 from app.models.unit import Unit
+from app.services.unit_household_service import UnitHouseholdService
 
 from app.repositories.pagination import Page, PageQuery, page_query, page_rows
 
@@ -53,6 +55,26 @@ class UnitUpdate(BaseModel):
     usage_type: str | None = None
     mea: str | None = None
     building_part: str | None = None
+
+
+class HouseholdRow(BaseModel):
+    model_config = ConfigDict(from_attributes=True, extra='forbid')
+    valid_from: date
+    persons: int = Field(strict=True, ge=0, le=2147483647)
+    is_vacancy: bool = Field(strict=True)
+
+
+@router.get('/{unit_id}/household', response_model=list[HouseholdRow])
+async def get_household(unit_id: uuid.UUID, auth: AuthContext = Depends(get_current_user),
+                        db: AsyncSession = Depends(get_live_member_db)):
+    return await UnitHouseholdService(db, auth).get(unit_id)
+
+
+@router.put('/{unit_id}/household', response_model=list[HouseholdRow])
+async def replace_household(unit_id: uuid.UUID, body: list[HouseholdRow],
+                            auth: AuthContext = Depends(require_write_dep),
+                            db: AsyncSession = Depends(get_live_writer_db)):
+    return await UnitHouseholdService(db, auth).replace(unit_id, body)
 
 
 @router.get("", response_model=list[UnitOut])

@@ -127,3 +127,15 @@ Feature: Maintenance reserve ledger
     When I correct the unit contribution by 300 euros
     And the backing Hausgeld is reversed
     Then keeping 100 euros directs me to delete the correction on desktop and mobile
+
+  Scenario: A retained repayment recipient remains identifiable after a deletion request
+    Given a retained repayment to Anna and an incidental 300 euro reserve note about Eva
+    When I request deletion of the actual repayment recipient Anna
+    Then Anna remains identifiable and the repayment evidence and reserve rows stay unchanged
+    And the complete finalized statement and its original digest remain identical
+
+  Scenario: Erasing an unbound incidental contact cleans only the reserve reason copies
+    Given a retained repayment to Anna and an incidental 300 euro reserve note about Eva
+    When I request deletion of the genuinely unbound incidental contact Eva
+    Then only Eva is removed from the live reserve reason and its exact audit copy for 300 euros
+    And the complete finalized statement and its original digest remain identical

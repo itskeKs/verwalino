@@ -127,7 +127,11 @@ and collisions of administrator-supplied UUIDs, never foreign row contents.
 The importer checks the format, safe regular-file members, exact manifest/member
 hash coverage, row counts, organization identity, and the release's Alembic
 ancestry. The same or an older known schema is accepted; newer/unknown heads are
-**422**. Version 1 and 2 are accepted. Hashes provide integrity, not issuer
+**422**. For pre-0167 archives, a missing register `resolution_date` is copied
+from the archived meeting only through a valid resolution/meeting/property relationship
+within the exported organization. Missing or inconsistent sources refuse the whole
+import. Existing date snapshots and all other archived register fields remain unchanged.
+Version 1 and 2 are accepted. Hashes provide integrity, not issuer
 provenance. Compressed input is limited to the existing 25 MiB upload limit (26 MiB raw multipart envelope), expanded input to 512 MiB and
 metadata to 32 MiB, decoded metadata to a conservative 64 MiB memory budget,
 individual JSON rows/manifest to 2 MiB, 20,000 rows and 10,000 regular members,
@@ -542,7 +546,7 @@ not an immutable field; a separate minimization policy remains an owner decision
 | `person` | `bank_name`, `bic`, `city`, `company_name`, `email`, `first_name`, `iban`, `last_name`, `phone`, `street`, `zip_code` | Identity fields survive only with an unexpired voucher binding; otherwise anonymized. |
 | `person_data_domain` | `label`, `reason_code` | Retained source, scope or review evidence and its technical provenance. |
 | `person_data_grant` | `capabilities`, `reason_code` | Retained source, scope or review evidence and its technical provenance; capability arrays contain authorization codes. |
-| `property` | `city`, `management_type`, `mea_scale_status`, `name`, `street`, `zip_code` | Required property identity/address and structural classifications. |
+| `property` | `city`, `federal_state`, `management_type`, `mea_scale_status`, `name`, `street`, `zip_code` | Required property identity/address and structural classifications. `federal_state` is a nullable, constrained two-letter state code retained as coarse holiday/jurisdiction evidence, never free text. |
 | `property_assignment` | `assignment_type`, `status` | Structural type/status; editable identifiers and text are scrubbed. |
 | `property_creation_receipt` | `request_digest` | Technical operation/status/error codes, keys and digests; personal event payloads are scrubbed separately. |
 | `property_data_domain` | `label`, `reason` | Retained source, scope or review evidence and its technical provenance. |
@@ -558,7 +562,7 @@ not an immutable field; a separate minimization policy remains an owner decision
 | `property_source_security` | `mode` | Security-mode enum; mutable reason is scrubbed. |
 | `resolution` | `majority_type`, `result`, `wording` | Registered resolution wording and voting classifications. |
 | `reserve_ledger_entry` | `component`, `reason` | Immutable reserve classification and audited correction/funding evidence; retained without rewriting. |
-| `resolution_register_entry` | `challenge_annotation`, `location`, `wording` | Legal register wording/location and mutable challenge annotation (ADR-0011). |
+| `resolution_register_entry` | `challenge_annotation`, `location`, `wording` | Legal register wording/location and mutable challenge annotation (ADR-0011). The non-text `resolution_date` is immutable meeting-date evidence; it and the separate `entry_date` survive export/import and retention unchanged. |
 | `runtime_budget_attestation` | `policy`, `policy_digest` | Retained source, scope or review evidence and its technical provenance. |
 | `runtime_budget_review` | `policy`, `policy_digest`, `reason`, `request_digest` | Retained source, scope or review evidence and its technical provenance. |
 | `scope_control_event` | `mode` | Technical operation/status/error codes, keys and digests; personal event payloads are scrubbed separately. |

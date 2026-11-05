@@ -58,6 +58,13 @@ HEATING_CATEGORY_CODES = frozenset({'HEIZUNG_ZENTRAL', 'WARMWASSER_ZENTRAL', 'ME
 
 
 @dataclass(frozen=True)
+class HouseholdInput:
+    valid_from: date
+    persons: int
+    is_vacancy: bool = False
+
+
+@dataclass(frozen=True)
 class UnitInput:
     """A unit participating in the property (frozen copy of `unit` row)."""
 
@@ -67,15 +74,15 @@ class UnitInput:
     area: Decimal | None = None
     heated_area: Decimal | None = None
     mea: Decimal | None = None
-    # Person count for the PERSONENZAHL key. PROVISIONAL (M3-A7, section 2.3):
-    # taken per-unit (constant over the settlement period); the engine takes
-    # it as input so the data-source decision does not touch the engine.
+    # Legacy frozen field, retained for older snapshots and the unchanged M4
+    # pure input contract. New M3 calculations exclusively use household.
     person_count: int | None = None
     # Self-measured consumption for the VERBRAUCH key (already a difference of
     # meter readings; section 2.4). Engine takes the resulting quantity.
     consumption: Decimal | None = None
     # Full-period occupant quantities; empty means day-based split within unit.
     consumption_periods: tuple[tuple[date, date, Decimal], ...] = ()
+    household: tuple[HouseholdInput, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -264,6 +271,7 @@ class VacancyShare:
     owner_profile_id: uuid.UUID | None
     days: int
     amount: Decimal
+    person_days: int | None = None
 
 
 # ===========================================================================

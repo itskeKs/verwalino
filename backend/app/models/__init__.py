@@ -8,6 +8,7 @@ from app.models.audit_event import AuditEvent
 # M1 Stammdaten
 from app.models.property import Property
 from app.models.unit import Unit
+from app.models.unit_household import UnitHousehold
 from app.models.person import Person
 from app.models.owner_profile import OwnerProfile
 from app.models.tenant_profile import TenantProfile

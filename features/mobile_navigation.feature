@@ -18,3 +18,15 @@ Feature: Mobile navigation
   Scenario: Desktop navigation remains available across the phone breakpoint
     Given the signed-in manager opens the navigation dashboard at 1280 pixels
     Then static navigation remains accessible when resizing across 768 pixels
+
+  Scenario Outline: Closing phone navigation preserves keyboard focus when the desktop navigation appears
+    Given the signed-in manager opens the navigation dashboard at 360 pixels
+    When the manager closes phone navigation through "<method>"
+    Then widening to <width> pixels moves focus to the active desktop navigation link
+
+    Examples:
+      | method  | width |
+      | Escape  | 768   |
+      | Escape  | 1280  |
+      | Objekte | 768   |
+      | Objekte | 1280  |

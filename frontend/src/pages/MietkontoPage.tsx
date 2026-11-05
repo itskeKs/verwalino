@@ -2,7 +2,7 @@
  * Mietkonto page -- Soll/Ist/Saldo + offene Posten per lease or owner.
  *
  * M6 Mietkonto: select a lease or owner, date range, then view the
- * account statement. Rueckstand (open debt) shown in red, Guthaben in green.
+ * account statement. Only the due tenant balance is labelled as arrears.
  */
 
 import { useEffect, useState, useCallback } from "react";
@@ -25,6 +25,7 @@ import type {
   Unit,
   Property,
   MietkontoResult,
+  TenantMietkontoResult,
   EconomicPlan,
 } from "../api/types";
 import { AccountingScopeSelector } from "../components/AccountingScopeSelector";
@@ -64,9 +65,13 @@ export function MietkontoPage() {
   const currentYear = new Date().getFullYear();
   const [periodStart, setPeriodStart] = useState(`${currentYear}-01-01`);
   const [periodEnd, setPeriodEnd] = useState(`${currentYear}-12-31`);
+  const [asOf, setAsOf] = useState(() => {
+    const today = new Date();
+    return `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, "0")}-${String(today.getDate()).padStart(2, "0")}`;
+  });
 
   // Result
-  const [result, setResult] = useState<MietkontoResult | null>(null);
+  const [result, setResult] = useState<MietkontoResult | TenantMietkontoResult | null>(null);
   const [querying, setQuerying] = useState(false);
 
   const loadLookups = useCallback(() => {
@@ -129,13 +134,14 @@ export function MietkontoPage() {
     if (viewMode === "lease" && !selectedLeaseId) return;
     if (viewMode === "owner" && !selectedOwnerId) return;
     if (!periodStart || !periodEnd) return;
+    if (viewMode === "lease" && !asOf) return;
 
     setQuerying(true);
     setError(null);
     setResult(null);
     try {
       if (viewMode === "lease") {
-        const r = await leaseStatement(selectedLeaseId, periodStart, periodEnd, scopeId || undefined);
+        const r = await leaseStatement(selectedLeaseId, periodStart, periodEnd, scopeId || undefined, asOf);
         setResult(r);
       } else {
         const r = await ownerStatement(
@@ -280,6 +286,11 @@ export function MietkontoPage() {
             />
           </label>
 
+          {viewMode === "lease" && <label>
+            Fällig am *
+            <input type="date" required value={asOf} onChange={(e) => setAsOf(e.target.value)} />
+          </label>}
+
           <div className="form-actions">
             <button
               className="btn btn--primary"
@@ -321,14 +332,29 @@ export function MietkontoPage() {
                     fontFamily: "var(--mono)",
                     fontWeight: 700,
                     fontSize: "1.05rem",
-                    color: balanceColor(result.balance),
+                    color: viewMode === "lease" && parseFloat(result.balance) > 0 ? undefined : balanceColor(result.balance),
                   }}
                 >
                   {result.balance} EUR
-                  {parseFloat(result.balance) > 0 && " (Rueckstand)"}
+                  {viewMode === "owner" && parseFloat(result.balance) > 0 && " (Rueckstand)"}
                   {parseFloat(result.balance) < 0 && " (Guthaben)"}
                 </td>
               </tr>
+              {"due_balance" in result && <>
+                <tr>
+                  <td>davon fällig</td>
+                  <td className={parseFloat(result.due_balance) > 0 ? "text-destructive" : parseFloat(result.due_balance) < 0 ? "text-emerald-700" : undefined}
+                    style={{ fontFamily: "var(--mono)" }}>
+                    {result.due_balance} EUR
+                    {parseFloat(result.due_balance) > 0 && " (Rückstand)"}
+                    {parseFloat(result.due_balance) < 0 && " (Guthaben)"}
+                  </td>
+                </tr>
+                <tr>
+                  <td>noch nicht fällig</td>
+                  <td style={{ fontFamily: "var(--mono)" }}>{result.not_yet_due_balance} EUR</td>
+                </tr>
+              </>}
             </tbody>
           </table>
 
@@ -352,9 +378,12 @@ export function MietkontoPage() {
                   {result.open_items.map((item, idx) => (
                     <tr key={idx}>
                       <td>
-                        {item.period_year
+                        <span>{item.period_year
                           ? `${item.period_year}${item.period_month ? "/" + String(item.period_month).padStart(2, "0") : ""}`
-                          : "-"}
+                          : "-"}</span>
+                        {"is_due" in item && <span className="block text-xs text-muted-foreground">
+                          {Number(item.open_amount) === 0 ? "ausgeglichen" : item.is_due ? "fällig" : "noch nicht fällig"}
+                        </span>}
                       </td>
                       <td>
                         {PAYMENT_TYPE_LABELS[item.payment_type] ?? item.payment_type}
@@ -370,7 +399,7 @@ export function MietkontoPage() {
                           textAlign: "right",
                           fontFamily: "var(--mono)",
                           fontWeight: 600,
-                          color: openAmountColor(item.open_amount),
+                          color: viewMode === "lease" && parseFloat(item.open_amount) > 0 ? undefined : openAmountColor(item.open_amount),
                         }}
                       >
                         {item.open_amount} EUR

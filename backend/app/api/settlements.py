@@ -211,6 +211,14 @@ class SettlementLineOut(BaseModel):
     note: str | None
 
 
+class VacancyAttributionOut(BaseModel):
+    unit_number: str
+    cost_label: str
+    days: int
+    person_days: int
+    amount: str
+
+
 class SettlementRunOut(BaseModel):
     id: str
     organization_id: str
@@ -236,6 +244,7 @@ class SettlementRunOut(BaseModel):
     superseded_by_id: str | None
     lines: list[SettlementLineOut] = []
     extra_inputs: dict | None = None
+    vacancy_attribution: list[VacancyAttributionOut] = Field(default_factory=list, exclude_if=lambda rows: not rows)
 
 
 class SettlementBatchSkipped(BaseModel):
@@ -304,7 +313,7 @@ def _line_out(ln: SettlementLine, cost_entry_id: str | None = None) -> Settlemen
     )
 
 
-def _run_out(run: SettlementRun, lines: list[SettlementLine]) -> SettlementRunOut:
+def _run_out(run: SettlementRun, lines: list[SettlementLine], *, vacancy_attribution: list[dict] | None = None) -> SettlementRunOut:
     # Relational legacy lines omit source IDs. Use only unambiguous exact matches
     # from the already-frozen snapshot; never infer source links by amount alone.
     sources = {}
@@ -342,6 +351,7 @@ def _run_out(run: SettlementRun, lines: list[SettlementLine]) -> SettlementRunOu
         finalized_by=str(run.finalized_by) if run.finalized_by else None,
         superseded_by_id=str(run.superseded_by_id) if run.superseded_by_id else None,
         extra_inputs=(run.snapshot_payload or {}).get("extra_inputs"),
+        vacancy_attribution=vacancy_attribution or [],
         lines=[_line_out(ln, sources.get((ln.sort_order, ln.line_type, ln.label, ln.cost_category_code, str(ln.amount)))) for ln in lines],
     )
 
@@ -396,7 +406,8 @@ async def get_settlement(
         raise HTTPException(status_code=404, detail="Settlement run not found")
     lines_repo = SettlementLineRepository(db, auth.organization_id)
     lines = await lines_repo.list_for_run(run_id)
-    return _run_out(run, list(lines))
+    svc = SettlementService(db, auth.organization_id, auth.user_id)
+    return _run_out(run, list(lines), vacancy_attribution=await svc.vacancy_disclosure(run))
 
 
 @router.get("/{run_id}/consumption-suggestions", response_model=list[ConsumptionSuggestionOut])
@@ -482,7 +493,7 @@ async def set_advance_payments(
         run_id, _dec(body.advance_payments_total, "advance_payments_total") if body.advance_payments_total is not None else None,
         heating_amount=_dec(body.heating_advance_payments_total, "heating_advance_payments_total") if body.heating_advance_payments_total is not None else None
     )
-    return _run_out(run, [])
+    return _run_out(run, [], vacancy_attribution=await svc.vacancy_disclosure(run))
 
 
 @router.patch("/{run_id}/advance-payments-derived", response_model=SettlementRunOut)
@@ -499,7 +510,7 @@ async def set_advance_payments_derived(
     """
     svc = SettlementService(db, auth.organization_id, auth.user_id)
     run = await svc.set_advance_payments_derived(run_id, period_year)
-    return _run_out(run, [])
+    return _run_out(run, [], vacancy_attribution=await svc.vacancy_disclosure(run))
 
 
 @router.post("/{run_id}/compute", response_model=SettlementRunOut)
@@ -514,7 +525,7 @@ async def compute_settlement(
     run, _result = await svc.compute(run_id, _to_extras(body))
     lines_repo = SettlementLineRepository(db, auth.organization_id)
     lines = await lines_repo.list_for_run(run_id)
-    return _run_out(run, list(lines))
+    return _run_out(run, list(lines), vacancy_attribution=await svc.vacancy_disclosure(run))
 
 
 @router.post("/{run_id}/preview", response_model=SettlementRunOut)
@@ -575,7 +586,7 @@ async def finalize_settlement(
     run = await svc.finalize(run_id, _to_extras(body))
     lines_repo = SettlementLineRepository(db, auth.organization_id)
     lines = await lines_repo.list_for_run(run_id)
-    return _run_out(run, list(lines))
+    return _run_out(run, list(lines), vacancy_attribution=await svc.vacancy_disclosure(run))
 
 
 @router.post("/{run_id}/correction", response_model=SettlementRunOut, status_code=201)

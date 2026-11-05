@@ -3,7 +3,7 @@
  * Desktop: sidebar static. Mobile: off-canvas sidebar with a dimming overlay.
  */
 
-import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, type FocusEvent, type ReactNode } from "react";
 import * as Dialog from "@radix-ui/react-dialog";
 import { X } from "lucide-react";
 import { OrganizationDeletionBanner } from "./OrganizationDeletionBanner";
@@ -21,6 +21,8 @@ export function AppShell({ children }: Props) {
   const [desktop, setDesktop] = useState(() => window.matchMedia(DESKTOP_MEDIA_QUERY).matches);
   const toggleRef = useRef<HTMLButtonElement>(null);
   const desktopNavRef = useRef<HTMLDivElement>(null);
+  const navigationHadFocus = useRef(false);
+  const restoreAfterResize = useRef(false);
 
   const restoreNavigationFocus = useCallback(() => {
     if (window.matchMedia(DESKTOP_MEDIA_QUERY).matches) {
@@ -35,21 +37,31 @@ export function AppShell({ children }: Props) {
   useEffect(() => {
     const media = window.matchMedia(DESKTOP_MEDIA_QUERY);
     const resize = (event: MediaQueryListEvent) => {
-      const navigationHadFocus = desktopNavRef.current?.contains(document.activeElement);
-      const toggleHadFocus = document.activeElement === toggleRef.current;
+      // CSS can blur the disappearing toggle before the media change is delivered.
+      restoreAfterResize.current = navigationHadFocus.current;
       setDesktop(event.matches);
       setSidebarOpen(false);
-      if (navigationHadFocus || toggleHadFocus) {
-        requestAnimationFrame(restoreNavigationFocus);
-      }
     };
     media.addEventListener("change", resize);
     return () => media.removeEventListener("change", resize);
-  }, [restoreNavigationFocus]);
+  }, []);
+
+  useLayoutEffect(() => {
+    if (restoreAfterResize.current) {
+      restoreAfterResize.current = false;
+      restoreNavigationFocus();
+    }
+  }, [desktop, restoreNavigationFocus]);
 
   return (
     <Dialog.Root open={!desktop && sidebarOpen} onOpenChange={setSidebarOpen}>
-    <div className="flex h-screen overflow-hidden bg-background">
+    <div
+      className="flex h-screen overflow-hidden bg-background"
+      onFocusCapture={(event: FocusEvent<HTMLElement>) => {
+        navigationHadFocus.current = event.target === toggleRef.current
+          || !!desktopNavRef.current?.contains(event.target);
+      }}
+    >
       {desktop ? (
         <div ref={desktopNavRef} className="flex shrink-0">
           <Sidebar onClose={() => setSidebarOpen(false)} />

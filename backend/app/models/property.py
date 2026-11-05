@@ -60,7 +60,10 @@ class Property(Base, UUIDPrimaryKeyMixin, TimestampMixin):
         String(24), nullable=False, server_default="LEGACY_UNCONFIRMED"
     )
 
+    federal_state: Mapped[str | None] = mapped_column(String(2), nullable=True)
+
     __table_args__ = (
+        CheckConstraint("federal_state IN ('BW','BY','BE','BB','HB','HH','HE','MV','NI','NW','RP','SL','SN','ST','SH','TH')", name="ck_property_federal_state"),
         CheckConstraint("construction_year BETWEEN 1 AND 9999", name="ck_property_construction_year"),
         CheckConstraint("total_area >= 0 AND total_area < 1000000000000", name="ck_property_total_area"),
         UniqueConstraint(

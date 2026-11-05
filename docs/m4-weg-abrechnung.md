@@ -419,6 +419,39 @@ recomputed by this fix. See [ADR-0013](adr/0013-reserve-financed-owner-costs.md)
 
 ---
 
+### Dated document addressees after an ownership change (#207)
+
+The economic plan uses the first day of its plan period; the asset report uses
+its report date (`period_end`). Each unit's addressed copy names the owner and
+“Eigentümer am DD.MM.YYYY”. The existing property-wide download combines these
+individual copies. The asset figures cover the complete report period, without
+splitting them at the transfer. Concurrent co-owners remain separate recipients;
+a missing dated owner or name refuses computation instead of inventing a recipient.
+
+The shared `engine.periods.owner_at` reads inclusive engine bounds after the
+existing exclusive-to-inclusive storage conversion. Newly computed documents
+store their unit, owner, name and key date in the existing snapshot; finalization
+hashes and freezes those values. The page and PDF use that frozen list. Old
+finalized snapshots without it keep their original rendering and digest; reads
+do not backfill new recipients. Migration 0162 adds new report recipients to
+both individual and organization retention through the existing shared catalog,
+recipient extractor and source deadlines. Report-line evidence dates extend the
+same deadline in both paths. An ended ownership alone does not permit erasing a
+retained report recipient; frozen names and documents remain unchanged.
+
+The live Hausgeld account follows dated ownership using only the unit's frozen
+plan advances. Continuing co-owners keep their original rounded monthly amounts;
+only departing owners' advances pass to dated successors. A transfer month is
+split by inclusive ownership days, with the existing cent distribution; an
+ambiguous transfer refuses calculation rather than shifting unrelated shares.
+For unit 2, Karl Weiß through 30 June 2026 and Lena Roth from 1 July, a monthly
+400.00 EUR produces 2,400.00 EUR for each. The 2026 plan names Karl and the
+31 December report names Lena. Annual-settlement ownership periods and its
+existing frozen plan basis remain unchanged; this does not decide contractual
+liability between seller and buyer.
+
+---
+
 ## 5. Economic Plan — Forward-Looking
 
 ### 5.1 Inputs (SDD §10)

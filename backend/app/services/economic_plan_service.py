@@ -35,6 +35,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.engine.periods import period_starting_in, validate_settlement_period
 from app.engine.canonical import canonical_json, sha256_hex
 from app.engine.rounding import DistributionError
+from app.services.document_addressees import document_addressees
 from app.engine.snapshot import build_plan_snapshot_payload
 from app.services.render_names import (
     DISPLAY_NAMES_KEY,
@@ -385,6 +386,7 @@ class EconomicPlanService:
 
         plan.snapshot_payload = {**build_plan_snapshot_payload(inp, result),
             **self._adopted_snapshot_inputs(plan, inputs), "financial_input_coverage": self._coverage}
+        plan.snapshot_payload["addressees"] = await document_addressees(self._session, self._org_id, plan.property_id, plan.period_start)
         plan.reserve_contribution_total = inputs.reserve_contribution_total
         await self._plans.update(plan)
 
@@ -416,6 +418,7 @@ class EconomicPlanService:
         inp, result = await self._compute_engine(plan, inputs)
 
         payload = {**build_plan_snapshot_payload(inp, result), **self._adopted_snapshot_inputs(plan, inputs)}
+        payload["addressees"] = await document_addressees(self._session, self._org_id, plan.property_id, plan.period_start)
         payload["financial_input_coverage"] = self._coverage
         # Eigentümer-/Objekt-Anzeige-Namen einfrieren (ADR-0012), vor dem Hash --
         # s. settlement_service.finalize. Noch OLD.status='draft', Schreiben erlaubt.

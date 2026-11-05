@@ -73,6 +73,18 @@ it("puts complete principal, interest and open amounts before descriptive column
   for (const table of tables) expect(within(table).getAllByRole("row")).toHaveLength(13);
 });
 
+it.each(["KALTMIETE", "NK_VORAUSZAHLUNG"])("shows the stored interest start only on the new %s row alongside legacy data", async payment_type => {
+  const legacy = notice.interest_snapshot.items[0];
+  vi.mocked(api.get).mockImplementation(async url => url === "/api/dunning/notice" ? {
+    ...notice, interest_snapshot: { ...notice.interest_snapshot, items: [legacy,
+      { ...legacy, payment_type, interest_start: "2026-04-08" }] },
+  } : []);
+  render(<MemoryRouter initialEntries={["/mahnungen/notice"]}><Routes><Route path="/mahnungen/:dunningId" element={<DunningNoticeDetailPage />} /></Routes></MemoryRouter>);
+  expect(await screen.findByText(/Zinsbeginn:/)).toHaveTextContent("08.04.2026");
+  expect(screen.getAllByText(/Zinsbeginn:/)).toHaveLength(1);
+  expect(screen.queryByText(/02.01.2026/)).toBeNull();
+});
+
 it.each([
   ["2026-11-01T12:26:04.611054+00:00", "01.11.2026, 13:26"],
   ["2026-07-01T12:26:04+00:00", "01.07.2026, 14:26"],

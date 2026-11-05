@@ -171,5 +171,40 @@ def resizing(browser_world, tmp_path):
         await page.keyboard.press("Escape")
         await expect(toggle).to_be_focused()
         await page.set_viewport_size({"width": 1280, "height": 900})
+        await expect(page.locator('nav a[aria-current="page"]')).to_be_focused()
+        await visible_focus(page)
         await desktop_navigation()
     b.run(run())
+
+
+@when(parsers.parse('the manager closes phone navigation through "{method}"'))
+def close_before_resize(browser_world, method):
+    async def run():
+        page = browser_world.page
+        toggle = page.get_by_role("button", name="Navigation umschalten", exact=True)
+        await page.keyboard.press("Tab")
+        await expect(toggle).to_be_focused()
+        await page.keyboard.press("Enter")
+        dialog = page.get_by_role("dialog", name="Navigation", exact=True)
+        await expect(dialog).to_be_in_viewport(ratio=1)
+        if method == "Escape":
+            await page.keyboard.press("Escape")
+        else:
+            await dialog.get_by_role("link", name=method, exact=True).focus()
+            await page.keyboard.press("Enter")
+            await expect(page).to_have_url("/objekte")
+        await expect(dialog).to_have_count(0)
+        await expect(toggle).to_be_focused()
+    browser_world.run(run())
+
+
+@then(parsers.parse("widening to {width:d} pixels moves focus to the active desktop navigation link"))
+def closed_toggle_resize(browser_world, width, tmp_path):
+    async def run():
+        page = browser_world.page
+        await page.set_viewport_size({"width": width, "height": 900})
+        await expect(page.get_by_role("button", name="Navigation umschalten", exact=True)).to_be_hidden()
+        await capture(browser_world, tmp_path, f"navigation-closed-resize-{width}")
+        await expect(page.locator('nav a[aria-current="page"]')).to_be_focused()
+        await visible_focus(page)
+    browser_world.run(run())

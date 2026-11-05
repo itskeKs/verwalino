@@ -8,6 +8,11 @@ Feature: Organization isolation
     And each organization has a property, a person and a bank account of its own
     And an administrator of "Verwaltung Alpha" is signed in
 
+  Scenario: Another organization cannot read or replace household history
+    Given a unit with saved household history belongs to Verwaltung Alpha
+    When Verwaltung Beta tries to read or replace that unit's households
+    Then the households are not found and Verwaltung Alpha retains its rows
+
   Scenario: Another organization's WEG financial details look missing
     Given a payment, economic plan and annual WEG settlement belong to Verwaltung Alpha
     When Verwaltung Beta opens those financial details and their input-owner list
@@ -18,7 +23,7 @@ Feature: Organization isolation
     When Verwaltung Beta tries to delete the empty annual draft
     Then the annual draft is not found and remains available to Verwaltung Alpha
 
-  Scenario: Another organization cannot read or change separate lease advances
+  Scenario: Another organization cannot read a dated rent account or change separate lease advances
     Given a lease with 750 euros rent, 150 euros operating and 90 euros heating advance
     When another organization requests the lease's advance history and statement actions
     Then all separate advance requests are reported as not found

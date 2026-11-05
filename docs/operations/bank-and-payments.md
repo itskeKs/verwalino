@@ -159,11 +159,16 @@ API calls without it and without configuration remain interest-free, explicit `n
 disables the calculation. Existing letters/PDFs are not recalculated as a result.
 
 The calculation per open item is `amount × (base + 5) / 100 × calendar days / 365`,
-from the actual due date, with a single `ROUND_HALF_UP` cent rounding. Fees
-and interest are not charged interest. Example: 700 EUR, base 2.50%, 60 days →
-8.63 EUR interest and 708.63 EUR total with fee 0. Due date, reference date,
+starting the day after the actual due date, with a single `ROUND_HALF_UP` cent rounding. Fees
+and interest are not charged interest. Example: 700 EUR January 2026 rent, due 6 January, reference
+2 March, base 2.50%, 55 days → 7.91 EUR interest and 707.91 EUR total with fee 0. Due date, reference date,
 days, base/annual interest rate, and amounts are saved and shown in detail/PDF;
 later configuration or payment changes do not recalculate the issued dunning notice.
+New `KALTMIETE` and `NK_VORAUSZAHLUNG` interest rows additionally freeze the first
+interest date and explicitly show `Zinsbeginn: TT.MM.JJJJ` in the detail and PDF.
+Older rows without this date retain their existing content and identical PDF
+rendering; no historical date is inferred. Heating, WEG and one-off rows keep
+their existing presentation and calculation.
 Rollback restrictions are documented under
 [migration compatibility](../../DEPLOY.md#migration-compatibility-00290148).
 Issuance alone confirms no receipt. The real UI/PDF flow
@@ -208,3 +213,61 @@ history coverage, or incoherent bookings produce errors instead of false zeros.
 The overview changes no bookings or leases. Mandatory check:
 `uv run pytest tests/test_dashboard_kpis.py`; see the
 [local UI acceptance procedure](../../DEPLOY.md#monthly-dashboard-rent-kpis-t52).
+
+
+## Rent due dates and holiday coverage
+
+New rent calculations stamp `KALTMIETE` and `NK_VORAUSZAHLUNG` with the third
+working day under [§ 556b(1) BGB](https://www.gesetze-im-internet.de/bgb/__556b.html).
+Saturday does not count ([BGH VIII ZR 129/09](https://juris.bundesgerichtshof.de/cgi-bin/rechtsprechung/document.py?Art=pm&Blank=1&Datum=2010-7&Gericht=bgh&file=dokument.pdf&linked=urt&nr=52857)).
+Set **Bundesland** in the property's creation/edit form. Empty means nationwide
+holidays; existing properties keep this empty state until explicitly edited.
+A saved change affects newly derived charges, never frozen issued notices/PDFs.
+WEG dues, one-off claims, rates and arrears aggregation retain their existing rules.
+The separate `HK_VORAUSZAHLUNG` line retains its previous due-date rule pending
+owner confirmation; it is not covered by this change.
+
+For April 2026, the counted days are 1, 2 and 7 April. Good Friday (3 April),
+Easter Monday (6 April) and the weekend are excluded. Payment in full on 7 April
+produces no reminder or interest. A 100 EUR shortfall is due on 7 April and
+accrues interest from 8 April (0.02 EUR on that day at a 2.50% base rate).
+Day-exact initial-month amounts stay unchanged. Count the three working days
+inclusively from the later of month start and lease start, even when the deadline
+falls in the next month or year. A lease starting Saturday, 11 April 2026 has
+counted days 13, 14 and 15 April; no reminder or interest is due through 15 April.
+Clipping a report to mid-month or changing the rent does not restart the count.
+
+The small pure calendar uses fixed and Gregorian Easter dates, without a new
+holiday dependency. Nationwide: New Year, Good Friday, Easter Monday, 1 May,
+Ascension, Whit Monday, 3 October and both Christmas days. Statewide additions:
+
+| Holiday | States |
+| --- | --- |
+| 6 January | Baden-Württemberg, Bavaria, Saxony-Anhalt |
+| Corpus Christi | Baden-Württemberg, Bavaria, Hesse, North Rhine-Westphalia, Rhineland-Palatinate, Saarland |
+| Assumption (15 August) | Saarland |
+| Reformation (31 October) | Brandenburg, Mecklenburg-Vorpommern, Saxony, Saxony-Anhalt, Thuringia; Bremen, Hamburg, Lower Saxony and Schleswig-Holstein from 2018 |
+| All Saints (1 November) | Baden-Württemberg, Bavaria, North Rhine-Westphalia, Rhineland-Palatinate, Saarland |
+| Easter Sunday and Whit Sunday (already excluded as Sundays for rent) | Brandenburg |
+| Repentance Day | Saxony; Wednesday before 23 November |
+| Women's Day (8 March) | Berlin from 2019; Mecklenburg-Vorpommern from 2023 |
+| Children's Day (20 September) | Thuringia from 2019 |
+
+Sources: [official state overview](https://www.hamburg.de/resource/blob/134374/7a4a9de67fd46caec0947c11bf23316d/bsb-feiertage-data.pdf),
+[Bavarian FTG Art. 1](https://www.gesetze-bayern.de/Content/Document/BayFTG-1),
+[Lower Saxony's dated Reformation rule](https://www.mi.niedersachsen.de/themen/allgemeine_angelegenheiten_inneren/feiertagsrecht/feiertagsrecht-60368.html),
+[Women's Day introductions](https://www.deutsche-rentenversicherung.de/DRV/DE/Ueber-uns-und-Presse/Presse/Meldungen/2024/240306_frauentag_feiertag_frei?nn=6a097debca84ce5471c1aa2d),
+[Thuringian parliament, 28 February 2019](https://parldok.thueringer-landtag.de/ParlDok/dokument/70291/140_plenarsitzung.pdf).
+Reformation introductions are also recorded by the
+[Bremen legislature](https://www.transparenz.bremen.de/metainformationen/gesetz-ueber-die-sonn-gedenk-und-feiertage-vom-12-november-1954-145882?template=20_gp_ifg_meta_detail_d),
+[Hamburg parliament](https://www.buergerschaft-hh.de/parldok/dokument/64307/bilanz_der_freien_museumsoeffnung_fuer_alle_am_tag_der_reformation.pdf)
+and [Lower Saxony's government announcement covering Schleswig-Holstein](https://www.stk.niedersachsen.de/startseite/presseinformationen/landesregierung-schlaegt-reformationstag-als-neuen-feiertag-vor-164249.html).
+Saxony's holiday list is in [SächsSFG](https://revosax.sachsen.de/vorschrift/3997).
+The calendar also includes [nationwide Reformation Day in 2017](https://www.mi.niedersachsen.de/startseite/aktuelles/presseinformationen/reformationstag-ist-im-jahr-2017-ein-arbeitsfreier-gesetzlicher-feiertag--148206.html)
+and Berlin's [one-off 8 May in 2020/2025 and 17 June 2028](https://www.berlin.de/aktuelles/9188766-958090-einmaliger-feiertag-am-8-mai-2025.html).
+This is the modern statewide calendar with those dated changes, not an archive
+of historical legislation before 1995. Municipality-only holidays (Augsburg's
+Peace Festival, Bavarian Assumption, local Corpus Christi in Saxony/Thuringia)
+cannot be inferred from a state and are excluded. No municipality is guessed
+from an address; contracts requiring additional local review remain outside
+this calendar's coverage.

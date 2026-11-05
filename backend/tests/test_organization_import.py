@@ -296,3 +296,58 @@ async def test_private_invoice_admission_is_listed_as_a_missing_dependency(rent_
         assert {'entity': 'invoice_upload_admission', 'source_ids': [identity], 'count': 1} in answer.json()['detail']['missing_dependencies']
     assert await rent_db.scalar(text('SELECT count(*) FROM property WHERE organization_id=:org'), import_target) == 0
     await rent_db.rollback()
+
+
+@pytest.mark.parametrize('archive_case', ['legacy', 'wrong_property', 'orphan', 'current_missing', 'current_snapshot'])
+async def test_register_archive_upgrade_preserves_both_dates_and_refuses_invalid_sources(
+    rent_world, import_target, rent_db, export_store, archive_case,
+):
+    """A real pre-0167 row shape must work, not merely a relabelled current export."""
+    async with api_client(rent_world) as api:
+        prop = await api.post('/api/properties', json={'name': 'Gartenstraße 5', 'management_type': 'WEG'})
+        assert prop.status_code == 201, prop.text
+        prop_id = prop.json()['id']
+        meeting = await api.post('/api/meetings', json={'property_id': prop_id, 'meeting_date': '2026-06-15',
+            'meeting_type': 'ORDENTLICH', 'location': 'Historic meeting place'})
+        assert meeting.status_code == 201, meeting.text
+        resolution = await api.post('/api/meetings/resolutions', json={'meeting_id': meeting.json()['id'],
+            'wording': 'Historic registered wording', 'votes_yes': 5, 'votes_no': 0, 'votes_abstain': 0,
+            'result': 'ANGENOMMEN'})
+        assert resolution.status_code == 201, resolution.text
+        entry = await api.post(f"/api/meetings/resolutions/{resolution.json()['id']}/register")
+        assert entry.status_code == 201, entry.text
+    files = unpack(await exported(rent_world))
+    manifest = json.loads(files['manifest.json'])
+    manifest['schema_head'] = '0167' if archive_case.startswith('current_') else '0166'
+    files['manifest.json'] = json.dumps(manifest).encode()
+    name = 'entities/resolution_register_entry.jsonl'
+    rows = [json.loads(line) for line in files[name].splitlines()]
+    historic = next(row for row in rows if row['id'] == entry.json()['id'])
+    historic['entry_date'] = '2026-11-01'  # Synthetic archive evidence, never a backdated live entry.
+    if archive_case == 'current_snapshot':
+        historic['resolution_date'] = '2026-06-14'  # Existing snapshots are not re-derived on import.
+    else:
+        historic.pop('resolution_date')
+    if archive_case == 'wrong_property':
+        historic['property_id'] = str(rent_world['property'])
+    if archive_case == 'orphan':
+        historic['resolution_id'] = str(uuid.uuid4())
+    files[name] = b''.join(json.dumps(row).encode() + b'\n' for row in rows)
+    async with api_client(import_target) as api:
+        response = await api.post('/api/organizations/import', files={'file': ('legacy.tar.gz', repack(files))})
+    if archive_case in ('legacy', 'current_snapshot'):
+        assert response.status_code == 200, response.text
+        mapping = response.json()['id_map']
+        stored = (await rent_db.execute(text('SELECT * FROM resolution_register_entry WHERE id=:id'),
+            {'id': uuid.UUID(mapping['resolution_register_entry'][historic['id']])})).mappings().one()
+        assert str(stored['resolution_date']) == ('2026-06-14' if archive_case == 'current_snapshot' else '2026-06-15')
+        assert str(stored['entry_date']) == '2026-11-01'
+        assert stored['location'] == historic['location']
+        assert stored['wording'] == historic['wording']
+        assert stored['sequence_number'] == historic['sequence_number']
+        assert str(stored['property_id']) == mapping['property'][historic['property_id']]
+        assert str(stored['resolution_id']) == mapping['resolution'][historic['resolution_id']]
+    else:
+        assert response.status_code == 422, response.text
+        assert await rent_db.scalar(text('SELECT count(*) FROM property WHERE organization_id=:org'), import_target) == 0
+    await rent_db.rollback()
