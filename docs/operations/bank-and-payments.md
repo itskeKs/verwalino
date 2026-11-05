@@ -192,6 +192,10 @@ a payment list balance of 650 EUR and a cost gross total of 125 EUR including ex
 
 ## Default interest on dunning notices (Verzugszinsen)
 
+Creating an individual tenant or owner notice opens its saved draft immediately.
+The successful creation response commits the draft before the detail request can
+start. The draft opens on the first request, and the manager can issue it from there.
+
 Under **Mahnungen → Mahneinstellungen**, an administrator can set the fees for all three
 levels and switch on **Verzugszinsen automatisch berechnen**. Other members see the same
 settings read-only. The starting values are 0.00 / 2.50 / 2.50 EUR with interest off.
