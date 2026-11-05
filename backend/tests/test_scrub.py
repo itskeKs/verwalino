@@ -209,12 +209,16 @@ def test_uuid_valued_credentials_and_queries_remain_redacted(identity):
 
 
 @pytest.mark.parametrize("template", ["organization {identity}{separator}{phone} erased", "contact {phone}{separator}{identity} erased"])
-@pytest.mark.parametrize("separator", [" ", "-", "/", ";", ",", ":"])
-@pytest.mark.parametrize("phone", ["03012345678", "+49 30 12345678"])
-def test_numeric_uuid_survives_next_to_a_redacted_phone(template, separator, phone):
-    identity = "12345678-1234-4234-8234-123456789012"
+@pytest.mark.parametrize("separator", [" ", "-", "/", "- ", " - ", "/ ", " / ", ";", ",", ":"])
+@pytest.mark.parametrize(("phone", "masked"), [
+    ("03012345678", "[redacted:phone]"), ("+49 30 12345678", "[redacted:phone]"),
+    ("030/12345678", "[redacted:phone]"), ("(030) 12345678", "[redacted:phone]"),
+    ("123 456 7890", "[redacted:phone]"), ("(12345678)", "[redacted:phone])"),
+])
+@pytest.mark.parametrize("identity", ["12345678-1234-4234-8234-123456789012", "ab123456-7890-4abc-8def-123456789abc"])
+def test_uuid_survives_next_to_a_redacted_phone(template, separator, phone, masked, identity):
     message = template.format(identity=identity, separator=separator, phone=phone)
-    expected = template.format(identity=identity, separator=separator, phone="[redacted:phone]")
+    expected = template.format(identity=identity, separator=separator, phone=masked)
     assert scrub_text(message) == expected
     assert scrub({"exception": {"values": [{"value": message}]}})["exception"]["values"][0]["value"] == expected
     record = logging.LogRecord("app.test", logging.ERROR, __file__, 1, message, (), None)

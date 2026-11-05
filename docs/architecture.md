@@ -515,8 +515,9 @@ and masks recognizable personal data, credentials and query values in messages
 and breadcrumbs. The same text filter protects formatted logs; SQLAlchemy hides
 bound parameters. Canonical hexadecimal UUID spans (`8-4-4-4-12`, case-insensitive)
 are excluded from IBAN and phone matching so diagnostic identifiers, including
-all-numeric UUIDs, remain complete. Hyphens and slashes adjoining a UUID do not
-prevent redaction of an adjacent phone number. Other
+all-numeric UUIDs, remain complete. Phone matching treats excluded UUID edges as
+token boundaries and retains surrounding phone-grammar separators, including
+whitespace, while masking adjacent phone numbers. Other
 IBAN-shaped candidates are conservatively redacted even with an invalid country,
 length or checksum; the filter does not validate bank details. UUID-shaped values
 in credentials or URL queries still follow the normal secret/query redaction.
