@@ -29,6 +29,7 @@ from app.models.document_ref import DocumentRef
 # M3 Verteilungs-/Abrechnungs-Engine (Betriebskostenabrechnung Mieter)
 from app.models.settlement_run import SettlementRun
 from app.models.settlement_line import SettlementLine
+from app.models.commercial_preallocation import CommercialPreallocation
 
 # M4 WEG-Abrechnung (Wirtschaftsplan eigene Entitaet; Jahresabrechnung +
 # Vermoegensbericht als settlement_run run_types)

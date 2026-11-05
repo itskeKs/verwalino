@@ -4,6 +4,23 @@ This page covers heating calculation and BK integration (T45/T46), annual proper
 figures (T39), BK batch drafts (T27), advance-payment proposals (T28), and prior-year
 economic plan proposals (T54).
 
+## Commercial preallocation in a tenant statement
+
+For a property with a commercial unit, open a draft and use “Vorwegabzug Gewerbe”
+on the relevant cost position. Select “Prozent” or “Festbetrag”, enter the value
+and a reason, then choose “Berechnen”. The rule is shared with every tenant
+statement using that cost position; calculate other drafts again to refresh
+their displayed results. “Vorschau” does not save changes. Selecting
+“Kein Vorwegabzug” and calculating removes an unfinalized rule.
+
+A 60 m² shop and 75/65 m² flats share EUR 1,200 waste as EUR 360 / 450 / 390
+without a rule. With 50% and “Gastronomie, Restmüll 2 × 1.100 l”, they pay
+EUR 600 / 321.43 / 278.57. Statements/PDFs show the actual commercial amount,
+reason and group distribution amount. The manager assesses the extra burden;
+the application does not infer it. Direct per-unit amounts and internal
+HeizkostenV positions do not offer this combination. After the first affected
+statement is finalized, the shared rule cannot be changed or removed.
+
 ## HeizkostenV calculation engine
 
 `app.engine.heizkosten.calculate_heating_costs(pools, context=...)` distributes

@@ -18,8 +18,8 @@ from alembic.migration import MigrationContext
 from alembic.script import ScriptDirectory
 from sqlalchemy import create_engine, text
 
-TARGET = '0168'
-SUPPORTED = ('0028', '0122', '0139', '0140', '0141', '0142', '0143', '0144', '0145', '0146', '0147', '0148', '0149', '0150', '0151', '0152', '0153', '0154', '0155', '0159', '0160', '0161', '0162', '0163', '0164', '0165', '0166', '0167', TARGET)
+TARGET = '0170'
+SUPPORTED = ('0028', '0122', '0139', '0140', '0141', '0142', '0143', '0144', '0145', '0146', '0147', '0148', '0149', '0150', '0151', '0152', '0153', '0154', '0155', '0159', '0160', '0161', '0162', '0163', '0164', '0165', '0166', '0167', '0168', '0169', TARGET)
 
 
 def release_head(graph: ScriptDirectory) -> str:
@@ -27,7 +27,7 @@ def release_head(graph: ScriptDirectory) -> str:
         raise ValueError('unsupported release head')
     revisions = list(graph.iterate_revisions(TARGET, '0028'))
     if [(r.revision, r.down_revision) for r in revisions] != [
-        ('0168', '0167'), ('0167', '0166'), ('0166', '0165'), ('0165', '0164'), ('0164', '0163'), ('0163', '0162'), ('0162', '0161'), ('0161', '0160'), ('0160', '0159'), ('0159', '0155'),
+        ('0170', '0169'), ('0169', '0168'), ('0168', '0167'), ('0167', '0166'), ('0166', '0165'), ('0165', '0164'), ('0164', '0163'), ('0163', '0162'), ('0162', '0161'), ('0161', '0160'), ('0160', '0159'), ('0159', '0155'),
         *((f'{n:04}', f'{n - 1:04}') for n in range(155, 28, -1))
     ]:
         raise ValueError('unsupported release upgrade graph')

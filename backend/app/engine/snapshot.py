@@ -136,6 +136,10 @@ def build_snapshot_payload(inp: SettlementInput, result: EngineResult) -> dict:
                     "tenant_distribution_key": p.tenant_distribution_key,
                     "tenant_apportionable": p.tenant_apportionable,
                     "apportionable_tenant_amount": _m(p.apportionable_tenant_amount),
+                    **({"commercial_share_percent": _m(p.commercial_share_percent),
+                        "commercial_amount": _m(p.commercial_amount),
+                        "commercial_reason": p.commercial_reason}
+                       if p.commercial_share_percent is not None or p.commercial_amount is not None else {}),
                     "external_amounts": [
                         {
                             "unit_id": str(e.unit_id),

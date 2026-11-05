@@ -92,6 +92,45 @@ async def import_erasure_payments(api, w, *, db=None, scope=None):
     return bank_id, transactions, payments
 
 
+async def test_due_erasure_retains_finalized_commercial_rules_and_foreign_financial_evidence(rent_world, reserve_erasure_db):
+    from app.engine.canonical import canonical_json, canonical_sha256
+    from app.services.organization_deletion_service import run_deletion
+    from tests.commercial_preallocation_support import commercial_property, commercial_rule, REASON
+    db, w = reserve_erasure_db, rent_world
+    async with api_client(w) as api, api_client(w, foreign=True) as foreign:
+        data = await commercial_property(api)
+        other = await commercial_property(foreign)
+        for client, sample in ((api, data), (foreign, other)):
+            answer = await client.post(f"/api/settlements/{sample['rows'][0]['run']['id']}/finalize",
+                json={'commercial_preallocations': [commercial_rule(sample)]})
+            assert answer.status_code == 200, answer.text
+        run_id = uuid.UUID(data['rows'][0]['run']['id'])
+        frozen = (await db.execute(text('SELECT snapshot_payload,snapshot_sha256,total_cost FROM settlement_run WHERE id=:run'), {'run': run_id})).one()
+        rule = await db.scalar(text('SELECT to_jsonb(r) FROM commercial_preallocation r WHERE organization_id=:org'), w)
+        assert await db.scalar(text("SELECT disposition FROM organization_retention_catalog() WHERE entity='commercial_preallocation'")) == 'retain'
+        retained = (await db.execute(text("SELECT identity FROM organization_retention_plan(:org) WHERE entity='commercial_preallocation'"), w)).scalars().all()
+        assert {'id': rule['id']} in retained
+        foreign_before = {}
+        for table in ('commercial_preallocation', 'cost_entry', 'settlement_run', 'settlement_line'):
+            foreign_before[table] = (await db.execute(text(f'SELECT to_jsonb(t) FROM {table} t WHERE organization_id=:org ORDER BY id'),
+                {'org': w['foreign_org']})).scalars().all()
+        await db.rollback()
+        assert (await api.post('/api/organizations/deletion')).status_code == 200
+        answer = await api.post('/api/organizations/deletion/confirm', json={'organization_name': 'T23 synthetic'})
+        assert answer.status_code == 200, answer.text
+    async with db.begin():
+        assert await run_deletion(db, w['org'], now=datetime.now(timezone.utc) + timedelta(days=8))
+    after = (await db.execute(text('SELECT snapshot_payload,snapshot_sha256,total_cost FROM settlement_run WHERE id=:run'), {'run': run_id})).one()
+    assert canonical_json(after[0]) == canonical_json(frozen[0])
+    assert canonical_sha256(after[0]) == after[1] == frozen[1]
+    assert after[2] == frozen[2] == 600
+    assert after[0]['inputs']['cost_positions'][0]['commercial_reason'] == REASON
+    assert await db.scalar(text('SELECT to_jsonb(r) FROM commercial_preallocation r WHERE organization_id=:org'), w) == rule
+    for table, original in foreign_before.items():
+        assert (await db.execute(text(f'SELECT to_jsonb(t) FROM {table} t WHERE organization_id=:org ORDER BY id'),
+            {'org': w['foreign_org']})).scalars().all() == original
+
+
 @pytest.mark.parametrize('scoped', [False, True], ids=['booked', 'scope-bound-vouchers'])
 async def test_erasure_scrubs_imported_bank_dependencies_without_rewriting_vouchers(
         rent_world, reserve_erasure_db, scoped):
