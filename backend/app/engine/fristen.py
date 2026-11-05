@@ -32,6 +32,7 @@ only (datetime.date), calendar arithmetic, no timezone.
 from __future__ import annotations
 
 import uuid
+from calendar import monthrange
 from dataclasses import dataclass, field
 from datetime import date, timedelta
 from typing import Literal
@@ -619,9 +620,13 @@ def owner_due_date(
     """Select the resolved calendar day, then shift under § 193 BGB.
 
     Unlike tenant rent, this does not count three working days. Historical
-    NULL means the approved default of day one, without changing frozen data.
+    NULL means day one. Historical 29–31 clamp to month end before the shift;
+    stored resolution values and frozen documents remain unchanged.
     """
-    current = date(year, month, monthly_due_day if monthly_due_day is not None else 1)
+    day = monthly_due_day if monthly_due_day is not None else 1
+    if not 1 <= day <= 31:
+        raise ValueError('Monthly due day must be between 1 and 31')
+    current = date(year, month, min(day, monthrange(year, month)[1]))
     while current.weekday() >= 5 or current in public_holidays(current.year, federal_state):
         current += timedelta(days=1)
     return current

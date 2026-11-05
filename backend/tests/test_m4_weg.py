@@ -85,17 +85,22 @@ async def test_historical_null_plan_keeps_its_frozen_payload_and_pdf_while_defau
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize('day', [29, 30, 31])
-async def test_historical_explicit_due_days_remain_frozen_and_mean_the_selected_day_when_it_exists(
-    client_a_admin, m4_seed, day,
+@pytest.mark.parametrize('year,month,last,cutoff,due', [
+    (2025, '07', 31, '2025-07-28', None),
+    (2025, '02', 28, '2025-02-27', '2025-02-28'),
+    (2026, '02', 28, '2026-03-01', '2026-03-02'),
+])
+async def test_historical_explicit_due_days_remain_frozen_with_the_approved_month_end_rule(
+    client_a_admin, m4_seed, day, year, month, last, cutoff, due,
 ):
-    plan_id = await _create_and_finalize_plan(client_a_admin, m4_seed, legacy_due_day=day)
+    plan_id = await _create_and_finalize_plan(client_a_admin, m4_seed, legacy_due_day=day, plan_year=year)
     before = (await client_a_admin.get(f'/api/economic-plans/{plan_id}')).json()
     pdf_before = (await client_a_admin.get(f'/api/economic-plans/{plan_id}/pdf')).content
     response = await client_a_admin.get(f"/api/payments/mietkonto/owner/{m4_seed['owner_a']}", params={
-        'economic_plan_id': plan_id, 'period_start': '2025-07-01', 'period_end': '2025-07-31',
-        'as_of': '2025-07-28'})
+        'economic_plan_id': plan_id, 'period_start': f'{year}-{month}-01', 'period_end': f'{year}-{month}-{last}',
+        'as_of': cutoff})
     assert response.status_code == 200, response.text
-    assert response.json()['open_items'][0]['due_date'] == f'2025-07-{day}'
+    assert response.json()['open_items'][0]['due_date'] == (due or f'{year}-{month}-{min(day, last)}')
     assert response.json()['due_balance'] == '0.00'
     assert (await client_a_admin.get(f'/api/economic-plans/{plan_id}')).json() == before
     assert before['monthly_due_day'] == day
@@ -219,13 +224,13 @@ def m4_withdrawal_seed(m4_seed):
     return {**m4_seed, 'ce_garten': str(receipt)}
 
 
-async def _create_and_finalize_plan(client, m4_seed, reserve="6000.00", *, legacy_due_day=...):
+async def _create_and_finalize_plan(client, m4_seed, reserve="6000.00", *, legacy_due_day=..., plan_year=2025):
     """Create + finalize a Wirtschaftsplan with the two owners' MEA shares."""
     resp = await client.post("/api/economic-plans", json={
         "property_id": m4_seed["property"],
-        "plan_year": 2025,
-        "period_start": "2025-01-01",
-        "period_end": "2025-12-31",
+        "plan_year": plan_year,
+        "period_start": f"{plan_year}-01-01",
+        "period_end": f"{plan_year}-12-31",
     })
     assert resp.status_code == 201, resp.text
     plan_id = resp.json()["id"]
@@ -1832,7 +1837,7 @@ async def test_paid_amount_errors_identify_the_owner_in_german(client_a_admin, c
 
 
 @pytest.mark.asyncio
-async def test_input_roster_keeps_original_plan_owner_after_history_correction(client_a_admin, m4_seed):
+async def test_input_roster_keeps_original_plan_owner_after_history_correction(client_a_admin, m4_seed, app_rw_session):
     api, w = client_a_admin, m4_seed
     plan = await _create_and_finalize_plan(api, w)
     history = (await api.get('/api/ownership', params={'unit_id': w['u2']})).json()[0]
@@ -1848,3 +1853,10 @@ async def test_input_roster_keeps_original_plan_owner_after_history_correction(c
     assert roster.status_code == 200, roster.text
     assert set(roster.json()) == {row['owner_profile_id'] for row in derived.json()} == {w['owner_a'], w['owner_b']}
     assert all(row['paid_total'] == '0.00' for row in derived.json())
+    from app.repositories.coverage_declaration_repo import CoverageDeclarationRepository
+    from app.repositories.economic_plan_repo import EconomicPlanRepository
+
+    org = uuid.UUID(str(w['org_a_id']))
+    await app_rw_session.execute(text("SELECT set_config('app.current_org_id',:org,true)"), {'org': str(org)})
+    original = await EconomicPlanRepository(app_rw_session, org).get_by_id(uuid.UUID(plan))
+    assert await CoverageDeclarationRepository(app_rw_session, org).owner_ids(original) == {w['owner_a'], w['owner_b']}

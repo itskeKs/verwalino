@@ -67,6 +67,24 @@ def test_owner_due_date_uses_the_approved_default_and_property_holidays(year, mo
     assert fristen.owner_due_date(year, month, day, federal_state=state) == expected
 
 
+@pytest.mark.parametrize('year,month,day,expected', [
+    (2025, 2, 29, date(2025, 2, 28)),
+    (2025, 2, 30, date(2025, 2, 28)),
+    (2026, 2, 31, date(2026, 3, 2)),
+    (2024, 2, 29, date(2024, 2, 29)),
+    (2026, 4, 31, date(2026, 4, 30)),
+    (2023, 12, 31, date(2024, 1, 2)),
+])
+def test_historical_owner_days_clamp_to_month_end_before_the_working_day_shift(year, month, day, expected):
+    assert fristen.owner_due_date(year, month, day) == expected
+
+
+@pytest.mark.parametrize('day', [0, 32])
+def test_owner_due_date_does_not_clamp_invalid_calendar_day_values(day):
+    with pytest.raises(ValueError):
+        fristen.owner_due_date(2026, 7, day)
+
+
 # ---------------------------------------------------------------------------
 # Date arithmetic
 # ---------------------------------------------------------------------------

@@ -116,7 +116,7 @@ pending; registration stays closed and legal review remains with #26. See the
 | Feature | Status | Location |
 | --- | --- | --- |
 | Economic plan, Hausgeld expected amounts, PDF | ✅ plan-start addressees; dated transfer of the unit’s ongoing advances (#207) | `api/economic_plans.py`, `services/payment_service.py`, `services/wirtschaftsplan_pdf.py` |
-| Monthly Hausgeld due day | 🚧 approved days 1–28/default 1, working-day shift, ledger, dunning/PDF and monitor wired; historical 29–31 shorter-month compatibility pending owner decision (#206) | `engine/fristen.py` (`owner_due_date`), `services/payment_service.py`, [semantics](m6-zahlungen-mietkonto.md#22-owner-expected-amount-per-owner-from-the-finalized-economic-plan) |
+| Monthly Hausgeld due day | ✅ days 1–28/default 1 with working-day shift; historical 29–31 clamp to month end before shifting without changing frozen records; ledger, dunning/PDF and monitor share the date (#206) | `engine/fristen.py` (`owner_due_date`), `services/payment_service.py`, [semantics](m6-zahlungen-mietkonto.md#22-owner-expected-amount-per-owner-from-the-finalized-economic-plan) |
 | Economic plan prefilled from the previous year | ✅ preview, then draft from last year's actual costs per category | `api/economic_plans.py` (`/previous/preview`, `/previous`), `components/PreviousPlan.tsx`, T54, [usage](operations/statements.md) |
 | Annual settlement, PDF | ✅ resolved Spitze plus frozen booked Hausgeld balance and resulting payment; owner/unit/period provenance (#204) | `api/weg_settlements.py`, `services/weg_jahresabrechnung_pdf.py` |
 | Adopt paid Hausgeld | ✅ | `api/weg_settlements.py` (`/paid-advances-derived`), `services/weg_settlement_service.py` (`derive_paid_advances`), `pages/WegSettlementDetailPage.tsx`, T09 |

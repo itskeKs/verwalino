@@ -52,19 +52,23 @@ async def test_weg_monitor_omits_tenant_debt_and_out_of_term_plan_obligations(mi
         assert {row['kind'] for row in second.json()} == {'WIRTSCHAFTSPLAN', 'BELEG_AUFBEWAHRUNG', 'OFFENE_POSTEN'}
 
 
+async def add_monitor_plan(ids, sphere, day=3, amount='600.00', *, end='2025-07-31'):
+    params = {**ids, 'plan': uuid.uuid4(), 'sphere': ids[sphere], 'day': day, 'amount': amount,
+        'end': date.fromisoformat(end)}
+    await mutate(text("""INSERT INTO economic_plan(id,organization_id,property_id,plan_year,period_start,period_end,monthly_due_day,status,engine_version)
+        VALUES (:plan,:org,:property,2025,'2025-07-01',:end,:day,'draft','fixture')"""), params)
+    await mutate(text("""INSERT INTO economic_plan_line(id,organization_id,economic_plan_id,line_type,owner_profile_id,unit_id,label,planned_amount,monthly_amount)
+        VALUES (gen_random_uuid(),:org,:plan,'OWNER_ADVANCE',:profile,:unit,'Resolved Hausgeld',CAST(:amount AS numeric),CAST(:amount AS numeric))"""), params)
+    await mutate(text("INSERT INTO accounting_scope_binding(organization_id,property_id,scope_id,economic_plan_id,origin,reason,reviewed_by) VALUES (:org,:property,:sphere,:plan,'REVIEWED','Resolved monthly due day',:actor)"), params)
+    await mutate(text("UPDATE economic_plan SET status='finalized' WHERE id=:plan"), params)
+    return params['plan']
+
+
 async def test_owner_monitor_and_ledger_share_due_dates_without_other_scope_debt(migrator_session, scope_seed):
     ids = await statement_fixture(migrator_session, scope_seed, 'owner')
     await mutate(text("INSERT INTO ownership_history(id,organization_id,unit_id,owner_profile_id,valid_from) VALUES (gen_random_uuid(),:org,:unit,:profile,'2020-01-01')"), ids)
-    for sphere, day, amount in [('scope', 3, '600.00'), ('second_scope', 1, '1800.00')]:
-        params = {**ids, 'plan': uuid.uuid4(), 'sphere': ids[sphere], 'day': day, 'amount': amount}
-        await mutate(text("""INSERT INTO economic_plan(id,organization_id,property_id,plan_year,period_start,period_end,monthly_due_day,status,engine_version)
-            VALUES (:plan,:org,:property,2025,'2025-07-01','2025-07-31',:day,'draft','fixture')"""), params)
-        await mutate(text("""INSERT INTO economic_plan_line(id,organization_id,economic_plan_id,line_type,owner_profile_id,unit_id,label,planned_amount,monthly_amount)
-            VALUES (gen_random_uuid(),:org,:plan,'OWNER_ADVANCE',:profile,:unit,'Resolved Hausgeld',CAST(:amount AS numeric),CAST(:amount AS numeric))"""), params)
-        await mutate(text("INSERT INTO accounting_scope_binding(organization_id,property_id,scope_id,economic_plan_id,origin,reason,reviewed_by) VALUES (:org,:property,:sphere,:plan,'REVIEWED','Resolved monthly due day',:actor)"), params)
-        await mutate(text("UPDATE economic_plan SET status='finalized' WHERE id=:plan"), params)
-        if sphere == 'scope':
-            ids['plan'] = params['plan']
+    ids['plan'] = await add_monitor_plan(ids, 'scope')
+    await add_monitor_plan(ids, 'second_scope', day=1, amount='1800.00')
     async with client(ids) as api:
         for cutoff, expected in [('2025-07-02', 'OK'), ('2025-07-04', 'DUE')]:
             response = await api.get('/api/fristen', params={'reference_date': cutoff, 'accounting_scope_id': str(ids['scope'])})
@@ -79,6 +83,18 @@ async def test_owner_monitor_and_ledger_share_due_dates_without_other_scope_debt
             assert ledger.status_code == 200, ledger.text
             assert ledger.json()['open_items'][0]['due_date'] == '2025-07-03'
             assert ledger.json()['due_balance'] == ('600.00' if expected == 'DUE' else '0.00')
+
+
+@pytest.mark.parametrize('second_end', ['2025-07-31', '2025-07-15'])
+async def test_monitor_refuses_overlapping_active_plans_including_nonidentical_periods(migrator_session, scope_seed, second_end):
+    ids = await statement_fixture(migrator_session, scope_seed, 'owner')
+    await mutate(text("INSERT INTO ownership_history(id,organization_id,unit_id,owner_profile_id,valid_from) VALUES (gen_random_uuid(),:org,:unit,:profile,'2020-01-01')"), ids)
+    await add_monitor_plan(ids, 'scope')
+    await add_monitor_plan(ids, 'scope', end=second_end)
+    async with client(ids) as api:
+        response = await api.get('/api/fristen', params={'reference_date': '2025-07-04', 'accounting_scope_id': str(ids['scope'])})
+        assert response.status_code == 409, response.text
+        assert response.json()['detail']['code'] == 'hausgeld_plan_ambiguous'
 
 
 async def test_monitor_live_scope_denial_and_invalid_reference_date(migrator_session, scope_seed):

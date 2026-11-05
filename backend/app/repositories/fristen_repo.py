@@ -12,13 +12,12 @@ import uuid
 from datetime import date
 from typing import Sequence
 
-from sqlalchemy import func, or_, select, text, union
+from sqlalchemy import func, select, text
 from fastapi import HTTPException
 
 from app.models.cost_entry import CostEntry
 from app.models.economic_plan import EconomicPlan
-from app.models.economic_plan_line import EconomicPlanLine
-from app.models.ownership_history import OwnershipHistory
+from app.repositories.coverage_declaration_repo import CoverageDeclarationRepository
 from app.models.invoice_document import InvoiceDocument
 from app.models.lease_agreement import LeaseAgreement
 from app.models.property import Property
@@ -141,18 +140,8 @@ class FristenRepository:
 
     async def plan_owner_ids(self, plan: EconomicPlan) -> Sequence[uuid.UUID]:
         """Frozen recipients plus dated successors; never omit a buyer's debt."""
-        frozen = select(EconomicPlanLine.owner_profile_id).where(
-            EconomicPlanLine.organization_id == self._org_id,
-            EconomicPlanLine.economic_plan_id == plan.id,
-            EconomicPlanLine.line_type == 'OWNER_ADVANCE',
-            EconomicPlanLine.owner_profile_id.is_not(None))
-        dated = (select(OwnershipHistory.owner_profile_id)
-            .join(Unit, Unit.id == OwnershipHistory.unit_id)
-            .where(OwnershipHistory.organization_id == self._org_id,
-                Unit.organization_id == self._org_id, Unit.property_id == plan.property_id,
-                OwnershipHistory.valid_from <= plan.period_end,
-                or_(OwnershipHistory.valid_to.is_(None), OwnershipHistory.valid_to > plan.period_start)))
-        return (await self._session.execute(union(frozen, dated))).scalars().all()
+        owners = await CoverageDeclarationRepository(self._session, self._org_id).owner_ids(plan)
+        return [uuid.UUID(owner) for owner in sorted(owners)]
 
     # ------------------------------------------------------------------
     # Retention anchor (nachrichtlich INFO)

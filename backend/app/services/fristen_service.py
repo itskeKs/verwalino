@@ -254,13 +254,13 @@ class FristenService:
         total = 0
         payments = PaymentService(self._session, self._org_id, self._user_id)
         plans = await self._repo.finalized_plans(reference_date, sphere.property_id if sphere else None)
-        periods = set()
-        for plan in plans:
-            key = (plan.property_id, plan.period_start, plan.period_end)
-            if key in periods:
+        period_ends = {}
+        for plan in sorted(plans, key=lambda p: (str(p.property_id), p.period_start, p.period_end)):
+            previous_end = period_ends.get(plan.property_id)
+            if previous_end is not None and plan.period_start <= previous_end:
                 raise HTTPException(409, {'code': 'hausgeld_plan_ambiguous',
-                    'message': 'Mehrere finalisierte Wirtschaftspläne gelten für denselben Zeitraum. Bitte klären Sie den gültigen Plan über eine Korrektur.'})
-            periods.add(key)
+                    'message': 'Mehrere finalisierte Wirtschaftspläne haben überlappende Zeiträume. Bitte klären Sie den gültigen Plan über eine Korrektur.'})
+            period_ends[plan.property_id] = plan.period_end
         for plan in plans:
             for owner in await self._repo.plan_owner_ids(plan):
                 result = await payments.account_statement_for_owner(owner, plan.id,

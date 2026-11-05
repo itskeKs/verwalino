@@ -836,6 +836,8 @@ The economic-plan detail displays “Fälligkeit: jeweils zum N. des Monats”
 below its title, using the stored day and showing 1 for historical NULL.
 The creation form defaults to 1, accepts days 1–28, and treats an empty entry
 as the default. Historical explicit values remain visible as stored.
+For historical days 29–31 absent from a month, owner rows show the derived
+month-end date after its working-day shift; the plan label keeps the stored day.
 
 Synthetic 600 EUR monthly Hausgeld, due day 3, at desktop and 360 px:
 
@@ -844,6 +846,11 @@ Synthetic 600 EUR monthly Hausgeld, due day 3, at desktop and 360 px:
 | New plan | [View](docs/assets/design/hausgeld-due/before-create-1280.png) | [View](docs/assets/design/hausgeld-due/before-create-360.png) | [View](docs/assets/design/hausgeld-due/after-create-1280.png) | [View](docs/assets/design/hausgeld-due/after-create-360.png) |
 | Finalized plan | [View](docs/assets/design/hausgeld-due/before-plan-1280.png) | [View](docs/assets/design/hausgeld-due/before-plan-360.png) | [View](docs/assets/design/hausgeld-due/after-plan-1280.png) | [View](docs/assets/design/hausgeld-due/after-plan-360.png) |
 | Owner ledger | [View](docs/assets/design/hausgeld-due/before-ledger-1280.png) | [View](docs/assets/design/hausgeld-due/before-ledger-360.png) | [View](docs/assets/design/hausgeld-due/after-ledger-1280.png) | [View](docs/assets/design/hausgeld-due/after-ledger-360.png) |
+
+| Historical day 31, February 2026 | 1280 px | 360 px |
+|---|---|---|
+| Stored plan day | [View](docs/assets/design/hausgeld-due/legacy-plan-1280.png) | [View](docs/assets/design/hausgeld-due/legacy-plan-360.png) |
+| Derived due date 02.03.2026 | [View](docs/assets/design/hausgeld-due/legacy-ledger-1280.png) | [View](docs/assets/design/hausgeld-due/legacy-ledger-360.png) |
 
 The existing form grid wraps the date input at 360 px. Synthetic full-year
 900 EUR rent, 100 EUR unpaid in April, cutoff 01.11.2026:
