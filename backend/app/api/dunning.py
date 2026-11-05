@@ -267,7 +267,7 @@ async def get_dunning_notice(
 async def create_dunning_for_tenant(
     body: DunningCreateTenant,
     auth: AuthContext = Depends(require_write_dep),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
 ):
     svc = DunningService(db, auth.organization_id, auth.user_id)
     notice = await svc.create_dunning_for_tenant(
@@ -288,7 +288,7 @@ async def create_dunning_for_tenant(
 async def create_dunning_for_owner(
     body: DunningCreateOwner,
     auth: AuthContext = Depends(require_write_dep),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
 ):
     svc = DunningService(db, auth.organization_id, auth.user_id)
     notice = await svc.create_dunning_for_owner(

@@ -134,6 +134,11 @@ The remaining assignment checks still require blind acceptance.
   Working days: 01.04., 02.04., 07.04. → due on **07.04.2026**, in default from **08.04.2026**
   without a reminder (§ 286 Abs. 2 Nr. 1 BGB).
 - Principal 100.00 €, correct tenant, unit, month April 2026.
+- Creating a notice opens its saved draft immediately, without a not-found page,
+  manual reload or second creation. Also check owner drafts with unpaid 2026
+  Hausgeld of 400.00 € per month: Karl Weiß owns January–June and Lena Roth
+  July–December. Create Karl's notice, then Lena's, for the 2026 plan as of
+  15.01.2027; each opens with 2400.00 € principal and exactly its six months.
 - **Default interest** (Anna is a consumer: base rate plus 5 percentage points, § 288 Abs. 1 BGB)
   on 100.00 € from 08.04.2026:
   - 08.04. to 30.06.2026: 84 days at 6.27 % (base rate 1.27 %) = 1.44 €
@@ -148,7 +153,9 @@ The remaining assignment checks still require blind acceptance.
 **Checked by:** agent
 **Also at 360 px:** the dunning letter
 **Automated:** [readable issued notice](../../features/journeys/dunning_notice.feature)
-checks four-digit principal, interest and open amounts without horizontal
+checks the first detail response for both owner drafts and an ordinary tenant
+draft, with no reload and no duplicate. Owner drafts show their six months at
+1280 and 360 px. It also checks four-digit principal, interest and open amounts without horizontal
 scrolling at 1280 and 360 px, plus the German issue-time display. Its April
 scenario checks the explicit `Zinsbeginn: 08.04.2026` in the issued detail at
 both widths and in the downloaded PDF. The separate
