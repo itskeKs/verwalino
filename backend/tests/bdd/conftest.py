@@ -184,6 +184,7 @@ def pytest_collection_modifyitems(config, items):
                     "organization_export_import.feature": "needs direct database fixtures and in-process archive storage",
                     "password_reset.feature": "needs the Mailpit test mailbox",
                     "profile_hints.feature": "needs a fresh organization seeded through the local database fixture",
+                    "cost_table_browser.feature": "needs an isolated organization seeded through the local database fixture",
                 }.get(Path(template.feature.filename).name)
                 if reason:
                     item.add_marker(pytest.mark.skip(reason=reason))
@@ -213,6 +214,7 @@ from tests.bdd.steps.lease_documents import *  # noqa: E402,F401,F403
 from tests.bdd.steps.diagnostics import *  # noqa: E402,F401,F403
 from tests.bdd.steps.browser_setup import *  # noqa: E402,F401,F403
 from tests.bdd.steps.browser_bank import *  # noqa: E402,F401,F403
+from tests.bdd.steps.browser_costs import *  # noqa: E402,F401,F403
 from tests.bdd.steps.browser_rent import *  # noqa: E402,F401,F403
 from tests.bdd.steps.browser_dunning import *  # noqa: E402,F401,F403
 from tests.bdd.steps.settlement_period import *  # noqa: E402,F401,F403
