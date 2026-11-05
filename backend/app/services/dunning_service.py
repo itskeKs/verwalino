@@ -38,7 +38,7 @@ from app.engine.mietkonto import (
     special_levy_expected_charges,
 )
 from app.models.audit_event import AuditEvent
-from app.models.dunning_notice import DunningNotice
+from app.models.dunning_notice import LEASE_SOURCE_KEY, DunningNotice
 from app.repositories.audit_repo import AuditRepository
 from app.core.rbac import ScopeCapability
 from app.services.dunning_scope_service import DunningScopeService
@@ -112,7 +112,10 @@ class DunningService:
         if dunning is None:
             raise HTTPException(422, "No overdue items found for this tenant in the given period")
 
-        # Persist as draft
+        # Scoped notices already carry their exact lease in the scope context.
+        items = dunning.items_snapshot()
+        if sphere is None:
+            items[0][LEASE_SOURCE_KEY] = str(lease.id)
         notice = DunningNotice(
             organization_id=self._org_id,
             tenant_profile_id=tenant_profile_id,
@@ -125,7 +128,7 @@ class DunningService:
             total_amount=dunning.total_amount,
             interest_amount=dunning.interest_amount,
             interest_snapshot=dunning.interest_snapshot,
-            included_items=dunning.items_snapshot(),
+            included_items=items,
             status="draft",
         )
         await context.attach(notice, sphere, period_start, period_end, lease_id=lease_agreement_id)
@@ -195,7 +198,7 @@ class DunningService:
             include_payment_dates=rates is not None,
         )
         overdue = self._engine_result(find_overdue_items, list(result.open_items),
-            reference_date, grace_days=grace_days)
+            reference_date, grace_days=grace_days, current_year=date.today().year)
         if not overdue:
             return lease, tenant, result, None
         await context.history(tenant_id=tenant.id)
@@ -259,7 +262,7 @@ class DunningService:
                                    include_payment_dates=rates is not None)
 
         overdue = self._engine_result(
-            find_overdue_items, list(result.open_items), ref_date, grace_days=grace_days
+            find_overdue_items, list(result.open_items), ref_date, grace_days=grace_days, current_year=date.today().year
         )
         if not overdue:
             raise HTTPException(

@@ -639,7 +639,7 @@ class TestDunningEngine:
         ]
 
         ref_date = date(2025, 7, 1)
-        overdue = find_overdue_items(items, ref_date, grace_days=0)
+        overdue = find_overdue_items(items, ref_date, grace_days=0, current_year=2026)
         assert len(overdue) == 2
         assert all(it.open_amount > 0 for it in overdue)
         assert overdue[0].payment_type == "KALTMIETE"
@@ -655,11 +655,11 @@ class TestDunningEngine:
         ]
         # June 2025 due date is June 1; ref_date June 2 with 5 days grace
         # -> deadline June 6, ref June 2 is NOT past deadline.
-        overdue = find_overdue_items(items, date(2025, 6, 2), grace_days=5)
+        overdue = find_overdue_items(items, date(2025, 6, 2), grace_days=5, current_year=2026)
         assert len(overdue) == 0
 
         # But with ref_date July 1 (past June 6) it IS overdue.
-        overdue = find_overdue_items(items, date(2025, 7, 1), grace_days=5)
+        overdue = find_overdue_items(items, date(2025, 7, 1), grace_days=5, current_year=2026)
         assert len(overdue) == 1
 
     def test_escalation_levels(self):
@@ -1506,3 +1506,120 @@ async def test_0174_downgrade_refuses_default_policy_notice_without_interest(iso
             assert connection.scalar(text("SELECT count(*) FROM dunning_notice WHERE id=:id"), params) == 1
     finally:
         engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_yearless_owner_payout_does_not_create_historical_arrears(
+    isolated_batch_seed, rent_db, monkeypatch,
+):
+    from app.services import dunning_service
+
+    class CurrentDate(date):
+        @classmethod
+        def today(cls):
+            return cls(2026, 11, 5)
+
+    monkeypatch.setattr(dunning_service, "date", CurrentDate)
+    client, seed = isolated_batch_seed
+    await rent_db.execute(text("""
+        INSERT INTO payment (organization_id, bank_account_id, property_id,
+            direction, amount, value_date, payment_type, owner_profile_id,
+            status, booked_at, booked_by)
+        VALUES (:org, :account, :property, 'OUT', 100, '2025-05-15', 'SONDERZAHLUNG',
+            :owner, 'booked', '2025-05-15 10:00+00', :actor)
+    """), {"org": seed["org_a_id"], "account": seed["acct_m7"],
+           "property": seed["prop_m7"], "owner": seed["owner_m7"], "actor": seed["user_a_admin_id"]})
+    await rent_db.commit()
+
+    response = await client.post("/api/dunning/owner", json={
+        "owner_profile_id": str(seed["owner_m7"]), "period_start": "2025-05-01",
+        "period_end": "2025-05-31", "reference_date": "2025-05-31",
+    })
+    assert response.status_code == 422, response.text
+    assert (await client.get("/api/dunning")).json() == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("sent, rate", [(False, None), (True, None), (True, "-0.8800")])
+async def test_exact_legacy_batch_receipt_replay(isolated_batch_seed, rent_db, rent_world, sent, rate):
+    import hashlib
+    import json
+
+    from app.models.dunning_batch import DunningBatch
+
+    client, seed = isolated_batch_seed
+    created = await client.post("/api/dunning/tenant", json=TestT35Interest.tenant_body(seed))
+    assert created.status_code == 201, created.text
+    notice = created.json()
+
+    # The pre-upgrade request digest included the raw rate text and whether it
+    # was present. Seed the receipt shape independently of the new serializer.
+    body = batch_request(
+        lease_agreement_ids=[str(seed["lease_m7"])],
+        expected_source_digest="a" * 64, request_id=str(uuid.uuid4()),
+    )
+    old = dict(body, accounting_scope_id=None, override_fee=None,
+               base_interest_rate=rate, base_interest_rate_supplied=sent)
+    digest = hashlib.sha256(json.dumps(old, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+    rent_db.add(DunningBatch(
+        organization_id=seed["org_a_id"], actor_user_id=seed["user_a_admin_id"],
+        request_id=uuid.UUID(body["request_id"]), request_digest=digest,
+        result=[{"lease_agreement_id": str(seed["lease_m7"]), "notice_id": notice["id"]}],
+    ))
+    await rent_db.commit()
+
+    exact = {**body, "base_interest_rate": rate} if sent else body
+    replay = await client.post("/api/dunning/batch", json=exact)
+    assert replay.status_code == 201, replay.text
+    assert replay.json() == [notice]
+    changed = {**body, "base_interest_rate": "0.00"} if not sent else body
+    assert (await client.post("/api/dunning/batch", json=changed)).status_code == 409
+    if sent and rate is not None:
+        assert (await client.post("/api/dunning/batch", json={**body, "base_interest_rate": "-0.88"})).status_code == 409
+    for actor in (api_client(rent_world, "clerk"), api_client(rent_world, foreign=True)):
+        async with actor:
+            assert (await actor.post("/api/dunning/batch", json={**body, "base_interest_rate": rate})).status_code == 422
+    fresh = {**body, "request_id": str(uuid.uuid4()), "base_interest_rate": rate}
+    assert (await client.post("/api/dunning/batch", json=fresh)).status_code == 422
+    assert (await client.post("/api/dunning/batch/preview", json=batch_request(base_interest_rate=rate))).status_code == 422
+    assert (await client.get("/api/dunning")).json() == [notice]
+
+
+@pytest.mark.asyncio
+async def test_unscoped_ledger_requires_exact_lease_provenance(isolated_batch_seed, rent_db):
+    client, seed = isolated_batch_seed
+    unit = await client.post("/api/units", json={
+        "property_id": str(seed["prop_m7"]), "number": "M7-2", "usage_type": "WOHNUNG",
+    })
+    assert unit.status_code == 201, unit.text
+    lease = await client.post("/api/leases", json={
+        "unit_id": unit.json()["id"], "tenant_profile_id": str(seed["tenant_m7"]),
+        "valid_from": "2025-01-01", "base_rent": "550.00", "advance_payment": "50.00",
+    })
+    assert lease.status_code == 201, lease.text
+    other_lease = lease.json()["id"]
+    await _set_org(rent_db, seed["org_a_id"])
+    legacy_id = await TestDunningImmutability()._insert_issued(rent_db, seed)
+    await rent_db.commit()
+    legacy_path = f"/api/dunning/{legacy_id}"
+    legacy = await client.get(legacy_path)
+    assert legacy.status_code == 200, legacy.text
+    legacy_pdf = await client.get(f"{legacy_path}/pdf")
+    assert legacy_pdf.status_code == 200
+    draft = await client.post("/api/dunning/tenant", json=TestT35Interest.tenant_body(seed))
+    assert draft.status_code == 201, draft.text
+    notice_id = draft.json()["id"]
+    issued = await client.post(f"/api/dunning/{notice_id}/issue")
+    assert issued.status_code == 200, issued.text
+
+    for lease_id, expected_ids in ((seed["lease_m7"], [notice_id]), (other_lease, [])):
+        ledger = await client.get(f"/api/payments/mietkonto/lease/{lease_id}", params={
+            "period_start": "2025-03-01", "period_end": "2025-03-31",
+        })
+        assert ledger.status_code == 200, ledger.text
+        assert [row["id"] for row in ledger.json()["dunning_notices"]] == expected_ids
+    history = await client.get("/api/dunning", params={"tenant_profile_id": str(seed["tenant_m7"])})
+    assert history.status_code == 200, history.text
+    assert {row["id"] for row in history.json()} == {notice_id, str(legacy_id)}
+    assert (await client.get(legacy_path)).json() == legacy.json()
+    assert (await client.get(f"{legacy_path}/pdf")).content == legacy_pdf.content

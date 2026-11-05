@@ -235,7 +235,7 @@ class FristenService:
                     charges, [to_payment_input(p) for p in scoped]
                 )
                 overdue = find_overdue_items(
-                    list(result.open_items), reference_date, grace_days=0
+                    list(result.open_items), reference_date, grace_days=0, current_year=date.today().year
                 )
                 total += len(overdue)
             except HTTPException:

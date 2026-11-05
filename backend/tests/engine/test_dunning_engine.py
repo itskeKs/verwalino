@@ -47,7 +47,7 @@ class TestFindOverdueItems:
             self._make_item(2025, 1, "KALTMIETE", "500.00", "500.00", "0.00"),    # balanced
             self._make_item(2025, 2, "KALTMIETE", "500.00", "600.00", "-100.00"), # credit
         ]
-        overdue = find_overdue_items(items, date(2025, 7, 1))
+        overdue = find_overdue_items(items, date(2025, 7, 1), current_year=2026)
         assert len(overdue) == 2
         assert all(it.open_amount > 0 for it in overdue)
 
@@ -57,9 +57,9 @@ class TestFindOverdueItems:
             self._make_item(2025, 6, "KALTMIETE", "500.00", "0.00", "500.00"),
         ]
         # Due June 1; grace 30 days -> deadline July 1; ref June 15 -> not overdue
-        assert len(find_overdue_items(items, date(2025, 6, 15), grace_days=30)) == 0
+        assert len(find_overdue_items(items, date(2025, 6, 15), grace_days=30, current_year=2026)) == 0
         # ref July 2 -> past deadline -> overdue
-        assert len(find_overdue_items(items, date(2025, 7, 2), grace_days=30)) == 1
+        assert len(find_overdue_items(items, date(2025, 7, 2), grace_days=30, current_year=2026)) == 1
 
     def test_sorted_output(self):
         """Output is sorted by (year, month, type)."""
@@ -68,12 +68,12 @@ class TestFindOverdueItems:
             self._make_item(2025, 3, "KALTMIETE", "500.00", "0.00", "500.00"),
             self._make_item(2025, 4, "KALTMIETE", "500.00", "0.00", "500.00"),
         ]
-        overdue = find_overdue_items(items, date(2025, 7, 1))
+        overdue = find_overdue_items(items, date(2025, 7, 1), current_year=2026)
         keys = [(it.period_year, it.period_month, it.payment_type) for it in overdue]
         assert keys == sorted(keys)
 
     def test_empty_input(self):
-        assert find_overdue_items([], date(2025, 7, 1)) == []
+        assert find_overdue_items([], date(2025, 7, 1), current_year=2026) == []
 
 
 # ---------------------------------------------------------------------------
@@ -292,7 +292,7 @@ def test_t35_is_independent_of_callers_decimal_precision_and_rounding():
 
 def test_t35_grace_only_filters_and_does_not_subtract_interest_days():
     item = OpenItem(2026, 1, 'KALTMIETE', Decimal('700.00'), Decimal('0.00'), Decimal('700.00'), due_date=date(2026, 1, 1))
-    overdue = find_overdue_items([item], date(2026, 3, 2), grace_days=30)
+    overdue = find_overdue_items([item], date(2026, 3, 2), grace_days=30, current_year=2026)
     result = assemble_dunning(overdue, 0, date(2026, 3, 2), rate_periods=_rates("2.50"))
     assert result.interest_snapshot['items'][0]['days'] == 60
     assert result.interest_amount == Decimal('8.63')
@@ -306,8 +306,8 @@ def test_april_rent_due_date_drives_overdue_detection_and_interest():
     rent = charges[0]
     assert rent.due_date == date(2026, 4, 7)
     items = list(account_statement(charges, []).open_items)
-    assert find_overdue_items(items, date(2026, 4, 7)) == []
-    overdue = find_overdue_items(items, date(2026, 4, 8))
+    assert find_overdue_items(items, date(2026, 4, 7), current_year=2026) == []
+    overdue = find_overdue_items(items, date(2026, 4, 8), current_year=2026)
     assert len(overdue) == 1 and overdue[0].due_date == date(2026, 4, 7)
 
 
@@ -328,10 +328,10 @@ def test_saturday_move_in_rent_is_not_dunned_until_after_wednesdays_deadline():
     assert charges[0].amount == Decimal('600.00')
     items = list(account_statement(charges, []).open_items)
     for reference_date in (date(2026, 4, 12), date(2026, 4, 15)):
-        assert assemble_dunning(find_overdue_items(items, reference_date), 0, reference_date,
+        assert assemble_dunning(find_overdue_items(items, reference_date, current_year=2026), 0, reference_date,
             override_fee=Decimal('0'), rate_periods=_rates("2.50")) is None
     reference_date = date(2026, 4, 16)
-    notice = assemble_dunning(find_overdue_items(items, reference_date), 0, reference_date,
+    notice = assemble_dunning(find_overdue_items(items, reference_date, current_year=2026), 0, reference_date,
         override_fee=Decimal('0'), rate_periods=_rates("2.50"))
     assert notice is not None
     assert notice.principal_amount == Decimal('600.00')
@@ -378,7 +378,7 @@ def test_partial_payment_reduces_the_principal_on_its_value_date():
     payments = [PaymentInput(uuid4(), "KALTMIETE", "IN", Decimal("234.56"), 2026, 4, value_date=date(2026, 4, 21))]
     account = account_statement(charges, payments)
     dated = account_statement(charges, payments, include_payment_dates=True)
-    items = find_overdue_items(list(dated.open_items), cutoff)
+    items = find_overdue_items(list(dated.open_items), cutoff, current_year=2026)
     assert dated.balance == account.balance == Decimal("1000.00")
     assert items[0].open_amount == account.open_items[0].open_amount
 

@@ -22,3 +22,9 @@ Feature: Dunning interest
     Given April rent of 700 EUR with 600 EUR paid on 7 April 2026
     When the manager checks April reminders on 8 April 2026
     Then the April reminder claims 100 EUR due on 7 April and interest from 8 April
+
+  @browser
+  Scenario: The unscoped lease account points to unassigned historical notices
+    Given an unpaid rental agreement for 700 EUR rent and no advance payment
+    When the manager opens that lease account without an accounting scope
+    Then the account links to dunning history for notices without a lease assignment

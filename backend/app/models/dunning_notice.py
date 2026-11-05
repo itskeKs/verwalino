@@ -32,6 +32,10 @@ from app.models.base import Base, UUIDPrimaryKeyMixin, TimestampMixin
 from app.models.dunning_scope_context import DunningScopeContext
 
 
+# Internal snapshot metadata for notices created without a scope context.
+LEASE_SOURCE_KEY = "_dunning_lease_id"
+
+
 class DunningNotice(Base, UUIDPrimaryKeyMixin, TimestampMixin):
     __tablename__ = "dunning_notice"
 

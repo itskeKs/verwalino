@@ -11,7 +11,7 @@ from typing import Sequence
 from sqlalchemy import and_, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.dunning_notice import DunningNotice
+from app.models.dunning_notice import LEASE_SOURCE_KEY, DunningNotice
 from app.models.dunning_scope_context import DunningScopeContext
 from app.models.lease_agreement import LeaseAgreement
 from app.repositories.base import TenantRepository
@@ -57,8 +57,6 @@ class DunningNoticeRepository(TenantRepository[DunningNotice]):
             LeaseAgreement.organization_id == self._org_id, LeaseAgreement.id == lease_id,
         ).scalar_subquery()
         context = DunningScopeContext
-        # Before provenance was introduced, notices were attached to a tenant
-        # profile only. Show those in the legacy account view for that tenant.
         stmt = select(
             DunningNotice.id, DunningNotice.issue_date, DunningNotice.level,
             DunningNotice.fee_amount, DunningNotice.interest_amount,
@@ -71,7 +69,8 @@ class DunningNoticeRepository(TenantRepository[DunningNotice]):
             DunningNotice.status == "issued",
             DunningNotice.cancelled_at.is_(None),
             context.scope_id == scope_id,
-            context.lease_agreement_id == (lease_id if scope_id is not None else None),
+            (context.lease_agreement_id == lease_id if scope_id is not None
+             else DunningNotice.included_items[0][LEASE_SOURCE_KEY].astext == str(lease_id)),
         ).order_by(DunningNotice.issue_date.desc(), DunningNotice.id)
         return (await self._session.execute(stmt)).mappings().all()
 

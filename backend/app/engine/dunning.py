@@ -142,7 +142,7 @@ class DunningInput:
 # Overdue detection
 # ---------------------------------------------------------------------------
 
-def _item_due_date(item: OpenItem, reference_date: date) -> date:
+def _item_due_date(item: OpenItem, current_year: int) -> date:
     """Compute the due date for an open item.
 
     Tenant rent/operating advances and frozen one-off charges carry an explicit
@@ -151,7 +151,7 @@ def _item_due_date(item: OpenItem, reference_date: date) -> date:
     """
     if item.due_date is not None:
         return item.due_date
-    year = item.period_year if item.period_year else reference_date.year
+    year = item.period_year if item.period_year else current_year
     month = item.period_month if item.period_month else 1
     return date(year, month, 1)
 
@@ -160,6 +160,8 @@ def find_overdue_items(
     open_items: list[OpenItem],
     reference_date: date,
     grace_days: int = DEFAULT_GRACE_DAYS,
+    *,
+    current_year: int,
 ) -> list[OverdueItem]:
     """Filter open items to those that are overdue as of reference_date.
 
@@ -173,7 +175,7 @@ def find_overdue_items(
     for item in open_items:
         if item.open_amount <= Decimal("0"):
             continue
-        item_due = _item_due_date(item, reference_date)
+        item_due = _item_due_date(item, current_year)
         deadline = item_due + timedelta(days=grace_days)
         if reference_date > deadline:
             overdue.append(OverdueItem(
@@ -183,7 +185,7 @@ def find_overdue_items(
                 soll=_money(item.soll),
                 ist=_money(item.ist),
                 open_amount=_money(item.open_amount),
-                due_date=item.due_date,
+                due_date=item.due_date if item.period_year else item_due,
                 payment_changes=item.payment_changes,
             ))
     overdue.sort(key=lambda x: (x.period_year, x.period_month or 0, x.payment_type))

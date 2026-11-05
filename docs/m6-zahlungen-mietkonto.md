@@ -248,7 +248,9 @@ at 6.27% (1.44 EUR) and 123 days at 6.52% (2.20 EUR), totaling 3.64 EUR in inter
 The stored snapshot supplies the detail and PDF with dates, principal, days, base and annual
 rates, premium, and interest amounts. Existing issued notices retain their stored fees,
 interest and single-rate snapshots. The tenant ledger displays the fees and interest of
-issued notices separately from Soll, Ist and Saldo. The calculation creates no expected charges.
+issued notices for the selected lease separately from Soll, Ist and Saldo. For an unscoped
+notice, the frozen snapshot records its source lease. Historical tenant notices without a
+verified lease assignment remain in **Mahnungen**. The calculation creates no expected charges.
 
 The notice detail shows principal and interest first in the frozen calculation,
 and the open amount first in the arrears table, so these values are readable at
@@ -261,7 +263,9 @@ history-sensitive tenant ledger path. The non-writing dunning-run preview filter
 principal claims strictly greater than the explicitly chosen threshold. Confirmation
 creates the chosen drafts atomically; changes to sources/escalation make a new preview
 necessary. Repeating a request whose outcome was unclear returns the same original
-drafts after renewed prepare/source admission. No M6 payments are added, old issued
+drafts after renewed prepare/source admission. This includes an exact retry of a committed
+legacy request that used the former rate field. New applies and all previews use the saved
+policy. No M6 payments are added, old issued
 letters/PDFs are not changed and nothing is sent.
 
 ### 2.3 Expected-amount engine as a pure function

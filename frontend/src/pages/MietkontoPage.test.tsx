@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import * as api from "../api/endpoints";
+import { MemoryRouter } from "react-router-dom";
 import { MietkontoPage } from "./MietkontoPage";
 
 vi.mock("../api/endpoints", () => ({
@@ -40,7 +41,7 @@ it("keeps the full-year balance and labels only the selected cutoff's due part a
     ],
   });
   const user = userEvent.setup();
-  render(<MietkontoPage />);
+  render(<MemoryRouter><MietkontoPage /></MemoryRouter>);
   await user.selectOptions(await screen.findByRole("combobox", { name: "Mietvertrag *" }), "lease-t12");
   const today = new Date();
   const localDate = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, "0")}-${String(today.getDate()).padStart(2, "0")}`;
@@ -85,7 +86,7 @@ describe("Mietkonto saldo (Soll minus Ist)", () => {
       }],
     });
     const user = userEvent.setup();
-    render(<MietkontoPage />);
+    render(<MemoryRouter><MietkontoPage /></MemoryRouter>);
     const lease = await screen.findByRole("combobox", { name: /^Mietvertrag \*$/ });
     expect(lease).toHaveAccessibleName("Mietvertrag *");
     await user.selectOptions(lease, "lease-t12");
@@ -107,7 +108,7 @@ describe("Mietkonto saldo (Soll minus Ist)", () => {
 
 it("gives native owner account selectors exact accessible names", async () => {
   const user = userEvent.setup();
-  render(<MietkontoPage />);
+  render(<MemoryRouter><MietkontoPage /></MemoryRouter>);
   const view = await screen.findByRole("combobox", { name: "Ansicht" });
   await user.selectOptions(view, "owner");
   expect(screen.getByRole("combobox", { name: "Eigentuemer *" })).toBeVisible();
@@ -119,7 +120,7 @@ it("loads frozen levy dues for an owner without an economic plan using an explic
   vi.mocked(api.listOwnerProfiles).mockResolvedValueOnce([{ id: "owner-levy", person_id: "person-levy", notes: "" }]);
   vi.mocked(api.listPersons).mockResolvedValueOnce([{ id: "person-levy", first_name: "Ada", last_name: "Besitzer" }] as never);
   vi.mocked(api.ownerStatement).mockResolvedValueOnce({ soll_total: "3000.00", ist_total: "0.00", balance: "3000.00", open_items: [] });
-  const user = userEvent.setup(); render(<MietkontoPage />);
+  const user = userEvent.setup(); render(<MemoryRouter><MietkontoPage /></MemoryRouter>);
   await user.selectOptions(await screen.findByRole("combobox", { name: "Ansicht" }), "owner");
   await screen.findByRole("option", { name: "Ada Besitzer" });
   await user.selectOptions(screen.getByRole("combobox", { name: "Eigentuemer *" }), "owner-levy");

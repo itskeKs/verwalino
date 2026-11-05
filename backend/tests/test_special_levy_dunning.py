@@ -20,9 +20,9 @@ def test_special_levy_dunning_respects_exact_due_date():
         [(date(2026, 6, 15), Decimal('3000.00'))], owner_id,
         date(2026, 6, 1), date(2026, 6, 30))
     statement = account_statement(charges, [])
-    assert not find_overdue_items(list(statement.open_items), date(2026, 6, 14))
-    assert not find_overdue_items(list(statement.open_items), date(2026, 6, 15))
-    overdue = find_overdue_items(list(statement.open_items), date(2026, 6, 16))
+    assert not find_overdue_items(list(statement.open_items), date(2026, 6, 14), current_year=2026)
+    assert not find_overdue_items(list(statement.open_items), date(2026, 6, 15), current_year=2026)
+    overdue = find_overdue_items(list(statement.open_items), date(2026, 6, 16), current_year=2026)
     assert sum(item.open_amount for item in overdue) == Decimal('3000.00')
 
 
@@ -136,11 +136,11 @@ def test_multiple_levy_dates_apply_monthly_payment_once_and_keep_types_separate(
     assert statement.soll_total == Decimal('1090.00')
     assert statement.ist_total == Decimal('100.00')
     assert statement.balance == Decimal('990.00')
-    overdue = find_overdue_items(list(statement.open_items), date(2026, 6, 16))
+    overdue = find_overdue_items(list(statement.open_items), date(2026, 6, 16), current_year=2026)
     assert {(item.payment_type, item.open_amount) for item in overdue} == {
         ('SONDERZAHLUNG', Decimal('200.00')), ('HAUSGELD_VORSCHUSS', Decimal('90.00'))}
-    assert not find_overdue_items([item for item in statement.open_items if item.payment_type == 'SONDERZAHLUNG'], date(2026, 6, 17), grace_days=2)
-    assert sum(item.open_amount for item in find_overdue_items(list(statement.open_items), date(2026, 6, 26))) == Decimal('990.00')
+    assert not find_overdue_items([item for item in statement.open_items if item.payment_type == 'SONDERZAHLUNG'], date(2026, 6, 17), grace_days=2, current_year=2026)
+    assert sum(item.open_amount for item in find_overdue_items(list(statement.open_items), date(2026, 6, 26), current_year=2026)) == Decimal('990.00')
 
 
 async def book_payment(api, ids, amount, *, payment_type='SONDERZAHLUNG', owner=None, **extra):

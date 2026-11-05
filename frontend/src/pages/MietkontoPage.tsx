@@ -428,6 +428,11 @@ export function MietkontoPage() {
               </table></div>
             </section>
           )}
+          {"dunning_notices" in result && scopeId === null && (
+            <p className="form-hint mt-4">
+              Ältere Mahnungen ohne Vertragszuordnung finden Sie unter <Link to="/mahnungen" className="underline">Mahnungen</Link>.
+            </p>
+          )}
         </div>
       )}
     </div>

@@ -201,7 +201,8 @@ New individual drafts and batch previews read the organization policy. When inte
 the detail and issued PDF show the saved calculation split at published rate changes and
 partial payments. A missing published rate prevents draft creation and names the affected
 half-year. Existing notices keep their saved amounts. In **Mietkonto**, **Ausgestellte Mahnungen**
-lists fees and interest as information separate from the account balance. See the
+lists fees and interest for the selected lease as information separate from the account balance.
+The unscoped statement links to **Mahnungen** for historical notices without a verified lease. See the
 [interest calculation](../m6-zahlungen-mietkonto.md#default-interest-on-dunning-notices)
 and [browser feature](../../features/dunning_interest.feature).
 

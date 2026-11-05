@@ -554,3 +554,23 @@ async def informational_ledger(browser_world):
     await expect(notice_row).to_contain_text("3,64")
     await expect(notice_row).to_contain_text("3,00")
     await browser_world.row("Saldo", "100.00 EUR")
+
+
+@when("the manager opens that lease account without an accounting scope")
+@browser_step
+async def unscoped_rent_account(browser_world):
+    page = browser_world.page
+    await browser_world.visit("/mietkonto")
+    await browser_world.select("Mietvertrag *", browser_world.world.data["leases"][0]["id"])
+    await field(page, "Zeitraum von *").fill("2026-04-01")
+    await field(page, "Zeitraum bis *").fill("2026-04-30")
+    await button(page, "Abrufen").click()
+    await expect(page.get_by_role("heading", name="Kontoauszug", exact=True)).to_be_visible()
+
+
+@then("the account links to dunning history for notices without a lease assignment")
+@browser_step
+async def unassigned_dunning_history(browser_world):
+    hint = browser_world.page.get_by_text("Ältere Mahnungen ohne Vertragszuordnung", exact=False)
+    await expect(hint).to_be_visible()
+    await expect(hint.get_by_role("link", name="Mahnungen", exact=True)).to_have_attribute("href", "/mahnungen")
