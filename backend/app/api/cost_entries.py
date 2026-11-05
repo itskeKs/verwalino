@@ -57,6 +57,7 @@ class CostEntryOut(BaseModel):
     confirmed_at: str | None
     confirmed_by: str | None
     superseded_by_id: str | None
+    bank_open_amount: str | None
 
     model_config = {"from_attributes": True}
 
@@ -131,7 +132,8 @@ async def list_cost_entries(
 ):
     repo = CostEntryRepository(db, auth.organization_id)
     items = await repo.list_by_filters(status=status, property_id=property_id)
-    return [_to_out(e) for e in items]
+    amounts = await repo.bank_open_amounts([e.id for e in items])
+    return [_to_out(e, amounts.get(e.id)) for e in items]
 
 
 def _render_cost_entries_csv(items: list[CostEntry]) -> bytes:
@@ -202,7 +204,8 @@ async def get_cost_entry(
     entry = await repo.get_by_id(entry_id)
     if entry is None:
         raise HTTPException(status_code=404, detail="Cost entry not found")
-    return _to_out(entry)
+    amounts = await repo.bank_open_amounts([entry.id])
+    return _to_out(entry, amounts.get(entry.id))
 
 
 @router.post("", response_model=CostEntryOut, status_code=201)
@@ -300,7 +303,9 @@ async def create_correction(
     return _to_out(entry)
 
 
-def _to_out(e: CostEntry) -> CostEntryOut:
+def _to_out(e: CostEntry, bank_open_amount=...) -> CostEntryOut:
+    if bank_open_amount is ...:
+        bank_open_amount = e.gross_amount
     return CostEntryOut(
         id=str(e.id),
         organization_id=str(e.organization_id),
@@ -325,4 +330,5 @@ def _to_out(e: CostEntry) -> CostEntryOut:
         confirmed_at=str(e.confirmed_at) if e.confirmed_at else None,
         confirmed_by=str(e.confirmed_by) if e.confirmed_by else None,
         superseded_by_id=str(e.superseded_by_id) if e.superseded_by_id else None,
+        bank_open_amount=str(bank_open_amount) if bank_open_amount is not None else None,
     )

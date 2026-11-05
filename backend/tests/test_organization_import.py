@@ -46,6 +46,42 @@ async def exported(w):
         return answer.content
 
 
+@pytest.mark.parametrize('scoped', [False, True])
+async def test_cost_bank_links_and_remaining_coverage_survive_archive_round_trip(rent_world, import_target, rent_db, export_store, scoped):
+    from tests.test_bank_transaction_assign import cost_assignment_graph, cost_open
+    async with api_client(rent_world) as api:
+        scope_id = None
+        if scoped:
+            response = await api.post('/api/accounting-scopes', headers={'Idempotency-Key': str(uuid.uuid4())}, json={
+                'property_id': str(rent_world['property']), 'scope_type': 'MIET', 'label': 'Electricity',
+                'valid_from': '2026-01-01', 'valid_to': '2026-12-31', 'whole_property': True,
+            })
+            assert response.status_code == 201, response.text
+            scope_id = response.json()['id']
+            response = await api.post(f'/api/accounting-scopes/{scope_id}/grants',
+                headers={'Idempotency-Key': str(uuid.uuid4())}, json={'user_id': str(rent_world['admin']),
+                    'capabilities': ['read', 'prepare', 'confirm', 'approve', 'export'], 'reason': 'Archive regression'})
+            assert response.status_code == 201, response.text
+        cost, bank, tids = await cost_assignment_graph(api, rent_world['property'], scope_id=scope_id)
+        assert await cost_open(api, cost) == 60
+        archive = await api.post('/api/organizations/export')
+        assert archive.status_code == 200, archive.text
+    async with api_client(import_target) as api:
+        response = await api.post('/api/organizations/import', files={'file': ('costs.tar.gz', archive.content)})
+        assert response.status_code == 200, response.text
+        ids = response.json()['id_map']
+        mapped_cost = ids['cost_entry'][cost]
+        assert await cost_open(api, mapped_cost) == 60
+        page = await api.get('/api/bank-transactions', params={'bank_account_id': ids['bank_account'][bank], 'status': 'ALL'})
+        assert page.status_code == 200, page.text
+        rows = {row['id']: row for row in page.json()['items']}
+        assert rows[ids['bank_transaction'][tids[0]]]['cost_entry_id'] == mapped_cost
+        for tid in tids:
+            response = await api.post(f"/api/bank-transactions/{ids['bank_transaction'][tid]}/assign", json={'cost_entry_id': mapped_cost})
+            assert response.status_code == 200, response.text
+        assert await cost_open(api, mapped_cost) == 0
+
+
 @pytest.mark.parametrize('corrected_source', [False, True])
 async def test_commercial_rules_and_finalized_statements_survive_an_archive_round_trip(rent_world, import_target, rent_db, export_store, corrected_source):
     from tests.commercial_preallocation_support import commercial_property, commercial_rule, REASON

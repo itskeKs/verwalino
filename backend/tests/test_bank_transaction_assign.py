@@ -81,6 +81,220 @@ async def listing(api, ids, **params):
     return await api.get(BASE, params={'bank_account_id': str(ids['bank']), **params})
 
 
+async def existing_cost(api, db, ids, amount='120.00', *, property_key='property', confirm=True, scope_id=None):
+    category = (await db.execute(text('SELECT id,plan_version FROM cost_category LIMIT 1'))).first()
+    response = await api.post('/api/cost-entries', json={
+        'property_id': str(ids[property_key]), 'accounting_scope_id': str(scope_id) if scope_id else None,
+        'cost_category_id': str(category.id),
+        'cost_category_plan_version': category.plan_version, 'gross_amount': amount,
+        'invoice_date': '2025-06-01', 'service_period_from': '2025-01-01',
+        'service_period_to': '2025-12-31', 'tenant_apportionable': 'UMLAGEFAEHIG',
+        'document_number': 'Electricity instalment',
+    })
+    assert response.status_code == 201, response.text
+    cost_id = response.json()['id']
+    if confirm:
+        response = await api.post(f'/api/cost-entries/{cost_id}/confirm')
+        assert response.status_code == 200, response.text
+    return cost_id
+
+
+async def cost_open(api, cost_id):
+    response = await api.get(f'/api/cost-entries/{cost_id}')
+    assert response.status_code == 200, response.text
+    return Decimal(response.json()['bank_open_amount'])
+
+
+async def cost_assignment_graph(api, property_id, *, scope_id=None):
+    """Use ordinary entry points for archive and retention regression data."""
+    category = (await api.get('/api/cost-categories')).json()[0]
+    response = await api.post('/api/cost-entries', json={
+        'property_id': str(property_id), 'accounting_scope_id': scope_id,
+        'cost_category_id': category['id'], 'cost_category_plan_version': category['plan_version'],
+        'gross_amount': '120.00', 'invoice_date': '2026-02-01',
+        'service_period_from': '2026-01-01', 'service_period_to': '2026-12-31',
+        'tenant_apportionable': 'UMLAGEFAEHIG', 'document_number': 'Electricity instalments',
+    })
+    assert response.status_code == 201, response.text
+    cost = response.json()['id']
+    assert (await api.post(f'/api/cost-entries/{cost}/confirm')).status_code == 200
+    response = await api.post('/api/bank-accounts', json={
+        'property_id': str(property_id), 'accounting_scope_id': scope_id,
+        'account_type': 'LAUFEND', 'label': 'Electricity instalments',
+    })
+    assert response.status_code == 201, response.text
+    bank = response.json()['id']
+    statement = b'Buchungstag;Wertstellung;Betrag;Name;Verwendungszweck\n02.02.2026;02.02.2026;-60,00;Stadtwerke;Electricity February\n02.03.2026;02.03.2026;-60,00;Stadtwerke;Electricity March\n'
+    response = await api.post(f'/api/bank-accounts/{bank}/imports', params={'dry_run': 'false'},
+                              files={'file': ('electricity.csv', statement, 'text/csv')})
+    assert response.status_code == 200, response.text
+    response = await api.get('/api/bank-transactions', params={'bank_account_id': bank})
+    tids = [row['id'] for row in response.json()['items']]
+    assert len(tids) == 2
+    response = await api.post(f'{BASE}/{tids[0]}/assign', json={'cost_entry_id': cost})
+    assert response.status_code == 200, response.text
+    return cost, bank, tids
+
+
+@pytest.mark.parametrize('total,debits', [('60.00', ['60.00']), ('120.00', ['60.00', '60.00']),
+                                          ('1234.57', ['0.01', '1234.56'])])
+async def test_cost_assignment_covers_existing_cost_once_and_retries_safely(bank_seed, bank_db, total, debits):
+    api, ids = bank_seed
+    cost = await existing_cost(api, bank_db, ids, total)
+    remaining = Decimal(total)
+    for debit in debits:
+        tid = await transaction(bank_db, ids, amount=f'-{debit}')
+        body = {'cost_entry_id': cost}
+        response = await api.post(f'{BASE}/{tid}/assign', json=body)
+        assert response.status_code == 200, response.text
+        assert response.json()['status'] == 'ZUGEORDNET' and response.json()['payments'] == []
+        remaining -= Decimal(debit)
+        assert await cost_open(api, cost) == remaining
+        retry = await api.post(f'{BASE}/{tid}/assign', json=body)
+        assert retry.status_code == 200, retry.text
+        assert await cost_open(api, cost) == remaining
+        assert (await listing(api, ids, status='ZUGEORDNET')).json()['items'][0]['cost_entry_id'] == cost
+    assert await bank_db.scalar(text('SELECT count(*) FROM payment WHERE bank_account_id=:bank'), ids) == 0
+    assert await bank_db.scalar(text("SELECT sum(gross_amount) FROM cost_entry WHERE property_id=:property AND status='confirmed' AND superseded_by_id IS NULL"), ids) == Decimal(total)
+
+
+@pytest.mark.parametrize('amount,other_property,confirm,expected', [
+    ('60.00', False, True, 422), ('0.00', False, True, 422),
+    ('-60.01', False, True, 409), ('-60.00', True, True, 422),
+    ('-60.00', False, False, 409),
+])
+async def test_invalid_cost_assignment_is_atomic(bank_seed, bank_db, amount, other_property, confirm, expected):
+    api, ids = bank_seed
+    cost = await existing_cost(api, bank_db, ids, '60.00',
+                               property_key='other_property' if other_property else 'property', confirm=confirm)
+    tid = await transaction(bank_db, ids, amount=amount)
+    response = await api.post(f'{BASE}/{tid}/assign', json={'cost_entry_id': cost})
+    assert response.status_code == expected, response.text
+    assert await bank_db.scalar(text('SELECT status FROM bank_transaction WHERE id=:id'), {'id': uuid.UUID(tid)}) == 'NEU'
+
+
+async def test_cost_assignment_hides_foreign_targets_and_refuses_mixed_assignments(bank_seed, bank_db, client_b_admin):
+    api, ids = bank_seed
+    cost = await existing_cost(api, bank_db, ids)
+    tid = await transaction(bank_db, ids, amount='-60.00')
+    assert (await client_b_admin.post(f'{BASE}/{tid}/assign', json={'cost_entry_id': cost})).status_code == 404
+    for target in (cost, str(uuid.uuid4())):
+        response = await client_b_admin.get(f'/api/cost-entries/{target}')
+        assert response.status_code == 404
+    response = await api.post(f'{BASE}/{tid}/assign', json={'cost_entry_id': str(uuid.uuid4())})
+    assert response.status_code == 404
+    response = await api.post(f'{BASE}/{tid}/assign', json={'cost_entry_id': cost, **split(ids)})
+    assert response.status_code == 422
+    foreign = uuid.uuid4()
+    await bank_db.execute(text('''INSERT INTO cost_entry(id,organization_id,property_id,cost_category_id,
+        cost_category_plan_version,gross_amount,invoice_date,service_period_from,service_period_to,
+        tenant_apportionable,status,source)
+        SELECT :id,p.organization_id,p.id,c.cost_category_id,c.cost_category_plan_version,c.gross_amount,
+          c.invoice_date,c.service_period_from,c.service_period_to,c.tenant_apportionable,'needs_review','MANUAL'
+        FROM cost_entry c CROSS JOIN LATERAL (SELECT id,organization_id FROM property
+          WHERE organization_id<>:org LIMIT 1) p WHERE c.id=CAST(:cost AS uuid)'''), {**ids, 'id': foreign, 'cost': cost})
+    # Use another organization's existing property; no foreign API data is exposed.
+    await bank_db.commit()
+    for target in (str(foreign), str(uuid.uuid4())):
+        response = await api.post(f'{BASE}/{tid}/assign', json={'cost_entry_id': target})
+        assert response.status_code == 404 and response.json()['detail'] == 'Kostenposition nicht gefunden.'
+
+
+async def test_concurrent_cost_assignments_cannot_overcover(bank_seed, bank_db):
+    api, ids = bank_seed
+    cost = await existing_cost(api, bank_db, ids, '120.00')
+    tids = [await transaction(bank_db, ids, amount='-80.00') for _ in range(2)]
+    responses = await asyncio.gather(*(api.post(f'{BASE}/{tid}/assign', json={'cost_entry_id': cost}) for tid in tids))
+    assert sorted(r.status_code for r in responses) == [200, 409], [r.text for r in responses]
+    assert await cost_open(api, cost) == Decimal('40.00')
+
+
+async def test_concurrent_retry_covers_once_and_cannot_switch_cost_or_book_payments(bank_seed, bank_db):
+    api, ids = bank_seed
+    cost = await existing_cost(api, bank_db, ids)
+    other = await existing_cost(api, bank_db, ids)
+    tid = await transaction(bank_db, ids, amount='-60.00')
+    responses = await asyncio.gather(*(api.post(f'{BASE}/{tid}/assign', json={'cost_entry_id': cost}) for _ in range(2)))
+    assert [r.status_code for r in responses] == [200, 200], [r.text for r in responses]
+    assert await cost_open(api, cost) == 60
+    assert (await api.post(f'{BASE}/{tid}/assign', json={'cost_entry_id': other})).status_code == 409
+    assert (await api.post(f'{BASE}/{tid}/assign', json=split(ids))).status_code == 409
+    assert await bank_db.scalar(text("SELECT count(*) FROM audit_event WHERE entity_id=CAST(:cost AS uuid) AND action='cost_entry.bank_transaction_assigned' AND payload_diff->>'bank_transaction_id'=:id"), {'cost': cost, 'id': tid}) == 1
+
+
+async def test_superseded_cost_is_not_an_assignment_target(bank_seed, bank_db):
+    api, ids = bank_seed
+    cost = await existing_cost(api, bank_db, ids)
+    response = await api.post(f'/api/cost-entries/{cost}/correction', json={'gross_amount': '100.00'})
+    assert response.status_code == 201, response.text
+    tid = await transaction(bank_db, ids, amount='-60.00')
+    assert (await api.post(f'{BASE}/{tid}/assign', json={'cost_entry_id': cost})).status_code == 409
+
+
+async def test_cost_assignment_requires_live_scope_write_grants_and_exact_scope(migrator_session, scope_seed, bank_db):
+    ids = await statement_fixture(migrator_session, scope_seed, 'lease')
+    await bank_db.execute(text("UPDATE scope_grant SET revoked_at=now(),revoked_by=:actor WHERE organization_id=:org AND user_id=:clerk AND revoked_at IS NULL"), ids)
+    for key in ('scope', 'second_scope'):
+        await bank_db.execute(text("INSERT INTO scope_grant(organization_id,scope_id,user_id,capabilities,granted_by,reason) VALUES (:org,:target,:clerk,ARRAY['read','prepare','confirm'],:actor,'Assign synthetic costs')"), {**ids, 'target': ids[key]})
+    await bank_db.commit()
+    async with scope_client(ids) as api:
+        cost = await existing_cost(api, bank_db, ids, scope_id=ids['scope'])
+        other = await existing_cost(api, bank_db, ids, scope_id=ids['second_scope'])
+        tid = await transaction(bank_db, ids, amount='-60.00')
+        # Selecting the bank scope hides targets belonging to another scope.
+        assert (await api.post(f'{BASE}/{tid}/assign', json={'cost_entry_id': other})).status_code == 404
+        response = await api.post(f'{BASE}/{tid}/assign', json={'cost_entry_id': cost})
+        assert response.status_code == 200, response.text
+        assert await cost_open(api, cost) == 60
+        await bank_db.execute(text("UPDATE scope_grant SET revoked_at=now(),revoked_by=:actor WHERE organization_id=:org AND scope_id=:scope AND user_id=:clerk AND revoked_at IS NULL"), ids)
+        await bank_db.commit()
+        assert (await api.post(f'{BASE}/{tid}/assign', json={'cost_entry_id': cost})).status_code == 404
+        assert (await api.get(f'/api/cost-entries/{cost}')).status_code == 404
+
+
+async def test_later_scope_classification_cannot_separate_matched_bank_and_cost(bank_seed, bank_db):
+    api, ids = bank_seed
+    cost = await existing_cost(api, bank_db, ids)
+    tid = await transaction(bank_db, ids, amount='-60.00')
+    assert (await api.post(f'{BASE}/{tid}/assign', json={'cost_entry_id': cost})).status_code == 200
+    scopes = []
+    for label in ('Cost scope', 'Other scope'):
+        response = await api.post('/api/accounting-scopes', headers={'Idempotency-Key': str(uuid.uuid4())}, json={
+            'property_id': str(ids['property']), 'scope_type': 'WEG', 'label': label,
+            'valid_from': '2025-01-01', 'valid_to': '2025-12-31', 'whole_property': True,
+        })
+        assert response.status_code == 201, response.text
+        sphere = response.json()['id']
+        response = await api.post(f'/api/accounting-scopes/{sphere}/grants', headers={'Idempotency-Key': str(uuid.uuid4())},
+            json={'user_id': str(ids['actor']), 'capabilities': ['read', 'prepare', 'confirm', 'approve', 'export'], 'reason': 'Classify matched evidence'})
+        assert response.status_code == 201, response.text
+        scopes.append(sphere)
+    response = await api.post(f'/api/accounting-scopes/{scopes[0]}/bindings', json={
+        'resource_type': 'bank_account', 'resource_id': str(ids['bank']), 'reason': 'Matched evidence'})
+    assert response.status_code == 201, response.text
+    for sphere, expected in ((scopes[1], 422), (scopes[0], 201)):
+        response = await api.post(f'/api/accounting-scopes/{sphere}/bindings', json={
+            'resource_type': 'cost_entry', 'resource_id': cost, 'reason': 'Matched evidence'})
+        assert response.status_code == expected, response.text
+    assert await cost_open(api, cost) == 60
+    assert (await api.post(f'{BASE}/{tid}/assign', json={'cost_entry_id': cost})).status_code == 200
+
+
+async def test_cost_link_and_financial_bank_fields_cannot_be_rewritten(bank_seed, bank_db):
+    api, ids = bank_seed
+    cost = await existing_cost(api, bank_db, ids, '60.00')
+    tid = await transaction(bank_db, ids, amount='-60.00')
+    response = await api.post(f'{BASE}/{tid}/assign', json={'cost_entry_id': cost})
+    assert response.status_code == 200, response.text
+    for sql in ("UPDATE bank_transaction SET cost_entry_id=NULL", "UPDATE bank_transaction SET amount=-1",
+                "UPDATE bank_transaction SET status='NEU'", 'DELETE FROM bank_transaction'):
+        with pytest.raises(DBAPIError):
+            async with bank_db.begin_nested():
+                await bank_db.execute(text(sql + ' WHERE id=:id'), {'id': uuid.UUID(tid)})
+    assert (await api.post(f'{BASE}/{tid}/ignore')).status_code == 409
+    assert (await api.patch(f'/api/cost-entries/{cost}', json={'gross_amount': '1.00'})).status_code == 409
+
+
 async def test_warm_rent_suggestions_booking_audit_retention_and_statement(bank_seed, bank_db):
     api, ids = bank_seed
     tid = await transaction(bank_db, ids)

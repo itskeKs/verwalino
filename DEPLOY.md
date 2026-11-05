@@ -1615,7 +1615,7 @@ remove `/srv/verwalino/logs/.deploy.lock` once no deploy is running. A stale `/s
 (a run was killed) is removed by hand once no backup is running. Never
 run `docker compose down -v` or delete the volumes.
 
-## Migration compatibility: 0029–0170
+## Migration compatibility: 0029–0171
 
 | Revisions | Effect on existing data and runtime compatibility |
 | --- | --- |
@@ -1655,14 +1655,16 @@ run `docker compose down -v` or delete the volumes.
 | 0167 (parent 0166) | Adds non-null immutable `resolution_register_entry.resolution_date`, copied from the related meeting. Backfill locks the register and its source tables, verifies the resolution, meeting, property and organization relationship, and refuses orphan or inconsistent sources. Every existing field, including `entry_date`, remains unchanged. New PDFs/page/API distinguish meeting date from entry date. Import of older organization archives derives only their missing meeting date through the same valid source relationship. Downgrade restores the prior trigger and removes the new column only while every date is exactly reconstructible from its valid source; otherwise repair forward. |
 | 0168 (parent 0167) | Adds only column-level UPDATE of `special_levy.resolution_id` behind the existing scope/source predicates and a guard allowing one null-to-adopted same-property reference. All other header fields and allocation rows remain immutable. Existing rows are not rewritten; historical archive/restore INSERT compatibility remains intact, while ordinary service/API creation requires an adopted reference. Downgrade restores the exact prior guard and removes the UPDATE policy/grant, retaining all existing references and evidence. |
 | 0169 (parent 0168) | Adds a shared commercial preallocation per confirmed cost position with percent or fixed amount and required reason. Forced RLS follows the source cost; source authority, organization lifecycle and computation evidence guards apply. Changing or removing a rule after an active finalized tenant statement uses the source is refused. Existing costs, statements and digests are not rewritten. Populated rules or snapshots prevent downgrade. |
-| 0170 (head; parent 0169) | Widens only `settlement_line.note` from `varchar(500)` to `text` so accepted 2,000-character commercial reasons and their explanation persist in full. Existing values, nulls, snapshots, hashes and PDF rendering remain unchanged. Upgrade and downgrade take the table type-change lock with NOWAIT. Downgrade refuses any stored note longer than 500 characters before narrowing; no truncation or row rewriting. |
+| 0170 (parent 0169) | Widens only `settlement_line.note` from `varchar(500)` to `text` so accepted 2,000-character commercial reasons and their explanation persist in full. Existing values, nulls, snapshots, hashes and PDF rendering remain unchanged. Upgrade and downgrade take the table type-change lock with NOWAIT. Downgrade refuses any stored note longer than 500 characters before narrowing; no truncation or row rewriting. |
+
+| 0171 (head; parent 0170) | Adds a nullable organization-bound existing-cost link to bank lines, outgoing/status/property/scope and exact coverage guards, immutable financial bank evidence and source-filtered remaining coverage. Linked bank lines inherit the retained cost deadline without becoming personal-retention roots. Existing costs, payments and reconciliation totals are unchanged. Downgrade refuses populated cost assignments. |
 
 DDL uses the existing PostgreSQL/Alembic transaction; 0123 also takes financial
 and ACL locks with NOWAIT table locks. Contention or unexpected data/function
 definitions must abort, not trigger repair/deletion. A rollback-only synthetic
-0028→0170 rehearsal compares every old table column/row and retained RLS flags;
-the 0122→0170, 0139→0170 and accepted-source 0140→0170, 0141→0170 and
-0142→0170, 0143→0170, 0144→0170, 0145→0170, 0146→0170, 0147→0170, 0148→0170, 0149→0170, 0150→0170, 0151→0170, 0152→0170, 0153→0170, 0154→0170, 0155→0170, 0159→0170, 0160→0170, 0161→0170, 0162→0170, 0163→0170, 0164→0170, 0165→0170, 0166→0170, 0167→0170, 0168→0170 and 0169→0170 (accepted sources) rehearsals also
+0028→0171 rehearsal compares every old table column/row and retained RLS flags;
+the 0122→0171, 0139→0171 and accepted-source 0140→0171, 0141→0171 and
+0142→0171, 0143→0171, 0144→0171, 0145→0171, 0146→0171, 0147→0171, 0148→0171, 0149→0171, 0150→0171, 0151→0171, 0152→0171, 0153→0171, 0154→0171, 0155→0171, 0159→0171, 0160→0171, 0161→0171, 0162→0171, 0163→0171, 0164→0171, 0165→0171, 0166→0171, 0167→0171, 0168→0171 0169→0171 and 0170→0171 (accepted sources) rehearsals also
 compare existing ACLs, allowing only the explicit organization INSERT/reserve UPDATE revocations and the capability-checked
 0159 binding adapter and the 0168 column-level resolution-link grant;
 it does not prove live data validity or cross-version runtime compatibility.
@@ -1685,10 +1687,10 @@ When adding a migration, update these together in the same release:
 
 ## Deployment boundary and accepted head
 
-The reviewed code targets **0170**. `backend/app/deployment.py` retains `TARGET`,
+The reviewed code targets **0171**. `backend/app/deployment.py` retains `TARGET`,
 `SUPPORTED`, `release_head()` and the read-only schema/role/runtime checks used
-by the migration rehearsals. Those checks accept measured **0028 → 0170**,
-**0122 → 0170**, **0139 → 0170**, **0140 → 0170**, **0141 → 0170**, **0142 → 0170**, **0143 → 0170**, **0144 → 0170**, **0145 → 0170**, **0146 → 0170**, **0147 → 0170**, **0148 → 0170**, **0149 → 0170**, **0150 → 0170**, **0151 → 0170**, **0152 → 0170**, **0153 → 0170**, **0154 → 0170**, **0155 → 0170**, **0159 → 0170**, **0160 → 0170**, **0161 → 0170**, **0162 → 0170**, **0163 → 0170**, **0164 → 0170**, **0165 → 0170**, **0166 → 0170** (accepted sources), **0167 → 0170** (accepted source), **0168 → 0170** (accepted source), **0169 → 0170** (accepted source), or **0170 → 0170**; unknown,
+by the migration rehearsals. Those checks accept measured **0028 → 0171**,
+**0122 → 0171**, **0139 → 0171**, **0140 → 0171**, **0141 → 0171**, **0142 → 0171**, **0143 → 0171**, **0144 → 0171**, **0145 → 0171**, **0146 → 0171**, **0147 → 0171**, **0148 → 0171**, **0149 → 0171**, **0150 → 0171**, **0151 → 0171**, **0152 → 0171**, **0153 → 0171**, **0154 → 0171**, **0155 → 0171**, **0159 → 0171**, **0160 → 0171**, **0161 → 0171**, **0162 → 0171**, **0163 → 0171**, **0164 → 0171**, **0165 → 0171**, **0166 → 0171** (accepted sources), **0167 → 0171** (accepted source), **0168 → 0171** (accepted source), **0169 → 0171** (accepted source), **0170 → 0171** (accepted source), or **0171 → 0171**; unknown,
 missing, multiple or intermediate revisions are rejected. These are code and
 rehearsal boundaries, not a measurement of a running installation.
 

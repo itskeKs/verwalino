@@ -407,6 +407,16 @@ async def import_organization(db, auth, source):
                 progress = False
                 for name, original in pending[:]:
                     dependencies = []
+                    if name == 'accounting_scope_binding':
+                        # Native binding admission needs the archived live grants.
+                        dependencies.extend(('scope_grant', grant['id']) for grant in entities.get('scope_grant', [])
+                                            if grant['scope_id'] == original['scope_id'])
+                    if name == 'bank_transaction' and original.get('cost_entry_id') is not None:
+                        # Restore both exact scopes before validating the cost match.
+                        dependencies.extend(('accounting_scope_binding', binding['id'])
+                            for binding in entities.get('accounting_scope_binding', [])
+                            if binding.get('bank_account_id') == original['bank_account_id']
+                            or binding.get('cost_entry_id') == original['cost_entry_id'])
                     if name == 'settlement_run':
                         # Snapshot cost references are not foreign keys. Rules
                         # must precede finalized runs even after FK retry passes.

@@ -8,9 +8,55 @@ from pathlib import Path
 
 from pytest_bdd import given, parsers, then, when
 
-from tests.bdd.steps.records import create_bank_account, create_property
+from tests.bdd.steps.records import create_bank_account, create_property, record_of, kind_named
 
 STATEMENTS = Path(__file__).resolve().parents[2] / "fixtures" / "bank"
+
+
+@given('each organization has a confirmed cost and an outgoing bank debit')
+def isolated_cost_debits(world):
+    rows = {}
+    for organization in world.organizations:
+        client = world.administrator_of(organization)
+        home = record_of(world, organization, kind_named('property'))
+        account = record_of(world, organization, kind_named('bank account'))
+        category = world.send(client, 'GET', '/api/cost-categories').json()[0]
+        answer = world.send(client, 'POST', '/api/cost-entries', json={
+            'property_id': home.id, 'cost_category_id': category['id'],
+            'cost_category_plan_version': category['plan_version'], 'gross_amount': '60.00',
+            'invoice_date': '2026-01-15', 'service_period_from': '2026-01-01',
+            'service_period_to': '2026-12-31', 'tenant_apportionable': 'UMLAGEFAEHIG',
+        })
+        assert answer.status_code == 201, world.describe_response()
+        cost = answer.json()['id']
+        assert world.send(client, 'POST', f'/api/cost-entries/{cost}/confirm').status_code == 200
+        content = b'Buchungstag;Wertstellung;Betrag;Name;Verwendungszweck\n15.01.2026;15.01.2026;-60,00;Stadtwerke;Isolated electricity\n'
+        answer = world.send(client, 'POST', f'/api/bank-accounts/{account.id}/imports', params={'dry_run': 'false'},
+                            files={'file': ('isolated.csv', content, 'text/csv')})
+        assert answer.status_code == 200, world.describe_response()
+        answer = world.send(client, 'GET', '/api/bank-transactions', params={'bank_account_id': account.id})
+        debit = next(row for row in answer.json()['items'] if row['purpose'] == 'Isolated electricity')
+        rows[organization] = {'cost': cost, 'debit': debit['id'], 'account': account.id}
+    world.data['isolated_cost_debits'] = rows
+
+
+@when("Verwaltung Alpha tries to assign its debit to Verwaltung Beta's cost")
+def foreign_cost_assignment(world):
+    rows = world.data['isolated_cost_debits']
+    world.act('POST', f"/api/bank-transactions/{rows['Verwaltung Alpha']['debit']}/assign",
+              json={'cost_entry_id': rows['Verwaltung Beta']['cost']})
+
+
+@then('the foreign cost is not found and both debits remain new')
+def foreign_cost_untouched(world):
+    assert world.response.status_code == 404, world.describe_response()
+    for organization, records in world.data['isolated_cost_debits'].items():
+        client = world.administrator_of(organization)
+        answer = world.look(client, f"/api/cost-entries/{records['cost']}")
+        assert Decimal(answer.json()['bank_open_amount']) == 60
+        answer = world.run(client.get('/api/bank-transactions', params={'bank_account_id': records['account']}))
+        row = next(row for row in answer.json()['items'] if row['id'] == records['debit'])
+        assert row['status'] == 'NEU' and row['cost_entry_id'] is None
 
 
 def _iso(day: str) -> str:

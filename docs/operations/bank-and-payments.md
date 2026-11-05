@@ -33,6 +33,29 @@ For write roles, the transactions page offers „Vorschlag übernehmen“ (accep
 suggestion), „Aufteilen“ (split), and „Ignorieren“ (ignore). Suggestions that
 require review open the split dialog; unclear amounts must be explicitly split
 completely there.
+
+For a debit, “Aufteilen” opens “Bestehende Kostenposition”. Select an active,
+confirmed cost of the bank account's property and choose “Kostenposition zuordnen”.
+The picker shows the remaining bank coverage and the original total, with the
+remaining amount after this assignment. A −60.00 EUR debit can cover a 60.00 EUR
+cost completely, or part of a 120.00 EUR cost; another −60.00 EUR debit then covers
+the remainder. The complete bank transaction links to one cost, without creating
+a cost or a payment. The transaction becomes “Zugeordnet”; yearly expenses still
+count that confirmed cost once. Positive transactions, other properties or
+accounting scopes, unconfirmed/superseded costs and excessive coverage are refused.
+Later classification of legacy matched records also refuses different cost/bank scopes.
+Concurrent assignments serialize and repeating the same cost assignment succeeds
+without covering it twice. A failed assignment keeps the selected cost; use
+“Kostenpositionen neu laden” to refresh a conflicting remaining amount.
+
+“Zuordnen als” also offers “Zahlung (z. B. Erstattung oder Rücklagenentnahme)” for
+the existing tenant-refund and reserve-payout booking paths. Incoming transactions
+keep the payment split. Cost matching does not alter bank reconciliation totals,
+reserve accounting or the cost original. The bank link and its financial fields
+are immutable; organization archives restore the link and its remaining coverage.
+During organization erasure, the matched bank evidence inherits its cost's
+retention deadline; an unmatched line gains no retention from this feature.
+
 `GET /api/bank-accounts/{id}/transactions` returns the list with optional
 `status`, `offset`, `limit` (default 50, maximum 100), and `next_offset`.
 
