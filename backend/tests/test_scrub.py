@@ -168,11 +168,12 @@ def test_generated_uuid_identifiers_remain_complete_in_mixed_text():
 ])
 @pytest.mark.parametrize("case", [str.lower, str.upper, str.title])
 @pytest.mark.parametrize("identity", ["ab123456-7890-4abc-8def-123456789abc", "12345678-1234-4234-8234-123456789012"])
-def test_uuid_spans_do_not_hide_ibans_or_other_secrets(iban, case, identity):
+@pytest.mark.parametrize("separator", [" ", "-", "/"])
+def test_uuid_spans_do_not_hide_ibans_or_other_secrets(iban, case, identity, separator):
     from app.diagnostics import diagnostic_log_lines
 
     iban = case(iban)
-    message = f"organization {identity}; {iban} {identity}; +49 30 12345678; alice@example.org password=private-value"
+    message = f"organization {identity}; {iban}{separator}{identity}; {identity}{separator}{iban}; +49 30 12345678; alice@example.org password=private-value"
     record = logging.LogRecord("app.test", logging.ERROR, __file__, 1, message, (), (RuntimeError, RuntimeError(message), None))
     record.request_id = identity
     formatted = RequestFormatter().format(record)
@@ -207,10 +208,17 @@ def test_uuid_valued_credentials_and_queries_remain_redacted(identity):
     assert identity not in scrub_text(f"password={identity} token={identity} https://example.org/?id={identity}")
 
 
-@pytest.mark.parametrize("template", ["organization {identity} {phone} erased", "contact {phone} {identity} erased"])
-def test_numeric_uuid_survives_next_to_a_redacted_phone(template):
+@pytest.mark.parametrize("template", ["organization {identity}{separator}{phone} erased", "contact {phone}{separator}{identity} erased"])
+@pytest.mark.parametrize("separator", [" ", "-", "/", ";", ",", ":"])
+@pytest.mark.parametrize("phone", ["03012345678", "+49 30 12345678"])
+def test_numeric_uuid_survives_next_to_a_redacted_phone(template, separator, phone):
     identity = "12345678-1234-4234-8234-123456789012"
-    assert scrub_text(template.format(identity=identity, phone="03012345678")) == template.format(identity=identity, phone="[redacted:phone]")
+    message = template.format(identity=identity, separator=separator, phone=phone)
+    expected = template.format(identity=identity, separator=separator, phone="[redacted:phone]")
+    assert scrub_text(message) == expected
+    assert scrub({"exception": {"values": [{"value": message}]}})["exception"]["values"][0]["value"] == expected
+    record = logging.LogRecord("app.test", logging.ERROR, __file__, 1, message, (), None)
+    assert expected in RequestFormatter().format(record)
 
 
 @pytest.mark.parametrize("text", ["1234567", "123456789012345", "2026-01-01", "created 2026-01-01T12:34:56Z", "INFO Max Mustermann"])

@@ -70,8 +70,15 @@ def _mask_outside_uuids(value: str, pattern: re.Pattern, replacement) -> str:
     parts = []
     start = 0
     for match in _UUID.finditer(value):
-        parts.extend((pattern.sub(replacement, value[start:match.start()]), match[0]))
-        start = match.end()
+        left, right = match.span()
+        # Keep adjacent separators with the UUID, so phone token anchors do
+        # not mistake them for an incomplete number at the split boundary.
+        while left > start and value[left - 1] in "-/":
+            left -= 1
+        while right < len(value) and value[right] in "-/":
+            right += 1
+        parts.extend((pattern.sub(replacement, value[start:left]), value[left:right]))
+        start = right
     parts.append(pattern.sub(replacement, value[start:]))
     return "".join(parts)
 
