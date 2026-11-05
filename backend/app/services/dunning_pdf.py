@@ -108,9 +108,13 @@ def build_dunning_html(
     for it in items:
         type_label = _TYPE_LABELS.get(it.get("payment_type", ""), it.get("payment_type", ""))
         period = _period_label(it.get("period_year"), it.get("period_month"))
+        monthly_due = ''
+        if it.get('payment_type') == 'HAUSGELD_VORSCHUSS' and it.get('due_date'):
+            due = date.fromisoformat(it['due_date']).strftime('%d.%m.%Y')
+            monthly_due = f'<br/><span class="note">Fällig am {due}</span>'
         arrears_rows.append(
             f"<tr>"
-            f"<td>{_esc(period)}</td>"
+            f"<td>{_esc(period)}{monthly_due}</td>"
             f"<td>{_esc(type_label)}</td>"
             f"<td class='num'>{_eur(it.get('soll'))}</td>"
             f"<td class='num'>{_eur(it.get('ist'))}</td>"

@@ -46,6 +46,27 @@ from app.engine.fristen import (
 )
 
 
+@pytest.mark.parametrize("day", range(1, 29))
+def test_owner_due_day_selects_a_calendar_day_before_shifting(day):
+    selected = date(2026, 7, day)
+    expected = selected
+    while expected.weekday() >= 5:
+        expected = date.fromordinal(expected.toordinal() + 1)
+    assert fristen.owner_due_date(2026, 7, day) == expected
+
+
+@pytest.mark.parametrize("year,month,day,state,expected", [
+    (2026, 7, 3, None, date(2026, 7, 3)),
+    (2026, 10, 3, None, date(2026, 10, 5)),
+    (2026, 3, None, None, date(2026, 3, 2)),
+    (2026, 5, 1, None, date(2026, 5, 4)),
+    (2026, 1, 6, 'BY', date(2026, 1, 7)),
+    (2026, 1, 6, None, date(2026, 1, 6)),
+])
+def test_owner_due_date_uses_the_approved_default_and_property_holidays(year, month, day, state, expected):
+    assert fristen.owner_due_date(year, month, day, federal_state=state) == expected
+
+
 # ---------------------------------------------------------------------------
 # Date arithmetic
 # ---------------------------------------------------------------------------

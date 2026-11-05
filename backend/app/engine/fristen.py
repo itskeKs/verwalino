@@ -610,3 +610,18 @@ def third_working_day(
             if remaining == 0:
                 return current
         current += timedelta(days=1)
+
+
+def owner_due_date(
+    year: int, month: int, monthly_due_day: int | None = None,
+    *, federal_state: FederalState | None = None,
+) -> date:
+    """Select the resolved calendar day, then shift under § 193 BGB.
+
+    Unlike tenant rent, this does not count three working days. Historical
+    NULL means the approved default of day one, without changing frozen data.
+    """
+    current = date(year, month, monthly_due_day if monthly_due_day is not None else 1)
+    while current.weekday() >= 5 or current in public_holidays(current.year, federal_state):
+        current += timedelta(days=1)
+    return current

@@ -805,3 +805,28 @@ def test_a_departing_share_without_an_unambiguous_buyer_is_refused():
         date(2025, 6, 30) if oid == 3 else None, Decimal('1')) for oid in (1, 2, 3)]
     with pytest.raises(ValueError, match='successors'):
         owner_expected_charges(lines, _U(1), YEAR_START, YEAR_END, owner_periods=history)
+
+
+def test_owner_due_split_keeps_full_balances_signed_credit_and_levy_dates():
+    from app.engine.dunning import find_overdue_items, assemble_dunning
+    from app.engine.mietkonto import special_levy_expected_charges
+
+    owner = _U(1)
+    charges = owner_expected_charges([OwnerAdvanceChargeInput(owner, _U(10), Decimal('1600.01'))],
+        owner, date(2026, 7, 1), date(2026, 8, 31), monthly_due_day=3)
+    assert [c.due_date for c in charges] == [date(2026, 7, 3), date(2026, 8, 3)]
+    charges += special_levy_expected_charges([(date(2026, 7, 4), Decimal('500.00'))],
+        owner, date(2026, 7, 1), date(2026, 8, 31))
+    payments = [_pay(1, PT_HAUSGELD_VORSCHUSS, '1700.01', month=8, year=2026, owner=owner)]
+    before = account_statement(charges, payments, as_of=date(2026, 7, 2))
+    after = account_statement(charges, payments, as_of=date(2026, 7, 4))
+    assert before.balance == after.balance == Decimal('2000.01')
+    assert before.due_balance == Decimal('0.00')
+    assert before.not_yet_due_balance == Decimal('2000.01')
+    assert after.due_balance == Decimal('2100.01')
+    assert after.not_yet_due_balance == Decimal('-100.00')
+    assert find_overdue_items(list(before.open_items), date(2026, 7, 2)) == []
+    overdue = find_overdue_items(list(after.open_items), date(2026, 7, 4))
+    assert len(overdue) == 1
+    notice = assemble_dunning(overdue, 0, date(2026, 7, 4))
+    assert notice.items_snapshot()[0]['due_date'] == '2026-07-03'

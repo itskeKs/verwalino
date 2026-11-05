@@ -949,6 +949,28 @@ class TestDunningChecks:
 # API: create / issue / list / delete / PDF + RBAC
 # ===========================================================================
 class TestDunningAPI:
+    @pytest.mark.parametrize('dated', [False, True])
+    def test_owner_notice_names_snapshot_due_day_and_preserves_legacy_html(self, dated):
+        from hashlib import sha256
+        from types import SimpleNamespace
+        from app.services.dunning_pdf import build_dunning_html
+
+        monthly = {'period_year': 2026, 'period_month': 7, 'payment_type': 'HAUSGELD_VORSCHUSS',
+            'soll': '600.00', 'ist': '0.00', 'open_amount': '600.00'}
+        if dated:
+            monthly['due_date'] = '2026-07-03'
+        notice = SimpleNamespace(level=1, principal_amount=Decimal('650.00'), fee_amount=Decimal('0.00'),
+            interest_amount=Decimal('0.00'), interest_snapshot=None, total_amount=Decimal('650.00'),
+            issue_date=date(2026, 7, 4), due_date=date(2026, 7, 18), included_items=[monthly,
+                {'period_year': 2026, 'period_month': 7, 'payment_type': 'SONDERZAHLUNG',
+                 'soll': '50.00', 'ist': '0.00', 'open_amount': '50.00', 'due_date': '2026-07-01'}])
+        html = build_dunning_html(notice)
+        if dated:
+            assert 'Fällig am 03.07.2026' in html
+        else:
+            # Fingerprint of the pre-date-rendering template, including an old dated levy.
+            assert sha256(html.encode()).hexdigest() == 'dc4f5138fea695bd60344a59af98be9defbe8edcc32227a47e5591126975b112'
+
     @pytest.mark.parametrize("issued_at", [None, datetime(2026, 11, 1, 12, 26, 4, 611054, tzinfo=_tz.utc)])
     def test_issue_time_serializes_as_iso_with_timezone(self, issued_at):
         from app.api.dunning import _to_out
