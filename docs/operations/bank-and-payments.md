@@ -44,6 +44,22 @@ a cost or a payment. The transaction becomes “Zugeordnet”; yearly expenses s
 count that confirmed cost once. Positive transactions, other properties or
 accounting scopes, unconfirmed/superseded costs and excessive coverage are refused.
 Later classification of legacy matched records also refuses different cost/bank scopes.
+In a one-to-one cost correction, the original bank links and audit history remain
+in place. Each successor inherits the assigned amount from earlier versions. For
+example, after assigning a −60.00 EUR debit to a 150.00 EUR cost, correcting and
+confirming it at 120.00 EUR leaves 60.00 EUR open for another debit. A correction,
+draft edit or confirmation below the inherited coverage is refused. The bank
+picker uses the remaining amount of the current confirmed version.
+
+When correcting a reviewed allocation, load “Korrekturvorschau” and use
+“Bankumsätze übernehmen” to select a new part for each old part that already
+has bank coverage. For a 119.00 EUR invoice changing from 59.00 + 60.00 EUR to
+19.00 + 40.00 + 60.00 EUR, select the third new part for a debit covering the
+old second part. The third part then has nothing open; the first two still
+have 19.00 and 40.00 EUR open. The debit remains linked to the original cost.
+Each selected successor must cover the sum inherited from its selected
+predecessors. If a new debit makes the preview stale, reload it before confirming.
+
 Concurrent assignments serialize and repeating the same cost assignment succeeds
 without covering it twice. A failed assignment keeps the selected cost; use
 “Kostenpositionen neu laden” to refresh a conflicting remaining amount.
@@ -52,7 +68,9 @@ without covering it twice. A failed assignment keeps the selected cost; use
 the existing tenant-refund and reserve-payout booking paths. Incoming transactions
 keep the payment split. Cost matching does not alter bank reconciliation totals,
 reserve accounting or the cost original. The bank link and its financial fields
-are immutable; organization archives restore the link and its remaining coverage.
+are immutable; supported organization archives restore ordinary cost links and
+their remaining coverage. Readable exports record explicit reviewed successor
+links; reviewed-document archives still require private provenance to import.
 During organization erasure, the matched bank evidence inherits its cost's
 retention deadline; an unmatched line gains no retention from this feature.
 

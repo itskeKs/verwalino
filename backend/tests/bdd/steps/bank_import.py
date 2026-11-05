@@ -8,7 +8,7 @@ from pathlib import Path
 
 from pytest_bdd import given, parsers, then, when
 
-from tests.bdd.steps.records import create_bank_account, create_property, record_of, kind_named
+from tests.bdd.steps.records import create_bank_account, create_property
 
 STATEMENTS = Path(__file__).resolve().parents[2] / "fixtures" / "bank"
 
@@ -18,8 +18,9 @@ def isolated_cost_debits(world):
     rows = {}
     for organization in world.organizations:
         client = world.administrator_of(organization)
-        home = record_of(world, organization, kind_named('property'))
-        account = record_of(world, organization, kind_named('bank account'))
+        # The archive scenarios clear earlier synthetic records on teardown.
+        home = create_property(world, organization, f'{organization} debit isolation property')
+        account = create_bank_account(world, organization, 'Debit isolation account', property_id=home.id)
         category = world.send(client, 'GET', '/api/cost-categories').json()[0]
         answer = world.send(client, 'POST', '/api/cost-entries', json={
             'property_id': home.id, 'cost_category_id': category['id'],

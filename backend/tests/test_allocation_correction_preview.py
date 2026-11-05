@@ -157,6 +157,9 @@ async def test_preview_helpers_bound_before_traversal_and_migration_roundtrip(mi
     try:
         with engine.begin() as db,Operations.context(MigrationContext.configure(db)):
             point=db.begin_nested()
+            db.execute(text('TRUNCATE bank_transaction,cost_entry CASCADE'))
+            bank_correction=importlib.import_module('migrations.versions.0172_bank_cost_corrections')
+            bank_correction.downgrade()
             db.execute(text('TRUNCATE allocation_integrity_attestation CASCADE'))
             db.execute(text('TRUNCATE financial_computation_attestation CASCADE'))
             db.execute(text('TRUNCATE allocation_correction_context,allocation_correction_completion'))
@@ -188,6 +191,7 @@ async def test_preview_helpers_bound_before_traversal_and_migration_roundtrip(mi
             importlib.import_module('migrations.versions.0121_visual_allocation_sources').upgrade()
             importlib.import_module('migrations.versions.0122_allocation_source_replacements').upgrade()
             importlib.import_module('migrations.versions.0123_replacement_exception_outcomes').upgrade()
+            bank_correction.upgrade()
             for signature in signatures[1:]:
                 assert not db.scalar(text("SELECT has_function_privilege('app_rw',:signature,'EXECUTE')"),{'signature':signature})
             for payload in ({'padding':'x'*2097152,'computation':[{'cost_entry_id':'invalid'}]}, {'inputs':{'cost_positions':[None]}}, {'result':{'lines':{}}}, {'result':{'owners':[{'cost_lines':False}]}}, {'result':{'owners':[None]}}):

@@ -8,6 +8,7 @@ import httpx
 import pytest
 import pytest_asyncio
 from sqlalchemy import text
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 from tests.conftest import MIGRATOR_URL
@@ -222,6 +223,83 @@ async def test_concurrent_retry_covers_once_and_cannot_switch_cost_or_book_payme
     assert await bank_db.scalar(text("SELECT count(*) FROM audit_event WHERE entity_id=CAST(:cost AS uuid) AND action='cost_entry.bank_transaction_assigned' AND payload_diff->>'bank_transaction_id'=:id"), {'cost': cost, 'id': tid}) == 1
 
 
+async def test_covered_cost_corrections_preserve_full_chain_coverage_and_original_evidence(bank_seed, bank_db):
+    api, ids = bank_seed
+    original = await existing_cost(api, bank_db, ids, '75.00')
+    first = await transaction(bank_db, ids, amount='-60.00')
+    assert (await api.post(f'{BASE}/{first}/assign', json={'cost_entry_id': original})).status_code == 200
+    costs = '/api/cost-entries'
+    refused = await api.post(f'{costs}/{original}/correction', json={'gross_amount': '59.99'})
+    assert refused.status_code == 409, refused.text
+    assert (await api.get(f'{costs}/{original}')).json()['superseded_by_id'] is None
+
+    corrected = await api.post(f'{costs}/{original}/correction', json={'gross_amount': '100.00'})
+    assert corrected.status_code == 201, corrected.text
+    successor = corrected.json()['id']
+    assert Decimal(corrected.json()['bank_open_amount']) == 40
+    refused = await api.patch(f'{costs}/{successor}', json={'gross_amount': '59.99'})
+    assert refused.status_code == 409, refused.text
+    updated = await api.patch(f'{costs}/{successor}', json={'gross_amount': '90.00'})
+    assert updated.status_code == 200 and Decimal(updated.json()['bank_open_amount']) == 30
+    confirmed = await api.post(f'{costs}/{successor}/confirm')
+    assert confirmed.status_code == 200 and Decimal(confirmed.json()['bank_open_amount']) == 30
+    assert (await api.post(f'{BASE}/{first}/assign', json={'cost_entry_id': original})).status_code == 200
+    assert (await api.post(f'{BASE}/{first}/assign', json={'cost_entry_id': successor})).status_code == 409
+    second = await transaction(bank_db, ids, amount='-30.00')
+    assert (await api.post(f'{BASE}/{second}/assign', json={'cost_entry_id': successor})).status_code == 200
+    assert (await api.post(f'{costs}/{successor}/correction', json={'gross_amount': '89.99'})).status_code == 409
+    corrected_again = await api.post(f'{costs}/{successor}/correction', json={'gross_amount': '90.00'})
+    assert corrected_again.status_code == 201 and Decimal(corrected_again.json()['bank_open_amount']) == 0
+    latest = corrected_again.json()['id']
+    assert (await api.post(f'{costs}/{latest}/confirm')).status_code == 200
+    extra = await transaction(bank_db, ids, amount='-0.01')
+    assert (await api.post(f'{BASE}/{extra}/assign', json={'cost_entry_id': latest})).status_code == 409
+    rows = (await listing(api, ids, status='ZUGEORDNET')).json()['items']
+    assert {row['id']: row['cost_entry_id'] for row in rows} == {first: original, second: successor}
+    audited = (await bank_db.execute(text("""SELECT entity_id::text, payload_diff->>'bank_transaction_id'
+        FROM audit_event WHERE organization_id=:org AND action='cost_entry.bank_transaction_assigned'"""), ids)).all()
+    assert set(audited) == {(original, first), (successor, second)}
+
+
+async def test_correction_and_new_assignment_serialize_against_same_coverage(bank_seed, bank_db):
+    api, ids = bank_seed
+    cost = await existing_cost(api, bank_db, ids)
+    first = await transaction(bank_db, ids, amount='-60.00')
+    second = await transaction(bank_db, ids, amount='-40.00')
+    assert (await api.post(f'{BASE}/{first}/assign', json={'cost_entry_id': cost})).status_code == 200
+    correction, assignment = await asyncio.gather(
+        api.post(f'/api/cost-entries/{cost}/correction', json={'gross_amount': '90.00'}),
+        api.post(f'{BASE}/{second}/assign', json={'cost_entry_id': cost}),
+    )
+    assert (correction.status_code, assignment.status_code) in {(201, 409), (409, 200)}, (
+        correction.text, assignment.text)
+    if correction.status_code == 201:
+        assert await cost_open(api, correction.json()['id']) == 30
+    else:
+        assert await cost_open(api, cost) == 20
+
+
+async def test_database_guards_covered_successor_and_its_boundaries(bank_seed, bank_db):
+    api, ids = bank_seed
+    original = await existing_cost(api, bank_db, ids)
+    tid = await transaction(bank_db, ids, amount='-60.00')
+    assert (await api.post(f'{BASE}/{tid}/assign', json={'cost_entry_id': original})).status_code == 200
+    foreign_property = await existing_cost(api, bank_db, ids, property_key='other_property', confirm=False)
+    with pytest.raises(IntegrityError):
+        async with bank_db.begin_nested():
+            await bank_db.execute(text('UPDATE cost_entry SET superseded_by_id=CAST(:next AS uuid) WHERE id=CAST(:id AS uuid)'),
+                                  {'id': original, 'next': foreign_property})
+    await bank_db.rollback()
+    result = await api.post(f'/api/cost-entries/{original}/correction', json={'gross_amount': '60.00'})
+    assert result.status_code == 201, result.text
+    successor = result.json()['id']
+    with pytest.raises(IntegrityError):
+        async with bank_db.begin_nested():
+            await bank_db.execute(text("UPDATE cost_entry SET gross_amount=59.99,status='confirmed' WHERE id=CAST(:id AS uuid)"),
+                                  {'id': successor})
+    await bank_db.rollback()
+
+
 async def test_superseded_cost_is_not_an_assignment_target(bank_seed, bank_db):
     api, ids = bank_seed
     cost = await existing_cost(api, bank_db, ids)
@@ -257,6 +335,14 @@ async def test_later_scope_classification_cannot_separate_matched_bank_and_cost(
     cost = await existing_cost(api, bank_db, ids)
     tid = await transaction(bank_db, ids, amount='-60.00')
     assert (await api.post(f'{BASE}/{tid}/assign', json={'cost_entry_id': cost})).status_code == 200
+    corrected = await api.post(f'/api/cost-entries/{cost}/correction', json={'gross_amount': '120.00'})
+    assert corrected.status_code == 201, corrected.text
+    successor = corrected.json()['id']
+    assert (await api.post(f'/api/cost-entries/{successor}/confirm')).status_code == 200
+    account = await api.post('/api/bank-accounts', json={'property_id': str(ids['property']),
+        'account_type': 'LAUFEND', 'label': 'Second legacy account'})
+    assert account.status_code == 201, account.text
+    another = await transaction(bank_db, {**ids, 'bank': uuid.UUID(account.json()['id'])}, amount='-1.00')
     scopes = []
     for label in ('Cost scope', 'Other scope'):
         response = await api.post('/api/accounting-scopes', headers={'Idempotency-Key': str(uuid.uuid4())}, json={
@@ -272,11 +358,16 @@ async def test_later_scope_classification_cannot_separate_matched_bank_and_cost(
     response = await api.post(f'/api/accounting-scopes/{scopes[0]}/bindings', json={
         'resource_type': 'bank_account', 'resource_id': str(ids['bank']), 'reason': 'Matched evidence'})
     assert response.status_code == 201, response.text
+    incomplete = await api.post(f'{BASE}/{another}/assign', json={'cost_entry_id': successor})
+    assert incomplete.status_code == 404, incomplete.text
     for sphere, expected in ((scopes[1], 422), (scopes[0], 201)):
         response = await api.post(f'/api/accounting-scopes/{sphere}/bindings', json={
-            'resource_type': 'cost_entry', 'resource_id': cost, 'reason': 'Matched evidence'})
+            'resource_type': 'cost_entry', 'resource_id': successor, 'reason': 'Matched evidence'})
         assert response.status_code == expected, response.text
-    assert await cost_open(api, cost) == 60
+    response = await api.post(f'/api/accounting-scopes/{scopes[0]}/bindings', json={
+        'resource_type': 'cost_entry', 'resource_id': cost, 'reason': 'Original matched evidence'})
+    assert response.status_code == 201, response.text
+    assert await cost_open(api, successor) == 60
     assert (await api.post(f'{BASE}/{tid}/assign', json={'cost_entry_id': cost})).status_code == 200
 
 

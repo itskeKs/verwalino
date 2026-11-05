@@ -193,6 +193,17 @@ async def second_electricity(browser_world):
     await assign_electricity(browser_world, 2)
 
 
+@when(parsers.parse('the manager confirms a correction of the electricity cost to {total:d} EUR'))
+def correct_electricity_cost(world, total):
+    old = world.data['electricity_cost']['id']
+    response = world.act('POST', f'/api/cost-entries/{old}/correction', json={'gross_amount': str(total)})
+    assert response.status_code == 201, world.describe_response()
+    corrected = response.json()['id']
+    response = world.act('POST', f'/api/cost-entries/{corrected}/confirm')
+    assert response.status_code == 200, world.describe_response()
+    world.data['electricity_cost'] = response.json()
+
+
 @then(parsers.parse('the electricity debit is assigned and the cost has {remaining:d} EUR remaining'))
 def electricity_remaining(world, remaining):
     cost = world.data['electricity_cost']

@@ -1,4 +1,6 @@
 """Whole-set correction is atomic, retained and replayable without duplicate money."""
+import asyncio
+import json
 import uuid
 import pytest
 from tests.test_financial_scope_boundary import worker_tenant,scope_seed  # noqa: F401
@@ -7,6 +9,7 @@ from tests.test_scoped_account_statements import client
 from tests.test_scope_payment_reconciliation import read_value
 from tests.test_allocation_adoptions import confirm_grant
 from tests.test_allocation_correction_preview import prepared,preview_url,parent,coverage
+from tests.test_organization_export import unpack
 
 pytestmark=pytest.mark.asyncio
 
@@ -48,6 +51,119 @@ async def test_correction_replaces_all_members_and_source_once(migrator_session,
     assert await read_value('SELECT count(*) FROM cost_entry WHERE organization_id=:org AND superseded_by_id IS NULL',ids)==3
     assert str(await read_value('SELECT sum(gross_amount) FROM cost_entry WHERE organization_id=:org AND superseded_by_id IS NULL',ids))==('-119.00' if credit else '119.00')
     assert await read_value('SELECT count(*) FROM invoice_document WHERE organization_id=:org AND status=\'active\'',ids)==1
+
+
+async def split_debit(api, ids, amount='60,00'):
+    response = await api.post('/api/bank-accounts', json={
+        'property_id': str(ids['property']), 'accounting_scope_id': str(ids['scope']),
+        'account_type': 'LAUFEND', 'label': 'Reviewed split cost',
+    })
+    assert response.status_code == 201, response.text
+    bank = response.json()['id']
+    statement = (
+        'Buchungstag;Wertstellung;Betrag;Name;Verwendungszweck\n'
+        f'02.02.2026;02.02.2026;-{amount};Stadtwerke;Reviewed split\n'
+    ).encode()
+    response = await api.post(f'/api/bank-accounts/{bank}/imports', params={'dry_run': 'false'},
+                              files={'file': ('split.csv', statement, 'text/csv')})
+    assert response.status_code == 200, response.text
+    page = await api.get('/api/bank-transactions', params={'bank_account_id': bank})
+    return bank, page.json()['items'][0]['id']
+
+
+async def test_covered_reviewed_split_requires_explicit_successor(migrator_session, scope_seed, store):
+    ids = await fixture(migrator_session, scope_seed)
+    await confirm_grant(ids)
+    async with client(ids) as api:
+        old, _, review, _ = await prepared(api, ids)
+        covered = old['costs'][1]['cost_entry_id']
+        bank, tid = await split_debit(api, ids)
+        url = f"/api/allocation-sets/{old['id']}/corrections"
+        unpaid = (await api.get(preview_url(old, review))).json()
+        response = await api.post(f'/api/bank-transactions/{tid}/assign', json={'cost_entry_id': covered})
+        assert response.status_code == 200, response.text
+        stale = await api.post(url, **command(old, review, unpaid))
+        assert stale.status_code == 409, stale.text
+        preview = (await api.get(preview_url(old, review))).json()
+        assert preview['can_review'] and preview['old']['costs'][1]['bank_covered_amount'] == '60.00', preview
+        body = command(old, review, preview)
+        missing = await api.post(url, **body)
+        assert missing.status_code == 422, missing.text
+        for source, target, status in [
+            (covered, str(uuid.uuid4()), 404),
+            (str(uuid.uuid4()), preview['proposed']['costs'][2]['allocation_line_id'], 404),
+            (covered, preview['proposed']['costs'][0]['allocation_line_id'], 422),
+        ]:
+            body['json']['bank_coverage_successors'] = {source: target}
+            invalid = await api.post(url, **body)
+            assert invalid.status_code == status, invalid.text
+        assert (await api.get(f'/api/cost-entries/{covered}')).json()['superseded_by_id'] is None
+        line = preview['proposed']['costs'][2]['allocation_line_id']
+        body['json']['bank_coverage_successors'] = {covered: line}
+        response = await api.post(url, **body)
+        assert response.status_code == 201, response.text
+        result = response.json()
+        assert (await api.post(url, **body)).json() == result
+        body['json']['bank_coverage_successors'] = {covered: preview['proposed']['costs'][1]['allocation_line_id']}
+        changed = await api.post(url, **body)
+        assert changed.status_code == 409, changed.text
+        actual = result['allocation']['costs']
+        for member, expected in zip(actual, ('19.00', '40.00', '0.00'), strict=True):
+            entry = await api.get(f"/api/cost-entries/{member['cost_entry_id']}")
+            assert entry.json()['bank_open_amount'] == expected, entry.text
+        rows = (await api.get('/api/bank-transactions', params={'bank_account_id': bank, 'status': 'ZUGEORDNET'})).json()['items']
+        assert [(row['id'], row['cost_entry_id']) for row in rows] == [(tid, covered)]
+    await confirm_grant(ids, 'actor')
+    async with client(ids, 'actor') as api:
+        archive = await api.post('/api/organizations/export')
+        assert archive.status_code == 200, archive.text
+        files = unpack(archive.content)
+        costs = {row['id']: row for row in map(json.loads, files['entities/cost_entry.jsonl'].splitlines())}
+        assert costs[covered]['bank_coverage_successor_id'] == actual[2]['cost_entry_id']
+        assert costs[covered]['superseded_by_id'] == actual[0]['cost_entry_id']
+        transactions = {row['id']: row for row in map(json.loads, files['entities/bank_transaction.jsonl'].splitlines())}
+        assert transactions[tid]['cost_entry_id'] == covered
+    assert await read_value('SELECT count(*) FROM allocation_correction WHERE organization_id=:org', ids) == 1
+
+
+async def test_reviewed_correction_and_bank_assignment_cannot_both_use_unpaid_preview(migrator_session, scope_seed, store):
+    ids = await fixture(migrator_session, scope_seed)
+    await confirm_grant(ids)
+    async with client(ids) as api:
+        old, _, review, _ = await prepared(api, ids)
+        _, tid = await split_debit(api, ids)
+        covered = old['costs'][1]['cost_entry_id']
+        preview = (await api.get(preview_url(old, review))).json()
+        assigned, corrected = await asyncio.gather(
+            api.post(f'/api/bank-transactions/{tid}/assign', json={'cost_entry_id': covered}),
+            api.post(f"/api/allocation-sets/{old['id']}/corrections", **command(old, review, preview)),
+        )
+        assert (assigned.status_code, corrected.status_code) in {(200, 409), (409, 201)}, (assigned.text, corrected.text)
+
+
+async def test_reviewed_successor_must_cover_sum_of_all_selected_predecessors(migrator_session, scope_seed, store):
+    ids = await fixture(migrator_session, scope_seed)
+    await confirm_grant(ids)
+    async with client(ids) as api:
+        old, _, review, _ = await prepared(api, ids)
+        old_ids = [item['cost_entry_id'] for item in old['costs']]
+        for cost, amount in zip(old_ids, ('30,00', '40,00'), strict=True):
+            _, tid = await split_debit(api, ids, amount)
+            response = await api.post(f'/api/bank-transactions/{tid}/assign', json={'cost_entry_id': cost})
+            assert response.status_code == 200, response.text
+        preview = (await api.get(preview_url(old, review))).json()
+        url = f"/api/allocation-sets/{old['id']}/corrections"
+        body = command(old, review, preview)
+        second, third = (line['allocation_line_id'] for line in preview['proposed']['costs'][1:])
+        body['json']['bank_coverage_successors'] = dict.fromkeys(old_ids, third)
+        response = await api.post(url, **body)
+        assert response.status_code == 422 and 'Summe' in response.json()['detail'], response.text
+        body['json']['bank_coverage_successors'] = dict(zip(old_ids, (third, second), strict=True))
+        response = await api.post(url, **body)
+        assert response.status_code == 201, response.text
+        for member, expected in zip(response.json()['allocation']['costs'], ('19.00', '0.00', '30.00'), strict=True):
+            entry = await api.get(f"/api/cost-entries/{member['cost_entry_id']}")
+            assert entry.json()['bank_open_amount'] == expected, entry.text
 
 
 async def next_review(api,allocation,review):
@@ -180,6 +296,10 @@ async def test_correction_guards_runtime_writes_and_retains_evidence_on_downgrad
             before={f:db.scalar(text('SELECT pg_get_functiondef(CAST(:signature AS regprocedure))'),{'signature':f}) for f in functions}
             point=db.begin_nested()
             try:
+                # The rollback-only rehearsal must unwind the newer bank function edits first.
+                db.execute(text('TRUNCATE bank_transaction,cost_entry CASCADE'))
+                bank_correction=importlib.import_module('migrations.versions.0172_bank_cost_corrections')
+                bank_correction.downgrade()
                 db.execute(text('TRUNCATE allocation_integrity_attestation CASCADE'))
                 computation=importlib.import_module('migrations.versions.0115_financial_computation_evidence')
                 db.execute(text('TRUNCATE financial_computation_attestation CASCADE'))
@@ -207,6 +327,7 @@ async def test_correction_guards_runtime_writes_and_retains_evidence_on_downgrad
                 importlib.import_module('migrations.versions.0121_visual_allocation_sources').upgrade()
                 importlib.import_module('migrations.versions.0122_allocation_source_replacements').upgrade()
                 importlib.import_module('migrations.versions.0123_replacement_exception_outcomes').upgrade()
+                bank_correction.upgrade()
                 assert before=={f:db.scalar(text('SELECT pg_get_functiondef(CAST(:signature AS regprocedure))'),{'signature':f}) for f in functions}
             finally:point.rollback()
     finally:engine.dispose()

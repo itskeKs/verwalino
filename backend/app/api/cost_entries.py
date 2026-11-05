@@ -240,7 +240,7 @@ async def create_cost_entry(
     entry = await svc.create(entry, accounting_scope_id=body.accounting_scope_id, source_document_id=body.source_document_id,
         idempotency_key=idempotency_key,
         request_digest=IdempotencyService.digest(body.model_dump(mode="json")))
-    return _to_out(entry)
+    return await _to_out_with_coverage(entry, db, auth.organization_id)
 
 
 @router.patch("/{entry_id}", response_model=CostEntryOut)
@@ -259,7 +259,7 @@ async def update_cost_entry(
             else:
                 updates[field_name] = value
     entry = await svc.update_draft(entry_id, updates)
-    return _to_out(entry)
+    return await _to_out_with_coverage(entry, db, auth.organization_id)
 
 
 @router.post("/{entry_id}/confirm", response_model=CostEntryOut)
@@ -270,7 +270,7 @@ async def confirm_cost_entry(
 ):
     svc = CostEntryService(db, auth.organization_id, auth.user_id)
     entry = await svc.confirm(entry_id)
-    return _to_out(entry)
+    return await _to_out_with_coverage(entry, db, auth.organization_id)
 
 
 @router.post("/{entry_id}/reject", response_model=CostEntryOut)
@@ -281,7 +281,7 @@ async def reject_cost_entry(
 ):
     svc = CostEntryService(db, auth.organization_id, auth.user_id)
     entry = await svc.reject(entry_id)
-    return _to_out(entry)
+    return await _to_out_with_coverage(entry, db, auth.organization_id)
 
 
 @router.post("/{entry_id}/correction", response_model=CostEntryOut, status_code=201)
@@ -300,12 +300,15 @@ async def create_correction(
             else:
                 corrections[field_name] = value
     entry = await svc.create_correction_version(entry_id, corrections)
-    return _to_out(entry)
+    return await _to_out_with_coverage(entry, db, auth.organization_id)
 
 
-def _to_out(e: CostEntry, bank_open_amount=...) -> CostEntryOut:
-    if bank_open_amount is ...:
-        bank_open_amount = e.gross_amount
+async def _to_out_with_coverage(e: CostEntry, db: AsyncSession, org_id: uuid.UUID) -> CostEntryOut:
+    amounts = await CostEntryRepository(db, org_id).bank_open_amounts([e.id])
+    return _to_out(e, amounts.get(e.id))
+
+
+def _to_out(e: CostEntry, bank_open_amount: Decimal | None) -> CostEntryOut:
     return CostEntryOut(
         id=str(e.id),
         organization_id=str(e.organization_id),

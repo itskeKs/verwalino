@@ -47,7 +47,8 @@ async def exported(w):
 
 
 @pytest.mark.parametrize('scoped', [False, True])
-async def test_cost_bank_links_and_remaining_coverage_survive_archive_round_trip(rent_world, import_target, rent_db, export_store, scoped):
+@pytest.mark.parametrize('corrected_source', [False, True])
+async def test_cost_bank_links_and_corrected_coverage_survive_archive_round_trip(rent_world, import_target, rent_db, export_store, scoped, corrected_source):
     from tests.test_bank_transaction_assign import cost_assignment_graph, cost_open
     async with api_client(rent_world) as api:
         scope_id = None
@@ -64,6 +65,12 @@ async def test_cost_bank_links_and_remaining_coverage_survive_archive_round_trip
             assert response.status_code == 201, response.text
         cost, bank, tids = await cost_assignment_graph(api, rent_world['property'], scope_id=scope_id)
         assert await cost_open(api, cost) == 60
+        successor = cost
+        if corrected_source:
+            corrected = await api.post(f'/api/cost-entries/{cost}/correction', json={'gross_amount': '120.00'})
+            assert corrected.status_code == 201, corrected.text
+            successor = corrected.json()['id']
+            assert (await api.post(f'/api/cost-entries/{successor}/confirm')).status_code == 200
         archive = await api.post('/api/organizations/export')
         assert archive.status_code == 200, archive.text
     async with api_client(import_target) as api:
@@ -71,15 +78,16 @@ async def test_cost_bank_links_and_remaining_coverage_survive_archive_round_trip
         assert response.status_code == 200, response.text
         ids = response.json()['id_map']
         mapped_cost = ids['cost_entry'][cost]
-        assert await cost_open(api, mapped_cost) == 60
+        mapped_successor = ids['cost_entry'][successor]
+        assert await cost_open(api, mapped_successor) == 60
         page = await api.get('/api/bank-transactions', params={'bank_account_id': ids['bank_account'][bank], 'status': 'ALL'})
         assert page.status_code == 200, page.text
         rows = {row['id']: row for row in page.json()['items']}
         assert rows[ids['bank_transaction'][tids[0]]]['cost_entry_id'] == mapped_cost
-        for tid in tids:
-            response = await api.post(f"/api/bank-transactions/{ids['bank_transaction'][tid]}/assign", json={'cost_entry_id': mapped_cost})
+        for tid, target in zip(tids, (mapped_cost, mapped_successor), strict=True):
+            response = await api.post(f"/api/bank-transactions/{ids['bank_transaction'][tid]}/assign", json={'cost_entry_id': target})
             assert response.status_code == 200, response.text
-        assert await cost_open(api, mapped_cost) == 0
+        assert await cost_open(api, mapped_successor) == 0
 
 
 @pytest.mark.parametrize('corrected_source', [False, True])
@@ -362,6 +370,32 @@ async def test_private_invoice_admission_is_listed_as_a_missing_dependency(rent_
         assert answer.status_code == 422, answer.text
         assert {'entity': 'invoice_upload_admission', 'source_ids': [identity], 'count': 1} in answer.json()['detail']['missing_dependencies']
     assert await rent_db.scalar(text('SELECT count(*) FROM property WHERE organization_id=:org'), import_target) == 0
+    await rent_db.rollback()
+
+
+async def test_archive_cannot_supply_a_reviewed_bank_successor_without_native_provenance(rent_world, import_target, rent_db, export_store):
+    from tests.test_bank_transaction_assign import cost_assignment_graph
+    async with api_client(rent_world) as api:
+        first, _, _ = await cost_assignment_graph(api, rent_world['property'])
+        predecessor = first
+        for _ in range(2):
+            response = await api.post(f'/api/cost-entries/{predecessor}/correction', json={'gross_amount': '120.00'})
+            assert response.status_code == 201, response.text
+            predecessor = response.json()['id']
+            response = await api.post(f'/api/cost-entries/{predecessor}/confirm')
+            assert response.status_code == 200, response.text
+        archive = await api.post('/api/organizations/export')
+        assert archive.status_code == 200, archive.text
+    files = unpack(archive.content)
+    costs = [json.loads(line) for line in files['entities/cost_entry.jsonl'].splitlines()]
+    old = next(row for row in costs if row['id'] == first)
+    assert old['superseded_by_id'] != predecessor and old['bank_coverage_successor_id'] is None
+    old['bank_coverage_successor_id'] = predecessor
+    files['entities/cost_entry.jsonl'] = b''.join(json.dumps(row).encode() + b'\n' for row in costs)
+    async with api_client(import_target) as api:
+        response = await api.post('/api/organizations/import', files={'file': ('tampered.tar.gz', repack(files))})
+        assert response.status_code == 422 and response.json()['detail']['code'] == 'IMPORT_INTEGRITY_REFUSAL', response.text
+    assert await rent_db.scalar(text('SELECT count(*) FROM cost_entry WHERE organization_id=:org'), import_target) == 0
     await rent_db.rollback()
 
 

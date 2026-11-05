@@ -32,3 +32,12 @@ Feature: Bank assignment
     When the manager assigns the second electricity debit to the existing cost
     Then the electricity debit is assigned and the cost has 0 EUR remaining
     And the yearly electricity expense remains 120 EUR
+
+  Scenario: A corrected cost keeps coverage from its original version
+    Given a confirmed electricity cost of 150 EUR and two 60 EUR bank debits
+    When the manager assigns the electricity debit to the existing cost
+    And the manager confirms a correction of the electricity cost to 120 EUR
+    Then the electricity debit is assigned and the cost has 60 EUR remaining
+    When the manager assigns the second electricity debit to the existing cost
+    Then the electricity debit is assigned and the cost has 0 EUR remaining
+    And the yearly electricity expense remains 120 EUR
