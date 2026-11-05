@@ -158,10 +158,12 @@ it("preserves newly created shares when switching the listing to the preparation
 it("requires an adopted resolution and retains financial inputs when missing", async () => {
   show(); await choose(); fill();
   fireEvent.change(screen.getByLabelText("Beschluss *"), { target: { value: "" } });
-  fireEvent.submit(screen.getByRole("button", { name: "Sonderumlage anlegen" }).closest("form")!);
+  fireEvent.click(screen.getByRole("button", { name: "Sonderumlage anlegen" }));
   expect(await screen.findByRole("alert")).toHaveTextContent("Eine Sonderumlage braucht einen Beschluss.");
   expect(api.post).not.toHaveBeenCalled();
   expect(screen.getByLabelText("Betrag (EUR) *")).toHaveValue("10000,00");
+  expect(screen.getByLabelText("Fällig am *")).toHaveValue("2026-06-15");
+  expect(screen.getByLabelText("Beschluss *")).toBeRequired();
   expect(screen.queryByRole("option", { name: /Abgelehnte Maßnahme/ })).toBeNull();
 });
 it("labels an unlinked levy and replaces the one-time form with the confirmed reference", async () => {

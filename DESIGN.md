@@ -1459,6 +1459,9 @@ are recorded adopted resolutions of the selected property, labelled with German
 meeting date, TOP and wording. Source loading failures remain visible and can be
 retried; changing the property clears the selection. Existing amount/date inputs
 remain intact after a refused save.
+Clicking “Sonderumlage anlegen” without a selection keeps the native required
+constraint and displays “Eine Sonderumlage braucht einen Beschluss.” in the
+page's alert instead of the browser's default validation bubble. No request is sent.
 
 Unlinked historical levy cards show “ohne Beschlussbezug”. A writer who selects
 the same prepare scope can use “Beschluss einmalig zuordnen” and “Beschluss
@@ -1476,5 +1479,7 @@ at 360 px. Register access alone grants no financial disclosure.
 | --- | --- | --- |
 | Levy before | [Desktop](docs/assets/design/levy-page-before-1280.png) | [Phone](docs/assets/design/levy-page-before-360.png) |
 | Levy after | [Desktop](docs/assets/design/levy-page-after-1280.png) | [Phone](docs/assets/design/levy-page-after-360.png) |
+| Missing resolution before | [Desktop](docs/assets/design/levy-missing-resolution-before-1280.png) | [Phone](docs/assets/design/levy-missing-resolution-before-360.png) |
+| Missing resolution after | [Desktop](docs/assets/design/levy-missing-reference-after-1280.png) | [Phone](docs/assets/design/levy-missing-reference-after-360.png) |
 | Register before | [Desktop](docs/assets/design/levy-register-before-1280.png) | [Phone](docs/assets/design/levy-register-before-360.png) |
 | Register after | [Desktop](docs/assets/design/levy-register-after-1280.png) | [Phone](docs/assets/design/levy-register-after-360.png) |

@@ -18,6 +18,17 @@ Feature: Special levy
     And the roof repair register entry shows its levy amount and due date
 
   @browser
+  Scenario Outline: Missing resolution feedback preserves the levy inputs at <width> pixels
+    When the manager clicks create without a resolution in the browser at <width> pixels
+    Then the browser explains the missing resolution and retains the financial inputs
+    And no special levy has been created
+
+    Examples:
+      | width |
+      | 1280  |
+      | 360   |
+
+  @browser
   Scenario Outline: The manager creates and follows the resolution levy at <width> pixels
     When the manager creates the roof repair levy in the browser at <width> pixels
     Then the levy links to the meeting of 15 May and TOP 3

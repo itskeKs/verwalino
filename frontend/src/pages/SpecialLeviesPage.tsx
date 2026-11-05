@@ -21,6 +21,7 @@ interface ResolutionChoice {
 }
 const dateLabel = (value: string) => value.split("-").reverse().join(".");
 const errorText = (error: unknown) => error instanceof Error ? error.message : "Anfrage fehlgeschlagen. Bitte erneut versuchen.";
+const missingResolutionMessage = "Eine Sonderumlage braucht einen Beschluss.";
 
 export default function SpecialLeviesPage() {
   const [searchParams] = useSearchParams();
@@ -124,7 +125,7 @@ export default function SpecialLeviesPage() {
     const normalized = moneyInput(amount);
     if (!normalized) { setError("Betrag muss positiv sein, mit höchstens 12 Vorkomma- und 2 Nachkommastellen."); return; }
     if (!validDate(dueDate)) { setError("Bitte ein gültiges Fälligkeitsdatum angeben."); return; }
-    if (!resolutionId) { setError("Eine Sonderumlage braucht einen Beschluss."); return; }
+    if (!resolutionId) { setError(missingResolutionMessage); return; }
     saving.current = true; setPending(true); setError(null);
     const request = generation.current;
     // A list started before this mutation must not remove its newly persisted result.
@@ -208,7 +209,9 @@ export default function SpecialLeviesPage() {
     {canWrite && propertyId && <form className="card mb-4" onSubmit={create}>
       <h2>Sonderumlage anlegen</h2>
       <AccountingScopeSelector key={`prepare-${propertyId}`} propertyId={propertyId} kind="WEG" capability="prepare" value={prepareScope} onChange={id => { generation.current++; setPrepareScope(id); }} onValidityChange={setPrepareValid} />
-      <label>Beschluss *<select aria-label="Beschluss *" className="w-full min-w-0" required value={resolutionId} disabled={pending || !!resolutionError} onChange={event => setResolutionId(event.target.value)}>{resolutionOptions()}</select></label>
+      <label>Beschluss *<select aria-label="Beschluss *" className="w-full min-w-0" required value={resolutionId} disabled={pending || !!resolutionError}
+        onInvalid={event => { event.preventDefault(); setError(missingResolutionMessage); }}
+        onChange={event => setResolutionId(event.target.value)}>{resolutionOptions()}</select></label>
       <label>Betrag (EUR) *<input aria-label="Betrag (EUR) *" type="text" inputMode="decimal" required value={amount} onChange={e => setAmount(e.target.value)} /></label>
       <label>Fällig am *<input aria-label="Fällig am *" type="date" required value={dueDate} onChange={e => setDueDate(e.target.value)} /></label>
       <button className="btn btn--primary" type="submit" disabled={pending || !prepareScope || !prepareValid || !context || !!resolutionError}>Sonderumlage anlegen</button>

@@ -103,10 +103,7 @@ async def capture(browser, screen):
         await browser.page.screenshot(path=str(directory / f'levy-{screen}-after-{browser.page.viewport_size["width"]}.png'), full_page=True)
 
 
-@when(parsers.parse('the manager creates the roof repair levy in the browser at {width:d} pixels'))
-@browser_step
-async def browser_create_levy(browser_world, width):
-    browser = browser_world
+async def prepare_levy_form(browser, width):
     await browser.page.set_viewport_size({'width': width, 'height': 1000})
     await browser.visit('/sonderumlagen')
     await browser.select('WEG-Objekt *', browser.world.data['property']['id'])
@@ -115,6 +112,38 @@ async def browser_create_levy(browser_world, width):
     await browser.scope(scope=form)
     await form.get_by_label('Betrag (EUR) *', exact=True).fill('1200,00')
     await form.get_by_label('Fällig am *', exact=True).fill('2026-07-01')
+    return form
+
+
+@when(parsers.parse('the manager clicks create without a resolution in the browser at {width:d} pixels'))
+@browser_step
+async def browser_missing_resolution(browser_world, width):
+    browser = browser_world
+    form = await prepare_levy_form(browser, width)
+    requests = []
+    browser.page.on('request', lambda request: requests.append(request)
+        if request.method == 'POST' and '/api/special-levies' in request.url else None)
+    await form.get_by_role('button', name='Sonderumlage anlegen', exact=True).click()
+    browser.world.data['missing_resolution_posts'] = requests
+
+
+@then('the browser explains the missing resolution and retains the financial inputs')
+@browser_step
+async def browser_missing_resolution_feedback(browser_world):
+    browser = browser_world
+    await expect(browser.page.get_by_role('alert')).to_have_text('Eine Sonderumlage braucht einen Beschluss.')
+    await expect(browser.page.get_by_label('Beschluss *', exact=True)).to_have_value('')
+    await expect(browser.page.get_by_label('Betrag (EUR) *', exact=True)).to_have_value('1200,00')
+    await expect(browser.page.get_by_label('Fällig am *', exact=True)).to_have_value('2026-07-01')
+    assert browser.world.data['missing_resolution_posts'] == []
+    await capture(browser, 'missing-reference')
+
+
+@when(parsers.parse('the manager creates the roof repair levy in the browser at {width:d} pixels'))
+@browser_step
+async def browser_create_levy(browser_world, width):
+    browser = browser_world
+    form = await prepare_levy_form(browser, width)
     await capture(browser, 'page')
     await browser.select('Beschluss *', browser.world.data['levy_resolution']['id'], form)
     async with browser.page.expect_response(lambda r: r.request.method == 'POST' and '/api/special-levies' in r.url) as pending:
