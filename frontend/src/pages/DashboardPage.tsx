@@ -161,10 +161,8 @@ function DashboardContent() {
       {/* Header */}
       <div>
         <p className="text-sm text-muted-foreground">{dateLabel}</p>
-        <h1 className="mt-0.5 text-2xl font-semibold tracking-tight">
-          {greeting()}
-          {org ? `, ${org.name}` : ""}
-        </h1>
+        <p className="mt-0.5 break-words text-sm font-medium text-muted-foreground">{org?.name ?? ""}</p>
+        <h1 className="mt-0.5 text-2xl font-semibold tracking-tight">{greeting()}</h1>
       </div>
 
       <div className="form-grid max-w-xl">

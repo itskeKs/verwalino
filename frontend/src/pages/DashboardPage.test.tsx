@@ -32,6 +32,14 @@ it("uses shared button styling for due-task actions including pagination", async
     expect(region.getByRole("button", { name })).toHaveClass("btn");
   }
 });
+it("greets without a name and shows the organization on its own line above the heading", async () => {
+  vi.mocked(endpoints.getMyOrganization).mockResolvedValue({ id: "org", name: "Sabine Muster Hausverwaltung" });
+  show();
+  const heading = await screen.findByRole("heading", { name: /Guten (Morgen|Tag|Abend)/ });
+  expect(heading).toBeVisible();
+  expect(screen.getByText("Sabine Muster Hausverwaltung").compareDocumentPosition(heading) & 4).toBeTruthy();
+  expect(heading).not.toHaveTextContent("Sabine Muster Hausverwaltung");
+});
 it("shows tomorrow through seven calendar days inclusive, and removes only after server success", async () => {
   show(); expect(await screen.findByText(task.title)).toBeVisible();
   const through = new Date(); through.setDate(through.getDate() + 7);

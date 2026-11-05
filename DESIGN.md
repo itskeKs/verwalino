@@ -310,8 +310,9 @@ Navigation entries are `NavItem`s in `GROUPS` (label = German noun, one lucide i
 
 New screens follow these page structures and use a German noun as their `h1`.
 
-- **Page header.** Either a date eyebrow plus greeting `h1` (dashboard: `text-sm muted` line, then
-  `h1 text-2xl`), or `h1` left and actions right (`flex justify-between`, wraps): secondary actions
+- **Page header.** Either a date eyebrow plus optional context line and greeting `h1` (dashboard:
+  date and organization in muted `text-sm` lines, then `h1 text-2xl`), or `h1` left and actions
+  right (`flex justify-between`, wraps): secondary actions
   first, the single primary action last, labelled "+ Neues Objekt" (legacy) or an icon `Button` "Neues Mandat".
 - **List page** (`PropertiesPage.tsx`, `MandatePage.tsx`): header, optional import panel, `ListSearch`
   (explicit "Suchen" submit), error line, inline create/edit card, table card, "Weitere laden" for the
