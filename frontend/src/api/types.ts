@@ -79,6 +79,7 @@ export interface User {
 export type ManagementType = "MIET" | "WEG" | "SEV" | "MISCH";
 
 export interface Property {
+  federal_state?: string | null;
   construction_year?: number | null;
   total_area?: string | null;
   id: string;
@@ -95,6 +96,7 @@ export interface Property {
 export type MeaScaleStatus = "LEGACY_UNCONFIRMED" | "CONFIRMED";
 
 export interface PropertyCreate {
+  federal_state?: string | null;
   construction_year?: number | null;
   total_area?: string | null;
   data_audience?: DeclarationApprovalRequest["new_property_audience"];
@@ -107,6 +109,7 @@ export interface PropertyCreate {
 }
 
 export interface PropertyUpdate {
+  federal_state?: string | null;
   construction_year?: number | null;
   total_area?: string | null;
   name?: string;
@@ -796,6 +799,7 @@ export interface SettlementRun {
   superseded_by_id: string | null;
   lines: SettlementLine[];
   extra_inputs?: ComputeRequest | null;
+  vacancy_attribution?: { unit_number: string; cost_label: string; days: number; person_days: number; amount: string }[];
 }
 
 export interface AdvanceProposal {
@@ -923,7 +927,16 @@ export interface EconomicPlanLine {
   note: string | null;
 }
 
+export interface DocumentAddressee {
+  unit_id: string;
+  unit_number: string;
+  owner_profile_id: string;
+  owner_name: string;
+  key_date: string;
+}
+
 export interface EconomicPlan {
+  addressees?: DocumentAddressee[];
   id: string;
   organization_id: string;
   property_id: string;
@@ -1188,6 +1201,12 @@ export interface MietkontoResult {
   balance: string;
 }
 
+export interface TenantMietkontoResult extends MietkontoResult {
+  open_items: (OpenItem & { is_due: boolean })[];
+  due_balance: string;
+  not_yet_due_balance: string;
+}
+
 // --- M7 Dunning (Mahnwesen) ---
 
 export type DunningStatus = "draft" | "issued" | "cancelled";
@@ -1226,6 +1245,7 @@ export interface DunningInterestSnapshot {
     period_year: number | null;
     period_month: number | null;
     due_date: string;
+    interest_start?: string;
     days: number;
     principal: string;
     interest: string;
@@ -1296,6 +1316,7 @@ export interface WegOwnerBalance {
 }
 
 export interface WegRun {
+  addressees?: DocumentAddressee[];
   id: string;
   organization_id: string;
   property_id: string;
@@ -1473,12 +1494,14 @@ export interface RegisterEntry {
   organization_id: string;
   property_id: string;
   sequence_number: number;
+  resolution_date: string;
   entry_date: string;
   location: string;
   wording: string;
   resolution_id: string;
   result: string | null;
   challenge_annotation: string | null;
+  special_levies: { id: string; accounting_scope_id: string; amount: string; due_date: string }[];
 }
 
 export interface ChallengeAnnotation {
@@ -1720,10 +1743,10 @@ export interface SpecialLevyCreate {
   accounting_scope_id: string;
   amount: string;
   due_date: string;
-  resolution_id?: string | null;
+  resolution_id: string;
 }
 
-export interface SpecialLevy extends SpecialLevyCreate {
+export interface SpecialLevy extends Omit<SpecialLevyCreate, "resolution_id"> {
   id: string;
   resolution_id: string | null;
   allocations: SpecialLevyAllocation[];
@@ -1815,4 +1838,10 @@ export interface SettlementPeriod {
   label: string;
   period_start: string;
   period_end: string;
+}
+
+export interface UnitHouseholdRow {
+  valid_from: string;
+  persons: number;
+  is_vacancy: boolean;
 }

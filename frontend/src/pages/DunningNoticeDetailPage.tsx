@@ -370,7 +370,11 @@ export function DunningNoticeDetailPage() {
         <div style={{ overflowX: "auto" }}><table className="data-table">
           <thead><tr><th>Hauptforderung</th><th>Zinsen</th><th>Typ</th><th>Periode</th><th>Fälligkeit</th><th>Tage</th></tr></thead>
           <tbody>{notice.interest_snapshot.items.map((item, index) => <tr key={index}>
-            <td className="whitespace-nowrap">{item.principal} EUR</td><td className="whitespace-nowrap">{item.interest} EUR</td>
+            <td className="whitespace-nowrap">
+              <span>{item.principal} EUR</span>
+              {item.interest_start && ["KALTMIETE", "NK_VORAUSZAHLUNG"].includes(item.payment_type) &&
+                <div className="text-xs font-normal">Zinsbeginn:<br />{item.interest_start.split("-").reverse().join(".")}</div>}
+            </td><td className="whitespace-nowrap">{item.interest} EUR</td>
             <td>{PAYMENT_TYPE_LABELS[item.payment_type] ?? item.payment_type}</td>
             <td>{item.period_year === null ? "-" : `${item.period_year}${item.period_month === null ? "" : `/${String(item.period_month).padStart(2, "0")}`}`}</td>
             <td>{item.due_date}</td><td>{item.days}</td>

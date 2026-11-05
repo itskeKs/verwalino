@@ -36,12 +36,16 @@ async def test_deadline_heating_charge_preserves_existing_rent_history_policy(mo
     from app.services.fristen_service import FristenService
     from app.repositories.lease_rent_change_repo import LeaseRentChangeRepository
 
-    lease = SimpleNamespace(id=uuid.uuid4(), valid_from=date(2026, 1, 1), valid_to=None,
+    lease = SimpleNamespace(id=uuid.uuid4(), unit_id=uuid.uuid4(), valid_from=date(2026, 1, 1), valid_to=None,
         base_rent=Decimal('750.00'), advance_payment=Decimal('150.00'), heating_advance_payment=Decimal('90.00'))
     # Deadline counts previously used the original lease, regardless of history.
     monkeypatch.setattr(LeaseRentChangeRepository, 'list_for_lease', AsyncMock(return_value=[
         SimpleNamespace(valid_from=date(2026, 1, 1), base_rent=Decimal('0.00'),
             advance_payment=Decimal('0.00'), heating_advance_payment=Decimal('0.00'))]))
+    from app.repositories.unit_repo import UnitRepository
+    from app.repositories.property_repo import PropertyRepository
+    monkeypatch.setattr(UnitRepository, 'get_by_id', AsyncMock(return_value=SimpleNamespace(property_id=uuid.uuid4())))
+    monkeypatch.setattr(PropertyRepository, 'get_by_id', AsyncMock(return_value=SimpleNamespace(federal_state='BY')))
     service = FristenService(None, uuid.uuid4())
     service._repo = SimpleNamespace(all_leases=AsyncMock(return_value=[lease]))
     service._payments = SimpleNamespace(list_for_lease=AsyncMock(return_value=[]))

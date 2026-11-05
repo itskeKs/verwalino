@@ -35,18 +35,43 @@ async def test_0128_migration_roundtrip_before_levy_notices(migrator_session):
     from tests.conftest import MIGRATOR_SYNC_URL
     await migrator_session.commit()
     migration = importlib.import_module('migrations.versions.0128_special_levy_dunning')
+    successor_migration = importlib.import_module('migrations.versions.0163_dated_successor_dunning')
     engine = create_engine(MIGRATOR_SYNC_URL)
     try:
         with engine.begin() as connection, Operations.context(MigrationContext.configure(connection)):
+            before = connection.scalar(text("SELECT pg_get_functiondef('validate_dunning_context()'::regprocedure)"))
+            contexts_sql = text('SELECT to_jsonb(c) FROM dunning_scope_context c ORDER BY organization_id,dunning_notice_id')
+            before_contexts = connection.execute(contexts_sql).scalars().all()
             point = connection.begin_nested()
             try:
-                before = connection.scalar(text("SELECT pg_get_functiondef('validate_dunning_context()'::regprocedure)"))
+                successors = connection.execute(text("""SELECT c.dunning_notice_id
+                    FROM dunning_scope_context c JOIN dunning_notice n
+                      ON n.id=c.dunning_notice_id AND n.organization_id=c.organization_id
+                    WHERE c.economic_plan_id IS NOT NULL AND n.owner_profile_id IS NOT NULL
+                      AND NOT EXISTS(SELECT 1 FROM economic_plan_line ln
+                        WHERE ln.organization_id=c.organization_id AND ln.economic_plan_id=c.economic_plan_id
+                          AND ln.owner_profile_id=n.owner_profile_id AND ln.line_type='OWNER_ADVANCE')""")).scalars().all()
+                if successors:
+                    with pytest.raises(RuntimeError, match='Cannot remove dated successor dunning provenance'):
+                        successor_migration.downgrade()
+                    # Earlier scenarios retain real successor notices. Only
+                    # this rollback-only historical projection excludes them.
+                    connection.execute(text('ALTER TABLE dunning_scope_context DISABLE TRIGGER USER'))
+                    connection.execute(text('DELETE FROM dunning_scope_context WHERE dunning_notice_id=ANY(:ids)'),
+                                       {'ids': successors})
+                    connection.execute(text('ALTER TABLE dunning_scope_context ENABLE TRIGGER USER'))
+                successor_migration.downgrade()
+                historical = connection.scalar(text("SELECT pg_get_functiondef('validate_dunning_context()'::regprocedure)"))
                 migration.downgrade()
                 assert not connection.scalar(text("SELECT EXISTS(SELECT 1 FROM information_schema.columns WHERE table_name='dunning_scope_context' AND column_name='special_levy_ids')"))
                 migration.upgrade()
+                assert connection.scalar(text("SELECT pg_get_functiondef('validate_dunning_context()'::regprocedure)")) == historical
+                successor_migration.upgrade()
                 assert connection.scalar(text("SELECT pg_get_functiondef('validate_dunning_context()'::regprocedure)")) == before
             finally:
                 point.rollback()
+            assert connection.execute(contexts_sql).scalars().all() == before_contexts
+            assert connection.scalar(text("SELECT pg_get_functiondef('validate_dunning_context()'::regprocedure)")) == before
     finally:
         engine.dispose()
 
@@ -153,9 +178,10 @@ async def test_multiple_levies_and_actual_payment_matching(levy_db, levy_fixture
 
 @pytest.mark.asyncio
 async def test_plan_plus_levy_keeps_hausgeld_semantics(levy_db, levy_fixture):
-    ids = {**levy_fixture, 'plan': uuid.uuid4(), 'profile': levy_fixture['owners'][0]}
+    ids = {**levy_fixture, 'plan': uuid.uuid4(), 'profile': levy_fixture['owners'][0],
+           'unit': levy_fixture['units'][0]}
     await levy_db.execute(text("INSERT INTO economic_plan(id,organization_id,property_id,plan_year,period_start,period_end,status,engine_version) VALUES (:plan,:org,:property,2026,'2026-01-01','2026-12-31','draft','fixture')"), ids)
-    await levy_db.execute(text("INSERT INTO economic_plan_line(organization_id,economic_plan_id,line_type,owner_profile_id,label,planned_amount,monthly_amount,sort_order) VALUES (:org,:plan,'OWNER_ADVANCE',:profile,'Plan source',1200,100,1)"), ids)
+    await levy_db.execute(text("INSERT INTO economic_plan_line(organization_id,economic_plan_id,line_type,unit_id,owner_profile_id,label,planned_amount,monthly_amount,sort_order) VALUES (:org,:plan,'OWNER_ADVANCE',:unit,:profile,'Plan source',1200,100,1)"), ids)
     await levy_db.execute(text("INSERT INTO accounting_scope_binding(organization_id,property_id,scope_id,economic_plan_id,origin,reason,reviewed_by) VALUES (:org,:property,:scope,:plan,'REVIEWED','Plan fixture',:actor)"), ids)
     await levy_db.commit()
     async with client(ids) as api:
@@ -347,7 +373,9 @@ async def test_same_owner_other_property_payment_and_levy_do_not_cross_scope(lev
     await bind(levy_db, other)
     await levy_db.execute(text('UPDATE scope_grant SET revoked_at=now(),revoked_by=:actor WHERE id=:grant'), other)
     await levy_db.execute(text("INSERT INTO scope_grant(organization_id,scope_id,user_id,capabilities,granted_by,reason) VALUES (:org,:scope,:clerk,ARRAY['read','prepare','confirm'],:actor,'Second property payment test')"), other)
-    other.update(owners=ids['owners'], unit=uuid.uuid4())
+    other.update(owners=ids['owners'], unit=uuid.uuid4(), meeting=uuid.uuid4(), resolution=uuid.uuid4())
+    await levy_db.execute(text("INSERT INTO owners_meeting(id,organization_id,property_id,meeting_date,location,meeting_type,status) VALUES (:meeting,:org,:property,'2026-05-15','','ORDENTLICH','HELD')"), other)
+    await levy_db.execute(text("INSERT INTO resolution(id,organization_id,meeting_id,wording,votes_yes,votes_no,votes_abstain,result) VALUES (:resolution,:org,:meeting,'Second property levy',1,0,0,'ANGENOMMEN')"), other)
     await levy_db.execute(text("INSERT INTO unit(id,organization_id,property_id,number,usage_type,mea) VALUES (:unit,:org,:property,'Elsewhere','WOHNUNG',1000)"), other)
     await levy_db.execute(text("INSERT INTO ownership_history(organization_id,unit_id,owner_profile_id,valid_from) VALUES (:org,:unit,:owner,'2024-01-01')"), {**other, 'owner': ids['owners'][0]})
     await levy_db.commit()

@@ -26,6 +26,7 @@ from decimal import Decimal
 
 from fastapi import HTTPException
 
+from app.services.document_addressees import document_addressees
 from app.engine.periods import validate_settlement_period
 from app.core.rbac import ScopeCapability
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -434,7 +435,8 @@ class WegSettlementService:
         self._write_report_lines(run, result)
 
         run.engine_version = ENGINE_VERSION
-        run.snapshot_payload = {**build_asset_report_payload(inp, result), "financial_input_coverage": coverage}
+        run.snapshot_payload = {**build_asset_report_payload(inp, result), "financial_input_coverage": coverage,
+            "addressees": await document_addressees(self._session, self._org_id, run.property_id, run.period_end)}
         await self._runs.update(run)
         await self._session.flush()
         await self._audit.create(
@@ -457,10 +459,9 @@ class WegSettlementService:
         inp, result = await self._compute_report_engine(run, inputs)
 
         payload = build_asset_report_payload(inp, result)
+        payload["addressees"] = await document_addressees(self._session, self._org_id, run.property_id, run.period_end)
         payload["financial_input_coverage"] = coverage
-        # Objekt-Anzeige-Namen einfrieren (ADR-0012), vor dem Hash. Der
-        # Vermögensbericht trägt keine Personennamen (nur Objektdaten), wird aber
-        # der Konsistenz halber ebenfalls selbsttragend eingefroren.
+        # Freeze display data and dated recipients before the integrity hash.
         payload[DISPLAY_NAMES_KEY] = freeze_block(
             await resolve_vermoegensbericht_values(self._session, self._org_id, run)
         )

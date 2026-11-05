@@ -76,7 +76,7 @@ pending; registration stays closed and legal review remains with #26. See the
 | Bank accounts | ✅ edit/end, historical references kept | `api/bank_accounts.py`, `pages/BankAccountsPage.tsx`, T55, [usage](operations/selector-pages.md) |
 | Expected charges (Sollstellung) for rent/operating costs, day-accurate | ✅ derived live, including rent history | `engine/mietkonto.py` (`tenant_expected_charges`) |
 | Record, book, reverse payment | ✅ drafts editable | `api/payments.py`, `pages/PaymentDetailPage.tsx`, T07 |
-| Tenant/owner ledger (Mietkonto), open items | ✅ | `api/payments.py` (`/mietkonto/*`, `/open-items`), `pages/MietkontoPage.tsx`, `pages/OpenItemsPage.tsx` |
+| Tenant/owner ledger (Mietkonto), open items | ✅ tenant account splits due/future balances at a selectable cutoff without clipping the reporting period | `api/payments.py` (`/mietkonto/*`, `/open-items`), `pages/MietkontoPage.tsx`, `pages/OpenItemsPage.tsx`, [semantics](m6-zahlungen-mietkonto.md#31-balance--open-items-per-person-pure-arithmetic-decimal) |
 | Bank statement import CSV/CAMT | ✅ CSV (generic, DKB and Sparkasse CSV-CAMT profiles) and CAMT.053 (.001.02/.08, XML/ZIP), preview, duplicate detection | `engine/bank_import.py`, `services/bank_import_service.py`, `api/bank_accounts.py` (`POST /{id}/imports`), `pages/BankTransactionsPage.tsx`, T15–T19, [usage](operations/bank-and-payments.md) |
 | Bank retrieval PSD2/FinTS | ❌ | – |
 | Match suggestions, split booking | ✅ apply suggestion, split, ignore | `engine/bank_matching.py`, `api/bank_transactions.py` (`/assign`, `/ignore`), `pages/BankTransactionsPage.tsx`, T20–T22, [usage](operations/bank-and-payments.md) |
@@ -107,28 +107,29 @@ pending; registration stays closed and legal review remains with #26. See the
 | Batch run per property | ✅ drafts for all leases, existing ones skipped | `api/settlements.py` (`POST /batch`), `pages/SettlementsPage.tsx`, T27, [usage](operations/statements.md) |
 | Suggestion for a new advance payment | ✅ separate operating/heating proposals; accepting appends one rent change | `api/settlements.py` (`/advance-proposal`), `pages/SettlementDetailPage.tsx` ("Vorauszahlungsvorschlag"), T28, [usage](operations/statements.md) |
 | Heating costs per HeizkostenV | ✅ full-period basic/consumption split; exact interim readings, otherwise degree days for heat and days for hot water/basic costs; frozen method/weights in PDF, or external billing | `engine/heizkosten.py`, `engine/heating_settlement.py`, `services/heating_input_service.py`, `components/HeatingInputs.tsx`, T45, T46, [usage](operations/statements.md) |
+| Dated household sizes | ✅ tenant statements use saved occupied/vacancy histories and exact person-days; missing matching data blocks; frozen owner vacancy shares visible; large raw bases persist (#201) | `api/units.py` (`/household`), `engine/person_days.py`, `components/HouseholdPanel.tsx`, [semantics](m3-abrechnungs-engine.md#23-personenzahl--saved-dated-household-sizes) |
 | Consumption from meters | ✅ property-year weights with invoice-period pools; either occupant-boundary date accepted, ambiguous readings require manual input, missing interim readings use degree days for internal heat and days for other consumption, with a reason | `engine/meter_consumption.py`, `api/settlements.py` (`/consumption-suggestions`, `/heating-consumption`), T31, [usage](operations/meters.md) |
 
 ## WEG (homeowners' association)
 
 | Feature | Status | Location |
 | --- | --- | --- |
-| Economic plan, Hausgeld expected amounts, PDF | ✅ | `api/economic_plans.py`, `services/payment_service.py`, `services/wirtschaftsplan_pdf.py` |
+| Economic plan, Hausgeld expected amounts, PDF | ✅ plan-start addressees; dated transfer of the unit’s ongoing advances (#207) | `api/economic_plans.py`, `services/payment_service.py`, `services/wirtschaftsplan_pdf.py` |
 | Economic plan prefilled from the previous year | ✅ preview, then draft from last year's actual costs per category | `api/economic_plans.py` (`/previous/preview`, `/previous`), `components/PreviousPlan.tsx`, T54, [usage](operations/statements.md) |
 | Annual settlement, PDF | ✅ resolved Spitze plus frozen booked Hausgeld balance and resulting payment; owner/unit/period provenance (#204) | `api/weg_settlements.py`, `services/weg_jahresabrechnung_pdf.py` |
 | Adopt paid Hausgeld | ✅ | `api/weg_settlements.py` (`/paid-advances-derived`), `services/weg_settlement_service.py` (`derive_paid_advances`), `pages/WegSettlementDetailPage.tsx`, T09 |
 | Maintenance reserve (Erhaltungsrücklage) | ✅ cash ledger, dated owner/unit shares, explicit unassigned cash, booking-gated payouts (cost AND resolution), unit contribution corrections capped by booked Hausgeld with audited draft reductions/deletions after reversals, evidenced withdrawal corrections and adjustments bounded by net receipt withdrawals, audited draft opening totals with difference preview, release of unbacked imported payout drafts and frozen annual carry-over | `engine/reserve_ledger.py`, `services/reserve_ledger_service.py`, `components/ReserveLedgerPanel.tsx`. Open follow-ups: #191 (double burden), #211 (`bank_transaction` retention) |
 | Asset report (Vermögensbericht) § 28 Abs. 4 WEG | ✅ includes confirmed deletion of empty drafts; bookings, ledger and retained evidence refuse deletion (#199) | `engine/vermoegensbericht.py`, `services/vermoegensbericht_pdf.py`, `pages/AssetReportsPage.tsx` |
-| Special levy (Sonderumlage) | ✅ distributed by MEA as owner expected amount `SONDERZAHLUNG`, appears in the owner ledger and can be dunned | `models/special_levy.py`, `api/special_levies.py`, `services/special_levy_service.py`, `pages/SpecialLeviesPage.tsx`, T32, T33, [usage](operations/weg.md) |
-| Mid-year owner change | ✅ annual settlement is day-accurate per owner | `api/ownership.py`, `services/weg_settlement_service.py`, T26, [usage](operations/tenancies-and-rent.md) |
-| Owners' meeting, minutes, resolution register | ✅ | `api/meetings.py`, `pages/MeetingDetailPage.tsx`, `pages/ResolutionRegisterPage.tsx` |
+| Special levy (Sonderumlage) | ✅ new levies require an adopted same-property resolution; historical unlinked levies can be linked once without changing frozen MEA shares, owner accounts or dunning; register/levy cross-links respect disclosure grants | `models/special_levy.py`, `api/special_levies.py`, `services/special_levy_service.py`, `pages/SpecialLeviesPage.tsx`, T32, T33, [usage](operations/weg.md) |
+| Mid-year owner change | ✅ annual settlement remains day-accurate; dated plan/report recipients, successor Hausgeld and shared recipient retention (#207) | `api/ownership.py`, `services/weg_settlement_service.py`, T26, [usage](operations/tenancies-and-rent.md) |
+| Owners' meeting, minutes, resolution register | ✅ immutable meeting date and separate entry date in page and new PDF extracts | `api/meetings.py`, `pages/MeetingDetailPage.tsx`, `pages/ResolutionRegisterPage.tsx` |
 | Meeting invitation as PDF | ✅ one page per owner, hint for less than three weeks' notice (§ 24 Abs. 4 WEG) | `api/meetings.py` (`/{id}/invitation.pdf`), `services/meeting_pdf.py`, T34, [usage](operations/weg.md) |
 
 ## Dunning, deadlines, tasks
 
 | Feature | Status | Location |
 | --- | --- | --- |
-| Dunning notice, 3 levels, fee, PDF | ✅ | `api/dunning.py`, `engine/dunning.py`, `services/dunning_pdf.py` |
+| Dunning notice, 3 levels, fee, PDF | ✅ rent/operating advances due on the third working day with optional property state; separate heating due-date rule unchanged | `api/dunning.py`, `engine/dunning.py`, `services/dunning_pdf.py` |
 | Default interest, selected dunning run | ✅ interest at base rate + 5 pp (§ 288 Abs. 1 BGB) shown on the PDF; preview of arrears above a threshold, selected ones become drafts in one step | `engine/dunning.py`, `services/dunning_batch_service.py`, `api/dunning.py` (`/batch/preview`, `/batch`), `components/DunningBatch.tsx`, T35, T53, [usage](operations/bank-and-payments.md) |
 | Deadline monitor (Fristenmonitor) | ✅ derived | `api/fristen.py`, `engine/fristen.py`, `pages/FristenmonitorPage.tsx` |
 | Tasks, follow-ups | ✅ create from property and unit, due tasks on the dashboard | `models/task.py`, `api/tasks.py`, `services/task_service.py`, `pages/TasksPage.tsx`, T41, T42, [usage](operations/tasks-and-documents.md) |
@@ -143,7 +144,7 @@ pending; registration stays closed and legal review remains with #26. See the
 | Tenant portal | ❌ | – |
 | Year overview per property (Anlage V) | ✅ income/expense overview plus default Anlage V mapping aid, unassigned/excluded items, exact reconciliation and separate CSV; tax review required | `api/reports.py` (`/property-year`, `/property-year.csv`, `/property-year/anlage-v`, `/property-year/anlage-v.csv`), `services/report_service.py`, `engine/anlage_v.py`, `pages/ReportsPage.tsx`, [M6 §6.12](m6-zahlungen-mietkonto.md#anlage-v-mapping-aid-34), T38, T39, #34, [usage](operations/statements.md) |
 | CSV/DATEV export | ✅ CSV for payments, costs and year overview; DATEV EXTF batch with explicitly configured SKR03/SKR04 accounts | `api/payments.py` (`/export.csv`), `api/cost_entries.py` (`/export.csv`), `api/reports.py` (`/datev.csv`), `services/datev_export.py`, `components/DatevExport.tsx`, T39, T40, T49, [usage](operations/tasks-and-documents.md) |
-| GDPR (DSGVO) access/erasure | ✅ access on screen, shared retention categories, retained booked recipients restricted; expired/unbound people anonymized | `api/dsgvo.py`, `services/dsgvo_service.py`, `components/DsgvoPanel.tsx` |
+| GDPR (DSGVO) access/erasure | ✅ access on screen, shared retention categories, retained booked recipients restricted; expired/unbound people anonymized, including incidental reserve reason/audit names | `api/dsgvo.py`, `services/dsgvo_service.py`, `components/DsgvoPanel.tsx` |
 
 ## Gaps
 

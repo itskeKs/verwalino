@@ -39,11 +39,14 @@ rate-days per month/component before a single final cent rounding.
 from __future__ import annotations
 
 import uuid
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import date
 from decimal import Decimal
 
-from app.engine.periods import day_count
+from app.engine.fristen import FederalState, public_holidays, third_working_day
+
+from app.engine.periods import day_count, owner_at, build_owner_cover
+from app.engine.types import OwnerPeriodInput
 from app.engine.rounding import CENT, annual_advance_share_for_period, distribute_amount, monthly_advance_share_for_period
 
 # Payment-type vocabulary (m6 section 1.3). Kept here as the engine's view of
@@ -263,6 +266,7 @@ def tenant_expected_charges(
     lease: LeaseChargeInput,
     period_start: date,
     period_end: date,
+    *, federal_state: FederalState | None = None,
 ) -> list[ExpectedCharge]:
     """Monthly tenant Soll over [period_start, period_end] (m6 section 2.1).
 
@@ -317,6 +321,10 @@ def tenant_expected_charges(
         rent_segments.append((rate.base_rent, days))
         nk_segments.append((rate.advance_payment, days))
         hk_segments.append((rate.heating_advance_payment, days))
+        holidays = public_holidays(year, federal_state)
+        if month == 12:
+            holidays |= public_holidays(year + 1, federal_state)
+        due = third_working_day(year, month, holidays, start_date=max(m_first, lease.valid_from))
         rent = _sum_rate_segments(rent_segments, days_in_month)
         nk = _sum_rate_segments(nk_segments, days_in_month)
         hk = _sum_rate_segments(hk_segments, days_in_month)
@@ -325,6 +333,7 @@ def tenant_expected_charges(
                 period_year=year,
                 period_month=month,
                 payment_type=PT_KALTMIETE,
+                due_date=due,
                 amount=rent,
                 lease_agreement_id=lease.lease_agreement_id,
                 days_occupied=days_occupied,
@@ -336,6 +345,7 @@ def tenant_expected_charges(
                 period_year=year,
                 period_month=month,
                 payment_type=PT_NK_VORAUSZAHLUNG,
+                due_date=due,
                 amount=nk,
                 lease_agreement_id=lease.lease_agreement_id,
                 days_occupied=days_occupied,
@@ -355,41 +365,80 @@ def owner_expected_charges(
     owner_profile_id: uuid.UUID,
     period_start: date,
     period_end: date,
+    *, owner_periods: list[OwnerPeriodInput] | None = None,
+    plan_start: date | None = None,
 ) -> list[ExpectedCharge]:
     """Monthly owner Hausgeld Soll over the period (m6 section 2.2).
 
-    One ExpectedCharge (HAUSGELD_VORSCHUSS) per month = SUM of the owner's
-    OWNER_ADVANCE monthly_amount over the owner's units (an owner with several
-    units owes the sum; exact, no re-rounding -- Cent + Cent = Cent). Every
-    month in the period is charged the full monthly rate (the WEG year is the
-    plan year; partial-year ownership inside the abrechnung is M4's concern --
-    here we generate the per-month Soll for the Hausgeld-Konto).
+    The frozen monthly volume stays with its unit. Dated ownership assigns it
+    to that month's owners, splitting a transfer month by inclusive owner-days
+    and concurrent successors by positive mea_share. Continuing co-owners retain
+    their frozen cents; only departed owners' rates pass to successors. Ambiguous
+    transfers fail instead of moving other shares. Largest-remainder rounding
+    preserves the unit total. Without history, retain the frozen owner amounts.
 
     [F6-5] no finalized plan => caller passes no advance_lines => empty Soll
     (the Hausgeld-Konto then shows only Ist, no Soll abgleich); the engine does
     not invent a Soll.
     """
-    monthly_total = Decimal("0.00")
-    for ln in advance_lines:
-        if ln.owner_profile_id == owner_profile_id and ln.monthly_amount is not None:
-            monthly_total += _money(ln.monthly_amount)
-    if monthly_total == 0:
-        return []
     charges: list[ExpectedCharge] = []
-    for year, month in _months_in_period(period_start, period_end):
+    inherited_rates: dict[uuid.UUID, dict[uuid.UUID, Decimal]] = {}
+    for year, month in _months_in_period(plan_start or period_start, period_end):
         m_first, m_last = _month_bounds(year, month)
         days_in_month = day_count(m_first, m_last)
-        charges.append(
-            ExpectedCharge(
-                period_year=year,
-                period_month=month,
-                payment_type=PT_HAUSGELD_VORSCHUSS,
-                amount=monthly_total,
-                owner_profile_id=owner_profile_id,
-                days_occupied=days_in_month,
-                days_in_month=days_in_month,
-            )
-        )
+        monthly_total = Decimal("0.00")
+        if owner_periods is None:
+            monthly_total = sum((ln.monthly_amount for ln in advance_lines
+                if ln.owner_profile_id == owner_profile_id), Decimal("0.00"))
+        else:
+            # Only a unit's own frozen advance funds its dated successors.
+            unit_totals: dict[uuid.UUID, Decimal] = {}
+            for ln in advance_lines:
+                if ln.unit_id is None:
+                    raise ValueError("Hausgeld plan line has no unit")
+                unit_totals[ln.unit_id] = unit_totals.get(ln.unit_id, Decimal(0)) + ln.monthly_amount
+            for unit, total in sorted(unit_totals.items(), key=lambda pair: str(pair[0])):
+                if not total:
+                    continue
+                previous = inherited_rates.setdefault(unit,
+                    {ln.owner_profile_id: ln.monthly_amount for ln in advance_lines if ln.unit_id == unit})
+                cover = build_owner_cover(unit, m_first, m_last, owner_periods)
+                boundaries = sorted({m_first, *(p.start for p in cover),
+                    *(date.fromordinal(p.end.toordinal() + 1) for p in cover if p.end < m_last)})
+                weights: dict[uuid.UUID, Decimal] = {}
+                for i, start in enumerate(boundaries):
+                    end = boundaries[i + 1].toordinal() - 1 if i + 1 < len(boundaries) else m_last.toordinal()
+                    owners = owner_at(owner_periods, unit, start)
+                    if len(owners) > 1 and any(o.mea_share is None or o.mea_share <= 0 for o in owners):
+                        raise ValueError("Co-ownership requires positive shares for Hausgeld")
+                    active = {o.owner_profile_id for o in owners}
+                    rates = {oid: amount for oid, amount in previous.items() if oid in active}
+                    departed = set(previous) - active
+                    transferred = sum((previous[oid] for oid in departed), Decimal(0))
+                    successors = [o for o in owners if o.owner_profile_id not in previous]
+                    # A sole remaining co-owner is an unambiguous full buyer.
+                    if departed and not successors and len(owners) == 1:
+                        successors = owners
+                    if bool(departed) != bool(successors):
+                        raise ValueError("Ownership does not identify successors of the frozen advances")
+                    if len(departed) > 1 and len(successors) > 1:
+                        raise ValueError("Several concurrent transfers do not identify individual successors")
+                    if successors:
+                        parts = distribute_amount(transferred,
+                            [o.mea_share if len(successors) > 1 else Decimal(1) for o in successors])
+                        for op, amount in zip(successors, parts):
+                            rates[op.owner_profile_id] = rates.get(op.owner_profile_id, Decimal(0)) + amount
+                    previous = rates
+                    inherited_rates[unit] = rates
+                    for oid, rate in rates.items():
+                        weights[oid] = weights.get(oid, Decimal(0)) + rate * (end - start.toordinal() + 1)
+                ids = sorted(weights, key=str)
+                amounts = distribute_amount(total, [weights[oid] for oid in ids])
+                monthly_total += dict(zip(ids, amounts)).get(owner_profile_id, Decimal(0))
+        if monthly_total and (year, month) >= (period_start.year, period_start.month):
+            charges.append(ExpectedCharge(period_year=year, period_month=month,
+                payment_type=PT_HAUSGELD_VORSCHUSS, amount=monthly_total,
+                owner_profile_id=owner_profile_id, days_occupied=days_in_month, days_in_month=days_in_month))
     return charges
 
 
@@ -412,6 +461,7 @@ class OpenItem:
     ist: Decimal
     open_amount: Decimal  # soll - ist
     due_date: date | None = None
+    is_due: bool | None = None
 
     @property
     def is_arrears(self) -> bool:
@@ -436,6 +486,8 @@ class MietkontoResult:
     soll_total: Decimal
     ist_total: Decimal
     balance: Decimal
+    due_balance: Decimal | None = None
+    not_yet_due_balance: Decimal | None = None
 
 
 def _ist_key(p: PaymentInput) -> tuple[int | None, int | None, str]:
@@ -445,6 +497,7 @@ def _ist_key(p: PaymentInput) -> tuple[int | None, int | None, str]:
 def account_statement(
     expected_charges: list[ExpectedCharge],
     payments: list[PaymentInput],
+    *, as_of: date | None = None,
 ) -> MietkontoResult:
     """Soll vs Ist per (period, type) -> offene Posten + Saldo (m6 section 3.1).
 
@@ -457,6 +510,9 @@ def account_statement(
     Dated one-off charges retain their due dates; each monthly payment bucket
     is applied once, oldest due first. Recurring monthly charges are unchanged.
     Deterministic order: by (year, month-or-0, payment_type, due_date).
+    With as_of, partition the signed open amounts by their existing due dates,
+    inclusive of the cutoff. Undated buckets fall back to their period start;
+    bookings without a period are due. No payment allocation or total changes.
     """
     # Aggregate Soll per key.
     soll_by_key: dict[tuple[int | None, int | None, str], Decimal] = {}
@@ -505,11 +561,20 @@ def account_statement(
         else:
             items.append(OpenItem(period_year=key[0], period_month=key[1], payment_type=key[2],
                 soll=soll, ist=ist, open_amount=_money(soll - ist)))
+    due_balance = None
+    not_yet_due_balance = None
+    if as_of is not None:
+        items = [replace(item, is_due=item.period_year is None or (item.due_date or
+            date(item.period_year, item.period_month or 1, 1)) <= as_of) for item in items]
+        due_balance = sum((item.open_amount for item in items if item.is_due), Decimal('0.00'))
+        not_yet_due_balance = _money(soll_total - ist_total - due_balance)
     return MietkontoResult(
         open_items=tuple(items),
         soll_total=_money(soll_total),
         ist_total=_money(ist_total),
         balance=_money(soll_total - ist_total),
+        due_balance=due_balance,
+        not_yet_due_balance=not_yet_due_balance,
     )
 
 

@@ -296,3 +296,112 @@ async def test_private_invoice_admission_is_listed_as_a_missing_dependency(rent_
         assert {'entity': 'invoice_upload_admission', 'source_ids': [identity], 'count': 1} in answer.json()['detail']['missing_dependencies']
     assert await rent_db.scalar(text('SELECT count(*) FROM property WHERE organization_id=:org'), import_target) == 0
     await rent_db.rollback()
+
+
+@pytest.mark.parametrize('archive_case', ['legacy', 'wrong_property', 'orphan', 'current_missing', 'current_snapshot'])
+async def test_register_archive_upgrade_preserves_both_dates_and_refuses_invalid_sources(
+    rent_world, import_target, rent_db, export_store, archive_case,
+):
+    """A real pre-0167 row shape must work, not merely a relabelled current export."""
+    async with api_client(rent_world) as api:
+        prop = await api.post('/api/properties', json={'name': 'Gartenstraße 5', 'management_type': 'WEG'})
+        assert prop.status_code == 201, prop.text
+        prop_id = prop.json()['id']
+        meeting = await api.post('/api/meetings', json={'property_id': prop_id, 'meeting_date': '2026-06-15',
+            'meeting_type': 'ORDENTLICH', 'location': 'Historic meeting place'})
+        assert meeting.status_code == 201, meeting.text
+        resolution = await api.post('/api/meetings/resolutions', json={'meeting_id': meeting.json()['id'],
+            'wording': 'Historic registered wording', 'votes_yes': 5, 'votes_no': 0, 'votes_abstain': 0,
+            'result': 'ANGENOMMEN'})
+        assert resolution.status_code == 201, resolution.text
+        entry = await api.post(f"/api/meetings/resolutions/{resolution.json()['id']}/register")
+        assert entry.status_code == 201, entry.text
+    files = unpack(await exported(rent_world))
+    manifest = json.loads(files['manifest.json'])
+    manifest['schema_head'] = '0167' if archive_case.startswith('current_') else '0166'
+    files['manifest.json'] = json.dumps(manifest).encode()
+    name = 'entities/resolution_register_entry.jsonl'
+    rows = [json.loads(line) for line in files[name].splitlines()]
+    historic = next(row for row in rows if row['id'] == entry.json()['id'])
+    historic['entry_date'] = '2026-11-01'  # Synthetic archive evidence, never a backdated live entry.
+    if archive_case == 'current_snapshot':
+        historic['resolution_date'] = '2026-06-14'  # Existing snapshots are not re-derived on import.
+    else:
+        historic.pop('resolution_date')
+    if archive_case == 'wrong_property':
+        historic['property_id'] = str(rent_world['property'])
+    if archive_case == 'orphan':
+        historic['resolution_id'] = str(uuid.uuid4())
+    files[name] = b''.join(json.dumps(row).encode() + b'\n' for row in rows)
+    async with api_client(import_target) as api:
+        response = await api.post('/api/organizations/import', files={'file': ('legacy.tar.gz', repack(files))})
+    if archive_case in ('legacy', 'current_snapshot'):
+        assert response.status_code == 200, response.text
+        mapping = response.json()['id_map']
+        stored = (await rent_db.execute(text('SELECT * FROM resolution_register_entry WHERE id=:id'),
+            {'id': uuid.UUID(mapping['resolution_register_entry'][historic['id']])})).mappings().one()
+        assert str(stored['resolution_date']) == ('2026-06-14' if archive_case == 'current_snapshot' else '2026-06-15')
+        assert str(stored['entry_date']) == '2026-11-01'
+        assert stored['location'] == historic['location']
+        assert stored['wording'] == historic['wording']
+        assert stored['sequence_number'] == historic['sequence_number']
+        assert str(stored['property_id']) == mapping['property'][historic['property_id']]
+        assert str(stored['resolution_id']) == mapping['resolution'][historic['resolution_id']]
+    else:
+        assert response.status_code == 422, response.text
+        assert await rent_db.scalar(text('SELECT count(*) FROM property WHERE organization_id=:org'), import_target) == 0
+    await rent_db.rollback()
+
+
+from tests.test_special_levy import levy_db, scope_seed, worker_tenant, client as levy_client  # noqa: E402,F401
+from tests.test_m4_weg import legacy_levy  # noqa: E402
+
+
+async def test_import_retains_historical_unlinked_levy_and_frozen_allocations(
+    levy_db, scope_seed, import_target, rent_db, export_store,
+):
+    ids = {'org': scope_seed['org_a_id'], 'actor': scope_seed['user_a_admin_id'],
+        'property': uuid.uuid4(), 'scope': uuid.uuid4()}
+    # This historical source contains only the levy's actual dependencies,
+    # without unrelated unclassified bank inputs or revoked grant history.
+    await levy_db.execute(text("INSERT INTO property(id,organization_id,name,management_type) VALUES (:property,:org,'Historical WEG','WEG')"), ids)
+    await levy_db.execute(text("INSERT INTO accounting_scope(id,organization_id,property_id,scope_type,label,valid_from,whole_property,origin,created_by) VALUES (:scope,:org,:property,'WEG','Historical WEG','2025-01-01',true,'REVIEWED',:actor)"), ids)
+    ids.update(unit=uuid.uuid4(), owner=uuid.uuid4(), person=uuid.uuid4(), history=uuid.uuid4())
+    for statement in (
+        "INSERT INTO unit(id,organization_id,property_id,number,usage_type,mea) VALUES (:unit,:org,:property,'Archive unit','WOHNUNG',1000)",
+        "INSERT INTO person(id,organization_id,first_name,last_name) VALUES (:person,:org,'Anna','Archive')",
+        "INSERT INTO owner_profile(id,organization_id,person_id) VALUES (:owner,:org,:person)",
+        "INSERT INTO ownership_history(id,organization_id,unit_id,owner_profile_id,valid_from) VALUES (:history,:org,:unit,:owner,'2025-01-01')",
+    ):
+        await levy_db.execute(text(statement), ids)
+    ids.update(units=[ids['unit']], owners=[ids['owner']], histories=[ids['history']], legacy_meas=[1000])
+    # A fresh target retains its administrator's existing mailbox identity.
+    email = await levy_db.scalar(text('SELECT email FROM "user" WHERE id=:actor'), ids)
+    await levy_db.commit()
+    await rent_db.execute(text('UPDATE "user" SET email=:email WHERE id=:admin'), {**import_target, 'email': email})
+    await rent_db.commit()
+    levy = await legacy_levy(levy_db, ids)
+    await levy_db.execute(text("INSERT INTO scope_grant(organization_id,scope_id,user_id,capabilities,granted_by,reason) VALUES (:org,:scope,:actor,ARRAY['read','prepare','export'],:actor,'Archive historical levy')"), ids)
+    await levy_db.commit()
+    async with levy_client(ids, 'actor') as api:
+        answer = await api.post('/api/organizations/export')
+        assert answer.status_code == 200, answer.text
+    files = unpack(answer.content)
+    manifest = json.loads(files['manifest.json'])
+    manifest['schema_head'] = '0167'
+    files['manifest.json'] = json.dumps(manifest).encode()
+    async with api_client(import_target) as api:
+        answer = await api.post('/api/organizations/import', files={'file': ('historical.tar.gz', repack(files))})
+        assert answer.status_code == 200, answer.text
+        mapping = answer.json()['id_map']
+        prop = mapping['property'][str(ids['property'])]
+        scope = mapping['accounting_scope'][str(ids['scope'])]
+        response = await api.get('/api/special-levies', params={'property_id': prop, 'accounting_scope_id': scope})
+        assert response.status_code == 200, response.text
+        row = next(row for row in response.json() if row['id'] == mapping['special_levy'][str(levy)])
+        assert row['resolution_id'] is None
+        assert row['amount'] == '1200.00' and row['due_date'] == '2026-07-01'
+        assert sorted(a['amount'] for a in row['allocations']) == ['1200.00']
+        payload = {'property_id': prop, 'accounting_scope_id': scope, 'amount': '1200.00', 'due_date': '2026-07-01'}
+        assert (await api.post('/api/special-levies', json=payload)).status_code == 422
+    await rent_db.rollback()

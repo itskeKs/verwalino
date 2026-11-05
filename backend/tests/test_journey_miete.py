@@ -294,6 +294,7 @@ class TestJourneyMiete:
                 "soll": "500.00",
                 "ist": "0.00",
                 "open_amount": "500.00",
+                "due_date": "2025-12-03",
             },
             {
                 "period_year": 2025,
@@ -302,6 +303,7 @@ class TestJourneyMiete:
                 "soll": "100.00",
                 "ist": "0.00",
                 "open_amount": "100.00",
+                "due_date": "2025-12-03",
             },
         ]
 

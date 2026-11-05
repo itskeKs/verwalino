@@ -13,6 +13,7 @@ vi.mock("../components/DsgvoPanel", () => ({ DsgvoPanel: () => null }));
 vi.mock("../api/endpoints", async importOriginal => ({
   ...await importOriginal<typeof endpoints>(),
   getProperty: vi.fn(), getPropertyKnowledge: vi.fn(), listUnits: vi.fn(), getUnit: vi.fn(),
+  getUnitHousehold: vi.fn(),
   getPerson: vi.fn(), listOwnership: vi.fn(), listLeases: vi.fn(), listOwnerProfiles: vi.fn(),
   listTenantProfiles: vi.fn(), listPersons: vi.fn(), listVendors: vi.fn(), listLeaseRentChanges: vi.fn(),
 }));
@@ -48,6 +49,7 @@ beforeEach(() => {
   vi.mocked(endpoints.getPropertyKnowledge).mockResolvedValue(null as never);
   vi.mocked(endpoints.listUnits).mockResolvedValue([]);
   vi.mocked(endpoints.getUnit).mockImplementation(async id => ({ ...unit, id, number: id === "other" ? "99" : "42" }) as never);
+  vi.mocked(endpoints.getUnitHousehold).mockResolvedValue([]);
   vi.mocked(endpoints.getPerson).mockResolvedValue(person as never);
   vi.mocked(endpoints.listLeases).mockImplementation(async () => leases);
   for (const fn of [endpoints.listOwnership, endpoints.listOwnerProfiles, endpoints.listTenantProfiles, endpoints.listPersons, endpoints.listVendors, endpoints.listLeaseRentChanges]) vi.mocked(fn).mockResolvedValue([]);

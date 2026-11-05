@@ -170,7 +170,7 @@ monthly expected without rate change = valid base rent + valid advance payment
 - **Separation by component:** The expected amount is maintained separately for `KALTMIETE` (= `base_rent`) and the two advances: `NK_VORAUSZAHLUNG` (= `advance_payment`) and `HK_VORAUSZAHLUNG` (= `heating_advance_payment`). Each advance credits its own statement component (§6.2), the base rent does not. Mixing them would distort the settlement integration.
 - **Mid-year start/end (day-accurate partial months):** If the lease begins/ends in the middle of a month, the expected amount of the partial month is **pro rata**. Basis: monthly, the partial month computed day-accurately via the same `app/engine/periods.py` arithmetic as M3 (day-inclusive, ADR-0004/0006). **[§18/domain F6-4]** whether a partial month is computed day-accurately (`days_occupied_in_month / days_in_month`) or as a flat full/half month — handled differently under leases/in practice. **Provisional assumption:** day-accurate partial month (consistent with M3); clearly marked, requires domain sign-off.
 - **Read boundary:** `lease_agreement.valid_to` is stored half-open; the expected-amount function reads via `db_exclusive_to_engine_inclusive` (ADR-0006) — the **same** read boundary as M3, **one** definition. This way the last rental month counts correctly (no off-by-one at lease end).
-- **Due date:** an expected-amount month is due from its due date on (for "overdue", M7). **[§18/domain]** Default due date (e.g. 3rd working day of the month, § 556b BGB) — provisionally the start of the month; requires domain sign-off.
+- **Due date:** `KALTMIETE` and `NK_VORAUSZAHLUNG` use the statutory third working day (§ 556b(1) BGB), excluding Saturdays, Sundays and the property's statewide holidays. A missing federal state means nationwide holidays only. Count inclusively from the actual rental interval's start: the later of month start and lease start, including holidays across month/year boundaries. Reporting-period clipping and rent changes never restart the count. Day-exact amounts are unchanged. `HK_VORAUSZAHLUNG` retains its previous date rule pending a separate owner decision. See [holiday coverage](operations/bank-and-payments.md#rent-due-dates-and-holiday-coverage).
 
 ### 2.2 Owner expected amount (per owner, from the finalized economic plan)
 
@@ -182,6 +182,7 @@ monthly expected(owner, month) = economic_plan_line(OWNER_ADVANCE, owner).monthl
 - The source is the `OWNER_ADVANCE.monthly_amount` per owner already computed in M4 and rounded on a **monthly basis** (ADR-0007 E4-3b). M6 invents **nothing** here — it reads the finalized plan.
 - **Only finalized plans** yield a binding monthly Hausgeld expected amount (a `draft` plan is not a resolved expected amount). Without a finalized plan, no Hausgeld advance is invented. Since Phase 2 (T32), explicitly created, frozen special levies (Sonderumlagen) can be added independently of this as a one-time owner expected amount.
 - **Multiple units per owner:** The plan has one `OWNER_ADVANCE` row per (owner, unit); the owner's expected amount per month is the **sum** of the `monthly_amount` over their units (exact, no further rounding — cent + cent = cent, m3 §4.3).
+- **Dated ownership and dunning:** The account and owner dunning share the same calculation, limited to the finalized plan's period. The unit's frozen advances follow ownership dates; continuing co-owners keep their frozen cents and a full departing share passes to its unambiguous successor, including a sole remaining co-owner. Zero-rate shares stay zero. Ambiguous transfers are refused. For Karl through June and Lena from July at 400 EUR per month, each account and dunning principal is 2400 EUR for the year. The annual settlement's frozen plan basis remains unchanged.
 
 #### Special levies since Phase 2 (T32)
 
@@ -222,7 +223,8 @@ items from an explicit base interest rate input with an optional configured defa
 `open × (base + 5) / 100 × calendar days since due date / 365`. Per item, rounding to
 the cent (`ROUND_HALF_UP`) happens only once; afterwards the stored interest lines are
 summed. Fees and interest are not themselves charged interest. Example: 700 EUR at a
-base rate of 2.50% over 60 days → 8.63 EUR interest. The interest snapshot records due
+base rate of 2.50%, January 2026 due on 6 January, reference date 2 March
+(55 days) → 7.91 EUR interest. The interest snapshot records due
 date, reference date, days, base/annual interest rate and amounts; an issued dunning
 notice, including its PDF, uses exclusively these stored values. The expected/actual
 balance of the account is not supplemented by further account postings as a result.
@@ -262,11 +264,41 @@ letters/PDFs are not changed and nothing is sent.
 
 `app/engine/mietkonto.py`:
 ```
-account_statement(expected_charges, payments) -> MietkontoResult
+account_statement(expected_charges, payments, as_of=None) -> MietkontoResult
 ```
 - Groups the **expected amount** (from §2) and the **actual** (`booked`, non-reversed `payment`) per (period, type).
 - Returns, per expected-amount period, the **open item** (expected − assigned actual) and the **running balance** over the period.
 - **Pure Decimal arithmetic**, no float, deterministic — golden-tested (§7). Summation without rounding (all amounts already cent-exact).
+
+The tenant statement `GET /api/payments/mietkonto/lease/{lease_agreement_id}` accepts
+optional `as_of` (ISO date, default: today). Its `due_balance` and
+`not_yet_due_balance` partition the existing signed open amounts; their sum is
+`balance`. An item is due on and after its existing due date. Undated monthly
+items retain the first-of-month fallback (including heating advances); annual
+buckets use January 1, and bookings without a period are included in the due part.
+Each tenant statement row includes `is_due`, computed by the same engine
+classification used for the aggregate. Owner statements and open-items DTOs
+remain unchanged. Credits and partial payments retain their existing period/type
+allocation; they are not moved to another month's debt. The engine computes the split only with an
+explicit cutoff, keeping its existing callers compatible and free of an implicit clock.
+
+The cutoff never clips `period_end`: full-year `soll_total`, `ist_total`, `balance`
+and individual open amounts stay unchanged, including at a mid-month cutoff.
+All currently booked payments assigned to the reporting period count, even when
+their value/booking date is later than the cutoff. This is a due-date view of
+the current statement, not a reconstruction of the historical ledger.
+
+In **Mietkonto**, select the lease and reporting period, choose **“Fällig am”**
+(today by default) and click **“Abrufen”**. “Saldo” remains the period balance;
+“davon fällig” alone carries “Rückstand” when positive, and “noch nicht fällig”
+shows the remaining signed part. Detail rows identify nonzero amounts as “fällig”
+or “noch nicht fällig” and zero amounts as “ausgeglichen”, including on narrow
+screens. Credits retain their sign without an arrears label. For 2026 with 900 EUR
+monthly rent, January–October paid except 100 EUR in April, the 01.11.2026 cutoff shows 1,900 EUR Saldo,
+100 EUR due and 1,800 EUR not yet due. On 04.11.2026 November is due:
+1,000 EUR due and 900 EUR not yet due, with the same 1,900 EUR Saldo.
+The owner statement, open-items views, dunning, dashboard and deadline monitor
+retain their existing policies.
 
 ### 3.2 Partial payment → open item
 
@@ -908,3 +940,10 @@ reversal/correction function.
 - **Exact due-date rules** (§ 556b BGB, Hausgeld due date): [§18/domain] (§2.1).
 - **Second RLS axis (full mandate-bound DB isolation):** deliberately not in the MVP (ADR-0010 option C) — door left open, not blocked.
 - **Final legal sign-off:** tax advisor/specialist lawyer — cannot be replaced by this document.
+
+Migration 0163 admits dated Hausgeld successors in the database dunning-context
+guard only through a unit represented in the linked finalized plan and the same
+organization and bound WEG scope. Ownership must overlap the claim period.
+Original plan recipients remain admissible for earlier claims. Existing notices,
+plan snapshots and amounts are not rewritten; a downgrade cannot discard an
+existing successor-backed context.

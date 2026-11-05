@@ -31,10 +31,8 @@ from app.engine.dunning import (
     next_dunning_level,
 )
 from app.engine.mietkonto import (
-    OwnerAdvanceChargeInput,
     PaymentInput,
     account_statement,
-    owner_expected_charges,
     special_levy_expected_charges,
 )
 from app.models.audit_event import AuditEvent
@@ -47,7 +45,6 @@ from app.services.payment_service import PaymentService
 from app.repositories.unit_repo import UnitRepository
 from app.repositories.dunning_notice_repo import DunningNoticeRepository
 from app.repositories.economic_plan_repo import (
-    EconomicPlanLineRepository,
     EconomicPlanRepository,
 )
 from app.repositories.lease_agreement_repo import LeaseAgreementRepository
@@ -86,7 +83,6 @@ class DunningService:
         self._leases = LeaseAgreementRepository(session, org_id)
         self._payments = PaymentRepository(session, org_id)
         self._plans = EconomicPlanRepository(session, org_id)
-        self._plan_lines = EconomicPlanLineRepository(session, org_id)
         self._persons = PersonRepository(session, org_id)
         self._tenants = TenantProfileRepository(session, org_id)
         self._owners = OwnerProfileRepository(session, org_id)
@@ -251,21 +247,8 @@ class DunningService:
             if sphere is not None and (plan.status != 'finalized' or period_start < plan.period_start or period_end > plan.period_end):
                 raise HTTPException(422, 'Scoped owner dunning requires a finalized plan covering its period')
             if plan.status == "finalized":
-                lines = await self._plan_lines.list_for_plan(economic_plan_id)
-                advance_lines = [
-                    OwnerAdvanceChargeInput(
-                        owner_profile_id=ln.owner_profile_id,
-                        unit_id=ln.unit_id,
-                        monthly_amount=ln.monthly_amount,
-                    )
-                    for ln in lines
-                    if ln.line_type == "OWNER_ADVANCE"
-                    and ln.owner_profile_id is not None
-                    and ln.monthly_amount is not None
-                ]
-                charges = owner_expected_charges(
-                    advance_lines, owner_profile_id, period_start, period_end
-                )
+                charges = await PaymentService(self._session, self._org_id, self._user_id).owner_plan_charges(
+                    plan, owner_profile_id, period_start, period_end)
 
         allocations = await SpecialLevyService(self._session, self._org_id, self._user_id).owner_allocations(
             owner_profile_id, period_start, period_end, sphere.id if sphere is not None else None)

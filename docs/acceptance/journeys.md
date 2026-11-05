@@ -12,6 +12,9 @@ of journey 1 and manual 60 EUR cost entry of journey 2 at 1280 and 360 px. It al
 field feedback for invalid money. Other steps remain outside this focused twin; the remaining
 twins come with #163–#176 and the twin of journey 6 with #160.
 
+The [dashboard greeting twin](../../features/journeys/dashboard_greeting.feature) checks the exact
+“Guten Tag” heading and separate organization context at desktop and phone widths.
+
 **Reference date:** The statement runs to October 2026 and the figures are those as of 31.10.2026.
 Rents for November and later that are already due on the day of the run (November: third working
 day = 04.11.2026) rightly show as open.
@@ -89,6 +92,12 @@ what Verwalino does not assign by itself.
   Anna Beispiel's 800.00 € receipt on 07.04.2026 suggests her lease.
 - Anna: January to October all paid, only in April 800.00 € instead of 900.00 € →
   **100.00 € open**. The payment on 07.04. was **on time** (see journey 3), only too low.
+  In “Mietkonto”, keep 01.01.–31.12.2026 and set “Fällig am” to 01.11.2026:
+  “Saldo” is 1,900.00 €, “davon fällig” is 100.00 € (“Rückstand”), and
+  “noch nicht fällig” is 1,800.00 € (November/December). Change only “Fällig am”
+  to 04.11.2026: the due part becomes 1,000.00 €, the future part 900.00 €,
+  and “Saldo” stays 1,900.00 €. This compares due dates against currently booked
+  allocations; it does not reconstruct past booking history.
 - Bernd: March to October paid in full, nothing open.
 - Anna's 2,250.00 € of 02.01. are the **deposit**, not rent.
 - General electricity (10 × 60.00 € = 600.00 €) and the building insurance (312.00 €) are expenses
@@ -107,7 +116,9 @@ The Sparkasse twin also opens Anna's April split with a long dwelling label at
 target and note span the row, and both bottom actions remain reachable. It corrects
 an over-allocation without losing inputs and books 650.00 EUR base rent plus
 150.00 EUR operating advance against her 800.00 EUR receipt.
-The remaining assignment and ledger checks still require blind acceptance.
+The full-year account cutoff is automated at 1280 and 360 px in
+[rent_account_due.feature](../../features/journeys/rent_account_due.feature).
+The remaining assignment checks still require blind acceptance.
 
 ## Journey 3: Dunning letter to Anna
 
@@ -134,10 +145,13 @@ The remaining assignment and ledger checks still require blind acceptance.
 **Also at 360 px:** the dunning letter
 **Automated:** [readable issued notice](../../features/journeys/dunning_notice.feature)
 checks four-digit principal, interest and open amounts without horizontal
-scrolling at 1280 and 360 px, plus the German issue-time display. The separate
+scrolling at 1280 and 360 px, plus the German issue-time display. Its April
+scenario checks the explicit `Zinsbeginn: 08.04.2026` in the issued detail at
+both widths and in the downloaded PDF. The separate
 [interest/PDF scenario](../../features/dunning_interest.feature) checks frozen
-amounts and the downloaded PDF. The April due-date and split-rate expectations
-above remain outside these automated checks.
+amounts and the downloaded PDF; its API scenarios cover the April due date and
+first interest day. The split-rate expectations above remain outside these
+automated checks.
 
 ## Journey 4: Rent change for Anna
 

@@ -205,6 +205,8 @@ class FristenService:
     async def _overdue_count(self, reference_date: date, sphere=None) -> int:
         leases = await self._repo.all_leases()
         total = 0
+        from app.repositories.unit_repo import UnitRepository
+        from app.repositories.property_repo import PropertyRepository
         for lease in leases:
             try:
                 inc_to = db_exclusive_to_engine_inclusive(lease.valid_to)
@@ -222,7 +224,11 @@ class FristenService:
                     advance_payment=lease.advance_payment,
                     heating_advance_payment=lease.heating_advance_payment,
                 )
-                charges = tenant_expected_charges(lc, period_start, period_end)
+                unit = await UnitRepository(self._session, self._org_id).get_by_id(lease.unit_id)
+                prop = await PropertyRepository(self._session, self._org_id).get_by_id(unit.property_id) if unit else None
+                if prop is None:
+                    raise HTTPException(404, "Property not found")
+                charges = tenant_expected_charges(lc, period_start, period_end, federal_state=prop.federal_state)
                 payments = await self._payments.list_for_lease(lease.id)
                 scoped = _scope_payments(payments, period_start, period_end)
                 result = account_statement(

@@ -1,3 +1,4 @@
+import { DocumentAddressees } from "../components/DocumentAddressees";
 import { FinancialCoverageReview } from "../components/FinancialCoverageReview";
 /**
  * Wirtschaftsplan detail (M4): planned-cost editor, compute (per-owner monthly
@@ -208,6 +209,8 @@ export function EconomicPlanDetailPage() {
           Ersetzt durch <Link to={`/wirtschaftsplaene/${plan.superseded_by_id}`} className="link">Korrektur</Link>.
         </div>
       )}
+
+      <DocumentAddressees addressees={plan.addressees} />
 
       <div className="card" style={{ marginBottom: "1.5rem" }}>
         <h2>Übersicht</h2>

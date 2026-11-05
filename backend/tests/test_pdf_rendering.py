@@ -96,7 +96,7 @@ def recipient_documents():
     meeting = OwnersMeeting(meeting_date=date(2026, 11, 30), location="Gemeinschaftsraum",
                             meeting_type="ORDENTLICH", status="HELD", protocol_text="Die Sitzung ist eröffnet.",
                             invitation_text="Wir laden Sie zur Versammlung ein.")
-    entries = [ResolutionRegisterEntry(sequence_number=1, entry_date=date(2026, 11, 30),
+    entries = [ResolutionRegisterEntry(sequence_number=1, resolution_date=date(2026, 6, 15), entry_date=date(2026, 11, 1),
                 location=meeting.location, wording="Der Wirtschaftsplan wird beschlossen.", challenge_annotation=None)]
     property_name = "Gartenstraße 5"
     meeting_names = MeetingDisplayNames(property_name=property_name)
@@ -243,3 +243,57 @@ class TestPdfRendererProtocol:
         """By default, the module uses WeasyPrintRenderer."""
         renderer = get_renderer()
         assert isinstance(renderer, WeasyPrintRenderer)
+
+
+@pytest.mark.parametrize('kind,expected', [
+    ('wirtschaftsplan', '65023c9dd39fc06f31b1663ef3c3e366e90683580129bdb568fe4a4dcc6b06b5'),
+    ('vermoegensbericht', '61b970ecfbc9dc3b7038c8063bc124393dad0709fa69fb457edf20b49748e6a4'),
+])
+def test_legacy_finalized_document_html_keeps_its_original_content(kind, expected):
+    from datetime import date
+    from hashlib import sha256
+    from types import SimpleNamespace
+    from app.services.wirtschaftsplan_pdf import build_wirtschaftsplan_html, WirtschaftsplanDisplayNames
+    from app.services.vermoegensbericht_pdf import build_vermoegensbericht_html, VermoegensberichtDisplayNames
+    # Digests captured from the original renderers, before dated addressees.
+    doc = SimpleNamespace(period_start=date(2025, 1, 1), period_end=date(2025, 12, 31), plan_year=2025,
+        snapshot_payload={'display_names': {'schema_version': 1, 'values': {}}},
+        snapshot_sha256='legacy-digest', engine_version='legacy')
+    render, names = ((build_wirtschaftsplan_html, WirtschaftsplanDisplayNames()) if kind == 'wirtschaftsplan'
+        else (build_vermoegensbericht_html, VermoegensberichtDisplayNames()))
+    assert sha256(render(doc, [], names).encode()).hexdigest() == expected
+
+
+@pytest.mark.parametrize('kind,expected', [
+    ('dunning', '5bb62e2b96ff3f23f04f5e103e8c465dc50cd6a239f1d8ea7023c973e90550c4'),
+    ('dunning_interest', 'f274d3a14ba4bb516552c2fbbd171e78d970a9b802af96bb5869ceaba6beed43'),
+])
+def test_legacy_dunning_html_is_identical_without_a_frozen_interest_start(kind, expected):
+    from hashlib import sha256
+    assert sha256(recipient_documents()[kind].encode()).hexdigest() == expected
+
+
+@pytest.mark.parametrize('payment_type', ['KALTMIETE', 'NK_VORAUSZAHLUNG'])
+def test_dunning_pdf_names_only_the_stored_interest_start_in_mixed_snapshot_rows(payment_type):
+    from types import SimpleNamespace
+    from app.services.dunning_pdf import build_dunning_html
+    legacy = {'payment_type': payment_type, 'period_year': 2026, 'period_month': 4,
+        'due_date': '2026-04-07', 'days': 1, 'principal': '100.00', 'interest': '0.02'}
+    notice = SimpleNamespace(level=1, issue_date=date(2026, 4, 8), due_date=date(2026, 4, 22),
+        principal_amount=Decimal('200.00'), fee_amount=Decimal('0'), total_amount=Decimal('200.04'),
+        interest_amount=Decimal('0.04'), included_items=[], interest_snapshot={
+            'base_interest_rate': '2.50', 'annual_rate': '7.50', 'reference_date': '2026-04-08',
+            'items': [legacy, {**legacy, 'interest_start': '2026-04-08'}]})
+    html = build_dunning_html(notice)
+    assert html.count('Zinsbeginn: 08.04.2026') == 1
+
+
+def test_register_extract_labels_meeting_date_before_the_preserved_entry_date():
+    html = recipient_documents()['register']
+    assert html.index('Datum der Versammlung') < html.index('Eingetragen am')
+    with pdfplumber.open(BytesIO(render_pdf(html))) as pdf:
+        text = " ".join(page.extract_text() or '' for page in pdf.pages)
+    assert '15.06.2026' in text
+    assert '01.11.2026' in text
+    assert text.index('15.06.2026') < text.index('01.11.2026')
+    assert 'Gemeinschaftsraum' in text

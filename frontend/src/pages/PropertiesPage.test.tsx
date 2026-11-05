@@ -65,3 +65,17 @@ it("names the settlement start and shows the inclusive month pattern", async () 
   fireEvent.change(month, { target: { value: "4" } });
   expect(screen.getByText("01.04. bis 31.03.")).toBeVisible();
 });
+
+it("saves the property state and allows the nationwide fallback", async () => {
+  vi.spyOn(api, "get").mockResolvedValue({ items: [], next_cursor: null });
+  const post = vi.spyOn(api, "post").mockResolvedValue({ id: "created" });
+  render(<MemoryRouter><PropertiesPage /></MemoryRouter>);
+  fireEvent.click(screen.getByRole("button", { name: "+ Neues Objekt" }));
+  const state = screen.getByRole("combobox", { name: "Bundesland" });
+  expect(state).toHaveValue("");
+  fireEvent.change(state, { target: { value: "BY" } });
+  fireEvent.change(screen.getByLabelText("Name *"), { target: { value: "Bayerisches Mietobjekt" } });
+  fireEvent.click(screen.getByRole("button", { name: "Speichern" }));
+  await waitFor(() => expect(post).toHaveBeenCalled());
+  expect(post.mock.calls[0][1]).toMatchObject({ federal_state: "BY" });
+});

@@ -1233,22 +1233,22 @@ class TestT35Interest:
         assert response.status_code == 201, response.text
         notice = response.json()
         assert notice["principal_amount"] == "600.00"
-        assert notice["interest_amount"] == "7.39"
-        assert notice["total_amount"] == "607.39"
-        assert [item["days"] for item in notice["interest_snapshot"]["items"]] == [60, 60]
+        assert notice["interest_amount"] == "6.90"
+        assert notice["total_amount"] == "606.90"
+        assert [item["days"] for item in notice["interest_snapshot"]["items"]] == [56, 56]
         response = await client_a_admin.post(f'/api/dunning/{notice["id"]}/issue')
         assert response.status_code == 200, response.text
         response = await client_a_admin.get(f'/api/dunning/{notice["id"]}/pdf')
         assert response.status_code == 200, response.text
         with pdfplumber.open(io.BytesIO(response.content)) as pdf:
             text = "\n".join(page.extract_text() for page in pdf.pages)
-        for value in ("Basiszinssatz", "2,50", "7,50", "30.04.2025", "60", "7,39", "607,39"):
+        for value in ("Basiszinssatz", "2,50", "7,50", "30.04.2025", "56", "6,90", "606,90"):
             assert value in text
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize("configured,supplied,expected", [
-        ("2.50", "missing", "7.39"), ("-0.88", "missing", "4.07"),
-        ("2.50", "-0.88", "4.07"), ("2.50", None, "0.00"),
+        ("2.50", "missing", "6.90"), ("-0.88", "missing", "3.79"),
+        ("2.50", "-0.88", "3.79"), ("2.50", None, "0.00"),
         (None, "missing", "0.00"), (None, None, "0.00"),
     ])
     async def test_t35_configuration_override_and_null(self, client_a_admin, m7_seed, monkeypatch, configured, supplied, expected):
@@ -1310,7 +1310,7 @@ class TestT35Interest:
                 with pytest.raises(DBAPIError, match="Cannot downgrade while interest-backed"):
                     with connection.begin_nested():
                         migration.downgrade()
-                assert connection.scalar(text("SELECT interest_amount FROM dunning_notice WHERE id=:id"), {"id": notice["id"]}) == Decimal("7.39")
+                assert connection.scalar(text("SELECT interest_amount FROM dunning_notice WHERE id=:id"), {"id": notice["id"]}) == Decimal("6.90")
         finally:
             engine.dispose()
 
@@ -1358,7 +1358,7 @@ async def test_t35_raw_sql_draft_total_and_provenance_consistency(client_a_admin
         with pytest.raises(DBAPIError, match='ck_dunning_notice_(total_sum|interest_provenance)'):
             async with app_rw_session.begin_nested():
                 await app_rw_session.execute(text(sql), {'id': uuid.UUID(notice['id'])})
-    assert await app_rw_session.scalar(text('SELECT interest_amount FROM dunning_notice WHERE id=:id'), {'id': uuid.UUID(notice['id'])}) == Decimal('7.39')
+    assert await app_rw_session.scalar(text('SELECT interest_amount FROM dunning_notice WHERE id=:id'), {'id': uuid.UUID(notice['id'])}) == Decimal('6.90')
 
 
 @pytest.mark.asyncio
@@ -1369,7 +1369,7 @@ async def test_t35_aggregated_open_item_overflow_returns_422(client_a_admin, m7_
     item = OpenItem(2025, 3, 'KALTMIETE', Decimal('1000000000000.00'), Decimal('0'), Decimal('1000000000000.00'))
     calls = []
 
-    def overflowing_statement(*args):
+    def overflowing_statement(*args, as_of=None):
         calls.append(args)
         return SimpleNamespace(open_items=[item])
 
@@ -1377,3 +1377,27 @@ async def test_t35_aggregated_open_item_overflow_returns_422(client_a_admin, m7_
     response = await client_a_admin.post('/api/dunning/tenant', json=TestT35Interest.tenant_body(m7_seed, base_interest_rate='2.50'))
     assert len(calls) == 1, 'Overflow must be injected into the canonical tenant statement'
     assert response.status_code == 422, response.text
+
+
+@pytest.mark.asyncio
+async def test_property_state_reaches_normal_tenant_dunning(client_a_admin, m7_seed):
+    body = TestT35Interest.tenant_body(m7_seed, period_start='2026-01-01', period_end='2026-01-31',
+        reference_date='2026-01-07', base_interest_rate='2.50')
+    # Nationwide third working day is 6 January; Bavaria excludes Epiphany.
+    response = await client_a_admin.post('/api/dunning/tenant', json=body)
+    assert response.status_code == 201, response.text
+    assert {item['due_date'] for item in response.json()['interest_snapshot']['items']} == {'2026-01-06'}
+    original = response.json()
+    issued = await client_a_admin.post(f"/api/dunning/{original['id']}/issue")
+    assert issued.status_code == 200, issued.text
+    frozen_pdf = (await client_a_admin.get(f"/api/dunning/{original['id']}/pdf")).content
+    changed = await client_a_admin.put(f"/api/properties/{m7_seed['prop_m7']}", json={'federal_state': 'BY'})
+    assert changed.status_code == 200, changed.text
+    response = await client_a_admin.post('/api/dunning/tenant', json=body)
+    assert response.status_code == 422, response.text
+    response = await client_a_admin.post('/api/dunning/tenant', json={**body, 'reference_date':'2026-01-08'})
+    assert response.status_code == 201, response.text
+    assert {item['due_date'] for item in response.json()['interest_snapshot']['items']} == {'2026-01-07'}
+    reloaded = (await client_a_admin.get(f"/api/dunning/{original['id']}")).json()
+    assert reloaded['interest_snapshot'] == original['interest_snapshot']
+    assert (await client_a_admin.get(f"/api/dunning/{original['id']}/pdf")).content == frozen_pdf

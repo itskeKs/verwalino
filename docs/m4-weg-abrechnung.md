@@ -419,6 +419,39 @@ recomputed by this fix. See [ADR-0013](adr/0013-reserve-financed-owner-costs.md)
 
 ---
 
+### Dated document addressees after an ownership change (#207)
+
+The economic plan uses the first day of its plan period; the asset report uses
+its report date (`period_end`). Each unit's addressed copy names the owner and
+“Eigentümer am DD.MM.YYYY”. The existing property-wide download combines these
+individual copies. The asset figures cover the complete report period, without
+splitting them at the transfer. Concurrent co-owners remain separate recipients;
+a missing dated owner or name refuses computation instead of inventing a recipient.
+
+The shared `engine.periods.owner_at` reads inclusive engine bounds after the
+existing exclusive-to-inclusive storage conversion. Newly computed documents
+store their unit, owner, name and key date in the existing snapshot; finalization
+hashes and freezes those values. The page and PDF use that frozen list. Old
+finalized snapshots without it keep their original rendering and digest; reads
+do not backfill new recipients. Migration 0162 adds new report recipients to
+both individual and organization retention through the existing shared catalog,
+recipient extractor and source deadlines. Report-line evidence dates extend the
+same deadline in both paths. An ended ownership alone does not permit erasing a
+retained report recipient; frozen names and documents remain unchanged.
+
+The live Hausgeld account follows dated ownership using only the unit's frozen
+plan advances. Continuing co-owners keep their original rounded monthly amounts;
+only departing owners' advances pass to dated successors. A transfer month is
+split by inclusive ownership days, with the existing cent distribution; an
+ambiguous transfer refuses calculation rather than shifting unrelated shares.
+For unit 2, Karl Weiß through 30 June 2026 and Lena Roth from 1 July, a monthly
+400.00 EUR produces 2,400.00 EUR for each. The 2026 plan names Karl and the
+31 December report names Lena. Annual-settlement ownership periods and its
+existing frozen plan basis remain unchanged; this does not decide contractual
+liability between seller and buyer.
+
+---
+
 ## 5. Economic Plan — Forward-Looking
 
 ### 5.1 Inputs (SDD §10)
@@ -1049,3 +1082,32 @@ or contact-source access. Its deletion metadata then reports only the generic
 German access restriction, without disclosing hidden bookings or other evidence.
 Saving a reserve opening through the input-coverage declaration refreshes both
 the ledger and the draft's deletion eligibility immediately on both pages.
+
+
+## Special-levy resolution authority (#203)
+
+New special levies require a recorded `ANGENOMMEN` resolution from the same
+property and organization. The service checks that recorded result without
+adjudicating votes or quorum. Missing/null references return 422 with
+“Eine Sonderumlage braucht einen Beschluss.” and save nothing; inaccessible or
+foreign references return 404. The existing whole-property WEG scope, due-date
+ownership basis, MEA rounding and source permissions remain authoritative.
+
+Historical unlinked levies continue to feed owner accounts and dunning. The page
+labels them “ohne Beschlussbezug”; a writer with the scope's prepare capability
+can assign an adopted resolution once with `PUT /api/special-levies/{id}/resolution`.
+The database permits only the first reference update and preserves every other
+header column and frozen allocation. Identical retries return the same result;
+competing different links have one winner, with 409 for the other. A successful
+first link records `special_levy.resolution_linked` once. Native archive import
+and operator restore retain historical INSERT compatibility, including null
+references; import selects the archived scope for each header’s native RLS checks
+and restores the prior context afterwards. It does not use ordinary new-creation
+validation.
+
+The register's API/page shows only levy summaries permitted by their native RLS
+and financial/source disclosure grants. A levy links back to the resolution's
+meeting date and TOP, using the frozen register meeting date when available.
+A 1,200 EUR levy on 600/400 MEA yields 720/480 EUR due 1 July 2026; the API/browser
+scenario in [special_levy.feature](../features/special_levy.feature) uses the
+adopted roof repair of 15 May 2026, TOP 3. See [operation](operations/weg.md).
