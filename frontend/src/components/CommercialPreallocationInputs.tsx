@@ -3,12 +3,12 @@ import { commercialRuleValidation } from '../lib/commercialPreallocation';
 
 export function CommercialPreallocationInputs({ options, rules, onChange, disabled, attempted }: {
   options: { id: string; label: string }[]; rules: CommercialPreallocationIn[];
-  onChange: (rules: CommercialPreallocationIn[]) => void; disabled: boolean; attempted: boolean;
+  onChange: (rule: CommercialPreallocationIn) => void; disabled: boolean; attempted: boolean;
 }) {
   function update(id: string, values: Partial<CommercialPreallocationIn>) {
     const old = rules.find(rule => rule.cost_entry_id === id);
-    onChange([...rules.filter(rule => rule.cost_entry_id !== id), { cost_entry_id: id,
-      commercial_share_percent: null, commercial_amount: null, commercial_reason: null, ...old, ...values }]);
+    onChange({ cost_entry_id: id,
+      commercial_share_percent: null, commercial_amount: null, commercial_reason: null, ...old, ...values });
   }
   return <section className="card" aria-label="Vorwegabzug Gewerbe" style={{ marginBottom: '1rem' }}>
     <h2>Vorwegabzug Gewerbe</h2>

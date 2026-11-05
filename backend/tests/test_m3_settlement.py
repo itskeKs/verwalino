@@ -22,6 +22,8 @@ from tests.test_invoice_extraction_worker import worker_tenant  # noqa: F401
 import pytest
 from sqlalchemy import text
 
+from tests.settlement_period_support import period_data_cleanup  # noqa: F401
+
 SYNC_URL = os.environ.get(
     "HV_DATABASE_URL_SYNC",
     "postgresql://app_migrator:migrator_secret@localhost:5433/hausverwaltung",
@@ -124,6 +126,7 @@ async def test_long_commercial_reason_persists_in_lines_snapshot_and_pdf(client_
 
 
 @pytest.mark.asyncio
+@pytest.mark.usefixtures('period_data_cleanup')
 async def test_commercial_preallocation_rejects_blank_reason_and_foreign_source(client_a_admin, client_b_admin):
     from tests.commercial_preallocation_support import commercial_property, commercial_rule
     api = client_a_admin

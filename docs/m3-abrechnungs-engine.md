@@ -825,6 +825,10 @@ with `cost_entry_id`, `commercial_share_percent`, `commercial_amount` and
 values as null removes an unfinalized rule. Compute/finalize saves atomically;
 preview applies hypothetical inputs without saving. Draft GET reads current
 shared rules rather than replaying a sibling's old compute extras.
+The draft page submits only positions explicitly edited or removed in that tab,
+so untouched loaded rules cannot overwrite a sibling's later changes. Successful
+compute/finalize responses refresh the displayed rules and clear saved commands;
+preview and failed requests retain unsaved commands.
 Accepted reasons retain their full 2,000-character limit. Persisted line notes use
 `text` (revision 0170), preserving the complete reason and engine explanation in
 the relational lines, frozen snapshot and escaped PDF output.

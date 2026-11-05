@@ -244,6 +244,7 @@ export function SettlementDetailPage() {
   const [unitMetrics, setUnitMetrics] = useState<UnitMetricIn[]>([]);
   const [heatingConfigs, setHeatingConfigs] = useState<HeatingConfig[]>([]);
   const [commercialRules, setCommercialRules] = useState<CommercialPreallocationIn[]>([]);
+  const [commercialCommands, setCommercialCommands] = useState<CommercialPreallocationIn[]>([]);
   const [commercialAttempted, setCommercialAttempted] = useState(false);
   const [showInputs, setShowInputs] = useState(false);
   const [consumptionSuggestions, setConsumptionSuggestions] = useState<ConsumptionSuggestion[]>([]);
@@ -275,9 +276,18 @@ export function SettlementDetailPage() {
     return [{ id: entry.id, label: category.label, kind: category.code === "HEIZUNG_ZENTRAL" ? "HEATING" as const : "HOT_WATER" as const }];
   });
 
+  function updateCommercialRule(rule: CommercialPreallocationIn) {
+    const update = (current: CommercialPreallocationIn[]) => [
+      ...current.filter(item => item.cost_entry_id !== rule.cost_entry_id), rule,
+    ];
+    setCommercialRules(update);
+    setCommercialCommands(update);
+  }
+
   function initStructuredInputs(entries: CostEntry[], r: SettlementRun) {
     setHeatingConfigs(r.extra_inputs?.heating_inputs ?? []);
     setCommercialRules(r.extra_inputs?.commercial_preallocations ?? []);
+    setCommercialCommands([]);
     setCommercialAttempted(false);
     setManualConsumptionIds(new Set());
     setConsumptionSuggestions([]);
@@ -443,7 +453,7 @@ export function SettlementDetailPage() {
   function buildComputeRequest(): ComputeRequest {
     setCommercialAttempted(true);
     return {
-      ...(commercialRules.length ? { commercial_preallocations: commercialRulesPayload(commercialRules) } : {}),
+      ...(commercialCommands.length ? { commercial_preallocations: commercialRulesPayload(commercialCommands) } : {}),
       heating_inputs: heatingPayload(heatingConfigs),
       external_amounts: externalAmounts.filter((e) => e.tenant_amount !== "" && !heatingConfigs.some(config => config.cost_entry_id === e.cost_entry_id)),
       manual_amounts: manualAmounts.filter((m) => m.amount !== "" && !heatingConfigs.some(config => config.cost_entry_id === m.cost_entry_id)),
@@ -521,6 +531,9 @@ export function SettlementDetailPage() {
     try {
       const result = await computeSettlement(runId, buildComputeRequest());
       setRun(result);
+      setCommercialRules(result.extra_inputs?.commercial_preallocations ?? []);
+      setCommercialCommands([]);
+      setCommercialAttempted(false);
     } catch (err) {
       if (err instanceof ApiError) {
         setActionError(err.message);
@@ -563,6 +576,9 @@ export function SettlementDetailPage() {
     try {
       const result = await finalizeSettlement(runId, buildComputeRequest());
       setRun(result);
+      setCommercialRules(result.extra_inputs?.commercial_preallocations ?? []);
+      setCommercialCommands([]);
+      setCommercialAttempted(false);
       setShowPreview(false);
     } catch (err) {
       if (err instanceof ApiError) {
@@ -1195,7 +1211,7 @@ export function SettlementDetailPage() {
       {isDraft && canEditHeating && heatingOptions.length > 0 && <HeatingInputs options={heatingOptions} configs={heatingConfigs}
         onChange={setHeatingConfigs} candidates={heatingCandidates} disabled={actionLoading} />}
       {isDraft && canEditHeating && commercialOptions.length > 0 && units.some(unit => unit.property_id === run.property_id && unit.usage_type === 'GEWERBE')
-        && <CommercialPreallocationInputs options={commercialOptions} rules={commercialRules} onChange={setCommercialRules}
+        && <CommercialPreallocationInputs options={commercialOptions} rules={commercialRules} onChange={updateCommercialRule}
           disabled={actionLoading} attempted={commercialAttempted} />}
       {isDraft && canEditHeating && heatingBlocked && <p>Interne Heizkosten: gültige Angaben und passende, vollständig geladene Zeiträume sind vor Berechnen, Vorschau und Finalisieren erforderlich.</p>}
 

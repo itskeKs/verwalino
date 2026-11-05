@@ -1495,6 +1495,10 @@ and the full-width “Begründung” textarea. Decimal comma/dot parsing reuses 
 existing exact string parser. No default share is inferred. Blank reasons and
 invalid values keep inputs, show a German alert and associate the invalid field
 with its explanation. Server refusals retain the entered rule.
+Loaded rules are displayed without becoming edit commands. Requests send only
+positions explicitly edited or removed in this tab. Successful calculation or
+finalization refreshes the displayed rules from the response and clears those
+commands; preview and failed requests retain unsaved edits.
 
 The card explains that “Berechnen” saves a position rule for every affected
 tenant statement, “Vorschau” is temporary, and first finalization locks the rule.
