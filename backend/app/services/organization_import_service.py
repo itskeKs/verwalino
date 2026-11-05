@@ -463,9 +463,20 @@ async def import_organization(db, auth, source):
                     # including numeric and nested JSON values, without float loss.
                     columns = ','.join(f'"{c}"' for c in row)
                     projection = ','.join(f'(v)."{c}"' for c in row)
+                    # Levy INSERT RLS requires an explicit financial context,
+                    # including for historical null-reference headers. Select
+                    # only this archived scope; native source/capability guards
+                    # still decide whether the administrator may restore it.
+                    if name == 'special_levy':
+                        previous_scope = await db.scalar(text("SELECT current_setting('app.current_scope_id',true)"))
+                        await db.execute(text("SELECT set_config('app.current_scope_id',:scope,true)"),
+                            {'scope': row['accounting_scope_id']})
                     await db.execute(text(f'INSERT INTO public."{name}" ({columns}) SELECT {projection} '
                         f'FROM json_populate_record(NULL::public."{name}",CAST(:row AS json)) v'),
                         {'row': json_bytes(row).decode()})
+                    if name == 'special_levy':
+                        await db.execute(text("SELECT set_config('app.current_scope_id',:scope,true)"),
+                            {'scope': previous_scope or ''})
                     inserted.add((name, original.get('id')))
                     pending.remove((name, original))
                     progress = True

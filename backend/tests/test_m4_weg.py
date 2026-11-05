@@ -1500,3 +1500,218 @@ async def test_foreign_details_match_missing_german_responses(client_a_admin, cl
         missing = await client_b_admin.get("/api/" + path.format(id=uuid.UUID(int=0)))
         assert foreign.status_code == missing.status_code == 404
         assert foreign.json() == missing.json() == {"detail": message}
+
+
+# Resolution authority for special levies uses the existing frozen-levy fixtures.
+from tests.test_special_levy import (  # noqa: E402,F401
+    levy_db, levy_fixture, scope_seed, worker_tenant, client as levy_client,
+    body as levy_body, create as create_levy,
+)
+
+
+@pytest.mark.asyncio
+async def test_resolution_levy_missing_reference_creates_nothing(levy_db, levy_fixture):
+    ids = levy_fixture
+    async with levy_client(ids) as api:
+        for supplied in (False, True):
+            payload = levy_body(ids)
+            if supplied:
+                payload['resolution_id'] = None
+            else:
+                payload.pop('resolution_id')
+            answer = await api.post('/api/special-levies', json=payload)
+            assert answer.status_code == 422, answer.text
+            assert answer.json()['detail'] == 'Eine Sonderumlage braucht einen Beschluss.'
+    assert await levy_db.scalar(text('SELECT count(*) FROM special_levy WHERE organization_id=:org'), ids) == 0
+    assert await levy_db.scalar(text("SELECT count(*) FROM audit_event WHERE organization_id=:org AND entity_type='special_levy'"), ids) == 0
+
+
+async def legacy_levy(db, ids):
+    """Synthetic historical row through the trusted migrator, never ordinary creation."""
+    levy = uuid.uuid4()
+    params = {**ids, 'levy': levy}
+    await db.execute(text("INSERT INTO special_levy(id,organization_id,property_id,accounting_scope_id,amount,due_date) VALUES (:levy,:org,:property,:scope,1200,'2026-07-01')"), params)
+    for unit, owner, history, mea in zip(ids['units'], ids['owners'], ids['histories'], ids.get('legacy_meas', [300, 300, 400]), strict=True):
+        await db.execute(text("INSERT INTO special_levy_allocation(organization_id,property_id,special_levy_id,unit_id,owner_profile_id,ownership_history_id,mea,amount) VALUES (:org,:property,:levy,:unit,:owner,:history,:mea,:amount)"),
+            {**params, 'unit': unit, 'owner': owner, 'history': history, 'mea': mea, 'amount': Decimal('1.20') * mea})
+    await db.commit()
+    return levy
+
+
+@pytest.mark.asyncio
+async def test_resolution_levy_links_once_and_preserves_all_frozen_evidence(levy_db, levy_fixture):
+    ids = levy_fixture
+    levy = await legacy_levy(levy_db, ids)
+    params = {'levy': levy}
+    before = await levy_db.scalar(text('SELECT to_jsonb(l) FROM special_levy l WHERE id=:levy'), params)
+    allocations = (await levy_db.execute(text('SELECT to_jsonb(a) FROM special_levy_allocation a WHERE special_levy_id=:levy ORDER BY id'), params)).scalars().all()
+    await levy_db.commit()
+    async with levy_client(ids) as api:
+        route = f'/api/special-levies/{levy}/resolution'
+        for _ in range(2):
+            answer = await api.put(route, json={'resolution_id': str(ids['resolution'])})
+            assert answer.status_code == 200, answer.text
+            assert answer.json()['resolution_id'] == str(ids['resolution'])
+        for reference in (None, str(uuid.uuid4())):
+            answer = await api.put(route, json={'resolution_id': reference})
+            assert answer.status_code in (409, 422), answer.text
+    after = await levy_db.scalar(text('SELECT to_jsonb(l) FROM special_levy l WHERE id=:levy'), params)
+    assert {k: v for k, v in after.items() if k != 'resolution_id'} == {k: v for k, v in before.items() if k != 'resolution_id'}
+    assert (await levy_db.execute(text('SELECT to_jsonb(a) FROM special_levy_allocation a WHERE special_levy_id=:levy ORDER BY id'), params)).scalars().all() == allocations
+    assert await levy_db.scalar(text("SELECT count(*) FROM audit_event WHERE entity_id=:levy AND action='special_levy.resolution_linked'"), params) == 1
+
+
+@pytest.mark.asyncio
+async def test_resolution_levy_rejects_unadopted_sources_for_creation_and_link(levy_db, levy_fixture):
+    ids = levy_fixture
+    await levy_db.execute(text("UPDATE resolution SET result='ABGELEHNT' WHERE id=:resolution"), ids)
+    levy = await legacy_levy(levy_db, ids)
+    async with levy_client(ids) as api:
+        answer = await api.post('/api/special-levies', json=levy_body(ids))
+        assert answer.status_code == 422, answer.text
+        answer = await api.put(f'/api/special-levies/{levy}/resolution', json={'resolution_id': str(ids['resolution'])})
+        assert answer.status_code == 422, answer.text
+    assert await levy_db.scalar(text('SELECT resolution_id FROM special_levy WHERE id=:id'), {'id': levy}) is None
+
+
+@pytest.mark.asyncio
+async def test_resolution_levy_concurrent_link_is_atomic(levy_db, levy_fixture):
+    import asyncio
+    ids = levy_fixture
+    levy = await legacy_levy(levy_db, ids)
+    other = uuid.uuid4()
+    await levy_db.execute(text("INSERT INTO resolution(id,organization_id,meeting_id,wording,votes_yes,votes_no,votes_abstain,result) VALUES (:id,:org,:meeting,'Second authority',2,0,0,'ANGENOMMEN')"), {**ids, 'id': other})
+    await levy_db.commit()
+    async def link(reference):
+        async with levy_client(ids) as api:
+            return await api.put(f'/api/special-levies/{levy}/resolution', json={'resolution_id': str(reference)})
+    answers = await asyncio.gather(link(ids['resolution']), link(other))
+    assert sorted(a.status_code for a in answers) == [200, 409]
+    winner = next(a.json()['resolution_id'] for a in answers if a.status_code == 200)
+    answers = await asyncio.gather(link(winner), link(winner))
+    assert [a.status_code for a in answers] == [200, 200]
+    assert await levy_db.scalar(text('SELECT resolution_id::text FROM special_levy WHERE id=:id'), {'id': levy}) == winner
+
+
+@pytest.mark.asyncio
+async def test_resolution_levy_foreign_property_missing_and_readonly_links_are_refused(levy_db, levy_fixture, client_b_admin):
+    ids = levy_fixture
+    levy = await legacy_levy(levy_db, ids)
+    foreign = uuid.uuid4()
+    meeting = uuid.uuid4()
+    await levy_db.execute(text("INSERT INTO owners_meeting(id,organization_id,property_id,meeting_date,location,meeting_type,status) VALUES (:id,:org,:other_property,'2026-05-15','','ORDENTLICH','HELD')"), {**ids, 'id': meeting})
+    await levy_db.execute(text("INSERT INTO resolution(id,organization_id,meeting_id,wording,votes_yes,votes_no,votes_abstain,result) VALUES (:id,:org,:meeting,'Foreign roof',2,0,0,'ANGENOMMEN')"), {**ids, 'id': foreign, 'meeting': meeting})
+    await levy_db.commit()
+    route = f'/api/special-levies/{levy}/resolution'
+    response = await client_b_admin.post('/api/properties', json={'name': 'Foreign authority', 'management_type': 'WEG'})
+    assert response.status_code == 201, response.text
+    response = await client_b_admin.post('/api/meetings', json={'property_id': response.json()['id'],
+        'meeting_date': '2026-05-15', 'meeting_type': 'ORDENTLICH', 'location': 'Foreign meeting'})
+    assert response.status_code == 201, response.text
+    response = await client_b_admin.post('/api/meetings/resolutions', json={'meeting_id': response.json()['id'],
+        'wording': 'Foreign authority', 'votes_yes': 1, 'votes_no': 0, 'votes_abstain': 0, 'result': 'ANGENOMMEN'})
+    assert response.status_code == 201, response.text
+    foreign_org = uuid.UUID(response.json()['id'])
+    async with levy_client(ids) as api:
+        for reference in (foreign, foreign_org, uuid.uuid4()):
+            response = await api.post('/api/special-levies', json=levy_body(ids, resolution_id=str(reference)))
+            assert response.status_code == 404, response.text
+            response = await api.put(route, json={'resolution_id': str(reference)})
+            assert response.status_code == 404, response.text
+    async with levy_client(ids, 'readonly') as api:
+        assert (await api.put(route, json={'resolution_id': str(ids['resolution'])})).status_code == 403
+    assert (await client_b_admin.put(route, json={'resolution_id': str(ids['resolution'])})).status_code == 404
+    assert (await client_b_admin.post('/api/special-levies', json=levy_body(ids))).status_code == 404
+    assert await levy_db.scalar(text('SELECT resolution_id FROM special_levy WHERE id=:id'), {'id': levy}) is None
+
+
+@pytest.mark.asyncio
+async def test_resolution_levy_register_does_not_disclose_without_financial_read(levy_db, levy_fixture):
+    ids = levy_fixture
+    async with levy_client(ids) as api:
+        levy = await create_levy(api, ids)
+        entry = await api.post(f"/api/meetings/resolutions/{ids['resolution']}/register")
+        assert entry.status_code == 201, entry.text
+        answer = await api.get(f"/api/meetings/register/{ids['property']}")
+        assert answer.status_code == 200
+        assert answer.json()[0]['special_levies'][0]['id'] == levy['id']
+    await levy_db.execute(text('UPDATE scope_grant SET revoked_at=now(),revoked_by=:actor WHERE id=:grant'), ids)
+    await levy_db.commit()
+    async with levy_client(ids) as api:
+        answer = await api.get(f"/api/meetings/register/{ids['property']}")
+        assert answer.status_code == 200, answer.text
+        assert answer.json()[0]['special_levies'] == []
+        assert (await api.put(f"/api/special-levies/{levy['id']}/resolution", json={'resolution_id': str(ids['resolution'])})).status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_resolution_levy_database_link_keeps_every_other_column_immutable(levy_db, levy_fixture):
+    from tests.test_financial_scope_boundary import actor
+    from sqlalchemy.exc import DBAPIError
+    ids = levy_fixture
+    levy = await legacy_levy(levy_db, ids)
+    ids['levy'] = levy
+    await actor(levy_db, ids)
+    await levy_db.execute(text("SELECT set_config('app.current_scope_id',:scope,true)"), {'scope': str(ids['scope'])})
+    for statement in (
+        'UPDATE special_levy SET resolution_id=:resolution,amount=1 WHERE id=:levy',
+        'UPDATE special_levy SET resolution_id=NULL WHERE id=:levy',
+        'UPDATE special_levy_allocation SET amount=1 WHERE special_levy_id=:levy',
+    ):
+        with pytest.raises(DBAPIError):
+            async with levy_db.begin_nested():
+                await levy_db.execute(text(statement), ids)
+    await levy_db.execute(text('UPDATE special_levy SET resolution_id=:resolution WHERE id=:levy'), ids)
+    for statement in ('UPDATE special_levy SET resolution_id=NULL WHERE id=:levy',
+        'UPDATE special_levy SET resolution_id=:resolution WHERE id=:levy'):
+        with pytest.raises(DBAPIError):
+            async with levy_db.begin_nested():
+                await levy_db.execute(text(statement), ids)
+    await levy_db.rollback()
+
+
+def test_resolution_levy_migration_roundtrip_restores_guard_and_column_grants(run_migrations):
+    from alembic.migration import MigrationContext
+    from alembic.operations import Operations
+    from sqlalchemy import create_engine
+    from tests.conftest import MIGRATOR_SYNC_URL
+    import importlib
+    migration = importlib.import_module('migrations.versions.0168_special_levy_resolution')
+    engine = create_engine(MIGRATOR_SYNC_URL)
+    try:
+        with engine.begin() as db, Operations.context(MigrationContext.configure(db)):
+            point = db.begin_nested()
+            try:
+                before = db.scalar(text("SELECT pg_get_functiondef('guard_special_levy()'::regprocedure)"))
+                assert db.scalar(text("SELECT has_column_privilege('app_rw','special_levy','resolution_id','UPDATE')"))
+                migration.downgrade()
+                assert not db.scalar(text("SELECT has_column_privilege('app_rw','special_levy','resolution_id','UPDATE')"))
+                migration.upgrade()
+                assert db.scalar(text("SELECT pg_get_functiondef('guard_special_levy()'::regprocedure)")) == before
+                assert not db.scalar(text("SELECT has_column_privilege('app_rw','special_levy','amount','UPDATE')"))
+            finally:
+                point.rollback()
+    finally:
+        engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_resolution_levy_legacy_account_and_dunning_remain_frozen_after_link(levy_db, levy_fixture):
+    ids = levy_fixture
+    levy = await legacy_levy(levy_db, ids)
+    params = {'accounting_scope_id': str(ids['scope']), 'period_start': '2026-07-01', 'period_end': '2026-07-31'}
+    async with levy_client(ids) as api:
+        path = f"/api/payments/mietkonto/owner/{ids['owners'][0]}"
+        before = await api.get(path, params=params)
+        assert before.status_code == 200 and before.json()['balance'] == '360.00', before.text
+        notice = await api.post('/api/dunning/owner', json={**params,
+            'owner_profile_id': str(ids['owners'][0]), 'reference_date': '2026-07-02'})
+        assert notice.status_code == 201, notice.text
+        assert notice.json()['principal_amount'] == '360.00'
+        frozen = await levy_db.scalar(text('SELECT to_jsonb(n) FROM dunning_notice n WHERE id=:id'), {'id': uuid.UUID(notice.json()['id'])})
+        await levy_db.commit()
+        linked = await api.put(f'/api/special-levies/{levy}/resolution', json={'resolution_id': str(ids['resolution'])})
+        assert linked.status_code == 200, linked.text
+        after = await api.get(path, params=params)
+        assert after.status_code == 200 and after.json() == before.json()
+    assert await levy_db.scalar(text('SELECT to_jsonb(n) FROM dunning_notice n WHERE id=:id'), {'id': uuid.UUID(notice.json()['id'])}) == frozen

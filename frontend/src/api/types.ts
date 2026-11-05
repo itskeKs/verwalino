@@ -1501,6 +1501,7 @@ export interface RegisterEntry {
   resolution_id: string;
   result: string | null;
   challenge_annotation: string | null;
+  special_levies: { id: string; accounting_scope_id: string; amount: string; due_date: string }[];
 }
 
 export interface ChallengeAnnotation {
@@ -1742,10 +1743,10 @@ export interface SpecialLevyCreate {
   accounting_scope_id: string;
   amount: string;
   due_date: string;
-  resolution_id?: string | null;
+  resolution_id: string;
 }
 
-export interface SpecialLevy extends SpecialLevyCreate {
+export interface SpecialLevy extends Omit<SpecialLevyCreate, "resolution_id"> {
   id: string;
   resolution_id: string | null;
   allocations: SpecialLevyAllocation[];

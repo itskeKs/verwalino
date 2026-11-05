@@ -29,7 +29,7 @@ def client(ids, who="clerk", *, raise_errors=True):
 
 def body(ids, **extra):
     return {"property_id": str(ids["property"]), "accounting_scope_id": str(ids["scope"]),
-        "amount": "10000.00", "due_date": "2025-06-15", **extra}
+        "amount": "10000.00", "due_date": "2025-06-15", "resolution_id": str(ids["resolution"]), **extra}
 
 
 def query(ids):
@@ -53,6 +53,9 @@ async def levy_fixture(levy_db, scope_seed):
     s = levy_db
     ids = await scope_fixture(s, scope_seed)
     await bind(s, ids)
+    ids['meeting'], ids['resolution'] = uuid.uuid4(), uuid.uuid4()
+    await s.execute(text("INSERT INTO owners_meeting(id,organization_id,property_id,meeting_date,location,meeting_type,status) VALUES (:meeting,:org,:property,'2025-05-15','Test','ORDENTLICH','HELD')"), ids)
+    await s.execute(text("INSERT INTO resolution(id,organization_id,meeting_id,wording,votes_yes,votes_no,votes_abstain,result) VALUES (:resolution,:org,:meeting,'Dachreparatur',2,0,0,'ANGENOMMEN')"), ids)
     await s.execute(text("UPDATE scope_grant SET revoked_at=now(),revoked_by=:actor WHERE id=:grant"), ids)
     ids["grant"] = uuid.uuid4()
     await s.execute(text("INSERT INTO scope_grant(id,organization_id,scope_id,user_id,capabilities,granted_by,reason) VALUES (:grant,:org,:scope,:clerk,ARRAY['read','prepare','confirm'],:actor,'Levy and payment test capabilities')"), ids)
@@ -318,6 +321,7 @@ async def test_sources_revoke_closes_levy_statement_and_audit(levy_db, levy_fixt
             await create(api, ids, amount='1.00')
             assert (await api.post(f'/api/property-data-domains/{domain}/grants/{receipt}/revoke')).status_code == 204
             assert (await api.get('/api/special-levies', params=query(ids))).status_code == 404
+            assert (await api.put(f"/api/special-levies/{levy['id']}/resolution", json={'resolution_id': str(ids['resolution'])})).status_code == 404
             assert (await api.get(url, params=params)).status_code == 404
             assert (await api.post('/api/special-levies', json=body(ids))).status_code == 404
             await actor(levy_db, ids, 'actor')
