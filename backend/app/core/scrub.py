@@ -17,6 +17,7 @@ REQUEST_HEADER_ALLOWLIST = ("content-type", "content-length", "accept", "user-ag
 # Underscores delimit filename parts; preceding digits may delimit an IBAN.
 _EMAIL = re.compile(r"(?<![^\W_]|[.!#$%&'*+/=?^`{|}~-])[\w.!#$%&'*+/=?^`{|}~-]{1,64}@(?:[^\W_]|-){1,63}(?:\.(?:[^\W_]|-){1,63}){1,127}(?![^\W_]|[.-])")
 _IBAN = re.compile(r"(?<![^\W\d_])[A-Z]{2}\d{2}(?:[ -]?[A-Z0-9]){11,30}(?![^\W_])", re.I)
+_UUID = re.compile(r"(?<![a-f0-9])[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}(?![a-f0-9])", re.I)
 _PHONE = re.compile(r"(?<![\w.+/-])(?:\+\d|\(\d|\d)[\d ()/-]{5,62}\d(?![\w.-])")
 _ISO_DATE = re.compile(r"\d{4}-\d{2}-\d{2}")
 _ADDRESS = re.compile(r"(?<![\w-])[\w-]{1,64}(?:straße|strasse|str\.)[ \t]{1,8}\d{1,6}[a-z]?(?:[ \t]{0,4}[-/][ \t]{0,4}\d{1,6}[a-z]?)?(?!\w)", re.I)
@@ -63,6 +64,18 @@ def _mask_assignments(value: str) -> str:
     return "".join(parts)
 
 
+def _mask_ibans(value: str) -> str:
+    # Exclude canonical UUID spans only from IBAN matching. All other candidates
+    # remain conservatively masked, without country/length/checksum validation.
+    parts = []
+    start = 0
+    for match in _UUID.finditer(value):
+        parts.extend((_IBAN.sub("[redacted:iban]", value[start:match.start()]), match[0]))
+        start = match.end()
+    parts.append(_IBAN.sub("[redacted:iban]", value[start:]))
+    return "".join(parts)
+
+
 def _mask_phone(match: re.Match) -> str:
     number = match[0]
     if _ISO_DATE.fullmatch(number):
@@ -100,7 +113,7 @@ def scrub_text(value: str, *, error_context: bool = False) -> str:
     value = _BEARER.sub("[redacted:token]", value)
     value = _JWT.sub("[redacted:token]", value)
     value = _EMAIL.sub("[redacted:email]", value)
-    value = _IBAN.sub("[redacted:iban]", value)
+    value = _mask_ibans(value)
     value = _ADDRESS.sub("[redacted:address]", value)
     value = _PHONE.sub(_mask_phone, value)
     value = _KEY_VALUE.sub(r"\1([redacted:name])", value)

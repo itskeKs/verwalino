@@ -4,7 +4,10 @@ import copy
 from http import HTTPStatus
 import json
 import logging
+import random
 import time
+from urllib.parse import quote
+from uuid import UUID
 
 import pytest
 from sqlalchemy.exc import IntegrityError
@@ -132,6 +135,75 @@ def test_structured_error_values_are_masked(message):
 def test_grouped_and_lowercase_ibans_are_masked(iban):
     assert "[redacted:iban]" in scrub_text(iban)
     assert iban not in scrub_text(iban)
+
+
+@pytest.mark.parametrize("identity", [
+    "ab123456-7890-4abc-8def-123456789abc",
+    "12345678-ab12-4abc-8def-123456789abc",
+    "12345678-1234-4abc-ab12-123456789abc",
+])
+@pytest.mark.parametrize("case", [str.lower, str.upper, str.title])
+def test_canonical_uuid_identifiers_survive_text_events_and_error_logs(identity, case):
+    identity = case(identity)
+    message = f"organization {identity} erased"
+    assert scrub_text(message) == message
+    assert scrub({"exception": {"values": [{"value": message}]}})["exception"]["values"][0]["value"] == message
+    record = logging.LogRecord("app.test", logging.ERROR, __file__, 1, message, (), None)
+    assert message in RequestFormatter().format(record)
+
+
+def test_generated_uuid_identifiers_remain_complete_in_mixed_text():
+    generator = random.Random(196)
+    for _ in range(2000):
+        identity = str(UUID(int=generator.getrandbits(128), version=4))
+        for value in (identity, identity.upper(), identity.title()):
+            message = f"organization {value} erased; run_{value}.json; /payments/{value}"
+            assert scrub_text(message) == message
+
+
+@pytest.mark.parametrize("iban", [
+    "DE89370400440532013000", "DE89 3704 0044 0532 0130 00", "DE89-3704-0044-0532-0130-00",
+    "GB82WEST12345698765432", "GB82 WEST 1234 5698 7654 32", "GB82-WEST-1234-5698-7654-32",
+])
+@pytest.mark.parametrize("case", [str.lower, str.upper, str.title])
+def test_uuid_spans_do_not_hide_ibans_or_other_secrets(iban, case):
+    from app.diagnostics import diagnostic_log_lines
+
+    identity = "ab123456-7890-4abc-8def-123456789abc"
+    iban = case(iban)
+    message = f"organization {identity}; {iban} {identity}; alice@example.org password=private-value"
+    record = logging.LogRecord("app.test", logging.ERROR, __file__, 1, message, (), (RuntimeError, RuntimeError(message), None))
+    record.request_id = identity
+    formatted = RequestFormatter().format(record)
+    event = {
+        "exception": {"values": [{"value": message}]},
+        "request": {"url": f"https://example.org/payments/{identity}?iban={quote(iban)}",
+                    "headers": {"User-Agent": message, "Authorization": identity}},
+        "extra": {"run_id": identity, "payment_id": identity},
+    }
+    filtered_event = scrub(event)
+    for filtered in (scrub_text(message), formatted, json.dumps(filtered_event)):
+        assert identity in filtered
+        for private in (iban, "alice@example.org", "private-value"):
+            assert private not in filtered
+        for mask in ("iban", "email", "password"):
+            assert f"[redacted:{mask}]" in filtered
+    assert filtered_event["extra"] == event["extra"]
+    assert filtered_event["request"]["url"] == f"https://example.org/payments/{identity}?iban=[redacted:query]"
+    assert filtered_event["request"]["headers"] == {"User-Agent": scrub_text(message, error_context=True)}
+    assert diagnostic_log_lines(formatted.splitlines()) == [
+        f"{formatted[:23]} ERROR request_id={identity} RuntimeError",
+    ]
+
+
+@pytest.mark.parametrize("candidate", ["DE00370400440532013000", "ZZ89370400440532013000", "DE89370400440532013000123"])
+def test_invalid_iban_shapes_are_still_conservatively_masked(candidate):
+    assert scrub_text(candidate) == "[redacted:iban]"
+
+
+def test_uuid_valued_credentials_and_queries_remain_redacted():
+    identity = "ab123456-7890-4abc-8def-123456789abc"
+    assert identity not in scrub_text(f"password={identity} token={identity} https://example.org/?id={identity}")
 
 
 @pytest.mark.parametrize("text", ["1234567", "123456789012345", "2026-01-01", "created 2026-01-01T12:34:56Z", "INFO Max Mustermann"])
