@@ -90,6 +90,109 @@ async def test_cost_bank_links_and_corrected_coverage_survive_archive_round_trip
         assert await cost_open(api, mapped_successor) == 0
 
 
+async def classify_scope(api, world, property_id, scope_type):
+    response = await api.post('/api/accounting-scopes', headers={'Idempotency-Key': str(uuid.uuid4())}, json={
+        'property_id': str(property_id), 'scope_type': scope_type, 'label': 'Archived evidence',
+        'valid_from': '2026-01-01', 'valid_to': '2026-12-31', 'whole_property': True,
+    })
+    assert response.status_code == 201, response.text
+    scope_id = response.json()['id']
+    response = await api.post(f'/api/accounting-scopes/{scope_id}/grants',
+        headers={'Idempotency-Key': str(uuid.uuid4())}, json={'user_id': str(world['admin']),
+            'capabilities': ['read', 'prepare', 'confirm', 'approve', 'export'], 'reason': 'Archive regression'})
+    assert response.status_code == 201, response.text
+    return scope_id
+
+
+@pytest.mark.parametrize('bound', ['bank_account', 'cost_entry'])
+async def test_partially_classified_bank_cost_archive_restores_the_existing_link(
+    rent_world, import_target, rent_db, export_store, bound,
+):
+    from tests.test_bank_transaction_assign import cost_assignment_graph, cost_open
+
+    async with api_client(rent_world) as api:
+        property_id = rent_world['property']
+        cost, bank, (assigned, unassigned) = await cost_assignment_graph(api, property_id)
+        scope = await classify_scope(api, rent_world, property_id, 'MIET')
+        classified = bank if bound == 'bank_account' else cost
+        response = await api.post(f'/api/accounting-scopes/{scope}/bindings', json={
+            'resource_type': bound, 'resource_id': classified, 'reason': 'Classify archived evidence'})
+        assert response.status_code == 201, response.text
+    archive = await exported(rent_world)
+    async with api_client(import_target) as api:
+        restored = await api.post('/api/organizations/import', files={'file': ('partial.tar.gz', archive)})
+        assert restored.status_code == 200, restored.text
+        ids = restored.json()['id_map']
+        bank_id, cost_id = ids['bank_account'][bank], ids['cost_entry'][cost]
+        rows = (await api.get('/api/bank-transactions', params={'bank_account_id': bank_id, 'status': 'ALL'})).json()['items']
+        assert {row['id']: row['cost_entry_id'] for row in rows} == {
+            ids['bank_transaction'][assigned]: cost_id, ids['bank_transaction'][unassigned]: None}
+        new_match = await api.post(f"/api/bank-transactions/{ids['bank_transaction'][unassigned]}/assign",
+                                   json={'cost_entry_id': cost_id})
+        assert new_match.status_code in (404, 422), new_match.text
+        missing, resource = ('cost_entry', cost_id) if bound == 'bank_account' else ('bank_account', bank_id)
+        response = await api.post(f"/api/accounting-scopes/{ids['accounting_scope'][scope]}/bindings", json={
+            'resource_type': missing, 'resource_id': resource, 'reason': 'Complete archived classification'})
+        assert response.status_code == 201, response.text
+        assert await cost_open(api, cost_id) == 60
+
+
+async def test_released_scoped_reserve_draft_and_later_cost_link_survive_archive(
+    rent_world, import_target, rent_db, export_store,
+):
+    from tests.test_bank_transaction_assign import cost_assignment_graph, cost_open
+
+    async with api_client(rent_world) as api:
+        response = await api.post('/api/properties', json={'name': 'Reserve evidence', 'management_type': 'WEG'})
+        assert response.status_code == 201, response.text
+        property_id = response.json()['id']
+        scope = await classify_scope(api, rent_world, property_id, 'WEG')
+        cost, bank, (_, debit) = await cost_assignment_graph(api, property_id, scope_id=scope)
+        response = await api.post(f'/api/bank-transactions/{debit}/assign', json={'lines': [{
+            'payment_type': 'RUECKLAGENENTNAHME', 'amount': '60.00', 'period_year': 2026, 'period_month': 2}]})
+        assert response.status_code == 200, response.text
+        draft, = response.json()['payments']
+        payment_id = draft['id']
+        assert draft['status'] == 'draft'
+        response = await api.delete(f'/api/payments/{payment_id}')
+        assert response.status_code == 204, response.text
+        retained = (await api.get(f'/api/payments/{payment_id}')).json()
+        assert (retained['status'], retained['bank_transaction_id']) == ('cancelled', debit)
+        response = await api.post(f'/api/bank-transactions/{debit}/assign', json={'cost_entry_id': cost})
+        assert response.status_code == 200, response.text
+        assert response.json()['payments'] == []
+        assert await cost_open(api, cost) == 0
+    archive = await exported(rent_world)
+    binding_sql = text('SELECT to_jsonb(b) FROM accounting_scope_binding b WHERE payment_id=CAST(:payment AS uuid)')
+    payment_sql = text('SELECT cancelled_at FROM payment WHERE id=CAST(:payment AS uuid)')
+    original_binding = await rent_db.scalar(binding_sql, {'payment': payment_id})
+    original_cancellation = await rent_db.scalar(payment_sql, {'payment': payment_id})
+    assert original_binding is not None and original_cancellation is not None
+    await rent_db.rollback()
+    async with api_client(import_target) as api:
+        restored = await api.post('/api/organizations/import', files={'file': ('cancelled-draft.tar.gz', archive)})
+        assert restored.status_code == 200, restored.text
+        ids = restored.json()['id_map']
+        debit_id, cost_id = ids['bank_transaction'][debit], ids['cost_entry'][cost]
+        retained = await api.get(f"/api/payments/{ids['payment'][payment_id]}")
+        assert retained.status_code == 200, retained.text
+        assert (retained.json()['status'], retained.json()['bank_transaction_id']) == ('cancelled', debit_id)
+        assert await cost_open(api, cost_id) == 0
+        restored_payment = {'payment': ids['payment'][payment_id]}
+        assert await rent_db.scalar(payment_sql, restored_payment) == original_cancellation
+        restored_binding = await rent_db.scalar(binding_sql, restored_payment)
+        assert restored_binding == {**original_binding, 'organization_id': str(import_target['org']),
+            'id': ids['accounting_scope_binding'][original_binding['id']],
+            'property_id': ids['property'][original_binding['property_id']],
+            'scope_id': ids['accounting_scope'][original_binding['scope_id']],
+            'payment_id': restored_payment['payment'], 'payment_bank_account_id': ids['bank_account'][bank],
+            'reviewed_by': ids['user'][original_binding['reviewed_by']]}
+        await rent_db.rollback()
+        page = await api.get('/api/bank-transactions', params={'bank_account_id': ids['bank_account'][bank], 'status': 'ALL'})
+        line = next(row for row in page.json()['items'] if row['id'] == debit_id)
+        assert line['cost_entry_id'] == cost_id
+
+
 @pytest.mark.parametrize('corrected_source', [False, True])
 async def test_commercial_rules_and_finalized_statements_survive_an_archive_round_trip(rent_world, import_target, rent_db, export_store, corrected_source):
     from tests.commercial_preallocation_support import commercial_property, commercial_rule, REASON

@@ -172,6 +172,8 @@ class CostEntryService:
             constraint = getattr(error.orig.__cause__, 'constraint_name', None)
             if constraint == 'bank_cost_coverage_floor':
                 raise HTTPException(409, 'Der Betrag darf nicht unter den bereits zugeordneten Bankumsätzen liegen.') from error
+            if constraint == 'bank_cost_rejection':
+                raise HTTPException(409, 'Eine Korrektur mit zugeordneten Bankumsätzen kann nicht verworfen werden.') from error
             if constraint == 'bank_cost_chain_boundary':
                 raise HTTPException(409, 'Die Korrektur muss im selben Objekt und Abrechnungskreis bleiben.') from error
             raise

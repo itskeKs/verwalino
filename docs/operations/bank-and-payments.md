@@ -48,8 +48,8 @@ In a one-to-one cost correction, the original bank links and audit history remai
 in place. Each successor inherits the assigned amount from earlier versions. For
 example, after assigning a −60.00 EUR debit to a 150.00 EUR cost, correcting and
 confirming it at 120.00 EUR leaves 60.00 EUR open for another debit. A correction,
-draft edit or confirmation below the inherited coverage is refused. The bank
-picker uses the remaining amount of the current confirmed version.
+draft edit or confirmation below the inherited coverage is refused. “Verwerfen”
+is refused for a correction that carries bank coverage. The bank picker uses the remaining amount of the current confirmed version.
 
 When correcting a reviewed allocation, load “Korrekturvorschau” and use
 “Bankumsätze übernehmen” to select a new part for each old part that already
@@ -68,8 +68,10 @@ without covering it twice. A failed assignment keeps the selected cost; use
 the existing tenant-refund and reserve-payout booking paths. Incoming transactions
 keep the payment split. Cost matching does not alter bank reconciliation totals,
 reserve accounting or the cost original. The bank link and its financial fields
-are immutable; supported organization archives restore ordinary cost links and
-their remaining coverage. Readable exports record explicit reviewed successor
+are immutable. A released scoped reserve draft retains its cancellation history
+when the debit is reassigned to a cost. Supported organization archives restore
+ordinary links and remaining coverage, including links classified on one side only
+and retained cancelled drafts. Readable exports record explicit reviewed successor
 links; reviewed-document archives still require private provenance to import.
 During organization erasure, the matched bank evidence inherits its cost's
 retention deadline; an unmatched line gains no retention from this feature.

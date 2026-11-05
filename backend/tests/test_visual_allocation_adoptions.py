@@ -281,6 +281,8 @@ async def test_visual_private_columns_helpers_and_downgrade_are_sealed(migrator_
             try:
                 db.execute(text('TRUNCATE bank_transaction,cost_entry CASCADE'))
                 bank_correction=importlib.import_module('migrations.versions.0172_bank_cost_corrections')
+                bank_evidence=importlib.import_module('migrations.versions.0173_preserve_bank_cost_evidence')
+                bank_evidence.downgrade()
                 bank_correction.downgrade()
                 db.execute(text('TRUNCATE allocation_set CASCADE'))
                 importlib.import_module('migrations.versions.0123_replacement_exception_outcomes').downgrade()
@@ -291,6 +293,7 @@ async def test_visual_private_columns_helpers_and_downgrade_are_sealed(migrator_
                 importlib.import_module('migrations.versions.0122_allocation_source_replacements').upgrade()
                 importlib.import_module('migrations.versions.0123_replacement_exception_outcomes').upgrade()
                 bank_correction.upgrade()
+                bank_evidence.upgrade()
                 assert before=={signature:db.scalar(text('SELECT pg_get_functiondef(CAST(:signature AS regprocedure))'),{'signature':signature}) for signature in before}
             finally:point.rollback()
         async with client(ids) as api:

@@ -196,9 +196,13 @@ async def test_cost_assignment_hides_foreign_targets_and_refuses_mixed_assignmen
           WHERE organization_id<>:org LIMIT 1) p WHERE c.id=CAST(:cost AS uuid)'''), {**ids, 'id': foreign, 'cost': cost})
     # Use another organization's existing property; no foreign API data is exposed.
     await bank_db.commit()
-    for target in (str(foreign), str(uuid.uuid4())):
-        response = await api.post(f'{BASE}/{tid}/assign', json={'cost_entry_id': target})
-        assert response.status_code == 404 and response.json()['detail'] == 'Kostenposition nicht gefunden.'
+    for processed in (False, True):
+        if processed:
+            assigned = await api.post(f'{BASE}/{tid}/assign', json={'cost_entry_id': cost})
+            assert assigned.status_code == 200, assigned.text
+        for target in (str(foreign), str(uuid.uuid4())):
+            response = await api.post(f'{BASE}/{tid}/assign', json={'cost_entry_id': target})
+            assert response.status_code == 404 and response.json()['detail'] == 'Kostenposition nicht gefunden.'
 
 
 async def test_concurrent_cost_assignments_cannot_overcover(bank_seed, bank_db):
@@ -259,6 +263,42 @@ async def test_covered_cost_corrections_preserve_full_chain_coverage_and_origina
     audited = (await bank_db.execute(text("""SELECT entity_id::text, payload_diff->>'bank_transaction_id'
         FROM audit_event WHERE organization_id=:org AND action='cost_entry.bank_transaction_assigned'"""), ids)).all()
     assert set(audited) == {(original, first), (successor, second)}
+
+
+async def test_covered_correction_cannot_be_rejected(bank_seed, bank_db):
+    api, ids = bank_seed
+    original = await existing_cost(api, bank_db, ids, '120.00')
+    tid = await transaction(bank_db, ids, amount='-60.00')
+    assigned = await api.post(f'{BASE}/{tid}/assign', json={'cost_entry_id': original})
+    assert assigned.status_code == 200, assigned.text
+    costs = '/api/cost-entries'
+    corrected = await api.post(f'{costs}/{original}/correction', json={'gross_amount': '120.00'})
+    assert corrected.status_code == 201, corrected.text
+    successor = corrected.json()['id']
+
+    refused = await api.post(f'{costs}/{successor}/reject')
+    assert refused.status_code == 409, refused.text
+    assert (await api.get(f'{costs}/{successor}')).json()['status'] == 'needs_review'
+    assert (await api.get(f'{costs}/{original}')).json()['superseded_by_id'] == successor
+    assert await bank_db.scalar(text("""SELECT count(*) FROM audit_event
+        WHERE entity_id=CAST(:id AS uuid) AND action='cost_entry.rejected'"""), {'id': successor}) == 0
+    confirmed = await api.post(f'{costs}/{successor}/confirm')
+    assert confirmed.status_code == 200, confirmed.text
+    assert await cost_open(api, successor) == 60
+    report = await api.get('/api/reports/property-year', params={'property_id': str(ids['property']), 'year': 2025})
+    assert report.status_code == 200, report.text
+    assert Decimal(report.json()['expense_total']) == 120
+    row, = (await listing(api, ids, status='ZUGEORDNET')).json()['items']
+    assert (row['id'], row['cost_entry_id']) == (tid, original)
+    events = (await bank_db.execute(text("""SELECT entity_id::text, payload_diff->>'bank_transaction_id'
+        FROM audit_event WHERE organization_id=:org AND action='cost_entry.bank_transaction_assigned'"""), ids)).all()
+    assert events == [(original, tid)]
+
+    uncovered = await existing_cost(api, bank_db, ids)
+    correction = await api.post(f'{costs}/{uncovered}/correction', json={})
+    assert correction.status_code == 201, correction.text
+    rejected = await api.post(f"{costs}/{correction.json()['id']}/reject")
+    assert rejected.status_code == 200 and rejected.json()['status'] == 'rejected', rejected.text
 
 
 async def test_correction_and_new_assignment_serialize_against_same_coverage(bank_seed, bank_db):

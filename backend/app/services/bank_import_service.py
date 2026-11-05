@@ -167,7 +167,7 @@ class BankImportService:
                             open_items=statement.open_items, owner_profile_id=owner.id))
         return suggest_matches(row, targets)
 
-    async def _pending_transaction(self, transaction_id, *, retry_cost_id=None):
+    async def _transaction_for_update(self, transaction_id):
         # Tenant filter + populate_existing in the shared repository are
         # essential after waiting for a concurrent assignment/ignore to commit.
         transaction = await self._transactions.get_by_id_for_update(transaction_id)
@@ -176,16 +176,26 @@ class BankImportService:
         account = await self._accounts.get_by_id(transaction.bank_account_id)
         if account is None:
             raise HTTPException(404, "Bank account not found")
-        if transaction.status != "NEU" and not (transaction.status == 'ZUGEORDNET' and retry_cost_id is not None
-                                                 and transaction.cost_entry_id == retry_cost_id):
+        return transaction, account
+
+    async def _pending_transaction(self, transaction_id):
+        transaction, account = await self._transaction_for_update(transaction_id)
+        if transaction.status != 'NEU':
             raise HTTPException(409, "Bank transaction has already been processed")
         return transaction, account
 
     async def assign_cost(self, transaction_id, cost_entry_id):
         context = self._context()
         await context.lock_inputs()
-        transaction, account = await self._pending_transaction(transaction_id, retry_cost_id=cost_entry_id)
+        transaction, account = await self._transaction_for_update(transaction_id)
         scope_id = await context.enter(account, capability=ScopeCapability.PREPARE)
+        costs = CostEntryRepository(self._session, self._org_id)
+        cost = await costs.get_by_id_for_update(cost_entry_id)
+        if cost is None:
+            raise HTTPException(404, 'Kostenposition nicht gefunden.')
+        retry = transaction.status == 'ZUGEORDNET' and transaction.cost_entry_id == cost.id
+        if transaction.status != 'NEU' and not retry:
+            raise HTTPException(409, "Bank transaction has already been processed")
         if scope_id is not None:
             sphere = await AuthorizationService(self._session, AuthContext(
                 self._user_id, self._org_id, 'live database role required')).require(scope_id, ScopeCapability.CONFIRM)
@@ -193,10 +203,6 @@ class BankImportService:
                 raise HTTPException(422, 'Dieser Abrechnungskreis unterstützt keine Bankzuordnung.')
             if transaction.value_date < sphere.valid_from or sphere.valid_to is not None and transaction.value_date > sphere.valid_to:
                 raise HTTPException(422, 'Das Wertstellungsdatum liegt außerhalb des Abrechnungskreises.')
-        costs = CostEntryRepository(self._session, self._org_id)
-        cost = await costs.get_by_id_for_update(cost_entry_id)
-        if cost is None:
-            raise HTTPException(404, 'Kostenposition nicht gefunden.')
         async with context.using(cost, capability=ScopeCapability.PREPARE) as cost_scope:
             if cost_scope != scope_id:
                 raise HTTPException(422, 'Kostenposition und Bankkonto müssen zum selben Abrechnungskreis gehören.')
@@ -205,7 +211,7 @@ class BankImportService:
                     self._user_id, self._org_id, 'live database role required')).require(cost_scope, ScopeCapability.CONFIRM)
         if transaction.amount >= 0 or cost.property_id != account.property_id:
             raise HTTPException(422, 'Kostenposition und ausgehender Umsatz müssen zum selben Objekt gehören.')
-        if transaction.cost_entry_id == cost.id:
+        if retry:
             return transaction, []
         if cost.status != 'confirmed' or cost.superseded_by_id is not None:
             raise HTTPException(409, 'Bitte eine aktuelle bestätigte Kostenposition wählen.')

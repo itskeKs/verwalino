@@ -187,7 +187,7 @@ def test_external_browser_app_does_not_start_local_processes(monkeypatch):
     from types import SimpleNamespace
     with synthetic_target() as (url, _, calls):
         monkeypatch.setenv("VERWALINO_TARGET_URL", url)
-        fixture = browser_app.__wrapped__({}, SimpleNamespace())
+        fixture = browser_app.__wrapped__({}, SimpleNamespace(), browser_storage=None)
         assert next(fixture) == url
         with pytest.raises(StopIteration):
             next(fixture)
