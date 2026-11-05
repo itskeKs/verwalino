@@ -1154,7 +1154,12 @@ class StagingDeployTests(ServerCase):
                 for name in ("docker-compose.staging.yml", "db/prod-init.sh", "Caddyfile",
                              "Caddyfile.staging", "Caddyfile.site"):
                     exported = self.srv / "staging/infra" / name
-                    self.assertEqual(exported.read_bytes(), (ROOT / "infra" / name).read_bytes())
+                    if producer.get("FAKE_REAL_ARCHIVE"):
+                        expected = subprocess.check_output(
+                            [producer["REAL_GIT"], "-C", str(ROOT), "show", f"HEAD:infra/{name}"])
+                    else:
+                        expected = (ROOT / "infra" / name).read_bytes()
+                    self.assertEqual(exported.read_bytes(), expected)
                     self.assertEqual(stat.S_IMODE(exported.stat().st_mode),
                                      0o755 if name == "db/prod-init.sh" else 0o640)
                 shutil.rmtree(self.srv / "staging")
