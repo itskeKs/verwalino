@@ -233,3 +233,15 @@ from tests.bdd.steps.persons_key import *  # noqa: E402,F401,F403
 from tests.bdd.steps.meetings import *  # noqa: E402,F401,F403
 from tests.bdd.steps.special_levy import *  # noqa: E402,F401,F403
 from tests.bdd.steps.vorwegabzug import *  # noqa: E402,F401,F403
+
+
+@pytest.fixture
+def reset_dunning_settings(world):
+    response = world.act("GET", "/api/dunning/settings")
+    assert response.status_code == 200, world.describe_response()
+    previous = response.json()
+    yield
+    if "fee_level_1" in previous:
+        world.actor = world.administrator_of("Verwaltung Alpha")
+        response = world.act("PUT", "/api/dunning/settings", json=previous)
+        assert response.status_code == 200, world.describe_response()

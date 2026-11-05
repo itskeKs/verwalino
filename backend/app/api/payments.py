@@ -28,6 +28,7 @@ from app.core.csv_exports import csv_text, csv_money
 from app.core.rbac import ScopeCapability
 from app.core.storage import attachment_content_disposition
 from app.repositories.bank_account_repo import BankAccountRepository
+from app.repositories.dunning_notice_repo import DunningNoticeRepository
 from app.repositories.tenant_profile_repo import TenantProfileRepository
 from app.repositories.owner_profile_repo import OwnerProfileRepository
 from app.services.property_master_service import require_property_master
@@ -147,10 +148,19 @@ class TenantOpenItemOut(OpenItemOut):
     is_due: bool
 
 
+class IssuedDunningInfo(BaseModel):
+    id: uuid.UUID
+    issue_date: date
+    level: int
+    fee_amount: Decimal
+    interest_amount: Decimal
+
+
 class TenantMietkontoOut(MietkontoOut):
     open_items: list[TenantOpenItemOut]
     due_balance: str
     not_yet_due_balance: str
+    dunning_notices: list[IssuedDunningInfo]
 
 
 def _to_out(p: Payment) -> PaymentOut:
@@ -248,8 +258,12 @@ async def lease_statement(
     statement = _mietkonto_out(result).model_dump()
     statement['open_items'] = [TenantOpenItemOut(**row, is_due=item.is_due)
         for row, item in zip(statement['open_items'], result.open_items)]
-    return TenantMietkontoOut(**statement,
-        due_balance=str(result.due_balance), not_yet_due_balance=str(result.not_yet_due_balance))
+    notices = await DunningNoticeRepository(db, auth.organization_id).issued_for_lease(
+        lease_agreement_id, accounting_scope_id,
+    )
+    return TenantMietkontoOut(**statement, due_balance=str(result.due_balance),
+        not_yet_due_balance=str(result.not_yet_due_balance),
+        dunning_notices=[IssuedDunningInfo.model_validate(row) for row in notices])
 
 
 @router.get("/mietkonto/owner/{owner_profile_id}", response_model=MietkontoOut)

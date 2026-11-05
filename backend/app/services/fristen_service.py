@@ -39,7 +39,7 @@ from app.engine.mietkonto import (
 )
 from app.repositories.fristen_repo import FristenRepository
 from app.repositories.payment_repo import PaymentRepository
-from app.services.dunning_service import _to_payment_input
+from app.services.payment_service import to_payment_input
 
 
 def _lease_overlaps(lease, period_start: date, period_end: date) -> bool:
@@ -232,7 +232,7 @@ class FristenService:
                 payments = await self._payments.list_for_lease(lease.id)
                 scoped = _scope_payments(payments, period_start, period_end)
                 result = account_statement(
-                    charges, [_to_payment_input(p) for p in scoped]
+                    charges, [to_payment_input(p) for p in scoped]
                 )
                 overdue = find_overdue_items(
                     list(result.open_items), reference_date, grace_days=0

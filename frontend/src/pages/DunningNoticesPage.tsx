@@ -11,7 +11,6 @@ import { useEffect, useState, useCallback, useRef } from "react";
 import { Link, useSearchParams, useNavigate } from "react-router-dom";
 import {
   listDunningNotices,
-  getDunningSettings,
   createDunningForTenant,
   createDunningForOwner,
   listTenantProfiles,
@@ -34,6 +33,7 @@ import type {
   Property,
   EconomicPlan,
 } from "../api/types";
+import { DunningSettingsForm } from "../components/DunningSettingsForm";
 import { AccountingScopeSelector } from "../components/AccountingScopeSelector";
 import { ApiError } from "../api/client";
 import { useAuth } from "../auth/useAuth";
@@ -70,13 +70,6 @@ const LEVEL_LABELS: Record<number, string> = {
 };
 
 type RecipientType = "tenant" | "owner";
-
-// Keep percentage precision in decimal text, never via binary floating point.
-function exactRate(value: string): string | null {
-  const normalized = value.trim().replace(",", ".");
-  return /^[+-]?(?:\d+(?:\.\d{1,4})?|\.\d{1,4})$/.test(normalized)
-    ? normalized : null;
-}
 
 function makeEmptyTenantForm(): DunningCreateTenant {
   const currentYear = new Date().getFullYear();
@@ -133,11 +126,6 @@ export function DunningNoticesPage() {
   const [saving, setSaving] = useState(false);
   const savingRef = useRef(false);
   const mounted = useRef(false);
-  const [rates, setRates] = useState({ tenant: "", owner: "" });
-  const editedRates = useRef({ tenant: false, owner: false });
-  const [settingsState, setSettingsState] = useState<"loading" | "configured" | "empty" | "error">("loading");
-  const [settingsError, setSettingsError] = useState("");
-  const [settingsRevision, setSettingsRevision] = useState(0);
   useEffect(() => {
     mounted.current = true;
     return () => { mounted.current = false; };
@@ -269,52 +257,8 @@ export function DunningNoticesPage() {
     ? units.find(item => item.id === selectedLease?.unit_id)?.property_id
     : selectedPlan?.property_id || ownerPropertyId || undefined;
 
-  useEffect(() => {
-    if (!showForm || !canWrite) return;
-    let active = true;
-    setSettingsState("loading");
-    setSettingsError("");
-    getDunningSettings().then(settings => {
-      if (!active) return;
-      const configured = settings.base_interest_rate;
-      if (configured !== null && exactRate(configured) === null) {
-        throw new Error("Ungültiger konfigurierter Basiszinssatz.");
-      }
-      setSettingsState(configured === null ? "empty" : "configured");
-      if (!editedRates.current[recipientType]) {
-        setRates(previous => ({ ...previous, [recipientType]: configured ?? "" }));
-      }
-    }).catch(err => {
-      if (!active) return;
-      setSettingsState("error");
-      setSettingsError(err instanceof Error ? err.message : String(err));
-    });
-    return () => { active = false; };
-  }, [showForm, canWrite, recipientType, creationProperty, tenantForm.lease_agreement_id,
-    ownerForm.owner_profile_id, ownerForm.economic_plan_id, sessionKey, settingsRevision]);
-
-  const rate = exactRate(rates[recipientType]);
-  const rateField = <div>
-    <label>
-      Basiszinssatz (%)
-      <input type="text" inputMode="decimal" required value={rates[recipientType]}
-        aria-invalid={rates[recipientType] !== "" && rate === null}
-        onChange={e => {
-          editedRates.current[recipientType] = true;
-          setRates({ ...rates, [recipientType]: e.target.value });
-        }} />
-    </label>
-    <p className="form-hint">Basiszinssatz ausdrücklich prüfen und eingeben (höchstens vier Nachkommastellen). Der Jahreszinssatz ergibt sich aus Basiszinssatz + 5 Prozentpunkten. Keine Zusicherung eines amtlich aktuellen Zinssatzes oder rechtlicher Zustellwirkung.</p>
-    {settingsState === "loading" && <p role="status">Lade Basiszinssatz-Konfiguration…</p>}
-    {settingsState === "empty" && <p>Kein Basiszinssatz konfiguriert. Bitte den zutreffenden Basiszinssatz manuell eingeben.</p>}
-    {settingsState === "error" && <p role="alert">Basiszinssatz-Konfiguration nicht verfügbar: {settingsError} Bitte manuell eingeben oder <button type="button" className="btn" onClick={() => setSettingsRevision(value => value + 1)}>Konfiguration erneut laden</button></p>}
-    {rates[recipientType] !== "" && rate === null && <p role="alert">Bitte einen endlichen Basiszinssatz mit höchstens vier Nachkommastellen eingeben.</p>}
-  </div>;
-
   function openCreate() {
     if (!canWrite || savingRef.current) return;
-    editedRates.current = { tenant: false, owner: false };
-    setRates({ tenant: "", owner: "" });
     setTenantForm(makeEmptyTenantForm());
     setOwnerForm(makeEmptyOwnerForm());
     setOwnerPropertyId("");
@@ -325,7 +269,7 @@ export function DunningNoticesPage() {
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
-    if (!canWrite || savingRef.current || rate === null || settingsState === "loading" || !scopeValid || (recipientType === "owner" && !ownerForm.economic_plan_id && (!ownerPropertyId || !ownerForm.accounting_scope_id))) return;
+    if (!canWrite || savingRef.current || !scopeValid || (recipientType === "owner" && !ownerForm.economic_plan_id && (!ownerPropertyId || !ownerForm.accounting_scope_id))) return;
     savingRef.current = true;
     const submittedSession = sessionKey;
     setSaving(true);
@@ -333,9 +277,9 @@ export function DunningNoticesPage() {
     try {
       let created: DunningNotice;
       if (recipientType === "tenant") {
-        created = await createDunningForTenant({ ...tenantForm, base_interest_rate: rate });
+        created = await createDunningForTenant(tenantForm);
       } else {
-        created = await createDunningForOwner({ ...ownerForm, base_interest_rate: rate });
+        created = await createDunningForOwner(ownerForm);
       }
       if (!mounted.current || activeSession.current !== submittedSession) return;
       setShowForm(false);
@@ -375,6 +319,8 @@ export function DunningNoticesPage() {
           + Neue Mahnung
         </button>}
       </div>
+
+      <DunningSettingsForm key={sessionKey} editable={session?.role === "OWNER_ADMIN"} />
 
       {/* Filters */}
       <div
@@ -673,7 +619,6 @@ export function DunningNoticesPage() {
               </>
             )}
 
-            {rateField}
             <AccountingScopeSelector key={`${recipientType}-${tenantForm.lease_agreement_id}-${ownerForm.owner_profile_id}-${ownerForm.economic_plan_id}-${ownerPropertyId}`}
               onValidityChange={setScopeValid} propertyId={creationProperty} kind={recipientType === "tenant" ? "MIET" : "WEG"}
               value={recipientType === "tenant" ? tenantForm.accounting_scope_id : ownerForm.accounting_scope_id}
@@ -684,7 +629,7 @@ export function DunningNoticesPage() {
               <button
                 type="submit"
                 className="btn btn--primary"
-                disabled={saving || rate === null || settingsState === "loading" || !scopeValid || (recipientType === "owner" && !ownerForm.economic_plan_id && (!ownerPropertyId || !ownerForm.accounting_scope_id))}
+                disabled={saving || !scopeValid || (recipientType === "owner" && !ownerForm.economic_plan_id && (!ownerPropertyId || !ownerForm.accounting_scope_id))}
               >
                 {saving ? "Erstellen..." : "Mahnung erstellen"}
               </button>

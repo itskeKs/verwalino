@@ -3,12 +3,15 @@ Feature: Dunning interest
 
   @browser
   Scenario: Issuing a notice preserves the reviewed interest in its PDF
-    Given an unpaid rental agreement for 700 EUR rent and no advance payment
-    When the manager creates a January notice as of 2 March 2026 with a base rate of "2,50"
-    Then the reloaded notice shows 7.91 EUR interest and 707.91 EUR in total
+    Given April rent of 700 EUR with 600 EUR paid on 7 April 2026
+    When the administrator saves the dunning settings in the browser
+    And the manager issues a first reminder for the April arrears
+    And the manager creates an April notice as of 31 October 2026
+    Then the reloaded notice shows 3.64 EUR interest and 106.64 EUR in total
     When the manager confirms "Mahnung ausgeben"
     Then the issued notice still shows the reviewed amounts after reload
     And "PDF herunterladen" opens a PDF with the tenant and the reviewed interest
+    And the rent account lists the issued interest separately from the open rent
 
   Scenario: April rent paid on the third working day is on time
     Given April rent of 700 EUR with 700 EUR paid on 7 April 2026

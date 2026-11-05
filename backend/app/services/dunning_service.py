@@ -23,7 +23,10 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.engine.dunning import (
+    COMMERCIAL_PREMIUM,
     DEFAULT_DUE_DAYS,
+    STANDARD_PREMIUM,
+    MissingBaseInterestRate,
     OverdueItem,
     assemble_dunning,
     dunning_fee,
@@ -31,7 +34,6 @@ from app.engine.dunning import (
     next_dunning_level,
 )
 from app.engine.mietkonto import (
-    PaymentInput,
     account_statement,
     special_levy_expected_charges,
 )
@@ -41,9 +43,10 @@ from app.repositories.audit_repo import AuditRepository
 from app.core.rbac import ScopeCapability
 from app.services.dunning_scope_service import DunningScopeService
 from app.services.special_levy_service import SpecialLevyService
-from app.services.payment_service import PaymentService
+from app.services.payment_service import PaymentService, to_payment_input
 from app.repositories.unit_repo import UnitRepository
 from app.repositories.dunning_notice_repo import DunningNoticeRepository
+from app.repositories.dunning_settings_repo import DunningSettingsRepository
 from app.repositories.economic_plan_repo import (
     EconomicPlanRepository,
 )
@@ -54,24 +57,6 @@ from app.repositories.tenant_profile_repo import TenantProfileRepository
 from app.repositories.owner_profile_repo import OwnerProfileRepository
 from app.repositories.property_repo import PropertyRepository
 from app.services.render_names import freeze_block, read_frozen_values
-
-
-def _to_payment_input(p) -> PaymentInput:
-    """Map a Payment ORM row to the pure engine's frozen PaymentInput."""
-    return PaymentInput(
-        payment_id=p.id,
-        payment_type=p.payment_type,
-        direction=p.direction,
-        amount=p.amount,
-        period_year=p.period_year,
-        period_month=p.period_month,
-        lease_agreement_id=p.lease_agreement_id,
-        tenant_profile_id=p.tenant_profile_id,
-        owner_profile_id=p.owner_profile_id,
-        is_booked=(p.status == "booked"),
-        is_reversed=(p.reversed_by_id is not None),
-        is_reversal=(p.reverses_id is not None),
-    )
 
 
 class DunningService:
@@ -88,6 +73,15 @@ class DunningService:
         self._owners = OwnerProfileRepository(session, org_id)
         self._properties = PropertyRepository(session, org_id)
         self._audit = AuditRepository(session, org_id)
+        self._settings = DunningSettingsRepository(session, org_id)
+        self._terms = None
+
+    async def terms(self):
+        # A batch reuses one policy for preview, digest and every persisted draft.
+        if self._terms is None:
+            settings = await self._settings.get()
+            self._terms = (settings.fees, await self._settings.rates() if settings.default_interest_enabled else None)
+        return self._terms
 
     # ------------------------------------------------------------------
     # Create dunning for tenant (from lease open items)
@@ -102,7 +96,6 @@ class DunningService:
         grace_days: int = 0,
         override_fee: Decimal | None = None,
         accounting_scope_id: uuid.UUID | None = None,
-        base_interest_rate: Decimal | None = None,
     ) -> DunningNotice:
         """Create a draft dunning notice for a tenant based on overdue open items.
 
@@ -114,7 +107,7 @@ class DunningService:
 
         lease, tenant, result, dunning = await self.tenant_basis(
             tenant_profile_id, lease_agreement_id, period_start, period_end,
-            ref_date, grace_days, override_fee, accounting_scope_id, base_interest_rate,
+            ref_date, grace_days, override_fee, accounting_scope_id,
         )
         if dunning is None:
             raise HTTPException(422, "No overdue items found for this tenant in the given period")
@@ -188,17 +181,19 @@ class DunningService:
     async def tenant_basis(
         self, tenant_profile_id, lease_agreement_id, period_start, period_end,
         reference_date, grace_days=0, override_fee=None, accounting_scope_id=None,
-        base_interest_rate=None,
     ):
         """One history-aware canonical statement and engine assembly, without writes."""
         context = DunningScopeService(self._session, self._org_id, self._user_id)
         sphere = await context.prepare(accounting_scope_id, 'MIET', period_start, period_end)
-        lease, tenant, _, _, _ = await self.require_tenant_sources(
+        lease, tenant, _, unit, _ = await self.require_tenant_sources(
             lease_agreement_id, tenant_profile_id, sphere)
         if lease.valid_from > period_end or (lease.valid_to is not None and lease.valid_to <= period_start):
             raise HTTPException(422, "Lease must overlap the dunning period")
+        fees, rates = await self.terms()
         result = await PaymentService(self._session, self._org_id, self._user_id).account_statement_for_lease(
-            lease.id, period_start, period_end, accounting_scope_id)
+            lease.id, period_start, period_end, accounting_scope_id,
+            include_payment_dates=rates is not None,
+        )
         overdue = self._engine_result(find_overdue_items, list(result.open_items),
             reference_date, grace_days=grace_days)
         if not overdue:
@@ -207,7 +202,8 @@ class DunningService:
         issued_count = await self._repo.count_issued_for_tenant(tenant.id)
         dunning = self._engine_result(assemble_dunning, overdue_items=overdue,
             existing_notice_count=issued_count, issue_date=reference_date,
-            override_fee=override_fee, base_interest_rate=base_interest_rate)
+            override_fee=override_fee, custom_fees=fees, rate_periods=rates,
+            premium=COMMERCIAL_PREMIUM if unit.usage_type == "GEWERBE" else STANDARD_PREMIUM)
         return lease, tenant, result, dunning
 
     # ------------------------------------------------------------------
@@ -223,7 +219,6 @@ class DunningService:
         grace_days: int = 0,
         override_fee: Decimal | None = None,
         accounting_scope_id: uuid.UUID | None = None,
-        base_interest_rate: Decimal | None = None,
     ) -> DunningNotice:
         """Create a draft dunning notice for an owner based on overdue open items."""
         ref_date = reference_date or date.today()
@@ -259,7 +254,9 @@ class DunningService:
             owner_profile_id, period_start, period_end))
         payments = await self._payments.list_for_owner(owner_profile_id)
         scoped = self._scope_payments_to_period(payments, period_start, period_end)
-        result = account_statement(charges, [_to_payment_input(p) for p in scoped])
+        fees, rates = await self.terms()
+        result = account_statement(charges, [to_payment_input(p) for p in scoped],
+                                   include_payment_dates=rates is not None)
 
         overdue = self._engine_result(
             find_overdue_items, list(result.open_items), ref_date, grace_days=grace_days
@@ -278,7 +275,7 @@ class DunningService:
             existing_notice_count=issued_count,
             issue_date=ref_date,
             override_fee=override_fee,
-            base_interest_rate=base_interest_rate,
+            custom_fees=fees, rate_periods=rates, premium=STANDARD_PREMIUM,
         )
         if dunning is None:
             raise HTTPException(status_code=422, detail="Could not assemble dunning notice")
@@ -483,6 +480,12 @@ class DunningService:
     def _engine_result(compute, *args, **kwargs):
         try:
             return compute(*args, **kwargs)
+        except MissingBaseInterestRate as exc:
+            start = exc.valid_from.strftime("%d.%m.%Y")
+            raise HTTPException(409, {
+                "code": "base_interest_rate_missing",
+                "message": f"Für das Halbjahr ab {start} ist kein amtlicher Basiszinssatz hinterlegt.",
+            }) from exc
         except ValueError as exc:
             raise HTTPException(422, str(exc)) from exc
 
