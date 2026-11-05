@@ -310,8 +310,9 @@ Navigation entries are `NavItem`s in `GROUPS` (label = German noun, one lucide i
 
 New screens follow these page structures and use a German noun as their `h1`.
 
-- **Page header.** Either a date eyebrow plus greeting `h1` (dashboard: `text-sm muted` line, then
-  `h1 text-2xl`), or `h1` left and actions right (`flex justify-between`, wraps): secondary actions
+- **Page header.** Either a date eyebrow plus optional context line and greeting `h1` (dashboard:
+  date and available organization in muted `text-sm` lines, then `h1 text-2xl` “Guten Tag”), or `h1` left and actions
+  right (`flex justify-between`, wraps): secondary actions
   first, the single primary action last, labelled "+ Neues Objekt" (legacy) or an icon `Button` "Neues Mandat".
 - **List page** (`PropertiesPage.tsx`, `MandatePage.tsx`): header, optional import panel, `ListSearch`
   (explicit "Suchen" submit), error line, inline create/edit card, table card, "Weitere laden" for the
@@ -1050,9 +1051,21 @@ The hosted quota images use the running frontend with synthetic API responses.
 The signup and password recovery images use synthetic deployment metadata and
 captured API responses. These are visual/360 px geometry checks, not end-to-end proof.
 
-The property-detail and dashboard images focus on the units and due-task cards at
-360 and 1280 px, using twelve long synthetic unit rows and a long task title from
-`features/responsive_property_dashboard.feature`. The upload card is captured in
+The dashboard images show the greeting and separate organization context for the
+fresh synthetic organization “Sabine Muster Hausverwaltung” at 1280 × 900 and
+360 × 900 px. The baseline captures use the dashboard source from `c8aeebe6`:
+[`issue-176-before-dashboard-desktop.png`](docs/assets/design/issue-176-before-dashboard-desktop.png)
+and [`issue-176-before-dashboard-360.png`](docs/assets/design/issue-176-before-dashboard-360.png).
+The matching current images are `dashboard-desktop.png` and `dashboard-360.png` in
+the table above. All four are unedited browser captures using the same deterministic
+synthetic organization identity and data in separately started, locked local test-harness
+runs. The exact “Guten Tag” heading assertion fails on the baseline; the corrected
+dashboard passes at both widths.
+
+The property-detail images focus on the units card at 360 and 1280 px, using twelve
+long synthetic unit rows from `features/responsive_property_dashboard.feature`.
+Earlier dashboard due-task captures from that feature remain in `issue-52-before-*`.
+The upload card is captured in
 `detail-upload-360.png` and `detail-upload-desktop.png`. Matching `issue-52-before-*`
 images preserve the baseline on the same data. The dashboard KPI images show the
 form with a long property option; its baseline captures are
