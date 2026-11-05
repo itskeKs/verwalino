@@ -142,6 +142,8 @@ async def browser_register_reference(browser_world):
     browser = browser_world
     link = browser.page.get_by_role('link', name=re.compile(r'Sonderumlage 1\.200,00\s€, fällig 01\.07\.2026'), exact=True)
     await expect(link).to_be_visible()
+    await link.scroll_into_view_if_needed()
+    await expect(link).to_be_in_viewport()
     await capture(browser, 'register')
     await link.click()
     await expect(browser.page.get_by_role('cell', name='720.00 EUR', exact=True)).to_be_visible()
