@@ -80,8 +80,6 @@ async def open_costs(browser_world, width):
     await page.get_by_label("E-Mail", exact=True).fill(b.world.data["cost_email"])
     await page.get_by_label("Passwort", exact=True).fill("testpass1234")
     await button(page, "Anmelden").click()
-    await expect(page.get_by_role("link", name="Objekte", exact=True)).to_be_visible()
-    await b.visit("/kosten")
     await expect(page.get_by_role("heading", name="Kostenpositionen", exact=True)).to_be_visible()
     await expect(page.locator("tbody tr")).to_have_count(6)
 
@@ -163,6 +161,7 @@ async def cost_filters_and_form(browser_world):
 async def cost_keyboard_details(browser_world):
     b, page = browser_world, browser_world.page
     await b.select("Objektfilter", b.world.data["cost_properties"][0]["id"])
+    await expect(page.locator("tbody tr")).to_have_count(3)
     await b.select("Statusfilter", "confirmed")
     await expect(page.locator("tbody tr")).to_have_count(1)
     details = page.get_by_role("link", name="Details", exact=True)
