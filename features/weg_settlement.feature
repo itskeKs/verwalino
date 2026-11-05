@@ -72,3 +72,16 @@ Feature: WEG settlement and the owner's Hausgeld balance
       | state     |
       | computed  |
       | finalized |
+
+  Scenario: Paid Hausgeld includes the buyer and identifies her missing amount
+    Given Karl Weiß owns unit 2 until June and Lena Roth owns it from July
+    And Anna, Karl and Lena have booked their twelve, six and six monthly Hausgeld payments
+    When I take over their paid Hausgeld from the booked figures
+    Then Anna, Karl and Lena have paid 7200, 2400 and 2400 euros
+    And clearing Lena's paid amount asks for her missing Hausgeld in German
+
+  @browser
+  Scenario: Paid Hausgeld prefill and missing buyer amount fit desktop and phone
+    Given Karl Weiß owns unit 2 until June and Lena Roth owns it from July
+    And Anna, Karl and Lena have booked their twelve, six and six monthly Hausgeld payments
+    Then the paid Hausgeld prefill and Lena's missing amount are visible on desktop and phone
