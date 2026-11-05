@@ -95,6 +95,8 @@ function PropertyDetailPageContent({ propertyId }: { propertyId?: string }) {
         if (err instanceof ApiError && [401, 403, 404].includes(err.status)) setProperty(null);
         if (err instanceof ApiError && err.status === 401) {
           setError("Nicht authentifiziert.");
+        } else if (err instanceof ApiError && err.status === 404) {
+          setError("Objekt nicht gefunden.");
         } else {
           setError(String(err));
         }
