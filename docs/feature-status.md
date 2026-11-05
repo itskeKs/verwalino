@@ -67,7 +67,7 @@ pending; registration stays closed and legal review remains with #26. See the
 | Rent change with effective date | ✅ full base rent and separate operating/heating rates | `models/lease_rent_change.py`, `api/leases.py` (`/rent-changes`), `engine/mietkonto.py`, T23, T24, [usage](operations/tenancies-and-rent.md) |
 | Graduated (Staffel) / index rent | ✅ | `api/leases.py` (`/rent-changes/staffel`, `/rent-changes/index`), `engine/index_rent.py`, T43, T44, [usage](operations/tenancies-and-rent.md) |
 | Security deposit management | 🟡 target, paid and refunded tracked; no installments, no recording of interest credits | `engine/mietkonto.py` (`deposit_statement`), `api/payments.py` (`/deposits`), `pages/DepositsPage.tsx`, T25, [usage](operations/tenancies-and-rent.md) |
-| Lease template, handover protocol | ✅ contract uses document-date rent with separate positive heating advance and total; unchanged zero-heating text and immutable issued PDFs retained; move-in/out protocol records unit readings | #37, #219, `services/lease_document_service.py`, `components/LeaseDocuments.tsx`, [usage](operations/tasks-and-documents.md#lease-contracts-and-handovers-37) |
+| Lease template, handover protocol | ✅ contract uses document-date rent and shows the last valid rent with its date for ended leases; immutable issued PDFs retained; move-in/out protocol records unit readings | #37, #219, `services/lease_document_service.py`, `components/LeaseDocuments.tsx`, [usage](operations/tasks-and-documents.md#lease-contracts-and-handovers-37) |
 
 ## Tenant ledger, bank and payments
 

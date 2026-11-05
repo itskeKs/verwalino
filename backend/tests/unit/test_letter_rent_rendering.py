@@ -70,14 +70,14 @@ async def variables(context, day):
 
 
 @pytest.mark.asyncio
-async def test_zero_heating_keeps_the_entire_legacy_contract_and_pdf_bytes(document_context):
-    values = await variables(document_context, date(2026, 6, 1))
+@pytest.mark.parametrize('day', [date(2025, 12, 31), date(2026, 6, 1)])
+async def test_zero_heating_keeps_the_entire_legacy_contract_and_pdf_bytes(document_context, day):
+    values = await variables(document_context, day)
     rendered = replace_tokens(CONTRACT_TEMPLATE, values)
     assert rendered == LEGACY_CONTRACT_TEXT
     assert values['vertrag.vorauszahlung'] == '150,00 €'
     args = ('Anna Beispiel', 'Musterweg 1\n12345 Teststadt', 'Mietvertrag · Einheit 1')
-    assert render_letter(*args, rendered, date(2026, 6, 1)) == render_letter(
-        *args, LEGACY_CONTRACT_TEXT, date(2026, 6, 1))
+    assert render_letter(*args, rendered, day) == render_letter(*args, LEGACY_CONTRACT_TEXT, day)
 
 
 @pytest.mark.asyncio
@@ -116,6 +116,28 @@ async def test_changed_zero_heating_rate_is_not_labelled_as_the_original_contrac
     assert 'Monatliche Vorauszahlung (Stand 15.03.2026): 160,00 €' in rendered
     assert 'Originalvertrag' not in rendered
     assert 'Heizkosten' not in rendered
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('day', [date(2026, 2, 28), date(2026, 4, 1)])
+async def test_end_of_tenancy_rent_includes_last_day_but_excludes_first_day_after_end(document_context, day):
+    c = document_context
+    c.lease.valid_to = date(2026, 3, 1)
+    c.history.return_value = [
+        SimpleNamespace(valid_from=date(2026, 2, 28), base_rent=Decimal('700'),
+                        advance_payment=Decimal('150'), heating_advance_payment=Decimal('0')),
+        SimpleNamespace(valid_from=date(2026, 3, 1), base_rent=Decimal('750'),
+                        advance_payment=Decimal('150'), heating_advance_payment=Decimal('90')),
+    ]
+    values = await variables(c, day)
+    assert values['datum'] == day.strftime('%d.%m.%Y')
+    assert values['vertrag.kaltmiete'] == '700,00 €'
+    assert values['vertrag.vorauszahlung'] == '150,00 €'
+    assert values['vertrag.mietaufstellung'] == (
+        'Monatliche Kaltmiete (Stand 28.02.2026): 700,00 €\n'
+        'Monatliche Vorauszahlung (Stand 28.02.2026): 150,00 €\n'
+        'Monatliche Gesamtmiete: 850,00 €'
+    )
 
 
 @pytest.mark.asyncio

@@ -60,6 +60,7 @@ def dated_rent_documents(world, day):
     template = create(world, '/api/letters/templates', {
         'name': 'Mietaufstellung', 'subject': 'Miete am {{datum}}', 'body': '{{vertrag.mietaufstellung}}',
     })
+    world.data['rent_template'] = template['id']
     letters = create(world, '/api/letters/issue', {
         'request_id': str(uuid4()), 'as_of': day, 'property_id': world.data['property']['id'],
         'template_id': template['id'],
@@ -113,6 +114,69 @@ def unchanged_rent_originals(world):
         response = world.look(world.actor, url)
         assert response.status_code == 200, response.text
         assert response.content == original
+
+
+def april_contract(world):
+    row = create(world, f"/api/leases/{world.data['leases'][0]['id']}/contract", {
+        'request_id': str(uuid4()), 'as_of': '2026-04-01', 'handover_date': '2026-01-02',
+    })
+    response = world.look(world.actor, row['pdf_url'])
+    assert response.status_code == 200, response.text
+    return row['pdf_url'], response.content
+
+
+@when('the manager ends the tenancy on 28 February after issuing an April contract')
+def end_tenancy_after_issuing(world):
+    world.data['pre_termination_contract'] = april_contract(world)
+    end_tenancy(world)
+
+
+@when('the manager ends the tenancy on 28 February')
+def end_tenancy(world):
+    response = world.act('PATCH', f"/api/leases/{world.data['leases'][0]['id']}", json={'valid_to': '2026-02-28'})
+    assert response.status_code == 200, response.text
+    assert response.json()['valid_to'] == '2026-02-28'
+
+
+@when('the manager creates a new contract dated 1 April')
+def create_historical_contract(world):
+    _, world.data['historical_contract'] = april_contract(world)
+
+
+@then('the new contract shows the rent at the end of the tenancy')
+def historical_contract_amounts(world):
+    assert_end_rent(pdf_text(world.data['historical_contract']), '01.04.2026')
+
+
+def assert_end_rent(content, document_date):
+    assert '990,00 €' not in content, 'The scheduled March increase never applied during the tenancy'
+    for expected in (document_date, 'Stand 28.02.2026', '700,00 €', '150,00 €', 'Monatliche Gesamtmiete: 850,00 €'):
+        assert expected in content
+    assert 'Heizkosten' not in content
+
+
+@then('both PDFs show the rent at the end of the tenancy on 28 February')
+def last_day_amounts(world):
+    for original in world.data['rent_originals'].values():
+        assert_end_rent(pdf_text(original), '28.02.2026')
+
+
+@then('a circular letter dated 1 April has no eligible recipients')
+def ended_tenant_excluded(world):
+    response = world.act('POST', '/api/letters/issue', json={
+        'request_id': str(uuid4()), 'as_of': '2026-04-01', 'property_id': world.data['property']['id'],
+        'template_id': world.data['rent_template'],
+    })
+    assert response.status_code == 422, response.text
+    assert response.json()['detail'] == 'Keine Mieter am gewählten Stichtag'
+
+
+@then('the pre-termination contract still downloads byte-identically')
+def unchanged_pre_termination_contract(world):
+    url, original = world.data['pre_termination_contract']
+    response = world.look(world.actor, url)
+    assert response.status_code == 200, response.text
+    assert response.content == original
 
 
 @when('the manager records an incoming handover with a reading of 125.5000')
