@@ -1513,3 +1513,21 @@ Synthetic test-database evidence (1280 and 360 px):
 | --- | --- | --- |
 | Before | [View](docs/assets/design/commercial-preallocation/before-1280.png) | [View](docs/assets/design/commercial-preallocation/before-360.png) |
 | After | [View](docs/assets/design/commercial-preallocation/after-1280.png) | [View](docs/assets/design/commercial-preallocation/after-360.png) |
+
+
+### WEG paid Hausgeld input errors (#183)
+
+“Aus Zahlenstand übernehmen” fills every authorized period/plan owner, including a
+mid-year buyer; owners without booked payments receive `0.00`. Clearing Lena Roth's
+amount and pressing “Berechnen” keeps the inputs and displays the server message:
+“Bitte geben Sie das tatsächlich gezahlte Hausgeld für Lena Roth an, auch bei 0,00 €.”
+Malformed or non-finite amounts ask for a valid Hausgeld amount for the named owner.
+The existing action-error card uses `detail.message`; classification uses the structured
+code, field and owner identifier. The plan Soll and frozen statement displays are unchanged.
+
+Synthetic Gartenstraße 5, Anna/Karl/Lena paid 7200/2400/2400 EUR; Lena's amount then cleared:
+
+| | Desktop | 360 px |
+| --- | --- | --- |
+| Before | [view](docs/assets/design/issue-183-before/paid-hausgeld-1280.png) | [view](docs/assets/design/issue-183-before/paid-hausgeld-360.png) |
+| After | [view](docs/assets/design/issue-183-after/paid-hausgeld-1280.png) | [view](docs/assets/design/issue-183-after/paid-hausgeld-360.png) |

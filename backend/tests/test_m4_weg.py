@@ -1715,3 +1715,55 @@ async def test_resolution_levy_legacy_account_and_dunning_remain_frozen_after_li
         after = await api.get(path, params=params)
         assert after.status_code == 200 and after.json() == before.json()
     assert await levy_db.scalar(text('SELECT to_jsonb(n) FROM dunning_notice n WHERE id=:id'), {'id': uuid.UUID(notice.json()['id'])}) == frozen
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('action', ['compute', 'finalize', 'coverage'])
+@pytest.mark.parametrize('value', ['', '   ', 'not-a-number', 'NaN', 'Infinity'])
+async def test_paid_amount_errors_identify_the_owner_in_german(client_a_admin, client_b_admin, m4_seed, action, value):
+    api, w = client_a_admin, m4_seed
+    plan = await _create_and_finalize_plan(api, w)
+    response = await api.post('/api/weg-settlements', json={'property_id': w['property'],
+        'economic_plan_id': plan, 'period_start': '2025-01-01', 'period_end': '2025-12-31'})
+    assert response.status_code == 201, response.text
+    run = response.json()['id']
+    body = {'paid_advances': [{'owner_profile_id': w['owner_a'], 'paid_total': value},
+                             {'owner_profile_id': w['owner_b'], 'paid_total': '0.00'}]}
+    url = f'/api/weg-settlements/{run}/{action}'
+    if action == 'coverage':
+        url = '/api/financial-input-coverage'
+        body = {'subject_kind': 'settlement', 'subject_id': run, 'values': body,
+                'reason': 'Reviewed synthetic payments', 'source_document_ids': [], 'confirmed_complete': True}
+    response = await api.post(url, json=body)
+    assert response.status_code == 422, response.text
+    detail = response.json()['detail']
+    assert isinstance(detail, dict), detail
+    assert detail['field'] == 'paid_total'
+    assert detail['owner_profile_id'] == w['owner_a']
+    assert 'Hausgeld' in detail['message'] and 'Invalid decimal' not in detail['message']
+    if not value.strip():
+        assert detail['code'] == 'financial_inputs_incomplete'
+        assert detail['blockers'][0]['code'] == 'owner_payment_coverage_missing'
+    else:
+        assert detail['code'] == 'invalid_decimal'
+    foreign = await client_b_admin.post(url, json=body)
+    assert foreign.status_code == 404, foreign.text
+
+
+@pytest.mark.asyncio
+async def test_input_roster_keeps_original_plan_owner_after_history_correction(client_a_admin, m4_seed):
+    api, w = client_a_admin, m4_seed
+    plan = await _create_and_finalize_plan(api, w)
+    history = (await api.get('/api/ownership', params={'unit_id': w['u2']})).json()[0]
+    response = await api.patch(f"/api/ownership/{history['id']}", json={'valid_to': '2024-12-31'})
+    assert response.status_code == 200, response.text
+    response = await api.post('/api/weg-settlements', json={'property_id': w['property'],
+        'economic_plan_id': plan, 'period_start': '2025-01-01', 'period_end': '2025-12-31'})
+    assert response.status_code == 201, response.text
+    run = response.json()['id']
+    derived = await api.post(f'/api/weg-settlements/{run}/paid-advances-derived')
+    assert derived.status_code == 200, derived.text
+    roster = await api.get(f'/api/weg-settlements/{run}/input-owners')
+    assert roster.status_code == 200, roster.text
+    assert set(roster.json()) == {row['owner_profile_id'] for row in derived.json()} == {w['owner_a'], w['owner_b']}
+    assert all(row['paid_total'] == '0.00' for row in derived.json())
