@@ -597,7 +597,11 @@ class PaymentService:
                 valid_from=row.valid_from, base_rent=row.base_rent, advance_payment=row.advance_payment, heating_advance_payment=row.heating_advance_payment,
             ) for row in rent_changes),
         )
-        charges = tenant_expected_charges(lc, period_start, period_end)
+        unit = await UnitRepository(self._session, self._org_id).get_by_id(lease.unit_id)
+        prop = await PropertyRepository(self._session, self._org_id).get_by_id(unit.property_id) if unit else None
+        if prop is None:
+            raise HTTPException(404, "Property not found")
+        charges = tenant_expected_charges(lc, period_start, period_end, federal_state=prop.federal_state)
         payments = await self._repo.list_for_lease(lease_agreement_id)
         scoped = self._scope_payments_to_period(payments, period_start, period_end)
         return account_statement(charges, [_to_payment_input(p) for p in scoped

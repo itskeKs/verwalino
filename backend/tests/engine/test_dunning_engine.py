@@ -289,3 +289,25 @@ def test_t35_grace_only_filters_and_does_not_subtract_interest_days():
     result = assemble_dunning(overdue, 0, date(2026, 3, 2), base_interest_rate=Decimal('2.50'))
     assert result.interest_snapshot['items'][0]['days'] == 60
     assert result.interest_amount == Decimal('8.63')
+
+
+def test_april_rent_due_date_drives_overdue_detection_and_interest():
+    import uuid
+    from app.engine.mietkonto import LeaseChargeInput, tenant_expected_charges, account_statement
+    lease = LeaseChargeInput(uuid.uuid4(), date(2026, 1, 1), None, Decimal('700'), Decimal('0'))
+    charges = tenant_expected_charges(lease, date(2026, 4, 1), date(2026, 4, 30))
+    rent = charges[0]
+    assert rent.due_date == date(2026, 4, 7)
+    items = list(account_statement(charges, []).open_items)
+    assert find_overdue_items(items, date(2026, 4, 7)) == []
+    overdue = find_overdue_items(items, date(2026, 4, 8))
+    assert len(overdue) == 1 and overdue[0].due_date == date(2026, 4, 7)
+
+
+def test_mid_month_rent_does_not_become_overdue_before_the_lease_starts():
+    import uuid
+    from app.engine.mietkonto import LeaseChargeInput, tenant_expected_charges
+    lease = LeaseChargeInput(uuid.uuid4(), date(2026, 4, 15), None, Decimal('700'), Decimal('100'))
+    charges = tenant_expected_charges(lease, date(2026, 4, 1), date(2026, 4, 30))
+    assert charges[0].amount == Decimal('373.33')
+    assert all(charge.due_date == date(2026, 4, 15) for charge in charges)

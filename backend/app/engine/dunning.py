@@ -127,9 +127,9 @@ class DunningInput:
 def _item_due_date(item: OpenItem) -> date:
     """Compute the due date for an open item.
 
-    Frozen one-off charges carry their actual due date. For recurring items,
-    [section 18/fachlich] provisionally use the 1st of the period month (or
-    Jan 1 if period_month is None), pending lease-specific due terms.
+    Tenant rent/operating advances and frozen one-off charges carry an explicit
+    due date. Other recurring items retain the provisional first-of-month
+    fallback (Jan 1 if period_month is None); this is not the tenant rent rule.
     """
     if item.due_date is not None:
         return item.due_date

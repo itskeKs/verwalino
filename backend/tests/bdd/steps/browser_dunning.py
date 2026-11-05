@@ -5,7 +5,7 @@ from urllib.parse import urlsplit
 
 import pdfplumber
 from playwright.async_api import expect
-from pytest_bdd import given, then, when
+from pytest_bdd import given, then, when, parsers
 
 from tests.bdd.steps.browser_common import browser_step, button, field, submit
 from tests.bdd.steps.browser_setup import bank_account, create, create_scope, rental
@@ -42,13 +42,13 @@ async def interest_notice(browser_world):
 
 
 async def interest_amounts(browser):
-    await browser.row("Verzugszinsen", "8.63 EUR")
-    await browser.row("Gesamtsumme", "708.63 EUR")
+    await browser.row("Verzugszinsen", "7.91 EUR")
+    await browser.row("Gesamtsumme", "707.91 EUR")
     await expect(browser.page.get_by_role("heading", name="Eingefrorene Zinsberechnung", exact=True)).to_be_visible()
     await expect(browser.page.get_by_text("Stichtag:", exact=False).filter(has_text="2026-03-02")).to_be_visible()
 
 
-@then("the reloaded notice shows 8.63 EUR interest and 708.63 EUR in total")
+@then("the reloaded notice shows 7.91 EUR interest and 707.91 EUR in total")
 @browser_step
 async def draft_interest(browser_world):
     await browser_world.page.reload()
@@ -83,7 +83,7 @@ async def readable_issued_amounts(browser_world):
         if width == 360:
             await page.wait_for_function("document.querySelector('aside').getBoundingClientRect().right <= 0")
         for title, amounts in (
-            ("Eingefrorene Zinsberechnung", ["1234.56 EUR", "15.22 EUR"]),
+            ("Eingefrorene Zinsberechnung", ["1234.56 EUR", "13.95 EUR"]),
             ("Rueckstandsaufstellung", ["1234.56 EUR"]),
         ):
             card = page.locator(".card").filter(has=page.get_by_role("heading", name=title, exact=True))
@@ -128,7 +128,7 @@ async def interest_pdf(browser_world):
         with pdfplumber.open(io.BytesIO(content)) as pdf:
             text = " ".join(part.extract_text() or "" for part in pdf.pages)
         assert browser_world.world.data["people"][0].name in text
-        for value in (r"700[.,]00", r"2[.,]50\s*%", r"7[.,]50\s*%", r"\b60\b", r"8[.,]63", r"708[.,]63"):
+        for value in (r"700[.,]00", r"2[.,]50\s*%", r"7[.,]50\s*%", r"\b55\b", r"7[.,]91", r"707[.,]91"):
             assert re.search(value, text), f"PDF missing {value}: {text}"
     finally:
         await popup.close()
@@ -332,3 +332,44 @@ async def batch_history(browser_world):
         await row.get_by_role("link", name="Details", exact=True).click()
         await browser_world.row("Status", "Entwurf")
         await browser_world.row("Hauptforderung (Rueckstand)", "850.00 EUR")
+
+
+@given(parsers.parse("April rent of 700 EUR with {paid:d} EUR paid on 7 April 2026"))
+def april_rent(world, seed_data, paid):
+    rental(world, seed_data, advance="0.00")
+    account = bank_account(world)
+    payment = create(world, "/api/payments", {
+        "accounting_scope_id": world.data["scope"]["id"],
+        "bank_account_id": account["id"], "tenant_profile_id": world.data["tenants"][0]["id"],
+        "lease_agreement_id": world.data["leases"][0]["id"], "amount": f"{paid}.00",
+        "direction": "IN", "value_date": "2026-04-07", "payment_type": "KALTMIETE",
+        "period_year": 2026, "period_month": 4,
+    })
+    assert world.act("POST", f"/api/payments/{payment['id']}/book").status_code == 200
+
+
+@when(parsers.parse("the manager checks April reminders on {day:d} April 2026"))
+def april_reminder(world, day):
+    world.act("POST", "/api/dunning/tenant", json={
+        "tenant_profile_id": world.data["tenants"][0]["id"],
+        "lease_agreement_id": world.data["leases"][0]["id"],
+        "accounting_scope_id": world.data["scope"]["id"],
+        "period_start": "2026-04-01", "period_end": "2026-04-30",
+        "reference_date": f"2026-04-{day:02}", "base_interest_rate": "2.50", "override_fee": "0.00",
+    })
+
+
+@then("no April reminder or interest is due")
+def april_on_time(world):
+    assert world.response.status_code == 422, world.describe_response()
+    assert world.response.json()["detail"] == "No overdue items found for this tenant in the given period"
+
+
+@then("the April reminder claims 100 EUR due on 7 April and interest from 8 April")
+def april_short(world):
+    assert world.response.status_code == 201, world.describe_response()
+    notice = world.response.json()
+    assert notice["principal_amount"] == "100.00"
+    assert notice["interest_amount"] == "0.02"
+    assert notice["included_items"][0]["due_date"] == "2026-04-07"
+    assert notice["interest_snapshot"]["items"][0]["days"] == 1

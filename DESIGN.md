@@ -25,6 +25,17 @@ Two styling layers coexist:
 Follow [Components](#components) for the permitted styling layers and their source files, and
 [Colour](#colour) for token use.
 
+The property creation/edit form offers an optional native select labelled
+“Bundesland”, with all sixteen states. “Nicht festgelegt – bundesweite Feiertage”
+represents an empty value. The adjacent hint explains that statewide holidays
+control rent due dates and municipality-only holidays are excluded. Existing
+form-grid spacing and responsive behaviour apply.
+
+| Property holiday context | Desktop | 360 px |
+| --- | --- | --- |
+| Before | [Desktop](docs/assets/design/rent-state-before-1280.png) | [Phone](docs/assets/design/rent-state-before-360.png) |
+| After | [Desktop](docs/assets/design/form-objekt-desktop.png) | [Phone](docs/assets/design/form-objekt-360.png) |
+
 ## Foundations
 
 ### Contract ownership and verification

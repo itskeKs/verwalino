@@ -304,3 +304,25 @@ async def test_t55_live_role_downgrade_blocks_property_and_mandate_edits(rent_wo
         assert (await api.patch(url, json={'label': 'No longer authorized'})).status_code == 403
         assert (await api.put(f"/api/properties/{w['property']}", json={'construction_year': 1984})).status_code == 403
         assert (await api.get(url)).json()['label'] == 'T55 Live'
+
+
+@pytest.mark.asyncio
+async def test_property_state_persists_clears_and_stays_organization_isolated(client_a_admin, client_b_admin):
+    response = await client_a_admin.post('/api/properties', json={
+        'name': 'Bayerisches Mietobjekt', 'management_type': 'MIET', 'federal_state': 'BY'})
+    assert response.status_code == 201, response.text
+    prop = response.json()
+    assert prop['federal_state'] == 'BY'
+    assert (await client_a_admin.get(f"/api/properties/{prop['id']}")).json()['federal_state'] == 'BY'
+    for method in ('get', 'put'):
+        kwargs = {'json': {'federal_state': 'HE'}} if method == 'put' else {}
+        assert (await getattr(client_b_admin, method)(f"/api/properties/{prop['id']}", **kwargs)).status_code == 404
+    changed = await client_a_admin.put(f"/api/properties/{prop['id']}", json={'federal_state': 'HE'})
+    assert changed.json()['federal_state'] == 'HE'
+    cleared = await client_a_admin.put(f"/api/properties/{prop['id']}", json={'federal_state': None})
+    assert cleared.json()['federal_state'] is None
+    legacy = await client_a_admin.post('/api/properties', json={'name': 'Nationwide', 'management_type': 'MIET'})
+    assert legacy.json()['federal_state'] is None
+    invalid = await client_a_admin.put(f"/api/properties/{prop['id']}", json={'federal_state': 'Bayern'})
+    assert invalid.status_code == 422
+    assert (await client_a_admin.get(f"/api/properties/{prop['id']}")).json()['federal_state'] is None

@@ -395,7 +395,7 @@ async def test_revision_chain_head_0131_head_preserves_full_state_and_issued_pdf
     config.set_main_option('script_location', str(Path(__file__).parents[1] / 'migrations'))
     scripts = ScriptDirectory.from_config(config)
     assert scripts.get_heads() == [TARGET]
-    expected_ancestry = [f'{number:04}' for number in range(131, 156)] + ['0159', '0160', '0161', '0162', '0163', '0164', '0165']
+    expected_ancestry = [f'{number:04}' for number in range(131, 156)] + ['0159', '0160', '0161', '0162', '0163', '0164', '0165', '0166']
     assert [r.revision for r in scripts.iterate_revisions(TARGET, '0131')] == expected_ancestry[:0:-1]
     engine = create_engine(MIGRATOR_SYNC_URL)
     try:
@@ -456,13 +456,22 @@ async def test_revision_chain_head_0131_head_preserves_full_state_and_issued_pdf
                 assert version() == (TARGET,)
                 retained = _chain_snapshot(connection)
                 assert any(row['unit_id'] == str(w['unit']) for row in retained['data']['unit_household'])
+                if connection.scalar(text('SELECT EXISTS(SELECT 1 FROM property WHERE federal_state IS NOT NULL)')):
+                    with pytest.raises(RuntimeError, match='Cannot discard property holiday context'):
+                        with connection.begin_nested():
+                            migrate('0165', downgrade=True)
+                    assert _chain_snapshot(connection) == retained
+                    # Only this rollback-only historical projection omits the
+                    # new state; all original context is restored at rollback.
+                    connection.execute(text('UPDATE property SET federal_state=NULL WHERE federal_state IS NOT NULL'))
+                before_basis_projection = _chain_snapshot(connection)
                 wide_lines = connection.execute(text('''SELECT id FROM settlement_line
                     WHERE abs(distribution_base_total)>=1000000 OR abs(distribution_base_share)>=1000000''')).scalars().all()
                 if wide_lines:
                     with pytest.raises(RuntimeError, match='Cannot narrow stored settlement bases; repair forward'):
                         with connection.begin_nested():
                             migrate('0164', downgrade=True)
-                    assert _chain_snapshot(connection) == retained
+                    assert _chain_snapshot(connection) == before_basis_projection
                     # Older releases cannot represent these raw bases. Project
                     # only inside this transaction; the final rollback compares
                     # every original row, snapshot, guard and schema definition.
