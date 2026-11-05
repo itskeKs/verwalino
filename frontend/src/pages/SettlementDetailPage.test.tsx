@@ -221,6 +221,56 @@ function deferred<T>() {
   const promise = new Promise<T>((res, rej) => { resolve = res; reject = rej; });
   return { promise, resolve, reject };
 }
+
+describe('commercial preallocation inputs', () => {
+  const reason = 'Gastronomie, Restmüll 2 × 1.100 l <Sonderlast> & Begründung';
+  function draft(commercial = true) {
+    vi.mocked(api.computeSettlement).mockReset();
+    vi.mocked(api.getSettlement).mockResolvedValue({ ...finalized, status: 'draft', lines: [], extra_inputs: null });
+    vi.mocked(api.listCostEntries).mockResolvedValue([createCostEntry({ tenant_distribution_key: 'WOHNFLAECHE',
+      service_period_from: '2026-01-01', service_period_to: '2026-12-31' })]);
+    vi.mocked(api.listUnits).mockResolvedValue(commercial ? [{ id: 'shop', property_id: 'property-1', usage_type: 'GEWERBE', number: 'Laden' }] as never : []);
+    vi.mocked(api.computeSettlement).mockResolvedValue({ ...finalized, status: 'draft' });
+    showProposal();
+  }
+
+  it('refuses a blank reason, retains inputs on server refusal and sends exact percentage intent', async () => {
+    draft();
+    const mode = await screen.findByLabelText('Vorwegabzug', { exact: true });
+    fireEvent.change(mode, { target: { value: 'percent' } });
+    fireEvent.change(screen.getByLabelText('Gewerbeanteil (%)', { exact: true }), { target: { value: '50,00' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Berechnen' }));
+    expect(await screen.findByRole('alert')).toHaveTextContent('Begründung');
+    expect(api.computeSettlement).not.toHaveBeenCalled();
+    fireEvent.change(screen.getByLabelText('Begründung', { exact: true }), { target: { value: reason } });
+    vi.mocked(api.computeSettlement).mockRejectedValueOnce(new ApiError(409, 'Regel bereits finalisiert'));
+    fireEvent.click(screen.getByRole('button', { name: 'Berechnen' }));
+    await screen.findByText('Regel bereits finalisiert');
+    expect(screen.getByLabelText('Begründung', { exact: true })).toHaveValue(reason);
+    expect(api.computeSettlement).toHaveBeenLastCalledWith('run-1', expect.objectContaining({ commercial_preallocations: [{
+      cost_entry_id: '00000000-0000-0000-0000-000000000001', commercial_share_percent: '50.00', commercial_amount: null, commercial_reason: reason,
+    }] }));
+  });
+
+  it('supports a German fixed amount and explicit removal', async () => {
+    draft();
+    const mode = await screen.findByLabelText('Vorwegabzug', { exact: true });
+    fireEvent.change(mode, { target: { value: 'fixed' } });
+    fireEvent.change(screen.getByLabelText('Festbetrag (EUR)', { exact: true }), { target: { value: '600,00' } });
+    fireEvent.change(screen.getByLabelText('Begründung', { exact: true }), { target: { value: reason } });
+    fireEvent.click(screen.getByRole('button', { name: 'Berechnen' }));
+    await waitFor(() => expect(api.computeSettlement).toHaveBeenCalledWith('run-1', expect.objectContaining({ commercial_preallocations: [expect.objectContaining({ commercial_share_percent: null, commercial_amount: '600.00' })] })));
+    fireEvent.change(mode, { target: { value: 'none' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Berechnen' }));
+    await waitFor(() => expect(api.computeSettlement).toHaveBeenLastCalledWith('run-1', expect.objectContaining({ commercial_preallocations: [expect.objectContaining({ commercial_share_percent: null, commercial_amount: null, commercial_reason: null })] })));
+  });
+
+  it('offers no commercial fields for a property without a commercial unit', async () => {
+    draft(false);
+    await screen.findByRole('button', { name: 'Berechnen' });
+    expect(screen.queryByLabelText('Vorwegabzug', { exact: true })).not.toBeInTheDocument();
+  });
+});
 let fetchProposal: ReturnType<typeof vi.fn>;
 function posts() { return fetchProposal.mock.calls.filter(([, options]) => options?.method === "POST"); }
 function date(value: string) { fireEvent.change(screen.getByLabelText("Übernehmen ab", { exact: true }), { target: { value } }); }

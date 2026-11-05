@@ -46,6 +46,37 @@ async def exported(w):
         return answer.content
 
 
+@pytest.mark.parametrize('corrected_source', [False, True])
+async def test_commercial_rules_and_finalized_statements_survive_an_archive_round_trip(rent_world, import_target, rent_db, export_store, corrected_source):
+    from tests.commercial_preallocation_support import commercial_property, commercial_rule, REASON
+    from app.engine.canonical import canonical_sha256
+    async with api_client(rent_world) as api:
+        data = await commercial_property(api)
+        run_id = data['rows'][0]['run']['id']
+        result = await api.post(f'/api/settlements/{run_id}/finalize', json={'commercial_preallocations': [commercial_rule(data)]})
+        assert result.status_code == 200, result.text
+        if corrected_source:
+            result = await api.post(f"/api/cost-entries/{data['cost']['id']}/correction", json={'gross_amount': '1200.00'})
+            assert result.status_code == 201, result.text
+        archive = await api.post('/api/organizations/export')
+        assert archive.status_code == 200, archive.text
+    async with api_client(import_target) as api:
+        restored = await api.post('/api/organizations/import', files={'file': ('commercial.tar.gz', archive.content)})
+        assert restored.status_code == 200, restored.text
+        ids = restored.json()['id_map']
+        restored_run = ids['settlement_run'][run_id]
+        result = await api.get(f'/api/settlements/{restored_run}')
+        assert result.status_code == 200 and result.json()['total_cost'] == '600.00', result.text
+        pdf = await api.get(f'/api/settlements/{restored_run}/pdf')
+        assert pdf.status_code == 200 and pdf.content.startswith(b'%PDF-'), pdf.text
+    rule = (await rent_db.execute(text('SELECT commercial_reason FROM commercial_preallocation WHERE organization_id=:org'), import_target)).scalar_one()
+    assert rule == REASON
+    payload, digest = (await rent_db.execute(text('SELECT snapshot_payload,snapshot_sha256 FROM settlement_run WHERE id=:id'),
+        {'id': uuid.UUID(restored_run)})).one()
+    assert canonical_sha256(payload) == digest
+    await rent_db.rollback()
+
+
 async def test_import_remaps_collisions_and_preserves_source_identity(rent_world, import_target, rent_db, export_store):
     archive = await exported(rent_world)
     async with api_client(import_target) as api:

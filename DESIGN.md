@@ -1483,3 +1483,29 @@ at 360 px. Register access alone grants no financial disclosure.
 | Missing resolution after | [Desktop](docs/assets/design/levy-missing-reference-after-1280.png) | [Phone](docs/assets/design/levy-missing-reference-after-360.png) |
 | Register before | [Desktop](docs/assets/design/levy-register-before-1280.png) | [Phone](docs/assets/design/levy-register-before-360.png) |
 | Register after | [Desktop](docs/assets/design/levy-register-after-1280.png) | [Phone](docs/assets/design/levy-register-after-360.png) |
+
+
+### Commercial preallocation in tenant drafts (#202)
+
+The draft detail offers a “Vorwegabzug Gewerbe” card only when the property has
+at least one commercial unit. Eligible active cost positions use fieldsets with
+the existing form-grid: “Vorwegabzug” selects “Kein Vorwegabzug”, “Prozent” or
+“Festbetrag”; the latter two reveal “Gewerbeanteil (%)” or “Festbetrag (EUR)”
+and the full-width “Begründung” textarea. Decimal comma/dot parsing reuses the
+existing exact string parser. No default share is inferred. Blank reasons and
+invalid values keep inputs, show a German alert and associate the invalid field
+with its explanation. Server refusals retain the entered rule.
+
+The card explains that “Berechnen” saves a position rule for every affected
+tenant statement, “Vorschau” is temporary, and first finalization locks the rule.
+Internal heating and direct-amount positions do not offer the incompatible rule.
+The existing statement note displays “Vorwegabzug Gewerbe” with its actual
+amount and reason. PDF rules use a full-width explanation immediately below the
+cost position, with escaped/wrapped text. Legacy frozen rows retain their layout.
+
+Synthetic test-database evidence (1280 and 360 px):
+
+| Commercial preallocation | Desktop | 360 px |
+| --- | --- | --- |
+| Before | [View](docs/assets/design/commercial-preallocation/before-1280.png) | [View](docs/assets/design/commercial-preallocation/before-360.png) |
+| After | [View](docs/assets/design/commercial-preallocation/after-1280.png) | [View](docs/assets/design/commercial-preallocation/after-360.png) |

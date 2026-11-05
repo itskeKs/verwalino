@@ -407,6 +407,11 @@ async def import_organization(db, auth, source):
                 progress = False
                 for name, original in pending[:]:
                     dependencies = []
+                    if name == 'settlement_run':
+                        # Snapshot cost references are not foreign keys. Rules
+                        # must precede finalized runs even after FK retry passes.
+                        dependencies.extend(('commercial_preallocation', rule['id'])
+                            for rule in entities.get('commercial_preallocation', []))
                     for child, parent, child_columns, parent_columns in keys:
                         if child == name and 'id' in parent_columns and parent not in {'organization', 'cost_category'}:
                             value = original.get(child_columns[parent_columns.index('id')])

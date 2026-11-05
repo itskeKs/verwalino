@@ -478,7 +478,7 @@ unit_share_i (exact) = G * wᵢ / Σw          (Decimal, unrounded)
 → distribute_amount(G, [wᵢ]) yields the rounded, sum-exact cent amounts (ADR-0005).
 ```
 
-- **Denominator = sum of the participating units**, not "all units of the property blindly". Who "participates" follows from the cost item and the settlement sphere (e.g., parking spaces without living area do not participate in a living-area key, having weight 0; a commercial unit may be excluded depending on the advance deduction (Vorwegabzug) **[OPEN/§18]**, §6.3).
+- **Denominator = sum of the participating units**, not "all units of the property blindly". Who "participates" follows from the cost item and the settlement sphere (e.g., parking spaces without living area do not participate in a living-area key, having weight 0; an explicitly configured commercial preallocation partitions eligible units into groups before applying the key, §6.3).
 - **Missing base quantity** (`area`/`mea` is NULL) for a participating unit → **hard error/escalation**, **no** silent 0 (that would redistribute costs unnoticed). The engine validates before calculating (§2.6).
 - **MEA with co-ownership:** If a unit with multiple fractional owners participates (`ownership_history.mea_share`), the **owner** sphere (M4) is split further by `mea_share`. For the **tenant BK** (M3), the addressee is the unit's tenant; the unit's MEA is its weight (fractional ownership is irrelevant here, because the tenant uses the whole unit).
 
@@ -807,12 +807,62 @@ SDD §7.2/§8/§9: for `GEMISCHT_PRUEFEN` (caretaker), `TEILWEISE_PRUEFEN` (CO2)
 
 **Caretaker share (`GEMISCHT_PRUEFEN`):** The administration/repair/maintenance share is extracted **up front** (in the cost item); M3 apportions the remaining apportionable part stored in `apportionable_tenant_amount` according to the selected key. The engine checks that an `apportionable_tenant_amount` is set for `GEMISCHT_PRUEFEN` (otherwise escalation).
 
-### 6.3 Commercial advance deduction (Vorwegabzug) — [OPEN/§18]
+### 6.3 Commercial preallocation (Vorwegabzug Gewerbe, #202)
 
-SDD §18: "Whether and how commercial units require an **advance deduction (Vorwegabzug)** (different apportionment logic, VAT option)." In mixed use (residential + commercial), an **advance deduction** of the costs attributable to commercial use **before** distribution to the apartments may be legally required (if commercial use causes significantly higher costs). **M3 does not decide this unilaterally.**
+The manager explicitly chooses a percentage (0–100, at most two decimal places)
+or a nonnegative cent-exact fixed amount, with a nonblank reason of at most 2,000
+characters. There is no automatic significance threshold, inferred deduction or
+VAT calculation. Without an entered rule, the existing allocation is unchanged.
+The assessment of commercial extra burden remains with the manager; see
+[§556a(1) BGB](https://www.gesetze-im-internet.de/bgb/__556a.html) and
+[BGH VIII ZR 78/05](https://juris.bundesgerichtshof.de/cgi-bin/rechtsprechung/document.py?Art=pm&Blank=1&Datum=2006-3&Gericht=bgh&file=dokument.pdf&linked=urt&nr=35689).
 
-- **Provisional assumption for M3 test cases (clearly marked):** **No** automatic advance deduction in M3. `unit.usage_type = GEWERBE` exists in the model and is carried in the snapshot; a commercial unit participates in the distribution under the **selected key** like any other unit (e.g., by area). A desired advance deduction is represented **manually** in M3 (a dedicated cost item for the commercial share with `MANUELLER_BETRAG`/exclusion of the apartments), not computed automatically.
-- The **automatic** advance-deduction logic (and VAT option for commercial use) is a delimited building block to be signed off professionally (recommendation: later specification round / with tax advisor). Recorded here, **not guessed away**.
+`commercial_preallocation` stores one shared rule per organization/cost entry,
+separately from the immutable confirmed cost and adopted treatment evidence.
+The existing compute/finalize request accepts optional `commercial_preallocations`
+with `cost_entry_id`, `commercial_share_percent`, `commercial_amount` and
+`commercial_reason`. Omitting a position retains its rule; sending all three
+values as null removes an unfinalized rule. Compute/finalize saves atomically;
+preview applies hypothetical inputs without saving. Draft GET reads current
+shared rules rather than replaying a sibling's old compute extras.
+
+The pure `m3.5.0` engine splits the position's **effective tenant amount** into
+commercial and remaining pools with the existing exact-cent rounding. Excluded
+owner-funded/non-apportionable amounts are not redistributed. Commercial units
+are `usage_type=GEWERBE`; all other eligible units remain in the remainder,
+including parking/other uses when they participate in the selected key. Each
+group reuses the existing key eligibility and complete tenant/vacancy cover,
+person-days, consumption splits and cumulative day shares for short windows.
+Consumption pools retain their property-year bounds. The commercial source pool
+is balanced once, then apportioned over the existing day-balanced property-year
+cent pools with the same rounding function. Each period retains its original
+total; percentage and equivalent fixed rules agree across fiscal boundaries.
+Missing positive key bases fail rather than losing a group's amount. Direct
+manual/external amounts and internal HeizkostenV pools cannot be combined with
+this rule because they already specify a different allocation mechanism.
+
+For EUR 1,200 waste over a 60 m² shop and 75/65 m² flats, no rule gives
+EUR 360 / 450 / 390. An explicit 50% or EUR 600 commercial rule gives
+EUR 600 / 321.43 / 278.57, totaling exactly EUR 1,200. Every affected statement
+and PDF shows “Vorwegabzug Gewerbe 600,00 € – Gastronomie, Restmüll 2 × 1.100 l”,
+plus the group's distribution amount and key bases. PDF explanations occupy a
+full-width row for readable long reasons and escape entered markup.
+
+The snapshot freezes the rule, usage types, bases, occupant inputs and results.
+Once an active finalized tenant statement references the cost, changing or
+removing its shared rule is refused, including introducing a rule after a
+legacy baseline was finalized. An unchanged rule remains usable by siblings.
+Confirmed source corrections continue through the existing correction path;
+no rule is silently copied to a new source. Organization archives restore rules
+(including those of superseded confirmed sources) before statement snapshots,
+even when foreign-key dependencies require further import passes. Old finalized snapshots/digests and
+their original PDF layout remain unchanged. Rule reads/writes follow the source
+organization, financial scope and source disclosure/authority checks.
+The existing guard-based organization retention catalog retains the protected
+live rule. Normal organization erasure therefore preserves its reason, the
+finalized amount and snapshot digest without a trigger or RLS bypass; the
+[survivor inventory](operations/organization-export.md#catalog-survivor-contract)
+documents the retained text.
 
 ---
 

@@ -1,4 +1,6 @@
 import { HeatingInputs } from "../components/HeatingInputs";
+import { CommercialPreallocationInputs } from "../components/CommercialPreallocationInputs";
+import { commercialRulesPayload } from "../lib/commercialPreallocation";
 import { heatingPayload, useHeatingCandidates } from "../lib/heatingInputs";
 import { FinancialCoverageReview } from "../components/FinancialCoverageReview";
 import { parseGermanAmount } from "../lib/germanAmount";
@@ -49,6 +51,7 @@ import type {
   SettlementRun,
   SettlementLine,
   ComputeRequest,
+  CommercialPreallocationIn,
   HeatingConfig,
   ExternalAmountIn,
   ManualAmountIn,
@@ -240,6 +243,8 @@ export function SettlementDetailPage() {
   const [manualAmounts, setManualAmounts] = useState<ManualAmountIn[]>([]);
   const [unitMetrics, setUnitMetrics] = useState<UnitMetricIn[]>([]);
   const [heatingConfigs, setHeatingConfigs] = useState<HeatingConfig[]>([]);
+  const [commercialRules, setCommercialRules] = useState<CommercialPreallocationIn[]>([]);
+  const [commercialAttempted, setCommercialAttempted] = useState(false);
   const [showInputs, setShowInputs] = useState(false);
   const [consumptionSuggestions, setConsumptionSuggestions] = useState<ConsumptionSuggestion[]>([]);
   const [manualConsumptionIds, setManualConsumptionIds] = useState<Set<string>>(new Set());
@@ -259,6 +264,10 @@ export function SettlementDetailPage() {
   const heatingCandidates = useHeatingCandidates(runId ?? "", heatingConfigs, canEditHeating && isDraft && run?.id === runId);
   const heatingBlocked = heatingConfigs.length > 0 && heatingCandidates.blocked;
   const genericEntries = costEntries.filter(entry => !heatingConfigs.some(config => config.cost_entry_id === entry.id));
+  const commercialOptions = genericEntries.filter(entry => entry.superseded_by_id === null && entry.tenant_apportionable !== 'NICHT_UMLAGEFAEHIG'
+    && entry.service_period_from <= (run?.period_end ?? '') && entry.service_period_to >= (run?.period_start ?? '')
+    && ['MEA', 'AREA', 'HEATED_AREA', 'UNIT_COUNT', 'PERSON_COUNT', 'CONSUMPTION'].includes(fromDbDistributionKey(entry.tenant_distribution_key ?? '')))
+    .map(entry => ({ id: entry.id, label: categories.find(category => category.id === entry.cost_category_id)?.label ?? 'Kostenposition' }));
   const consumptionBlocked = needsConsumption(genericEntries) && (consumptionLoading || Boolean(consumptionError));
   const heatingOptions = costEntries.flatMap(entry => {
     const category = categories.find(category => category.id === entry.cost_category_id);
@@ -268,6 +277,8 @@ export function SettlementDetailPage() {
 
   function initStructuredInputs(entries: CostEntry[], r: SettlementRun) {
     setHeatingConfigs(r.extra_inputs?.heating_inputs ?? []);
+    setCommercialRules(r.extra_inputs?.commercial_preallocations ?? []);
+    setCommercialAttempted(false);
     setManualConsumptionIds(new Set());
     setConsumptionSuggestions([]);
     setConsumptionError(null);
@@ -430,7 +441,9 @@ export function SettlementDetailPage() {
   }
 
   function buildComputeRequest(): ComputeRequest {
+    setCommercialAttempted(true);
     return {
+      ...(commercialRules.length ? { commercial_preallocations: commercialRulesPayload(commercialRules) } : {}),
       heating_inputs: heatingPayload(heatingConfigs),
       external_amounts: externalAmounts.filter((e) => e.tenant_amount !== "" && !heatingConfigs.some(config => config.cost_entry_id === e.cost_entry_id)),
       manual_amounts: manualAmounts.filter((m) => m.amount !== "" && !heatingConfigs.some(config => config.cost_entry_id === m.cost_entry_id)),
@@ -1181,6 +1194,9 @@ export function SettlementDetailPage() {
 
       {isDraft && canEditHeating && heatingOptions.length > 0 && <HeatingInputs options={heatingOptions} configs={heatingConfigs}
         onChange={setHeatingConfigs} candidates={heatingCandidates} disabled={actionLoading} />}
+      {isDraft && canEditHeating && commercialOptions.length > 0 && units.some(unit => unit.property_id === run.property_id && unit.usage_type === 'GEWERBE')
+        && <CommercialPreallocationInputs options={commercialOptions} rules={commercialRules} onChange={setCommercialRules}
+          disabled={actionLoading} attempted={commercialAttempted} />}
       {isDraft && canEditHeating && heatingBlocked && <p>Interne Heizkosten: gültige Angaben und passende, vollständig geladene Zeiträume sind vor Berechnen, Vorschau und Finalisieren erforderlich.</p>}
 
       {/* Structured inputs (draft only) */}
