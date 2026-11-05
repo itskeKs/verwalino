@@ -1861,12 +1861,12 @@ async def test_attestation_maps_opening_database_refusals(monkeypatch, constrain
     driver.__cause__ = DriverError()
     driver.__cause__.constraint_name = constraint
     failure = DBAPIError(None, None, driver)
-    subject = SimpleNamespace(run_type='WEG_JAHRESABRECHNUNG')
+    subject = SimpleNamespace(id=uuid4(), run_type='WEG_JAHRESABRECHNUNG')
     monkeypatch.setattr(FinancialScopeService, 'lock_inputs', AsyncMock())
     monkeypatch.setattr(routes, 'SettlementRunRepository', lambda *args: SimpleNamespace(get_by_id_for_update=AsyncMock(return_value=subject)))
     monkeypatch.setattr(routes, 'FinancialInputPolicy', lambda *args: SimpleNamespace(attest=AsyncMock(side_effect=failure)))
     with pytest.raises(HTTPException) as refused:
-        await routes.attest(routes.Attestation(subject_kind='settlement', subject_id=uuid4(),
+        await routes.attest(routes.Attestation(subject_kind='settlement', subject_id=subject.id,
             values={'paid_advances': []}, confirmed_complete=True, reason='Reviewed inputs'),
             SimpleNamespace(organization_id=uuid4(), user_id=uuid4()), None)
     assert refused.value.status_code == status

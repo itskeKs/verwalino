@@ -195,20 +195,24 @@ def _dec(value: str | None, field: str) -> Decimal | None:
         raise HTTPException(status_code=422, detail=f"Invalid decimal for {field}: {value}")
 
 
-def _weg_extras(body: WegComputeRequest | None) -> WegComputeExtras:
+async def _weg_extras(body: WegComputeRequest | None, svc: WegSettlementService, run_id: uuid.UUID, *, capability=ScopeCapability.PREPARE) -> WegComputeExtras:
     if body is None:
         return WegComputeExtras()
+    paid = []
+    for item in body.paid_advances:
+        owner_id = uuid.UUID(item.owner_profile_id)
+        try:
+            amount = Decimal(item.paid_total)
+            if not amount.is_finite():
+                raise ValueError('finite amount required')
+        except (InvalidOperation, ValueError):
+            await svc.reject_paid_amount(run_id, owner_id, missing=not item.paid_total.strip(), capability=capability)
+        paid.append(ManualOwnerAdvance(owner_profile_id=owner_id, paid_total=amount))
     return WegComputeExtras(
         reserve_override_reason=body.reserve_override_reason,
         reserve_opening_balance=_dec(body.reserve_opening_balance, "reserve_opening_balance"),
         reserve_withdrawals_total=_dec(body.reserve_withdrawals_total, "reserve_withdrawals_total"),
-        paid_advances=[
-            ManualOwnerAdvance(
-                owner_profile_id=uuid.UUID(p.owner_profile_id),
-                paid_total=_dec(p.paid_total, "paid_total"),
-            )
-            for p in body.paid_advances
-        ],
+        paid_advances=paid,
     )
 
 
@@ -503,7 +507,7 @@ async def compute_weg_run(
     db: AsyncSession = Depends(get_db, scope="function"),
 ):
     svc = WegSettlementService(db, auth.organization_id, auth.user_id)
-    run, _result = await svc.compute_weg(run_id, _weg_extras(body))
+    run, _result = await svc.compute_weg(run_id, await _weg_extras(body, svc, run_id))
     lines_repo = SettlementLineRepository(db, auth.organization_id)
     lines = await lines_repo.list_for_run(run_id)
     return await _checked_run_out(db, auth, run, list(lines))
@@ -518,7 +522,7 @@ async def finalize_weg_run(
     db: AsyncSession = Depends(get_db, scope="function"),
 ):
     svc = WegSettlementService(db, auth.organization_id, auth.user_id)
-    run = await svc.finalize_weg(run_id, _weg_extras(body))
+    run = await svc.finalize_weg(run_id, await _weg_extras(body, svc, run_id))
     lines_repo = SettlementLineRepository(db, auth.organization_id)
     lines = await lines_repo.list_for_run(run_id)
     return await _checked_run_out(db, auth, run, list(lines))
