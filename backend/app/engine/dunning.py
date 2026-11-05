@@ -252,6 +252,8 @@ def assemble_dunning(
                     "due_date": due.isoformat(), "days": days,
                     "principal": str(item_principal), "interest": str(amount),
                 })
+                if item.payment_type in ("KALTMIETE", "NK_VORAUSZAHLUNG"):
+                    rows[-1]["interest_start"] = (due + timedelta(days=1)).isoformat()
             interest = _money(interest)
             snapshot = {"base_interest_rate": str(base_interest_rate),
                         "annual_rate": str(annual_rate),

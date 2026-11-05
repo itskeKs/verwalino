@@ -542,7 +542,7 @@ not an immutable field; a separate minimization policy remains an owner decision
 | `person` | `bank_name`, `bic`, `city`, `company_name`, `email`, `first_name`, `iban`, `last_name`, `phone`, `street`, `zip_code` | Identity fields survive only with an unexpired voucher binding; otherwise anonymized. |
 | `person_data_domain` | `label`, `reason_code` | Retained source, scope or review evidence and its technical provenance. |
 | `person_data_grant` | `capabilities`, `reason_code` | Retained source, scope or review evidence and its technical provenance; capability arrays contain authorization codes. |
-| `property` | `city`, `management_type`, `mea_scale_status`, `name`, `street`, `zip_code` | Required property identity/address and structural classifications. |
+| `property` | `city`, `federal_state`, `management_type`, `mea_scale_status`, `name`, `street`, `zip_code` | Required property identity/address and structural classifications. `federal_state` is a nullable, constrained two-letter state code retained as coarse holiday/jurisdiction evidence, never free text. |
 | `property_assignment` | `assignment_type`, `status` | Structural type/status; editable identifiers and text are scrubbed. |
 | `property_creation_receipt` | `request_digest` | Technical operation/status/error codes, keys and digests; personal event payloads are scrubbed separately. |
 | `property_data_domain` | `label`, `reason` | Retained source, scope or review evidence and its technical provenance. |

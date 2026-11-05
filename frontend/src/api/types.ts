@@ -1239,6 +1239,7 @@ export interface DunningInterestSnapshot {
     period_year: number | null;
     period_month: number | null;
     due_date: string;
+    interest_start?: string;
     days: number;
     principal: string;
     interest: string;

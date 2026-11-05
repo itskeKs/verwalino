@@ -164,6 +164,11 @@ and interest are not charged interest. Example: 700 EUR January 2026 rent, due 6
 2 March, base 2.50%, 55 days → 7.91 EUR interest and 707.91 EUR total with fee 0. Due date, reference date,
 days, base/annual interest rate, and amounts are saved and shown in detail/PDF;
 later configuration or payment changes do not recalculate the issued dunning notice.
+New `KALTMIETE` and `NK_VORAUSZAHLUNG` interest rows additionally freeze the first
+interest date and explicitly show `Zinsbeginn: TT.MM.JJJJ` in the detail and PDF.
+Older rows without this date retain their existing content and identical PDF
+rendering; no historical date is inferred. Heating, WEG and one-off rows keep
+their existing presentation and calculation.
 Rollback restrictions are documented under
 [migration compatibility](../../DEPLOY.md#migration-compatibility-00290148).
 Issuance alone confirms no receipt. The real UI/PDF flow

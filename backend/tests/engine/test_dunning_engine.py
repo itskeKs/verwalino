@@ -330,3 +330,17 @@ def test_saturday_move_in_rent_is_not_dunned_until_after_wednesdays_deadline():
     assert notice.principal_amount == Decimal('600.00')
     assert notice.interest_amount == Decimal('0.12')
     assert notice.interest_snapshot['items'][0]['days'] == 1
+
+
+@pytest.mark.parametrize('payment_type,expected_start', [
+    ('KALTMIETE', '2026-04-08'), ('NK_VORAUSZAHLUNG', '2026-04-08'),
+    ('HK_VORAUSZAHLUNG', None), ('HAUSGELD_VORSCHUSS', None), ('SONDERZAHLUNG', None),
+])
+def test_only_new_rent_and_operating_interest_rows_freeze_the_first_interest_day(payment_type, expected_start):
+    item = OverdueItem(2026, 4, payment_type, Decimal('100'), Decimal('0'), Decimal('100'), date(2026, 4, 7))
+    notice = assemble_dunning([item], 0, date(2026, 4, 8), base_interest_rate=Decimal('2.50'))
+    row = notice.interest_snapshot['items'][0]
+    assert row.get('interest_start') == expected_start
+    assert notice.interest_amount == Decimal('0.02')
+    if expected_start is None:
+        assert 'interest_start' not in row

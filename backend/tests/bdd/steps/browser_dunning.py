@@ -1,6 +1,8 @@
 """Individual, scoped and selected dunning journeys, with API-only prerequisites."""
 import io
+import os
 import re
+from pathlib import Path
 from urllib.parse import urlsplit
 
 import pdfplumber
@@ -94,7 +96,10 @@ async def readable_issued_amounts(browser_world):
             row = table.locator("tbody tr").first
             for index, value in enumerate(amounts):
                 cell = row.get_by_role("cell").nth(index)
-                await expect(cell).to_have_text(value)
+                if title == "Eingefrorene Zinsberechnung" and index == 0:
+                    await expect(cell.locator("span").first).to_have_text(value)
+                else:
+                    await expect(cell).to_have_text(value)
                 fits = await cell.evaluate("cell => { const box = cell.getBoundingClientRect(); const clip = cell.closest('table').parentElement.getBoundingClientRect(); return box.left >= clip.left && box.right <= clip.right && box.right <= innerWidth && cell.scrollWidth <= cell.clientWidth; }")
                 assert fits, f"{title}: {value} is clipped at {width} px"
         assert await page.evaluate("document.documentElement.scrollWidth <= innerWidth"), f"Page overflows at {width} px"
@@ -373,3 +378,49 @@ def april_short(world):
     assert notice["interest_amount"] == "0.02"
     assert notice["included_items"][0]["due_date"] == "2026-04-07"
     assert notice["interest_snapshot"]["items"][0]["days"] == 1
+    assert notice["interest_snapshot"]["items"][0]["interest_start"] == "2026-04-08"
+
+
+@when("the manager opens the created April reminder")
+@browser_step
+async def open_april_reminder(browser_world):
+    response = browser_world.world.response
+    assert response.status_code == 201, browser_world.world.describe_response()
+    await browser_world.visit(f"/mahnungen/{response.json()['id']}")
+    await expect(button(browser_world.page, "Mahnung ausgeben")).to_be_visible()
+
+
+@then("the issued April reminder names 8 April 2026 as the interest start in the detail and PDF")
+@browser_step
+async def explicit_april_interest_start(browser_world):
+    page = browser_world.page
+    await page.reload()
+    await expect(page.get_by_text("Ausgestellt", exact=True).first).to_be_visible()
+    for width in (1280, 360):
+        await page.set_viewport_size({"width": width, "height": 900})
+        if width == 360:
+            await page.wait_for_function("document.querySelector('aside').getBoundingClientRect().right <= 0")
+        if os.environ.get("VERWALINO_CAPTURE_DESIGN") == "1":
+            directory = Path(__file__).resolve().parents[4] / "docs/assets/design/dunning-notice"
+            await page.locator(".card").filter(has=page.get_by_role("heading", name="Eingefrorene Zinsberechnung", exact=True)).scroll_into_view_if_needed()
+            await page.screenshot(path=str(directory / f"after-{width}.png"), full_page=True)
+    async with page.expect_popup() as opened:
+        await button(page, "PDF herunterladen").click()
+    popup = await opened.value
+    try:
+        await popup.wait_for_load_state()
+        response = await browser_world.context.request.get(popup.url)
+        assert response.status == 200
+        assert response.headers["content-type"].startswith("application/pdf")
+        with pdfplumber.open(io.BytesIO(await response.body())) as pdf:
+            text = " ".join(part.extract_text() or "" for part in pdf.pages)
+        assert re.search(r"Zinsbeginn:\s*08\.04\.2026", text), text
+        assert "07.04.2026" in text and re.search(r"0[.,]02", text), text
+    finally:
+        await popup.close()
+    for width in (1280, 360):
+        await page.set_viewport_size({"width": width, "height": 900})
+        start = page.get_by_text("Zinsbeginn:", exact=False).filter(has_text="08.04.2026")
+        await expect(start).to_be_visible()
+        assert await start.evaluate("element => { const box = element.getBoundingClientRect(); return box.left >= 0 && box.right <= innerWidth; }")
+        assert await page.evaluate("document.documentElement.scrollWidth <= innerWidth")
