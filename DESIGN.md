@@ -1515,6 +1515,43 @@ Synthetic test-database evidence (1280 and 360 px):
 | After | [View](docs/assets/design/commercial-preallocation/after-1280.png) | [View](docs/assets/design/commercial-preallocation/after-360.png) |
 
 
+### Existing-cost bank assignment (#164)
+
+For outgoing transactions, “Umsatz aufteilen” defaults to “Bestehende Kostenposition”.
+The “Zuordnen als” selector retains “Zahlung (z. B. Erstattung oder Rücklagenentnahme)”
+for the existing payment form. Incoming transactions retain their payment split.
+The cost form uses the shared full-width form grid and bottom actions. Native
+selectors stay within the dialog at 360 px, including long German option labels.
+“Kostenposition” lists only current confirmed same-property costs with remaining
+bank coverage; labels show document number (or invoice date), “offen” and “gesamt”.
+Selecting one shows “Nach Zuordnung noch offen”. Excessive coverage disables
+“Kostenposition zuordnen” with a German error. Failed requests keep the selection;
+“Kostenpositionen neu laden” refreshes availability. Empty and loading states report
+the actual cost list. Successful matching reports “Umsatz zugeordnet.” and updates
+the bank status. No payment/cost creation is implied by this action.
+
+Synthetic −60.00 EUR electricity debit and a confirmed 120.00 EUR position:
+
+| | Desktop | 360 px |
+| --- | --- | --- |
+| Before | [view](docs/assets/design/bank-cost-assignment/before-1280.png) | [view](docs/assets/design/bank-cost-assignment/before-360.png) |
+| After | [view](docs/assets/design/bank-cost-assignment/after-1280.png) | [view](docs/assets/design/bank-cost-assignment/after-360.png) |
+
+For a reviewed allocation correction with assigned debits, “Bankumsätze übernehmen”
+shows each covered old part with its covered amount and an initially empty successor
+selector. Options identify the proposed parts by their visible position and amount;
+the selection uses the reviewed line ID. Parts below the required amount are
+disabled, and confirmation requires valid selections whose combined coverage fits
+each target. The controls use the same full-width fields as the existing review.
+The original bank link stays visible on the original transaction.
+
+Synthetic 119.00 EUR invoice, old parts 59.00 and 60.00 EUR, and a 60.00 EUR debit:
+
+| Reviewed correction | Desktop | 360 px |
+| --- | --- | --- |
+| Before | [view](docs/assets/design/bank-cost-correction/before-1280.png) | [view](docs/assets/design/bank-cost-correction/before-360.png) |
+| After | [view](docs/assets/design/bank-cost-correction/after-1280.png) | [view](docs/assets/design/bank-cost-correction/after-360.png) |
+
 ### WEG paid Hausgeld input errors (#183)
 
 “Aus Zahlenstand übernehmen” fills every authorized period/plan owner, including a

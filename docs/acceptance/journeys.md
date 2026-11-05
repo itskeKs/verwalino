@@ -102,6 +102,9 @@ what Verwalino does not assign by itself.
 - Anna's 2,250.00 € of 02.01. are the **deposit**, not rent.
 - General electricity (10 × 60.00 € = 600.00 €) and the building insurance (312.00 €) are expenses
   of the property.
+  Enter and confirm the January electricity cost for 60.00 €, then assign its
+  −60.00 € bank debit to that existing cost. The debit becomes “Zugeordnet”, the
+  cost has 0.00 € remaining bank coverage, and the year still counts 60.00 € once.
 - The private Amazon booking (34.99 €) belongs to nothing and is counted nowhere.
 - If Sabine uploads the same file a second time, no booking is created twice.
 
@@ -110,6 +113,7 @@ what Verwalino does not assign by itself.
 **Automated through the browser:** original Sparkasse preview/import, Anna's partial-rent
 suggestion, duplicate detection and refusal of a statement for another account in
 [sparkasse_statement.feature](../../features/journeys/sparkasse_statement.feature);
+the January electricity assignment and unchanged yearly expense run at 1280 and 360 px there;
 manual “60,00” cost entry in [money_inputs.feature](../../features/journeys/money_inputs.feature).
 The Sparkasse twin also opens Anna's April split with a long dwelling label at
 1280, 800 and 360 px: the explanation remains complete, labels sit above fields,

@@ -5,10 +5,14 @@ import json
 import os
 from pathlib import Path
 import shutil
+import signal
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
+
+from installer_test_process import install_interrupt_handlers, managed_process, run, unittest_main
 
 ROOT = Path(__file__).resolve().parents[1]
 DIGEST = "sha256:" + "a" * 64
@@ -47,7 +51,15 @@ elif name == "docker":
     if args == ["compose", "version", "--short"]:
         print("2.24.0")
     elif args == ["info"]:
-        pass
+        if pathlib.Path.cwd().name == "instance" and (marker := os.environ.get("INSTALL_CONTRACT_BLOCK_DOCTOR")):
+            # The real doctor invokes this shim directly inside the install tree.
+            path = pathlib.Path(marker)
+            signal.signal(signal.SIGTERM, signal.SIG_IGN)
+            path.with_suffix(".tmp").write_text(json.dumps([
+                os.getppid(), os.getpid(), os.getpgrp(), str(pathlib.Path.cwd().parent),
+            ]))
+            path.with_suffix(".tmp").replace(path)
+            time.sleep(30)  # Fail-safe if the outer contract is itself killed.
     elif args[:2] == ["info", "-f"]:
         print("27.0.0" if "ServerVersion" in args[-1] else "/docker-data")
     elif args[0] in ("ps", "volume"):
@@ -116,6 +128,13 @@ elif name == "curl":
 '''
 
 
+def process_group(pid):
+    try:
+        return os.getpgid(pid)
+    except ProcessLookupError:
+        return None
+
+
 class InstallScenarioTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
@@ -139,18 +158,19 @@ class InstallScenarioTests(unittest.TestCase):
         self.report = self.base / "report with spaces"
 
     def build_bundle(self):
-        result = subprocess.run(["bash", str(ROOT / "scripts/build-release-bundle.sh"), str(self.bundle)],
+        result = run(["bash", str(ROOT / "scripts/build-release-bundle.sh"), str(self.bundle)],
                                 env=dict(self.env, DIGEST=DIGEST), capture_output=True, text=True, check=False)
         self.assertEqual(result.returncode, 0, result.stderr)
         # Checkout bundles are unsigned; production release signing stays in its workflow.
         (self.bundle / "SHA256SUMS.sigstore.json").write_text("{}\n")
 
+    def scenario_command(self):
+        return ["bash", str(ROOT / "scripts/install-scenarios.sh"), "--bundle", str(self.bundle),
+                "--version", "v0.0.0", "--report", str(self.report)]
+
     def run_scenarios(self):
         self.build_bundle()
-        return subprocess.run(["bash", str(ROOT / "scripts/install-scenarios.sh"),
-                               "--bundle", str(self.bundle), "--version", "v0.0.0",
-                               "--report", str(self.report)], env=self.env,
-                              capture_output=True, text=True, check=False, timeout=30)
+        return run(self.scenario_command(), env=self.env, capture_output=True, text=True, timeout=30)
 
     def rows(self):
         report = json.loads((self.report / "scenarios.json").read_text())
@@ -186,6 +206,82 @@ class InstallScenarioTests(unittest.TestCase):
                                  str(Path(args[args.index("-f") + 1]).parents[1] / ".env.selfhost"))
                 self.assertIn("--profile", args)
                 self.assertEqual(args[args.index("--profile") + 1], "ops")
+
+    def test_interrupted_harness_removes_its_doctor_group_and_install_tree(self):
+        for signum in (signal.SIGINT, signal.SIGTERM):
+            with self.subTest(signal=signum.name):
+                self.assert_interrupted_harness_is_clean(signum)
+
+    def assert_interrupted_harness_is_clean(self, signum):
+        with tempfile.TemporaryDirectory(dir=self.base) as temporary:
+            scratch = Path(temporary).resolve()
+            marker = scratch / "doctor.json"
+            env = dict(os.environ, TMPDIR=str(scratch), INSTALL_CONTRACT_BLOCK_DOCTOR=str(marker))
+            command = [sys.executable, "-B", __file__,
+                       "InstallScenarioTests.test_four_scenarios_pass_with_reporter_compatible_steps_and_cleanup"]
+            with (scratch / "runner.log").open("w") as output:
+                try:
+                    # Give the nested suite time to stop its own group and
+                    # finalize its fixture before escalating against it.
+                    with managed_process(command, env=env, term_grace=8,
+                                         stdout=output, stderr=subprocess.STDOUT) as runner:
+                        doctor, docker, group, tree = self.wait_for_doctor(marker, scratch)
+                        runner.send_signal(signum)
+                        status = runner.wait(timeout=10)
+                        self.assert_doctor_stopped(doctor, docker, group)
+                        self.assertFalse(tree.exists(), f"Install tree survived {signum.name}: {tree}")
+                        self.assertNotEqual(group, runner.pid, "The harness command needs its own process group")
+                        self.assertEqual(status, 128 + signum, (scratch / "runner.log").read_text())
+                finally:
+                    # The unpatched runner leaks this group. Limit fallback cleanup
+                    # to the group from this run and verify it still has an owned PID.
+                    if marker.exists():
+                        doctor, docker, group, _ = json.loads(marker.read_text())
+                        if any(process_group(pid) == group for pid in (doctor, docker)):
+                            try:
+                                os.killpg(group, signal.SIGKILL)
+                            except ProcessLookupError:
+                                pass
+
+    def wait_for_doctor(self, marker, scratch):
+        deadline = time.monotonic() + 15
+        while not marker.exists():
+            self.assertLess(time.monotonic(), deadline, "Doctor never reached fake Docker")
+            time.sleep(0.02)
+        doctor, docker, group, tree = json.loads(marker.read_text())
+        tree = Path(tree).resolve()
+        self.assertTrue(tree.is_relative_to(scratch.resolve()))
+        self.assertTrue(tree.name.startswith("verwalino-install-") and tree.is_dir(), tree)
+        self.assertEqual(os.getpgid(doctor), group)
+        self.assertEqual(os.getpgid(docker), group)
+        return doctor, docker, group, tree
+
+    def assert_doctor_stopped(self, doctor, docker, group):
+        deadline = time.monotonic() + 5
+        while True:
+            alive = [pid for pid in (doctor, docker) if process_group(pid) == group]
+            try:
+                os.killpg(group, 0)
+            except ProcessLookupError:
+                self.assertEqual(alive, [], f"Doctor group {group} still has recorded PIDs")
+                return
+            except PermissionError:
+                # macOS can report EPERM while the last members are zombies.
+                pass
+            self.assertLess(time.monotonic(), deadline, f"Doctor group {group} survived; recorded PIDs: {alive}")
+            time.sleep(0.02)
+
+    def test_matrix_timeout_stops_the_doctor_process_group(self):
+        self.build_bundle()
+        marker = self.base / "doctor.json"
+        self.env["INSTALL_CONTRACT_BLOCK_DOCTOR"] = str(marker)
+        with self.assertRaises(subprocess.TimeoutExpired):
+            with managed_process(self.scenario_command(), env=self.env, stdout=subprocess.PIPE,
+                                 stderr=subprocess.PIPE) as runner:
+                doctor, docker, group, _ = self.wait_for_doctor(marker, self.base)
+                self.assertEqual(group, runner.pid)
+                runner.communicate(timeout=0.1)
+        self.assert_doctor_stopped(doctor, docker, group)
 
     def test_four_scenarios_pass_with_reporter_compatible_steps_and_cleanup(self):
         result = self.run_scenarios()
@@ -266,4 +362,5 @@ class InstallScenarioTests(unittest.TestCase):
 
 
 if __name__ == "__main__":
-    unittest.main()
+    install_interrupt_handlers()
+    unittest_main()

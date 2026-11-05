@@ -126,3 +126,8 @@ Feature: Organization isolation
     When the manager creates the roof repair levy due on 1 July 2026
     And Verwaltung Beta tries to create, read and link that special levy
     Then the special levy authority is not found and its frozen obligation is unchanged
+
+  Scenario: A bank debit cannot cover another organization's cost
+    Given each organization has a confirmed cost and an outgoing bank debit
+    When Verwaltung Alpha tries to assign its debit to Verwaltung Beta's cost
+    Then the foreign cost is not found and both debits remain new

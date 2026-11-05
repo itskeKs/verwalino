@@ -6,6 +6,7 @@ import pytest
 from sqlalchemy import text
 from sqlalchemy.exc import DBAPIError
 
+from tests.migration_rehearsal import rewind_bank_allocation_functions
 from tests.test_financial_scope_boundary import worker_tenant, scope_seed  # noqa: F401
 from tests.test_invoice_source_custody import store, fixture
 from tests.test_scoped_account_statements import client, mutate
@@ -279,19 +280,29 @@ async def test_alias_migration_roundtrip_and_populated_rollback_refusal(migrator
     engine = create_engine(MIGRATOR_SYNC_URL)
     try:
         with engine.begin() as db, Operations.context(MigrationContext.configure(db)):
-            importlib.import_module('migrations.versions.0123_replacement_exception_outcomes').downgrade()
-            importlib.import_module('migrations.versions.0122_allocation_source_replacements').downgrade()
-            importlib.import_module('migrations.versions.0121_visual_allocation_sources').downgrade()
-            before = {signature:db.scalar(text('SELECT pg_get_functiondef(CAST(:signature AS regprocedure))'),{'signature':signature}) for signature,_,_ in migration.PATCHES}
-            with pytest.raises(DBAPIError,match='Retain physical source'),db.begin_nested(): migration.downgrade()
-            point = db.begin_nested()
-            try:
-                db.execute(text('TRUNCATE visual_extract_attestation CASCADE'))
-                migration.downgrade(); migration.upgrade()
-                assert before == {signature:db.scalar(text('SELECT pg_get_functiondef(CAST(:signature AS regprocedure))'),{'signature':signature}) for signature in before}
-            finally:
-                point.rollback()
-                importlib.import_module('migrations.versions.0121_visual_allocation_sources').upgrade()
-                importlib.import_module('migrations.versions.0122_allocation_source_replacements').upgrade()
-                importlib.import_module('migrations.versions.0123_replacement_exception_outcomes').upgrade()
+            function_sql = text('SELECT pg_get_functiondef(CAST(:signature AS regprocedure))')
+            head_signatures = ('allocation_correction_preview(uuid,uuid,uuid)',
+                               'allocation_replacement_preview(uuid,uuid,uuid)',
+                               'visual_allocation_correction_preview(uuid,uuid,uuid)')
+            head = [db.scalar(function_sql, {'signature': signature}) for signature in head_signatures]
+            # Prove the populated refusal with this test's own retained source.
+            assert db.scalar(text('SELECT EXISTS(SELECT 1 FROM visual_extract_artifact WHERE organization_id=:org)'), ids)
+            assert db.scalar(text('SELECT EXISTS(SELECT 1 FROM allocation_set WHERE organization_id=:org)'), ids)
+            with pytest.raises(DBAPIError, match='Retain physical source'), db.begin_nested():
+                migration.downgrade()
+            with db.begin_nested() as historical:
+                rewind_bank_allocation_functions(db)
+                # Older DDL cannot represent visual adoptions and replacements
+                # from other cases. Clear their synthetic graph in this savepoint.
+                db.execute(text('TRUNCATE visual_extract_attestation,allocation_set CASCADE'))
+                importlib.import_module('migrations.versions.0123_replacement_exception_outcomes').downgrade()
+                importlib.import_module('migrations.versions.0122_allocation_source_replacements').downgrade()
+                importlib.import_module('migrations.versions.0121_visual_allocation_sources').downgrade()
+                before = {signature: db.scalar(function_sql, {'signature': signature})
+                          for signature, _, _ in migration.PATCHES}
+                migration.downgrade()
+                migration.upgrade()
+                assert before == {signature: db.scalar(function_sql, {'signature': signature}) for signature in before}
+                historical.rollback()
+            assert head == [db.scalar(function_sql, {'signature': signature}) for signature in head_signatures]
     finally: engine.dispose()

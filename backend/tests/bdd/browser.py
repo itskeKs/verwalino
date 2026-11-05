@@ -40,7 +40,13 @@ def _stop(process):
 
 
 @pytest.fixture(scope="session")
-def browser_app(seed_data, request):
+def browser_storage():
+    with tempfile.TemporaryDirectory(prefix="verwalino-browser-") as storage:
+        yield storage
+
+
+@pytest.fixture(scope="session")
+def browser_app(seed_data, request, browser_storage):
     """Use an explicit external target or own a guarded local stack."""
     if target_url():
         yield target_url()
@@ -71,8 +77,7 @@ def browser_app(seed_data, request):
     with ExitStack() as stack:
         previous_handler = signal.signal(signal.SIGTERM, interrupt)
         stack.callback(signal.signal, signal.SIGTERM, previous_handler)
-        storage = stack.enter_context(tempfile.TemporaryDirectory(prefix="verwalino-browser-"))
-        env["HV_DOCUMENT_STORAGE_ROOT"] = storage
+        env["HV_DOCUMENT_STORAGE_ROOT"] = browser_storage
         reporter = request.config.pluginmanager.getplugin("scenario-report")
         for (command, directory, url), name in zip(commands, ("backend", "vite")):
             if reporter:

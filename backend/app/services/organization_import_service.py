@@ -395,6 +395,39 @@ async def import_organization(db, auth, source):
                     inserted.add((name, row['id']))
                     continue
                 pending.append((name, row))
+        # Replay staged classification through native guards. A one-sided
+        # binding was added after an unclassified match, so replay that order.
+        # Fully classified matches still require both bindings before insertion.
+        bindings = entities.get('accounting_scope_binding', [])
+        bank_bindings = {row['bank_account_id']: row['id'] for row in bindings if row.get('bank_account_id')}
+        cost_bindings = {row['cost_entry_id']: row['id'] for row in bindings if row.get('cost_entry_id')}
+        bank_dependencies = {}
+        for row in entities.get('bank_transaction', []):
+            if row.get('cost_entry_id') is None:
+                continue
+            bank_binding = bank_bindings.get(row['bank_account_id'])
+            cost_binding = cost_bindings.get(row['cost_entry_id'])
+            if bank_binding and cost_binding:
+                bank_dependencies['bank_transaction', row['id']] = [
+                    ('accounting_scope_binding', bank_binding), ('accounting_scope_binding', cost_binding)]
+            elif binding := bank_binding or cost_binding:
+                bank_dependencies.setdefault(('accounting_scope_binding', binding), []).append(
+                    ('bank_transaction', row['id']))
+        # A cancelled reserve draft retains its original scope binding.
+        # Insert it before the payment so the native account trigger can reuse it.
+        matched_debits = {row['id'] for row in entities.get('bank_transaction', []) if row.get('cost_entry_id')}
+        released_drafts = {row['id']: row for row in entities.get('payment', [])
+            if row.get('cancelled_at') and row.get('payment_type') == 'RUECKLAGENENTNAHME'
+            and row.get('bank_transaction_id') in matched_debits}
+        early_payment_bindings = set()
+        for row in bindings:
+            draft = released_drafts.get(row.get('payment_id'))
+            if draft is None or draft.get('bank_account_id') not in bank_bindings:
+                continue
+            early_payment_bindings.add(row['id'])
+            bank_dependencies['accounting_scope_binding', row['id']] = [
+                ('accounting_scope_binding', bank_bindings[draft['bank_account_id']])]
+            bank_dependencies['payment', draft['id']] = [('accounting_scope_binding', row['id'])]
         registrations = {}
         for row in entities.get('document_ref', []):
             kind = row['source_kind']
@@ -406,7 +439,11 @@ async def import_organization(db, auth, source):
             while pending:
                 progress = False
                 for name, original in pending[:]:
-                    dependencies = []
+                    dependencies = list(bank_dependencies.get((name, original.get('id')), ()))
+                    if name == 'accounting_scope_binding':
+                        # Native binding admission needs the archived live grants.
+                        dependencies.extend(('scope_grant', grant['id']) for grant in entities.get('scope_grant', [])
+                                            if grant['scope_id'] == original['scope_id'])
                     if name == 'settlement_run':
                         # Snapshot cost references are not foreign keys. Rules
                         # must precede finalized runs even after FK retry passes.
@@ -414,6 +451,9 @@ async def import_organization(db, auth, source):
                             for rule in entities.get('commercial_preallocation', []))
                     for child, parent, child_columns, parent_columns in keys:
                         if child == name and 'id' in parent_columns and parent not in {'organization', 'cost_category'}:
+                            if name == 'accounting_scope_binding' and parent == 'payment' and original['id'] in early_payment_bindings:
+                                # Its payment FKs and semantic validation are deferred.
+                                continue
                             value = original.get(child_columns[parent_columns.index('id')])
                             if value is not None:
                                 dependencies.append((parent, value))
