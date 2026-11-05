@@ -513,7 +513,16 @@ when supplied, otherwise the application version. Before sending, the pure
 scrubber removes bodies, user identities, frame locals and source snippets,
 and masks recognizable personal data, credentials and query values in messages
 and breadcrumbs. The same text filter protects formatted logs; SQLAlchemy hides
-bound parameters. No person directory is loaded: names are matched heuristically,
+bound parameters. Canonical hexadecimal UUID spans (`8-4-4-4-12`, case-insensitive)
+are excluded from IBAN and phone matching so diagnostic identifiers, including
+all-numeric UUIDs, remain complete. Phone matching treats excluded UUID edges as
+token boundaries and retains surrounding phone-grammar separators, including
+whitespace, while masking adjacent phone numbers. Other
+IBAN-shaped candidates are conservatively redacted even with an invalid country,
+length or checksum; the filter does not validate bank details. UUID-shaped values
+in credentials or URL queries still follow the normal secret/query redaction.
+Text filtering remains bounded to the first 8192 characters per string.
+No person directory is loaded: names are matched heuristically,
 so this is not a guarantee for arbitrary names or unrecognized free text.
 Transport tests stay offline. Configuration, hosted GlitchTip and log lookup are
 documented in [DEPLOY.md](../DEPLOY.md#request-ids-and-optional-error-tracking).
