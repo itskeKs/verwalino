@@ -321,7 +321,10 @@ def tenant_expected_charges(
         rent_segments.append((rate.base_rent, days))
         nk_segments.append((rate.advance_payment, days))
         hk_segments.append((rate.heating_advance_payment, days))
-        due = max(lease.valid_from, third_working_day(year, month, public_holidays(year, federal_state)))
+        holidays = public_holidays(year, federal_state)
+        if month == 12:
+            holidays |= public_holidays(year + 1, federal_state)
+        due = third_working_day(year, month, holidays, start_date=max(m_first, lease.valid_from))
         rent = _sum_rate_segments(rent_segments, days_in_month)
         nk = _sum_rate_segments(nk_segments, days_in_month)
         hk = _sum_rate_segments(hk_segments, days_in_month)

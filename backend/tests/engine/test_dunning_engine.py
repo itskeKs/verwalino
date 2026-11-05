@@ -304,10 +304,29 @@ def test_april_rent_due_date_drives_overdue_detection_and_interest():
     assert len(overdue) == 1 and overdue[0].due_date == date(2026, 4, 7)
 
 
-def test_mid_month_rent_does_not_become_overdue_before_the_lease_starts():
+def test_mid_month_rent_allows_three_working_days_from_the_lease_start():
     import uuid
     from app.engine.mietkonto import LeaseChargeInput, tenant_expected_charges
     lease = LeaseChargeInput(uuid.uuid4(), date(2026, 4, 15), None, Decimal('700'), Decimal('100'))
     charges = tenant_expected_charges(lease, date(2026, 4, 1), date(2026, 4, 30))
     assert charges[0].amount == Decimal('373.33')
-    assert all(charge.due_date == date(2026, 4, 15) for charge in charges)
+    assert all(charge.due_date == date(2026, 4, 17) for charge in charges)
+
+
+def test_saturday_move_in_rent_is_not_dunned_until_after_wednesdays_deadline():
+    import uuid
+    from app.engine.mietkonto import LeaseChargeInput, tenant_expected_charges, account_statement
+    lease = LeaseChargeInput(uuid.UUID(int=93), date(2026, 4, 11), None, Decimal('900'), Decimal('0'))
+    charges = tenant_expected_charges(lease, date(2026, 4, 1), date(2026, 4, 30))
+    assert charges[0].amount == Decimal('600.00')
+    items = list(account_statement(charges, []).open_items)
+    for reference_date in (date(2026, 4, 12), date(2026, 4, 15)):
+        assert assemble_dunning(find_overdue_items(items, reference_date), 0, reference_date,
+            override_fee=Decimal('0'), base_interest_rate=Decimal('2.50')) is None
+    reference_date = date(2026, 4, 16)
+    notice = assemble_dunning(find_overdue_items(items, reference_date), 0, reference_date,
+        override_fee=Decimal('0'), base_interest_rate=Decimal('2.50'))
+    assert notice is not None
+    assert notice.principal_amount == Decimal('600.00')
+    assert notice.interest_amount == Decimal('0.12')
+    assert notice.interest_snapshot['items'][0]['days'] == 1

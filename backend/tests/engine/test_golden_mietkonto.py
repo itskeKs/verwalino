@@ -41,6 +41,33 @@ YEAR_START = date(2025, 1, 1)
 YEAR_END = date(2025, 12, 31)
 
 
+@pytest.mark.parametrize('lease_start,expected_due', [
+    (date(2026, 4, 11), date(2026, 4, 15)),
+    (date(2026, 4, 15), date(2026, 4, 17)),
+    (date(2026, 4, 30), date(2026, 5, 5)),
+    (date(2026, 12, 31), date(2027, 1, 5)),
+])
+def test_first_rent_and_operating_advance_allow_three_working_days(lease_start, expected_due):
+    lease = LeaseChargeInput(uuid.UUID(int=91), lease_start, None, Decimal('900'), Decimal('150'))
+    charges = tenant_expected_charges(lease, lease_start, lease_start)
+    assert [(charge.payment_type, charge.due_date) for charge in charges] == [
+        (PT_KALTMIETE, expected_due), (PT_NK_VORAUSZAHLUNG, expected_due)]
+
+
+@pytest.mark.parametrize('lease_start,expected_due', [
+    (date(2026, 1, 1), date(2026, 4, 7)),
+    (date(2026, 4, 11), date(2026, 4, 15)),
+])
+def test_clipped_rent_reports_and_rate_changes_keep_the_actual_rental_period_deadline(lease_start, expected_due):
+    lease = LeaseChargeInput(uuid.UUID(int=92), lease_start, None, Decimal('900'), Decimal('150'),
+        rent_changes=(mietkonto.RentChangeInput(date(2026, 4, 14), Decimal('1200'), Decimal('180')),))
+    full = tenant_expected_charges(lease, date(2026, 4, 1), date(2026, 4, 30))
+    clipped = tenant_expected_charges(lease, date(2026, 4, 14), date(2026, 4, 30))
+    assert [charge.due_date for charge in full] == [expected_due, expected_due]
+    assert [charge.due_date for charge in clipped] == [expected_due, expected_due]
+    assert [charge.amount for charge in clipped] == [Decimal('680.00'), Decimal('102.00')]
+
+
 def test_heating_advance_is_day_exact_across_a_partial_month_and_rent_change():
     lease = LeaseChargeInput(_U(90), date(2025, 3, 15), None, Decimal('750'), Decimal('150'),
         heating_advance_payment=Decimal('90'), rent_changes=(mietkonto.RentChangeInput(

@@ -136,8 +136,9 @@ The remaining assignment and ledger checks still require blind acceptance.
 checks four-digit principal, interest and open amounts without horizontal
 scrolling at 1280 and 360 px, plus the German issue-time display. The separate
 [interest/PDF scenario](../../features/dunning_interest.feature) checks frozen
-amounts and the downloaded PDF. The April due-date and split-rate expectations
-above remain outside these automated checks.
+amounts and the downloaded PDF; its API scenarios cover the April due date and
+first interest day. The split-rate expectations above remain outside these
+automated checks.
 
 ## Journey 4: Rent change for Anna
 

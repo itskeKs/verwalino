@@ -594,9 +594,15 @@ def public_holidays(year: int, federal_state: FederalState | None = None) -> fro
     return frozenset(holidays)
 
 
-def third_working_day(year: int, month: int, holidays: frozenset[date]) -> date:
-    """Rent deadline under § 556b(1) BGB, BGH VIII ZR 129/09: no Saturdays."""
-    current = date(year, month, 1)
+def third_working_day(
+    year: int, month: int, holidays: frozenset[date], *, start_date: date | None = None,
+) -> date:
+    """Rent deadline under § 556b(1) BGB, BGH VIII ZR 129/09: no Saturdays.
+
+    Count inclusively from the actual rental interval's start (month start by
+    default). The caller supplies holidays for every year the count can touch.
+    """
+    current = start_date if start_date is not None else date(year, month, 1)
     remaining = 3
     while True:
         if current.weekday() < 5 and current not in holidays:

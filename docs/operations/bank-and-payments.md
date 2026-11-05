@@ -226,8 +226,11 @@ For April 2026, the counted days are 1, 2 and 7 April. Good Friday (3 April),
 Easter Monday (6 April) and the weekend are excluded. Payment in full on 7 April
 produces no reminder or interest. A 100 EUR shortfall is due on 7 April and
 accrues interest from 8 April (0.02 EUR on that day at a 2.50% base rate).
-Day-exact initial-month amounts stay unchanged; their due date cannot precede
-the lease start. Clipping a report to mid-month does not move the due date.
+Day-exact initial-month amounts stay unchanged. Count the three working days
+inclusively from the later of month start and lease start, even when the deadline
+falls in the next month or year. A lease starting Saturday, 11 April 2026 has
+counted days 13, 14 and 15 April; no reminder or interest is due through 15 April.
+Clipping a report to mid-month or changing the rent does not restart the count.
 
 The small pure calendar uses fixed and Gregorian Easter dates, without a new
 holiday dependency. Nationwide: New Year, Good Friday, Easter Monday, 1 May,
