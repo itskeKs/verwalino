@@ -22,6 +22,7 @@ from app.models.invoice_document import InvoiceDocument
 from app.models.lease_agreement import LeaseAgreement
 from app.models.property import Property
 from app.models.settlement_run import SettlementRun
+from app.models.special_levy import SpecialLevy, SpecialLevyAllocation
 from app.models.unit import Unit
 
 
@@ -142,6 +143,23 @@ class FristenRepository:
         """Frozen recipients plus dated successors; never omit a buyer's debt."""
         owners = await CoverageDeclarationRepository(self._session, self._org_id).owner_ids(plan)
         return [uuid.UUID(owner) for owner in sorted(owners)]
+
+    async def levy_owner_starts(
+        self, scope_id: uuid.UUID, property_id: uuid.UUID, start: date, end: date,
+    ) -> dict[uuid.UUID, date]:
+        """Find each frozen recipient's first levy due date in the selected scope."""
+        stmt = (
+            select(SpecialLevyAllocation.owner_profile_id, func.min(SpecialLevy.due_date))
+            .join(SpecialLevy)
+            .where(
+                SpecialLevy.organization_id == self._org_id,
+                SpecialLevy.property_id == property_id,
+                SpecialLevy.accounting_scope_id == scope_id,
+                SpecialLevy.due_date.between(start, end),
+            )
+            .group_by(SpecialLevyAllocation.owner_profile_id)
+        )
+        return {owner: due for owner, due in await self._session.execute(stmt)}
 
     # ------------------------------------------------------------------
     # Retention anchor (nachrichtlich INFO)

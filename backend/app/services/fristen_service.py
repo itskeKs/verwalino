@@ -33,6 +33,7 @@ from app.engine.fristen import (
     build_fristenmonitor,
 )
 from app.engine.mietkonto import (
+    PT_SONDERZAHLUNG,
     LeaseChargeInput,
     account_statement,
     tenant_expected_charges,
@@ -257,16 +258,39 @@ class FristenService:
         period_ends = {}
         for plan in sorted(plans, key=lambda p: (str(p.property_id), p.period_start, p.period_end)):
             previous_end = period_ends.get(plan.property_id)
-            if previous_end is not None and plan.period_start <= previous_end:
+            # Payments and Hausgeld charges are matched by month, even for partial plans.
+            if previous_end is not None and plan.period_start.replace(day=1) <= previous_end:
                 raise HTTPException(409, {'code': 'hausgeld_plan_ambiguous',
-                    'message': 'Mehrere finalisierte Wirtschaftspläne haben überlappende Zeiträume. Bitte klären Sie den gültigen Plan über eine Korrektur.'})
+                    'message': 'Mehrere finalisierte Wirtschaftspläne gelten im selben Abrechnungsmonat. Bitte klären Sie den gültigen Plan über eine Korrektur.'})
             period_ends[plan.property_id] = plan.period_end
+
+        # Frozen levies can exist only in a WEG scope. Evaluate all levy dates
+        # together per owner so a monthly payment is applied oldest due first.
+        levy_months = {}
+        if sphere is not None:
+            end = min(reference_date, sphere.valid_to) if sphere.valid_to else reference_date
+            levy_starts = await self._repo.levy_owner_starts(
+                sphere.id, sphere.property_id, sphere.valid_from, end)
+            for owner, start in levy_starts.items():
+                result = await payments.account_statement_for_owner(
+                    owner, None, start, end, sphere.id, property_id=sphere.property_id, as_of=reference_date)
+                items = [item for item in result.open_items
+                         if item.payment_type == PT_SONDERZAHLUNG and item.due_date is not None]
+                levy_months[owner] = {(item.period_year, item.period_month) for item in items}
+                total += len(find_overdue_items(items, reference_date, grace_days=0))
+
         for plan in plans:
             for owner in await self._repo.plan_owner_ids(plan):
                 result = await payments.account_statement_for_owner(owner, plan.id,
                     plan.period_start, min(reference_date, plan.period_end),
                     sphere.id if sphere else None, property_id=plan.property_id, as_of=reference_date)
-                total += len(find_overdue_items(list(result.open_items), reference_date, grace_days=0))
+                # A plan statement can also include levies or their payments.
+                # Those buckets already use the complete levy allocation above.
+                counted_months = levy_months.get(owner, ())
+                items = [item for item in result.open_items
+                         if item.payment_type != PT_SONDERZAHLUNG
+                         or (item.period_year, item.period_month) not in counted_months]
+                total += len(find_overdue_items(items, reference_date, grace_days=0))
         return total
 
 

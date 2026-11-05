@@ -52,11 +52,11 @@ async def test_weg_monitor_omits_tenant_debt_and_out_of_term_plan_obligations(mi
         assert {row['kind'] for row in second.json()} == {'WIRTSCHAFTSPLAN', 'BELEG_AUFBEWAHRUNG', 'OFFENE_POSTEN'}
 
 
-async def add_monitor_plan(ids, sphere, day=3, amount='600.00', *, end='2025-07-31'):
+async def add_monitor_plan(ids, sphere, day=3, amount='600.00', *, start='2025-07-01', end='2025-07-31'):
     params = {**ids, 'plan': uuid.uuid4(), 'sphere': ids[sphere], 'day': day, 'amount': amount,
-        'end': date.fromisoformat(end)}
+        'start': date.fromisoformat(start), 'end': date.fromisoformat(end)}
     await mutate(text("""INSERT INTO economic_plan(id,organization_id,property_id,plan_year,period_start,period_end,monthly_due_day,status,engine_version)
-        VALUES (:plan,:org,:property,2025,'2025-07-01',:end,:day,'draft','fixture')"""), params)
+        VALUES (:plan,:org,:property,2025,:start,:end,:day,'draft','fixture')"""), params)
     await mutate(text("""INSERT INTO economic_plan_line(id,organization_id,economic_plan_id,line_type,owner_profile_id,unit_id,label,planned_amount,monthly_amount)
         VALUES (gen_random_uuid(),:org,:plan,'OWNER_ADVANCE',:profile,:unit,'Resolved Hausgeld',CAST(:amount AS numeric),CAST(:amount AS numeric))"""), params)
     await mutate(text("INSERT INTO accounting_scope_binding(organization_id,property_id,scope_id,economic_plan_id,origin,reason,reviewed_by) VALUES (:org,:property,:sphere,:plan,'REVIEWED','Resolved monthly due day',:actor)"), params)

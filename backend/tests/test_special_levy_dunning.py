@@ -10,6 +10,8 @@ from tests.test_special_levy import (
     levy_db, levy_fixture, scope_seed, worker_tenant, client, create, query,
 )  # noqa: F401
 
+from tests.test_scoped_fristen import add_monitor_plan
+
 from app.engine.dunning import find_overdue_items
 from app.engine.mietkonto import account_statement, special_levy_expected_charges
 
@@ -82,6 +84,12 @@ def dunning_body(ids, **extra):
             'reference_date': '2026-06-16', **extra}
 
 
+async def monitor_open_items(api, ids, reference_date):
+    response = await api.get('/api/fristen', params={**query(ids), 'reference_date': reference_date})
+    assert response.status_code == 200, response.text
+    return next(row for row in response.json() if row['kind'] == 'OFFENE_POSTEN')
+
+
 @pytest.mark.asyncio
 async def test_levy_without_plan_real_dunning_payment_issue_pdf(levy_db, levy_fixture):
     ids = levy_fixture
@@ -93,6 +101,12 @@ async def test_levy_without_plan_real_dunning_payment_issue_pdf(levy_db, levy_fi
         statement = await api.get(f"/api/payments/mietkonto/owner/{ids['owners'][0]}", params={**query(ids), 'period_start': '2026-06-01', 'period_end': '2026-06-30'})
         assert statement.status_code == 200, statement.text
         assert statement.json()['balance'] == '3000.00'
+        async with client(ids, 'readonly') as reader:
+            due_today = await monitor_open_items(reader, ids, '2026-06-15')
+            assert due_today['status'] == 'OK'
+            overdue = await monitor_open_items(reader, ids, '2026-06-16')
+            assert overdue['status'] == 'DUE'
+            assert overdue['detail'].startswith('3 '), overdue
         for day in ('2026-06-14', '2026-06-15'):
             before = await api.post('/api/dunning/owner', json=dunning_body(ids, reference_date=day))
             assert before.status_code == 422, before.text
@@ -152,6 +166,59 @@ async def book_payment(api, ids, amount, *, payment_type='SONDERZAHLUNG', owner=
     booked = await api.post(f"/api/payments/{payment['id']}/book")
     assert booked.status_code == 200, booked.text
     return payment
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('payment_type', ['SONDERZAHLUNG', 'HAUSGELD_VORSCHUSS'])
+async def test_monitor_refuses_adjacent_plans_using_the_same_monthly_payment(levy_fixture, payment_type):
+    ids = {**levy_fixture, 'profile': levy_fixture['owners'][0], 'unit': levy_fixture['units'][0]}
+    amount = '600.00' if payment_type == 'HAUSGELD_VORSCHUSS' else '0.00'
+    windows = [('2025-07-01', '2025-07-15'), ('2025-07-16', '2025-07-31')]
+    plans = [await add_monitor_plan(ids, 'scope', day=day, amount=amount, start=start, end=end)
+             for (start, end), day in zip(windows, (3, 17), strict=True)]
+    async with client(ids) as api:
+        if payment_type == 'SONDERZAHLUNG':
+            for due in ('2025-07-03', '2025-07-17'):
+                await create(api, ids, due_date=due, amount='2000.00')
+            # Pay both levies for the other owners so their balances cannot mask the error.
+            for owner, total in zip(ids['owners'][1:], ('1200.00', '1600.00'), strict=True):
+                await book_payment(api, ids, total, owner=owner,
+                    value_date='2025-07-03', period_year=2025, period_month=7)
+        await book_payment(api, ids, '600.00', payment_type=payment_type,
+            value_date='2025-07-03', period_year=2025, period_month=7)
+        url = f"/api/payments/mietkonto/owner/{ids['profile']}"
+        for (start, end), plan in zip(windows, plans, strict=True):
+            statement = await api.get(url, params={**query(ids), 'economic_plan_id': str(plan),
+                'period_start': start, 'period_end': end, 'as_of': '2025-07-30'})
+            assert statement.status_code == 200, statement.text
+            assert statement.json()['balance'] == '0.00'
+        if payment_type == 'SONDERZAHLUNG':
+            whole_month = await api.get(url, params={**query(ids),
+                'period_start': '2025-07-01', 'period_end': '2025-07-31', 'as_of': '2025-07-30'})
+            assert whole_month.status_code == 200, whole_month.text
+            assert whole_month.json()['due_balance'] == '600.00'
+        monitor = await api.get('/api/fristen', params={**query(ids), 'reference_date': '2025-07-30'})
+        assert monitor.status_code == 409, monitor.text
+        assert monitor.json()['detail']['code'] == 'hausgeld_plan_ambiguous'
+
+
+@pytest.mark.asyncio
+async def test_monitor_counts_frozen_levies_across_a_plan_boundary_once(levy_fixture):
+    ids = {**levy_fixture, 'profile': levy_fixture['owners'][0], 'unit': levy_fixture['units'][0]}
+    await add_monitor_plan(ids, 'scope', amount='0.00', start='2025-07-16')
+    await add_monitor_plan(ids, 'scope', amount='0.00', start='2025-08-01', end='2025-08-31')
+    async with client(ids) as api:
+        for due in ('2025-07-03', '2025-07-17'):
+            await create(api, ids, due_date=due, amount='2000.00')
+        for owner, amount in zip(ids['owners'], ('600.00', '1200.00', '1600.00'), strict=True):
+            await book_payment(api, ids, amount, owner=owner,
+                value_date='2025-07-03', period_year=2025, period_month=7)
+    async with client(ids, 'readonly') as reader:
+        due_today = await monitor_open_items(reader, ids, '2025-07-17')
+        assert due_today['status'] == 'OK'
+        overdue = await monitor_open_items(reader, ids, '2025-08-15')
+        assert overdue['status'] == 'DUE'
+        assert overdue['detail'].startswith('1 '), overdue
 
 
 @pytest.mark.asyncio
