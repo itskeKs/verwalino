@@ -1494,6 +1494,7 @@ export interface RegisterEntry {
   organization_id: string;
   property_id: string;
   sequence_number: number;
+  resolution_date: string;
   entry_date: string;
   location: string;
   wording: string;

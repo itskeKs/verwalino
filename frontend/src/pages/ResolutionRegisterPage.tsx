@@ -238,7 +238,8 @@ export function ResolutionRegisterPage() {
               <thead>
                 <tr>
                   <th style={{ width: "50px" }}>Nr.</th>
-                  <th style={{ width: "100px" }}>Datum</th>
+                  <th style={{ width: "120px" }}>Datum der Versammlung</th>
+                  <th style={{ width: "100px" }}>Eingetragen am</th>
                   <th style={{ width: "120px" }}>Ort</th>
                   <th>Beschlusswortlaut</th>
                   <th style={{ width: "220px" }}>
@@ -257,7 +258,8 @@ export function ResolutionRegisterPage() {
                     >
                       {entry.sequence_number}
                     </td>
-                    <td>{entry.entry_date}</td>
+                    <td>{entry.resolution_date.split("-").reverse().join(".")}</td>
+                    <td>{entry.entry_date.split("-").reverse().join(".")}</td>
                     <td>{entry.location || "-"}</td>
                     <td style={{ whiteSpace: "pre-wrap" }}>
                       {entry.wording}

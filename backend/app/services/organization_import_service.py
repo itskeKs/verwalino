@@ -169,6 +169,27 @@ async def foreign_keys(db):
       GROUP BY fk.oid,child.relname,parent.relname'''))).all()
 
 
+def backfill_legacy_register_dates(entities, schema_head, source_org):
+    """Adapt pre-0167 register rows without rewriting any archived evidence."""
+    entries = [row for row in entities.get('resolution_register_entry', []) if 'resolution_date' not in row]
+    if not entries:
+        return
+    graph = ScriptDirectory(str(Path(__file__).resolve().parents[2] / 'migrations'))
+    if schema_head not in {r.revision for r in graph.iterate_revisions('0166', 'base')}:
+        return  # Current archives must supply the frozen snapshot themselves.
+    sources = {name: {row['id']: row for row in entities.get(name, [])}
+               for name in ('resolution', 'owners_meeting', 'property')}
+    for entry in entries:
+        resolution = sources['resolution'].get(entry.get('resolution_id'), {})
+        meeting = sources['owners_meeting'].get(resolution.get('meeting_id'), {})
+        prop = sources['property'].get(meeting.get('property_id'), {})
+        if (any(row.get('organization_id') != source_org for row in (entry, resolution, meeting, prop))
+                or meeting.get('property_id') != entry.get('property_id') or not meeting.get('meeting_date')):
+            refuse('Das Versammlungsdatum des Beschluss-Sammlungseintrags ist nicht eindeutig zuordenbar.',
+                   entity='resolution_register_entry', source_ids=[entry['id']], count=1)
+        entry['resolution_date'] = meeting['meeting_date']
+
+
 def remap(value, identities):
     """Resolve UUID references, including typed UUIDs embedded in JSON snapshots."""
     if isinstance(value, dict):
@@ -220,6 +241,7 @@ async def import_organization(db, auth, source):
                     if row['id'] in ids:
                         refuse('Das Archiv enthält doppelte Datensatzkennungen.', entity=name)
                     ids.add(row['id'])
+        backfill_legacy_register_dates(entities, manifest['schema_head'], source_org)
         keys = await foreign_keys(db)
         missing = {}
         categories = (await db.execute(text('SELECT id,code,plan_version FROM cost_category'))).mappings().all()

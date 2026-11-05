@@ -126,6 +126,7 @@ class RegisterEntryOut(BaseModel):
     organization_id: str
     property_id: str
     sequence_number: int
+    resolution_date: date
     entry_date: date
     location: str
     wording: str
@@ -193,6 +194,7 @@ def _entry_out(e, result) -> RegisterEntryOut:
         organization_id=str(e.organization_id),
         property_id=str(e.property_id),
         sequence_number=e.sequence_number,
+        resolution_date=e.resolution_date,
         entry_date=e.entry_date,
         location=e.location,
         wording=e.wording,

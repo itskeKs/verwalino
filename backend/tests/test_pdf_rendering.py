@@ -96,7 +96,7 @@ def recipient_documents():
     meeting = OwnersMeeting(meeting_date=date(2026, 11, 30), location="Gemeinschaftsraum",
                             meeting_type="ORDENTLICH", status="HELD", protocol_text="Die Sitzung ist eröffnet.",
                             invitation_text="Wir laden Sie zur Versammlung ein.")
-    entries = [ResolutionRegisterEntry(sequence_number=1, entry_date=date(2026, 11, 30),
+    entries = [ResolutionRegisterEntry(sequence_number=1, resolution_date=date(2026, 6, 15), entry_date=date(2026, 11, 1),
                 location=meeting.location, wording="Der Wirtschaftsplan wird beschlossen.", challenge_annotation=None)]
     property_name = "Gartenstraße 5"
     meeting_names = MeetingDisplayNames(property_name=property_name)
@@ -286,3 +286,14 @@ def test_dunning_pdf_names_only_the_stored_interest_start_in_mixed_snapshot_rows
             'items': [legacy, {**legacy, 'interest_start': '2026-04-08'}]})
     html = build_dunning_html(notice)
     assert html.count('Zinsbeginn: 08.04.2026') == 1
+
+
+def test_register_extract_labels_meeting_date_before_the_preserved_entry_date():
+    html = recipient_documents()['register']
+    assert html.index('Datum der Versammlung') < html.index('Eingetragen am')
+    with pdfplumber.open(BytesIO(render_pdf(html))) as pdf:
+        text = " ".join(page.extract_text() or '' for page in pdf.pages)
+    assert '15.06.2026' in text
+    assert '01.11.2026' in text
+    assert text.index('15.06.2026') < text.index('01.11.2026')
+    assert 'Gemeinschaftsraum' in text

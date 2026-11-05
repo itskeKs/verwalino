@@ -59,3 +59,13 @@ backend notice appears in UI and PDF (§ 24 Abs. 4 WEG). It confirms neither dis
 timely receipt. The export changes no meeting, agenda,
 ownership history, or existing minutes. The real Chrome flow is repeatable with
 `scripts/acceptance/t34_meeting_invitation_browser.cjs`.
+
+### Dates in the resolution register
+
+Each meeting resolution entered into the Beschluss-Sammlung stores its meeting date
+and place as immutable copies. The page and newly generated PDF extracts show
+“Datum der Versammlung” first and “Eingetragen am” second. The latter is the actual
+registration day; registering an older meeting does not backdate the entry.
+Existing entries receive their meeting date during the reviewed 0167 upgrade,
+without changing their entry dates, wording, locations, numbering or references.
+Stored PDFs remain unchanged. Written and court resolutions remain unsupported.
