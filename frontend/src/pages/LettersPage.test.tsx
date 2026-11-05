@@ -34,6 +34,9 @@ it("requires explicit inputs and confirmation, then shows retained recipient PDF
   await selectInputs();
   expect(screen.getByText(template.body)).toBeVisible();
   expect(screen.getByText(/Kein HTML/)).toBeVisible();
+  expect(screen.getByText('{{vertrag.mietaufstellung}}')).toBeVisible();
+  expect(screen.getByText(/Mietbeträge gelten zum gewählten Stichtag/)).toBeVisible();
+  expect(screen.getByText(/auch „vertrag.vorauszahlung“ enthält dann diese Aufstellung/)).toBeVisible();
   fireEvent.click(screen.getByRole("button", { name: "Briefe erstellen" }));
   const dialog = screen.getByRole("dialog", { name: "Briefe verbindlich erstellen?" });
   expect(within(dialog).getByText(/Gartenhaus/)).toBeVisible();

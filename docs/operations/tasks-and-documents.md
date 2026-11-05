@@ -124,11 +124,20 @@ Contracts and handover protocols render built-in bodies through the shared lette
 They neither select nor create editable letter templates; a circular named **Mietvertrag**
 does not affect a contract. General circulars also support the plain-text variables `{{vermieter.name}}`, `{{vermieter.adresse}}`,
 `{{einheit.nummer}}`, `{{einheit.lage}}`, `{{einheit.flaeche}}`, `{{vertrag.beginn}}`,
-`{{vertrag.ende}}`, `{{vertrag.kaltmiete}}`, `{{vertrag.vorauszahlung}}`,
+`{{vertrag.ende}}`, `{{vertrag.kaltmiete}}`, `{{vertrag.vorauszahlung}}`, `{{vertrag.mietaufstellung}}`,
 `{{vertrag.kaution}}`, `{{vertrag.uebergabe}}` and `{{vertrag.vereinbarungen}}`.
 Landlords are prefilled from ownership at the lease start; missing landlord data is visibly
-marked for free-text completion. Rent and the combined advance are the original lease amounts,
-not later rent changes. The contract dialog accepts a document date, handover date and free-text
+marked for free-text completion. Rent amounts use the shared rate history for the document date,
+including a change effective on that day. `vertrag.mietaufstellung` supplies the complete rent
+section used by the built-in contract. When heating is positive, both it and
+`vertrag.vorauszahlung` list **Betriebskosten-Vorauszahlung**, **Heizkosten-Vorauszahlung** and
+**Monatliche Gesamtmiete** on separate lines: EUR 750 net plus EUR 150 operating and EUR 90
+heating produces EUR 990 total. At zero heating, `vertrag.vorauszahlung` remains a single
+amount; an unchanged zero-heating lease keeps the full previous contract text and PDF bytes.
+Changed rates are labelled with the document date instead of “Originalvertrag”. Previously issued
+PDFs and request replays always retain their stored original bytes, even after rate changes.
+Template authors should use `vertrag.mietaufstellung` without adding an “Originalvertrag” label
+of their own. The contract dialog accepts a document date, handover date and free-text
 agreements. General circulars can also use the new variables, referring to the recipient's
 selected lease; when several leases belong to one recipient, only the existing single selected
 lease is represented. Handover date and agreements are marked as free text outside contract issuance.

@@ -635,7 +635,13 @@ typo of `btn--primary`), `badge--warning`, `form-hint`, `table-responsive`.
   save keeps inputs, and success reveals the retained PDF and refreshes the unit meter history.
   Network and access failures use German feedback and preserve the draft.
   “Briefe” lists the additional landlord/unit/lease placeholders and explains the single selected
-  original lease used for a recipient with multiple leases.
+  lease used for a recipient with multiple leases. Rent values follow the selected document date.
+  `vertrag.mietaufstellung` supplies the complete rent section shared with the built-in contract.
+  Positive heating produces separate “Betriebskosten-Vorauszahlung”, “Heizkosten-Vorauszahlung”
+  and “Monatliche Gesamtmiete” lines, including in the existing `vertrag.vorauszahlung` placeholder.
+  Zero heating keeps that placeholder a single amount and unchanged leases retain the previous
+  contract text. Changed rates use “Stand DD.MM.YYYY” instead of “Originalvertrag”. The help names
+  the multiline expansion so authors can place the placeholder on its own line.
 
 - **Tables.** Legacy: `<div class="card paged-table"><table class="data-table">`. Kit:
   `Card > CardContent p-0 > div.overflow-x-auto > table.data-table` (`MandatePage.tsx`). First column is
