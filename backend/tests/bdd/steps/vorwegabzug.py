@@ -2,14 +2,13 @@ from decimal import Decimal
 import subprocess
 from pytest_bdd import given, when, then, parsers
 from tests.commercial_preallocation_support import commercial_property, commercial_rule, REASON
-from tests.settlement_period_support import period_data_cleanup  # noqa: F401
 from tests.bdd.steps.browser_common import browser_step
 from tests.bdd.report import artifact_directory, attach_artifact
 from playwright.async_api import expect
 
 
 @given('a shop of 60 square metres and flats of 75 and 65 square metres with annual waste costs of 1200 euros')
-def mixed_waste_property(world, period_data_cleanup):
+def mixed_waste_property(world):
     world.data['commercial'] = world.run(commercial_property(world.actor))
 
 
