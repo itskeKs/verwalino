@@ -644,6 +644,14 @@ typo of `btn--primary`), `badge--warning`, `form-hint`, `table-responsive`.
   contract text. Changed rates use “Stand DD.MM.YYYY” instead of “Originalvertrag”. The help names
   the multiline expansion so authors can place the placeholder on its own line.
 
+  Synthetic browser captures for the dated rent controls and the
+  [issued contract PDF](docs/assets/design/dated-rent-documents/contract-pdf.png).
+
+  | Surface | Before at 1280 px | After at 1280 px | Before at 360 px | After at 360 px |
+  | --- | --- | --- | --- | --- |
+  | Letter placeholder help | [Before](docs/assets/design/dated-rent-documents/letters-before-1280.png) | [After](docs/assets/design/dated-rent-documents/letters-after-1280.png) | [Before](docs/assets/design/dated-rent-documents/letters-before-360.png) | [After](docs/assets/design/dated-rent-documents/letters-after-360.png) |
+  | Contract dialog | [Before](docs/assets/design/dated-rent-documents/contract-before-1280.png) | [After](docs/assets/design/dated-rent-documents/contract-after-1280.png) | [Before](docs/assets/design/dated-rent-documents/contract-before-360.png) | [After](docs/assets/design/dated-rent-documents/contract-after-360.png) |
+
 - **Tables.** Legacy: `<div class="card paged-table"><table class="data-table">`. Kit:
   `Card > CardContent p-0 > div.overflow-x-auto > table.data-table` (`MandatePage.tsx`). First column is
   the `.link` to the detail page, last column holds row actions as `btn btn--small` ("Bearbeiten",
