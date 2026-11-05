@@ -43,6 +43,8 @@ from dataclasses import dataclass, field
 from datetime import date
 from decimal import Decimal
 
+from app.engine.fristen import FederalState, public_holidays, third_working_day
+
 from app.engine.periods import day_count, owner_at, build_owner_cover
 from app.engine.types import OwnerPeriodInput
 from app.engine.rounding import CENT, annual_advance_share_for_period, distribute_amount, monthly_advance_share_for_period
@@ -264,6 +266,7 @@ def tenant_expected_charges(
     lease: LeaseChargeInput,
     period_start: date,
     period_end: date,
+    *, federal_state: FederalState | None = None,
 ) -> list[ExpectedCharge]:
     """Monthly tenant Soll over [period_start, period_end] (m6 section 2.1).
 
@@ -318,6 +321,10 @@ def tenant_expected_charges(
         rent_segments.append((rate.base_rent, days))
         nk_segments.append((rate.advance_payment, days))
         hk_segments.append((rate.heating_advance_payment, days))
+        holidays = public_holidays(year, federal_state)
+        if month == 12:
+            holidays |= public_holidays(year + 1, federal_state)
+        due = third_working_day(year, month, holidays, start_date=max(m_first, lease.valid_from))
         rent = _sum_rate_segments(rent_segments, days_in_month)
         nk = _sum_rate_segments(nk_segments, days_in_month)
         hk = _sum_rate_segments(hk_segments, days_in_month)
@@ -326,6 +333,7 @@ def tenant_expected_charges(
                 period_year=year,
                 period_month=month,
                 payment_type=PT_KALTMIETE,
+                due_date=due,
                 amount=rent,
                 lease_agreement_id=lease.lease_agreement_id,
                 days_occupied=days_occupied,
@@ -337,6 +345,7 @@ def tenant_expected_charges(
                 period_year=year,
                 period_month=month,
                 payment_type=PT_NK_VORAUSZAHLUNG,
+                due_date=due,
                 amount=nk,
                 lease_agreement_id=lease.lease_agreement_id,
                 days_occupied=days_occupied,

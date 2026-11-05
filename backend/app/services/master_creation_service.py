@@ -22,7 +22,11 @@ from app.models.unit import Unit
 from app.models.person import Person
 from app.services.quota_service import require_counts
 
+from app.engine.fristen import FederalState
+
+
 class PropertyFacts(BaseModel):
+    federal_state: FederalState | None = None
     construction_year: StrictInt | None = Field(default=None, ge=1, le=9999)
     total_area: StrictStr | None = None
 
@@ -86,7 +90,7 @@ async def create_property(db, auth, body: PropertyCreate, idempotency_key=None):
         raise HTTPException(422, 'Idempotency-Key required for audience creation')
     # Keep existing receipt digests stable when callers omit the new facts.
     payload = body.model_dump(mode='json', exclude={
-        field for field in ("construction_year", "total_area") if field not in body.model_fields_set
+        field for field in ("construction_year", "total_area", "federal_state") if field not in body.model_fields_set
     })
     if body.data_audience is not None:
         for grant in payload['data_audience']['grants']:
@@ -117,6 +121,7 @@ async def create_property(db, auth, body: PropertyCreate, idempotency_key=None):
         city=body.city,
         management_type=body.management_type,
         fiscal_year_start_month=body.fiscal_year_start_month,
+        federal_state=body.federal_state,
         construction_year=body.construction_year,
         total_area=Decimal(body.total_area) if body.total_area is not None else None,
         mea_denominator=body.mea_denominator,

@@ -255,3 +255,24 @@ async def test_frozen_person_vacancy_requires_existing_financial_disclosure(scop
             refused = await api.get(url)
             assert refused.status_code == 404, refused.text
             assert '56.34' not in refused.text
+
+
+async def test_omitted_state_replays_a_pre_upgrade_creation_receipt(monkeypatch):
+    import hashlib
+    import json
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+    from app.services import master_creation_service as service
+
+    body = service.PropertyCreate(name='Legacy retry', management_type='MIET')
+    # This is the payload before the nullable state field existed.
+    legacy_payload = body.model_dump(mode='json', exclude={'construction_year', 'total_area', 'federal_state'})
+    digest = hashlib.sha256(json.dumps(legacy_payload, sort_keys=True, separators=(',', ':')).encode()).hexdigest()
+    prop = SimpleNamespace(id=uuid.uuid4())
+    monkeypatch.setattr(service.PropertyCreationRepository, 'get', AsyncMock(return_value={
+        'request_digest': digest, 'property_id': prop.id}))
+    monkeypatch.setattr(service.PropertyRepository, 'get_by_id', AsyncMock(return_value=prop))
+    monkeypatch.setattr(service, 'require_property_master', AsyncMock())
+    db = SimpleNamespace(scalar=AsyncMock(return_value='PREPARATION'))
+    auth = SimpleNamespace(organization_id=uuid.uuid4(), user_id=uuid.uuid4())
+    assert await service.create_property(db, auth, body, uuid.uuid4()) is prop

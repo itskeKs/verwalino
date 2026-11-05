@@ -129,7 +129,7 @@ pending; registration stays closed and legal review remains with #26. See the
 
 | Feature | Status | Location |
 | --- | --- | --- |
-| Dunning notice, 3 levels, fee, PDF | ✅ | `api/dunning.py`, `engine/dunning.py`, `services/dunning_pdf.py` |
+| Dunning notice, 3 levels, fee, PDF | ✅ rent/operating advances due on the third working day with optional property state; separate heating due-date rule unchanged | `api/dunning.py`, `engine/dunning.py`, `services/dunning_pdf.py` |
 | Default interest, selected dunning run | ✅ interest at base rate + 5 pp (§ 288 Abs. 1 BGB) shown on the PDF; preview of arrears above a threshold, selected ones become drafts in one step | `engine/dunning.py`, `services/dunning_batch_service.py`, `api/dunning.py` (`/batch/preview`, `/batch`), `components/DunningBatch.tsx`, T35, T53, [usage](operations/bank-and-payments.md) |
 | Deadline monitor (Fristenmonitor) | ✅ derived | `api/fristen.py`, `engine/fristen.py`, `pages/FristenmonitorPage.tsx` |
 | Tasks, follow-ups | ✅ create from property and unit, due tasks on the dashboard | `models/task.py`, `api/tasks.py`, `services/task_service.py`, `pages/TasksPage.tsx`, T41, T42, [usage](operations/tasks-and-documents.md) |

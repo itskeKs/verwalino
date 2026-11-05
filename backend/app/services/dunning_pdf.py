@@ -143,9 +143,13 @@ def build_dunning_html(
         for item in snapshot["items"]:
             label = _TYPE_LABELS.get(item["payment_type"], item["payment_type"])
             due = date.fromisoformat(item["due_date"]).strftime("%d.%m.%Y")
+            interest_start = ""
+            if item.get("interest_start") and item["payment_type"] in ("KALTMIETE", "NK_VORAUSZAHLUNG"):
+                start = date.fromisoformat(item["interest_start"]).strftime("%d.%m.%Y")
+                interest_start = f"<br/>Zinsbeginn: {start}"
             interest_rows.append(
                 f"<tr><td>{_esc(_period_label(item['period_year'], item['period_month']))}<br/>{_esc(label)}</td>"
-                f"<td>{due}</td><td class='num'>{item['days']}</td>"
+                f"<td>{due}{interest_start}</td><td class='num'>{item['days']}</td>"
                 f"<td class='num'>{_eur(item['principal'])}</td>"
                 f"<td class='num'>{_eur(item['interest'])}</td></tr>"
             )

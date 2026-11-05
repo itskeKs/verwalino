@@ -25,6 +25,17 @@ Two styling layers coexist:
 Follow [Components](#components) for the permitted styling layers and their source files, and
 [Colour](#colour) for token use.
 
+The property creation/edit form offers an optional native select labelled
+“Bundesland”, with all sixteen states. “Nicht festgelegt – bundesweite Feiertage”
+represents an empty value. The adjacent hint explains that statewide holidays
+control rent due dates and municipality-only holidays are excluded. Existing
+form-grid spacing and responsive behaviour apply.
+
+| Property holiday context | Desktop | 360 px |
+| --- | --- | --- |
+| Before | [Desktop](docs/assets/design/rent-state-before-1280.png) | [Phone](docs/assets/design/rent-state-before-360.png) |
+| After | [Desktop](docs/assets/design/form-objekt-desktop.png) | [Phone](docs/assets/design/form-objekt-360.png) |
+
 ## Foundations
 
 ### Contract ownership and verification
@@ -532,13 +543,17 @@ interest table, and `Offen`, `Soll`, `Ist` before period and type in its arrears
 table. Monetary cells stay unbroken; principal, interest and open amounts are
 readable in the initial table viewport at 360 px. Remaining descriptive columns
 use the existing horizontal scroll containers. Desktop keeps the complete tables.
+New rent and operating-advance interest rows show their frozen `Zinsbeginn` as
+`TT.MM.JJJJ` beneath the principal, visible without horizontal scrolling at
+360 px. Legacy rows without that stored date show no inferred start date.
 Both `Ausgestellt am` locations show the persisted instant as `TT.MM.JJJJ, HH:MM`
 in `Europe/Berlin`, using the existing German `toLocaleString` options pattern
 with two-digit day, month, hour and minute. The API supplies ISO with a timezone.
-This changes display only; frozen values and PDFs retain their stored contents.
+Existing frozen values and issued PDFs retain their stored contents. New rent
+and operating-advance PDFs also name the stored interest start explicitly.
 
-Synthetic issued notices from the shared test database; the captures show the
-actual issue times on 4 November 2026, not the fixed November 1 unit-test instant:
+Synthetic April notices from the shared test database; the captures show actual
+issue times on 5 November 2026 and the explicitly stored 8 April interest start:
 
 | Dunning notice detail | 1280 px | 360 px |
 |---|---|---|

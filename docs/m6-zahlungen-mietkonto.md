@@ -170,7 +170,7 @@ monthly expected without rate change = valid base rent + valid advance payment
 - **Separation by component:** The expected amount is maintained separately for `KALTMIETE` (= `base_rent`) and the two advances: `NK_VORAUSZAHLUNG` (= `advance_payment`) and `HK_VORAUSZAHLUNG` (= `heating_advance_payment`). Each advance credits its own statement component (§6.2), the base rent does not. Mixing them would distort the settlement integration.
 - **Mid-year start/end (day-accurate partial months):** If the lease begins/ends in the middle of a month, the expected amount of the partial month is **pro rata**. Basis: monthly, the partial month computed day-accurately via the same `app/engine/periods.py` arithmetic as M3 (day-inclusive, ADR-0004/0006). **[§18/domain F6-4]** whether a partial month is computed day-accurately (`days_occupied_in_month / days_in_month`) or as a flat full/half month — handled differently under leases/in practice. **Provisional assumption:** day-accurate partial month (consistent with M3); clearly marked, requires domain sign-off.
 - **Read boundary:** `lease_agreement.valid_to` is stored half-open; the expected-amount function reads via `db_exclusive_to_engine_inclusive` (ADR-0006) — the **same** read boundary as M3, **one** definition. This way the last rental month counts correctly (no off-by-one at lease end).
-- **Due date:** an expected-amount month is due from its due date on (for "overdue", M7). **[§18/domain]** Default due date (e.g. 3rd working day of the month, § 556b BGB) — provisionally the start of the month; requires domain sign-off.
+- **Due date:** `KALTMIETE` and `NK_VORAUSZAHLUNG` use the statutory third working day (§ 556b(1) BGB), excluding Saturdays, Sundays and the property's statewide holidays. A missing federal state means nationwide holidays only. Count inclusively from the actual rental interval's start: the later of month start and lease start, including holidays across month/year boundaries. Reporting-period clipping and rent changes never restart the count. Day-exact amounts are unchanged. `HK_VORAUSZAHLUNG` retains its previous date rule pending a separate owner decision. See [holiday coverage](operations/bank-and-payments.md#rent-due-dates-and-holiday-coverage).
 
 ### 2.2 Owner expected amount (per owner, from the finalized economic plan)
 
@@ -223,7 +223,8 @@ items from an explicit base interest rate input with an optional configured defa
 `open × (base + 5) / 100 × calendar days since due date / 365`. Per item, rounding to
 the cent (`ROUND_HALF_UP`) happens only once; afterwards the stored interest lines are
 summed. Fees and interest are not themselves charged interest. Example: 700 EUR at a
-base rate of 2.50% over 60 days → 8.63 EUR interest. The interest snapshot records due
+base rate of 2.50%, January 2026 due on 6 January, reference date 2 March
+(55 days) → 7.91 EUR interest. The interest snapshot records due
 date, reference date, days, base/annual interest rate and amounts; an issued dunning
 notice, including its PDF, uses exclusively these stored values. The expected/actual
 balance of the account is not supplemented by further account postings as a result.

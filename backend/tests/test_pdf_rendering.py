@@ -262,3 +262,27 @@ def test_legacy_finalized_document_html_keeps_its_original_content(kind, expecte
     render, names = ((build_wirtschaftsplan_html, WirtschaftsplanDisplayNames()) if kind == 'wirtschaftsplan'
         else (build_vermoegensbericht_html, VermoegensberichtDisplayNames()))
     assert sha256(render(doc, [], names).encode()).hexdigest() == expected
+
+
+@pytest.mark.parametrize('kind,expected', [
+    ('dunning', '5bb62e2b96ff3f23f04f5e103e8c465dc50cd6a239f1d8ea7023c973e90550c4'),
+    ('dunning_interest', 'f274d3a14ba4bb516552c2fbbd171e78d970a9b802af96bb5869ceaba6beed43'),
+])
+def test_legacy_dunning_html_is_identical_without_a_frozen_interest_start(kind, expected):
+    from hashlib import sha256
+    assert sha256(recipient_documents()[kind].encode()).hexdigest() == expected
+
+
+@pytest.mark.parametrize('payment_type', ['KALTMIETE', 'NK_VORAUSZAHLUNG'])
+def test_dunning_pdf_names_only_the_stored_interest_start_in_mixed_snapshot_rows(payment_type):
+    from types import SimpleNamespace
+    from app.services.dunning_pdf import build_dunning_html
+    legacy = {'payment_type': payment_type, 'period_year': 2026, 'period_month': 4,
+        'due_date': '2026-04-07', 'days': 1, 'principal': '100.00', 'interest': '0.02'}
+    notice = SimpleNamespace(level=1, issue_date=date(2026, 4, 8), due_date=date(2026, 4, 22),
+        principal_amount=Decimal('200.00'), fee_amount=Decimal('0'), total_amount=Decimal('200.04'),
+        interest_amount=Decimal('0.04'), included_items=[], interest_snapshot={
+            'base_interest_rate': '2.50', 'annual_rate': '7.50', 'reference_date': '2026-04-08',
+            'items': [legacy, {**legacy, 'interest_start': '2026-04-08'}]})
+    html = build_dunning_html(notice)
+    assert html.count('Zinsbeginn: 08.04.2026') == 1

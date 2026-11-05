@@ -79,6 +79,7 @@ export interface User {
 export type ManagementType = "MIET" | "WEG" | "SEV" | "MISCH";
 
 export interface Property {
+  federal_state?: string | null;
   construction_year?: number | null;
   total_area?: string | null;
   id: string;
@@ -95,6 +96,7 @@ export interface Property {
 export type MeaScaleStatus = "LEGACY_UNCONFIRMED" | "CONFIRMED";
 
 export interface PropertyCreate {
+  federal_state?: string | null;
   construction_year?: number | null;
   total_area?: string | null;
   data_audience?: DeclarationApprovalRequest["new_property_audience"];
@@ -107,6 +109,7 @@ export interface PropertyCreate {
 }
 
 export interface PropertyUpdate {
+  federal_state?: string | null;
   construction_year?: number | null;
   total_area?: string | null;
   name?: string;
@@ -1236,6 +1239,7 @@ export interface DunningInterestSnapshot {
     period_year: number | null;
     period_month: number | null;
     due_date: string;
+    interest_start?: string;
     days: number;
     principal: string;
     interest: string;
