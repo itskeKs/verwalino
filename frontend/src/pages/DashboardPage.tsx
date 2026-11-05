@@ -74,12 +74,6 @@ function todayIso(): string {
   return calendarIso(new Date());
 }
 
-function greeting(): string {
-  const h = new Date().getHours();
-  if (h < 11) return "Guten Morgen";
-  if (h < 18) return "Guten Tag";
-  return "Guten Abend";
-}
 
 export function DashboardPage() {
   const { session } = useAuth();
@@ -161,8 +155,8 @@ function DashboardContent() {
       {/* Header */}
       <div>
         <p className="text-sm text-muted-foreground">{dateLabel}</p>
-        <p className="mt-0.5 break-words text-sm font-medium text-muted-foreground">{org?.name ?? ""}</p>
-        <h1 className="mt-0.5 text-2xl font-semibold tracking-tight">{greeting()}</h1>
+        {org?.name && <p className="mt-0.5 break-words text-sm font-medium text-muted-foreground">{org.name}</p>}
+        <h1 className="mt-0.5 text-2xl font-semibold tracking-tight">Guten Tag</h1>
       </div>
 
       <div className="form-grid max-w-xl">

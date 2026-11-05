@@ -12,6 +12,9 @@ of journey 1 and manual 60 EUR cost entry of journey 2 at 1280 and 360 px. It al
 field feedback for invalid money. Other steps remain outside this focused twin; the remaining
 twins come with #163–#176 and the twin of journey 6 with #160.
 
+The [dashboard greeting twin](../../features/journeys/dashboard_greeting.feature) checks the exact
+“Guten Tag” heading and separate organization context at desktop and phone widths.
+
 **Reference date:** The statement runs to October 2026 and the figures are those as of 31.10.2026.
 Rents for November and later that are already due on the day of the run (November: third working
 day = 04.11.2026) rightly show as open.

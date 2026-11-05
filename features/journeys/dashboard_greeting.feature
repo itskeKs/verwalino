@@ -5,7 +5,7 @@ Feature: Dashboard greeting and organization context
   Scenario Outline: Organization context remains separate from the greeting
     Given a fresh organization named "Sabine Muster Hausverwaltung"
     When the manager opens the dashboard at <width> pixels
-    Then the dashboard greets without a name and shows the organization above the heading
+    Then the dashboard shows the exact greeting and the organization above the heading
 
     Examples:
       | width |
