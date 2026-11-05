@@ -514,7 +514,8 @@ scrubber removes bodies, user identities, frame locals and source snippets,
 and masks recognizable personal data, credentials and query values in messages
 and breadcrumbs. The same text filter protects formatted logs; SQLAlchemy hides
 bound parameters. Canonical hexadecimal UUID spans (`8-4-4-4-12`, case-insensitive)
-are excluded from IBAN matching so diagnostic identifiers remain complete. Other
+are excluded from IBAN and phone matching so diagnostic identifiers, including
+all-numeric UUIDs, remain complete. Other
 IBAN-shaped candidates are conservatively redacted even with an invalid country,
 length or checksum; the filter does not validate bank details. UUID-shaped values
 in credentials or URL queries still follow the normal secret/query redaction.

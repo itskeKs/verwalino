@@ -64,15 +64,15 @@ def _mask_assignments(value: str) -> str:
     return "".join(parts)
 
 
-def _mask_ibans(value: str) -> str:
-    # Exclude canonical UUID spans only from IBAN matching. All other candidates
-    # remain conservatively masked, without country/length/checksum validation.
+def _mask_outside_uuids(value: str, pattern: re.Pattern, replacement) -> str:
+    # Exclude canonical UUID spans from IBAN/phone matching. Other candidates
+    # retain their existing conservative filtering, without bank validation.
     parts = []
     start = 0
     for match in _UUID.finditer(value):
-        parts.extend((_IBAN.sub("[redacted:iban]", value[start:match.start()]), match[0]))
+        parts.extend((pattern.sub(replacement, value[start:match.start()]), match[0]))
         start = match.end()
-    parts.append(_IBAN.sub("[redacted:iban]", value[start:]))
+    parts.append(pattern.sub(replacement, value[start:]))
     return "".join(parts)
 
 
@@ -113,9 +113,9 @@ def scrub_text(value: str, *, error_context: bool = False) -> str:
     value = _BEARER.sub("[redacted:token]", value)
     value = _JWT.sub("[redacted:token]", value)
     value = _EMAIL.sub("[redacted:email]", value)
-    value = _mask_ibans(value)
+    value = _mask_outside_uuids(value, _IBAN, "[redacted:iban]")
     value = _ADDRESS.sub("[redacted:address]", value)
-    value = _PHONE.sub(_mask_phone, value)
+    value = _mask_outside_uuids(value, _PHONE, _mask_phone)
     value = _KEY_VALUE.sub(r"\1([redacted:name])", value)
     value = _OWNER_NAME.sub(r"\1[redacted:name]\2", value)
     value = _mask_names(value, error_context=error_context)

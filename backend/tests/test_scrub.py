@@ -141,6 +141,7 @@ def test_grouped_and_lowercase_ibans_are_masked(iban):
     "ab123456-7890-4abc-8def-123456789abc",
     "12345678-ab12-4abc-8def-123456789abc",
     "12345678-1234-4abc-ab12-123456789abc",
+    "12345678-1234-4234-8234-123456789012",
 ])
 @pytest.mark.parametrize("case", [str.lower, str.upper, str.title])
 def test_canonical_uuid_identifiers_survive_text_events_and_error_logs(identity, case):
@@ -166,12 +167,12 @@ def test_generated_uuid_identifiers_remain_complete_in_mixed_text():
     "GB82WEST12345698765432", "GB82 WEST 1234 5698 7654 32", "GB82-WEST-1234-5698-7654-32",
 ])
 @pytest.mark.parametrize("case", [str.lower, str.upper, str.title])
-def test_uuid_spans_do_not_hide_ibans_or_other_secrets(iban, case):
+@pytest.mark.parametrize("identity", ["ab123456-7890-4abc-8def-123456789abc", "12345678-1234-4234-8234-123456789012"])
+def test_uuid_spans_do_not_hide_ibans_or_other_secrets(iban, case, identity):
     from app.diagnostics import diagnostic_log_lines
 
-    identity = "ab123456-7890-4abc-8def-123456789abc"
     iban = case(iban)
-    message = f"organization {identity}; {iban} {identity}; alice@example.org password=private-value"
+    message = f"organization {identity}; {iban} {identity}; +49 30 12345678; alice@example.org password=private-value"
     record = logging.LogRecord("app.test", logging.ERROR, __file__, 1, message, (), (RuntimeError, RuntimeError(message), None))
     record.request_id = identity
     formatted = RequestFormatter().format(record)
@@ -184,9 +185,9 @@ def test_uuid_spans_do_not_hide_ibans_or_other_secrets(iban, case):
     filtered_event = scrub(event)
     for filtered in (scrub_text(message), formatted, json.dumps(filtered_event)):
         assert identity in filtered
-        for private in (iban, "alice@example.org", "private-value"):
+        for private in (iban, "+49 30 12345678", "alice@example.org", "private-value"):
             assert private not in filtered
-        for mask in ("iban", "email", "password"):
+        for mask in ("iban", "phone", "email", "password"):
             assert f"[redacted:{mask}]" in filtered
     assert filtered_event["extra"] == event["extra"]
     assert filtered_event["request"]["url"] == f"https://example.org/payments/{identity}?iban=[redacted:query]"
@@ -201,9 +202,15 @@ def test_invalid_iban_shapes_are_still_conservatively_masked(candidate):
     assert scrub_text(candidate) == "[redacted:iban]"
 
 
-def test_uuid_valued_credentials_and_queries_remain_redacted():
-    identity = "ab123456-7890-4abc-8def-123456789abc"
+@pytest.mark.parametrize("identity", ["ab123456-7890-4abc-8def-123456789abc", "12345678-1234-4234-8234-123456789012"])
+def test_uuid_valued_credentials_and_queries_remain_redacted(identity):
     assert identity not in scrub_text(f"password={identity} token={identity} https://example.org/?id={identity}")
+
+
+@pytest.mark.parametrize("template", ["organization {identity} {phone} erased", "contact {phone} {identity} erased"])
+def test_numeric_uuid_survives_next_to_a_redacted_phone(template):
+    identity = "12345678-1234-4234-8234-123456789012"
+    assert scrub_text(template.format(identity=identity, phone="03012345678")) == template.format(identity=identity, phone="[redacted:phone]")
 
 
 @pytest.mark.parametrize("text", ["1234567", "123456789012345", "2026-01-01", "created 2026-01-01T12:34:56Z", "INFO Max Mustermann"])
