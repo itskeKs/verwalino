@@ -1450,3 +1450,31 @@ stack. The live entry uses the real registration day, not the fixed historic
 | --- | --- | --- |
 | Before | [Desktop](docs/assets/design/register-dates-before-1280.png) | [Phone](docs/assets/design/register-dates-before-360.png) |
 | After | [Desktop](docs/assets/design/register-dates-after-1280.png) | [Phone](docs/assets/design/register-dates-after-360.png) |
+
+
+### Special-levy resolution reference
+
+The Sonderumlagen creation card adds the required “Beschluss *” selector. Choices
+are recorded adopted resolutions of the selected property, labelled with German
+meeting date, TOP and wording. Source loading failures remain visible and can be
+retried; changing the property clears the selection. Existing amount/date inputs
+remain intact after a refused save.
+
+Unlinked historical levy cards show “ohne Beschlussbezug”. A writer who selects
+the same prepare scope can use “Beschluss einmalig zuordnen” and “Beschluss
+zuordnen”. The hint explains that the reference is permanent and the amount,
+due date and shares remain unchanged. After confirmation, the form becomes the
+resolution link, for example “15.05.2026 · TOP 3”. The fixed allocation table scrolls
+inside its card on narrow screens.
+
+In the Beschluss-Sammlung, disclosed levy links sit beneath the wording, for
+example “Sonderumlage 1.200,00 €, fällig 01.07.2026”. They open the levy card in its
+explicit read scope. Existing horizontal register-table scrolling remains in use
+at 360 px. Register access alone grants no financial disclosure.
+
+| Resolution levy | Desktop | 360 px |
+| --- | --- | --- |
+| Levy before | [Desktop](docs/assets/design/levy-page-before-1280.png) | [Phone](docs/assets/design/levy-page-before-360.png) |
+| Levy after | [Desktop](docs/assets/design/levy-page-after-1280.png) | [Phone](docs/assets/design/levy-page-after-360.png) |
+| Register before | [Desktop](docs/assets/design/levy-register-before-1280.png) | [Phone](docs/assets/design/levy-register-before-360.png) |
+| Register after | [Desktop](docs/assets/design/levy-register-after-1280.png) | [Phone](docs/assets/design/levy-register-after-360.png) |

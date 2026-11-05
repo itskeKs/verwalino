@@ -1324,8 +1324,12 @@ export function createSpecialLevy(body: SpecialLevyCreate): Promise<SpecialLevy>
     accounting_scope_id: body.accounting_scope_id,
     amount: body.amount,
     due_date: body.due_date,
-    ...(body.resolution_id !== undefined ? { resolution_id: body.resolution_id } : {}),
+    resolution_id: body.resolution_id,
   });
+}
+
+export function linkSpecialLevyResolution(id: string, resolutionId: string): Promise<SpecialLevy> {
+  return api.put<SpecialLevy>(`/api/special-levies/${encodeURIComponent(id)}/resolution`, { resolution_id: resolutionId });
 }
 
 // General document filing: retain originals, archive metadata only.

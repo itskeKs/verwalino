@@ -20,6 +20,10 @@ beforeEach(() => {
     if (url === "/api/properties") return [{ id: "p1", name: "Sonnenhof", management_type: "WEG" }, { id: "p2", name: "Parkhof", management_type: "WEG" }];
     if (url.startsWith("/api/units")) return [1, 2, 3].map(n => ({ id: `u${n}`, property_id: "p1", number: String(n) }));
     if (url === "/api/owner-profiles") return [1, 2, 3].map(n => ({ id: `o${n}`, person_id: `person${n}` }));
+    if (url.startsWith("/api/meetings?")) return [{ id: "meeting", property_id: "p1", meeting_date: "2026-05-15" }];
+    if (url === "/api/meetings/meeting/agenda") return [{ id: "top", item_number: 3 }];
+    if (url === "/api/meetings/meeting/resolutions") return [{ id: "resolution", agenda_item_id: "top", result: "ANGENOMMEN", wording: "Dachreparatur" }, { id: "rejected", result: "ABGELEHNT", wording: "Abgelehnte Maßnahme" }];
+    if (url.startsWith("/api/meetings/register/")) return [{ id: "entry", resolution_id: "resolution", resolution_date: "2026-05-15" }];
     if (url === "/api/persons") return [1, 2, 3].map(n => ({ id: `person${n}`, first_name: "Ada", last_name: `Besitzer ${n}` }));
     if (url.startsWith("/api/special-levies?")) return getRows();
     throw new Error(`Unexpected GET ${url}`);
@@ -33,9 +37,11 @@ async function choose() {
   fireEvent.change(screen.getByLabelText("WEG-Objekt *"), { target: { value: "p1" } });
   fireEvent.change(screen.getByLabelText("Abrechnungskreis read"), { target: { value: "scope-p1" } });
   await screen.findByText("Keine Sonderumlagen vorhanden.");
+  if (auth.role === "CLERK" || auth.role === "OWNER_ADMIN") await screen.findByRole("option", { name: "15.05.2026 · TOP 3 · Dachreparatur" });
   if (auth.role === "CLERK" || auth.role === "OWNER_ADMIN") fireEvent.change(screen.getByLabelText("Abrechnungskreis prepare"), { target: { value: "scope-p1" } });
 }
 function fill(amount = "10000,00", date = "2026-06-15") {
+  fireEvent.change(screen.getByLabelText("Beschluss *"), { target: { value: "resolution" } });
   fireEvent.change(screen.getByLabelText("Betrag (EUR) *"), { target: { value: amount } });
   fireEvent.change(screen.getByLabelText("Fällig am *"), { target: { value: date } });
 }
@@ -48,7 +54,7 @@ it("does not issue an unscoped GET, and links existing workflows", async () => {
 it("creates an exact decimal payload and displays only frozen server shares with human labels", async () => {
   show(); await choose(); fill(); fireEvent.click(screen.getByRole("button", { name: "Sonderumlage anlegen" }));
   await screen.findByText("Ada Besitzer 1");
-  expect(api.post).toHaveBeenCalledWith("/api/special-levies", { property_id: "p1", accounting_scope_id: "scope-p1", amount: "10000.00", due_date: "2026-06-15" });
+  expect(api.post).toHaveBeenCalledWith("/api/special-levies", { property_id: "p1", accounting_scope_id: "scope-p1", amount: "10000.00", due_date: "2026-06-15", resolution_id: "resolution" });
   expect(screen.getAllByText("3000.00 EUR")).toHaveLength(2);
   expect(screen.getByText("4000.00 EUR")).toBeVisible();
   expect(screen.getByText("Wohnung 3")).toBeVisible();
@@ -98,9 +104,9 @@ it("retries a failed list request", async () => {
   getRows = async () => [levy]; fireEvent.click(screen.getByRole("button", { name: "Aktualisieren" })); await screen.findByText("Ada Besitzer 1");
 });
 it("sanitizes extra fields and URL-encodes endpoint filters", async () => {
-  const body = { property_id: "p1", accounting_scope_id: "scope-p1", amount: "10000.00", due_date: "2026-06-15", allocations: levy.allocations };
+  const body = { property_id: "p1", accounting_scope_id: "scope-p1", amount: "10000.00", due_date: "2026-06-15", resolution_id: "resolution", allocations: levy.allocations };
   await createSpecialLevy(body);
-  expect(api.post).toHaveBeenCalledWith("/api/special-levies", { property_id: "p1", accounting_scope_id: "scope-p1", amount: "10000.00", due_date: "2026-06-15" });
+  expect(api.post).toHaveBeenCalledWith("/api/special-levies", { property_id: "p1", accounting_scope_id: "scope-p1", amount: "10000.00", due_date: "2026-06-15", resolution_id: "resolution" });
   await listSpecialLevies("scope&1", "property/1");
   expect(api.get).toHaveBeenCalledWith("/api/special-levies?accounting_scope_id=scope%261&property_id=property%2F1");
 });
@@ -147,4 +153,27 @@ it("preserves newly created shares when switching the listing to the preparation
   await waitFor(() => expect(api.get).toHaveBeenCalledWith("/api/special-levies?accounting_scope_id=scope-other&property_id=p1"));
   await act(async () => {});
   expect(screen.getByText("Ada Besitzer 1")).toBeVisible();
+});
+
+it("requires an adopted resolution and retains financial inputs when missing", async () => {
+  show(); await choose(); fill();
+  fireEvent.change(screen.getByLabelText("Beschluss *"), { target: { value: "" } });
+  fireEvent.submit(screen.getByRole("button", { name: "Sonderumlage anlegen" }).closest("form")!);
+  expect(await screen.findByRole("alert")).toHaveTextContent("Eine Sonderumlage braucht einen Beschluss.");
+  expect(api.post).not.toHaveBeenCalled();
+  expect(screen.getByLabelText("Betrag (EUR) *")).toHaveValue("10000,00");
+  expect(screen.queryByRole("option", { name: /Abgelehnte Maßnahme/ })).toBeNull();
+});
+it("labels an unlinked levy and replaces the one-time form with the confirmed reference", async () => {
+  vi.spyOn(api, "put").mockResolvedValue({ ...levy, resolution_id: "resolution" });
+  show(); await choose(); getRows = async () => [levy];
+  fireEvent.click(screen.getByRole("button", { name: "Aktualisieren" }));
+  expect(await screen.findByText("ohne Beschlussbezug")).toBeVisible();
+  fireEvent.change(screen.getByLabelText("Beschluss einmalig zuordnen"), { target: { value: "resolution" } });
+  fireEvent.click(screen.getByRole("button", { name: "Beschluss zuordnen" }));
+  expect(await screen.findByRole("link", { name: "15.05.2026 · TOP 3" })).toHaveAttribute("href", "/beschluss-sammlung?property_id=p1#beschluss-entry");
+  expect(api.put).toHaveBeenCalledWith("/api/special-levies/levy/resolution", { resolution_id: "resolution" });
+  expect(screen.queryByText("ohne Beschlussbezug")).toBeNull();
+  expect(screen.queryByRole("button", { name: "Beschluss zuordnen" })).toBeNull();
+  expect(screen.getAllByText("3000.00 EUR")).toHaveLength(2);
 });

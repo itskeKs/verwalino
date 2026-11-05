@@ -115,3 +115,9 @@ Feature: Organization isolation
     Given an audited draft reserve contribution correction belongs to Verwaltung Alpha
     When Verwaltung Beta tries to reduce and delete that contribution correction
     Then the reserve contribution correction is not found and remains unchanged
+
+  Scenario: Another organization's special levy authority cannot be read or linked
+    Given Gartenstraße 5 has two owners and an adopted roof repair resolution
+    When the manager creates the roof repair levy due on 1 July 2026
+    And Verwaltung Beta tries to create, read and link that special levy
+    Then the special levy authority is not found and its frozen obligation is unchanged

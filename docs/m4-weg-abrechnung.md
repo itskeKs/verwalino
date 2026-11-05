@@ -1082,3 +1082,32 @@ or contact-source access. Its deletion metadata then reports only the generic
 German access restriction, without disclosing hidden bookings or other evidence.
 Saving a reserve opening through the input-coverage declaration refreshes both
 the ledger and the draft's deletion eligibility immediately on both pages.
+
+
+## Special-levy resolution authority (#203)
+
+New special levies require a recorded `ANGENOMMEN` resolution from the same
+property and organization. The service checks that recorded result without
+adjudicating votes or quorum. Missing/null references return 422 with
+“Eine Sonderumlage braucht einen Beschluss.” and save nothing; inaccessible or
+foreign references return 404. The existing whole-property WEG scope, due-date
+ownership basis, MEA rounding and source permissions remain authoritative.
+
+Historical unlinked levies continue to feed owner accounts and dunning. The page
+labels them “ohne Beschlussbezug”; a writer with the scope's prepare capability
+can assign an adopted resolution once with `PUT /api/special-levies/{id}/resolution`.
+The database permits only the first reference update and preserves every other
+header column and frozen allocation. Identical retries return the same result;
+competing different links have one winner, with 409 for the other. A successful
+first link records `special_levy.resolution_linked` once. Native archive import
+and operator restore retain historical INSERT compatibility, including null
+references; import selects the archived scope for each header’s native RLS checks
+and restores the prior context afterwards. It does not use ordinary new-creation
+validation.
+
+The register's API/page shows only levy summaries permitted by their native RLS
+and financial/source disclosure grants. A levy links back to the resolution's
+meeting date and TOP, using the frozen register meeting date when available.
+A 1,200 EUR levy on 600/400 MEA yields 720/480 EUR due 1 July 2026; the API/browser
+scenario in [special_levy.feature](../features/special_levy.feature) uses the
+adopted roof repair of 15 May 2026, TOP 3. See [operation](operations/weg.md).
