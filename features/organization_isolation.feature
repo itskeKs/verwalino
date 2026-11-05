@@ -23,7 +23,7 @@ Feature: Organization isolation
     When Verwaltung Beta tries to delete the empty annual draft
     Then the annual draft is not found and remains available to Verwaltung Alpha
 
-  Scenario: Another organization cannot read or change separate lease advances
+  Scenario: Another organization cannot read a dated rent account or change separate lease advances
     Given a lease with 750 euros rent, 150 euros operating and 90 euros heating advance
     When another organization requests the lease's advance history and statement actions
     Then all separate advance requests are reported as not found

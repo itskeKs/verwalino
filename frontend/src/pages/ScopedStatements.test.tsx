@@ -30,14 +30,14 @@ beforeEach(() => {
 const statement = { soll_total: "7200.00", ist_total: "100.00", balance: "-7100.00", open_items: [] };
 
 it("passes the selected read scope and clears stale results and scope when changing lease", async () => {
-  vi.mocked(endpoints.leaseStatement).mockResolvedValue(statement);
+  vi.mocked(endpoints.leaseStatement).mockResolvedValue({ ...statement, due_balance: "-7100.00", not_yet_due_balance: "0.00" });
   render(<MietkontoPage />);
   fireEvent.change(await screen.findByLabelText("Mietvertrag *"), { target: { value: "lease" } });
   await screen.findByRole("option", { name: /Lesebereich/ });
   fireEvent.change(screen.getByRole("combobox", { name: "Abrechnungskreis" }), { target: { value: "scope" } });
   fireEvent.click(screen.getByRole("button", { name: "Abrufen" }));
   await screen.findByText("100.00 EUR");
-  expect(endpoints.leaseStatement).toHaveBeenCalledWith("lease", expect.any(String), expect.any(String), "scope");
+  expect(endpoints.leaseStatement).toHaveBeenCalledWith("lease", expect.any(String), expect.any(String), "scope", expect.any(String));
   fireEvent.change(screen.getByLabelText("Mietvertrag *"), { target: { value: "other" } });
   expect(screen.queryByText("100.00 EUR")).toBeNull();
   expect(screen.getByRole("combobox", { name: "Abrechnungskreis" })).toHaveValue("");

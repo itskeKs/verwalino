@@ -578,6 +578,7 @@ class PaymentService:
     async def account_statement_for_lease(
         self, lease_agreement_id: uuid.UUID, period_start: date, period_end: date,
         accounting_scope_id: uuid.UUID | None = None,
+        *, as_of: date | None = None,
     ) -> MietkontoResult:
         """Soll/Ist/Saldo + offene Posten of one lease over a period (§3.1)."""
         await FinancialScopeService(self._session, self._org_id, self._user_id).select_report_scope(
@@ -605,7 +606,7 @@ class PaymentService:
         payments = await self._repo.list_for_lease(lease_agreement_id)
         scoped = self._scope_payments_to_period(payments, period_start, period_end)
         return account_statement(charges, [_to_payment_input(p) for p in scoped
-                                           if p.payment_type != "KAUTION"])
+                                           if p.payment_type != "KAUTION"], as_of=as_of or date.today())
 
     async def owner_plan_charges(
         self, plan: EconomicPlan, owner_profile_id: uuid.UUID,

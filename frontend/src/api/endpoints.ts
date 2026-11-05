@@ -101,6 +101,7 @@ import type {
   DepositAccount,
   OpenItem,
   MietkontoResult,
+  TenantMietkontoResult,
   DunningNotice,
   DunningSettings,
   DunningCreateTenant,
@@ -1021,9 +1022,10 @@ export function leaseStatement(
   periodStart: string,
   periodEnd: string,
   accountingScopeId?: string,
-): Promise<MietkontoResult> {
-  return api.get<MietkontoResult>(
-    `/api/payments/mietkonto/lease/${leaseId}?period_start=${periodStart}&period_end=${periodEnd}${accountingScopeId ? `&accounting_scope_id=${encodeURIComponent(accountingScopeId)}` : ""}`,
+  asOf?: string,
+): Promise<TenantMietkontoResult> {
+  return api.get<TenantMietkontoResult>(
+    `/api/payments/mietkonto/lease/${leaseId}?period_start=${periodStart}&period_end=${periodEnd}${accountingScopeId ? `&accounting_scope_id=${encodeURIComponent(accountingScopeId)}` : ""}${asOf ? `&as_of=${encodeURIComponent(asOf)}` : ""}`,
   );
 }
 

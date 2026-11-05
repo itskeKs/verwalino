@@ -143,6 +143,11 @@ class MietkontoOut(BaseModel):
     balance: str
 
 
+class TenantMietkontoOut(MietkontoOut):
+    due_balance: str
+    not_yet_due_balance: str
+
+
 def _to_out(p: Payment) -> PaymentOut:
     return PaymentOut(
         reserve_cost_entry_id=str(p.reserve_cost_entry_id) if p.reserve_cost_entry_id else None,
@@ -221,20 +226,22 @@ async def deposits(
                           for key, value in row.items()}) for row in rows]
 
 
-@router.get("/mietkonto/lease/{lease_agreement_id}", response_model=MietkontoOut)
+@router.get("/mietkonto/lease/{lease_agreement_id}", response_model=TenantMietkontoOut)
 async def lease_statement(
     lease_agreement_id: uuid.UUID,
     period_start: date,
     period_end: date,
     accounting_scope_id: uuid.UUID | None = None,
+    as_of: date | None = None,
     auth: AuthContext = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
     svc = PaymentService(db, auth.organization_id, auth.user_id)
     result = await svc.account_statement_for_lease(
-        lease_agreement_id, period_start, period_end, accounting_scope_id
+        lease_agreement_id, period_start, period_end, accounting_scope_id, as_of=as_of
     )
-    return _mietkonto_out(result)
+    return TenantMietkontoOut(**_mietkonto_out(result).model_dump(),
+        due_balance=str(result.due_balance), not_yet_due_balance=str(result.not_yet_due_balance))
 
 
 @router.get("/mietkonto/owner/{owner_profile_id}", response_model=MietkontoOut)
