@@ -143,7 +143,12 @@ class MietkontoOut(BaseModel):
     balance: str
 
 
+class TenantOpenItemOut(OpenItemOut):
+    is_due: bool
+
+
 class TenantMietkontoOut(MietkontoOut):
+    open_items: list[TenantOpenItemOut]
     due_balance: str
     not_yet_due_balance: str
 
@@ -240,7 +245,10 @@ async def lease_statement(
     result = await svc.account_statement_for_lease(
         lease_agreement_id, period_start, period_end, accounting_scope_id, as_of=as_of
     )
-    return TenantMietkontoOut(**_mietkonto_out(result).model_dump(),
+    statement = _mietkonto_out(result).model_dump()
+    statement['open_items'] = [TenantOpenItemOut(**row, is_due=item.is_due)
+        for row, item in zip(statement['open_items'], result.open_items)]
+    return TenantMietkontoOut(**statement,
         due_balance=str(result.due_balance), not_yet_due_balance=str(result.not_yet_due_balance))
 
 

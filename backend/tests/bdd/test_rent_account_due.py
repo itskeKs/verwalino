@@ -49,6 +49,10 @@ def november_account(browser_world, tmp_path):
         await browser_world.row('Saldo', '1900.00 EUR')
         await browser_world.row('davon fällig', '100.00 EUR (Rückstand)')
         await browser_world.row('noch nicht fällig', '1800.00 EUR')
+        await rent_row(page, '2026/04', 'Kaltmiete', '100.00 EUR', 'fällig')
+        for month in ['11', '12']:
+            await rent_row(page, f'2026/{month}', 'Kaltmiete', '750.00 EUR', 'noch nicht fällig')
+            await rent_row(page, f'2026/{month}', 'Betriebskosten-Vorauszahlung', '150.00 EUR', 'noch nicht fällig')
         saldo = page.get_by_role('row').filter(has=page.get_by_role('cell', name='Saldo', exact=True))
         await expect(saldo).not_to_contain_text('Rückstand')
         await expect(field(page, 'Zeitraum bis *')).to_have_value('2026-12-31')
@@ -58,6 +62,8 @@ def november_account(browser_world, tmp_path):
         directory.mkdir(parents=True, exist_ok=True)
         await field(page, 'Fällig am *').evaluate("e => e.scrollIntoView({block: 'start'})")
         await page.screenshot(path=str(directory / f'after-{page.viewport_size["width"]}.png'), full_page=True)
+        await page.get_by_text('2026/11', exact=True).first.evaluate("e => e.scrollIntoView({block: 'center'})")
+        await page.screenshot(path=str(directory / f'future-{page.viewport_size["width"]}.png'), full_page=True)
     browser_world.run(run())
 
 
@@ -77,4 +83,16 @@ def on_due_date(browser_world):
         await browser_world.row('Saldo', '1900.00 EUR')
         await browser_world.row('davon fällig', '1000.00 EUR (Rückstand)')
         await browser_world.row('noch nicht fällig', '900.00 EUR')
+        page = browser_world.page
+        await rent_row(page, '2026/04', 'Kaltmiete', '100.00 EUR', 'fällig')
+        for kind, amount in [('Kaltmiete', '750.00 EUR'), ('Betriebskosten-Vorauszahlung', '150.00 EUR')]:
+            await rent_row(page, '2026/11', kind, amount, 'fällig')
+            await rent_row(page, '2026/12', kind, amount, 'noch nicht fällig')
     browser_world.run(run())
+
+
+async def rent_row(page, period, kind, amount, status):
+    row = page.get_by_role('row').filter(has=page.get_by_text(period, exact=True)).filter(
+        has=page.get_by_role('cell', name=kind, exact=True))
+    await expect(row.get_by_role('cell').nth(4)).to_contain_text(amount)
+    await expect(row.get_by_text(status, exact=True)).to_be_visible()

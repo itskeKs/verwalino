@@ -823,8 +823,11 @@ The legacy summary table keeps “Soll gesamt”, “Ist gesamt” and “Saldo�
 tenant Saldo has no arrears suffix or warning colour. Two rows follow:
 “davon fällig” (positive: “Rückstand”, destructive token; negative: “Guthaben”,
 emerald) and “noch nicht fällig” (neutral). Signed amounts retain the page's
-existing decimal-string `EUR` notation. The detail rows keep the same amounts;
-positive tenant open amounts are neutral because they can include future rent.
+existing decimal-string `EUR` notation. The detail rows keep the same amounts
+and show the backend due classification
+below the period: “fällig” or “noch nicht fällig” for nonzero signed amounts,
+“ausgeglichen” for zero. Positive tenant open amounts remain neutral; credits
+never carry an arrears label.
 Owner view retains its existing summary and colours and has no cutoff input.
 
 The existing form grid wraps the date input at 360 px. Synthetic full-year
@@ -834,6 +837,7 @@ The existing form grid wraps the date input at 360 px. Synthetic full-year
 |---|---|---|
 | Before | [View](docs/assets/design/rent-account-due/before-1280.png) | [View](docs/assets/design/rent-account-due/before-360.png) |
 | After | [View](docs/assets/design/rent-account-due/after-1280.png) | [View](docs/assets/design/rent-account-due/after-360.png) |
+| Future rows | [View](docs/assets/design/rent-account-due/future-1280.png) | [View](docs/assets/design/rent-account-due/future-360.png) |
 
 ## E-Mail
 

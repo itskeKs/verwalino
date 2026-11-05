@@ -39,7 +39,7 @@ rate-days per month/component before a single final cent rounding.
 from __future__ import annotations
 
 import uuid
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import date
 from decimal import Decimal
 
@@ -461,6 +461,7 @@ class OpenItem:
     ist: Decimal
     open_amount: Decimal  # soll - ist
     due_date: date | None = None
+    is_due: bool | None = None
 
     @property
     def is_arrears(self) -> bool:
@@ -563,9 +564,9 @@ def account_statement(
     due_balance = None
     not_yet_due_balance = None
     if as_of is not None:
-        due_balance = sum((item.open_amount for item in items
-            if item.period_year is None or (item.due_date or
-                date(item.period_year, item.period_month or 1, 1)) <= as_of), Decimal('0.00'))
+        items = [replace(item, is_due=item.period_year is None or (item.due_date or
+            date(item.period_year, item.period_month or 1, 1)) <= as_of) for item in items]
+        due_balance = sum((item.open_amount for item in items if item.is_due), Decimal('0.00'))
         not_yet_due_balance = _money(soll_total - ist_total - due_balance)
     return MietkontoResult(
         open_items=tuple(items),

@@ -649,9 +649,13 @@ class TestMietkontoAPI:
             body = response.json()
             assert (body['soll_total'], body['ist_total'], body['balance']) == ('10200.00', '8400.00', '1800.00')
             assert (body['due_balance'], body['not_yet_due_balance']) == (due, future)
+            items = body['open_items']
+            assert all(item['is_due'] == (item['period_month'] < 11 or
+                item['period_month'] == 11 and cutoff >= '2026-11-04') for item in items)
+            amounts = [{key: value for key, value in item.items() if key != 'is_due'} for item in items]
             if original_items is None:
-                original_items = body['open_items']
-            assert body['open_items'] == original_items
+                original_items = amounts
+            assert amounts == original_items
         with patch('app.services.payment_service.date') as clock:
             clock.today.return_value = date(2026, 11, 1)
             response = await client_a_clerk.get(url, params=params)

@@ -1,6 +1,8 @@
 @journey @browser
 Feature: Due rent within the full-year account
   Journey 2 distinguishes Anna's real April arrears from rent not yet due.
+  April is labelled due; positive November and December rows are not yet due.
+  On November 4 the November rows become due while December remains not yet due.
 
   Scenario Outline: The November reference date leaves future rent out of arrears
     Given Anna's full-year rent account has 100 euros unpaid through October

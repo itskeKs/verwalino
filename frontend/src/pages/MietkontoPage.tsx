@@ -378,9 +378,12 @@ export function MietkontoPage() {
                   {result.open_items.map((item, idx) => (
                     <tr key={idx}>
                       <td>
-                        {item.period_year
+                        <span>{item.period_year
                           ? `${item.period_year}${item.period_month ? "/" + String(item.period_month).padStart(2, "0") : ""}`
-                          : "-"}
+                          : "-"}</span>
+                        {"is_due" in item && <span className="block text-xs text-muted-foreground">
+                          {Number(item.open_amount) === 0 ? "ausgeglichen" : item.is_due ? "fällig" : "noch nicht fällig"}
+                        </span>}
                       </td>
                       <td>
                         {PAYMENT_TYPE_LABELS[item.payment_type] ?? item.payment_type}

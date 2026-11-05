@@ -132,7 +132,9 @@ def test_statement_cutoff_splits_the_full_year_without_prorating_or_reallocating
     result = account_statement(charges, payments, as_of=cutoff)
     assert (result.soll_total, result.ist_total, result.balance) == (
         Decimal('10800.00'), Decimal('8900.00'), Decimal('1900.00'))
-    assert result.open_items == original.open_items
+    assert tuple(replace(item, is_due=None) for item in result.open_items) == original.open_items
+    assert all(item.is_due == (item.period_month < 11 or
+        item.period_month == 11 and cutoff >= date(2026, 11, 4)) for item in result.open_items)
     assert result.due_balance == Decimal(due)
     assert result.not_yet_due_balance == Decimal(future)
     assert result.due_balance + result.not_yet_due_balance == result.balance
@@ -154,7 +156,10 @@ def test_statement_cutoff_keeps_signed_credits_partial_payments_and_undated_buck
         _pay(5, PT_KALTMIETE, '999', year=2026, month=11, is_booked=False),
         _pay(6, PT_KALTMIETE, '999', year=2026, month=11, is_reversed=True)]
     result = account_statement(charges, payments, as_of=date(2026, 11, 1))
-    assert result.open_items == account_statement(charges, payments).open_items
+    assert tuple(replace(item, is_due=None) for item in result.open_items) == account_statement(charges, payments).open_items
+    assert result.due_balance == sum(item.open_amount for item in result.open_items if item.is_due)
+    assert all(item.is_due == (item.period_month in (None, 10) or
+        item.payment_type == "HK_VORAUSZAHLUNG") for item in result.open_items)
     # October credit -50.01, annual credit -10.01 and existing first-of-month HK +90.01.
     assert result.due_balance == Decimal('29.99')
     assert result.not_yet_due_balance == Decimal(future)

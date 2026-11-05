@@ -32,7 +32,12 @@ afterEach(() => {
 it("keeps the full-year balance and labels only the selected cutoff's due part as arrears", async () => {
   vi.mocked(api.leaseStatement).mockResolvedValue({
     soll_total: "10800.00", ist_total: "8900.00", balance: "1900.00",
-    due_balance: "100.00", not_yet_due_balance: "1800.00", open_items: [],
+    due_balance: "100.00", not_yet_due_balance: "1800.00", open_items: [
+      { period_year: 2026, period_month: 4, payment_type: "KALTMIETE", soll: "750.00", ist: "650.00", open_amount: "100.00", is_due: true },
+      { period_year: 2026, period_month: 11, payment_type: "KALTMIETE", soll: "750.00", ist: "0.00", open_amount: "750.00", is_due: false },
+      { period_year: 2026, period_month: 12, payment_type: "KALTMIETE", soll: "750.00", ist: "800.00", open_amount: "-50.00", is_due: false },
+      { period_year: 2026, period_month: 10, payment_type: "KALTMIETE", soll: "750.00", ist: "750.00", open_amount: "0.00", is_due: true },
+    ],
   });
   const user = userEvent.setup();
   render(<MietkontoPage />);
@@ -48,7 +53,13 @@ it("keeps the full-year balance and labels only the selected cutoff's due part a
   expect(saldo).toHaveTextContent("1900.00 EUR");
   expect(saldo).not.toHaveTextContent(/R[uü]e?ckstand/);
   expect(screen.getByText("davon fällig").closest("tr")).toHaveTextContent("100.00 EUR (Rückstand)");
-  expect(screen.getByText("noch nicht fällig").closest("tr")).toHaveTextContent("1800.00 EUR");
+  expect(screen.getAllByText("noch nicht fällig")[0].closest("tr")).toHaveTextContent("1800.00 EUR");
+  for (const [period, status, amount] of [["2026/04", "fällig", "100.00"], ["2026/11", "noch nicht fällig", "750.00"], ["2026/12", "noch nicht fällig", "-50.00"], ["2026/10", "ausgeglichen", "0.00"]]) {
+    const row = screen.getByText(period).closest("tr")!;
+    expect(within(row).getByText(status)).toBeVisible();
+    expect(row).toHaveTextContent(`${amount} EUR`);
+    expect(row).not.toHaveTextContent("Rückstand");
+  }
   expect(api.leaseStatement).toHaveBeenCalledWith("lease-t12", "2026-01-01", "2026-12-31", undefined, "2026-11-01");
   fireEvent.change(screen.getByLabelText("Fällig am *"), { target: { value: "2026-11-04" } });
   expect(screen.queryByText("Saldo", { exact: true })).not.toBeInTheDocument();
@@ -67,10 +78,10 @@ describe("Mietkonto saldo (Soll minus Ist)", () => {
       due_balance: balance, not_yet_due_balance: "0.00",
       open_items: [{
         period_year: 2025, period_month: 12, payment_type: "KALTMIETE",
-        soll: "500.00", ist: "0.00", open_amount: "500.00",
+        soll: "500.00", ist: "0.00", open_amount: "500.00", is_due: true,
       }, {
         period_year: 2025, period_month: 12, payment_type: "NK_VORAUSZAHLUNG",
-        soll: "100.00", ist: "0.00", open_amount: "100.00",
+        soll: "100.00", ist: "0.00", open_amount: "100.00", is_due: true,
       }],
     });
     const user = userEvent.setup();
