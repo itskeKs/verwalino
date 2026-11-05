@@ -17,7 +17,7 @@ from tests.bdd.world import target_url
 
 ROOT = Path(__file__).resolve().parents[3]
 scenarios(str(ROOT / "features/journeys/dashboard_greeting.feature"))
-pytestmark = pytest.mark.skipif(target_url(), reason="Fresh dashboard identity requires the local disposable test database")
+pytestmark = pytest.mark.skipif(bool(target_url()), reason="Fresh dashboard identity requires the local disposable test database")
 
 
 @pytest_asyncio.fixture

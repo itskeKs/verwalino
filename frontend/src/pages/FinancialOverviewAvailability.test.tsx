@@ -37,7 +37,8 @@ it("keeps successful master counts and marks failed dashboard finance unavailabl
   await act(async () => request.reject(new Error("Financial overview requires scope")));
   expect(await screen.findByRole("alert")).toHaveTextContent("Financial overview requires scope");
   expectNoAllClear();
-  expect(screen.getByRole("heading", { level: 1 })).toHaveTextContent("Testverwaltung");
+  expect(screen.getByRole("heading", { level: 1 })).toHaveTextContent(/^Guten Tag$/);
+  expect(screen.getByText("Testverwaltung", { exact: true })).toBeInTheDocument();
   expect(within(screen.getByRole("link", { name: /^Objekte/ })).getByText("2")).toBeInTheDocument();
   expect(within(screen.getByRole("link", { name: /^Personen 1/ })).getByText("1")).toBeInTheDocument();
   for (const label of [/^Fristen überfällig/, /^Überfällige Posten/]) {
