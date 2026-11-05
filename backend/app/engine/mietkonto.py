@@ -39,7 +39,7 @@ rate-days per month/component before a single final cent rounding.
 from __future__ import annotations
 
 import uuid
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import date
 from decimal import Decimal
 
@@ -461,6 +461,7 @@ class OpenItem:
     ist: Decimal
     open_amount: Decimal  # soll - ist
     due_date: date | None = None
+    is_due: bool | None = None
 
     @property
     def is_arrears(self) -> bool:
@@ -485,6 +486,8 @@ class MietkontoResult:
     soll_total: Decimal
     ist_total: Decimal
     balance: Decimal
+    due_balance: Decimal | None = None
+    not_yet_due_balance: Decimal | None = None
 
 
 def _ist_key(p: PaymentInput) -> tuple[int | None, int | None, str]:
@@ -494,6 +497,7 @@ def _ist_key(p: PaymentInput) -> tuple[int | None, int | None, str]:
 def account_statement(
     expected_charges: list[ExpectedCharge],
     payments: list[PaymentInput],
+    *, as_of: date | None = None,
 ) -> MietkontoResult:
     """Soll vs Ist per (period, type) -> offene Posten + Saldo (m6 section 3.1).
 
@@ -506,6 +510,9 @@ def account_statement(
     Dated one-off charges retain their due dates; each monthly payment bucket
     is applied once, oldest due first. Recurring monthly charges are unchanged.
     Deterministic order: by (year, month-or-0, payment_type, due_date).
+    With as_of, partition the signed open amounts by their existing due dates,
+    inclusive of the cutoff. Undated buckets fall back to their period start;
+    bookings without a period are due. No payment allocation or total changes.
     """
     # Aggregate Soll per key.
     soll_by_key: dict[tuple[int | None, int | None, str], Decimal] = {}
@@ -554,11 +561,20 @@ def account_statement(
         else:
             items.append(OpenItem(period_year=key[0], period_month=key[1], payment_type=key[2],
                 soll=soll, ist=ist, open_amount=_money(soll - ist)))
+    due_balance = None
+    not_yet_due_balance = None
+    if as_of is not None:
+        items = [replace(item, is_due=item.period_year is None or (item.due_date or
+            date(item.period_year, item.period_month or 1, 1)) <= as_of) for item in items]
+        due_balance = sum((item.open_amount for item in items if item.is_due), Decimal('0.00'))
+        not_yet_due_balance = _money(soll_total - ist_total - due_balance)
     return MietkontoResult(
         open_items=tuple(items),
         soll_total=_money(soll_total),
         ist_total=_money(ist_total),
         balance=_money(soll_total - ist_total),
+        due_balance=due_balance,
+        not_yet_due_balance=not_yet_due_balance,
     )
 
 

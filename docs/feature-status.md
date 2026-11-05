@@ -76,7 +76,7 @@ pending; registration stays closed and legal review remains with #26. See the
 | Bank accounts | ✅ edit/end, historical references kept | `api/bank_accounts.py`, `pages/BankAccountsPage.tsx`, T55, [usage](operations/selector-pages.md) |
 | Expected charges (Sollstellung) for rent/operating costs, day-accurate | ✅ derived live, including rent history | `engine/mietkonto.py` (`tenant_expected_charges`) |
 | Record, book, reverse payment | ✅ drafts editable | `api/payments.py`, `pages/PaymentDetailPage.tsx`, T07 |
-| Tenant/owner ledger (Mietkonto), open items | ✅ | `api/payments.py` (`/mietkonto/*`, `/open-items`), `pages/MietkontoPage.tsx`, `pages/OpenItemsPage.tsx` |
+| Tenant/owner ledger (Mietkonto), open items | ✅ tenant account splits due/future balances at a selectable cutoff without clipping the reporting period | `api/payments.py` (`/mietkonto/*`, `/open-items`), `pages/MietkontoPage.tsx`, `pages/OpenItemsPage.tsx`, [semantics](m6-zahlungen-mietkonto.md#31-balance--open-items-per-person-pure-arithmetic-decimal) |
 | Bank statement import CSV/CAMT | ✅ CSV (generic, DKB and Sparkasse CSV-CAMT profiles) and CAMT.053 (.001.02/.08, XML/ZIP), preview, duplicate detection | `engine/bank_import.py`, `services/bank_import_service.py`, `api/bank_accounts.py` (`POST /{id}/imports`), `pages/BankTransactionsPage.tsx`, T15–T19, [usage](operations/bank-and-payments.md) |
 | Bank retrieval PSD2/FinTS | ❌ | – |
 | Match suggestions, split booking | ✅ apply suggestion, split, ignore | `engine/bank_matching.py`, `api/bank_transactions.py` (`/assign`, `/ignore`), `pages/BankTransactionsPage.tsx`, T20–T22, [usage](operations/bank-and-payments.md) |

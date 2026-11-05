@@ -264,11 +264,41 @@ letters/PDFs are not changed and nothing is sent.
 
 `app/engine/mietkonto.py`:
 ```
-account_statement(expected_charges, payments) -> MietkontoResult
+account_statement(expected_charges, payments, as_of=None) -> MietkontoResult
 ```
 - Groups the **expected amount** (from §2) and the **actual** (`booked`, non-reversed `payment`) per (period, type).
 - Returns, per expected-amount period, the **open item** (expected − assigned actual) and the **running balance** over the period.
 - **Pure Decimal arithmetic**, no float, deterministic — golden-tested (§7). Summation without rounding (all amounts already cent-exact).
+
+The tenant statement `GET /api/payments/mietkonto/lease/{lease_agreement_id}` accepts
+optional `as_of` (ISO date, default: today). Its `due_balance` and
+`not_yet_due_balance` partition the existing signed open amounts; their sum is
+`balance`. An item is due on and after its existing due date. Undated monthly
+items retain the first-of-month fallback (including heating advances); annual
+buckets use January 1, and bookings without a period are included in the due part.
+Each tenant statement row includes `is_due`, computed by the same engine
+classification used for the aggregate. Owner statements and open-items DTOs
+remain unchanged. Credits and partial payments retain their existing period/type
+allocation; they are not moved to another month's debt. The engine computes the split only with an
+explicit cutoff, keeping its existing callers compatible and free of an implicit clock.
+
+The cutoff never clips `period_end`: full-year `soll_total`, `ist_total`, `balance`
+and individual open amounts stay unchanged, including at a mid-month cutoff.
+All currently booked payments assigned to the reporting period count, even when
+their value/booking date is later than the cutoff. This is a due-date view of
+the current statement, not a reconstruction of the historical ledger.
+
+In **Mietkonto**, select the lease and reporting period, choose **“Fällig am”**
+(today by default) and click **“Abrufen”**. “Saldo” remains the period balance;
+“davon fällig” alone carries “Rückstand” when positive, and “noch nicht fällig”
+shows the remaining signed part. Detail rows identify nonzero amounts as “fällig”
+or “noch nicht fällig” and zero amounts as “ausgeglichen”, including on narrow
+screens. Credits retain their sign without an arrears label. For 2026 with 900 EUR
+monthly rent, January–October paid except 100 EUR in April, the 01.11.2026 cutoff shows 1,900 EUR Saldo,
+100 EUR due and 1,800 EUR not yet due. On 04.11.2026 November is due:
+1,000 EUR due and 900 EUR not yet due, with the same 1,900 EUR Saldo.
+The owner statement, open-items views, dunning, dashboard and deadline monitor
+retain their existing policies.
 
 ### 3.2 Partial payment → open item
 

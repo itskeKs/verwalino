@@ -814,6 +814,31 @@ inline expressions, with the variants below. The inconsistencies are tracked in 
 | Empty value | `—` (kit, newer pages), `-` (older tables), `–` (`BankTransactionsPage.tsx`) | `MandatePage.tsx`, `InvoiceDocumentsPage.tsx`, `BankTransactionsPage.tsx`, respectively |
 | Money input | accept `1234,56` and `1234.56`, send `1234.56` | `moneyInput`, `exactCents`, `normalizePlanAmount` (see above) |
 
+### Tenant rent account due-date split
+
+“Mietkonto” retains the full reporting period and adds the labelled date input
+“Fällig am *” for the tenant view, defaulting to the local current date. Changing
+it clears the previous result until “Abrufen” loads the selected cutoff.
+The legacy summary table keeps “Soll gesamt”, “Ist gesamt” and “Saldo”; a positive
+tenant Saldo has no arrears suffix or warning colour. Two rows follow:
+“davon fällig” (positive: “Rückstand”, destructive token; negative: “Guthaben”,
+emerald) and “noch nicht fällig” (neutral). Signed amounts retain the page's
+existing decimal-string `EUR` notation. The detail rows keep the same amounts
+and show the backend due classification
+below the period: “fällig” or “noch nicht fällig” for nonzero signed amounts,
+“ausgeglichen” for zero. Positive tenant open amounts remain neutral; credits
+never carry an arrears label.
+Owner view retains its existing summary and colours and has no cutoff input.
+
+The existing form grid wraps the date input at 360 px. Synthetic full-year
+900 EUR rent, 100 EUR unpaid in April, cutoff 01.11.2026:
+
+| | 1280 px | 360 px |
+|---|---|---|
+| Before | [View](docs/assets/design/rent-account-due/before-1280.png) | [View](docs/assets/design/rent-account-due/before-360.png) |
+| After | [View](docs/assets/design/rent-account-due/after-1280.png) | [View](docs/assets/design/rent-account-due/after-360.png) |
+| Future rows | [View](docs/assets/design/rent-account-due/future-1280.png) | [View](docs/assets/design/rent-account-due/future-360.png) |
+
 ## E-Mail
 
 Transactional mail uses `backend/app/mail/` and the website brand. The shared

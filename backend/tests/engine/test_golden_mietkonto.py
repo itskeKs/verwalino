@@ -115,6 +115,57 @@ def _U(n: int) -> uuid.UUID:
     return uuid.UUID(int=n)
 
 
+@pytest.mark.parametrize('cutoff,due,future', [
+    (date(2026, 11, 1), '100.00', '1800.00'),
+    (date(2026, 11, 3), '100.00', '1800.00'),
+    (date(2026, 11, 4), '1000.00', '900.00'),
+    (date(2026, 11, 5), '1000.00', '900.00'),
+    (date(2026, 11, 15), '1000.00', '900.00'),
+])
+def test_statement_cutoff_splits_the_full_year_without_prorating_or_reallocating(cutoff, due, future):
+    lease = LeaseChargeInput(_U(170), date(2026, 1, 1), None, Decimal('750'), Decimal('150'))
+    charges = tenant_expected_charges(lease, date(2026, 1, 1), date(2026, 12, 31))
+    payments = [_pay(month * 2 + offset, kind, '650' if month == 4 and kind == PT_KALTMIETE else amount,
+        year=2026, month=month) for month in range(1, 11)
+        for offset, (kind, amount) in enumerate([(PT_KALTMIETE, '750'), (PT_NK_VORAUSZAHLUNG, '150')])]
+    original = account_statement(charges, payments)
+    result = account_statement(charges, payments, as_of=cutoff)
+    assert (result.soll_total, result.ist_total, result.balance) == (
+        Decimal('10800.00'), Decimal('8900.00'), Decimal('1900.00'))
+    assert tuple(replace(item, is_due=None) for item in result.open_items) == original.open_items
+    assert all(item.is_due == (item.period_month < 11 or
+        item.period_month == 11 and cutoff >= date(2026, 11, 4)) for item in result.open_items)
+    assert result.due_balance == Decimal(due)
+    assert result.not_yet_due_balance == Decimal(future)
+    assert result.due_balance + result.not_yet_due_balance == result.balance
+
+
+@pytest.mark.parametrize('november_payment,future,balance', [
+    ('200.02', '1295.03', '1325.02'),
+    ('800.04', '695.01', '725.00'),
+])
+def test_statement_cutoff_keeps_signed_credits_partial_payments_and_undated_buckets(november_payment, future, balance):
+    charges = [ExpectedCharge(2026, 10, PT_KALTMIETE, Decimal('750.03'), due_date=date(2026, 10, 5)),
+        ExpectedCharge(2026, 11, PT_KALTMIETE, Decimal('750.03'), due_date=date(2026, 11, 4)),
+        ExpectedCharge(2026, 11, 'HK_VORAUSZAHLUNG', Decimal('90.01')),
+        ExpectedCharge(2026, 12, PT_KALTMIETE, Decimal('750.03'), due_date=date(2026, 12, 3))]
+    payments = [_pay(1, PT_KALTMIETE, '800.04', year=2026, month=10),
+        _pay(2, PT_KALTMIETE, november_payment, year=2026, month=11),
+        _pay(3, PT_NK_VORAUSZAHLUNG, '10.01', year=2026),
+        _pay(4, PT_KALTMIETE, '5.01', year=2026, month=12),
+        _pay(5, PT_KALTMIETE, '999', year=2026, month=11, is_booked=False),
+        _pay(6, PT_KALTMIETE, '999', year=2026, month=11, is_reversed=True)]
+    result = account_statement(charges, payments, as_of=date(2026, 11, 1))
+    assert tuple(replace(item, is_due=None) for item in result.open_items) == account_statement(charges, payments).open_items
+    assert result.due_balance == sum(item.open_amount for item in result.open_items if item.is_due)
+    assert all(item.is_due == (item.period_month in (None, 10) or
+        item.payment_type == "HK_VORAUSZAHLUNG") for item in result.open_items)
+    # October credit -50.01, annual credit -10.01 and existing first-of-month HK +90.01.
+    assert result.due_balance == Decimal('29.99')
+    assert result.not_yet_due_balance == Decimal(future)
+    assert result.balance == Decimal(balance)
+
+
 def _pay(
     pid: int,
     ptype: str,

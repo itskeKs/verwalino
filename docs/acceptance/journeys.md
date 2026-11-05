@@ -89,6 +89,12 @@ what Verwalino does not assign by itself.
   Anna Beispiel's 800.00 € receipt on 07.04.2026 suggests her lease.
 - Anna: January to October all paid, only in April 800.00 € instead of 900.00 € →
   **100.00 € open**. The payment on 07.04. was **on time** (see journey 3), only too low.
+  In “Mietkonto”, keep 01.01.–31.12.2026 and set “Fällig am” to 01.11.2026:
+  “Saldo” is 1,900.00 €, “davon fällig” is 100.00 € (“Rückstand”), and
+  “noch nicht fällig” is 1,800.00 € (November/December). Change only “Fällig am”
+  to 04.11.2026: the due part becomes 1,000.00 €, the future part 900.00 €,
+  and “Saldo” stays 1,900.00 €. This compares due dates against currently booked
+  allocations; it does not reconstruct past booking history.
 - Bernd: March to October paid in full, nothing open.
 - Anna's 2,250.00 € of 02.01. are the **deposit**, not rent.
 - General electricity (10 × 60.00 € = 600.00 €) and the building insurance (312.00 €) are expenses
@@ -107,7 +113,9 @@ The Sparkasse twin also opens Anna's April split with a long dwelling label at
 target and note span the row, and both bottom actions remain reachable. It corrects
 an over-allocation without losing inputs and books 650.00 EUR base rent plus
 150.00 EUR operating advance against her 800.00 EUR receipt.
-The remaining assignment and ledger checks still require blind acceptance.
+The full-year account cutoff is automated at 1280 and 360 px in
+[rent_account_due.feature](../../features/journeys/rent_account_due.feature).
+The remaining assignment checks still require blind acceptance.
 
 ## Journey 3: Dunning letter to Anna
 

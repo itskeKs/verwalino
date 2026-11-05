@@ -111,6 +111,8 @@ def foreign_advances(world):
     world.actor = world.administrator_of('Verwaltung Beta')
     lease_url, run_url = f"/api/leases/{data['lease']['id']}", f"/api/settlements/{run['id']}"
     requests = [
+        ('GET', f"/api/payments/mietkonto/lease/{data['lease']['id']}", {'params': {
+            'period_start': '2026-01-01', 'period_end': '2026-12-31', 'as_of': '2026-11-01'}}),
         ('GET', lease_url + '/rent-changes', {}),
         ('PATCH', lease_url, {'json': {'heating_advance_payment': '999.00'}}),
         ('POST', lease_url + '/rent-changes', {'json': {'valid_from': '2026-04-01', 'base_rent': '750.00',
@@ -126,7 +128,7 @@ def foreign_advances(world):
 
 @then('all separate advance requests are reported as not found')
 def no_foreign_advances(world):
-    assert [response.status_code for response in world.data['foreign_advance_responses']] == [404] * 8
+    assert [response.status_code for response in world.data['foreign_advance_responses']] == [404] * 9
 
 
 @when("the manager finalizes Bernd's statement without heating costs or heating advances")
