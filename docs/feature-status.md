@@ -1,6 +1,6 @@
 # Feature status
 
-Current feature catalog of Verwalino by area. Status as of 2026-10-31, migration head `0149`.
+Current feature catalog of Verwalino by area. Status as of 2026-11-05, migration head `0150`.
 Status: ✅ implemented and reachable in the running app, 🟡 partial (reason given), ❌ not implemented.
 Short paths: `api/ services/ engine/ models/ workers/ core/` are under
 `backend/app/`, `pages/ components/ lib/` under `frontend/src/`; other paths are relative to the
@@ -31,6 +31,7 @@ pending; registration stays closed and legal review remains with #26. See the
 | Hosted staging and canary | 🟡 isolated staging/deploy-on-main, restricted mail, 15-minute production API canary and dual failure alerts implemented; first deploy, DNS, secrets and live alert checks pending | `infra/docker-compose.staging.yml`, `scripts/deploy-server.sh`, `scripts/canary.py`, [runbook](operations/staging-and-canary.md), issue #25 |
 | Request IDs and opt-in error tracking | ✅ response/log correlation always enabled; API error events scrubbed before sending, tracking off by default | `core/request_id.py`, `core/logging.py`, `core/error_tracking.py`, `core/scrub.py`, `DEPLOY.md`, issue #16 |
 | Login/logout | ✅ | `api/auth.py`, `pages/LoginPage.tsx` |
+| Personal design | ✅ default Klar and optional Warm per user, persistent settings for every authenticated role; shared controls, responsive top navigation, priority tasks and property cards | `api/auth.py` (`/preferences`), `models/user.py`, `pages/SettingsPage.tsx`, `design/DesignThemeContext.tsx`, [usage](operations/users-and-access.md#choosing-your-personal-design) |
 | Login rate limiting | ✅ persisted IP/email lockout, mode-specific limits, hosted escalation, generic failures; atomic attempt reservations; shared signup limiter and active signup honeypot | `core/rate_limit.py`, `core/deployment_policy.py`, issue #20 |
 | Self-service signup | ✅ hosted only, captured confirmation email, 24-hour single-use token, atomic tenant/owner creation, durable cooldown and generic responses | `api/signup.py`, `pages/SignupPage.tsx`, issue #19 |
 | Create users | ✅ admin-only form and user management | `api/users.py`, `pages/UsersPage.tsx`, T06, T57, [usage](operations/users-and-access.md) |

@@ -134,14 +134,14 @@ it.each(["CLERK", "READ_ONLY"])("mandate editing is admin only (%s)", async role
 });
 it("property editing keeps decimal area as a string and clears both optional fields with null", async () => {
   const { writes } = setup(); mount("/objekte", <PropertiesPage />);
-  fireEvent.click(await screen.findByRole("button", { name: "Bearbeiten" }));
+  fireEvent.click((await screen.findAllByRole("button", { name: "Bearbeiten" }))[0]);
   expect(screen.getByLabelText("Baujahr")).toHaveValue(1901);
   fireEvent.change(screen.getByLabelText("Gesamtfläche (m²)"), { target: { value: "999999999999.99" } });
   fireEvent.click(screen.getByRole("button", { name: "Speichern" }));
   await waitFor(() => expect(writes).toHaveLength(1));
   expect(writes[0].body.total_area).toBe("999999999999.99");
   await waitFor(() => expect(screen.queryByLabelText("Baujahr")).not.toBeInTheDocument());
-  fireEvent.click(screen.getByRole("button", { name: "Bearbeiten" }));
+  fireEvent.click(screen.getAllByRole("button", { name: "Bearbeiten" })[0]);
   fireEvent.change(screen.getByLabelText("Baujahr"), { target: { value: "" } });
   fireEvent.change(screen.getByLabelText("Gesamtfläche (m²)"), { target: { value: "" } });
   fireEvent.click(screen.getByRole("button", { name: "Speichern" }));
@@ -208,14 +208,14 @@ it("cancelled vendor and mandate forms do not persist changes", async () => {
 });
 it("unchanged optional object fields are omitted and invalid decimal strings never reach the API", async () => {
   const { writes } = setup(); mount("/objekte", <PropertiesPage />);
-  fireEvent.click(await screen.findByRole("button", { name: "Bearbeiten" }));
+  fireEvent.click((await screen.findAllByRole("button", { name: "Bearbeiten" }))[0]);
   fireEvent.change(screen.getByLabelText("Name *"), { target: { value: "Umbenannt" } });
   fireEvent.click(screen.getByRole("button", { name: "Speichern" }));
   await waitFor(() => expect(writes).toHaveLength(1));
   expect(writes[0].body).not.toHaveProperty("construction_year");
   expect(writes[0].body).not.toHaveProperty("total_area");
   await waitFor(() => expect(screen.queryByLabelText("Baujahr")).not.toBeInTheDocument());
-  fireEvent.click(screen.getByRole("button", { name: "Bearbeiten" }));
+  fireEvent.click(screen.getAllByRole("button", { name: "Bearbeiten" })[0]);
   for (const invalid of ["1e3", "-1", "1.234", "NaN", "1000000000000.00"]) {
     fireEvent.change(screen.getByLabelText("Gesamtfläche (m²)"), { target: { value: invalid } });
     fireEvent.click(screen.getByRole("button", { name: "Speichern" }));
@@ -237,7 +237,7 @@ it("editor blocks duplicate writes and ignores a completion after its route gene
   const save = vi.fn(() => pending);
   const onSaved = vi.fn();
   const view = render(<MasterDataEditor key="old" title="Bearbeiten" initial={{ label: "Alt" }} fields={[{ key: "label", label: "Bezeichnung" }]} save={save} onSaved={onSaved} />);
-  fireEvent.click(screen.getByRole("button", { name: "Bearbeiten" }));
+  fireEvent.click(screen.getAllByRole("button", { name: "Bearbeiten" })[0]);
   fireEvent.change(screen.getByLabelText("Bezeichnung"), { target: { value: "Neu" } });
   const form = screen.getByLabelText("Bezeichnung").closest("form")!;
   fireEvent.submit(form); fireEvent.submit(form);

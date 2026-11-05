@@ -267,7 +267,7 @@ def _chain_0131_projection(head):
     return projected
 
 
-async def test_revision_chain_0149_0131_0149_preserves_full_state_and_issued_pdf(rent_world, client_a_admin, seed_data):
+async def test_revision_chain_0150_0131_0150_preserves_full_state_and_issued_pdf(rent_world, client_a_admin, seed_data):
     """Rollback-only whole-chain rehearsal, not a production downgrade strategy."""
     import os
     from pathlib import Path
@@ -364,9 +364,9 @@ async def test_revision_chain_0149_0131_0149_preserves_full_state_and_issued_pdf
     config = Config()
     config.set_main_option('script_location', str(Path(__file__).parents[1] / 'migrations'))
     scripts = ScriptDirectory.from_config(config)
-    assert scripts.get_heads() == ['0149']
-    assert [r.revision for r in scripts.iterate_revisions('0149', '0131')] == [
-        f'{number:04}' for number in range(149, 131, -1)
+    assert scripts.get_heads() == ['0150']
+    assert [r.revision for r in scripts.iterate_revisions('0150', '0131')] == [
+        f'{number:04}' for number in range(150, 131, -1)
     ]
     engine = create_engine(MIGRATOR_SYNC_URL)
     try:
@@ -423,7 +423,7 @@ async def test_revision_chain_0149_0131_0149_preserves_full_state_and_issued_pdf
                         historical.rollback()
                     return projected
 
-                assert version() == ('0149',)
+                assert version() == ('0150',)
                 retained = _chain_snapshot(connection)
                 reserve_line_types = ('RESERVE_LATE_CASH', 'RESERVE_ADJUSTMENT')
                 assert any(row['line_type'] == 'RESERVE_ADJUSTMENT' for row in retained['data']['settlement_line'])
@@ -523,7 +523,7 @@ async def test_revision_chain_0149_0131_0149_preserves_full_state_and_issued_pdf
                 down = _chain_snapshot(connection)
                 down['data'].pop('alembic_version')
                 assert down == old
-                migrate('0149', downgrade=False)
+                migrate('0150', downgrade=False)
                 connection.execute(text('SET CONSTRAINTS ALL IMMEDIATE'))
                 assert _chain_snapshot(connection) == head
                 for table, rows in corpus.items():

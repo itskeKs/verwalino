@@ -10,7 +10,58 @@ Source files: `frontend/tailwind.config.cjs` (token mapping), `frontend/src/inde
 classes), `frontend/src/components/ui/` (UI kit), `frontend/src/components/AppShell.tsx`,
 `Sidebar.tsx`, `Topbar.tsx` (shell). Copy and format rules also appear in the
 [frontend rule](.claude/rules/frontend-ui.md). The current theme is light; dark mode is outside this
-contract.
+contract. Two personal light designs are supported: **Klar** (default) and **Warm**.
+Dark mode and additional palettes are outside this change.
+
+### Personal design contract
+
+`/einstellungen` is available to every authenticated role, including read-only.
+Two labelled radio choices show schematic previews: Klar uses cobalt accents and a
+pale vertical desktop navigation; Warm uses petrol horizontal desktop navigation,
+cream content surfaces, sage portfolio panels and grouped property cards.
+The same routes, domain fields, permissions and actions work in both designs.
+The selection is personal to the user, stored in `user.design_theme`, and loaded
+through `GET /api/auth/preferences`; `PATCH` accepts only `design_theme` (`klar` or
+`warm`). Login/session responses stay unchanged. Theme changes update tokens and
+layout without remounting routed work. Account changes discard stale reads/saves.
+
+Choosing a radio is a draft. “Noch nicht gespeichert.” remains until explicit
+“Design speichern” succeeds. “Wird gespeichert …” disables repeat submission;
+failure retains the choice and the last saved appearance. A failed initial read
+shows “Design konnte nicht geladen werden.” and “Erneut laden”, with saving
+disabled. Success says “Design für Ihr Benutzerkonto gespeichert.” Only then does
+the new design apply. No appearance preference is stored in browser storage.
+
+Shared tokens style kit components and legacy forms/buttons/search fields/cards.
+Mobile controls have at least 44 px targets and editable fields use 16 px text.
+The mobile minimum applies to portalled dialogs too, including password
+save/cancel and the close control; it is not scoped only to the app shell.
+Navigation is at the top, with a three-route shortcut row and a menu for every
+other role-appropriate route. Property lists become labelled cards at 360 px;
+Klar retains a desktop table while Warm uses cards on desktop too. Both retain
+the existing address, type, settlement-period and edit fields/actions. Dashboard
+due tasks precede financial selectors, quotas, figures and deadline panels; only
+real API results are shown.
+
+Klar foundations: background `#f5f7fb`, sidebar `#eef2f8`, accent `#2156ca`,
+white panels, 12 px panel radius. Warm: background `#f5f3ee`, navigation `#123f40`,
+accent `#175d5b`, sage `#e8ece2`, white panels, 15 px panel radius. Text stays
+dark ink with clear muted contrast. Global legacy token aliases follow the same
+active palette. Product-specific shell, personal-preview, dashboard and property
+layout classes live in `index.css`; existing domain components remain in place.
+
+The following captures use only synthetic records on the disposable test database.
+The before dashboard shows the previous navigation and financial-first order.
+
+| Screen | Klar desktop / phone | Warm desktop / phone |
+| --- | --- | --- |
+| Dashboard | [1280 px](docs/assets/design/themes-klar-dashboard-1280.png) · [360 px](docs/assets/design/themes-klar-dashboard-360.png) | [1280 px](docs/assets/design/themes-warm-dashboard-1280.png) · [360 px](docs/assets/design/themes-warm-dashboard-360.png) |
+| Properties | [1280 px](docs/assets/design/themes-klar-properties-1280.png) · [360 px](docs/assets/design/themes-klar-properties-360.png) | [1280 px](docs/assets/design/themes-warm-properties-1280.png) · [360 px](docs/assets/design/themes-warm-properties-360.png) |
+| Property form | [1280 px](docs/assets/design/themes-klar-form-1280.png) · [360 px](docs/assets/design/themes-klar-form-360.png) | [1280 px](docs/assets/design/themes-warm-form-1280.png) · [360 px](docs/assets/design/themes-warm-form-360.png) |
+| Personal settings | [1280 px](docs/assets/design/themes-klar-settings-1280.png) · [360 px](docs/assets/design/themes-klar-settings-360.png) | [1280 px](docs/assets/design/themes-warm-settings-1280.png) · [360 px](docs/assets/design/themes-warm-settings-360.png) |
+
+Previous dashboard: [desktop](docs/assets/design/themes-before-dashboard-1280.png) ·
+[phone](docs/assets/design/themes-before-dashboard-360.png).
 
 ## How to build a screen
 
@@ -43,26 +94,26 @@ Tokens are HSL channels on `:root` in `index.css`, exposed to Tailwind in `tailw
 
 | Token (Tailwind) | HSL | Hex | Role |
 |---|---|---|---|
-| `background` | 210 20% 98% | `#f9fafb` | page background, inputs, dialog surface |
-| `foreground` | 222 24% 17% | `#212736` | body text |
+| `background` | 220 43% 97% | `#f5f7fb` | Klar page background; inputs/dialogs use card |
+| `foreground` | 214 37% 15% | `#192536` | body text |
 | `card` / `card-foreground` | 0 0% 100% / as foreground | `#ffffff` | cards, topbar, outline buttons |
 | `primary` | 221 72% 46% | `#2156ca` | main action, links, focus ring, active hover border |
 | `primary-foreground` | 0 0% 100% | `#ffffff` | text on primary |
-| `secondary` | 214 24% 95% | `#eff2f5` | default badge, role chip, quiet panels (`bg-secondary/40`) |
-| `muted` / `muted-foreground` | 214 24% 95% / 215 16% 47% | `#65758b` text | secondary text, hints, descriptions, table headers |
-| `accent` | 214 30% 93% | `#e8ecf3` | hover on outline and ghost buttons, table row hover (50%) |
+| `secondary` | 219 28% 95% | `#eff2f6` | default badge, role chip, quiet panels (`bg-secondary/40`) |
+| `muted` / `muted-foreground` | 214 24% 95% / 216 15% 42% | `#5b687b` text | secondary text, hints, descriptions, table headers |
+| `accent` | 221 83% 95% | `#eaf0fd` | hover on outline and ghost buttons, table row hover (50%) |
 | `destructive` | 0 72% 50% | `#db2424` | error text, destructive button |
-| `border` (`--ui-border`), `input` | 214 20% 89% | `#dde2e9` | all borders and input outlines |
+| `border` (`--ui-border`), `input` | 215 30% 89% / 215 30% 84% | `#dce3ec` / `#cbd5e3` | borders and input outlines |
 | `ring` | 221 72% 46% | `#2156ca` | keyboard focus ring |
-| `sidebar` / `sidebar-foreground` | 222 32% 13% / 214 22% 88% | `#171d2c` / `#dae0e7` | navigation rail |
-| `sidebar-accent` | 221 64% 54% | `#3f6ed5` | active nav item, brand tile |
+| `sidebar` / `sidebar-foreground` | 216 38% 95% / 216 24% 33% | `#eef2f8` / `#46546a` | Klar navigation rail |
+| `sidebar-accent` / foreground | 0 0% 100% / 221 72% 46% | `#ffffff` / `#2156ca` | Klar active nav item; brand tile uses primary |
 
 Semantic colours that are **not** tokens: `ui/badge.tsx` and `ui/stat-card.tsx` use the Tailwind palette
 (blue = primary/type, emerald = success, amber = warning/attention, red = destructive, slate = info/neutral).
 `success` and `warning` exist as tokens but no component uses them. Legacy `.badge--*` classes use fixed
 hex pairs. `--border` (hex) and `--ui-border` (HSL) are different variables: the kit uses `--ui-border`.
-Legacy variables `--color-primary` (`#2456c8`), `--bg-content`, `--text`, `--text-muted` remain for old
-inline styles. Use token colours rather than hard-coded hex values: pick a role from the table;
+Legacy variables `--color-primary`, `--bg-content`, `--text`, `--text-muted` remain as
+aliases to the active semantic tokens for old inline styles. Use token colours rather than hard-coded hex values: pick a role from the table;
 for a new status colour reuse a `Badge` tone.
 
 ### Typography
@@ -85,11 +136,11 @@ for a new status colour reuse a `Badge` tone.
   or `space-y-6` (kit pages), `1.5rem` bottom margin per legacy card. Card padding `p-5` (kit) or
   `1.25rem 1.4rem` (`.card`). Grids: `gap-4` for stat tiles, `gap-6` for main panels, `.form-grid` gap
   `1rem 1.1rem`.
-- Radius: `--radius` = 0.65 rem. `rounded-lg` = radius (cards, tiles), `rounded-md` = radius - 2 px
+- Radius: `--radius` = 0.8 rem for Klar, 1 rem for Warm. `rounded-lg` = radius (cards, tiles), `rounded-md` = radius - 2 px
   (buttons, inputs, nav items), `rounded-sm` = radius - 4 px. Badges and the role chip are `rounded-full`.
 - Elevation is flat: cards and primary buttons `shadow-sm` with a 1 px border; a linked `StatCard` gains
   `shadow-md` and `border-primary/40` on hover; dialogs `shadow-lg` over a `bg-black/50` overlay.
-  Stacking: mobile nav overlay `z-30`, sidebar `z-40`, dialog and overlay `z-50`.
+  Stacking: Warm desktop navigation/dropdown `z-20`/`z-25`, dialog and overlay `z-50`.
 
 ### Icons
 
@@ -191,14 +242,18 @@ the fresh-export control outside the viewport.
 
 ### App shell
 
-`AppShell.tsx`: `flex h-screen overflow-hidden` = **Sidebar** (16 rem) + a column of **Topbar**
-(`h-16`, `border-b bg-card`, `px-4 md:px-8`) and `main` (the scroll container; the window itself never
-scrolls) with the centred `max-w-6xl` content. Topbar right side: role chip (from `sm`), "Passwort ändern"
+`AppShell.tsx`: a viewport-height flex shell with a 220 px **Sidebar** for Klar, or
+horizontal navigation for Warm, plus a column of **Topbar**
+and `main` (the scroll container; the window itself never scrolls) with centred content.
+Klar has a pale 220 px desktop sidebar with grouped disclosures; Warm has petrol
+horizontal desktop navigation with the same grouped links in dropdowns. Topbar right side: role chip (from `sm`), "Passwort ändern"
 (opens the password dialog; label hidden below `sm`), "Abmelden". Signed out, `LoginPage` renders alone
 (own `LoginPage.css`, 380 px card); while the session is probed `App.tsx` shows a centred "Lade...".
 
-Below `md` (768 px) the sidebar is off-canvas (`fixed`, slides in via the hamburger, `bg-black/40`
-overlay, closes on link click or overlay click); from `md` it is static. `AppShell.css`, `Sidebar.css`
+Below `md` (768 px), a top shortcut row offers Übersicht, Objekte and Posteingang.
+The menu opens the grouped navigation in an accessible dialog and closes on route
+selection or Escape. The desktop shell changes at 1024 px for Warm's wider menu.
+`AppShell.css`, `Sidebar.css`
 and `Topbar.css` exist but are imported nowhere; the shell is styled with utilities only.
 
 First-run setup opens when `GET /api/setup` reports `required: true`; the backend
@@ -273,8 +328,9 @@ use `new-password` autocomplete and remain labelled and usable at 360 px.
 
 ### Sidebar groups
 
-Source: `GROUPS` in `Sidebar.tsx`. Active item `bg-sidebar-accent text-sidebar-accent-foreground`,
-idle `text-sidebar-foreground/75`, hover `bg-white/5`; group label 0.68 rem uppercase at 40 % opacity.
+Source: `GROUPS` in `Sidebar.tsx`, shared by both designs and the mobile menu.
+The active group opens automatically; native disclosures group the remaining links.
+Klar highlights the active link on white; Warm uses a pale petrol tint.
 Detail pages (`/objekte/:id`, `/mandate/:id`, ...) have no nav entry; the parent stays highlighted.
 
 | Group | Entries | Visible to |
@@ -288,6 +344,7 @@ Detail pages (`/objekte/:id`, `/mandate/:id`, ...) have no nav entry; the parent
 | Zahlungen | Bankkonten, Zahlungen, Mietkonto, Kautionen, Offene Posten, Mahnungen | all |
 | Verwaltung | Benutzer | `OWNER_ADMIN` |
 | Erweitert | Altquellen, Berechtigungen, Seitenauszüge | `OWNER_ADMIN` |
+| Persönlich | Einstellungen | all |
 
 Navigation entries are `NavItem`s in `GROUPS` (label = German noun, one lucide icon); their routes are in
 `App.tsx`. Add a new top-level screen's nav entry to `GROUPS`; detail pages keep their parent's entry.
@@ -295,7 +352,7 @@ Navigation entries are `NavItem`s in `GROUPS` (label = German noun, one lucide i
 
 ### Page patterns
 
-![Dashboard](docs/assets/design/dashboard-desktop.png)
+![Klar dashboard](docs/assets/design/themes-klar-dashboard-1280.png)
 
 New screens follow these page structures and use a German noun as their `h1`.
 
@@ -420,10 +477,10 @@ scroll sideways; wide tables stay within their own horizontal scroll container.
 
 | Width | Behaviour |
 |---|---|
-| < 640 (`sm`) | stat tiles 1 column; role chip and "Passwort ändern" label hidden; `DialogFooter` stacks (Cancel under primary) |
-| < 768 (`md`) | sidebar off-canvas; page padding 1 rem; `.form-grid` 1 column; `.data-table` 0.82 rem |
+| < 640 (`sm`) | stat tiles 1 column; `DialogFooter` stacks (Cancel under primary) |
+| < 768 (`md`) | top shortcuts and dialog menu; role chip and topbar action labels hidden; page gutter 18 px; `.form-grid` 1 column; property cards; 44 px controls |
 | 640-1023 | stat tiles 2 columns |
-| >= 1024 (`lg`) | stat tiles 4 columns; "Handlungsbedarf" and "Schnellzugriff" side by side (2:1) |
+| >= 1024 (`lg`) | Warm horizontal desktop navigation; stat tiles 4 columns; "Handlungsbedarf" and "Schnellzugriff" side by side (2:1) |
 
 Wide tables use `overflow-x-auto` (`MandatePage.tsx`) or `.paged-list .paged-table` (`index.css`). Long
 content uses `min-w-0` plus `truncate` (`DashboardPage.tsx`) or `overflow-wrap: anywhere`
@@ -434,7 +491,8 @@ and the document upload button extend beyond their card, so `main` scrolls sidew
 
 New screens use the kit components and tokens. Reuse global classes only for what has no kit
 counterpart yet (tables, key-value tables, form grid, error and empty text). Do not add new global
-classes or inline `style={{}}`; the existing inline styles (about 470) are known debt.
+classes or inline `style={{}}` for new domain screens; the existing inline styles
+(about 470) are known debt. The shared design layouts above are owned global classes.
 
 ### UI kit (`frontend/src/components/ui/`)
 
@@ -705,9 +763,9 @@ synthetic browser-intercepted API responses, without starting a backend or acces
 | Legacy source status | `/altquellen` | [Desktop](docs/assets/permissions/after-legacy-desktop.png) | [Phone](docs/assets/permissions/after-legacy-360.png) |
 | Declaration publication | `/teilungserklaerung/import/:id/review`, "Übernahme vorbereiten" | [Desktop](docs/assets/permissions/after-publication-desktop.png) | [Phone](docs/assets/permissions/after-publication-360.png) |
 | Emergency pause | `/berechtigungen` (paused) | [Desktop](docs/assets/permissions/paused-overview-desktop.png) | [Phone](docs/assets/permissions/paused-overview-360.png) |
-| Dashboard | `/` | [`dashboard-desktop.png`](docs/assets/design/dashboard-desktop.png) | [`dashboard-360.png`](docs/assets/design/dashboard-360.png) |
+| Dashboard (Klar) | `/` | [desktop](docs/assets/design/themes-klar-dashboard-1280.png) | [phone](docs/assets/design/themes-klar-dashboard-360.png) |
 | Hosted dashboard quota | `/`, free plan at 90% | [`dashboard-quota-1280.png`](docs/assets/design/dashboard-quota-1280.png) | [`dashboard-quota-360.png`](docs/assets/design/dashboard-quota-360.png) |
-| List | `/objekte` | [`list-objekte-desktop.png`](docs/assets/design/list-objekte-desktop.png) | [`list-objekte-360.png`](docs/assets/design/list-objekte-360.png) |
+| List (Klar) | `/objekte` | [desktop](docs/assets/design/themes-klar-properties-1280.png) | [phone](docs/assets/design/themes-klar-properties-360.png) |
 | Detail | `/objekte/:id` | [`detail-objekt-desktop.png`](docs/assets/design/detail-objekt-desktop.png) | [`detail-objekt-360.png`](docs/assets/design/detail-objekt-360.png) |
 | Hosted signup | `/signup` | [`signup-desktop.png`](docs/assets/design/signup-desktop.png) | [`signup-360.png`](docs/assets/design/signup-360.png) |
 | Signup confirmation, retryable password error | `/signup/confirm` | [`signup-confirm-desktop.png`](docs/assets/design/signup-confirm-desktop.png) | [`signup-confirm-360.png`](docs/assets/design/signup-confirm-360.png) |

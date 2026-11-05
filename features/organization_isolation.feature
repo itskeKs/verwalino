@@ -8,6 +8,11 @@ Feature: Organization isolation
     And each organization has a property, a person and a bank account of its own
     And an administrator of "Verwaltung Alpha" is signed in
 
+  Scenario: Personal appearance cannot change another organization's users
+    Given the organizations have independent personal designs
+    When Verwaltung Alpha changes its personal design
+    Then Verwaltung Beta keeps its personal design
+
   Scenario Outline: A user sees only the <records> of their own organization
     When the user lists the <records>
     Then the list shows the <records> of "Verwaltung Alpha"

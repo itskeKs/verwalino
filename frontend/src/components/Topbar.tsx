@@ -2,7 +2,8 @@
  * Top bar (UI-Kit) -- hamburger (mobile), spacer, role chip + logout.
  */
 
-import { Menu, LogOut, Key } from "lucide-react";
+import { Menu, LogOut, Key, House, Settings } from "lucide-react";
+import { Link } from "react-router-dom";
 import { useAuth } from "../auth/useAuth";
 import { Button } from "./ui/button";
 import { useState } from "react";
@@ -80,27 +81,31 @@ export function Topbar({ onToggleSidebar }: Props) {
   };
 
   return (
-    <header className="flex h-16 shrink-0 items-center gap-3 border-b border-border bg-card px-4 md:px-8">
+    <header className="app-topbar">
       <button
-        className="flex h-9 w-9 items-center justify-center rounded-md text-foreground hover:bg-accent md:hidden"
+        className="app-menu-button"
         onClick={onToggleSidebar}
         aria-label="Navigation umschalten"
       >
         <Menu className="h-5 w-5" />
       </button>
 
+      <Link to="/" className="topbar-brand"><House aria-hidden="true" />verwalino</Link>
+      <span className="topbar-context">Ihr Arbeitsbereich</span>
       <div className="flex-1" />
 
       {session && (
-        <div className="flex items-center gap-3">
+        <div className="topbar-actions">
           <span className="hidden rounded-full bg-secondary px-3 py-1 text-xs font-medium text-secondary-foreground sm:inline">
             {roleLabelDe(session.role)}
           </span>
+          <Link to="/einstellungen" className="topbar-settings" aria-label="Einstellungen"><Settings aria-hidden="true" /><span>Einstellungen</span></Link>
           <Button
             variant="ghost"
             size="sm"
             onClick={() => setPasswordDialogOpen(true)}
             title="Passwort ändern"
+            aria-label="Passwort ändern"
           >
             <Key className="h-4 w-4" />
             <span className="hidden sm:inline">Passwort ändern</span>

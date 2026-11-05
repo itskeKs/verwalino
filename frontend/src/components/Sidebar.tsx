@@ -1,11 +1,9 @@
 /**
- * Modern sidebar navigation (UI-Kit) -- dark rail with grouped, icon-led links.
- *
- * Desktop (md+): static, always visible. Mobile: off-canvas, slides in when
- * `open`. Admin-only links appear only for OWNER_ADMIN.
+ * Grouped navigation shared by Klar, Warm and the accessible mobile menu.
+ * Admin-only links appear only for OWNER_ADMIN.
  */
 
-import { NavLink } from "react-router-dom";
+import { NavLink, useLocation } from "react-router-dom";
 import {
   LayoutDashboard,
   CalendarClock,
@@ -27,10 +25,14 @@ import {
   BellRing,
   UserCog,
   KeyRound,
+  House,
+  Settings,
+  ChevronDown,
   type LucideIcon,
 } from "lucide-react";
 import { useAuth } from "../auth/useAuth";
-import { cn } from "../lib/utils";
+import { Dialog, DialogContent, DialogTitle, DialogDescription } from "./ui/dialog";
+import { useDesignTheme } from "../design/useDesignTheme";
 
 interface Props {
   open: boolean;
@@ -115,6 +117,10 @@ const GROUPS: NavGroup[] = [
     items: [{ to: "/users", label: "Benutzer", icon: UserCog }],
   },
   {
+    label: "Persönlich",
+    items: [{ to: "/einstellungen", label: "Einstellungen", icon: Settings }],
+  },
+  {
     label: "Erweitert",
     adminOnly: true,
     items: [
@@ -128,53 +134,27 @@ const GROUPS: NavGroup[] = [
 export function Sidebar({ open, onClose }: Props) {
   const { session } = useAuth();
   const isAdmin = session?.role === "OWNER_ADMIN";
+  return <>
+    <aside className="app-sidebar"><div className="app-brand"><span><House aria-hidden="true" /></span>verwalino</div><NavigationLinks isAdmin={isAdmin} onClose={onClose} /></aside>
+    <Dialog open={open} onOpenChange={value => { if (!value) onClose(); }}><DialogContent className="navigation-dialog"><DialogTitle>Navigation</DialogTitle><DialogDescription>Alle Bereiche Ihres Arbeitsbereichs.</DialogDescription><NavigationLinks isAdmin={isAdmin} onClose={onClose} /></DialogContent></Dialog>
+  </>;
+}
 
-  return (
-    <aside
-      className={cn(
-        "fixed inset-y-0 left-0 z-40 flex w-64 flex-col bg-sidebar text-sidebar-foreground transition-transform duration-200 md:static md:translate-x-0",
-        open ? "translate-x-0" : "-translate-x-full",
-      )}
-    >
-      {/* Brand */}
-      <div className="flex h-16 shrink-0 items-center gap-2.5 px-5">
-        <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-sidebar-accent text-sidebar-accent-foreground">
-          <KeyRound className="h-4 w-4" />
-        </span>
-        <span className="text-[0.95rem] font-semibold tracking-tight text-white">
-          Hausverwaltung
-        </span>
-      </div>
+const PRIMARY_PATHS = ["/", "/objekte", "/posteingang"];
 
-      {/* Nav */}
-      <nav className="flex-1 overflow-y-auto px-3 pb-6">
-        {GROUPS.filter((g) => !g.adminOnly || isAdmin).map((group) => (
-          <div key={group.label} className="mb-1">
-            <p className="px-3 pb-1 pt-4 text-[0.68rem] font-semibold uppercase tracking-wider text-sidebar-foreground/40">
-              {group.label}
-            </p>
-            {group.items.map((item) => (
-              <NavLink
-                key={item.to}
-                to={item.to}
-                end={item.end}
-                onClick={onClose}
-                className={({ isActive }) =>
-                  cn(
-                    "flex items-center gap-3 rounded-md px-3 py-2 text-sm font-medium transition-colors",
-                    isActive
-                      ? "bg-sidebar-accent text-sidebar-accent-foreground shadow-sm"
-                      : "text-sidebar-foreground/75 hover:bg-white/5 hover:text-white",
-                  )
-                }
-              >
-                <item.icon className="h-[1.05rem] w-[1.05rem] shrink-0" />
-                <span className="truncate">{item.label}</span>
-              </NavLink>
-            ))}
-          </div>
-        ))}
-      </nav>
-    </aside>
-  );
+function NavigationLinks({ isAdmin, onClose }: { isAdmin: boolean; onClose: () => void }) {
+  const { pathname } = useLocation();
+  const { theme } = useDesignTheme();
+  const groups = GROUPS.filter(group => !group.adminOnly || isAdmin);
+  const primary = groups.flatMap(group => group.items).filter(item => PRIMARY_PATHS.includes(item.to));
+  const link = (item: NavItem) => <NavLink key={item.to} to={item.to} end={item.end} onClick={onClose} className="app-nav-link"><item.icon aria-hidden="true" /><span>{item.to === "/" ? "Übersicht" : item.label}</span></NavLink>;
+  return <nav className="app-navigation" aria-label="Hauptnavigation">
+    <div className="primary-navigation">{primary.map(link)}</div>
+    <details className="navigation-more" key={pathname} open={theme === "klar" && !PRIMARY_PATHS.includes(pathname) || undefined}><summary>Weitere Bereiche<ChevronDown aria-hidden="true" /></summary><div className="navigation-groups">{groups.map(group => {
+      const items = group.items.filter(item => !PRIMARY_PATHS.includes(item.to));
+      if (!items.length) return null;
+      const active = items.some(item => pathname === item.to || pathname.startsWith(item.to + "/"));
+      return <details className="navigation-group" key={group.label} open={active || undefined}><summary>{group.label}<ChevronDown aria-hidden="true" /></summary><div>{items.map(link)}</div></details>;
+    })}</div></details>
+  </nav>;
 }

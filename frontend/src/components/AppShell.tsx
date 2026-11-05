@@ -1,12 +1,14 @@
 /**
- * Application shell (UI-Kit): dark sidebar rail + topbar + scrolling content.
- * Desktop: sidebar static. Mobile: off-canvas sidebar with a dimming overlay.
+ * Shared routed work with personal Klar/Warm navigation and design tokens.
  */
 
 import { useState, type ReactNode } from "react";
 import { OrganizationDeletionBanner } from "./OrganizationDeletionBanner";
 import { Topbar } from "./Topbar";
 import { Sidebar } from "./Sidebar";
+import { useDesignTheme } from "../design/useDesignTheme";
+import { NavLink } from "react-router-dom";
+import { LayoutDashboard, Building2, Inbox } from "lucide-react";
 
 interface Props {
   children: ReactNode;
@@ -14,22 +16,21 @@ interface Props {
 
 export function AppShell({ children }: Props) {
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const { theme } = useDesignTheme();
 
   return (
-    <div className="flex h-screen overflow-hidden bg-background">
+    <div className={`app-layout app-layout--${theme}`} data-design-theme={theme}>
       <Sidebar open={sidebarOpen} onClose={() => setSidebarOpen(false)} />
 
-      {sidebarOpen && (
-        <div
-          className="fixed inset-0 z-30 bg-black/40 md:hidden"
-          onClick={() => setSidebarOpen(false)}
-        />
-      )}
-
-      <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
+      <div className="app-workspace">
         <Topbar onToggleSidebar={() => setSidebarOpen((o) => !o)} />
-        <main className="flex-1 overflow-y-auto px-4 py-6 md:px-8 md:py-8">
-          <div className="mx-auto max-w-6xl"><OrganizationDeletionBanner />{children}</div>
+        <nav className="mobile-shortcuts" aria-label="Schnellnavigation">
+          <NavLink to="/" end><LayoutDashboard aria-hidden="true" />Übersicht</NavLink>
+          <NavLink to="/objekte"><Building2 aria-hidden="true" />Objekte</NavLink>
+          <NavLink to="/posteingang"><Inbox aria-hidden="true" />Posteingang</NavLink>
+        </nav>
+        <main className="app-main">
+          <div className="app-page"><OrganizationDeletionBanner />{children}</div>
         </main>
       </div>
     </div>

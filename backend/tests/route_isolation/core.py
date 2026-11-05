@@ -165,6 +165,8 @@ PROBES: dict[str, Probe] = {
     "POST /api/attachments/{attachment_id}/archive": Probe(row("attachment", attachment_id="id")),
     # app/api/auth.py
     "GET /api/auth/session": Probe(),
+    "GET /api/auth/preferences": Probe(),
+    "PATCH /api/auth/preferences": Probe(body={"design_theme": "klar"}),
     # app/api/cost_categories.py
     "GET /api/cost-categories": Probe(),
     # app/api/dsgvo.py

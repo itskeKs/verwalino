@@ -401,6 +401,11 @@ def clear_disposable_source_context(cursor):
     cursor.execute("SELECT EXISTS(SELECT 1 FROM information_schema.columns WHERE table_schema='public' AND table_name='user' AND column_name='session_version')")
     if cursor.fetchone()[0]:
         cursor.execute('UPDATE public."user" SET session_version=0 WHERE session_version<>0')
+    cursor.execute("SELECT EXISTS(SELECT 1 FROM information_schema.columns WHERE table_schema='public' AND table_name='user' AND column_name='design_theme')")
+    if cursor.fetchone()[0]:
+        # Only the guarded disposable database is reset; production downgrade
+        # still refuses to discard a user's selected non-default appearance.
+        cursor.execute('UPDATE public."user" SET design_theme=\'klar\' WHERE design_theme<>\'klar\'')
     cursor.execute("SELECT to_regprocedure('public.guard_property_source_context()')")
     if not cursor.fetchone()[0]:
         return
@@ -611,19 +616,22 @@ def _upgrade_test_database(alembic_cfg):
     upgraded_lifecycle_tables = rehearse_initial_upgrade('0147')
     command.upgrade(alembic_cfg, '0148')  # accepted source
     upgraded_retention_tables = rehearse_initial_upgrade('0148')
+    command.upgrade(alembic_cfg, '0149')
+    upgraded_reserve_tables = rehearse_initial_upgrade('0149')
     command.upgrade(alembic_cfg, "head")
-    return {'upgrade_0028_to_0149_tables': upgraded_0028_tables,
-            'upgrade_0122_to_0149_tables': upgraded_tables,
-            'upgrade_0139_to_0149_tables': upgraded_0139_tables,
-            'upgrade_0140_to_0149_tables': upgraded_parent_tables,
-            'upgrade_0141_to_0149_tables': upgraded_setup_tables,
-            'upgrade_0142_to_0149_tables': upgraded_throttle_tables,
-            'upgrade_0143_to_0149_tables': upgraded_lease_tables,
-            'upgrade_0144_to_0149_tables': upgraded_signup_tables,
-            'upgrade_0145_to_0149_tables': upgraded_reset_tables,
-            'upgrade_0146_to_0149_tables': upgraded_quota_tables,
-            'upgrade_0147_to_0149_tables': upgraded_lifecycle_tables,
-            'upgrade_0148_to_0149_tables': upgraded_retention_tables}  # accepted source
+    return {'upgrade_0028_to_0150_tables': upgraded_0028_tables,
+            'upgrade_0122_to_0150_tables': upgraded_tables,
+            'upgrade_0139_to_0150_tables': upgraded_0139_tables,
+            'upgrade_0140_to_0150_tables': upgraded_parent_tables,
+            'upgrade_0141_to_0150_tables': upgraded_setup_tables,
+            'upgrade_0142_to_0150_tables': upgraded_throttle_tables,
+            'upgrade_0143_to_0150_tables': upgraded_lease_tables,
+            'upgrade_0144_to_0150_tables': upgraded_signup_tables,
+            'upgrade_0145_to_0150_tables': upgraded_reset_tables,
+            'upgrade_0146_to_0150_tables': upgraded_quota_tables,
+            'upgrade_0147_to_0150_tables': upgraded_lifecycle_tables,
+            'upgrade_0148_to_0150_tables': upgraded_retention_tables,
+            'upgrade_0149_to_0150_tables': upgraded_reserve_tables}  # accepted source
 
 
 @pytest.fixture(scope="session", autouse=True)

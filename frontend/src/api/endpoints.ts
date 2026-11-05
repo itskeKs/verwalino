@@ -3,6 +3,14 @@
  */
 
 import { api, uploadFormData } from "./client";
+import type { DesignTheme, UserPreferences } from "./types";
+
+export function getPreferences(signal?: AbortSignal): Promise<UserPreferences> {
+  return api.get("/api/auth/preferences", { signal });
+}
+export function updatePreferences(designTheme: DesignTheme, signal?: AbortSignal): Promise<UserPreferences> {
+  return api.patch("/api/auth/preferences", { design_theme: designTheme }, { signal });
+}
 import type { ReserveLedger, ReserveOverride } from './types';
 
 export function getReserveLedger(runId: string): Promise<ReserveLedger> {
