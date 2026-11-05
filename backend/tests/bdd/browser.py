@@ -62,7 +62,7 @@ def browser_app(seed_data, request):
     env.update(HV_DECLARATION_IMPORT_ENABLED="false", HV_INVOICE_EXTRACTION_ENABLED="false")
     env["HV_DEPLOYMENT_MODE"] = get_deployment_policy().deployment_mode
     commands = [
-        ([sys.executable, "-m", "uvicorn", "app.main:app", "--host", "127.0.0.1", "--port", "18000"], ROOT / "backend", "http://127.0.0.1:18000/api/health/live"),
+        ([sys.executable, "-m", "uvicorn", "tests.dunning_response_app:app", "--host", "127.0.0.1", "--port", "18000"], ROOT / "backend", "http://127.0.0.1:18000/api/health/live"),
         (["node", "node_modules/vite/bin/vite.js", "--host", "127.0.0.1", "--port", "13000", "--strictPort"], ROOT / "frontend", BASE_URL),
     ]
     def interrupt(signum, frame):

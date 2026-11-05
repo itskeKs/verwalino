@@ -149,6 +149,11 @@ a payment list balance of 650 EUR and a cost gross total of 125 EUR including ex
 
 ## Default interest on dunning notices (Verzugszinsen)
 
+Creating an individual tenant or owner notice opens its saved draft immediately.
+The successful creation response commits the draft before the detail request can
+start; no reload or second creation is needed. Amounts, dates, interest and the
+immutable issued notice retain their existing calculation and snapshot rules.
+
 Both dunning notice forms require an explicitly reviewed „Basiszinssatz (%)“ (base interest rate).
 Without a configured default the field stays empty; see
 [dunning interest defaults](../../DEPLOY.md#dunning-interest-defaults).
