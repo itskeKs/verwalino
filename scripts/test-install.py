@@ -7,10 +7,11 @@ import os
 from pathlib import Path
 import shutil
 import socket
-import subprocess
 import sys
 import tempfile
 import unittest
+
+from installer_test_process import install_interrupt_handlers, run, unittest_main
 
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = ROOT / "install.sh"
@@ -144,7 +145,7 @@ class InstallTests(unittest.TestCase):
         if not (self.dest / ".env.selfhost").exists() and "--port" not in args:
             options += ["--port", TEST_PORT]
         command = ["/bin/bash", "-s", "--"] if piped else ["/bin/bash", str(SCRIPT)]
-        return subprocess.run(command + options + list(args), env=self.env, cwd=self.base,
+        return run(command + options + list(args), env=self.env, cwd=self.base,
                               input=SCRIPT.read_text() if piped and SCRIPT.exists() else None,
                               text=True, capture_output=True, timeout=15, check=False)
 
@@ -329,7 +330,7 @@ class InstallTests(unittest.TestCase):
 
     def test_truncated_piped_script_does_not_create_installation_files(self):
         script = SCRIPT.read_text().split('stage=$(mktemp', 1)[0]
-        subprocess.run(["/bin/bash", "-s", "--", "--dir", str(self.dest), "--version", TAG],
+        run(["/bin/bash", "-s", "--", "--dir", str(self.dest), "--version", TAG],
                        env=self.env, cwd=self.base, input=script, text=True,
                        capture_output=True, timeout=15, check=False)
         self.assertFalse(self.dest.exists())
@@ -433,4 +434,5 @@ class InstallTests(unittest.TestCase):
 
 
 if __name__ == "__main__":
-    unittest.main()
+    install_interrupt_handlers()
+    unittest_main()

@@ -23,12 +23,17 @@ from pathlib import Path
 
 import yaml
 
+from installer_test_process import install_interrupt_handlers, managed_process, run, unittest_main
+
 ROOT = Path(__file__).resolve().parents[1]
 RELEASE_TARGET = runpy.run_path(str(ROOT / "backend/app/deployment.py"))["TARGET"]
 SECRETS = ("MIGRATOR_PASSWORD", "APP_RW_PASSWORD", "APP_WORKER_PASSWORD", "APP_REVIEW_PASSWORD", "SESSION_SECRET")
+if __name__ == "__main__":
+    install_interrupt_handlers()
+
 PATH_BASH = shutil.which("bash")
-PATH_BASH_VERSION = subprocess.check_output([PATH_BASH, "--version"], text=True).splitlines()[0]
-MAC_BASH_VERSION = (subprocess.check_output(["/bin/bash", "--version"], text=True).splitlines()[0]
+PATH_BASH_VERSION = run([PATH_BASH, "--version"], text=True, capture_output=True, check=True).stdout.splitlines()[0]
+MAC_BASH_VERSION = (run(["/bin/bash", "--version"], text=True, capture_output=True, check=True).stdout.splitlines()[0]
                     if Path("/bin/bash").exists() else "unavailable")
 SMTP = {
     "HV_SMTP_HOST": "smtp.example.invalid", "HV_SMTP_PORT": "465",
@@ -46,15 +51,15 @@ with socket.socket() as port_probe:
 
 class FormatIsolationTests(unittest.TestCase):
     def test_format_target_excludes_the_regular_database_fixture_tree(self):
-        result = subprocess.run(['make', '-n', 'test-selfhost-format'], cwd=ROOT,
-                                check=True, capture_output=True, text=True)
+        result = run(['make', '-n', 'test-selfhost-format'], cwd=ROOT,
+                     check=True, capture_output=True, text=True)
         command = result.stdout.split('pytest ', 1)[1]
         self.assertIn('--noconftest', command)
         self.assertIn('tests/test_selfhost_backup_format.py', command)
         self.assertNotIn('tests/test_reserve_ledger.py', command)
 
     def test_format_mode_rejects_a_regular_test_session_before_fixtures(self):
-        result = subprocess.run([
+        result = run([
             '/bin/bash', '-c', '. ./scripts/test-env.sh; export VERWALINO_FORMAT_TEST=1; '
             'cd backend; exec "$@"', 'format-session-guard', sys.executable, '-m', 'pytest',
             '--collect-only', '-q', 'tests/test_selfhost_backup_format.py',
@@ -390,9 +395,8 @@ if "run" in sys.argv and "bootstrap" in sys.argv:
         if stderr_closed:
             command = [self.bash, "-c", 'exec 2>&-; exec "$@"', "closed-stderr", *command]
         # Restore diagnostics spawn many fake CLI processes; allow for host load.
-        return subprocess.run(command, env=self.env, input=input,
-                              text=True, stdout=subprocess.PIPE, stderr=stderr, cwd=self.base, check=False,
-                              timeout=60, start_new_session=True)
+        return run(command, env=self.env, input=input,
+                   text=True, stdout=subprocess.PIPE, stderr=stderr, cwd=self.base, timeout=60)
 
     def init(self, *args):
         result = self.run_script("init", *args)
@@ -878,9 +882,8 @@ os.execv({str(self.base / "bin/docker")!r}, ["docker", *sys.argv[1:]])
 ''')
         docker.chmod(0o755)
         command = [self.bash, str(self.root / "scripts/self-host.sh"), "update", "--image", self.new_image, "--yes"]
-        with subprocess.Popen(command, env=self.env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                              cwd=self.base, start_new_session=True) as process:
-            self.addCleanup(lambda: process.kill() if process.poll() is None else None)
+        with managed_process(command, env=self.env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                             cwd=self.base) as process:
             os.set_blocking(process.stdout.fileno(), False)
             deadline = time.monotonic() + 30
             while not switched.exists():
@@ -1280,7 +1283,7 @@ os.execv("/bin/mv", ["mv", *sys.argv[1:]])
         restored = self.run_script("restore", str(archive), "--yes")
         self.assertEqual(restored.returncode, 0, restored.stderr)
         self.log.unlink()
-        launched = subprocess.run(shlex.split(command), env=self.env, text=True, capture_output=True, check=False, timeout=15)
+        launched = run(shlex.split(command), env=self.env, text=True, capture_output=True, check=False, timeout=15)
         self.assertEqual(launched.returncode, 0, launched.stderr)
         args, = [c["args"] for c in self.calls()]
         self.assertEqual(args[args.index("up"):],
@@ -1304,7 +1307,7 @@ os.execv("/bin/mv", ["mv", *sys.argv[1:]])
                         HV_SMTP_SECURITY="starttls", HV_SMTP_USERNAME="attacker", HV_SMTP_PASSWORD="wrong",
                         HV_SMTP_TIMEOUT_SECONDS="5")
         self.log.unlink()
-        launched = subprocess.run(shlex.split(command), env=self.env, text=True, capture_output=True, check=False, timeout=15)
+        launched = run(shlex.split(command), env=self.env, text=True, capture_output=True, check=False, timeout=15)
         app, = [c for c in self.calls() if "up" in c["args"] and c["args"][-1] == "app"]
         self.assertEqual(app["smtp"], {key: value for key, value in SMTP.items() if key != "HV_SMTP_PASSWORD"})
         self.assertTrue(app["smtp_password_matches"])
@@ -1502,7 +1505,7 @@ os.execv("/bin/mv", ["mv", *sys.argv[1:]])
         self.assertEqual(self.calls(), [])
         paths = ["backups/private.dump", "verwalino-backup-20261030T120000Z.tar", ".verwalino-backup.abcdef/db.dump"]
         for path in paths:
-            ignored = subprocess.run(["git", "check-ignore", "--no-index", path], cwd=ROOT, capture_output=True, text=True)
+            ignored = run(["git", "check-ignore", "--no-index", path], cwd=ROOT, capture_output=True, text=True)
             self.assertEqual(ignored.returncode, 0, path)
 
     def test_backup_refuses_missing_or_ambiguous_schema_head(self):
@@ -2512,7 +2515,7 @@ class InstallMatrixWorkflowTests(unittest.TestCase):
                     for tool in tools:
                         if tool != missing:
                             (binary / tool).symlink_to(shutil.which("true"))
-                    result = subprocess.run([shutil.which("bash"), "-e", "-c", check],
+                    result = run([shutil.which("bash"), "-e", "-c", check],
                                             env=dict(os.environ, PATH=str(binary)), capture_output=True,
                                             text=True, check=False, timeout=5)
                     self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
@@ -2680,7 +2683,7 @@ class ReleaseBundleTests(unittest.TestCase):
                 target.parent.mkdir(parents=True, exist_ok=True)
                 target.write_bytes((ROOT / path).read_bytes())
             digest = "sha256:" + "a" * 64
-            result = subprocess.run(["bash", "-euo", "pipefail", "-c", step["run"]],
+            result = run(["bash", "-euo", "pipefail", "-c", step["run"]],
                                     cwd=root, env=dict(os.environ, DIGEST=digest),
                                     text=True, capture_output=True, check=False, timeout=15)
             self.assertEqual(result.returncode, 0, result.stderr)
@@ -2716,4 +2719,4 @@ def load_tests(loader, tests, pattern):
 
 if __name__ == "__main__":
     print(f"PATH bash: {PATH_BASH_VERSION}\n/bin/bash: {MAC_BASH_VERSION}", file=sys.stderr)
-    unittest.main()
+    unittest_main()
