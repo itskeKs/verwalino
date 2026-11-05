@@ -14,6 +14,7 @@ import signal
 import socket
 import stat
 import subprocess
+import sys
 import tarfile
 import tempfile
 import time
@@ -118,6 +119,8 @@ if tool == "git":
                 info = tarfile.TarInfo(name)
                 info.size = len(data)
                 archive.addfile(info, io.BytesIO(data))
+        if "archive-after-output" in fail:
+            sys.exit(17)
     sys.exit(0)
 
 # docker
@@ -229,6 +232,12 @@ class ServerCase(unittest.TestCase):
         for tool in ("docker", "git", "curl", "sleep", "date"):
             (binary / tool).write_text(FAKE_TOOL)
             (binary / tool).chmod(0o755)
+        if sys.platform == "darwin":
+            # Model the Debian host: BSD tar can close the pipe before Git's final record.
+            gnu_tar = shutil.which("gtar")
+            if gnu_tar is None:
+                self.fail("Hosted-server contracts require GNU tar on macOS: brew install gnu-tar")
+            (binary / "tar").symlink_to(gnu_tar)
         self.env = {k: v for k, v in os.environ.items() if not k.startswith(("VERWALINO_", "FAKE_", "COMPOSE_", "SSH_"))}
         self.env.update(PATH=f"{binary}:{os.environ['PATH']}", VERWALINO_SERVER_ROOT=str(self.srv),
                         VERWALINO_CONFIG=str(self.config), FAKE_LOG=str(self.log),
@@ -1136,6 +1145,43 @@ class StagingDeployTests(ServerCase):
         exported = self.srv / "staging/infra/db/prod-init.sh"
         self.assertEqual(stat.S_IMODE(exported.stat().st_mode), 0o755)
         self.assertTrue(exported.parent.stat().st_mode & stat.S_IXOTH)
+
+    def test_staging_archive_preserves_runtime_contents_and_modes_with_both_producers(self):
+        for producer in ({}, {"FAKE_REAL_ARCHIVE": "1", "REAL_GIT": shutil.which("git")}):
+            with self.subTest(producer=producer):
+                result = self.deploy(**producer)
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                for name in ("docker-compose.staging.yml", "db/prod-init.sh", "Caddyfile",
+                             "Caddyfile.staging", "Caddyfile.site"):
+                    exported = self.srv / "staging/infra" / name
+                    self.assertEqual(exported.read_bytes(), (ROOT / "infra" / name).read_bytes())
+                    self.assertEqual(stat.S_IMODE(exported.stat().st_mode),
+                                     0o755 if name == "db/prod-init.sh" else 0o640)
+                shutil.rmtree(self.srv / "staging")
+
+    def test_archive_producer_failure_stops_before_docker_and_preserves_staging_config(self):
+        before = self.staging.read_bytes()
+        result = self.deploy(FAKE_FAIL="archive-after-output")
+        self.assertEqual(result.returncode, 17, result.stdout + result.stderr)
+        self.assertIn('FAILED at step "export staging runtime files"', result.stdout)
+        self.assertIn("rollback: staging old-staging-sha", result.stdout)
+        self.assertEqual(self.calls("docker"), [])
+        self.assertEqual(self.staging.read_bytes(), before)
+        self.assertEqual(self.config.read_bytes(), self.production)
+        self.assertFalse((self.srv / "logs/.deploy.lock").exists())
+
+    def test_archive_extraction_failure_stops_before_docker_and_preserves_staging_config(self):
+        before = self.staging.read_bytes()
+        (self.srv / "staging").mkdir()
+        (self.srv / "staging/infra").write_text("not a directory")
+        result = self.deploy()
+        self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+        self.assertIn('FAILED at step "export staging runtime files"', result.stdout)
+        self.assertIn("rollback: staging old-staging-sha", result.stdout)
+        self.assertEqual(self.calls("docker"), [])
+        self.assertEqual(self.staging.read_bytes(), before)
+        self.assertEqual(self.config.read_bytes(), self.production)
+        self.assertFalse((self.srv / "logs/.deploy.lock").exists())
 
     def test_staging_pins_main_image_and_runs_only_its_project_without_checkout_or_backup(self):
         result = self.deploy()
