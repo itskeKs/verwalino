@@ -56,8 +56,25 @@ def _defer_interrupt():
             _raise_interrupt()
 
 
-def _child_status(child):
-    return os.waitid(os.P_PID, child.pid, os.WEXITED | os.WNOHANG | os.WNOWAIT)
+class _OwnedProcess(subprocess.Popen):
+    def poll(self):
+        # Keep waitpid and recording returncode in one interruption-free
+        # section. Teardown can then trust that an unset returncode means
+        # the group leader has not been reaped and its ID cannot be reused.
+        with _defer_interrupt():
+            return super().poll()
+
+    def wait(self, timeout=None):
+        deadline = None if timeout is None else time.monotonic() + timeout
+        while (returncode := self.poll()) is None:
+            delay = 0.01
+            if deadline is not None:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    raise subprocess.TimeoutExpired(self.args, timeout)
+                delay = min(delay, remaining)
+            time.sleep(delay)
+        return returncode
 
 
 def _signal_group(child, signum):
@@ -65,26 +82,20 @@ def _signal_group(child, signum):
         os.killpg(child.pid, signum)
     except ProcessLookupError:
         return False
-    except PermissionError:
-        # macOS returns EPERM for a group containing only zombies.
-        if sys.platform != "darwin" or _child_status(child) is None:
-            raise
-        return False
     return True
 
 
 def _stop_group(child, term_grace):
-    # A signal can interrupt Popen just after waitpid, before it records
-    # returncode. Confirm the leader is still our child without reaping it,
-    # and hold its PID until after the final group signal.
-    try:
-        _child_status(child)
-    except ChildProcessError:
-        return
+    # Hold the unreaped leader's PID until after the final group signal.
     try:
         if _signal_group(child, signal.SIGTERM):
             time.sleep(term_grace)
             _signal_group(child, signal.SIGKILL)
+    except PermissionError:
+        # macOS can return EPERM when only zombies remain. The bounded wait
+        # below still has to confirm that the owned leader exited.
+        if sys.platform != "darwin":
+            raise
     finally:
         child.wait(timeout=KILL_WAIT_SECONDS)
 
@@ -113,7 +124,7 @@ def managed_process(args, *, term_grace=TERM_GRACE_SECONDS, **kwargs):
             # Do not let a signal land between spawning and taking ownership.
             # Deferring in Python avoids inheriting a blocked signal mask.
             with _defer_interrupt():
-                child = subprocess.Popen(args, start_new_session=True, **kwargs)
+                child = _OwnedProcess(args, start_new_session=True, **kwargs)
             yield child
         finally:
             _finish(child, term_grace)
