@@ -24,6 +24,8 @@ class CostEntry(Base, UUIDPrimaryKeyMixin, TimestampMixin):
         UniqueConstraint("organization_id", "id", name="uq_cost_entry_organization_id_id"),
         ForeignKeyConstraint(["organization_id", "vendor_id"], ["vendor.organization_id", "vendor.id"],
             name="fk_cost_entry_vendor_id_tenant", ondelete="RESTRICT"),
+        ForeignKeyConstraint(["organization_id", "bank_coverage_successor_id"], ["cost_entry.organization_id", "cost_entry.id"],
+            name="fk_cost_entry_bank_successor"),
     )
 
     organization_id: Mapped[uuid.UUID] = mapped_column(
@@ -105,3 +107,6 @@ class CostEntry(Base, UUIDPrimaryKeyMixin, TimestampMixin):
         ForeignKey("cost_entry.id", ondelete="RESTRICT"),
         nullable=True,
     )
+
+    # Reviewed regrouping has a separate, explicitly selected coverage successor.
+    bank_coverage_successor_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)

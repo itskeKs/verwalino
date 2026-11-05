@@ -1,6 +1,7 @@
 """Historical migration setup inside rollback-only, guarded test savepoints."""
 from pathlib import Path
 from contextlib import contextmanager
+from importlib import import_module
 import json
 from uuid import UUID
 
@@ -8,6 +9,18 @@ from alembic.script import ScriptDirectory
 from sqlalchemy import text
 
 from tests.conftest import clear_disposable_source_context
+
+
+def rewind_bank_allocation_functions(connection):
+    """Expose pre-bank function bodies for bespoke allocation DDL rehearsals.
+
+    Keep the current schema and retained data in the enclosing savepoint.
+    The caller rolls back all function changes after rehearsing older DDL.
+    """
+    if not connection.in_nested_transaction():
+        raise RuntimeError('Historical allocation functions require a rollback-only savepoint')
+    import_module('migrations.versions.0173_preserve_bank_cost_evidence')._patch_functions(reverse=True)
+    import_module('migrations.versions.0172_bank_cost_corrections').patch_functions(reverse=True)
 
 
 def source_security_function_templates(connection):

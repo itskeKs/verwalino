@@ -647,6 +647,7 @@ export interface CostEntry {
   confirmed_at: string | null;
   confirmed_by: string | null;
   superseded_by_id: string | null;
+  bank_open_amount?: string | null;
 }
 
 export interface CostEntryCreate {
@@ -1033,6 +1034,7 @@ export interface BankTransaction {
   counterparty_iban: string | null;
   purpose: string | null;
   status: BankTransactionStatus;
+  cost_entry_id?: string | null;
 }
 
 export interface BankTransactionPage {

@@ -1,5 +1,6 @@
 """Confirm complete reviewed allocations with explicit original or retained visual evidence."""
 import uuid
+from typing import Annotated
 from fastapi import APIRouter,Depends,Header,Query
 from pydantic import BaseModel,ConfigDict,Field,field_validator
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -9,6 +10,7 @@ from app.api.preconditions import expected_revision
 from app.services.allocation_adoption_service import AllocationAdoptionService
 
 router=APIRouter(tags=['allocation_adoptions'])
+BankCoverageSuccessors = Annotated[dict[uuid.UUID, uuid.UUID], Field(max_length=100)]
 
 
 class AdoptionCreate(BaseModel):
@@ -54,6 +56,7 @@ async def correction_preview(set_id:uuid.UUID,treatment_review_id:uuid.UUID,auth
 
 class CorrectionCreate(AdoptionCreate):
     downstream_followups_reviewed:bool=Field(strict=True)
+    bank_coverage_successors: BankCoverageSuccessors = Field(default_factory=dict)
 
     @field_validator('downstream_followups_reviewed')
     @classmethod
@@ -103,6 +106,7 @@ class VisualAdoptionCreate(VisualFinancialReview):
 
 class VisualCorrectionCreate(VisualFinancialReview):
     downstream_followups_reviewed:bool=Field(strict=True)
+    bank_coverage_successors: BankCoverageSuccessors = Field(default_factory=dict)
 
     @field_validator('downstream_followups_reviewed')
     @classmethod
