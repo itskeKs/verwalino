@@ -35,6 +35,10 @@ names. Native option lists retain the full names; Tab and the selection keys rem
 usable. The desktop layout keeps its existing columns. The browser regression in
 [`property_selectors.feature`](../../features/property_selectors.feature) exercises
 empty, long and short selections at 360 and 1280 px with synthetic properties.
+The Tasks create/edit dialog also keeps its controls, select arrow and focus outline
+inside the dialog at both widths. Changing the property preserves title, note, due
+date and assignee; Save persists the chosen values and Cancel discards unsaved edits.
+Its browser checks measure the dialog itself, including empty, long and short choices.
 
 The dashboard shows open, dated tasks up to and including seven local
 calendar days into the future, regardless of their assignee. Undated and

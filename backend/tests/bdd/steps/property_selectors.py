@@ -187,6 +187,133 @@ async def check_selector(browser):
     assert not failures, '\n'.join(failures)
 
 
+async def tab_to_task_control(page, control):
+    for _ in range(30):
+        if await control.evaluate('element => element === document.activeElement'):
+            break
+        await page.keyboard.press('Tab')
+    await expect(control).to_be_focused()
+
+
+@when(parsers.parse('the Tasks {mode} dialog is opened at {width:d} pixels wide'))
+def open_task_dialog(browser_world, mode, width):
+    world = browser_world.world
+    title = f'Selector dialog {mode} {width}'
+    values = {'title': title, 'note': 'Fenster und Gemeinschaftsgarten prüfen.', 'due_date': '2026-12-15'}
+    if mode == 'Edit':
+        create(world, '/api/tasks', values)
+    world.data.update(task_dialog_mode=mode, task_dialog_values=values)
+
+    async def open_dialog():
+        page = browser_world.page
+        await page.set_viewport_size({'width': width, 'height': 800 if width == 360 else 900})
+        await browser_world.visit('/aufgaben')
+        if mode == 'Create':
+            await page.get_by_role('button', name='Aufgabe anlegen', exact=True).click()
+        else:
+            row = page.get_by_role('listitem').filter(has=page.get_by_role('heading', name=title, exact=True))
+            await row.get_by_role('button', name='Bearbeiten', exact=True).click()
+        await expect(page.get_by_role('dialog').get_by_role('combobox', name='Objekt', exact=True)).to_be_enabled()
+    browser_world.run(open_dialog())
+
+
+@then('the task dialog contains its controls and preserves save and cancel behavior')
+def task_dialog_fits(browser_world):
+    browser_world.run(check_task_dialog(browser_world))
+
+
+async def check_task_dialog(browser):
+    page = browser.page
+    dialog = page.get_by_role('dialog')
+    mode = browser.world.data['task_dialog_mode']
+    values = browser.world.data['task_dialog_values']
+    selector = dialog.get_by_role('combobox', name='Objekt', exact=True)
+    title = dialog.get_by_label('Titel *', exact=True)
+    note = dialog.get_by_role('textbox', name='Notiz', exact=True)
+    due = dialog.get_by_label('Fällig am', exact=True)
+    assigned = dialog.get_by_role('combobox', name='Zuständig', exact=True)
+    initial_assignee = await assigned.input_value()
+    assert initial_assignee
+    for control, value in ((title, values['title']), (note, values['note']), (due, values['due_date'])):
+        await expect(control).to_have_value(value if mode == 'Edit' else '')
+        await control.fill(value)
+    failures = []
+    properties = browser.world.data['selector_properties']
+    for state, home in [('empty', None), ('long', properties[0]), ('short', properties[1])]:
+        await tab_to_task_control(page, selector)
+        if home:
+            await expect(selector.locator(f'option[value="{home.id}"]')).to_have_text(home.name)
+            await page.keyboard.press('Shift+Tab')
+            await page.keyboard.press('Tab')
+            await page.keyboard.type(home.name)
+        await expect(selector).to_have_value(home.id if home else '')
+        await expect(selector).to_be_focused()
+        for control, value in ((title, values['title']), (note, values['note']),
+                               (due, values['due_date']), (assigned, initial_assignee)):
+            await expect(control).to_have_value(value)
+        bounds = await dialog.evaluate('''dialog => {
+            const panel = dialog.getBoundingClientRect();
+            const select = dialog.querySelector('select[aria-label="Objekt"]');
+            const rect = select.getBoundingClientRect();
+            const style = getComputedStyle(select);
+            const halo = style.boxShadow !== 'none' ? 3 :
+                Math.max(0, parseFloat(style.outlineWidth) + parseFloat(style.outlineOffset));
+            return {client: dialog.clientWidth, scroll: dialog.scrollWidth,
+                left: panel.left, right: panel.right, viewport: innerWidth,
+                selectorLeft: rect.left, selectorRight: rect.right, selectorWidth: rect.width,
+                focusVisible: style.boxShadow !== 'none' || style.outlineStyle !== 'none',
+                focusFits: rect.left - halo >= panel.left && rect.right + halo <= panel.right,
+                outside: [...dialog.querySelectorAll('input, select, textarea, label, button, p')]
+                    .filter(element => element.getClientRects().length)
+                    .filter(element => {
+                        const r = element.getBoundingClientRect();
+                        return r.left < panel.left - 0.5 || r.right > panel.right + 0.5;
+                    }).map(element => element.getAttribute('aria-label') || element.tagName)};
+        }''')
+        fits = (bounds['scroll'] <= bounds['client'] and not bounds['outside']
+                and bounds['left'] >= 0 and bounds['right'] <= bounds['viewport']
+                and bounds['focusVisible'] and bounds['focusFits'])
+        print(f'Task dialog {mode} {page.viewport_size["width"]} {state}: {bounds}')
+        if not fits:
+            failures.append(f'{mode} {state}: {bounds}')
+        if os.environ.get('VERWALINO_CAPTURE_DESIGN') == '1' and state == 'long':
+            directory = Path(__file__).resolve().parents[4] / 'docs/assets/design/property-selectors'
+            phase = 'after' if fits else 'before'
+            await page.screenshot(path=str(directory / f'task-dialog-{mode.lower()}-{phase}-{page.viewport_size["width"]}.png'), animations='disabled')
+    await tab_to_task_control(page, dialog.get_by_role('button', name='Abbrechen', exact=True))
+    await page.keyboard.press('Enter')
+    await expect(dialog).to_have_count(0)
+    row = page.get_by_role('listitem').filter(has=page.get_by_role('heading', name=values['title'], exact=True))
+    if mode == 'Create':
+        await expect(row).to_have_count(0)
+        await page.get_by_role('button', name='Aufgabe anlegen', exact=True).click()
+    else:
+        await row.get_by_role('button', name='Bearbeiten', exact=True).click()
+    await expect(selector).to_have_value('')
+    for control, value in ((title, values['title']), (note, values['note']), (due, values['due_date'])):
+        await expect(control).to_have_value(value if mode == 'Edit' else '')
+    saved_title = values['title'] + ' saved'
+    await title.fill(saved_title)
+    await note.fill(values['note'])
+    await due.fill(values['due_date'])
+    await tab_to_task_control(page, selector)
+    await page.keyboard.type(properties[0].name)
+    await expect(selector).to_have_value(properties[0].id)
+    await tab_to_task_control(page, dialog.get_by_role('button', name='Speichern', exact=True))
+    await page.keyboard.press('Enter')
+    await expect(dialog).to_have_count(0)
+    saved = page.get_by_role('listitem').filter(has=page.get_by_role('heading', name=saved_title, exact=True))
+    await expect(saved).to_be_visible()
+    await page.reload()
+    await saved.get_by_role('button', name='Bearbeiten', exact=True).click()
+    for control, value in ((title, saved_title), (note, values['note']), (due, values['due_date']),
+                           (assigned, initial_assignee), (selector, properties[0].id)):
+        await expect(control).to_have_value(value)
+    await dialog.get_by_role('button', name='Abbrechen', exact=True).click()
+    await expect(dialog).to_have_count(0)
+    assert not failures, '\n'.join(failures)
+
+
 @when(parsers.parse('the manager starts a new property at {width:d} pixels wide'))
 def open_property_form(browser_world, width):
     async def open_form():

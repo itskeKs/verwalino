@@ -345,6 +345,18 @@ Levies, Meetings, Resolution Register and Payments are capped at their available
 width while retaining their natural desktop width when it fits. Option text remains complete in the native list, and focus
 indicators remain visible without horizontal page scrolling.
 
+The Tasks create/edit dialog allows both its form grid item and its fieldset to
+shrink with `min-w-0`. This bounds the native property selector and surrounding
+labels to the dialog, including before selection; page width alone does not detect
+clipping inside a modal. The existing single-column form, values and Save/Cancel
+behavior remain unchanged. These synthetic long-selection captures use 360 × 800
+and 1280 × 900 viewports with keyboard focus on the object selector.
+
+| Tasks dialog | 1280 px before / after | 360 px before / after |
+|---|---|---|
+| Create | [before](docs/assets/design/property-selectors/task-dialog-create-before-1280.png) · [after](docs/assets/design/property-selectors/task-dialog-create-after-1280.png) | [before](docs/assets/design/property-selectors/task-dialog-create-before-360.png) · [after](docs/assets/design/property-selectors/task-dialog-create-after-360.png) |
+| Edit | [before](docs/assets/design/property-selectors/task-dialog-edit-before-1280.png) · [after](docs/assets/design/property-selectors/task-dialog-edit-after-1280.png) | [before](docs/assets/design/property-selectors/task-dialog-edit-before-360.png) · [after](docs/assets/design/property-selectors/task-dialog-edit-after-360.png) |
+
 The following captures use synthetic long and short WEG properties on the disposable
 test database. Each selector has keyboard focus; long-name captures follow keyboard
 selection. Desktop is 1280 × 900 px and phone is 360 × 900 px.

@@ -34,6 +34,17 @@ Feature: Property selectors
       | CostForm    | 360   |
       | CostForm    | 1280  |
 
+  Scenario Outline: Task dialogs retain selections and actions within their panel
+    When the Tasks <mode> dialog is opened at <width> pixels wide
+    Then the task dialog contains its controls and preserves save and cancel behavior
+
+    Examples:
+      | mode   | width |
+      | Create | 360   |
+      | Edit   | 360   |
+      | Create | 1280  |
+      | Edit   | 1280  |
+
   Scenario Outline: The existing property form keeps its responsive columns
     When the manager starts a new property at <width> pixels wide
     Then its controls fit the established responsive columns
