@@ -1455,3 +1455,54 @@ async def enabled_dunning_interest(client_a_admin):
     finally:
         response = await client_a_admin.put(path, json=original)
         assert response.status_code == 200, response.text
+
+
+@pytest.mark.asyncio
+async def test_0174_downgrade_refuses_default_policy_notice_without_interest(isolated_batch_seed, monkeypatch):
+    from contextlib import nullcontext
+    from types import SimpleNamespace
+
+    import sqlalchemy
+    from alembic import command
+    from alembic.config import Config
+    from sqlalchemy.exc import DBAPIError
+
+    client, seed = isolated_batch_seed
+    payload = TestT35Interest.tenant_body(seed)
+    del payload["override_fee"]
+    draft = await client.post("/api/dunning/tenant", json=payload)
+    assert draft.status_code == 201, draft.text
+    notice = draft.json()
+    assert notice["fee_amount"] == "0.00"
+    assert notice["interest_snapshot"] is None
+    issued = await client.post(f"/api/dunning/{notice['id']}/issue")
+    assert issued.status_code == 200, issued.text
+
+    cfg = Config("alembic.ini")
+    cfg.attributes["hv_declaration_test_database"] = True
+    engine = sqlalchemy.create_engine(SYNC_URL)
+    try:
+        with engine.connect() as connection:
+            params = {"id": notice["id"], "org": notice["organization_id"]}
+            assert connection.scalar(text("SELECT count(*) FROM dunning_settings WHERE organization_id=:org"), params) == 0
+            assert connection.scalar(text("""
+                SELECT status='issued' AND interest_snapshot IS NULL AND included_items->0->>'_dunning_format'='2'
+                FROM dunning_notice WHERE id=:id
+            """), params)
+            # Exercise the normal Alembic command in a rollback-only transaction.
+            # Isolate the one default-policy notice from other test evidence.
+            connection.execute(text("CREATE TEMP TABLE default_policy_notice AS SELECT * FROM dunning_notice WHERE id=:id"), params)
+            connection.execute(text("TRUNCATE public.dunning_settings, public.dunning_notice CASCADE"))
+            connection.execute(text("INSERT INTO dunning_notice SELECT * FROM default_policy_notice"))
+            connection.execute(text("SET CONSTRAINTS ALL IMMEDIATE"))
+            with monkeypatch.context() as patch:
+                patch.setattr(sqlalchemy, "engine_from_config",
+                              lambda *args, **kwargs: SimpleNamespace(connect=lambda: nullcontext(connection)))
+                with pytest.raises(DBAPIError, match="Previous releases cannot render retained organization-policy notices"):
+                    with connection.begin_nested():
+                        command.downgrade(cfg, "0173")
+            assert connection.scalar(text("SELECT version_num FROM alembic_version")) == "0174"
+            assert connection.scalar(text("SELECT to_regclass('public.dunning_settings')")) is not None
+            assert connection.scalar(text("SELECT count(*) FROM dunning_notice WHERE id=:id"), params) == 1
+    finally:
+        engine.dispose()
