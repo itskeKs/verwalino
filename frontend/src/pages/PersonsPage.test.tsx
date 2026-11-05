@@ -21,6 +21,7 @@ it("keeps the person list mounted during a saved edit refresh", async () => {
   fireEvent.change(screen.getByLabelText("Nachname *"), { target: { value: "Neu" } });
   fireEvent.click(screen.getByRole("button", { name: "Speichern" }));
   expect(await screen.findByRole("status")).toHaveTextContent("Person gespeichert.");
+  await waitFor(() => expect(finish).toBeTypeOf("function"));
   expect(table).toBeInTheDocument();
   await act(async () => finish(json({ items: [{ ...person, last_name: "Neu" }], next_cursor: null })));
   expect(await screen.findByRole("link", { name: "Anna Neu" })).toBeVisible();
