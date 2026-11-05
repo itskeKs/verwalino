@@ -1052,8 +1052,6 @@ disposable test database with synthetic data (organisation "Muster Hausverwaltun
 amounts). Desktop is 1280 px wide at 1x; the 360 px images are 2x. File names are fixed so the table
 stays valid when they are retaken. The review-list screenshots were refreshed with
 synthetic browser-intercepted API responses, without starting a backend or accessing a database.
-The refreshed new-property form captures use the local browser harness and synthetic
-WEG properties at 1x, with a 900 px viewport height.
 
 | Screen | Page | Desktop | 360 px |
 |---|---|---|---|
