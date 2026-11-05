@@ -623,7 +623,8 @@ typo of `btn--primary`), `badge--warning`, `form-hint`, `table-responsive`.
 
 - **Lease documents.** Each lease in unit detail offers “Mietvertrag erstellen” and a retained
   document history. The kit dialog displays “Vorlage; rechtliche Prüfung erforderlich”, an issue
-  date, handover date and a clearly labelled free-text agreement block before saving. The PDF link
+  date, handover date and a clearly labelled free-text agreement block before saving. Its help
+  states that rent amounts apply on the chosen document date. The PDF link
   appears only after issuance succeeds. Inputs remain available after failure; readers see history
   without creation actions. Labels and long names wrap inside the available width.
   The “Übergabeprotokoll” kit dialog captures move-in/out, date, present parties, latest unit-meter

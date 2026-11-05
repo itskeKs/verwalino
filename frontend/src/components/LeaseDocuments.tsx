@@ -136,7 +136,7 @@ export function LeaseDocuments({ leaseId, propertyId, unitId, tenantLabel, canWr
     <Dialog open={open} onOpenChange={next => { if (!mutationLock.current) setOpen(next); }}>
       <DialogContent className="max-h-[90vh] overflow-y-auto">
         <DialogTitle>Mietvertrag erstellen</DialogTitle>
-        <DialogDescription>Vorlage; rechtliche Prüfung erforderlich. Bitte prüfen Sie die Parteien und ergänzen Sie die freien Vertragsbedingungen. Die Beträge stammen aus dem Originalvertrag. Eigentümer bei Mietbeginn werden als Vermieter vorbelegt; fehlende Daten sind als Freitext markiert.</DialogDescription>
+        <DialogDescription>Vorlage; rechtliche Prüfung erforderlich. Bitte prüfen Sie die Parteien und ergänzen Sie die freien Vertragsbedingungen. Die Mietbeträge gelten zum gewählten Dokumentdatum. Eigentümer bei Mietbeginn werden als Vermieter vorbelegt; fehlende Daten sind als Freitext markiert.</DialogDescription>
         <form onSubmit={event => { void submit(event); }} className="space-y-4">
           <fieldset disabled={saving} className="min-w-0 space-y-4">
             <div className="grid gap-2"><Label htmlFor={`${leaseId}-issue-date`}>Dokumentdatum</Label><Input id={`${leaseId}-issue-date`} type="date" required value={asOf} onChange={event => { requestId.current = null; setAsOf(event.target.value); }} /></div>
