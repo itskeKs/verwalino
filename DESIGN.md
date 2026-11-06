@@ -486,6 +486,16 @@ The scrollable dialog keeps all fields and actions reachable at 360 px.
 | After | [Desktop](docs/assets/design/split-dialog/after-1280.png) | [Tablet](docs/assets/design/split-dialog/after-800.png) | [Phone](docs/assets/design/split-dialog/after-360.png) |
 | Bottom actions | [Desktop](docs/assets/design/split-dialog/after-actions-1280.png) | [Tablet](docs/assets/design/split-dialog/after-actions-800.png) | [Phone](docs/assets/design/split-dialog/after-actions-360.png) |
 
+The rent payment picker offers tenancies. If a request still sends an owner
+for a rent type, the split dialog keeps the inputs and shows the server message
+above the rows: “Dieser Zahlungstyp gehört zu einem Mietverhältnis, nicht zu
+einem Eigentümer.”
+
+| Split dialog counterparty error | 1280 px | 360 px |
+|---|---|---|
+| Before (generic error) | [Desktop](docs/assets/design/payment-counterparty/before-1280.png) | [Phone](docs/assets/design/payment-counterparty/before-360.png) |
+| After (rent counterparty error) | [Desktop](docs/assets/design/payment-counterparty/after-1280.png) | [Phone](docs/assets/design/payment-counterparty/after-360.png) |
+
 ### Empty tenant and owner selections
 
 In the unit's new tenancy or ownership card, an empty profile list shows a

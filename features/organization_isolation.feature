@@ -163,6 +163,13 @@ Feature: Organization isolation
     When Verwaltung Alpha tries to assign its debit to Verwaltung Beta's cost
     Then the foreign cost is not found and both debits remain new
 
+  Scenario: A foreign owner looks missing when recording or assigning rent
+    Given a rental receipt and an owner for the rented unit
+    And Verwaltung Beta has an owner profile
+    When Verwaltung Alpha tries to record and assign rent to the foreign owner and to an unknown owner
+    Then both routes report the owners as equally missing
+    And the rental receipt remains pending with no payment recorded
+
   Scenario: Reminder policy belongs to the signed-in organization
     When Verwaltung Alpha saves its own dunning settings
     And Verwaltung Beta saves different dunning settings
