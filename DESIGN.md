@@ -1325,6 +1325,15 @@ show the same rejected 51-character input on synthetic data.
 | Before: no field error | [Desktop](docs/assets/design/unit-name-validation/before-1280.png) | [Phone](docs/assets/design/unit-name-validation/before-360.png) |
 | After: inline error | [Desktop](docs/assets/design/unit-name-validation/after-1280.png) | [Phone](docs/assets/design/unit-name-validation/after-360.png) |
 
+Submitting “Wohnung 1” twice in a synthetic rental property used to save two rows.
+The unit form now keeps the second entry, explains the conflict below the number
+field, and leaves the original row as the only saved unit.
+
+| Duplicate number submission | 1280 px | 360 px |
+|---|---|---|
+| Before: duplicate saved | [Desktop](docs/assets/design/duplicate-unit-number/before-1280.png) | [Phone](docs/assets/design/duplicate-unit-number/before-360.png) |
+| After: duplicate refused | [Desktop](docs/assets/design/duplicate-unit-number/after-1280.png) | [Phone](docs/assets/design/duplicate-unit-number/after-360.png) |
+
 Earlier dashboard due-task captures from that feature remain in `issue-52-before-*`.
 The upload card is captured in
 `detail-upload-360.png` and `detail-upload-desktop.png`. Matching `issue-52-before-*`
