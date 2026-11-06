@@ -196,6 +196,10 @@ Creating an individual tenant or owner notice opens its saved draft immediately.
 The successful creation response commits the draft before the detail request can
 start. The draft opens on the first request, and the manager can issue it from there.
 
+If creating a tenant notice fails, **Mahnungen** brings the explanation into
+view and keeps the entered values. If an accounting scope is required, select
+it and submit the same form again. The refused submission creates no draft.
+
 Under **Mahnungen → Mahneinstellungen**, an administrator can set the fees for all three
 levels and switch on **Verzugszinsen automatisch berechnen**. Other members see the same
 settings read-only. The starting values are 0.00 / 2.50 / 2.50 EUR with interest off.

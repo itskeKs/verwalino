@@ -16,8 +16,9 @@ Feature: Readable issued dunning notice
     Given a rental agreement with receipts in two separate accounting scopes
     When the manager submits a June tenant notice without an accounting scope at <width> px
     Then the form explains the accounting scope requirement in German and no draft exists
+    And the explanation is fully in view without manual scrolling and the form keeps its values
     When the manager selects the first accounting scope and submits the same notice
-    Then the tenant draft opens with 750 EUR principal
+    Then exactly one tenant draft exists and opens with 750 EUR principal
 
     Examples:
       | width |

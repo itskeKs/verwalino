@@ -45,7 +45,7 @@ it("preserves and displays the open-items scope, retains it after an error, and 
   await waitFor(() => expect(selector).toHaveValue("scope"));
   await waitFor(() => expect(screen.getByRole("button", { name: "Mahnung erstellen" })).toBeEnabled());
   fireEvent.click(screen.getByRole("button", { name: "Mahnung erstellen" }));
-  await screen.findByText("Review history");
+  expect(await screen.findByRole("alert")).toHaveTextContent("Review history");
   expect(endpoints.createDunningForTenant).toHaveBeenCalledWith(expect.objectContaining({ accounting_scope_id: "scope", lease_agreement_id: "lease", period_start: "2025-01-01" }));
   expect(selector).toHaveValue("scope");
   fireEvent.change(screen.getByLabelText("Mietvertrag *"), { target: { value: "other" } });

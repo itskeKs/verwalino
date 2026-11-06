@@ -104,14 +104,25 @@ def tenant_draft_without_duplicate(browser_world, world):
 async def submit_without_scope(browser_world, width):
     b = browser_world
     data = b.world.data
-    await b.page.set_viewport_size({'width': width, 'height': 900})
+    await b.page.set_viewport_size({'width': width, 'height': 800})
     await b.visit('/mahnungen')
     await button(b.page, '+ Neue Mahnung').click()
     await b.select('Mieter *', data['tenants'][0]['id'])
     await b.select('Mietvertrag *', data['leases'][0]['id'])
-    for label, value in [('Zeitraum von *', '2026-06-01'), ('Zeitraum bis *', '2026-06-30'), ('Stichtag', '2026-07-15')]:
+    dates = {'Zeitraum von *': '2026-06-01', 'Zeitraum bis *': '2026-06-30', 'Stichtag': '2026-07-15'}
+    for label, value in dates.items():
         await field(b.page, label).fill(value)
+    data['dunning_fields'] = {
+        'Empfaengertyp *': 'tenant',
+        'Mieter *': data['tenants'][0]['id'],
+        'Mietvertrag *': data['leases'][0]['id'],
+        **dates,
+        'Karenzzeit (Tage)': await field(b.page, 'Karenzzeit (Tage)').input_value(),
+        'Mahngebuehr (Override)': await field(b.page, 'Mahngebuehr (Override)').input_value(),
+        'Abrechnungskreis': '',
+    }
     await expect(field(b.page, 'Abrechnungskreis')).to_have_value('')
+    await button(b.page, 'Mahnung erstellen').scroll_into_view_if_needed()
     await submit(b, 'Mahnung erstellen', '/api/dunning/tenant', status=409)
 
 
@@ -119,19 +130,40 @@ async def submit_without_scope(browser_world, width):
 def scope_refusal_without_draft(browser_world, world):
     rows = world.act('GET', '/api/dunning', params={'tenant_profile_id': world.data['tenants'][0]['id']})
     assert rows.status_code == 200 and rows.json() == [], rows.text
-    browser_world.run(expect(browser_world.page.locator('.error-text').first).to_have_text(
+    browser_world.run(expect(scope_refusal(browser_world.page)).to_be_visible())
+
+
+def scope_refusal(page):
+    return page.get_by_text(
         'Wählen Sie einen eindeutigen Abrechnungskreis und prüfen Sie noch nicht zugeordnete Daten, '
-        'bevor Sie die Zahlungen berechnen.'))
+        'bevor Sie die Zahlungen berechnen.', exact=True)
+
+
+@then('the explanation is fully in view without manual scrolling and the form keeps its values')
+@browser_step
+async def visible_scope_refusal(browser_world):
+    b = browser_world
+    await expect(scope_refusal(b.page)).to_be_in_viewport(ratio=1)
+    for label, value in b.world.data['dunning_fields'].items():
+        control = (
+            b.page.get_by_role('combobox', name=label, exact=True)
+            if label in {'Empfaengertyp *', 'Mieter *', 'Mietvertrag *', 'Abrechnungskreis'}
+            else field(b.page, label)
+        )
+        await expect(control).to_have_value(value)
 
 
 @when('the manager selects the first accounting scope and submits the same notice')
 @browser_step
 async def retry_with_scope(browser_world):
     await browser_world.scope()
-    await create_and_open(browser_world, 'tenant')
+    browser_world.world.data['scoped_tenant_draft'] = await create_and_open(browser_world, 'tenant')
 
 
-@then('the tenant draft opens with 750 EUR principal')
-@browser_step
-async def scoped_tenant_principal(browser_world):
-    await browser_world.row('Hauptforderung (Rueckstand)', '750.00 EUR')
+@then('exactly one tenant draft exists and opens with 750 EUR principal')
+def scoped_tenant_principal(browser_world, world):
+    browser_world.run(browser_world.row('Hauptforderung (Rueckstand)', '750.00 EUR'))
+    notice = world.data['scoped_tenant_draft']
+    assert notice['principal_amount'] == '750.00'
+    rows = world.act('GET', '/api/dunning', params={'tenant_profile_id': world.data['tenants'][0]['id']})
+    assert rows.status_code == 200 and [row['id'] for row in rows.json()] == [notice['id']], rows.text

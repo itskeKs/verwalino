@@ -659,6 +659,15 @@ and no draft is created.
 | Before | [View](docs/assets/design/dunning-scope-refusal/before-1280.png) | [View](docs/assets/design/dunning-scope-refusal/before-360.png) |
 | After | [View](docs/assets/design/dunning-scope-refusal/after-1280.png) | [View](docs/assets/design/dunning-scope-refusal/after-360.png) |
 
+A failed tenant submission announces its existing error and brings it into
+view if it is offscreen. The error stays above the creation card; it is fully
+readable immediately after submission at 360 px and 1280 px.
+
+| Refusal immediately after submitting | 1280 px | 360 px |
+|---|---|---|
+| Before | [View](docs/assets/design/dunning-refusal-viewport/before-1280.png) | [View](docs/assets/design/dunning-refusal-viewport/before-360.png) |
+| After | [View](docs/assets/design/dunning-refusal-viewport/after-1280.png) | [View](docs/assets/design/dunning-refusal-viewport/after-360.png) |
+
 The frozen calculation shows the statutory premium and a separate table of
 **Zinsabschnitte** with the date range, amount, principal, annual and base rates
 and day count. The tenant account shows fees and interest in an **Ausgestellte

@@ -125,11 +125,17 @@ export function DunningNoticesPage() {
   const [scopeValid, setScopeValid] = useState(false);
   const [saving, setSaving] = useState(false);
   const savingRef = useRef(false);
+  const tenantErrorRef = useRef<HTMLParagraphElement>(null);
+  const tenantFormOpen = showForm && canWrite && recipientType === "tenant";
   const mounted = useRef(false);
   useEffect(() => {
     mounted.current = true;
     return () => { mounted.current = false; };
   }, []);
+
+  useEffect(() => {
+    if (error) tenantErrorRef.current?.scrollIntoView?.({ block: "nearest" });
+  }, [error]);
 
   const statusFilter = searchParams.get("status") ?? "";
   const levelFilter = searchParams.get("level") ?? "";
@@ -355,7 +361,15 @@ export function DunningNoticesPage() {
         </select>
       </div>
 
-      {error && <p className="error-text">{error}</p>}
+      {error && (
+        <p
+          ref={tenantFormOpen ? tenantErrorRef : undefined}
+          role={tenantFormOpen ? "alert" : undefined}
+          className="error-text"
+        >
+          {error}
+        </p>
+      )}
 
       {showForm && canWrite && (
         <div className="card" style={{ marginBottom: "1rem" }}>
