@@ -1,6 +1,6 @@
 """Steps for features about what organizations see and may change.
 
-Vocabulary: a *record* is a property, a person or a bank account (see
+Vocabulary: a *record* is a property, a person, a bank account or a unit (see
 ``records.py``); "the <record> of "<organization>"" is the one the Given step
 created for that organization.
 """
@@ -14,6 +14,7 @@ from tests.bdd.steps.records import (
     create_bank_account,
     create_person,
     create_property,
+    create_unit,
     kind_named,
     record_of,
 )
@@ -67,6 +68,12 @@ def organizations_have_records(world, organization_records):
             create_bank_account(world, organization, f"{organization} bank account", property_id=home.id)
         organization_records.update(world.records)
     world.records.update(organization_records)
+
+
+@given(parsers.parse('"{organization}" has a unit named "{name}"'))
+def organization_has_unit(world, organization, name):
+    parent = record_of(world, organization, kind_named("property"))
+    create_unit(world, organization, name, property_id=parent.id)
 
 
 @when(parsers.parse("the user lists the {kinds}"))
