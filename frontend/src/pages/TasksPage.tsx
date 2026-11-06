@@ -153,7 +153,7 @@ function TasksContent() {
       <DialogContent onEscapeKeyDown={e => { if (lock.current) e.preventDefault(); }} onPointerDownOutside={e => { if (lock.current) e.preventDefault(); }} className="max-h-[90vh] overflow-y-auto">
         <DialogTitle>{editing === "new" ? "Aufgabe anlegen" : "Aufgabe bearbeiten"}</DialogTitle>
         <DialogDescription>{hasContext ? `Fester Kontext: ${contextText}. Bitte vor dem Speichern prüfen.` : "Aufgaben können auch ohne Objektbindung angelegt werden."}</DialogDescription>
-        <form onSubmit={submit}><fieldset disabled={pending} className="space-y-3">
+        <form onSubmit={submit} className="min-w-0"><fieldset disabled={pending} className="min-w-0 space-y-3">
           <label className="block">Titel *<input required maxLength={255} value={form.title} onChange={e => field("title", e.target.value)} /></label>
           <label className="block">Notiz<textarea maxLength={10000} value={form.note} onChange={e => field("note", e.target.value)} /></label>
           <label className="block">Fällig am<input type="date" value={form.due} onChange={e => field("due", e.target.value)} /></label>
