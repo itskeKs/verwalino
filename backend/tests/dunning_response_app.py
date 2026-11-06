@@ -6,15 +6,23 @@ Function-scope transactions have already committed before this scheduling gate.
 """
 import asyncio
 import json
+import os
+from pathlib import Path
 
 from app.main import app as real_app
+from tests.bank_browser_trace import PATH, TRACE_FILE_ENV, install_database_trace, trace_bank_request
 
 pending_reads: dict[str, asyncio.Event] = {}
+bank_trace_file = os.environ.get(TRACE_FILE_ENV)
+if bank_trace_file:
+    install_database_trace()
 
 
 async def app(scope, receive, send):
     if scope['type'] != 'http':
         return await real_app(scope, receive, send)
+    if bank_trace_file and scope['method'] == 'GET' and scope['path'] == PATH:
+        return await trace_bank_request(real_app, scope, receive, send, Path(bank_trace_file))
     create = scope['method'] == 'POST' and scope['path'] in {'/api/dunning/owner', '/api/dunning/tenant'}
     first_read = pending_reads.get(scope['path']) if scope['method'] == 'GET' else None
     successful = False
