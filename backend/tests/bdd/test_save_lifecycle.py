@@ -4,9 +4,10 @@ import re
 from pathlib import Path
 from urllib.parse import urlsplit
 
-from playwright.async_api import expect
+from playwright.async_api import TimeoutError as PlaywrightTimeoutError, expect
 from pytest_bdd import given, parsers, scenarios, then, when
 
+from tests.bank_browser_trace import PATH as BANK_LIST_PATH
 from tests.bdd.steps.browser_common import button, field
 from tests.bdd.steps.browser_setup import create
 from tests.bdd.report import artifact_directory, attach_artifact
@@ -58,7 +59,12 @@ def save_named_pages(browser_world, width, request):
             else:
                 await route.fallback()
 
-        element = await retained.element_handle()
+        try:
+            element = await retained.element_handle()
+        except PlaywrightTimeoutError:
+            if refresh_path == BANK_LIST_PATH and b.bank_trace:
+                await b.bank_trace.table_timed_out()
+            raise
         await b.page.route(pattern, pause_refresh)
         try:
             await action.scroll_into_view_if_needed()
@@ -133,6 +139,7 @@ def save_named_pages(browser_world, width, request):
         await expect(row.get_by_text('Mietkonto Gartenflügel', exact=True)).to_be_visible()
         await capture('accounts')
 
+        b.observe_bank_save(request.config, width)
         await b.visit(f"/bankkonten/{d['account']['id']}/umsaetze")
         await field(page, 'Status').select_option('')
         row = page.get_by_role('row').filter(has=page.get_by_text('Warmmiete Januar 2026', exact=True))
