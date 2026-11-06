@@ -219,6 +219,7 @@ from tests.bdd.steps.browser_costs import *  # noqa: E402,F401,F403
 from tests.bdd.steps.browser_rent import *  # noqa: E402,F401,F403
 from tests.bdd.steps.browser_dunning import *  # noqa: E402,F401,F403
 from tests.bdd.steps.browser_mobile_navigation import *  # noqa: E402,F401,F403
+from tests.bdd.steps.browser_users import *  # noqa: E402,F401,F403
 from tests.bdd.steps.settlement_period import *  # noqa: E402,F401,F403
 from tests.bdd.steps.heating_settlement import *  # noqa: E402,F401,F403
 from tests.bdd.steps.advance_split import *  # noqa: E402,F401,F403
