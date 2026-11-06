@@ -28,6 +28,7 @@ import type {
 } from "../api/types";
 import { AuthCtx } from "../auth/useAuth";
 import { ApiError } from "../api/client";
+import { normalizePlanAmount } from "../api/previousPlan";
 
 const STATUS_LABELS: Record<string, string> = { draft: "Entwurf", finalized: "Finalisiert" };
 const STATUS_CSS: Record<string, string> = { draft: "badge--draft", finalized: "badge--confirmed" };
@@ -53,11 +54,13 @@ export function EconomicPlanDetailPage() {
   const [persons, setPersons] = useState<Person[]>([]);
   const [rows, setRows] = useState<CostRow[]>([]);
   const [reserve, setReserve] = useState("");
+  const [reserveError, setReserveError] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
+  const reserveAmount = normalizePlanAmount(reserve);
   const isDraft = plan?.status === "draft";
   const isFinalized = plan?.status === "finalized";
 
@@ -81,7 +84,8 @@ export function EconomicPlanDetailPage() {
           distribution_key: row.distribution_key ?? "MEA", cost_group: row.cost_group ?? "UMLAGEFAEHIG",
           category_id: row.category_id ?? null,
         })) : []);
-        setReserve(stored ? stored.reserve_contribution_total : pl.status === "finalized" ? pl.reserve_contribution_total : "");
+        setReserve(stored?.reserve_contribution_total ?? pl.reserve_contribution_total);
+        setReserveError(false);
       })
       .catch((err) => { if (current) setError(err instanceof ApiError ? (err.status === 401 ? "Nicht authentifiziert." : err.message) : String(err)); })
       .finally(() => { if (current) setLoading(false); });
@@ -136,7 +140,7 @@ export function EconomicPlanDetailPage() {
         cost_group: r.cost_group,
         category_id: r.category_id,
       }));
-    return { planned_costs, reserve_contribution_total: reserve };
+    return { planned_costs, reserve_contribution_total: reserveAmount ?? reserve };
   }
 
   async function run(fn: () => Promise<EconomicPlan>) {
@@ -152,8 +156,21 @@ export function EconomicPlanDetailPage() {
     }
   }
 
+  function validateReserve() {
+    // The database stores up to 12 integer digits and two decimal places.
+    if (reserveAmount !== null && reserveAmount.length <= 15) return true;
+    setActionError(null);
+    setReserveError(true);
+    return false;
+  }
+
+  async function handleCompute() {
+    if (!planId || !validateReserve()) return;
+    await run(() => computeEconomicPlan(planId, buildRequest()));
+  }
+
   async function handleFinalize() {
-    if (!planId) return;
+    if (!planId || !validateReserve()) return;
     if (!window.confirm("Wirtschaftsplan finalisieren? Danach unveränderbar (GoBD); Änderung nur als Korrektur.")) return;
     await run(() => finalizeEconomicPlan(planId, buildRequest()));
   }
@@ -258,14 +275,24 @@ export function EconomicPlanDetailPage() {
             <button className="btn btn--small" onClick={addRow}>+ Position</button>
           </div>
           <div className="form-grid" style={{ marginTop: "1rem" }}>
-            <label>
-              Rücklagenzuführung (Jahr)
-              <input type="text" inputMode="decimal" placeholder="0.00" value={reserve} onChange={(e) => setReserve(e.target.value)} />
-            </label>
+            <div>
+              <label>
+                Rücklagenzuführung (Jahr)
+                <input type="text" inputMode="decimal" placeholder="0.00" value={reserve}
+                  aria-invalid={reserveError}
+                  aria-describedby={reserveError ? "economic-plan-reserve-error" : undefined}
+                  onChange={(e) => { setReserve(e.target.value); setReserveError(false); }} />
+              </label>
+              {reserveError && (
+                <p id="economic-plan-reserve-error" role="alert" className="error-text">
+                  Bitte geben Sie die Rücklagenzuführung als gültigen EUR-Betrag ein.
+                </p>
+              )}
+            </div>
           </div>
       {plan.status === "draft" && <FinancialCoverageReview kind="economic_plan" subjectId={plan.id} values={buildRequest()} />}
           <div className="form-actions" style={{ marginTop: "1rem" }}>
-            <button className="btn btn--primary" disabled={busy} onClick={() => planId && run(() => computeEconomicPlan(planId, buildRequest()))}>
+            <button className="btn btn--primary" disabled={busy} onClick={handleCompute}>
               {busy ? "Berechnen..." : "Berechnen"}
             </button>
             <button className="btn btn--primary" style={{ background: "#2e7d32", borderColor: "#2e7d32" }} disabled={busy} onClick={handleFinalize}>

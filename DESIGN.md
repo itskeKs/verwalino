@@ -947,6 +947,16 @@ inline expressions, with the variants below. The inconsistencies are tracked in 
 | Empty value | `—` (kit, newer pages), `-` (older tables), `–` (`BankTransactionsPage.tsx`) | `MandatePage.tsx`, `InvoiceDocumentsPage.tsx`, `BankTransactionsPage.tsx`, respectively |
 | Money input | accept `1234,56` and `1234.56`, send `1234.56` | `moneyInput`, `exactCents`, `normalizePlanAmount` (see above) |
 
+### Economic plan draft reserve
+
+A new draft without saved input rows pre-fills “Rücklagenzuführung (Jahr)” with
+the amount from “Übersicht”, including zero. A blank or invalid reserve blocks
+“Berechnen” and “Finalisieren” without changing the cost rows. The field shows
+“Bitte geben Sie die Rücklagenzuführung als gültigen EUR-Betrag ein.” underneath,
+with an alert associated through `aria-describedby` and `aria-invalid` on the
+input. Editing the reserve clears the alert. Decimal comma and dot are accepted;
+the request carries an exact decimal string.
+
 ### Rent and owner account due-date split
 
 “Mietkonto” retains the full reporting period and adds the labelled date input
