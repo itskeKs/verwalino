@@ -267,6 +267,9 @@ database fixtures and the in-process deletion CLI), `organization_export_import.
 The four `journeys/profile_hints.feature` browser examples seed a fresh organization
 through the local database fixture and are skipped on external targets; they run
 against the local browser stack and in PR CI's browser job.
+The populated cost-table browser regression also requires a locally seeded,
+isolated organization and is skipped on external targets; local PR browser CI
+checks it at 360 and 1280 px without depending on earlier scenarios' records.
 Each skipped scenario records its reason in the report. Local runs continue to
 exercise both organizations, all isolation scenarios, first-run setup, the inbox
 review chain, deletion, export/import and password reset; PR CI retains this
