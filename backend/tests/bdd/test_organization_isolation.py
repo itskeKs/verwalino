@@ -15,6 +15,7 @@ def financial_details(world, seed_data):
     from tests.bdd.steps.browser_setup import create
 
     records = create_balance_world(world, seed_data)
+    world.data['isolated_owner_schedule'] = {'owner': records['owners'][0], 'plan': records['plan']}
     payment = create(world, "/api/payments", {"bank_account_id": records["bank"],
         "owner_profile_id": records["owners"][0], "direction": "IN", "amount": "600.00",
         "value_date": "2026-01-05", "payment_type": "HAUSGELD_VORSCHUSS"})
@@ -45,6 +46,27 @@ def foreign_financial_explanations(foreign_financial_responses):
     for foreign, missing, message in foreign_financial_responses:
         assert foreign.status_code == missing.status_code == 404
         assert foreign.json() == missing.json() == {"detail": message}
+
+
+@when("Verwaltung Beta requests Alpha's owner ledger at a selected due-date cutoff", target_fixture='foreign_owner_schedule')
+def foreign_owner_schedule(world, financial_details):
+    data = world.data['isolated_owner_schedule']
+    query = '?period_start=2026-07-01&period_end=2026-07-31&as_of=2026-07-02&economic_plan_id='
+    path = f"/api/payments/mietkonto/owner/{data['owner']}" + query + data['plan']
+    own = world.look(world.administrator_of('Verwaltung Alpha'), path)
+    assert own.status_code == 200, own.text
+    assert own.json()['open_items'][0]['due_date'] == '2026-07-01'
+    foreign = world.administrator_of('Verwaltung Beta')
+    missing = '/api/payments/mietkonto/owner/00000000-0000-0000-0000-000000000000' + query + '00000000-0000-0000-0000-000000000000'
+    return world.look(foreign, path), world.look(foreign, missing)
+
+
+@then('the foreign owner schedule looks missing and exposes no financial amounts')
+def missing_owner_schedule(foreign_owner_schedule):
+    foreign, missing = foreign_owner_schedule
+    assert foreign.status_code == missing.status_code == 404
+    assert foreign.json() == missing.json()
+    assert set(foreign.json()) == {'detail'}
 
 
 @when("Verwaltung Alpha saves its own dunning settings")

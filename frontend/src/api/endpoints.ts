@@ -100,7 +100,7 @@ import type {
   PaymentCreate,
   DepositAccount,
   OpenItem,
-  MietkontoResult,
+  OwnerMietkontoResult,
   TenantMietkontoResult,
   DunningNotice,
   DunningSettings,
@@ -1036,11 +1036,13 @@ export function ownerStatement(
   periodEnd: string,
   economicPlanId?: string,
   accountingScopeId?: string,
-): Promise<MietkontoResult> {
+  asOf?: string,
+): Promise<OwnerMietkontoResult> {
   let qs = `?period_start=${periodStart}&period_end=${periodEnd}`;
   if (accountingScopeId) qs += `&accounting_scope_id=${encodeURIComponent(accountingScopeId)}`;
   if (economicPlanId) qs += `&economic_plan_id=${encodeURIComponent(economicPlanId)}`;
-  return api.get<MietkontoResult>(`/api/payments/mietkonto/owner/${ownerProfileId}${qs}`);
+  if (asOf) qs += `&as_of=${encodeURIComponent(asOf)}`;
+  return api.get<OwnerMietkontoResult>(`/api/payments/mietkonto/owner/${ownerProfileId}${qs}`);
 }
 
 export function leaseOpenItems(

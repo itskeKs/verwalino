@@ -49,13 +49,15 @@ class CoverageDeclarationRepository(TenantRepository[CoverageDeclaration]):
             "AND u.property_id=:property AND o.valid_from<=:end AND (o.valid_to IS NULL OR o.valid_to>:start)"),
             {"org": self._org_id, "property": subject.property_id, "start": subject.period_start, "end": subject.period_end})
         owners = {str(i) for i in result.scalars()}
-        if getattr(subject, 'run_type', None) == 'WEG_JAHRESABRECHNUNG':
+        is_plan = getattr(subject, '__tablename__', None) == 'economic_plan'
+        if is_plan or getattr(subject, 'run_type', None) == 'WEG_JAHRESABRECHNUNG':
             result = await self._session.execute(text(
                 "SELECT DISTINCT l.owner_profile_id FROM economic_plan_line l JOIN economic_plan p "
                 "ON p.id=l.economic_plan_id AND p.organization_id=l.organization_id "
                 "WHERE l.organization_id=:org AND p.property_id=:property AND p.id=:plan "
                 "AND l.line_type='OWNER_ADVANCE' AND l.owner_profile_id IS NOT NULL"),
-                {"org": self._org_id, "property": subject.property_id, "plan": subject.economic_plan_id})
+                {"org": self._org_id, "property": subject.property_id,
+                 "plan": subject.id if is_plan else subject.economic_plan_id})
             owners.update(str(i) for i in result.scalars())
         return owners
 

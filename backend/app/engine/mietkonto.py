@@ -43,7 +43,7 @@ from dataclasses import dataclass, field, replace
 from datetime import date
 from decimal import Decimal
 
-from app.engine.fristen import FederalState, public_holidays, third_working_day
+from app.engine.fristen import FederalState, owner_due_date, public_holidays, third_working_day
 
 from app.engine.periods import day_count, owner_at, build_owner_cover
 from app.engine.types import OwnerPeriodInput
@@ -368,6 +368,8 @@ def owner_expected_charges(
     period_end: date,
     *, owner_periods: list[OwnerPeriodInput] | None = None,
     plan_start: date | None = None,
+    monthly_due_day: int | None = None,
+    federal_state: FederalState | None = None,
 ) -> list[ExpectedCharge]:
     """Monthly owner Hausgeld Soll over the period (m6 section 2.2).
 
@@ -439,7 +441,8 @@ def owner_expected_charges(
         if monthly_total and (year, month) >= (period_start.year, period_start.month):
             charges.append(ExpectedCharge(period_year=year, period_month=month,
                 payment_type=PT_HAUSGELD_VORSCHUSS, amount=monthly_total,
-                owner_profile_id=owner_profile_id, days_occupied=days_in_month, days_in_month=days_in_month))
+                owner_profile_id=owner_profile_id, days_occupied=days_in_month, days_in_month=days_in_month,
+                due_date=owner_due_date(year, month, monthly_due_day, federal_state=federal_state)))
     return charges
 
 

@@ -52,7 +52,7 @@ class EconomicPlanCreate(BaseModel):
     period_start: date | None = None
     period_end: date | None = None
     reserve_contribution_total: str | None = None
-    monthly_due_day: int | None = None
+    monthly_due_day: Annotated[int, Field(ge=1, le=28)] | None = 1
     management_mandate_id: str | None = None
 
 

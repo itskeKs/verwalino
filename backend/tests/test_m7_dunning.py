@@ -976,6 +976,48 @@ class TestDunningChecks:
 # API: create / issue / list / delete / PDF + RBAC
 # ===========================================================================
 class TestDunningAPI:
+    @pytest.mark.parametrize('dated', [False, True])
+    def test_owner_notice_names_snapshot_due_day_and_preserves_legacy_html(self, dated):
+        from hashlib import sha256
+        from types import SimpleNamespace
+        from app.services.dunning_pdf import build_dunning_html
+
+        monthly = {'period_year': 2026, 'period_month': 7, 'payment_type': 'HAUSGELD_VORSCHUSS',
+            'soll': '600.00', 'ist': '0.00', 'open_amount': '600.00'}
+        if dated:
+            monthly['due_date'] = '2026-07-03'
+        notice = SimpleNamespace(level=1, principal_amount=Decimal('650.00'), fee_amount=Decimal('0.00'),
+            interest_amount=Decimal('0.00'), interest_snapshot=None, total_amount=Decimal('650.00'),
+            issue_date=date(2026, 7, 4), due_date=date(2026, 7, 18), included_items=[monthly,
+                {'period_year': 2026, 'period_month': 7, 'payment_type': 'SONDERZAHLUNG',
+                 'soll': '50.00', 'ist': '0.00', 'open_amount': '50.00', 'due_date': '2026-07-01'}])
+        html = build_dunning_html(notice)
+        if dated:
+            assert 'Fällig am 03.07.2026' in html
+        else:
+            # Fingerprint of the pre-date-rendering template, including an old dated levy.
+            assert sha256(html.encode()).hexdigest() == 'dc4f5138fea695bd60344a59af98be9defbe8edcc32227a47e5591126975b112'
+
+    def test_owner_notice_omits_the_fallback_date_for_a_payment_without_a_period(self):
+        from types import SimpleNamespace
+        from app.engine.dunning import assemble_dunning, find_overdue_items
+        from app.engine.mietkonto import PaymentInput, account_statement
+        from app.services.dunning_pdf import build_dunning_html
+
+        issue_date = date(2026, 7, 4)
+        payment = PaymentInput(uuid.uuid4(), 'HAUSGELD_VORSCHUSS', 'OUT', Decimal('600.00'),
+            period_year=None, period_month=None)
+        statement = account_statement([], [payment])
+        overdue = find_overdue_items(list(statement.open_items), issue_date, current_year=2026)
+        draft = assemble_dunning(overdue, 0, issue_date)
+        items = draft.items_snapshot()
+        assert items == [{'period_year': 0, 'period_month': None, 'payment_type': 'HAUSGELD_VORSCHUSS',
+            'soll': '0.00', 'ist': '-600.00', 'open_amount': '600.00', 'due_date': '2026-01-01',
+            '_dunning_format': 2}]
+
+        issued = SimpleNamespace(**vars(draft), included_items=items, status='issued')
+        assert 'Fällig am 01.01.2026' not in build_dunning_html(issued)
+
     @pytest.mark.parametrize("issued_at", [None, datetime(2026, 11, 1, 12, 26, 4, 611054, tzinfo=_tz.utc)])
     def test_issue_time_serializes_as_iso_with_timezone(self, issued_at):
         from app.api.dunning import _to_out
