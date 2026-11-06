@@ -187,7 +187,7 @@ class BrowserWorld:
             }
             origin = urlsplit(self.session.base_url)
             if (url.scheme, url.netloc) == (origin.scheme, origin.netloc) or internal_pdf_asset:
-                headers = await self.bank_trace.headers(route.request, url) if self.bank_trace else None
+                headers = self.bank_trace.headers(route.request, url) if self.bank_trace else None
                 if headers is None:
                     await route.continue_()
                 else:
@@ -262,10 +262,12 @@ def browser_world(world, browser_session, request):
                     browser.run(browser.context.tracing.stop())
         finally:
             if hasattr(browser, "context"):
-                if browser.bank_trace:
-                    browser.bank_trace.snapshot("before_browser_close")
                 try:
-                    browser.run(browser.context.close())
-                finally:
                     if browser.bank_trace:
-                        browser.bank_trace.snapshot("after_browser_close")
+                        browser.bank_trace.snapshot("before_browser_close")
+                finally:
+                    try:
+                        browser.run(browser.context.close())
+                    finally:
+                        if browser.bank_trace:
+                            browser.bank_trace.snapshot("after_browser_close")

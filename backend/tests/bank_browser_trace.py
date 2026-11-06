@@ -1,6 +1,6 @@
 """Bounded diagnostics for the local bank save-lifecycle browser scenario."""
 import asyncio
-from contextlib import closing
+from contextlib import closing, suppress
 from contextvars import ContextVar
 import json
 import re
@@ -34,7 +34,8 @@ def _write(path, record):
             stream.write(json.dumps(record) + "\n")
     except OSError:
         # A diagnostic must never replace the request outcome.
-        print('BANK_BROWSER_TRACE {"event":"trace_write_failed"}', flush=True)
+        with suppress(OSError, ValueError):
+            print('BANK_BROWSER_TRACE {"event":"trace_write_failed"}', flush=True)
 
 
 class BankTraceLog:
@@ -44,7 +45,8 @@ class BankTraceLog:
         self.failed_widths = set()
 
     def emit(self, record):
-        self.terminal.write_line("BANK_BROWSER_TRACE " + json.dumps(record))
+        with suppress(OSError, ValueError):
+            self.terminal.write_line("BANK_BROWSER_TRACE " + json.dumps(record))
 
     def records(self, width):
         try:
@@ -84,7 +86,7 @@ class BankPageTrace:
         if tag := self.requests.get(request):
             self.events.append(_record(kind, tag=tag, **fields))
 
-    async def headers(self, request, url):
+    def headers(self, request, url):
         if url.path != PATH or request.method != "GET":
             return None
         status = _status(url.query)
@@ -97,7 +99,11 @@ class BankPageTrace:
         tag = f"{prefix}-{count + 1}" if status == "NEU" else prefix
         self.requests[request] = tag
         self._browser_event("browser_request", request)
-        return {**await request.all_headers(), HEADER: tag}
+        # Chromium supplies its own session cookie on continuation. Keep
+        # credentials out of the override recorded by Playwright tracing.
+        headers = {name: value for name, value in request.headers.items()
+                   if name.lower() not in {"cookie", "authorization", "proxy-authorization"}}
+        return {**headers, HEADER: tag}
 
     async def table_timed_out(self):
         self.log.failed_widths.add(self.width)
@@ -223,8 +229,13 @@ async def trace_bank_request(app, scope, receive, send, path):
             disconnect_read = True
         return message
 
+    outcome = "raised"
     try:
         await app(scope, track_receive, track_send)
+        outcome = "returned"
+    except asyncio.CancelledError:
+        outcome = "cancelled"
+        raise
     finally:
         _current.reset(token)
         timings = {
@@ -232,4 +243,5 @@ async def trace_bank_request(app, scope, receive, send, path):
                    "total_ms": round(total * 1000, 1), "max_ms": round(maximum * 1000, 1)}
             for name, (started, completed, total, maximum) in trace["sql"].items()
         }
-        _write(path, _record("request_end", tag=tag, http=response, disconnect_read=disconnect_read, sql=timings))
+        _write(path, _record("request_end", tag=tag, http=response, outcome=outcome,
+                             disconnect_read=disconnect_read, sql=timings))
