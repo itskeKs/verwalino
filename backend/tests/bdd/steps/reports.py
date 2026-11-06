@@ -260,6 +260,27 @@ def book_report_payment(world, account, kind, amount, *, tenant=0, month=1):
     assert response.status_code == 200, world.describe_response()
 
 
+@given('confirmed electricity costs of 10 times 60 euros and insurance of 312 euros')
+def journey_five_expenses(world):
+    response = world.act('GET', '/api/cost-categories')
+    assert response.status_code == 200, world.describe_response()
+    categories = {row['code']: row for row in response.json()}
+    for code, count, amount in [('ALLGEMEINSTROM', 10, '60.00'), ('GEBAEUDEVERSICHERUNG', 1, '312.00')]:
+        category = categories[code]
+        for month in range(1, count + 1):
+            cost = create(world, '/api/cost-entries', {
+                'property_id': world.data['property']['id'],
+                'accounting_scope_id': world.data['scope']['id'],
+                'cost_category_id': category['id'], 'cost_category_plan_version': category['plan_version'],
+                'invoice_date': f'2026-{month:02d}-01',
+                'service_period_from': '2026-01-01', 'service_period_to': '2026-12-31',
+                'gross_amount': amount, 'tenant_distribution_key': 'WOHNFLAECHE',
+                'tenant_apportionable': 'UMLAGEFAEHIG', 'source': 'MANUAL',
+            })
+            response = world.act('POST', f"/api/cost-entries/{cost['id']}/confirm")
+            assert response.status_code == 200, world.describe_response()
+
+
 @then('the overview shows 14660 euros income and the separate deposit on desktop and at 360 px')
 @browser_step
 async def journey_five_headline(browser_world):
@@ -286,7 +307,7 @@ async def journey_five_headline(browser_world):
         assert await page.evaluate('document.documentElement.scrollWidth <= window.innerWidth')
 
 
-@then('the downloaded overview and Anlage V CSV both show 14660 euros income')
+@then('both CSV exports show 14660 euros income and the overview CSV includes the expenses and balance')
 @browser_step
 async def journey_five_csv(browser_world):
     page = browser_world.page
@@ -299,3 +320,65 @@ async def journey_five_csv(browser_world):
         from pathlib import Path
         rows = list(csv.reader(io.StringIO(Path(await download.path()).read_text(encoding='utf-8-sig')), delimiter=';'))
         assert next(row[-1] for row in rows if row[column] == label) == '14660,00'
+        if column == 2:
+            assert {row[4]: row[5:] for row in rows if row[2] == 'Ausgaben'} == {
+                'Allgemeinstrom / Beleuchtung': ['UMLAGEFAEHIG', '600,00'],
+                'Gebaeudeversicherung': ['UMLAGEFAEHIG', '312,00'],
+            }
+            assert {row[2]: row[-1] for row in rows if row[2] in ('Ausgaben gesamt', 'Saldo')} == {
+                'Ausgaben gesamt': '912,00', 'Saldo': '13748,00',
+            }
+
+
+@then('all annual expense columns are reachable without horizontal page scrolling')
+@browser_step
+async def journey_five_expense_table(browser_world):
+    page = browser_world.page
+    overview = page.get_by_role('region', name='Jahresübersicht', exact=True)
+    table = overview.get_by_role('table', name='Ausgaben', exact=True)
+    headers = table.get_by_role('columnheader')
+    await expect(headers).to_have_text(['Kategorie', 'Code', 'Umlagefähigkeit', 'Betrag (EUR)'])
+    electricity = table.get_by_role('row').filter(has=page.get_by_role('cell', name='ALLGEMEINSTROM', exact=True))
+    insurance = table.get_by_role('row').filter(has=page.get_by_role('cell', name='GEBAEUDEVERSICHERUNG', exact=True))
+    await expect(table.locator('tbody tr')).to_have_count(2)
+    await expect(electricity.get_by_role('cell')).to_have_text([
+        'Allgemeinstrom / Beleuchtung', 'ALLGEMEINSTROM', 'Voll umlagefaehig', '600,00 EUR',
+    ])
+    await expect(insurance.get_by_role('cell')).to_have_text([
+        'Gebaeudeversicherung', 'GEBAEUDEVERSICHERUNG', 'Voll umlagefaehig', '312,00 EUR',
+    ])
+    await expect(overview.locator('dd')).to_have_text(['14.660,00 EUR', '912,00 EUR', '13.748,00 EUR'])
+
+    main = page.locator('main')
+    heading = page.get_by_role('heading', name='Objekt-Jahresübersicht', exact=True)
+    controls = page.locator('form').filter(has=button(page, 'Übersicht anzeigen'))
+    for width in (360, 1280):
+        await page.set_viewport_size({'width': width, 'height': 1000})
+        bounds = await main.evaluate("""main => ({
+            client: main.clientWidth, scroll: main.scrollWidth,
+            document: document.documentElement.scrollWidth, viewport: innerWidth
+        })""")
+        assert bounds['scroll'] <= bounds['client'] and bounds['document'] <= width, bounds
+        heading_left = (await heading.bounding_box())['x']
+        controls_left = (await controls.bounding_box())['x']
+        container = table.locator('..')
+        scroll_range = await container.evaluate('el => el.scrollWidth - el.clientWidth')
+        assert (scroll_range > 0) == (width == 360), (width, scroll_range)
+        if width == 360:
+            await container.hover()
+            await page.mouse.wheel(scroll_range, 0)
+            await expect(headers.last).to_be_in_viewport(ratio=0.99)
+
+        for column in range(4):
+            header = headers.nth(column)
+            await header.scroll_into_view_if_needed()
+            await expect(header).to_be_in_viewport(ratio=0.99)
+            await expect(electricity.get_by_role('cell').nth(column)).to_be_in_viewport(ratio=0.99)
+            await expect(insurance.get_by_role('cell').nth(column)).to_be_in_viewport(ratio=0.99)
+
+        if width == 360:
+            assert await container.evaluate('el => el.scrollLeft') > 0
+        assert (await heading.bounding_box())['x'] == heading_left
+        assert (await controls.bounding_box())['x'] == controls_left
+        assert await main.evaluate('el => el.scrollLeft') == 0
+        await container.evaluate('el => { el.scrollLeft = 0; }')

@@ -625,6 +625,16 @@ amounts, status, source and keyboard-reachable `Details` links retain their exis
 content. Filtering and opening the creation form keep this table containment.
 Creation-form selector sizing is tracked separately in #284.
 
+The annual overview on `/berichte` gives the income and expense tables separate
+`overflow-x-auto` containers. At 360 px the expense columns scroll together
+inside the table area. Report headings, filters and totals stay within the page
+width. The populated desktop view shows all columns at once.
+
+| Annual overview | 1280 px | 360 px |
+| --- | --- | --- |
+| Before | [view](docs/assets/design/annual-report-tables/before-1280.png) | [view](docs/assets/design/annual-report-tables/before-360.png) |
+| After | [view](docs/assets/design/annual-report-tables/after-1280.png) | [view](docs/assets/design/annual-report-tables/after-360.png) · [scrolled to amounts](docs/assets/design/annual-report-tables/after-360-amounts.png) |
+
 The dunning notice detail puts `Hauptforderung` and `Zinsen` first in its frozen
 interest table, and `Offen`, `Soll`, `Ist` before period and type in its arrears
 table. Monetary cells stay unbroken; principal, interest and open amounts are
