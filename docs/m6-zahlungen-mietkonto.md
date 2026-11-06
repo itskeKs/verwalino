@@ -608,7 +608,10 @@ or unresolved classification does not yield seemingly complete totals. Existing
 bookings and snapshots remain unchanged.
 
 The `/berichte` interface (T39) queries property/year/scope explicitly; changing the
-selection removes old results. The CSV download at `/api/reports/property-year.csv`
+selection removes old results. On narrow screens, scroll the annual expense
+table sideways to see the category, code, allocability and amount. The report
+controls and totals stay within the page width.
+The CSV download at `/api/reports/property-year.csv`
 computes the same basis afresh and additionally requires scope/source export
 permissions, checked again before output. UTF-8 BOM, semicolon, CRLF and decimal comma
 are fixed for spreadsheet programs. Texts prone to formula injection receive an
