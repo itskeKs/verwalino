@@ -213,8 +213,10 @@ Below `md` (768 px) the hamburger opens a modal navigation drawer over a `bg-bla
 overlay. Closed navigation is unmounted. The existing Radix Dialog primitive moves focus to
 “Navigation schließen”, contains Tab and Shift+Tab, and hides the obscured page from assistive
 technology. Escape, the close button, route selection and the backdrop close the drawer and return
-focus to “Navigation umschalten”. Navigation links and the close button have a visible focus ring;
-focused links scroll into view even when Shift+Tab wraps to the last entry.
+focus to “Navigation umschalten”. A primary click on the backdrop closes the drawer from the
+moment the backdrop can receive input, including during the opening slide. Navigation links and
+the close button have a visible focus ring. Focused links scroll into view even when Shift+Tab
+wraps to the last entry.
 From `md` the same navigation is static, outside the dialog. Crossing the breakpoint closes the
 mobile drawer; focus moves from disappearing navigation to the visible toggle, or from the mobile
 toggle/drawer to the active desktop link. A focused closed toggle also transfers focus when it
