@@ -523,7 +523,7 @@ class SettlementService:
         self, run_id: uuid.UUID, amount: Decimal | None = None, *, heating_amount: Decimal | None = None
     ) -> SettlementRun:
         """Set the manual advance-payment total on a draft run (section 7.2)."""
-        run = await self._get_draft_or_404(run_id)
+        run = await self._get_tenant_advance_draft(run_id)
         previous = rental_values(run)
         if amount is not None:
             run.advance_payments_total = amount
@@ -555,7 +555,7 @@ class SettlementService:
         """Derive both component totals from active bookings within the lease period."""
         from app.services.payment_service import PaymentService
 
-        run = await self._get_draft_or_404(run_id)
+        run = await self._get_tenant_advance_draft(run_id)
         if not run.period_start.year <= period_year <= run.period_end.year:
             raise HTTPException(422, "DERIVED reference year must belong to the settlement period")
         if run.lease_agreement_id is None:
@@ -591,6 +591,12 @@ class SettlementService:
                 },
             )
         )
+        return run
+
+    async def _get_tenant_advance_draft(self, run_id: uuid.UUID) -> SettlementRun:
+        run = await self._get_draft_or_404(run_id)
+        if run.run_type != "BK_MIETER":
+            raise HTTPException(404, "Financial draft not found")
         return run
 
     async def _invalidate_advance_calculation(self, run: SettlementRun) -> None:

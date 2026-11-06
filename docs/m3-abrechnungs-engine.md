@@ -932,6 +932,8 @@ Changing a draft's manual advance values or deriving its advances again clears
 the saved calculation and keeps its structured inputs. The next calculation
 uses the new advance basis. Until then, reopening the draft shows the saved
 advances without the previous balance or component breakdown.
+The tenant advance endpoints return 404 for WEG settlement and asset report
+drafts, which keep their saved inputs and results.
 
 ### 7.3 Proposing a future advance payment (phase 2, T28)
 
