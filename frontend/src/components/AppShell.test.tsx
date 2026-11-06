@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
-import { act, cleanup, render, screen } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
 import { AuthCtx } from "../auth/useAuth";
@@ -56,6 +56,27 @@ it("opens a named mobile dialog and restores toggle focus after Escape and route
   await user.click(screen.getByRole("link", { name: "Objekte" }));
   expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
   expect(toggle).toHaveFocus();
+});
+
+it("dismisses an immediate backdrop click before outside pointer handling is registered", async () => {
+  shell();
+  const toggle = screen.getByRole("button", { name: "Navigation umschalten" });
+  toggle.focus();
+  fireEvent.click(toggle);
+  const dialog = screen.getByRole("dialog", { name: "Navigation" });
+  // The decorative backdrop is rendered immediately before the dialog in the portal.
+  const backdrop = dialog.previousElementSibling!;
+  expect(backdrop).toHaveAttribute("data-state", "open");
+
+  // Keep the opening and pointer interaction in one turn: Radix defers its document listener.
+  fireEvent.click(backdrop, { button: 0, ctrlKey: true });
+  expect(dialog).toBeInTheDocument();
+  fireEvent.pointerDown(backdrop, { button: 0 });
+  fireEvent.pointerUp(backdrop, { button: 0 });
+  fireEvent.click(backdrop, { button: 0 });
+
+  expect(screen.queryByRole("dialog", { name: "Navigation" })).not.toBeInTheDocument();
+  await waitFor(() => expect(toggle).toHaveFocus());
 });
 
 it("keeps desktop navigation outside a modal dialog", () => {
