@@ -69,6 +69,7 @@ async def submit_invalid_area(browser_world, width):
     async with b.page.expect_response(lambda r: r.request.method == "POST" and r.url.endswith("/api/units")) as response:
         await button(b.page, "Speichern").click()
     b.world.data["area_status"] = (await response.value).status
+    await expect(button(b.page, "Speichern")).to_be_enabled()
 
 
 @then("the area field explains the refusal and the form retains the input")

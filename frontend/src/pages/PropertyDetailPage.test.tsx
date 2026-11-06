@@ -178,13 +178,13 @@ it.each([
     .mockRejectedValueOnce(new ApiError(422, message, `invalid_unit_${field}`))
     .mockResolvedValueOnce({ id: "unit-0" } as Unit);
   fireEvent.click(await screen.findByRole("button", { name: "Bearbeiten" }));
-  const input = screen.getByRole("textbox", { name: label, exact: true });
+  const input = screen.getByRole("textbox", { name: label });
   fireEvent.change(input, { target: { value: "abc" } });
   fireEvent.click(screen.getByRole("button", { name: "Speichern" }));
   expect(await screen.findByText(message)).toBeVisible();
   expect(input).toHaveAccessibleDescription(message);
   expect(input).toHaveValue("abc");
-  expect(screen.getByRole("textbox", { name: otherLabel, exact: true })).not.toHaveAccessibleDescription();
+  expect(screen.getByRole("textbox", { name: otherLabel })).not.toHaveAccessibleDescription();
 
   fireEvent.change(input, { target: { value: "75,50" } });
   expect(screen.queryByText(message)).not.toBeInTheDocument();
