@@ -851,3 +851,35 @@ async def test_named_master_data_write_visible_before_response(bank_seed, app_rw
         response = await client.request(method, path, json=body)
     assert response.status_code in (200, 201), response.text
     assert observed == [marker], f'{kind}: saved value not committed at http.response.start'
+
+
+async def test_bank_list_reads_matching_targets_once_per_account_month(bank_seed, bank_db, monkeypatch):
+    from collections import Counter
+    from app.repositories.lease_agreement_repo import LeaseAgreementRepository
+
+    api, ids = bank_seed
+    receipts = [await transaction(bank_db, ids), await transaction(bank_db, ids, amount="700.00"),
+        await transaction(bank_db, ids, purpose="Warmmiete Juli 2025"),
+        await transaction(bank_db, ids, bank="other_bank")]
+    calls = Counter()
+    original = LeaseAgreementRepository.matching_targets
+
+    async def observe(repo, property_id, start, end):
+        calls[property_id, start] += 1
+        return await original(repo, property_id, start, end)
+
+    monkeypatch.setattr(LeaseAgreementRepository, "matching_targets", observe)
+    response = await api.get(BASE)
+    assert response.status_code == 200, response.text
+    listed = {row["id"]: row for row in response.json()["items"]}
+    for receipt, lease in zip(receipts, ("lease", "lease", "lease", "other_lease"), strict=True):
+        lines = listed[receipt]["suggestions"][0]["lines"]
+        assert {line["lease_agreement_id"] for line in lines} == {str(ids[lease])}
+    full, partial = (listed[receipt]["suggestions"][0] for receipt in receipts[:2])
+    assert full["confidence"] == "HIGH"
+    assert partial["confidence"] == "LOW"
+    assert calls == {
+        (ids["property"], date(2025, 6, 1)): 1,
+        (ids["property"], date(2025, 7, 1)): 1,
+        (ids["other_property"], date(2025, 6, 1)): 1,
+    }

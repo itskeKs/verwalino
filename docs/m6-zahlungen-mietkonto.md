@@ -517,9 +517,10 @@ manually editable. The API validates again (§6.10); the user interface follows 
 `GET /api/bank-transactions` returns paginated transactions with real suggestions
 (default status `NEU`, explicitly `ALL` for all states, account filter,
 limit 50/maximum 100). Even without suggestions,
-the account RLS and current scope grants remain authoritative. Each list entry
-uses its own calculation context; Hausgeld only from the matching
-finalized, non-superseded economic plan. The owner actual filter
+the account RLS and current scope grants remain authoritative. Within one page
+request, receipts for the same account and month reuse the authorized matching
+targets. Each receipt is evaluated against those targets with its own amount
+and purpose. Hausgeld uses the matching finalized, non-superseded plan. The owner actual filter
 additionally restricts to the bank property, even if the person owns several properties.
 
 `POST /{id}/assign` validates all rows before the first payment. Positive,

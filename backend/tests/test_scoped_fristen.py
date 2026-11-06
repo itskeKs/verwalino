@@ -134,9 +134,9 @@ async def test_partial_fiscal_year_requires_reviewed_coverage(migrator_session, 
 
 async def test_malformed_lease_does_not_become_zero_overdue(migrator_session, scope_seed, monkeypatch):
     ids = await statement_fixture(migrator_session, scope_seed, 'lease')
-    def invalid(*args):
+    def invalid(*args, **kwargs):
         raise ValueError('Malformed calculation input')
-    monkeypatch.setattr('app.services.fristen_service.tenant_expected_charges', invalid)
+    monkeypatch.setattr('app.services.payment_service.tenant_expected_charges', invalid)
     async with client(ids) as api:
         response = await api.get('/api/fristen', params={'reference_date': '2025-12-31', 'accounting_scope_id': str(ids['scope'])})
         assert response.status_code == 409

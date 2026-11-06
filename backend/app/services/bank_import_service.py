@@ -100,15 +100,16 @@ class BankImportService:
         rows = await self._transactions.list_page(
             bank_account_id=bank_account_id, status=status, limit=limit, offset=offset)
         items = []
+        targets_by_period: dict[tuple[uuid.UUID, int, int], list[MatchTarget]] = {}
         for row in rows[:limit]:
-            suggestions = await self._suggestions(row) if row.status == "NEU" else ()
+            suggestions = await self._suggestions(row, targets_by_period) if row.status == "NEU" else ()
             items.append({key: getattr(row, key) for key in (
                 "id", "bank_account_id", "booking_date", "value_date", "amount",
                 "counterparty_name", "counterparty_iban", "purpose", "status", "cost_entry_id")}
                 | {"suggestions": suggestions})
         return {"items": items, "next_offset": offset + limit if len(rows) > limit else None}
 
-    async def _suggestions(self, transaction):
+    async def _suggestions(self, transaction, targets_by_period):
         row = BankImportRow(**{key: getattr(transaction, key) for key in (
             "booking_date", "value_date", "amount", "counterparty_name",
             "counterparty_iban", "purpose", "import_hash")})
@@ -116,6 +117,9 @@ class BankImportService:
         if period is None or row.amount <= 0:
             return ()
         year, month, _ = period
+        key = (transaction.bank_account_id, year, month)
+        if key in targets_by_period:
+            return suggest_matches(row, targets_by_period[key])
         month_start = date(year, month, 1)
         month_end = date(year, month, monthrange(year, month)[1])
         account = await self._accounts.get_by_id(transaction.bank_account_id)
@@ -128,6 +132,7 @@ class BankImportService:
             sphere = await context.select_read_scope(scope_id)
             if sphere is not None and (month_end < sphere.valid_from
                     or sphere.valid_to is not None and month_start > sphere.valid_to):
+                targets_by_period[key] = []
                 return ()
             start, end = date(year, 1, 1), date(year, 12, 31)
             if sphere is not None:
@@ -165,6 +170,9 @@ class BankImportService:
                         targets.append(MatchTarget(
                             name=f"{person.first_name} {person.last_name}".strip(), iban=person.iban,
                             open_items=statement.open_items, owner_profile_id=owner.id))
+        # This request holds the source locks while it uses these targets.
+        # Match each receipt separately, including its amount and purpose.
+        targets_by_period[key] = targets
         return suggest_matches(row, targets)
 
     async def _transaction_for_update(self, transaction_id):
