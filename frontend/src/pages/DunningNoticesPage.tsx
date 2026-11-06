@@ -125,8 +125,8 @@ export function DunningNoticesPage() {
   const [scopeValid, setScopeValid] = useState(false);
   const [saving, setSaving] = useState(false);
   const savingRef = useRef(false);
-  const tenantErrorRef = useRef<HTMLParagraphElement>(null);
-  const tenantFormOpen = showForm && canWrite && recipientType === "tenant";
+  const creationErrorRef = useRef<HTMLParagraphElement>(null);
+  const creationFormOpen = showForm && canWrite;
   const mounted = useRef(false);
   useEffect(() => {
     mounted.current = true;
@@ -134,7 +134,7 @@ export function DunningNoticesPage() {
   }, []);
 
   useEffect(() => {
-    if (error) tenantErrorRef.current?.scrollIntoView?.({ block: "nearest" });
+    if (error) creationErrorRef.current?.scrollIntoView?.({ block: "nearest" });
   }, [error]);
 
   const statusFilter = searchParams.get("status") ?? "";
@@ -363,15 +363,15 @@ export function DunningNoticesPage() {
 
       {error && (
         <p
-          ref={tenantFormOpen ? tenantErrorRef : undefined}
-          role={tenantFormOpen ? "alert" : undefined}
-          className="error-text"
+          ref={creationFormOpen ? creationErrorRef : undefined}
+          role={creationFormOpen ? "alert" : undefined}
+          className={creationFormOpen && recipientType === "owner" ? "error-text scroll-mt-2" : "error-text"}
         >
           {error}
         </p>
       )}
 
-      {showForm && canWrite && (
+      {creationFormOpen && (
         <div className="card" style={{ marginBottom: "1rem" }}>
           <h2>Neue Mahnung anlegen</h2>
           <p style={{ fontSize: "0.85rem", color: "var(--text-muted)", marginBottom: "1rem" }}>

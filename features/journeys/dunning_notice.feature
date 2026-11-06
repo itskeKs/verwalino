@@ -10,7 +10,7 @@ Feature: Readable issued dunning notice
   Scenario Outline: An owner notice explains when the July charge is not yet overdue
     Given Anna Berg's 2026 plan charges 600 EUR in July due on 3 July
     When the manager submits Anna's July notice as of 2 July 2026 at <width> px
-    Then the form explains the refusal in German, keeps the selections and creates no draft
+    Then the German refusal is fully in view without manual scrolling, the selections remain and no draft is created
     When the manager changes only the reference date to 4 July 2026 and resubmits
     Then exactly one owner draft opens with 600 EUR principal for the charge due on 3 July
 

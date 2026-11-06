@@ -98,23 +98,23 @@ def submit_early_owner_notice(browser_world, july_plan, width):
                 await field(b.page, label).fill(value)
         await b.page.get_by_label('Abrechnungskreis suchen', exact=True).fill('WEG Gartenstraße')
         await b.select('Abrechnungskreis', w['scope'])
+        await button(b.page, 'Mahnung erstellen').scroll_into_view_if_needed()
         return await submit(b, 'Mahnung erstellen', '/api/dunning/owner', status=422)
 
     w['refusal'] = b.run(submit_early())
 
 
-@then('the form explains the refusal in German, keeps the selections and creates no draft')
+@then('the German refusal is fully in view without manual scrolling, the selections remain and no draft is created')
 def early_owner_notice_is_refused(browser_world, world, july_plan):
     b, w = browser_world, july_plan
 
+    detail = 'Für den ausgewählten Eigentümer gibt es im gewählten Zeitraum zum Stichtag keine überfälligen Beträge.'
+    assert w['refusal'] == {'detail': detail}
+
     async def check_form():
-        message = b.page.get_by_text(
-            'Für den ausgewählten Eigentümer gibt es im gewählten Zeitraum zum Stichtag keine überfälligen Beträge.',
-            exact=True,
-        )
-        await expect(message).to_be_visible()
-        await message.scroll_into_view_if_needed()
-        await expect(message).to_be_in_viewport(ratio=1)
+        await expect(b.page.get_by_text(detail, exact=True)).to_be_in_viewport(ratio=1)
+        await expect(b.page.get_by_role('combobox', name='Empfaengertyp *', exact=True)).to_have_value('owner')
+        await expect(b.page.get_by_role('combobox', name='Abrechnungskreis', exact=True)).to_have_value(w['scope'])
         for label, value in w['selections'].items():
             control = (b.page.get_by_role('combobox', name=label, exact=True)
                        if label in {'Eigentuemer *', 'WEG-Objekt *', 'Wirtschaftsplan'} else field(b.page, label))
