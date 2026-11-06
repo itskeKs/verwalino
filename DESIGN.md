@@ -1008,6 +1008,15 @@ inline expressions, with the variants below. The inconsistencies are tracked in 
 - Grouped money requires the decimal comma in these controls. A plain decimal
   point remains available with up to two fractional digits.
 
+Synthetic data in the portable installation, captured at both viewport widths.
+
+| Form | 1280 px | 360 px |
+| --- | --- | --- |
+| Unit area | [before](docs/assets/design/german-form-inputs/unit-area-before-1280.png) · [after](docs/assets/design/german-form-inputs/unit-area-after-1280.png) | [before](docs/assets/design/german-form-inputs/unit-area-before-360.png) · [after](docs/assets/design/german-form-inputs/unit-area-after-360.png) |
+| Tenant dunning fee | [before](docs/assets/design/german-form-inputs/fee-tenant-before-1280.png) · [after](docs/assets/design/german-form-inputs/fee-tenant-after-1280.png) | [before](docs/assets/design/german-form-inputs/fee-tenant-before-360.png) · [after](docs/assets/design/german-form-inputs/fee-tenant-after-360.png) |
+| Owner dunning fee | [before](docs/assets/design/german-form-inputs/fee-owner-before-1280.png) · [after](docs/assets/design/german-form-inputs/fee-owner-after-1280.png) | [before](docs/assets/design/german-form-inputs/fee-owner-before-360.png) · [after](docs/assets/design/german-form-inputs/fee-owner-after-360.png) |
+| Deposit split | [before](docs/assets/design/german-form-inputs/deposit-before-1280.png) · [after](docs/assets/design/german-form-inputs/deposit-after-1280.png) | [before](docs/assets/design/german-form-inputs/deposit-before-360.png) · [after](docs/assets/design/german-form-inputs/deposit-after-360.png) |
+
 ### Economic plan draft reserve
 
 A new draft without saved input rows pre-fills “Rücklagenzuführung (Jahr)” with
