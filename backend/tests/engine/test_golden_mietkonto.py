@@ -963,3 +963,20 @@ def test_reversal_after_finalization_preserves_the_frozen_credit_policy(ptype, d
     assert mietkonto.derive_advance_total_for_period(
         payments, filt, date(2025, 7, 1), YEAR_END, finalized_credits=frozen,
     ) == Decimal(expected)
+
+
+@pytest.mark.parametrize("ptype", [PT_NK_VORAUSZAHLUNG, PT_HK_VORAUSZAHLUNG])
+def test_reversing_a_refund_after_a_zero_credit_preserves_the_full_remaining_advance(ptype):
+    lease = _U(50)
+    receipt = _pay(1, ptype, "50.00", lease=lease)
+    refund = _pay(2, ptype, "50.00", lease=lease, direction="OUT")
+    filt = AdvanceFilter(frozenset({ptype}), 2025, lease)
+    june_end = date(2025, 6, 30)
+    frozen = mietkonto.derive_advance_credits_for_period([receipt, refund], filt, YEAR_START, june_end)
+
+    payments = [receipt, replace(refund, is_reversed=True),
+                replace(refund, payment_id=_U(3), direction="IN", is_reversal=True)]
+    assert mietkonto.derive_advance_total_for_period(
+        payments, filt, date(2025, 7, 1), YEAR_END, finalized_credits=frozen,
+    ) == Decimal("50.00")
+    assert frozen == (mietkonto.AdvanceCredit(2025, None, YEAR_START, june_end, Decimal("0.00")),)

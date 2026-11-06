@@ -436,8 +436,10 @@ and a 70-euro standalone refund assigned to the same period give a derived
 total of −20 euros for that component (#216). Year/month buckets, lease bounds,
 reversals and frozen credits apply separately to each type. A later derivation
 uses the signed difference for buckets with active standalone refunds or negative
-frozen credits, including when the booked net is zero. A known breakdown can
-omit zero buckets. If an affected finalized statement lacks its breakdown,
+frozen credits, including when the booked net is zero. Finalization records
+zero refund credits so a later reversal can reconcile them. Previously omitted
+buckets in known breakdowns count as zero when reconciling refunds. If an
+affected finalized statement lacks its breakdown,
 derivation returns `advance_credit_history_missing`. Finalized snapshots retain
 their amounts.
 Both totals default to unknown; missing totals block computation, coverage and

@@ -726,10 +726,9 @@ def derive_advance_credits_for_period(
         for previous in frozen:
             if previous.month == month:
                 amount += share(previous.period_start, previous.period_end) - previous.amount
-        # A refund can exhaust a bucket and still leave a frozen credit to offset.
-        if total or amount:
-            credit = amount if signed else max(Decimal("0.00"), amount)
-            credits.append(AdvanceCredit(filt.year, month, period_start, period_end, credit))
+        # Freeze even a zero refund credit so a later reversal can reconcile it.
+        credit = amount if signed else max(Decimal("0.00"), amount)
+        credits.append(AdvanceCredit(filt.year, month, period_start, period_end, credit))
     return tuple(credits)
 
 
