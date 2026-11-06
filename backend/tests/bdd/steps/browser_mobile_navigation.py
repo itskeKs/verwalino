@@ -65,7 +65,7 @@ def closed_keyboard(browser_world, tmp_path):
         await capture(b, tmp_path, "navigation-closed-focus-360")
         await visible_focus(b.page)
         await expect(b.page.get_by_role("button", name="Navigation umschalten", exact=True)).to_be_focused()
-        assert not await b.page.get_by_role("link", name="Dashboard", exact=True).count()
+        await expect(b.page.get_by_role("navigation", name="Hauptnavigation")).to_have_count(0)
     b.run(run())
 
 
@@ -75,7 +75,7 @@ def escape(browser_world, tmp_path):
 
     async def run():
         await b.page.get_by_role("button", name="Navigation umschalten", exact=True).click()
-        await expect(b.page.get_by_role("link", name="Dashboard", exact=True)).to_be_in_viewport(ratio=1)
+        await expect(b.page.get_by_role("dialog", name="Navigation").get_by_role("link", name="Übersicht", exact=True)).to_be_in_viewport(ratio=1)
         await capture(b, tmp_path, "navigation-open-360")
         await b.page.keyboard.press("Escape")
     b.run(run())
@@ -86,7 +86,7 @@ def closed_after_escape(browser_world, tmp_path):
     async def run():
         page = browser_world.page
         await expect(page.get_by_role("button", name="Navigation umschalten", exact=True)).to_be_focused()
-        await expect(page.get_by_role("link", name="Dashboard", exact=True)).to_have_count(0)
+        await expect(page.get_by_role("navigation", name="Hauptnavigation")).to_have_count(0)
         await capture(browser_world, tmp_path, "navigation-escape-360")
     browser_world.run(run())
 
@@ -106,9 +106,13 @@ def phone_controls(browser_world, tmp_path):
         await expect(dialog).to_be_in_viewport(ratio=1)
         await visible_focus(page)
         await capture(b, tmp_path, "navigation-open-360")
-        # Traverse past both ends of all navigation entries, including admin links.
+        # Expand the groups so the keyboard traversal includes the admin links.
+        await dialog.get_by_text("Weitere Bereiche", exact=True).click()
+        for group in await dialog.locator(".navigation-group > summary").all():
+            await group.click()
+        focusable_count = await dialog.locator("a, summary, button").count()
         for key in ("Tab", "Shift+Tab"):
-            for _ in range(await dialog.get_by_role("link").count() + 3):
+            for _ in range(focusable_count + 1):
                 await page.keyboard.press(key)
                 assert await page.locator(":focus").evaluate("e => !!e.closest('[role=dialog]')")
                 await visible_focus(page)
@@ -155,7 +159,7 @@ def resizing(browser_world, tmp_path):
         await page.set_viewport_size({"width": 767, "height": 900})
         toggle = page.get_by_role("button", name="Navigation umschalten", exact=True)
         await expect(toggle).to_be_focused()
-        await expect(page.get_by_role("link", name="Dashboard", exact=True)).to_have_count(0)
+        await expect(page.get_by_role("navigation", name="Hauptnavigation")).to_have_count(0)
         await toggle.press("Enter")
         await expect(page.get_by_role("dialog", name="Navigation", exact=True)).to_be_visible()
         await page.set_viewport_size({"width": 768, "height": 900})
@@ -171,7 +175,7 @@ def resizing(browser_world, tmp_path):
         await page.keyboard.press("Escape")
         await expect(toggle).to_be_focused()
         await page.set_viewport_size({"width": 1280, "height": 900})
-        await expect(page.locator('nav a[aria-current="page"]')).to_be_focused()
+        await expect(page.get_by_role("navigation", name="Hauptnavigation").locator('a[aria-current="page"]')).to_be_focused()
         await visible_focus(page)
         await desktop_navigation()
     b.run(run())
@@ -205,6 +209,6 @@ def closed_toggle_resize(browser_world, width, tmp_path):
         await page.set_viewport_size({"width": width, "height": 900})
         await expect(page.get_by_role("button", name="Navigation umschalten", exact=True)).to_be_hidden()
         await capture(browser_world, tmp_path, f"navigation-closed-resize-{width}")
-        await expect(page.locator('nav a[aria-current="page"]')).to_be_focused()
+        await expect(page.get_by_role("navigation", name="Hauptnavigation").locator('a[aria-current="page"]')).to_be_focused()
         await visible_focus(page)
     browser_world.run(run())

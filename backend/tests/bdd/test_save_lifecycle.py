@@ -30,8 +30,10 @@ def representative_lists(world):
     for year in range(2020, 2025):
         create(world, '/api/leases', {'unit_id': d['units'][0]['id'], 'tenant_profile_id': d['tenants'][0]['id'], 'valid_from': f'{year}-01-01', 'valid_to': f'{year}-12-31', 'base_rent': '1234.56', 'advance_payment': '150.00'})
 
+    # Ordinary outgoing rows keep the list long. The separate incoming
+    # receipts in this scenario exercise rent matching and assignment.
     content = 'Buchungstag;Wertstellung;Betrag;Name;Verwendungszweck\n' + ''.join(
-        f'05.03.2026;05.03.2026;25,00;Testdienst {index};Nebeneingang Gartenflügel {index}\n' for index in range(30))
+        f'05.03.2026;05.03.2026;-25,00;Testdienst {index};Nebenausgabe Gartenflügel {index}\n' for index in range(30))
     response = world.act('POST', f"/api/bank-accounts/{d['account']['id']}/imports", params={'dry_run': 'false'}, files={'file': ('more-receipts.csv', content.encode(), 'text/csv')})
     assert response.status_code == 200, response.text
 

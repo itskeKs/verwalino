@@ -41,7 +41,8 @@ Screenshots show demo data.
 ## Features
 
 - **Access and organization:** login, user administration, admin/clerk/read-only
-  roles, password changes and session revocation, management mandates, and a
+  roles, password changes and session revocation, personal Klar/Warm design
+  settings, management mandates, and a
   dashboard with deadlines, due tasks, and monthly rent figures.
 - **Properties and units:** rental, WEG, SEV, and mixed properties; unit areas and
   co-ownership shares (MEA); meters and readings; CSV master-data import;

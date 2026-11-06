@@ -624,7 +624,7 @@ describe("Teilungserklärung entry points and legal shares", () => {
   it("does not expose property write actions to read-only users", async () => {
     vi.spyOn(api, "get").mockResolvedValue({ items: [exampleProperty], next_cursor: null });
     renderWithRole(<MemoryRouter><PropertiesPage /></MemoryRouter>, "READ_ONLY");
-    expect(await screen.findByRole("link", { name: "Talstraße 112" })).toBeVisible();
+    expect((await screen.findAllByRole("link", { name: "Talstraße 112" }))[0]).toBeVisible();
     expect(screen.queryByRole("link", { name: "Teilungserklärung importieren" })).toBeNull();
     expect(screen.queryByRole("button", { name: "Bearbeiten" })).toBeNull();
   });

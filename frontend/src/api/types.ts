@@ -1877,6 +1877,8 @@ export interface SettlementPeriod {
   period_start: string;
   period_end: string;
 }
+export type DesignTheme = "klar" | "warm";
+export interface UserPreferences { design_theme: DesignTheme }
 
 export interface UnitHouseholdRow {
   valid_from: string;

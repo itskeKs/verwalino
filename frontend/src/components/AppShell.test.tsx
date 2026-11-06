@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
-import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
 import { AuthCtx } from "../auth/useAuth";
@@ -35,7 +35,7 @@ function shell(desktop = false) {
 
 it("keeps closed mobile navigation out of the accessibility tree and tab order", async () => {
   shell();
-  expect(screen.queryByRole("link", { name: "Dashboard" })).not.toBeInTheDocument();
+  expect(screen.queryByRole("navigation", { name: "Hauptnavigation" })).not.toBeInTheDocument();
   await userEvent.tab();
   expect(screen.getByRole("button", { name: "Navigation umschalten" })).toHaveFocus();
 });
@@ -53,7 +53,7 @@ it("opens a named mobile dialog and restores toggle focus after Escape and route
   expect(toggle).toHaveFocus();
   expect(toggle).toHaveAttribute("aria-expanded", "false");
   await user.keyboard("{Enter}");
-  await user.click(screen.getByRole("link", { name: "Objekte" }));
+  await user.click(within(screen.getByRole("dialog", { name: "Navigation" })).getByRole("link", { name: "Objekte" }));
   expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
   expect(toggle).toHaveFocus();
 });
@@ -81,7 +81,7 @@ it("dismisses an immediate backdrop click before outside pointer handling is reg
 
 it("keeps desktop navigation outside a modal dialog", () => {
   shell(true);
-  expect(screen.getByRole("link", { name: "Dashboard" })).toBeInTheDocument();
+  expect(within(screen.getByRole("navigation", { name: "Hauptnavigation" })).getByRole("link", { name: "Übersicht" })).toBeInTheDocument();
   expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
 });
 
@@ -93,7 +93,7 @@ it("restores navigation focus after the closed toggle becomes hidden at the desk
   // Browsers blur a display:none toggle before dispatching the media change.
   toggle.blur();
   resize(true);
-  expect(screen.getByRole("link", { name: "Dashboard" })).toHaveFocus();
+  expect(within(screen.getByRole("navigation", { name: "Hauptnavigation" })).getByRole("link", { name: "Übersicht" })).toHaveFocus();
 });
 
 it("keeps page control focus when navigation changes at the desktop breakpoint", async () => {

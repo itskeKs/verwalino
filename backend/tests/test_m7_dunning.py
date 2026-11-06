@@ -1540,6 +1540,11 @@ async def test_0174_downgrade_refuses_default_policy_notice_without_interest(iso
             with monkeypatch.context() as patch:
                 patch.setattr(sqlalchemy, "engine_from_config",
                               lambda *args, **kwargs: SimpleNamespace(connect=lambda: nullcontext(connection)))
+                # Rehearse the dunning guard from its own revision. This
+                # historical projection rolls back with the outer transaction.
+                connection.execute(text("""UPDATE public."user"
+                    SET design_theme='klar' WHERE design_theme<>'klar'"""))
+                command.downgrade(cfg, "0174")
                 with pytest.raises(DBAPIError, match="Previous releases cannot render retained organization-policy notices"):
                     with connection.begin_nested():
                         command.downgrade(cfg, "0173")

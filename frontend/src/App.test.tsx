@@ -58,6 +58,13 @@ afterEach(() => {
   permissionsInventoryFails = false;
 });
 
+it.each(["OWNER_ADMIN", "CLERK", "READ_ONLY"])("opens personal settings for %s", async role => {
+  renderRoutes("/einstellungen", role);
+  expect(await screen.findByRole("heading", { name: "Einstellungen" })).toBeVisible();
+  expect(screen.getByRole("radio", { name: /Klar/ })).toBeInTheDocument();
+  expect(screen.getByRole("radio", { name: /Warm/ })).toBeInTheDocument();
+});
+
 describe("setup status availability", () => {
   it.each([undefined, "OWNER_ADMIN"])("keeps normal routes available after a failed setup check for %s", async role => {
     const log = vi.spyOn(console, "error").mockImplementation(() => {});
@@ -119,6 +126,9 @@ describe("governance navigation", () => {
 
   it("keeps advanced governance links reachable for admins", async () => {
     renderRoutes("/objekte", "OWNER_ADMIN");
+    await screen.findByRole("heading", { name: "Objekte" });
+    fireEvent.click(screen.getByText("Weitere Bereiche", { selector: "summary" }));
+    fireEvent.click(screen.getByText("Erweitert", { selector: "summary" }));
     expect(await screen.findByRole("link", { name: "Berechtigungen" })).toBeVisible();
     expect(screen.getByText("Erweitert")).toBeVisible();
   });
