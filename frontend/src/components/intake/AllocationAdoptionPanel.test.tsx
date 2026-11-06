@@ -86,9 +86,11 @@ it('preserves an unknown correction across parent GET failure and recovers the e
     if (url.includes('adoption-preview')) return json({ ...preview, can_adopt: false });
     return json({ options: [], items: [] });
   }));
-  const view = render(<AllocationAdoptionPanel {...props} />);
+  const view = await renderAdoption();
   await screen.findByText('Kostenübernahme bestätigt');
-  fireEvent.click(screen.getByRole('button', { name: 'Korrekturvorschau laden' }));
+  const loadPreview = screen.getByRole('button', { name: 'Korrekturvorschau laden' });
+  await waitFor(() => expect(loadPreview).toBeEnabled());
+  fireEvent.click(loadPreview);
   await screen.findByLabelText('Begründung der Korrektur');
   fireEvent.change(screen.getByLabelText('Begründung der Korrektur'), { target: { value: 'Reviewed correction' } });
   for (const box of screen.getAllByRole('checkbox')) fireEvent.click(box);
