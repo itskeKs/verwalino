@@ -148,6 +148,26 @@ it("shows a rejected unit number at the field and saves after shortening it", as
   expect(screen.queryByRole("heading", { name: "Einheit bearbeiten" })).not.toBeInTheDocument();
 });
 
+it("keeps a refused duplicate number in the new unit form for correction", async () => {
+  renderMeaProperty("MIET", [null]);
+  const message = "Eine Einheit mit dieser Nummer gibt es in diesem Objekt schon.";
+  vi.spyOn(endpoints, "createUnit")
+    .mockRejectedValueOnce(new ApiError(409, message, "duplicate_unit_number"))
+    .mockResolvedValueOnce({ id: "new-unit" } as Unit);
+  fireEvent.click(await screen.findByRole("button", { name: "+ Neue Einheit" }));
+  const input = screen.getByRole("textbox", { name: "Nummer *" });
+  fireEvent.change(input, { target: { value: "1" } });
+  fireEvent.click(screen.getByRole("button", { name: "Speichern" }));
+  expect(await screen.findByRole("alert")).toHaveTextContent(message);
+  expect(input).toHaveAccessibleDescription(message);
+  expect(input).toHaveValue("1");
+
+  fireEvent.change(input, { target: { value: "2" } });
+  expect(screen.queryByText(message)).not.toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "Speichern" }));
+  expect(await screen.findByRole("status")).toHaveTextContent("Einheit gespeichert.");
+});
+
 it.each([["OWNER_ADMIN", true], ["CLERK", true], ["READ_ONLY", false], ["UNKNOWN", false]] as const)(
   "binds the property meter panel without a unit and with role %s", async (role, canWrite) => {
     render(<AuthCtx.Provider value={{ loading: false, session: { user_id: "user", organization_id: "org", role }, login: vi.fn(), logout: vi.fn() }}>

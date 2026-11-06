@@ -11,8 +11,6 @@ import asyncio
 import hashlib
 import json
 import math
-import re
-import unicodedata
 import uuid
 from collections import defaultdict
 from contextlib import AbstractAsyncContextManager
@@ -27,6 +25,7 @@ from app.core.config import Settings, settings
 from app.core.locking import is_lock_timeout
 from app.core.db import get_worker_tenant_session
 from app.core.storage import DocumentStore, get_store
+from app.core.unit_numbers import normalize_unit_number
 from app.declarations.batching import PageBatch, PageBatcher
 from app.declarations.evidence import EvidenceTextIndex
 from app.declarations.policy import CandidateContext, classify_candidate
@@ -1693,7 +1692,7 @@ def _candidate_drafts(imported, inventory, output, validation_issues, document_i
     draft_issues: list[DraftIssue] = []
     existing_by_number: dict[str, list[Unit]] = defaultdict(list)
     for unit in units:
-        existing_by_number[_normalize_unit_number(unit.number)].append(unit)
+        existing_by_number[normalize_unit_number(unit.number)].append(unit)
 
     unit_groups: dict[str, dict[str, list[FactPayload]]] = defaultdict(dict)
     special_subjects: dict[str, dict[str, list[FactPayload]]] = defaultdict(dict)
@@ -1739,7 +1738,7 @@ def _candidate_drafts(imported, inventory, output, validation_issues, document_i
         numbers = {_normalized_json(fact) for fact in number_facts}
         number = None
         if len(numbers) == 1 and number_facts and isinstance(number_facts[0].normalized_value.value, str):
-            number = _normalize_unit_number(number_facts[0].normalized_value.value)
+            number = normalize_unit_number(number_facts[0].normalized_value.value)
         matches = existing_by_number.get(number or "", []) if imported.mode == "EXISTING_PROPERTY" else []
         if imported.mode == "EXISTING_PROPERTY" and len(matches) > 1:
             code = "AMBIGUOUS_UNIT_MATCH"
@@ -2146,7 +2145,3 @@ def _values_semantically_equal(proposed: object, previous: object) -> bool:
         except Exception:
             return False
     return proposed == previous
-
-
-def _normalize_unit_number(value: str) -> str:
-    return re.sub(r"\s+", " ", unicodedata.normalize("NFKC", value)).strip().casefold()

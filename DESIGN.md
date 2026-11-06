@@ -341,6 +341,8 @@ New screens follow these page structures and use a German noun as their `h1`.
   errors stay inline beside the retained data. Initial errors and not-found replace the page.
   When editing a unit, a name over 50 characters shows “Die Bezeichnung darf höchstens 50 Zeichen lang sein.”
   below “Nummer *”. The field retains the entered name and clears the error when edited.
+  Creating or renaming a unit to a number already in the property shows “Eine Einheit mit dieser
+  Nummer gibt es in diesem Objekt schon.” in the same field error, with the entry kept for correction.
   Property details offer the MEA scale confirmation and unit MEA field for WEG, MISCH and SEV;
   MIET offers them only when an existing unit has a recorded MEA (including zero). Unset MEA
   is not a recorded share. The confirmation card appears only for writers with an unconfirmed

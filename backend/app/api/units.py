@@ -28,6 +28,7 @@ from app.repositories.pagination import Page, PageQuery, page_query, page_rows
 from app.services.master_creation_service import (
     UnitCreate, create_unit as create_unit_record, _validate_usage_type,
     _parse_mea_numerator, _require_confirmed_mea_scale, _validate_mea_total,
+    lock_unit_property, require_available_unit_number,
 )
 
 router = APIRouter(prefix="/api/units", tags=["units"])
@@ -151,13 +152,19 @@ async def update_unit(
         _validate_usage_type(body.usage_type)
 
     mea = _parse_mea_numerator(body.mea) if body.mea is not None else None
-    if mea is not None:
-        prop = await _require_confirmed_mea_scale(db, auth.organization_id, unit.property_id)
+    if body.number is not None or mea is not None:
+        prop = await lock_unit_property(db, auth.organization_id, unit.property_id)
+        if mea is not None:
+            _require_confirmed_mea_scale(prop)
         unit = await repo.get_by_id_for_update(unit_id)
         if unit is None or unit.property_id != prop.id:
             raise HTTPException(status_code=404, detail="Unit not found")
-        units = await repo.list_by_property_for_update(prop.id)
-        _validate_mea_total(mea, prop, units, replacing_unit=unit)
+        if mea is not None:
+            units = await repo.list_by_property_for_update(prop.id)
+            _validate_mea_total(mea, prop, units, replacing_unit=unit)
+        # An unchanged number must not prevent editing a legacy duplicate's other fields.
+        if body.number is not None and body.number != unit.number:
+            await require_available_unit_number(repo, prop.id, body.number, exclude_unit_id=unit_id)
 
     if body.number is not None:
         unit.number = body.number
