@@ -306,3 +306,85 @@ def combined_proposal_preserves_original(world):
     assert before['snapshot_sha256'] == after['snapshot_sha256'] == run['snapshot_sha256']
     assert before['lines'] == after['lines']
     assert world.act('GET', path + '/pdf').content == pdf.content
+
+
+def book_tenant_advances(world, direction, amount):
+    data = world.data['advance_split']
+    for kind in ('NK_VORAUSZAHLUNG', 'HK_VORAUSZAHLUNG'):
+        payment = world.run(create(world.actor, '/api/payments', {
+            'bank_account_id': data['account']['id'], 'direction': direction, 'amount': amount,
+            'value_date': '2026-07-05' if direction == 'IN' else '2026-07-20',
+            'payment_type': kind, 'period_year': 2026, 'period_month': 7,
+            'tenant_profile_id': data['tenant']['id'], 'lease_agreement_id': data['lease']['id']}))
+        response = world.act('POST', f"/api/payments/{payment['id']}/book")
+        assert response.status_code == 200, world.describe_response()
+
+
+@given('Anna paid 50 euros each in operating and heating advances for July 2026')
+def paid_advances_for_july(world):
+    world.data['advance_split'] = world.run(period_property(world.actor, month=1))
+    book_tenant_advances(world, 'IN', '50.00')
+
+
+@when('the manager books a 70 euro refund for each advance and derives the 2026 statement')
+def derive_refunded_advances(world):
+    book_tenant_advances(world, 'OUT', '70.00')
+    data = world.data['advance_split']
+    run = world.run(create(world.actor, '/api/settlements', statement(data, '2026-01-01', '2026-12-31')))
+    world.data['refund_run_url'] = f"/api/settlements/{run['id']}"
+    response = world.act('PATCH', world.data['refund_run_url'] + '/advance-payments-derived',
+                         params={'period_year': 2026})
+    assert response.status_code == 200, world.describe_response()
+
+
+@then('each advance is minus 20 euros')
+def advances_are_negative(world):
+    run = world.response.json()
+    for prefix in ('', 'heating_'):
+        assert run[f'{prefix}advance_payments_total'] == '-20.00'
+        assert run[f'{prefix}advance_payments_source'] == 'DERIVED'
+
+
+@when('the manager finalizes the statement with 100 euros operating and 80 euros heating costs')
+def finalize_refunded_statement(world):
+    data = world.data['advance_split']
+    for code, amount in [('GRUNDSTEUER', '100.00'), ('MESSDIENST', '80.00')]:
+        confirmed_period_cost(world, data, code, amount, '2026-01-01', '2026-12-31', 'WOHNFLAECHE')
+    url = world.data['refund_run_url']
+    world.run(attest_fixture(world.actor, 'settlement', url.rsplit('/', 1)[-1], {
+        'advance_payments_total': '-20.00', 'advance_payments_source': 'DERIVED',
+        'heating_advance_payments_total': '-20.00', 'heating_advance_payments_source': 'DERIVED'}))
+    response = world.act('POST', url + '/finalize', json={})
+    assert response.status_code == 200, world.describe_response()
+    world.data['finalized_refund_run'] = response.json()
+
+
+@then('the statement and PDF show both negative advances and 220 euros due')
+def refunded_statement_and_pdf(world):
+    run = world.data['finalized_refund_run']
+    assert run['status'] == 'finalized'
+    assert run['advance_payments_total'] == run['heating_advance_payments_total'] == '-20.00'
+    lines = {line['label']: line['amount'] for line in run['lines']}
+    assert lines['Betriebskosten abzüglich Vorauszahlungen'] == '120.00'
+    assert lines['Heizkosten abzüglich Vorauszahlungen'] == '100.00'
+    assert run['balance'] == '220.00'
+    response = world.act('GET', world.data['refund_run_url'] + '/pdf')
+    assert response.status_code == 200, world.describe_response()
+    content = subprocess.run(['pdftotext', '-layout', '-', '-'], input=response.content,
+                             capture_output=True, check=True).stdout.decode()
+    for label in ('Betriebskosten-Vorauszahlungen', 'Heizkosten-Vorauszahlungen'):
+        assert any(label in line and '-20,00' in line for line in content.splitlines()), content
+    assert '220,00' in content
+
+
+@when('the manager books another refund for each advance')
+def book_additional_refunds(world):
+    book_tenant_advances(world, 'OUT', '10.00')
+
+
+@then('the finalized statement and PDF still show both negative advances and 220 euros due')
+def finalized_refunds_stay_frozen(world):
+    response = world.act('GET', world.data['refund_run_url'])
+    assert response.status_code == 200, world.describe_response()
+    assert response.json() == world.data['finalized_refund_run']
+    refunded_statement_and_pdf(world)

@@ -105,7 +105,8 @@ for a new status colour reuse a `Badge` tone.
 ### Icons
 
 `lucide-react` only; no custom SVG, no emoji. Icons accompany a text label, except the mobile menu
-button (`aria-label="Navigation umschalten"`) and the topbar key button below `sm` (`title`). Sizes (rem,
+button (`aria-label="Navigation umschalten"`), its close icon (`aria-label="Navigation schließen"`),
+and the topbar key button below `sm` (`title`). Sizes (rem,
 so x 15 px): `h-4 w-4` inside buttons (`Button` forces `[&_svg]:h-4 [&_svg]:w-4`) and in the quick-action
 tile, 1.05 rem in the nav, `h-5 w-5` in the `h-10 w-10` `StatCard` tile. Colour follows the text colour.
 
@@ -208,9 +209,21 @@ scrolls) with the centred `max-w-6xl` content. Topbar right side: role chip (fro
 (opens the password dialog; label hidden below `sm`), "Abmelden". Signed out, `LoginPage` renders alone
 (own `LoginPage.css`, 380 px card); while the session is probed `App.tsx` shows a centred "Lade...".
 
-Below `md` (768 px) the sidebar is off-canvas (`fixed`, slides in via the hamburger, `bg-black/40`
-overlay, closes on link click or overlay click); from `md` it is static. `AppShell.css`, `Sidebar.css`
-and `Topbar.css` exist but are imported nowhere; the shell is styled with utilities only.
+Below `md` (768 px) the hamburger opens a modal navigation drawer over a `bg-black/40`
+overlay. Closed navigation is unmounted. The existing Radix Dialog primitive moves focus to
+“Navigation schließen”, contains Tab and Shift+Tab, and hides the obscured page from assistive
+technology. Escape, the close button, route selection and the backdrop close the drawer and return
+focus to “Navigation umschalten”. A primary click on the backdrop closes the drawer from the
+moment the backdrop can receive input, including during the opening slide. Navigation links and
+the close button have a visible focus ring. Focused links scroll into view even when Shift+Tab
+wraps to the last entry.
+From `md` the same navigation is static, outside the dialog. Crossing the breakpoint closes the
+mobile drawer; focus moves from disappearing navigation to the visible toggle, or from the mobile
+toggle/drawer to the active desktop link. A focused closed toggle also transfers focus when it
+disappears: the shell remembers navigation focus and restores it after the new layout mounts.
+The drawer retains its 200 ms slide; while closing it is
+inert until unmounted. `AppShell.css`, `Sidebar.css` and `Topbar.css` exist but are imported nowhere;
+the shell uses utilities and the drawer keyframes in `index.css`.
 
 First-run setup opens when `GET /api/setup` reports `required: true`; the backend
 owns the deployment decision. Required setup takes precedence over login and
@@ -326,6 +339,10 @@ New screens follow these page structures and use a German noun as their `h1`.
   scroll anchoring so closing an inline form does not pull the view to the top. A route
   change starts a fresh detail state; a confirmed loss of access clears protected data. Refresh
   errors stay inline beside the retained data. Initial errors and not-found replace the page.
+  When editing a unit, a name over 50 characters shows “Die Bezeichnung darf höchstens 50 Zeichen lang sein.”
+  below “Nummer *”. The field retains the entered name and clears the error when edited.
+  Creating or renaming a unit to a number already in the property shows “Eine Einheit mit dieser
+  Nummer gibt es in diesem Objekt schon.” in the same field error, with the entry kept for correction.
   Property details offer the MEA scale confirmation and unit MEA field for WEG, MISCH and SEV;
   MIET offers them only when an existing unit has a recorded MEA (including zero). Unset MEA
   is not a recorded share. The confirmation card appears only for writers with an unconfirmed
@@ -336,6 +353,69 @@ New screens follow these page structures and use a German noun as their `h1`.
   is wrapped in `<fieldset disabled>` and the button label changes ("Speichern..."). Create and edit forms
   open as a card above the list; small edits of master data open `MasterDataEditor` as a dialog.
   Selects, checkboxes and file inputs are the native elements.
+
+Form-grid tracks, direct children and fieldsets may shrink below their content's
+intrinsic width. Native controls stay within their grid cell at 360 px even when
+an unselected option has a long property name. Tasks filters, Letters forms and person document uploads
+use this shared behavior. Standalone native selectors in Reports, Costs, Special
+Levies, Meetings, Resolution Register and Payments are capped at their available
+width while retaining their natural desktop width when it fits. Option text remains complete in the native list, and focus
+indicators remain visible without horizontal page scrolling.
+
+The Tasks create/edit dialog allows both its form grid item and its fieldset to
+shrink with `min-w-0`. This bounds the native property selector and surrounding
+labels to the dialog, including before selection; page width alone does not detect
+clipping inside a modal. The existing single-column form, values and Save/Cancel
+behavior remain unchanged. These synthetic long-selection captures use 360 × 800
+and 1280 × 900 viewports with keyboard focus on the object selector.
+
+| Tasks dialog | 1280 px before / after | 360 px before / after |
+|---|---|---|
+| Create | [before](docs/assets/design/property-selectors/task-dialog-create-before-1280.png) · [after](docs/assets/design/property-selectors/task-dialog-create-after-1280.png) | [before](docs/assets/design/property-selectors/task-dialog-create-before-360.png) · [after](docs/assets/design/property-selectors/task-dialog-create-after-360.png) |
+| Edit | [before](docs/assets/design/property-selectors/task-dialog-edit-before-1280.png) · [after](docs/assets/design/property-selectors/task-dialog-edit-after-1280.png) | [before](docs/assets/design/property-selectors/task-dialog-edit-before-360.png) · [after](docs/assets/design/property-selectors/task-dialog-edit-after-360.png) |
+
+The following captures use synthetic long and short WEG properties on the disposable
+test database. Each selector has keyboard focus; long-name captures follow keyboard
+selection. Desktop is 1280 × 900 px and phone is 360 × 900 px.
+
+| Property selector | Desktop before / after | 360 px before / after |
+|---|---|---|
+| Tasks, unselected | [before](docs/assets/design/property-selectors/before-tasks-empty-1280.png) · [after](docs/assets/design/property-selectors/after-tasks-empty-1280.png) | [before](docs/assets/design/property-selectors/before-tasks-empty-360.png) · [after](docs/assets/design/property-selectors/after-tasks-empty-360.png) |
+| Tasks, long name | [before](docs/assets/design/property-selectors/before-tasks-long-1280.png) · [after](docs/assets/design/property-selectors/after-tasks-long-1280.png) | [before](docs/assets/design/property-selectors/before-tasks-long-360.png) · [after](docs/assets/design/property-selectors/after-tasks-long-360.png) |
+| Letters, unselected | [before](docs/assets/design/property-selectors/before-letters-empty-1280.png) · [after](docs/assets/design/property-selectors/after-letters-empty-1280.png) | [before](docs/assets/design/property-selectors/before-letters-empty-360.png) · [after](docs/assets/design/property-selectors/after-letters-empty-360.png) |
+| Letters, long name | [before](docs/assets/design/property-selectors/before-letters-long-1280.png) · [after](docs/assets/design/property-selectors/after-letters-long-1280.png) | [before](docs/assets/design/property-selectors/before-letters-long-360.png) · [after](docs/assets/design/property-selectors/after-letters-long-360.png) |
+| Reports, unselected | [before](docs/assets/design/property-selectors/before-reports-empty-1280.png) · [after](docs/assets/design/property-selectors/after-reports-empty-1280.png) | [before](docs/assets/design/property-selectors/before-reports-empty-360.png) · [after](docs/assets/design/property-selectors/after-reports-empty-360.png) |
+| Reports, long name | [before](docs/assets/design/property-selectors/before-reports-long-1280.png) · [after](docs/assets/design/property-selectors/after-reports-long-1280.png) | [before](docs/assets/design/property-selectors/before-reports-long-360.png) · [after](docs/assets/design/property-selectors/after-reports-long-360.png) |
+
+Additional affected selectors use the same synthetic records and keyboard checks.
+Costs and expanded cost-form after captures also include a saved `1250.00`
+gardening cost for each property. The table remains populated after filtering and
+scrolls within its card; the original before captures predate these cost fixtures.
+The Payments option combines the account label and full property name.
+
+| View, long selection | Desktop before / after | 360 px before / after |
+|---|---|---|
+| Costs | [before](docs/assets/design/property-selectors/before-costs-long-1280.png) · [after](docs/assets/design/property-selectors/after-costs-long-1280.png) | [before](docs/assets/design/property-selectors/before-costs-long-360.png) · [after](docs/assets/design/property-selectors/after-costs-long-360.png) |
+| Special Levies | [before](docs/assets/design/property-selectors/before-levies-long-1280.png) · [after](docs/assets/design/property-selectors/after-levies-long-1280.png) | [before](docs/assets/design/property-selectors/before-levies-long-360.png) · [after](docs/assets/design/property-selectors/after-levies-long-360.png) |
+| Meetings | [before](docs/assets/design/property-selectors/before-meetings-long-1280.png) · [after](docs/assets/design/property-selectors/after-meetings-long-1280.png) | [before](docs/assets/design/property-selectors/before-meetings-long-360.png) · [after](docs/assets/design/property-selectors/after-meetings-long-360.png) |
+| Resolution Register | [before](docs/assets/design/property-selectors/before-resolutions-long-1280.png) · [after](docs/assets/design/property-selectors/after-resolutions-long-1280.png) | [before](docs/assets/design/property-selectors/before-resolutions-long-360.png) · [after](docs/assets/design/property-selectors/after-resolutions-long-360.png) |
+| Payments account | [before](docs/assets/design/property-selectors/before-payments-long-1280.png) · [after](docs/assets/design/property-selectors/after-payments-long-1280.png) | [before](docs/assets/design/property-selectors/before-payments-long-360.png) · [after](docs/assets/design/property-selectors/after-payments-long-360.png) |
+| Person document upload | [before](docs/assets/design/property-selectors/before-person-long-1280.png) · [after](docs/assets/design/property-selectors/after-person-long-1280.png) | [before](docs/assets/design/property-selectors/before-person-long-360.png) · [after](docs/assets/design/property-selectors/after-person-long-360.png) |
+| Expanded cost form | [before](docs/assets/design/property-selectors/before-costform-long-1280.png) · [after](docs/assets/design/property-selectors/after-costform-long-1280.png) | [before](docs/assets/design/property-selectors/before-costform-long-360.png) · [after](docs/assets/design/property-selectors/after-costform-long-360.png) |
+
+The Users page creation card follows `.form-grid`: two columns on desktop and
+one at the existing mobile breakpoint. Native email, name, initial-password and
+role controls have persistent wrapping labels; required captions are “E-Mail *”
+and “Startpasswort *”. The fieldset and labels can shrink, and controls fill their
+available width. “Benutzer anlegen” is a primary kit Button in `.form-actions`.
+The disabled fieldset and “Erstelle…” label identify pending creation. Errors
+retain all entries; a successful keyboard submission clears them and refreshes
+the user list with the selected role.
+
+| User creation | 1280 px | 360 px |
+|---|---|---|
+| Before | [Desktop](docs/assets/design/user-creation/before-1280.png) | [Phone](docs/assets/design/user-creation/before-360.png) |
+| After | [Desktop](docs/assets/design/user-creation/after-1280.png) | [Phone](docs/assets/design/user-creation/after-360.png) |
 
 The “Umsatz aufteilen” dialog uses the same form grid. Each split row is a
 full-width card with labels above its fields, two columns from 768 px and one
@@ -349,6 +429,16 @@ The scrollable dialog keeps all fields and actions reachable at 360 px.
 | Before | [Desktop](docs/assets/design/split-dialog/before-1280.png) | [Tablet](docs/assets/design/split-dialog/before-800.png) | [Phone](docs/assets/design/split-dialog/before-360.png) |
 | After | [Desktop](docs/assets/design/split-dialog/after-1280.png) | [Tablet](docs/assets/design/split-dialog/after-800.png) | [Phone](docs/assets/design/split-dialog/after-360.png) |
 | Bottom actions | [Desktop](docs/assets/design/split-dialog/after-actions-1280.png) | [Tablet](docs/assets/design/split-dialog/after-actions-800.png) | [Phone](docs/assets/design/split-dialog/after-actions-360.png) |
+
+The rent payment picker offers tenancies. If a request still sends an owner
+for a rent type, the split dialog keeps the inputs and shows the server message
+above the rows: “Dieser Zahlungstyp gehört zu einem Mietverhältnis, nicht zu
+einem Eigentümer.”
+
+| Split dialog counterparty error | 1280 px | 360 px |
+|---|---|---|
+| Before (generic error) | [Desktop](docs/assets/design/payment-counterparty/before-1280.png) | [Phone](docs/assets/design/payment-counterparty/before-360.png) |
+| After (rent counterparty error) | [Desktop](docs/assets/design/payment-counterparty/after-1280.png) | [Phone](docs/assets/design/payment-counterparty/after-360.png) |
 
 ### Empty tenant and owner selections
 
@@ -539,6 +629,22 @@ and use the existing `.btn` style for reload, completion and pagination.
 The dashboard's rent KPI form allows its labels to shrink so long property options
 stay within the card, including before a property is selected.
 
+The populated `/kosten` list uses `card overflow-x-auto`: its seven columns remain
+available by scrolling within the card at 360 px. Dates, categories, properties,
+amounts, status, source and keyboard-reachable `Details` links retain their existing
+content. Filtering and opening the creation form keep this table containment.
+Creation-form selector sizing is tracked separately in #284.
+
+The annual overview on `/berichte` gives the income and expense tables separate
+`overflow-x-auto` containers. At 360 px the expense columns scroll together
+inside the table area. Report headings, filters and totals stay within the page
+width. The populated desktop view shows all columns at once.
+
+| Annual overview | 1280 px | 360 px |
+| --- | --- | --- |
+| Before | [view](docs/assets/design/annual-report-tables/before-1280.png) | [view](docs/assets/design/annual-report-tables/before-360.png) |
+| After | [view](docs/assets/design/annual-report-tables/after-1280.png) | [view](docs/assets/design/annual-report-tables/after-360.png) · [scrolled to amounts](docs/assets/design/annual-report-tables/after-360-amounts.png) |
+
 The dunning notice detail puts `Hauptforderung` and `Zinsen` first in its frozen
 interest table, and `Offen`, `Soll`, `Ist` before period and type in its arrears
 table. Monetary cells stay unbroken; principal, interest and open amounts are
@@ -567,6 +673,36 @@ the standard responsive form grid, with fees stacked at 360 px. Organization
 administrators can save the form and receive an inline confirmation. Other members
 can read the fees and switch state. New individual notices and batch previews use
 the saved organization policy. The batch form uses the same responsive grid.
+
+When the calculation requires an accounting scope and none was selected,
+the existing error above **Neue Mahnung anlegen** says „Wählen Sie einen
+eindeutigen Abrechnungskreis und prüfen Sie noch nicht zugeordnete Daten,
+bevor Sie die Zahlungen berechnen.“ The form keeps its inputs for retry
+and no draft is created.
+
+| Required accounting scope refusal | 1280 px | 360 px |
+|---|---|---|
+| Before | [View](docs/assets/design/dunning-scope-refusal/before-1280.png) | [View](docs/assets/design/dunning-scope-refusal/before-360.png) |
+| After | [View](docs/assets/design/dunning-scope-refusal/after-1280.png) | [View](docs/assets/design/dunning-scope-refusal/after-360.png) |
+
+A failed tenant or owner submission announces its existing error and brings it into
+view if it is offscreen. The error stays above the creation card; it is fully
+readable immediately after submission at 360 px and 1280 px.
+
+| Tenant refusal immediately after submitting | 1280 px | 360 px |
+|---|---|---|
+| Before | [View](docs/assets/design/dunning-refusal-viewport/before-1280.png) | [View](docs/assets/design/dunning-refusal-viewport/before-360.png) |
+| After | [View](docs/assets/design/dunning-refusal-viewport/after-1280.png) | [View](docs/assets/design/dunning-refusal-viewport/after-360.png) |
+
+If no owner charge is overdue, the inline error says „Für den ausgewählten
+Eigentümer gibt es im gewählten Zeitraum zum Stichtag keine überfälligen
+Beträge.“ The form keeps the selections for retry and brings the full message
+into view without manual scrolling.
+
+| Owner refusal immediately after submitting | 1280 px | 360 px |
+|---|---|---|
+| Before | [View](docs/assets/design/owner-dunning-no-overdue/before-1280.png) | [View](docs/assets/design/owner-dunning-no-overdue/before-360.png) |
+| After | [View](docs/assets/design/owner-dunning-no-overdue/after-1280.png) | [View](docs/assets/design/owner-dunning-no-overdue/after-360.png) |
 
 The frozen calculation shows the statutory premium and a separate table of
 **Zinsabschnitte** with the date range, amount, principal, annual and base rates
@@ -782,6 +918,12 @@ admin-only nav group.
 
 ### Tone and wording
 
+When declaration import is disabled, the import page shows “Der Import von
+Teilungserklärungen ist für Ihre Organisation nicht eingerichtet. Bitte wenden
+Sie sich an Ihre Administration.” for draft creation, upload and start refusals.
+The message omits the machine code and request ID; upload feedback stays with
+the affected file.
+
 - Use German UI text with real umlauts and formal **Sie**: 47 files address the user as Sie/Ihr, none
   uses du ("Geben Sie Ihr aktuelles Passwort und das neue Passwort ein."). Instructions are otherwise
   impersonal ("Bitte erneut versuchen.", "Bitte ein Objekt auswählen.").
@@ -869,6 +1011,66 @@ inline expressions, with the variants below. The inconsistencies are tracked in 
 | IBAN | shown as stored; SEPA confirmation input removes whitespace and upper-cases it | `normalizedIban` in `components/SepaExport.tsx`; `BankAccountsPage.tsx` prints `iban` raw. There is no IBAN display grouping in the frontend. |
 | Empty value | `—` (kit, newer pages), `-` (older tables), `–` (`BankTransactionsPage.tsx`) | `MandatePage.tsx`, `InvoiceDocumentsPage.tsx`, `BankTransactionsPage.tsx`, respectively |
 | Money input | accept `1234,56` and `1234.56`, send `1234.56` | `moneyInput`, `exactCents`, `normalizePlanAmount` (see above) |
+
+### Unit areas, dunning fees and bank split amounts
+
+- Unit creation and editing accept `75,50` or `75.50` for “Flaeche (m2)” and
+  “Beheizte Flaeche (m2)”. A rejected area shows the German explanation below the
+  affected field and associates it with the input. For example: “Fläche: Bitte eine
+  Zahl wie 75,50 mit höchstens zwei Nachkommastellen eingeben.” Editing the location
+  preserves the stored area values unless a new area is entered.
+- The individual tenant and owner fee fields accept `0,00` as an explicit zero.
+  An empty field uses the standard fee. Invalid text leaves the form open and shows
+  “Mahngebühr: Bitte einen Betrag wie 0,00 eingeben.”
+- “Betrag (EUR)” in the split dialog accepts `2.250,00`. The remaining amount and
+  the booking use the same exact value. Invalid input leaves all split rows editable
+  and identifies the amount by row, starting with “Betrag in Splitzeile 1: Bitte einen
+  positiven Betrag wie 2.250,00 eingeben”. On submission, the dialog scrolls the
+  validation message into view, including at 360 × 640 px.
+- Grouped money requires the decimal comma in these controls. A plain decimal
+  point remains available with up to two fractional digits.
+
+Synthetic data in the portable installation, captured at both viewport widths.
+
+| Form | 1280 px | 360 px |
+| --- | --- | --- |
+| Unit area | [before](docs/assets/design/german-form-inputs/unit-area-before-1280.png) · [after](docs/assets/design/german-form-inputs/unit-area-after-1280.png) | [before](docs/assets/design/german-form-inputs/unit-area-before-360.png) · [after](docs/assets/design/german-form-inputs/unit-area-after-360.png) |
+| Tenant dunning fee | [before](docs/assets/design/german-form-inputs/fee-tenant-before-1280.png) · [after](docs/assets/design/german-form-inputs/fee-tenant-after-1280.png) | [before](docs/assets/design/german-form-inputs/fee-tenant-before-360.png) · [after](docs/assets/design/german-form-inputs/fee-tenant-after-360.png) |
+| Owner dunning fee | [before](docs/assets/design/german-form-inputs/fee-owner-before-1280.png) · [after](docs/assets/design/german-form-inputs/fee-owner-after-1280.png) | [before](docs/assets/design/german-form-inputs/fee-owner-before-360.png) · [after](docs/assets/design/german-form-inputs/fee-owner-after-360.png) |
+| Deposit split | [before](docs/assets/design/german-form-inputs/deposit-before-1280.png) · [after](docs/assets/design/german-form-inputs/deposit-after-1280.png) | [before](docs/assets/design/german-form-inputs/deposit-before-360.png) · [after](docs/assets/design/german-form-inputs/deposit-after-360.png) |
+
+### Economic plan draft reserve
+
+A new draft without saved input rows pre-fills “Rücklagenzuführung (Jahr)” with
+the amount from “Übersicht”, including zero. A blank or invalid reserve blocks
+“Berechnen” and “Finalisieren” without changing the cost rows. The field shows
+“Bitte geben Sie die Rücklagenzuführung als gültigen EUR-Betrag ein.” underneath,
+with an alert associated through `aria-describedby` and `aria-invalid` on the
+input. Editing the reserve clears the alert. Decimal comma and dot are accepted;
+the request carries an exact decimal string.
+
+The screenshots use synthetic WEG records on a disposable PostgreSQL installation.
+EUR 7,200.00 in planned costs and zero reserve produce a EUR 600.00 monthly advance.
+At 360 px, the result capture is scrolled horizontally to show the monthly amount.
+
+| Draft reserve | 1280 px | 360 px |
+|---|---|---|
+| Before: blank editor and failed calculation | [Desktop](docs/assets/design/economic-plan-reserve/before-1280.png) | [Phone](docs/assets/design/economic-plan-reserve/before-360.png) |
+| After: stored zero in the editor | [Desktop](docs/assets/design/economic-plan-reserve/after-1280.png) | [Phone](docs/assets/design/economic-plan-reserve/after-360.png) |
+| After: calculated advance | [Desktop](docs/assets/design/economic-plan-reserve/result-1280.png) | [Phone](docs/assets/design/economic-plan-reserve/result-360.png) |
+| After: cleared reserve, costs retained | [Desktop](docs/assets/design/economic-plan-reserve/invalid-1280.png) | [Phone](docs/assets/design/economic-plan-reserve/invalid-360.png) |
+
+After “Berechnen”, reopening a manual draft restores the calculated cost rows
+and reserve in the editor. If either changes, the previous calculated amounts
+are hidden and “Finalisieren” is disabled until another calculation succeeds.
+The editor explains: “Die Berechnung passt nicht zu den aktuellen Eingaben.
+Bitte vor dem Finalisieren neu berechnen.” Data-basis confirmation remains
+required. The 360 px after image scrolls the cost table to the annual amount.
+
+| Reopened calculated draft | 1280 px | 360 px |
+|---|---|---|
+| Before: missing editor row | [Desktop](docs/assets/design/economic-plan-reserve/reopen-before-1280.png) | [Phone](docs/assets/design/economic-plan-reserve/reopen-before-360.png) |
+| After: editable 7,200 EUR cost | [Desktop](docs/assets/design/economic-plan-reserve/reopen-after-1280.png) | [Phone](docs/assets/design/economic-plan-reserve/reopen-after-360.png) |
 
 ### Rent and owner account due-date split
 
@@ -1055,6 +1257,42 @@ and the sixty-receipt import/assignment use the real API. Each pair is desktop/3
 
 ## Screenshots
 
+The declaration import upload refusal uses a synthetic draft and PDF against
+the portable installer with import disabled.
+
+| Declaration import upload refusal | Desktop (1280 px) | Mobile (360 px) |
+|---|---|---|
+| Before | [Before](docs/assets/design/declaration-import-disabled-before-1280.png) | [Before](docs/assets/design/declaration-import-disabled-before-360.png) |
+| After | [After](docs/assets/design/declaration-import-disabled-after-1280.png) | [After](docs/assets/design/declaration-import-disabled-after-360.png) |
+
+Mobile keyboard navigation uses the shared test database and synthetic long property names.
+The closed-focus images show the first Tab after loading the dashboard; the Escape images show
+the result of opening navigation and pressing Escape. Desktop layout and existing routes stay the
+same. The current dashboard and property-list images below are refreshed on the same test stack.
+
+| Navigation state | Before | After |
+|---|---|---|
+| Dashboard, 1280 px | [Before](docs/assets/design/navigation-before-dashboard-1280.png) | [After](docs/assets/design/navigation-dashboard-1280.png) |
+| Dashboard, 360 px | [Before](docs/assets/design/navigation-before-dashboard-360.png) | [After](docs/assets/design/navigation-dashboard-360.png) |
+| First keyboard focus, 360 px | [Before](docs/assets/design/navigation-before-closed-focus-360.png) | [After](docs/assets/design/navigation-closed-focus-360.png) |
+| Open drawer, 360 px | [Before](docs/assets/design/navigation-before-open-360.png) | [After](docs/assets/design/navigation-open-360.png) |
+| Escape result, 360 px | [Before](docs/assets/design/navigation-before-escape-360.png) | [After](docs/assets/design/navigation-escape-360.png) |
+| Closed toggle resized to 1280 px | [Before](docs/assets/design/navigation-before-closed-resize-1280.png) | [After](docs/assets/design/navigation-closed-resize-1280.png) |
+
+The resize pair follows keyboard selection of “Objekte” at 360 px and widening the closed drawer
+to 1280 px. Before the correction focus fell to the page body; afterward the active “Objekte”
+navigation link receives visible focus without another keyboard or pointer action.
+
+The cost list uses six synthetic costs for Aprilhaus and Maihaus, including a
+confirmed gardening cost dated `2026-12-31` for `1250.00`. The mobile before image
+shows the table widening the main page; the after image retains all columns in a
+scrollable card. Desktop keeps the same columns and values.
+
+| Cost table | 1280 px | 360 px |
+|---|---|---|
+| Before | [Desktop](docs/assets/design/cost-table-before-1280.png) | [Phone](docs/assets/design/cost-table-before-360.png) |
+| After | [Desktop](docs/assets/design/cost-table-after-1280.png) | [Phone](docs/assets/design/cost-table-after-360.png) |
+
 Property MEA guidance uses new synthetic MIET and WEG properties on the disposable test
 database, showing the page top and new-unit card at 1280 and 360 CSS px. MIET has neither the scale
 confirmation nor the unit MEA field; WEG retains both and shows a German scale status.
@@ -1140,6 +1378,23 @@ dashboard passes at both widths.
 
 The property-detail images focus on the units card at 360 and 1280 px, using twelve
 long synthetic unit rows from `features/responsive_property_dashboard.feature`.
+The unit editor's name error is shown in the #214 captures below. Both pairs
+show the same rejected 51-character input on synthetic data.
+
+| Unit editor | 1280 px | 360 px |
+|---|---|---|
+| Before: no field error | [Desktop](docs/assets/design/unit-name-validation/before-1280.png) | [Phone](docs/assets/design/unit-name-validation/before-360.png) |
+| After: inline error | [Desktop](docs/assets/design/unit-name-validation/after-1280.png) | [Phone](docs/assets/design/unit-name-validation/after-360.png) |
+
+Submitting “Wohnung 1” twice in a synthetic rental property used to save two rows.
+The unit form now keeps the second entry, explains the conflict below the number
+field, and leaves the original row as the only saved unit.
+
+| Duplicate number submission | 1280 px | 360 px |
+|---|---|---|
+| Before: duplicate saved | [Desktop](docs/assets/design/duplicate-unit-number/before-1280.png) | [Phone](docs/assets/design/duplicate-unit-number/before-360.png) |
+| After: duplicate refused | [Desktop](docs/assets/design/duplicate-unit-number/after-1280.png) | [Phone](docs/assets/design/duplicate-unit-number/after-360.png) |
+
 Earlier dashboard due-task captures from that feature remain in `issue-52-before-*`.
 The upload card is captured in
 `detail-upload-360.png` and `detail-upload-desktop.png`. Matching `issue-52-before-*`

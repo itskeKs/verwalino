@@ -1079,6 +1079,12 @@ sources. No implicit contact profiles, lease agreements or self-approvals.
 
 **`unit`** (unit, SDD §6.1): `organization_id`, `property_id` FK, `number`, `location`, **`area NUMERIC(10,2)`** (living/usable area), **`heated_area NUMERIC(10,2)`** (heated area), `usage_type` (Wohnung|Gewerbe|Stellplatz|Sonstige, i.e., residential|commercial|parking space|other), **`mea NUMERIC(12,6)`** (co-ownership share — exact, not float). Optional distribution peculiarities. RLS active.
 
+Unit creation and editing accept an ungrouped decimal comma or dot for `area` and
+`heated_area`, such as `75,50`. The fields store exact nonnegative values up to
+`99999999.99` with at most two fractional digits. An authorized request with an
+invalid area receives a field-specific 422 after the property or unit access checks.
+
+
 **`person`** (SDD §6.2): `organization_id`, contact data, optional bank data. **GDPR fields (Section 3.3):** `deletion_requested_at`, `processing_restricted`, `anonymized_at`. RLS active. Owner/tenant/vendor as separate logics (SDD §6.2) — either specializations of `person` (`owner_profile`, `tenant_profile`, `vendor`) or separate tables with a person reference; **[DECISION] for M1**, proposed here as 1:1 profiles, since one person can have several roles (e.g., owner *and* also a tenant themselves).
 
 **`ownership_history`** (SDD §6.2, §14 — *core of chronological integrity*): `organization_id`, `unit_id` FK, `owner_profile_id` FK, **`valid_from DATE NOT NULL`**, **`valid_to DATE NULL`**, **`mea_share NUMERIC(12,6)`** (this owner's share of the unit, in case of shared ownership). RLS active.
@@ -1369,6 +1375,11 @@ Limits: a probe does not combine an own parent with a foreign child id, and fore
 ### 7.5 App shell & infrastructure (in parallel, roadmap M0)
 
 - **Responsive web app shell** (React/TS): navigation/layout skeleton (desktop + mobile), login page, org context display, placeholder navigation for later modules. No native app.
+- Below 768 px, navigation uses the existing Radix modal dialog: closed links are unmounted,
+  focus stays inside the open drawer, and Escape, its close control, backdrop or route selection
+  return focus to the toggle. Desktop navigation remains static and accessible; breakpoint changes
+  move focus to the visible navigation control. The real-browser regression is
+  [`mobile_navigation.feature`](../features/mobile_navigation.feature).
 - **Auth flow** end-to-end: login → session → tenant context in the backend.
 - **PDF rendering pipeline as a skeleton:** Set up HTML→PDF (Playwright) as a service/stub and wire it to a smoke test (e.g., “Hello-PDF”) — empty in domain terms, but present as infrastructure (roadmap M0). Actual settlement PDFs from M3.
 - **Object storage skeleton:** local FS with a checksum helper function (SHA-256) as a stub; encapsulate the interface so that S3 with Object Lock/WORM can later sit behind it (SDD §16). Domain voucher storage only in M2.

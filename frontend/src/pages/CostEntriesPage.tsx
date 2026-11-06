@@ -608,7 +608,7 @@ export function CostEntriesPage() {
       ) : entries.length === 0 ? (
         <p className="empty-hint">Keine Kostenpositionen vorhanden.</p>
       ) : (
-        <div className="card">
+        <div className="card overflow-x-auto">
           <table className="data-table">
             <thead>
               <tr>

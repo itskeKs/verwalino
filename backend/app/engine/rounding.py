@@ -119,7 +119,8 @@ def annual_advance_share_for_period(
         return Decimal("0.00")
     total = total.quantize(CENT)
     count = end.month - start.month + 1
-    monthly = _floor_to_cent(total / count)
+    # Round the magnitude down so a negative total cannot leave a positive remainder.
+    monthly = _floor_to_cent(abs(total) / count).copy_sign(total)
     result = Decimal("0.00")
     for month in range(start.month, end.month + 1):
         share = total - monthly * (count - 1) if month == end.month else monthly

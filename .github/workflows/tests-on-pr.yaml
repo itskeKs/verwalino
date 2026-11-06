@@ -228,7 +228,7 @@ jobs:
   browser:
     name: Browser (Chromium features)
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 25
     env:
       UV_LOCKED: "1"
     steps:

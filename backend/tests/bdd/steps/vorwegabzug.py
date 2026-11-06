@@ -96,7 +96,7 @@ async def commercial_rendered_result(browser_world, request):
     for width in (1280, 360):
         await page.set_viewport_size({'width': width, 'height': 1000})
         if width == 360:
-            await page.wait_for_function("document.querySelector('aside').getBoundingClientRect().right <= 0")
+            await expect(page.locator("aside")).to_have_count(0)
         await expect(page.get_by_text(f'Vorwegabzug Gewerbe 600,00 € – {REASON}', exact=False)).to_be_visible()
         await expect(page.get_by_role('cell', name='321.43 EUR', exact=True).first).to_be_visible()
         assert await page.evaluate('document.documentElement.scrollWidth <= innerWidth')

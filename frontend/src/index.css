@@ -73,8 +73,23 @@ body {
   margin: 0;
 }
 
+select {
+  min-width: 0;
+  max-width: 100%;
+}
+
 #root {
   min-height: 100vh;
+}
+
+@keyframes navigation-slide-in {
+  from { transform: translateX(-100%); }
+  to { transform: translateX(0); }
+}
+
+@keyframes navigation-slide-out {
+  from { transform: translateX(0); }
+  to { transform: translateX(-100%); }
 }
 
 h1 {
@@ -320,11 +335,17 @@ code {
 
 .form-grid {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  min-width: 0;
   gap: 1rem 1.1rem;
 }
 
+.form-grid > * {
+  min-width: 0;
+}
+
 .form-grid label {
+  min-width: 0;
   display: flex;
   flex-direction: column;
   font-size: 0.82rem;
@@ -336,6 +357,8 @@ code {
 .form-grid input,
 .form-grid select,
 .form-grid textarea {
+  min-width: 0;
+  max-width: 100%;
   padding: 0.5rem 0.65rem;
   border: 1px solid hsl(var(--ui-input));
   border-radius: calc(var(--radius) - 2px);
@@ -854,7 +877,7 @@ code {
   }
 
   .form-grid {
-    grid-template-columns: 1fr;
+    grid-template-columns: minmax(0, 1fr);
   }
 }
 

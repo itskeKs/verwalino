@@ -35,3 +35,13 @@ Feature: Combined and separate operating-cost and heating advances
     And the manager finalizes the annual statement with 1900 euros operating and 1000 euros heating costs
     Then the original bookings remain unchanged
     And the statement credits 1440 euros combined, 900 euros operating and 540 euros heating, with 20 euros payable
+
+  Scenario: Standalone refunds reduce each derived advance and finalized amounts stay frozen
+    Given an administrator of "Verwaltung Alpha" is signed in
+    And Anna paid 50 euros each in operating and heating advances for July 2026
+    When the manager books a 70 euro refund for each advance and derives the 2026 statement
+    Then each advance is minus 20 euros
+    When the manager finalizes the statement with 100 euros operating and 80 euros heating costs
+    Then the statement and PDF show both negative advances and 220 euros due
+    When the manager books another refund for each advance
+    Then the finalized statement and PDF still show both negative advances and 220 euros due

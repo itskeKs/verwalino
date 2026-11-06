@@ -16,6 +16,8 @@ from sqlalchemy.orm import Mapped, mapped_column
 
 from app.models.base import Base, UUIDPrimaryKeyMixin, TimestampMixin
 
+UNIT_NUMBER_MAX_LENGTH = 50
+
 
 class Unit(Base, UUIDPrimaryKeyMixin, TimestampMixin):
     __tablename__ = "unit"
@@ -33,7 +35,7 @@ class Unit(Base, UUIDPrimaryKeyMixin, TimestampMixin):
         index=True,
     )
 
-    number: Mapped[str] = mapped_column(String(50), nullable=False)
+    number: Mapped[str] = mapped_column(String(UNIT_NUMBER_MAX_LENGTH), nullable=False)
     location: Mapped[str] = mapped_column(String(255), nullable=False, default="")
 
     # Area in sqm -- NUMERIC(10,2), never float (I4)

@@ -38,6 +38,13 @@ repair is required for production data. No production rollout has been performed
 
 ## Manual cost amounts
 
+The cost list at `/kosten` keeps wide populated tables inside a horizontally
+scrollable card on narrow screens. Scroll the table to reach its rightmost columns
+and `Details`; the link also remains reachable with Tab and opens with Enter.
+Status/property filters and the creation form retain the listed costs and their
+existing values. The table remains contained below the expanded creation form;
+the separate selector-sizing correction is tracked in #284.
+
 The manual cost form accepts decimal commas or dots, including German grouped
 amounts such as “2.250,00”, for gross amount, VAT amount and tenant-apportionable
 amount. The VAT percentage accepts the same decimal separators. Values are sent

@@ -1,5 +1,5 @@
 import { api } from "./api/client";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { MemoryRouter, useLocation } from "react-router-dom";
 import { AuthProvider } from "./auth/AuthContext";
@@ -10,6 +10,11 @@ import * as letters from "./api/letters";
 let permissionsMode = "PREPARATION";
 let permissionsStatusFails = false;
 let permissionsInventoryFails = false;
+beforeEach(() => {
+  vi.stubGlobal("matchMedia", vi.fn(() => ({
+    matches: true, addEventListener: vi.fn(), removeEventListener: vi.fn(),
+  })));
+});
 function CurrentPath() { return <output aria-label="Aktuelle Route">{useLocation().pathname}</output>; }
 const inventory = { generated_at: "2026-10-31T12:00:00Z", mode: "PREPARATION", counts: {
   properties_total: 5, properties_without_domain: 2, properties_without_current_reader: 3,
@@ -47,6 +52,7 @@ function renderRoutes(path: string, role?: string, setupStatus: { required: bool
 afterEach(() => {
   cleanup();
   vi.restoreAllMocks();
+  vi.unstubAllGlobals();
   permissionsMode = "PREPARATION";
   permissionsStatusFails = false;
   permissionsInventoryFails = false;

@@ -235,6 +235,46 @@ function pendingImport(overrides: Partial<ReturnType<typeof declarationImport>> 
 }
 
 describe("Teilungserklärung upload wizard", () => {
+  it.each([
+    ["draft creation", "/api/declaration-imports"],
+    ["upload", "/api/declaration-imports/import-1/documents"],
+    ["start", "/api/declaration-imports/import-1/start"],
+  ])("explains disabled import after %s without exposing the code or request ID", async (action, endpoint) => {
+    const code = "DECLARATION_IMPORT_DISABLED";
+    const requestId = "disabled-import-1234";
+    const refusal = jsonResponse({ detail: code }, 503);
+    refusal.headers.set("X-Request-ID", requestId);
+    const fetchMock = vi.fn((url: string) =>
+      Promise.resolve(url === endpoint ? refusal : jsonResponse({}, 404)),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    vi.spyOn(declarationApi, "getDeclarationImport").mockResolvedValue(pendingImport());
+    vi.spyOn(declarationApi, "listDeclarationDocuments").mockResolvedValue(action === "start" ? [{
+      id: "document-1", property_id: null, doc_type: "DECLARATION", title: "Erklärung.pdf",
+      original_filename: "Erklärung.pdf", mime_type: "application/pdf", content_byte_size: 5,
+      content_sha256: "a", sequence_no: 1, document_role: "DECLARATION",
+    }] : []);
+    vi.spyOn(declarationApi, "pollDeclarationImport").mockImplementation(() => () => undefined);
+    renderImportRoute(action === "draft creation" ? undefined : "/teilungserklaerung/import/import-1");
+
+    if (action === "upload") {
+      const input = await screen.findByLabelText("PDF-Dateien auswählen");
+      await waitFor(() => expect(input).toBeEnabled());
+      fireEvent.change(input, {
+        target: { files: [new File(["%PDF"], "Erklärung.pdf", { type: "application/pdf" })] },
+      });
+      fireEvent.click(screen.getByRole("button", { name: "Ausgewählte PDFs hochladen" }));
+    } else if (action === "start") {
+      const start = await screen.findByRole("button", { name: "Import starten" });
+      await waitFor(() => expect(start).toBeEnabled());
+      fireEvent.click(start);
+    }
+
+    expect(await screen.findByText(/Der Import von Teilungserklärungen ist für Ihre Organisation nicht eingerichtet\. Bitte wenden Sie sich an Ihre Administration\./)).toBeVisible();
+    expect(fetchMock).toHaveBeenCalledWith(endpoint, expect.objectContaining({ method: "POST" }));
+    expect(screen.queryByText(new RegExp(`${code}|Request-ID|${requestId}`))).not.toBeInTheDocument();
+  });
+
   it("defaults to a new-property import and discloses OpenAI processing", async () => {
     vi.spyOn(declarationApi, "createDeclarationImport").mockResolvedValue(pendingImport());
     renderImportRoute();

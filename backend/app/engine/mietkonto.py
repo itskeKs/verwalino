@@ -70,6 +70,7 @@ def advance_modes_for_period(lease, changes, start: date, end: date) -> frozense
 PT_KALTMIETE = "KALTMIETE"
 PT_NK_VORAUSZAHLUNG = "NK_VORAUSZAHLUNG"
 PT_HK_VORAUSZAHLUNG = "HK_VORAUSZAHLUNG"
+_TENANT_ADVANCE_TYPES = frozenset({PT_NK_VORAUSZAHLUNG, PT_HK_VORAUSZAHLUNG})
 PT_HAUSGELD_VORSCHUSS = "HAUSGELD_VORSCHUSS"
 PT_RUECKLAGENANTEIL = "RUECKLAGENANTEIL"
 PT_SONDERZAHLUNG = "SONDERZAHLUNG"
@@ -697,6 +698,21 @@ class AdvanceFilter:
     lease_agreement_id: uuid.UUID | None = None
     owner_profile_id: uuid.UUID | None = None
 
+    def matches(self, payment: PaymentInput) -> bool:
+        return (
+            payment.is_booked and not payment.is_reversed and not payment.is_reversal
+            and payment.payment_type in self.types and payment.period_year == self.year
+            and (self.lease_agreement_id is None or payment.lease_agreement_id == self.lease_agreement_id)
+            and (self.owner_profile_id is None or payment.owner_profile_id == self.owner_profile_id)
+        )
+
+
+def _sum_advances(payments: list[PaymentInput]) -> Decimal:
+    return _money(sum((
+        p.signed_amount if p.payment_type in _TENANT_ADVANCE_TYPES else p.amount
+        for p in payments
+    ), Decimal("0.00")))
+
 
 def derive_advance_total(
     payments: list[PaymentInput],
@@ -714,33 +730,16 @@ def derive_advance_total(
     SAME value the MANUAL path would carry, so feeding it through the unchanged
     M3/M4 engine yields a bit-identical result (m6 §6.7 / I6-E).
 
-    Uses `amount` (positive), NOT signed_amount: an advance payment is an IN;
-    its correction is a Storno row that is excluded together with its original
-    (Variante A), so the positive sum is already net-correct. (Defensive: a
-    bare OUT advance with no reversal link would still be summed as +amount;
-    such a row is not how a Storno is modeled here -- Storni carry reverses_id.)
+    Tenant advance refunds reduce the corresponding NK or HK total. Hausgeld
+    uses gross amounts here, with direction applied separately by its period
+    derivation.
     """
-    total = Decimal("0.00")
-    for p in payments:
-        if not p.is_booked:
-            continue
-        if p.is_reversed or p.is_reversal:
-            continue
-        if p.payment_type not in filt.types:
-            continue
-        if p.period_year != filt.year:
-            continue
-        if filt.lease_agreement_id is not None and p.lease_agreement_id != filt.lease_agreement_id:
-            continue
-        if filt.owner_profile_id is not None and p.owner_profile_id != filt.owner_profile_id:
-            continue
-        total += p.amount
-    return _money(total)
+    return _sum_advances([p for p in payments if filt.matches(p)])
 
 
 @dataclass(frozen=True)
 class AdvanceCredit:
-    """Frozen credit for one assigned year/month bucket of this lease's NK."""
+    """Frozen credit for one assigned year/month bucket."""
 
     year: int
     month: int | None
@@ -748,6 +747,17 @@ class AdvanceCredit:
     period_end: date
     amount: Decimal
     combined_amount: Decimal = Decimal("0.00")
+
+
+def tenant_refund_buckets(
+    payments: list[PaymentInput], frozen: list[AdvanceCredit],
+) -> set[tuple[int, int | None]]:
+    """Find signed buckets in one scoped input, including frozen refund effects."""
+    return {
+        (p.period_year, p.period_month) for p in payments
+        if p.payment_type in _TENANT_ADVANCE_TYPES and p.direction == "OUT" and p.period_year is not None
+        and p.is_booked and not p.is_reversal and not p.is_reversed
+    } | {(credit.year, credit.month) for credit in frozen if credit.amount < 0}
 
 
 def derive_advance_credits_for_period(
@@ -767,11 +777,16 @@ def derive_advance_credits_for_period(
     """
     if not period_start.year <= filt.year <= period_end.year:
         return ()
+    active = [p for p in payments if filt.matches(p)]
+    frozen = [credit for credit in finalized_credits if credit.year == filt.year
+              and (credit.period_end < period_start or credit.period_start > period_end)]
+    signed_buckets = tenant_refund_buckets(active, frozen) if filt.types & _TENANT_ADVANCE_TYPES else set()
     credits = []
     for month in [*range(1, 13), None]:
-        bucket = [p for p in payments if p.period_month == month]
-        total = derive_advance_total(bucket, filt)
-        if not total:
+        bucket = [p for p in active if p.period_month == month]
+        total = _sum_advances(bucket)
+        signed = (filt.year, month) in signed_buckets
+        if not total and not signed:
             continue
         combined = derive_advance_total([p for p in bucket if p.combined_advance], filt)
 
@@ -784,14 +799,15 @@ def derive_advance_credits_for_period(
 
         amount = share(total, period_start, period_end)
         combined_amount = share(combined, period_start, period_end)
-        for previous in finalized_credits:
-            disjoint = previous.period_end < period_start or previous.period_start > period_end
-            if previous.year == filt.year and previous.month == month and disjoint:
+        for previous in frozen:
+            if previous.month == month:
                 amount += share(total, previous.period_start, previous.period_end) - previous.amount
                 combined_amount += share(combined, previous.period_start, previous.period_end) - previous.combined_amount
-        amount = max(Decimal("0.00"), amount)
-        credits.append(AdvanceCredit(filt.year, month, period_start, period_end, amount,
-            min(amount, max(Decimal("0.00"), combined_amount))))
+        # Freeze even a zero refund credit so a later reversal can reconcile it.
+        if not signed:
+            amount = max(Decimal("0.00"), amount)
+            combined_amount = min(amount, max(Decimal("0.00"), combined_amount))
+        credits.append(AdvanceCredit(filt.year, month, period_start, period_end, amount, combined_amount))
     return tuple(credits)
 
 

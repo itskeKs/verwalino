@@ -2,6 +2,26 @@
 
 Master-data editing, ending, deletion, and paginated selection.
 
+## Native selectors in responsive forms
+
+At 360 px, native selectors keep their control, arrow and keyboard focus within
+the available panel width even when an option contains a long property name.
+The option list retains the complete label; the saved name is unchanged. At
+1280 px, standalone controls retain their natural width when it fits, and shared
+forms keep their two-column layout.
+
+This applies to Tasks, Letters, Reports, Costs, Special Levies, Meetings,
+Resolution Register, Payments account filters, the expanded cost-creation form,
+and document upload on person
+details. Payment account labels retain both the account and property name.
+The [browser regression](../../features/property_selectors.feature) checks all
+nine views and the expanded cost form before selection and after choosing long and short options with the
+keyboard at both widths, plus the existing new-property form's column layout.
+Costs and the expanded cost form use a saved gardening cost for each property;
+the checks wait for the matching rows after selection, keeping the table populated
+without relying on records from earlier scenarios.
+Synthetic [before/after captures](../../DESIGN.md) show the affected selectors.
+
 ## Bounded master-data selectors
 
 `GET /api/properties/page`, `/api/persons/page`, `/api/users/page` and
@@ -75,3 +95,8 @@ Properties have optional **Baujahr** (year built) and **Gesamtfläche (m²)** (t
 Decimal, not invented from units. Empty entries remain unknown.
 The [UI-only acceptance](../../DEPLOY.md#editable-master-metadata-t55-local-head-0136) verifies the real
 rename, 1984 / 1.234,56 m² and unchanged sources after desktop/phone reload.
+
+To rename a unit, open the property and select **Bearbeiten** in the unit row.
+If **Nummer \*** exceeds 50 characters, the form keeps the entered name and shows
+“Die Bezeichnung darf höchstens 50 Zeichen lang sein.” below the field. Shorten
+the name and select **Speichern** again.

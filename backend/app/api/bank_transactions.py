@@ -13,7 +13,7 @@ from app.api.bank_accounts import BankTransactionOut
 from app.api.payments import PaymentOut, _to_out
 from app.core.tenant import AuthContext, get_current_user, get_db, require_write_dep
 from app.services.bank_import_service import BankImportService
-from app.services.payment_service import OWNER_TYPES, TENANT_TYPES
+from app.services.payment_service import OWNER_TYPES
 
 router = APIRouter(prefix="/api/bank-transactions", tags=["bank-transactions"])
 Status = Literal["NEU", "ZUGEORDNET", "IGNORIERT"]
@@ -41,12 +41,12 @@ class AssignmentLine(BaseModel):
             if tenant or owner or self.tenant_profile_id:
                 raise ValueError('Reserve payouts have no personal counterparty')
             return self
-        if tenant == owner or owner and self.tenant_profile_id is not None:
+        # Let the service report the missing owner with the same typed error
+        # as direct payment creation. Keep the split target shape checks.
+        missing_owner = self.payment_type in OWNER_TYPES and not owner and self.tenant_profile_id is None
+        if (tenant and owner or owner and self.tenant_profile_id is not None
+                or not (tenant or owner or missing_owner)):
             raise ValueError("Choose exactly one lease or owner target")
-        if self.payment_type in TENANT_TYPES and not tenant:
-            raise ValueError("Tenant payments require a lease")
-        if self.payment_type in OWNER_TYPES and not owner:
-            raise ValueError("Owner payments require an owner")
         return self
 
 

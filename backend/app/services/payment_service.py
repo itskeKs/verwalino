@@ -54,6 +54,7 @@ from app.engine.mietkonto import (
     owner_expected_charges,
     special_levy_expected_charges,
     tenant_expected_charges,
+    tenant_refund_buckets,
 )
 from app.models.audit_event import AuditEvent
 from app.models.economic_plan import EconomicPlan
@@ -84,6 +85,26 @@ from app.repositories.unit_repo import UnitRepository
 # Storno and for input validation messages.
 TENANT_TYPES = frozenset({"KALTMIETE", "NK_VORAUSZAHLUNG", "HK_VORAUSZAHLUNG", "KAUTION"})
 OWNER_TYPES = frozenset({"HAUSGELD_VORSCHUSS", "RUECKLAGENANTEIL", "SONDERZAHLUNG"})
+
+
+def payment_counterparty_error(payment_type: str) -> HTTPException:
+    if payment_type in TENANT_TYPES:
+        message = "Dieser Zahlungstyp gehört zu einem Mietverhältnis, nicht zu einem Eigentümer."
+    elif payment_type in OWNER_TYPES:
+        message = "Dieser Zahlungstyp erfordert einen Eigentümer als Gegenpartei."
+    else:
+        message = "Bitte wählen Sie eine gültige Gegenpartei für diesen Zahlungstyp."
+    return HTTPException(422, {"code": "PAYMENT_COUNTERPARTY_TYPE_MISMATCH", "message": message})
+
+
+def validate_payment_counterparty(
+    payment_type: str, tenant_profile_id: uuid.UUID | None, owner_profile_id: uuid.UUID | None,
+) -> None:
+    if (
+        payment_type in TENANT_TYPES and (tenant_profile_id is None or owner_profile_id is not None)
+        or payment_type in OWNER_TYPES and (owner_profile_id is None or tenant_profile_id is not None)
+    ):
+        raise payment_counterparty_error(payment_type)
 
 
 def _compute_retention_until(value_date: date) -> date:
@@ -225,7 +246,8 @@ class PaymentService:
         (ADR-0010) -- never client-chosen. A draft is freely editable; the
         bewusste `book` step freezes it.
         """
-        await FinancialScopeService(self._session, self._org_id, self._user_id).lock_inputs()
+        context = FinancialScopeService(self._session, self._org_id, self._user_id)
+        await context.lock_inputs()
         parents = await self._resolve_parents({
             "bank_account_id": bank_account_id, "tenant_profile_id": tenant_profile_id,
             "owner_profile_id": owner_profile_id, "lease_agreement_id": lease_agreement_id,
@@ -261,6 +283,13 @@ class PaymentService:
         with self._session.no_autoflush:
             await self._require_deposit_sources(payment)
             await self._reserve_evidence(payment, complete=False)
+        try:
+            validate_payment_counterparty(payment_type, tenant_profile_id, owner_profile_id)
+        except HTTPException:
+            # A scoped INSERT would check prepare access before the CHECK.
+            # Preserve that precedence when reporting the error before the write.
+            await context.enter(account, capability=ScopeCapability.PREPARE)
+            raise
         payment = await self._repo.create(payment)
         await self._session.refresh(payment, ["management_mandate_id"])
         await self._audit.create(
@@ -805,7 +834,7 @@ class PaymentService:
         finalized = await SettlementRunRepository(self._session, self._org_id).finalized_bk_for_advance_years(
             lease_agreement_id, period_start, period_end)
         prefix = "heating_" if payment_type == "HK_VORAUSZAHLUNG" else ""
-        frozen, seen = [], set()
+        frozen, known_windows, legacy_windows, seen = [], [], [], set()
         for run in finalized:
             payload = run.snapshot_payload or {}
             period = payload.get("period", {})
@@ -816,20 +845,39 @@ class PaymentService:
             data = payload.get("inputs", {})
             if data.get(prefix + "advance_payments_source") != "DERIVED":
                 continue
+            start, end = map(date.fromisoformat, bounds)
             buckets = data.get(prefix + "advance_payment_credits")
             if buckets is None:
                 old_lease = next((row for row in data.get("lease_periods", [])
                     if row["lease_agreement_id"] == str(lease_agreement_id)), {})
                 old_end = date.fromisoformat(old_lease["to"]) if old_lease.get("to") else None
-                if (old_end != lease_end and Decimal(payload["result"].get(prefix + "advance_payments_total", "0.00"))
-                        and self._nk_credit_buckets_change(lease, inputs,
-                            date.fromisoformat(bounds[0]), date.fromisoformat(bounds[1]), old_end, lease_end, payment_type)):
-                    raise HTTPException(409, {"code": "advance_credit_history_missing",
-                        "message": "Der eingefrorene Vorauszahlungsnachweis fehlt. Bitte die frühere Abrechnung korrigieren."})
+                old_total = Decimal(payload.get("result", {}).get(prefix + "advance_payments_total", "0.00"))
+                legacy_windows.append((start, end, old_end, old_total))
                 continue
-            frozen.extend(AdvanceCredit(row["year"], row["month"], date.fromisoformat(bounds[0]),
-                date.fromisoformat(bounds[1]), Decimal(row["amount"]),
-                Decimal(row.get("combined_amount", "0.00"))) for row in buckets)
+            known_windows.append((start, end, {(row["year"], row["month"]) for row in buckets}))
+            frozen.extend(AdvanceCredit(row["year"], row["month"], start, end, Decimal(row["amount"]),
+                Decimal(row.get("combined_amount", "0.00")))
+                          for row in buckets)
+
+        signed_buckets = {(year, month) for year, month in tenant_refund_buckets(inputs, frozen)
+                          if period_start.year <= year <= period_end.year}
+        for start, end, old_end, old_total in legacy_windows:
+            affected_by_refund = any(
+                (start.year, start.month) <= (year, month or 12)
+                and (year, month or 1) <= (end.year, end.month)
+                for year, month in signed_buckets
+            )
+            if affected_by_refund or (
+                old_end != lease_end and old_total
+                and self._nk_credit_buckets_change(lease, inputs, start, end, old_end, lease_end, payment_type)
+            ):
+                raise HTTPException(409, {"code": "advance_credit_history_missing",
+                    "message": "Der eingefrorene Vorauszahlungsnachweis fehlt. Bitte die frühere Abrechnung korrigieren."})
+
+        # A recorded breakdown can omit buckets that credited zero at finalization.
+        for start, end, recorded in known_windows:
+            frozen.extend(AdvanceCredit(year, month, start, end, Decimal("0.00"))
+                          for year, month in signed_buckets - recorded if start.year <= year <= end.year)
         credits = tuple(credit
             for year in range(period_start.year, period_end.year + 1)
             for credit in derive_advance_credits_for_period(inputs, AdvanceFilter(

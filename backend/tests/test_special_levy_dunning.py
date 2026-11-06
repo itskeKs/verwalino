@@ -110,7 +110,10 @@ async def test_levy_without_plan_real_dunning_payment_issue_pdf(levy_db, levy_fi
         for day in ('2026-06-14', '2026-06-15'):
             before = await api.post('/api/dunning/owner', json=dunning_body(ids, reference_date=day))
             assert before.status_code == 422, before.text
-            assert 'No overdue items' in before.text
+            assert before.json()['detail'] == (
+                'Für den ausgewählten Eigentümer gibt es im gewählten Zeitraum '
+                'zum Stichtag keine überfälligen Beträge.'
+            ), before.text
         result = await api.post('/api/dunning/owner', json=dunning_body(ids))
         assert result.status_code == 201, result.text
         draft = result.json()
@@ -237,7 +240,11 @@ async def test_automatic_owner_interest_starts_after_the_resolved_hausgeld_due_d
         try:
             body = dunning_body(ids, economic_plan_id=str(plan), period_start='2026-07-01', period_end='2026-07-31')
             early = await api.post('/api/dunning/owner', json={**body, 'reference_date': '2026-07-02'})
-            assert early.status_code == 422 and early.json()['detail'].startswith('No overdue items'), early.text
+            assert early.status_code == 422, early.text
+            assert early.json()['detail'] == (
+                'Für den ausgewählten Eigentümer gibt es im gewählten Zeitraum '
+                'zum Stichtag keine überfälligen Beträge.'
+            ), early.text
             late = await api.post('/api/dunning/owner', json={**body, 'reference_date': '2026-07-04'})
             assert late.status_code == 201, late.text
             notice = late.json()

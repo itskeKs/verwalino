@@ -29,6 +29,7 @@ from app.engine.mietkonto import (
     OwnerAdvanceChargeInput,
     PaymentInput,
     PT_HAUSGELD_VORSCHUSS,
+    PT_HK_VORAUSZAHLUNG,
     PT_KALTMIETE,
     PT_NK_VORAUSZAHLUNG,
     account_statement,
@@ -255,6 +256,89 @@ def test_outside_lease_notice_belongs_only_to_the_statement_containing_lease_end
             (date(2025, 3, 15), date(2025, 3, 31)), (date(2025, 4, 1), date(2025, 6, 29)),
             (date(2025, 6, 30), date(2025, 6, 30)), (date(2025, 7, 1), YEAR_END))]
     assert totals == [Decimal("100.00"), Decimal("0.00"), Decimal("200.00"), Decimal("0.00")]
+
+
+@pytest.mark.parametrize("ptype", [PT_NK_VORAUSZAHLUNG, PT_HK_VORAUSZAHLUNG])
+@pytest.mark.parametrize("month", [7, None])
+def test_standalone_refunds_reduce_derived_tenant_advances(ptype, month):
+    lease = _U(50)
+    incoming = _pay(1, ptype, "50.00", month=month, lease=lease)
+    refund = _pay(2, ptype, "70.00", month=month, lease=lease, direction="OUT")
+    reversed_payment = replace(incoming, payment_id=_U(3), amount=Decimal("1234.56"), is_reversed=True)
+    reversal = replace(reversed_payment, payment_id=_U(4), direction="OUT", is_reversed=False, is_reversal=True)
+    payments = [
+        incoming, refund, reversed_payment, reversal,
+        replace(refund, payment_id=_U(5), lease_agreement_id=_U(51)),
+        replace(refund, payment_id=_U(6), period_year=2024),
+        replace(refund, payment_id=_U(7), is_booked=False),
+        replace(refund, payment_id=_U(8), payment_type=PT_KALTMIETE),
+    ]
+    filt = AdvanceFilter(frozenset({ptype}), 2025, lease)
+
+    assert derive_advance_total(payments, filt) == Decimal("-20.00")
+    assert mietkonto.derive_advance_total_for_period(payments, filt, YEAR_START, YEAR_END) == Decimal("-20.00")
+    assert derive_advance_total([reversed_payment], filt) == Decimal("0.00")
+    assert derive_advance_total([reversal], filt) == Decimal("0.00")
+
+
+@pytest.mark.parametrize("ptype", [PT_NK_VORAUSZAHLUNG, PT_HK_VORAUSZAHLUNG])
+@pytest.mark.parametrize("month,first_expected,second_expected", [
+    (7, "-9.04", "-10.96"),
+    (None, "-10.71", "-9.29"),
+])
+def test_negative_tenant_advances_reconcile_at_a_partial_month_cut(ptype, month, first_expected, second_expected):
+    payments = [
+        _pay(1, ptype, "50.00", month=month, lease=_U(50)),
+        _pay(2, ptype, "70.00", month=month, lease=_U(50), direction="OUT"),
+    ]
+    filt = AdvanceFilter(frozenset({ptype}), 2025, _U(50))
+
+    assert mietkonto.derive_advance_total_for_period(
+        payments, filt, YEAR_START, date(2025, 7, 14),
+    ) == Decimal(first_expected)
+    assert mietkonto.derive_advance_total_for_period(
+        payments, filt, date(2025, 7, 15), YEAR_END,
+    ) == Decimal(second_expected)
+
+
+@pytest.mark.parametrize("ptype", [PT_NK_VORAUSZAHLUNG, PT_HK_VORAUSZAHLUNG])
+def test_a_small_annual_refund_keeps_its_sign_in_the_remainder_month(ptype):
+    refund = _pay(1, ptype, "0.01", lease=_U(50), direction="OUT")
+    filt = AdvanceFilter(frozenset({ptype}), 2025, _U(50))
+
+    assert mietkonto.derive_advance_total_for_period(
+        [refund], filt, YEAR_START, date(2025, 11, 30),
+    ) == Decimal("0.00")
+    assert mietkonto.derive_advance_total_for_period(
+        [refund], filt, date(2025, 12, 1), YEAR_END,
+    ) == Decimal("-0.01")
+
+
+@pytest.mark.parametrize("ptype", [PT_NK_VORAUSZAHLUNG, PT_HK_VORAUSZAHLUNG])
+@pytest.mark.parametrize("refund,remainder", [("50.00", "-24.96"), ("70.00", "-44.96")])
+def test_later_refunds_reconcile_with_the_credit_already_frozen(ptype, refund, remainder):
+    incoming = _pay(1, ptype, "50.00", lease=_U(50))
+    outgoing = _pay(2, ptype, refund, lease=_U(50), direction="OUT")
+    filt = AdvanceFilter(frozenset({ptype}), 2025, _U(50))
+    frozen = mietkonto.derive_advance_credits_for_period([incoming], filt, YEAR_START, date(2025, 6, 30))
+    assert [credit.amount for credit in frozen] == [Decimal("24.96")]
+
+    assert mietkonto.derive_advance_total_for_period(
+        [incoming, outgoing], filt, date(2025, 7, 1), YEAR_END, finalized_credits=frozen,
+    ) == Decimal(remainder)
+    assert [credit.amount for credit in frozen] == [Decimal("24.96")]
+
+
+@pytest.mark.parametrize("ptype", [PT_NK_VORAUSZAHLUNG, PT_HK_VORAUSZAHLUNG])
+def test_a_refund_assigned_outside_the_lease_is_excluded_from_its_credit(ptype):
+    lease_start = date(2025, 7, 1)
+    refund = _pay(1, ptype, "70.00", month=6, lease=_U(50), direction="OUT")
+    filt = AdvanceFilter(frozenset({ptype}), 2025, _U(50))
+
+    assert mietkonto.derive_advance_total_for_period(
+        [refund], filt, lease_start, YEAR_END, lease_start=lease_start,
+    ) == Decimal("0.00")
+    assert mietkonto.uncredited_advance_total([refund], filt, lease_start, None) == Decimal("-70.00")
 
 
 @pytest.mark.parametrize("ptype,addressee", [("NK_VORAUSZAHLUNG", "lease"), ("HAUSGELD_VORSCHUSS", "owner")])
@@ -868,3 +952,69 @@ def test_owner_due_split_keeps_full_balances_signed_credit_and_levy_dates():
     assert len(overdue) == 1
     notice = assemble_dunning(overdue, 0, date(2026, 7, 4))
     assert notice.items_snapshot()[0]['due_date'] == '2026-07-03'
+
+
+
+@pytest.mark.parametrize("ptype", [PT_NK_VORAUSZAHLUNG, PT_HK_VORAUSZAHLUNG])
+@pytest.mark.parametrize("july_refund", [False, True])
+def test_extending_a_lease_preserves_the_non_refund_credit_floor(ptype, july_refund):
+    receipt = _pay(1, ptype, "50.00", lease=_U(50))
+    filt = AdvanceFilter(frozenset({ptype}), 2025, _U(50))
+    june_end = date(2025, 6, 30)
+    frozen = mietkonto.derive_advance_credits_for_period(
+        [receipt], filt, YEAR_START, june_end, lease_start=YEAR_START, lease_end=june_end,
+    )
+    assert [credit.amount for credit in frozen] == [Decimal("50.00")]
+
+    payments = [receipt]
+    if july_refund:
+        payments.append(_pay(2, ptype, "10.00", month=7, lease=_U(50), direction="OUT"))
+    july_start, september_end = date(2025, 7, 1), date(2025, 9, 30)
+    summer = mietkonto.derive_advance_credits_for_period(
+        payments, filt, july_start, september_end, lease_start=YEAR_START,
+        lease_end=YEAR_END, finalized_credits=frozen,
+    )
+    autumn = mietkonto.derive_advance_credits_for_period(
+        payments, filt, date(2025, 10, 1), YEAR_END, lease_start=YEAR_START,
+        lease_end=YEAR_END, finalized_credits=frozen + summer,
+    )
+    assert [credit.amount for credit in summer + autumn if credit.month is None] == [Decimal("0.00")] * 2
+    if july_refund:
+        assert [credit.amount for credit in summer if credit.month == 7] == [Decimal("-10.00")]
+
+
+@pytest.mark.parametrize("ptype", [PT_NK_VORAUSZAHLUNG, PT_HK_VORAUSZAHLUNG])
+@pytest.mark.parametrize("direction,frozen_amount,expected", [
+    ("IN", "24.96", "0.00"),
+    ("OUT", "-24.96", "24.96"),
+])
+def test_reversal_after_finalization_preserves_the_frozen_credit_policy(ptype, direction, frozen_amount, expected):
+    payment = _pay(1, ptype, "50.00", lease=_U(50), direction=direction)
+    filt = AdvanceFilter(frozenset({ptype}), 2025, _U(50))
+    june_end = date(2025, 6, 30)
+    frozen = mietkonto.derive_advance_credits_for_period([payment], filt, YEAR_START, june_end)
+    assert [credit.amount for credit in frozen] == [Decimal(frozen_amount)]
+    reversal_direction = "OUT" if direction == "IN" else "IN"
+    payments = [replace(payment, is_reversed=True),
+                replace(payment, payment_id=_U(2), direction=reversal_direction, is_reversal=True)]
+
+    assert mietkonto.derive_advance_total_for_period(
+        payments, filt, date(2025, 7, 1), YEAR_END, finalized_credits=frozen,
+    ) == Decimal(expected)
+
+
+@pytest.mark.parametrize("ptype", [PT_NK_VORAUSZAHLUNG, PT_HK_VORAUSZAHLUNG])
+def test_reversing_a_refund_after_a_zero_credit_preserves_the_full_remaining_advance(ptype):
+    lease = _U(50)
+    receipt = _pay(1, ptype, "50.00", lease=lease)
+    refund = _pay(2, ptype, "50.00", lease=lease, direction="OUT")
+    filt = AdvanceFilter(frozenset({ptype}), 2025, lease)
+    june_end = date(2025, 6, 30)
+    frozen = mietkonto.derive_advance_credits_for_period([receipt, refund], filt, YEAR_START, june_end)
+
+    payments = [receipt, replace(refund, is_reversed=True),
+                replace(refund, payment_id=_U(3), direction="IN", is_reversal=True)]
+    assert mietkonto.derive_advance_total_for_period(
+        payments, filt, date(2025, 7, 1), YEAR_END, finalized_credits=frozen,
+    ) == Decimal("50.00")
+    assert frozen == (mietkonto.AdvanceCredit(2025, None, YEAR_START, june_end, Decimal("0.00")),)

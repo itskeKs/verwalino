@@ -483,6 +483,10 @@ persisted in the uncomputed draft and remains editable after reload; the source 
 original IDs are retained as provenance in the later normal computation. No automatic
 data-basis attestation, cost change, finalization, or resolution.
 
+After a manual draft is calculated, reopening restores the cost rows and reserve used for
+that result. Changes made in the editor require another calculation before finalizing a
+previously calculated draft. The existing data-basis confirmation still applies.
+
 ### 5.2 Outputs (SDD §10)
 
 - **Plan amount per category** (`PLANNED_COST` lines, + subtotals allocable/non-allocable/reserve).

@@ -130,7 +130,8 @@ def long_owner_balance(world, seed_data):
     return create_balance_world(world, seed_data, owner_name='Anna-Katharina Freifrau von Hohenzollern-Sigmaringen')
 
 
-def create_balance_world(world, seed_data, *, cost_period_end='2026-12-31', owner_name='Anna Berg', second_owner='Berta Vollständig', scope_start='2026-01-01'):
+def create_balance_world(world, seed_data, *, cost_period_end='2026-12-31', owner_name='Anna Berg', second_owner='Berta Vollständig',
+                         scope_start='2026-01-01', monthly_due_day=1):
     world.actor = world.administrator_of('Verwaltung Alpha')
     world.actor_organization = 'Verwaltung Alpha'
     user = str(seed_data['user_a_admin_id'])
@@ -164,7 +165,7 @@ def create_balance_world(world, seed_data, *, cost_period_end='2026-12-31', owne
         'tenant_apportionable': 'NICHT_UMLAGEFAEHIG', 'source': 'MANUAL'})
     assert world.act('POST', f"/api/cost-entries/{cost['id']}/confirm").status_code == 200
     plan = create(world, '/api/economic-plans', {**basis, 'plan_year': 2026,
-        'period_start': '2026-01-01', 'period_end': '2026-12-31'})
+        'period_start': '2026-01-01', 'period_end': '2026-12-31', 'monthly_due_day': monthly_due_day})
     values = {'planned_costs': [{'category_code': 'GARTENPFLEGE', 'label': 'Bewirtschaftung',
         'planned_amount': '12000.00', 'cost_group': 'UMLAGEFAEHIG'}], 'reserve_contribution_total': '0.00'}
     world.run(attest_fixture(world.actor, 'economic_plan', plan['id'], values))
@@ -338,7 +339,7 @@ def balance_browser(browser_world, weg_balance):
         for width in (1280, 360):
             await b.page.set_viewport_size({'width': width, 'height': 1000})
             if width == 360:
-                await b.page.wait_for_function("document.querySelector('aside').getBoundingClientRect().right <= 0")
+                await expect(b.page.locator("aside")).to_have_count(0)
             region = b.page.get_by_role('region', name='Hausgeld-Abgleich · Anna Berg', exact=True)
             await expect(region).to_be_visible()
             for label, value in (
@@ -522,7 +523,7 @@ def long_statement_browser(browser_world, world, weg_balance):
         for width in (1280, 360):
             await b.page.set_viewport_size({'width': width, 'height': 1000})
             if width == 360:
-                await b.page.wait_for_function("document.querySelector('aside').getBoundingClientRect().right <= 0")
+                await expect(b.page.locator("aside")).to_have_count(0)
             heading = b.page.get_by_role('heading', name=name, exact=True)
             await expect(heading).to_be_visible()
             card = heading.locator('..')

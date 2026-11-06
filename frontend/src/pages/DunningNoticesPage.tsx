@@ -33,6 +33,7 @@ import type {
   Property,
   EconomicPlan,
 } from "../api/types";
+import { parseGermanAmount } from "../lib/germanAmount";
 import { DunningSettingsForm } from "../components/DunningSettingsForm";
 import { AccountingScopeSelector } from "../components/AccountingScopeSelector";
 import { ApiError } from "../api/client";
@@ -125,11 +126,17 @@ export function DunningNoticesPage() {
   const [scopeValid, setScopeValid] = useState(false);
   const [saving, setSaving] = useState(false);
   const savingRef = useRef(false);
+  const creationErrorRef = useRef<HTMLParagraphElement>(null);
+  const creationFormOpen = showForm && canWrite;
   const mounted = useRef(false);
   useEffect(() => {
     mounted.current = true;
     return () => { mounted.current = false; };
   }, []);
+
+  useEffect(() => {
+    if (error) creationErrorRef.current?.scrollIntoView?.({ block: "nearest" });
+  }, [error]);
 
   const statusFilter = searchParams.get("status") ?? "";
   const levelFilter = searchParams.get("level") ?? "";
@@ -270,6 +277,14 @@ export function DunningNoticesPage() {
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     if (!canWrite || savingRef.current || !scopeValid || (recipientType === "owner" && !ownerForm.economic_plan_id && (!ownerPropertyId || !ownerForm.accounting_scope_id))) return;
+    const feeInput = (recipientType === "tenant" ? tenantForm : ownerForm).override_fee?.trim() ?? null;
+    // Require a decimal comma for grouping; never read a dotted decimal as a larger fee.
+    const override_fee = feeInput !== null && (feeInput.includes(",") || /^-?\d+(?:\.\d{1,2})?$/.test(feeInput))
+      ? parseGermanAmount(feeInput) : null;
+    if (feeInput != null && override_fee === null) {
+      setError("Mahngebühr: Bitte einen Betrag wie 0,00 eingeben.");
+      return;
+    }
     savingRef.current = true;
     const submittedSession = sessionKey;
     setSaving(true);
@@ -277,9 +292,9 @@ export function DunningNoticesPage() {
     try {
       let created: DunningNotice;
       if (recipientType === "tenant") {
-        created = await createDunningForTenant(tenantForm);
+        created = await createDunningForTenant({ ...tenantForm, override_fee });
       } else {
-        created = await createDunningForOwner(ownerForm);
+        created = await createDunningForOwner({ ...ownerForm, override_fee });
       }
       if (!mounted.current || activeSession.current !== submittedSession) return;
       setShowForm(false);
@@ -355,9 +370,17 @@ export function DunningNoticesPage() {
         </select>
       </div>
 
-      {error && <p className="error-text">{error}</p>}
+      {error && (
+        <p
+          ref={creationFormOpen ? creationErrorRef : undefined}
+          role={creationFormOpen ? "alert" : undefined}
+          className={creationFormOpen && recipientType === "owner" ? "error-text scroll-mt-2" : "error-text"}
+        >
+          {error}
+        </p>
+      )}
 
-      {showForm && canWrite && (
+      {creationFormOpen && (
         <div className="card" style={{ marginBottom: "1rem" }}>
           <h2>Neue Mahnung anlegen</h2>
           <p style={{ fontSize: "0.85rem", color: "var(--text-muted)", marginBottom: "1rem" }}>

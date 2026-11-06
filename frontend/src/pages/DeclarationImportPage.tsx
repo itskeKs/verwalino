@@ -32,6 +32,7 @@ const RETRYABLE_FAILURE_CODES = new Set([
 ]);
 
 const FAILURE_MESSAGES: Record<string, string> = {
+  DECLARATION_IMPORT_DISABLED: "Der Import von Teilungserklärungen ist für Ihre Organisation nicht eingerichtet. Bitte wenden Sie sich an Ihre Administration.",
   ORGANIZATION_AI_BUDGET_EXCEEDED: "Das monatliche KI-Budget ist ausgeschöpft. Bitte wenden Sie sich an den Betreiber.",
   JOB_PRINCIPAL_UNVERIFIED: "Für diesen älteren Auftrag ist kein bestätigter Auslöser gespeichert. Ein berechtigter Benutzer kann ihn erneut starten.",
   JOB_PERMISSION_CHANGED: "Die Berechtigung des auslösenden Benutzers gilt nicht mehr. Ein berechtigter Benutzer kann den Import erneut starten.",
@@ -55,7 +56,9 @@ interface UploadItem {
 }
 
 function safeErrorMessage(error: unknown): string {
-  return error instanceof ApiError ? error.message : "Der Vorgang konnte nicht abgeschlossen werden.";
+  if (!(error instanceof ApiError)) return "Der Vorgang konnte nicht abgeschlossen werden.";
+  if (error.code && Object.hasOwn(FAILURE_MESSAGES, error.code)) return FAILURE_MESSAGES[error.code];
+  return error.message;
 }
 
 function stageLabel(item: DeclarationImport | null): string {

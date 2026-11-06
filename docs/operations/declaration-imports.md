@@ -13,6 +13,11 @@ evidence. The lexical PostgreSQL search works without a model call. The optional
 feature returns exclusively a cited answer drawn from a bounded retrieval of approved
 evidence and can be switched off separately.
 
+When declaration import is disabled, as it is on a portable self-host install,
+opening a new draft, uploading a PDF to an existing draft or starting an import
+shows: “Der Import von Teilungserklärungen ist für Ihre Organisation nicht
+eingerichtet. Bitte wenden Sie sich an Ihre Administration.”
+
 ## Operating Flow and Model Matrix
 
 ```text

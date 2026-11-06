@@ -526,7 +526,10 @@ async def test_foreign_and_unknown_payment_parents_leave_no_changes(
             "tenant_profile_id": str(m6_seed["tenant_b"])}
     if field == "owner_profile_id":
         body.pop("tenant_profile_id")
-        body.update(payment_type="SONDERZAHLUNG", owner_profile_id=str(m6_seed["owner_b"]))
+        # For POST the foreign or unknown owner must look absent even when the
+        # selected type also disallows an owner. The PATCH setup needs a valid draft.
+        body.update(payment_type="KALTMIETE" if method == "post" else "SONDERZAHLUNG",
+                    owner_profile_id=str(m6_seed["owner_b"]))
     path = "/api/payments"
     if method == "patch":
         draft = await client_b_admin.post(path, json=body)
@@ -546,6 +549,61 @@ async def test_foreign_and_unknown_payment_parents_leave_no_changes(
 
 
 class TestPaymentAPI:
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("payment_type", ["KALTMIETE", "NK_VORAUSZAHLUNG", "HK_VORAUSZAHLUNG"])
+    async def test_rent_draft_requires_a_tenant_instead_of_an_owner(self, client_a_clerk, m6_seed, payment_type):
+        body = {
+            "bank_account_id": str(m6_seed["acct_a"]), "direction": "IN",
+            "amount": "75.25", "value_date": "2025-06-01", "payment_type": payment_type,
+            "period_year": 2025, "period_month": 6,
+        }
+        response = await client_a_clerk.post("/api/payments", json={**body, "owner_profile_id": str(m6_seed["owner"])})
+        assert response.status_code == 422, response.text
+        assert response.json()["detail"] == {
+            "code": "PAYMENT_COUNTERPARTY_TYPE_MISMATCH",
+            "message": "Dieser Zahlungstyp gehört zu einem Mietverhältnis, nicht zu einem Eigentümer.",
+        }
+        response = await client_a_clerk.post("/api/payments", json={
+            **body, "tenant_profile_id": str(m6_seed["tenant"]), "lease_agreement_id": str(m6_seed["lease"]),
+        })
+        assert response.status_code == 201, response.text
+        assert response.json()["tenant_profile_id"] == str(m6_seed["tenant"])
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("payment_type", ["HAUSGELD_VORSCHUSS", "RUECKLAGENANTEIL", "SONDERZAHLUNG"])
+    async def test_owner_draft_requires_an_owner(self, client_a_clerk, m6_seed, payment_type):
+        body = {
+            "bank_account_id": str(m6_seed["acct_a"]), "direction": "IN",
+            "amount": "75.25", "value_date": "2025-06-01", "payment_type": payment_type,
+        }
+        response = await client_a_clerk.post("/api/payments", json=body)
+        assert response.status_code == 422, response.text
+        assert response.json()["detail"] == {
+            "code": "PAYMENT_COUNTERPARTY_TYPE_MISMATCH",
+            "message": "Dieser Zahlungstyp erfordert einen Eigentümer als Gegenpartei.",
+        }
+        response = await client_a_clerk.post("/api/payments", json={**body, "owner_profile_id": str(m6_seed["owner"])})
+        assert response.status_code == 201, response.text
+        assert response.json()["owner_profile_id"] == str(m6_seed["owner"])
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("payment_type", ["KALTMIETE", "HK_VORAUSZAHLUNG"])
+    async def test_create_maps_the_database_counterparty_check(self, client_a_clerk, m6_seed, payment_type, monkeypatch):
+        from app.services import payment_service
+
+        # Exercise the two real CHECK constraints when the service guard does not catch the input.
+        monkeypatch.setattr(payment_service, "validate_payment_counterparty", lambda *_: None)
+        response = await client_a_clerk.post("/api/payments", json={
+            "bank_account_id": str(m6_seed["acct_a"]), "direction": "IN",
+            "amount": "75.25", "value_date": "2025-06-01", "payment_type": payment_type,
+            "owner_profile_id": str(m6_seed["owner"]),
+        })
+        assert response.status_code == 422, response.text
+        assert response.json()["detail"] == {
+            "code": "PAYMENT_COUNTERPARTY_TYPE_MISMATCH",
+            "message": "Dieser Zahlungstyp gehört zu einem Mietverhältnis, nicht zu einem Eigentümer.",
+        }
+
     @pytest.mark.asyncio
     async def test_create_book_list_reverse_flow(self, client_a_clerk, m6_seed):
         # Create draft.

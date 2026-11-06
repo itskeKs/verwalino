@@ -79,6 +79,27 @@ Feature: Organization isolation
     When the user opens the settlement period offers of "Verwaltung Beta"
     Then the property is reported as not found
 
+  Scenario: An overlong name does not reveal another organization's unit
+    Given "Verwaltung Beta" has a unit named "Wohnung 1"
+    When the user tries to rename the unit of "Verwaltung Beta" to "Wohnung 1 · Südflügel · Aufgang Änne · GartenblickX"
+    Then the unit is reported as not found
+    And "Verwaltung Beta" still has its unit unchanged
+
+  Scenario: Invalid area does not reveal another organization's property or unit
+    Given "Verwaltung Beta" has a unit named "Area check"
+    When the user submits an invalid area for that unit and for a new unit in "Verwaltung Beta"
+    Then neither attempt reveals the foreign property or unit
+    And "Verwaltung Beta" still has its unit unchanged
+
+  Scenario: A duplicate number does not reveal another organization's units
+    Given "Verwaltung Beta" has a unit named "Wohnung 2"
+    And "Verwaltung Beta" has a unit named "Wohnung 3"
+    When the user tries to rename the unit of "Verwaltung Beta" to "Wohnung 2"
+    Then the unit is reported as not found
+    When the user tries to add or import another "Wohnung 2" into the property of "Verwaltung Beta"
+    Then the property is reported as not found for both attempts
+    And "Verwaltung Beta" still has its unit unchanged
+
   Scenario: Signing in again keeps the session in the same organization
     When the administrator signs in again
     Then the signed-in session belongs to "Verwaltung Alpha"
@@ -136,6 +157,13 @@ Feature: Organization isolation
     Given each organization has a confirmed cost and an outgoing bank debit
     When Verwaltung Alpha tries to assign its debit to Verwaltung Beta's cost
     Then the foreign cost is not found and both debits remain new
+
+  Scenario: A foreign owner looks missing when recording or assigning rent
+    Given a rental receipt and an owner for the rented unit
+    And Verwaltung Beta has an owner profile
+    When Verwaltung Alpha tries to record and assign rent to the foreign owner and to an unknown owner
+    Then both routes report the owners as equally missing
+    And the rental receipt remains pending with no payment recorded
 
   Scenario: Reminder policy belongs to the signed-in organization
     When Verwaltung Alpha saves its own dunning settings

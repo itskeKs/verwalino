@@ -131,6 +131,15 @@ The type is the **control key** for the settlement integration (§6) — hence s
 | `NACHZAHLUNG` | Tenant or owner | "… / additional payment" | settles the `balance` of a **finalized** settlement (`settlement_run_id`); settlement-neutral for the *next* period. |
 | `KAUTION` *(optional)* | Tenant | "Tenant: security deposit" | Security deposit account holdings; **settlement-neutral** (§3.4). |
 
+Direct payment creation and bank assignment use the same counterparty rule.
+Tenant types require a tenant and reject an owner. Owner types require an owner
+and reject a tenant. A mismatch returns HTTP 422 with the code
+`PAYMENT_COUNTERPARTY_TYPE_MISMATCH`. The rent message is “Dieser Zahlungstyp
+gehört zu einem Mietverhältnis, nicht zu einem Eigentümer.” The owner message is
+“Dieser Zahlungstyp erfordert einen Eigentümer als Gegenpartei.” An invalid split
+leaves the bank receipt pending and creates no payments; correct the target and
+submit again.
+
 > **[§18/domain F6-3] Scope of payment types.** SDD §18 explicitly lists the depth of the tenant ledger and the treatment of security deposits as open. Whether `KAUTION` is already maintained in M6 (a dedicated account type exists: `bank_account.account_type='KAUTION'`) or deferred to after M9, and whether further types are needed (e.g. rent reduction, refund of credit as its own `OUT` type), has **not** been decided unilaterally. **Provisional assumption:** the vocabulary above; `KAUTION` carried as an optional type, but settlement-neutral. Requires domain sign-off.
 
 ### 1.4 `open_item` — derived (computed), not persisted [DECISION]
@@ -230,12 +239,23 @@ otherwise be lost. A downgrade-and-upgrade run without such contexts and the ref
 when provenance is already recorded are tested. Issued letters, snapshots and shares
 are not changed retrospectively.
 
+### Accounting scope for tenant dunning notices
+
+In **Mahnungen → Neue Mahnung anlegen**, selecting the tenant and lease leaves
+the accounting scope for the manager to choose. If scoped payments require a
+scope, submitting without one returns HTTP 409 and creates no draft. The form
+explains in German that an exact accounting scope and review of unclassified
+inputs are required. Select an eligible **Abrechnungskreis** and submit again
+to calculate the notice for that scope.
+
 ### Default interest on dunning notices
 
 An administrator sets the three fees and enables interest under **Mahnungen → Mahneinstellungen**.
 All organization members can read the settings. Without saved settings, fees are 0.00 / 2.50 /
-2.50 EUR and interest is off. A per-notice fee override takes precedence. Individual and batch
-drafts use the same organization policy.
+2.50 EUR and interest is off. A per-notice fee override takes precedence. In individual
+tenant and owner drafts, a blank override uses the configured fee and `0,00` explicitly
+sets the fee to zero. An invalid override leaves the form open for correction.
+Individual and batch drafts use the same organization policy.
 
 With interest enabled, each overdue item accrues simple interest from the day after its due
 date through the notice date. The item is split at base-rate changes and on the booked value
@@ -383,13 +403,18 @@ This is the most correctness-critical place in M6 and the reason why it is desig
 
 ```
 derive_advance_total(payments, filter) -> Decimal
-   = Σ amount  over all payments with:
-       status = 'booked'  AND  reversed_by_id IS NULL  (not reversed)
+   = Σ contribution  over all payments with:
+       status = 'booked'  AND  reversed_by_id IS NULL
+       AND reverses_id IS NULL
        AND payment_type ∈ filter.types
        AND period_year  = filter.year
        AND (filter.lease_agreement_id IS NULL OR lease_agreement_id = filter.lease_agreement_id)
        AND (filter.owner_profile_id  IS NULL OR owner_profile_id  = filter.owner_profile_id)
 ```
+
+The contribution is signed for tenant advances: incoming payments add their
+amount and standalone refunds subtract it. Other payment types use their gross
+amount here. The Hausgeld period derivation applies direction separately.
 
 - **Pure function** (`app/engine/mietkonto.py`), `Decimal` in/out, no DB — testable, deterministic. The service loads the matching `payment` rows (repository query with exactly this filter) and passes them to the function; the function sums. **No bank matching, no parsing** (SDD §3).
 - **No double counting — guaranteed by three properties:** (1) every payment has **exactly one** `payment_type` and **exactly one** period reference (`period_year`) and addressee; (2) **reversed** payments (`reversed_by_id IS NOT NULL`) and reversal rows are treated consistently (either both out, or both in — net zero; see §6.6); (3) the settlement filters are **disjoint** per quantity (operating cost advance payment ≠ Hausgeld advance ≠ base rent). A payment can thus flow into **at most one** settlement quantity.
@@ -406,11 +431,21 @@ sum in either mode.
 The statement retains `advance_payments_total` / `advance_payments_source`
 and adds `heating_advance_payments_total` / `heating_advance_payments_source`.
 Each source is MANUAL or DERIVED independently. The existing derivation action
-fills both from their matching active booked payment types. Year/month buckets,
-lease bounds, reversals and frozen credits apply separately to each type.
-Unknown totals block computation, coverage and finalization. For a wholly
-combined period, entering the manual combined total supplies heating zero
-when there is no existing separate heating total. Finalization freezes both totals and sources.
+fills both from their matching active booked payment types. A 50-euro receipt
+and a 70-euro standalone refund assigned to the same period give a derived
+total of −20 euros for that component (#216). Year/month buckets, lease bounds,
+reversals and frozen credits apply separately to each type. A later derivation
+uses the signed difference for buckets with active standalone refunds or negative
+frozen credits, including when the booked net is zero. Finalization records
+zero refund credits so a later reversal can reconcile them. Previously omitted
+buckets in known breakdowns count as zero when reconciling refunds. If an
+affected finalized statement lacks its breakdown,
+derivation returns `advance_credit_history_missing`. Finalized snapshots retain
+their amounts.
+Both totals default to unknown; missing totals block computation, coverage and
+finalization. Finalization freezes both totals and sources.
+For a wholly combined period, entering the manual combined total supplies heating
+zero when there is no existing separate heating total.
 Manual heating totals use the same signed numeric carrier as operating totals;
 monthly lease and rent-change rates remain non-negative. An older rent-change
 request that omits heating preserves the effective heating rate.
@@ -545,8 +580,11 @@ Write roles can explicitly accept complete unambiguous suggestions,
 split manually in the dialog by lease/owner, payment type and month,
 or ignore a receipt without a payment. Suggestions requiring review or incomplete
 suggestions are not booked automatically. The positive split amounts must
-cover the absolute bank amount cent-exactly; German decimal input is validated without
-floating-point arithmetic. Errors keep the inputs, 409 becomes visible, reload
+cover the absolute bank amount cent-exactly. A split amount accepts German grouping
+with a decimal comma, such as `2.250,00`, and is validated without floating-point
+arithmetic. An invalid amount identifies the affected split row without booking it.
+The dialog scrolls the validation message into view on submission.
+Errors keep the inputs, 409 becomes visible, reload
 follows only on success. READ_ONLY gets no mutation actions. "Alle" ("All") also keeps
 processed rows; account filter and pagination remain server-side.
 The split dialog aligns labels above fields in a responsive form grid. Lease/owner
@@ -585,7 +623,10 @@ or unresolved classification does not yield seemingly complete totals. Existing
 bookings and snapshots remain unchanged.
 
 The `/berichte` interface (T39) queries property/year/scope explicitly; changing the
-selection removes old results. The CSV download at `/api/reports/property-year.csv`
+selection removes old results. On narrow screens, scroll the annual expense
+table sideways to see the category, code, allocability and amount. The report
+controls and totals stay within the page width.
+The CSV download at `/api/reports/property-year.csv`
 computes the same basis afresh and additionally requires scope/source export
 permissions, checked again before output. UTF-8 BOM, semicolon, CRLF and decimal comma
 are fixed for spreadsheet programs. Texts prone to formula injection receive an

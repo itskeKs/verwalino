@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { parseGermanAmount } from "../lib/germanAmount";
 import { ApiError } from "../api/client";
 import { Link, useParams, useSearchParams } from "react-router-dom";
 import {
@@ -315,6 +316,10 @@ function positiveAmount(value: string): string | null {
   const amount = cents(value);
   return amount !== null && amount > 0n && amount <= 99999999999999n ? decimal(amount) : null;
 }
+// A bare dot remains the API decimal separator, so "850.001" stays invalid.
+function splitInput(value: string): string {
+  return value.includes(",") ? parseGermanAmount(value) ?? "" : value;
+}
 function validLine(line: BankAssignmentLine): boolean {
   const lease = Boolean(line.lease_agreement_id);
   const owner = Boolean(line.owner_profile_id);
@@ -412,7 +417,11 @@ function SplitDialog({ transaction, account, busy, error, onClose, onSubmit }: {
   });
   const [targets, setTargets] = useState<TargetData | null>(null);
   const [targetError, setTargetError] = useState<string | null>(null);
-  const [validation, setValidation] = useState<string | null>(null);
+  const [validation, setValidation] = useState<{ message: string } | null>(null);
+  const validationRef = useRef<HTMLParagraphElement>(null);
+  useEffect(() => {
+    if (validation) validationRef.current?.scrollIntoView?.({ block: "nearest" });
+  }, [validation]);
   const [targetRevision, setTargetRevision] = useState(0);
   useEffect(() => {
     if (!account || mode !== "payment") return;
@@ -441,12 +450,16 @@ function SplitDialog({ transaction, account, busy, error, onClose, onSubmit }: {
   function submit() {
     if (busy || !targets) return;
     const lines: BankAssignmentLine[] = [];
-    for (const item of rows) {
-      const amount = positiveAmount(item.amount);
+    for (const [index, item] of rows.entries()) {
+      const amount = positiveAmount(splitInput(item.amount));
+      if (amount === null) {
+        setValidation({ message: `Betrag in Splitzeile ${index + 1}: Bitte einen positiven Betrag wie 2.250,00 eingeben (max. 12 Vorkommastellen und 2 Nachkommastellen).` });
+        return;
+      }
       const lease = item.targetKind === "lease" ? targets.leases.find(lease => lease.id === item.target) : undefined;
       const owner = item.targetKind === "owner" ? targets.owners.find(owner => owner.id === item.target) : undefined;
-      if (!amount || !/^\d{1,4}$/.test(item.period_year) || !/^\d{1,2}$/.test(item.period_month) || (item.payment_type !== "RUECKLAGENENTNAHME" && !lease && !owner)) {
-        setValidation("Bitte positive Beträge (max. 12 Vorkommastellen, 2 Nachkommastellen), Periode und ein gültiges Ziel im Bankobjekt angeben.");
+      if (!/^\d{1,4}$/.test(item.period_year) || !/^\d{1,2}$/.test(item.period_month) || (item.payment_type !== "RUECKLAGENENTNAHME" && !lease && !owner)) {
+        setValidation({ message: "Bitte Periode und ein gültiges Ziel im Bankobjekt angeben." });
         return;
       }
       const line: BankAssignmentLine = {
@@ -454,15 +467,15 @@ function SplitDialog({ transaction, account, busy, error, onClose, onSubmit }: {
         ...(item.payment_type === "RUECKLAGENENTNAHME" ? { reserve_cost_entry_id: item.reserve_cost_entry_id, reserve_register_entry_id: item.reserve_register_entry_id } : lease ? { lease_agreement_id: lease.id, tenant_profile_id: lease.tenant_profile_id } : { owner_profile_id: owner!.id }),
         ...(item.note.trim() ? { note: item.note.trim() } : {}),
       };
-      if (!validLine(line)) { setValidation("Bitte Zahlungsart, Ziel und gültige Periode prüfen."); return; }
+      if (!validLine(line)) { setValidation({ message: "Bitte Zahlungsart, Ziel und gültige Periode prüfen." }); return; }
       lines.push(line);
     }
-    if (!coversTransaction(lines, transaction.amount)) { setValidation("Die Summe der positiven Splitbeträge muss den Umsatz vollständig abdecken."); return; }
+    if (!coversTransaction(lines, transaction.amount)) { setValidation({ message: "Die Summe der positiven Splitbeträge muss den Umsatz vollständig abdecken." }); return; }
     setValidation(null);
     onSubmit(lines);
   }
   const total = cents(transaction.amount);
-  const entered = rows.map(item => cents(item.amount));
+  const entered = rows.map(item => cents(splitInput(item.amount)));
   const remaining = total !== null && entered.every(amount => amount !== null)
     ? (total < 0n ? -total : total) - entered.reduce<bigint>((sum, amount) => sum + amount!, 0n) : null;
   const selectedCost = costs?.find(cost => cost.id === costId);
@@ -500,7 +513,7 @@ function SplitDialog({ transaction, account, busy, error, onClose, onSubmit }: {
       </div>)}
       {targetError && <div><p role="alert" className="error-text">{targetError}</p><button className="btn" onClick={() => setTargetRevision(value => value + 1)}>Ziele erneut laden</button></div>}
       {!targets && !targetError && <p>Lade Ziele…</p>}
-      {validation && <p role="alert" className="error-text">{validation}</p>}
+      {validation && <p ref={validationRef} role="alert" className="error-text">{validation.message}</p>}
       {error && <p role="alert" className="error-text">{error}</p>}
       <form className="form-grid min-w-0" onSubmit={event => { event.preventDefault(); submit(); }} noValidate>
         <fieldset className="contents min-w-0" disabled={busy || !targets}>

@@ -493,9 +493,16 @@ async def test_previous_edited_values_compute_without_changing_final_original(cl
     draft = response.json()
     inputs = draft["draft_inputs"]
     assert (await api.post(f"/api/economic-plans/{draft['id']}/compute", json=inputs)).status_code == 422
+    # The detail editor can submit more precision than the initial adoption form.
+    next(row for row in inputs["planned_costs"] if row["category_code"] == "GARTENPFLEGE")["planned_amount"] = "4100.251"
     await attest_fixture(api, "economic_plan", draft["id"], inputs)
     computed = await api.post(f"/api/economic-plans/{draft['id']}/compute", json=inputs)
     assert computed.status_code == 200, computed.text
+    reopened = await api.get(f"/api/economic-plans/{draft['id']}")
+    assert reopened.status_code == 200, reopened.text
+    for response in (computed, reopened):
+        row = next(row for row in response.json()["draft_inputs"]["planned_costs"] if row["category_code"] == "GARTENPFLEGE")
+        assert row["planned_amount"] == "4100.251"
     owner_lines = [line for line in computed.json()["lines"] if line["line_type"] == "OWNER_ADVANCE"]
     assert sorted(Decimal(line["planned_amount"]) for line in owner_lines) == [Decimal("5440.10"), Decimal("8160.15")]
     assert (await api.get(f"/api/economic-plans/{old_id}")).json() == original
