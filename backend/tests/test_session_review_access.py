@@ -283,6 +283,7 @@ async def test_revision_chain_head_0131_head_preserves_full_state_and_issued_pdf
     from app.deployment import TARGET
     from app.models.base import Base
     from tests.conftest import MIGRATOR_SYNC_URL
+    from tests.migration_rehearsal import project_legacy_advance_modes
     from tests.test_letters import contract_body, create_template, issue_body
     from tests.test_reserve_ledger import reserve_world, finalize
     from tests.financial_coverage_helpers import attest_fixture, reserve_evidence
@@ -313,6 +314,8 @@ async def test_revision_chain_head_0131_head_preserves_full_state_and_issued_pdf
     assert os.environ.get('HV_DECLARATION_TEST_DATABASE_PROFILE', 'local') == 'local'
     w = rent_world
     async with api_client(w) as admin:
+        mode = await admin.patch(f"/api/leases/{w['lease']}", json={'advance_mode': 'SEPARATE'})
+        assert mode.status_code == 200, mode.text
         household = await admin.put(f"/api/units/{w['unit']}/household", json=[
             {'valid_from': '2026-01-01', 'persons': 2, 'is_vacancy': False},
         ])
@@ -457,17 +460,17 @@ async def test_revision_chain_head_0131_head_preserves_full_state_and_issued_pdf
                 assert version() == (TARGET,)
                 retained = _chain_snapshot(connection)
                 assert any(row['unit_id'] == str(w['unit']) for row in retained['data']['unit_household'])
-                if connection.scalar(text("""SELECT EXISTS(SELECT 1 FROM lease_agreement WHERE advance_mode IS NOT NULL)
-                        OR EXISTS(SELECT 1 FROM lease_rent_change WHERE advance_mode IS NOT NULL)""")):
-                    with pytest.raises(DBAPIError, match='Retain explicit tenant advance modes'):
-                        with connection.begin_nested():
-                            migrate('0174', downgrade=True)
-                    assert _chain_snapshot(connection) == retained
-                    # Only the rollback-only projection omits the unsupported mode.
-                    connection.execute(text('UPDATE lease_agreement SET advance_mode=NULL WHERE advance_mode IS NOT NULL'))
-                    connection.execute(text('ALTER TABLE lease_rent_change DISABLE TRIGGER protect_lease_rent_change'))
-                    connection.execute(text('UPDATE lease_rent_change SET advance_mode=NULL WHERE advance_mode IS NOT NULL'))
-                    connection.execute(text('ALTER TABLE lease_rent_change ENABLE TRIGGER protect_lease_rent_change'))
+                connection.execute(text('LOCK TABLE public.lease_agreement, public.lease_rent_change, '
+                                        'public.audit_event IN ACCESS EXCLUSIVE MODE'))
+                with pytest.raises(DBAPIError, match='Retain explicit tenant advance modes'):
+                    with connection.begin_nested():
+                        migrate('0174', downgrade=True)
+                assert _chain_snapshot(connection) == retained
+                with connection.begin_nested():
+                    migrate('0175', downgrade=True)
+                    project_legacy_advance_modes(connection)
+                    # Compare the subsequent full chain with a projected head.
+                    migrate(TARGET, downgrade=False)
                 # The removed columns have no pre-bank representation.
                 # Keep the original rows and every other field in this rollback-only projection.
                 if connection.scalar(text('SELECT EXISTS(SELECT 1 FROM cost_entry WHERE bank_coverage_successor_id IS NOT NULL)')):

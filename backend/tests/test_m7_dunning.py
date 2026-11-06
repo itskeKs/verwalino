@@ -1508,6 +1508,7 @@ async def test_0174_downgrade_refuses_default_policy_notice_without_interest(iso
     from alembic import command
     from alembic.config import Config
     from sqlalchemy.exc import DBAPIError
+    from tests.migration_rehearsal import project_legacy_advance_modes
 
     client, seed = isolated_batch_seed
     payload = TestT35Interest.tenant_body(seed)
@@ -1531,23 +1532,23 @@ async def test_0174_downgrade_refuses_default_policy_notice_without_interest(iso
                 SELECT status='issued' AND interest_snapshot IS NULL AND included_items->0->>'_dunning_format'='2'
                 FROM dunning_notice WHERE id=:id
             """), params)
-            # Exercise the normal Alembic command in a rollback-only transaction.
-            # Isolate the one default-policy notice from other test evidence.
-            connection.execute(text("CREATE TEMP TABLE default_policy_notice AS SELECT * FROM dunning_notice WHERE id=:id"), params)
-            connection.execute(text("TRUNCATE public.dunning_settings, public.dunning_notice CASCADE"))
-            connection.execute(text("INSERT INTO dunning_notice SELECT * FROM default_policy_notice"))
-            # Omit #311's mode columns inside this rollback-only test of 0174's own guard.
-            connection.execute(text('UPDATE lease_agreement SET advance_mode=NULL WHERE advance_mode IS NOT NULL'))
-            connection.execute(text('ALTER TABLE lease_rent_change DISABLE TRIGGER protect_lease_rent_change'))
-            connection.execute(text('UPDATE lease_rent_change SET advance_mode=NULL WHERE advance_mode IS NOT NULL'))
-            connection.execute(text('ALTER TABLE lease_rent_change ENABLE TRIGGER protect_lease_rent_change'))
-            connection.execute(text("SET CONSTRAINTS ALL IMMEDIATE"))
             with monkeypatch.context() as patch:
                 patch.setattr(sqlalchemy, "engine_from_config",
                               lambda *args, **kwargs: SimpleNamespace(connect=lambda: nullcontext(connection)))
-                with pytest.raises(DBAPIError, match="Previous releases cannot render retained organization-policy notices"):
-                    with connection.begin_nested():
-                        command.downgrade(cfg, "0173")
+                with connection.begin_nested() as historical:
+                    connection.execute(text("LOCK TABLE public.lease_agreement, public.lease_rent_change, "
+                                            "public.audit_event IN ACCESS EXCLUSIVE MODE"))
+                    command.downgrade(cfg, "0175")
+                    connection.execute(text("SET CONSTRAINTS ALL IMMEDIATE"))
+                    project_legacy_advance_modes(connection)
+                    # Isolate the one default-policy notice from other test evidence.
+                    connection.execute(text("CREATE TEMP TABLE default_policy_notice AS SELECT * FROM dunning_notice WHERE id=:id"), params)
+                    connection.execute(text("TRUNCATE public.dunning_settings, public.dunning_notice CASCADE"))
+                    connection.execute(text("INSERT INTO dunning_notice SELECT * FROM default_policy_notice"))
+                    with pytest.raises(DBAPIError, match="Previous releases cannot render retained organization-policy notices"):
+                        with connection.begin_nested():
+                            command.downgrade(cfg, "0173")
+                    historical.rollback()
             assert connection.scalar(text("SELECT version_num FROM alembic_version")) == "0176"
             assert connection.scalar(text("SELECT to_regclass('public.dunning_settings')")) is not None
             assert connection.scalar(text("SELECT count(*) FROM dunning_notice WHERE id=:id"), params) == 1
