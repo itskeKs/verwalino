@@ -6,6 +6,7 @@ from playwright.async_api import expect
 from pytest_bdd import scenarios, given, when, then, parsers
 
 from tests.bdd.steps.browser_common import browser_step, button, field, submit
+from tests.bdd.test_weg_settlement import create_balance_world
 from tests.bdd.test_weg_settlement import dated_owners as create_dated_owners
 
 scenarios(str(Path(__file__).resolve().parents[3] / "features" / "journeys" / "dunning_notice.feature"))
@@ -70,6 +71,83 @@ def dated_drafts_without_duplicates(world, dated_owners):
         rows = world.act('GET', '/api/dunning', params={'owner_profile_id': notice['owner_profile_id']})
         assert rows.status_code == 200, rows.text
         assert [row['id'] for row in rows.json()] == [notice['id']]
+
+
+@given("Anna Berg's 2026 plan charges 600 EUR in July due on 3 July", target_fixture='july_plan')
+def july_plan(world, seed_data):
+    return create_balance_world(world, seed_data, monthly_due_day=3)
+
+
+@when(parsers.parse("the manager submits Anna's July notice as of 2 July 2026 at {width:d} px"))
+def submit_early_owner_notice(browser_world, july_plan, width):
+    b, w = browser_world, july_plan
+    w['selections'] = {
+        'Eigentuemer *': w['owners'][0], 'WEG-Objekt *': w['property'], 'Wirtschaftsplan': w['plan'],
+        'Zeitraum von *': '2026-07-01', 'Zeitraum bis *': '2026-07-31', 'Stichtag': '2026-07-02',
+    }
+
+    async def submit_early():
+        await b.page.set_viewport_size({'width': width, 'height': 800})
+        await b.visit('/mahnungen')
+        await button(b.page, '+ Neue Mahnung').click()
+        await field(b.page, 'Empfaengertyp *').select_option('owner')
+        for label, value in w['selections'].items():
+            if label in {'Eigentuemer *', 'WEG-Objekt *', 'Wirtschaftsplan'}:
+                await b.select(label, value)
+            else:
+                await field(b.page, label).fill(value)
+        await b.page.get_by_label('Abrechnungskreis suchen', exact=True).fill('WEG Gartenstraße')
+        await b.select('Abrechnungskreis', w['scope'])
+        return await submit(b, 'Mahnung erstellen', '/api/dunning/owner', status=422)
+
+    w['refusal'] = b.run(submit_early())
+
+
+@then('the form explains the refusal in German, keeps the selections and creates no draft')
+def early_owner_notice_is_refused(browser_world, world, july_plan):
+    b, w = browser_world, july_plan
+
+    async def check_form():
+        message = b.page.get_by_text(
+            'Für den ausgewählten Eigentümer gibt es im gewählten Zeitraum zum Stichtag keine überfälligen Beträge.',
+            exact=True,
+        )
+        await expect(message).to_be_visible()
+        await message.scroll_into_view_if_needed()
+        await expect(message).to_be_in_viewport(ratio=1)
+        for label, value in w['selections'].items():
+            control = (b.page.get_by_role('combobox', name=label, exact=True)
+                       if label in {'Eigentuemer *', 'WEG-Objekt *', 'Wirtschaftsplan'} else field(b.page, label))
+            await expect(control).to_have_value(value)
+
+    rows = world.act('GET', '/api/dunning', params={'owner_profile_id': w['owners'][0]})
+    assert rows.status_code == 200 and rows.json() == [], rows.text
+    b.run(check_form())
+
+
+@when('the manager changes only the reference date to 4 July 2026 and resubmits')
+def retry_owner_notice(browser_world, july_plan):
+    b = browser_world
+
+    async def retry():
+        await field(b.page, 'Stichtag').fill('2026-07-04')
+        return await create_and_open(b, 'owner')
+
+    july_plan['draft'] = b.run(retry())
+
+
+@then('exactly one owner draft opens with 600 EUR principal for the charge due on 3 July')
+def july_owner_draft_is_correct(browser_world, world, july_plan):
+    notice = july_plan['draft']
+    browser_world.run(browser_world.row('Hauptforderung (Rueckstand)', '600.00 EUR'))
+    rows = world.act('GET', '/api/dunning', params={'owner_profile_id': july_plan['owners'][0]})
+    assert rows.status_code == 200 and [row['id'] for row in rows.json()] == [notice['id']], rows.text
+    draft = world.act('GET', f"/api/dunning/{notice['id']}")
+    assert draft.status_code == 200, draft.text
+    saved = draft.json()
+    assert (saved['status'], saved['principal_amount']) == ('draft', '600.00')
+    item, = saved['included_items']
+    assert (item['due_date'], item['open_amount']) == ('2026-07-03', '600.00')
 
 
 @when('the manager creates an ordinary January tenant notice as of 2 March 2026')

@@ -267,7 +267,10 @@ class DunningService:
         if not overdue:
             raise HTTPException(
                 status_code=422,
-                detail="No overdue items found for this owner in the given period",
+                detail=(
+                    "Für den ausgewählten Eigentümer gibt es im gewählten Zeitraum "
+                    "zum Stichtag keine überfälligen Beträge."
+                ),
             )
 
         await context.history(owner_id=owner_profile_id)

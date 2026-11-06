@@ -161,7 +161,10 @@ async def test_owner_dunning_uses_the_same_plan_window_and_transfers_as_the_acco
             'owner_profile_id': w[owner], 'reference_date': '2028-01-15'})
         if not months[owner]:
             assert notice.status_code == 422, notice.text
-            assert notice.json()['detail'] == 'No overdue items found for this owner in the given period'
+            assert notice.json()['detail'] == (
+                'Für den ausgewählten Eigentümer gibt es im gewählten Zeitraum '
+                'zum Stichtag keine überfälligen Beträge.'
+            )
         else:
             assert notice.status_code == 201, notice.text
             assert Decimal(notice.json()['principal_amount']) == expected

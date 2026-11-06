@@ -7,6 +7,18 @@ Feature: Readable issued dunning notice
     When the manager creates Karl's and Lena's notices for the 2026 plan as of 15 January 2027
     Then each draft opens immediately with only its six monthly advances and no duplicate
 
+  Scenario Outline: An owner notice explains when the July charge is not yet overdue
+    Given Anna Berg's 2026 plan charges 600 EUR in July due on 3 July
+    When the manager submits Anna's July notice as of 2 July 2026 at <width> px
+    Then the form explains the refusal in German, keeps the selections and creates no draft
+    When the manager changes only the reference date to 4 July 2026 and resubmits
+    Then exactly one owner draft opens with 600 EUR principal for the charge due on 3 July
+
+    Examples:
+      | width |
+      | 1280  |
+      | 360   |
+
   Scenario: An ordinary tenant draft opens immediately after creation
     Given an unpaid rental agreement for 700 EUR rent and no advance payment
     When the manager creates an ordinary January tenant notice as of 2 March 2026
