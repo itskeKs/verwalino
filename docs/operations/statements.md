@@ -174,6 +174,16 @@ Finalized snapshots, booked payments, and the actual amounts (Ist) remain unchan
 `scripts/acceptance/t28_advance_proposal_browser.cjs` verifies 1,200 EUR / 12 = 100 EUR
 and the tenant ledger 2027 after explicit adoption: 700/100 instead of 700/150.
 
+## Manual economic plan drafts
+
+When a new draft opens under **Wirtschaftspläne**, “Rücklagenzuführung (Jahr)”
+starts with the reserve in the summary. If the reserve is zero, leave the
+prefilled value in place, enter the planned costs, confirm the data basis and
+choose “Berechnen”. The reserve accepts a nonnegative EUR amount with up to two
+decimal places, using a comma or dot as the decimal separator. If the reserve
+is blank or invalid, enter a valid amount (zero is allowed) and retry. The form
+keeps the entered costs.
+
 ## Economic plan from prior-year actuals
 
 T54 introduced this workflow.

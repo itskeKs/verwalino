@@ -40,10 +40,56 @@ it("does not overwrite edits with action response draft_inputs", async () => {
   fireEvent.click(screen.getByRole("button", { name: "Berechnen" })); await screen.findByRole("button", { name: "Berechnen" });
   expect(screen.getByDisplayValue("7200.99")).toBeInTheDocument(); expect(screen.getByDisplayValue("6300.99")).toBeInTheDocument();
 });
-it("keeps manual drafts without stored proposals empty", async () => {
-  const { draft_inputs: _unused, ...manual } = draft; void _unused; mocks(manual); show();
-  await screen.findByText("Geplante Kosten"); expect(screen.queryByDisplayValue("7100.10")).not.toBeInTheDocument();
-  expect(screen.getByLabelText("Rücklagenzuführung (Jahr)")).toHaveValue("");
+it("keeps the stored reserve and leaves cost rows empty in a new manual draft", async () => {
+  mocks({ ...draft, draft_inputs: null }); show();
+  await screen.findByText("Geplante Kosten");
+  expect(screen.queryByLabelText("Kategorie 1")).not.toBeInTheDocument();
+  expect(screen.getByLabelText("Rücklagenzuführung (Jahr)")).toHaveValue("6200.20");
+});
+it("computes a new zero-reserve draft without re-entering the reserve", async () => {
+  const manual = { ...draft, reserve_contribution_total: "0.00", draft_inputs: null };
+  mocks(manual);
+  const post = vi.spyOn(api, "post").mockResolvedValue({
+    ...manual, lines: [{ id: "advance", owner_profile_id: "owner", planned_amount: "7200.00", monthly_amount: "600.00" }],
+  });
+  show();
+  expect(await screen.findByRole("cell", { name: "0.00 EUR" })).toBeVisible();
+  expect(screen.getByLabelText("Rücklagenzuführung (Jahr)")).toHaveValue("0.00");
+  fireEvent.click(screen.getByRole("button", { name: "+ Position" }));
+  fireEvent.change(screen.getByLabelText("Position – Jahresbetrag"), { target: { value: "7200.00" } });
+  fireEvent.click(screen.getByRole("button", { name: "Berechnen" }));
+  expect(await screen.findByRole("cell", { name: "600.00 EUR" })).toBeVisible();
+  expect(post).toHaveBeenCalledWith("/api/economic-plans/new/compute", expect.objectContaining({
+    reserve_contribution_total: "0.00",
+    planned_costs: [expect.objectContaining({ planned_amount: "7200.00" })],
+  }));
+});
+it.each([
+  ["Berechnen", ""], ["Berechnen", "kein Betrag"], ["Berechnen", "-1"], ["Finalisieren", ""],
+])("rejects %s with reserve '%s' and preserves edited costs", async (button, invalid) => {
+  mocks();
+  const post = vi.spyOn(api, "post").mockResolvedValue(draft);
+  const confirm = vi.spyOn(window, "confirm").mockReturnValue(true);
+  show();
+  const amount = await screen.findByDisplayValue("7100.10");
+  fireEvent.change(amount, { target: { value: "7200.00" } });
+  const reserve = screen.getByLabelText("Rücklagenzuführung (Jahr)");
+  fireEvent.change(reserve, { target: { value: invalid } });
+  fireEvent.click(screen.getByRole("button", { name: button }));
+  expect(await screen.findByRole("alert")).toHaveTextContent("Bitte geben Sie die Rücklagenzuführung als gültigen EUR-Betrag ein.");
+  expect(reserve).toHaveAttribute("aria-invalid", "true");
+  expect(reserve).toHaveAccessibleDescription("Bitte geben Sie die Rücklagenzuführung als gültigen EUR-Betrag ein.");
+  expect(amount).toHaveValue("7200.00");
+  expect(post).not.toHaveBeenCalled();
+  expect(confirm).not.toHaveBeenCalled();
+  fireEvent.change(reserve, { target: { value: "0,00" } });
+  expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: button }));
+  await screen.findByRole("button", { name: "Berechnen" });
+  expect(post).toHaveBeenCalledWith(
+    `/api/economic-plans/new/${button === "Berechnen" ? "compute" : "finalize"}`,
+    { planned_costs: [{ ...costs[0], planned_amount: "7200.00" }], reserve_contribution_total: "0.00" },
+  );
 });
 it("hydrates the next plan on route changes without leaking active edits", async () => {
   vi.spyOn(api, "get").mockImplementation(async path => {
