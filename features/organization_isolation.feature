@@ -85,6 +85,12 @@ Feature: Organization isolation
     Then the unit is reported as not found
     And "Verwaltung Beta" still has its unit unchanged
 
+  Scenario: Invalid area does not reveal another organization's property or unit
+    Given "Verwaltung Beta" has a unit named "Area check"
+    When the user submits an invalid area for that unit and for a new unit in "Verwaltung Beta"
+    Then neither attempt reveals the foreign property or unit
+    And "Verwaltung Beta" still has its unit unchanged
+
   Scenario: A duplicate number does not reveal another organization's units
     Given "Verwaltung Beta" has a unit named "Wohnung 2"
     And "Verwaltung Beta" has a unit named "Wohnung 3"

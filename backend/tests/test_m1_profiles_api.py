@@ -111,6 +111,43 @@ async def test_unit_update_rejects_a_number_over_50_characters(client_a_admin, c
     assert saved.json()["number"] == number
 
 
+@pytest.mark.asyncio
+async def test_unit_area_accepts_a_decimal_comma_on_create_and_update(client_a_admin):
+    property_id = await _new_unit_property(client_a_admin)
+    created = await client_a_admin.post("/api/units", json={
+        "property_id": property_id, "number": "Area", "usage_type": "WOHNUNG", "area": "75,50",
+    })
+    assert created.status_code == 201, created.text
+    assert created.json()["area"] == "75.50"
+
+    path = f"/api/units/{created.json()['id']}"
+    updated = await client_a_admin.put(path, json={"area": "76,25", "heated_area": "70,00"})
+    assert updated.status_code == 200, updated.text
+    saved = (await client_a_admin.get(path)).json()
+    assert (saved["area"], saved["heated_area"]) == ("76.25", "70.00")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("field", "bad"), [
+    ("area", "abc"), ("area", "NaN"), ("area", "100000000,00"), ("heated_area", "75,501"),
+])
+async def test_invalid_unit_area_is_reported_without_saving(client_a_admin, field, bad):
+    property_id = await _new_unit_property(client_a_admin)
+    payload = {"property_id": property_id, "number": "Area", "usage_type": "WOHNUNG"}
+    refused = await client_a_admin.post("/api/units", json={**payload, field: bad})
+    assert refused.status_code == 422, refused.text
+    assert refused.json()["detail"]["code"] == f"invalid_unit_{field}"
+
+    created = await client_a_admin.post("/api/units", json={**payload, "area": "70.00"})
+    assert created.status_code == 201, created.text
+    path = f"/api/units/{created.json()['id']}"
+    refused = await client_a_admin.put(path, json={"location": "Should not save", field: bad})
+    assert refused.status_code == 422, refused.text
+    assert refused.json()["detail"]["code"] == f"invalid_unit_{field}"
+    saved = (await client_a_admin.get(path)).json()
+    assert (saved["location"], saved["area"], saved["heated_area"]) == ("", "70.00", None)
+
+
 UNIT_NUMBER_CONFLICT = {
     "code": "duplicate_unit_number",
     "message": "Eine Einheit mit dieser Nummer gibt es in diesem Objekt schon.",

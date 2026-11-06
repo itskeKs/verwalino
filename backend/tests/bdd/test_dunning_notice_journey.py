@@ -245,3 +245,73 @@ def scoped_tenant_principal(browser_world, world):
     assert notice['principal_amount'] == '750.00'
     rows = world.act('GET', '/api/dunning', params={'tenant_profile_id': world.data['tenants'][0]['id']})
     assert rows.status_code == 200 and [row['id'] for row in rows.json()] == [notice['id']], rows.text
+
+
+@given("the standard first dunning fee is 2.50 EUR without automatic interest")
+def set_nonzero_fee(world, reset_dunning_settings):
+    response = world.act("PUT", "/api/dunning/settings", json={
+        "fee_level_1": "2.50", "fee_level_2": "2.50", "fee_level_3": "2.50",
+        "default_interest_enabled": False,
+    })
+    assert response.status_code == 200, world.describe_response()
+
+
+async def open_fee_form(browser, width):
+    await browser.page.set_viewport_size({"width": width, "height": 900})
+    await browser.visit("/mahnungen")
+    await button(browser.page, "+ Neue Mahnung").click()
+
+
+async def submit_fee(browser, kind, fee, tmp_path):
+    page = browser.page
+    await field(page, "Mahngebuehr (Override)").fill(fee)
+    async with page.expect_response(lambda r: r.request.method == "POST" and r.url.endswith(f"/api/dunning/{kind}")) as pending:
+        await button(page, "Mahnung erstellen").click()
+    response = await pending.value
+    if response.status == 201:
+        await browser.row("Mahngebühr", "0.00 EUR")
+        await page.get_by_role("cell", name="Mahngebühr", exact=True).scroll_into_view_if_needed()
+    else:
+        await expect(page.get_by_role("alert")).to_be_visible()
+    await page.screenshot(path=str(tmp_path / f"fee-{kind}-{page.viewport_size['width']}.png"), full_page=True)
+    assert response.status == 201, await response.text()
+    browser.world.data["zero_fee_notice"] = (await response.json())["id"]
+
+
+@when(parsers.parse('the manager creates the January tenant notice with "{fee}" fee at {width:d} px'))
+@browser_step
+async def zero_fee_tenant(browser_world, fee, width, tmp_path):
+    b = browser_world
+    await open_fee_form(b, width)
+    await b.select("Mieter *", b.world.data["tenants"][0]["id"])
+    await b.select("Mietvertrag *", b.world.data["leases"][0]["id"])
+    for label, value in [("Zeitraum von *", "2026-01-01"), ("Zeitraum bis *", "2026-01-31"), ("Stichtag", "2026-03-02")]:
+        await field(b.page, label).fill(value)
+    await b.scope()
+    await submit_fee(b, "tenant", fee, tmp_path)
+
+
+@when(parsers.parse("""the manager creates Anna's July owner notice with "{fee}" fee at {width:d} px"""))
+@browser_step
+async def zero_fee_owner(browser_world, july_plan, fee, width, tmp_path):
+    b, w = browser_world, july_plan
+    await open_fee_form(b, width)
+    await field(b.page, "Empfaengertyp *").select_option("owner")
+    await b.select("Eigentuemer *", w["owners"][0])
+    await b.select("WEG-Objekt *", w["property"])
+    await b.select("Wirtschaftsplan", w["plan"])
+    for label, value in [("Zeitraum von *", "2026-07-01"), ("Zeitraum bis *", "2026-07-31"), ("Stichtag", "2026-07-04")]:
+        await field(b.page, label).fill(value)
+    await field(b.page, "Abrechnungskreis suchen").fill("WEG Gartenstraße")
+    await b.select("Abrechnungskreis", w["scope"])
+    await submit_fee(b, "owner", fee, tmp_path)
+
+
+@then(parsers.parse("the notice has {principal:d} EUR principal, no fee, no interest and {total:d} EUR total"))
+def zero_fee_saved(world, principal, total):
+    response = world.act("GET", f"/api/dunning/{world.data['zero_fee_notice']}")
+    assert response.status_code == 200, world.describe_response()
+    notice = response.json()
+    assert (notice["principal_amount"], notice["fee_amount"], notice["interest_amount"], notice["total_amount"]) == (
+        f"{principal}.00", "0.00", "0.00", f"{total}.00",
+    )
