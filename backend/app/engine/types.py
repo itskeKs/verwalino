@@ -207,6 +207,7 @@ class SettlementInput:
     heating_advance_payments_source: str = 'MANUAL'
     advance_layout: Literal["COMBINED", "SEPARATE", "MIXED"] | None = None
     combined_advance_payments_total: Decimal = Decimal("0.00")
+    unallocated_advance_payments_total: Decimal = Decimal("0.00")
 
 
 # ---------------------------------------------------------------------------

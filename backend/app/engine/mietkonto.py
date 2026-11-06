@@ -188,6 +188,7 @@ class PaymentInput:
     is_reversal: bool = False  # True if reverses_id IS NOT NULL (a Storno row)
     value_date: date | None = None
     combined_advance: bool = False
+    unallocated_advance: bool = False
 
     @property
     def signed_amount(self) -> Decimal:
@@ -747,6 +748,7 @@ class AdvanceCredit:
     period_end: date
     amount: Decimal
     combined_amount: Decimal = Decimal("0.00")
+    unallocated_amount: Decimal = Decimal("0.00")
 
 
 def tenant_refund_buckets(
@@ -757,7 +759,11 @@ def tenant_refund_buckets(
         (p.period_year, p.period_month) for p in payments
         if p.payment_type in _TENANT_ADVANCE_TYPES and p.direction == "OUT" and p.period_year is not None
         and p.is_booked and not p.is_reversal and not p.is_reversed
-    } | {(credit.year, credit.month) for credit in frozen if credit.amount < 0}
+    } | {
+        (credit.year, credit.month) for credit in frozen
+        if min(credit.amount, credit.combined_amount, credit.unallocated_amount,
+               credit.amount - credit.combined_amount - credit.unallocated_amount) < 0
+    }
 
 
 def derive_advance_credits_for_period(
@@ -788,7 +794,8 @@ def derive_advance_credits_for_period(
         signed = (filt.year, month) in signed_buckets
         if not total and not signed:
             continue
-        combined = derive_advance_total([p for p in bucket if p.combined_advance], filt)
+        combined = _sum_advances([p for p in bucket if p.combined_advance])
+        unallocated = _sum_advances([p for p in bucket if p.unallocated_advance])
 
         def share(value, start, end):
             args = (value, filt.year, start, end)
@@ -799,15 +806,22 @@ def derive_advance_credits_for_period(
 
         amount = share(total, period_start, period_end)
         combined_amount = share(combined, period_start, period_end)
+        # Round cumulative shares so two overall credits cannot leave a
+        # rounding cent in the operating component when it had no payment.
+        overall_amount = share(combined + unallocated, period_start, period_end)
         for previous in frozen:
             if previous.month == month:
                 amount += share(total, previous.period_start, previous.period_end) - previous.amount
                 combined_amount += share(combined, previous.period_start, previous.period_end) - previous.combined_amount
+                overall_amount += (share(combined + unallocated, previous.period_start, previous.period_end)
+                                   - previous.combined_amount - previous.unallocated_amount)
         # Freeze even a zero refund credit so a later reversal can reconcile it.
         if not signed:
             amount = max(Decimal("0.00"), amount)
             combined_amount = min(amount, max(Decimal("0.00"), combined_amount))
-        credits.append(AdvanceCredit(filt.year, month, period_start, period_end, amount, combined_amount))
+            overall_amount = min(amount, max(combined_amount, overall_amount))
+        credits.append(AdvanceCredit(filt.year, month, period_start, period_end, amount,
+            combined_amount, overall_amount - combined_amount))
     return tuple(credits)
 
 

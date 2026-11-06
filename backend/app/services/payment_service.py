@@ -118,7 +118,9 @@ def _compute_retention_until(value_date: date) -> date:
     return year_end.replace(year=year_end.year + 8)
 
 
-def to_payment_input(p: Payment, *, combined_advance: bool = False) -> PaymentInput:
+def to_payment_input(
+    p: Payment, *, combined_advance: bool = False, unallocated_advance: bool = False,
+) -> PaymentInput:
     """Map a Payment ORM row to the pure engine's frozen PaymentInput."""
     return PaymentInput(
         payment_id=p.id,
@@ -135,6 +137,7 @@ def to_payment_input(p: Payment, *, combined_advance: bool = False) -> PaymentIn
         is_reversal=(p.reverses_id is not None),
         value_date=p.value_date,
         combined_advance=combined_advance,
+        unallocated_advance=unallocated_advance,
     )
 
 
@@ -856,7 +859,7 @@ class PaymentService:
                 continue
             known_windows.append((start, end, {(row["year"], row["month"]) for row in buckets}))
             frozen.extend(AdvanceCredit(row["year"], row["month"], start, end, Decimal(row["amount"]),
-                Decimal(row.get("combined_amount", "0.00")))
+                Decimal(row.get("combined_amount", "0.00")), Decimal(row.get("unallocated_amount", "0.00")))
                           for row in buckets)
 
         signed_buckets = {(year, month) for year, month in tenant_refund_buckets(inputs, frozen)
@@ -903,9 +906,17 @@ class PaymentService:
             and p.period_year is not None and 1 <= p.period_year <= 9999 and p.booked_at is not None]
         frozen = await self._audit.booked_advance_modes(candidates) if candidates else {}
         valid_ids = set(candidates)
-        return [to_payment_input(p, combined_advance=p.id in valid_ids and (
-            frozen[p.id] == ["COMBINED"] if p.id in frozen else self._assigned_advance_modes(lease, history, p) == {"COMBINED"}))
-            for p in rows]
+        inputs = []
+        for payment in rows:
+            modes = ()
+            if payment.id in valid_ids:
+                modes = (frozen[payment.id] if payment.id in frozen
+                         else self._assigned_advance_modes(lease, history, payment))
+            includes_combined = "COMBINED" in modes
+            inputs.append(to_payment_input(payment,
+                combined_advance=includes_combined and len(modes) == 1,
+                unallocated_advance=includes_combined and len(modes) > 1))
+        return inputs
 
     @staticmethod
     def _assigned_advance_modes(lease, history, payment):

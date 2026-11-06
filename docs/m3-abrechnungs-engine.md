@@ -917,7 +917,11 @@ Existing rates with no mode keep the legacy display rule.
 
 For a year with both modes, a monthly combined payment is disclosed as a
 combined credit. The separate operating and heating credits retain their own
-lines. The statement reports one overall balance. It carries its booked credits
+lines. If a booking spans both modes without a clear component assignment,
+the statement shows “Vorauszahlungen ohne Aufteilung” and deducts that credit
+once from the overall result. For example, an annual payment of EUR 2,340
+against EUR 1,900 operating and EUR 1,000 heating costs leaves EUR 560 payable.
+The statement reports one overall balance. It carries its booked credits
 once through the existing partial-period and frozen credit rules. Finalized
 statements keep their original snapshot, digest, and document output.
 

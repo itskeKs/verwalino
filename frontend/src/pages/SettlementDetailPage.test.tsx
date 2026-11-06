@@ -12,7 +12,7 @@ import { AuthCtx } from "../auth/useAuth";
 import userEvent from "@testing-library/user-event";
 import { Link, MemoryRouter, Route, Routes } from "react-router-dom";
 import * as api from "../api/endpoints";
-import type { CommercialPreallocationIn, ConsumptionSuggestion, CostEntry, SettlementRun } from "../api/types";
+import type { CommercialPreallocationIn, ConsumptionSuggestion, CostEntry, SettlementLine, SettlementRun } from "../api/types";
 import { ApiError } from "../api/client";
 
 vi.mock("../api/endpoints", async (importOriginal) => ({
@@ -222,6 +222,27 @@ function deferred<T>() {
   const promise = new Promise<T>((res, rej) => { resolve = res; reject = rej; });
   return { promise, resolve, reject };
 }
+
+it("labels the advance total neutrally when the breakdown has unallocated and heating credits", async () => {
+  const lines: SettlementLine[] = [
+    ["Vorauszahlungen ohne Aufteilung", "193.55"],
+    ["Heizkosten-Vorauszahlungen", "46.45"],
+  ].map(([label, amount], sort_order) => ({
+    id: String(sort_order), line_type: "ADVANCE_PAYMENT", label, amount, sort_order,
+    cost_entry_id: null, cost_category_code: null, distribution_key: null, total_amount: null,
+    distribution_base_total: null, distribution_base_share: null, time_share_days: null,
+    time_share_total_days: null, note: null,
+  }));
+  vi.mocked(api.getSettlement).mockResolvedValue({
+    ...finalized, advance_payments_total: "193.55", heating_advance_payments_total: "46.45", lines,
+  });
+  vi.mocked(api.listCostEntries).mockResolvedValue([]);
+  showProposal();
+
+  expect(await screen.findByRole("row", { name: /^(Vorauszahlungen) 193\.55 EUR/ })).toBeVisible();
+  expect(screen.getByRole("row", { name: "Vorauszahlungen ohne Aufteilung 193.55 EUR" })).toBeVisible();
+  expect(screen.queryByText("Betriebskosten-Vorauszahlungen", { exact: true })).not.toBeInTheDocument();
+});
 
 describe('commercial preallocation inputs', () => {
   const reason = 'Gastronomie, Restmüll 2 × 1.100 l <Sonderlast> & Begründung';

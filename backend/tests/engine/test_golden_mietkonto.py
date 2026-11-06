@@ -120,6 +120,38 @@ def test_combined_and_operating_credits_in_one_month_are_preserved_across_frozen
     assert (second.amount, second.combined_amount) == (Decimal("201.30"), Decimal("123.88"))
 
 
+def test_rounding_two_overall_credits_never_creates_an_operating_credit():
+    payments = [
+        replace(_pay(1, PT_NK_VORAUSZAHLUNG, "0.01", month=7), combined_advance=True),
+        replace(_pay(2, PT_NK_VORAUSZAHLUNG, "0.01", month=7), unallocated_advance=True),
+    ]
+    filt = AdvanceFilter(frozenset({PT_NK_VORAUSZAHLUNG}), 2025)
+    first, = mietkonto.derive_advance_credits_for_period(payments, filt, date(2025, 7, 1), date(2025, 7, 15))
+    second, = mietkonto.derive_advance_credits_for_period(payments, filt, date(2025, 7, 16), date(2025, 7, 31),
+        finalized_credits=(first,))
+    for credit in (first, second):
+        assert credit.amount == credit.combined_amount + credit.unallocated_amount
+    assert first.combined_amount + second.combined_amount == Decimal("0.01")
+    assert first.unallocated_amount + second.unallocated_amount == Decimal("0.01")
+
+
+def test_annual_unallocated_credit_and_signed_refund_reconcile_after_finalization():
+    receipt = replace(_pay(1, PT_NK_VORAUSZAHLUNG, "2340.00"), unallocated_advance=True)
+    refund = replace(_pay(2, PT_NK_VORAUSZAHLUNG, "2400.00", direction="OUT"), combined_advance=True)
+    filt = AdvanceFilter(frozenset({PT_NK_VORAUSZAHLUNG}), 2025)
+    june_end = date(2025, 6, 30)
+    first, = mietkonto.derive_advance_credits_for_period([receipt, refund], filt, YEAR_START, june_end)
+    assert (first.amount, first.combined_amount, first.unallocated_amount) == (
+        Decimal("-30"), Decimal("-1200"), Decimal("1170"))
+
+    second, = mietkonto.derive_advance_credits_for_period([
+        receipt, replace(refund, is_reversed=True),
+        replace(refund, payment_id=_U(3), direction="IN", is_reversal=True),
+    ], filt, date(2025, 7, 1), YEAR_END, finalized_credits=(first,))
+    assert (second.amount, second.combined_amount, second.unallocated_amount) == (
+        Decimal("2370"), Decimal("1200"), Decimal("1170"))
+
+
 @pytest.mark.parametrize("month,amount,first_end,lease_end,frozen,expected", [
     (None, "1200.00", date(2025, 3, 31), date(2025, 9, 30), "300.00", "900.00"),
     (3, "100.00", date(2025, 3, 14), date(2025, 3, 20), "45.16", "54.84"),

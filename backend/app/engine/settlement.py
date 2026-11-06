@@ -159,7 +159,7 @@ def compute_bk_settlement(inp: SettlementInput) -> EngineResult:
                 positions.append(pos)
             parts.append(replace(inp, period_start=start, period_end=end,
                 cost_positions=tuple(positions), advance_payments_total=Decimal(0), heating_advance_payments_total=Decimal(0),
-                combined_advance_payments_total=Decimal(0)))
+                combined_advance_payments_total=Decimal(0), unallocated_advance_payments_total=Decimal(0)))
         inp = replace(inp, allocation_inputs=tuple(parts))
     if inp.allocation_inputs:
         # Provider amounts describe this selected statement, so crossing a
@@ -385,7 +385,10 @@ def _finish_result(inp, cost_lines, computation, vacancy_attr, heating_costs, to
 
     layout = inp.advance_layout
     combined = advance if layout == "COMBINED" else _money(inp.combined_advance_payments_total)
-    split_advances = layout == "SEPARATE" or (layout is None and (bool(heating_ids) or heating_advance != 0))
+    unallocated = _money(inp.unallocated_advance_payments_total)
+    operating_advance = advance - combined - unallocated
+    split_advances = not unallocated and (
+        layout == "SEPARATE" or (layout is None and (bool(heating_ids) or heating_advance != 0)))
     advance_note = f"Quelle: {inp.advance_payments_source}"
     heating_note = f"Quelle: {inp.heating_advance_payments_source}"
 
@@ -394,16 +397,20 @@ def _finish_result(inp, cost_lines, computation, vacancy_attr, heating_costs, to
         lines.append(ResultLine(line_type="ADVANCE_PAYMENT", label="Betriebskosten-Vorauszahlungen inkl. Heizkosten",
             amount=combined, sort_order=sort_order, note=advance_note))
         sort_order += 1
-    if layout != "COMBINED":
+    if unallocated:
+        lines.append(ResultLine(line_type="ADVANCE_PAYMENT", label="Vorauszahlungen ohne Aufteilung",
+            amount=unallocated, sort_order=sort_order, note=advance_note))
+        sort_order += 1
+    if layout != "COMBINED" and (operating_advance or not unallocated):
         lines.append(ResultLine(line_type="ADVANCE_PAYMENT",
             label="Betriebskosten-Vorauszahlungen" if split_advances or layout == "MIXED" else "Geleistete Vorauszahlungen",
-            amount=advance - combined, sort_order=sort_order, note=advance_note))
+            amount=operating_advance, sort_order=sort_order, note=advance_note))
         sort_order += 1
     if split_advances:
         lines.append(ResultLine(line_type="SUBTOTAL", label="Betriebskosten abzüglich Vorauszahlungen",
             amount=_money(total_cost - heating_cost - advance), sort_order=sort_order, note=advance_note))
         sort_order += 1
-    if split_advances or layout == "MIXED" or heating_advance:
+    if split_advances or heating_advance or (layout == "MIXED" and not unallocated):
         lines.append(ResultLine(line_type="ADVANCE_PAYMENT", label="Heizkosten-Vorauszahlungen",
             amount=heating_advance, sort_order=sort_order, note=heating_note))
         sort_order += 1

@@ -260,8 +260,10 @@ export function SettlementDetailPage() {
 
   const advanceLines = run?.lines.filter(line => line.line_type === "ADVANCE_PAYMENT") ?? [];
   const hasCombinedAdvance = advanceLines.some(line => line.label === "Betriebskosten-Vorauszahlungen inkl. Heizkosten");
+  const hasUnallocatedAdvance = advanceLines.some(line => line.label === "Vorauszahlungen ohne Aufteilung");
   const singleAdvanceBlock = advanceLines.length === 1;
   const advanceSummaryLabel = singleAdvanceBlock ? advanceLines[0].label :
+    hasUnallocatedAdvance ? "Vorauszahlungen" :
     hasCombinedAdvance ? "Betriebs- und gemeinsame Vorauszahlungen" : "Betriebskosten-Vorauszahlungen";
   const isDraft = run?.status === "draft";
   const isFinalized = run?.status === "finalized";

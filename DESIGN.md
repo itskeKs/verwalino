@@ -475,6 +475,10 @@ Statements show one combined credit when the rate includes heating. Separate
 rates show the operating and heating credits, both component balances, and
 the overall balance. The mixed-year statement lists attributable combined,
 operating, and heating credits separately and shows the overall balance.
+Payments spanning both modes without a component assignment appear as
+“Vorauszahlungen ohne Aufteilung” in the result and PDF. If these payments
+appear alongside component credits, the detail summary labels the amount
+“Vorauszahlungen”.
 Legacy statements with zero heating advance and no allocated heating cost
 lines retain “Geleistete Vorauszahlungen”. Existing payment totals and
 MANUAL/DERIVED sources still apply. The derivation action fills the recorded

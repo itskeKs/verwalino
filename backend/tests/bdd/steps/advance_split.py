@@ -224,6 +224,7 @@ def first_combined_bookings(world):
 
 
 @when('changes to 150 euros operating and 90 euros heating from July')
+@when('the manager changes to 150 euros operating and 90 euros heating from July')
 def change_to_separate(world):
     data = world.data['advance_split']
     url = f"/api/leases/{data['lease']['id']}/rent-changes"
@@ -236,26 +237,62 @@ def change_to_separate(world):
 
 @when('the manager finalizes the annual statement with 1900 euros operating and 1000 euros heating costs')
 def combined_or_mixed_statement(world):
-    data = world.data['advance_split']
-    for code, amount in [('GRUNDSTEUER', '1900.00'), ('MESSDIENST', '1000.00')]:
-        confirmed_period_cost(world, data, code, amount, '2026-01-01', '2026-12-31', 'WOHNFLAECHE')
     mixed = 'original_advance_bookings' in world.data
     if mixed:
         book_monthly_advances(world, range(7, 13), [
             ('NK_VORAUSZAHLUNG', '150.00'), ('HK_VORAUSZAHLUNG', '90.00')])
     else:
         book_monthly_advances(world, range(1, 13), [('NK_VORAUSZAHLUNG', '240.00')])
+    finalize_annual_advance_statement(world, '2340.00' if mixed else '2880.00', '540.00' if mixed else '0.00')
+
+
+@when('books one 2340 euro advance for 2026 without a month')
+def book_annual_advance(world):
+    data = world.data['advance_split']
+    payment = world.run(create(world.actor, '/api/payments', {
+        'bank_account_id': data['account']['id'], 'direction': 'IN', 'amount': '2340.00',
+        'value_date': '2026-12-07', 'payment_type': 'NK_VORAUSZAHLUNG', 'period_year': 2026,
+        'tenant_profile_id': data['tenant']['id'], 'lease_agreement_id': data['lease']['id']}))
+    response = world.act('POST', f"/api/payments/{payment['id']}/book")
+    assert response.status_code == 200, world.describe_response()
+    assert response.json()['period_month'] is None
+
+
+@when('finalizes the statement with 1900 euros operating and 1000 euros heating costs for that advance')
+def finalize_unallocated_advance(world):
+    finalize_annual_advance_statement(world, '2340.00', '0.00')
+
+
+def finalize_annual_advance_statement(world, advance_total, heating_total):
+    data = world.data['advance_split']
+    for code, amount in [('GRUNDSTEUER', '1900.00'), ('MESSDIENST', '1000.00')]:
+        confirmed_period_cost(world, data, code, amount, '2026-01-01', '2026-12-31', 'WOHNFLAECHE')
     run = world.run(create(world.actor, '/api/settlements', statement(data, '2026-01-01', '2026-12-31')))
     url = f"/api/settlements/{run['id']}"
     response = world.act('PATCH', url + '/advance-payments-derived', params={'period_year': 2026})
     assert response.status_code == 200, world.describe_response()
     world.run(attest_fixture(world.actor, 'settlement', run['id'], {
-        'advance_payments_total': '2340.00' if mixed else '2880.00', 'advance_payments_source': 'DERIVED',
-        'heating_advance_payments_total': '540.00' if mixed else '0.00',
+        'advance_payments_total': advance_total, 'advance_payments_source': 'DERIVED',
+        'heating_advance_payments_total': heating_total,
         'heating_advance_payments_source': 'DERIVED'}))
     response = world.act('POST', url + '/finalize', json={})
     assert response.status_code == 200, world.describe_response()
     world.data['combined_run'] = response.json()
+
+
+@then('the statement and PDF show one unallocated advance of 2340 euros and 560 euros payable')
+def unallocated_advance_results(world):
+    run = world.data['combined_run']
+    label = 'Vorauszahlungen ohne Aufteilung'
+    lines = [line for line in run['lines'] if line['line_type'] == 'ADVANCE_PAYMENT']
+    assert [(line['label'], Decimal(line['amount'])) for line in lines] == [(label, Decimal('2340'))]
+    assert Decimal(run['balance']) == Decimal('560')
+    response = world.act('GET', f"/api/settlements/{run['id']}/pdf")
+    assert response.status_code == 200, world.describe_response()
+    content = subprocess.run(['pdftotext', '-layout', '-', '-'], input=response.content,
+                             capture_output=True, check=True).stdout.decode()
+    assert sum(label in line and '2.340,00' in line for line in content.splitlines()) == 1, content
+    assert '560,00' in content
 
 
 @then('the statement and PDF show 2880 euros combined credit and 20 euros payable')

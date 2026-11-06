@@ -877,7 +877,8 @@ class SettlementService:
         if inp.advance_payments_source == "DERIVED":
             payload["inputs"]["advance_payment_credits"] = [
                 {"year": c.year, "month": c.month, "amount": str(c.amount),
-                 **({"combined_amount": str(c.combined_amount)} if c.combined_amount else {})}
+                 **({"combined_amount": str(c.combined_amount)} if c.combined_amount else {}),
+                 **({"unallocated_amount": str(c.unallocated_amount)} if c.unallocated_amount else {})}
                 for c in self._advance_credits]
         if inp.heating_advance_payments_source == "DERIVED":
             payload["inputs"]["heating_advance_payment_credits"] = [
@@ -1005,14 +1006,16 @@ class SettlementService:
         modes = await self._advance_modes_for_run(run)
         layout = None
         combined = sum((credit.combined_amount for credit in self._advance_credits), Decimal("0.00"))
-        if "COMBINED" in modes or combined:
-            full_combined = modes == {"COMBINED"} and (
+        unallocated = sum((credit.unallocated_amount for credit in self._advance_credits), Decimal("0.00"))
+        if "COMBINED" in modes or combined or unallocated:
+            full_combined = modes == {"COMBINED"} and not unallocated and (
                 run.advance_payments_source == "MANUAL" or combined == run.advance_payments_total)
             layout = "COMBINED" if full_combined and not run.heating_advance_payments_total else "MIXED"
         elif "SEPARATE" in modes:
             layout = "SEPARATE"
         inp = replace(inp, uncredited_advance_payments_total=excluded + heating_excluded,
-            advance_layout=layout, combined_advance_payments_total=combined)
+            advance_layout=layout, combined_advance_payments_total=combined,
+            unallocated_advance_payments_total=unallocated)
         try:
             result = compute_bk_settlement(inp)
         except MissingHouseholdError as exc:
