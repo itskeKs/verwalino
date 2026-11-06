@@ -258,23 +258,70 @@ def book_annual_advance(world):
     assert response.json()['period_month'] is None
 
 
-@when('finalizes the statement with 1900 euros operating and 1000 euros heating costs for that advance')
-def finalize_unallocated_advance(world):
-    finalize_annual_advance_statement(world, '2340.00', '0.00')
+@when('calculates the annual draft with 1900 euros operating and 1000 euros heating costs and zero advances')
+def calculate_annual_draft_without_advances(world):
+    run = annual_advance_draft(world, advance_payments_total='0.00', heating_advance_payments_total='0.00')
+    world.data['annual_draft'] = run['id']
+    attest_annual_advances(world, run['id'], '0.00', '0.00', 'MANUAL')
+    response = world.act('POST', f"/api/settlements/{run['id']}/compute", json={})
+    assert response.status_code == 200, world.describe_response()
+    computed = response.json()
+    assert Decimal(computed['balance']) == Decimal('2900')
+    assert computed['lines']
 
 
-def finalize_annual_advance_statement(world, advance_total, heating_total):
+@when('derives the advances from bookings and reopens the draft')
+def derive_and_reopen_annual_draft(world):
+    url = f"/api/settlements/{world.data['annual_draft']}"
+    response = world.act('PATCH', url + '/advance-payments-derived', params={'period_year': 2026})
+    assert response.status_code == 200, world.describe_response()
+    response = world.act('GET', url)
+    assert response.status_code == 200, world.describe_response()
+
+
+@then('the reloaded draft has 2340 euros in advances and no calculated balance or lines')
+def annual_draft_has_no_stale_result(world):
+    draft = world.response.json()
+    assert Decimal(draft['advance_payments_total']) == Decimal('2340')
+    assert draft['advance_payments_source'] == 'DERIVED'
+    assert draft['balance'] is None
+    assert draft['total_cost'] is None
+    assert draft['lines'] == []
+
+
+@when('the manager confirms the new advance basis and calculates and finalizes the draft')
+def recalculate_and_finalize_annual_draft(world):
+    run_id = world.data['annual_draft']
+    url = f'/api/settlements/{run_id}'
+    attest_annual_advances(world, run_id, '2340.00', '0.00', 'DERIVED')
+    response = world.act('POST', url + '/compute', json={})
+    assert response.status_code == 200, world.describe_response()
+    assert Decimal(response.json()['balance']) == Decimal('560')
+    response = world.act('POST', url + '/finalize', json={})
+    assert response.status_code == 200, world.describe_response()
+    world.data['combined_run'] = response.json()
+
+
+def annual_advance_draft(world, **advances):
     data = world.data['advance_split']
     for code, amount in [('GRUNDSTEUER', '1900.00'), ('MESSDIENST', '1000.00')]:
         confirmed_period_cost(world, data, code, amount, '2026-01-01', '2026-12-31', 'WOHNFLAECHE')
-    run = world.run(create(world.actor, '/api/settlements', statement(data, '2026-01-01', '2026-12-31')))
+    return world.run(create(world.actor, '/api/settlements', {
+        **statement(data, '2026-01-01', '2026-12-31'), **advances}))
+
+
+def attest_annual_advances(world, run_id, advance_total, heating_total, source):
+    world.run(attest_fixture(world.actor, 'settlement', run_id, {
+        'advance_payments_total': advance_total, 'advance_payments_source': source,
+        'heating_advance_payments_total': heating_total, 'heating_advance_payments_source': source}))
+
+
+def finalize_annual_advance_statement(world, advance_total, heating_total):
+    run = annual_advance_draft(world)
     url = f"/api/settlements/{run['id']}"
     response = world.act('PATCH', url + '/advance-payments-derived', params={'period_year': 2026})
     assert response.status_code == 200, world.describe_response()
-    world.run(attest_fixture(world.actor, 'settlement', run['id'], {
-        'advance_payments_total': advance_total, 'advance_payments_source': 'DERIVED',
-        'heating_advance_payments_total': heating_total,
-        'heating_advance_payments_source': 'DERIVED'}))
+    attest_annual_advances(world, run['id'], advance_total, heating_total, 'DERIVED')
     response = world.act('POST', url + '/finalize', json={})
     assert response.status_code == 200, world.describe_response()
     world.data['combined_run'] = response.json()
@@ -293,6 +340,24 @@ def unallocated_advance_results(world):
                              capture_output=True, check=True).stdout.decode()
     assert sum(label in line and '2.340,00' in line for line in content.splitlines()) == 1, content
     assert '560,00' in content
+    world.data['annual_pdf'] = response.content
+
+
+@then('neither advance setter can change the finalized result or PDF')
+def finalized_annual_advances_are_immutable(world):
+    run = world.data['combined_run']
+    url = f"/api/settlements/{run['id']}"
+    response = world.act('PATCH', url + '/advance-payments', json={'advance_payments_total': '0.00'})
+    assert response.status_code == 409, world.describe_response()
+    response = world.act('PATCH', url + '/advance-payments-derived', params={'period_year': 2026})
+    assert response.status_code == 409, world.describe_response()
+    reloaded = world.act('GET', url)
+    assert reloaded.status_code == 200, world.describe_response()
+    for field in ('advance_payments_total', 'balance', 'lines', 'snapshot_sha256'):
+        assert reloaded.json()[field] == run[field]
+    pdf = world.act('GET', url + '/pdf')
+    assert pdf.status_code == 200, world.describe_response()
+    assert pdf.content == world.data['annual_pdf']
 
 
 @then('the statement and PDF show 2880 euros combined credit and 20 euros payable')

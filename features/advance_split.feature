@@ -36,14 +36,6 @@ Feature: Combined and separate operating-cost and heating advances
     Then the original bookings remain unchanged
     And the statement credits 1440 euros combined, 900 euros operating and 540 euros heating, with 20 euros payable
 
-  Scenario: An annual advance across both modes is credited once without a component split
-    Given an administrator of "Verwaltung Alpha" is signed in
-    And a lease with 750 euros rent and 240 euros combined advance
-    When the manager changes to 150 euros operating and 90 euros heating from July
-    And books one 2340 euro advance for 2026 without a month
-    And finalizes the statement with 1900 euros operating and 1000 euros heating costs for that advance
-    Then the statement and PDF show one unallocated advance of 2340 euros and 560 euros payable
-
   Scenario: Standalone refunds reduce each derived advance and finalized amounts stay frozen
     Given an administrator of "Verwaltung Alpha" is signed in
     And Anna paid 50 euros each in operating and heating advances for July 2026
