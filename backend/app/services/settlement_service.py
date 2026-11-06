@@ -524,6 +524,7 @@ class SettlementService:
     ) -> SettlementRun:
         """Set the manual advance-payment total on a draft run (section 7.2)."""
         run = await self._get_draft_or_404(run_id)
+        previous = rental_values(run)
         if amount is not None:
             run.advance_payments_total = amount
             run.advance_payments_source = "MANUAL"
@@ -533,6 +534,8 @@ class SettlementService:
         if heating_amount is not None:
             run.heating_advance_payments_total = heating_amount
             run.heating_advance_payments_source = "MANUAL"
+        if rental_values(run) != previous:
+            await self._invalidate_advance_calculation(run)
         await self._runs.update(run)
         await self._audit.create(
             AuditEvent(
@@ -570,6 +573,8 @@ class SettlementService:
         run.heating_advance_payments_source = "DERIVED"
         run.advance_payments_total = total
         run.advance_payments_source = "DERIVED"
+        # The attribution can change even when the derived amounts stay equal.
+        await self._invalidate_advance_calculation(run)
         await self._runs.update(run)
         await self._audit.create(
             AuditEvent(
@@ -587,6 +592,15 @@ class SettlementService:
             )
         )
         return run
+
+    async def _invalidate_advance_calculation(self, run: SettlementRun) -> None:
+        # Keep the saved calculation inputs so the manager can calculate again.
+        extras = (run.snapshot_payload or {}).get("extra_inputs")
+        run.snapshot_payload = {"extra_inputs": extras} if extras is not None else None
+        run.snapshot_sha256 = None
+        run.total_cost = None
+        run.balance = None
+        await self._lines.delete_for_run(run.id)
 
     # ------------------------------------------------------------------
     # compute (draft, repeatable) and preview

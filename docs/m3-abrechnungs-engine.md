@@ -928,6 +928,11 @@ so an annual remainder cannot move a credit from one category to another or
 create a refund. Finalized statements keep their original snapshot, digest,
 and document output.
 
+Changing a draft's manual advance values or deriving its advances again clears
+the saved calculation and keeps its structured inputs. The next calculation
+uses the new advance basis. Until then, reopening the draft shows the saved
+advances without the previous balance or component breakdown.
+
 ### 7.3 Proposing a future advance payment (phase 2, T28)
 
 The historical M3 plan in §7.2 must be distinguished from today's actual path: M6 can
