@@ -40,7 +40,7 @@ from app.engine.mietkonto import (
 )
 from app.repositories.fristen_repo import FristenRepository
 from app.repositories.payment_repo import PaymentRepository
-from app.services.dunning_service import _to_payment_input
+from app.services.payment_service import to_payment_input
 
 
 def _lease_overlaps(lease, period_start: date, period_end: date) -> bool:
@@ -235,10 +235,10 @@ class FristenService:
                 payments = await self._payments.list_for_lease(lease.id)
                 scoped = _scope_payments(payments, period_start, period_end)
                 result = account_statement(
-                    charges, [_to_payment_input(p) for p in scoped]
+                    charges, [to_payment_input(p) for p in scoped]
                 )
                 overdue = find_overdue_items(
-                    list(result.open_items), reference_date, grace_days=0
+                    list(result.open_items), reference_date, grace_days=0, current_year=date.today().year
                 )
                 total += len(overdue)
             except HTTPException:
@@ -266,6 +266,7 @@ class FristenService:
 
         # Frozen levies can exist only in a WEG scope. Evaluate all levy dates
         # together per owner so a monthly payment is applied oldest due first.
+        current_year = date.today().year
         levy_months = {}
         if sphere is not None:
             end = min(reference_date, sphere.valid_to) if sphere.valid_to else reference_date
@@ -277,7 +278,7 @@ class FristenService:
                 items = [item for item in result.open_items
                          if item.payment_type == PT_SONDERZAHLUNG and item.due_date is not None]
                 levy_months[owner] = {(item.period_year, item.period_month) for item in items}
-                total += len(find_overdue_items(items, reference_date, grace_days=0))
+                total += len(find_overdue_items(items, reference_date, grace_days=0, current_year=current_year))
 
         for plan in plans:
             for owner in await self._repo.plan_owner_ids(plan):
@@ -290,7 +291,7 @@ class FristenService:
                 items = [item for item in result.open_items
                          if item.payment_type != PT_SONDERZAHLUNG
                          or (item.period_year, item.period_month) not in counted_months]
-                total += len(find_overdue_items(items, reference_date, grace_days=0))
+                total += len(find_overdue_items(items, reference_date, grace_days=0, current_year=current_year))
         return total
 
 

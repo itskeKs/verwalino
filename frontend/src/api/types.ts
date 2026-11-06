@@ -647,6 +647,7 @@ export interface CostEntry {
   confirmed_at: string | null;
   confirmed_by: string | null;
   superseded_by_id: string | null;
+  bank_open_amount?: string | null;
 }
 
 export interface CostEntryCreate {
@@ -1033,6 +1034,7 @@ export interface BankTransaction {
   counterparty_iban: string | null;
   purpose: string | null;
   status: BankTransactionStatus;
+  cost_entry_id?: string | null;
 }
 
 export interface BankTransactionPage {
@@ -1209,14 +1211,25 @@ export interface MietkontoResult {
   balance: string;
 }
 
+export interface IssuedDunningInfo {
+  id: string;
+  issue_date: string;
+  level: number;
+  fee_amount: string;
+  interest_amount: string;
+}
+
 export interface TenantMietkontoResult extends MietkontoResult {
+  dunning_notices: IssuedDunningInfo[];
   open_items: (OpenItem & { is_due: boolean })[];
   due_balance: string;
   not_yet_due_balance: string;
 }
 
-export interface OwnerMietkontoResult extends TenantMietkontoResult {
+export interface OwnerMietkontoResult extends MietkontoResult {
   open_items: (OpenItem & { is_due: boolean; due_date: string | null })[];
+  due_balance: string;
+  not_yet_due_balance: string;
 }
 
 // --- M7 Dunning (Mahnwesen) ---
@@ -1245,19 +1258,34 @@ export interface DunningNotice {
 }
 
 export interface DunningSettings {
-  base_interest_rate: string | null;
+  fee_level_1: string;
+  fee_level_2: string;
+  fee_level_3: string;
+  default_interest_enabled: boolean;
+}
+
+export interface DunningInterestSegment {
+  start: string;
+  end: string;
+  days: number;
+  principal: string;
+  base_interest_rate: string;
+  annual_rate: string;
+  interest: string;
 }
 
 export interface DunningInterestSnapshot {
-  base_interest_rate: string;
-  annual_rate: string;
+  base_interest_rate?: string;
+  annual_rate?: string;
+  premium?: 5 | 9;
   reference_date: string;
   items: {
     payment_type: string;
     period_year: number | null;
     period_month: number | null;
     due_date: string;
-    interest_start?: string;
+    interest_start?: string | null;
+    segments?: DunningInterestSegment[];
     days: number;
     principal: string;
     interest: string;
@@ -1274,7 +1302,6 @@ export interface DunningIncludedItem {
 }
 
 export interface DunningCreateTenant {
-  base_interest_rate?: string | null;
   accounting_scope_id?: string | null;
   tenant_profile_id: string;
   lease_agreement_id: string;
@@ -1286,7 +1313,6 @@ export interface DunningCreateTenant {
 }
 
 export interface DunningCreateOwner {
-  base_interest_rate?: string | null;
   accounting_scope_id?: string | null;
   owner_profile_id: string;
   period_start: string;

@@ -352,6 +352,14 @@ worker or use an existing dev stack; start only the disposable database first.
 Do not wrap these targets in another acquisition of the same lock. Direct pytest
 commands and separately running dev stacks must hold that lock too; release it between runs.
 
+The local browser server wraps the real app with a test-only dunning scheduling
+gate: after sending a successful individual owner/tenant creation response, it
+holds request cleanup until the first detail read completes (bounded to five
+seconds). No responses or data are replaced. This exposes uncommitted drafts
+deterministically; function-scope transactions commit before the response starts.
+The [dunning journey](journeys/dunning_notice.feature) asserts that the first
+detail read succeeds without reload. External targets use their ordinary server.
+
 **CI decision:** the separate browser job runs `make test-browser` on PRs. The locked
 Chromium download and `playwright install --with-deps chromium` give a deterministic,
 short setup, with no host Chrome dependency; the job uses the same disposable

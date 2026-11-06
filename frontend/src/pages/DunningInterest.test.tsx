@@ -9,10 +9,11 @@ const auth = vi.hoisted(() => ({ role: "CLERK", organization_id: "org" }));
 vi.mock("../auth/useAuth", () => ({ useAuth: () => ({ session: auth }) }));
 vi.mock("../components/AccountingScopeSelector", () => ({ AccountingScopeSelector: (p: { onChange: (id: string) => void; onValidityChange: (valid: boolean) => void }) => <button type="button" onClick={() => { p.onChange("scope"); p.onValidityChange(true); }}>Kreis wählen</button> }));
 const notice = { id: "notice", status: "issued", level: 1, issue_date: "2026-03-02", due_date: "2026-03-16", principal_amount: "700.00", fee_amount: "0.00", interest_amount: "8.63", total_amount: "708.63", included_items: [], interest_snapshot: { base_interest_rate: "2.50", annual_rate: "7.50", reference_date: "2026-03-02", items: [{ payment_type: "KALTMIETE", period_year: 2026, period_month: 1, due_date: "2026-01-01", days: 60, principal: "700.00", interest: "8.63" }] } };
-let settings: () => Promise<{ base_interest_rate: string | null }>;
+const defaults = { fee_level_1: "0.00", fee_level_2: "2.50", fee_level_3: "2.50", default_interest_enabled: false };
+let settings: () => Promise<typeof defaults>;
 beforeEach(() => {
   auth.role = "CLERK"; auth.organization_id = "org";
-  settings = async () => ({ base_interest_rate: "2.50" });
+  settings = async () => defaults;
   vi.spyOn(api, "get").mockImplementation(async url => {
     if (url === "/api/dunning/settings") return settings();
     if (url === "/api/dunning/notice") return notice;
@@ -31,21 +32,37 @@ beforeEach(() => {
 afterEach(() => { cleanup(); vi.restoreAllMocks(); });
 function show() { return render(<MemoryRouter initialEntries={["/mahnungen?create=tenant&tenant_profile_id=tenant&lease_agreement_id=lease"]}><Routes><Route path="/mahnungen" element={<DunningNoticesPage />} /><Route path="/mahnungen/:dunningId" element={<DunningNoticeDetailPage />} /></Routes></MemoryRouter>); }
 async function ready() { await screen.findByRole("option", { name: /Ada Test ab/ }); fireEvent.click(screen.getByRole("button", { name: "Kreis wählen" })); }
-it("prefills the configured basis rate without inventing a current official rate", async () => {
+it("reads organization settings without offering a clerk an edit", async () => {
   show(); await ready();
-  expect(await screen.findByLabelText("Basiszinssatz (%)")).toHaveValue("2.50");
+  expect(await screen.findByLabelText("Mahngebühr Stufe 2 (EUR)")).toHaveValue("2,50");
+  expect(screen.getByLabelText("Mahngebühr Stufe 2 (EUR)")).toHaveAttribute("readonly");
+  expect(screen.getByLabelText("Verzugszinsen automatisch berechnen")).toBeDisabled();
+  expect(screen.queryByText("Mahneinstellungen speichern")).toBeNull();
 });
-it("requires explicit rate input and sends exact negative comma percentages", async () => {
-  settings = async () => ({ base_interest_rate: null }); show(); await ready();
-  const input = await screen.findByLabelText("Basiszinssatz (%)");
-  expect(input).toHaveValue(""); expect(input).toBeRequired();
-  expect(screen.getByText(/Kein Basiszinssatz konfiguriert/)).toBeVisible();
-  fireEvent.submit(input.closest("form")!); expect(api.post).not.toHaveBeenCalled();
-  fireEvent.change(input, { target: { value: "-0,8800" } });
-  fireEvent.submit(input.closest("form")!);
+
+it("an administrator saves the three fees as exact decimal text and enables interest", async () => {
+  auth.role = "OWNER_ADMIN";
+  const updated = { ...defaults, fee_level_2: "3.00", fee_level_3: "4.00", default_interest_enabled: true };
+  vi.spyOn(api, "put").mockResolvedValue(updated);
+  show(); await ready();
+  const fee = await screen.findByLabelText("Mahngebühr Stufe 2 (EUR)");
+  fireEvent.change(fee, { target: { value: "3,00" } });
+  fireEvent.change(screen.getByLabelText("Mahngebühr Stufe 3 (EUR)"), { target: { value: "4,00" } });
+  fireEvent.click(screen.getByLabelText("Verzugszinsen automatisch berechnen"));
+  fireEvent.submit(fee.closest("form")!);
+  expect(api.put).toHaveBeenCalledWith("/api/dunning/settings", updated);
+  await screen.findByText("Mahneinstellungen gespeichert.");
+});
+
+it("creates the tenant notice without a manual rate", async () => {
+  show(); await ready();
+  expect(screen.queryByLabelText("Basiszinssatz (%)")).toBeNull();
+  fireEvent.submit(screen.getByRole("button", { name: "Mahnung erstellen" }).closest("form")!);
   await screen.findByText("Verzugszinsen");
-  expect(api.post).toHaveBeenCalledWith("/api/dunning/tenant", expect.objectContaining({ base_interest_rate: "-0.8800", accounting_scope_id: "scope" }));
+  expect(api.post).toHaveBeenCalledWith("/api/dunning/tenant", expect.objectContaining({ accounting_scope_id: "scope" }));
+  expect(vi.mocked(api.post).mock.calls[0][1]).not.toHaveProperty("base_interest_rate");
 });
+
 it("shows frozen interest, rates, reference date and item days without recalculation", async () => {
   render(<MemoryRouter initialEntries={["/mahnungen/notice"]}><Routes><Route path="/mahnungen/:dunningId" element={<DunningNoticeDetailPage />} /></Routes></MemoryRouter>);
   expect(await screen.findByText("Verzugszinsen")).toBeVisible();
@@ -102,69 +119,33 @@ function deferred<T>() {
   const promise = new Promise<T>((yes, no) => { resolve = yes; reject = no; });
   return { promise, resolve, reject };
 }
-it.each(["NaN", "Infinity", "-Infinity", "1e2", "2.12345", "2,12345", "2.5%", "1,2.3", ""])('rejects invalid percentage %j without a POST', async value => {
-  show(); await ready(); await waitFor(() => expect(screen.getByLabelText("Basiszinssatz (%)")).toHaveValue("2.50"));
-  const input = screen.getByLabelText("Basiszinssatz (%)");
-  fireEvent.change(input, { target: { value } }); fireEvent.submit(input.closest("form")!);
-  expect(api.post).not.toHaveBeenCalled(); expect(screen.getByRole("button", { name: "Mahnung erstellen" })).toBeDisabled();
-});
-it("retains a manual value when configuration arrives late", async () => {
-  const late = deferred<{ base_interest_rate: string | null }>(); settings = () => late.promise;
-  show(); await ready(); const input = screen.getByLabelText("Basiszinssatz (%)");
-  fireEvent.change(input, { target: { value: "-0,88" } });
-  expect(screen.getByRole("button", { name: "Mahnung erstellen" })).toBeDisabled();
-  await act(async () => late.resolve({ base_interest_rate: "2.50" }));
-  expect(input).toHaveValue("-0,88"); expect(screen.getByRole("button", { name: "Mahnung erstellen" })).toBeEnabled();
-});
-it("ignores late configuration from a previous recipient context", async () => {
-  const old = deferred<{ base_interest_rate: string | null }>(); settings = () => old.promise;
-  show(); await ready(); const next = deferred<{ base_interest_rate: string | null }>(); settings = () => next.promise;
-  fireEvent.change(screen.getByLabelText("Empfaengertyp *"), { target: { value: "owner" } });
-  await act(async () => old.resolve({ base_interest_rate: "9.9999" }));
-  expect(screen.getByLabelText("Basiszinssatz (%)")).toHaveValue("");
-  await act(async () => next.resolve({ base_interest_rate: null }));
-  expect(screen.getByLabelText("Basiszinssatz (%)")).toHaveValue("");
-});
-it("preserves separate manual rates across recipient and source switches and posts owner scope without a plan", async () => {
-  show(); await ready(); await waitFor(() => expect(screen.getByLabelText("Basiszinssatz (%)")).toHaveValue("2.50"));
-  fireEvent.change(screen.getByLabelText("Basiszinssatz (%)"), { target: { value: "1,2345" } });
+it("posts owner scope without a plan or manual interest rate", async () => {
+  show(); await ready();
   fireEvent.change(screen.getByLabelText("Empfaengertyp *"), { target: { value: "owner" } });
   fireEvent.change(screen.getByLabelText("Eigentuemer *"), { target: { value: "owner" } });
   fireEvent.change(screen.getByLabelText("WEG-Objekt *"), { target: { value: "property" } });
-  fireEvent.change(screen.getByLabelText("Basiszinssatz (%)"), { target: { value: "-0,8800" } });
   fireEvent.click(screen.getByRole("button", { name: "Kreis wählen" }));
-  await waitFor(() => expect(screen.getByRole("button", { name: "Mahnung erstellen" })).toBeEnabled());
-  fireEvent.submit(screen.getByLabelText("Basiszinssatz (%)").closest("form")!);
+  const button = screen.getByRole("button", { name: "Mahnung erstellen" });
+  await waitFor(() => expect(button).toBeEnabled());
+  fireEvent.submit(button.closest("form")!);
   await screen.findByText("Verzugszinsen");
-  expect(api.post).toHaveBeenCalledWith("/api/dunning/owner", expect.objectContaining({ base_interest_rate: "-0.8800", owner_profile_id: "owner", economic_plan_id: null, accounting_scope_id: "scope" }));
+  expect(api.post).toHaveBeenCalledWith("/api/dunning/owner", expect.objectContaining({ owner_profile_id: "owner", economic_plan_id: null, accounting_scope_id: "scope" }));
+  expect(vi.mocked(api.post).mock.calls[0][1]).not.toHaveProperty("base_interest_rate");
 });
-it("retries failed settings without overwriting user input", async () => {
-  settings = async () => { throw new Error("offline"); }; show(); await ready();
-  expect(await screen.findByRole("alert")).toHaveTextContent("offline");
-  fireEvent.change(screen.getByLabelText("Basiszinssatz (%)"), { target: { value: "0" } });
-  settings = async () => ({ base_interest_rate: "2.50" });
-  fireEvent.click(screen.getByRole("button", { name: "Konfiguration erneut laden" }));
-  await waitFor(() => expect(screen.queryByRole("alert")).toBeNull());
-  expect(screen.getByLabelText("Basiszinssatz (%)")).toHaveValue("0");
-});
+
 it("preserves input on POST error and synchronously locks duplicate submissions", async () => {
   const post = deferred<unknown>(); vi.mocked(api.post).mockReturnValue(post.promise);
-  show(); await ready(); await waitFor(() => expect(screen.getByLabelText("Basiszinssatz (%)")).toHaveValue("2.50"));
-  const input = screen.getByLabelText("Basiszinssatz (%)"); fireEvent.change(input, { target: { value: "-0,88" } });
+  show(); await ready();
+  const input = screen.getByLabelText("Mahngebuehr (Override)"); fireEvent.change(input, { target: { value: "4" } });
   act(() => { fireEvent.submit(input.closest("form")!); fireEvent.submit(input.closest("form")!); });
   expect(api.post).toHaveBeenCalledTimes(1); expect(input).toBeDisabled();
   await act(async () => post.reject(new Error("POST offline")));
-  expect(await screen.findByText(/POST offline/)).toBeVisible(); expect(input).toHaveValue("-0,88"); expect(input).toBeEnabled();
+  expect(await screen.findByText(/POST offline/)).toBeVisible(); expect(input).toHaveValue("4"); expect(input).toBeEnabled();
 });
 it.each(["READ_ONLY", "UNKNOWN"])("%s cannot create even with a creation URL", async role => {
   auth.role = role; show(); await screen.findByText("Keine Mahnungen vorhanden.");
   expect(screen.queryByLabelText("Basiszinssatz (%)")).toBeNull();
   expect(screen.queryByRole("button", { name: "+ Neue Mahnung" })).toBeNull(); expect(api.post).not.toHaveBeenCalled();
-});
-it("ignores configuration completion after unmount", async () => {
-  const late = deferred<{ base_interest_rate: string | null }>(); settings = () => late.promise;
-  const page = show(); await ready(); page.unmount();
-  await act(async () => late.resolve({ base_interest_rate: "2.50" })); expect(api.post).not.toHaveBeenCalled();
 });
 it("keeps legacy zero-interest letters and the issued-only PDF action unchanged", async () => {
   vi.mocked(api.get).mockImplementation(async url => url === "/api/dunning/notice" ? { ...notice, interest_amount: "0.00", interest_snapshot: null, total_amount: "700.00" } : []);
@@ -174,32 +155,16 @@ it("keeps legacy zero-interest letters and the issued-only PDF action unchanged"
   expect(screen.getByRole("button", { name: "PDF herunterladen" })).toBeVisible();
 });
 
-it("retains each recipient's manual rate when switching back", async () => {
-  show(); await ready(); await waitFor(() => expect(screen.getByLabelText("Basiszinssatz (%)")).toHaveValue("2.50"));
-  fireEvent.change(screen.getByLabelText("Basiszinssatz (%)"), { target: { value: "1,2345" } });
-  fireEvent.change(screen.getByLabelText("Empfaengertyp *"), { target: { value: "owner" } });
-  fireEvent.change(screen.getByLabelText("Basiszinssatz (%)"), { target: { value: "-.88" } });
-  fireEvent.change(screen.getByLabelText("Empfaengertyp *"), { target: { value: "tenant" } });
-  await waitFor(() => expect(screen.queryByText("Lade Basiszinssatz-Konfiguration…")).toBeNull());
-  expect(screen.getByLabelText("Basiszinssatz (%)")).toHaveValue("1,2345");
-  fireEvent.change(screen.getByLabelText("Empfaengertyp *"), { target: { value: "owner" } });
-  expect(screen.getByLabelText("Basiszinssatz (%)")).toHaveValue("-.88");
-});
-it("ignores stale configuration from another organization", async () => {
-  const old = deferred<{ base_interest_rate: string | null }>(); settings = () => old.promise;
+it("ignores stale settings from another organization", async () => {
+  const old = deferred<typeof defaults>(); settings = () => old.promise;
   const page = show(); await ready();
-  const next = deferred<{ base_interest_rate: string | null }>(); settings = () => next.promise;
+  const next = deferred<typeof defaults>(); settings = () => next.promise;
   auth.organization_id = "other-org";
-  page.rerender(<MemoryRouter initialEntries={["/mahnungen?create=tenant&tenant_profile_id=tenant&lease_agreement_id=lease"]}><Routes><Route path="/mahnungen" element={<DunningNoticesPage />} /></Routes></MemoryRouter>);
-  await act(async () => old.resolve({ base_interest_rate: "9.9999" }));
-  expect(screen.getByLabelText("Basiszinssatz (%)")).toHaveValue("");
-  await act(async () => next.resolve({ base_interest_rate: "1.2345" }));
-  expect(screen.getByLabelText("Basiszinssatz (%)")).toHaveValue("1.2345");
-});
-it.each(["NaN", "Infinity", "2.12345"])("never prefills malformed configured rate %s", async value => {
-  settings = async () => ({ base_interest_rate: value }); show(); await ready();
-  expect(await screen.findByRole("alert")).toHaveTextContent("Ungültiger konfigurierter Basiszinssatz");
-  expect(screen.getByLabelText("Basiszinssatz (%)")).toHaveValue(""); expect(api.post).not.toHaveBeenCalled();
+  page.rerender(<MemoryRouter><Routes><Route path="/mahnungen" element={<DunningNoticesPage />} /></Routes></MemoryRouter>);
+  await act(async () => old.resolve({ ...defaults, fee_level_2: "99.00" }));
+  expect(screen.queryByLabelText("Mahngebühr Stufe 2 (EUR)")).toBeNull();
+  await act(async () => next.resolve({ ...defaults, fee_level_2: "3.00" }));
+  expect(screen.getByLabelText("Mahngebühr Stufe 2 (EUR)")).toHaveValue("3,00");
 });
 it("does not fetch current settings or offer PDF for a frozen draft", async () => {
   vi.mocked(api.get).mockImplementation(async url => url === "/api/dunning/notice" ? { ...notice, status: "draft", interest_amount: "8.6300", total_amount: "708.6300" } : []);

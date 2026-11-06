@@ -67,3 +67,33 @@ def missing_owner_schedule(foreign_owner_schedule):
     assert foreign.status_code == missing.status_code == 404
     assert foreign.json() == missing.json()
     assert set(foreign.json()) == {'detail'}
+
+
+@when("Verwaltung Alpha saves its own dunning settings")
+def alpha_dunning_settings(world, reset_dunning_settings):
+    world.data["alpha_dunning_settings"] = {
+        "fee_level_1": "0.00", "fee_level_2": "3.00", "fee_level_3": "4.00",
+        "default_interest_enabled": True,
+    }
+    answer = world.act("PUT", "/api/dunning/settings", json=world.data["alpha_dunning_settings"])
+    assert answer.status_code == 200, world.describe_response()
+
+
+@when("Verwaltung Beta saves different dunning settings")
+def beta_dunning_settings(world):
+    beta = world.administrator_of("Verwaltung Beta")
+    previous = world.look(beta, "/api/dunning/settings").json()
+    settings = {**previous, "fee_level_2": "6.50", "default_interest_enabled": False}
+    try:
+        answer = world.send(beta, "PUT", "/api/dunning/settings", json=settings)
+        assert answer.status_code == 200, world.describe_response()
+        assert world.look(beta, "/api/dunning/settings").json() == settings
+        assert world.act("GET", "/api/dunning/settings").json() == world.data["alpha_dunning_settings"]
+    finally:
+        answer = world.send(beta, "PUT", "/api/dunning/settings", json=previous)
+        assert answer.status_code == 200, world.describe_response()
+
+
+@then("each administrator reads only their own dunning settings")
+def alpha_settings_retained(world):
+    assert world.act("GET", "/api/dunning/settings").json() == world.data["alpha_dunning_settings"]

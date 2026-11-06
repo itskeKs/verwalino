@@ -167,6 +167,13 @@ monthly expected without rate change = valid base rent + valid advance payment
 
 - **Effective-date changes (Phase 2, T23):** `lease_rent_change` adds complete base rent/operating/heating rates without overwriting the original contract amounts. Each rate applies from its effective date inclusive; the last previous rate also continues to apply when a query begins later. Several daily segments are summed exactly per month/component and only then rounded; constant rates keep the existing largest-remainder partial-month logic. Example March 2026: 700 EUR through March 14, 750 EUR from March 15 yields 727.42 EUR base rent, operating costs 150 EUR unchanged. History append-only, effective dates unique per lease; organization/parent RLS and prepare permissions apply, financial lock before lease lock. Existing bookings/final snapshots remain unchanged.
 - **Operation (Phase 2, T24):** Every lease history in the unit shows original rates and changes with their source; "Miete ändern ab …" ("Change rent from …") records the full valid base rent/operating/heating rate. The date must lie within the contract limits displayed inclusively, cent-exact strings up to `Numeric(14,2)`, no floating-point arithmetic. Write roles can add entries, READ_ONLY can only read; load/server errors are visible, inputs are kept and the dialog is locked against double actions/closing during the POST. The browser acceptance run demonstrates unchanged original data after reload and 24 tenant ledger items with an annual expected amount of 10,650 EUR for +50 EUR from April 1, 2026.
+- **Letters and lease documents (#219):** The shared `rate_on` resolver supplies the base rent and both advances valid on the document date, inclusive of that day's change. The built-in contract and `vertrag.mietaufstellung` show separate **Betriebskosten-Vorauszahlung** and **Heizkosten-Vorauszahlung** lines when heating is positive, plus **Monatliche Gesamtmiete** (750 + 150 + 90 = 990 EUR). Existing `vertrag.vorauszahlung` templates also expand to those advance/total lines for positive heating. At zero heating the advance stays a single amount; unchanged leases preserve their previous contract text and rendered PDF bytes. A changed rate is dated rather than called “Originalvertrag”. Issued originals and request replays remain stored bytes; source/contact/export checks are unchanged. This does not introduce the optional combined/separate choice tracked in #311. See [document usage](operations/tasks-and-documents.md#lease-contracts-and-handovers-37).
+  A document at the end of a tenancy uses the last inclusive tenancy day as the latest rate date.
+  The summary shows that “Stand DD.MM.YYYY” and includes the total even at zero heating. A contract
+  dated later still carries its selected document date. A historical circular uses the last tenancy
+  day as its existing **Stichtag**, which determines its letter date and recipient set. The
+  historical rule leaves the original single-advance rendering in place for unchanged rates
+  before the last tenancy day and for open leases.
 - **Separation by component:** The expected amount is maintained separately for `KALTMIETE` (= `base_rent`) and the two advances: `NK_VORAUSZAHLUNG` (= `advance_payment`) and `HK_VORAUSZAHLUNG` (= `heating_advance_payment`). Each advance credits its own statement component (§6.2), the base rent does not. Mixing them would distort the settlement integration.
 - **Mid-year start/end (day-accurate partial months):** If the lease begins/ends in the middle of a month, the expected amount of the partial month is **pro rata**. Basis: monthly, the partial month computed day-accurately via the same `app/engine/periods.py` arithmetic as M3 (day-inclusive, ADR-0004/0006). **[§18/domain F6-4]** whether a partial month is computed day-accurately (`days_occupied_in_month / days_in_month`) or as a flat full/half month — handled differently under leases/in practice. **Provisional assumption:** day-accurate partial month (consistent with M3); clearly marked, requires domain sign-off.
 - **Read boundary:** `lease_agreement.valid_to` is stored half-open; the expected-amount function reads via `db_exclusive_to_engine_inclusive` (ADR-0006) — the **same** read boundary as M3, **one** definition. This way the last rental month counts correctly (no off-by-one at lease end).
@@ -222,35 +229,54 @@ otherwise be lost. A downgrade-and-upgrade run without such contexts and the ref
 when provenance is already recorded are tested. Issued letters, snapshots and shares
 are not changed retrospectively.
 
-Since Phase 2 (T35), M7 can calculate default interest (Verzugszinsen) for these open
-items from an explicit base interest rate input with an optional configured default:
-`open × (base + 5) / 100 × calendar days since due date / 365`. Per item, rounding to
-the cent (`ROUND_HALF_UP`) happens only once; afterwards the stored interest lines are
-summed. Fees and interest are not themselves charged interest. Example: 700 EUR at a
-base rate of 2.50%, January 2026 due on 6 January, reference date 2 March
-(55 days) → 7.91 EUR interest. The interest snapshot records due
-date, reference date, days, base/annual interest rate and amounts; an issued dunning
-notice, including its PDF, uses exclusively these stored values. The expected/actual
-balance of the account is not supplemented by further account postings as a result.
-Without a configured default, the new interface requires an explicit input; old API
-calls without an interest base and existing letters keep their interest-free
-semantics. No official interest rate is invented and no delivery is claimed. Migration
-0129 protects the new amounts and provenance even against a direct SQL update and
-refuses a downgrade that would lose existing interest bases.
+### Default interest on dunning notices
+
+An administrator sets the three fees and enables interest under **Mahnungen → Mahneinstellungen**.
+All organization members can read the settings. Without saved settings, fees are 0.00 / 2.50 /
+2.50 EUR and interest is off. A per-notice fee override takes precedence. Individual and batch
+drafts use the same organization policy.
+
+With interest enabled, each overdue item accrues simple interest from the day after its due
+date through the notice date. The item is split at base-rate changes and on the booked value
+date of each partial payment. That date uses the reduced principal. The existing period
+assignment, payment allocation, open balances and notice eligibility still apply.
+The annual rate is the statutory base rate plus 5 percentage points for residential leases and
+owners, or 9 for a unit with usage type `GEWERBE`. Each segment accrues
+`principal × annual rate × calendar days / 36500`. Round the sum per item to cents with
+`ROUND_HALF_UP`, then sum the rounded items. Displayed segment amounts use differences between
+rounded running totals so they reconcile to the frozen item amount. Interest accrues on the
+overdue principal only.
+
+Migration 0174 seeds the global `base_interest_rate` catalog with the January and July rates
+from 2002 through July 2026. Verify future entries against the
+[Bundesbank rate history](https://www.bundesbank.de/de/bundesbank/organisation/agb-und-regelungen/basiszinssatz-607820)
+and publish each new half-year through a release migration. The first half-year comes from the
+[Bundesbank's December 2001 announcement](https://www.bundesbank.de/resource/blob/680962/59e9f594e1d5c41d967c8b810a7f3d19/472B63F073F071307366337C94F8C870/2001-12-28-basiszinssatz-46382-download.pdf).
+When a required half-year is missing, the API returns 409 and the user sees which rate is missing.
+
+For 100 EUR due 7 April 2026, the residential notice through 31 October records 84 days
+at 6.27% (1.44 EUR) and 123 days at 6.52% (2.20 EUR), totaling 3.64 EUR in interest.
+The stored snapshot supplies the detail and PDF with dates, principal, days, base and annual
+rates, premium, and interest amounts. Existing issued notices retain their stored fees,
+interest and single-rate snapshots. The tenant ledger displays the fees and interest of
+issued notices for the selected lease separately from Soll, Ist and Saldo. For an unscoped
+notice, the frozen snapshot records its source lease. Historical tenant notices without a
+verified lease assignment remain in **Mahnungen**. The calculation creates no expected charges.
 
 The notice detail shows principal and interest first in the frozen calculation,
 and the open amount first in the arrears table, so these values are readable at
 360 px without scrolling sideways. Other table columns remain scrollable within
 their card. `Ausgestellt am` shows the stored issue instant as `TT.MM.JJJJ, HH:MM`
 in German time (`Europe/Berlin`); API responses carry ISO timestamps with timezone.
-The letter, frozen calculation and PDF are unchanged.
 
 Since T53, individual and selected tenant dunning notices use the same
 history-sensitive tenant ledger path. The non-writing dunning-run preview filters
 principal claims strictly greater than the explicitly chosen threshold. Confirmation
 creates the chosen drafts atomically; changes to sources/escalation make a new preview
 necessary. Repeating a request whose outcome was unclear returns the same original
-drafts after renewed prepare/source admission. No M6 payments are added, old issued
+drafts after renewed prepare/source admission. This includes an exact retry of a committed
+legacy request that used the former rate field. New applies and all previews use the saved
+policy. No M6 payments are added, old issued
 letters/PDFs are not changed and nothing is sent.
 
 ### 2.3 Expected-amount engine as a pure function

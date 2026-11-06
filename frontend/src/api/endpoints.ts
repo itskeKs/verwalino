@@ -950,8 +950,9 @@ export function listBankMatchingTransactions(bankAccountId: string, status: Bank
   return api.get<BankMatchingPage>(`/api/bank-transactions?${params}`);
 }
 
-export function assignBankTransaction(id: string, lines: BankAssignmentLine[]): Promise<BankAssignmentResult> {
-  return api.post<BankAssignmentResult>(`/api/bank-transactions/${encodeURIComponent(id)}/assign`, { lines });
+export function assignBankTransaction(id: string, target: BankAssignmentLine[] | string): Promise<BankAssignmentResult> {
+  return api.post<BankAssignmentResult>(`/api/bank-transactions/${encodeURIComponent(id)}/assign`,
+    typeof target === "string" ? { cost_entry_id: target } : { lines: target });
 }
 
 export function ignoreBankTransaction(id: string): Promise<{ id: string; status: "IGNORIERT" }> {
@@ -1076,6 +1077,10 @@ export function setAdvancePaymentsDerived(
 
 export function getDunningSettings(): Promise<DunningSettings> {
   return api.get<DunningSettings>("/api/dunning/settings");
+}
+
+export function saveDunningSettings(body: DunningSettings): Promise<DunningSettings> {
+  return api.put<DunningSettings>("/api/dunning/settings", body);
 }
 
 export function listDunningNotices(params?: {

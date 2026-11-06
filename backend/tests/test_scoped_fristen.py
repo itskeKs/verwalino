@@ -13,6 +13,7 @@ pytestmark = pytest.mark.asyncio
 
 async def add_cost(ids, scope, start='2025-01-01', end='2025-12-31'):
     params = {**ids, 'cost': uuid.uuid4(), 'sphere': ids[scope], 'start': date.fromisoformat(start), 'end': date.fromisoformat(end)}
+    params['year'] = params['start'].year
     await mutate(text("""INSERT INTO cost_entry(id,organization_id,property_id,cost_category_id,cost_category_plan_version,
         invoice_date,service_period_from,service_period_to,gross_amount,tenant_apportionable,status,source,confirmed_at,confirmed_by)
         SELECT :cost,:org,:property,id,1,:start,:start,:end,100,'UMLAGEFAEHIG','confirmed','MANUAL',now(),:actor
@@ -55,8 +56,9 @@ async def test_weg_monitor_omits_tenant_debt_and_out_of_term_plan_obligations(mi
 async def add_monitor_plan(ids, sphere, day=3, amount='600.00', *, start='2025-07-01', end='2025-07-31'):
     params = {**ids, 'plan': uuid.uuid4(), 'sphere': ids[sphere], 'day': day, 'amount': amount,
         'start': date.fromisoformat(start), 'end': date.fromisoformat(end)}
+    params['year'] = params['start'].year
     await mutate(text("""INSERT INTO economic_plan(id,organization_id,property_id,plan_year,period_start,period_end,monthly_due_day,status,engine_version)
-        VALUES (:plan,:org,:property,2025,:start,:end,:day,'draft','fixture')"""), params)
+        VALUES (:plan,:org,:property,:year,:start,:end,:day,'draft','fixture')"""), params)
     await mutate(text("""INSERT INTO economic_plan_line(id,organization_id,economic_plan_id,line_type,owner_profile_id,unit_id,label,planned_amount,monthly_amount)
         VALUES (gen_random_uuid(),:org,:plan,'OWNER_ADVANCE',:profile,:unit,'Resolved Hausgeld',CAST(:amount AS numeric),CAST(:amount AS numeric))"""), params)
     await mutate(text("INSERT INTO accounting_scope_binding(organization_id,property_id,scope_id,economic_plan_id,origin,reason,reviewed_by) VALUES (:org,:property,:sphere,:plan,'REVIEWED','Resolved monthly due day',:actor)"), params)

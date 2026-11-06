@@ -62,7 +62,15 @@ class BankTransaction(Base, UUIDPrimaryKeyMixin, TimestampMixin):
         String(12), nullable=False, default="NEU"
     )
 
+    cost_entry_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
+
     __table_args__ = (
+        ForeignKeyConstraint(
+            ["organization_id", "cost_entry_id"], ["cost_entry.organization_id", "cost_entry.id"],
+            name="fk_bank_transaction_cost_org", ondelete="RESTRICT",
+        ),
+        CheckConstraint("cost_entry_id IS NULL OR (amount<0 AND status='ZUGEORDNET')",
+                        name="ck_bank_transaction_cost_assignment"),
         ForeignKeyConstraint(
             ["organization_id", "bank_account_id"],
             ["bank_account.organization_id", "bank_account.id"],

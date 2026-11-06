@@ -825,8 +825,8 @@ def test_owner_due_split_keeps_full_balances_signed_credit_and_levy_dates():
     assert before.not_yet_due_balance == Decimal('2000.01')
     assert after.due_balance == Decimal('2100.01')
     assert after.not_yet_due_balance == Decimal('-100.00')
-    assert find_overdue_items(list(before.open_items), date(2026, 7, 2)) == []
-    overdue = find_overdue_items(list(after.open_items), date(2026, 7, 4))
+    assert find_overdue_items(list(before.open_items), date(2026, 7, 2), current_year=2026) == []
+    overdue = find_overdue_items(list(after.open_items), date(2026, 7, 4), current_year=2026)
     assert len(overdue) == 1
     notice = assemble_dunning(overdue, 0, date(2026, 7, 4))
     assert notice.items_snapshot()[0]['due_date'] == '2026-07-03'

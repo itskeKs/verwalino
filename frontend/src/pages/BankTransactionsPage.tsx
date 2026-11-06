@@ -4,12 +4,12 @@ import { Link, useParams, useSearchParams } from "react-router-dom";
 import {
   getBankAccount, importBankTransactions, listBankMatchingTransactions,
   assignBankTransaction, ignoreBankTransaction, listUnits, listLeases,
-  listOwnership, listTenantProfiles, listOwnerProfiles, listPersons,
+  listOwnership, listTenantProfiles, listOwnerProfiles, listPersons, listCostEntries,
 } from "../api/endpoints";
 import type {
   BankAccount, BankImportResult, BankTransactionWithSuggestions, BankTransactionStatus,
   BankAssignmentLine, BankMatchSuggestion, BankMatchLine, LeaseRecord,
-  OwnerProfile, TenantProfile, Person, Unit, OwnershipRecord,
+  OwnerProfile, TenantProfile, Person, Unit, OwnershipRecord, CostEntry,
 } from "../api/types";
 import { ReserveEvidenceFields } from "../components/ReserveEvidenceFields";
 import { useAuth } from "../auth/useAuth";
@@ -170,7 +170,7 @@ function AccountTransactions({ id }: { id: string }) {
     }
   }
 
-  async function mutate(item: BankTransactionWithSuggestions, lines?: BankAssignmentLine[]) {
+  async function mutate(item: BankTransactionWithSuggestions, lines?: BankAssignmentLine[] | string) {
     if (!canWrite || item.status !== "NEU" || mutationLock.current) return;
     mutationLock.current = true;
     setMutating(true);
@@ -377,8 +377,27 @@ function SplitDialog({ transaction, account, busy, error, onClose, onSubmit }: {
   busy: boolean;
   error: string | null;
   onClose: () => void;
-  onSubmit: (lines: BankAssignmentLine[]) => void;
+  onSubmit: (lines: BankAssignmentLine[] | string) => void;
 }) {
+  const outgoing = (cents(transaction.amount) ?? 0n) < 0n;
+  const [mode, setMode] = useState<"cost" | "payment">(outgoing ? "cost" : "payment");
+  const [costs, setCosts] = useState<CostEntry[] | null>(null);
+  const [costError, setCostError] = useState<string | null>(null);
+  const [costId, setCostId] = useState("");
+  const [costRevision, setCostRevision] = useState(0);
+  useEffect(() => {
+    if (!account || mode !== "cost") return;
+    let cancelled = false;
+    listCostEntries({ property_id: account.property_id, status: "confirmed" })
+      .then(items => {
+        if (!cancelled) {
+          setCosts(items.filter(item => item.property_id === account.property_id && item.status === "confirmed"
+            && !item.superseded_by_id && item.bank_open_amount != null && (cents(item.bank_open_amount) ?? 0n) > 0n));
+          setCostError(null);
+        }
+      }).catch(cause => { if (!cancelled) setCostError(errorMessage(cause)); });
+    return () => { cancelled = true; };
+  }, [account, mode, costRevision]);
   function row(key: number, line?: BankMatchLine): SplitRow {
     const [year, month] = transaction.value_date.split("-");
     const payment_type = line?.payment_type ?? "KALTMIETE";
@@ -396,7 +415,7 @@ function SplitDialog({ transaction, account, busy, error, onClose, onSubmit }: {
   const [validation, setValidation] = useState<string | null>(null);
   const [targetRevision, setTargetRevision] = useState(0);
   useEffect(() => {
-    if (!account) return;
+    if (!account || mode !== "payment") return;
     let cancelled = false;
     Promise.all([listUnits(account.property_id), listLeases(), listOwnerProfiles(), listTenantProfiles(), listPersons(), listOwnership()])
       .then(([units, leases, owners, tenants, persons, ownership]) => {
@@ -409,7 +428,7 @@ function SplitDialog({ transaction, account, busy, error, onClose, onSubmit }: {
         setTargetError(null);
       }).catch(cause => { if (!cancelled) setTargetError(errorMessage(cause)); });
     return () => { cancelled = true; };
-  }, [account, targetRevision]);
+  }, [account, targetRevision, mode]);
 
   function name(personId?: string) {
     const person = targets?.persons.find(person => person.id === personId);
@@ -446,11 +465,35 @@ function SplitDialog({ transaction, account, busy, error, onClose, onSubmit }: {
   const entered = rows.map(item => cents(item.amount));
   const remaining = total !== null && entered.every(amount => amount !== null)
     ? (total < 0n ? -total : total) - entered.reduce<bigint>((sum, amount) => sum + amount!, 0n) : null;
+  const selectedCost = costs?.find(cost => cost.id === costId);
+  const exceedsCost = selectedCost && total !== null && -total > cents(selectedCost.bank_open_amount!)!;
 
   return <Dialog open onOpenChange={open => { if (!open && !busy) onClose(); }}>
     <DialogContent style={{ width: 'calc(100% - 2rem)', gridTemplateColumns: 'minmax(0, 1fr)' }} className="max-w-3xl max-h-[90vh] overflow-y-auto" onEscapeKeyDown={event => { if (busy) event.preventDefault(); }} onPointerDownOutside={event => { if (busy) event.preventDefault(); }}>
       <DialogTitle>Umsatz aufteilen</DialogTitle>
-      <DialogDescription>{transaction.counterparty_name ?? "Unbekannte Gegenpartei"} · {money(transaction.amount)} · {transaction.amount.startsWith("-") ? "Ausgang (OUT)" : "Eingang (IN)"}. Splitbeträge immer positiv, z. B. 700,00. Die Buchungsberechtigung wird serverseitig geprüft.</DialogDescription>
+      <DialogDescription>{transaction.counterparty_name ?? "Unbekannte Gegenpartei"} · {money(transaction.amount)} · {outgoing ? "Ausgang (OUT)" : "Eingang (IN)"}. {mode === "cost" ? "Ordnen Sie den vollständigen Umsatz einer bestehenden bestätigten Kostenposition zu. Teilzahlungen auf eine Kostenposition sind möglich." : "Splitbeträge immer positiv, z. B. 700,00. Die Buchungsberechtigung wird serverseitig geprüft."}</DialogDescription>
+      {outgoing && <div className="form-grid min-w-0"><label className="form-full-width min-w-0">Zuordnen als<select className="min-w-0 w-full" aria-label="Zuordnen als" value={mode} disabled={busy} onChange={event => setMode(event.target.value as "cost" | "payment")}>
+        <option value="cost">Bestehende Kostenposition</option><option value="payment">Zahlung (z. B. Erstattung oder Rücklagenentnahme)</option>
+      </select></label></div>}
+      {mode === "cost" ? <form className="form-grid min-w-0" onSubmit={event => {
+        event.preventDefault();
+        if (!busy && selectedCost && !exceedsCost) onSubmit(selectedCost.id);
+      }}>
+        <label className="form-full-width min-w-0">Kostenposition<select aria-label="Kostenposition" value={costId} disabled={busy || !costs} onChange={event => setCostId(event.target.value)}>
+          <option value="">Kostenposition wählen</option>
+          {costs?.map(cost => <option key={cost.id} value={cost.id}>{cost.document_number || `Rechnung vom ${date(cost.invoice_date)}`} · offen: {money(cost.bank_open_amount!)} · gesamt: {money(cost.gross_amount)}</option>)}
+        </select></label>
+        {!costs && !costError && <p className="form-full-width">Lade Kostenpositionen…</p>}
+        {costs?.length === 0 && <p className="form-full-width">Keine offenen bestätigten Kostenpositionen für dieses Objekt verfügbar.</p>}
+        {selectedCost && <p className="form-full-width">Nach Zuordnung noch offen: {money(decimal(cents(selectedCost.bank_open_amount!)! + total!))}</p>}
+        {exceedsCost && <p role="alert" className="error-text form-full-width">Der Umsatz überschreitet den offenen Betrag der Kostenposition.</p>}
+        {(error || costError) && <p role="alert" className="error-text form-full-width">{error || costError}</p>}
+        <div className="form-actions">
+          <button type="submit" className="btn btn--primary" disabled={busy || !selectedCost || Boolean(exceedsCost)}>{busy ? "Bitte warten…" : "Kostenposition zuordnen"}</button>
+          <button type="button" className="btn" disabled={busy} onClick={() => { setCostId(""); setCostRevision(value => value + 1); }}>Kostenpositionen neu laden</button>
+          <button type="button" className="btn" disabled={busy} onClick={onClose}>Abbrechen</button>
+        </div>
+      </form> : <>
       {(transaction.suggestions ?? []).map((suggestion, index) => <div key={index}>
         <SuggestionDetails suggestion={suggestion} />
         {transaction.suggestions.length > 1 && <button type="button" className="btn" disabled={busy} onClick={() => { setRows(suggestion.lines.length ? suggestion.lines.slice(0, 100).map((line, index) => row(index, line)) : [row(0)]); setValidation(null); }}>Vorschlag {index + 1} laden: {suggestion.target_name}</button>}
@@ -492,6 +535,7 @@ function SplitDialog({ transaction, account, busy, error, onClose, onSubmit }: {
           <button type="button" className="btn" disabled={busy} onClick={onClose}>Abbrechen</button>
         </div>
       </form>
+      </>}
     </DialogContent>
   </Dialog>;
 }

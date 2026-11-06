@@ -20,6 +20,13 @@ from app.repositories.base import TenantRepository
 class CostEntryRepository(TenantRepository[CostEntry]):
     model = CostEntry
 
+    async def bank_open_amounts(self, ids):
+        if not ids:
+            return {}
+        statement = self._base_query().where(CostEntry.id.in_(ids)).with_only_columns(
+            CostEntry.id, func.bank_cost_open_amount(self._org_id, CostEntry.id))
+        return dict((await self._session.execute(statement)).all())
+
     async def readable_ids(self, entry_ids: set[uuid.UUID]) -> set[uuid.UUID]:
         """Batch current source visibility through the ordinary cost-entry RLS."""
         if not entry_ids:
