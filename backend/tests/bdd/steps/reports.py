@@ -281,6 +281,16 @@ def journey_five_expenses(world):
             assert response.status_code == 200, world.describe_response()
 
 
+async def _resize_annual_overview(page, width):
+    await page.set_viewport_size({'width': width, 'height': 1000})
+    # The viewport can change before AppShell commits its media-query update.
+    navigation = page.get_by_role('navigation')
+    if width == 360:
+        await expect(navigation).to_have_count(0)
+    else:
+        await expect(navigation).to_be_visible()
+
+
 @then('the overview shows 14660 euros income and the separate deposit on desktop and at 360 px')
 @browser_step
 async def journey_five_headline(browser_world):
@@ -291,13 +301,13 @@ async def journey_five_headline(browser_world):
     overview = page.get_by_role('region', name='Jahresübersicht', exact=True)
     await expect(overview).to_be_visible()
     await expect(page.get_by_role('region', name='Anlage V', exact=True).get_by_role('table', name='Abgleich mit der Jahresübersicht')).to_be_visible()
-    for width in (1280, 360):
-        await page.set_viewport_size({'width': width, 'height': 1000})
-        if os.environ.get('VERWALINO_CAPTURE_DESIGN') == '1':
-            directory = Path(__file__).resolve().parents[4] / 'docs/assets/design'
+    if os.environ.get('VERWALINO_CAPTURE_DESIGN') == '1':
+        directory = Path(__file__).resolve().parents[4] / 'docs/assets/design'
+        for width in (1280, 360):
+            await _resize_annual_overview(page, width)
             await page.screenshot(path=str(directory / f'reports-income-{width}.png'), full_page=True, animations='disabled')
     for width in (1280, 360):
-        await page.set_viewport_size({'width': width, 'height': 1000})
+        await _resize_annual_overview(page, width)
         await expect(overview.locator('dl')).to_contain_text('14.660,00 EUR')
         await expect(overview.get_by_role('table', name='Einnahmen', exact=True)).to_contain_text('2.250,00 EUR')
         panel = page.get_by_role('region', name='Anlage V', exact=True)
@@ -353,7 +363,7 @@ async def journey_five_expense_table(browser_world):
     heading = page.get_by_role('heading', name='Objekt-Jahresübersicht', exact=True)
     controls = page.locator('form').filter(has=button(page, 'Übersicht anzeigen'))
     for width in (360, 1280):
-        await page.set_viewport_size({'width': width, 'height': 1000})
+        await _resize_annual_overview(page, width)
         bounds = await main.evaluate("""main => ({
             client: main.clientWidth, scroll: main.scrollWidth,
             document: document.documentElement.scrollWidth, viewport: innerWidth
