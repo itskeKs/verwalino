@@ -623,6 +623,17 @@ administrators can save the form and receive an inline confirmation. Other membe
 can read the fees and switch state. New individual notices and batch previews use
 the saved organization policy. The batch form uses the same responsive grid.
 
+When the calculation requires an accounting scope and none was selected,
+the existing error above **Neue Mahnung anlegen** says „Wählen Sie einen
+eindeutigen Abrechnungskreis und prüfen Sie noch nicht zugeordnete Daten,
+bevor Sie die Zahlungen berechnen.“ The form keeps its inputs for retry
+and no draft is created.
+
+| Required accounting scope refusal | 1280 px | 360 px |
+|---|---|---|
+| Before | [View](docs/assets/design/dunning-scope-refusal/before-1280.png) | [View](docs/assets/design/dunning-scope-refusal/before-360.png) |
+| After | [View](docs/assets/design/dunning-scope-refusal/after-1280.png) | [View](docs/assets/design/dunning-scope-refusal/after-360.png) |
+
 The frozen calculation shows the statutory premium and a separate table of
 **Zinsabschnitte** with the date range, amount, principal, annual and base rates
 and day count. The tenant account shows fees and interest in an **Ausgestellte
