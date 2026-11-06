@@ -175,17 +175,18 @@ editable for mid-year scopes and gap-closing transitions. Year-only NK advances
 are split across the calendar months the lease actually covers in the assigned
 year; Hausgeld uses all twelve months. A statement credits its covered months, including
 months in the second calendar year of a non-calendar period. The rounding module
-floors each monthly share to cents and assigns the remainder to the last covered month, so
-the last period covering that year receives the remaining cents. For a lease
+rounds each monthly share's magnitude down to cents and assigns the signed remainder
+to the last covered month, so the last period covering that year receives the remaining cents. For a lease
 covering the whole calendar year with 1,200 euros paid, January–June and
 July–December credit 600 euros each; April–December credits
 900 euros. For 1,000 euros, January–November credit 83.33 euros each and December
 83.37 euros. A full calendar year still credits the full amount. Month shares
 do not depend on other drafts or finalization order while lease dates and booked payments are fixed;
-later statements cannot change earlier finalized shares. After a later lease-end
-edit, each year/month bucket uses already finalized snapshot credits in place
-of those windows' current shares, never reducing a new credit below zero. The last
-open statement takes the remainder: 300 euros already finalized from
+later statements cannot change earlier finalized shares. After a lease-end edit
+or a change to booked advances, each year/month bucket uses already finalized
+snapshot credits in place of those windows' current shares. The last open
+statement takes the signed remainder, even when a refund brings the bucket to
+zero. For example, 300 euros already finalized from
 a 1,200-euro annual payment leaves 900 euros after entering a September end;
 245.16 euros already finalized from three 100-euro payments through 14 March
 leaves 54.84 euros after entering an end on 20 March. Frozen credits are read from
@@ -245,9 +246,10 @@ MANUAL statements and never invents a historical credit breakdown.
 
 After a date edit, several open drafts may each include the same outstanding
 difference. Finalizing one freezes its credit; another stale draft must be
-re-derived before finalization (`derived_total_stale`, HTTP 422). Late bookings
-assigned to an already finalized month likewise enter a later statement through
-the frozen-credit difference; the earlier snapshot stays unchanged.
+re-derived before finalization (`derived_total_stale`, HTTP 422). Late bookings,
+including standalone refunds assigned to an already finalized month, enter
+a later statement in the assigned year through the frozen-credit difference.
+The earlier snapshot stays unchanged.
 
 Automatic form prefill only applies while both date fields are empty. A delayed
 period-offer response preserves dates the user has already entered; choosing an
@@ -879,13 +881,17 @@ documents the retained text.
 
 ```
 expected (total_cost)      = Σ rounded tenant shares of all apportionable cost categories
-actual (advance_payments)  = sum of the tenant's operating cost advance payments in the period
-balance                    = total_cost − advance_payments_total
+actual (operating, heating) = each component's net advance payments in the period
+balance                     = total_cost − advance_payments_total − heating_advance_payments_total
    balance > 0  → additional payment (tenant pays)
    balance < 0  → credit (tenant is refunded)
 ```
 
-`balance`, `total_cost`, `advance_payments_total` are on the `settlement_run` (header) **and** as `settlement_line` (`ADVANCE_PAYMENT`, `BALANCE`) for PDF/verification.
+The settlement subtracts the signed operating and heating advance totals
+from the respective costs. With 50 euros received and 70 euros refunded for
+one component, the derived advance is −20 euros and the refund increases the
+balance due accordingly. The run stores both totals and the balance. Its
+`ADVANCE_PAYMENT` and `BALANCE` lines carry the same values into the PDF.
 
 ### 7.2 Origin of the advance payment total — [DECISION], M3 manual
 

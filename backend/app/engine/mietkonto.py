@@ -55,6 +55,7 @@ from app.engine.rounding import CENT, annual_advance_share_for_period, distribut
 PT_KALTMIETE = "KALTMIETE"
 PT_NK_VORAUSZAHLUNG = "NK_VORAUSZAHLUNG"
 PT_HK_VORAUSZAHLUNG = "HK_VORAUSZAHLUNG"
+_TENANT_ADVANCE_TYPES = frozenset({PT_NK_VORAUSZAHLUNG, PT_HK_VORAUSZAHLUNG})
 PT_HAUSGELD_VORSCHUSS = "HAUSGELD_VORSCHUSS"
 PT_RUECKLAGENANTEIL = "RUECKLAGENANTEIL"
 PT_SONDERZAHLUNG = "SONDERZAHLUNG"
@@ -642,11 +643,9 @@ def derive_advance_total(
     SAME value the MANUAL path would carry, so feeding it through the unchanged
     M3/M4 engine yields a bit-identical result (m6 §6.7 / I6-E).
 
-    Uses `amount` (positive), NOT signed_amount: an advance payment is an IN;
-    its correction is a Storno row that is excluded together with its original
-    (Variante A), so the positive sum is already net-correct. (Defensive: a
-    bare OUT advance with no reversal link would still be summed as +amount;
-    such a row is not how a Storno is modeled here -- Storni carry reverses_id.)
+    Tenant advance refunds reduce the corresponding NK or HK total. Hausgeld
+    uses gross amounts here, with direction applied separately by its period
+    derivation.
     """
     total = Decimal("0.00")
     for p in payments:
@@ -662,13 +661,13 @@ def derive_advance_total(
             continue
         if filt.owner_profile_id is not None and p.owner_profile_id != filt.owner_profile_id:
             continue
-        total += p.amount
+        total += p.signed_amount if p.payment_type in _TENANT_ADVANCE_TYPES else p.amount
     return _money(total)
 
 
 @dataclass(frozen=True)
 class AdvanceCredit:
-    """Frozen credit for one assigned year/month bucket of this lease's NK."""
+    """Frozen credit for one assigned year/month bucket."""
 
     year: int
     month: int | None
@@ -694,10 +693,11 @@ def derive_advance_credits_for_period(
     """
     if not period_start.year <= filt.year <= period_end.year:
         return ()
+    signed = bool(filt.types & _TENANT_ADVANCE_TYPES)
     credits = []
     for month in [*range(1, 13), None]:
         total = derive_advance_total([p for p in payments if p.period_month == month], filt)
-        if not total:
+        if not total and not (signed and finalized_credits):
             continue
 
         def share(start, end):
@@ -712,7 +712,10 @@ def derive_advance_credits_for_period(
             disjoint = previous.period_end < period_start or previous.period_start > period_end
             if previous.year == filt.year and previous.month == month and disjoint:
                 amount += share(previous.period_start, previous.period_end) - previous.amount
-        credits.append(AdvanceCredit(filt.year, month, period_start, period_end, max(Decimal("0.00"), amount)))
+        # A refund can exhaust a bucket and still leave a frozen credit to offset.
+        if total or amount:
+            credit = amount if signed else max(Decimal("0.00"), amount)
+            credits.append(AdvanceCredit(filt.year, month, period_start, period_end, credit))
     return tuple(credits)
 
 

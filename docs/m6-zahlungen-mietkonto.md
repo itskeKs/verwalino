@@ -402,13 +402,18 @@ This is the most correctness-critical place in M6 and the reason why it is desig
 
 ```
 derive_advance_total(payments, filter) -> Decimal
-   = Σ amount  over all payments with:
-       status = 'booked'  AND  reversed_by_id IS NULL  (not reversed)
+   = Σ contribution  over all payments with:
+       status = 'booked'  AND  reversed_by_id IS NULL
+       AND reverses_id IS NULL
        AND payment_type ∈ filter.types
        AND period_year  = filter.year
        AND (filter.lease_agreement_id IS NULL OR lease_agreement_id = filter.lease_agreement_id)
        AND (filter.owner_profile_id  IS NULL OR owner_profile_id  = filter.owner_profile_id)
 ```
+
+The contribution is signed for tenant advances: incoming payments add their
+amount and standalone refunds subtract it. Other payment types use their gross
+amount here. The Hausgeld period derivation applies direction separately.
 
 - **Pure function** (`app/engine/mietkonto.py`), `Decimal` in/out, no DB — testable, deterministic. The service loads the matching `payment` rows (repository query with exactly this filter) and passes them to the function; the function sums. **No bank matching, no parsing** (SDD §3).
 - **No double counting — guaranteed by three properties:** (1) every payment has **exactly one** `payment_type` and **exactly one** period reference (`period_year`) and addressee; (2) **reversed** payments (`reversed_by_id IS NOT NULL`) and reversal rows are treated consistently (either both out, or both in — net zero; see §6.6); (3) the settlement filters are **disjoint** per quantity (operating cost advance payment ≠ Hausgeld advance ≠ base rent). A payment can thus flow into **at most one** settlement quantity.
@@ -426,8 +431,12 @@ remain operating-cost payments.
 The statement retains `advance_payments_total` / `advance_payments_source`
 and adds `heating_advance_payments_total` / `heating_advance_payments_source`.
 Each source is MANUAL or DERIVED independently. The existing derivation action
-fills both from their matching active booked payment types. Year/month buckets,
-lease bounds, reversals and frozen credits apply separately to each type.
+fills both from their matching active booked payment types. A 50-euro receipt
+and a 70-euro standalone refund assigned to the same period give a derived
+total of −20 euros for that component (#216). Year/month buckets, lease bounds,
+reversals and frozen credits apply separately to each type. A later derivation
+accounts for the signed difference from disjoint finalized credits, including
+when the current bucket nets to zero. Finalized snapshots retain their amounts.
 Both totals default to unknown; missing totals block computation, coverage and
 finalization. Finalization freezes both totals and sources.
 Manual heating totals use the same signed numeric carrier as operating totals;
