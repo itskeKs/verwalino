@@ -48,7 +48,7 @@ pending; registration stays closed and legal review remains with #26. See the
 | Create/edit property (rental/WEG/SEV/mixed) | ✅ including reference-protected deletion | `api/properties.py`, `pages/PropertiesPage.tsx`, T56, [usage](operations/selector-pages.md) |
 | Year built, total area | ✅ optional, stored explicitly | `models/property.py` (`construction_year`, `total_area`), `pages/PropertyDetailPage.tsx`, T55, [usage](operations/selector-pages.md) |
 | Photos | ❌ | – |
-| Units (type, area, heated area) | ✅ | `api/units.py`, `pages/PropertyDetailPage.tsx` |
+| Units (name, type, area, heated area) | ✅ names over 50 characters are rejected when editing; the form keeps the entered name and shows the error at the field | `api/units.py`, `pages/PropertyDetailPage.tsx`, #214 |
 | Record MEA (co-ownership share) | ✅ scale confirmed by hand ("MEA-Skala bestätigen") or via declaration import; units need a confirmed scale (409 otherwise). Property details offer confirmation and the unit MEA field for WEG/MISCH/SEV, and for MIET only with an existing recorded unit MEA (including zero); unconfirmed status reads "Skala noch nicht bestätigt" | `api/properties.py` (`POST /{id}/mea-scale/confirm`), `api/units.py`, `pages/PropertyDetailPage.tsx`, T05 |
 | Declaration of division (Teilungserklärung) import (AI, review) | ✅ needs feature flag and OpenAI key | `api/declaration_imports.py`, `workers/declaration_import.py`, `pages/DeclarationImportPage.tsx` |
 | Property knowledge with sources | ✅ | `services/property_knowledge_service.py`, `pages/PropertyKnowledgePage.tsx` |

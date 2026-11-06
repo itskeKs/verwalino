@@ -339,6 +339,8 @@ New screens follow these page structures and use a German noun as their `h1`.
   scroll anchoring so closing an inline form does not pull the view to the top. A route
   change starts a fresh detail state; a confirmed loss of access clears protected data. Refresh
   errors stay inline beside the retained data. Initial errors and not-found replace the page.
+  When editing a unit, a name over 50 characters shows “Die Bezeichnung darf höchstens 50 Zeichen lang sein.”
+  below “Nummer *”. The field retains the entered name and clears the error when edited.
   Property details offer the MEA scale confirmation and unit MEA field for WEG, MISCH and SEV;
   MIET offers them only when an existing unit has a recorded MEA (including zero). Unset MEA
   is not a recorded share. The confirmation card appears only for writers with an unconfirmed
@@ -1313,6 +1315,14 @@ dashboard passes at both widths.
 
 The property-detail images focus on the units card at 360 and 1280 px, using twelve
 long synthetic unit rows from `features/responsive_property_dashboard.feature`.
+The unit editor's name error is shown in the #214 captures below. Both pairs
+show the same rejected 51-character input on synthetic data.
+
+| Unit editor | 1280 px | 360 px |
+|---|---|---|
+| Before: no field error | [Desktop](docs/assets/design/unit-name-validation/before-1280.png) | [Phone](docs/assets/design/unit-name-validation/before-360.png) |
+| After: inline error | [Desktop](docs/assets/design/unit-name-validation/after-1280.png) | [Phone](docs/assets/design/unit-name-validation/after-360.png) |
+
 Earlier dashboard due-task captures from that feature remain in `issue-52-before-*`.
 The upload card is captured in
 `detail-upload-360.png` and `detail-upload-desktop.png`. Matching `issue-52-before-*`

@@ -95,3 +95,8 @@ Properties have optional **Baujahr** (year built) and **Gesamtfläche (m²)** (t
 Decimal, not invented from units. Empty entries remain unknown.
 The [UI-only acceptance](../../DEPLOY.md#editable-master-metadata-t55-local-head-0136) verifies the real
 rename, 1984 / 1.234,56 m² and unchanged sources after desktop/phone reload.
+
+To rename a unit, open the property and select **Bearbeiten** in the unit row.
+If **Nummer \*** exceeds 50 characters, the form keeps the entered name and shows
+“Die Bezeichnung darf höchstens 50 Zeichen lang sein.” below the field. Shorten
+the name and select **Speichern** again.
