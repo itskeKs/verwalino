@@ -337,6 +337,55 @@ New screens follow these page structures and use a German noun as their `h1`.
   open as a card above the list; small edits of master data open `MasterDataEditor` as a dialog.
   Selects, checkboxes and file inputs are the native elements.
 
+Form-grid tracks, direct children and fieldsets may shrink below their content's
+intrinsic width. Native controls stay within their grid cell at 360 px even when
+an unselected option has a long property name. Tasks filters, Letters forms and person document uploads
+use this shared behavior. Standalone native selectors in Reports, Costs, Special
+Levies, Meetings, Resolution Register and Payments are capped at their available
+width while retaining their natural desktop width when it fits. Option text remains complete in the native list, and focus
+indicators remain visible without horizontal page scrolling.
+
+The Tasks create/edit dialog allows both its form grid item and its fieldset to
+shrink with `min-w-0`. This bounds the native property selector and surrounding
+labels to the dialog, including before selection; page width alone does not detect
+clipping inside a modal. The existing single-column form, values and Save/Cancel
+behavior remain unchanged. These synthetic long-selection captures use 360 × 800
+and 1280 × 900 viewports with keyboard focus on the object selector.
+
+| Tasks dialog | 1280 px before / after | 360 px before / after |
+|---|---|---|
+| Create | [before](docs/assets/design/property-selectors/task-dialog-create-before-1280.png) · [after](docs/assets/design/property-selectors/task-dialog-create-after-1280.png) | [before](docs/assets/design/property-selectors/task-dialog-create-before-360.png) · [after](docs/assets/design/property-selectors/task-dialog-create-after-360.png) |
+| Edit | [before](docs/assets/design/property-selectors/task-dialog-edit-before-1280.png) · [after](docs/assets/design/property-selectors/task-dialog-edit-after-1280.png) | [before](docs/assets/design/property-selectors/task-dialog-edit-before-360.png) · [after](docs/assets/design/property-selectors/task-dialog-edit-after-360.png) |
+
+The following captures use synthetic long and short WEG properties on the disposable
+test database. Each selector has keyboard focus; long-name captures follow keyboard
+selection. Desktop is 1280 × 900 px and phone is 360 × 900 px.
+
+| Property selector | Desktop before / after | 360 px before / after |
+|---|---|---|
+| Tasks, unselected | [before](docs/assets/design/property-selectors/before-tasks-empty-1280.png) · [after](docs/assets/design/property-selectors/after-tasks-empty-1280.png) | [before](docs/assets/design/property-selectors/before-tasks-empty-360.png) · [after](docs/assets/design/property-selectors/after-tasks-empty-360.png) |
+| Tasks, long name | [before](docs/assets/design/property-selectors/before-tasks-long-1280.png) · [after](docs/assets/design/property-selectors/after-tasks-long-1280.png) | [before](docs/assets/design/property-selectors/before-tasks-long-360.png) · [after](docs/assets/design/property-selectors/after-tasks-long-360.png) |
+| Letters, unselected | [before](docs/assets/design/property-selectors/before-letters-empty-1280.png) · [after](docs/assets/design/property-selectors/after-letters-empty-1280.png) | [before](docs/assets/design/property-selectors/before-letters-empty-360.png) · [after](docs/assets/design/property-selectors/after-letters-empty-360.png) |
+| Letters, long name | [before](docs/assets/design/property-selectors/before-letters-long-1280.png) · [after](docs/assets/design/property-selectors/after-letters-long-1280.png) | [before](docs/assets/design/property-selectors/before-letters-long-360.png) · [after](docs/assets/design/property-selectors/after-letters-long-360.png) |
+| Reports, unselected | [before](docs/assets/design/property-selectors/before-reports-empty-1280.png) · [after](docs/assets/design/property-selectors/after-reports-empty-1280.png) | [before](docs/assets/design/property-selectors/before-reports-empty-360.png) · [after](docs/assets/design/property-selectors/after-reports-empty-360.png) |
+| Reports, long name | [before](docs/assets/design/property-selectors/before-reports-long-1280.png) · [after](docs/assets/design/property-selectors/after-reports-long-1280.png) | [before](docs/assets/design/property-selectors/before-reports-long-360.png) · [after](docs/assets/design/property-selectors/after-reports-long-360.png) |
+
+Additional affected selectors use the same synthetic records and keyboard checks.
+Costs and expanded cost-form after captures also include a saved `1250.00`
+gardening cost for each property. The table remains populated after filtering and
+scrolls within its card; the original before captures predate these cost fixtures.
+The Payments option combines the account label and full property name.
+
+| View, long selection | Desktop before / after | 360 px before / after |
+|---|---|---|
+| Costs | [before](docs/assets/design/property-selectors/before-costs-long-1280.png) · [after](docs/assets/design/property-selectors/after-costs-long-1280.png) | [before](docs/assets/design/property-selectors/before-costs-long-360.png) · [after](docs/assets/design/property-selectors/after-costs-long-360.png) |
+| Special Levies | [before](docs/assets/design/property-selectors/before-levies-long-1280.png) · [after](docs/assets/design/property-selectors/after-levies-long-1280.png) | [before](docs/assets/design/property-selectors/before-levies-long-360.png) · [after](docs/assets/design/property-selectors/after-levies-long-360.png) |
+| Meetings | [before](docs/assets/design/property-selectors/before-meetings-long-1280.png) · [after](docs/assets/design/property-selectors/after-meetings-long-1280.png) | [before](docs/assets/design/property-selectors/before-meetings-long-360.png) · [after](docs/assets/design/property-selectors/after-meetings-long-360.png) |
+| Resolution Register | [before](docs/assets/design/property-selectors/before-resolutions-long-1280.png) · [after](docs/assets/design/property-selectors/after-resolutions-long-1280.png) | [before](docs/assets/design/property-selectors/before-resolutions-long-360.png) · [after](docs/assets/design/property-selectors/after-resolutions-long-360.png) |
+| Payments account | [before](docs/assets/design/property-selectors/before-payments-long-1280.png) · [after](docs/assets/design/property-selectors/after-payments-long-1280.png) | [before](docs/assets/design/property-selectors/before-payments-long-360.png) · [after](docs/assets/design/property-selectors/after-payments-long-360.png) |
+| Person document upload | [before](docs/assets/design/property-selectors/before-person-long-1280.png) · [after](docs/assets/design/property-selectors/after-person-long-1280.png) | [before](docs/assets/design/property-selectors/before-person-long-360.png) · [after](docs/assets/design/property-selectors/after-person-long-360.png) |
+| Expanded cost form | [before](docs/assets/design/property-selectors/before-costform-long-1280.png) · [after](docs/assets/design/property-selectors/after-costform-long-1280.png) | [before](docs/assets/design/property-selectors/before-costform-long-360.png) · [after](docs/assets/design/property-selectors/after-costform-long-360.png) |
+
 The “Umsatz aufteilen” dialog uses the same form grid. Each split row is a
 full-width card with labels above its fields, two columns from 768 px and one
 column below. The lease/owner target and note span the row. Fieldsets may shrink
