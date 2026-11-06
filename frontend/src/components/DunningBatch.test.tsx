@@ -48,7 +48,7 @@ it("loads nothing while closed, requires explicit input and creates only the sel
   await submitThree();
   await screen.findByRole("link", { name: "Entwurf notice0 öffnen" });
   expect(api.post).toHaveBeenLastCalledWith("/api/dunning/batch", {
-    period_start: "2026-01-01", period_end: "2026-12-31", reference_date: "2026-10-01", threshold: "0.01", grace_days: 0, base_interest_rate: null,
+    period_start: "2026-01-01", period_end: "2026-12-31", reference_date: "2026-10-01", threshold: "0.01", grace_days: 0,
     lease_agreement_ids: candidates.slice(0, 3).map(c => c.lease_agreement_id), expected_source_digest: "digest", request_id: expect.any(String),
   });
   expect(screen.getByText(/nicht ausgestellt/)).toBeInTheDocument();
@@ -175,16 +175,12 @@ it("ignores a late preview after a session switch and after unmount", async () =
   expect(api.post).toHaveBeenCalledTimes(3);
 });
 
-it("requires an explicit interest rate only when interest is requested", async () => {
+it("previews using the organization settings without a manual rate", async () => {
   show(); await prepare();
-  fireEvent.change(screen.getByLabelText("Verzugszinsen"), { target: { value: "yes" } });
-  expect(screen.queryByRole("checkbox")).toBeNull();
-  expect(screen.getByLabelText("Basiszinssatz (%)")).toHaveValue("");
-  expect(screen.getByRole("button", { name: "Mahnlauf prüfen" })).toBeDisabled();
-  fireEvent.change(screen.getByLabelText("Basiszinssatz (%)"), { target: { value: "-0,1250" } });
+  expect(screen.queryByLabelText("Basiszinssatz (%)")).toBeNull();
   fireEvent.click(screen.getByRole("button", { name: "Mahnlauf prüfen" }));
   await screen.findByRole("checkbox", { name: /Person 1/ });
-  expect(api.post).toHaveBeenLastCalledWith("/api/dunning/batch/preview", expect.objectContaining({ base_interest_rate: "-0.1250" }));
+  expect(vi.mocked(api.post).mock.lastCall?.[1]).not.toHaveProperty("base_interest_rate");
 });
 
 it("rejects malformed monetary rows visibly instead of showing a partial selectable preview", async () => {

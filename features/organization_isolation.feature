@@ -8,17 +8,32 @@ Feature: Organization isolation
     And each organization has a property, a person and a bank account of its own
     And an administrator of "Verwaltung Alpha" is signed in
 
+  Scenario: Another organization cannot read or replace household history
+    Given a unit with saved household history belongs to Verwaltung Alpha
+    When Verwaltung Beta tries to read or replace that unit's households
+    Then the households are not found and Verwaltung Alpha retains its rows
+
+  Scenario: Another organization cannot read or change a commercial preallocation
+    Given a shop of 60 square metres and flats of 75 and 65 square metres with annual waste costs of 1200 euros
+    When Verwaltung Beta tries to open and calculate Alpha's commercial statement
+    Then the commercial statement is not found and Alpha's allocation rule is unchanged
+
   Scenario: Another organization's WEG financial details look missing
     Given a payment, economic plan and annual WEG settlement belong to Verwaltung Alpha
     When Verwaltung Beta opens those financial details and their input-owner list
     Then the foreign financial records have the same German explanation as missing records
+
+  Scenario: Another organization cannot read an owner's due-date schedule
+    Given a payment, economic plan and annual WEG settlement belong to Verwaltung Alpha
+    When Verwaltung Beta requests Alpha's owner ledger at a selected due-date cutoff
+    Then the foreign owner schedule looks missing and exposes no financial amounts
 
   Scenario: Another organization's empty annual drafts cannot be deleted
     Given an empty asset report belongs to Verwaltung Alpha
     When Verwaltung Beta tries to delete the empty annual draft
     Then the annual draft is not found and remains available to Verwaltung Alpha
 
-  Scenario: Another organization cannot read or change separate lease advances
+  Scenario: Another organization cannot read a dated rent account or change separate lease advances
     Given a lease with 750 euros rent, 150 euros operating and 90 euros heating advance
     When another organization requests the lease's advance history and statement actions
     Then all separate advance requests are reported as not found
@@ -110,3 +125,19 @@ Feature: Organization isolation
     Given an audited draft reserve contribution correction belongs to Verwaltung Alpha
     When Verwaltung Beta tries to reduce and delete that contribution correction
     Then the reserve contribution correction is not found and remains unchanged
+
+  Scenario: Another organization's special levy authority cannot be read or linked
+    Given Gartenstraße 5 has two owners and an adopted roof repair resolution
+    When the manager creates the roof repair levy due on 1 July 2026
+    And Verwaltung Beta tries to create, read and link that special levy
+    Then the special levy authority is not found and its frozen obligation is unchanged
+
+  Scenario: A bank debit cannot cover another organization's cost
+    Given each organization has a confirmed cost and an outgoing bank debit
+    When Verwaltung Alpha tries to assign its debit to Verwaltung Beta's cost
+    Then the foreign cost is not found and both debits remain new
+
+  Scenario: Reminder policy belongs to the signed-in organization
+    When Verwaltung Alpha saves its own dunning settings
+    And Verwaltung Beta saves different dunning settings
+    Then each administrator reads only their own dunning settings

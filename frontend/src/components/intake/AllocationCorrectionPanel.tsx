@@ -3,23 +3,53 @@ import { ApiError } from '../../api/client';
 import { allocationCorrectionsApi, visualAllocationApi, type VisualCorrectionCommand, type CorrectionCommand, type CorrectionPreview, type CorrectionResult } from '../../api/allocationAdoptions';
 import { AllocationCorrectionPreview } from './AllocationCorrectionPreview';
 import { CorrectionFollowups } from './CorrectionFollowups';
+import { exactCents } from '../../api/allocationProposals';
+import { formatEuro } from '../../lib/utils';
 
 type FinancialCorrection = CorrectionCommand | VisualCorrectionCommand;
 
 export function Confirmation({ preview, reviewId, disabled, submit, replacement = false }: { replacement?: boolean; preview: CorrectionPreview; reviewId: string; disabled: boolean; submit: (body: FinancialCorrection) => void }) {
   const [reason, setReason] = useState('');
   const [costs, setCosts] = useState(false); const [disclosure, setDisclosure] = useState(false); const [followups, setFollowups] = useState(false);
+  const [successors, setSuccessors] = useState<Record<string, string>>({});
+  const covered = (preview.old?.costs ?? []).flatMap(cost =>
+    cost.cost_entry_id && cost.bank_covered_amount ? [{ id: cost.cost_entry_id, position: cost.position, amount: cost.bank_covered_amount }] : []);
+  const proposed = (preview.proposed?.costs ?? []).flatMap(line =>
+    line.allocation_line_id ? [{ id: line.allocation_line_id, position: line.position, amount: line.gross_amount }] : []);
+  const inherited = new Map<string, bigint>();
+  for (const cost of covered) {
+    const line = successors[cost.id];
+    if (line) inherited.set(line, (inherited.get(line) ?? 0n) + (exactCents(cost.amount) ?? 0n));
+  }
+  const overCapacity = proposed.some(line => inherited.has(line.id) && inherited.get(line.id)! > (exactCents(line.amount) ?? 0n));
+  const hasMappings = covered.every(cost => proposed.some(line => successors[cost.id] === line.id));
   const visual = preview.source_variant === 'visual';
   return <div className="space-y-3">
     <p>Die Bestätigung ersetzt alle bisherigen Teilkosten gemeinsam. Frühere Kosten und Belegversionen bleiben erhalten. Betroffene Finanzvorgänge müssen anschließend gesondert bearbeitet werden.</p>
     {visual && <p>Der bereits aufbewahrte Auszug bleibt der Beleg für diese Korrektur, auch nach Widerruf seiner vorübergehenden Freigabe.</p>}
     <fieldset className="min-w-0 space-y-3" disabled={disabled}>
+      {covered.length > 0 && <div className="space-y-2">
+        <h4>Bankumsätze übernehmen</h4>
+        <p>Wählen Sie für jede bereits zugeordnete Position den passenden neuen Teil. Der Bankumsatz bleibt mit der bisherigen Position verknüpft.</p>
+        {covered.map(cost => <label key={cost.id} className="block">
+          Nachfolger für Teil {cost.position} ({formatEuro(cost.amount)} zugeordnet)
+          <select className="block w-full min-w-0 rounded-md border border-input bg-background px-3 py-2"
+            value={successors[cost.id] ?? ''} onChange={event => setSuccessors(previous => ({ ...previous, [cost.id]: event.target.value }))}>
+            <option value="">Neuen Teil wählen</option>
+            {proposed.map(line => <option key={line.id} value={line.id}
+              disabled={(exactCents(line.amount) ?? 0n) < (exactCents(cost.amount) ?? 0n)}>
+              Teil {line.position} · {formatEuro(line.amount)}
+            </option>)}
+          </select>
+        </label>)}
+        {overCapacity && <p role="alert" className="error-text">Die übernommenen Bankumsätze übersteigen den Betrag eines neuen Teils.</p>}
+      </div>}
       <label className="block">{replacement ? 'Begründung der Belegersetzung' : 'Begründung der Korrektur'}<textarea className="block w-full min-w-0 rounded-md border border-input bg-background px-3 py-2" maxLength={2000} value={reason} onChange={event => { setReason(event.target.value); setCosts(false); setDisclosure(false); setFollowups(false); }} /></label>
       <label className="flex items-start gap-2"><input type="checkbox" checked={costs} onChange={event => setCosts(event.target.checked)} />Alle neuen Teilkosten, Beträge und Verteilungen geprüft; gemeinsam ersetzen.</label>
       <label className="flex items-start gap-2"><input type="checkbox" checked={disclosure} onChange={event => setDisclosure(event.target.checked)} />{visual ? 'Aufbewahrten Auszug geprüft; dieselben Seiten als dauerhaften Beleg der Korrektur bestätigen.' : replacement ? 'Bisheriges und neues Original verglichen; der neue Beleg ersetzt den bisherigen und wird im Abrechnungskreis dauerhaft aufbewahrt.' : 'Vollständiges Original geprüft; neue Belegversion im Abrechnungskreis freigeben.'}</label>
       <label className="flex items-start gap-2"><input type="checkbox" checked={followups} onChange={event => setFollowups(event.target.checked)} />Alle angezeigten Folgen geprüft; erforderliche Folgearbeiten bleiben offen.</label>
     </fieldset>
-    <button className="btn" disabled={disabled || !reason.trim() || !costs || !disclosure || !followups || !preview.preview_digest || (visual && !preview.visual_content_sha256)} onClick={() => submit({ treatment_review_id: reviewId, preview_digest: preview.preview_digest!, reason: reason.trim(), costs_confirmed: true, ...(visual ? { visual_content_sha256: preview.visual_content_sha256!, retained_visual_source_reviewed: true as const } : { whole_original_disclosure_reviewed: true as const }), downstream_followups_reviewed: true })}>{replacement ? 'Beleg und alle Teilkosten verbindlich ersetzen' : 'Gesamte Aufteilung verbindlich korrigieren'}</button>
+    <button className="btn" disabled={disabled || !reason.trim() || !costs || !disclosure || !followups || !hasMappings || overCapacity || !preview.preview_digest || (visual && !preview.visual_content_sha256)} onClick={() => submit({ treatment_review_id: reviewId, preview_digest: preview.preview_digest!, reason: reason.trim(), costs_confirmed: true, ...(visual ? { visual_content_sha256: preview.visual_content_sha256!, retained_visual_source_reviewed: true as const } : { whole_original_disclosure_reviewed: true as const }), downstream_followups_reviewed: true, ...(covered.length ? { bank_coverage_successors: successors } : {}) })}>{replacement ? 'Beleg und alle Teilkosten verbindlich ersetzen' : 'Gesamte Aufteilung verbindlich korrigieren'}</button>
   </div>;
 }
 

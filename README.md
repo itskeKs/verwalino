@@ -62,7 +62,7 @@ Screenshots show demo data.
 - **WEG:** economic plans and prior-year proposals, annual settlements and PDFs,
   paid owner contributions (Hausgeld), asset reports, special levies, day-accurate
   owner changes, meetings, minutes, resolution register, and invitation PDFs.
-- **Dunning, deadlines, tasks:** three dunning levels, fees and default interest,
+- **Dunning, deadlines, tasks:** three dunning levels, organization-specific fees and optional automatic default interest,
   selected draft batches, a derived deadline monitor, and tasks with follow-ups
   from property and unit pages and on the dashboard.
 - **Documents, communication, reports:** property/unit/person documents, letter

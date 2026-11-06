@@ -1,4 +1,5 @@
 """Atomic cost adoption with trusted verification of bytes actually read by URI."""
+import json
 import uuid
 from fastapi import HTTPException
 from sqlalchemy import text
@@ -10,6 +11,10 @@ from app.services.visual_extract_service import verified_bytes
 
 
 class AllocationAdoptionService(IntakeService):
+    async def _set_bank_coverage_successors(self, mapping):
+        await self.db.execute(text("SELECT set_config('app.bank_cost_mapping',:mapping,true)"),
+            {'mapping': json.dumps({str(cost): str(line) for cost, line in mapping.items()})})
+
     async def preview(self,target):
         return await self.call('SELECT allocation_adoption_preview(:org,:target)',target=target)
 
@@ -82,6 +87,7 @@ class AllocationAdoptionService(IntakeService):
         return await self.call('SELECT visual_allocation_correction_preview(:org,:predecessor,:target)',predecessor=predecessor,target=target)
 
     async def correct_visual(self,predecessor,body,key,expected):
+        await self._set_bank_coverage_successors(body.bank_coverage_successors)
         params={'predecessor':predecessor,'target':body.treatment_review_id,'hash':body.visual_content_sha256,'expected':expected,
             'request':key,'preview':body.preview_digest,'reason':body.reason,'confirmed':body.costs_confirmed,
             'retained':body.retained_visual_source_reviewed,'followups':body.downstream_followups_reviewed}
@@ -99,6 +105,7 @@ class AllocationAdoptionService(IntakeService):
         return {'receipt':receipt,'allocation':await self.detail(uuid.UUID(receipt['successor_id']))}
 
     async def correct(self,predecessor,body,key,expected,*,replacement=False):
+        await self._set_bank_coverage_successors(body.bank_coverage_successors)
         params={'predecessor':predecessor,'target':body.treatment_review_id,'expected':expected,'request':key,'preview':body.preview_digest,
           'reason':body.reason,'confirmed':body.costs_confirmed,'disclosed':body.whole_original_disclosure_reviewed,
           'followups':body.downstream_followups_reviewed}

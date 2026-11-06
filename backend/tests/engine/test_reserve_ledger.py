@@ -74,7 +74,8 @@ def test_asset_report_selects_late_cash_and_adjustments_by_structured_type():
         reserve_contributions_total=D('0'), bank_balances=(), receivables=(), payables=()))
     # Changing human-readable notes must not change financial row selection.
     lines = [replace(line, note='Reviewed cash component') for line in result.lines]
-    run = SimpleNamespace(period_start=date(2026, 1, 1), period_end=date(2026, 12, 31), snapshot_sha256=None)
+    run = SimpleNamespace(period_start=date(2026, 1, 1), period_end=date(2026, 12, 31),
+                          snapshot_sha256=None, snapshot_payload=None)
     html = build_vermoegensbericht_html(run, lines)
     assert 'Nachträgliche Buchungen zum abgeschlossenen Jahr' in html
     assert '999,00 EUR' in html and '-99,00 EUR' in html and '26.900,00 EUR' in html

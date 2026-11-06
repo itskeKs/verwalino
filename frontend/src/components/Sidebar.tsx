@@ -1,11 +1,12 @@
 /**
  * Modern sidebar navigation (UI-Kit) -- dark rail with grouped, icon-led links.
  *
- * Desktop (md+): static, always visible. Mobile: off-canvas, slides in when
- * `open`. Admin-only links appear only for OWNER_ADMIN.
+ * Desktop (md+): static, always visible. Mobile: inside the shell's modal drawer.
+ * Admin-only links appear only for OWNER_ADMIN.
  */
 
 import { NavLink } from "react-router-dom";
+import type { ReactNode } from "react";
 import {
   LayoutDashboard,
   CalendarClock,
@@ -33,8 +34,8 @@ import { useAuth } from "../auth/useAuth";
 import { cn } from "../lib/utils";
 
 interface Props {
-  open: boolean;
   onClose: () => void;
+  closeControl?: ReactNode;
 }
 
 interface NavItem {
@@ -125,17 +126,12 @@ const GROUPS: NavGroup[] = [
   },
 ];
 
-export function Sidebar({ open, onClose }: Props) {
+export function Sidebar({ onClose, closeControl }: Props) {
   const { session } = useAuth();
   const isAdmin = session?.role === "OWNER_ADMIN";
 
   return (
-    <aside
-      className={cn(
-        "fixed inset-y-0 left-0 z-40 flex w-64 flex-col bg-sidebar text-sidebar-foreground transition-transform duration-200 md:static md:translate-x-0",
-        open ? "translate-x-0" : "-translate-x-full",
-      )}
-    >
+    <aside className="flex h-full w-64 flex-col bg-sidebar text-sidebar-foreground">
       {/* Brand */}
       <div className="flex h-16 shrink-0 items-center gap-2.5 px-5">
         <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-sidebar-accent text-sidebar-accent-foreground">
@@ -144,6 +140,7 @@ export function Sidebar({ open, onClose }: Props) {
         <span className="text-[0.95rem] font-semibold tracking-tight text-white">
           Hausverwaltung
         </span>
+        {closeControl}
       </div>
 
       {/* Nav */}
@@ -161,7 +158,7 @@ export function Sidebar({ open, onClose }: Props) {
                 onClick={onClose}
                 className={({ isActive }) =>
                   cn(
-                    "flex items-center gap-3 rounded-md px-3 py-2 text-sm font-medium transition-colors",
+                    "flex items-center gap-3 rounded-md px-3 py-2 text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-sidebar-foreground",
                     isActive
                       ? "bg-sidebar-accent text-sidebar-accent-foreground shadow-sm"
                       : "text-sidebar-foreground/75 hover:bg-white/5 hover:text-white",

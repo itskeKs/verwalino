@@ -513,7 +513,16 @@ when supplied, otherwise the application version. Before sending, the pure
 scrubber removes bodies, user identities, frame locals and source snippets,
 and masks recognizable personal data, credentials and query values in messages
 and breadcrumbs. The same text filter protects formatted logs; SQLAlchemy hides
-bound parameters. No person directory is loaded: names are matched heuristically,
+bound parameters. Canonical hexadecimal UUID spans (`8-4-4-4-12`, case-insensitive)
+are excluded from IBAN and phone matching so diagnostic identifiers, including
+all-numeric UUIDs, remain complete. Phone matching treats excluded UUID edges as
+token boundaries and retains surrounding phone-grammar separators, including
+whitespace, while masking adjacent phone numbers. Other
+IBAN-shaped candidates are conservatively redacted even with an invalid country,
+length or checksum; the filter does not validate bank details. UUID-shaped values
+in credentials or URL queries still follow the normal secret/query redaction.
+Text filtering remains bounded to the first 8192 characters per string.
+No person directory is loaded: names are matched heuristically,
 so this is not a guarantee for arbitrary names or unrecognized free text.
 Transport tests stay offline. Configuration, hosted GlitchTip and log lookup are
 documented in [DEPLOY.md](../DEPLOY.md#request-ids-and-optional-error-tracking).
@@ -1360,6 +1369,11 @@ Limits: a probe does not combine an own parent with a foreign child id, and fore
 ### 7.5 App shell & infrastructure (in parallel, roadmap M0)
 
 - **Responsive web app shell** (React/TS): navigation/layout skeleton (desktop + mobile), login page, org context display, placeholder navigation for later modules. No native app.
+- Below 768 px, navigation uses the existing Radix modal dialog: closed links are unmounted,
+  focus stays inside the open drawer, and Escape, its close control, backdrop or route selection
+  return focus to the toggle. Desktop navigation remains static and accessible; breakpoint changes
+  move focus to the visible navigation control. The real-browser regression is
+  [`mobile_navigation.feature`](../features/mobile_navigation.feature).
 - **Auth flow** end-to-end: login → session → tenant context in the backend.
 - **PDF rendering pipeline as a skeleton:** Set up HTML→PDF (Playwright) as a service/stub and wire it to a smoke test (e.g., “Hello-PDF”) — empty in domain terms, but present as infrastructure (roadmap M0). Actual settlement PDFs from M3.
 - **Object storage skeleton:** local FS with a checksum helper function (SHA-256) as a stub; encapsulate the interface so that S3 with Object Lock/WORM can later sit behind it (SDD §16). Domain voucher storage only in M2.

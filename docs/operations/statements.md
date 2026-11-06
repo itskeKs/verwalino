@@ -4,6 +4,23 @@ This page covers heating calculation and BK integration (T45/T46), annual proper
 figures (T39), BK batch drafts (T27), advance-payment proposals (T28), and prior-year
 economic plan proposals (T54).
 
+## Commercial preallocation in a tenant statement
+
+For a property with a commercial unit, open a draft and use “Vorwegabzug Gewerbe”
+on the relevant cost position. Select “Prozent” or “Festbetrag”, enter the value
+and a reason, then choose “Berechnen”. The rule is shared with every tenant
+statement using that cost position; calculate other drafts again to refresh
+their displayed results. “Vorschau” does not save changes. Selecting
+“Kein Vorwegabzug” and calculating removes an unfinalized rule.
+
+A 60 m² shop and 75/65 m² flats share EUR 1,200 waste as EUR 360 / 450 / 390
+without a rule. With 50% and “Gastronomie, Restmüll 2 × 1.100 l”, they pay
+EUR 600 / 321.43 / 278.57. Statements/PDFs show the actual commercial amount,
+reason and group distribution amount. The manager assesses the extra burden;
+the application does not infer it. Direct per-unit amounts and internal
+HeizkostenV positions do not offer this combination. After the first affected
+statement is finalized, the shared rule cannot be changed or removed.
+
 ## HeizkostenV calculation engine
 
 `app.engine.heizkosten.calculate_heating_costs(pools, context=...)` distributes
@@ -178,3 +195,42 @@ automatically create again. The [UI-only acceptance](../../DEPLOY.md#previous-ye
 verifies plan 2027 from actuals 2026,
 7,000 EUR costs + 6,000 EUR separate reserve as well as edited 7,100.25 + 6,500 EUR
 and desktop/smartphone reload.
+
+
+## Persons key and household history
+
+On each unit page, open “Haushalt bearbeiten”. Add dated “Belegung” counts and,
+where needed, “Leerstand” counts. A vacancy row suggests one person; edit it if
+necessary and save the history. Dates are inclusive. Each count continues until
+the next saved date in the same occupied/vacancy stream. Removing all rows and
+saving clears the history. Counts contain no household names.
+
+Persons-key tenant statements read this shared history, rather than per-statement
+head counts. The statement's structured-input panel links to each unit editor.
+The position note shows person-days; a household change or tenant change is
+weighted using the counts valid on those actual days. A saved zero is allowed.
+Missing occupied input blocks from the first uncovered day, even if a vacancy
+count exists, and missing vacancy input likewise needs an explicit saved value.
+The vacancy share remains with the owner.
+
+For 2026, Anna's two persons through May and three from June give 944 person-days.
+Bernd's one person from March gives 306, plus 59 vacant days at one person. A
+1,250-euro persons-key cost splits into 901.45 / 292.21 / 56.34 euros for
+Anna / Bernd / owner. Constant counts keep their previous relative shares.
+Existing finalized statements retain their frozen values and rendering after
+household edits. Upgrading to migration 0164 does not infer a history from older
+per-statement values; enter the history before making new persons-key calculations.
+
+
+The saved statement view includes “Leerstand – Eigentümeranteile” when its
+snapshot contains vacancy person-days. It directly lists each permitted unit's
+saved person-days and owner amount, including unit 2's 59 person-days and
+56.34 euros in the example above. These are stored results, rather than a
+subtraction from tenant amounts. Unit numbers also come from the snapshot;
+later household edits do not change them. A partial accounting scope discloses
+only its units. Existing PDFs remain unchanged.
+
+Migration 0165 retains larger raw person-day numerators and denominators. For
+two constant 1,370-person households in 2026, both preview and saved/finalized
+statements show 625.00 euros with bases 500,050 / 1,000,100. No input cap or quota
+normalization is required.

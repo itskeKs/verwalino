@@ -33,6 +33,49 @@ For write roles, the transactions page offers „Vorschlag übernehmen“ (accep
 suggestion), „Aufteilen“ (split), and „Ignorieren“ (ignore). Suggestions that
 require review open the split dialog; unclear amounts must be explicitly split
 completely there.
+
+For a debit, “Aufteilen” opens “Bestehende Kostenposition”. Select an active,
+confirmed cost of the bank account's property and choose “Kostenposition zuordnen”.
+The picker shows the remaining bank coverage and the original total, with the
+remaining amount after this assignment. A −60.00 EUR debit can cover a 60.00 EUR
+cost completely, or part of a 120.00 EUR cost; another −60.00 EUR debit then covers
+the remainder. The complete bank transaction links to one cost, without creating
+a cost or a payment. The transaction becomes “Zugeordnet”; yearly expenses still
+count that confirmed cost once. Positive transactions, other properties or
+accounting scopes, unconfirmed/superseded costs and excessive coverage are refused.
+Later classification of legacy matched records also refuses different cost/bank scopes.
+In a one-to-one cost correction, the original bank links and audit history remain
+in place. Each successor inherits the assigned amount from earlier versions. For
+example, after assigning a −60.00 EUR debit to a 150.00 EUR cost, correcting and
+confirming it at 120.00 EUR leaves 60.00 EUR open for another debit. A correction,
+draft edit or confirmation below the inherited coverage is refused. “Verwerfen”
+is refused for a correction that carries bank coverage. The bank picker uses the remaining amount of the current confirmed version.
+
+When correcting a reviewed allocation, load “Korrekturvorschau” and use
+“Bankumsätze übernehmen” to select a new part for each old part that already
+has bank coverage. For a 119.00 EUR invoice changing from 59.00 + 60.00 EUR to
+19.00 + 40.00 + 60.00 EUR, select the third new part for a debit covering the
+old second part. The third part then has nothing open; the first two still
+have 19.00 and 40.00 EUR open. The debit remains linked to the original cost.
+Each selected successor must cover the sum inherited from its selected
+predecessors. If a new debit makes the preview stale, reload it before confirming.
+
+Concurrent assignments serialize and repeating the same cost assignment succeeds
+without covering it twice. A failed assignment keeps the selected cost; use
+“Kostenpositionen neu laden” to refresh a conflicting remaining amount.
+
+“Zuordnen als” also offers “Zahlung (z. B. Erstattung oder Rücklagenentnahme)” for
+the existing tenant-refund and reserve-payout booking paths. Incoming transactions
+keep the payment split. Cost matching does not alter bank reconciliation totals,
+reserve accounting or the cost original. The bank link and its financial fields
+are immutable. A released scoped reserve draft retains its cancellation history
+when the debit is reassigned to a cost. Supported organization archives restore
+ordinary links and remaining coverage, including links classified on one side only
+and retained cancelled drafts. Readable exports record explicit reviewed successor
+links; reviewed-document archives still require private provenance to import.
+During organization erasure, the matched bank evidence inherits its cost's
+retention deadline; an unmatched line gains no retention from this feature.
+
 `GET /api/bank-accounts/{id}/transactions` returns the list with optional
 `status`, `offset`, `limit` (default 50, maximum 100), and `next_offset`.
 
@@ -149,26 +192,23 @@ a payment list balance of 650 EUR and a cost gross total of 125 EUR including ex
 
 ## Default interest on dunning notices (Verzugszinsen)
 
-Both dunning notice forms require an explicitly reviewed „Basiszinssatz (%)“ (base interest rate).
-Without a configured default the field stays empty; see
-[dunning interest defaults](../../DEPLOY.md#dunning-interest-defaults).
-The app claims no official or automatically current
-interest rate. `GET /api/dunning/settings` returns the default for signed-in members.
-An explicit decimal string `base_interest_rate` overrides it; old
-API calls without it and without configuration remain interest-free, explicit `null`
-disables the calculation. Existing letters/PDFs are not recalculated as a result.
+Creating an individual tenant or owner notice opens its saved draft immediately.
+The successful creation response commits the draft before the detail request can
+start. The draft opens on the first request, and the manager can issue it from there.
 
-The calculation per open item is `amount × (base + 5) / 100 × calendar days / 365`,
-from the actual due date, with a single `ROUND_HALF_UP` cent rounding. Fees
-and interest are not charged interest. Example: 700 EUR, base 2.50%, 60 days →
-8.63 EUR interest and 708.63 EUR total with fee 0. Due date, reference date,
-days, base/annual interest rate, and amounts are saved and shown in detail/PDF;
-later configuration or payment changes do not recalculate the issued dunning notice.
-Rollback restrictions are documented under
-[migration compatibility](../../DEPLOY.md#migration-compatibility-00290148).
-Issuance alone confirms no receipt. The real UI/PDF flow
-is repeatable with [the dunning interest browser feature](../../features/dunning_interest.feature)
-using `make test-browser`.
+Under **Mahnungen → Mahneinstellungen**, an administrator can set the fees for all three
+levels and switch on **Verzugszinsen automatisch berechnen**. Other members see the same
+settings read-only. The starting values are 0.00 / 2.50 / 2.50 EUR with interest off.
+A notice's fee override still applies when provided.
+
+New individual drafts and batch previews read the organization policy. When interest is enabled,
+the detail and issued PDF show the saved calculation split at published rate changes and
+partial payments. A missing published rate prevents draft creation and names the affected
+half-year. Existing notices keep their saved amounts. In **Mietkonto**, **Ausgestellte Mahnungen**
+lists fees and interest for the selected lease as information separate from the account balance.
+The unscoped statement links to **Mahnungen** for historical notices without a verified lease. See the
+[interest calculation](../m6-zahlungen-mietkonto.md#default-interest-on-dunning-notices)
+and [browser feature](../../features/dunning_interest.feature).
 
 ## Dunning run with selected drafts
 
@@ -186,7 +226,7 @@ unclear, the same job is kept for a manual retry;
 its original IDs are returned under renewed complete prepare/source checks,
 not recalculated or duplicated. Old issued letters remain
 unchanged. [The dunning batch browser feature](../../features/dunning_batch.feature) verifies three
-arrears of 850 EUR each and three drafts totaling 2,550 EUR, including
+arrears of 850 EUR each and three drafts totaling 2,568.69 EUR with interest enabled, including
 mobile cancellation and reload (`make test-browser`). Source immutability remains covered by API tests.
 
 ## Monthly rent KPIs
@@ -208,3 +248,61 @@ history coverage, or incoherent bookings produce errors instead of false zeros.
 The overview changes no bookings or leases. Mandatory check:
 `uv run pytest tests/test_dashboard_kpis.py`; see the
 [local UI acceptance procedure](../../DEPLOY.md#monthly-dashboard-rent-kpis-t52).
+
+
+## Rent due dates and holiday coverage
+
+New rent calculations stamp `KALTMIETE` and `NK_VORAUSZAHLUNG` with the third
+working day under [§ 556b(1) BGB](https://www.gesetze-im-internet.de/bgb/__556b.html).
+Saturday does not count ([BGH VIII ZR 129/09](https://juris.bundesgerichtshof.de/cgi-bin/rechtsprechung/document.py?Art=pm&Blank=1&Datum=2010-7&Gericht=bgh&file=dokument.pdf&linked=urt&nr=52857)).
+Set **Bundesland** in the property's creation/edit form. Empty means nationwide
+holidays; existing properties keep this empty state until explicitly edited.
+A saved change affects newly derived charges, never frozen issued notices/PDFs.
+WEG dues, one-off claims, rates and arrears aggregation retain their existing rules.
+The separate `HK_VORAUSZAHLUNG` line retains its previous due-date rule pending
+owner confirmation; it is not covered by this change.
+
+For April 2026, the counted days are 1, 2 and 7 April. Good Friday (3 April),
+Easter Monday (6 April) and the weekend are excluded. Payment in full on 7 April
+produces no reminder or interest. A 100 EUR shortfall is due on 7 April and
+accrues interest from 8 April (0.02 EUR on that day at a 1.27% base rate plus 5 percentage points).
+Day-exact initial-month amounts stay unchanged. Count the three working days
+inclusively from the later of month start and lease start, even when the deadline
+falls in the next month or year. A lease starting Saturday, 11 April 2026 has
+counted days 13, 14 and 15 April; no reminder or interest is due through 15 April.
+Clipping a report to mid-month or changing the rent does not restart the count.
+
+The small pure calendar uses fixed and Gregorian Easter dates, without a new
+holiday dependency. Nationwide: New Year, Good Friday, Easter Monday, 1 May,
+Ascension, Whit Monday, 3 October and both Christmas days. Statewide additions:
+
+| Holiday | States |
+| --- | --- |
+| 6 January | Baden-Württemberg, Bavaria, Saxony-Anhalt |
+| Corpus Christi | Baden-Württemberg, Bavaria, Hesse, North Rhine-Westphalia, Rhineland-Palatinate, Saarland |
+| Assumption (15 August) | Saarland |
+| Reformation (31 October) | Brandenburg, Mecklenburg-Vorpommern, Saxony, Saxony-Anhalt, Thuringia; Bremen, Hamburg, Lower Saxony and Schleswig-Holstein from 2018 |
+| All Saints (1 November) | Baden-Württemberg, Bavaria, North Rhine-Westphalia, Rhineland-Palatinate, Saarland |
+| Easter Sunday and Whit Sunday (already excluded as Sundays for rent) | Brandenburg |
+| Repentance Day | Saxony; Wednesday before 23 November |
+| Women's Day (8 March) | Berlin from 2019; Mecklenburg-Vorpommern from 2023 |
+| Children's Day (20 September) | Thuringia from 2019 |
+
+Sources: [official state overview](https://www.hamburg.de/resource/blob/134374/7a4a9de67fd46caec0947c11bf23316d/bsb-feiertage-data.pdf),
+[Bavarian FTG Art. 1](https://www.gesetze-bayern.de/Content/Document/BayFTG-1),
+[Lower Saxony's dated Reformation rule](https://www.mi.niedersachsen.de/themen/allgemeine_angelegenheiten_inneren/feiertagsrecht/feiertagsrecht-60368.html),
+[Women's Day introductions](https://www.deutsche-rentenversicherung.de/DRV/DE/Ueber-uns-und-Presse/Presse/Meldungen/2024/240306_frauentag_feiertag_frei?nn=6a097debca84ce5471c1aa2d),
+[Thuringian parliament, 28 February 2019](https://parldok.thueringer-landtag.de/ParlDok/dokument/70291/140_plenarsitzung.pdf).
+Reformation introductions are also recorded by the
+[Bremen legislature](https://www.transparenz.bremen.de/metainformationen/gesetz-ueber-die-sonn-gedenk-und-feiertage-vom-12-november-1954-145882?template=20_gp_ifg_meta_detail_d),
+[Hamburg parliament](https://www.buergerschaft-hh.de/parldok/dokument/64307/bilanz_der_freien_museumsoeffnung_fuer_alle_am_tag_der_reformation.pdf)
+and [Lower Saxony's government announcement covering Schleswig-Holstein](https://www.stk.niedersachsen.de/startseite/presseinformationen/landesregierung-schlaegt-reformationstag-als-neuen-feiertag-vor-164249.html).
+Saxony's holiday list is in [SächsSFG](https://revosax.sachsen.de/vorschrift/3997).
+The calendar also includes [nationwide Reformation Day in 2017](https://www.mi.niedersachsen.de/startseite/aktuelles/presseinformationen/reformationstag-ist-im-jahr-2017-ein-arbeitsfreier-gesetzlicher-feiertag--148206.html)
+and Berlin's [one-off 8 May in 2020/2025 and 17 June 2028](https://www.berlin.de/aktuelles/9188766-958090-einmaliger-feiertag-am-8-mai-2025.html).
+This is the modern statewide calendar with those dated changes, not an archive
+of historical legislation before 1995. Municipality-only holidays (Augsburg's
+Peace Festival, Bavarian Assumption, local Corpus Christi in Saxony/Thuringia)
+cannot be inferred from a state and are excluded. No municipality is guessed
+from an address; contracts requiring additional local review remain outside
+this calendar's coverage.

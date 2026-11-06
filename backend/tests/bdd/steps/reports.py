@@ -8,7 +8,7 @@ from playwright.async_api import expect
 
 from tests.bdd.steps.browser_common import browser_step, button, field
 from tests.bdd.steps.browser_setup import bank_account, create, rental
-from tests.bdd.steps.records import PROPERTY, record_of
+from tests.bdd.steps.records import PROPERTY, record_of, create_person
 
 
 @given('Gartenstraße 5 has a finalized asset report for 2026 with a declared bank balance of 500 euros')
@@ -20,6 +20,14 @@ def recipient_asset_report(world, seed_data):
                           'grants': [{'user_id': user, 'capabilities': ['read', 'prepare', 'approve', 'export'],
                                       'reason': 'Synthetic recipient check'}]},
     }, keyed=True)
+    unit = create(world, '/api/units', {
+        'property_id': home['id'], 'number': '1', 'usage_type': 'WOHNUNG',
+    })
+    person = create_person(world, 'Verwaltung Alpha', 'Anna Berg')
+    owner = create(world, '/api/owner-profiles', {'person_id': person.id})
+    create(world, '/api/ownership', {
+        'unit_id': unit['id'], 'owner_profile_id': owner['id'], 'valid_from': '2026-01-01',
+    })
     scope = create(world, '/api/accounting-scopes', {
         'property_id': home['id'], 'scope_type': 'WEG', 'label': 'WEG Gartenstraße 5',
         'valid_from': '2026-01-01', 'valid_to': '2026-12-31', 'whole_property': True,

@@ -79,6 +79,7 @@ export interface User {
 export type ManagementType = "MIET" | "WEG" | "SEV" | "MISCH";
 
 export interface Property {
+  federal_state?: string | null;
   construction_year?: number | null;
   total_area?: string | null;
   id: string;
@@ -95,6 +96,7 @@ export interface Property {
 export type MeaScaleStatus = "LEGACY_UNCONFIRMED" | "CONFIRMED";
 
 export interface PropertyCreate {
+  federal_state?: string | null;
   construction_year?: number | null;
   total_area?: string | null;
   data_audience?: DeclarationApprovalRequest["new_property_audience"];
@@ -107,6 +109,7 @@ export interface PropertyCreate {
 }
 
 export interface PropertyUpdate {
+  federal_state?: string | null;
   construction_year?: number | null;
   total_area?: string | null;
   name?: string;
@@ -644,6 +647,7 @@ export interface CostEntry {
   confirmed_at: string | null;
   confirmed_by: string | null;
   superseded_by_id: string | null;
+  bank_open_amount?: string | null;
 }
 
 export interface CostEntryCreate {
@@ -796,6 +800,7 @@ export interface SettlementRun {
   superseded_by_id: string | null;
   lines: SettlementLine[];
   extra_inputs?: ComputeRequest | null;
+  vacancy_attribution?: { unit_number: string; cost_label: string; days: number; person_days: number; amount: string }[];
 }
 
 export interface AdvanceProposal {
@@ -897,11 +902,19 @@ export interface HeatingConsumptionCandidate {
   reason: string | null;
 }
 
+export interface CommercialPreallocationIn {
+  cost_entry_id: string;
+  commercial_share_percent: string | null;
+  commercial_amount: string | null;
+  commercial_reason: string | null;
+}
+
 export interface ComputeRequest {
   external_amounts: ExternalAmountIn[];
   manual_amounts: ManualAmountIn[];
   unit_metrics: UnitMetricIn[];
   heating_inputs?: HeatingConfig[];
+  commercial_preallocations?: CommercialPreallocationIn[];
 }
 
 // --- M4 WEG: Wirtschaftsplan (Economic Plan) ---
@@ -923,7 +936,16 @@ export interface EconomicPlanLine {
   note: string | null;
 }
 
+export interface DocumentAddressee {
+  unit_id: string;
+  unit_number: string;
+  owner_profile_id: string;
+  owner_name: string;
+  key_date: string;
+}
+
 export interface EconomicPlan {
+  addressees?: DocumentAddressee[];
   id: string;
   organization_id: string;
   property_id: string;
@@ -1012,6 +1034,7 @@ export interface BankTransaction {
   counterparty_iban: string | null;
   purpose: string | null;
   status: BankTransactionStatus;
+  cost_entry_id?: string | null;
 }
 
 export interface BankTransactionPage {
@@ -1188,6 +1211,27 @@ export interface MietkontoResult {
   balance: string;
 }
 
+export interface IssuedDunningInfo {
+  id: string;
+  issue_date: string;
+  level: number;
+  fee_amount: string;
+  interest_amount: string;
+}
+
+export interface TenantMietkontoResult extends MietkontoResult {
+  dunning_notices: IssuedDunningInfo[];
+  open_items: (OpenItem & { is_due: boolean })[];
+  due_balance: string;
+  not_yet_due_balance: string;
+}
+
+export interface OwnerMietkontoResult extends MietkontoResult {
+  open_items: (OpenItem & { is_due: boolean; due_date: string | null })[];
+  due_balance: string;
+  not_yet_due_balance: string;
+}
+
 // --- M7 Dunning (Mahnwesen) ---
 
 export type DunningStatus = "draft" | "issued" | "cancelled";
@@ -1214,18 +1258,34 @@ export interface DunningNotice {
 }
 
 export interface DunningSettings {
-  base_interest_rate: string | null;
+  fee_level_1: string;
+  fee_level_2: string;
+  fee_level_3: string;
+  default_interest_enabled: boolean;
+}
+
+export interface DunningInterestSegment {
+  start: string;
+  end: string;
+  days: number;
+  principal: string;
+  base_interest_rate: string;
+  annual_rate: string;
+  interest: string;
 }
 
 export interface DunningInterestSnapshot {
-  base_interest_rate: string;
-  annual_rate: string;
+  base_interest_rate?: string;
+  annual_rate?: string;
+  premium?: 5 | 9;
   reference_date: string;
   items: {
     payment_type: string;
     period_year: number | null;
     period_month: number | null;
     due_date: string;
+    interest_start?: string | null;
+    segments?: DunningInterestSegment[];
     days: number;
     principal: string;
     interest: string;
@@ -1242,7 +1302,6 @@ export interface DunningIncludedItem {
 }
 
 export interface DunningCreateTenant {
-  base_interest_rate?: string | null;
   accounting_scope_id?: string | null;
   tenant_profile_id: string;
   lease_agreement_id: string;
@@ -1254,7 +1313,6 @@ export interface DunningCreateTenant {
 }
 
 export interface DunningCreateOwner {
-  base_interest_rate?: string | null;
   accounting_scope_id?: string | null;
   owner_profile_id: string;
   period_start: string;
@@ -1296,6 +1354,7 @@ export interface WegOwnerBalance {
 }
 
 export interface WegRun {
+  addressees?: DocumentAddressee[];
   id: string;
   organization_id: string;
   property_id: string;
@@ -1473,12 +1532,14 @@ export interface RegisterEntry {
   organization_id: string;
   property_id: string;
   sequence_number: number;
+  resolution_date: string;
   entry_date: string;
   location: string;
   wording: string;
   resolution_id: string;
   result: string | null;
   challenge_annotation: string | null;
+  special_levies: { id: string; accounting_scope_id: string; amount: string; due_date: string }[];
 }
 
 export interface ChallengeAnnotation {
@@ -1720,10 +1781,10 @@ export interface SpecialLevyCreate {
   accounting_scope_id: string;
   amount: string;
   due_date: string;
-  resolution_id?: string | null;
+  resolution_id: string;
 }
 
-export interface SpecialLevy extends SpecialLevyCreate {
+export interface SpecialLevy extends Omit<SpecialLevyCreate, "resolution_id"> {
   id: string;
   resolution_id: string | null;
   allocations: SpecialLevyAllocation[];
@@ -1815,4 +1876,10 @@ export interface SettlementPeriod {
   label: string;
   period_start: string;
   period_end: string;
+}
+
+export interface UnitHouseholdRow {
+  valid_from: string;
+  persons: number;
+  is_vacancy: boolean;
 }

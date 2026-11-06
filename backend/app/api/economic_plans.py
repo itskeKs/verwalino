@@ -21,6 +21,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field, StrictInt, StrictStr
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.schemas.document_addressee import DocumentAddressee
 from app.core.tenant import AuthContext, get_current_user, get_db, require_write_dep
 from app.core.live_principal import get_live_writer_db
 from app.models.economic_plan import EconomicPlan
@@ -51,7 +52,7 @@ class EconomicPlanCreate(BaseModel):
     period_start: date | None = None
     period_end: date | None = None
     reserve_contribution_total: str | None = None
-    monthly_due_day: int | None = None
+    monthly_due_day: Annotated[int, Field(ge=1, le=28)] | None = 1
     management_mandate_id: str | None = None
 
 
@@ -116,6 +117,7 @@ class PlanLineOut(BaseModel):
 
 
 class EconomicPlanOut(BaseModel):
+    addressees: list[DocumentAddressee] = []
     id: str
     organization_id: str
     property_id: str
@@ -183,6 +185,7 @@ def _line_out(ln: EconomicPlanLine) -> PlanLineOut:
 
 def _plan_out(plan: EconomicPlan, lines: list[EconomicPlanLine]) -> EconomicPlanOut:
     return EconomicPlanOut(
+        addressees=(plan.snapshot_payload or {}).get("addressees", []),
         id=str(plan.id),
         organization_id=str(plan.organization_id),
         property_id=str(plan.property_id),

@@ -1,3 +1,4 @@
+import { DocumentAddressees } from "../components/DocumentAddressees";
 import { FinancialCoverageReview } from "../components/FinancialCoverageReview";
 /**
  * Wirtschaftsplan detail (M4): planned-cost editor, compute (per-owner monthly
@@ -188,6 +189,7 @@ export function EconomicPlanDetailPage() {
           {STATUS_LABELS[plan.status] ?? plan.status}
         </span>
       </h1>
+      <p>Fälligkeit: jeweils zum {plan.monthly_due_day ?? 1}. des Monats</p>
 
       {actionError && (
         <div className="card" style={{ marginBottom: "1rem", background: "#ffebee", borderColor: "#ef9a9a" }}>
@@ -208,6 +210,8 @@ export function EconomicPlanDetailPage() {
           Ersetzt durch <Link to={`/wirtschaftsplaene/${plan.superseded_by_id}`} className="link">Korrektur</Link>.
         </div>
       )}
+
+      <DocumentAddressees addressees={plan.addressees} />
 
       <div className="card" style={{ marginBottom: "1.5rem" }}>
         <h2>Übersicht</h2>

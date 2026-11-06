@@ -410,7 +410,7 @@ def clear_disposable_source_context(cursor):
     # Modern receipts can be independent of property/document foreign keys.
     # No CASCADE: a new reverse FK must not silently erase the shared seeds.
     retained = ['alembic_version', 'organization', 'user', 'membership',
-                'management_mandate', 'audit_event', 'cost_category']
+                'management_mandate', 'audit_event', 'cost_category', 'base_interest_rate']
     cursor.execute("""SELECT c.relname FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace
       WHERE n.nspname='public' AND c.relkind IN ('r','p') AND c.relname<>ALL(%s)
       AND NOT EXISTS(SELECT 1 FROM pg_depend d WHERE d.classid='pg_class'::regclass
@@ -631,28 +631,67 @@ def _upgrade_test_database(alembic_cfg):
     upgraded_deadline_tables = rehearse_initial_upgrade('0159')
     command.upgrade(alembic_cfg, '0160')
     upgraded_reason_erasure_tables = rehearse_initial_upgrade('0160')
+    command.upgrade(alembic_cfg, '0161')
+    upgraded_report_recipient_tables = rehearse_initial_upgrade('0161')
+    command.upgrade(alembic_cfg, '0162')
+    upgraded_successor_dunning_tables = rehearse_initial_upgrade('0162')
+    command.upgrade(alembic_cfg, '0163')
+    upgraded_household_tables = rehearse_initial_upgrade('0163')
+    command.upgrade(alembic_cfg, '0164')
+    upgraded_person_day_bases = rehearse_initial_upgrade('0164')
+    command.upgrade(alembic_cfg, '0165')
+    upgraded_property_state = rehearse_initial_upgrade('0165')
+    command.upgrade(alembic_cfg, '0166')
+    upgraded_register_date = rehearse_initial_upgrade('0166')
+    command.upgrade(alembic_cfg, '0167')
+    upgraded_levy_authority = rehearse_initial_upgrade('0167')
+    command.upgrade(alembic_cfg, '0168')
+    upgraded_commercial_rules = rehearse_initial_upgrade('0168')
+    command.upgrade(alembic_cfg, '0169')
+    upgraded_statement_notes = rehearse_initial_upgrade('0169')
+    command.upgrade(alembic_cfg, '0170')
+    upgraded_bank_cost = rehearse_initial_upgrade('0170')
+    command.upgrade(alembic_cfg, '0171')
+    upgraded_bank_corrections = rehearse_initial_upgrade('0171')
+    command.upgrade(alembic_cfg, '0172')
+    upgraded_bank_evidence = rehearse_initial_upgrade('0172')
+    command.upgrade(alembic_cfg, '0173')
+    upgraded_dunning_policy = rehearse_initial_upgrade('0173')
     command.upgrade(alembic_cfg, "head")
-    return {'upgrade_0028_to_0161_tables': upgraded_0028_tables,
-            'upgrade_0122_to_0161_tables': upgraded_tables,
-            'upgrade_0139_to_0161_tables': upgraded_0139_tables,
-            'upgrade_0140_to_0161_tables': upgraded_parent_tables,
-            'upgrade_0141_to_0161_tables': upgraded_setup_tables,
-            'upgrade_0142_to_0161_tables': upgraded_throttle_tables,
-            'upgrade_0143_to_0161_tables': upgraded_lease_tables,
-            'upgrade_0144_to_0161_tables': upgraded_signup_tables,
-            'upgrade_0145_to_0161_tables': upgraded_reset_tables,
-            'upgrade_0146_to_0161_tables': upgraded_quota_tables,
-            'upgrade_0147_to_0161_tables': upgraded_lifecycle_tables,
-            'upgrade_0148_to_0161_tables': upgraded_retention_tables,
-            'upgrade_0149_to_0161_tables': upgraded_reserve_tables,
-            'upgrade_0150_to_0161_tables': upgraded_heating_tables,
-            'upgrade_0151_to_0161_tables': upgraded_draft_tables,
-            'upgrade_0152_to_0161_tables': upgraded_bank_tables,
-            'upgrade_0153_to_0161_tables': upgraded_restoration_tables,
-            'upgrade_0154_to_0161_tables': upgraded_always_guard_tables,
-            'upgrade_0155_to_0161_tables': upgraded_person_retention_tables,
-            'upgrade_0159_to_0161_tables': upgraded_deadline_tables,
-            'upgrade_0160_to_0161_tables': upgraded_reason_erasure_tables}  # accepted source
+    return {'upgrade_0028_to_0174_tables': upgraded_0028_tables,
+            'upgrade_0122_to_0174_tables': upgraded_tables,
+            'upgrade_0139_to_0174_tables': upgraded_0139_tables,
+            'upgrade_0140_to_0174_tables': upgraded_parent_tables,
+            'upgrade_0141_to_0174_tables': upgraded_setup_tables,
+            'upgrade_0142_to_0174_tables': upgraded_throttle_tables,
+            'upgrade_0143_to_0174_tables': upgraded_lease_tables,
+            'upgrade_0144_to_0174_tables': upgraded_signup_tables,
+            'upgrade_0145_to_0174_tables': upgraded_reset_tables,
+            'upgrade_0146_to_0174_tables': upgraded_quota_tables,
+            'upgrade_0147_to_0174_tables': upgraded_lifecycle_tables,
+            'upgrade_0148_to_0174_tables': upgraded_retention_tables,
+            'upgrade_0149_to_0174_tables': upgraded_reserve_tables,
+            'upgrade_0150_to_0174_tables': upgraded_heating_tables,
+            'upgrade_0151_to_0174_tables': upgraded_draft_tables,
+            'upgrade_0152_to_0174_tables': upgraded_bank_tables,
+            'upgrade_0153_to_0174_tables': upgraded_restoration_tables,
+            'upgrade_0154_to_0174_tables': upgraded_always_guard_tables,
+            'upgrade_0155_to_0174_tables': upgraded_person_retention_tables,
+            'upgrade_0159_to_0174_tables': upgraded_deadline_tables,
+            'upgrade_0160_to_0174_tables': upgraded_reason_erasure_tables,
+            'upgrade_0161_to_0174_tables': upgraded_report_recipient_tables,
+            'upgrade_0162_to_0174_tables': upgraded_successor_dunning_tables,
+            'upgrade_0163_to_0174_tables': upgraded_household_tables,
+            'upgrade_0164_to_0174_tables': upgraded_person_day_bases,
+            'upgrade_0165_to_0174_tables': upgraded_property_state,
+            'upgrade_0166_to_0174_tables': upgraded_register_date,
+            'upgrade_0167_to_0174_tables': upgraded_levy_authority,
+            'upgrade_0168_to_0174_tables': upgraded_commercial_rules,
+            'upgrade_0169_to_0174_tables': upgraded_statement_notes,
+            'upgrade_0170_to_0174_tables': upgraded_bank_cost,
+            'upgrade_0171_to_0174_tables': upgraded_bank_corrections,
+            'upgrade_0172_to_0174_tables': upgraded_bank_evidence,
+            'upgrade_0173_to_0174_tables': upgraded_dunning_policy}  # accepted source
 
 
 @pytest.fixture(scope="session", autouse=True)

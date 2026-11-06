@@ -175,7 +175,7 @@ async def test_retention_catalog_and_raw_facts_remain_private(rent_db):
     for role in ('app_rw', 'app_worker', 'app_review'):
         for signature in ('person_retention_categories()', 'person_retention_bindings(uuid,uuid,text)',
                           'privacy_retention_facts(uuid,uuid)', 'privacy_retention_facts_before0159(uuid,uuid)',
-                          'retention_base_until(jsonb)', 'retention_source_until(text,jsonb)'):
+                          'report_retention_recipients(jsonb)', 'retention_base_until(jsonb)', 'retention_source_until(text,jsonb)'):
             assert not await rent_db.scalar(text('SELECT has_function_privilege(:role,:signature,\'EXECUTE\')'),
                                            {'role': role, 'signature': signature})
 

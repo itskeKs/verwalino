@@ -1861,12 +1861,12 @@ async def test_attestation_maps_opening_database_refusals(monkeypatch, constrain
     driver.__cause__ = DriverError()
     driver.__cause__.constraint_name = constraint
     failure = DBAPIError(None, None, driver)
-    subject = SimpleNamespace(run_type='WEG_JAHRESABRECHNUNG')
+    subject = SimpleNamespace(id=uuid4(), run_type='WEG_JAHRESABRECHNUNG')
     monkeypatch.setattr(FinancialScopeService, 'lock_inputs', AsyncMock())
     monkeypatch.setattr(routes, 'SettlementRunRepository', lambda *args: SimpleNamespace(get_by_id_for_update=AsyncMock(return_value=subject)))
     monkeypatch.setattr(routes, 'FinancialInputPolicy', lambda *args: SimpleNamespace(attest=AsyncMock(side_effect=failure)))
     with pytest.raises(HTTPException) as refused:
-        await routes.attest(routes.Attestation(subject_kind='settlement', subject_id=uuid4(),
+        await routes.attest(routes.Attestation(subject_kind='settlement', subject_id=subject.id,
             values={'paid_advances': []}, confirmed_complete=True, reason='Reviewed inputs'),
             SimpleNamespace(organization_id=uuid4(), user_id=uuid4()), None)
     assert refused.value.status_code == status
@@ -2078,6 +2078,7 @@ async def test_compatible_weg_scope_cannot_reimport_a_finalized_opening(
     from app.repositories.reserve_ledger_repo import ReserveLedgerRepository
     from app.services.reserve_ledger_service import ReserveLedgerService
     from tests.test_scope_grants import scope_fixture, bind
+    from tests.financial_coverage_helpers import add_report_recipient
 
     session = migrator_session
     api, _ = worker_tenant
@@ -2093,6 +2094,7 @@ async def test_compatible_weg_scope_cannot_reimport_a_finalized_opening(
             {**ids, 'scope': scope})
     await bind(session, ids)
     await session.commit()
+    await add_report_recipient(ids)
     body = {'property_id': str(ids['property']), 'period_start': '2025-01-01', 'period_end': '2025-12-31'}
     original = await api.post('/api/weg-settlements/asset-reports', json={**body, 'accounting_scope_id': str(ids['scope'])})
     assert original.status_code == 201, original.text

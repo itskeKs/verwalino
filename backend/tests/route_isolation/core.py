@@ -177,6 +177,11 @@ PROBES: dict[str, Probe] = {
     "GET /api/dunning": Probe(
         row("tenant_profile", tenant_profile_id="id"), status=200, because=EMPTY_FILTER),
     "GET /api/dunning/settings": Probe(),
+    # Keep B's policy semantically identical to the pre-seeded batch preview.
+    "PUT /api/dunning/settings": Probe(body={
+        "fee_level_1": "0.00", "fee_level_2": "2.50", "fee_level_3": "2.50",
+        "default_interest_enabled": False,
+    }),
     "GET /api/dunning/{dunning_id}": Probe(row("dunning_notice", dunning_id="id")),
     "GET /api/dunning/{dunning_id}/pdf": Probe(row("dunning_notice", dunning_id="id")),
     "POST /api/dunning/batch": Probe(row("lease_agreement", lease_agreement_id="id"), body=BATCH_APPLY),
@@ -301,6 +306,8 @@ PROBES: dict[str, Probe] = {
     # app/api/tenant_profiles.py
     "GET /api/tenant-profiles": Probe(row("person", person_id="id"), status=200, because=EMPTY_FILTER),
     "POST /api/tenant-profiles": Probe(row("person", person_id="id")),
+    "GET /api/units/{unit_id}/household": Probe(row("unit", unit_id="id")),
+    "PUT /api/units/{unit_id}/household": Probe(row("unit", unit_id="id"), body=[{"valid_from": "2026-01-01", "persons": 1, "is_vacancy": False}]),
     # app/api/units.py
     "DELETE /api/units/{unit_id}": Probe(row("unit", unit_id="id")),
     "GET /api/units": Probe(row("property", property_id="id"), status=200, because=EMPTY_FILTER),

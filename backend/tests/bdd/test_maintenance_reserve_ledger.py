@@ -749,6 +749,7 @@ def evidence_forms(world, reserve_scenario, browser_world, request, tmp_path):
             await page.get_by_role('button', name='Abbrechen', exact=True).click()
             await browser_world.visit(f"/bankkonten/{w['bank_giro']}/umsaetze")
             await page.get_by_role('button', name='Aufteilen', exact=True).click()
+            await page.get_by_label('Zuordnen als', exact=True).select_option('payment')
             await page.get_by_label('Zahlungsart', exact=True).select_option('RUECKLAGENENTNAHME')
             await page.get_by_label('Betrag (EUR)', exact=True).fill('100,00')
             await expect(page.get_by_role('button', name='Als Entwurf übernehmen', exact=True)).to_be_enabled()

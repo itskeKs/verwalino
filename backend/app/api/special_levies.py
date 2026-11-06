@@ -3,8 +3,8 @@ import uuid
 from datetime import date
 from decimal import Decimal
 
-from fastapi import APIRouter, Depends
-from pydantic import BaseModel, ConfigDict, Field
+from fastapi import APIRouter, Depends, HTTPException
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.tenant import AuthContext, get_current_user, get_db, require_write_dep
@@ -14,13 +14,24 @@ from app.services.special_levy_service import SpecialLevyService
 router = APIRouter(prefix="/api/special-levies", tags=["special-levies"])
 
 
-class SpecialLevyCreate(BaseModel):
+class ResolutionReference(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    resolution_id: uuid.UUID
+
+    @model_validator(mode="before")
+    @classmethod
+    def require_reference(cls, data):
+        if isinstance(data, dict) and data.get("resolution_id") is None:
+            raise HTTPException(422, "Eine Sonderumlage braucht einen Beschluss.")
+        return data
+
+
+class SpecialLevyCreate(ResolutionReference):
     model_config = ConfigDict(extra="forbid")
     property_id: uuid.UUID
     accounting_scope_id: uuid.UUID
     amount: Decimal = Field(gt=0, max_digits=14, decimal_places=2, allow_inf_nan=False)
     due_date: date
-    resolution_id: uuid.UUID | None = None
 
 
 class AllocationOut(BaseModel):
@@ -57,6 +68,16 @@ async def create_levy(body: SpecialLevyCreate,
     # Refresh the Numeric scale so POST and subsequent GET return identical basis.
     for allocation in allocations:
         await db.refresh(allocation)
+    return output(levy, allocations)
+
+
+@router.put("/{levy_id}/resolution", response_model=SpecialLevyOut)
+async def link_resolution(levy_id: uuid.UUID, body: ResolutionReference,
+    auth: AuthContext = Depends(require_write_dep),
+    db: AsyncSession = Depends(get_db, scope="function")):
+    await require_live_principal(db, auth, writer=True)
+    levy, allocations = await SpecialLevyService(db, auth.organization_id, auth.user_id).link_resolution(
+        levy_id, body.resolution_id)
     return output(levy, allocations)
 
 

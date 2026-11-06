@@ -20,7 +20,16 @@ const MANAGEMENT_TYPES: { value: ManagementType; label: string }[] = [
   { value: "MISCH", label: "Mischobjekt" },
 ];
 
+const FEDERAL_STATES = [
+  ["BW", "Baden-Württemberg"], ["BY", "Bayern"], ["BE", "Berlin"],
+  ["BB", "Brandenburg"], ["HB", "Bremen"], ["HH", "Hamburg"],
+  ["HE", "Hessen"], ["MV", "Mecklenburg-Vorpommern"], ["NI", "Niedersachsen"],
+  ["NW", "Nordrhein-Westfalen"], ["RP", "Rheinland-Pfalz"], ["SL", "Saarland"],
+  ["SN", "Sachsen"], ["ST", "Sachsen-Anhalt"], ["SH", "Schleswig-Holstein"], ["TH", "Thüringen"],
+];
+
 const EMPTY_FORM: PropertyCreate = {
+  federal_state: null,
   construction_year: null,
   total_area: null,
   name: "",
@@ -71,6 +80,7 @@ export function PropertiesPage() {
     originalBuilding.current = { construction_year: p.construction_year ?? null, total_area: p.total_area ?? null };
     setEditId(p.id);
     setForm({
+      federal_state: p.federal_state ?? null,
       construction_year: p.construction_year ?? null,
       total_area: p.total_area ?? null,
       name: p.name,
@@ -198,6 +208,15 @@ export function PropertiesPage() {
                 onChange={(e) => setForm({ ...form, city: e.target.value })}
               />
             </label>
+            <label className="min-w-0">
+              Bundesland
+              <select className="w-full min-w-0" aria-label="Bundesland" value={form.federal_state ?? ""}
+                onChange={event => setForm({ ...form, federal_state: event.target.value || null })}>
+                <option value="">Nicht festgelegt – bundesweite Feiertage</option>
+                {FEDERAL_STATES.map(([value, label]) => <option key={value} value={value}>{label}</option>)}
+              </select>
+            </label>
+            <p className="text-sm text-muted-foreground">Für die Mietfälligkeit gelten die landesweiten Feiertage. Örtliche Feiertage werden nicht berücksichtigt.</p>
             <label>
               Beginn des Abrechnungszeitraums
               <select

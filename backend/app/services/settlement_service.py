@@ -34,12 +34,14 @@ from types import SimpleNamespace
 from fastapi import HTTPException
 from app.core.rbac import ScopeCapability
 from sqlalchemy import text
+from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.temporal import db_exclusive_to_engine_inclusive
 from app.engine.canonical import canonical_json, sha256_hex
 from app.engine.periods import validate_settlement_period, period_for_date, build_unit_cover, property_period_windows
 from app.engine.rounding import DistributionError
+from app.engine.person_days import MissingHouseholdError
 from app.engine.mietkonto import _money
 from app.services.lease_rent_change_service import LeaseRentChangeService
 from app.services.heating_input_service import HeatingConfig, HeatingSliceOverride, HeatingInputService, property_period_run
@@ -64,6 +66,7 @@ from app.engine.types import (
     PropertyInput,
     SettlementInput,
     UnitInput,
+    HouseholdInput,
 )
 from app.models.audit_event import AuditEvent
 from app.services.financial_scope_service import FinancialScopeService
@@ -73,13 +76,38 @@ from app.models.property import Property
 from app.models.settlement_line import SettlementLine
 from app.models.settlement_run import SettlementRun
 from app.repositories.audit_repo import AuditRepository
+from app.repositories.cost_entry_repo import CostEntryRepository
+from app.repositories.commercial_preallocation_repo import CommercialPreallocationRepository
 from app.repositories.lease_agreement_repo import LeaseAgreementRepository
 from app.repositories.settlement_repo import (
     SettlementLineRepository,
     SettlementRunRepository,
 )
 
-ENGINE_VERSION = "m3.3.0"
+ENGINE_VERSION = "m3.5.0"
+
+
+def frozen_vacancy_attribution(run: SettlementRun, allowed_units: set[str], allowed_costs: set[str]) -> list[dict]:
+    """Project only retained person-day results from an authorized run.
+
+    The caller supplies readable source IDs and unit IDs read under the
+    statement's exact current scope.
+    No owner identity or live household/master data is added to that disclosure.
+    Older snapshots without saved person-days keep their existing rendering.
+    """
+    payload = run.snapshot_payload or {}
+    attribution = [v for v in payload.get('vacancy_attribution', []) if v.get('person_days') is not None]
+    if not attribution:
+        return []
+    inputs = payload.get('inputs', {})
+    units = {u['id']: u['number'] for u in inputs.get('units', [])}
+    labels = {p['cost_entry_id']: p['category_code'] for p in inputs.get('cost_positions', [])}
+    labels.update({line['cost_entry_id']: line['label'] for line in payload.get('result', {}).get('lines', [])
+                   if line.get('cost_entry_id')})
+    return [dict(unit_number=units[v['unit_id']], cost_label=labels[v['cost_entry_id']],
+                 days=v['days'], person_days=v['person_days'], amount=v['amount'])
+            for v in attribution if v['unit_id'] in allowed_units and v['unit_id'] in units
+            and v['cost_entry_id'] in allowed_costs and v['cost_entry_id'] in labels]
 
 
 class SettlementPeriodConflict(HTTPException):
@@ -110,11 +138,19 @@ class ManualAmountEntry:
 
 @dataclass
 class UnitMetric:
-    """Per-unit consumption / person count for VERBRAUCH / PERSONENZAHL."""
+    """Consumption input plus legacy person-count data kept for frozen runs."""
 
     unit_id: uuid.UUID
     consumption: Decimal | None = None
     person_count: int | None = None
+
+
+@dataclass
+class CommercialPreallocationEntry:
+    cost_entry_id: uuid.UUID
+    commercial_share_percent: Decimal | None = None
+    commercial_amount: Decimal | None = None
+    commercial_reason: str | None = None
 
 
 @dataclass
@@ -125,6 +161,7 @@ class ComputeExtras:
     manual_amounts: list[ManualAmountEntry] = field(default_factory=list)
     unit_metrics: list[UnitMetric] = field(default_factory=list)
     heating_inputs: list[HeatingConfig] = field(default_factory=list)
+    commercial_preallocations: list[CommercialPreallocationEntry] | None = None
 
 
 def decode_compute_extras(payload: dict) -> ComputeExtras:
@@ -133,6 +170,11 @@ def decode_compute_extras(payload: dict) -> ComputeExtras:
         return date.fromisoformat(value) if value is not None else None
 
     return ComputeExtras(
+        commercial_preallocations=[CommercialPreallocationEntry(uuid.UUID(e['cost_entry_id']),
+            Decimal(e['commercial_share_percent']) if e.get('commercial_share_percent') is not None else None,
+            Decimal(e['commercial_amount']) if e.get('commercial_amount') is not None else None,
+            e.get('commercial_reason')) for e in payload['commercial_preallocations']]
+            if payload.get('commercial_preallocations') is not None else None,
         external_amounts=[ExternalAmountEntry(uuid.UUID(e['cost_entry_id']),uuid.UUID(e['unit_id']),
             Decimal(e['tenant_amount']),day(e.get('period_from')),day(e.get('period_to')))
             for e in payload.get('external_amounts',[])],
@@ -178,6 +220,30 @@ class SettlementService:
         self._lines = SettlementLineRepository(session, org_id)
         self._audit = AuditRepository(session, org_id)
         self._meter_sources: list[dict] = []
+
+    async def vacancy_disclosure(self, run: SettlementRun) -> list[dict]:
+        attribution = [v for v in (run.snapshot_payload or {}).get('vacancy_attribution', [])
+                       if v.get('person_days') is not None]
+        if not attribution:
+            return []
+        # Source read grants are independent of a detail write's selected scope.
+        # RLS still checks the live actor and each original source's exact grant.
+        selected = await self._session.scalar(text("SELECT current_setting('app.current_scope_id',true)"))
+        if selected:
+            await self._session.execute(text("SELECT set_config('app.current_scope_id','',true)"))
+        readable = await CostEntryRepository(self._session, self._org_id).readable_ids(
+            {uuid.UUID(v['cost_entry_id']) for v in attribution})
+        # Restore only after a successful read; on failure the request rolls back
+        # SET LOCAL rather than issuing SQL in a possibly aborted transaction.
+        if selected:
+            await self._session.execute(text("SELECT set_config('app.current_scope_id',:scope,true)"),
+                                        {'scope': selected})
+        # A finalized legacy output can later receive a partial classification.
+        # Select that exact current scope before applying unit/source RLS; the
+        # frozen property's wider input universe is not a disclosure grant.
+        async with FinancialScopeService(self._session, self._org_id, self._user_id).using(run):
+            allowed = {str(u.id) for u in await self._runs.units_for_property(run.property_id)}
+            return frozen_vacancy_attribution(run, allowed, {str(entry_id) for entry_id in readable})
 
     async def advance_proposal(self, run_id: uuid.UUID, *, accept_from: date | None = None):
         run, proposal = await self._load_advance_proposal(run_id, ScopeCapability.READ)
@@ -523,6 +589,7 @@ class SettlementService:
         rather than persisting a partial/wrong result.
         """
         run = await self._get_draft_or_404(run_id)
+        await self._save_commercial_preallocations(run, extras)
         computation_basis = await begin_computation(self._session, self._org_id, run, 'compute')
         inp, result = await self._compute_engine(run, extras)
 
@@ -578,6 +645,7 @@ class SettlementService:
           run from commit. Any error -> rollback (no half-finalized run).
         """
         run = await self._get_draft_or_404(run_id)
+        await self._save_commercial_preallocations(run, extras)
         computation_basis = await begin_computation(self._session, self._org_id, run, 'finalize')
         if await self._runs.has_conflicting_period(run):
             raise SettlementPeriodConflict()
@@ -702,6 +770,62 @@ class SettlementService:
     # ------------------------------------------------------------------
     # internals
     # ------------------------------------------------------------------
+    @staticmethod
+    def _commercial_values(rule):
+        return {name: getattr(rule, name) for name in (
+            'commercial_share_percent', 'commercial_amount', 'commercial_reason')}
+
+    async def current_extra_inputs(self, run):
+        """Drafts read the shared position rules; finalized evidence stays literal."""
+        frozen = (run.snapshot_payload or {}).get('extra_inputs')
+        if run.status != 'draft':
+            return frozen
+        async with FinancialScopeService(self._session, self._org_id, self._user_id).using(run):
+            entries = await self._runs.active_cost_entries_for_period(run.property_id, run.period_start, run.period_end)
+            rules = await CommercialPreallocationRepository(self._session, self._org_id).for_costs([e.id for e, _ in entries])
+        values = [{'cost_entry_id': str(rule.cost_entry_id), **{key: str(value) if isinstance(value, Decimal) else value
+            for key, value in self._commercial_values(rule).items()}} for rule in rules.values()]
+        return {**(frozen or {}), 'commercial_preallocations': values}
+
+    async def _commercial_command_sources(self, run, extras):
+        commands = extras.commercial_preallocations or []
+        ids = [rule.cost_entry_id for rule in commands]
+        if len(ids) != len(set(ids)):
+            raise HTTPException(422, 'Vorwegabzug Gewerbe: eine Kostenposition darf nur einmal vorkommen.')
+        entries = await self._runs.active_cost_entries_for_period(run.property_id, run.period_start, run.period_end)
+        sources = {entry.id: entry for entry, _ in entries}
+        if not set(ids) <= sources.keys():
+            raise HTTPException(404, 'Kostenposition nicht gefunden.')
+        return sources
+
+    async def _save_commercial_preallocations(self, run, extras):
+        if extras is None or not extras.commercial_preallocations:
+            return
+        await FinancialScopeService(self._session, self._org_id, self._user_id).enter(
+            run, capability=ScopeCapability.PREPARE, computation=True)
+        sources = await self._commercial_command_sources(run, extras)
+        repo = CommercialPreallocationRepository(self._session, self._org_id)
+        existing = await repo.for_costs([rule.cost_entry_id for rule in extras.commercial_preallocations])
+        for rule in extras.commercial_preallocations:
+            values = self._commercial_values(rule)
+            old = existing.get(rule.cost_entry_id)
+            if old is not None and self._commercial_values(old) == values:
+                continue
+            if old is None and rule.commercial_share_percent is None and rule.commercial_amount is None:
+                continue
+            try:
+                await repo.save(sources[rule.cost_entry_id], values)
+            except DBAPIError as error:
+                if getattr(error.orig, 'sqlstate', None) == '42501':
+                    raise HTTPException(404, 'Kostenposition nicht gefunden.') from None
+                if getattr(error.orig, 'sqlstate', None) == 'P2020':
+                    raise HTTPException(409, {'code': 'commercial_preallocation_finalized', 'message':
+                        'Vorwegabzug Gewerbe bereits finalisiert. Die Regel dieser Kostenposition kann nicht mehr geändert werden.'}) from None
+                raise
+            await self._audit.create(AuditEvent(actor_user_id=self._user_id, entity_type='cost_entry',
+                entity_id=rule.cost_entry_id, action='settlement.commercial_preallocation_changed',
+                payload_diff={key: str(value) if isinstance(value, Decimal) else value for key, value in values.items()}))
+
     async def _get_draft_or_404(self, run_id: uuid.UUID) -> SettlementRun:
         scope = FinancialScopeService(self._session, self._org_id, self._user_id)
         run = await self._runs.get_by_id(run_id)
@@ -832,9 +956,16 @@ class SettlementService:
         self._coverage = await FinancialInputPolicy(self._session, self._org_id, self._user_id).require(run, "settlement", rental_values(run))
         if extras is None:
             extras = decode_compute_extras((run.snapshot_payload or {}).get('extra_inputs',{}))
+            # Saved extras are evidence of the last run, never a command to
+            # overwrite a position rule subsequently changed by another draft.
+            extras.commercial_preallocations = None
+        if extras.commercial_preallocations:
+            await self._commercial_command_sources(run, extras)
         self._extra_payload = json.loads(json.dumps(asdict(extras),default=str))
+        self._commercial_payload = {}
         self._heating_sources = {}
         inp = await self._load_engine_input(run, extras)
+        self._extra_payload['commercial_preallocations'] = list(self._commercial_payload.values())
         from app.services.payment_service import PaymentService
 
         payments = PaymentService(self._session, self._org_id, self._user_id)
@@ -855,6 +986,8 @@ class SettlementService:
         inp = replace(inp, uncredited_advance_payments_total=excluded + heating_excluded)
         try:
             result = compute_bk_settlement(inp)
+        except MissingHouseholdError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
         except (EngineValidationError, DistributionError, PeriodOverlapError) as exc:
             # Escalate fail-loud as a 422 (do not persist a wrong/partial run).
             # PeriodOverlapError: a genuine (EXCLUDE-bypassing) lease overlap is a
@@ -919,7 +1052,7 @@ class SettlementService:
                    if e.service_period_from <= run.period_end and e.service_period_to >= run.period_start]
         generic_entries = [(e,c) for e,c in entries if e.id not in heating_configs]
 
-        # Per-unit metric overrides (consumption / person count).
+        # Only consumption uses per-run metric overrides.
         metric_by_unit = {m.unit_id: m for m in extras.unit_metrics}
         self._meter_sources = []
         needs_consumption = any(entry.tenant_distribution_key == "VERBRAUCH"
@@ -949,6 +1082,11 @@ class SettlementService:
                     self._meter_sources.append(source)
                 consumptions[unit.id] = value
 
+        from app.repositories.unit_household_repo import UnitHouseholdRepository
+        household_by_unit = {}
+        for row in await UnitHouseholdRepository(self._session, self._org_id).for_units([u.id for u in units]):
+            household_by_unit.setdefault(row.unit_id, []).append(HouseholdInput(row.valid_from, row.persons, row.is_vacancy))
+
         def unit_input(u) -> UnitInput:
             m = metric_by_unit.get(u.id)
             return UnitInput(
@@ -958,7 +1096,7 @@ class SettlementService:
                 area=u.area,
                 heated_area=u.heated_area,
                 mea=u.mea,
-                person_count=m.person_count if m else None,
+                household=tuple(household_by_unit.get(u.id, [])),
                 consumption=consumptions.get(u.id, m.consumption if m else None),
                 consumption_periods=self._consumption_periods.get(u.id, ()),
             )
@@ -1001,6 +1139,8 @@ class SettlementService:
             man_by_entry.setdefault(m.cost_entry_id, []).append(m)
 
         position_inputs = []
+        commercial_rules = await CommercialPreallocationRepository(self._session, self._org_id).for_costs([e.id for e, _ in entries])
+        commercial_rules.update({rule.cost_entry_id: rule for rule in extras.commercial_preallocations or []})
         for entry, category in entries:
             code = category.code if category is not None else "UNBEKANNT"
             label = category.label if category is not None else code
@@ -1018,6 +1158,11 @@ class SettlementService:
                 for m in man_by_entry.get(entry.id, [])
             )
             heating = None
+            rule = commercial_rules.get(entry.id)
+            commercial = self._commercial_values(rule) if rule is not None else {}
+            if rule is not None and (rule.commercial_share_percent is not None or rule.commercial_amount is not None):
+                self._commercial_payload[str(entry.id)] = {'cost_entry_id': str(entry.id), **{
+                    key: str(value) if isinstance(value, Decimal) else value for key, value in commercial.items()}}
             if entry.id in heating_configs:
                 if ext or man:
                     raise HTTPException(422,'Heizkosten intern und externe/manuelle Geldbeträge dürfen nicht kombiniert werden')
@@ -1039,6 +1184,7 @@ class SettlementService:
                     external_amounts=ext,
                     manual_amounts=man,
                     heating=heating,
+                    **commercial,
                 )
             )
 

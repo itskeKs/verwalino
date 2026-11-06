@@ -108,6 +108,10 @@ and a second bank edit against the last confirmed account data. The
 [`post_import_assignment` journey](journeys/post_import_assignment.feature) imports sixty receipts
 through the UI, assigns a lower row on the import page and requires a viewport-visible receipt
 without changing the statement's scroll position at 1280 and 360 px.
+The [`mobile_navigation` feature](mobile_navigation.feature) checks closed-drawer Tab focus,
+Escape, focus containment, route/close/backdrop dismissal, and static desktop navigation across
+767/768 px, including automatic focus after a closed mobile toggle disappears at 768 and 1280 px.
+Its synthetic captures use the existing `VERWALINO_CAPTURE_DESIGN=1` opt-in.
 
 ## How the step library is organised
 
@@ -267,6 +271,9 @@ database fixtures and the in-process deletion CLI), `organization_export_import.
 The four `journeys/profile_hints.feature` browser examples seed a fresh organization
 through the local database fixture and are skipped on external targets; they run
 against the local browser stack and in PR CI's browser job.
+The populated cost-table browser regression also requires a locally seeded,
+isolated organization and is skipped on external targets; local PR browser CI
+checks it at 360 and 1280 px without depending on earlier scenarios' records.
 Each skipped scenario records its reason in the report. Local runs continue to
 exercise both organizations, all isolation scenarios, first-run setup, the inbox
 review chain, deletion, export/import and password reset; PR CI retains this
@@ -351,6 +358,14 @@ on success or failure before the lock is released. The target does not start a
 worker or use an existing dev stack; start only the disposable database first.
 Do not wrap these targets in another acquisition of the same lock. Direct pytest
 commands and separately running dev stacks must hold that lock too; release it between runs.
+
+The local browser server wraps the real app with a test-only dunning scheduling
+gate: after sending a successful individual owner/tenant creation response, it
+holds request cleanup until the first detail read completes (bounded to five
+seconds). No responses or data are replaced. This exposes uncommitted drafts
+deterministically; function-scope transactions commit before the response starts.
+The [dunning journey](journeys/dunning_notice.feature) asserts that the first
+detail read succeeds without reload. External targets use their ordinary server.
 
 **CI decision:** the separate browser job runs `make test-browser` on PRs. The locked
 Chromium download and `playwright install --with-deps chromium` give a deterministic,

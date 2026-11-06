@@ -18,6 +18,10 @@ function mocks(plan: object = draft) {
   });
 }
 afterEach(() => { cleanup(); vi.restoreAllMocks(); });
+it.each([1, 3, 28, 31, null])("shows resolved due day %s without changing historical values", async day => {
+  mocks({ ...draft, monthly_due_day: day }); show();
+  expect(await screen.findByText(`Fälligkeit: jeweils zum ${day ?? 1}. des Monats`)).toBeVisible();
+});
 it("rehydrates uncomputed stored rows and reserve on reload and computes exact category IDs/strings", async () => {
   mocks(); const post = vi.spyOn(api, "post").mockResolvedValue(draft);
   let view = show(); await screen.findByDisplayValue("7100.10");
@@ -59,6 +63,14 @@ it("does not expose draft write controls to read-only sessions", async () => {
   expect(screen.queryByRole("button", { name: "Berechnen" })).not.toBeInTheDocument(); expect(screen.queryByRole("button", { name: "Finalisieren" })).not.toBeInTheDocument();
 });
 
+it("shows the frozen plan addressee and the plan-start date", async () => {
+  mocks({ ...draft, status: 'finalized', addressees: [{ unit_id: 'unit-2', unit_number: '2',
+    owner_profile_id: 'karl', owner_name: 'Karl Weiß', key_date: '2026-01-01' }] });
+  show();
+  const recipients = await screen.findByRole('region', { name: 'Dokumentempfänger' });
+  expect(recipients).toHaveTextContent('Einheit 2: Karl Weiß');
+  expect(recipients).toHaveTextContent('Eigentümer am 01.01.2026');
+});
 it.each([
   [new ApiError(404, "Wirtschaftsplan nicht gefunden."), "Wirtschaftsplan nicht gefunden."],
   [new ApiError(401, "Unauthorized"), "Nicht authentifiziert."],
