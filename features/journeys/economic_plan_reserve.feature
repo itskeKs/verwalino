@@ -1,7 +1,7 @@
+@browser @journey
 Feature: A manual economic plan keeps its calculated inputs
   Reopening the draft keeps the calculated costs and zero reserve available for finalization.
 
-  @browser
   Scenario Outline: Reopening a manual plan keeps the costs used for finalization
     Given a property with one owner responsible for the full WEG costs
     When the manager creates a zero-reserve economic plan and calculates 7200 euros in annual costs at <width> pixels

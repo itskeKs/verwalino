@@ -186,11 +186,10 @@ def _line_out(ln: EconomicPlanLine) -> PlanLineOut:
 def _plan_out(plan: EconomicPlan, lines: list[EconomicPlanLine]) -> EconomicPlanOut:
     snapshot = plan.snapshot_payload or {}
     draft_inputs = snapshot.get("draft_inputs")
-    if draft_inputs is None and plan.status == "draft" and lines:
-        # Manual calculations freeze the exact attested inputs together with the
-        # result. Read that basis, not the latest (possibly uncomputed) declaration
-        # or the result lines, which do not carry all the input metadata.
-        draft_inputs = snapshot.get("financial_input_coverage", {}).get("values")
+    if plan.status == "draft" and lines:
+        # Compare and reopen against the attested inputs used for this calculation.
+        # The adopted snapshot's two-decimal values may have lost input precision.
+        draft_inputs = snapshot.get("financial_input_coverage", {}).get("values", draft_inputs)
     return EconomicPlanOut(
         addressees=snapshot.get("addressees", []),
         id=str(plan.id),

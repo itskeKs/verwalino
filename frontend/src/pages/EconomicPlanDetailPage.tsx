@@ -53,9 +53,18 @@ function editableRows(stored: NonNullable<EconomicPlan["draft_inputs"]>): CostRo
   }));
 }
 
+function comparableCostAmount(value: string): string {
+  // Match the attested decimal string without rounding or changing the request.
+  const match = /^(-?)([0-9]+)(?:\.([0-9]+))?$/.exec(value);
+  if (!match) return value;
+  const [, sign, whole, fraction = ""] = match;
+  const significantFraction = fraction.replace(/0+$/, "");
+  return sign + whole.replace(/^0+(?=[0-9])/, "") + (significantFraction ? `.${significantFraction}` : "");
+}
+
 function calculationKey(rows: CostRow[], reserve: string) {
   return JSON.stringify([
-    rows.map(row => ({ ...row, planned_amount: normalizePlanAmount(row.planned_amount) ?? row.planned_amount })),
+    rows.map(row => ({ ...row, planned_amount: comparableCostAmount(row.planned_amount) })),
     normalizePlanAmount(reserve) ?? reserve,
   ]);
 }

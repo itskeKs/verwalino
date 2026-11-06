@@ -46,7 +46,7 @@ it("keeps the stored reserve and leaves cost rows empty in a new manual draft", 
   expect(screen.queryByLabelText("Kategorie 1")).not.toBeInTheDocument();
   expect(screen.getByLabelText("Rücklagenzuführung (Jahr)")).toHaveValue("6200.20");
 });
-it("computes a new zero-reserve draft without re-entering the reserve", async () => {
+it("computes a new zero-reserve draft with trailing zeros in the cost and without re-entering the reserve", async () => {
   const manual = { ...draft, reserve_contribution_total: "0.00", draft_inputs: null };
   mocks(manual);
   const post = vi.spyOn(api, "post").mockResolvedValue({
@@ -59,12 +59,13 @@ it("computes a new zero-reserve draft without re-entering the reserve", async ()
   expect(await screen.findByRole("cell", { name: "0.00 EUR" })).toBeVisible();
   expect(screen.getByLabelText("Rücklagenzuführung (Jahr)")).toHaveValue("0.00");
   fireEvent.click(screen.getByRole("button", { name: "+ Position" }));
-  fireEvent.change(screen.getByLabelText("Position – Jahresbetrag"), { target: { value: "7200.00" } });
+  fireEvent.change(screen.getByLabelText("Position – Jahresbetrag"), { target: { value: "7200.000" } });
   fireEvent.click(screen.getByRole("button", { name: "Berechnen" }));
   expect(await screen.findByRole("cell", { name: "600.00 EUR" })).toBeVisible();
+  expect(screen.getByRole("button", { name: "Finalisieren" })).toBeEnabled();
   expect(post).toHaveBeenCalledWith("/api/economic-plans/new/compute", expect.objectContaining({
     reserve_contribution_total: "0.00",
-    planned_costs: [expect.objectContaining({ planned_amount: "7200.00" })],
+    planned_costs: [expect.objectContaining({ planned_amount: "7200.000" })],
   }));
 });
 it.each([
@@ -150,6 +151,9 @@ it("requires updated results before finalizing edits to a calculated draft", asy
   const amount = screen.getByRole("textbox", { name: "Historische Heizung – Jahresbetrag" });
   fireEvent.change(amount, { target: { value: "7200.00" } });
   expect(finalize).toBeEnabled();
+
+  fireEvent.change(amount, { target: { value: "7200.001" } });
+  expect(finalize).toBeDisabled();
 
   fireEvent.change(amount, { target: { value: "8400.00" } });
   expect(screen.queryByRole("cell", { name: "600.00 EUR" })).not.toBeInTheDocument();
