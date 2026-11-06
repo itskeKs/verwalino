@@ -67,7 +67,7 @@ pending; registration stays closed and legal review remains with #26. See the
 | Rent change with effective date | ✅ full base rent and separate operating/heating rates | `models/lease_rent_change.py`, `api/leases.py` (`/rent-changes`), `engine/mietkonto.py`, T23, T24, [usage](operations/tenancies-and-rent.md) |
 | Graduated (Staffel) / index rent | ✅ | `api/leases.py` (`/rent-changes/staffel`, `/rent-changes/index`), `engine/index_rent.py`, T43, T44, [usage](operations/tenancies-and-rent.md) |
 | Security deposit management | 🟡 target, paid and refunded tracked; no installments, no recording of interest credits | `engine/mietkonto.py` (`deposit_statement`), `api/payments.py` (`/deposits`), `pages/DepositsPage.tsx`, T25, [usage](operations/tenancies-and-rent.md) |
-| Lease template, handover protocol | ✅ lease-filled contract starting point with legal-review caveat; move-in/out protocol records unit readings and retains an immutable PDF | #37, `services/lease_document_service.py`, `components/LeaseDocuments.tsx`, [usage](operations/tasks-and-documents.md#lease-contracts-and-handovers-37) |
+| Lease template, handover protocol | ✅ contract uses document-date rent and shows the last valid rent with its date for ended leases; immutable issued PDFs retained; move-in/out protocol records unit readings | #37, #219, `services/lease_document_service.py`, `components/LeaseDocuments.tsx`, [usage](operations/tasks-and-documents.md#lease-contracts-and-handovers-37) |
 
 ## Tenant ledger, bank and payments
 
@@ -140,7 +140,7 @@ pending; registration stays closed and legal review remains with #26. See the
 | Feature | Status | Location |
 | --- | --- | --- |
 | Documents per property/unit/person | ✅ "Dokumente" panel: upload, open, archive | `models/attachment.py`, `api/attachments.py`, `components/AttachmentsPanel.tsx`, T36, T37, [usage](operations/tasks-and-documents.md) |
-| Letter templates, dispatch by e-mail/letter | ✅ placeholder templates produce one PDF per recipient; e-mail for settlement, dunning notice and invitation (SMTP disabled until configured) | `api/letters.py`, `services/letter_service.py`, `pages/LettersPage.tsx`, `api/mail.py`, `services/mail_service.py`, `components/MailDispatch.tsx`, T47, T48, [usage](operations/tasks-and-documents.md) |
+| Letter templates, dispatch by e-mail/letter | ✅ placeholder templates produce one PDF per recipient with document-date rent, separate positive heating advance and total; e-mail for settlement, dunning notice and invitation (SMTP disabled until configured) | #219, `api/letters.py`, `services/letter_service.py`, `pages/LettersPage.tsx`, `api/mail.py`, `services/mail_service.py`, `components/MailDispatch.tsx`, T47, T48, [usage](operations/tasks-and-documents.md) |
 | Transactional mail templates | templates ready, senders pending: 15 typed German text/HTML templates with hosted/self-hosted footers | `app/mail/`, #125; sender adoption #111/#115; [previews](operations/mail-previews.md) |
 | Tenant portal | ❌ | – |
 | Year overview per property (Anlage V) | ✅ income/expense overview plus default Anlage V mapping aid, unassigned/excluded items, exact reconciliation and separate CSV; tax review required | `api/reports.py` (`/property-year`, `/property-year.csv`, `/property-year/anlage-v`, `/property-year/anlage-v.csv`), `services/report_service.py`, `engine/anlage_v.py`, `pages/ReportsPage.tsx`, [M6 §6.12](m6-zahlungen-mietkonto.md#anlage-v-mapping-aid-34), T38, T39, #34, [usage](operations/statements.md) |

@@ -175,6 +175,8 @@ it("creates a lease contract only after confirming its legal caveat", async () =
   fireEvent.click(await screen.findByRole('button', { name: 'Mietvertrag erstellen' }));
   const dialog = await screen.findByRole('dialog', { name: 'Mietvertrag erstellen' });
   expect(within(dialog).getByText(/Vorlage; rechtliche Prüfung erforderlich/)).toBeVisible();
+  expect(within(dialog).getByText(/Die Mietbeträge gelten zum gewählten Dokumentdatum/)).toBeVisible();
+  expect(within(dialog).getByText(/nach Mietende, zeigt das PDF die Beträge vom letzten Miettag/)).toBeVisible();
   expect(posts()).toHaveLength(0);
   fireEvent.change(within(dialog).getByLabelText('Übergabedatum'), { target: { value: '2026-01-02' } });
   fireEvent.change(within(dialog).getByLabelText('Freitext: weitere Vereinbarungen'), { target: { value: 'Gartenmitbenutzung prüfen' } });
