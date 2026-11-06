@@ -151,6 +151,12 @@ Use unpaid 2026 Hausgeld of 400.00 € per month, with Karl Weiß owning January
 Lena Roth owning July–December. Create Karl's notice, then Lena's, for the 2026 plan as of
 15.01.2027. Each draft opens immediately with 2400.00 € principal and exactly its six months.
 
+Separately, create a manual plan for one owner with all shares, 7,200.00 € in annual costs
+and zero reserve. Calculate the 600.00 € monthly advance, cancel finalization, return to
+the list and reopen the draft. The annual cost is still editable and the monthly advance
+still shows 600.00 €. Confirm the data basis and finalize; the saved annual and monthly
+advances remain 7,200.00 € and 600.00 € at desktop and 360 px.
+
 **Checked by:** agent
 **Also at 360 px:** the dunning letter
 **Automated:** [readable issued notice](../../features/journeys/dunning_notice.feature)
@@ -163,7 +169,9 @@ both widths and in the downloaded PDF. The separate
 [interest/PDF scenario](../../features/dunning_interest.feature) checks frozen
 amounts, both published rates, the issued PDF, and the ledger's separate notice information.
 The [organization settings scenarios](../../features/dunning_settings.feature) also verify
-the second-level fee and the residential and commercial premiums.
+the second-level fee and the residential and commercial premiums. The
+[manual plan journey](../../features/journeys/economic_plan_reserve.feature)
+checks cancellation, reopening and finalization at both widths.
 
 ## Journey 4: Rent change for Anna
 

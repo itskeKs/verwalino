@@ -1,5 +1,5 @@
 import { afterEach, expect, it, vi } from "vitest";
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { Link, MemoryRouter, Route, Routes } from "react-router-dom";
 import { api, ApiError } from "../api/client";
 import { AuthCtx, type AuthContextValue } from "../auth/useAuth";
@@ -46,22 +46,26 @@ it("keeps the stored reserve and leaves cost rows empty in a new manual draft", 
   expect(screen.queryByLabelText("Kategorie 1")).not.toBeInTheDocument();
   expect(screen.getByLabelText("Rücklagenzuführung (Jahr)")).toHaveValue("6200.20");
 });
-it("computes a new zero-reserve draft without re-entering the reserve", async () => {
+it.each(["7200.000", "7200.", " 7200.00 "])("computes a new zero-reserve draft with cost %j", async (enteredAmount) => {
   const manual = { ...draft, reserve_contribution_total: "0.00", draft_inputs: null };
   mocks(manual);
   const post = vi.spyOn(api, "post").mockResolvedValue({
     ...manual, lines: [{ id: "advance", owner_profile_id: "owner", planned_amount: "7200.00", monthly_amount: "600.00" }],
+    draft_inputs: { reserve_contribution_total: "0", planned_costs: [{
+      category_code: "", label: "", planned_amount: "7200", distribution_key: "MEA", cost_group: "UMLAGEFAEHIG", category_id: null,
+    }] },
   });
   show();
   expect(await screen.findByRole("cell", { name: "0.00 EUR" })).toBeVisible();
   expect(screen.getByLabelText("Rücklagenzuführung (Jahr)")).toHaveValue("0.00");
   fireEvent.click(screen.getByRole("button", { name: "+ Position" }));
-  fireEvent.change(screen.getByLabelText("Position – Jahresbetrag"), { target: { value: "7200.00" } });
+  fireEvent.change(screen.getByLabelText("Position – Jahresbetrag"), { target: { value: enteredAmount } });
   fireEvent.click(screen.getByRole("button", { name: "Berechnen" }));
   expect(await screen.findByRole("cell", { name: "600.00 EUR" })).toBeVisible();
+  expect(screen.getByRole("button", { name: "Finalisieren" })).toBeEnabled();
   expect(post).toHaveBeenCalledWith("/api/economic-plans/new/compute", expect.objectContaining({
     reserve_contribution_total: "0.00",
-    planned_costs: [expect.objectContaining({ planned_amount: "7200.00" })],
+    planned_costs: [expect.objectContaining({ planned_amount: enteredAmount })],
   }));
 });
 it.each([
@@ -129,4 +133,58 @@ it.each([
     expect(rendered.firstChild?.textContent?.trim()).toBe(expected);
     expect(screen.queryByText(/ApiError:/)).not.toBeInTheDocument();
   } finally { get.mockRestore(); }
+});
+
+it("requires updated results before finalizing edits to a calculated draft", async () => {
+  const advance = { id: "advance", owner_profile_id: "owner", planned_amount: "7200.00", monthly_amount: "600.00" };
+  const savedCosts = [{ ...costs[0], planned_amount: "7200" }];
+  const computed = { ...draft, lines: [advance], draft_inputs: { ...draft.draft_inputs, planned_costs: savedCosts } };
+  mocks(computed);
+  vi.spyOn(api, "post").mockResolvedValue({
+    ...computed,
+    lines: [{ ...advance, planned_amount: "8400.00", monthly_amount: "700.00" }],
+    draft_inputs: { ...computed.draft_inputs, planned_costs: [{ ...savedCosts[0], planned_amount: "8400" }] },
+  });
+  show();
+  expect(await screen.findByRole("cell", { name: "600.00 EUR" })).toBeVisible();
+  const finalize = screen.getByRole("button", { name: "Finalisieren" });
+  const amount = screen.getByRole("textbox", { name: "Historische Heizung – Jahresbetrag" });
+  fireEvent.change(amount, { target: { value: "7200.00" } });
+  expect(finalize).toBeEnabled();
+
+  fireEvent.change(amount, { target: { value: "7200.001" } });
+  expect(finalize).toBeDisabled();
+
+  fireEvent.change(amount, { target: { value: "8400.00" } });
+  expect(screen.queryByRole("cell", { name: "600.00 EUR" })).not.toBeInTheDocument();
+  expect(finalize).toBeDisabled();
+  fireEvent.click(screen.getByRole("button", { name: "Berechnen" }));
+  expect(await screen.findByRole("cell", { name: "700.00 EUR" })).toBeVisible();
+  expect(finalize).toBeEnabled();
+});
+
+it("keeps an edit made during computation dirty when the result arrives", async () => {
+  const computed = {
+    ...draft,
+    lines: [{ id: "advance", owner_profile_id: "owner", planned_amount: "7200.00", monthly_amount: "600.00" }],
+    draft_inputs: { ...draft.draft_inputs, planned_costs: [{ ...costs[0], planned_amount: "7200" }] },
+  };
+  let finish!: (response: typeof computed) => void;
+  mocks();
+  vi.spyOn(api, "post").mockReturnValue(new Promise<typeof computed>(resolve => { finish = resolve; }));
+  show();
+  const amount = await screen.findByDisplayValue("7100.10");
+  fireEvent.change(amount, { target: { value: "7200." } });
+  fireEvent.click(screen.getByRole("button", { name: "Berechnen" }));
+  fireEvent.change(amount, { target: { value: "8400.00" } });
+  await act(async () => finish(computed));
+
+  const finalize = screen.getByRole("button", { name: "Finalisieren" });
+  expect(amount).toHaveValue("8400.00");
+  expect(screen.queryByRole("cell", { name: "600.00 EUR" })).not.toBeInTheDocument();
+  expect(finalize).toBeDisabled();
+
+  fireEvent.change(amount, { target: { value: "7200." } });
+  expect(screen.getByRole("cell", { name: "600.00 EUR" })).toBeVisible();
+  expect(finalize).toBeEnabled();
 });
