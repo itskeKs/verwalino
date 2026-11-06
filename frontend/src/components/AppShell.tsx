@@ -68,7 +68,13 @@ export function AppShell({ children }: Props) {
         </div>
       ) : (
         <Dialog.Portal>
-          <Dialog.Overlay className="fixed inset-0 z-30 bg-black/40" />
+          <Dialog.Overlay
+            className="fixed inset-0 z-30 bg-black/40"
+            onClick={(event) => {
+              // The backdrop can receive a click before Radix registers its outside-pointer listener.
+              if (event.button === 0 && !event.ctrlKey) setSidebarOpen(false);
+            }}
+          />
           <Dialog.Content
             id="mobile-navigation"
             aria-describedby={undefined}
