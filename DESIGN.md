@@ -898,6 +898,12 @@ admin-only nav group.
 
 ### Tone and wording
 
+When declaration import is disabled, the import page shows “Der Import von
+Teilungserklärungen ist für Ihre Organisation nicht eingerichtet. Bitte wenden
+Sie sich an Ihre Administration.” for draft creation, upload and start refusals.
+The message omits the machine code and request ID; upload feedback stays with
+the affected file.
+
 - Use German UI text with real umlauts and formal **Sie**: 47 files address the user as Sie/Ihr, none
   uses du ("Geben Sie Ihr aktuelles Passwort und das neue Passwort ein."). Instructions are otherwise
   impersonal ("Bitte erneut versuchen.", "Bitte ein Objekt auswählen.").
@@ -1203,6 +1209,14 @@ and the sixty-receipt import/assignment use the real API. Each pair is desktop/3
 | Assignment after importing a long statement | [before](docs/assets/design/save-lifecycle/r1-before-assignment-after-import-1280.png) · [after](docs/assets/design/save-lifecycle/r1-after-assignment-after-import-1280.png) | [before](docs/assets/design/save-lifecycle/r1-before-assignment-after-import-360.png) · [after](docs/assets/design/save-lifecycle/r1-after-assignment-after-import-360.png) |
 
 ## Screenshots
+
+The declaration import upload refusal uses a synthetic draft and PDF against
+the portable installer with import disabled.
+
+| Declaration import upload refusal | Desktop (1280 px) | Mobile (360 px) |
+|---|---|---|
+| Before | [Before](docs/assets/design/declaration-import-disabled-before-1280.png) | [Before](docs/assets/design/declaration-import-disabled-before-360.png) |
+| After | [After](docs/assets/design/declaration-import-disabled-after-1280.png) | [After](docs/assets/design/declaration-import-disabled-after-360.png) |
 
 Mobile keyboard navigation uses the shared test database and synthetic long property names.
 The closed-focus images show the first Tab after loading the dashboard; the Escape images show
