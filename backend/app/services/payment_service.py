@@ -401,14 +401,20 @@ class PaymentService:
                 detail=f"Cannot book from status '{payment.status}'",
             )
 
-        if (payment.payment_type == "HK_VORAUSZAHLUNG" and payment.lease_agreement_id is not None
-                and payment.period_year is not None):
+        assigned_modes = None
+        if (payment.payment_type in {"NK_VORAUSZAHLUNG", "HK_VORAUSZAHLUNG"}
+                and payment.lease_agreement_id is not None and payment.period_year is not None):
+            if not 1 <= payment.period_year <= 9999:
+                raise HTTPException(422, "Das Zuordnungsjahr muss zwischen 1 und 9999 liegen.")
             lease = await self._leases.get_by_id(payment.lease_agreement_id)
             if lease is None:
                 raise HTTPException(404, "Lease agreement not found")
             history = await LeaseRentChangeRepository(self._session, self._org_id).list_for_lease(lease.id)
-            if self._assigned_advance_modes(lease, history, payment) == {"COMBINED"}:
+            modes = self._assigned_advance_modes(lease, history, payment)
+            if payment.payment_type == "HK_VORAUSZAHLUNG" and modes == {"COMBINED"}:
                 raise HTTPException(422, "Für diesen Zeitraum enthält die Betriebskosten-Vorauszahlung bereits die Heizkosten.")
+            if payment.payment_type == "NK_VORAUSZAHLUNG":
+                assigned_modes = sorted(mode or "LEGACY" for mode in modes)
 
         await self._require_deposit_sources(payment)
         await self._reserve_evidence(payment, complete=True)
@@ -447,6 +453,7 @@ class PaymentService:
                     "amount": str(payment.amount),
                     "payment_type": payment.payment_type,
                     "retention_until": str(payment.retention_until),
+                    **({"assigned_advance_modes": assigned_modes} if assigned_modes is not None else {}),
                     **({'reserve_plan_unresolved': True} if reserve_plan_unresolved else {}),
                 },
             )
@@ -600,6 +607,14 @@ class PaymentService:
         if lease is None:
             raise HTTPException(status_code=404, detail="Lease agreement not found")
 
+        return await self.tenant_statement_in_current_scope(
+            lease, period_start, period_end, as_of=as_of, include_payment_dates=include_payment_dates)
+
+    async def tenant_statement_in_current_scope(
+        self, lease, period_start: date, period_end: date,
+        *, as_of: date | None = None, include_payment_dates: bool = False,
+    ) -> MietkontoResult:
+        """Compute a visible lease in the caller's already admitted reporting scope."""
         rent_changes = await LeaseRentChangeRepository(self._session, self._org_id).list_for_lease(lease.id)
         lc = LeaseChargeInput(
             lease_agreement_id=lease.id,
@@ -617,9 +632,9 @@ class PaymentService:
         if prop is None:
             raise HTTPException(404, "Property not found")
         charges = tenant_expected_charges(lc, period_start, period_end, federal_state=prop.federal_state)
-        payments = await self._repo.list_for_lease(lease_agreement_id)
+        payments = await self._repo.list_for_lease(lease.id)
         scoped = self._scope_payments_to_period(payments, period_start, period_end)
-        inputs = self._tenant_payment_inputs(lease, rent_changes, [p for p in scoped if p.payment_type != "KAUTION"])
+        inputs = await self._tenant_payment_inputs(lease, rent_changes, [p for p in scoped if p.payment_type != "KAUTION"])
         return account_statement(charges, inputs, as_of=as_of or date.today(), include_payment_dates=include_payment_dates)
 
     async def owner_plan_charges(
@@ -833,15 +848,16 @@ class PaymentService:
         if not classify or not rows or payment_type != "NK_VORAUSZAHLUNG":
             return lease, [to_payment_input(p) for p in rows]
         history = await LeaseRentChangeRepository(self._session, self._org_id).list_for_lease(lease.id)
-        return lease, self._tenant_payment_inputs(lease, history, rows)
+        return lease, await self._tenant_payment_inputs(lease, history, rows)
 
-    @classmethod
-    def _tenant_payment_inputs(cls, lease, history, rows):
-        if lease.advance_mode is None and not any(change.advance_mode for change in history):
-            return [to_payment_input(p) for p in rows]
-        return [to_payment_input(p, combined_advance=p.payment_type == "NK_VORAUSZAHLUNG"
-            and p.period_year is not None and p.booked_at is not None
-            and cls._assigned_advance_modes(lease, history, p) == {"COMBINED"}) for p in rows]
+    async def _tenant_payment_inputs(self, lease, history, rows):
+        candidates = [p.id for p in rows if p.payment_type == "NK_VORAUSZAHLUNG"
+            and p.period_year is not None and 1 <= p.period_year <= 9999 and p.booked_at is not None]
+        frozen = await self._audit.booked_advance_modes(candidates) if candidates else {}
+        valid_ids = set(candidates)
+        return [to_payment_input(p, combined_advance=p.id in valid_ids and (
+            frozen[p.id] == ["COMBINED"] if p.id in frozen else self._assigned_advance_modes(lease, history, p) == {"COMBINED"}))
+            for p in rows]
 
     @staticmethod
     def _assigned_advance_modes(lease, history, payment):

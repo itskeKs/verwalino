@@ -70,7 +70,7 @@ class LeaseRentChangeService:
                 "rent_change_id": str(row.id), "valid_from": row.valid_from.isoformat(),
                 "base_rent": f"{row.base_rent:.2f}", "advance_payment": f"{row.advance_payment:.2f}",
                 "heating_advance_payment": f"{row.heating_advance_payment:.2f}",
-                "advance_mode": row.advance_mode,
+                **({"advance_mode": row.advance_mode} if row.advance_mode is not None else {}),
             },
         ))
         return row

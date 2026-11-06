@@ -1548,7 +1548,7 @@ async def test_0174_downgrade_refuses_default_policy_notice_without_interest(iso
                 with pytest.raises(DBAPIError, match="Previous releases cannot render retained organization-policy notices"):
                     with connection.begin_nested():
                         command.downgrade(cfg, "0173")
-            assert connection.scalar(text("SELECT version_num FROM alembic_version")) == "0175"
+            assert connection.scalar(text("SELECT version_num FROM alembic_version")) == "0176"
             assert connection.scalar(text("SELECT to_regclass('public.dunning_settings')")) is not None
             assert connection.scalar(text("SELECT count(*) FROM dunning_notice WHERE id=:id"), params) == 1
     finally:

@@ -472,6 +472,7 @@ not an immutable field; a separate minimization policy remains an owner decision
 
 | Table | Surviving text/JSON columns | Reason or transformation |
 | --- | --- | --- |
+| `lease_agreement`, `lease_rent_change` | `advance_mode` | Controlled advance-mode vocabulary. |
 | `access_coverage_review` | `manifest_digest` | Technical operation/status/error codes, keys and digests; personal event payloads are scrubbed separately. |
 | `access_coverage_snapshot` | `manifest`, `manifest_digest`, `request_digest` | Retained source, scope or review evidence and its technical provenance. |
 | `access_disposition_acceptance` | `assessment`, `assessment_digest`, `manifest_digest`, `reason`, `request_digest` | Retained source, scope or review evidence and its technical provenance. |

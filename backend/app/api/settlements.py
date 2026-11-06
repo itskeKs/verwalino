@@ -457,7 +457,7 @@ async def get_heating_consumption(
         run_id,cost_entry_id,meter_type,base_key)
 
 
-@router.get("/{run_id}/advance-proposal", response_model=AdvanceProposalOut)
+@router.get("/{run_id}/advance-proposal", response_model=AdvanceProposalOut, response_model_exclude_none=True)
 async def get_advance_proposal(
     run_id: uuid.UUID,
     accept_from: date | None = None,

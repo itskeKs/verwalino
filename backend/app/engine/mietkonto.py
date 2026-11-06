@@ -548,9 +548,32 @@ def account_statement(
     heating_periods = {(c.period_year, c.period_month) for c in expected_charges if c.payment_type == PT_HK_VORAUSZAHLUNG}
     combined_prepayments = {(p.period_year, p.period_month) for p in payments if p.combined_advance}
     reconciled_periods = heating_periods & combined_prepayments
-    # A joint prepayment covers both advances of its assigned month. Keep one
-    # account balance for that month so a later split cannot create arrears or
-    # require a fictitious allocation between equal-due components.
+    if reconciled_periods:
+        # Named credits stay on their booked components. Where one component
+        # is already overpaid, only the joint receipts can cover the other.
+        component_open = {}
+        for charge in expected_charges:
+            if charge.payment_type in (PT_NK_VORAUSZAHLUNG, PT_HK_VORAUSZAHLUNG):
+                key = (charge.period_year, charge.period_month, charge.payment_type)
+                component_open[key] = component_open.get(key, Decimal(0)) + charge.amount
+        for payment in payments:
+            key = _ist_key(payment)
+            if key in component_open and not payment.combined_advance:
+                component_open[key] -= payment.signed_amount
+        heating_only = set()
+        for year, month in tuple(reconciled_periods):
+            operating = component_open.get((year, month, PT_NK_VORAUSZAHLUNG), Decimal(0))
+            heating = component_open[(year, month, PT_HK_VORAUSZAHLUNG)]
+            if operating < 0 or heating < 0:
+                reconciled_periods.remove((year, month))
+                if operating < 0 < heating:
+                    heating_only.add((year, month))
+        payments = [
+            replace(p, payment_type=PT_HK_VORAUSZAHLUNG)
+            if p.combined_advance and (p.period_year, p.period_month) in heating_only else p
+            for p in payments
+        ]
+    # Otherwise a joint receipt covers the same-day components together.
     if reconciled_periods:
         expected_charges = [
             replace(c, payment_type=PT_NK_VORAUSZAHLUNG, combined_advance=True)

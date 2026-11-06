@@ -32,15 +32,9 @@ from app.engine.fristen import (
     WirtschaftsplanObligationInput,
     build_fristenmonitor,
 )
-from app.engine.mietkonto import (
-    PT_SONDERZAHLUNG,
-    LeaseChargeInput,
-    account_statement,
-    tenant_expected_charges,
-)
+from app.engine.mietkonto import PT_SONDERZAHLUNG
 from app.repositories.fristen_repo import FristenRepository
-from app.repositories.payment_repo import PaymentRepository
-from app.services.payment_service import to_payment_input
+from app.services.payment_service import PaymentService
 
 
 def _lease_overlaps(lease, period_start: date, period_end: date) -> bool:
@@ -63,7 +57,7 @@ class FristenService:
         self._org_id = org_id
         self._user_id = user_id
         self._repo = FristenRepository(session, org_id)
-        self._payments = PaymentRepository(session, org_id)
+        self._payments = PaymentService(session, org_id, user_id)
 
     async def requires_accounting_scope(self) -> bool:
         """Check monitor admission only, without loading financial report rows."""
@@ -208,8 +202,6 @@ class FristenService:
     async def _overdue_count(self, reference_date: date, sphere=None) -> int:
         leases = await self._repo.all_leases()
         total = 0
-        from app.repositories.unit_repo import UnitRepository
-        from app.repositories.property_repo import PropertyRepository
         for lease in leases:
             try:
                 inc_to = db_exclusive_to_engine_inclusive(lease.valid_to)
@@ -219,24 +211,7 @@ class FristenService:
                     period_end = inc_to
                 if period_start > period_end:
                     continue
-                lc = LeaseChargeInput(
-                    lease_agreement_id=lease.id,
-                    valid_from=lease.valid_from,
-                    valid_to=inc_to,
-                    base_rent=lease.base_rent,
-                    advance_payment=lease.advance_payment,
-                    heating_advance_payment=lease.heating_advance_payment,
-                )
-                unit = await UnitRepository(self._session, self._org_id).get_by_id(lease.unit_id)
-                prop = await PropertyRepository(self._session, self._org_id).get_by_id(unit.property_id) if unit else None
-                if prop is None:
-                    raise HTTPException(404, "Property not found")
-                charges = tenant_expected_charges(lc, period_start, period_end, federal_state=prop.federal_state)
-                payments = await self._payments.list_for_lease(lease.id)
-                scoped = _scope_payments(payments, period_start, period_end)
-                result = account_statement(
-                    charges, [to_payment_input(p) for p in scoped]
-                )
+                result = await self._payments.tenant_statement_in_current_scope(lease, period_start, period_end)
                 overdue = find_overdue_items(
                     list(result.open_items), reference_date, grace_days=0, current_year=date.today().year
                 )
@@ -293,16 +268,3 @@ class FristenService:
                          or (item.period_year, item.period_month) not in counted_months]
                 total += len(find_overdue_items(items, reference_date, grace_days=0, current_year=current_year))
         return total
-
-
-def _scope_payments(payments, period_start: date, period_end: date):
-    """Same period scoping as PaymentService / DunningService."""
-    y_lo, y_hi = period_start.year, period_end.year
-    scoped = []
-    for p in payments:
-        if p.period_year is not None:
-            if y_lo <= p.period_year <= y_hi:
-                scoped.append(p)
-        elif period_start <= p.value_date <= period_end:
-            scoped.append(p)
-    return scoped

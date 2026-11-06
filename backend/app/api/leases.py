@@ -289,6 +289,8 @@ async def update_lease(
     try:
         await db.flush()
     except IntegrityError as exc:
+        if getattr(exc.orig.__cause__, "constraint_name", None) == "original_advance_mode_frozen":
+            raise HTTPException(409, "Cannot change amounts: has booked payments or finalized settlement") from exc
         if "excl_lease_no_overlap" in str(exc):
             raise HTTPException(409, "Overlapping lease period for this unit") from exc
         raise
