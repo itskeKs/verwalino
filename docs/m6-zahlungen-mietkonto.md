@@ -229,6 +229,15 @@ otherwise be lost. A downgrade-and-upgrade run without such contexts and the ref
 when provenance is already recorded are tested. Issued letters, snapshots and shares
 are not changed retrospectively.
 
+### Accounting scope for tenant dunning notices
+
+In **Mahnungen → Neue Mahnung anlegen**, selecting the tenant and lease leaves
+the accounting scope for the manager to choose. If scoped payments require a
+scope, submitting without one returns HTTP 409 and creates no draft. The form
+explains in German that an exact accounting scope and review of unclassified
+inputs are required. Select an eligible **Abrechnungskreis** and submit again
+to calculate the notice for that scope.
+
 ### Default interest on dunning notices
 
 An administrator sets the three fees and enables interest under **Mahnungen → Mahneinstellungen**.
