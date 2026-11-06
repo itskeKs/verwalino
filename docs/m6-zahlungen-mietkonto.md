@@ -559,6 +559,7 @@ suggestions are not booked automatically. The positive split amounts must
 cover the absolute bank amount cent-exactly. A split amount accepts German grouping
 with a decimal comma, such as `2.250,00`, and is validated without floating-point
 arithmetic. An invalid amount identifies the affected split row without booking it.
+The dialog scrolls the validation message into view on submission.
 Errors keep the inputs, 409 becomes visible, reload
 follows only on success. READ_ONLY gets no mutation actions. "Alle" ("All") also keeps
 processed rows; account filter and pagination remain server-side.

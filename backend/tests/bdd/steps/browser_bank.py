@@ -404,7 +404,7 @@ def imported_deposit(world, seed_data):
 @browser_step
 async def submit_invalid_deposit(browser_world, width):
     b = browser_world
-    await b.page.set_viewport_size({"width": width, "height": 900})
+    await b.page.set_viewport_size({"width": width, "height": 640 if width == 360 else 900})
     await open_transactions(b)
     await button(transaction(b, "Kaution Sonnenhof"), "Aufteilen").click()
     dialog = deposit_split(b)
@@ -424,8 +424,8 @@ async def invalid_deposit_is_unbooked(browser_world, tmp_path):
     b = browser_world
     dialog = deposit_split(b)
     alert = dialog.get_by_role("alert")
-    await expect(alert).to_be_visible()
-    await alert.scroll_into_view_if_needed()
+    # Allow for subpixel rounding at the dialog scroll boundary.
+    await expect(alert).to_be_in_viewport(ratio=0.99)
     await b.page.screenshot(path=str(tmp_path / f"deposit-{b.page.viewport_size['width']}.png"))
     await expect(alert).to_contain_text("Betrag in Splitzeile 1: Bitte einen positiven Betrag wie 2.250,00 eingeben")
     await expect(field(dialog, "Betrag (EUR)")).to_have_value("abc")

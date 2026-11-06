@@ -66,7 +66,7 @@ function PropertyDetailPageContent({ propertyId }: { propertyId?: string }) {
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [showUnitForm, setShowUnitForm] = useState(false);
-  const [editUnitId, setEditUnitId] = useState<string | null>(null);
+  const [editingUnit, setEditingUnit] = useState<Unit | null>(null);
   const [unitForm, setUnitForm] = useState<UnitFormData>(EMPTY_UNIT_FORM);
   const [unitNumberError, setUnitNumberError] = useState<string | null>(null);
   const [unitAreaError, setUnitAreaError] = useState<{ field: "area" | "heated_area"; message: string } | null>(null);
@@ -137,7 +137,7 @@ function PropertyDetailPageContent({ propertyId }: { propertyId?: string }) {
   function openCreateUnit() {
     setUnitNumberError(null);
     setUnitAreaError(null);
-    setEditUnitId(null);
+    setEditingUnit(null);
     setUnitForm(EMPTY_UNIT_FORM);
     setShowUnitForm(true);
   }
@@ -145,7 +145,7 @@ function PropertyDetailPageContent({ propertyId }: { propertyId?: string }) {
   function openEditUnit(u: Unit) {
     setUnitNumberError(null);
     setUnitAreaError(null);
-    setEditUnitId(u.id);
+    setEditingUnit(u);
     setUnitForm({
       number: u.number,
       location: u.location,
@@ -167,17 +167,17 @@ function PropertyDetailPageContent({ propertyId }: { propertyId?: string }) {
     setUnitNumberError(null);
     setUnitAreaError(null);
     try {
-      if (editUnitId) {
+      if (editingUnit) {
         const body: UnitUpdate = {
           number: unitForm.number,
           location: unitForm.location,
           usage_type: unitForm.usage_type,
         };
-        if (unitForm.area) body.area = unitForm.area;
-        if (unitForm.heated_area) body.heated_area = unitForm.heated_area;
+        if (unitForm.area && unitForm.area !== editingUnit.area) body.area = unitForm.area;
+        if (unitForm.heated_area && unitForm.heated_area !== editingUnit.heated_area) body.heated_area = unitForm.heated_area;
         if (unitForm.mea) body.mea = unitForm.mea;
         body.building_part = unitForm.building_part;
-        await updateUnit(editUnitId, body);
+        await updateUnit(editingUnit.id, body);
       } else {
         const body: UnitCreate = {
           property_id: propertyId,
@@ -193,7 +193,7 @@ function PropertyDetailPageContent({ propertyId }: { propertyId?: string }) {
       }
       setSuccess("Einheit gespeichert.");
       setShowUnitForm(false);
-      setEditUnitId(null);
+      setEditingUnit(null);
       reload();
     } catch (err) {
       if (err instanceof ApiError && (
@@ -303,7 +303,7 @@ function PropertyDetailPageContent({ propertyId }: { propertyId?: string }) {
 
       {isWrite && showUnitForm && (
         <div className="card" style={{ marginBottom: "1rem" }}>
-          <h2>{editUnitId ? "Einheit bearbeiten" : "Neue Einheit anlegen"}</h2>
+          <h2>{editingUnit ? "Einheit bearbeiten" : "Neue Einheit anlegen"}</h2>
           <form onSubmit={handleUnitSubmit} className="form-grid">
             <div>
               <label>

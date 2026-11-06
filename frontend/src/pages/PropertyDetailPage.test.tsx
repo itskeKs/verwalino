@@ -168,6 +168,34 @@ it("keeps a refused duplicate number in the new unit form for correction", async
   expect(await screen.findByRole("status")).toHaveTextContent("Einheit gespeichert.");
 });
 
+it("saves a location edit without resubmitting legacy negative areas", async () => {
+  const unit: Unit = {
+    id: "unit-0", property_id: "property", number: "1", location: "Gartenflügel",
+    usage_type: "WOHNUNG", area: "-12.50", heated_area: "-4.00", mea: null, building_part: "",
+  };
+  vi.mocked(endpoints.listUnits).mockResolvedValueOnce([unit]);
+  renderMeaProperty("MIET", [null]);
+  const update = vi.spyOn(endpoints, "updateUnit").mockImplementation(async (_id, body) => {
+    if ("area" in body || "heated_area" in body) {
+      throw new ApiError(422, "Fläche: Bitte eine Zahl wie 75,50 eingeben.", "invalid_unit_area");
+    }
+    const saved = { ...unit, location: body.location ?? unit.location };
+    vi.mocked(endpoints.listUnits).mockResolvedValue([saved]);
+    return saved;
+  });
+  fireEvent.click(await screen.findByRole("button", { name: "Bearbeiten" }));
+  expect(screen.getByRole("textbox", { name: "Flaeche (m2)" })).toHaveValue("-12.50");
+  expect(screen.getByRole("textbox", { name: "Beheizte Flaeche (m2)" })).toHaveValue("-4.00");
+  fireEvent.change(screen.getByRole("textbox", { name: "Lage" }), { target: { value: "Vorderhaus" } });
+  fireEvent.click(screen.getByRole("button", { name: "Speichern" }));
+
+  expect(await screen.findByRole("status")).toHaveTextContent("Einheit gespeichert.");
+  expect(update).toHaveBeenCalledWith("unit-0", expect.objectContaining({ location: "Vorderhaus" }));
+  expect(await screen.findByRole("cell", { name: "Vorderhaus" })).toBeVisible();
+  expect(screen.getByRole("cell", { name: "-12.50" })).toBeVisible();
+  expect(screen.getByRole("cell", { name: "-4.00" })).toBeVisible();
+});
+
 it.each([
   ["area", "Flaeche (m2)", "Beheizte Flaeche (m2)", "Fläche"],
   ["heated_area", "Beheizte Flaeche (m2)", "Flaeche (m2)", "Beheizte Fläche"],
