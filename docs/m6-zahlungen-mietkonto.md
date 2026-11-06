@@ -435,8 +435,11 @@ fills both from their matching active booked payment types. A 50-euro receipt
 and a 70-euro standalone refund assigned to the same period give a derived
 total of −20 euros for that component (#216). Year/month buckets, lease bounds,
 reversals and frozen credits apply separately to each type. A later derivation
-accounts for the signed difference from disjoint finalized credits, including
-when the current bucket nets to zero. Finalized snapshots retain their amounts.
+uses the signed difference for buckets with active standalone refunds or negative
+frozen credits, including when the booked net is zero. A known breakdown can
+omit zero buckets. If an affected finalized statement lacks its breakdown,
+derivation returns `advance_credit_history_missing`. Finalized snapshots retain
+their amounts.
 Both totals default to unknown; missing totals block computation, coverage and
 finalization. Finalization freezes both totals and sources.
 Manual heating totals use the same signed numeric carrier as operating totals;

@@ -184,10 +184,12 @@ July–December credit 600 euros each; April–December credits
 do not depend on other drafts or finalization order while lease dates and booked payments are fixed;
 later statements cannot change earlier finalized shares. After a lease-end edit
 or a change to booked advances, each year/month bucket uses already finalized
-snapshot credits in place of those windows' current shares. The last open
-statement takes the signed remainder, even when a refund brings the bucket to
-zero. For example, 300 euros already finalized from
-a 1,200-euro annual payment leaves 900 euros after entering a September end;
+snapshot credits in place of those windows' current shares. Ordinary buckets
+keep the zero floor. For a bucket with an active standalone refund or a negative
+frozen credit, the last open statement takes the signed remainder, including
+when the booked net is zero. A bucket omitted from a known finalized breakdown
+counts as zero for this refund reconciliation. For example, 300 euros already
+finalized from a 1,200-euro annual payment leaves 900 euros after entering a September end;
 245.16 euros already finalized from three 100-euro payments through 14 March
 leaves 54.84 euros after entering an end on 20 March. Frozen credits are read from
 the snapshot, never recomputed. This includes later calendar windows finalized
@@ -231,9 +233,10 @@ shows their combined total. This also works for a newly created lease-clipped st
 The structured amount is frozen in the snapshot;
 the API exposes it in the notice label.
 
-Legacy DERIVED snapshots without year/month credit buckets can still use fixed
-lease dates. After a date edit, `advance_credit_history_missing` (HTTP 409) only
-blocks derivation if a credit bucket in the legacy statement's covered span changes.
+Legacy DERIVED snapshots without year/month credit buckets can still be used
+when their covered buckets are unaffected. Derivation returns
+`advance_credit_history_missing` (HTTP 409) when a credit bucket in the legacy
+statement's span changes after a date edit or needs refund reconciliation.
 Month-assigned advances from January–March remain usable when an end in June is
 entered later; a year-only payment whose covered-month denominator changes still
 requires correction or a confirmed MANUAL total. Create a correction with
@@ -246,9 +249,9 @@ MANUAL statements and never invents a historical credit breakdown.
 
 After a date edit, several open drafts may each include the same outstanding
 difference. Finalizing one freezes its credit; another stale draft must be
-re-derived before finalization (`derived_total_stale`, HTTP 422). Late bookings,
-including standalone refunds assigned to an already finalized month, enter
-a later statement in the assigned year through the frozen-credit difference.
+re-derived before finalization (`derived_total_stale`, HTTP 422). Standalone
+refunds assigned to an already finalized month enter another statement in the
+assigned year through the frozen-credit difference.
 The earlier snapshot stays unchanged.
 
 Automatic form prefill only applies while both date fields are empty. A delayed

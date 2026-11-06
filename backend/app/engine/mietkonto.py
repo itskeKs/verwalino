@@ -626,6 +626,21 @@ class AdvanceFilter:
     lease_agreement_id: uuid.UUID | None = None
     owner_profile_id: uuid.UUID | None = None
 
+    def matches(self, payment: PaymentInput) -> bool:
+        return (
+            payment.is_booked and not payment.is_reversed and not payment.is_reversal
+            and payment.payment_type in self.types and payment.period_year == self.year
+            and (self.lease_agreement_id is None or payment.lease_agreement_id == self.lease_agreement_id)
+            and (self.owner_profile_id is None or payment.owner_profile_id == self.owner_profile_id)
+        )
+
+
+def _sum_advances(payments: list[PaymentInput]) -> Decimal:
+    return _money(sum((
+        p.signed_amount if p.payment_type in _TENANT_ADVANCE_TYPES else p.amount
+        for p in payments
+    ), Decimal("0.00")))
+
 
 def derive_advance_total(
     payments: list[PaymentInput],
@@ -647,22 +662,7 @@ def derive_advance_total(
     uses gross amounts here, with direction applied separately by its period
     derivation.
     """
-    total = Decimal("0.00")
-    for p in payments:
-        if not p.is_booked:
-            continue
-        if p.is_reversed or p.is_reversal:
-            continue
-        if p.payment_type not in filt.types:
-            continue
-        if p.period_year != filt.year:
-            continue
-        if filt.lease_agreement_id is not None and p.lease_agreement_id != filt.lease_agreement_id:
-            continue
-        if filt.owner_profile_id is not None and p.owner_profile_id != filt.owner_profile_id:
-            continue
-        total += p.signed_amount if p.payment_type in _TENANT_ADVANCE_TYPES else p.amount
-    return _money(total)
+    return _sum_advances([p for p in payments if filt.matches(p)])
 
 
 @dataclass(frozen=True)
@@ -674,6 +674,17 @@ class AdvanceCredit:
     period_start: date
     period_end: date
     amount: Decimal
+
+
+def tenant_refund_buckets(
+    payments: list[PaymentInput], frozen: list[AdvanceCredit],
+) -> set[tuple[int, int | None]]:
+    """Find signed buckets in one scoped input, including frozen refund effects."""
+    return {
+        (p.period_year, p.period_month) for p in payments
+        if p.payment_type in _TENANT_ADVANCE_TYPES and p.direction == "OUT" and p.period_year is not None
+        and p.is_booked and not p.is_reversal and not p.is_reversed
+    } | {(credit.year, credit.month) for credit in frozen if credit.amount < 0}
 
 
 def derive_advance_credits_for_period(
@@ -693,11 +704,15 @@ def derive_advance_credits_for_period(
     """
     if not period_start.year <= filt.year <= period_end.year:
         return ()
-    signed = bool(filt.types & _TENANT_ADVANCE_TYPES)
+    active = [p for p in payments if filt.matches(p)]
+    frozen = [credit for credit in finalized_credits if credit.year == filt.year
+              and (credit.period_end < period_start or credit.period_start > period_end)]
+    signed_buckets = tenant_refund_buckets(active, frozen) if filt.types & _TENANT_ADVANCE_TYPES else set()
     credits = []
     for month in [*range(1, 13), None]:
-        total = derive_advance_total([p for p in payments if p.period_month == month], filt)
-        if not total and not (signed and finalized_credits):
+        total = _sum_advances([p for p in active if p.period_month == month])
+        signed = (filt.year, month) in signed_buckets
+        if not total and not signed:
             continue
 
         def share(start, end):
@@ -708,9 +723,8 @@ def derive_advance_credits_for_period(
             return monthly_advance_share_for_period(total, filt.year, month, start, end, **span)
 
         amount = share(period_start, period_end)
-        for previous in finalized_credits:
-            disjoint = previous.period_end < period_start or previous.period_start > period_end
-            if previous.year == filt.year and previous.month == month and disjoint:
+        for previous in frozen:
+            if previous.month == month:
                 amount += share(previous.period_start, previous.period_end) - previous.amount
         # A refund can exhaust a bucket and still leave a frozen credit to offset.
         if total or amount:
