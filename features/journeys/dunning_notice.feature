@@ -50,3 +50,25 @@ Feature: Readable issued dunning notice
     And the manager opens the created April reminder
     And the manager confirms "Mahnung ausgeben"
     Then the issued April reminder names 8 April 2026 as the interest start in the detail and PDF
+
+  Scenario Outline: A tenant notice keeps an explicit zero fee
+    Given an unpaid rental agreement for 700 EUR rent and no advance payment
+    And the standard first dunning fee is 2.50 EUR without automatic interest
+    When the manager creates the January tenant notice with "0,00" fee at <width> px
+    Then the notice has 700 EUR principal, no fee, no interest and 700 EUR total
+
+    Examples:
+      | width |
+      | 1280  |
+      | 360   |
+
+  Scenario Outline: An owner notice keeps an explicit zero fee
+    Given Anna Berg's 2026 plan charges 600 EUR in July due on 3 July
+    And the standard first dunning fee is 2.50 EUR without automatic interest
+    When the manager creates Anna's July owner notice with "0,00" fee at <width> px
+    Then the notice has 600 EUR principal, no fee, no interest and 600 EUR total
+
+    Examples:
+      | width |
+      | 1280  |
+      | 360   |

@@ -242,8 +242,10 @@ to calculate the notice for that scope.
 
 An administrator sets the three fees and enables interest under **Mahnungen → Mahneinstellungen**.
 All organization members can read the settings. Without saved settings, fees are 0.00 / 2.50 /
-2.50 EUR and interest is off. A per-notice fee override takes precedence. Individual and batch
-drafts use the same organization policy.
+2.50 EUR and interest is off. A per-notice fee override takes precedence. In individual
+tenant and owner drafts, a blank override uses the configured fee and `0,00` explicitly
+sets the fee to zero. An invalid override leaves the form open for correction.
+Individual and batch drafts use the same organization policy.
 
 With interest enabled, each overdue item accrues simple interest from the day after its due
 date through the notice date. The item is split at base-rate changes and on the booked value
@@ -554,8 +556,10 @@ Write roles can explicitly accept complete unambiguous suggestions,
 split manually in the dialog by lease/owner, payment type and month,
 or ignore a receipt without a payment. Suggestions requiring review or incomplete
 suggestions are not booked automatically. The positive split amounts must
-cover the absolute bank amount cent-exactly; German decimal input is validated without
-floating-point arithmetic. Errors keep the inputs, 409 becomes visible, reload
+cover the absolute bank amount cent-exactly. A split amount accepts German grouping
+with a decimal comma, such as `2.250,00`, and is validated without floating-point
+arithmetic. An invalid amount identifies the affected split row without booking it.
+Errors keep the inputs, 409 becomes visible, reload
 follows only on success. READ_ONLY gets no mutation actions. "Alle" ("All") also keeps
 processed rows; account filter and pagination remain server-side.
 The split dialog aligns labels above fields in a responsive form grid. Lease/owner

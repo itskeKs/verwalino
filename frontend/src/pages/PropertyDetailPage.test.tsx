@@ -168,6 +168,31 @@ it("keeps a refused duplicate number in the new unit form for correction", async
   expect(await screen.findByRole("status")).toHaveTextContent("Einheit gespeichert.");
 });
 
+it.each([
+  ["area", "Flaeche (m2)", "Beheizte Flaeche (m2)", "Fläche"],
+  ["heated_area", "Beheizte Flaeche (m2)", "Flaeche (m2)", "Beheizte Fläche"],
+])("keeps an invalid %s editable and associates the server explanation", async (field, label, otherLabel, name) => {
+  renderMeaProperty("MIET", [null]);
+  const message = `${name}: Bitte eine Zahl wie 75,50 mit höchstens zwei Nachkommastellen eingeben.`;
+  const update = vi.spyOn(endpoints, "updateUnit")
+    .mockRejectedValueOnce(new ApiError(422, message, `invalid_unit_${field}`))
+    .mockResolvedValueOnce({ id: "unit-0" } as Unit);
+  fireEvent.click(await screen.findByRole("button", { name: "Bearbeiten" }));
+  const input = screen.getByRole("textbox", { name: label, exact: true });
+  fireEvent.change(input, { target: { value: "abc" } });
+  fireEvent.click(screen.getByRole("button", { name: "Speichern" }));
+  expect(await screen.findByText(message)).toBeVisible();
+  expect(input).toHaveAccessibleDescription(message);
+  expect(input).toHaveValue("abc");
+  expect(screen.getByRole("textbox", { name: otherLabel, exact: true })).not.toHaveAccessibleDescription();
+
+  fireEvent.change(input, { target: { value: "75,50" } });
+  expect(screen.queryByText(message)).not.toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "Speichern" }));
+  expect(await screen.findByRole("status")).toHaveTextContent("Einheit gespeichert.");
+  expect(update).toHaveBeenLastCalledWith("unit-0", expect.objectContaining({ [field]: "75,50" }));
+});
+
 it.each([["OWNER_ADMIN", true], ["CLERK", true], ["READ_ONLY", false], ["UNKNOWN", false]] as const)(
   "binds the property meter panel without a unit and with role %s", async (role, canWrite) => {
     render(<AuthCtx.Provider value={{ loading: false, session: { user_id: "user", organization_id: "org", role }, login: vi.fn(), logout: vi.fn() }}>

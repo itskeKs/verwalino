@@ -382,3 +382,84 @@ async def february_partial(browser_world):
     await ledger_row(browser_world, "2026/02", "Kaltmiete", ["700.00", "500.00", "200.00"])
     await ledger_row(browser_world, "2026/02", "Betriebskosten-Vorauszahlung", ["150.00", "100.00", "50.00"])
     await browser_world.row("Saldo", "250.00 EUR")
+
+
+@given("a 2250 EUR receipt imported into a deposit account for an existing tenancy")
+def imported_deposit(world, seed_data):
+    rental(world, seed_data)
+    lease = world.data["leases"][0]
+    response = world.act("PATCH", f"/api/leases/{lease['id']}", json={"base_rent": "750.00", "deposit": "2250.00"})
+    assert response.status_code == 200, world.describe_response()
+    account = bank_account(world, deposit=True)
+    content = (
+        "Buchungstag;Wertstellung;Betrag;Name;Verwendungszweck\n"
+        f"02.01.2026;02.01.2026;2250,00;{world.data['people'][0].name};Kaution Sonnenhof\n"
+    ).encode()
+    response = world.act("POST", f"/api/bank-accounts/{account['id']}/imports", params={"dry_run": "false"},
+                         files={"file": ("deposit.csv", content, "text/csv")})
+    assert response.status_code == 200, world.describe_response()
+
+
+@when(parsers.parse("the manager tries to book the deposit with an invalid amount at {width:d} px"))
+@browser_step
+async def submit_invalid_deposit(browser_world, width):
+    b = browser_world
+    await b.page.set_viewport_size({"width": width, "height": 900})
+    await open_transactions(b)
+    await button(transaction(b, "Kaution Sonnenhof"), "Aufteilen").click()
+    dialog = deposit_split(b)
+    await field(dialog, "Zahlungsart").select_option("KAUTION")
+    await field(dialog, "Mietvertrag").select_option(b.world.data["leases"][0]["id"])
+    await field(dialog, "Betrag (EUR)").fill("abc")
+    await button(dialog, "Zuordnung buchen").click()
+
+
+def deposit_split(browser):
+    return browser.page.get_by_role("dialog", name="Umsatz aufteilen", exact=True)
+
+
+@then("the amount is explained in German and the receipt remains unassigned")
+@browser_step
+async def invalid_deposit_is_unbooked(browser_world, tmp_path):
+    b = browser_world
+    dialog = deposit_split(b)
+    alert = dialog.get_by_role("alert")
+    await expect(alert).to_be_visible()
+    await alert.scroll_into_view_if_needed()
+    await b.page.screenshot(path=str(tmp_path / f"deposit-{b.page.viewport_size['width']}.png"))
+    await expect(alert).to_contain_text("Betrag in Splitzeile 1: Bitte einen positiven Betrag wie 2.250,00 eingeben")
+    await expect(field(dialog, "Betrag (EUR)")).to_have_value("abc")
+    await expect(field(dialog, "Mietvertrag")).to_have_value(b.world.data["leases"][0]["id"])
+    response = await b.context.request.get("/api/bank-transactions", params={"bank_account_id": b.world.data["account"]["id"]})
+    assert response.ok, await response.text()
+    receipt, = (await response.json())["items"]
+    assert receipt["status"] == "NEU"
+    b.world.data["deposit_transaction"] = receipt["id"]
+    response = await b.context.request.get("/api/payments", params={"bank_account_id": b.world.data["account"]["id"]})
+    assert response.ok and await response.json() == [], await response.text()
+
+
+@when(parsers.parse('the manager corrects only the split amount to "{amount}"'))
+@browser_step
+async def book_grouped_deposit(browser_world, amount):
+    dialog = deposit_split(browser_world)
+    await field(dialog, "Betrag (EUR)").fill(amount)
+    await expect(dialog.get_by_text("Restbetrag: 0,00 €", exact=True)).to_be_visible()
+    await button(dialog, "Zuordnung buchen").click()
+    await expect(dialog).not_to_be_visible()
+
+
+@then("exactly 2250 EUR is booked as a deposit for the selected tenancy")
+@browser_step
+async def grouped_deposit_is_booked(browser_world):
+    b = browser_world
+    await b.page.reload()
+    await field(b.page, "Status").select_option("ZUGEORDNET")
+    await expect(transaction(b, "Kaution Sonnenhof").get_by_role("cell", name="2.250,00 €", exact=True)).to_be_visible()
+    response = await b.context.request.get("/api/payments", params={"bank_account_id": b.world.data["account"]["id"]})
+    assert response.ok, await response.text()
+    payment, = await response.json()
+    assert (payment["status"], payment["payment_type"], payment["amount"],
+            payment["lease_agreement_id"], payment["bank_transaction_id"]) == (
+        "booked", "KAUTION", "2250.00", b.world.data["leases"][0]["id"], b.world.data["deposit_transaction"],
+    )

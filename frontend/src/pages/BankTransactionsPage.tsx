@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { parseGermanAmount } from "../lib/germanAmount";
 import { ApiError } from "../api/client";
 import { Link, useParams, useSearchParams } from "react-router-dom";
 import {
@@ -315,6 +316,10 @@ function positiveAmount(value: string): string | null {
   const amount = cents(value);
   return amount !== null && amount > 0n && amount <= 99999999999999n ? decimal(amount) : null;
 }
+// A bare dot remains the API decimal separator, so "850.001" stays invalid.
+function splitInput(value: string): string {
+  return value.includes(",") ? parseGermanAmount(value) ?? "" : value;
+}
 function validLine(line: BankAssignmentLine): boolean {
   const lease = Boolean(line.lease_agreement_id);
   const owner = Boolean(line.owner_profile_id);
@@ -441,12 +446,16 @@ function SplitDialog({ transaction, account, busy, error, onClose, onSubmit }: {
   function submit() {
     if (busy || !targets) return;
     const lines: BankAssignmentLine[] = [];
-    for (const item of rows) {
-      const amount = positiveAmount(item.amount);
+    for (const [index, item] of rows.entries()) {
+      const amount = positiveAmount(splitInput(item.amount));
+      if (amount === null) {
+        setValidation(`Betrag in Splitzeile ${index + 1}: Bitte einen positiven Betrag wie 2.250,00 eingeben (max. 12 Vorkommastellen und 2 Nachkommastellen).`);
+        return;
+      }
       const lease = item.targetKind === "lease" ? targets.leases.find(lease => lease.id === item.target) : undefined;
       const owner = item.targetKind === "owner" ? targets.owners.find(owner => owner.id === item.target) : undefined;
-      if (!amount || !/^\d{1,4}$/.test(item.period_year) || !/^\d{1,2}$/.test(item.period_month) || (item.payment_type !== "RUECKLAGENENTNAHME" && !lease && !owner)) {
-        setValidation("Bitte positive Beträge (max. 12 Vorkommastellen, 2 Nachkommastellen), Periode und ein gültiges Ziel im Bankobjekt angeben.");
+      if (!/^\d{1,4}$/.test(item.period_year) || !/^\d{1,2}$/.test(item.period_month) || (item.payment_type !== "RUECKLAGENENTNAHME" && !lease && !owner)) {
+        setValidation("Bitte Periode und ein gültiges Ziel im Bankobjekt angeben.");
         return;
       }
       const line: BankAssignmentLine = {
@@ -462,7 +471,7 @@ function SplitDialog({ transaction, account, busy, error, onClose, onSubmit }: {
     onSubmit(lines);
   }
   const total = cents(transaction.amount);
-  const entered = rows.map(item => cents(item.amount));
+  const entered = rows.map(item => cents(splitInput(item.amount)));
   const remaining = total !== null && entered.every(amount => amount !== null)
     ? (total < 0n ? -total : total) - entered.reduce<bigint>((sum, amount) => sum + amount!, 0n) : null;
   const selectedCost = costs?.find(cost => cost.id === costId);
