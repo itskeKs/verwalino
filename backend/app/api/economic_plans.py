@@ -184,8 +184,15 @@ def _line_out(ln: EconomicPlanLine) -> PlanLineOut:
 
 
 def _plan_out(plan: EconomicPlan, lines: list[EconomicPlanLine]) -> EconomicPlanOut:
+    snapshot = plan.snapshot_payload or {}
+    draft_inputs = snapshot.get("draft_inputs")
+    if draft_inputs is None and plan.status == "draft" and lines:
+        # Manual calculations freeze the exact attested inputs together with the
+        # result. Read that basis, not the latest (possibly uncomputed) declaration
+        # or the result lines, which do not carry all the input metadata.
+        draft_inputs = snapshot.get("financial_input_coverage", {}).get("values")
     return EconomicPlanOut(
-        addressees=(plan.snapshot_payload or {}).get("addressees", []),
+        addressees=snapshot.get("addressees", []),
         id=str(plan.id),
         organization_id=str(plan.organization_id),
         property_id=str(plan.property_id),
@@ -202,8 +209,8 @@ def _plan_out(plan: EconomicPlan, lines: list[EconomicPlanLine]) -> EconomicPlan
         finalized_by=str(plan.finalized_by) if plan.finalized_by else None,
         superseded_by_id=str(plan.superseded_by_id) if plan.superseded_by_id else None,
         lines=[_line_out(ln) for ln in lines],
-        draft_inputs=(plan.snapshot_payload or {}).get("draft_inputs"),
-        accounting_scope_id=(plan.snapshot_payload or {}).get("previous_actuals", {}).get("accounting_scope_id"),
+        draft_inputs=draft_inputs,
+        accounting_scope_id=snapshot.get("previous_actuals", {}).get("accounting_scope_id"),
     )
 
 

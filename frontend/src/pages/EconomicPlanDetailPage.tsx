@@ -42,6 +42,24 @@ interface CostRow {
   category_id: string | null;
 }
 
+function editableRows(stored: NonNullable<EconomicPlan["draft_inputs"]>): CostRow[] {
+  return stored.planned_costs.map(row => ({
+    category_code: row.category_code,
+    label: row.label,
+    planned_amount: row.planned_amount,
+    distribution_key: row.distribution_key ?? "MEA",
+    cost_group: row.cost_group ?? "UMLAGEFAEHIG",
+    category_id: row.category_id ?? null,
+  }));
+}
+
+function calculationKey(rows: CostRow[], reserve: string) {
+  return JSON.stringify([
+    rows.map(row => ({ ...row, planned_amount: normalizePlanAmount(row.planned_amount) ?? row.planned_amount })),
+    normalizePlanAmount(reserve) ?? reserve,
+  ]);
+}
+
 export function EconomicPlanDetailPage() {
   const { planId } = useParams<{ planId: string }>();
   const navigate = useNavigate();
@@ -63,6 +81,10 @@ export function EconomicPlanDetailPage() {
   const reserveAmount = normalizePlanAmount(reserve);
   const isDraft = plan?.status === "draft";
   const isFinalized = plan?.status === "finalized";
+  const stored = plan?.draft_inputs;
+  const needsRecompute = canWrite && isDraft && plan.lines.length > 0 && (
+    !stored || calculationKey(rows, reserve) !== calculationKey(editableRows(stored), stored.reserve_contribution_total)
+  );
 
   const reload = useCallback(() => {
     if (!planId) return;
@@ -79,12 +101,9 @@ export function EconomicPlanDetailPage() {
         setPersons(per);
         // Hydrate only on route load, never from compute/finalize action responses.
         const stored = pl.status === "draft" ? pl.draft_inputs : null;
-        setRows(stored ? stored.planned_costs.map(row => ({
-          category_code: row.category_code, label: row.label, planned_amount: row.planned_amount,
-          distribution_key: row.distribution_key ?? "MEA", cost_group: row.cost_group ?? "UMLAGEFAEHIG",
-          category_id: row.category_id ?? null,
-        })) : []);
-        setReserve(stored?.reserve_contribution_total ?? pl.reserve_contribution_total);
+        setRows(stored ? editableRows(stored) : []);
+        const savedReserve = stored?.reserve_contribution_total ?? pl.reserve_contribution_total;
+        setReserve(normalizePlanAmount(savedReserve) ?? savedReserve);
         setReserveError(false);
       })
       .catch((err) => { if (current) setError(err instanceof ApiError ? (err.status === 401 ? "Nicht authentifiziert." : err.message) : String(err)); })
@@ -170,7 +189,7 @@ export function EconomicPlanDetailPage() {
   }
 
   async function handleFinalize() {
-    if (!planId || !validateReserve()) return;
+    if (!planId || needsRecompute || !validateReserve()) return;
     if (!window.confirm("Wirtschaftsplan finalisieren? Danach unveränderbar (GoBD); Änderung nur als Korrektur.")) return;
     await run(() => finalizeEconomicPlan(planId, buildRequest()));
   }
@@ -235,7 +254,7 @@ export function EconomicPlanDetailPage() {
         <table className="info-table"><tbody>
           <tr><td>Objekt</td><td><Link to={`/objekte/${plan.property_id}`} className="link">{propName(plan.property_id)}</Link></td></tr>
           <tr><td>Zeitraum</td><td>{plan.period_start} bis {plan.period_end}</td></tr>
-          <tr><td>Rücklagenzuführung</td><td style={{ fontFamily: "var(--mono)" }}>{plan.reserve_contribution_total} EUR</td></tr>
+          {!needsRecompute && <tr><td>Rücklagenzuführung</td><td style={{ fontFamily: "var(--mono)" }}>{plan.reserve_contribution_total} EUR</td></tr>}
           <tr><td>Engine-Version</td><td><code>{plan.engine_version}</code></td></tr>
           {plan.finalized_at && <tr><td>Finalisiert am</td><td>{plan.finalized_at}</td></tr>}
         </tbody></table>
@@ -291,11 +310,12 @@ export function EconomicPlanDetailPage() {
             </div>
           </div>
       {plan.status === "draft" && <FinancialCoverageReview kind="economic_plan" subjectId={plan.id} values={buildRequest()} />}
+          {needsRecompute && <p role="status">Die Berechnung passt nicht zu den aktuellen Eingaben. Bitte vor dem Finalisieren neu berechnen.</p>}
           <div className="form-actions" style={{ marginTop: "1rem" }}>
             <button className="btn btn--primary" disabled={busy} onClick={handleCompute}>
               {busy ? "Berechnen..." : "Berechnen"}
             </button>
-            <button className="btn btn--primary" style={{ background: "#2e7d32", borderColor: "#2e7d32" }} disabled={busy} onClick={handleFinalize}>
+            <button className="btn btn--primary" style={{ background: "#2e7d32", borderColor: "#2e7d32" }} disabled={busy || needsRecompute} onClick={handleFinalize}>
               Finalisieren
             </button>
           </div>
@@ -309,7 +329,7 @@ export function EconomicPlanDetailPage() {
         </div>
       )}
 
-      {ownerLines.length > 0 && (
+      {!needsRecompute && ownerLines.length > 0 && (
         <div className="card" style={{ marginBottom: "1rem" }}>
           <h2>Hausgeld-Vorschüsse je Eigentümer</h2>
           <table className="data-table">
@@ -330,7 +350,7 @@ export function EconomicPlanDetailPage() {
         </div>
       )}
 
-      {costLines.length > 0 && (
+      {!needsRecompute && costLines.length > 0 && (
         <div className="card">
           <h2>Geplante Kosten (berechnet)</h2>
           <table className="data-table">

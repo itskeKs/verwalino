@@ -1002,6 +1002,18 @@ At 360 px, the result capture is scrolled horizontally to show the monthly amoun
 | After: calculated advance | [Desktop](docs/assets/design/economic-plan-reserve/result-1280.png) | [Phone](docs/assets/design/economic-plan-reserve/result-360.png) |
 | After: cleared reserve, costs retained | [Desktop](docs/assets/design/economic-plan-reserve/invalid-1280.png) | [Phone](docs/assets/design/economic-plan-reserve/invalid-360.png) |
 
+After “Berechnen”, reopening a manual draft restores the calculated cost rows
+and reserve in the editor. If either changes, the previous calculated amounts
+are hidden and “Finalisieren” is disabled until another calculation succeeds.
+The editor explains: “Die Berechnung passt nicht zu den aktuellen Eingaben.
+Bitte vor dem Finalisieren neu berechnen.” Data-basis confirmation remains
+required. The 360 px after image scrolls the cost table to the annual amount.
+
+| Reopened calculated draft | 1280 px | 360 px |
+|---|---|---|
+| Before: missing editor row | [Desktop](docs/assets/design/economic-plan-reserve/reopen-before-1280.png) | [Phone](docs/assets/design/economic-plan-reserve/reopen-before-360.png) |
+| After: editable 7,200 EUR cost | [Desktop](docs/assets/design/economic-plan-reserve/reopen-after-1280.png) | [Phone](docs/assets/design/economic-plan-reserve/reopen-after-360.png) |
+
 ### Rent and owner account due-date split
 
 “Mietkonto” retains the full reporting period and adds the labelled date input
