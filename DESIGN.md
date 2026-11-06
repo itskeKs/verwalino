@@ -699,6 +699,25 @@ Synthetic long-owner statements from the test database, at 1280 px and 360 px wi
 | Snapshot hash before / after | [before](docs/assets/design/weg-statements/hash-before-1280.png) · [after](docs/assets/design/weg-statements/hash-after-1280.png) | [before](docs/assets/design/weg-statements/hash-before-360.png) · [after](docs/assets/design/weg-statements/hash-after-360.png) |
 | Table scrolled to complete amounts | — | [computed](docs/assets/design/weg-statements/computed-amount-after-360.png) · [finalized](docs/assets/design/weg-statements/finalized-amount-after-360.png) |
 
+The economic-plan detail gives `Hausgeld-Vorschüsse je Eigentümer` and
+`Geplante Kosten (berechnet)` separate `overflow-x-auto` containers. Owner names
+and cost labels wrap; annual, monthly and planned monetary values stay unbroken.
+At 360 px each table scrolls within its card while the page stays within the
+viewport. Desktop retains every column and value. Finalized plans also wrap the
+complete snapshot SHA-256 inside its card; the stored snapshot is unchanged.
+
+Synthetic test-database plans with eight units at 125/1000 MEA, long owner names,
+and 12345.67 EUR each for Grundsteuer and the reserve contribution:
+
+| Economic plan state / table | 1280 px | 360 px |
+| --- | --- | --- |
+| Calculated owner advances | [before](docs/assets/design/economic-plan-tables/calculated-before-1280.png) · [after](docs/assets/design/economic-plan-tables/calculated-after-1280.png) | [before](docs/assets/design/economic-plan-tables/calculated-before-360.png) · [after](docs/assets/design/economic-plan-tables/calculated-after-360.png) |
+| Finalized owner advances | [before](docs/assets/design/economic-plan-tables/finalized-before-1280.png) · [after](docs/assets/design/economic-plan-tables/finalized-after-1280.png) | [before](docs/assets/design/economic-plan-tables/finalized-before-360.png) · [after](docs/assets/design/economic-plan-tables/finalized-after-360.png) |
+| Calculated costs | Included above | [before](docs/assets/design/economic-plan-tables/calculated-costs-before-360.png) · [after](docs/assets/design/economic-plan-tables/calculated-costs-after-360.png) |
+| Finalized costs | Included above | [before](docs/assets/design/economic-plan-tables/finalized-costs-before-360.png) · [after](docs/assets/design/economic-plan-tables/finalized-costs-after-360.png) |
+| Scrolled calculated amounts | — | [advances](docs/assets/design/economic-plan-tables/calculated-amounts-after-360.png) · [costs](docs/assets/design/economic-plan-tables/calculated-cost-amounts-after-360.png) |
+| Scrolled finalized amounts | — | [advances](docs/assets/design/economic-plan-tables/finalized-amounts-after-360.png) · [costs](docs/assets/design/economic-plan-tables/finalized-cost-amounts-after-360.png) |
+
 ## Components
 
 New screens use the kit components and tokens. Reuse global classes only for what has no kit
