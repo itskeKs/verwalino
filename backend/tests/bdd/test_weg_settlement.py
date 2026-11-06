@@ -130,7 +130,8 @@ def long_owner_balance(world, seed_data):
     return create_balance_world(world, seed_data, owner_name='Anna-Katharina Freifrau von Hohenzollern-Sigmaringen')
 
 
-def create_balance_world(world, seed_data, *, cost_period_end='2026-12-31', owner_name='Anna Berg', second_owner='Berta Vollständig', scope_start='2026-01-01'):
+def create_balance_world(world, seed_data, *, cost_period_end='2026-12-31', owner_name='Anna Berg', second_owner='Berta Vollständig',
+                         scope_start='2026-01-01', monthly_due_day=1):
     world.actor = world.administrator_of('Verwaltung Alpha')
     world.actor_organization = 'Verwaltung Alpha'
     user = str(seed_data['user_a_admin_id'])
@@ -164,7 +165,7 @@ def create_balance_world(world, seed_data, *, cost_period_end='2026-12-31', owne
         'tenant_apportionable': 'NICHT_UMLAGEFAEHIG', 'source': 'MANUAL'})
     assert world.act('POST', f"/api/cost-entries/{cost['id']}/confirm").status_code == 200
     plan = create(world, '/api/economic-plans', {**basis, 'plan_year': 2026,
-        'period_start': '2026-01-01', 'period_end': '2026-12-31'})
+        'period_start': '2026-01-01', 'period_end': '2026-12-31', 'monthly_due_day': monthly_due_day})
     values = {'planned_costs': [{'category_code': 'GARTENPFLEGE', 'label': 'Bewirtschaftung',
         'planned_amount': '12000.00', 'cost_group': 'UMLAGEFAEHIG'}], 'reserve_contribution_total': '0.00'}
     world.run(attest_fixture(world.actor, 'economic_plan', plan['id'], values))

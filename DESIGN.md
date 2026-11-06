@@ -670,6 +670,15 @@ readable immediately after submission at 360 px and 1280 px.
 | Before | [View](docs/assets/design/dunning-refusal-viewport/before-1280.png) | [View](docs/assets/design/dunning-refusal-viewport/before-360.png) |
 | After | [View](docs/assets/design/dunning-refusal-viewport/after-1280.png) | [View](docs/assets/design/dunning-refusal-viewport/after-360.png) |
 
+If no owner charge is overdue, the inline error says „Für den ausgewählten
+Eigentümer gibt es im gewählten Zeitraum zum Stichtag keine überfälligen
+Beträge.“ The form keeps the selections for retry.
+
+| Owner notice before the charge is overdue | 1280 px | 360 px |
+|---|---|---|
+| Before | [View](docs/assets/design/owner-dunning-no-overdue/before-1280.png) | [View](docs/assets/design/owner-dunning-no-overdue/before-360.png) |
+| After | [View](docs/assets/design/owner-dunning-no-overdue/after-1280.png) | [View](docs/assets/design/owner-dunning-no-overdue/after-360.png) |
+
 The frozen calculation shows the statutory premium and a separate table of
 **Zinsabschnitte** with the date range, amount, principal, annual and base rates
 and day count. The tenant account shows fees and interest in an **Ausgestellte
