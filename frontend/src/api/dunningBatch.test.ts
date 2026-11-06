@@ -3,7 +3,7 @@ import { api } from "./client";
 import { previewDunningBatch, createDunningBatch, sumBatchAmounts } from "./dunningBatch";
 
 afterEach(() => vi.restoreAllMocks());
-const input = { period_start: "2026-01-01", period_end: "2026-12-31", reference_date: "2026-10-01", threshold: "0.01", grace_days: 0, base_interest_rate: null };
+const input = { period_start: "2026-01-01", period_end: "2026-12-31", reference_date: "2026-10-01", threshold: "0.01", grace_days: 0 };
 it("posts exact decimal text and explicit null interest without adding a fee override", async () => {
   const post = vi.spyOn(api, "post").mockResolvedValue({ candidates: [], source_digest: "digest" });
   await previewDunningBatch(input);

@@ -25,6 +25,88 @@ SYNC_URL = os.environ.get(
 )
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize('day', [0, 29, 30, 31])
+async def test_new_plan_refuses_due_days_outside_one_through_twenty_eight(client_a_admin, m4_seed, day):
+    response = await client_a_admin.post('/api/economic-plans', json={
+        'property_id': m4_seed['property'], 'plan_year': 2026, 'monthly_due_day': day})
+    assert response.status_code == 422, response.text
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('due_input', [{}, {'monthly_due_day': None}])
+async def test_new_plan_defaults_an_omitted_or_null_due_day_to_one(client_a_admin, m4_seed, due_input):
+    response = await client_a_admin.post('/api/economic-plans', json={
+        'property_id': m4_seed['property'], 'plan_year': 2026, **due_input})
+    assert response.status_code == 201, response.text
+    assert response.json()['monthly_due_day'] == 1
+
+
+@pytest.mark.parametrize('day', range(1, 29))
+def test_new_plan_accepts_each_resolved_due_day(day):
+    from app.api.economic_plans import EconomicPlanCreate
+
+    assert EconomicPlanCreate(property_id=str(uuid.uuid4()), plan_year=2026,
+        monthly_due_day=day).monthly_due_day == day
+
+
+@pytest.mark.parametrize('day', [0, 29, 30, 31])
+def test_plan_request_refuses_due_days_outside_one_through_twenty_eight(day):
+    from pydantic import ValidationError
+    from app.api.economic_plans import EconomicPlanCreate
+
+    with pytest.raises(ValidationError):
+        EconomicPlanCreate(property_id=str(uuid.uuid4()), plan_year=2026, monthly_due_day=day)
+
+
+@pytest.mark.asyncio
+async def test_historical_null_plan_keeps_its_frozen_payload_and_pdf_while_defaulting_to_first(
+    client_a_admin, m4_seed,
+):
+    # NULL is the original API default and remains a valid frozen historical value.
+    plan_id = await _create_and_finalize_plan(client_a_admin, m4_seed, legacy_due_day=None)
+    before = (await client_a_admin.get(f'/api/economic-plans/{plan_id}')).json()
+    pdf_before = (await client_a_admin.get(f'/api/economic-plans/{plan_id}/pdf')).content
+    with psycopg2.connect(SYNC_URL) as connection, connection.cursor() as cursor:
+        cursor.execute('SELECT monthly_due_day, snapshot_payload, snapshot_sha256 FROM economic_plan WHERE id=%s', (plan_id,))
+        frozen_before = cursor.fetchone()
+    result = await client_a_admin.get(f"/api/payments/mietkonto/owner/{m4_seed['owner_a']}", params={
+        'economic_plan_id': plan_id, 'period_start': '2025-03-01', 'period_end': '2025-03-31',
+        'as_of': '2025-03-02'})
+    assert result.status_code == 200, result.text
+    assert result.json()['open_items'][0]['due_date'] == '2025-03-03'
+    assert result.json()['due_balance'] == '0.00'
+    assert (await client_a_admin.get(f'/api/economic-plans/{plan_id}')).json() == before
+    assert (await client_a_admin.get(f'/api/economic-plans/{plan_id}/pdf')).content == pdf_before
+    with psycopg2.connect(SYNC_URL) as connection, connection.cursor() as cursor:
+        cursor.execute('SELECT monthly_due_day, snapshot_payload, snapshot_sha256 FROM economic_plan WHERE id=%s', (plan_id,))
+        assert cursor.fetchone() == frozen_before
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('day', [29, 30, 31])
+@pytest.mark.parametrize('year,month,last,cutoff,due', [
+    (2025, '07', 31, '2025-07-28', None),
+    (2025, '02', 28, '2025-02-27', '2025-02-28'),
+    (2026, '02', 28, '2026-03-01', '2026-03-02'),
+])
+async def test_historical_explicit_due_days_remain_frozen_with_the_approved_month_end_rule(
+    client_a_admin, m4_seed, day, year, month, last, cutoff, due,
+):
+    plan_id = await _create_and_finalize_plan(client_a_admin, m4_seed, legacy_due_day=day, plan_year=year)
+    before = (await client_a_admin.get(f'/api/economic-plans/{plan_id}')).json()
+    pdf_before = (await client_a_admin.get(f'/api/economic-plans/{plan_id}/pdf')).content
+    response = await client_a_admin.get(f"/api/payments/mietkonto/owner/{m4_seed['owner_a']}", params={
+        'economic_plan_id': plan_id, 'period_start': f'{year}-{month}-01', 'period_end': f'{year}-{month}-{last}',
+        'as_of': cutoff})
+    assert response.status_code == 200, response.text
+    assert response.json()['open_items'][0]['due_date'] == (due or f'{year}-{month}-{min(day, last)}')
+    assert response.json()['due_balance'] == '0.00'
+    assert (await client_a_admin.get(f'/api/economic-plans/{plan_id}')).json() == before
+    assert before['monthly_due_day'] == day
+    assert (await client_a_admin.get(f'/api/economic-plans/{plan_id}/pdf')).content == pdf_before
+
+
 # ===========================================================================
 # Seed: a WEG (org_a) -- 2 units MEA 600/400, two owners; cost entries from
 # three spheres (umlagefaehig / nicht umlagefaehig / Erhaltungsruecklage).
@@ -142,16 +224,19 @@ def m4_withdrawal_seed(m4_seed):
     return {**m4_seed, 'ce_garten': str(receipt)}
 
 
-async def _create_and_finalize_plan(client, m4_seed, reserve="6000.00"):
+async def _create_and_finalize_plan(client, m4_seed, reserve="6000.00", *, legacy_due_day=..., plan_year=2025):
     """Create + finalize a Wirtschaftsplan with the two owners' MEA shares."""
     resp = await client.post("/api/economic-plans", json={
         "property_id": m4_seed["property"],
-        "plan_year": 2025,
-        "period_start": "2025-01-01",
-        "period_end": "2025-12-31",
+        "plan_year": plan_year,
+        "period_start": f"{plan_year}-01-01",
+        "period_end": f"{plan_year}-12-31",
     })
     assert resp.status_code == 201, resp.text
     plan_id = resp.json()["id"]
+    if legacy_due_day is not ...:
+        with psycopg2.connect(SYNC_URL) as connection, connection.cursor() as cursor:
+            cursor.execute('UPDATE economic_plan SET monthly_due_day=%s WHERE id=%s', (legacy_due_day, plan_id))
     # Planned: Gartenpflege 4000 + Verwalter 3000 = 7000 cost; reserve 6000.
     body = {
         "planned_costs": [
@@ -682,7 +767,8 @@ class TestM4Rbac:
 # ===========================================================================
 class TestM4PlanImmutability:
     @pytest.mark.asyncio
-    async def test_update_finalized_plan_rejected(self, app_rw_session, m4_seed, client_a_admin):
+    @pytest.mark.parametrize('column', ['reserve_contribution_total', 'monthly_due_day'])
+    async def test_update_finalized_plan_rejected(self, app_rw_session, m4_seed, client_a_admin, column):
         plan_id = await _create_and_finalize_plan(client_a_admin, m4_seed)
         await app_rw_session.execute(
             text("SELECT set_config('app.current_org_id', :oid, true)"),
@@ -690,7 +776,7 @@ class TestM4PlanImmutability:
         )
         with pytest.raises(Exception, match="GoBD|finalized"):
             await app_rw_session.execute(
-                text("UPDATE economic_plan SET reserve_contribution_total = 999 WHERE id = :id"),
+                text(f"UPDATE economic_plan SET {column} = 3 WHERE id = :id"),
                 {"id": plan_id},
             )
 
@@ -1751,7 +1837,7 @@ async def test_paid_amount_errors_identify_the_owner_in_german(client_a_admin, c
 
 
 @pytest.mark.asyncio
-async def test_input_roster_keeps_original_plan_owner_after_history_correction(client_a_admin, m4_seed):
+async def test_input_roster_keeps_original_plan_owner_after_history_correction(client_a_admin, m4_seed, app_rw_session):
     api, w = client_a_admin, m4_seed
     plan = await _create_and_finalize_plan(api, w)
     history = (await api.get('/api/ownership', params={'unit_id': w['u2']})).json()[0]
@@ -1767,3 +1853,10 @@ async def test_input_roster_keeps_original_plan_owner_after_history_correction(c
     assert roster.status_code == 200, roster.text
     assert set(roster.json()) == {row['owner_profile_id'] for row in derived.json()} == {w['owner_a'], w['owner_b']}
     assert all(row['paid_total'] == '0.00' for row in derived.json())
+    from app.repositories.coverage_declaration_repo import CoverageDeclarationRepository
+    from app.repositories.economic_plan_repo import EconomicPlanRepository
+
+    org = uuid.UUID(str(w['org_a_id']))
+    await app_rw_session.execute(text("SELECT set_config('app.current_org_id',:org,true)"), {'org': str(org)})
+    original = await EconomicPlanRepository(app_rw_session, org).get_by_id(uuid.UUID(plan))
+    assert await CoverageDeclarationRepository(app_rw_session, org).owner_ids(original) == {w['owner_a'], w['owner_b']}

@@ -177,6 +177,11 @@ PROBES: dict[str, Probe] = {
     "GET /api/dunning": Probe(
         row("tenant_profile", tenant_profile_id="id"), status=200, because=EMPTY_FILTER),
     "GET /api/dunning/settings": Probe(),
+    # Keep B's policy semantically identical to the pre-seeded batch preview.
+    "PUT /api/dunning/settings": Probe(body={
+        "fee_level_1": "0.00", "fee_level_2": "2.50", "fee_level_3": "2.50",
+        "default_interest_enabled": False,
+    }),
     "GET /api/dunning/{dunning_id}": Probe(row("dunning_notice", dunning_id="id")),
     "GET /api/dunning/{dunning_id}/pdf": Probe(row("dunning_notice", dunning_id="id")),
     "POST /api/dunning/batch": Probe(row("lease_agreement", lease_agreement_id="id"), body=BATCH_APPLY),

@@ -109,6 +109,7 @@ class BankTransactionOut(BaseModel):
     counterparty_iban: str | None
     purpose: str | None
     status: Literal["NEU", "ZUGEORDNET", "IGNORIERT"]
+    cost_entry_id: uuid.UUID | None = None
 
     model_config = {"from_attributes": True}
 

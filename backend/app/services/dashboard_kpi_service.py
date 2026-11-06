@@ -20,7 +20,7 @@ from app.models.tenant_profile import TenantProfile
 from app.models.unit import Unit
 from app.repositories.lease_rent_change_repo import LeaseRentChangeRepository
 from app.repositories.payment_repo import PaymentRepository
-from app.services.payment_service import _to_payment_input
+from app.services.payment_service import to_payment_input
 from app.services.report_service import Money, ReportService
 
 RENT_TYPES = frozenset({'KALTMIETE', 'NK_VORAUSZAHLUNG', 'HK_VORAUSZAHLUNG'})
@@ -138,10 +138,10 @@ class DashboardKpiService:
         for payment in payments:
             if payment.period_year is None or payment.period_month is None:
                 unassigned_count += 1
-                unassigned_amount += _to_payment_input(payment).signed_amount
+                unassigned_amount += to_payment_input(payment).signed_amount
                 continue
             if (payment.period_year, payment.period_month) <= (end.year, end.month):
-                assigned[payment.lease_agreement_id].append(_to_payment_input(payment))
+                assigned[payment.lease_agreement_id].append(to_payment_input(payment))
         for lease in leases:
             lease_input = LeaseChargeInput(
                 lease_agreement_id=lease.id, valid_from=lease.valid_from,

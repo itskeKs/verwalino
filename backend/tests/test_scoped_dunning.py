@@ -11,6 +11,80 @@ from tests.test_scoped_account_statements import statement_fixture, client, muta
 pytestmark = pytest.mark.asyncio
 
 
+@pytest.fixture(params=['tenant', 'owner'])
+async def creation_case(request, migrator_session, scope_seed):
+    kind = request.param
+    ids = await statement_fixture(migrator_session, scope_seed, 'lease' if kind == 'tenant' else 'owner')
+    await grant(ids, ['read', 'prepare'])
+    body = tenant_body(ids)
+    if kind == 'owner':
+        body.pop('tenant_profile_id')
+        body.pop('lease_agreement_id')
+        body['owner_profile_id'] = str(ids['profile'])
+        ids['plan'] = uuid.uuid4()
+        await mutate(text("INSERT INTO economic_plan(id,organization_id,property_id,plan_year,period_start,period_end,status,engine_version) VALUES (:plan,:org,:property,2025,'2025-01-01','2025-12-31','draft','fixture')"), ids)
+        await mutate(text("INSERT INTO ownership_history(organization_id,unit_id,owner_profile_id,valid_from) VALUES (:org,:unit,:profile,'2025-01-01')"), ids)
+        await mutate(text("INSERT INTO economic_plan_line(organization_id,economic_plan_id,line_type,unit_id,owner_profile_id,label,planned_amount,monthly_amount,sort_order) VALUES (:org,:plan,'OWNER_ADVANCE',:unit,:profile,'Plan source',1200,100,1)"), ids)
+        await mutate(text("INSERT INTO accounting_scope_binding(organization_id,property_id,scope_id,economic_plan_id,origin,reason,reviewed_by) VALUES (:org,:property,:scope,:plan,'REVIEWED','Plan fixture',:actor)"), ids)
+        await mutate(text("UPDATE economic_plan SET status='finalized',finalized_at=now(),finalized_by=:actor,snapshot_payload='{}',snapshot_sha256=:sha WHERE id=:plan"), {**ids, 'sha': 'd'*64})
+        body['economic_plan_id'] = str(ids['plan'])
+    return ids, kind, body
+
+
+async def test_created_draft_is_readable_at_response_start(creation_case, app_rw_session):
+    from httpx import ASGITransport, AsyncClient
+    from app.main import app
+
+    ids, kind, body = creation_case
+    await app_rw_session.execute(text("SELECT set_config('app.current_org_id',:org,true), set_config('app.current_user_id',:actor,true)"),
+                                 {'org': str(ids['org']), 'actor': str(ids['clerk'])})
+    observed = []
+    async with client(ids) as api:
+        async def observe_response(scope, receive, send):
+            async def observe_send(message):
+                if message['type'] == 'http.response.start' and message['status'] == 201:
+                    # Independent app_rw transaction: ASGITransport otherwise waits
+                    # for request-scope cleanup and hides this response-boundary race.
+                    rows = (await app_rw_session.scalars(text(f'SELECT id FROM dunning_notice WHERE {kind}_profile_id=:profile'), {'profile': ids['profile']})).all()
+                    observed.extend(str(row) for row in rows)
+                    for notice_id in observed:
+                        detail = await api.get(f'/api/dunning/{notice_id}')
+                        assert detail.status_code == 200, detail.text
+                        assert detail.json()['status'] == 'draft'
+                await send(message)
+            await app(scope, receive, observe_send)
+
+        async with AsyncClient(transport=ASGITransport(app=observe_response), base_url='http://test', cookies=api.cookies) as writer:
+            response = await writer.post(f'/api/dunning/{kind}', json=body)
+        assert response.status_code == 201, response.text
+        assert observed == [response.json()['id']], 'Draft not committed at http.response.start'
+        assert response.json()['principal_amount'] == ('7100.00' if kind == 'tenant' else '1100.00')
+        assert [row['id'] for row in (await api.get('/api/dunning')).json()] == observed
+
+
+async def test_failed_creation_rolls_back_flushed_draft(creation_case, monkeypatch):
+    from fastapi import HTTPException
+    from app.services.dunning_service import DunningService
+
+    ids, kind, body = creation_case
+    method = f'create_dunning_for_{kind}'
+    original = getattr(DunningService, method)
+
+    async def refuse_after_flush(service, **values):
+        await original(service, **values)
+        raise HTTPException(422, 'Synthetic late validation refusal')
+
+    monkeypatch.setattr(DunningService, method, refuse_after_flush)
+    async with client(ids) as api:
+        response = await api.post(f'/api/dunning/{kind}', json=body)
+        assert response.status_code == 422, response.text
+        assert (await api.get('/api/dunning')).json() == []
+        monkeypatch.setattr(DunningService, method, original)
+        created = await api.post(f'/api/dunning/{kind}', json=body)
+        assert created.status_code == 201, created.text
+        assert len((await api.get('/api/dunning')).json()) == 1
+
+
 async def grant(ids, caps, key='scope'):
     params = {**ids, 'sphere': ids[key], 'caps': caps}
     await mutate(text('UPDATE scope_grant SET revoked_at=now(),revoked_by=:actor WHERE organization_id=:org AND scope_id=:sphere AND user_id=:clerk AND revoked_at IS NULL'), params)

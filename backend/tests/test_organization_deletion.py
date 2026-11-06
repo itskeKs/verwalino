@@ -131,6 +131,25 @@ async def test_due_erasure_retains_finalized_commercial_rules_and_foreign_financ
             {'org': w['foreign_org']})).scalars().all() == original
 
 
+async def test_cost_bank_evidence_inherits_retention_without_retaining_unassigned_lines(rent_world, reserve_erasure_db):
+    from tests.test_bank_transaction_assign import cost_assignment_graph
+    from app.services.organization_deletion_service import run_deletion
+    db, w = reserve_erasure_db, rent_world
+    async with api_client(w) as api:
+        cost, bank, tids = await cost_assignment_graph(api, w['property'])
+        rows = (await db.execute(text("SELECT entity,identity,retention_until FROM organization_retention_plan(:org) WHERE entity IN ('cost_entry','bank_transaction')"), w)).all()
+        retained = {(row.entity, row.identity['id']): row.retention_until for row in rows}
+        assert retained['bank_transaction', tids[0]] == retained['cost_entry', cost]
+        assert ('bank_transaction', tids[1]) not in retained
+        await db.rollback()
+        assert (await api.post('/api/organizations/deletion')).status_code == 200
+        assert (await api.post('/api/organizations/deletion/confirm', json={'organization_name': 'T23 synthetic'})).status_code == 200
+    async with db.begin():
+        assert await run_deletion(db, w['org'], now=datetime.now(timezone.utc) + timedelta(days=8))
+    kept = (await db.execute(text('SELECT id,cost_entry_id,amount FROM bank_transaction WHERE bank_account_id=CAST(:bank AS uuid)'), {'bank': bank})).one()
+    assert str(kept.id) == tids[0] and str(kept.cost_entry_id) == cost and kept.amount == -60
+
+
 @pytest.mark.parametrize('scoped', [False, True], ids=['booked', 'scope-bound-vouchers'])
 async def test_erasure_scrubs_imported_bank_dependencies_without_rewriting_vouchers(
         rent_world, reserve_erasure_db, scoped):
