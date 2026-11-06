@@ -78,6 +78,42 @@ def split(ids):
         for kind, amount in [('KALTMIETE','700.00'), ('NK_VORAUSZAHLUNG','150.00')]]}
 
 
+@pytest.mark.parametrize('payment_type', ['KALTMIETE', 'NK_VORAUSZAHLUNG', 'HK_VORAUSZAHLUNG', 'RUECKLAGENANTEIL'])
+async def test_wrong_counterparty_leaves_the_whole_split_pending_and_allows_correction(bank_seed, bank_db, payment_type):
+    api, ids = bank_seed
+    tid = await transaction(bank_db, ids)
+    path = f'{BASE}/{tid}/assign'
+    first, line = split(ids)['lines']
+    line = {**line, 'payment_type': payment_type}
+    owner_type = payment_type == 'RUECKLAGENANTEIL'
+    owner = {'owner_profile_id': str(ids['owner'])}
+    invalid = {key: value for key, value in line.items() if key not in ('lease_agreement_id', 'tenant_profile_id')}
+    response = await api.post(path, json={'lines': [first, invalid if owner_type else {**invalid, **owner}]})
+    assert response.status_code == 422, response.text
+    assert response.json()['detail'] == {
+        'code': 'PAYMENT_COUNTERPARTY_TYPE_MISMATCH',
+        'message': (
+            'Dieser Zahlungstyp erfordert einen Eigentümer als Gegenpartei.' if owner_type else
+            'Dieser Zahlungstyp gehört zu einem Mietverhältnis, nicht zu einem Eigentümer.'
+        ),
+    }
+    pending = (await listing(api, ids)).json()['items']
+    assert any(row['id'] == tid and row['status'] == 'NEU' for row in pending)
+    assert await bank_db.scalar(text('SELECT count(*) FROM payment WHERE bank_transaction_id = :id'),
+                                {'id': uuid.UUID(tid)}) == 0
+
+    corrected = {**invalid, **owner} if owner_type else line
+    response = await api.post(path, json={'lines': [first, corrected]})
+    assert response.status_code == 200, response.text
+    assert response.json()['status'] == 'ZUGEORDNET'
+    booked = response.json()['payments']
+    assert [(item['status'], Decimal(item['amount'])) for item in booked] == [
+        ('booked', Decimal('700.00')), ('booked', Decimal('150.00')),
+    ]
+    key = 'owner_profile_id' if owner_type else 'tenant_profile_id'
+    assert booked[1][key] == str(ids['owner' if owner_type else 'tenant'])
+
+
 async def listing(api, ids, **params):
     return await api.get(BASE, params={'bank_account_id': str(ids['bank']), **params})
 
@@ -676,6 +712,11 @@ async def test_real_target_mismatches_and_foreign_target(bank_seed, bank_db, see
     assert (await api.post(f'{BASE}/{tid}/assign',json=body)).status_code == 422
     owner_line = {'payment_type':'HAUSGELD_VORSCHUSS','amount':'850.00','period_year':2025,'period_month':6,'owner_profile_id':str(foreign_owner)}
     assert (await api.post(f'{BASE}/{tid}/assign',json={'lines':[owner_line]})).status_code == 404
+    for owner_id in (foreign_owner, uuid.uuid4()):
+        response = await api.post(f'{BASE}/{tid}/assign', json={
+            'lines': [{**owner_line, 'payment_type': 'KALTMIETE', 'owner_profile_id': str(owner_id)}],
+        })
+        assert response.status_code == 404 and response.json()['detail'] == 'Owner profile not found'
     other_tid = await transaction(bank_db,ids,bank='other_bank')
     owner_line['owner_profile_id'] = str(ids['owner'])
     assert (await api.post(f'{BASE}/{other_tid}/assign',json={'lines':[owner_line]})).status_code == 422

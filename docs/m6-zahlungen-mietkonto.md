@@ -131,6 +131,15 @@ The type is the **control key** for the settlement integration (§6) — hence s
 | `NACHZAHLUNG` | Tenant or owner | "… / additional payment" | settles the `balance` of a **finalized** settlement (`settlement_run_id`); settlement-neutral for the *next* period. |
 | `KAUTION` *(optional)* | Tenant | "Tenant: security deposit" | Security deposit account holdings; **settlement-neutral** (§3.4). |
 
+Direct payment creation and bank assignment use the same counterparty rule.
+Tenant types require a tenant and reject an owner. Owner types require an owner
+and reject a tenant. A mismatch returns HTTP 422 with the code
+`PAYMENT_COUNTERPARTY_TYPE_MISMATCH`. The rent message is “Dieser Zahlungstyp
+gehört zu einem Mietverhältnis, nicht zu einem Eigentümer.” The owner message is
+“Dieser Zahlungstyp erfordert einen Eigentümer als Gegenpartei.” An invalid split
+leaves the bank receipt pending and creates no payments; correct the target and
+submit again.
+
 > **[§18/domain F6-3] Scope of payment types.** SDD §18 explicitly lists the depth of the tenant ledger and the treatment of security deposits as open. Whether `KAUTION` is already maintained in M6 (a dedicated account type exists: `bank_account.account_type='KAUTION'`) or deferred to after M9, and whether further types are needed (e.g. rent reduction, refund of credit as its own `OUT` type), has **not** been decided unilaterally. **Provisional assumption:** the vocabulary above; `KAUTION` carried as an optional type, but settlement-neutral. Requires domain sign-off.
 
 ### 1.4 `open_item` — derived (computed), not persisted [DECISION]

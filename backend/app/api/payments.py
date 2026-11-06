@@ -19,7 +19,7 @@ from fastapi import APIRouter, Depends, HTTPException, Response
 from pydantic import BaseModel
 
 from sqlalchemy import text
-from sqlalchemy.exc import DBAPIError
+from sqlalchemy.exc import DBAPIError, IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.tenant import AuthContext, get_current_user, get_db, require_write_dep
@@ -34,7 +34,7 @@ from app.repositories.owner_profile_repo import OwnerProfileRepository
 from app.services.property_master_service import require_property_master
 from app.models.payment import Payment
 from app.repositories.payment_repo import PaymentRepository
-from app.services.payment_service import PaymentService
+from app.services.payment_service import PaymentService, payment_counterparty_error
 from app.services.reserve_ledger_service import ReserveLedgerService
 from app.services.financial_scope_service import FinancialScopeService
 from app.repositories.lease_agreement_repo import LeaseAgreementRepository
@@ -506,22 +506,31 @@ async def create_payment(
     db: AsyncSession = Depends(get_live_writer_db),
 ):
     svc = PaymentService(db, auth.organization_id, auth.user_id)
-    payment = await svc.create_draft(
-        bank_account_id=uuid.UUID(body.bank_account_id),
-        direction=body.direction,
-        amount=_dec(body.amount, "amount"),
-        value_date=body.value_date,
-        payment_type=body.payment_type,
-        tenant_profile_id=uuid.UUID(body.tenant_profile_id) if body.tenant_profile_id else None,
-        owner_profile_id=uuid.UUID(body.owner_profile_id) if body.owner_profile_id else None,
-        lease_agreement_id=uuid.UUID(body.lease_agreement_id) if body.lease_agreement_id else None,
-        period_year=body.period_year,
-        period_month=body.period_month,
-        settlement_run_id=uuid.UUID(body.settlement_run_id) if body.settlement_run_id else None,
-        reserve_cost_entry_id=body.reserve_cost_entry_id,
-        reserve_register_entry_id=body.reserve_register_entry_id,
-        note=body.note,
-    )
+    try:
+        payment = await svc.create_draft(
+            bank_account_id=uuid.UUID(body.bank_account_id),
+            direction=body.direction,
+            amount=_dec(body.amount, "amount"),
+            value_date=body.value_date,
+            payment_type=body.payment_type,
+            tenant_profile_id=uuid.UUID(body.tenant_profile_id) if body.tenant_profile_id else None,
+            owner_profile_id=uuid.UUID(body.owner_profile_id) if body.owner_profile_id else None,
+            lease_agreement_id=uuid.UUID(body.lease_agreement_id) if body.lease_agreement_id else None,
+            period_year=body.period_year,
+            period_month=body.period_month,
+            settlement_run_id=uuid.UUID(body.settlement_run_id) if body.settlement_run_id else None,
+            reserve_cost_entry_id=body.reserve_cost_entry_id,
+            reserve_register_entry_id=body.reserve_register_entry_id,
+            note=body.note,
+        )
+    except IntegrityError as exc:
+        constraint = getattr(getattr(exc.orig, "__cause__", None), "constraint_name", None)
+        if getattr(exc.orig, "sqlstate", None) == "23514" and constraint in {
+            "ck_payment_ck_payment_counterparty_type",  # naming convention applied to 0016
+            "ck_payment_heating_counterparty",
+        }:
+            raise payment_counterparty_error(body.payment_type) from exc
+        raise
     return _to_out(payment)
 
 

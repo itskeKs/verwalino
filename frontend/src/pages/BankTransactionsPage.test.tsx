@@ -280,6 +280,29 @@ it("lays out split rows as full-width form grids with shared actions at the bott
   expect(form.lastElementChild).toBe(submit.parentElement);
 });
 
+it("shows a structured rent counterparty refusal in the split form and allows retry", async () => {
+  const message = "Dieser Zahlungstyp gehört zu einem Mietverhältnis, nicht zu einem Eigentümer.";
+  const mutation = vi.fn()
+    .mockResolvedValueOnce(json({ detail: { code: "PAYMENT_COUNTERPARTY_TYPE_MISMATCH", message } }, 422))
+    .mockResolvedValueOnce(json({ id: "tx", status: "ZUGEORDNET", payments: [] }));
+  const fetchMock = assignmentSetup(warm, "OWNER_ADMIN", mutation);
+  fireEvent.click(await screen.findByRole("button", { name: "Aufteilen" }));
+  const dialog = await screen.findByRole("dialog", { name: "Umsatz aufteilen" });
+  await within(dialog).findAllByRole("option", { name: /Anna Muster.*2025-01-01/ });
+  expect(within(dialog).queryByLabelText("Eigentümer")).not.toBeInTheDocument();
+
+  const submit = within(dialog).getByRole("button", { name: "Zuordnung buchen" });
+  fireEvent.click(submit);
+  expect(await within(dialog).findByRole("alert")).toHaveTextContent(message);
+  expect(within(dialog).getAllByLabelText("Betrag (EUR)")[0]).toHaveValue("700.00");
+  expect(within(dialog).getAllByLabelText("Mietvertrag")[0]).toHaveValue("lease");
+  expect(submit).toBeEnabled();
+
+  fireEvent.click(submit);
+  await waitFor(() => expect(dialog).not.toBeInTheDocument());
+  expect(posts(fetchMock)).toHaveLength(2);
+});
+
 it("locks split fields and actions during a double submission and retains inputs after refusal", async () => {
   let finish!: (response: Response) => void;
   const fetchMock = assignmentSetup(warm, "OWNER_ADMIN", () => new Promise(resolve => { finish = resolve; }));

@@ -84,6 +84,26 @@ TENANT_TYPES = frozenset({"KALTMIETE", "NK_VORAUSZAHLUNG", "HK_VORAUSZAHLUNG", "
 OWNER_TYPES = frozenset({"HAUSGELD_VORSCHUSS", "RUECKLAGENANTEIL", "SONDERZAHLUNG"})
 
 
+def payment_counterparty_error(payment_type: str) -> HTTPException:
+    if payment_type in TENANT_TYPES:
+        message = "Dieser Zahlungstyp gehört zu einem Mietverhältnis, nicht zu einem Eigentümer."
+    elif payment_type in OWNER_TYPES:
+        message = "Dieser Zahlungstyp erfordert einen Eigentümer als Gegenpartei."
+    else:
+        message = "Bitte wählen Sie eine gültige Gegenpartei für diesen Zahlungstyp."
+    return HTTPException(422, {"code": "PAYMENT_COUNTERPARTY_TYPE_MISMATCH", "message": message})
+
+
+def validate_payment_counterparty(
+    payment_type: str, tenant_profile_id: uuid.UUID | None, owner_profile_id: uuid.UUID | None,
+) -> None:
+    if (
+        payment_type in TENANT_TYPES and (tenant_profile_id is None or owner_profile_id is not None)
+        or payment_type in OWNER_TYPES and (owner_profile_id is None or tenant_profile_id is not None)
+    ):
+        raise payment_counterparty_error(payment_type)
+
+
 def _compute_retention_until(value_date: date) -> date:
     """Aufbewahrungs-Anker for a booking record (m6 section 5; ADR-0003 #3).
 
@@ -222,7 +242,8 @@ class PaymentService:
         (ADR-0010) -- never client-chosen. A draft is freely editable; the
         bewusste `book` step freezes it.
         """
-        await FinancialScopeService(self._session, self._org_id, self._user_id).lock_inputs()
+        context = FinancialScopeService(self._session, self._org_id, self._user_id)
+        await context.lock_inputs()
         parents = await self._resolve_parents({
             "bank_account_id": bank_account_id, "tenant_profile_id": tenant_profile_id,
             "owner_profile_id": owner_profile_id, "lease_agreement_id": lease_agreement_id,
@@ -258,6 +279,13 @@ class PaymentService:
         with self._session.no_autoflush:
             await self._require_deposit_sources(payment)
             await self._reserve_evidence(payment, complete=False)
+        try:
+            validate_payment_counterparty(payment_type, tenant_profile_id, owner_profile_id)
+        except HTTPException:
+            # A scoped INSERT would check prepare access before the CHECK.
+            # Preserve that precedence when reporting the error before the write.
+            await context.enter(account, capability=ScopeCapability.PREPARE)
+            raise
         payment = await self._repo.create(payment)
         await self._session.refresh(payment, ["management_mandate_id"])
         await self._audit.create(
