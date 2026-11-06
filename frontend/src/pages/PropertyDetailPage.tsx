@@ -68,6 +68,7 @@ function PropertyDetailPageContent({ propertyId }: { propertyId?: string }) {
   const [showUnitForm, setShowUnitForm] = useState(false);
   const [editUnitId, setEditUnitId] = useState<string | null>(null);
   const [unitForm, setUnitForm] = useState<UnitFormData>(EMPTY_UNIT_FORM);
+  const [unitNumberError, setUnitNumberError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [success, setSuccess] = useState<string | null>(null);
   const [knowledge, setKnowledge] = useState<PropertyKnowledgeOverview | null>(null);
@@ -133,12 +134,14 @@ function PropertyDetailPageContent({ propertyId }: { propertyId?: string }) {
   }
 
   function openCreateUnit() {
+    setUnitNumberError(null);
     setEditUnitId(null);
     setUnitForm(EMPTY_UNIT_FORM);
     setShowUnitForm(true);
   }
 
   function openEditUnit(u: Unit) {
+    setUnitNumberError(null);
     setEditUnitId(u.id);
     setUnitForm({
       number: u.number,
@@ -158,6 +161,7 @@ function PropertyDetailPageContent({ propertyId }: { propertyId?: string }) {
     setSuccess(null);
     setSaving(true);
     setError(null);
+    setUnitNumberError(null);
     try {
       if (editUnitId) {
         const body: UnitUpdate = {
@@ -188,7 +192,12 @@ function PropertyDetailPageContent({ propertyId }: { propertyId?: string }) {
       setEditUnitId(null);
       reload();
     } catch (err) {
-      if (err instanceof ApiError) {
+      if (err instanceof ApiError && (
+        (err.status === 422 && err.code === "unit_number_too_long") ||
+        (err.status === 409 && err.code === "duplicate_unit_number")
+      )) {
+        setUnitNumberError(err.message);
+      } else if (err instanceof ApiError) {
         setError(err.message);
       } else {
         setError(String(err));
@@ -288,15 +297,23 @@ function PropertyDetailPageContent({ propertyId }: { propertyId?: string }) {
         <div className="card" style={{ marginBottom: "1rem" }}>
           <h2>{editUnitId ? "Einheit bearbeiten" : "Neue Einheit anlegen"}</h2>
           <form onSubmit={handleUnitSubmit} className="form-grid">
-            <label>
-              Nummer *
-              <input
-                type="text"
-                required
-                value={unitForm.number}
-                onChange={(e) => setUnitForm({ ...unitForm, number: e.target.value })}
-              />
-            </label>
+            <div>
+              <label>
+                Nummer *
+                <input
+                  type="text"
+                  required
+                  aria-invalid={unitNumberError !== null}
+                  aria-describedby={unitNumberError ? "unit-number-error" : undefined}
+                  value={unitForm.number}
+                  onChange={(e) => {
+                    setUnitNumberError(null);
+                    setUnitForm({ ...unitForm, number: e.target.value });
+                  }}
+                />
+              </label>
+              {unitNumberError && <p id="unit-number-error" role="alert" className="error-text mt-1">{unitNumberError}</p>}
+            </div>
             <label>
               Lage
               <input

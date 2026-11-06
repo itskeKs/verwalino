@@ -79,6 +79,21 @@ Feature: Organization isolation
     When the user opens the settlement period offers of "Verwaltung Beta"
     Then the property is reported as not found
 
+  Scenario: An overlong name does not reveal another organization's unit
+    Given "Verwaltung Beta" has a unit named "Wohnung 1"
+    When the user tries to rename the unit of "Verwaltung Beta" to "Wohnung 1 · Südflügel · Aufgang Änne · GartenblickX"
+    Then the unit is reported as not found
+    And "Verwaltung Beta" still has its unit unchanged
+
+  Scenario: A duplicate number does not reveal another organization's units
+    Given "Verwaltung Beta" has a unit named "Wohnung 2"
+    And "Verwaltung Beta" has a unit named "Wohnung 3"
+    When the user tries to rename the unit of "Verwaltung Beta" to "Wohnung 2"
+    Then the unit is reported as not found
+    When the user tries to add or import another "Wohnung 2" into the property of "Verwaltung Beta"
+    Then the property is reported as not found for both attempts
+    And "Verwaltung Beta" still has its unit unchanged
+
   Scenario: Signing in again keeps the session in the same organization
     When the administrator signs in again
     Then the signed-in session belongs to "Verwaltung Alpha"

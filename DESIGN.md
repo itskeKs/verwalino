@@ -339,6 +339,10 @@ New screens follow these page structures and use a German noun as their `h1`.
   scroll anchoring so closing an inline form does not pull the view to the top. A route
   change starts a fresh detail state; a confirmed loss of access clears protected data. Refresh
   errors stay inline beside the retained data. Initial errors and not-found replace the page.
+  When editing a unit, a name over 50 characters shows “Die Bezeichnung darf höchstens 50 Zeichen lang sein.”
+  below “Nummer *”. The field retains the entered name and clears the error when edited.
+  Creating or renaming a unit to a number already in the property shows “Eine Einheit mit dieser
+  Nummer gibt es in diesem Objekt schon.” in the same field error, with the entry kept for correction.
   Property details offer the MEA scale confirmation and unit MEA field for WEG, MISCH and SEV;
   MIET offers them only when an existing unit has a recorded MEA (including zero). Unset MEA
   is not a recorded share. The confirmation card appears only for writers with an unconfirmed
@@ -894,6 +898,12 @@ admin-only nav group.
 
 ### Tone and wording
 
+When declaration import is disabled, the import page shows “Der Import von
+Teilungserklärungen ist für Ihre Organisation nicht eingerichtet. Bitte wenden
+Sie sich an Ihre Administration.” for draft creation, upload and start refusals.
+The message omits the machine code and request ID; upload feedback stays with
+the affected file.
+
 - Use German UI text with real umlauts and formal **Sie**: 47 files address the user as Sie/Ihr, none
   uses du ("Geben Sie Ihr aktuelles Passwort und das neue Passwort ein."). Instructions are otherwise
   impersonal ("Bitte erneut versuchen.", "Bitte ein Objekt auswählen.").
@@ -1200,6 +1210,14 @@ and the sixty-receipt import/assignment use the real API. Each pair is desktop/3
 
 ## Screenshots
 
+The declaration import upload refusal uses a synthetic draft and PDF against
+the portable installer with import disabled.
+
+| Declaration import upload refusal | Desktop (1280 px) | Mobile (360 px) |
+|---|---|---|
+| Before | [Before](docs/assets/design/declaration-import-disabled-before-1280.png) | [Before](docs/assets/design/declaration-import-disabled-before-360.png) |
+| After | [After](docs/assets/design/declaration-import-disabled-after-1280.png) | [After](docs/assets/design/declaration-import-disabled-after-360.png) |
+
 Mobile keyboard navigation uses the shared test database and synthetic long property names.
 The closed-focus images show the first Tab after loading the dashboard; the Escape images show
 the result of opening navigation and pressing Escape. Desktop layout and existing routes stay the
@@ -1313,6 +1331,23 @@ dashboard passes at both widths.
 
 The property-detail images focus on the units card at 360 and 1280 px, using twelve
 long synthetic unit rows from `features/responsive_property_dashboard.feature`.
+The unit editor's name error is shown in the #214 captures below. Both pairs
+show the same rejected 51-character input on synthetic data.
+
+| Unit editor | 1280 px | 360 px |
+|---|---|---|
+| Before: no field error | [Desktop](docs/assets/design/unit-name-validation/before-1280.png) | [Phone](docs/assets/design/unit-name-validation/before-360.png) |
+| After: inline error | [Desktop](docs/assets/design/unit-name-validation/after-1280.png) | [Phone](docs/assets/design/unit-name-validation/after-360.png) |
+
+Submitting “Wohnung 1” twice in a synthetic rental property used to save two rows.
+The unit form now keeps the second entry, explains the conflict below the number
+field, and leaves the original row as the only saved unit.
+
+| Duplicate number submission | 1280 px | 360 px |
+|---|---|---|
+| Before: duplicate saved | [Desktop](docs/assets/design/duplicate-unit-number/before-1280.png) | [Phone](docs/assets/design/duplicate-unit-number/before-360.png) |
+| After: duplicate refused | [Desktop](docs/assets/design/duplicate-unit-number/after-1280.png) | [Phone](docs/assets/design/duplicate-unit-number/after-360.png) |
+
 Earlier dashboard due-task captures from that feature remain in `issue-52-before-*`.
 The upload card is captured in
 `detail-upload-360.png` and `detail-upload-desktop.png`. Matching `issue-52-before-*`

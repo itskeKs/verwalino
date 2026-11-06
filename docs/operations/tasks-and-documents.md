@@ -257,11 +257,15 @@ and fill it as a UTF-8 file (BOM permitted) with semicolons and unchanged column
 `property`, `unit`, and `person` create new properties, units, and contacts;
 `property_key` references a local property key or an authorized
 existing property UUID. Areas remain exact decimal values, including `60,25`.
-Unknown columns, invalid values, and duplicates are reported with row/field.
+Unknown columns, invalid values, and duplicate CSV record keys are reported with row/field.
 No automatically created profiles or leases.
 
 The preview writes nothing. Only after review, explicit approval of the
 data scope (if required), and confirmation is the entire import created atomically.
+Creating or renaming a unit in **Objekte** or applying a CSV import rejects a number
+already used in the same property, including case, whitespace, and Unicode compatibility
+variants. The same number can be used in different properties. A duplicate during CSV
+apply rolls back the entire import, including any preceding rows.
 There are no silent self-approvals. Changes require a new
 preview; repeating the same request returns the same IDs, after permission revocation
 no partial response. Continue unclear network errors with **Import erneut versuchen** (retry import),

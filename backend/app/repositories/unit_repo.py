@@ -17,6 +17,16 @@ class UnitRepository(TenantRepository[Unit]):
         result = await self._session.execute(stmt)
         return result.scalars().all()
 
+    async def list_numbers_by_property(
+        self, property_id: uuid.UUID, *, exclude_unit_id: uuid.UUID | None = None
+    ) -> Sequence[str]:
+        stmt = select(Unit.number).where(
+            Unit.organization_id == self._org_id, Unit.property_id == property_id
+        )
+        if exclude_unit_id is not None:
+            stmt = stmt.where(Unit.id != exclude_unit_id)
+        return (await self._session.scalars(stmt)).all()
+
     async def list_by_property_for_update(
         self, property_id: uuid.UUID
     ) -> Sequence[Unit]:
@@ -28,8 +38,3 @@ class UnitRepository(TenantRepository[Unit]):
         )
         result = await self._session.execute(stmt)
         return result.scalars().all()
-
-    async def get_by_id_for_update(self, unit_id: uuid.UUID) -> Unit | None:
-        stmt = self._base_query().where(Unit.id == unit_id).with_for_update()
-        result = await self._session.execute(stmt)
-        return result.scalar_one_or_none()
