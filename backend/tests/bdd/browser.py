@@ -16,11 +16,13 @@ import subprocess
 import sys
 import tempfile
 import time
+from urllib.parse import urlsplit
 from urllib.request import urlopen
 
 import pytest
 from playwright.async_api import Error as PlaywrightError, TimeoutError as PlaywrightTimeoutError, async_playwright, expect
 
+from tests.bank_browser_trace import HEADER, PATH, PREFIX, line, status_filter
 from tests.bdd.report import artifact_directory, attach_artifact
 from tests.bdd.world import admin_credentials, target_url
 
@@ -87,6 +89,8 @@ def browser_app(seed_data, request, browser_storage):
             else:
                 log = stack.enter_context(tempfile.TemporaryFile(mode="w+"))
             process = subprocess.Popen(command, cwd=directory, env=env, stdout=log, stderr=log, start_new_session=True)
+            if name == "backend":
+                stack.callback(_report_bank_trace, log, request.config)
             stack.callback(_stop, process)
             deadline = time.monotonic() + 30
             while process.poll() is None and time.monotonic() < deadline:
@@ -102,6 +106,16 @@ def browser_app(seed_data, request, browser_storage):
         if reporter:
             reporter.run["target_url"] = BASE_URL
         yield BASE_URL
+
+
+def _report_bank_trace(log, config):
+    terminal = config.pluginmanager.getplugin("terminalreporter")
+    if terminal is None:
+        return
+    log.seek(0)
+    for entry in log:
+        if entry.startswith(PREFIX):
+            terminal.write_line(entry.rstrip())
 
 
 class BrowserSession:
@@ -151,6 +165,9 @@ class BrowserWorld:
         self.session = session
         self.world = world
         self.errors = []
+        self.bank_trace_width = None
+        self.bank_trace_requests = {}
+        self.bank_trace_report = None
 
     def run(self, coroutine):
         return self.session.run(coroutine)
@@ -164,7 +181,6 @@ class BrowserWorld:
             await self.context.tracing.start(screenshots=True, snapshots=True, sources=True)
         # Only the selected app origin is allowed; never call unrelated services.
         async def local_only(route):
-            from urllib.parse import urlsplit
             url = urlsplit(route.request.url)
             # Chromium's bundled PDF viewer loads internal assets, not network resources.
             internal_pdf_asset = (url.scheme, url.netloc) in {
@@ -173,7 +189,15 @@ class BrowserWorld:
             }
             origin = urlsplit(self.session.base_url)
             if (url.scheme, url.netloc) == (origin.scheme, origin.netloc) or internal_pdf_asset:
-                await route.continue_()
+                if (self.bank_trace_width and len(self.bank_trace_requests) < 3
+                        and url.path == PATH and route.request.method == "GET"):
+                    tag = f"361-{self.bank_trace_width}-{len(self.bank_trace_requests) + 1}"
+                    self.bank_trace_requests[route.request] = tag
+                    self.bank_trace_report("browser_request", route.request)
+                    headers = await route.request.all_headers()
+                    await route.continue_(headers={**headers, HEADER: tag})
+                else:
+                    await route.continue_()
             else:
                 self.errors.append(f"External request: {route.request.url}")
                 await route.abort()
@@ -181,6 +205,19 @@ class BrowserWorld:
         self.page = await self.context.new_page()
         self.page.set_default_timeout(10000)
         self.page.on("pageerror", lambda error: self.errors.append(str(error)))
+
+    def trace_bank_reads(self, width, terminal):
+        if target_url() or terminal is None:
+            return
+        self.bank_trace_width = width
+
+        def report(kind, req, **fields):
+            if tag := self.bank_trace_requests.get(req):
+                terminal.write_line(line(kind, tag=tag, status=status_filter(urlsplit(req.url).query), **fields))
+
+        self.bank_trace_report = report
+        self.page.on("response", lambda res: report("browser_response", res.request, http=res.status))
+        self.page.on("requestfailed", lambda req: report("browser_failed", req))
 
     async def visit(self, path):
         await self.page.goto(path)
@@ -241,3 +278,6 @@ def browser_world(world, browser_session, request):
         finally:
             if hasattr(browser, "context"):
                 browser.run(browser.context.close())
+                if browser.bank_trace_width:
+                    terminal = request.config.pluginmanager.getplugin("terminalreporter")
+                    terminal.write_line(line("browser_closed", width=browser.bank_trace_width))

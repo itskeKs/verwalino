@@ -127,6 +127,29 @@ def dump_test_database_activity(*, pid=None, include_idle=False):
         print(f'Lock diagnostic unavailable: {type(diagnostic_error).__name__}', file=_diagnostic_stream())
 
 
+def dump_bank_browser_activity(terminal):
+    """Sample only the relevant active statements without printing query text."""
+    from tests.bank_browser_trace import line
+    from psycopg2.extras import RealDictCursor
+
+    try:
+        with closing(_diagnostic_connect(MIGRATOR_SYNC_URL, connect_timeout=3,
+                     options='-c statement_timeout=2000 -c lock_timeout=1000')) as diagnostic:
+            with diagnostic.cursor(cursor_factory=RealDictCursor) as cursor:
+                cursor.execute("""SELECT pid, extract(epoch FROM query_start)::float8 AS query_start,
+                    extract(epoch FROM xact_start)::float8 AS xact_start, wait_event_type, wait_event,
+                    pg_blocking_pids(pid) AS blockers,
+                    CASE WHEN query LIKE 'SELECT lease_agreement.organization_id,%'
+                        THEN 'lease_match' ELSE 'advisory_lock' END AS operation
+                    FROM pg_stat_activity WHERE datname=current_database() AND state='active'
+                    AND (query LIKE 'SELECT lease_agreement.organization_id,%'
+                         OR query LIKE 'SELECT pg_advisory_xact_lock%')
+                    ORDER BY pid LIMIT 12""")
+                terminal.write_line(line("activity", sessions=cursor.fetchall()))
+    except Exception as error:
+        terminal.write_line(line("activity_error", error=type(error).__name__))
+
+
 def dump_test_lock_timeout(error, *, statement=None, pid=None):
     if target_url() or not is_lock_timeout(error):
         return

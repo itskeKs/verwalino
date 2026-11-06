@@ -4,12 +4,14 @@ import re
 from pathlib import Path
 from urllib.parse import urlsplit
 
-from playwright.async_api import expect
+from playwright.async_api import TimeoutError as PlaywrightTimeoutError, expect
 from pytest_bdd import given, parsers, scenarios, then, when
 
 from tests.bdd.steps.browser_common import button, field
 from tests.bdd.steps.browser_setup import create
 from tests.bdd.report import artifact_directory, attach_artifact
+from tests.bdd.world import target_url
+from tests.conftest import dump_bank_browser_activity
 
 scenarios(
     str(Path(__file__).resolve().parents[3] / 'features/save_lifecycle.feature'),
@@ -133,6 +135,7 @@ def save_named_pages(browser_world, width, request):
         await expect(row.get_by_text('Mietkonto Gartenflügel', exact=True)).to_be_visible()
         await capture('accounts')
 
+        b.trace_bank_reads(width, request.config.pluginmanager.getplugin("terminalreporter"))
         await b.visit(f"/bankkonten/{d['account']['id']}/umsaetze")
         await field(page, 'Status').select_option('')
         row = page.get_by_role('row').filter(has=page.get_by_text('Warmmiete Januar 2026', exact=True))
@@ -140,7 +143,12 @@ def save_named_pages(browser_world, width, request):
         await expect(row).to_contain_text('Zugeordnet')
         await expect(button(row, 'Vorschlag übernehmen')).to_have_count(0)
         await capture('assignment')
-    b.run(run())
+    try:
+        b.run(run())
+    except PlaywrightTimeoutError:
+        if b.bank_trace_width and not target_url():
+            dump_bank_browser_activity(request.config.pluginmanager.getplugin("terminalreporter"))
+        raise
     d['save_receipts'] = results
 
 

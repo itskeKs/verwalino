@@ -8,13 +8,17 @@ import asyncio
 import json
 
 from app.main import app as real_app
+from tests.bank_browser_trace import PATH, install_database_trace, trace_bank_request
 
 pending_reads: dict[str, asyncio.Event] = {}
+install_database_trace()
 
 
 async def app(scope, receive, send):
     if scope['type'] != 'http':
         return await real_app(scope, receive, send)
+    if scope['method'] == 'GET' and scope['path'] == PATH:
+        return await trace_bank_request(real_app, scope, receive, send)
     create = scope['method'] == 'POST' and scope['path'] in {'/api/dunning/owner', '/api/dunning/tenant'}
     first_read = pending_reads.get(scope['path']) if scope['method'] == 'GET' else None
     successful = False
