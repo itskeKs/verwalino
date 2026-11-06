@@ -7,6 +7,8 @@ created for that organization.
 
 from __future__ import annotations
 
+from uuid import uuid4
+
 import pytest
 from pytest_bdd import given, parsers, then, when
 
@@ -94,6 +96,29 @@ def user_opens(world, kind, organization):
 def user_renames(world, kind, organization, new_name):
     record = record_of(world, organization, kind_named(kind))
     world.act(record.kind.change_method, f"{record.kind.path}/{record.id}", json={record.kind.name_field: new_name})
+
+
+@when(parsers.parse('the user tries to add or import another "{number}" into the property of "{organization}"'))
+def user_adds_foreign_unit(world, number, organization):
+    from tests.test_master_import import body
+
+    property_id = record_of(world, organization, kind_named("property")).id
+    unit = {"property_id": property_id, "number": number, "usage_type": "WOHNUNG"}
+    value = body([{
+        "kind": "unit", "key": "U1", "property_key": property_id, "number": number, "usage_type": "WOHNUNG",
+    }])
+    world.data["foreign_unit_creates"] = [
+        world.act("POST", "/api/units", json=unit),
+        world.act("POST", "/api/properties/import/apply", json={
+            **value, "expected_digest": "0" * 64, "request_id": str(uuid4()),
+        }),
+    ]
+
+
+@then("the property is reported as not found for both attempts")
+def foreign_unit_creates_refused(world):
+    for response in world.data["foreign_unit_creates"]:
+        assert response.status_code == 404, response.text
 
 
 @then(parsers.parse('the list shows the {kinds} of "{organization}"'))

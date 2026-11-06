@@ -10,7 +10,10 @@ Tests the additively created endpoints:
 
 from __future__ import annotations
 
+import asyncio
+
 import pytest
+from tests.test_master_import import apply, body, inventory, preview
 from tests.test_rent_changes import rent_db, rent_world, api_client  # noqa: F401
 
 
@@ -106,6 +109,102 @@ async def test_unit_update_rejects_a_number_over_50_characters(client_a_admin, c
     saved = await client_a_admin.put(path, json={"number": number})
     assert saved.status_code == 200
     assert saved.json()["number"] == number
+
+
+UNIT_NUMBER_CONFLICT = {
+    "code": "duplicate_unit_number",
+    "message": "Eine Einheit mit dieser Nummer gibt es in diesem Objekt schon.",
+}
+
+
+async def _new_unit_property(client):
+    response = await client.post("/api/properties", json={"name": "Musterhaus", "management_type": "MIET"})
+    assert response.status_code == 201, response.text
+    return response.json()["id"]
+
+
+async def _post_unit(client, property_id, number):
+    return await client.post("/api/units", json={
+        "property_id": property_id, "number": number, "usage_type": "WOHNUNG",
+    })
+
+
+def _assert_unit_number_conflict(response):
+    assert response.status_code == 409, response.text
+    assert response.json()["detail"] == UNIT_NUMBER_CONFLICT
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("number", ["Wohnung 1", "wOHNUNG 1", "  Wohnung\t 1  ", "Wohnung １"])
+async def test_unit_creation_rejects_an_equivalent_number_in_the_same_property(client_a_admin, number):
+    property_id = await _new_unit_property(client_a_admin)
+    original = await _post_unit(client_a_admin, property_id, "Wohnung 1")
+    assert original.status_code == 201, original.text
+
+    _assert_unit_number_conflict(await _post_unit(client_a_admin, property_id, number))
+    units = await client_a_admin.get("/api/units", params={"property_id": property_id})
+    assert units.json() == [original.json()]
+
+
+@pytest.mark.asyncio
+async def test_the_same_number_is_allowed_in_different_properties_and_organizations(client_a_admin, client_b_admin):
+    for client in (client_a_admin, client_a_admin, client_b_admin):
+        response = await _post_unit(client, await _new_unit_property(client), "Wohnung 1")
+        assert response.status_code == 201, response.text
+
+
+@pytest.mark.asyncio
+async def test_only_one_concurrent_create_of_the_same_unit_number_succeeds(client_a_admin):
+    property_id = await _new_unit_property(client_a_admin)
+    responses = await asyncio.gather(
+        _post_unit(client_a_admin, property_id, "Wohnung 1"),
+        _post_unit(client_a_admin, property_id, " wohnung  1 "),
+    )
+    assert sorted(response.status_code for response in responses) == [201, 409]
+    _assert_unit_number_conflict(next(response for response in responses if response.status_code == 409))
+
+
+@pytest.mark.asyncio
+async def test_unit_rename_rejects_an_existing_number_but_allows_its_own_number(client_a_admin):
+    property_id = await _new_unit_property(client_a_admin)
+    existing = await _post_unit(client_a_admin, property_id, "Wohnung 1")
+    other = await _post_unit(client_a_admin, property_id, "Wohnung 2")
+    assert existing.status_code == other.status_code == 201
+    path = f"/api/units/{other.json()['id']}"
+
+    refused = await client_a_admin.put(path, json={"number": " wohnung  1 ", "location": "Not saved"})
+    _assert_unit_number_conflict(refused)
+    assert (await client_a_admin.get(path)).json() == other.json()
+
+    saved = await client_a_admin.put(path, json={"number": "wohnung 2", "location": "Südflügel"})
+    assert saved.status_code == 200, saved.text
+    assert saved.json()["number"] == "wohnung 2"
+    assert saved.json()["location"] == "Südflügel"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("existing_property", [True, False], ids=["existing-unit", "same-csv"])
+async def test_master_import_rolls_back_all_rows_on_a_duplicate_unit_number(client_a_admin, existing_property):
+    rows = [
+        {"kind": "property", "key": "P1", "name": "CSV-Musterhaus", "management_type": "MIET"},
+        {"kind": "person", "key": "C1", "last_name": "Beispiel"},
+        {"kind": "unit", "key": "U1", "property_key": "P1", "number": "Wohnung 1", "usage_type": "WOHNUNG"},
+    ]
+    target_property = "P1"
+    if existing_property:
+        target_property = await _new_unit_property(client_a_admin)
+        original = await _post_unit(client_a_admin, target_property, "Wohnung 1")
+        assert original.status_code == 201, original.text
+    rows.append({
+        **rows[-1], "key": "U2", "property_key": target_property, "number": " wohnung  1 ",
+    })
+    before = await inventory(client_a_admin)
+    value = body(rows)
+    projected = await preview(client_a_admin, value)
+    assert projected["errors"] == []
+
+    _assert_unit_number_conflict(await apply(client_a_admin, value, projected))
+    assert await inventory(client_a_admin) == before
 
 
 # ---------------------------------------------------------------------------

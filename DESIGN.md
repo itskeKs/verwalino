@@ -341,6 +341,8 @@ New screens follow these page structures and use a German noun as their `h1`.
   errors stay inline beside the retained data. Initial errors and not-found replace the page.
   When editing a unit, a name over 50 characters shows “Die Bezeichnung darf höchstens 50 Zeichen lang sein.”
   below “Nummer *”. The field retains the entered name and clears the error when edited.
+  Creating or renaming a unit to a number already in the property shows “Eine Einheit mit dieser
+  Nummer gibt es in diesem Objekt schon.” in the same field error, with the entry kept for correction.
   Property details offer the MEA scale confirmation and unit MEA field for WEG, MISCH and SEV;
   MIET offers them only when an existing unit has a recorded MEA (including zero). Unset MEA
   is not a recorded share. The confirmation card appears only for writers with an unconfirmed
@@ -1322,6 +1324,15 @@ show the same rejected 51-character input on synthetic data.
 |---|---|---|
 | Before: no field error | [Desktop](docs/assets/design/unit-name-validation/before-1280.png) | [Phone](docs/assets/design/unit-name-validation/before-360.png) |
 | After: inline error | [Desktop](docs/assets/design/unit-name-validation/after-1280.png) | [Phone](docs/assets/design/unit-name-validation/after-360.png) |
+
+Submitting “Wohnung 1” twice in a synthetic rental property used to save two rows.
+The unit form now keeps the second entry, explains the conflict below the number
+field, and leaves the original row as the only saved unit.
+
+| Duplicate number submission | 1280 px | 360 px |
+|---|---|---|
+| Before: duplicate saved | [Desktop](docs/assets/design/duplicate-unit-number/before-1280.png) | [Phone](docs/assets/design/duplicate-unit-number/before-360.png) |
+| After: duplicate refused | [Desktop](docs/assets/design/duplicate-unit-number/after-1280.png) | [Phone](docs/assets/design/duplicate-unit-number/after-360.png) |
 
 Earlier dashboard due-task captures from that feature remain in `issue-52-before-*`.
 The upload card is captured in

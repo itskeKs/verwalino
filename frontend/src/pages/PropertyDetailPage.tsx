@@ -192,7 +192,10 @@ function PropertyDetailPageContent({ propertyId }: { propertyId?: string }) {
       setEditUnitId(null);
       reload();
     } catch (err) {
-      if (err instanceof ApiError && err.status === 422 && err.code === "unit_number_too_long") {
+      if (err instanceof ApiError && (
+        (err.status === 422 && err.code === "unit_number_too_long") ||
+        (err.status === 409 && err.code === "duplicate_unit_number")
+      )) {
         setUnitNumberError(err.message);
       } else if (err instanceof ApiError) {
         setError(err.message);

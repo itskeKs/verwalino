@@ -9,8 +9,6 @@ from __future__ import annotations
 
 import hashlib
 import json
-import re
-import unicodedata
 import uuid
 from dataclasses import dataclass
 from decimal import Decimal, InvalidOperation
@@ -19,6 +17,7 @@ from typing import Any, Iterable, Mapping, Sequence
 
 from pydantic import TypeAdapter, ValidationError
 
+from app.core.unit_numbers import normalize_unit_number
 from app.declarations.policy import CandidateContext, classify_candidate
 from app.declarations.schemas import (
     DocumentRelationPayload,
@@ -599,7 +598,7 @@ def build_existing_approval_plan(
         by_subject.setdefault(candidate.subject_key, []).append(candidate)
     units_by_number: dict[str, list[Any]] = {}
     for unit in units:
-        units_by_number.setdefault(_normalize_unit_number(unit.number), []).append(unit)
+        units_by_number.setdefault(normalize_unit_number(unit.number), []).append(unit)
     units_by_id = {unit.id: unit for unit in units}
     unit_subject_ids: dict[str, uuid.UUID] = {}
     for subject_key, subject_candidates in sorted(by_subject.items()):
@@ -726,7 +725,7 @@ def build_existing_approval_plan(
         elif candidate.candidate_type == "UNIT_CREATE":
             values = _parse_composite_fact(candidate, value, _UNIT_FIELDS)
             planned = _build_unit(item, candidate, values, evidence)
-            if _normalize_unit_number(planned.number) in units_by_number or any(_normalize_unit_number(existing.number) == _normalize_unit_number(planned.number) for existing in new_units):
+            if normalize_unit_number(planned.number) in units_by_number or any(normalize_unit_number(existing.number) == normalize_unit_number(planned.number) for existing in new_units):
                 raise ApprovalConflict("DUPLICATE_UNIT_NUMBER")
             new_units.append(planned)
         elif candidate.candidate_type == "LEGAL_REFERENCE" and candidate.operation == "CREATE":
@@ -882,10 +881,10 @@ def build_existing_approval_plan(
         if touches_mea:
             raise ApprovalConflict("MEA_CANONICAL_SCALE_UNCONFIRMED")
         final_numbers_without_mea = [
-            _normalize_unit_number(updates_by_unit_field.get((unit.id, "number"), unit.number))
+            normalize_unit_number(updates_by_unit_field.get((unit.id, "number"), unit.number))
             for unit in units
         ]
-        final_numbers_without_mea.extend(_normalize_unit_number(unit.number) for unit in new_units)
+        final_numbers_without_mea.extend(normalize_unit_number(unit.number) for unit in new_units)
         if len(final_numbers_without_mea) != len(set(final_numbers_without_mea)):
             raise ApprovalConflict("DUPLICATE_UNIT_NUMBER")
         _validate_fact_source_collisions(facts)
@@ -903,7 +902,7 @@ def build_existing_approval_plan(
         number = updates_by_unit_field.get((unit.id, "number"), unit.number)
         if not isinstance(number, str) or not number.strip():
             raise ApprovalConflict("INCOMPLETE_UNIT")
-        final_numbers.append(_normalize_unit_number(number))
+        final_numbers.append(normalize_unit_number(number))
         numerator_value = updates_by_unit_field.get((unit.id, "mea"), unit.mea)
         if isinstance(numerator_value, Mapping):
             numerator_value = numerator_value.get("numerator")
@@ -918,7 +917,7 @@ def build_existing_approval_plan(
             raise ApprovalConflict("INVALID_MEA")
         final_numerators.append(numerator)
     for planned in new_units:
-        final_numbers.append(_normalize_unit_number(planned.number))
+        final_numbers.append(normalize_unit_number(planned.number))
         if planned.mea_numerator < 0 or planned.mea_numerator > final_denominator:
             raise ApprovalConflict("INVALID_MEA")
         final_numerators.append(planned.mea_numerator)
@@ -1018,7 +1017,7 @@ def _resolve_existing_unit(subject_key: str, candidates: Sequence[DeclarationCan
         number = _required_text(_parse_fact(subject_key, "number", raw))
     except ApprovalConflict as exc:
         raise ApprovalConflict("UNIT_MATCH_NOT_FOUND") from exc
-    matches = units_by_number.get(_normalize_unit_number(number), ())
+    matches = units_by_number.get(normalize_unit_number(number), ())
     if not matches:
         raise ApprovalConflict("UNIT_MATCH_NOT_FOUND")
     if len(matches) != 1:
@@ -1280,7 +1279,7 @@ def _validate_units(units: Sequence[PlannedUnit], denominator: int) -> None:
         raise ApprovalConflict("INCOMPLETE_UNIT")
     if len({unit.subject_key for unit in units}) != len(units):
         raise ApprovalConflict("DUPLICATE_UNIT_SUBJECT")
-    normalized_numbers = [_normalize_unit_number(unit.number) for unit in units]
+    normalized_numbers = [normalize_unit_number(unit.number) for unit in units]
     if len(normalized_numbers) != len(set(normalized_numbers)):
         raise ApprovalConflict("DUPLICATE_UNIT_NUMBER")
     if any(unit.mea_denominator != denominator for unit in units):
@@ -1323,10 +1322,6 @@ def _validate_decimal_column(value: Decimal | None) -> None:
         raise ApprovalConflict("APPROVAL_DECIMAL_OUT_OF_RANGE") from exc
     if value != quantized:
         raise ApprovalConflict("APPROVAL_DECIMAL_OUT_OF_RANGE")
-
-
-def _normalize_unit_number(value: str) -> str:
-    return re.sub(r"\s+", " ", unicodedata.normalize("NFKC", value)).strip().casefold()
 
 
 def _normalized_python(value: Any) -> Any:
