@@ -12,6 +12,18 @@ Feature: Readable issued dunning notice
     When the manager creates an ordinary January tenant notice as of 2 March 2026
     Then the tenant draft opens immediately with 700 EUR principal and no duplicate
 
+  Scenario Outline: A missing accounting scope is explained in German before a draft is created
+    Given a rental agreement with receipts in two separate accounting scopes
+    When the manager submits a June tenant notice without an accounting scope at <width> px
+    Then the form explains the accounting scope requirement in German and no draft exists
+    When the manager selects the first accounting scope and submits the same notice
+    Then the tenant draft opens with 750 EUR principal
+
+    Examples:
+      | width |
+      | 1280  |
+      | 360   |
+
   Scenario: Issued principal, interest and arrears are readable without horizontal scrolling
     Given an unpaid rental agreement for 1234.56 EUR rent and no advance payment
     When the manager creates a January notice as of 2 March 2026 with automatic interest

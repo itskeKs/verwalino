@@ -3,9 +3,9 @@ from pathlib import Path
 import re
 
 from playwright.async_api import expect
-from pytest_bdd import scenarios, given, when, then
+from pytest_bdd import scenarios, given, when, then, parsers
 
-from tests.bdd.steps.browser_common import button, field, submit
+from tests.bdd.steps.browser_common import browser_step, button, field, submit
 from tests.bdd.test_weg_settlement import dated_owners as create_dated_owners
 
 scenarios(str(Path(__file__).resolve().parents[3] / "features" / "journeys" / "dunning_notice.feature"))
@@ -97,3 +97,41 @@ def tenant_draft_without_duplicate(browser_world, world):
     browser_world.run(browser_world.row('Hauptforderung (Rueckstand)', '700.00 EUR'))
     rows = world.act('GET', '/api/dunning', params={'tenant_profile_id': notice['tenant_profile_id']})
     assert rows.status_code == 200 and [row['id'] for row in rows.json()] == [notice['id']], rows.text
+
+
+@when(parsers.parse('the manager submits a June tenant notice without an accounting scope at {width:d} px'))
+@browser_step
+async def submit_without_scope(browser_world, width):
+    b = browser_world
+    data = b.world.data
+    await b.page.set_viewport_size({'width': width, 'height': 900})
+    await b.visit('/mahnungen')
+    await button(b.page, '+ Neue Mahnung').click()
+    await b.select('Mieter *', data['tenants'][0]['id'])
+    await b.select('Mietvertrag *', data['leases'][0]['id'])
+    for label, value in [('Zeitraum von *', '2026-06-01'), ('Zeitraum bis *', '2026-06-30'), ('Stichtag', '2026-07-15')]:
+        await field(b.page, label).fill(value)
+    await expect(field(b.page, 'Abrechnungskreis')).to_have_value('')
+    await submit(b, 'Mahnung erstellen', '/api/dunning/tenant', status=409)
+
+
+@then('the form explains the accounting scope requirement in German and no draft exists')
+def scope_refusal_without_draft(browser_world, world):
+    rows = world.act('GET', '/api/dunning', params={'tenant_profile_id': world.data['tenants'][0]['id']})
+    assert rows.status_code == 200 and rows.json() == [], rows.text
+    browser_world.run(expect(browser_world.page.locator('.error-text').first).to_have_text(
+        'Wählen Sie einen eindeutigen Abrechnungskreis und prüfen Sie noch nicht zugeordnete Daten, '
+        'bevor Sie die Zahlungen berechnen.'))
+
+
+@when('the manager selects the first accounting scope and submits the same notice')
+@browser_step
+async def retry_with_scope(browser_world):
+    await browser_world.scope()
+    await create_and_open(browser_world, 'tenant')
+
+
+@then('the tenant draft opens with 750 EUR principal')
+@browser_step
+async def scoped_tenant_principal(browser_world):
+    await browser_world.row('Hauptforderung (Rueckstand)', '750.00 EUR')
