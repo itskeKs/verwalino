@@ -23,6 +23,11 @@ Feature: Organization isolation
     When Verwaltung Beta opens those financial details and their input-owner list
     Then the foreign financial records have the same German explanation as missing records
 
+  Scenario: Another organization cannot read an owner's due-date schedule
+    Given a payment, economic plan and annual WEG settlement belong to Verwaltung Alpha
+    When Verwaltung Beta requests Alpha's owner ledger at a selected due-date cutoff
+    Then the foreign owner schedule looks missing and exposes no financial amounts
+
   Scenario: Another organization's empty annual drafts cannot be deleted
     Given an empty asset report belongs to Verwaltung Alpha
     When Verwaltung Beta tries to delete the empty annual draft

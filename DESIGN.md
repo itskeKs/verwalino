@@ -870,21 +870,42 @@ inline expressions, with the variants below. The inconsistencies are tracked in 
 | Empty value | `—` (kit, newer pages), `-` (older tables), `–` (`BankTransactionsPage.tsx`) | `MandatePage.tsx`, `InvoiceDocumentsPage.tsx`, `BankTransactionsPage.tsx`, respectively |
 | Money input | accept `1234,56` and `1234.56`, send `1234.56` | `moneyInput`, `exactCents`, `normalizePlanAmount` (see above) |
 
-### Tenant rent account due-date split
+### Rent and owner account due-date split
 
 “Mietkonto” retains the full reporting period and adds the labelled date input
-“Fällig am *” for the tenant view, defaulting to the local current date. Changing
+“Fällig am *” for tenant and owner views, defaulting to the local current date. Changing
 it clears the previous result until “Abrufen” loads the selected cutoff.
 The legacy summary table keeps “Soll gesamt”, “Ist gesamt” and “Saldo”; a positive
-tenant Saldo has no arrears suffix or warning colour. Two rows follow:
+Saldo has no arrears suffix or warning colour. Two rows follow:
 “davon fällig” (positive: “Rückstand”, destructive token; negative: “Guthaben”,
 emerald) and “noch nicht fällig” (neutral). Signed amounts retain the page's
 existing decimal-string `EUR` notation. The detail rows keep the same amounts
 and show the backend due classification
 below the period: “fällig” or “noch nicht fällig” for nonzero signed amounts,
-“ausgeglichen” for zero. Positive tenant open amounts remain neutral; credits
+“ausgeglichen” for zero. Positive open amounts remain neutral; credits
 never carry an arrears label.
-Owner view retains its existing summary and colours and has no cutoff input.
+Owner rows also show “Fällig am DD.MM.YYYY” from the backend, including the
+resolved working-day shift. The full-period balance stays visible as the cutoff changes.
+
+The economic-plan detail displays “Fälligkeit: jeweils zum N. des Monats”
+below its title, using the stored day and showing 1 for historical NULL.
+The creation form defaults to 1, accepts days 1–28, and treats an empty entry
+as the default. Historical explicit values remain visible as stored.
+For historical days 29–31 absent from a month, owner rows show the derived
+month-end date after its working-day shift; the plan label keeps the stored day.
+
+Synthetic 600 EUR monthly Hausgeld, due day 3, at desktop and 360 px:
+
+| Screen | Before desktop | Before 360 px | After desktop | After 360 px |
+|---|---|---|---|---|
+| New plan | [View](docs/assets/design/hausgeld-due/before-create-1280.png) | [View](docs/assets/design/hausgeld-due/before-create-360.png) | [View](docs/assets/design/hausgeld-due/after-create-1280.png) | [View](docs/assets/design/hausgeld-due/after-create-360.png) |
+| Finalized plan | [View](docs/assets/design/hausgeld-due/before-plan-1280.png) | [View](docs/assets/design/hausgeld-due/before-plan-360.png) | [View](docs/assets/design/hausgeld-due/after-plan-1280.png) | [View](docs/assets/design/hausgeld-due/after-plan-360.png) |
+| Owner ledger | [View](docs/assets/design/hausgeld-due/before-ledger-1280.png) | [View](docs/assets/design/hausgeld-due/before-ledger-360.png) | [View](docs/assets/design/hausgeld-due/after-ledger-1280.png) | [View](docs/assets/design/hausgeld-due/after-ledger-360.png) |
+
+| Historical day 31, February 2026 | 1280 px | 360 px |
+|---|---|---|
+| Stored plan day | [View](docs/assets/design/hausgeld-due/legacy-plan-1280.png) | [View](docs/assets/design/hausgeld-due/legacy-plan-360.png) |
+| Derived due date 02.03.2026 | [View](docs/assets/design/hausgeld-due/legacy-ledger-1280.png) | [View](docs/assets/design/hausgeld-due/legacy-ledger-360.png) |
 
 The existing form grid wraps the date input at 360 px. Synthetic full-year
 900 EUR rent, 100 EUR unpaid in April, cutoff 01.11.2026:

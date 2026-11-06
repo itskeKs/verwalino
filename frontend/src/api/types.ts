@@ -1234,6 +1234,12 @@ export interface TenantMietkontoResult extends MietkontoResult {
   not_yet_due_balance: string;
 }
 
+export interface OwnerMietkontoResult extends MietkontoResult {
+  open_items: (OpenItem & { is_due: boolean; due_date: string | null })[];
+  due_balance: string;
+  not_yet_due_balance: string;
+}
+
 // --- M7 Dunning (Mahnwesen) ---
 
 export type DunningStatus = "draft" | "issued" | "cancelled";

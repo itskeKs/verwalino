@@ -189,6 +189,7 @@ export function EconomicPlanDetailPage() {
           {STATUS_LABELS[plan.status] ?? plan.status}
         </span>
       </h1>
+      <p>Fälligkeit: jeweils zum {plan.monthly_due_day ?? 1}. des Monats</p>
 
       {actionError && (
         <div className="card" style={{ marginBottom: "1rem", background: "#ffebee", borderColor: "#ef9a9a" }}>

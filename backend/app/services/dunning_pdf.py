@@ -115,10 +115,17 @@ def build_dunning_html(
     arrears_rows = []
     for it in items:
         type_label = _payment_label(it)
-        period = _period_label(it.get("period_year"), it.get("period_month"))
+        year, month = it.get("period_year"), it.get("period_month")
+        period = _period_label(year, month)
+        monthly_due = ''
+        # Yearless payment rows can carry a dunning fallback date in the snapshot.
+        if (it.get('payment_type') == 'HAUSGELD_VORSCHUSS'
+                and int(year or 0) > 0 and month is not None and it.get('due_date')):
+            due = date.fromisoformat(it['due_date']).strftime('%d.%m.%Y')
+            monthly_due = f'<br/><span class="note">Fällig am {due}</span>'
         arrears_rows.append(
             f"<tr>"
-            f"<td>{_esc(period)}</td>"
+            f"<td>{_esc(period)}{monthly_due}</td>"
             f"<td>{_esc(type_label)}</td>"
             f"<td class='num'>{_eur(it.get('soll'))}</td>"
             f"<td class='num'>{_eur(it.get('ist'))}</td>"

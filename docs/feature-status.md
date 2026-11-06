@@ -76,7 +76,7 @@ pending; registration stays closed and legal review remains with #26. See the
 | Bank accounts | ✅ edit/end, historical references kept | `api/bank_accounts.py`, `pages/BankAccountsPage.tsx`, T55, [usage](operations/selector-pages.md) |
 | Expected charges (Sollstellung) for rent/operating costs, day-accurate | ✅ derived live, including rent history | `engine/mietkonto.py` (`tenant_expected_charges`) |
 | Record, book, reverse payment | ✅ drafts editable | `api/payments.py`, `pages/PaymentDetailPage.tsx`, T07 |
-| Tenant/owner ledger (Mietkonto), open items | ✅ tenant account splits due/future balances at a selectable cutoff without clipping the reporting period | `api/payments.py` (`/mietkonto/*`, `/open-items`), `pages/MietkontoPage.tsx`, `pages/OpenItemsPage.tsx`, [semantics](m6-zahlungen-mietkonto.md#31-balance--open-items-per-person-pure-arithmetic-decimal) |
+| Tenant/owner ledger (Mietkonto), open items | ✅ tenant and owner accounts split signed due/future balances at a selectable cutoff without clipping the reporting period; owner rows expose their due date | `api/payments.py` (`/mietkonto/*`, `/open-items`), `pages/MietkontoPage.tsx`, `pages/OpenItemsPage.tsx`, [semantics](m6-zahlungen-mietkonto.md#31-balance--open-items-per-person-pure-arithmetic-decimal) |
 | Bank statement import CSV/CAMT | ✅ CSV (generic, DKB and Sparkasse CSV-CAMT profiles) and CAMT.053 (.001.02/.08, XML/ZIP), preview, duplicate detection | `engine/bank_import.py`, `services/bank_import_service.py`, `api/bank_accounts.py` (`POST /{id}/imports`), `pages/BankTransactionsPage.tsx`, T15–T19, [usage](operations/bank-and-payments.md) |
 | Bank retrieval PSD2/FinTS | ❌ | – |
 | Match suggestions, split booking | ✅ apply suggestion, split, ignore; whole outgoing transactions can cover an existing confirmed same-property cost up to its total. Coverage follows ordinary corrections and explicitly selected reviewed allocation successors | `engine/bank_matching.py`, `api/bank_transactions.py` (`/assign`, `/ignore`), `pages/BankTransactionsPage.tsx`, T20–T22, [usage](operations/bank-and-payments.md) |
@@ -116,6 +116,7 @@ pending; registration stays closed and legal review remains with #26. See the
 | Feature | Status | Location |
 | --- | --- | --- |
 | Economic plan, Hausgeld expected amounts, PDF | ✅ plan-start addressees; dated transfer of the unit’s ongoing advances (#207) | `api/economic_plans.py`, `services/payment_service.py`, `services/wirtschaftsplan_pdf.py` |
+| Monthly Hausgeld due day | ✅ days 1–28/default 1 with working-day shift; historical 29–31 clamp to month end before shifting without changing frozen records; ledger, dunning/PDF and monitor share the date (#206) | `engine/fristen.py` (`owner_due_date`), `services/payment_service.py`, [semantics](m6-zahlungen-mietkonto.md#22-owner-expected-amount-per-owner-from-the-finalized-economic-plan) |
 | Economic plan prefilled from the previous year | ✅ preview, then draft from last year's actual costs per category | `api/economic_plans.py` (`/previous/preview`, `/previous`), `components/PreviousPlan.tsx`, T54, [usage](operations/statements.md) |
 | Annual settlement, PDF | ✅ resolved Spitze plus frozen booked Hausgeld balance and resulting payment; owner/unit/period provenance (#204) | `api/weg_settlements.py`, `services/weg_jahresabrechnung_pdf.py` |
 | Adopt paid Hausgeld | ✅ | `api/weg_settlements.py` (`/paid-advances-derived`), `services/weg_settlement_service.py` (`derive_paid_advances`), `pages/WegSettlementDetailPage.tsx`, T09 |
@@ -130,9 +131,9 @@ pending; registration stays closed and legal review remains with #26. See the
 
 | Feature | Status | Location |
 | --- | --- | --- |
-| Dunning notice, 3 levels, fee, PDF | ✅ organization fees per level, optional override, and frozen issued amounts in the notice and PDF | `api/dunning.py`, `engine/dunning.py`, `services/dunning_pdf.py` |
+| Dunning notice, 3 levels, fee, PDF | ✅ dated rent and Hausgeld obligations, organization fees per level, optional override, and frozen issued amounts in the notice and PDF | `api/dunning.py`, `engine/dunning.py`, `services/dunning_pdf.py` |
 | Default interest, selected dunning run | ✅ optional organization-wide interest at statutory base rate + 5 or 9 pp, split by rate and payment dates; selected batch drafts use the same policy | `engine/dunning.py`, `services/dunning_batch_service.py`, `api/dunning.py` (`/batch/preview`, `/batch`), `components/DunningBatch.tsx`, T35, T53, [usage](operations/bank-and-payments.md) |
-| Deadline monitor (Fristenmonitor) | ✅ derived | `api/fristen.py`, `engine/fristen.py`, `pages/FristenmonitorPage.tsx` |
+| Deadline monitor (Fristenmonitor) | ✅ derived; WEG scopes include owner arrears from the same dated ledger used by dunning | `api/fristen.py`, `services/fristen_service.py`, `engine/fristen.py`, `pages/FristenmonitorPage.tsx` |
 | Tasks, follow-ups | ✅ create from property and unit, due tasks on the dashboard | `models/task.py`, `api/tasks.py`, `services/task_service.py`, `pages/TasksPage.tsx`, T41, T42, [usage](operations/tasks-and-documents.md) |
 
 ## Documents, communication, reports
