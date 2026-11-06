@@ -182,6 +182,12 @@ refused before writes; ordinary import
 must not forge historical authority or private evidence. Database refusals expose
 only the entity/source IDs and a stable code, never SQL or target data.
 
+Readable exports include explicit bank coverage successors on costs corrected
+through reviewed allocations. Import continues to refuse reviewed documents
+without their private admission and rejects an explicit successor submitted
+without a native reviewed correction. Supported ordinary archives restore the
+original bank link and derive remaining coverage from the ordinary cost versions.
+
 ## Organization erasure
 
 `POST /api/organizations/deletion` creates a request and returns a retention

@@ -561,6 +561,37 @@ issue times on 5 November 2026 and the explicitly stored 8 April interest start:
 | Before | [View](docs/assets/design/dunning-notice/before-1280.png) | [View](docs/assets/design/dunning-notice/before-360.png) |
 | After | [View](docs/assets/design/dunning-notice/after-1280.png) | [View](docs/assets/design/dunning-notice/after-360.png) |
 
+Under **Mahnungen**, the collapsible **Mahneinstellungen** card contains three
+labelled EUR fields and **Verzugszinsen automatisch berechnen**. The card uses
+the standard responsive form grid, with fees stacked at 360 px. Organization
+administrators can save the form and receive an inline confirmation. Other members
+can read the fees and switch state. New individual notices and batch previews use
+the saved organization policy. The batch form uses the same responsive grid.
+
+The frozen calculation shows the statutory premium and a separate table of
+**Zinsabschnitte** with the date range, amount, principal, annual and base rates
+and day count. The tenant account shows fees and interest in an **Ausgestellte
+Mahnungen** section below the account items. Its amounts use German currency
+formatting and have no effect on Soll, Ist or Saldo. An unscoped tenant ledger
+links to **Mahnungen** for older notices without a verified lease assignment.
+
+Synthetic browser captures at 1280 px and 360 px show the same April arrears
+before and after the policy change. The level-2 PDF changes from a 5.00 EUR fee
+and 3.70 EUR at one rate to a saved 3.00 EUR fee and 3.64 EUR across two rates.
+
+| Surface | 1280 px | 360 px |
+|---|---|---|
+| Dunning settings | [before](docs/assets/design/dunning-settings/settings-before-1280.png) · [after](docs/assets/design/dunning-settings/settings-after-1280.png) | [before](docs/assets/design/dunning-settings/settings-before-360.png) · [after](docs/assets/design/dunning-settings/settings-after-360.png) |
+| Individual notice form | [before](docs/assets/design/dunning-settings/new-notice-before-1280.png) · [after](docs/assets/design/dunning-settings/new-notice-after-1280.png) | [before](docs/assets/design/dunning-settings/new-notice-before-360.png) · [after](docs/assets/design/dunning-settings/new-notice-after-360.png) |
+| Issued detail | [before](docs/assets/design/dunning-settings/detail-before-1280.png) · [after](docs/assets/design/dunning-settings/detail-after-1280.png) | [before](docs/assets/design/dunning-settings/detail-before-360.png) · [after](docs/assets/design/dunning-settings/detail-after-360.png) |
+| Tenant ledger | [before](docs/assets/design/dunning-settings/ledger-before-1280.png) · [after](docs/assets/design/dunning-settings/ledger-after-1280.png) | [before](docs/assets/design/dunning-settings/ledger-before-360.png) · [after](docs/assets/design/dunning-settings/ledger-after-360.png) |
+| Unscoped tenant ledger history link | [before](docs/assets/design/dunning-settings/ledger-history-before-1280.png) · [after](docs/assets/design/dunning-settings/ledger-history-after-1280.png) | [before](docs/assets/design/dunning-settings/ledger-history-before-360.png) · [after](docs/assets/design/dunning-settings/ledger-history-after-360.png) |
+| Dunning batch form | [before](docs/assets/design/dunning-settings/batch-before-1280.png) · [after](docs/assets/design/dunning-settings/batch-after-1280.png) | [before](docs/assets/design/dunning-settings/batch-before-360.png) · [after](docs/assets/design/dunning-settings/batch-after-360.png) |
+
+Issued PDF renderings in A4 format
+[before](docs/assets/design/dunning-settings/pdf-before.png) and
+[after](docs/assets/design/dunning-settings/pdf-after.png).
+
 The WEG settlement detail follows this contract: `settlement-detail` wraps long owner
 names and the complete snapshot SHA-256. Each individual statement uses its own
 `overflow-x-auto` container, natural column widths and unbroken monetary values;
@@ -1538,6 +1569,43 @@ Synthetic test-database evidence (1280 and 360 px):
 | Before | [View](docs/assets/design/commercial-preallocation/before-1280.png) | [View](docs/assets/design/commercial-preallocation/before-360.png) |
 | After | [View](docs/assets/design/commercial-preallocation/after-1280.png) | [View](docs/assets/design/commercial-preallocation/after-360.png) |
 
+
+### Existing-cost bank assignment (#164)
+
+For outgoing transactions, “Umsatz aufteilen” defaults to “Bestehende Kostenposition”.
+The “Zuordnen als” selector retains “Zahlung (z. B. Erstattung oder Rücklagenentnahme)”
+for the existing payment form. Incoming transactions retain their payment split.
+The cost form uses the shared full-width form grid and bottom actions. Native
+selectors stay within the dialog at 360 px, including long German option labels.
+“Kostenposition” lists only current confirmed same-property costs with remaining
+bank coverage; labels show document number (or invoice date), “offen” and “gesamt”.
+Selecting one shows “Nach Zuordnung noch offen”. Excessive coverage disables
+“Kostenposition zuordnen” with a German error. Failed requests keep the selection;
+“Kostenpositionen neu laden” refreshes availability. Empty and loading states report
+the actual cost list. Successful matching reports “Umsatz zugeordnet.” and updates
+the bank status. No payment/cost creation is implied by this action.
+
+Synthetic −60.00 EUR electricity debit and a confirmed 120.00 EUR position:
+
+| | Desktop | 360 px |
+| --- | --- | --- |
+| Before | [view](docs/assets/design/bank-cost-assignment/before-1280.png) | [view](docs/assets/design/bank-cost-assignment/before-360.png) |
+| After | [view](docs/assets/design/bank-cost-assignment/after-1280.png) | [view](docs/assets/design/bank-cost-assignment/after-360.png) |
+
+For a reviewed allocation correction with assigned debits, “Bankumsätze übernehmen”
+shows each covered old part with its covered amount and an initially empty successor
+selector. Options identify the proposed parts by their visible position and amount;
+the selection uses the reviewed line ID. Parts below the required amount are
+disabled, and confirmation requires valid selections whose combined coverage fits
+each target. The controls use the same full-width fields as the existing review.
+The original bank link stays visible on the original transaction.
+
+Synthetic 119.00 EUR invoice, old parts 59.00 and 60.00 EUR, and a 60.00 EUR debit:
+
+| Reviewed correction | Desktop | 360 px |
+| --- | --- | --- |
+| Before | [view](docs/assets/design/bank-cost-correction/before-1280.png) | [view](docs/assets/design/bank-cost-correction/before-360.png) |
+| After | [view](docs/assets/design/bank-cost-correction/after-1280.png) | [view](docs/assets/design/bank-cost-correction/after-360.png) |
 
 ### WEG paid Hausgeld input errors (#183)
 

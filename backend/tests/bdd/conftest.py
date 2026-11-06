@@ -17,7 +17,7 @@ import pytest
 import pytest_asyncio
 
 from tests.bdd.world import World, admin_credentials, target_url
-from tests.bdd.browser import browser_app, browser_session, browser_world  # noqa: F401
+from tests.bdd.browser import browser_app, browser_session, browser_storage, browser_world  # noqa: F401
 
 # Reused as-is: a throw-away user that may change its password without
 # touching the shared seed users (see tests/test_auth_password.py).
@@ -182,6 +182,7 @@ def pytest_collection_modifyitems(config, items):
                     "inbox_review_chain.feature": "needs the in-process invoice worker and direct database fixtures",
                     "organization_deletion.feature": "needs direct database fixtures and the in-process deletion CLI",
                     "organization_export_import.feature": "needs direct database fixtures and in-process archive storage",
+                    "bank_cost_correction.feature": "needs local reviewed intake and its document store",
                     "password_reset.feature": "needs the Mailpit test mailbox",
                     "profile_hints.feature": "needs a fresh organization seeded through the local database fixture",
                 }.get(Path(template.feature.filename).name)
@@ -232,3 +233,15 @@ from tests.bdd.steps.persons_key import *  # noqa: E402,F401,F403
 from tests.bdd.steps.meetings import *  # noqa: E402,F401,F403
 from tests.bdd.steps.special_levy import *  # noqa: E402,F401,F403
 from tests.bdd.steps.vorwegabzug import *  # noqa: E402,F401,F403
+
+
+@pytest.fixture
+def reset_dunning_settings(world):
+    response = world.act("GET", "/api/dunning/settings")
+    assert response.status_code == 200, world.describe_response()
+    previous = response.json()
+    yield
+    if "fee_level_1" in previous:
+        world.actor = world.administrator_of("Verwaltung Alpha")
+        response = world.act("PUT", "/api/dunning/settings", json=previous)
+        assert response.status_code == 200, world.describe_response()

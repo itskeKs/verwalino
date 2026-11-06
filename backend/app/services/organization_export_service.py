@@ -146,6 +146,8 @@ def export_predicate(name, columns):
         checks.append(f"property_source_permitted(:org,'{name}',t.id,'export')")
     if "bank_account_id" in columns:
         checks.append("(t.bank_account_id IS NULL OR financial_scope_access(:org,'bank_account',t.bank_account_id,'export'))")
+    if name == 'bank_transaction':
+        checks.append("(t.cost_entry_id IS NULL OR financial_scope_access(:org,'cost_entry',t.cost_entry_id,'export'))")
     for column in ("scope_id", "accounting_scope_id", "scope_hint_id"):
         if column in columns:
             checks.append(f"(t.{column} IS NULL OR has_scope_capability(:org,t.{column},'export'))")

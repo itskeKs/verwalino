@@ -30,8 +30,8 @@ beforeEach(() => {
 const statement = { soll_total: "7200.00", ist_total: "100.00", balance: "-7100.00", open_items: [] };
 
 it("passes the selected read scope and clears stale results and scope when changing lease", async () => {
-  vi.mocked(endpoints.leaseStatement).mockResolvedValue({ ...statement, due_balance: "-7100.00", not_yet_due_balance: "0.00" });
-  render(<MietkontoPage />);
+  vi.mocked(endpoints.leaseStatement).mockResolvedValue({ ...statement, dunning_notices: [], due_balance: "-7100.00", not_yet_due_balance: "0.00" });
+  render(<MemoryRouter><MietkontoPage /></MemoryRouter>);
   fireEvent.change(await screen.findByLabelText("Mietvertrag *"), { target: { value: "lease" } });
   await screen.findByRole("option", { name: /Lesebereich/ });
   fireEvent.change(screen.getByRole("combobox", { name: "Abrechnungskreis" }), { target: { value: "scope" } });
@@ -46,7 +46,7 @@ it("passes the selected read scope and clears stale results and scope when chang
 it("passes owner scope and plan and freezes query controls until the response arrives", async () => {
   let finish!: (value: typeof statement) => void;
   vi.mocked(endpoints.ownerStatement).mockReturnValue(new Promise(resolve => { finish = resolve; }));
-  render(<MietkontoPage />);
+  render(<MemoryRouter><MietkontoPage /></MemoryRouter>);
   fireEvent.change(await screen.findByLabelText("Ansicht"), { target: { value: "owner" } });
   fireEvent.change(screen.getByLabelText("Eigentuemer *"), { target: { value: "owner" } });
   fireEvent.change(screen.getByLabelText("Wirtschaftsplan (fuer Soll)"), { target: { value: "plan" } });

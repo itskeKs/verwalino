@@ -9,7 +9,7 @@ import pdfplumber
 from playwright.async_api import expect
 from pytest_bdd import given, then, when, parsers
 
-from tests.bdd.steps.browser_common import browser_step, button, field, submit
+from tests.bdd.steps.browser_common import browser_step, button, field, ledger, submit
 from tests.bdd.steps.browser_setup import bank_account, create, create_scope, rental
 
 
@@ -25,9 +25,38 @@ def unpaid_four_digit_rent(world, seed_data):
     assert response.status_code == 200, world.describe_response()
 
 
-@when('the manager creates a January notice as of 2 March 2026 with a base rate of "2,50"')
+@when("the manager creates a January notice as of 2 March 2026 with automatic interest")
+def interest_notice(browser_world, reset_dunning_settings):
+    _set_interest(browser_world.world)
+    browser_world.run(_browser_notice(browser_world, "2026-01-01", "2026-01-31", "2026-03-02"))
+
+
+@when("the administrator saves the dunning settings in the browser")
+def configure_interest_in_browser(browser_world, reset_dunning_settings):
+    async def configure():
+        page = browser_world.page
+        await browser_world.visit("/mahnungen")
+        await page.get_by_text("Mahneinstellungen", exact=True).click()
+        await field(page, "Mahngebühr Stufe 2 (EUR)").fill("3,00")
+        await field(page, "Mahngebühr Stufe 3 (EUR)").fill("4,00")
+        await field(page, "Verzugszinsen automatisch berechnen").check()
+        async with page.expect_response(lambda response: response.request.method == "PUT"
+                                        and response.url.endswith("/api/dunning/settings")) as pending:
+            await button(page, "Mahneinstellungen speichern").click()
+        answer = await pending.value
+        assert answer.ok, await answer.text()
+        await expect(page.get_by_text("Mahneinstellungen gespeichert.", exact=True)).to_be_visible()
+
+    browser_world.run(configure())
+
+
+@when("the manager creates an April notice as of 31 October 2026")
 @browser_step
-async def interest_notice(browser_world):
+async def april_notice_in_browser(browser_world):
+    await _browser_notice(browser_world, "2026-04-01", "2026-04-30", "2026-10-31")
+
+
+async def _browser_notice(browser_world, period_start, period_end, cutoff):
     page = browser_world.page
     data = browser_world.world.data
     await browser_world.visit("/mahnungen")
@@ -35,22 +64,24 @@ async def interest_notice(browser_world):
     await field(page, "Empfaengertyp *").select_option("tenant")
     await browser_world.select("Mieter *", data["tenants"][0]["id"])
     await browser_world.select("Mietvertrag *", data["leases"][0]["id"])
-    for label, value in (("Zeitraum von *", "2026-01-01"), ("Zeitraum bis *", "2026-01-31"), ("Stichtag", "2026-03-02"), ("Karenzzeit (Tage)", "0"), ("Mahngebuehr (Override)", "0"), ("Basiszinssatz (%)", "2,50")):
+    for label, value in (("Zeitraum von *", period_start), ("Zeitraum bis *", period_end), ("Stichtag", cutoff)):
         await field(page, label).fill(value)
     await browser_world.scope()
+    assert await field(page, "Basiszinssatz (%)").count() == 0
     await submit(browser_world, "Mahnung erstellen", "/api/dunning/tenant")
     await expect(button(page, "Mahnung ausgeben")).to_be_visible()
     data["notice_url"] = page.url
 
 
 async def interest_amounts(browser):
-    await browser.row("Verzugszinsen", "7.91 EUR")
-    await browser.row("Gesamtsumme", "707.91 EUR")
+    await browser.row("Verzugszinsen", "3.64 EUR")
+    await browser.row("Mahngebühr", "3.00 EUR")
+    await browser.row("Gesamtsumme", "106.64 EUR")
     await expect(browser.page.get_by_role("heading", name="Eingefrorene Zinsberechnung", exact=True)).to_be_visible()
-    await expect(browser.page.get_by_text("Stichtag:", exact=False).filter(has_text="2026-03-02")).to_be_visible()
+    await expect(browser.page.get_by_text("Stichtag:", exact=False).filter(has_text="2026-10-31")).to_be_visible()
 
 
-@then("the reloaded notice shows 7.91 EUR interest and 707.91 EUR in total")
+@then("the reloaded notice shows 3.64 EUR interest and 106.64 EUR in total")
 @browser_step
 async def draft_interest(browser_world):
     await browser_world.page.reload()
@@ -85,11 +116,11 @@ async def readable_issued_amounts(browser_world):
         if width == 360:
             await page.wait_for_function("document.querySelector('aside').getBoundingClientRect().right <= 0")
         for title, amounts in (
-            ("Eingefrorene Zinsberechnung", ["1234.56 EUR", "13.95 EUR"]),
+            ("Eingefrorene Zinsberechnung", ["1234.56 EUR", "11.66 EUR"]),
             ("Rueckstandsaufstellung", ["1234.56 EUR"]),
         ):
             card = page.locator(".card").filter(has=page.get_by_role("heading", name=title, exact=True))
-            table = card.get_by_role("table")
+            table = card.get_by_role("table").first
             await table.scroll_into_view_if_needed()
             # Read the initial table viewport: no horizontal scrolling to reach money.
             await table.evaluate("table => { table.parentElement.scrollLeft = 0; }")
@@ -133,7 +164,7 @@ async def interest_pdf(browser_world):
         with pdfplumber.open(io.BytesIO(content)) as pdf:
             text = " ".join(part.extract_text() or "" for part in pdf.pages)
         assert browser_world.world.data["people"][0].name in text
-        for value in (r"700[.,]00", r"2[.,]50\s*%", r"7[.,]50\s*%", r"\b55\b", r"7[.,]91", r"707[.,]91"):
+        for value in (r"100[.,]00", r"1[.,]27\s*%", r"1[.,]52\s*%", r"\b84\b", r"\b123\b", r"3[.,]64", r"106[.,]64"):
             assert re.search(value, text), f"PDF missing {value}: {text}"
     finally:
         await popup.close()
@@ -178,16 +209,16 @@ async def correct_period(browser_world):
     page = browser_world.page
     await field(page, "Zeitraum von *").fill("2025-01-01")
     await field(page, "Stichtag").fill("2027-01-15")
-    await field(page, "Basiszinssatz (%)").fill("0")
     await button(page, "Mahnung erstellen").click()
     await expect(page.get_by_text("Report period is outside accounting scope", exact=True)).to_be_visible()
     await field(page, "Zeitraum von *").fill("2026-01-01")
 
 
-@then("the notice form keeps the first scope selected")
+@then("the notice form keeps the first scope selected and requires no manual rate")
 @browser_step
 async def scope_retained(browser_world):
     await expect(field(browser_world.page, "Abrechnungskreis")).to_have_value(browser_world.world.data["scope"]["id"])
+    assert await field(browser_world.page, "Basiszinssatz (%)").count() == 0
 
 
 @when("the manager creates the scoped notice")
@@ -249,15 +280,17 @@ async def preview_arrears(browser_world):
     await preview_batch(browser_world)
 
 
-@then("the preview offers three unselected arrears of 850 EUR each")
+@then("the preview offers three unselected arrears of 850 EUR each with 6.23 EUR interest")
 @browser_step
 async def preview_candidates(browser_world):
     batch = browser_world.page.get_by_role("region", name="Mahnlauf", exact=True)
+    assert await field(batch, "Basiszinssatz (%)").count() == 0
     await expect(batch.get_by_role("checkbox")).to_have_count(3)
     for index, person in enumerate(browser_world.world.data["people"]):
         row = batch.get_by_role("row").filter(has_text=person.name)
         await expect(row.get_by_role("checkbox")).not_to_be_checked()
         await expect(row.get_by_role("cell").nth(2)).to_have_text("850.00 EUR")
+        await expect(row).to_contain_text("6.23 EUR")
     await expect(button(batch, "Auswahl bestätigen")).to_be_disabled()
 
 
@@ -282,7 +315,7 @@ async def confirm_batch(browser):
     await button(batch, "Alle geeigneten Rückstände auswählen").click()
     await button(batch, "Auswahl bestätigen").click()
     dialog = browser.page.get_by_role("dialog", name="Mahnentwürfe anlegen", exact=True)
-    await expect(dialog).to_contain_text("3 Mahnentwürfe: Hauptforderung 2550.00 EUR; Gesamtsumme 2550.00 EUR.")
+    await expect(dialog).to_contain_text("3 Mahnentwürfe: Hauptforderung 2550.00 EUR; Gesamtsumme 2568.69 EUR.")
     return dialog
 
 
@@ -337,6 +370,7 @@ async def batch_history(browser_world):
         await row.get_by_role("link", name="Details", exact=True).click()
         await browser_world.row("Status", "Entwurf")
         await browser_world.row("Hauptforderung (Rueckstand)", "850.00 EUR")
+        await browser_world.row("Verzugszinsen", "6.23 EUR")
 
 
 @given(parsers.parse("April rent of 700 EUR with {paid:d} EUR paid on 7 April 2026"))
@@ -354,13 +388,14 @@ def april_rent(world, seed_data, paid):
 
 
 @when(parsers.parse("the manager checks April reminders on {day:d} April 2026"))
-def april_reminder(world, day):
+def april_reminder(world, day, reset_dunning_settings):
+    _set_interest(world)
     world.act("POST", "/api/dunning/tenant", json={
         "tenant_profile_id": world.data["tenants"][0]["id"],
         "lease_agreement_id": world.data["leases"][0]["id"],
         "accounting_scope_id": world.data["scope"]["id"],
         "period_start": "2026-04-01", "period_end": "2026-04-30",
-        "reference_date": f"2026-04-{day:02}", "base_interest_rate": "2.50", "override_fee": "0.00",
+        "reference_date": f"2026-04-{day:02}", "override_fee": "0.00",
     })
 
 
@@ -424,3 +459,118 @@ async def explicit_april_interest_start(browser_world):
         await expect(start).to_be_visible()
         assert await start.evaluate("element => { const box = element.getBoundingClientRect(); return box.left >= 0 && box.right <= innerWidth; }")
         assert await page.evaluate("document.documentElement.scrollWidth <= innerWidth")
+
+
+@given(parsers.parse('the April rental unit is "{usage}"'))
+def april_unit_use(world, usage):
+    unit_id = world.data["units"][0]["id"]
+    response = world.act("PUT", f"/api/units/{unit_id}", json={"usage_type": usage})
+    assert response.status_code == 200, world.describe_response()
+
+
+def _set_interest(world):
+    path = "/api/dunning/settings"
+    settings = world.act("GET", path).json()
+    response = world.act("PUT", path, json={**settings, "default_interest_enabled": True})
+    assert response.status_code == 200, world.describe_response()
+
+
+@given("the organization enables automatic dunning interest")
+def enable_automatic_interest(world, reset_dunning_settings):
+    _set_interest(world)
+
+
+@when("the administrator saves reminder fees of 0, 3 and 4 EUR and enables interest")
+def configure_april_reminders(world, reset_dunning_settings):
+    response = world.act("PUT", "/api/dunning/settings", json={
+        "fee_level_1": "0.00", "fee_level_2": "3.00", "fee_level_3": "4.00",
+        "default_interest_enabled": True,
+    })
+    assert response.status_code == 200, world.describe_response()
+
+
+def _april_notice(world, cutoff):
+    response = world.act("POST", "/api/dunning/tenant", json={
+        "tenant_profile_id": world.data["tenants"][0]["id"],
+        "lease_agreement_id": world.data["leases"][0]["id"],
+        "accounting_scope_id": world.data["scope"]["id"],
+        "period_start": "2026-04-01", "period_end": "2026-04-30",
+        "reference_date": cutoff,
+    })
+    assert response.status_code == 201, world.describe_response()
+    return response.json()
+
+
+@when("the manager issues a first reminder for the April arrears")
+def issue_first_april_reminder(world):
+    notice = _april_notice(world, "2026-04-08")
+    assert notice["fee_amount"] == "0.00"
+    response = world.act("POST", f"/api/dunning/{notice['id']}/issue")
+    assert response.status_code == 200, world.describe_response()
+
+
+@when("the manager prepares a second April reminder as of 31 October 2026")
+def second_april_reminder(world):
+    world.data["second_reminder"] = _april_notice(world, "2026-10-31")
+
+
+@then(parsers.parse("the draft contains a 3.00 EUR fee and {interest} EUR interest at a {premium:d} point premium"))
+def april_reminder_amounts(world, interest, premium):
+    notice = world.data["second_reminder"]
+    assert notice["level"] == 2
+    assert notice["fee_amount"] == "3.00"
+    assert notice["interest_amount"] == interest
+    assert notice["interest_snapshot"]["premium"] == premium
+
+
+@then("the interest is split into 84 days at 1.27 percent and 123 days at 1.52 percent")
+def april_reminder_segments(world):
+    segments = world.data["second_reminder"]["interest_snapshot"]["items"][0]["segments"]
+    assert [(row["days"], row["base_interest_rate"]) for row in segments] == [(84, "1.27"), (123, "1.52")]
+
+
+
+@then(parsers.parse("the issued PDF shows the same {premium:d} point premium"))
+def issued_premium(world, premium):
+    notice_id = world.data["second_reminder"]["id"]
+    path = f"/api/dunning/{notice_id}"
+    assert world.act("POST", f"{path}/issue").status_code == 200, world.describe_response()
+    response = world.act("GET", f"{path}/pdf")
+    assert response.status_code == 200, world.describe_response()
+    with pdfplumber.open(io.BytesIO(response.content)) as pdf:
+        text = " ".join(part.extract_text() or "" for part in pdf.pages)
+    paragraph = 2 if premium == 9 else 1
+    assert f"Basiszinssatz + {premium} Prozentpunkte (§ 288 Abs. {paragraph} BGB)" in text
+    assert "07.04.2026" in text
+
+
+@then("the rent account lists the issued interest separately from the open rent")
+@browser_step
+async def informational_ledger(browser_world):
+    await ledger(browser_world, start="2026-04-01", end="2026-04-30")
+    page = browser_world.page
+    await expect(page.get_by_role("heading", name="Ausgestellte Mahnungen")).to_be_visible()
+    notice_row = page.get_by_role("row").filter(has_text="Stufe 2")
+    await expect(notice_row).to_contain_text("3,64")
+    await expect(notice_row).to_contain_text("3,00")
+    await browser_world.row("Saldo", "100.00 EUR")
+
+
+@when("the manager opens that lease account without an accounting scope")
+@browser_step
+async def unscoped_rent_account(browser_world):
+    page = browser_world.page
+    await browser_world.visit("/mietkonto")
+    await browser_world.select("Mietvertrag *", browser_world.world.data["leases"][0]["id"])
+    await field(page, "Zeitraum von *").fill("2026-04-01")
+    await field(page, "Zeitraum bis *").fill("2026-04-30")
+    await button(page, "Abrufen").click()
+    await expect(page.get_by_role("heading", name="Kontoauszug", exact=True)).to_be_visible()
+
+
+@then("the account links to dunning history for notices without a lease assignment")
+@browser_step
+async def unassigned_dunning_history(browser_world):
+    hint = browser_world.page.get_by_text("Ältere Mahnungen ohne Vertragszuordnung", exact=False)
+    await expect(hint).to_be_visible()
+    await expect(hint.get_by_role("link", name="Mahnungen", exact=True)).to_have_attribute("href", "/mahnungen")
