@@ -52,6 +52,7 @@ class SettlementRunCreate(BaseModel):
     period_start: date
     period_end: date
     advance_payments_total: str | None = None
+    heating_advance_payments_total: str | None = None
     management_mandate_id: str | None = None
 
 
@@ -87,10 +88,15 @@ class ConsumptionSuggestionOut(BaseModel):
 
 
 class AdvanceProposalOut(BaseModel):
+    accept_from: date
     lease_agreement_id: str
     tenant_cost: str
     months: str
     monthly_amount: str
+    heating_tenant_cost: str
+    heating_monthly_amount: str
+    current_monthly_amount: str
+    current_heating_monthly_amount: str
     period_start: date
     period_end: date
 
@@ -102,7 +108,14 @@ class AdvanceProposalAccept(BaseModel):
 
 
 class AdvancePaymentsUpdate(BaseModel):
-    advance_payments_total: str
+    advance_payments_total: str | None = None
+    heating_advance_payments_total: str | None = None
+
+    @model_validator(mode="after")
+    def has_amount(self):
+        if self.advance_payments_total is None and self.heating_advance_payments_total is None:
+            raise ValueError("Bitte mindestens eine Vorauszahlungssumme angeben.")
+        return self
 
 
 class ExternalAmountIn(BaseModel):
@@ -171,6 +184,25 @@ class HeatingConfigIn(BaseModel):
         return value
 
 
+class CommercialPreallocationIn(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+    cost_entry_id: uuid.UUID
+    commercial_share_percent: Annotated[Decimal, Field(ge=0, le=100, max_digits=5, decimal_places=2, allow_inf_nan=False)] | None = None
+    commercial_amount: Annotated[Decimal, Field(ge=0, max_digits=14, decimal_places=2, allow_inf_nan=False)] | None = None
+    commercial_reason: str | None = Field(default=None, max_length=2000)
+
+    @model_validator(mode='after')
+    def reasoned_rule(self):
+        values = (self.commercial_share_percent, self.commercial_amount)
+        if values == (None, None) and self.commercial_reason is None:
+            return self  # Explicitly remove this position's unfinalized rule.
+        if sum(value is not None for value in values) != 1:
+            raise ValueError('Vorwegabzug Gewerbe: genau einen Prozentsatz oder Festbetrag angeben.')
+        if not self.commercial_reason or not self.commercial_reason.strip():
+            raise ValueError('Vorwegabzug Gewerbe: eine Begründung ist erforderlich.')
+        return self
+
+
 class ComputeRequest(BaseModel):
     """Structured extra inputs for the engine (provisional source O3-1/O3-5)."""
 
@@ -179,6 +211,7 @@ class ComputeRequest(BaseModel):
     external_amounts: list[ExternalAmountIn] = []
     manual_amounts: list[ManualAmountIn] = []
     unit_metrics: list[UnitMetricIn] = []
+    commercial_preallocations: list[CommercialPreallocationIn] | None = Field(default=None, max_length=1000)
 
 
 class SettlementLineOut(BaseModel):
@@ -198,6 +231,14 @@ class SettlementLineOut(BaseModel):
     note: str | None
 
 
+class VacancyAttributionOut(BaseModel):
+    unit_number: str
+    cost_label: str
+    days: int
+    person_days: int
+    amount: str
+
+
 class SettlementRunOut(BaseModel):
     id: str
     organization_id: str
@@ -211,6 +252,8 @@ class SettlementRunOut(BaseModel):
     tenant_profile_id: str | None
     advance_payments_total: str | None
     advance_payments_source: str
+    heating_advance_payments_total: str | None
+    heating_advance_payments_source: str
     total_cost: str | None
     balance: str | None
     status: str
@@ -221,6 +264,7 @@ class SettlementRunOut(BaseModel):
     superseded_by_id: str | None
     lines: list[SettlementLineOut] = []
     extra_inputs: dict | None = None
+    vacancy_attribution: list[VacancyAttributionOut] = Field(default_factory=list, exclude_if=lambda rows: not rows)
 
 
 class SettlementBatchSkipped(BaseModel):
@@ -246,8 +290,13 @@ class SettlementBatchOut(BaseModel):
 # ---------------------------------------------------------------------------
 def _dec(value: str, field: str) -> Decimal:
     try:
-        return Decimal(value)
+        amount = Decimal(value)
+        if field == "heating_advance_payments_total" and (not amount.is_finite() or abs(amount) >= Decimal("1000000000000") or amount != amount.quantize(Decimal("0.01"))):
+            raise ValueError("Invalid heating advance amount")
+        return amount
     except (InvalidOperation, ValueError):
+        if field == 'heating_advance_payments_total':
+            raise HTTPException(422, 'Bitte geben Sie die Heizkosten-Vorauszahlung als endlichen, centgenauen EUR-Betrag ein.') from None
         raise HTTPException(status_code=422, detail=f"Invalid decimal for {field}: {value}")
 
 
@@ -284,7 +333,7 @@ def _line_out(ln: SettlementLine, cost_entry_id: str | None = None) -> Settlemen
     )
 
 
-def _run_out(run: SettlementRun, lines: list[SettlementLine]) -> SettlementRunOut:
+def _run_out(run: SettlementRun, lines: list[SettlementLine], *, vacancy_attribution: list[dict] | None = None) -> SettlementRunOut:
     # Relational legacy lines omit source IDs. Use only unambiguous exact matches
     # from the already-frozen snapshot; never infer source links by amount alone.
     sources = {}
@@ -311,6 +360,8 @@ def _run_out(run: SettlementRun, lines: list[SettlementLine]) -> SettlementRunOu
         if run.advance_payments_total is not None
         else None,
         advance_payments_source=run.advance_payments_source,
+        heating_advance_payments_total=str(run.heating_advance_payments_total) if run.heating_advance_payments_total is not None else None,
+        heating_advance_payments_source=run.heating_advance_payments_source,
         total_cost=str(run.total_cost) if run.total_cost is not None else None,
         balance=str(run.balance) if run.balance is not None else None,
         status=run.status,
@@ -320,6 +371,7 @@ def _run_out(run: SettlementRun, lines: list[SettlementLine]) -> SettlementRunOu
         finalized_by=str(run.finalized_by) if run.finalized_by else None,
         superseded_by_id=str(run.superseded_by_id) if run.superseded_by_id else None,
         extra_inputs=(run.snapshot_payload or {}).get("extra_inputs"),
+        vacancy_attribution=vacancy_attribution or [],
         lines=[_line_out(ln, sources.get((ln.sort_order, ln.line_type, ln.label, ln.cost_category_code, str(ln.amount)))) for ln in lines],
     )
 
@@ -374,7 +426,10 @@ async def get_settlement(
         raise HTTPException(status_code=404, detail="Settlement run not found")
     lines_repo = SettlementLineRepository(db, auth.organization_id)
     lines = await lines_repo.list_for_run(run_id)
-    return _run_out(run, list(lines))
+    svc = SettlementService(db, auth.organization_id, auth.user_id)
+    out = _run_out(run, list(lines), vacancy_attribution=await svc.vacancy_disclosure(run))
+    out.extra_inputs = await svc.current_extra_inputs(run)
+    return out
 
 
 @router.get("/{run_id}/consumption-suggestions", response_model=list[ConsumptionSuggestionOut])
@@ -402,10 +457,11 @@ async def get_heating_consumption(
 @router.get("/{run_id}/advance-proposal", response_model=AdvanceProposalOut)
 async def get_advance_proposal(
     run_id: uuid.UUID,
+    accept_from: date | None = None,
     auth: AuthContext = Depends(get_current_user),
     db: AsyncSession = Depends(get_live_member_db),
 ):
-    return await SettlementService(db, auth.organization_id, auth.user_id).advance_proposal(run_id)
+    return await SettlementService(db, auth.organization_id, auth.user_id).advance_proposal(run_id, accept_from=accept_from)
 
 
 @router.post("/{run_id}/advance-proposal", response_model=RentChangeOut, status_code=201)
@@ -416,7 +472,7 @@ async def accept_advance_proposal(
     db: AsyncSession = Depends(get_db, scope="function"),
 ):
     await require_live_principal(db, auth, writer=True)
-    row = await SettlementService(db, auth.organization_id, auth.user_id).advance_proposal(
+    row = await SettlementService(db, auth.organization_id, auth.user_id).accept_advance_proposal(
         run_id, accept_from=body.valid_from,
     )
     return _rent_change_out(row)
@@ -438,6 +494,8 @@ async def create_settlement(
         advance_payments_total=_dec(body.advance_payments_total, "advance_payments_total")
         if body.advance_payments_total is not None
         else None,
+        heating_advance_payments_total=_dec(body.heating_advance_payments_total, "heating_advance_payments_total")
+        if body.heating_advance_payments_total is not None else None,
         management_mandate_id=uuid.UUID(body.management_mandate_id)
         if body.management_mandate_id
         else None,
@@ -454,9 +512,10 @@ async def set_advance_payments(
 ):
     svc = SettlementService(db, auth.organization_id, auth.user_id)
     run = await svc.set_advance_payments(
-        run_id, _dec(body.advance_payments_total, "advance_payments_total")
+        run_id, _dec(body.advance_payments_total, "advance_payments_total") if body.advance_payments_total is not None else None,
+        heating_amount=_dec(body.heating_advance_payments_total, "heating_advance_payments_total") if body.heating_advance_payments_total is not None else None
     )
-    return _run_out(run, [])
+    return _run_out(run, [], vacancy_attribution=await svc.vacancy_disclosure(run))
 
 
 @router.patch("/{run_id}/advance-payments-derived", response_model=SettlementRunOut)
@@ -473,7 +532,7 @@ async def set_advance_payments_derived(
     """
     svc = SettlementService(db, auth.organization_id, auth.user_id)
     run = await svc.set_advance_payments_derived(run_id, period_year)
-    return _run_out(run, [])
+    return _run_out(run, [], vacancy_attribution=await svc.vacancy_disclosure(run))
 
 
 @router.post("/{run_id}/compute", response_model=SettlementRunOut)
@@ -488,7 +547,7 @@ async def compute_settlement(
     run, _result = await svc.compute(run_id, _to_extras(body))
     lines_repo = SettlementLineRepository(db, auth.organization_id)
     lines = await lines_repo.list_for_run(run_id)
-    return _run_out(run, list(lines))
+    return _run_out(run, list(lines), vacancy_attribution=await svc.vacancy_disclosure(run))
 
 
 @router.post("/{run_id}/preview", response_model=SettlementRunOut)
@@ -549,7 +608,7 @@ async def finalize_settlement(
     run = await svc.finalize(run_id, _to_extras(body))
     lines_repo = SettlementLineRepository(db, auth.organization_id)
     lines = await lines_repo.list_for_run(run_id)
-    return _run_out(run, list(lines))
+    return _run_out(run, list(lines), vacancy_attribution=await svc.vacancy_disclosure(run))
 
 
 @router.post("/{run_id}/correction", response_model=SettlementRunOut, status_code=201)

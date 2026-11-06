@@ -137,10 +137,10 @@ Feature: Settlement period
     Then the draft legacy statement causes an overlap error
 
   @browser
-  Scenario: Manual unit inputs explain their property-year basis in a clipped statement
+  Scenario: A clipped statement explains annual consumption and links to saved dated households
     Given an administrator of "Verwaltung Alpha" is signed in
     And a calendar-year property where tenant A leaves on 30 September and tenant B moves in on 1 October
     And two units with annual water quantities of 1000 each and a water invoice of 1000 euros
-    And a person-based cost source for that property
+    And a person-based cost source and dated households for that property
     When the manager opens the structured inputs of tenant A's clipped statement
-    Then manual consumption and persons explain the property-year basis on desktop and mobile
+    Then annual consumption and saved household history are accessible on desktop and mobile

@@ -72,3 +72,19 @@ def bank_account(world, *, deposit=False):
 def statement_account(world, seed_data):
     rental(world, seed_data)
     bank_account(world)
+
+
+@given("Anna Beispiel's rental account and the January to October Sparkasse statement")
+def sparkasse_rental(world, seed_data):
+    rental(world, seed_data, advance="150.00")
+    person = world.data["people"][0]
+    response = world.act("PUT", f"/api/persons/{person.id}", json={
+        "first_name": "Anna", "last_name": "Beispiel", "iban": "DE89370400440532013000",
+    })
+    assert response.status_code == 200, world.describe_response()
+    response = world.act("PATCH", f"/api/leases/{world.data['leases'][0]['id']}", json={"base_rent": "750.00"})
+    assert response.status_code == 200, world.describe_response()
+    account = bank_account(world)
+    response = world.act("PATCH", f"/api/bank-accounts/{account['id']}", json={"iban": "DE75512108001245126199"})
+    assert response.status_code == 200, world.describe_response()
+    world.data["account"] = response.json()

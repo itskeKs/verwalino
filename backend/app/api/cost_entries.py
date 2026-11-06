@@ -11,9 +11,10 @@ import io
 import uuid
 from datetime import date
 from decimal import Decimal
+from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Header, Response
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -56,8 +57,13 @@ class CostEntryOut(BaseModel):
     confirmed_at: str | None
     confirmed_by: str | None
     superseded_by_id: str | None
+    bank_open_amount: str | None
 
     model_config = {"from_attributes": True}
+
+
+CostAmount = Annotated[Decimal, Field(ge=0, max_digits=14, decimal_places=2, allow_inf_nan=False)]
+VatRate = Annotated[Decimal, Field(ge=0, max_digits=5, decimal_places=2, allow_inf_nan=False)]
 
 
 class CostEntryCreate(BaseModel):
@@ -71,22 +77,22 @@ class CostEntryCreate(BaseModel):
     invoice_date: date
     service_period_from: date
     service_period_to: date
-    gross_amount: str
-    vat_amount: str | None = None
-    vat_rate: str | None = None
+    gross_amount: CostAmount
+    vat_amount: CostAmount | None = None
+    vat_rate: VatRate | None = None
     document_number: str | None = None
     owner_distribution_key: str | None = None
     tenant_distribution_key: str | None = None
     tenant_apportionable: str
-    apportionable_tenant_amount: str | None = None
+    apportionable_tenant_amount: CostAmount | None = None
     source: str = "MANUAL"
     status: str = "needs_review"
 
 
 class CostEntryUpdate(BaseModel):
-    gross_amount: str | None = None
-    vat_amount: str | None = None
-    vat_rate: str | None = None
+    gross_amount: CostAmount | None = None
+    vat_amount: CostAmount | None = None
+    vat_rate: VatRate | None = None
     invoice_date: date | None = None
     service_period_from: date | None = None
     service_period_to: date | None = None
@@ -97,13 +103,13 @@ class CostEntryUpdate(BaseModel):
     owner_distribution_key: str | None = None
     tenant_distribution_key: str | None = None
     tenant_apportionable: str | None = None
-    apportionable_tenant_amount: str | None = None
+    apportionable_tenant_amount: CostAmount | None = None
 
 
 class CostEntryCorrectionCreate(BaseModel):
-    gross_amount: str | None = None
-    vat_amount: str | None = None
-    vat_rate: str | None = None
+    gross_amount: CostAmount | None = None
+    vat_amount: CostAmount | None = None
+    vat_rate: VatRate | None = None
     invoice_date: date | None = None
     service_period_from: date | None = None
     service_period_to: date | None = None
@@ -114,7 +120,7 @@ class CostEntryCorrectionCreate(BaseModel):
     owner_distribution_key: str | None = None
     tenant_distribution_key: str | None = None
     tenant_apportionable: str | None = None
-    apportionable_tenant_amount: str | None = None
+    apportionable_tenant_amount: CostAmount | None = None
 
 
 @router.get("", response_model=list[CostEntryOut])
@@ -126,7 +132,8 @@ async def list_cost_entries(
 ):
     repo = CostEntryRepository(db, auth.organization_id)
     items = await repo.list_by_filters(status=status, property_id=property_id)
-    return [_to_out(e) for e in items]
+    amounts = await repo.bank_open_amounts([e.id for e in items])
+    return [_to_out(e, amounts.get(e.id)) for e in items]
 
 
 def _render_cost_entries_csv(items: list[CostEntry]) -> bytes:
@@ -197,7 +204,8 @@ async def get_cost_entry(
     entry = await repo.get_by_id(entry_id)
     if entry is None:
         raise HTTPException(status_code=404, detail="Cost entry not found")
-    return _to_out(entry)
+    amounts = await repo.bank_open_amounts([entry.id])
+    return _to_out(entry, amounts.get(entry.id))
 
 
 @router.post("", response_model=CostEntryOut, status_code=201)
@@ -217,14 +225,14 @@ async def create_cost_entry(
         invoice_date=body.invoice_date,
         service_period_from=body.service_period_from,
         service_period_to=body.service_period_to,
-        gross_amount=Decimal(body.gross_amount),
-        vat_amount=Decimal(body.vat_amount) if body.vat_amount else None,
-        vat_rate=Decimal(body.vat_rate) if body.vat_rate else None,
+        gross_amount=body.gross_amount,
+        vat_amount=body.vat_amount,
+        vat_rate=body.vat_rate,
         document_number=body.document_number,
         owner_distribution_key=body.owner_distribution_key,
         tenant_distribution_key=body.tenant_distribution_key,
         tenant_apportionable=body.tenant_apportionable,
-        apportionable_tenant_amount=Decimal(body.apportionable_tenant_amount) if body.apportionable_tenant_amount else None,
+        apportionable_tenant_amount=body.apportionable_tenant_amount,
         status=body.status,
         source=body.source,
     )
@@ -232,7 +240,7 @@ async def create_cost_entry(
     entry = await svc.create(entry, accounting_scope_id=body.accounting_scope_id, source_document_id=body.source_document_id,
         idempotency_key=idempotency_key,
         request_digest=IdempotencyService.digest(body.model_dump(mode="json")))
-    return _to_out(entry)
+    return await _to_out_with_coverage(entry, db, auth.organization_id)
 
 
 @router.patch("/{entry_id}", response_model=CostEntryOut)
@@ -246,14 +254,12 @@ async def update_cost_entry(
     updates = {}
     for field_name, value in body.model_dump(exclude_unset=True).items():
         if value is not None:
-            if field_name in ("gross_amount", "vat_amount", "vat_rate", "apportionable_tenant_amount"):
-                updates[field_name] = Decimal(value)
-            elif field_name in ("cost_category_id", "vendor_id"):
+            if field_name in ("cost_category_id", "vendor_id"):
                 updates[field_name] = uuid.UUID(value)
             else:
                 updates[field_name] = value
     entry = await svc.update_draft(entry_id, updates)
-    return _to_out(entry)
+    return await _to_out_with_coverage(entry, db, auth.organization_id)
 
 
 @router.post("/{entry_id}/confirm", response_model=CostEntryOut)
@@ -264,7 +270,7 @@ async def confirm_cost_entry(
 ):
     svc = CostEntryService(db, auth.organization_id, auth.user_id)
     entry = await svc.confirm(entry_id)
-    return _to_out(entry)
+    return await _to_out_with_coverage(entry, db, auth.organization_id)
 
 
 @router.post("/{entry_id}/reject", response_model=CostEntryOut)
@@ -275,7 +281,7 @@ async def reject_cost_entry(
 ):
     svc = CostEntryService(db, auth.organization_id, auth.user_id)
     entry = await svc.reject(entry_id)
-    return _to_out(entry)
+    return await _to_out_with_coverage(entry, db, auth.organization_id)
 
 
 @router.post("/{entry_id}/correction", response_model=CostEntryOut, status_code=201)
@@ -289,17 +295,20 @@ async def create_correction(
     corrections = {}
     for field_name, value in body.model_dump(exclude_unset=True).items():
         if value is not None:
-            if field_name in ("gross_amount", "vat_amount", "vat_rate", "apportionable_tenant_amount"):
-                corrections[field_name] = Decimal(value)
-            elif field_name in ("cost_category_id", "vendor_id"):
+            if field_name in ("cost_category_id", "vendor_id"):
                 corrections[field_name] = uuid.UUID(value)
             else:
                 corrections[field_name] = value
     entry = await svc.create_correction_version(entry_id, corrections)
-    return _to_out(entry)
+    return await _to_out_with_coverage(entry, db, auth.organization_id)
 
 
-def _to_out(e: CostEntry) -> CostEntryOut:
+async def _to_out_with_coverage(e: CostEntry, db: AsyncSession, org_id: uuid.UUID) -> CostEntryOut:
+    amounts = await CostEntryRepository(db, org_id).bank_open_amounts([e.id])
+    return _to_out(e, amounts.get(e.id))
+
+
+def _to_out(e: CostEntry, bank_open_amount: Decimal | None) -> CostEntryOut:
     return CostEntryOut(
         id=str(e.id),
         organization_id=str(e.organization_id),
@@ -324,4 +333,5 @@ def _to_out(e: CostEntry) -> CostEntryOut:
         confirmed_at=str(e.confirmed_at) if e.confirmed_at else None,
         confirmed_by=str(e.confirmed_by) if e.confirmed_by else None,
         superseded_by_id=str(e.superseded_by_id) if e.superseded_by_id else None,
+        bank_open_amount=str(bank_open_amount) if bank_open_amount is not None else None,
     )

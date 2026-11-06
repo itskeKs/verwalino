@@ -74,12 +74,6 @@ function todayIso(): string {
   return calendarIso(new Date());
 }
 
-function greeting(): string {
-  const h = new Date().getHours();
-  if (h < 11) return "Guten Morgen";
-  if (h < 18) return "Guten Tag";
-  return "Guten Abend";
-}
 
 export function DashboardPage() {
   const { session } = useAuth();
@@ -161,10 +155,8 @@ function DashboardContent() {
       {/* Header */}
       <div>
         <p className="text-sm text-muted-foreground">{dateLabel}</p>
-        <h1 className="mt-0.5 text-2xl font-semibold tracking-tight">
-          {greeting()}
-          {org ? `, ${org.name}` : ""}
-        </h1>
+        {org?.name && <p className="mt-0.5 break-words text-sm font-medium text-muted-foreground">{org.name}</p>}
+        <h1 className="mt-0.5 text-2xl font-semibold tracking-tight">Guten Tag</h1>
       </div>
 
       <div className="dashboard-priority">
@@ -366,9 +358,9 @@ function DueTasks({ canWrite }: { canWrite: boolean }) {
     <p className="text-sm text-muted-foreground">Offene Aufgaben bis einschließlich {formatDate(dueUntil)} · alle zugänglichen Zuständigkeiten</p>
     {loading && <p role="status">Aufgaben werden geladen…</p>}
     {error && <p role="alert">Aufgaben: {error}</p>}
-    <button disabled={pending || loading} onClick={() => setRevision(n => n + 1)}>Aufgaben erneut laden</button>
-    {tasks && <ul className="dashboard-task-list">{tasks.map(task => <li key={task.id} className="flex items-center gap-3 py-3"><div className="flex-1"><p className="font-medium">{task.title}</p><p className="text-sm text-muted-foreground">Fällig am {task.due_date ? formatDate(task.due_date) : "—"}{task.property_name ? ` · ${task.property_name}` : ""}</p></div>{canWrite && <button className="btn" disabled={pending || loading} onClick={() => void complete(task)}>Erledigen</button>}</li>)}</ul>}
+    <button className="btn" disabled={pending || loading} onClick={() => setRevision(n => n + 1)}>Aufgaben erneut laden</button>
+    {tasks && <ul className="dashboard-task-list">{tasks.map(task => <li key={task.id} className="flex flex-wrap items-center gap-3 py-3"><div className="min-w-0 flex-1 [overflow-wrap:anywhere]"><p className="font-medium">{task.title}</p><p className="text-sm text-muted-foreground">Fällig am {task.due_date ? formatDate(task.due_date) : "—"}{task.property_name ? ` · ${task.property_name}` : ""}</p></div>{canWrite && <button className="btn" disabled={pending || loading} onClick={() => void complete(task)}>Erledigen</button>}</li>)}</ul>}
     {tasks?.length === 0 && !loading && !error && <p>Keine fälligen Aufgaben in diesem Zeitraum.</p>}
-    <div className="dashboard-task-pages"><button disabled={pending || loading || offset === 0} onClick={() => { setTasks(null); setOffset(Math.max(0, offset - 50)); }}>Vorherige Aufgaben</button><button disabled={pending || loading || nextOffset === null} onClick={() => { if (nextOffset !== null) { setTasks(null); setOffset(nextOffset); } }}>Weitere Aufgaben</button></div>
+    <div className="dashboard-task-pages"><button className="btn" disabled={pending || loading || offset === 0} onClick={() => { setTasks(null); setOffset(Math.max(0, offset - 50)); }}>Vorherige Aufgaben</button><button className="btn" disabled={pending || loading || nextOffset === null} onClick={() => { if (nextOffset !== null) { setTasks(null); setOffset(nextOffset); } }}>Weitere Aufgaben</button></div>
   </CardContent></Card>;
 }

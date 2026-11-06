@@ -127,7 +127,11 @@ and collisions of administrator-supplied UUIDs, never foreign row contents.
 The importer checks the format, safe regular-file members, exact manifest/member
 hash coverage, row counts, organization identity, and the release's Alembic
 ancestry. The same or an older known schema is accepted; newer/unknown heads are
-**422**. Version 1 and 2 are accepted. Hashes provide integrity, not issuer
+**422**. For pre-0167 archives, a missing register `resolution_date` is copied
+from the archived meeting only through a valid resolution/meeting/property relationship
+within the exported organization. Missing or inconsistent sources refuse the whole
+import. Existing date snapshots and all other archived register fields remain unchanged.
+Version 1 and 2 are accepted. Hashes provide integrity, not issuer
 provenance. Compressed input is limited to the existing 25 MiB upload limit (26 MiB raw multipart envelope), expanded input to 512 MiB and
 metadata to 32 MiB, decoded metadata to a conservative 64 MiB memory budget,
 individual JSON rows/manifest to 2 MiB, 20,000 rows and 10,000 regular members,
@@ -177,6 +181,12 @@ currently list the unavailable `invoice_upload_admission` document IDs and are
 refused before writes; ordinary import
 must not forge historical authority or private evidence. Database refusals expose
 only the entity/source IDs and a stable code, never SQL or target data.
+
+Readable exports include explicit bank coverage successors on costs corrected
+through reviewed allocations. Import continues to refuse reviewed documents
+without their private admission and rejects an explicit successor submitted
+without a native reviewed correction. Supported ordinary archives restore the
+original bank link and derive remaining coverage from the ordinary cost versions.
 
 ## Organization erasure
 
@@ -317,6 +327,7 @@ row instead.
 
 | Table | Scrubbed columns |
 | --- | --- |
+| `bank_transaction` | `counterparty_name`, `counterparty_iban`, `purpose` |
 | `tenant_profile`, `lease_agreement`, `owner_profile` | `notes` |
 | `vendor` | `notes`, `tax_id`, `vat_id` |
 | `owners_meeting` | `protocol_text`, `invitation_text` |
@@ -360,6 +371,88 @@ Expiry does not automatically purge immutable evidence: that remains a separate
 operator/legal decision under [ADR-0012](../adr/0012-gdpr-erasure-vs-gobd-retention.md).
 Its provisional retention durations still require the documented domain sign-off.
 
+### Retained imported bank dependencies
+
+Migration 0153 classifies `bank_transaction` as `conditional` with `retain_when`
+`false`: it seeds no independent voucher or person deadline. The existing
+recursive FK closure retains a bank line only when retained evidence needs it,
+including booked payments and drafts kept by immutable `accounting_scope_binding`
+rows. Its account remains a required parent. Unreferenced lines are erased.
+The existing composite `ON DELETE RESTRICT` FK keeps organization, account and
+line coherent. Erasure neither clears a payment's bank reference nor rewrites a
+payment or scope binding. Their bytes and hashes stay unchanged; bank IDs,
+dates, amounts, status and `import_hash` also stay unchanged. Bank free-text
+fields in the scrub table above become `Gelöscht`, even for counterparties absent
+from person master data or still bound to an unexpired voucher. This uses the
+existing mutable-field and entity-payload
+scrubber; these fields are not frozen voucher content. The refusal “Imported
+payment draft follows retained bank movement” remains accurate.
+
+The property's own bank account is an existing structural dependency and stays
+byte-for-byte unchanged, including IBAN/BIC, label and bank name. Its existing
+used-account, scope and source guards remain unchanged. No account scrub is
+needed to scrub the imported counterparty fields; these are different records.
+Migration downgrade restores the exact previous catalog, owner and grants.
+No payment or scope-binding guard changes.
+
+**Operator user check, using synthetic data only:**
+
+1. Hold `/tmp/verwalino-testdb.lock` for a manual test-stack run, source
+   `scripts/test-env.sh` and use only `infra-postgres-1` on `127.0.0.1:55432`.
+   Create two isolated organizations and a rental lease starting 2026-01-01 in
+   each. Record their UUIDs. Do not use the unfiltered operator CLI on shared
+   test data. Use disposable local document storage for this run.
+2. In each organization create a `LAUFEND` account with label `Private account
+   holder`, IBAN `DE89370400440532013000`, BIC `COBADEFFXXX` and bank name
+   `Private bank contact`. Import this UTF-8 semicolon CSV through
+   `POST /api/bank-accounts/{account_id}/imports?dry_run=false` (multipart `file`):
+
+   ```csv
+   Buchungstag;Wertstellung;Betrag;Name;IBAN;Verwendungszweck;Währung
+   01.02.2026;01.02.2026;700,00;Unregistered Payer;DE89370400440532013000;Private rent reference;EUR
+   03.02.2026;03.02.2026;15,00;Unlinked Payer;;Private unassigned reference;EUR
+   ```
+
+3. Find the 700.00 line with `GET /api/bank-transactions?bank_account_id=...`.
+   Assign it through `POST /api/bank-transactions/{id}/assign`, with one `lines`
+   item: `payment_type=KALTMIETE`, `amount="700.00"`, the organization's tenant
+   profile and lease UUIDs, `period_year=2026`, `period_month=2`. This assignment
+   already books the rent payment. Leave the 15.00 line unassigned. Save the full
+   payment row, its retained hash, both bank rows and the account row as a
+   before-comparison, scoped to these UUIDs.
+4. For the first organization only, request `POST /api/organizations/deletion`
+   and confirm its exact name through `/api/organizations/deletion/confirm`.
+   Run the existing operator erasure for that UUID after its seven-day deadline.
+   In the disposable test harness, call `run_deletion` with test time eight days
+   ahead instead of waiting; do not alter the stored deadline or database clock.
+5. Inspect only the recorded UUIDs as the operator: the booked payment and its
+   hash are identical; its bank line exists in the same organization/account,
+   with unchanged amount/dates/status/import hash. All three counterparty/purpose
+   fields are `Gelöscht`; the own-account row is unchanged. The unassigned
+   15.00 line is absent. The second organization's bank/account rows, including
+   its unassigned line, are byte-for-byte unchanged. The former first owner
+   receives 401 from `/api/auth/session`.
+6. For the draft variant, use a reviewed WEG account scope, import an outgoing
+   1200.00 line and assign `RUECKLAGENENTNAHME` without payout evidence. The
+   scope-bound draft and its immutable binding survive unchanged; its bank
+   line undergoes the same scrubbing and its own-account row remains unchanged.
+   An unscoped unsupported payout draft and its otherwise unneeded bank line are
+   erased instead.
+
+The deterministic executable counterpart creates these isolated organizations,
+imports/assigns through HTTP and executes the real erasure with that later test
+time. It also checks the FK refusal, draft refusal text, full voucher hashes,
+foreign unlinked rows and the existing scope-bound/cancelled-draft behavior:
+
+```sh
+make test-backend PYTEST_ARGS="-q tests/test_organization_deletion.py tests/bdd/test_organization_deletion.py -k 'erasure_scrubs_imported_bank_dependencies or erasure_keeps_payment_retention_conditional or imported_rent_vouchers'"
+```
+
+This Make target owns the shared test-DB lock itself; stop a manual stack and
+release its lock before running it. It uses synthetic fixtures and temporary
+storage and needs no production access. Independent blind acceptance on the PR
+state remains the maintainer's pre-merge check.
+
 ### Catalog survivor contract
 
 The catalog test covers **every** text/varchar/JSON column of retained roots,
@@ -401,10 +494,11 @@ not an immutable field; a separate minimization policy remains an owner decision
 | `assignment_proposal` | `blockers`, `method`, `reason`, `request_digest`, `state` | Retained source, scope or review evidence and its technical provenance; `blockers` is an array of structured blocker codes. |
 | `attachment` | `archive_reason`, `content_sha256`, `mime_type`, `original_filename`, `storage_backend`, `storage_uri`, `title` | Retained original content, metadata and storage identity. |
 | `audit_event` | `action`, `entity_type`, `prev_event_hash` | Technical operation/status/error codes, keys and digests; personal event payloads are scrubbed separately. |
-| `bank_account` | `account_type`, `bank_name`, `bic`, `iban`, `label` | Required account identity of retained financial records. |
-| `bank_transaction` | `counterparty_iban`, `counterparty_name`, `import_hash`, `purpose`, `status` | Retained bank evidence and reconciliation context. |
+| `bank_account` | `account_type`, `bank_name`, `bic`, `iban`, `label` | Required own-account identity of retained financial records; unchanged by bank-line erasure. |
+| `bank_transaction` | `import_hash`, `status` | Technical import digest and reconciliation status; counterparty and purpose fields are scrubbed. |
 | `context_decision` | `comparison_note`, `method`, `quotation`, `request_digest`, `snapshot`, `snapshot_digest`, `xml_path` | Retained source, scope or review evidence and its technical provenance. |
 | `cost_entry` | `document_number`, `owner_distribution_key`, `source`, `status`, `tenant_apportionable`, `tenant_distribution_key` | Frozen voucher content, accounting classifications and computation provenance. |
+| `commercial_preallocation` | `commercial_reason` | Shared position-allocation evidence. The existing guard-based catalog retains the protected rule; normal organization erasure preserves it and the statement's frozen copy under the existing retention decision. |
 | `coverage_declaration` | `component`, `reason`, `source_document_ids`, `source_revision`, `state`, `values` | Retained source, scope or review evidence and its technical provenance. |
 | `declaration_extraction_run` | `error_code`, `harness_version`, `model_name`, `prompt_version`, `provider`, `schema_version`, `status` | Technical operation/status/error codes, keys and digests; personal event payloads are scrubbed separately. |
 | `declaration_import` | `approval_idempotency_key`, `approval_request_digest`, `approval_result_json`, `current_stage`, `error_code`, `error_message`, `lease_owner`, `mode`, `status` | Retained source, scope or review evidence and its technical provenance. |
@@ -459,7 +553,7 @@ not an immutable field; a separate minimization policy remains an owner decision
 | `person` | `bank_name`, `bic`, `city`, `company_name`, `email`, `first_name`, `iban`, `last_name`, `phone`, `street`, `zip_code` | Identity fields survive only with an unexpired voucher binding; otherwise anonymized. |
 | `person_data_domain` | `label`, `reason_code` | Retained source, scope or review evidence and its technical provenance. |
 | `person_data_grant` | `capabilities`, `reason_code` | Retained source, scope or review evidence and its technical provenance; capability arrays contain authorization codes. |
-| `property` | `city`, `management_type`, `mea_scale_status`, `name`, `street`, `zip_code` | Required property identity/address and structural classifications. |
+| `property` | `city`, `federal_state`, `management_type`, `mea_scale_status`, `name`, `street`, `zip_code` | Required property identity/address and structural classifications. `federal_state` is a nullable, constrained two-letter state code retained as coarse holiday/jurisdiction evidence, never free text. |
 | `property_assignment` | `assignment_type`, `status` | Structural type/status; editable identifiers and text are scrubbed. |
 | `property_creation_receipt` | `request_digest` | Technical operation/status/error codes, keys and digests; personal event payloads are scrubbed separately. |
 | `property_data_domain` | `label`, `reason` | Retained source, scope or review evidence and its technical provenance. |
@@ -475,7 +569,7 @@ not an immutable field; a separate minimization policy remains an owner decision
 | `property_source_security` | `mode` | Security-mode enum; mutable reason is scrubbed. |
 | `resolution` | `majority_type`, `result`, `wording` | Registered resolution wording and voting classifications. |
 | `reserve_ledger_entry` | `component`, `reason` | Immutable reserve classification and audited correction/funding evidence; retained without rewriting. |
-| `resolution_register_entry` | `challenge_annotation`, `location`, `wording` | Legal register wording/location and mutable challenge annotation (ADR-0011). |
+| `resolution_register_entry` | `challenge_annotation`, `location`, `wording` | Legal register wording/location and mutable challenge annotation (ADR-0011). The non-text `resolution_date` is immutable meeting-date evidence; it and the separate `entry_date` survive export/import and retention unchanged. |
 | `runtime_budget_attestation` | `policy`, `policy_digest` | Retained source, scope or review evidence and its technical provenance. |
 | `runtime_budget_review` | `policy`, `policy_digest`, `reason`, `request_digest` | Retained source, scope or review evidence and its technical provenance. |
 | `scope_control_event` | `mode` | Technical operation/status/error codes, keys and digests; personal event payloads are scrubbed separately. |
@@ -484,7 +578,7 @@ not an immutable field; a separate minimization policy remains an owner decision
 | `scope_payment_reconciliation` | `reason`, `request_digest` | Retained source, scope or review evidence and its technical provenance. |
 | `scope_payment_reconciliation_item` | `source_digest` | Retained source, scope or review evidence and its technical provenance. |
 | `settlement_line` | `cost_category_code`, `distribution_key`, `label`, `line_type`, `note` | Frozen voucher content, accounting classifications and computation provenance. |
-| `settlement_run` | `advance_payments_source`, `engine_version`, `run_type`, `snapshot_payload`, `snapshot_sha256`, `status` | Frozen voucher content, accounting classifications and computation provenance. |
+| `settlement_run` | `advance_payments_source`, `heating_advance_payments_source`, `engine_version`, `run_type`, `snapshot_payload`, `snapshot_sha256`, `status` | Frozen voucher content, accounting classifications and computation provenance. |
 | `source_partition_revision` | `content_sha256`, `reason`, `request_digest` | Retained source, scope or review evidence and its technical provenance. |
 | `source_security_authorization` | `previous_mode`, `target_mode` | Retained source, scope or review evidence and its technical provenance. |
 | `source_security_transition` | `assessment_digest`, `manifest_digest`, `previous_mode`, `reason`, `request_digest`, `target_mode` | Retained source, scope or review evidence and its technical provenance. |
@@ -569,3 +663,26 @@ scrubbed row and records its post-scrub hash, preserving all non-payload fields.
 Historical `prev_event_hash` values stay; the marker records a deliberate payload
 discontinuity and does not certify an old hash against changed bytes. Retained
 receipts remain operator-only.
+
+## Person binding categories
+
+The private `person_retention_categories()` catalog (0159) defines the financial
+roots that propagate personal retention in the organization plan. Individual
+status/export and the database person-erasure command consume its direct
+bindings as well. Revision 0160 also shares the evidence-date calculation,
+including the existing later-of-invoice/service rule and retained originals. A
+confirmed manual invoice dated in 2020 for services in 2017 retains its supplier
+through 2028 in both individual and organization decisions. Missing original
+retention dates keep the existing original-metadata fallback. Recipient-specific
+settlement/plan lines use their own dates and parent period, without inheriting
+a different recipient's later line. A booked payment's structured tenant/owner recipient remains
+readable during retention, including for outgoing repayments. Existing
+`retention_until` values govern; historical missing payment deadlines follow the
+existing value-date year-end rule. No payment row, amount, recipient link,
+original, finalized snapshot or digest is rewritten by this reconciliation.
+Expired and absent bindings allow personal anonymization. Generic organization
+FK dependencies, retained source/letter roots and the legacy owner-name fallback
+remain additional operator-only dependencies. Individual disclosures still
+require complete person, financial and source access; hidden payments cannot be
+mistaken for absent retention. Incidental reserve free-text scrubbing is separate
+from this binding rule.

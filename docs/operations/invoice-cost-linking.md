@@ -35,3 +35,27 @@ application boundary), preserve migration 0029, operation receipts, originals an
 link reads. Do not downgrade a populated database or re-enable the old imported
 cost writer. Alembic downgrade exists for disposable test teardown only. Forward
 repair is required for production data. No production rollout has been performed.
+
+## Manual cost amounts
+
+The cost list at `/kosten` keeps wide populated tables inside a horizontally
+scrollable card on narrow screens. Scroll the table to reach its rightmost columns
+and `Details`; the link also remains reachable with Tab and opens with Enter.
+Status/property filters and the creation form retain the listed costs and their
+existing values. The table remains contained below the expanded creation form;
+the separate selector-sizing correction is tracked in #284.
+
+The manual cost form accepts decimal commas or dots, including German grouped
+amounts such as “2.250,00”, for gross amount, VAT amount and tenant-apportionable
+amount. The VAT percentage accepts the same decimal separators. Values are sent
+as exact decimal strings; optional empty fields remain null and zero stays zero.
+Invalid input retains the form and shows a German problem at the affected field.
+
+Create, draft update and correction requests reject malformed, negative,
+non-finite, over-precision or oversized amounts with HTTP 422 and a field
+location. EUR fields allow twelve integer digits and two decimal places;
+VAT rate follows its existing NUMERIC(5,2) storage bound. The API uses canonical
+decimal notation, so raw German comma strings are invalid. Confirmation,
+correction history and organization/source permissions remain unchanged.
+The [money-input journey twin](../../features/journeys/money_inputs.feature)
+saves and reloads the 60 EUR example at desktop and phone widths.

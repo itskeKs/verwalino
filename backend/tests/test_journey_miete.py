@@ -191,7 +191,7 @@ class TestJourneyMiete:
 
         # 5. Create settlement run (Jan–Dec 2025)
         resp = await client_a_admin.post("/api/settlements", json={
-            "property_id": t12_seed["property"],
+            'heating_advance_payments_total': '0.00', "property_id": t12_seed["property"],
             "lease_agreement_id": t12_seed["lease"],
             "period_start": "2025-01-01",
             "period_end": "2025-12-31",
@@ -294,6 +294,7 @@ class TestJourneyMiete:
                 "soll": "500.00",
                 "ist": "0.00",
                 "open_amount": "500.00",
+                "due_date": "2025-12-03",
             },
             {
                 "period_year": 2025,
@@ -302,6 +303,7 @@ class TestJourneyMiete:
                 "soll": "100.00",
                 "ist": "0.00",
                 "open_amount": "100.00",
+                "due_date": "2025-12-03",
             },
         ]
 
@@ -320,7 +322,7 @@ class TestJourneyMiete:
         from tests.financial_coverage_helpers import attest_fixture
 
         await attest_fixture(client, "settlement", run_id, {
-            "advance_payments_total": amount,
+            'heating_advance_payments_total': '0.00', 'heating_advance_payments_source': source, "advance_payments_total": amount,
             "advance_payments_source": source,
         })
 
@@ -329,7 +331,7 @@ class TestJourneyMiete:
         """Verify PDF generation for settlement and dunning."""
         # Create and finalize settlement
         resp = await client_a_admin.post("/api/settlements", json={
-            "property_id": t12_seed["property"],
+            'heating_advance_payments_total': '0.00', "property_id": t12_seed["property"],
             "lease_agreement_id": t12_seed["lease"],
             "period_start": "2025-01-01",
             "period_end": "2025-12-31",

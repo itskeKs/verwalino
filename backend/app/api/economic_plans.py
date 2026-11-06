@@ -21,6 +21,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field, StrictInt, StrictStr
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.schemas.document_addressee import DocumentAddressee
 from app.core.tenant import AuthContext, get_current_user, get_db, require_write_dep
 from app.core.live_principal import get_live_writer_db
 from app.models.economic_plan import EconomicPlan
@@ -51,7 +52,7 @@ class EconomicPlanCreate(BaseModel):
     period_start: date | None = None
     period_end: date | None = None
     reserve_contribution_total: str | None = None
-    monthly_due_day: int | None = None
+    monthly_due_day: Annotated[int, Field(ge=1, le=28)] | None = 1
     management_mandate_id: str | None = None
 
 
@@ -116,6 +117,7 @@ class PlanLineOut(BaseModel):
 
 
 class EconomicPlanOut(BaseModel):
+    addressees: list[DocumentAddressee] = []
     id: str
     organization_id: str
     property_id: str
@@ -182,7 +184,14 @@ def _line_out(ln: EconomicPlanLine) -> PlanLineOut:
 
 
 def _plan_out(plan: EconomicPlan, lines: list[EconomicPlanLine]) -> EconomicPlanOut:
+    snapshot = plan.snapshot_payload or {}
+    draft_inputs = snapshot.get("draft_inputs")
+    if plan.status == "draft" and lines:
+        # Compare and reopen against the attested inputs used for this calculation.
+        # The adopted snapshot's two-decimal values may have lost input precision.
+        draft_inputs = snapshot.get("financial_input_coverage", {}).get("values", draft_inputs)
     return EconomicPlanOut(
+        addressees=snapshot.get("addressees", []),
         id=str(plan.id),
         organization_id=str(plan.organization_id),
         property_id=str(plan.property_id),
@@ -199,8 +208,8 @@ def _plan_out(plan: EconomicPlan, lines: list[EconomicPlanLine]) -> EconomicPlan
         finalized_by=str(plan.finalized_by) if plan.finalized_by else None,
         superseded_by_id=str(plan.superseded_by_id) if plan.superseded_by_id else None,
         lines=[_line_out(ln) for ln in lines],
-        draft_inputs=(plan.snapshot_payload or {}).get("draft_inputs"),
-        accounting_scope_id=(plan.snapshot_payload or {}).get("previous_actuals", {}).get("accounting_scope_id"),
+        draft_inputs=draft_inputs,
+        accounting_scope_id=snapshot.get("previous_actuals", {}).get("accounting_scope_id"),
     )
 
 
@@ -253,7 +262,7 @@ async def get_plan(
     repo = EconomicPlanRepository(db, auth.organization_id)
     plan = await repo.get_by_id(plan_id)
     if plan is None:
-        raise HTTPException(status_code=404, detail="Economic plan not found")
+        raise HTTPException(status_code=404, detail="Wirtschaftsplan nicht gefunden.")
     line_repo = EconomicPlanLineRepository(db, auth.organization_id)
     lines = await line_repo.list_for_plan(plan_id)
     return _plan_out(plan, list(lines))
@@ -263,7 +272,7 @@ async def get_plan(
 async def create_plan(
     body: EconomicPlanCreate,
     auth: AuthContext = Depends(require_write_dep),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
 ):
     svc = EconomicPlanService(db, auth.organization_id, auth.user_id, session_version=auth.session_version)
     plan = await svc.create_draft(
@@ -285,7 +294,7 @@ async def compute_plan(
     plan_id: uuid.UUID,
     body: PlanComputeRequest | None = None,
     auth: AuthContext = Depends(require_write_dep),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
 ):
     svc = EconomicPlanService(db, auth.organization_id, auth.user_id, session_version=auth.session_version)
     plan, _result = await svc.compute(plan_id, _to_inputs(body))
@@ -313,7 +322,7 @@ async def finalize_plan(
 async def create_plan_correction(
     plan_id: uuid.UUID,
     auth: AuthContext = Depends(require_write_dep),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
 ):
     svc = EconomicPlanService(db, auth.organization_id, auth.user_id, session_version=auth.session_version)
     plan = await svc.create_correction_run(plan_id)

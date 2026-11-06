@@ -17,12 +17,13 @@ from app.repositories.property_repo import PropertyRepository
 from app.repositories.unit_repo import UnitRepository
 from app.core.temporal import db_exclusive_to_api_inclusive
 from app.services.financial_scope_service import FinancialScopeService
+from app.services.lease_rent_change_service import LeaseRentChangeService
 from app.services.property_master_service import require_property_master
 from app.services.quota_service import lock_quota
 
 TOKENS = {"mieter.name", "mieter.adresse", "objekt.name", "objekt.adresse", "datum",
           "vermieter.name", "vermieter.adresse", "einheit.nummer", "einheit.lage", "einheit.flaeche",
-          "vertrag.beginn", "vertrag.ende", "vertrag.kaltmiete", "vertrag.vorauszahlung",
+          "vertrag.beginn", "vertrag.ende", "vertrag.kaltmiete", "vertrag.vorauszahlung", "vertrag.mietaufstellung",
           "vertrag.kaution", "vertrag.uebergabe", "vertrag.vereinbarungen"}
 PLACEHOLDER = re.compile(r"{{\s*([a-z.]+)\s*}}")
 LETTER_PAYLOAD_FORMAT = 'verwalino.letter.v1'
@@ -140,6 +141,26 @@ class LetterService:
         owner_addresses = [f"{owner['street']}\n{owner['zip_code']} {owner['city']}".strip() for owner in owners]
         sources = [{key: str(owner[key]) for key in ('id', 'organization_id', 'unit_id', 'owner_profile_id', 'person_id')} for owner in owners]
         end = db_exclusive_to_api_inclusive(lease.valid_to)
+        rate_day = min(as_of, end) if end is not None else as_of
+        at_tenancy_end = end is not None and rate_day == end
+        rate = await LeaseRentChangeService(self.db, self.org, self.auth.user_id).rate_on(lease, rate_day)
+        rent = german_decimal(rate.base_rent) + ' €'
+        advance = german_decimal(rate.advance_payment) + ' €'
+        total = german_decimal(rate.base_rent + rate.advance_payment + rate.heating_advance_payment)
+        # Preserve the legacy single-advance text outside the end-of-tenancy snapshot.
+        original = all(getattr(rate, field) == getattr(lease, field) for field in
+                       ('base_rent', 'advance_payment', 'heating_advance_payment'))
+        label = ('Originalvertrag' if original and not rate.heating_advance_payment and not at_tenancy_end
+                 else f'Stand {rate_day:%d.%m.%Y}')
+        if rate.heating_advance_payment:
+            advance = (f'Betriebskosten-Vorauszahlung: {advance}\n'
+                       f'Heizkosten-Vorauszahlung: {german_decimal(rate.heating_advance_payment)} €\n'
+                       f'Monatliche Gesamtmiete: {total} €')
+            rent_summary = f'Monatliche Kaltmiete ({label}): {rent}\n{advance}'
+        else:
+            rent_summary = f'Monatliche Kaltmiete ({label}): {rent}\nMonatliche Vorauszahlung ({label}): {advance}'
+            if at_tenancy_end:
+                rent_summary += f'\nMonatliche Gesamtmiete: {total} €'
         values = {'mieter.name': person.company_name or f'{person.first_name} {person.last_name}'.strip(),
                   'mieter.adresse': address(person), 'objekt.name': prop.name, 'objekt.adresse': address(prop),
                   'datum': as_of.strftime('%d.%m.%Y'), 'einheit.nummer': unit.number, 'einheit.lage': unit.location,
@@ -148,8 +169,9 @@ class LetterService:
                   'vermieter.adresse': '\n'.join(owner_addresses) or '[Freitext: Vermieteranschrift ergänzen]',
                   'vertrag.beginn': lease.valid_from.strftime('%d.%m.%Y'),
                   'vertrag.ende': end.strftime('%d.%m.%Y') if end else 'Unbefristet',
-                  'vertrag.kaltmiete': german_decimal(lease.base_rent) + ' €',
-                  'vertrag.vorauszahlung': german_decimal(lease.advance_payment) + ' €',
+                  'vertrag.kaltmiete': rent,
+                  'vertrag.vorauszahlung': advance,
+                  'vertrag.mietaufstellung': rent_summary,
                   'vertrag.kaution': german_decimal(lease.deposit) + ' €' if lease.deposit is not None else 'Nicht erfasst',
                   'vertrag.uebergabe': handover_date.strftime('%d.%m.%Y') if handover_date else '[Freitext: Übergabedatum ergänzen]',
                   'vertrag.vereinbarungen': agreements or '[Freitext: weitere Vereinbarungen ergänzen und rechtlich prüfen]'}

@@ -155,6 +155,7 @@ async def test_creation_failure_rolls_back_audience_and_parallel_retry_is_one_re
 
 
 async def test_master_migration_retains_receipts_and_roundtrips(scope_seed):
+    from tests.test_session_review_access import _chain_snapshot
     import importlib
     from sqlalchemy import create_engine
     from alembic.migration import MigrationContext
@@ -172,12 +173,17 @@ async def test_master_migration_retains_receipts_and_roundtrips(scope_seed):
             with engine.begin() as db,Operations.context(MigrationContext.configure(db)):
                 with pytest.raises(DBAPIError,match='Retain strict property master'):
                     with db.begin_nested(): migration.downgrade()
+                retained = _chain_snapshot(db)
                 savepoint=db.begin_nested()
                 try:
                     db.execute(text('TRUNCATE property_source_security'))
                     with pytest.raises(DBAPIError,match='Retain property creation receipts'):
                         with db.begin_nested(): migration.downgrade()
                     db.execute(text('TRUNCATE property_creation_receipt'))
+                    # Later household policies depend on this historical function.
+                    # Isolate only those policies inside the rollback-only projection.
+                    for command in ('select', 'insert', 'delete'):
+                        db.execute(text(f'DROP POLICY unit_household_{command} ON unit_household'))
                     migration.downgrade()
                     assert db.scalar(text("SELECT to_regprocedure('property_master_access(uuid,uuid,text)')")) is None
                     migration.upgrade()
@@ -186,6 +192,7 @@ async def test_master_migration_retains_receipts_and_roundtrips(scope_seed):
                     assert 'row_security=off' in db.scalar(text("SELECT proconfig FROM pg_proc WHERE oid='property_master_access(uuid,uuid,text)'::regprocedure"))
                 finally: savepoint.rollback()
                 assert db.scalar(text('SELECT count(*) FROM property_creation_receipt WHERE organization_id=:org'),ids)==1
+                assert _chain_snapshot(db) == retained
     finally: engine.dispose()
 
 
@@ -231,3 +238,41 @@ async def test_master_fields_cannot_disclose_unproven_or_quarantined_sources(sco
                 await db.execute(text("SELECT set_config('app.current_user_id',:actor,true)"),{'actor':str(ids['actor'])})
                 for table in ['property','unit']:
                     assert await db.scalar(text(f'SELECT count(*) FROM {table}')) == (1 if classification=='ADMITTED' else 0)
+
+
+async def test_frozen_person_vacancy_requires_existing_financial_disclosure(scope_seed):
+    from tests.persons_key_support import persons_property, persons_run
+    ids = principals(scope_seed)
+    async with client(ids, 'actor') as api:
+        data = await persons_property(api)
+        run = await persons_run(api, data)
+        url = f"/api/settlements/{run['id']}"
+        finalized = await api.post(url + '/finalize', json={})
+        assert finalized.status_code == 200, finalized.text
+        visible = await api.get(url)
+        assert visible.status_code == 200 and visible.json()['vacancy_attribution'][0]['person_days'] == 59
+        async with synthetic_enforcement(scope_seed):
+            refused = await api.get(url)
+            assert refused.status_code == 404, refused.text
+            assert '56.34' not in refused.text
+
+
+async def test_omitted_state_replays_a_pre_upgrade_creation_receipt(monkeypatch):
+    import hashlib
+    import json
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+    from app.services import master_creation_service as service
+
+    body = service.PropertyCreate(name='Legacy retry', management_type='MIET')
+    # This is the payload before the nullable state field existed.
+    legacy_payload = body.model_dump(mode='json', exclude={'construction_year', 'total_area', 'federal_state'})
+    digest = hashlib.sha256(json.dumps(legacy_payload, sort_keys=True, separators=(',', ':')).encode()).hexdigest()
+    prop = SimpleNamespace(id=uuid.uuid4())
+    monkeypatch.setattr(service.PropertyCreationRepository, 'get', AsyncMock(return_value={
+        'request_digest': digest, 'property_id': prop.id}))
+    monkeypatch.setattr(service.PropertyRepository, 'get_by_id', AsyncMock(return_value=prop))
+    monkeypatch.setattr(service, 'require_property_master', AsyncMock())
+    db = SimpleNamespace(scalar=AsyncMock(return_value='PREPARATION'))
+    auth = SimpleNamespace(organization_id=uuid.uuid4(), user_id=uuid.uuid4())
+    assert await service.create_property(db, auth, body, uuid.uuid4()) is prop

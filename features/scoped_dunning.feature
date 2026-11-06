@@ -7,7 +7,7 @@ Feature: Scoped dunning
     Given a rental agreement with receipts in two separate accounting scopes
     When the manager opens the notice form from the first scope's open items
     And the manager corrects a reporting period outside that scope
-    Then the notice form keeps the first scope selected
+    Then the notice form keeps the first scope selected and requires no manual rate
     When the manager creates the scoped notice
     Then the notice shows only the first scope's outstanding rent
     When the manager confirms "Entwurf verwerfen"

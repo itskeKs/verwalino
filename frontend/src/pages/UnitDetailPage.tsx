@@ -40,10 +40,12 @@ import type {
   LeaseRentChange,
 } from "../api/types";
 import { ApiError } from "../api/client";
+import { rentAmount } from "../lib/rentAmount";
 import { useAuth } from "../auth/useAuth";
 import { AttachmentsPanel } from "../components/AttachmentsPanel";
 import { Dialog, DialogContent, DialogTitle, DialogDescription } from "../components/ui/dialog";
 import { Input } from "../components/ui/input";
+import { HouseholdPanel } from "../components/HouseholdPanel";
 import { MeterPanel } from "../components/MeterPanel";
 import { LeaseDocuments } from "../components/LeaseDocuments";
 
@@ -70,15 +72,21 @@ interface LeaseFormData {
   valid_to: string;
   base_rent: string;
   advance_payment: string;
+  heating_advance_payment: string;
   deposit: string;
   notes: string;
 }
 
 export function UnitDetailPage() {
+  const { propertyId, unitId } = useParams<{ propertyId: string; unitId: string }>();
+  return <UnitDetailPageContent key={propertyId + ":" + unitId} propertyId={propertyId} unitId={unitId} />;
+}
+
+function UnitDetailPageContent({ propertyId, unitId }: { propertyId?: string; unitId?: string }) {
   const navigate = useNavigate();
   const { session } = useAuth();
   const canWriteOwnership = session?.role === "OWNER_ADMIN" || session?.role === "CLERK";
-  const { propertyId, unitId } = useParams<{ propertyId: string; unitId: string }>();
+
   const requestVersion = useRef(0);
   const [unit, setUnit] = useState<Unit | null>(null);
   const [property, setProperty] = useState<Property | null>(null);
@@ -107,10 +115,12 @@ export function UnitDetailPage() {
   const [editingLease, setEditingLease] = useState<LeaseRecord | null>(null);
   const [leaseForm, setLeaseForm] = useState<LeaseFormData>({
     tenant_profile_id: "", valid_from: "", valid_to: "",
-    base_rent: "", advance_payment: "", deposit: "", notes: "",
+    base_rent: "", advance_payment: "", heating_advance_payment: "0.00", deposit: "", notes: "",
   });
   const [leaseFormError, setLeaseFormError] = useState<string | null>(null);
   const [savingLease, setSavingLease] = useState(false);
+  const [leaseStatus, setLeaseStatus] = useState<string | null>(null);
+  const [invalidLeaseAmount, setInvalidLeaseAmount] = useState<string | null>(null);
 
   const personName = useCallback((profilePersonId: string) => {
     const p = persons.find((pe) => pe.id === profilePersonId);
@@ -132,8 +142,6 @@ export function UnitDetailPage() {
   const reload = useCallback(() => {
     if (!unitId || !propertyId) return;
     const version = ++requestVersion.current;
-    setUnit(null);
-    setProperty(null);
     setLoading(true);
     setError(null);
     Promise.all([
@@ -157,6 +165,7 @@ export function UnitDetailPage() {
       })
       .catch((err) => {
         if (version !== requestVersion.current) return;
+        if (err instanceof ApiError && [401, 403, 404].includes(err.status)) setUnit(null);
         if (err instanceof ApiError && err.status === 401) {
           setError("Nicht authentifiziert.");
         } else {
@@ -175,6 +184,8 @@ export function UnitDetailPage() {
     ownerMutationLock.current = true;
     setSavingOwner(true);
     setOwnerFormError(null);
+    setOwnerStatus(null);
+    setLeaseStatus(null);
     try {
       const body: OwnershipCreate = {
         unit_id: unitId,
@@ -184,6 +195,7 @@ export function UnitDetailPage() {
       if (ownerForm.valid_to) body.valid_to = ownerForm.valid_to;
       if (ownerForm.mea_share) body.mea_share = ownerForm.mea_share;
       await createOwnership(body);
+      setOwnerStatus("Eigentum gespeichert.");
       setOwnerSuggestion(null);
       setShowOwnerForm(false);
       reload();
@@ -207,31 +219,54 @@ export function UnitDetailPage() {
   async function handleLeaseSubmit(e: React.FormEvent) {
     e.preventDefault();
     if (!unitId || !canWriteOwnership) return;
-    setSavingLease(true);
     setLeaseFormError(null);
+    setLeaseStatus(null);
+    setOwnerStatus(null);
+    setInvalidLeaseAmount(null);
+    const amounts = {
+      base_rent: rentAmount(leaseForm.base_rent),
+      advance_payment: rentAmount(leaseForm.advance_payment),
+      heating_advance_payment: rentAmount(leaseForm.heating_advance_payment),
+      deposit: leaseForm.deposit.trim() ? rentAmount(leaseForm.deposit) : null,
+    };
+    for (const [field, label] of [
+      ["base_rent", "die Kaltmiete"], ["advance_payment", "die Betriebskosten-Vorauszahlung"],
+      ["heating_advance_payment", "die Heizkosten-Vorauszahlung"], ["deposit", "die Kaution"],
+    ] as const) {
+      if (field === "deposit" && !leaseForm.deposit.trim()) continue;
+      if (amounts[field] === null) {
+        setInvalidLeaseAmount(field);
+        setLeaseFormError(`Bitte geben Sie ${label} als gültigen EUR-Betrag ein.`);
+        return;
+      }
+    }
+    setSavingLease(true);
     try {
       const body: LeaseCreate = {
         unit_id: unitId,
         tenant_profile_id: leaseForm.tenant_profile_id,
         valid_from: leaseForm.valid_from,
-        base_rent: leaseForm.base_rent,
-        advance_payment: leaseForm.advance_payment,
+        base_rent: amounts.base_rent!,
+        advance_payment: amounts.advance_payment!,
+        heating_advance_payment: amounts.heating_advance_payment!,
       };
       if (leaseForm.valid_to) body.valid_to = leaseForm.valid_to;
-      if (leaseForm.deposit) body.deposit = leaseForm.deposit;
+      if (amounts.deposit !== null) body.deposit = amounts.deposit;
       if (leaseForm.notes) body.notes = leaseForm.notes;
       if (editingLease) {
         const changes: LeaseUpdate = {
           valid_to: leaseForm.valid_to || null,
           notes: leaseForm.notes,
         };
-        if (leaseForm.base_rent !== editingLease.base_rent) changes.base_rent = leaseForm.base_rent;
-        if (leaseForm.advance_payment !== editingLease.advance_payment) changes.advance_payment = leaseForm.advance_payment;
-        if (leaseForm.deposit && leaseForm.deposit !== editingLease.deposit) changes.deposit = leaseForm.deposit;
+        if (amounts.base_rent !== editingLease.base_rent) changes.base_rent = amounts.base_rent!;
+        if (amounts.advance_payment !== editingLease.advance_payment) changes.advance_payment = amounts.advance_payment!;
+        if (amounts.heating_advance_payment !== editingLease.heating_advance_payment) changes.heating_advance_payment = amounts.heating_advance_payment!;
+        if (amounts.deposit !== null && amounts.deposit !== editingLease.deposit) changes.deposit = amounts.deposit;
         await patchLease(editingLease.id, changes);
       } else {
         await createLease(body);
       }
+      setLeaseStatus("Mietvertrag gespeichert.");
       setShowLeaseForm(false);
       reload();
     } catch (err) {
@@ -251,12 +286,12 @@ export function UnitDetailPage() {
     }
   }
 
-  if (loading) return <p>Lade...</p>;
+  if (loading && !unit) return <p>Lade...</p>;
   if (error && !unit) return <p className="error-text">{error}</p>;
   if (!unit || !property) return <p className="error-text">Einheit nicht gefunden.</p>;
 
   return (
-    <div>
+    <div style={{ overflowAnchor: "none" }}>
       <p style={{ marginBottom: "0.5rem" }}>
         <Link to={`/objekte/${propertyId}`} className="link">&larr; {property.name}</Link>
       </p>
@@ -281,6 +316,8 @@ export function UnitDetailPage() {
         </table>
       </div>
 
+      <HouseholdPanel key={unit.id} unitId={unit.id} canWrite={canWriteOwnership} />
+
       <AttachmentsPanel propertyId={property.id} unitId={unit.id} canWrite={canWriteOwnership} />
 
       {/* Ownership History */}
@@ -297,11 +334,16 @@ export function UnitDetailPage() {
         </button>}
       </div>
 
-      {ownerStatus && <p role="status">{ownerStatus}</p>}
+      {ownerStatus && <p role="status" className="sticky top-0 z-10 bg-background py-2">{ownerStatus}</p>}
 
       {canWriteOwnership && showOwnerForm && (
         <div className="card" style={{ marginBottom: "1rem" }}>
           <h2>Neues Eigentum anlegen</h2>
+          {ownerProfiles.length === 0 && (
+            <p className="empty-hint">
+              Noch keine Person als Eigentümer gekennzeichnet. Unter <Link to="/personen" className="link">Personen</Link> → Rollen / Profile → „Als Eigentuemer kennzeichnen“.
+            </p>
+          )}
           {ownerFormError && <p className="error-text">{ownerFormError}</p>}
           <form onSubmit={handleOwnerSubmit} className="form-grid">
             <label>
@@ -383,6 +425,7 @@ export function UnitDetailPage() {
                     disabled={savingOwner}
                     onEnded={(ended, nextDay) => {
                       setOwnerships(previous => previous.map(row => row.id === ended.id ? ended : row));
+                      setLeaseStatus(null);
                       setOwnerStatus(`Eigentum bis einschließlich ${ended.valid_to} beendet. Neuen Eigentümer ab ${nextDay} bewusst auswählen und speichern.`);
                       setOwnerFormError(null);
                       setOwnerSuggestion({ valid_from: nextDay, mea_share: o.mea_share ?? "" });
@@ -406,7 +449,7 @@ export function UnitDetailPage() {
           setLeaseForm({
             tenant_profile_id: tenantProfiles[0]?.id ?? "",
             valid_from: "", valid_to: "",
-            base_rent: "", advance_payment: "", deposit: "", notes: "",
+            base_rent: "", advance_payment: "", heating_advance_payment: "0.00", deposit: "", notes: "",
           });
           setShowLeaseForm(true);
         }}>
@@ -414,10 +457,16 @@ export function UnitDetailPage() {
         </button>}
       </div>
 
+      {leaseStatus && <p role="status" className="sticky top-0 z-10 bg-background py-2">{leaseStatus}</p>}
       {canWriteOwnership && showLeaseForm && (
         <div className="card" style={{ marginBottom: "1rem" }}>
           <h2>{editingLease ? "Mietvertrag bearbeiten / beenden" : "Neuen Mietvertrag anlegen"}</h2>
-          {leaseFormError && <p className="error-text">{leaseFormError}</p>}
+          {!editingLease && tenantProfiles.length === 0 && (
+            <p className="empty-hint">
+              Noch keine Person als Mieter gekennzeichnet. Unter <Link to="/personen" className="link">Personen</Link> → Rollen / Profile → „Als Mieter kennzeichnen“.
+            </p>
+          )}
+          {leaseFormError && <p id="lease-form-error" role="alert" className="error-text">{leaseFormError}</p>}
           <form onSubmit={handleLeaseSubmit} className="form-grid">
             <label>
               <span id="lease-tenant-label">Mieter *</span>
@@ -458,25 +507,38 @@ export function UnitDetailPage() {
                 type="text"
                 inputMode="decimal"
                 required
+                aria-invalid={leaseFormError !== null && invalidLeaseAmount === "base_rent"}
+                aria-describedby={leaseFormError && invalidLeaseAmount === "base_rent" ? "lease-form-error" : undefined}
                 value={leaseForm.base_rent}
                 onChange={(e) => setLeaseForm({ ...leaseForm, base_rent: e.target.value })}
               />
             </label>
             <label>
-              NK-Vorauszahlung (EUR) *
+              Betriebskosten-Vorauszahlung (EUR) *
               <input
                 type="text"
                 inputMode="decimal"
                 required
+                aria-invalid={leaseFormError !== null && invalidLeaseAmount === "advance_payment"}
+                aria-describedby={leaseFormError && invalidLeaseAmount === "advance_payment" ? "lease-form-error" : undefined}
                 value={leaseForm.advance_payment}
                 onChange={(e) => setLeaseForm({ ...leaseForm, advance_payment: e.target.value })}
               />
+            </label>
+            <label>
+              Heizkosten-Vorauszahlung (EUR) *
+              <input type="text" inputMode="decimal" required aria-invalid={leaseFormError !== null && invalidLeaseAmount === "heating_advance_payment"}
+                aria-describedby={leaseFormError && invalidLeaseAmount === "heating_advance_payment" ? "lease-form-error" : undefined}
+                value={leaseForm.heating_advance_payment}
+                onChange={(e) => setLeaseForm({ ...leaseForm, heating_advance_payment: e.target.value })} />
             </label>
             <label>
               Kaution (EUR)
               <input
                 type="text"
                 inputMode="decimal"
+                aria-invalid={leaseFormError !== null && invalidLeaseAmount === "deposit"}
+                aria-describedby={leaseFormError && invalidLeaseAmount === "deposit" ? "lease-form-error" : undefined}
                 value={leaseForm.deposit}
                 onChange={(e) => setLeaseForm({ ...leaseForm, deposit: e.target.value })}
               />
@@ -512,7 +574,7 @@ export function UnitDetailPage() {
                 <th>Von</th>
                 <th>Bis</th>
                 <th>Kaltmiete</th>
-                <th>NK-Voraus.</th>
+                <th>Betriebskosten-Vorauszahlung</th><th>Heizkosten-Vorauszahlung</th>
                 <th>Kaution</th>
                 <th>Aktion</th>
               </tr>
@@ -525,7 +587,7 @@ export function UnitDetailPage() {
                     <td>{la.valid_from}</td>
                     <td>{la.valid_to ?? "offen"}</td>
                     <td>{la.base_rent}</td>
-                    <td>{la.advance_payment}</td>
+                    <td>{la.advance_payment}</td><td>{la.heating_advance_payment}</td>
                     <td>{la.deposit ?? "-"}</td>
                     <td>{canWriteOwnership && <button className="btn" onClick={() => {
                       setEditingLease(la);
@@ -533,14 +595,14 @@ export function UnitDetailPage() {
                       setLeaseForm({
                         tenant_profile_id: la.tenant_profile_id, valid_from: la.valid_from,
                         valid_to: la.valid_to ?? "", base_rent: la.base_rent,
-                        advance_payment: la.advance_payment, deposit: la.deposit ?? "", notes: la.notes,
+                        advance_payment: la.advance_payment, heating_advance_payment: la.heating_advance_payment, deposit: la.deposit ?? "", notes: la.notes,
                       });
                       setShowLeaseForm(true);
                     }}>Bearbeiten / beenden</button>}
                       {canWriteOwnership && <MasterDataDelete entityId={la.id} title="Mietvertrag löschen" entityName={`Mietvertrag ${la.id} · Einheit ${unit.number} · ${tenantProfileLabel(la.tenant_profile_id)} · ${la.valid_from} bis ${la.valid_to ?? "offen"}`} remove={deleteLease} onDeleted={reload} />}
                     </td>
                   </tr>
-                  <tr><td colSpan={7}>
+                  <tr><td colSpan={8}>
                     <LeaseRentHistory lease={la} tenantLabel={tenantProfileLabel(la.tenant_profile_id)} />
                   </td></tr>
                 </Fragment>
@@ -642,15 +704,6 @@ function OwnershipEndAction({ ownership, ownerLabel, disabled, onEnded }: {
   </>;
 }
 
-// Validate/normalize decimal input only; rent calculations stay in the backend.
-function rentAmount(value: string): string | null {
-  const match = /^(\d+)(?:[.,](\d{1,2}))?$/.exec(value.trim());
-  if (!match) return null;
-  const integer = match[1].replace(/^0+(?=\d)/, "");
-  if (integer.length > 12) return null;
-  return `${integer}.${(match[2] ?? "").padEnd(2, "0")}`;
-}
-
 function rentDate(value: string): boolean {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(value) || value.startsWith("0000")) return false;
   const parsed = new Date(`${value}T00:00:00Z`);
@@ -695,6 +748,7 @@ function LeaseRentHistory({ lease, tenantLabel }: { lease: LeaseRecord; tenantLa
   const [validFrom, setValidFrom] = useState("");
   const [baseRent, setBaseRent] = useState(lease.base_rent);
   const [advance, setAdvance] = useState(lease.advance_payment);
+  const [heatingAdvance, setHeatingAdvance] = useState(lease.heating_advance_payment);
   const [formError, setFormError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const mutationLock = useRef(false);
@@ -729,6 +783,7 @@ function LeaseRentHistory({ lease, tenantLabel }: { lease: LeaseRecord; tenantLa
     const rate = rateAt(date);
     setBaseRent(rate.base_rent);
     setAdvance(rate.advance_payment);
+    setHeatingAdvance(rate.heating_advance_payment);
     setFormError(null);
   }
 
@@ -747,14 +802,15 @@ function LeaseRentHistory({ lease, tenantLabel }: { lease: LeaseRecord; tenantLa
     }
     const base_rent = rentAmount(baseRent);
     const advance_payment = rentAmount(advance);
-    if (base_rent === null || advance_payment === null) {
-      setFormError("Bitte Kaltmiete und Vorauszahlung als nicht negative EUR-Beträge mit höchstens zwei Nachkommastellen eingeben (maximal 999.999.999.999,99).");
+    const heating_advance_payment = rentAmount(heatingAdvance);
+    if (base_rent === null || advance_payment === null || heating_advance_payment === null) {
+      setFormError("Bitte Kaltmiete und beide Vorauszahlungen als nicht negative EUR-Beträge mit höchstens zwei Nachkommastellen eingeben (maximal 999.999.999.999,99).");
       return;
     }
     mutationLock.current = true;
     setSaving(true);
     try {
-      const row = await createLeaseRentChange(lease.id, { valid_from: validFrom, base_rent, advance_payment });
+      const row = await createLeaseRentChange(lease.id, { valid_from: validFrom, base_rent, advance_payment, heating_advance_payment });
       setRows(previous => [...previous, row].sort((a, b) => a.valid_from.localeCompare(b.valid_from)));
       setOpen(false);
       setRevision(previous => previous + 1);
@@ -867,12 +923,12 @@ function LeaseRentHistory({ lease, tenantLabel }: { lease: LeaseRecord; tenantLa
   const contractLabel = `${tenantLabel} · ${lease.valid_from} bis ${lease.valid_to ?? "offen"}`;
   return <section aria-label={`Mietänderungen: ${contractLabel}`}>
     <h3>Mietänderungen · {contractLabel}</h3>
-    <p>Historische volle Monatsraten (KALT / NK). Die Beträge im Mietvertrag oben sind die Originalbeträge.</p>
+    <p>Historische volle Monatsraten (Kaltmiete / Betriebskosten / Heizkosten). Die Beträge im Mietvertrag oben sind die Originalbeträge.</p>
     <table className="data-table" aria-label={`Miethistorie: ${contractLabel}`}>
-      <thead><tr><th>Gültig ab</th><th>Kaltmiete (EUR)</th><th>Vorauszahlung (EUR)</th><th>Quelle</th></tr></thead>
+      <thead><tr><th>Gültig ab</th><th>Kaltmiete (EUR)</th><th>Betriebskosten-Vorauszahlung (EUR)</th><th>Heizkosten-Vorauszahlung (EUR)</th><th>Quelle</th></tr></thead>
       <tbody>
-        <tr><td>{lease.valid_from}</td><td>{lease.base_rent}</td><td>{lease.advance_payment}</td><td>Originalvertrag</td></tr>
-        {rows.map(row => <tr key={row.id}><td>{row.valid_from}</td><td>{row.base_rent}</td><td>{row.advance_payment}</td><td>Mietänderung</td></tr>)}
+        <tr><td>{lease.valid_from}</td><td>{lease.base_rent}</td><td>{lease.advance_payment}</td><td>{lease.heating_advance_payment}</td><td>Originalvertrag</td></tr>
+        {rows.map(row => <tr key={row.id}><td>{row.valid_from}</td><td>{row.base_rent}</td><td>{row.advance_payment}</td><td>{row.heating_advance_payment}</td><td>Mietänderung</td></tr>)}
       </tbody>
     </table>
     {loading && <p role="status">Lade Mietänderungen…</p>}
@@ -910,7 +966,7 @@ function LeaseRentHistory({ lease, tenantLabel }: { lease: LeaseRecord; tenantLa
           {indexPreview && <div role="status" aria-label="Indexmietvorschau">
             <p>Bisherige Kaltmiete: {indexPreview.previous_base_rent} EUR (seit {indexPreview.previous_valid_from})</p>
             <p>Neue Kaltmiete: {indexPreview.base_rent} EUR</p>
-            <p>Vorauszahlung unverändert: {indexPreview.advance_payment} EUR</p>
+            <p>Vorauszahlungen unverändert: Betriebskosten {indexPreview.advance_payment} EUR / Heizkosten {indexPreview.heating_advance_payment} EUR</p>
             <p>Gültig ab: {indexPreview.valid_from}</p>
           </div>}
           {formError && <p role="alert" className="error-text">{formError}</p>}
@@ -930,9 +986,10 @@ function LeaseRentHistory({ lease, tenantLabel }: { lease: LeaseRecord; tenantLa
         </DialogDescription>
         <form onSubmit={submit} noValidate>
           <label>Gültig ab<Input type="date" value={validFrom} min={lease.valid_from} max={lease.valid_to ?? undefined} disabled={saving} onChange={event => selectDate(event.target.value)} /></label>
-          <p>Vorbelegung: {source === lease ? "Originalvertrag" : `Mietänderung ab ${source.valid_from}`} · KALT {source.base_rent} EUR / NK {source.advance_payment} EUR. Bei Datumswechsel werden beide Beträge neu vorbelegt.</p>
+          <p>Vorbelegung: {source === lease ? "Originalvertrag" : `Mietänderung ab ${source.valid_from}`} · KALT {source.base_rent} EUR / Betriebskosten {source.advance_payment} EUR / Heizkosten {source.heating_advance_payment} EUR. Bei Datumswechsel werden alle drei Beträge neu vorbelegt.</p>
           <label>Kaltmiete (EUR)<Input inputMode="decimal" value={baseRent} disabled={saving} onChange={event => setBaseRent(event.target.value)} /></label>
-          <label>Vorauszahlung (EUR)<Input inputMode="decimal" value={advance} disabled={saving} onChange={event => setAdvance(event.target.value)} /></label>
+          <label>Betriebskosten-Vorauszahlung (EUR)<Input inputMode="decimal" value={advance} disabled={saving} onChange={event => setAdvance(event.target.value)} /></label>
+          <label>Heizkosten-Vorauszahlung (EUR)<Input inputMode="decimal" value={heatingAdvance} disabled={saving} onChange={event => setHeatingAdvance(event.target.value)} /></label>
           {formError && <p role="alert" className="error-text">{formError}</p>}
           <div className="form-actions">
             <button type="submit" className="btn btn--primary" disabled={saving}>Mietänderung speichern</button>
@@ -946,7 +1003,7 @@ function LeaseRentHistory({ lease, tenantLabel }: { lease: LeaseRecord; tenantLa
         <DialogTitle>Staffelmiete anlegen</DialogTitle>
         <DialogDescription>
           {contractLabel}. Die erste Erhöhung gilt am Startdatum, weitere folgen im gewählten Monatsintervall, kalendarisch am Startdatum verankert.
-          Grundlage ist die am Startdatum geltende Kaltmiete aus dem Verlauf; die Vorauszahlung bleibt unverändert.
+          Grundlage ist die am Startdatum geltende Kaltmiete aus dem Verlauf; beide Vorauszahlungen bleiben unverändert.
           Mindestens zwölf Monate seit der letzten Mietänderung und zwischen den Stufen (§ 557a BGB).
           Prozent ist nur eine Rechenhilfe: Die schriftliche Vereinbarung muss Mieten oder Erhöhungen in Geldbeträgen ausweisen; eine rechtliche Prüfung der Miethöhe erfolgt hier nicht.
           Jede Stufe wird als unveränderliche historische Monatsrate gespeichert. Originalvertrag, Buchungen und finalisierte Dokumente bleiben unverändert; keine Neuberechnung wird ausgelöst.

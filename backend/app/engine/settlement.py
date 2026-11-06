@@ -9,7 +9,7 @@ Flow (m3-abrechnungs-engine.md section 3.2 / section 7):
      cells as owner attribution (so no cent disappears, section 3.3 / I-D).
   4. total_cost = sum of the tenant's rounded position shares (already cent-
      exact per position -> add without re-rounding, section 4.3).
-  5. balance = total_cost - advance_payments_total.
+  5. balance = total_cost - operating advances - heating advances.
   6. assemble result lines + full computation trace + canonical snapshot payload.
 
 The output is a pure data structure; the service layer persists it (settlement_
@@ -38,9 +38,10 @@ from app.engine.periods import (
     time_factor,
 )
 from app.engine.heating_settlement import distribute_heating_position
-from app.engine.rounding import CENT, day_share_for_period
+from app.engine.rounding import CENT, day_share_for_period, distribute_amount
 from app.engine.types import (
     ALL_KEYS,
+    HEATING_CATEGORY_CODES,
     ComputationStep,
     CostPositionInput,
     EngineResult,
@@ -60,6 +61,31 @@ class EngineValidationError(ValueError):
 
 def _money(value: Decimal) -> Decimal:
     return value.quantize(CENT)
+
+
+def commercial_preallocation_amount(pos: CostPositionInput, total: Decimal) -> Decimal | None:
+    """Validate explicit manager intent and balance the two group pools in cents."""
+    percent, amount, reason = pos.commercial_share_percent, pos.commercial_amount, pos.commercial_reason
+    if percent is None and amount is None and reason is None:
+        return None
+    if (percent is None) == (amount is None):
+        raise EngineValidationError('Vorwegabzug Gewerbe: genau einen Prozentsatz oder Festbetrag angeben.')
+    if not reason or not reason.strip() or len(reason) > 2000:
+        raise EngineValidationError('Vorwegabzug Gewerbe: eine Begründung mit höchstens 2.000 Zeichen ist erforderlich.')
+    if pos.heating is not None or pos.tenant_distribution_key not in ALL_KEYS - {'MANUELLER_BETRAG', 'EXTERNE_ABRECHNUNG'}:
+        raise EngineValidationError('Vorwegabzug Gewerbe benötigt einen Verteilungsschlüssel; direkte Beträge und interne Heizkosten sind nicht kombinierbar.')
+    if not is_billable_to_tenant(pos):
+        raise EngineValidationError('Vorwegabzug Gewerbe: die Position ist nicht umlagefähig.')
+    value = percent if percent is not None else amount
+    if not value.is_finite() or value < 0 or value != value.quantize(CENT):
+        raise EngineValidationError('Vorwegabzug Gewerbe: einen endlichen, nichtnegativen Wert mit höchstens zwei Nachkommastellen angeben.')
+    if percent is not None:
+        if percent > 100:
+            raise EngineValidationError('Vorwegabzug Gewerbe: der Prozentsatz muss zwischen 0 und 100 liegen.')
+        return distribute_amount(total, [percent, Decimal(100) - percent])[0]
+    if amount > total:
+        raise EngineValidationError('Vorwegabzug Gewerbe: der Festbetrag überschreitet den umlagefähigen Betrag.')
+    return amount
 
 
 def _validate(inp: SettlementInput) -> None:
@@ -84,6 +110,8 @@ def _validate(inp: SettlementInput) -> None:
         )
 
     for pos in inp.cost_positions:
+        if commercial_preallocation_amount(pos, effective_total(pos)) is not None and not any(u.usage_type == 'GEWERBE' for u in inp.units):
+            raise EngineValidationError('Vorwegabzug Gewerbe: das Objekt hat keine Gewerbeeinheit.')
         # Position must overlap the settlement period (else it does not belong
         # here -- section 2.6 #1).
         start, end = ((period_for_date(inp.property.fiscal_year_start_month, inp.period_start)[0],
@@ -130,7 +158,7 @@ def compute_bk_settlement(inp: SettlementInput) -> EngineResult:
                     pos = replace(pos, heating=replace(pos.heating, slices=slices))
                 positions.append(pos)
             parts.append(replace(inp, period_start=start, period_end=end,
-                cost_positions=tuple(positions), advance_payments_total=Decimal(0)))
+                cost_positions=tuple(positions), advance_payments_total=Decimal(0), heating_advance_payments_total=Decimal(0)))
         inp = replace(inp, allocation_inputs=tuple(parts))
     if inp.allocation_inputs:
         # Provider amounts describe this selected statement, so crossing a
@@ -188,6 +216,7 @@ def compute_bk_settlement(inp: SettlementInput) -> EngineResult:
             # NICHT_UMLAGEFAEHIG never appears in a Mieter-BK (invariant I-F).
             continue
 
+        commercial_total = None
         if pos.heating is not None:
             cells, heating_result = distribute_heating_position(pos, period_start=inp.period_start, period_end=inp.period_end)
             heating_costs.append(heating_result)
@@ -204,8 +233,42 @@ def compute_bk_settlement(inp: SettlementInput) -> EngineResult:
             source_covers = {u.id: build_unit_cover(
                 u.id, cover_start, cover_end, leases, owner_periods,
             ) for u in units}
-            cells = distribute_position(pos, units, source_covers,
-                period_start=inp.period_start, period_end=inp.period_end, allocation_period=allocation_period)
+            pool_total = effective_total(pos)
+            commercial_total = commercial_preallocation_amount(pos, pool_total)
+            split_pos = pos
+            if allocation_period is not None:
+                if commercial_total is not None:
+                    # Balance source group cents once. Apportion commerce over
+                    # the existing property-year cent pools, so every period
+                    # retains its original total and neither group overspends
+                    # even a tiny pool. Equal fixed/percentage rules agree.
+                    source_windows = property_period_windows(pos.service_period_from, pos.service_period_to,
+                        inp.property.fiscal_year_start_month)
+                    pools = [day_share_for_period(pool_total, pos.service_period_from, pos.service_period_to, a, b)
+                        for a, b in source_windows]
+                    commercial_pools = distribute_amount(commercial_total, [abs(p) for p in pools]) if pool_total else [Decimal(0)] * len(pools)
+                    index = source_windows.index((cover_start, cover_end))
+                    pool_total, commercial_total = pools[index], commercial_pools[index]
+                else:
+                    pool_total = day_share_for_period(pool_total, pos.service_period_from, pos.service_period_to, *allocation_period)
+                # The pool is already restricted to this property year, exactly
+                # as in distribute_position's consumption path. Do not clip twice.
+                split_pos = replace(pos, service_period_from=cover_start, service_period_to=cover_end)
+            if commercial_total is None:
+                cells = distribute_position(pos, units, source_covers,
+                    period_start=inp.period_start, period_end=inp.period_end, allocation_period=allocation_period)
+            else:
+                cells = []
+                for commercial, group_total in ((True, commercial_total), (False, pool_total - commercial_total)):
+                    group_units = [u for u in units if (u.usage_type == 'GEWERBE') == commercial]
+                    if not group_units:
+                        raise EngineValidationError('Vorwegabzug Gewerbe benötigt Gewerbe und weitere teilnehmende Einheiten.')
+                    # Keep the existing key eligibility, complete occupant cover,
+                    # person-days, vacancy attribution and window selection in
+                    # each group. Only the already apportionable pool changes.
+                    group_pos = replace(split_pos, gross_amount=group_total, apportionable_tenant_amount=group_total)
+                    cells.extend(distribute_position(group_pos, group_units, source_covers,
+                        period_start=inp.period_start, period_end=inp.period_end))
         if not cells:
             continue
 
@@ -231,6 +294,7 @@ def compute_bk_settlement(inp: SettlementInput) -> EngineResult:
                         owner_profile_id=c.cover.owner_profile_id,
                         days=c.time_days,
                         amount=c.amount,
+                        person_days=int(c.key_base_share) if pos.tenant_distribution_key == 'PERSONENZAHL' else None,
                     )
                 )
 
@@ -247,12 +311,24 @@ def compute_bk_settlement(inp: SettlementInput) -> EngineResult:
         # is the normal case; if multiple, days are summed, share is the sum).
         rep = target_cells[0]
         tenant_days = sum(c.time_days for c in target_cells)
-        measured_split = pos.tenant_distribution_key == "VERBRAUCH" and any(
-            u.id == rep.unit_id and u.consumption_periods for u in units)
+        persons_split = pos.tenant_distribution_key == "PERSONENZAHL"
+        measured_split = persons_split or (pos.tenant_distribution_key == "VERBRAUCH" and any(
+            u.id == rep.unit_id and u.consumption_periods for u in units))
         base_share = sum((c.key_base_share for c in target_cells), Decimal(0)) if measured_split else rep.key_base_share
         time_days = None if measured_split else tenant_days
         time_total = None if measured_split else rep.time_total_days
         note = "Verbrauchsaufteilung innerhalb der Einheit: Zwischenablesungen, sonst Tage" if measured_split else _position_note(pos)
+        if persons_split:
+            own_days = format(int(base_share), ',').replace(',', '.')
+            total_days = format(int(rep.key_base_total), ',').replace(',', '.')
+            note = f"Personentage für Einheit {next(u.number for u in units if u.id == rep.unit_id)}: {own_days} von {total_days}"
+        if commercial_total is not None:
+            commercial_unit = next(u for u in units if u.id == rep.unit_id).usage_type == 'GEWERBE'
+            group_total = commercial_total if commercial_unit else eff_total - commercial_total
+            euros = lambda value: format(value, ',.2f').translate(str.maketrans(',.', '.,'))
+            deduction = f'Vorwegabzug Gewerbe {euros(commercial_total)} € – {pos.commercial_reason}'
+            group = 'Gewerbe' if commercial_unit else 'übrige Einheiten'
+            note = f'{deduction}. Verteilungsbetrag {group}: {euros(group_total)} €.' + (f' {note}' if note else '')
 
         cost_lines.append(
             ResultLine(
@@ -296,20 +372,42 @@ def _finish_result(inp, cost_lines, computation, vacancy_attr, heating_costs, to
     # 4./5. Soll - Vorauszahlung -> Saldo (section 7), once per statement.
     sort_order = len(cost_lines)
     advance = _money(inp.advance_payments_total)
-    balance = _money(total_cost - advance)
+    heating_advance = _money(inp.heating_advance_payments_total)
+    allocated_ids = {line.cost_entry_id for line in cost_lines}
+    heating_ids = {pos.cost_entry_id for window in (inp.allocation_inputs or (inp,))
+        for pos in window.cost_positions
+        if pos.cost_entry_id in allocated_ids
+        and (pos.heating is not None or pos.category_code in HEATING_CATEGORY_CODES)}
+    heating_cost = (sum((result.heating_cost_total for result in period_results), Decimal('0.00'))
+        if period_results else sum((line.amount for line in cost_lines if line.cost_entry_id in heating_ids), Decimal('0.00')))
+    balance = _money(total_cost - advance - heating_advance)
+
+    split_advances = bool(heating_ids) or heating_advance != 0
 
     # Advance-payment + balance lines (BGH: Abzug der Vorauszahlungen + Saldo).
     lines: list[ResultLine] = list(cost_lines)
     lines.append(
         ResultLine(
             line_type="ADVANCE_PAYMENT",
-            label="Geleistete Vorauszahlungen",
+            label="Betriebskosten-Vorauszahlungen" if split_advances else "Geleistete Vorauszahlungen",
             amount=advance,
             sort_order=sort_order,
             note=f"Quelle: {inp.advance_payments_source}",
         )
     )
     sort_order += 1
+    if split_advances:
+        lines.append(ResultLine(line_type='SUBTOTAL', label='Betriebskosten abzüglich Vorauszahlungen',
+            amount=_money(total_cost - heating_cost - advance), sort_order=sort_order,
+            note=f'Quelle: {inp.advance_payments_source}'))
+        sort_order += 1
+        lines.append(ResultLine(line_type='ADVANCE_PAYMENT', label='Heizkosten-Vorauszahlungen',
+            amount=heating_advance, sort_order=sort_order, note=f'Quelle: {inp.heating_advance_payments_source}'))
+        sort_order += 1
+        lines.append(ResultLine(line_type='SUBTOTAL', label='Heizkosten abzüglich Vorauszahlungen',
+            amount=_money(heating_cost - heating_advance), sort_order=sort_order,
+            note=f'Quelle: {inp.heating_advance_payments_source}'))
+        sort_order += 1
     lines.append(
         ResultLine(
             line_type="BALANCE",
@@ -336,6 +434,8 @@ def _finish_result(inp, cost_lines, computation, vacancy_attr, heating_costs, to
         computation=tuple(computation),
         total_cost=_money(total_cost),
         advance_payments_total=advance,
+        heating_advance_payments_total=heating_advance,
+        heating_cost_total=_money(heating_cost),
         balance=balance,
         vacancy_attribution=tuple(vacancy_attr),
         heating_costs=tuple(heating_costs),

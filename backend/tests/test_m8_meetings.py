@@ -328,6 +328,8 @@ class TestRegisterEntries:
             f"/api/meetings/resolutions/{r1.json()['id']}/register"
         )
         assert e1.status_code == 201
+        assert e1.json()["resolution_date"] == "2026-09-01"
+        assert e1.json()["entry_date"] == date.today().isoformat()
         # sequence_number is relative to property; may not be 1 if other tests
         # already inserted entries for this property
         seq1 = e1.json()["sequence_number"]
@@ -478,8 +480,8 @@ class TestRegisterImmutability:
 
         await migrator_session.execute(text(
             "INSERT INTO resolution_register_entry (id, organization_id, property_id, "
-            "sequence_number, entry_date, location, wording, resolution_id) "
-            "VALUES (:id, :org, :prop, :seq, :dt, :loc, :w, :rid)"
+            "sequence_number, resolution_date, entry_date, location, wording, resolution_id) "
+            "VALUES (:id, :org, :prop, :seq, :dt, :dt, :loc, :w, :rid)"
         ), {"id": entry_id, "org": org_a, "prop": prop_id, "seq": next_seq,
             "dt": date(2026, 1, 1), "loc": "Test", "w": "Original-Wortlaut",
             "rid": resolution_id})
@@ -521,8 +523,8 @@ class TestRegisterImmutability:
 
         await migrator_session.execute(text(
             "INSERT INTO resolution_register_entry (id, organization_id, property_id, "
-            "sequence_number, entry_date, location, wording, resolution_id) "
-            "VALUES (:id, :org, :prop, :seq, :dt, :loc, :w, :rid)"
+            "sequence_number, resolution_date, entry_date, location, wording, resolution_id) "
+            "VALUES (:id, :org, :prop, :seq, :dt, :dt, :loc, :w, :rid)"
         ), {"id": entry_id, "org": org_a, "prop": prop_id, "seq": next_seq,
             "dt": date(2026, 2, 1), "loc": "Test", "w": "Seq-Test-Wortlaut",
             "rid": resolution_id})
@@ -563,8 +565,8 @@ class TestRegisterImmutability:
 
         await migrator_session.execute(text(
             "INSERT INTO resolution_register_entry (id, organization_id, property_id, "
-            "sequence_number, entry_date, location, wording, resolution_id) "
-            "VALUES (:id, :org, :prop, :seq, :dt, :loc, :w, :rid)"
+            "sequence_number, resolution_date, entry_date, location, wording, resolution_id) "
+            "VALUES (:id, :org, :prop, :seq, :dt, :dt, :loc, :w, :rid)"
         ), {"id": entry_id, "org": org_a, "prop": prop_id, "seq": next_seq,
             "dt": date(2026, 3, 1), "loc": "Test", "w": "Delete-Test-Wortlaut",
             "rid": resolution_id})
@@ -605,8 +607,8 @@ class TestRegisterImmutability:
 
         await migrator_session.execute(text(
             "INSERT INTO resolution_register_entry (id, organization_id, property_id, "
-            "sequence_number, entry_date, location, wording, resolution_id) "
-            "VALUES (:id, :org, :prop, :seq, :dt, :loc, :w, :rid)"
+            "sequence_number, resolution_date, entry_date, location, wording, resolution_id) "
+            "VALUES (:id, :org, :prop, :seq, :dt, :dt, :loc, :w, :rid)"
         ), {"id": entry_id, "org": org_a, "prop": prop_id, "seq": next_seq,
             "dt": date(2026, 4, 1), "loc": "Test", "w": "Annotation-Test-Wortlaut",
             "rid": resolution_id})
@@ -624,7 +626,8 @@ class TestRegisterImmutability:
         assert row.scalar_one() == "Angefochten"
 
     @pytest.mark.asyncio
-    async def test_update_entry_date_fails(self, migrator_session, m8_seed):
+    @pytest.mark.parametrize("column", ["entry_date", "resolution_date"])
+    async def test_update_entry_date_fails(self, migrator_session, m8_seed, column):
         """UPDATE entry_date on a register entry must be rejected."""
         org_a = str(m8_seed["org_a_id"])
         prop_id = str(m8_seed["prop_m8"])
@@ -654,15 +657,15 @@ class TestRegisterImmutability:
 
         await migrator_session.execute(text(
             "INSERT INTO resolution_register_entry (id, organization_id, property_id, "
-            "sequence_number, entry_date, location, wording, resolution_id) "
-            "VALUES (:id, :org, :prop, :seq, :dt, :loc, :w, :rid)"
+            "sequence_number, resolution_date, entry_date, location, wording, resolution_id) "
+            "VALUES (:id, :org, :prop, :seq, :dt, :dt, :loc, :w, :rid)"
         ), {"id": entry_id, "org": org_a, "prop": prop_id, "seq": next_seq,
             "dt": date(2026, 5, 1), "loc": "Test", "w": "Date-Test-Wortlaut",
             "rid": resolution_id})
 
-        with pytest.raises(Exception, match="Immutability.*entry_date"):
+        with pytest.raises(Exception, match=f"Immutability.*{column}"):
             await migrator_session.execute(text(
-                "UPDATE resolution_register_entry SET entry_date = '2099-01-01' WHERE id = :id"
+                f"UPDATE resolution_register_entry SET {column} = '2099-01-01' WHERE id = :id"
             ), {"id": entry_id})
 
 
@@ -1073,3 +1076,103 @@ async def test_invitation_keeps_held_protocol_resolutions_register_and_audit_unc
     before = stored_rows()
     assert len(invitation_pages(await client_a_admin.get(f'/api/meetings/{mid}/invitation.pdf'))) == 2
     assert stored_rows() == before
+
+
+@pytest.fixture
+def legacy_register_rehearsal(run_migrations, request):
+    """Rollback-only 0166 projection on the guarded shared test database."""
+    from alembic.migration import MigrationContext
+    from alembic.operations import Operations
+    from alembic.script import ScriptDirectory
+    from sqlalchemy import create_engine
+    from app.core.config import settings
+    from app.core.declaration_test_database import require_disposable_database_settings
+
+    revision = ScriptDirectory('migrations').get_revision('0167')
+    assert revision is not None, 'Register meeting-date migration is missing'
+    _, _, url = require_disposable_database_settings(settings)
+    engine = create_engine(url)
+    try:
+        with engine.connect() as connection, connection.begin() as transaction:
+            with Operations.context(MigrationContext.configure(connection)):
+                revision.module.downgrade()
+                ids = {key: str(uuid.uuid4()) for key in ('org', 'other_org', 'prop', 'other_prop', 'meeting', 'resolution', 'entry')}
+                invalid = getattr(request.node, 'callspec', None)
+                invalid = invalid.params.get('invalid_source') if invalid else None
+                ids.update(property_org=ids['other_org'] if invalid == 'property_tenant' else ids['org'],
+                    meeting_org=ids['other_org'] if invalid == 'meeting_tenant' else ids['org'],
+                    resolution_org=ids['other_org'] if invalid == 'resolution_tenant' else ids['org'],
+                    meeting_prop=ids['other_prop'] if invalid == 'meeting_property' else ids['prop'])
+                connection.execute(text("INSERT INTO organization(id,name) VALUES (:org,'Register legacy'),(:other_org,'Other legacy')"), ids)
+                connection.execute(text("INSERT INTO property(id,organization_id,name,management_type) VALUES (:prop,:property_org,'Gartenstraße 5','WEG'),(:other_prop,:org,'Other WEG','WEG')"), ids)
+                connection.execute(text("""INSERT INTO owners_meeting(id,organization_id,property_id,meeting_date,meeting_type,status,location)
+                    VALUES (:meeting,:meeting_org,:meeting_prop,'2026-06-15','ORDENTLICH','HELD','Current meeting place')"""), ids)
+                connection.execute(text("""INSERT INTO resolution(id,organization_id,meeting_id,wording,result)
+                    VALUES (:resolution,:resolution_org,:meeting,'Current source wording','ANGENOMMEN')"""), ids)
+                connection.execute(text("""INSERT INTO resolution_register_entry(id,organization_id,property_id,sequence_number,
+                    entry_date,location,wording,resolution_id,challenge_annotation,created_at,updated_at)
+                    VALUES (:entry,:org,:prop,1,'2026-11-01','Historic meeting place','Historic registered wording',
+                    :resolution,'Historic challenge','2026-11-01 12:00:00+00','2026-11-02 12:00:00+00')"""), ids)
+                yield connection, revision.module, ids
+            transaction.rollback()
+    finally:
+        engine.dispose()
+
+
+def test_register_migration_backfills_meeting_date_without_rewriting_any_old_field(legacy_register_rehearsal):
+    from types import SimpleNamespace
+    from io import BytesIO
+    import pdfplumber
+    from app.services.meeting_pdf import render_register_pdf
+
+    connection, migration, ids = legacy_register_rehearsal
+    def rows():
+        return {table: connection.execute(text(f'SELECT to_jsonb(t) FROM {table} t WHERE id=:id'),
+            {'id': ids[key]}).scalar_one() for table, key in (
+                ('resolution_register_entry', 'entry'), ('resolution', 'resolution'), ('owners_meeting', 'meeting'))}
+    before = rows()
+    migration.upgrade()
+    after = rows()
+    assert after['resolution_register_entry'].pop('resolution_date') == '2026-06-15'
+    assert after == before
+    entry = connection.execute(text('SELECT * FROM resolution_register_entry WHERE id=:entry'), ids).mappings().one()
+    assert entry['entry_date'] == date(2026, 11, 1)
+    with pdfplumber.open(BytesIO(render_register_pdf([SimpleNamespace(**entry)]))) as pdf:
+        content = ' '.join(page.extract_text() or '' for page in pdf.pages)
+    assert '15.06.2026' in content and '01.11.2026' in content
+    assert all(word in content for word in ('Historic', 'meeting', 'place', 'registered', 'wording'))
+    migration.downgrade()
+    assert rows() == before
+    migration.upgrade()
+    assert connection.scalar(text('SELECT resolution_date FROM resolution_register_entry WHERE id=:entry'), ids) == date(2026, 6, 15)
+
+
+@pytest.mark.parametrize('invalid_source', ['resolution_tenant', 'meeting_tenant', 'property_tenant', 'meeting_property', 'orphan_resolution', 'orphan_meeting'])
+def test_register_migration_refuses_inconsistent_sources_atomically(legacy_register_rehearsal, invalid_source):
+    from sqlalchemy.exc import DBAPIError
+    connection, migration, ids = legacy_register_rehearsal
+    if invalid_source.startswith('orphan_'):
+        table, parent, key = ('resolution_register_entry', 'resolution', 'resolution') if invalid_source == 'orphan_resolution' else ('resolution', 'owners_meeting', 'meeting')
+        constraints = connection.execute(text("""SELECT conname FROM pg_constraint WHERE contype='f'
+            AND conrelid=CAST(:table AS regclass) AND confrelid=CAST(:parent AS regclass)"""),
+            {'table': table, 'parent': parent}).scalars().all()
+        assert constraints
+        for name in constraints:
+            connection.execute(text(f'ALTER TABLE {table} DROP CONSTRAINT "{name}"'))
+        connection.execute(text(f'DELETE FROM {parent} WHERE id=:{key}'), ids)
+    before = connection.scalar(text('SELECT to_jsonb(e) FROM resolution_register_entry e WHERE id=:entry'), ids)
+    with pytest.raises(DBAPIError, match='Cannot derive register meeting date'):
+        with connection.begin_nested():
+            migration.upgrade()
+    assert connection.scalar(text('SELECT to_jsonb(e) FROM resolution_register_entry e WHERE id=:entry'), ids) == before
+
+
+def test_register_date_downgrade_refuses_to_discard_a_snapshot_after_source_changes(legacy_register_rehearsal):
+    from sqlalchemy.exc import DBAPIError
+    connection, migration, ids = legacy_register_rehearsal
+    migration.upgrade()
+    connection.execute(text("UPDATE owners_meeting SET meeting_date='2026-06-16' WHERE id=:meeting"), ids)
+    with pytest.raises(DBAPIError, match='Cannot discard register meeting date'):
+        with connection.begin_nested():
+            migration.downgrade()
+    assert connection.scalar(text('SELECT resolution_date FROM resolution_register_entry WHERE id=:entry'), ids) == date(2026, 6, 15)

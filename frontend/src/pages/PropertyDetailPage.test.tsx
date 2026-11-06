@@ -4,6 +4,8 @@ import { Link, MemoryRouter, Route, Routes } from "react-router-dom";
 import { AuthCtx } from "../auth/useAuth";
 import { PropertyDetailPage } from "./PropertyDetailPage";
 import * as endpoints from "../api/endpoints";
+import { ApiError } from "../api/client";
+import type { ManagementType, MeaScaleStatus, Unit } from "../api/types";
 
 vi.mock("../components/AttachmentsPanel", () => ({
   AttachmentsPanel: ({ propertyId, unitId, personId, canWrite }: { propertyId?: string; unitId?: string; personId?: string; canWrite: boolean }) =>
@@ -28,6 +30,195 @@ beforeEach(() => {
   } as never);
   vi.mocked(endpoints.listUnits).mockResolvedValue([]);
   vi.mocked(endpoints.getPropertyKnowledge).mockResolvedValue(null as never);
+});
+
+function renderMeaProperty(managementType: ManagementType, mea: (string | null)[], status: MeaScaleStatus = "LEGACY_UNCONFIRMED", role = "CLERK") {
+  vi.mocked(endpoints.getProperty).mockResolvedValue({
+    id: "property", name: "Musterhaus", management_type: managementType,
+    fiscal_year_start_month: 1, mea_scale_status: status,
+    mea_denominator: status === "CONFIRMED" ? 1000 : null,
+  } as never);
+  vi.mocked(endpoints.listUnits).mockResolvedValue(mea.map((share, index): Unit => ({
+    id: `unit-${index}`, property_id: "property", number: String(index + 1),
+    location: "Gartenflügel", usage_type: "WOHNUNG", area: null, heated_area: null,
+    mea: share, building_part: "",
+  })));
+  return render(<AuthCtx.Provider value={{ loading: false, session: { user_id: "u", organization_id: "o", role }, login: vi.fn(), logout: vi.fn() }}>
+    <MemoryRouter initialEntries={["/objekte/property"]}><Routes><Route path="/objekte/:propertyId" element={<PropertyDetailPage />} /></Routes></MemoryRouter>
+  </AuthCtx.Provider>);
+}
+
+it.each([{ shares: [] }, { shares: [null, null] }])("hides MEA confirmation and the unit field for MIET without recorded shares ($shares)", async ({ shares }) => {
+  renderMeaProperty("MIET", shares);
+  await screen.findByRole("heading", { name: "Musterhaus" });
+  expect(screen.queryByRole("heading", { name: "MEA-Skala bestätigen" })).not.toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "+ Neue Einheit" }));
+  expect(screen.queryByLabelText("MEA (Miteigentumsanteil)")).not.toBeInTheDocument();
+});
+
+it.each<ManagementType>(["WEG", "MISCH", "SEV"])("shows German MEA confirmation and the unit field for %s without shares", async managementType => {
+  renderMeaProperty(managementType, [null]);
+  expect(await screen.findByRole("heading", { name: "MEA-Skala bestätigen" })).toBeVisible();
+  expect(screen.getByText("Skala noch nicht bestätigt")).toBeVisible();
+  expect(screen.queryByText("LEGACY_UNCONFIRMED")).not.toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "+ Neue Einheit" }));
+  expect(screen.getByLabelText("MEA (Miteigentumsanteil)")).toBeVisible();
+});
+
+it.each(["250.000000", "0.000000"])("keeps MEA confirmation and existing MIET share %s editable", async share => {
+  renderMeaProperty("MIET", [null, share]);
+  expect(await screen.findByRole("heading", { name: "MEA-Skala bestätigen" })).toBeVisible();
+  expect(screen.getByText(`${share} (Zähler/Skala unbestätigt)`)).toBeVisible();
+  fireEvent.click(screen.getAllByRole("button", { name: "Bearbeiten" })[1]);
+  expect(screen.getByLabelText("MEA (Miteigentumsanteil)")).toHaveValue(share);
+});
+
+it("keeps confirmed MIET shares editable without asking to confirm again", async () => {
+  renderMeaProperty("MIET", ["250.000000"], "CONFIRMED");
+  await screen.findByRole("heading", { name: "Musterhaus" });
+  expect(screen.queryByRole("heading", { name: "MEA-Skala bestätigen" })).not.toBeInTheDocument();
+  expect(screen.getByText("250.000000 / 1.000")).toBeVisible();
+  fireEvent.click(screen.getByRole("button", { name: "Bearbeiten" }));
+  expect(screen.getByLabelText("MEA (Miteigentumsanteil)")).toHaveValue("250.000000");
+});
+
+it("confirms the WEG scale through the existing action and refreshes the prompt", async () => {
+  renderMeaProperty("WEG", []);
+  vi.spyOn(endpoints, "confirmMeaScale").mockResolvedValue({} as never);
+  await screen.findByRole("heading", { name: "MEA-Skala bestätigen" });
+  vi.mocked(endpoints.getProperty).mockResolvedValue({
+    id: "property", name: "Musterhaus", management_type: "WEG", fiscal_year_start_month: 1,
+    mea_scale_status: "CONFIRMED", mea_denominator: 1000,
+  } as never);
+  fireEvent.change(screen.getByLabelText("Nenner *"), { target: { value: "1000" } });
+  fireEvent.click(screen.getByRole("button", { name: "MEA-Skala bestätigen" }));
+  expect(await screen.findByRole("status")).toHaveTextContent("MEA-Skala gespeichert.");
+  expect(endpoints.confirmMeaScale).toHaveBeenCalledWith("property", 1000);
+  expect(screen.queryByRole("heading", { name: "MEA-Skala bestätigen" })).not.toBeInTheDocument();
+});
+
+it("keeps MEA confirmation and unit editing unavailable to read-only users", async () => {
+  renderMeaProperty("WEG", ["250.000000"], "LEGACY_UNCONFIRMED", "READ_ONLY");
+  await screen.findByRole("heading", { name: "Musterhaus" });
+  expect(screen.queryByRole("heading", { name: "MEA-Skala bestätigen" })).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "+ Neue Einheit" })).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Bearbeiten" })).not.toBeInTheDocument();
+});
+
+it("keeps the property and panels while a saved unit refreshes", async () => {
+  let finish!: (value: never) => void;
+  vi.spyOn(endpoints, "createUnit").mockResolvedValue({ id: "new-unit" } as never);
+  render(<AuthCtx.Provider value={{ loading: false, session: { user_id: "u", organization_id: "o", role: "CLERK" }, login: vi.fn(), logout: vi.fn() }}><MemoryRouter initialEntries={["/objekte/property"]}><Routes><Route path="/objekte/:propertyId" element={<PropertyDetailPage />} /></Routes></MemoryRouter></AuthCtx.Provider>);
+  const panel = await screen.findByRole("region", { name: "Zähler" });
+  vi.mocked(endpoints.getProperty).mockReturnValueOnce(new Promise(resolve => { finish = resolve; }));
+  vi.mocked(endpoints.listUnits).mockResolvedValue([{ id: "new-unit", number: "42", location: "Gartenflügel", usage_type: "WOHNUNG" }] as never);
+  fireEvent.click(screen.getByRole("button", { name: "+ Neue Einheit" }));
+  fireEvent.change(screen.getByLabelText("Nummer *"), { target: { value: "42" } });
+  fireEvent.click(screen.getByRole("button", { name: "Speichern" }));
+  expect(await screen.findByRole("status")).toHaveTextContent("Einheit gespeichert.");
+  expect(screen.getByRole("heading", { name: "T30 Haus" })).toBeVisible();
+  expect(panel).toBeInTheDocument();
+  await act(async () => finish({ id: "property", name: "T30 Haus", management_type: "MIET", fiscal_year_start_month: 1 } as never));
+  expect(await screen.findByRole("link", { name: "42" })).toBeVisible();
+});
+
+it("shows a rejected unit number at the field and saves after shortening it", async () => {
+  renderMeaProperty("MIET", [null]);
+  const message = "Die Bezeichnung darf höchstens 50 Zeichen lang sein.";
+  const validNumber = "Ä".repeat(50);
+  const tooLong = validNumber + "X";
+  const update = vi.spyOn(endpoints, "updateUnit")
+    .mockRejectedValueOnce(new ApiError(422, message, "unit_number_too_long"))
+    .mockResolvedValueOnce({ number: validNumber } as Unit);
+  fireEvent.click(await screen.findByRole("button", { name: "Bearbeiten" }));
+  const input = screen.getByRole("textbox", { name: "Nummer *" });
+  fireEvent.change(input, { target: { value: tooLong } });
+  fireEvent.click(screen.getByRole("button", { name: "Speichern" }));
+  expect(await screen.findByText(message)).toBeVisible();
+  expect(input).toHaveAccessibleDescription(message);
+  expect(input).toHaveAttribute("aria-invalid", "true");
+  expect(input).toHaveValue(tooLong);
+  expect(update).toHaveBeenNthCalledWith(1, "unit-0", expect.objectContaining({ number: tooLong }));
+
+  fireEvent.change(input, { target: { value: validNumber } });
+  expect(screen.queryByText(message)).not.toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "Speichern" }));
+  expect(await screen.findByRole("status")).toHaveTextContent("Einheit gespeichert.");
+  expect(update).toHaveBeenNthCalledWith(2, "unit-0", expect.objectContaining({ number: validNumber }));
+  expect(screen.queryByRole("heading", { name: "Einheit bearbeiten" })).not.toBeInTheDocument();
+});
+
+it("keeps a refused duplicate number in the new unit form for correction", async () => {
+  renderMeaProperty("MIET", [null]);
+  const message = "Eine Einheit mit dieser Nummer gibt es in diesem Objekt schon.";
+  vi.spyOn(endpoints, "createUnit")
+    .mockRejectedValueOnce(new ApiError(409, message, "duplicate_unit_number"))
+    .mockResolvedValueOnce({ id: "new-unit" } as Unit);
+  fireEvent.click(await screen.findByRole("button", { name: "+ Neue Einheit" }));
+  const input = screen.getByRole("textbox", { name: "Nummer *" });
+  fireEvent.change(input, { target: { value: "1" } });
+  fireEvent.click(screen.getByRole("button", { name: "Speichern" }));
+  expect(await screen.findByRole("alert")).toHaveTextContent(message);
+  expect(input).toHaveAccessibleDescription(message);
+  expect(input).toHaveValue("1");
+
+  fireEvent.change(input, { target: { value: "2" } });
+  expect(screen.queryByText(message)).not.toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "Speichern" }));
+  expect(await screen.findByRole("status")).toHaveTextContent("Einheit gespeichert.");
+});
+
+it("saves a location edit without resubmitting legacy negative areas", async () => {
+  const unit: Unit = {
+    id: "unit-0", property_id: "property", number: "1", location: "Gartenflügel",
+    usage_type: "WOHNUNG", area: "-12.50", heated_area: "-4.00", mea: null, building_part: "",
+  };
+  vi.mocked(endpoints.listUnits).mockResolvedValueOnce([unit]);
+  renderMeaProperty("MIET", [null]);
+  const update = vi.spyOn(endpoints, "updateUnit").mockImplementation(async (_id, body) => {
+    if ("area" in body || "heated_area" in body) {
+      throw new ApiError(422, "Fläche: Bitte eine Zahl wie 75,50 eingeben.", "invalid_unit_area");
+    }
+    const saved = { ...unit, location: body.location ?? unit.location };
+    vi.mocked(endpoints.listUnits).mockResolvedValue([saved]);
+    return saved;
+  });
+  fireEvent.click(await screen.findByRole("button", { name: "Bearbeiten" }));
+  expect(screen.getByRole("textbox", { name: "Flaeche (m2)" })).toHaveValue("-12.50");
+  expect(screen.getByRole("textbox", { name: "Beheizte Flaeche (m2)" })).toHaveValue("-4.00");
+  fireEvent.change(screen.getByRole("textbox", { name: "Lage" }), { target: { value: "Vorderhaus" } });
+  fireEvent.click(screen.getByRole("button", { name: "Speichern" }));
+
+  expect(await screen.findByRole("status")).toHaveTextContent("Einheit gespeichert.");
+  expect(update).toHaveBeenCalledWith("unit-0", expect.objectContaining({ location: "Vorderhaus" }));
+  expect(await screen.findByRole("cell", { name: "Vorderhaus" })).toBeVisible();
+  expect(screen.getByRole("cell", { name: "-12.50" })).toBeVisible();
+  expect(screen.getByRole("cell", { name: "-4.00" })).toBeVisible();
+});
+
+it.each([
+  ["area", "Flaeche (m2)", "Beheizte Flaeche (m2)", "Fläche"],
+  ["heated_area", "Beheizte Flaeche (m2)", "Flaeche (m2)", "Beheizte Fläche"],
+])("keeps an invalid %s editable and associates the server explanation", async (field, label, otherLabel, name) => {
+  renderMeaProperty("MIET", [null]);
+  const message = `${name}: Bitte eine Zahl wie 75,50 mit höchstens zwei Nachkommastellen eingeben.`;
+  const update = vi.spyOn(endpoints, "updateUnit")
+    .mockRejectedValueOnce(new ApiError(422, message, `invalid_unit_${field}`))
+    .mockResolvedValueOnce({ id: "unit-0" } as Unit);
+  fireEvent.click(await screen.findByRole("button", { name: "Bearbeiten" }));
+  const input = screen.getByRole("textbox", { name: label });
+  fireEvent.change(input, { target: { value: "abc" } });
+  fireEvent.click(screen.getByRole("button", { name: "Speichern" }));
+  expect(await screen.findByText(message)).toBeVisible();
+  expect(input).toHaveAccessibleDescription(message);
+  expect(input).toHaveValue("abc");
+  expect(screen.getByRole("textbox", { name: otherLabel })).not.toHaveAccessibleDescription();
+
+  fireEvent.change(input, { target: { value: "75,50" } });
+  expect(screen.queryByText(message)).not.toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "Speichern" }));
+  expect(await screen.findByRole("status")).toHaveTextContent("Einheit gespeichert.");
+  expect(update).toHaveBeenLastCalledWith("unit-0", expect.objectContaining({ [field]: "75,50" }));
 });
 
 it.each([["OWNER_ADMIN", true], ["CLERK", true], ["READ_ONLY", false], ["UNKNOWN", false]] as const)(

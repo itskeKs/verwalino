@@ -292,6 +292,41 @@ async def test_letter_placeholders_include_lease_unit_and_original_landlord(rent
         assert (await api.get(issued.json()[0]['pdf_url'])).status_code == 409
 
 
+@pytest.mark.parametrize('day,net,heating,total', [
+    ('2026-03-14', '700,00 €', None, None),
+    ('2026-03-15', '750,00 €', '90,00 €', '990,00 €'),
+    ('2026-06-01', '750,00 €', '90,00 €', '990,00 €'),
+])
+async def test_existing_letter_placeholders_use_dated_advances_and_keep_issued_bytes(rent_world, day, net, heating, total):
+    w = rent_world
+    async with api_client(w) as api:
+        template = await create_template(api, body='Kaltmiete: {{vertrag.kaltmiete}}\nVorauszahlung: {{vertrag.vorauszahlung}}')
+        request = issue_body(w, template, as_of=day)
+        before = await api.post('/api/letters/issue', json=request)
+        assert before.status_code == 201, before.text
+        original = (await api.get(before.json()[0]['pdf_url'])).content
+        changed = await api.post(f"/api/leases/{w['lease']}/rent-changes", json={
+            'valid_from': '2026-03-15', 'base_rent': '750.00',
+            'advance_payment': '150.00', 'heating_advance_payment': '90.00',
+        })
+        assert changed.status_code == 201, changed.text
+        replay = await api.post('/api/letters/issue', json=request)
+        assert replay.status_code == 201 and replay.json() == before.json()
+        assert (await api.get(before.json()[0]['pdf_url'])).content == original
+        current = await api.post('/api/letters/issue', json={**request, 'request_id': str(uuid.uuid4())})
+        assert current.status_code == 201, current.text
+        content = pdf_text((await api.get(current.json()[0]['pdf_url'])).content)
+        assert f'Kaltmiete: {net}' in content
+        if heating:
+            for expected in ('Betriebskosten-Vorauszahlung: 150,00 €',
+                             f'Heizkosten-Vorauszahlung: {heating}', f'Monatliche Gesamtmiete: {total}'):
+                assert expected in content
+        else:
+            assert 'Vorauszahlung: 150,00 €' in content
+            assert 'Heizkosten' not in content
+            assert (await api.get(current.json()[0]['pdf_url'])).content == original
+
+
 def contract_body(**changes):
     return {'request_id': str(uuid.uuid4()), 'as_of': '2026-01-01',
             'handover_date': '2026-01-02', 'agreements': 'Freitext: Gartenmitbenutzung prüfen.', **changes}
@@ -497,12 +532,12 @@ async def test_handover_of_a_finalized_lease_preserves_the_settlement(rent_world
     from tests.financial_coverage_helpers import attest_fixture
     w = rent_world
     async with api_client(w) as api:
-        response = await api.post('/api/settlements', json={'property_id': str(w['property']),
+        response = await api.post('/api/settlements', json={'heating_advance_payments_total': '0.00', 'property_id': str(w['property']),
             'lease_agreement_id': str(w['lease']), 'period_start': '2026-01-01',
             'period_end': '2026-01-31', 'advance_payments_total': '0.00'})
         assert response.status_code == 201, response.text
         run_id = response.json()['id']
-        await attest_fixture(api, 'settlement', run_id, {'advance_payments_total': '0.00', 'advance_payments_source': 'MANUAL'})
+        await attest_fixture(api, 'settlement', run_id, {'heating_advance_payments_total': '0.00', 'heating_advance_payments_source': 'MANUAL', 'advance_payments_total': '0.00', 'advance_payments_source': 'MANUAL'})
         response = await api.post(f'/api/settlements/{run_id}/finalize', json={})
         assert response.status_code == 200, response.text
         finalized = response.json()

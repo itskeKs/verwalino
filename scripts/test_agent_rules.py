@@ -16,7 +16,7 @@ ROOT = Path(__file__).resolve().parents[1]
 HOOK = ROOT / ".codex/hooks/attach_rules.py"
 TOPICS = {"language", "migrations", "api-layer", "engine", "gobd",
           "frontend-ui", "testing", "selfhost", "docs",
-          "architecture", "domain", "ai-pipeline", "session-cleanup"}
+          "architecture", "domain", "ai-pipeline", "session-cleanup", "issue-scope"}
 
 
 def read_rule(path: Path) -> tuple[dict, str]:
@@ -160,7 +160,7 @@ class AgentRuleTests(unittest.TestCase):
     def test_session_start_returns_only_the_always_on_rules(self):
         expected = {path.stem for path in (ROOT / ".cursor/rules").glob("*.mdc")
                     if read_rule(path)[0]["alwaysApply"]}
-        self.assertEqual(expected, {"language", "docs", "session-cleanup"})
+        self.assertEqual(expected, {"language", "docs", "session-cleanup", "issue-scope"})
         for source in ("startup", "resume", "clear", "compact", "fork"):
             with self.subTest(source=source):
                 payload = {"hook_event_name": "SessionStart", "source": source}

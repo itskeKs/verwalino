@@ -7,7 +7,7 @@ import { Sidebar } from "./Sidebar";
 afterEach(cleanup);
 it("groups permissions under one active admin entry", () => {
   render(<AuthCtx.Provider value={{ loading: false, session: { user_id: "u", organization_id: "o", role: "OWNER_ADMIN" }, login: vi.fn(), logout: vi.fn() }}>
-    <MemoryRouter initialEntries={["/berechtigungen/bestand"]}><Sidebar open onClose={vi.fn()} /></MemoryRouter>
+    <MemoryRouter initialEntries={["/berechtigungen/bestand"]}><Sidebar onClose={vi.fn()} /></MemoryRouter>
   </AuthCtx.Provider>);
   expect(screen.getAllByRole("link", { name: "Berechtigungen" })).toHaveLength(1);
   expect(screen.getByRole("link", { name: "Berechtigungen" })).toHaveAttribute("aria-current", "page");
@@ -20,7 +20,7 @@ it("groups permissions under one active admin entry", () => {
 it.each(["READ_ONLY", "CLERK", "OWNER_ADMIN"])("shows the active Berichte navigation link for %s", role => {
   const onClose = vi.fn();
   render(<AuthCtx.Provider value={{ loading: false, session: { user_id: "user", organization_id: "org", role }, login: vi.fn(), logout: vi.fn() }}>
-    <MemoryRouter initialEntries={["/berichte"]}><Sidebar open onClose={onClose} /></MemoryRouter>
+    <MemoryRouter initialEntries={["/berichte"]}><Sidebar onClose={onClose} /></MemoryRouter>
   </AuthCtx.Provider>);
   const link = screen.getByRole("link", { name: "Berichte" });
   expect(link).toHaveAttribute("href", "/berichte"); expect(link).toHaveAttribute("aria-current", "page");
@@ -29,7 +29,7 @@ it.each(["READ_ONLY", "CLERK", "OWNER_ADMIN"])("shows the active Berichte naviga
 
 it.each(["READ_ONLY", "CLERK", "OWNER_ADMIN"])("shows active Aufgaben navigation for %s", role => {
   const onClose = vi.fn();
-  render(<AuthCtx.Provider value={{ loading: false, session: { user_id: "u", organization_id: "o", role }, login: vi.fn(), logout: vi.fn() }}><MemoryRouter initialEntries={["/aufgaben"]}><Sidebar open onClose={onClose} /></MemoryRouter></AuthCtx.Provider>);
+  render(<AuthCtx.Provider value={{ loading: false, session: { user_id: "u", organization_id: "o", role }, login: vi.fn(), logout: vi.fn() }}><MemoryRouter initialEntries={["/aufgaben"]}><Sidebar onClose={onClose} /></MemoryRouter></AuthCtx.Provider>);
   const link = screen.getByRole("link", { name: "Aufgaben" });
   expect(link).toHaveAttribute("href", "/aufgaben"); expect(link).toHaveAttribute("aria-current", "page");
   fireEvent.click(link); expect(onClose).toHaveBeenCalledOnce();

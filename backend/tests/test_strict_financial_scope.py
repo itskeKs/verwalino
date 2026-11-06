@@ -115,6 +115,10 @@ async def test_strict_scoped_clerk_creates_weg_draft_without_property_read_acces
         assert draft.json()['status'] == 'draft'
         assert draft.json()['property_id'] == str(ids['property'])
         assert draft.json()['economic_plan_id'] == plan.json()['id']
+        assert draft.json()['delete_restriction']['code'] == 'SETTLEMENT_DELETE_SOURCE_ACCESS_REQUIRED'
+        detail = await api.get(f"/api/weg-settlements/{draft.json()['id']}")
+        assert detail.status_code == 200, detail.text
+        assert detail.json()['delete_restriction'] == draft.json()['delete_restriction']
         assert await read_value('SELECT scope_id FROM accounting_scope_binding WHERE settlement_run_id=:run',
             ids | {'run': uuid.UUID(draft.json()['id'])}) == ids['scope']
         count = 'SELECT count(*) FROM settlement_run WHERE organization_id=:org'

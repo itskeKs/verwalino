@@ -4,6 +4,7 @@ import pytest
 from app.core.db import get_worker_session_factory
 from app.core.invoice_ocr import extract_invoice
 from app.workers.invoice_extraction import process_once
+from tests.migration_rehearsal import rewind_bank_allocation_functions
 from tests.test_invoice_extraction_worker import worker_tenant,pdf_bytes  # noqa: F401
 from tests.test_invoice_source_custody import store  # noqa: F401
 from tests.test_financial_scope_boundary import scope_seed  # noqa: F401
@@ -160,10 +161,13 @@ async def test_extraction_migration_retains_revisions_and_restores_empty_schema(
                 db.execute(text('TRUNCATE exception_case CASCADE'))
                 db.execute(text('TRUNCATE exception_case CASCADE'))
                 db.execute(text('TRUNCATE allocation_treatment_review CASCADE'))
+                importlib.import_module('migrations.versions.0160_shared_retention_deadlines').downgrade()
+                importlib.import_module('migrations.versions.0159_person_retention_bindings').downgrade()
                 db.execute(text('TRUNCATE allocation_integrity_attestation CASCADE'))
                 db.execute(text('TRUNCATE exception_completion CASCADE'))
                 db.execute(text('TRUNCATE financial_computation_attestation CASCADE'))
                 db.execute(text('TRUNCATE allocation_correction_context,allocation_correction_completion'))
+                rewind_bank_allocation_functions(db)
                 importlib.import_module('migrations.versions.0123_replacement_exception_outcomes').downgrade()
                 importlib.import_module('migrations.versions.0122_allocation_source_replacements').downgrade()
                 importlib.import_module('migrations.versions.0121_visual_allocation_sources').downgrade()

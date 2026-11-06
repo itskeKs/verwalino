@@ -4,6 +4,23 @@ This page covers heating calculation and BK integration (T45/T46), annual proper
 figures (T39), BK batch drafts (T27), advance-payment proposals (T28), and prior-year
 economic plan proposals (T54).
 
+## Commercial preallocation in a tenant statement
+
+For a property with a commercial unit, open a draft and use “Vorwegabzug Gewerbe”
+on the relevant cost position. Select “Prozent” or “Festbetrag”, enter the value
+and a reason, then choose “Berechnen”. The rule is shared with every tenant
+statement using that cost position; calculate other drafts again to refresh
+their displayed results. “Vorschau” does not save changes. Selecting
+“Kein Vorwegabzug” and calculating removes an unfinalized rule.
+
+A 60 m² shop and 75/65 m² flats share EUR 1,200 waste as EUR 360 / 450 / 390
+without a rule. With 50% and “Gastronomie, Restmüll 2 × 1.100 l”, they pay
+EUR 600 / 321.43 / 278.57. Statements/PDFs show the actual commercial amount,
+reason and group distribution amount. The manager assesses the extra burden;
+the application does not infer it. Direct per-unit amounts and internal
+HeizkostenV positions do not offer this combination. After the first affected
+statement is finalized, the shared rule cannot be changed or removed.
+
 ## HeizkostenV calculation engine
 
 `app.engine.heizkosten.calculate_heating_costs(pools, context=...)` distributes
@@ -44,9 +61,16 @@ building consumption, before selecting a lease's clipped statement. Exact interi
 readings ([§9b](https://www.gesetze-im-internet.de/heizkostenv/__9b.html)) split only
 the changed unit's consumption-dependent share; other units need no reading at that
 change date. Declared manual quantities remain supported (at most six decimal places).
-Missing interim readings split known unit-period consumption by degree-days if
-available, otherwise by days. The engine currently has no degree-day model, so the
-fallback is days; basic costs always split by days. Missing period consumption still
+Missing interim heat readings split known unit-period consumption by the fixed
+[degree-day table](../m3-abrechnungs-engine.md#51-principle-values-come-in-the-engine-only-distributesadopts):
+June–August share 40 per mille over 92 days; other months retain their published
+weights, including December 160. Hot water and basic costs always split by days.
+For a 1 July 2026 change without an interim reading, EUR 2,000 heating consumption
+costs split EUR 1,166.09 / EUR 833.91; EUR 400 hot-water consumption costs split
+EUR 198.36 / EUR 201.64. Suggestions and PDF notes name “Aufteilung nach
+Gradtagszahlen (§ 9b HeizkostenV)” with the exact weights. Finalization freezes
+the method and shares; older final statements keep their stored amounts and notes.
+Missing period consumption still
 returns 422 and is never replaced with zero or estimated building consumption.
 For a 10,000-euro pool, 70% consumption, two equally sized units each using 1,000,
 and A/B using 600/400 in the first unit, the statements are 3,221.92 / 1,778.08 /
@@ -78,8 +102,10 @@ active confirmed gross costs by invoice date. Drafts, reversal chains,
 superseded costs, and merely imported bank transactions do not count.
 
 The date basis and a domain note are included in the response. Security deposit and other
-payment types remain separately visible; no tax treatment is
-assumed. `TEILWEISE_PRUEFEN` remains its own flag. This is a
+payment types remain separately visible. Deposits never increase income or balance;
+`NACHZAHLUNG` is tenant backpayment income. House-money advances, reserve shares and
+owner special payments count as income only for WEG, not MIET, SEV or MISCH.
+The same mapping rule controls headline, reconciliation and both CSV exports. `TEILWEISE_PRUEFEN` remains its own flag. This is a
 verifiable basis, not a complete Anlage V or tax return.
 
 The **Anlage V** panel under **Berichte** maps this per-property year overview to
@@ -88,8 +114,11 @@ form detail lines via `GET /api/reports/property-year/anlage-v`.
 the same property, year and optional accounting scope. This is a
 "Zuordnungshilfe, keine Steuerberatung"; "Zeilennummern je Formularjahr prüfen"
 (check line numbers for each form year). The mapping ignores the Umlagefähigkeit
-split and lists `NACHZAHLUNG` under "Nicht zugeordnet": a Nachzahlung can come from
-a tenant or an owner, so its origin needs separate review.
+split and maps tenant `NACHZAHLUNG` to "Umlagen". Deposits remain visible under
+"Nicht zugeordnet" with their original amounts but contribute zero to the
+reconciliation totals. The same applies to owner receipts outside WEG; WEG receipts
+count as unassigned income. Thus mapped plus counted unassigned amounts equals the
+overview income. The overview CSV marks non-income rows as "Durchlaufend".
 
 The report requires full read/source permissions and, where applicable, an
 explicit homeowners' association (WEG)/MIET accounting scope covering the entire property and year. Missing
@@ -145,6 +174,16 @@ Finalized snapshots, booked payments, and the actual amounts (Ist) remain unchan
 `scripts/acceptance/t28_advance_proposal_browser.cjs` verifies 1,200 EUR / 12 = 100 EUR
 and the tenant ledger 2027 after explicit adoption: 700/100 instead of 700/150.
 
+## Manual economic plan drafts
+
+When a new draft opens under **Wirtschaftspläne**, “Rücklagenzuführung (Jahr)”
+starts with the reserve in the summary. If the reserve is zero, leave the
+prefilled value in place, enter the planned costs, confirm the data basis and
+choose “Berechnen”. The reserve accepts a nonnegative EUR amount with up to two
+decimal places, using a comma or dot as the decimal separator. If the reserve
+is blank or invalid, enter a valid amount (zero is allowed) and retry. The form
+keeps the entered costs.
+
 ## Economic plan from prior-year actuals
 
 T54 introduced this workflow.
@@ -166,3 +205,42 @@ automatically create again. The [UI-only acceptance](../../DEPLOY.md#previous-ye
 verifies plan 2027 from actuals 2026,
 7,000 EUR costs + 6,000 EUR separate reserve as well as edited 7,100.25 + 6,500 EUR
 and desktop/smartphone reload.
+
+
+## Persons key and household history
+
+On each unit page, open “Haushalt bearbeiten”. Add dated “Belegung” counts and,
+where needed, “Leerstand” counts. A vacancy row suggests one person; edit it if
+necessary and save the history. Dates are inclusive. Each count continues until
+the next saved date in the same occupied/vacancy stream. Removing all rows and
+saving clears the history. Counts contain no household names.
+
+Persons-key tenant statements read this shared history, rather than per-statement
+head counts. The statement's structured-input panel links to each unit editor.
+The position note shows person-days; a household change or tenant change is
+weighted using the counts valid on those actual days. A saved zero is allowed.
+Missing occupied input blocks from the first uncovered day, even if a vacancy
+count exists, and missing vacancy input likewise needs an explicit saved value.
+The vacancy share remains with the owner.
+
+For 2026, Anna's two persons through May and three from June give 944 person-days.
+Bernd's one person from March gives 306, plus 59 vacant days at one person. A
+1,250-euro persons-key cost splits into 901.45 / 292.21 / 56.34 euros for
+Anna / Bernd / owner. Constant counts keep their previous relative shares.
+Existing finalized statements retain their frozen values and rendering after
+household edits. Upgrading to migration 0164 does not infer a history from older
+per-statement values; enter the history before making new persons-key calculations.
+
+
+The saved statement view includes “Leerstand – Eigentümeranteile” when its
+snapshot contains vacancy person-days. It directly lists each permitted unit's
+saved person-days and owner amount, including unit 2's 59 person-days and
+56.34 euros in the example above. These are stored results, rather than a
+subtraction from tenant amounts. Unit numbers also come from the snapshot;
+later household edits do not change them. A partial accounting scope discloses
+only its units. Existing PDFs remain unchanged.
+
+Migration 0165 retains larger raw person-day numerators and denominators. For
+two constant 1,370-person households in 2026, both preview and saved/finalized
+statements show 625.00 euros with bases 500,050 / 1,000,100. No input cap or quota
+normalization is required.

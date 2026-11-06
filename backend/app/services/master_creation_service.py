@@ -9,6 +9,7 @@ from fastapi import HTTPException
 from pydantic import BaseModel, Field, StrictInt, StrictStr, field_validator
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
+from app.core.unit_numbers import normalize_unit_number
 from app.declarations.review_schemas import NewPropertyAudience
 from app.services.property_data_domain_service import PropertyDataDomainService
 from app.services.property_master_service import require_property_master
@@ -22,7 +23,11 @@ from app.models.unit import Unit
 from app.models.person import Person
 from app.services.quota_service import require_counts
 
+from app.engine.fristen import FederalState
+
+
 class PropertyFacts(BaseModel):
+    federal_state: FederalState | None = None
     construction_year: StrictInt | None = Field(default=None, ge=1, le=9999)
     total_area: StrictStr | None = None
 
@@ -86,7 +91,7 @@ async def create_property(db, auth, body: PropertyCreate, idempotency_key=None):
         raise HTTPException(422, 'Idempotency-Key required for audience creation')
     # Keep existing receipt digests stable when callers omit the new facts.
     payload = body.model_dump(mode='json', exclude={
-        field for field in ("construction_year", "total_area") if field not in body.model_fields_set
+        field for field in ("construction_year", "total_area", "federal_state") if field not in body.model_fields_set
     })
     if body.data_audience is not None:
         for grant in payload['data_audience']['grants']:
@@ -117,6 +122,7 @@ async def create_property(db, auth, body: PropertyCreate, idempotency_key=None):
         city=body.city,
         management_type=body.management_type,
         fiscal_year_start_month=body.fiscal_year_start_month,
+        federal_state=body.federal_state,
         construction_year=body.construction_year,
         total_area=Decimal(body.total_area) if body.total_area is not None else None,
         mea_denominator=body.mea_denominator,
@@ -128,26 +134,41 @@ async def create_property(db, auth, body: PropertyCreate, idempotency_key=None):
     return prop
 
 
+def parse_unit_area(value: str, field: str) -> Decimal:
+    """Parse an exact unit area within the same bounds as master-data import."""
+    normalized = value.strip().replace(",", ".")
+    if re.fullmatch(r"[0-9]+(?:\.[0-9]{1,2})?", normalized):
+        amount = Decimal(normalized)
+        if amount <= Decimal("99999999.99"):
+            return amount
+    label = "Fläche" if field == "area" else "Beheizte Fläche"
+    raise HTTPException(422, detail={
+        "code": f"invalid_unit_{field}",
+        "message": f"{label}: Bitte eine Zahl wie 75,50 mit höchstens zwei Nachkommastellen eingeben.",
+    })
+
+
 async def create_unit(db, auth, body: UnitCreate):
-    if await PropertyRepository(db, auth.organization_id).get_by_id(uuid.UUID(body.property_id)) is None:
+    property_id = uuid.UUID(body.property_id)
+    if await PropertyRepository(db, auth.organization_id).get_by_id(property_id) is None:
         raise HTTPException(404, "Property not found")
-    await require_property_master(db, auth.organization_id, uuid.UUID(body.property_id))
+    await require_property_master(db, auth.organization_id, property_id)
     _validate_usage_type(body.usage_type)
     await require_counts(db, auth.organization_id, units=1)
     repo = UnitRepository(db, auth.organization_id)
     mea = _parse_mea_numerator(body.mea) if body.mea is not None else None
+    prop = await lock_unit_property(db, auth.organization_id, property_id)
     if mea is not None:
-        prop = await _require_confirmed_mea_scale(
-            db, auth.organization_id, uuid.UUID(body.property_id)
-        )
-        units = await repo.list_by_property_for_update(prop.id)
+        _require_confirmed_mea_scale(prop)
+        units = await repo.list_by_property_for_update(property_id)
         _validate_mea_total(mea, prop, units)
+    await require_available_unit_number(repo, property_id, body.number)
     unit = Unit(
-        property_id=uuid.UUID(body.property_id),
+        property_id=property_id,
         number=body.number,
         location=body.location,
-        area=Decimal(body.area) if body.area else None,
-        heated_area=Decimal(body.heated_area) if body.heated_area else None,
+        area=parse_unit_area(body.area, "area") if body.area else None,
+        heated_area=parse_unit_area(body.heated_area, "heated_area") if body.heated_area else None,
         usage_type=body.usage_type,
         mea=mea,
         building_part=body.building_part,
@@ -202,21 +223,38 @@ def _parse_mea_numerator(value: str) -> Decimal:
     return mea
 
 
-async def _require_confirmed_mea_scale(
+async def lock_unit_property(
     db: AsyncSession,
     org_id: uuid.UUID,
     property_id: uuid.UUID,
 ) -> Property:
+    # Serialize number and MEA writes before reading the property's other units.
     property_repo = PropertyRepository(db, org_id)
     prop = await property_repo.get_by_id_for_update(property_id)
     if prop is None:
         raise HTTPException(status_code=404, detail="Property not found")
+    return prop
+
+
+async def require_available_unit_number(
+    repo: UnitRepository, property_id: uuid.UUID, number: str, *, exclude_unit_id: uuid.UUID | None = None,
+) -> None:
+    """Check a proposed number after locking its authorized property."""
+    proposed = normalize_unit_number(number)
+    numbers = await repo.list_numbers_by_property(property_id, exclude_unit_id=exclude_unit_id)
+    if any(normalize_unit_number(existing) == proposed for existing in numbers):
+        raise HTTPException(status_code=409, detail={
+            "code": "duplicate_unit_number",
+            "message": "Eine Einheit mit dieser Nummer gibt es in diesem Objekt schon.",
+        })
+
+
+def _require_confirmed_mea_scale(prop: Property) -> None:
     if prop.mea_scale_status != "CONFIRMED" or prop.mea_denominator is None:
         raise HTTPException(
             status_code=409,
             detail="Property MEA scale must be confirmed before writing MEA values",
         )
-    return prop
 
 
 def _validate_mea_total(

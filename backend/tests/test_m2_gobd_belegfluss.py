@@ -1124,6 +1124,37 @@ class TestUploadFirstAtomic:
         return response.json()
 
     @pytest.mark.asyncio
+    @pytest.mark.parametrize("value", ["60,00", "NaN", "-1", "1e400", "0.001", "1000000000000"])
+    @pytest.mark.parametrize("field", ["gross_amount", "vat_amount", "vat_rate", "apportionable_tenant_amount"])
+    @pytest.mark.parametrize("operation", ["create", "update", "correction"])
+    async def test_invalid_cost_amount_is_a_field_validation_error(self, client_a_admin, m2_seed, value, field, operation):
+        body = await self.payload(client_a_admin, m2_seed)
+        if operation == "create":
+            response = await client_a_admin.post("/api/cost-entries", json={**body, field: value})
+        else:
+            created = await client_a_admin.post("/api/cost-entries", json=body)
+            assert created.status_code == 201, created.text
+            path = f"/api/cost-entries/{created.json()['id']}"
+            if operation == "update":
+                response = await client_a_admin.patch(path, json={field: value})
+            else:
+                confirmed = await client_a_admin.post(f"{path}/confirm")
+                assert confirmed.status_code == 200, confirmed.text
+                response = await client_a_admin.post(f"{path}/correction", json={field: value})
+        assert response.status_code == 422, response.text
+        assert any(error["loc"] == ["body", field] for error in response.json()["detail"])
+
+    @pytest.mark.asyncio
+    async def test_canonical_cost_amounts_preserve_optional_zeros(self, client_a_admin, m2_seed):
+        amounts = {"gross_amount": "60.00", "vat_amount": "0.00", "vat_rate": "0.00",
+                   "apportionable_tenant_amount": "0.00"}
+        response = await client_a_admin.post("/api/cost-entries", json={
+            **await self.payload(client_a_admin, m2_seed), **amounts,
+        })
+        assert response.status_code == 201, response.text
+        assert {field: response.json()[field] for field in amounts} == amounts
+
+    @pytest.mark.asyncio
     async def test_link_replay_confirm_original(self, client_a_admin, m2_seed, tmp_store):
         doc = await self.upload(client_a_admin)
         body = await self.payload(client_a_admin, m2_seed, doc["id"])

@@ -19,6 +19,8 @@ OPENING_IMPORT_ONLY = {'code': 'RESERVE_OPENING_IMPORT_ONLY', 'message': 'Ein Im
 OPENING_IMPORT_EXISTS = {'code': 'RESERVE_OPENING_IMPORT_EXISTS', 'message': 'Nach dem Import eines Anfangsbestands können Sie keinen früheren oder abweichenden, überlappenden Abrechnungszeitraum anlegen.'}
 DERIVED_TOTAL_READ_ONLY = {'code': 'RESERVE_DERIVED_TOTAL_READ_ONLY', 'message': 'Zuführungen und Entnahmen werden aus Buchungen abgeleitet; Korrekturen erfolgen mit Bezug im Rücklagenbuch.'}
 CONTRIBUTION_EXCEEDS_BOOKED = {'code': 'RESERVE_CONTRIBUTION_EXCEEDS_BOOKED', 'message': 'Die Zuführungskorrektur darf den Rücklagenanteil des gebuchten Hausgelds der Einheit nicht überschreiten.'}
+CORRECTION_ALREADY_ZERO = {'code': 'RESERVE_AMOUNT_INVALID', 'message': 'Diese Korrektur ist bereits vollständig aufgehoben. Es ist kein Restbetrag mehr vorhanden.'}
+CORRECTION_AMOUNT_INVALID = {'code': 'RESERVE_AMOUNT_INVALID', 'message': 'Bitte geben Sie einen anderen, nicht negativen Korrekturbetrag ein.'}
 
 
 def _euro(amount):
@@ -357,6 +359,12 @@ class ReserveLedgerService:
         await self.invalidate_computation(run)
         return entry
 
+    async def contribution_reduction_limit(self, run, original, current):
+        limit = min(original.amount, await self.repo.contribution_headroom(run, original.unit_id) + current)
+        return limit, {**CONTRIBUTION_EXCEEDS_BOOKED,
+            'message': ('Für diese Korrektur ist kein positiver Restbetrag mehr möglich. Bitte verwenden Sie „Korrektur löschen“.'
+                if limit <= ZERO else f'Sie können für diese Korrektur höchstens {_euro(limit)} beibehalten.')}
+
     async def reduce_contribution(self, run, entry_id, reduced_to, reason):
         original = next((entry for entry in await self.repo.entries(run) if entry.id == entry_id), None)
         if original is None:
@@ -364,24 +372,25 @@ class ReserveLedgerService:
         if (await self.read(run))['frozen'] or await self.repo.has_finalized_opening_period(run):
             raise HTTPException(409, {'code': 'RESERVE_PERIOD_FINALIZED', 'message': 'Die Rücklage dieses Zeitraums ist finalisiert.'})
         if original.component != 'CONTRIBUTION' or original.unit_id is None or original.payment_id or original.reverses_entry_id:
-            raise HTTPException(422, {'code': 'RESERVE_INPUT_INVALID', 'message': 'Sie können nur eine Zuführungskorrektur mit Einheitenbezug verringern oder löschen.'})
+            raise HTTPException(422, {'code': 'RESERVE_INPUT_INVALID', 'message': 'Sie können nur eine Zuführungskorrektur mit Einheitenbezug ändern oder löschen.'})
         if not reason.strip():
             raise HTTPException(422, {'code': 'RESERVE_CORRECTION_REASON_REQUIRED', 'message': 'Bitte begründen Sie die Rücklagenkorrektur.'})
         current = await self.repo.current_contribution_amount(original)
         target = money(reduced_to)
-        limit = min(current, await self.repo.contribution_headroom(run, original.unit_id) + current)
-        if target > current or target > ZERO and target > limit:
-            raise HTTPException(422, {**CONTRIBUTION_EXCEEDS_BOOKED,
-                'message': f'Sie können für diese Korrektur höchstens {_euro(limit)} beibehalten.'})
-        if target < ZERO or target == current or current <= ZERO:
-            raise HTTPException(422, {'code': 'RESERVE_AMOUNT_INVALID', 'message': 'Bitte verringern Sie den verbleibenden Korrekturbetrag oder löschen Sie die Korrektur.'})
+        limit, detail = await self.contribution_reduction_limit(run, original, current)
+        if current == ZERO and target == ZERO:
+            raise HTTPException(422, CORRECTION_ALREADY_ZERO)
+        if target > ZERO and target > limit:
+            raise HTTPException(422, detail)
+        if target < ZERO or target == current:
+            raise HTTPException(422, CORRECTION_AMOUNT_INVALID)
         entry = await self.repo.create(ReserveLedgerEntry(
             property_id=run.property_id, settlement_run_id=run.id, entry_date=run.period_end,
             component='CONTRIBUTION', amount=target-current, reason=reason.strip(), created_by=self.user_id,
             unit_id=original.unit_id, reverses_entry_id=original.id))
         await AuditRepository(self.session, self.org_id).create(AuditEvent(
             actor_user_id=self.user_id, entity_type='settlement_run', entity_id=run.id,
-            action='reserve.contribution_reduced', payload_diff={
+            action='reserve.contribution_restored' if target > current else 'reserve.contribution_reduced', payload_diff={
                 'entry_id': str(entry.id), 'reverses_entry_id': str(original.id),
                 'old_amount': format(current, '.2f'), 'new_amount': format(target, '.2f'), 'reason': reason.strip()}))
         await self.invalidate_computation(run)

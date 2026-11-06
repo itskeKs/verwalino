@@ -110,6 +110,112 @@ def _U(n: int) -> uuid.UUID:
     return uuid.UUID(int=n)
 
 
+class TestGoldenCommercialPreallocation:
+    def scenario(self):
+        inp = TestGolden1FlaecheTrivial()._scenario(_U(21))
+        units = tuple(replace(u, area=Decimal(area), usage_type=usage) for u, area, usage in zip(
+            inp.units, ('60', '75', '65'), ('GEWERBE', 'WOHNUNG', 'WOHNUNG')))
+        return replace(inp, units=units, cost_positions=(replace(inp.cost_positions[0], gross_amount=Decimal('1200.00')),))
+
+    @pytest.mark.parametrize('rule', [{}, {'commercial_share_percent': Decimal('50')}, {'commercial_amount': Decimal('600.00')}])
+    def test_shop_and_flats_reconcile_with_and_without_an_explicit_rule(self, rule):
+        inp = self.scenario()
+        if rule:
+            rule = {**rule, 'commercial_reason': 'Gastronomie, Restmüll 2 × 1.100 l'}
+            inp = replace(inp, cost_positions=(replace(inp.cost_positions[0], **rule),))
+        results = [compute_bk_settlement(replace(inp, target_lease_agreement_id=l.lease_agreement_id)) for l in inp.lease_periods]
+        assert [r.total_cost for r in results] == list(map(Decimal, ('600.00', '321.43', '278.57') if rule else ('360', '450', '390')))
+        assert sum(r.total_cost for r in results) == Decimal('1200.00')
+        if rule:
+            for result in results:
+                assert 'Vorwegabzug Gewerbe 600,00 € – Gastronomie, Restmüll 2 × 1.100 l' in result.lines[0].note
+                frozen = build_snapshot_payload(inp, result)['inputs']['cost_positions'][0]
+                assert frozen['commercial_reason'] == rule['commercial_reason']
+
+    def test_several_commercial_units_and_other_eligible_uses_keep_exact_group_cents(self):
+        inp = self.scenario()
+        units = (*inp.units, replace(inp.units[0], id=_U(14), number='4', area=Decimal('40')))
+        # The non-commercial remainder includes supported parking/other units.
+        units = (units[0], replace(units[1], usage_type='STELLPLATZ'), replace(units[2], usage_type='SONSTIGE'), units[3])
+        leases = (*inp.lease_periods, replace(inp.lease_periods[0], lease_agreement_id=_U(24), unit_id=_U(14)))
+        pos = replace(inp.cost_positions[0], gross_amount=Decimal('1200.01'),
+            commercial_share_percent=Decimal('50'), commercial_reason='Measured commercial burden')
+        inp = replace(inp, units=units, lease_periods=leases, cost_positions=(pos,))
+        amounts = [compute_bk_settlement(replace(inp, target_lease_agreement_id=l.lease_agreement_id)).total_cost for l in leases]
+        assert amounts == list(map(Decimal, ('360.01', '321.43', '278.57', '240.00')))
+        assert sum(amounts) == Decimal('1200.01')
+
+    def test_only_the_already_apportionable_amount_is_split(self):
+        inp = self.scenario()
+        pos = replace(inp.cost_positions[0], gross_amount=Decimal('2000'), tenant_apportionable='GEMISCHT_PRUEFEN',
+            apportionable_tenant_amount=Decimal('1200'), commercial_amount=Decimal('600'), commercial_reason='Commercial waste')
+        inp = replace(inp, cost_positions=(pos,))
+        amounts = [compute_bk_settlement(replace(inp, target_lease_agreement_id=l.lease_agreement_id)).total_cost for l in inp.lease_periods]
+        assert amounts == list(map(Decimal, ('600', '321.43', '278.57')))
+
+    @pytest.mark.parametrize('rule', [
+        {'commercial_share_percent': Decimal('50'), 'commercial_reason': '  '},
+        {'commercial_share_percent': Decimal('101'), 'commercial_reason': 'Reason'},
+        {'commercial_amount': Decimal('1200.01'), 'commercial_reason': 'Reason'},
+        {'commercial_amount': Decimal('600'), 'commercial_share_percent': Decimal('50'), 'commercial_reason': 'Reason'},
+    ])
+    def test_invalid_commercial_rules_fail_loudly(self, rule):
+        from app.engine.settlement import EngineValidationError
+        inp = self.scenario()
+        with pytest.raises(EngineValidationError, match='Vorwegabzug'):
+            compute_bk_settlement(replace(inp, cost_positions=(replace(inp.cost_positions[0], **rule),)))
+
+    def test_no_commercial_unit_keeps_the_former_result(self):
+        inp = self.scenario()
+        inp = replace(inp, units=tuple(replace(u, usage_type='WOHNUNG') for u in inp.units))
+        assert compute_bk_settlement(inp).total_cost == Decimal('360.00')
+
+    @pytest.mark.parametrize('amount,commercial', [('1200.02', '600.01'), ('0.03', '0.02'), ('0.00', '0.00')])
+    def test_percentage_and_fixed_source_cents_agree_across_fiscal_boundaries(self, amount, commercial):
+        inp = self.scenario()
+        end = date(2027, 12, 31)
+        inp = replace(inp, property=replace(inp.property, fiscal_year_start_month=7), period_end=end,
+            lease_periods=tuple(replace(lease, valid_to=None) for lease in inp.lease_periods),
+            units=tuple(replace(u, consumption=u.area) for u in inp.units))
+        amounts = []
+        for rule in ({'commercial_share_percent': Decimal('50')}, {'commercial_amount': Decimal(commercial)}):
+            pos = replace(inp.cost_positions[0], gross_amount=Decimal(amount), service_period_to=end, tenant_distribution_key='VERBRAUCH',
+                commercial_reason='Commercial burden', **rule)
+            results = [compute_bk_settlement(replace(inp, cost_positions=(pos,),
+                target_lease_agreement_id=l.lease_agreement_id)) for l in inp.lease_periods]
+            amounts.append([result.total_cost for result in results])
+            for part in results[0].period_results:
+                assert Decimal(0) <= part.lines[0].amount <= part.lines[0].total_amount
+        assert amounts[0][0] == Decimal(commercial)
+        assert amounts[0] == amounts[1]
+        assert sum(amounts[0]) == Decimal(amount)
+
+    @pytest.mark.parametrize('key', ['WOHNFLAECHE', 'PERSONENZAHL', 'VERBRAUCH'])
+    def test_group_cents_survive_tenant_changes_vacancy_and_adjacent_windows(self, key):
+        from app.engine.periods import build_unit_cover
+        from app.engine.types import HouseholdInput
+        inp = self.scenario()
+        units = tuple(replace(u, consumption=u.area, household=(HouseholdInput(YEAR_START, 1),
+            HouseholdInput(YEAR_START, 1, True))) for u in inp.units)
+        leases = (replace(inp.lease_periods[0], valid_to=date(2025, 9, 30)),
+            inp.lease_periods[1], replace(inp.lease_periods[2], valid_from=date(2025, 3, 1)),
+            replace(inp.lease_periods[0], lease_agreement_id=_U(24), valid_from=date(2025, 10, 1)))
+        pos = replace(inp.cost_positions[0], gross_amount=Decimal('1200.01'), tenant_distribution_key=key,
+            commercial_share_percent=Decimal('50'), commercial_reason='Commercial burden')
+        inp = replace(inp, units=units, lease_periods=leases, cost_positions=(pos,))
+        results = [compute_bk_settlement(replace(inp, target_lease_agreement_id=l.lease_agreement_id)) for l in leases]
+        vacancy = sum(v.amount for v in results[0].vacancy_attribution)
+        assert results[0].total_cost + results[3].total_cost == Decimal('600.01')
+        assert results[1].total_cost + results[2].total_cost + vacancy == Decimal('600.00')
+        for lease, whole in zip(leases, results):
+            windows = [(YEAR_START, date(2025, 5, 13)), (date(2025, 5, 14), YEAR_END)]
+            parts = [compute_bk_settlement(replace(inp, target_lease_agreement_id=lease.lease_agreement_id,
+                period_start=a, period_end=b)) for a, b in windows]
+            assert sum(r.total_cost for r in parts) == whole.total_cost
+        # The unchanged cover builder still attributes the vacant flat to its owner.
+        assert build_unit_cover(units[2].id, YEAR_START, YEAR_END, list(leases), list(inp.owner_periods))[0].kind == 'VACANCY'
+
+
 def _cost_lines(result):
     return {ln.category_code: ln for ln in result.lines if ln.line_type == "COST"}
 
@@ -648,3 +754,107 @@ class TestGolden5ExitScenario:
         h2 = canonical_sha256(build_snapshot_payload(inp, r2))
         assert h1 == h2
         assert len(h1) == 64
+
+
+def persons_scenario(year=2026):
+    from app.engine.types import HouseholdInput
+    start, end = date(year, 1, 1), date(year, 12, 31)
+    inp = TestGolden1FlaecheTrivial()._scenario(_U(21))
+    return replace(inp, period_start=start, period_end=end,
+        units=(replace(inp.units[0], household=(HouseholdInput(start, 2), HouseholdInput(date(year, 6, 1), 3))),
+               replace(inp.units[1], household=(HouseholdInput(start, 1, True), HouseholdInput(date(year, 3, 1), 1)))),
+        lease_periods=(replace(inp.lease_periods[0], valid_from=start, valid_to=None),
+                       replace(inp.lease_periods[1], valid_from=date(year, 3, 1), valid_to=None)),
+        owner_periods=inp.owner_periods[:2],
+        cost_positions=(replace(inp.cost_positions[0], gross_amount=Decimal('1250.00'),
+            service_period_from=start, service_period_to=end, tenant_distribution_key='PERSONENZAHL'),))
+
+
+def test_person_days_include_household_changes_and_owner_vacancy_once():
+    inp = persons_scenario()
+    anna = compute_bk_settlement(inp)
+    bernd = compute_bk_settlement(replace(inp, target_lease_agreement_id=_U(22)))
+    line = anna.lines[0]
+    assert line.distribution_base_share == 944
+    assert line.distribution_base_total == 1309
+    assert '944' in line.note and 'Personentage' in line.note
+    assert bernd.lines[0].distribution_base_share == 306
+    assert (anna.total_cost, bernd.total_cost) == (Decimal('901.45'), Decimal('292.21'))
+    assert sum(v.amount for v in anna.vacancy_attribution) == Decimal('56.34')
+    assert anna.total_cost + bernd.total_cost + sum(v.amount for v in anna.vacancy_attribution) == Decimal('1250.00')
+    snapshot = build_snapshot_payload(inp, anna)
+    assert snapshot['inputs']['units'][0]['household'][1]['persons'] == 3
+    assert snapshot['result']['lines'][0]['distribution_base_share'] == '944.000000'
+
+
+@pytest.mark.parametrize('vacancy,missing_from', [(False, '01.03.2026'), (True, '01.01.2026')])
+def test_person_days_never_substitute_the_other_household_stream(vacancy, missing_from):
+    from app.engine.rounding import DistributionError
+    inp = persons_scenario()
+    unit = replace(inp.units[1], household=tuple(r for r in inp.units[1].household if r.is_vacancy != vacancy))
+    with pytest.raises(DistributionError, match=f'Handeingabe erforderlich: Personenzahl für Einheit 2 ab {missing_from} fehlt'):
+        compute_bk_settlement(replace(inp, units=(inp.units[0], unit)))
+
+
+@pytest.mark.parametrize('year,expected_days', [(2026, 47), (2024, 49)])
+def test_person_days_weight_mid_month_changes_and_leap_day(year, expected_days):
+    from app.engine.types import HouseholdInput
+    inp = persons_scenario(year)
+    start, end = date(year, 2, 1), date(year, 2, 29 if year == 2024 else 28)
+    inp = replace(inp, period_start=start, period_end=end,
+        units=(replace(inp.units[0], household=(HouseholdInput(start, 1), HouseholdInput(date(year, 2, 10), 2))),
+               replace(inp.units[1], household=(HouseholdInput(start, 1, True),))),
+        cost_positions=(replace(inp.cost_positions[0], service_period_from=start, service_period_to=end),))
+    result = compute_bk_settlement(inp)
+    assert result.lines[0].distribution_base_share == expected_days
+    assert result.lines[0].distribution_base_total == expected_days + (end - start).days + 1
+
+
+def test_person_days_split_successive_tenants_by_counts_not_just_days():
+    from app.engine.types import HouseholdInput
+    inp = persons_scenario()
+    unit = replace(inp.units[0], household=(HouseholdInput(inp.period_start, 1), HouseholdInput(date(2026, 7, 1), 3)))
+    leases = (replace(inp.lease_periods[0], valid_to=date(2026, 6, 30)),
+              replace(inp.lease_periods[1], unit_id=unit.id, valid_from=date(2026, 7, 1)))
+    inp = replace(inp, units=(unit,), lease_periods=leases)
+    first = compute_bk_settlement(inp)
+    second = compute_bk_settlement(replace(inp, target_lease_agreement_id=_U(22)))
+    assert first.lines[0].distribution_base_share == 181
+    assert second.lines[0].distribution_base_share == 552
+    assert (first.total_cost, second.total_cost) == (Decimal('308.66'), Decimal('941.34'))
+
+
+def test_person_days_explicit_zero_is_present_and_constant_counts_keep_the_ratio():
+    from app.engine.types import HouseholdInput
+    inp = persons_scenario()
+    inp = replace(inp, lease_periods=(inp.lease_periods[0], replace(inp.lease_periods[1], valid_from=inp.period_start)))
+    inp = replace(inp, units=tuple(replace(u, household=(HouseholdInput(inp.period_start, n),)) for u, n in zip(inp.units, (0, 2))))
+    assert compute_bk_settlement(inp).total_cost == 0
+    assert compute_bk_settlement(replace(inp, target_lease_agreement_id=_U(22))).total_cost == Decimal('1250.00')
+    inp = replace(inp, units=tuple(replace(u, household=(HouseholdInput(inp.period_start, n),)) for u, n in zip(inp.units, (2, 3))))
+    assert compute_bk_settlement(inp).total_cost == Decimal('500.00')
+
+
+@pytest.mark.parametrize('amount', ['1250.00', '1000.01', '-1000.01'])
+def test_person_days_short_windows_reconcile_across_a_household_change(amount):
+    inp = persons_scenario()
+    inp = replace(inp, cost_positions=(replace(inp.cost_positions[0], gross_amount=Decimal(amount)),))
+    full = compute_bk_settlement(inp)
+    first = compute_bk_settlement(replace(inp, period_end=date(2026, 4, 15)))
+    second = compute_bk_settlement(replace(inp, period_start=date(2026, 4, 16)))
+    assert first.total_cost + second.total_cost == full.total_cost
+    assert first.lines[0].distribution_base_share + second.lines[0].distribution_base_share == 944
+
+
+@pytest.mark.parametrize('counts,total,expected', [
+    ((1, 2, 3), '150.03', ('25.00', '50.01', '75.02')),
+    ((1, 4, 7), '100.00', ('8.33', '33.33', '58.34')),
+    ((1, 4, 7), '1000.00', ('83.33', '333.33', '583.34')),
+])
+def test_person_days_keep_exact_remainder_ties_for_three_constant_counts(counts, total, expected):
+    from app.engine.types import HouseholdInput
+    inp = TestGolden1FlaecheTrivial()._scenario(_U(21))
+    inp = replace(inp, units=tuple(replace(u, household=(HouseholdInput(YEAR_START, n),)) for u, n in zip(inp.units, counts)),
+        cost_positions=(replace(inp.cost_positions[0], tenant_distribution_key='PERSONENZAHL', gross_amount=Decimal(total)),))
+    assert [compute_bk_settlement(replace(inp, target_lease_agreement_id=lease.lease_agreement_id)).total_cost
+            for lease in inp.lease_periods] == [Decimal(value) for value in expected]

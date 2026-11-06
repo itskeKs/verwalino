@@ -2,6 +2,20 @@
 
 Browser acceptance journeys for bank import/assignment, rent changes, deposits and dunning now live in the `@browser` features; see [the feature runner](../features/README.md#browser-features).
 
+The property, person and unit detail pages and the persons/bank account lists keep their
+loaded content during save refreshes and confirm successful writes with inline status text.
+Changed list values appear without a manual reload; errors retain useful input and loaded data.
+Bank assignment/ignore finish their database transaction before the success response, using
+the same function-scoped dependency as the existing writer guards. Their table stays visible
+during the subsequent refresh and reflects the confirmed status immediately.
+A later account edit starts from the canonical successful response, including while its list read
+is pending. Confirmed contact/transaction access loss removes open private editors and invalidates
+late completions; transient failures retain useful input. Assignment feedback remains page-level
+and visible after importing a long statement without leaving the import page. See the
+[save lifecycle design and screenshots](../DESIGN.md#master-data-save-lifecycle) and
+[executable browser journey](../features/save_lifecycle.feature).
+
+
 As of: 2026-06-02 · Version 0.1 (design, before implementation)
 Reference: [sdd-property-management-mvp.md](sdd-property-management-mvp.md) v0.2 §3 (non-goal: bank import), §5.4 (incoming payments — *note: the SDD numbers them §6.3/§6.7*), §6.3 (bank accounts), §6.7 (rent/payment management), §11 (PDF), §13 (`Payment`/`OpenItem`), §14 (chronology), §16, §17, §18 · [archived roadmap](archive/roadmap.md) M6 · [architecture.md](architecture.md) §2.6 (segregation of funds (Vermögenstrennung)), §5.1 (conventions), §5.3 (`bank_account` anchor), assumption A-4 · [m3-abrechnungs-engine.md](m3-abrechnungs-engine.md) §7 (`advance_payments_source` MANUAL→DERIVED) · [m4-weg-abrechnung.md](m4-weg-abrechnung.md) §2.4 (paid_advances, settlement balance (Abrechnungsspitze)) · ADRs: [0003](adr/0003-gobd-immutability-mechanism.md) (reused), [0005](adr/0005-rounding-largest-remainder.md) (reused), [0006](adr/0006-valid-to-convention.md) (reused), [0007](adr/0007-weg-settlement-balance-and-economic-plan.md) (monthly basis, balance) · **[0009-expected-actual-and-payment-receipt.md](adr/0009-expected-actual-and-payment-receipt.md) (new)** · **[0010-segregation-of-funds-payments.md](adr/0010-segregation-of-funds-payments.md) (new)**
 Status: **Draft for confirmation by the human — no application code, no migration, no commit**
@@ -84,7 +98,7 @@ A `payment` row is **one recorded money movement** (inflow or outflow) against a
 | `tenant_profile_id` | `UUID NULL` FK→`tenant_profile` (`RESTRICT`) | for a tenant payment. |
 | `owner_profile_id` | `UUID NULL` FK→`owner_profile` (`RESTRICT`) | for an owner payment. *(exactly **one** of the two set for person-related types; CHECK §1.4.)* |
 | **Purpose/type (controlled vocabulary, §1.3):** | | |
-| `payment_type` | `String(24) NOT NULL` | `NK_VORAUSZAHLUNG` \| `HAUSGELD_VORSCHUSS` \| `RUECKLAGENANTEIL` \| `KALTMIETE` \| `SONDERZAHLUNG` \| `NACHZAHLUNG` \| optionally `KAUTION`. CHECK. **The type controls the settlement integration (§6) — it is correctness-critical.** |
+| `payment_type` | `String(24) NOT NULL` | `NK_VORAUSZAHLUNG` \| `HK_VORAUSZAHLUNG` \| `HAUSGELD_VORSCHUSS` \| `RUECKLAGENANTEIL` \| `KALTMIETE` \| `SONDERZAHLUNG` \| `NACHZAHLUNG` \| optionally `KAUTION`. CHECK. **The type controls the settlement integration (§6) — it is correctness-critical.** |
 | **Assignment (what the payment settles):** | | |
 | `lease_agreement_id` | `UUID NULL` FK→`lease_agreement` (`RESTRICT`) | for tenant-related types: the lease whose expected amount the payment serves. |
 | `period_year` | `SMALLINT NULL` | Settlement/expected-amount year to which the payment is assigned (for the DERIVED aggregation, §6). |
@@ -109,6 +123,7 @@ The type is the **control key** for the settlement integration (§6) — hence s
 | `payment_type` | Counterparty | SDD §6.7 | flows into (§6) |
 | --- | --- | --- | --- |
 | `KALTMIETE` | Tenant | "Tenant: base rent" | Tenant ledger expected/actual (rent); **not** into the operating cost statement. |
+| `HK_VORAUSZAHLUNG` | Tenant | "Tenant: heating advance payment" | **Heating statement `heating_advance_payments_total` (DERIVED)** (§6.2). |
 | `NK_VORAUSZAHLUNG` | Tenant | "Tenant: operating cost advance payment" | **Operating cost statement `advance_payments_total` (DERIVED)** (§6.2). |
 | `HAUSGELD_VORSCHUSS` | Owner | "Owner: Hausgeld advance payment" | WEG expected/actual **informational**; **NOT** into the settlement balance (§6.3). |
 | `RUECKLAGENANTEIL` | Owner | "Owner: reserve share (Rücklagenanteil)" | Reserve actual (informational); **not** into the balance (§6.3/§6.4). |
@@ -135,7 +150,7 @@ open_item(person, period, type) = expected(person, period, type)  −  Σ assign
 - `open_item` is computed as a **pure function** (`app/engine/mietkonto.py`) and delivered via a **read-only API endpoint** (list per person/property). No row is materialized per month, there is no generation job, and no second truth that could drift.
 - **M7 delimitation (no anticipation):** Dunning levels/history (M7) need a per-item anchor (a dunning status "sticks" to a specific overdue item). M6 supplies the *computed* overdue items as input; whether M7 materializes a small persisted dunning/status record from them (referencing person/period/type) is **[§18/domain F6-1]** and M7's concern. **M6 does not decide the dunning persistence.**
 
-**Counterparty/type consistency (CHECK on `payment`):** tenant-related types (`KALTMIETE`, `NK_VORAUSZAHLUNG`, `KAUTION`) require `tenant_profile_id NOT NULL` and `owner_profile_id NULL`; owner-related ones (`HAUSGELD_VORSCHUSS`, `RUECKLAGENANTEIL`, `SONDERZAHLUNG`) the reverse; `NACHZAHLUNG` allows both (depending on the addressee), but requires that **exactly one** person is set. These CHECKs prevent a payment from being recorded type-inconsistently (basis of the unambiguous DERIVED assignment, §6).
+**Counterparty/type consistency (CHECK on `payment`):** tenant-related types (`KALTMIETE`, `NK_VORAUSZAHLUNG`, `HK_VORAUSZAHLUNG`, `KAUTION`) require `tenant_profile_id NOT NULL` and `owner_profile_id NULL`; owner-related ones (`HAUSGELD_VORSCHUSS`, `RUECKLAGENANTEIL`, `SONDERZAHLUNG`) the reverse; `NACHZAHLUNG` allows both (depending on the addressee), but requires that **exactly one** person is set. These CHECKs prevent a payment from being recorded type-inconsistently (basis of the unambiguous DERIVED assignment, §6).
 
 ---
 
@@ -150,12 +165,19 @@ monthly expected without rate change = valid base rent + valid advance payment
                                        (lease_agreement + lease_rent_change)
 ```
 
-- **Effective-date changes (Phase 2, T23):** `lease_rent_change` adds complete base rent/operating cost rates without overwriting the original contract amounts. Each rate applies from its effective date inclusive; the last previous rate also continues to apply when a query begins later. Several daily segments are summed exactly per month/component and only then rounded; constant rates keep the existing largest-remainder partial-month logic. Example March 2026: 700 EUR through March 14, 750 EUR from March 15 yields 727.42 EUR base rent, operating costs 150 EUR unchanged. History append-only, effective dates unique per lease; organization/parent RLS and prepare permissions apply, financial lock before lease lock. Existing bookings/final snapshots remain unchanged.
-- **Operation (Phase 2, T24):** Every lease history in the unit shows original rates and changes with their source; "Miete ändern ab …" ("Change rent from …") records the full valid base rent/operating cost rate. The date must lie within the contract limits displayed inclusively, cent-exact strings up to `Numeric(14,2)`, no floating-point arithmetic. Write roles can add entries, READ_ONLY can only read; load/server errors are visible, inputs are kept and the dialog is locked against double actions/closing during the POST. The browser acceptance run demonstrates unchanged original data after reload and 24 tenant ledger items with an annual expected amount of 10,650 EUR for +50 EUR from April 1, 2026.
-- **Separation by component:** The expected amount is maintained separately for `KALTMIETE` (= `base_rent`) and `NK_VORAUSZAHLUNG` (= `advance_payment`), because only the operating cost advance payment flows into the operating cost statement (§6.2), the base rent does not. Mixing them would distort the settlement integration.
+- **Effective-date changes (Phase 2, T23):** `lease_rent_change` adds complete base rent/operating/heating rates without overwriting the original contract amounts. Each rate applies from its effective date inclusive; the last previous rate also continues to apply when a query begins later. Several daily segments are summed exactly per month/component and only then rounded; constant rates keep the existing largest-remainder partial-month logic. Example March 2026: 700 EUR through March 14, 750 EUR from March 15 yields 727.42 EUR base rent, operating costs 150 EUR unchanged. History append-only, effective dates unique per lease; organization/parent RLS and prepare permissions apply, financial lock before lease lock. Existing bookings/final snapshots remain unchanged.
+- **Operation (Phase 2, T24):** Every lease history in the unit shows original rates and changes with their source; "Miete ändern ab …" ("Change rent from …") records the full valid base rent/operating/heating rate. The date must lie within the contract limits displayed inclusively, cent-exact strings up to `Numeric(14,2)`, no floating-point arithmetic. Write roles can add entries, READ_ONLY can only read; load/server errors are visible, inputs are kept and the dialog is locked against double actions/closing during the POST. The browser acceptance run demonstrates unchanged original data after reload and 24 tenant ledger items with an annual expected amount of 10,650 EUR for +50 EUR from April 1, 2026.
+- **Letters and lease documents (#219):** The shared `rate_on` resolver supplies the base rent and both advances valid on the document date, inclusive of that day's change. The built-in contract and `vertrag.mietaufstellung` show separate **Betriebskosten-Vorauszahlung** and **Heizkosten-Vorauszahlung** lines when heating is positive, plus **Monatliche Gesamtmiete** (750 + 150 + 90 = 990 EUR). Existing `vertrag.vorauszahlung` templates also expand to those advance/total lines for positive heating. At zero heating the advance stays a single amount; unchanged leases preserve their previous contract text and rendered PDF bytes. A changed rate is dated rather than called “Originalvertrag”. Issued originals and request replays remain stored bytes; source/contact/export checks are unchanged. This does not introduce the optional combined/separate choice tracked in #311. See [document usage](operations/tasks-and-documents.md#lease-contracts-and-handovers-37).
+  A document at the end of a tenancy uses the last inclusive tenancy day as the latest rate date.
+  The summary shows that “Stand DD.MM.YYYY” and includes the total even at zero heating. A contract
+  dated later still carries its selected document date. A historical circular uses the last tenancy
+  day as its existing **Stichtag**, which determines its letter date and recipient set. The
+  historical rule leaves the original single-advance rendering in place for unchanged rates
+  before the last tenancy day and for open leases.
+- **Separation by component:** The expected amount is maintained separately for `KALTMIETE` (= `base_rent`) and the two advances: `NK_VORAUSZAHLUNG` (= `advance_payment`) and `HK_VORAUSZAHLUNG` (= `heating_advance_payment`). Each advance credits its own statement component (§6.2), the base rent does not. Mixing them would distort the settlement integration.
 - **Mid-year start/end (day-accurate partial months):** If the lease begins/ends in the middle of a month, the expected amount of the partial month is **pro rata**. Basis: monthly, the partial month computed day-accurately via the same `app/engine/periods.py` arithmetic as M3 (day-inclusive, ADR-0004/0006). **[§18/domain F6-4]** whether a partial month is computed day-accurately (`days_occupied_in_month / days_in_month`) or as a flat full/half month — handled differently under leases/in practice. **Provisional assumption:** day-accurate partial month (consistent with M3); clearly marked, requires domain sign-off.
 - **Read boundary:** `lease_agreement.valid_to` is stored half-open; the expected-amount function reads via `db_exclusive_to_engine_inclusive` (ADR-0006) — the **same** read boundary as M3, **one** definition. This way the last rental month counts correctly (no off-by-one at lease end).
-- **Due date:** an expected-amount month is due from its due date on (for "overdue", M7). **[§18/domain]** Default due date (e.g. 3rd working day of the month, § 556b BGB) — provisionally the start of the month; requires domain sign-off.
+- **Due date:** `KALTMIETE` and `NK_VORAUSZAHLUNG` use the statutory third working day (§ 556b(1) BGB), excluding Saturdays, Sundays and the property's statewide holidays. A missing federal state means nationwide holidays only. Count inclusively from the actual rental interval's start: the later of month start and lease start, including holidays across month/year boundaries. Reporting-period clipping and rent changes never restart the count. Day-exact amounts are unchanged. `HK_VORAUSZAHLUNG` retains its previous date rule pending a separate owner decision. See [holiday coverage](operations/bank-and-payments.md#rent-due-dates-and-holiday-coverage).
 
 ### 2.2 Owner expected amount (per owner, from the finalized economic plan)
 
@@ -167,6 +189,11 @@ monthly expected(owner, month) = economic_plan_line(OWNER_ADVANCE, owner).monthl
 - The source is the `OWNER_ADVANCE.monthly_amount` per owner already computed in M4 and rounded on a **monthly basis** (ADR-0007 E4-3b). M6 invents **nothing** here — it reads the finalized plan.
 - **Only finalized plans** yield a binding monthly Hausgeld expected amount (a `draft` plan is not a resolved expected amount). Without a finalized plan, no Hausgeld advance is invented. Since Phase 2 (T32), explicitly created, frozen special levies (Sonderumlagen) can be added independently of this as a one-time owner expected amount.
 - **Multiple units per owner:** The plan has one `OWNER_ADVANCE` row per (owner, unit); the owner's expected amount per month is the **sum** of the `monthly_amount` over their units (exact, no further rounding — cent + cent = cent, m3 §4.3).
+- **Resolved due date (#206):** The finalized plan's `monthly_due_day` selects a calendar day, default 1. `engine.fristen.owner_due_date` shifts Saturday, Sunday or a public holiday forward to the next working day, using the property's state or nationwide holidays when it has no state. This selects a calendar day; it does not count the tenant's third working day. Day 3 gives 03.07.2026 and 05.10.2026; the default gives 02.03.2026. Owner charges, ledger rows, dunning and the deadline monitor share that date. One-off levy dates and owner-period allocation remain unchanged.
+- **Cutoff and full balance:** The owner account accepts `as_of` independently of the full reporting period and defaults it to the current date. `due_balance` and `not_yet_due_balance` partition signed open amounts, including credits, using the existing #170 classification. Due dates at the cutoff are due; dunning includes unpaid amounts only after their due date. The full Soll, Ist, Saldo and payment allocation do not change. New owner notices name the monthly due date; old included-item snapshots and issued output are not recomputed from the current plan.
+- **Historical compatibility:** Existing explicit days 29–31 remain stored and visible as resolved. If the day is absent from a month, the derived date first clamps to that month's final calendar day, then shifts to the next working day. A historical day 31 therefore gives 02.03.2026 for February 2026 (28 February is a Saturday). Historical NULL is read as day 1. No frozen column, snapshot or issued PDF is rewritten; new input still accepts only 1–28.
+- **Deadline monitor:** Owner arrears use the statement and overdue filter within the selected WEG scope (or the complete unclassified organization). The scoped monitor counts frozen levies for each recipient, including levies outside any active finalized plan. Levies for the same owner, property and month share the existing payment allocation, even when a plan starts or ends that month. If active finalized plans for the same property share a billing month, the monitor returns a conflict (`hausgeld_plan_ambiguous`). This covers overlapping dates and disjoint plan periods within one month. The existing correction chain resolves which plan applies.
+- **Dated ownership and dunning:** The account and owner dunning share the same calculation, limited to the finalized plan's period. The unit's frozen advances follow ownership dates; continuing co-owners keep their frozen cents and a full departing share passes to its unambiguous successor, including a sole remaining co-owner. Zero-rate shares stay zero. Ambiguous transfers are refused. For Karl through June and Lena from July at 400 EUR per month, each account and dunning principal is 2400 EUR for the year. The annual settlement's frozen plan basis remains unchanged.
 
 #### Special levies since Phase 2 (T32)
 
@@ -202,33 +229,71 @@ otherwise be lost. A downgrade-and-upgrade run without such contexts and the ref
 when provenance is already recorded are tested. Issued letters, snapshots and shares
 are not changed retrospectively.
 
-Since Phase 2 (T35), M7 can calculate default interest (Verzugszinsen) for these open
-items from an explicit base interest rate input with an optional configured default:
-`open × (base + 5) / 100 × calendar days since due date / 365`. Per item, rounding to
-the cent (`ROUND_HALF_UP`) happens only once; afterwards the stored interest lines are
-summed. Fees and interest are not themselves charged interest. Example: 700 EUR at a
-base rate of 2.50% over 60 days → 8.63 EUR interest. The interest snapshot records due
-date, reference date, days, base/annual interest rate and amounts; an issued dunning
-notice, including its PDF, uses exclusively these stored values. The expected/actual
-balance of the account is not supplemented by further account postings as a result.
-Without a configured default, the new interface requires an explicit input; old API
-calls without an interest base and existing letters keep their interest-free
-semantics. No official interest rate is invented and no delivery is claimed. Migration
-0129 protects the new amounts and provenance even against a direct SQL update and
-refuses a downgrade that would lose existing interest bases.
+### Accounting scope for tenant dunning notices
+
+In **Mahnungen → Neue Mahnung anlegen**, selecting the tenant and lease leaves
+the accounting scope for the manager to choose. If scoped payments require a
+scope, submitting without one returns HTTP 409 and creates no draft. The form
+explains in German that an exact accounting scope and review of unclassified
+inputs are required. Select an eligible **Abrechnungskreis** and submit again
+to calculate the notice for that scope.
+
+### Default interest on dunning notices
+
+An administrator sets the three fees and enables interest under **Mahnungen → Mahneinstellungen**.
+All organization members can read the settings. Without saved settings, fees are 0.00 / 2.50 /
+2.50 EUR and interest is off. A per-notice fee override takes precedence. In individual
+tenant and owner drafts, a blank override uses the configured fee and `0,00` explicitly
+sets the fee to zero. An invalid override leaves the form open for correction.
+Individual and batch drafts use the same organization policy.
+
+With interest enabled, each overdue item accrues simple interest from the day after its due
+date through the notice date. The item is split at base-rate changes and on the booked value
+date of each partial payment. That date uses the reduced principal. The existing period
+assignment, payment allocation, open balances and notice eligibility still apply.
+The annual rate is the statutory base rate plus 5 percentage points for residential leases and
+owners, or 9 for a unit with usage type `GEWERBE`. Each segment accrues
+`principal × annual rate × calendar days / 36500`. Round the sum per item to cents with
+`ROUND_HALF_UP`, then sum the rounded items. Displayed segment amounts use differences between
+rounded running totals so they reconcile to the frozen item amount. Interest accrues on the
+overdue principal only.
+
+Migration 0174 seeds the global `base_interest_rate` catalog with the January and July rates
+from 2002 through July 2026. Verify future entries against the
+[Bundesbank rate history](https://www.bundesbank.de/de/bundesbank/organisation/agb-und-regelungen/basiszinssatz-607820)
+and publish each new half-year through a release migration. The first half-year comes from the
+[Bundesbank's December 2001 announcement](https://www.bundesbank.de/resource/blob/680962/59e9f594e1d5c41d967c8b810a7f3d19/472B63F073F071307366337C94F8C870/2001-12-28-basiszinssatz-46382-download.pdf).
+When a required half-year is missing, the API returns 409 and the user sees which rate is missing.
+
+For 100 EUR due 7 April 2026, the residential notice through 31 October records 84 days
+at 6.27% (1.44 EUR) and 123 days at 6.52% (2.20 EUR), totaling 3.64 EUR in interest.
+The stored snapshot supplies the detail and PDF with dates, principal, days, base and annual
+rates, premium, and interest amounts. Existing issued notices retain their stored fees,
+interest and single-rate snapshots. The tenant ledger displays the fees and interest of
+issued notices for the selected lease separately from Soll, Ist and Saldo. For an unscoped
+notice, the frozen snapshot records its source lease. Historical tenant notices without a
+verified lease assignment remain in **Mahnungen**. The calculation creates no expected charges.
+
+The notice detail shows principal and interest first in the frozen calculation,
+and the open amount first in the arrears table, so these values are readable at
+360 px without scrolling sideways. Other table columns remain scrollable within
+their card. `Ausgestellt am` shows the stored issue instant as `TT.MM.JJJJ, HH:MM`
+in German time (`Europe/Berlin`); API responses carry ISO timestamps with timezone.
 
 Since T53, individual and selected tenant dunning notices use the same
 history-sensitive tenant ledger path. The non-writing dunning-run preview filters
 principal claims strictly greater than the explicitly chosen threshold. Confirmation
 creates the chosen drafts atomically; changes to sources/escalation make a new preview
 necessary. Repeating a request whose outcome was unclear returns the same original
-drafts after renewed prepare/source admission. No M6 payments are added, old issued
+drafts after renewed prepare/source admission. This includes an exact retry of a committed
+legacy request that used the former rate field. New applies and all previews use the saved
+policy. No M6 payments are added, old issued
 letters/PDFs are not changed and nothing is sent.
 
 ### 2.3 Expected-amount engine as a pure function
 
 `app/engine/mietkonto.py`:
-- `tenant_expected_charges(lease, period) -> list[ExpectedCharge]` — monthly expected-amount items (KALTMIETE/NK_VORAUSZAHLUNG separately), day-accurate partial months.
+- `tenant_expected_charges(lease, period) -> list[ExpectedCharge]` — monthly expected-amount items (KALTMIETE/NK_VORAUSZAHLUNG/HK_VORAUSZAHLUNG separately), day-accurate partial months.
 - `owner_expected_charges(owner_advance_lines, period) -> list[ExpectedCharge]` — monthly Hausgeld expected-amount items per owner.
 - Both take **frozen inputs** (dataclasses) and return a deterministic expected-amount list; no DB. The rounding of the monthly installments already happens in M4 (`monthly_amount`); for the tenant expected amount, `base_rent+advance_payment` is already cent-exact, × a day-accurate partial month if applicable via `distribute_amount` (ADR-0005, if a partial month yields several partial expected amounts).
 
@@ -240,11 +305,41 @@ letters/PDFs are not changed and nothing is sent.
 
 `app/engine/mietkonto.py`:
 ```
-account_statement(expected_charges, payments) -> MietkontoResult
+account_statement(expected_charges, payments, as_of=None) -> MietkontoResult
 ```
 - Groups the **expected amount** (from §2) and the **actual** (`booked`, non-reversed `payment`) per (period, type).
 - Returns, per expected-amount period, the **open item** (expected − assigned actual) and the **running balance** over the period.
 - **Pure Decimal arithmetic**, no float, deterministic — golden-tested (§7). Summation without rounding (all amounts already cent-exact).
+
+The tenant statement `GET /api/payments/mietkonto/lease/{lease_agreement_id}` accepts
+optional `as_of` (ISO date, default: today). Its `due_balance` and
+`not_yet_due_balance` partition the existing signed open amounts; their sum is
+`balance`. An item is due on and after its existing due date. Undated monthly
+items retain the first-of-month fallback (including heating advances); annual
+buckets use January 1, and bookings without a period are included in the due part.
+Each tenant statement row includes `is_due`, computed by the same engine
+classification used for the aggregate. Owner statements also expose the signed
+balance split and per-row `is_due` for their cutoff (see §2.2). The separate
+open-items endpoint retains its existing response. Credits and partial payments
+retain their existing period and type allocation. The engine computes the split
+with an explicit cutoff.
+
+The cutoff never clips `period_end`: full-year `soll_total`, `ist_total`, `balance`
+and individual open amounts stay unchanged, including at a mid-month cutoff.
+All currently booked payments assigned to the reporting period count, even when
+their value/booking date is later than the cutoff. This is a due-date view of
+the current statement, not a reconstruction of the historical ledger.
+
+In **Mietkonto**, select the lease and reporting period, choose **“Fällig am”**
+(today by default) and click **“Abrufen”**. “Saldo” remains the period balance;
+“davon fällig” alone carries “Rückstand” when positive, and “noch nicht fällig”
+shows the remaining signed part. Detail rows identify nonzero amounts as “fällig”
+or “noch nicht fällig” and zero amounts as “ausgeglichen”, including on narrow
+screens. Credits retain their sign without an arrears label. For 2026 with 900 EUR
+monthly rent, January–October paid except 100 EUR in April, the 01.11.2026 cutoff shows 1,900 EUR Saldo,
+100 EUR due and 1,800 EUR not yet due. On 04.11.2026 November is due:
+1,000 EUR due and 900 EUR not yet due, with the same 1,900 EUR Saldo.
+See §2.2 for the owner statement, owner dunning and the deadline monitor.
 
 ### 3.2 Partial payment → open item
 
@@ -309,17 +404,41 @@ derive_advance_total(payments, filter) -> Decimal
 - **Pure function** (`app/engine/mietkonto.py`), `Decimal` in/out, no DB — testable, deterministic. The service loads the matching `payment` rows (repository query with exactly this filter) and passes them to the function; the function sums. **No bank matching, no parsing** (SDD §3).
 - **No double counting — guaranteed by three properties:** (1) every payment has **exactly one** `payment_type` and **exactly one** period reference (`period_year`) and addressee; (2) **reversed** payments (`reversed_by_id IS NOT NULL`) and reversal rows are treated consistently (either both out, or both in — net zero; see §6.6); (3) the settlement filters are **disjoint** per quantity (operating cost advance payment ≠ Hausgeld advance ≠ base rent). A payment can thus flow into **at most one** settlement quantity.
 
-### 6.2 Operating cost statement (M3, `advance_payments_total`) ← `NK_VORAUSZAHLUNG`
+### 6.2 Operating and heating statement advances
+
+Issue #67 separates the lease's monthly `advance_payment` (operating costs)
+from `heating_advance_payment` (heating, default zero), including each full
+rent-change history row. The ledger emits an additional `HK_VORAUSZAHLUNG`
+charge only for positive heating rates, with the same partial-month and
+rate-change day calculation. Open items, dunning, SEPA rent collection,
+dashboard rent KPIs and deadlines include it. Existing booked NK payments
+remain operating-cost payments.
+
+The statement retains `advance_payments_total` / `advance_payments_source`
+and adds `heating_advance_payments_total` / `heating_advance_payments_source`.
+Each source is MANUAL or DERIVED independently. The existing derivation action
+fills both from their matching active booked payment types. Year/month buckets,
+lease bounds, reversals and frozen credits apply separately to each type.
+Both totals default to unknown; missing totals block computation, coverage and
+finalization. Finalization freezes both totals and sources.
+Manual heating totals use the same signed numeric carrier as operating totals;
+monthly lease and rent-change rates remain non-negative. An older rent-change
+request that omits heating preserves the effective heating rate.
+
+Bank matching maps “heizkosten”, “heizung” and “hk” to heating; “warmmiete”
+covers rent and both advances. Each proposal remains subject to confirmation.
+
 
 **Precise assignment:**
 
 | Settlement quantity | M3 field | payments fed (type + period + addressee) |
 | --- | --- | --- |
-| Tenant's advance payment total | `settlement_run.advance_payments_total` (`source='DERIVED'`) | `payment` with `payment_type='NK_VORAUSZAHLUNG'` **AND** `period_year` = settlement year of the run **AND** `lease_agreement_id` = `settlement_run.lease_agreement_id` **AND** `status='booked'` **AND** not reversed. |
+| Heating advance payment total | `settlement_run.heating_advance_payments_total` (`source='DERIVED'`) | Active booked `HK_VORAUSZAHLUNG` payments of the same lease, assigned period and lease-covered months/days, independently of operating advances. |
+| Operating advance payment total | `settlement_run.advance_payments_total` (`source='DERIVED'`) | Active booked `NK_VORAUSZAHLUNG` payments of the same lease, assigned period and lease-covered months/days, independently of heating advances. |
 
-- **Only the operating cost advance payment** flows into the operating cost statement — **not** the base rent (`KALTMIETE` is tenant ledger expected/actual, not operating costs). This is the sharpest delimitation: a tenant often pays base rent + operating costs in one amount, but in the system they are **two separate `payment` rows with two types** (or a split when recording). The operating cost statement pulls **exclusively** the `NK_VORAUSZAHLUNG` part.
+- **Each advance credits its matching cost component:** `NK_VORAUSZAHLUNG` credits operating costs and `HK_VORAUSZAHLUNG` credits heating costs. Base rent (`KALTMIETE`) stays in the rent account. A combined bank transfer becomes separate `payment` rows for its components when recorded or split.
 - **Addressee-exact:** On a mid-year tenant change, each tenant has their **own** `lease_agreement_id`; the DERIVED sum per run pulls only the payments of **this** lease (consistent with M3 §3.5: one `settlement_run` per lease).
-- **Period-exact:** The payment's `period_year` must match the settlement year. Advance payments for 2025 flow into the 2025 operating cost statement, not 2024 — analogous to the `service_period` logic of the costs (M3 §3.4). **[§18/domain F6-7]** Treatment of payments at the year boundary (December rent paid in January / advance payment for the following year): provisionally the **recorded `period_year`** (assigned manually) is authoritative, not the `value_date`. Requires domain sign-off.
+- **Period-exact:** The recorded `period_year` and optional `period_month` assign an advance to the statement period; a cross-year statement can include both years. Lease-covered days determine partial-period credits. The bank `value_date` does not replace this assignment: a December advance paid in January still belongs to its recorded December period (M3 §3.4).
 
 ### 6.3 WEG settlement (M4, payment status) ← `HAUSGELD_VORSCHUSS` (informational, NOT into the balance)
 
@@ -437,10 +556,18 @@ Write roles can explicitly accept complete unambiguous suggestions,
 split manually in the dialog by lease/owner, payment type and month,
 or ignore a receipt without a payment. Suggestions requiring review or incomplete
 suggestions are not booked automatically. The positive split amounts must
-cover the absolute bank amount cent-exactly; German decimal input is validated without
-floating-point arithmetic. Errors keep the inputs, 409 becomes visible, reload
+cover the absolute bank amount cent-exactly. A split amount accepts German grouping
+with a decimal comma, such as `2.250,00`, and is validated without floating-point
+arithmetic. An invalid amount identifies the affected split row without booking it.
+The dialog scrolls the validation message into view on submission.
+Errors keep the inputs, 409 becomes visible, reload
 follows only on success. READ_ONLY gets no mutation actions. "Alle" ("All") also keeps
 processed rows; account filter and pagination remain server-side.
+The split dialog aligns labels above fields in a responsive form grid. Lease/owner
+targets and notes use the full row width; long lease labels cannot widen the dialog.
+The explanation stays readable, and booking/cancellation share the bottom action row,
+reachable by scrolling on a narrow screen. The Sparkasse journey checks this with
+synthetic transactions at 1280, 800 and 360 px.
 The browser scenarios in `features/bank_assignment.feature` set up master data and
 import receipts through the API, then accept suggestions, split and ignore receipts
 through the UI. They assert January's 850=700+150 is fully paid and its receipt appears
@@ -460,15 +587,22 @@ automatically treated as fully allocable. Balance = income total − cost total;
 amounts remain Decimal-exact, even with large sums and a low outer precision context.
 
 The date basis used deliberately differs from the expected-amount period/service
-period. Security deposits remain reported separately and are not reinterpreted for tax
-purposes. The overview does not replace a complete Anlage V (rental income tax form)
+period. Security deposits remain separately visible as pass-through funds and never
+increase income or balance. Tenant backpayments (`NACHZAHLUNG`) count as income and
+map to Umlagen. `HAUSGELD_VORSCHUSS`, `RUECKLAGENANTEIL` and `SONDERZAHLUNG` count as
+income only for WEG properties, not MIET, SEV or MISCH. These rules live in the
+existing Anlage V category mapping and are shared by year totals and reconciliation.
+The existing SEV report admission restriction remains in force. The overview does not replace a complete Anlage V (rental income tax form)
 or EÜR (cash-basis profit statement). Complete source read permissions and, where
 applicable, an explicit whole-property/whole-year scope are required; partial access
 or unresolved classification does not yield seemingly complete totals. Existing
 bookings and snapshots remain unchanged.
 
 The `/berichte` interface (T39) queries property/year/scope explicitly; changing the
-selection removes old results. The CSV download at `/api/reports/property-year.csv`
+selection removes old results. On narrow screens, scroll the annual expense
+table sideways to see the category, code, allocability and amount. The report
+controls and totals stay within the page width.
+The CSV download at `/api/reports/property-year.csv`
 computes the same basis afresh and additionally requires scope/source export
 permissions, checked again before output. UTF-8 BOM, semicolon, CRLF and decimal comma
 are fixed for spreadsheet programs. Texts prone to formula injection receive an
@@ -535,8 +669,11 @@ The overview's existing exclusions remain unchanged: unbooked/draft payments,
 reversed originals and reversal rows, cancelled payments, raw bank transactions,
 unconfirmed and superseded costs, and records outside the selected property,
 calendar year and complete authorized scope do not enter the mapping. Every amount
-that does enter is counted once: **mapped + unassigned = original report total**
-for each section, including explicit exclusions in unassigned. Refunds/credits keep
+eligible for the section total is counted once: **mapped + unassigned = report total**.
+The visible unassigned list also retains deposits and non-WEG owner receipts with
+their original amounts; those non-income rows are excluded from the income
+reconciliation's unassigned total. WEG owner receipts remain counted but unassigned
+for Anlage V. Excluded expense categories still count in expense reconciliation. Refunds/credits keep
 their signs. No redistribution or sub-cent rounding is needed; the source is already
 cent-exact. An inconsistent input total is refused. Tables are validated at import
 (duplicate categories cannot silently overwrite each other); organization-specific
@@ -570,6 +707,8 @@ overrides and ELSTER submission remain follow-ups, with no migration in this cha
 | `other` | Sonstige Kosten | Werbungskosten |
 <!-- anlage-v-lines:end -->
 
+Both operating-cost and heating advances map to the Umlagen income line in the Anlage V aid.
+
 ##### Default Anlage V category mapping
 
 `NACHZAHLUNG` uses the existing unassigned fallback rather than an entry in the
@@ -588,10 +727,12 @@ compares this documentation exactly.
 | --- | --- | --- |
 | `KALTMIETE` | Mieteinnahmen für Wohnungen (ohne Umlagen) | [§/fachlich] Wohnraummiete als Vorschlag; andere Nutzungen, Angehörige und Vorjahresmieten gesondert prüfen. |
 | `NK_VORAUSZAHLUNG` | Einnahmen aus umgelegten Neben-/Betriebskosten (Umlagen) | [§/fachlich] Laufende Umlagen; Abrechnungserstattungen und Nachzahlungen gesondert prüfen. |
-| `KAUTION` | Nicht zugeordnet | [§/fachlich] Ausgeschlossen: verwahrte Kaution, keine Miete; eine spätere Verrechnung ist gesondert zu prüfen. |
-| `HAUSGELD_VORSCHUSS` | Nicht zugeordnet | [§/fachlich] Ausgeschlossen: WEG-Eigentümervorschuss, keine Vermietungseinnahme. |
-| `RUECKLAGENANTEIL` | Nicht zugeordnet | [§/fachlich] Ausgeschlossen: Rücklagenzuführung, keine Vermietungseinnahme. |
-| `SONDERZAHLUNG` | Nicht zugeordnet | [§/fachlich] Nicht als Miete angesetzt: Eigentümer-Sonderzahlung; Verwendungszweck gesondert prüfen. |
+| `HK_VORAUSZAHLUNG` | Einnahmen aus umgelegten Neben-/Betriebskosten (Umlagen) | [§/fachlich] Laufende Umlagen; Abrechnungserstattungen und Nachzahlungen gesondert prüfen. |
+| `NACHZAHLUNG` | Einnahmen aus umgelegten Neben-/Betriebskosten (Umlagen) | [§/fachlich] Nachzahlung des Mieters aus der Betriebskostenabrechnung als Umlage; Zufluss prüfen. |
+| `KAUTION` | Nicht zugeordnet | [§/fachlich] Durchlaufend: verwahrte Kaution, keine Einnahme; im Abgleich nicht mitgezählt. Eine spätere Verrechnung ist gesondert zu prüfen. |
+| `HAUSGELD_VORSCHUSS` | Nicht zugeordnet | [§/fachlich] Einnahme nur bei WEG-Verwaltung; kein Vermietungsertrag. Sonst im Abgleich nicht mitgezählt. |
+| `RUECKLAGENANTEIL` | Nicht zugeordnet | [§/fachlich] Einnahme nur bei WEG-Verwaltung; Rücklagenzuführung ist kein Vermietungsertrag. Sonst im Abgleich nicht mitgezählt. |
+| `SONDERZAHLUNG` | Nicht zugeordnet | [§/fachlich] Einnahme nur bei WEG-Verwaltung; Eigentümer-Sonderzahlung, keine Miete. Sonst im Abgleich nicht mitgezählt. |
 | `GRUNDSTEUER` | Grundsteuer | [§/fachlich] Nur vermietungsbezogene Grundsteuer; andere öffentliche Lasten prüfen. |
 | `KALTWASSER` | Wasserversorgung / Entwässerung | [§/fachlich] Vermietungsbezogene Wasserkosten; Abfluss und Umlage prüfen. |
 | `ENTWAESSERUNG` | Wasserversorgung / Entwässerung | [§/fachlich] Vermietungsbezogene Abwasserkosten; Abfluss und Umlage prüfen. |
@@ -734,7 +875,7 @@ Each golden test checks **not only the final total**, but the **individual open 
 
 ### 7.3 The exit test (DERIVED == MANUAL)
 
-Golden test 5 + invariant I6-E together are the objective proof of the M6 exit: an operating cost statement that **derives** its advance payment from recorded `NK_VORAUSZAHLUNG` payments yields **exactly the same** (to the cent, to the snapshot hash) as the manual variant with the same sum. This provides **reproducible** proof that "a settlement pulls recorded payments automatically" — without touching the verified M3 engine.
+Golden test 5 + invariant I6-E together are the objective proof of the M6 exit: an operating cost statement that **derives** its advance payment from recorded `NK_VORAUSZAHLUNG` payments yields **exactly the same** (to the cent, to the snapshot hash) as the manual variant with the same sum. This provides **reproducible** proof that "a settlement pulls recorded payments automatically" — while preserving the verified cost-allocation calculations.
 
 ---
 
@@ -760,7 +901,7 @@ Golden test 5 + invariant I6-E together are the objective proof of the M6 exit: 
 ### 8.3 Service (recording, booking, reversal — atomic)
 - [ ] `app/services/payment_service.py` (style of `cost_entry_service.py`): `create_draft`, `update_draft`, `book` (`draft→booked`, atomic, audit), `reverse_payment` (reversal = new `booked` row + set `reversed_by_id` — the **only** permitted mutation of the `booked` original row, analogous to `create_correction_run`), `account_statement_for(person/lease)` (loads expected-amount inputs + payments, calls the pure engine), `open_items_for(...)`.
 - [ ] **Settlement integration (pure, tested derivation):**
-  - [ ] `settlement_service.py` (M3): add a `DERIVED` path — on `compute`/`finalize` of a run with `advance_payments_source='DERIVED'`, pull the operating cost sum via `payment_repo` + `derive_advance_total` (§6.2), set `advance_payments_total`. **MANUAL path unchanged.** The M3 engine itself (`compute_bk_settlement`) stays **untouched** — it only receives the same `advance_payments_total` as before, now from payments.
+  - [ ] `settlement_service.py` (M3): add a `DERIVED` path — on `compute`/`finalize` of a run with `advance_payments_source='DERIVED'`, pull the operating cost sum via `payment_repo` + `derive_advance_total` (§6.2), set `advance_payments_total`. **MANUAL path unchanged.** The engine receives the two separately derived component totals; its cost-allocation calculations are unchanged.
   - [ ] `weg_settlement_service.py` (M4): optionally derive `WegComputeExtras.paid_advances` from payments (`HAUSGELD_VORSCHUSS` per owner/year, §6.3) instead of manually. **The balance (`actual−expected(plan)`) is NOT touched** — only the informational `paid_advances` disclosure. Engine (`compute_weg_jahresabrechnung`) unchanged.
   - [ ] optionally `asset_report` (M4): offer DERIVED account balance per `bank_account` (§6.5, E6-7), MANUAL as a fallback.
 - [ ] `audit_event` actions: `payment.created`, `payment.booked`, `payment.reversed`.
@@ -846,3 +987,10 @@ reversal/correction function.
 - **Exact due-date rules** (§ 556b BGB, Hausgeld due date): [§18/domain] (§2.1).
 - **Second RLS axis (full mandate-bound DB isolation):** deliberately not in the MVP (ADR-0010 option C) — door left open, not blocked.
 - **Final legal sign-off:** tax advisor/specialist lawyer — cannot be replaced by this document.
+
+Migration 0163 admits dated Hausgeld successors in the database dunning-context
+guard only through a unit represented in the linked finalized plan and the same
+organization and bound WEG scope. Ownership must overlap the claim period.
+Original plan recipients remain admissible for earlier claims. Existing notices,
+plan snapshots and amounts are not rewritten; a downgrade cannot discard an
+existing successor-backed context.

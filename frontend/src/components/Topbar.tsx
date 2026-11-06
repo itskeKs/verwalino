@@ -6,7 +6,7 @@ import { Menu, LogOut, Key, House, Settings } from "lucide-react";
 import { Link } from "react-router-dom";
 import { useAuth } from "../auth/useAuth";
 import { Button } from "./ui/button";
-import { useState } from "react";
+import { useState, type Ref } from "react";
 import {
   Dialog,
   DialogContent,
@@ -22,9 +22,11 @@ import { ApiError } from "../api/client";
 
 interface Props {
   onToggleSidebar: () => void;
+  navigationOpen?: boolean;
+  navigationButtonRef?: Ref<HTMLButtonElement>;
 }
 
-export function Topbar({ onToggleSidebar }: Props) {
+export function Topbar({ onToggleSidebar, navigationOpen = false, navigationButtonRef }: Props) {
   const { session, logout } = useAuth();
   const [passwordDialogOpen, setPasswordDialogOpen] = useState(false);
   const [oldPassword, setOldPassword] = useState("");
@@ -83,9 +85,12 @@ export function Topbar({ onToggleSidebar }: Props) {
   return (
     <header className="app-topbar">
       <button
+        ref={navigationButtonRef}
         className="app-menu-button"
         onClick={onToggleSidebar}
         aria-label="Navigation umschalten"
+        aria-expanded={navigationOpen}
+        aria-controls="mobile-navigation"
       >
         <Menu className="h-5 w-5" />
       </button>

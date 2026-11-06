@@ -3,6 +3,7 @@
  * Admin-only links appear only for OWNER_ADMIN.
  */
 
+import type { ReactNode } from "react";
 import { NavLink, useLocation } from "react-router-dom";
 import {
   LayoutDashboard,
@@ -31,12 +32,11 @@ import {
   type LucideIcon,
 } from "lucide-react";
 import { useAuth } from "../auth/useAuth";
-import { Dialog, DialogContent, DialogTitle, DialogDescription } from "./ui/dialog";
 import { useDesignTheme } from "../design/useDesignTheme";
 
 interface Props {
-  open: boolean;
   onClose: () => void;
+  closeControl?: ReactNode;
 }
 
 interface NavItem {
@@ -56,7 +56,7 @@ const GROUPS: NavGroup[] = [
   {
     label: "Übersicht",
     items: [
-      { to: "/", label: "Dashboard", icon: LayoutDashboard, end: true },
+      { to: "/", label: "Übersicht", icon: LayoutDashboard, end: true },
       { to: "/aufgaben", label: "Aufgaben", icon: ClipboardList },
       { to: "/briefe", label: "Briefe", icon: FileText },
       { to: "/fristen", label: "Fristenmonitor", icon: CalendarClock },
@@ -131,30 +131,57 @@ const GROUPS: NavGroup[] = [
   },
 ];
 
-export function Sidebar({ open, onClose }: Props) {
+export function Sidebar({ onClose, closeControl }: Props) {
   const { session } = useAuth();
   const isAdmin = session?.role === "OWNER_ADMIN";
-  return <>
-    <aside className="app-sidebar"><div className="app-brand"><span><House aria-hidden="true" /></span>verwalino</div><NavigationLinks isAdmin={isAdmin} onClose={onClose} /></aside>
-    <Dialog open={open} onOpenChange={value => { if (!value) onClose(); }}><DialogContent className="navigation-dialog"><DialogTitle>Navigation</DialogTitle><DialogDescription>Alle Bereiche Ihres Arbeitsbereichs.</DialogDescription><NavigationLinks isAdmin={isAdmin} onClose={onClose} /></DialogContent></Dialog>
-  </>;
+  return (
+    <aside className="app-sidebar">
+      <div className="app-brand">
+        <span><House aria-hidden="true" /></span>verwalino
+        {closeControl}
+      </div>
+      <NavigationLinks isAdmin={isAdmin} mobile={!!closeControl} onClose={onClose} />
+    </aside>
+  );
 }
 
 const PRIMARY_PATHS = ["/", "/objekte", "/posteingang"];
 
-function NavigationLinks({ isAdmin, onClose }: { isAdmin: boolean; onClose: () => void }) {
+function NavigationLinks({ isAdmin, mobile, onClose }: { isAdmin: boolean; mobile: boolean; onClose: () => void }) {
   const { pathname } = useLocation();
   const { theme } = useDesignTheme();
   const groups = GROUPS.filter(group => !group.adminOnly || isAdmin);
   const primary = groups.flatMap(group => group.items).filter(item => PRIMARY_PATHS.includes(item.to));
-  const link = (item: NavItem) => <NavLink key={item.to} to={item.to} end={item.end} onClick={onClose} className="app-nav-link"><item.icon aria-hidden="true" /><span>{item.to === "/" ? "Übersicht" : item.label}</span></NavLink>;
-  return <nav className="app-navigation" aria-label="Hauptnavigation">
-    <div className="primary-navigation">{primary.map(link)}</div>
-    <details className="navigation-more" key={pathname} open={theme === "klar" && !PRIMARY_PATHS.includes(pathname) || undefined}><summary>Weitere Bereiche<ChevronDown aria-hidden="true" /></summary><div className="navigation-groups">{groups.map(group => {
-      const items = group.items.filter(item => !PRIMARY_PATHS.includes(item.to));
-      if (!items.length) return null;
-      const active = items.some(item => pathname === item.to || pathname.startsWith(item.to + "/"));
-      return <details className="navigation-group" key={group.label} open={active || undefined}><summary>{group.label}<ChevronDown aria-hidden="true" /></summary><div>{items.map(link)}</div></details>;
-    })}</div></details>
-  </nav>;
+  const secondaryGroups = groups.map(group => ({
+    ...group,
+    items: group.items.filter(item => !PRIMARY_PATHS.includes(item.to)),
+  })).filter(group => group.items.length > 0);
+  const activeGroup = secondaryGroups.find(group => group.items.some(item => isCurrentPath(pathname, item.to)));
+  const link = (item: NavItem) => (
+    <NavLink key={item.to} to={item.to} end={item.end} onClick={onClose} className="app-nav-link">
+      <item.icon aria-hidden="true" />
+      <span>{item.label}</span>
+    </NavLink>
+  );
+
+  return (
+    <nav className="app-navigation" aria-label="Hauptnavigation">
+      <div className="primary-navigation">{primary.map(link)}</div>
+      <details className="navigation-more" key={pathname} open={(mobile || theme === "klar") && !!activeGroup}>
+        <summary>Weitere Bereiche<ChevronDown aria-hidden="true" /></summary>
+        <div className="navigation-groups">
+          {secondaryGroups.map(group => (
+            <details className="navigation-group" key={group.label} open={group === activeGroup}>
+              <summary>{group.label}<ChevronDown aria-hidden="true" /></summary>
+              <div>{group.items.map(link)}</div>
+            </details>
+          ))}
+        </div>
+      </details>
+    </nav>
+  );
+}
+
+function isCurrentPath(pathname: string, path: string) {
+  return pathname === path || pathname.startsWith(path + "/");
 }

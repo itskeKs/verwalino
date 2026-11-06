@@ -36,6 +36,19 @@ async def warm_persists(browser_world):
     await page.get_by_role('link', name='Objekte', exact=True).click()
     await expect(page.get_by_role('heading', name='Objekte', exact=True)).to_be_visible()
 
+    nav = page.get_by_role('navigation', name='Hauptnavigation')
+    more = nav.get_by_text('Weitere Bereiche', exact=True)
+    panel = nav.locator('.navigation-groups')
+    for width in (1024, 1280):
+        await page.set_viewport_size({'width': width, 'height': 900})
+        await more.click()
+        await expect(panel).to_be_in_viewport(ratio=1)
+        await more.click()
+    await more.click()
+    await nav.locator('.navigation-group > summary').filter(has_text='Zahlungen').click()
+    await nav.get_by_role('link', name='Bankkonten', exact=True).click()
+    await expect(page.get_by_role('heading', name='Bankkonten', exact=True)).to_be_visible()
+
 
 @when('the user opens the settings on a narrow screen and saves Klar')
 @browser_step
@@ -65,7 +78,7 @@ async def mobile_navigation(browser_world):
     await expect(dialog).to_be_visible()
     if await dialog.locator('.navigation-more').get_attribute('open') is None:
         await dialog.get_by_text('Weitere Bereiche', exact=True).click()
-    await dialog.get_by_text('Zahlungen', exact=True).first.click()
+    await dialog.locator('.navigation-group > summary').filter(has_text='Zahlungen').click()
     await dialog.get_by_role('link', name='Bankkonten', exact=True).click()
     await expect(dialog).not_to_be_visible()
     await expect(page.get_by_role('heading', name='Bankkonten', exact=True)).to_be_visible()

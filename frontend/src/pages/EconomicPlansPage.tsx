@@ -49,7 +49,7 @@ export function EconomicPlansPage() {
         setProperties(pr);
       })
       .catch((err) =>
-        setError(err instanceof ApiError && err.status === 401 ? "Nicht authentifiziert." : String(err)),
+        setError(err instanceof ApiError ? (err.status === 401 ? "Nicht authentifiziert." : err.message) : String(err)),
       )
       .finally(() => setLoading(false));
   }, []);
@@ -124,8 +124,8 @@ export function EconomicPlansPage() {
             </label>
             <label>
               Fälligkeitstag (monatl.)
-              <input type="number" min="1" max="31" value={form.monthly_due_day ?? 1}
-                onChange={(e) => setForm({ ...form, monthly_due_day: parseInt(e.target.value, 10) || null })} />
+              <input type="number" min="1" max="28" value={form.monthly_due_day ?? ""}
+                onChange={(e) => setForm({ ...form, monthly_due_day: e.target.value ? Number(e.target.value) : null })} />
             </label>
             <AccountingScopeSelector key={form.property_id} propertyId={form.property_id} value={form.accounting_scope_id} onChange={id => setForm({ ...form, accounting_scope_id: id })} kind="WEG" />
             <div className="form-actions">

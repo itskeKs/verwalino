@@ -48,7 +48,7 @@ test-backend: check-testdb ## Backend pytest against the test DB (PYTEST_ARGS="-
 test-installer: ## Self-host installer and hosted-server script contract tests (no DB; Docker is faked)
 	python3 -B scripts/test-install.py
 	python3 -B scripts/test-install-scenarios.py
-	cd backend && $(UV_LINT) python ../scripts/test-self-host.py
+	cd backend && exec $(UV_LINT) python -B ../scripts/test-self-host.py
 	cd backend && $(UV_LINT) python ../scripts/test-server-deploy.py
 	cd backend && $(UV_LINT) python ../scripts/test-canary.py
 
@@ -56,7 +56,7 @@ test-selfhost-format: ## Opt-in backup format round trip in scratch test databas
 	@( $(TESTDB_LOCK); \
 	  trap 'exit 130' INT; trap 'exit 143' TERM; \
 	  export VERWALINO_FORMAT_TEST=1; \
-	  . ./scripts/test-env.sh && cd backend && $(UV_TEST) pytest -q tests/test_selfhost_backup_format.py )
+	  . ./scripts/test-env.sh && cd backend && $(UV_TEST) pytest --noconftest -q tests/test_selfhost_backup_format.py )
 
 test-frontend: frontend/node_modules ## Frontend vitest (single run)
 	cd frontend && npm test

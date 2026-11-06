@@ -157,7 +157,7 @@ def test_delimited_heating_pool_uses_annual_unit_weights_but_only_service_period
 def build_scenario(s):
     """Use the reconciliation generator for all time/consumption/heating keys."""
     from app.engine.periods import build_unit_cover
-    from app.engine.types import ManualAmountInput
+    from app.engine.types import ManualAmountInput, HouseholdInput
 
     units = tuple(
         UnitInput(
@@ -167,7 +167,7 @@ def build_scenario(s):
             area=u["area"],
             heated_area=u["area"],
             mea=u["mea"],
-            person_count=i + 1,
+            household=(HouseholdInput(date.min, i + 1), HouseholdInput(date.min, i + 1, True)),
             consumption=D(i + 1) * 100,
         )
         for i, u in enumerate(s["units"])
@@ -515,6 +515,7 @@ def test_half_year_consumption_invoices_keep_their_own_cost_periods():
 
 
 def test_in_period_snapshot_bytes_match_f3869e1_for_963_runs():
+    """Guard new computations, with split keys added to the f3869e1 fixture set."""
     import hashlib
     import json
     from tests.engine.settlement_scenarios import in_period_fingerprints
@@ -523,7 +524,7 @@ def test_in_period_snapshot_bytes_match_f3869e1_for_963_runs():
     assert len(records) == 963
     assert (
         hashlib.sha256(json.dumps(records).encode()).hexdigest()
-        == "b0a354c6c3df5eb71372980ebd0ff20ff968701a9069e6d9eb3e5586a568a8cf"
+        == "bdad47674051958a43649c26d5c940f8164c7e7a14cd384e90798087198b2f73"
     )
 
 
@@ -627,3 +628,53 @@ def test_free_consumption_window_can_cross_the_property_year():
 
     payload = build_snapshot_payload(inp, result)
     assert len(payload["inputs"]["property_periods"]) == 2
+
+
+def test_delimited_heating_fallback_keeps_degree_days_inside_partial_source_months():
+    from fractions import Fraction
+    from app.engine.heating_settlement import distribute_heating_position
+    from app.engine.meter_consumption import split_consumption
+    from tests.engine.test_meter_consumption import reading, changed_unit_covers, START, END
+
+    covers = changed_unit_covers(date(2026, 7, 1))
+    split = split_consumption([reading(START, "0"), reading(END, "1000")],
+        START, END, covers, fallback="DEGREE_DAYS")
+    slices = tuple(HeatingSliceInput(uid(i + 1), c.unit_id, c.start, c.end,
+        c.lease_agreement_id, None, D(70), q, "DEGREE_DAYS", split.exact_quantity(i))
+        for i, (c, (_, _, q)) in enumerate(zip(covers, split.periods)))
+    source = CostPositionInput(uid(5), None, "HEIZUNG_ZENTRAL", "Heizung", D("4000.00"),
+        date(2026, 5, 16), date(2026, 9, 15), "EXTERNE_ABRECHNUNG", "UMLAGEFAEHIG",
+        heating=HeatingPositionInput("HEATING", D("0.50"), "AREA", True, False, slices))
+    _, allocation = distribute_heating_position(source)
+    rows = {r.unit_id: r for r in allocation.pool.rows}
+    # May 16–31 plus June versus July–August plus September 1–15.
+    before = Fraction(40 * 16, 31) + Fraction(40 * 30, 92)
+    after = Fraction(40 * 62, 92) + 15
+    from app.engine.rounding import distribute_amount
+    expected = distribute_amount(D("2000.00"), [D(before.numerator) / before.denominator,
+                                               D(after.numerator) / after.denominator])
+    assert [rows[s.id].consumption_amount for s in slices] == expected
+    assert sum(r.gross_amount for r in rows.values()) == D("4000.00")
+
+
+@pytest.mark.parametrize("total,source_end,expected", [
+    ("23.00", date(2026, 12, 31), [D("6.71"), D("4.79")]),
+    ("253.00", date(2026, 12, 31), [D("73.76"), D("52.74")]),
+    ("6.44", date(2026, 11, 30), [D("2.24"), D("0.98")]),
+])
+def test_degree_day_money_ties_keep_the_exact_largest_remainder_order(total, source_end, expected):
+    from app.engine.heating_settlement import distribute_heating_position
+    from app.engine.meter_consumption import split_consumption
+    from tests.engine.test_meter_consumption import reading, changed_unit_covers, START, END
+
+    covers = changed_unit_covers(date(2026, 7, 1))
+    split = split_consumption([reading(START, "0"), reading(END, "1000")],
+        START, END, covers, fallback="DEGREE_DAYS")
+    slices = tuple(HeatingSliceInput(uid(i + 1), c.unit_id, c.start, c.end,
+        c.lease_agreement_id, None, D(70), q, "DEGREE_DAYS", split.exact_quantity(i))
+        for i, (c, (_, _, q)) in enumerate(zip(covers, split.periods)))
+    source = CostPositionInput(uid(5), None, "HEIZUNG_ZENTRAL", "Heizung", D(total),
+        START, source_end, "EXTERNE_ABRECHNUNG", "UMLAGEFAEHIG",
+        heating=HeatingPositionInput("HEATING", D("0.50"), "AREA", True, False, slices))
+    _, allocation = distribute_heating_position(source)
+    assert [r.consumption_amount for r in allocation.pool.rows] == expected

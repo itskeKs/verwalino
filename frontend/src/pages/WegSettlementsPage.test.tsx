@@ -1,7 +1,7 @@
 import { afterEach, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
-import { api } from "../api/client";
+import { api, ApiError } from "../api/client";
 import type { EconomicPlan, Property } from "../api/types";
 import { WegSettlementsPage } from "./WegSettlementsPage";
 
@@ -46,4 +46,18 @@ it("adopts the selected plan's April period", async () => {
   fireEvent.change(screen.getByRole("combobox", { name: "Wirtschaftsplan (Soll) *" }), { target: { value: "plan" } });
   expect(screen.getByLabelText("Zeitraum von *")).toHaveValue("2025-04-01");
   expect(screen.getByLabelText("Zeitraum bis *")).toHaveValue("2026-03-31");
+});
+
+it.each([
+  [new ApiError(404, "WEG-Abrechnungen konnten nicht geladen werden."), "WEG-Abrechnungen konnten nicht geladen werden."],
+  [new ApiError(401, "Unauthorized"), "Nicht authentifiziert."],
+  [new Error("Synthetic network failure"), "Error: Synthetic network failure"],
+])("renders load errors without the API class prefix and preserves auth and fallback: %s", async (error, expected) => {
+  const get = vi.spyOn(api, "get").mockRejectedValue(error);
+  try {
+    render(<MemoryRouter><WegSettlementsPage /></MemoryRouter>);
+    const rendered = await screen.findByText(expected, { exact: true });
+    expect(rendered.firstChild?.textContent?.trim()).toBe(expected);
+    expect(screen.queryByText(/ApiError:/)).not.toBeInTheDocument();
+  } finally { get.mockRestore(); }
 });

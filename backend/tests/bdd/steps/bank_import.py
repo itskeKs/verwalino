@@ -13,6 +13,53 @@ from tests.bdd.steps.records import create_bank_account, create_property
 STATEMENTS = Path(__file__).resolve().parents[2] / "fixtures" / "bank"
 
 
+@given('each organization has a confirmed cost and an outgoing bank debit')
+def isolated_cost_debits(world):
+    rows = {}
+    for organization in world.organizations:
+        client = world.administrator_of(organization)
+        # The archive scenarios clear earlier synthetic records on teardown.
+        home = create_property(world, organization, f'{organization} debit isolation property')
+        account = create_bank_account(world, organization, 'Debit isolation account', property_id=home.id)
+        category = world.send(client, 'GET', '/api/cost-categories').json()[0]
+        answer = world.send(client, 'POST', '/api/cost-entries', json={
+            'property_id': home.id, 'cost_category_id': category['id'],
+            'cost_category_plan_version': category['plan_version'], 'gross_amount': '60.00',
+            'invoice_date': '2026-01-15', 'service_period_from': '2026-01-01',
+            'service_period_to': '2026-12-31', 'tenant_apportionable': 'UMLAGEFAEHIG',
+        })
+        assert answer.status_code == 201, world.describe_response()
+        cost = answer.json()['id']
+        assert world.send(client, 'POST', f'/api/cost-entries/{cost}/confirm').status_code == 200
+        content = b'Buchungstag;Wertstellung;Betrag;Name;Verwendungszweck\n15.01.2026;15.01.2026;-60,00;Stadtwerke;Isolated electricity\n'
+        answer = world.send(client, 'POST', f'/api/bank-accounts/{account.id}/imports', params={'dry_run': 'false'},
+                            files={'file': ('isolated.csv', content, 'text/csv')})
+        assert answer.status_code == 200, world.describe_response()
+        answer = world.send(client, 'GET', '/api/bank-transactions', params={'bank_account_id': account.id})
+        debit = next(row for row in answer.json()['items'] if row['purpose'] == 'Isolated electricity')
+        rows[organization] = {'cost': cost, 'debit': debit['id'], 'account': account.id}
+    world.data['isolated_cost_debits'] = rows
+
+
+@when("Verwaltung Alpha tries to assign its debit to Verwaltung Beta's cost")
+def foreign_cost_assignment(world):
+    rows = world.data['isolated_cost_debits']
+    world.act('POST', f"/api/bank-transactions/{rows['Verwaltung Alpha']['debit']}/assign",
+              json={'cost_entry_id': rows['Verwaltung Beta']['cost']})
+
+
+@then('the foreign cost is not found and both debits remain new')
+def foreign_cost_untouched(world):
+    assert world.response.status_code == 404, world.describe_response()
+    for organization, records in world.data['isolated_cost_debits'].items():
+        client = world.administrator_of(organization)
+        answer = world.look(client, f"/api/cost-entries/{records['cost']}")
+        assert Decimal(answer.json()['bank_open_amount']) == 60
+        answer = world.run(client.get('/api/bank-transactions', params={'bank_account_id': records['account']}))
+        row = next(row for row in answer.json()['items'] if row['id'] == records['debit'])
+        assert row['status'] == 'NEU' and row['cost_entry_id'] is None
+
+
 def _iso(day: str) -> str:
     return datetime.strptime(day, "%d.%m.%Y").date().isoformat()
 
@@ -113,3 +160,23 @@ def account_is_empty(world):
 def account_holds(world, count):
     stored = _stored_transactions(world)
     assert len(stored) == count, f"The bank account holds {len(stored)} transactions, expected {count}."
+
+
+@given(parsers.parse('the Sparkasse statement "{filename}"'))
+def sparkasse_statement(world, filename):
+    world.data["statement"] = (filename, (STATEMENTS / filename).read_bytes())
+
+
+def _anna_receipt(world):
+    rows = _stored_transactions(world)
+    matches = [row for row in rows if row["booking_date"] == "2026-04-07" and Decimal(row["amount"]) == Decimal("800.00")]
+    assert len(matches) == 1, matches
+    row = matches[0]
+    assert row["counterparty_name"] == "Anna Beispiel"
+    assert row["counterparty_iban"] == "DE89370400440532013000"
+    return row
+
+
+@then("Anna Beispiel's 800 EUR receipt on 07.04.2026 retains her name and IBAN")
+def anna_receipt(world):
+    _anna_receipt(world)

@@ -78,3 +78,12 @@ monthly Hausgeld amount = distribute_amount(annual_advance, [1]*12) -> 12 cent i
 4. Every cent split (MEA distribution (co-ownership share, Miteigentumsanteil) **and** 12 monthly installments) runs through the central `distribute_amount` (ADR-0005); `Σ == total` exactly.
 
 > **[§18/domain] No self-certification:** The `actual − expected` definition of the balance and the month-based plan basis are the transparent and recomputable choice customary under the prevailing view on the WEMoG. Whether a different treatment is mandatory in a specific case (deviating declaration of division/resolutions, missing plan, special cost bearing under § 16 II WEG) must be domain-reviewed by a **tax advisor/WEG specialist attorney**. This ADR fixes the *technical* definition and its recomputable implementation, not the final legal assessment.
+
+## Display clarification (#204)
+
+New annual statements also show the owner's plan Soll, net booked Hausgeld,
+`account_balance = plan_soll − paid` and `payment_amount = abrechnungsspitze + account_balance`.
+The page and PDF explain their sources and ownership periods. Only the Spitze is the
+resolution amount; plan arrears remain owed under the plan. The display creates no new
+claim and changes neither ledger nor dunning. Versioned snapshots freeze the additional
+figures without rewriting older finalized statements or their digests.

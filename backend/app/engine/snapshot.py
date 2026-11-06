@@ -91,6 +91,10 @@ def build_snapshot_payload(inp: SettlementInput, result: EngineResult) -> dict:
                     "heated_area": _q(u.heated_area),
                     "mea": _q(u.mea),
                     "person_count": u.person_count,
+                    **({"household": [
+                        {"valid_from": r.valid_from.isoformat(), "persons": r.persons, "is_vacancy": r.is_vacancy}
+                        for r in sorted(u.household, key=lambda r: (r.is_vacancy, r.valid_from))
+                    ]} if u.household else {}),
                     "consumption": _q(u.consumption),
                     **({"consumption_periods": [
                         {"from": a.isoformat(), "to": b.isoformat(), "consumption": str(q)}
@@ -106,6 +110,7 @@ def build_snapshot_payload(inp: SettlementInput, result: EngineResult) -> dict:
                     "from": l.valid_from.isoformat(),
                     "to": l.valid_to.isoformat() if l.valid_to else None,
                     "advance_payment": _m(l.advance_payment),
+                    "heating_advance_payment": _m(l.heating_advance_payment),
                 }
                 for l in leases
             ],
@@ -131,6 +136,10 @@ def build_snapshot_payload(inp: SettlementInput, result: EngineResult) -> dict:
                     "tenant_distribution_key": p.tenant_distribution_key,
                     "tenant_apportionable": p.tenant_apportionable,
                     "apportionable_tenant_amount": _m(p.apportionable_tenant_amount),
+                    **({"commercial_share_percent": _m(p.commercial_share_percent),
+                        "commercial_amount": _m(p.commercial_amount),
+                        "commercial_reason": p.commercial_reason}
+                       if p.commercial_share_percent is not None or p.commercial_amount is not None else {}),
                     "external_amounts": [
                         {
                             "unit_id": str(e.unit_id),
@@ -155,6 +164,8 @@ def build_snapshot_payload(inp: SettlementInput, result: EngineResult) -> dict:
             ],
             "advance_payments_total": _m(inp.advance_payments_total),
             "advance_payments_source": inp.advance_payments_source,
+            "heating_advance_payments_total": _m(inp.heating_advance_payments_total),
+            "heating_advance_payments_source": inp.heating_advance_payments_source,
         },
         "computation": [
             {
@@ -177,6 +188,7 @@ def build_snapshot_payload(inp: SettlementInput, result: EngineResult) -> dict:
                 "unit_id": str(v.unit_id),
                 "owner_profile_id": str(v.owner_profile_id) if v.owner_profile_id else None,
                 "days": v.days,
+                **({"person_days": v.person_days} if v.person_days is not None else {}),
                 "amount": _m(v.amount),
             }
             for v in sorted(
@@ -205,6 +217,8 @@ def build_snapshot_payload(inp: SettlementInput, result: EngineResult) -> dict:
             ],
             "total_cost": _m(result.total_cost),
             "advance_payments_total": _m(result.advance_payments_total),
+            "heating_advance_payments_total": _m(result.heating_advance_payments_total),
+            "heating_cost_total": _m(result.heating_cost_total),
             "balance": _m(result.balance),
         },
     }
@@ -329,6 +343,8 @@ def build_weg_snapshot_payload(
                     "cost_entry_id": str(p.cost_entry_id),
                     "category_code": p.category_code,
                     "gross_amount": _m(p.gross_amount),
+                    **({"reserve_funded_amount": _m(p.reserve_funded_amount)}
+                       if p.reserve_funded_amount else {}),
                     "service_period": {
                         "from": p.service_period_from.isoformat(),
                         "to": p.service_period_to.isoformat(),
@@ -417,6 +433,10 @@ def build_weg_snapshot_payload(
                     "plan_advance": _m(o.plan_advance),
                     "abrechnungsspitze": _m(o.abrechnungsspitze),
                     "paid_advances": _m(o.paid_advances),
+                    "plan_soll": _m(o.plan_advance),
+                    "paid": _m(o.paid_advances),
+                    "account_balance": _m(o.account_balance),
+                    "payment_amount": _m(o.payment_amount),
                     "cost_lines": [
                         {
                             "line_type": ln.line_type,

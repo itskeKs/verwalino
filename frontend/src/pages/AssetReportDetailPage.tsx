@@ -1,4 +1,6 @@
+import { DocumentAddressees } from "../components/DocumentAddressees";
 import { ReserveLedgerPanel } from "../components/ReserveLedgerPanel";
+import { WegDraftDelete } from "../components/WegDraftDelete";
 import { FinancialCoverageReview } from "../components/FinancialCoverageReview";
 import { FinancialCorrectionControls } from "../components/FinancialCorrectionControls";
 /**
@@ -6,7 +8,7 @@ import { FinancialCorrectionControls } from "../components/FinancialCorrectionCo
  * payables inputs (clearly labelled "Verwalter-Angabe"), compute, finalize, PDF.
  * Reserve closing = opening + contributions - withdrawals (auto).
  */
-import { useEffect, useRef, useState } from "react";
+import { Fragment, useEffect, useRef, useState } from "react";
 import { useParams, Link } from "react-router-dom";
 import {
   getWegRun,
@@ -18,15 +20,18 @@ import {
 } from "../api/endpoints";
 import type { WegRun, AssetItemIn, AssetReportComputeRequest, Property, BankAccount } from "../api/types";
 import { ApiError } from "../api/client";
+import { formatEuro } from "../lib/utils";
 
 const STATUS_LABELS: Record<string, string> = { draft: "Entwurf", finalized: "Finalisiert" };
 const STATUS_CSS: Record<string, string> = { draft: "badge--draft", finalized: "badge--confirmed" };
 
+const RESERVE_LABELS: Record<string, string> = {
+  RESERVE_OPENING: "Anfangsbestand",
+  RESERVE_CONTRIBUTION: "Zuführungen",
+  RESERVE_WITHDRAWAL: "Entnahmen",
+  RESERVE_CLOSING: "Endbestand",
+};
 const LINE_LABELS: Record<string, string> = {
-  RESERVE_OPENING: "Erhaltungsrücklage Anfangsbestand",
-  RESERVE_CONTRIBUTION: "Zuführung",
-  RESERVE_WITHDRAWAL: "Entnahme",
-  RESERVE_CLOSING: "Erhaltungsrücklage Endbestand",
   BANK_BALANCE: "Bankkonto",
   RECEIVABLE: "Forderung",
   PAYABLE: "Verbindlichkeit",
@@ -124,6 +129,7 @@ export function AssetReportDetailPage() {
 
   if (loading) return <p>Lade...</p>;
   if (!run) return <p className="error-text">{error ?? "Vermögensbericht nicht gefunden."}</p>;
+  const firstReserveIndex = run.lines.findIndex(line => RESERVE_LABELS[line.line_type]);
 
   return (
     <div>
@@ -137,6 +143,8 @@ export function AssetReportDetailPage() {
         </span>
       </h1>
 
+      <WegDraftDelete key={`delete-${run.id}`} run={run} disabled={busy} />
+
       {actionError && (
         <div className="card" style={{ marginBottom: "1rem", background: "#ffebee", borderColor: "#ef9a9a" }}>
           <strong>Fehler:</strong> {actionError}
@@ -148,6 +156,8 @@ export function AssetReportDetailPage() {
           {run.snapshot_sha256 && <div style={{ marginTop: "0.5rem", fontSize: "0.82rem" }}>Snapshot SHA-256: <code>{run.snapshot_sha256}</code></div>}
         </div>
       )}
+
+      <DocumentAddressees addressees={run.addressees} />
 
       <div className="card" style={{ marginBottom: "1.5rem" }}>
         <h2>Übersicht</h2>
@@ -182,7 +192,7 @@ export function AssetReportDetailPage() {
           </label>)}
           {itemEditor(receivables, setReceivables, "Forderungen")}
           {itemEditor(payables, setPayables, "Verbindlichkeiten")}
-      {run.status === "draft" && <FinancialCoverageReview key={ledgerVersion} kind="settlement" subjectId={run.id} values={req()} onSaved={() => setLedgerRefresh(v => v + 1)} />}
+      {run.status === "draft" && <FinancialCoverageReview key={ledgerVersion} kind="settlement" subjectId={run.id} values={req()} onSaved={() => { void run_(() => getWegRun(run.id)); }} />}
           <div className="form-actions" style={{ marginTop: "1rem" }}>
             <button className="btn btn--primary" disabled={busy} onClick={() => runId && run_(() => computeAssetReport(runId, req()))}>
               {busy ? "Berechnen..." : "Berechnen"}
@@ -208,18 +218,23 @@ export function AssetReportDetailPage() {
           <table className="data-table">
             <thead><tr><th>Position</th><th style={{ textAlign: "right" }}>Betrag</th></tr></thead>
             <tbody>
-              {run.lines.map((l) => {
+              {run.lines.map((l, index) => {
                 const isClosing = l.line_type === "RESERVE_CLOSING";
+                const reserveLabel = RESERVE_LABELS[l.line_type];
+                const note = reserveLabel ? l.note?.replace(/\bZufuehrungen\b/g, "Zuführungen") : l.note;
                 return (
-                  <tr key={l.id} style={isClosing ? { fontWeight: 700 } : undefined}>
-                    <td>
-                      {LINE_LABELS[l.line_type] ?? l.label}
-                      {l.label && LINE_LABELS[l.line_type] && l.label !== LINE_LABELS[l.line_type]
-                        ? <span style={{ color: "var(--text-muted)" }}> — {l.label}</span> : null}
-                      {l.note ? <div style={{ fontSize: "0.78rem", color: "var(--text-muted)", fontStyle: "italic" }}>{l.note}</div> : null}
-                    </td>
-                    <td style={{ fontFamily: "var(--mono)", textAlign: "right" }}>{l.amount} EUR</td>
-                  </tr>
+                  <Fragment key={l.id}>
+                    {index === firstReserveIndex && <tr><th colSpan={2}>Erhaltungsrücklage</th></tr>}
+                    <tr style={isClosing ? { fontWeight: 700 } : undefined}>
+                      <td>
+                        {reserveLabel ?? LINE_LABELS[l.line_type] ?? l.label}
+                        {!reserveLabel && l.label && LINE_LABELS[l.line_type] && l.label !== LINE_LABELS[l.line_type]
+                          ? <span style={{ color: "var(--text-muted)" }}> — {l.label}</span> : null}
+                        {note ? <div style={{ fontSize: "0.78rem", color: "var(--text-muted)", fontStyle: "italic" }}>{note}</div> : null}
+                      </td>
+                      <td style={{ fontFamily: "var(--mono)", textAlign: "right" }}>{formatEuro(l.amount)}</td>
+                    </tr>
+                  </Fragment>
                 );
               })}
             </tbody>

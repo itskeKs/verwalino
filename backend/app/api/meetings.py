@@ -121,17 +121,26 @@ class ResolutionOut(BaseModel):
     model_config = {"from_attributes": True}
 
 
+class RegisterLevyOut(BaseModel):
+    id: str
+    accounting_scope_id: str
+    amount: str
+    due_date: date
+
+
 class RegisterEntryOut(BaseModel):
     id: str
     organization_id: str
     property_id: str
     sequence_number: int
+    resolution_date: date
     entry_date: date
     location: str
     wording: str
     resolution_id: str
     result: str | None
     challenge_annotation: str | None
+    special_levies: list[RegisterLevyOut]
 
     model_config = {"from_attributes": True}
 
@@ -187,24 +196,29 @@ def _resolution_out(r) -> ResolutionOut:
     )
 
 
-def _entry_out(e, result) -> RegisterEntryOut:
+def _entry_out(e, result, levies) -> RegisterEntryOut:
     return RegisterEntryOut(
         id=str(e.id),
         organization_id=str(e.organization_id),
         property_id=str(e.property_id),
         sequence_number=e.sequence_number,
+        resolution_date=e.resolution_date,
         entry_date=e.entry_date,
         location=e.location,
         wording=e.wording,
         resolution_id=str(e.resolution_id),
         result=result,
         challenge_annotation=e.challenge_annotation,
+        special_levies=[RegisterLevyOut(id=str(l.id), accounting_scope_id=str(l.accounting_scope_id), amount=f"{l.amount:.2f}", due_date=l.due_date) for l in levies],
     )
 
 
 async def _entries_out(db, org_id, entries):
     results = await RegisterEntryRepository(db, org_id).resolution_results(entries)
-    return [_entry_out(entry, results.get(entry.resolution_id)) for entry in entries]
+    from app.repositories.special_levy_repo import SpecialLevyRepository
+    levies = await SpecialLevyRepository(db, org_id).for_resolutions({entry.resolution_id for entry in entries})
+    return [_entry_out(entry, results.get(entry.resolution_id),
+        [levy for levy in levies if levy.resolution_id == entry.resolution_id]) for entry in entries]
 
 
 # ===========================================================================

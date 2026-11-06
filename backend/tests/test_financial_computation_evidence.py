@@ -13,7 +13,7 @@ pytestmark=pytest.mark.asyncio
 async def prepared_financial(api,seed,kind):
     if kind=='rental':
         target=await draft(api,seed,'1200.00');body=_extras_for_exit(seed)
-        await attest_fixture(api,'settlement',target,{'advance_payments_total':'1200.00','advance_payments_source':'MANUAL'})
+        await attest_fixture(api,'settlement',target,{'heating_advance_payments_total': '0.00', 'heating_advance_payments_source': 'MANUAL', 'advance_payments_total':'1200.00','advance_payments_source':'MANUAL'})
         return target,'/api/settlements/'+target,body,'settlement_run'
     endpoint={'plan':'/api/economic-plans','weg':'/api/weg-settlements','asset':'/api/weg-settlements/asset-reports'}[kind]
     data={'property_id':seed['property'],'period_start':'2025-01-01','period_end':'2025-12-31'}

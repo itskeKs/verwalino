@@ -58,6 +58,184 @@ async def reserve_erasure_db(rent_db, export_store):
         await rent_db.rollback()
 
 
+async def import_erasure_payments(api, w, *, db=None, scope=None):
+    """Create real imported rent vouchers with unknown counterparty identities."""
+    bank = await api.post('/api/bank-accounts', json={
+        'property_id': str(w['property']), 'account_type': 'LAUFEND',
+        'label': 'Private account holder', 'iban': 'DE89370400440532013000',
+        'bic': 'COBADEFFXXX', 'bank_name': 'Private bank contact'})
+    assert bank.status_code == 201, bank.text
+    bank_id = bank.json()['id']
+    if scope:
+        await db.execute(text("""INSERT INTO accounting_scope_binding(organization_id,property_id,scope_id,
+            bank_account_id,origin,reason,reviewed_by) VALUES (:org,:property,:scope,CAST(:bank AS uuid),
+            'REVIEWED','Bank erasure',:admin)"""), {**w, 'scope': scope, 'bank': bank_id})
+        await db.commit()
+    statement = ('Buchungstag;Wertstellung;Betrag;Name;IBAN;Verwendungszweck;Währung\n'
+        '01.02.2026;01.02.2026;700,00;Unregistered Payer;DE89370400440532013000;Private rent reference;EUR\n'
+        '02.02.2026;02.02.2026;125,00;Another Payer;DE89370400440532013000;Private draft reference;EUR\n'
+        '03.02.2026;03.02.2026;15,00;Unlinked Payer;;Private unassigned reference;EUR\n').encode()
+    imported = await api.post(f'/api/bank-accounts/{bank_id}/imports', params={'dry_run': 'false'},
+        files={'file': ('erasure.csv', statement, 'text/csv')})
+    assert imported.status_code == 200, imported.text
+    page = await api.get('/api/bank-transactions', params={'bank_account_id': bank_id})
+    assert page.status_code == 200, page.text
+    transactions = {row['amount']: row for row in page.json()['items']}
+    payments = {}
+    for amount in ('700.00', '125.00'):
+        assigned = await api.post(f"/api/bank-transactions/{transactions[amount]['id']}/assign", json={'lines': [{
+            'payment_type': 'KALTMIETE', 'amount': amount, 'tenant_profile_id': str(w['tenant']),
+            'lease_agreement_id': str(w['lease']), 'period_year': 2026, 'period_month': 2}]})
+        assert assigned.status_code == 200, assigned.text
+        payments[amount] = assigned.json()['payments'][0]['id']
+        assert assigned.json()['payments'][0]['status'] == 'booked'
+    return bank_id, transactions, payments
+
+
+async def test_due_erasure_retains_finalized_commercial_rules_and_foreign_financial_evidence(rent_world, reserve_erasure_db):
+    from app.engine.canonical import canonical_json, canonical_sha256
+    from app.services.organization_deletion_service import run_deletion
+    from tests.commercial_preallocation_support import commercial_property, commercial_rule, REASON
+    db, w = reserve_erasure_db, rent_world
+    async with api_client(w) as api, api_client(w, foreign=True) as foreign:
+        data = await commercial_property(api)
+        other = await commercial_property(foreign)
+        for client, sample in ((api, data), (foreign, other)):
+            answer = await client.post(f"/api/settlements/{sample['rows'][0]['run']['id']}/finalize",
+                json={'commercial_preallocations': [commercial_rule(sample)]})
+            assert answer.status_code == 200, answer.text
+        run_id = uuid.UUID(data['rows'][0]['run']['id'])
+        frozen = (await db.execute(text('SELECT snapshot_payload,snapshot_sha256,total_cost FROM settlement_run WHERE id=:run'), {'run': run_id})).one()
+        rule = await db.scalar(text('SELECT to_jsonb(r) FROM commercial_preallocation r WHERE organization_id=:org'), w)
+        assert await db.scalar(text("SELECT disposition FROM organization_retention_catalog() WHERE entity='commercial_preallocation'")) == 'retain'
+        retained = (await db.execute(text("SELECT identity FROM organization_retention_plan(:org) WHERE entity='commercial_preallocation'"), w)).scalars().all()
+        assert {'id': rule['id']} in retained
+        foreign_before = {}
+        for table in ('commercial_preallocation', 'cost_entry', 'settlement_run', 'settlement_line'):
+            foreign_before[table] = (await db.execute(text(f'SELECT to_jsonb(t) FROM {table} t WHERE organization_id=:org ORDER BY id'),
+                {'org': w['foreign_org']})).scalars().all()
+        await db.rollback()
+        assert (await api.post('/api/organizations/deletion')).status_code == 200
+        answer = await api.post('/api/organizations/deletion/confirm', json={'organization_name': 'T23 synthetic'})
+        assert answer.status_code == 200, answer.text
+    async with db.begin():
+        assert await run_deletion(db, w['org'], now=datetime.now(timezone.utc) + timedelta(days=8))
+    after = (await db.execute(text('SELECT snapshot_payload,snapshot_sha256,total_cost FROM settlement_run WHERE id=:run'), {'run': run_id})).one()
+    assert canonical_json(after[0]) == canonical_json(frozen[0])
+    assert canonical_sha256(after[0]) == after[1] == frozen[1]
+    assert after[2] == frozen[2] == 600
+    assert after[0]['inputs']['cost_positions'][0]['commercial_reason'] == REASON
+    assert await db.scalar(text('SELECT to_jsonb(r) FROM commercial_preallocation r WHERE organization_id=:org'), w) == rule
+    for table, original in foreign_before.items():
+        assert (await db.execute(text(f'SELECT to_jsonb(t) FROM {table} t WHERE organization_id=:org ORDER BY id'),
+            {'org': w['foreign_org']})).scalars().all() == original
+
+
+async def test_cost_bank_evidence_inherits_retention_without_retaining_unassigned_lines(rent_world, reserve_erasure_db):
+    from tests.test_bank_transaction_assign import cost_assignment_graph
+    from app.services.organization_deletion_service import run_deletion
+    db, w = reserve_erasure_db, rent_world
+    async with api_client(w) as api:
+        cost, bank, tids = await cost_assignment_graph(api, w['property'])
+        rows = (await db.execute(text("SELECT entity,identity,retention_until FROM organization_retention_plan(:org) WHERE entity IN ('cost_entry','bank_transaction')"), w)).all()
+        retained = {(row.entity, row.identity['id']): row.retention_until for row in rows}
+        assert retained['bank_transaction', tids[0]] == retained['cost_entry', cost]
+        assert ('bank_transaction', tids[1]) not in retained
+        await db.rollback()
+        assert (await api.post('/api/organizations/deletion')).status_code == 200
+        assert (await api.post('/api/organizations/deletion/confirm', json={'organization_name': 'T23 synthetic'})).status_code == 200
+    async with db.begin():
+        assert await run_deletion(db, w['org'], now=datetime.now(timezone.utc) + timedelta(days=8))
+    kept = (await db.execute(text('SELECT id,cost_entry_id,amount FROM bank_transaction WHERE bank_account_id=CAST(:bank AS uuid)'), {'bank': bank})).one()
+    assert str(kept.id) == tids[0] and str(kept.cost_entry_id) == cost and kept.amount == -60
+
+
+@pytest.mark.parametrize('scoped', [False, True], ids=['booked', 'scope-bound-vouchers'])
+async def test_erasure_scrubs_imported_bank_dependencies_without_rewriting_vouchers(
+        rent_world, reserve_erasure_db, scoped):
+    from sqlalchemy.exc import DBAPIError
+    from app.services.organization_deletion_service import retained_hash, run_deletion
+    db, w = reserve_erasure_db, rent_world
+    if scoped:
+        scope = await db.scalar(text("""INSERT INTO accounting_scope(organization_id,property_id,scope_type,
+            label,valid_from,whole_property,origin,created_by) VALUES (:org,:property,'MIET',
+            'Bank erasure scope','2025-01-01',true,'REVIEWED',:admin) RETURNING id"""), w)
+        await db.execute(text("""INSERT INTO scope_grant(organization_id,scope_id,user_id,capabilities,granted_by,reason)
+            VALUES (:org,:scope,:admin,ARRAY['read','prepare','confirm','approve','export'],:admin,'Bank erasure')"""),
+            {**w, 'scope': scope})
+        await db.commit()
+    async with api_client(w) as api, api_client(w, foreign=True) as foreign:
+        bank, transactions, payments = await import_erasure_payments(api, w, db=db, scope=scope if scoped else None)
+        foreign_world = {key: w['foreign_' + key] for key in ('property', 'tenant', 'lease')}
+        foreign_bank, _, _ = await import_erasure_payments(foreign, foreign_world)
+        await db.rollback()
+        # Deleting a referenced line cannot silently create a dangling voucher.
+        with pytest.raises(DBAPIError) as refused:
+            async with db.begin_nested():
+                await db.execute(text('DELETE FROM bank_transaction WHERE organization_id=:org AND id=CAST(:id AS uuid)'),
+                    {**w, 'id': transactions['700.00']['id']})
+        assert refused.value.orig.sqlstate == '23503'
+        assert refused.value.orig.__cause__.constraint_name == 'fk_payment_bank_transaction_coherence'
+        before = (await db.execute(text('SELECT to_jsonb(p) FROM payment p WHERE organization_id=:org'), w)).scalars().all()
+        before_account = await db.scalar(text('SELECT to_jsonb(b) FROM bank_account b WHERE id=CAST(:id AS uuid)'), {'id': bank})
+        before_lines = (await db.execute(text('SELECT to_jsonb(t) FROM bank_transaction t WHERE organization_id=:org'), w)).scalars().all()
+        foreign_before = (await db.execute(text('SELECT to_jsonb(t) FROM bank_transaction t WHERE organization_id=:org ORDER BY id'),
+            {'org': w['foreign_org']})).scalars().all()
+        foreign_account = await db.scalar(text('SELECT to_jsonb(b) FROM bank_account b WHERE id=CAST(:id AS uuid)'), {'id': foreign_bank})
+        bindings = (await db.execute(text('SELECT to_jsonb(b) FROM accounting_scope_binding b WHERE organization_id=:org ORDER BY id'), w)).scalars().all()
+        assert {row['payment_id'] for row in bindings if row['payment_id']} == (set(payments.values()) if scoped else set())
+        await db.rollback()
+        assert (await api.post('/api/organizations/deletion')).status_code == 200
+        assert (await api.post('/api/organizations/deletion/confirm', json={'organization_name': 'T23 synthetic'})).status_code == 200
+    async with db.begin():
+        assert await run_deletion(db, w['org'], now=datetime.now(timezone.utc) + timedelta(days=8))
+    after = (await db.execute(text('SELECT to_jsonb(p) FROM payment p WHERE organization_id=:org'), w)).scalars().all()
+    expected = [row for row in before if scoped or row['status'] == 'booked']
+    assert {row['id']: row for row in after} == {row['id']: row for row in expected}
+    assert {row['id']: retained_hash('payment', row) for row in after} == {
+        row['id']: retained_hash('payment', row) for row in expected}
+    lines = (await db.execute(text('SELECT to_jsonb(t) FROM bank_transaction t WHERE organization_id=:org'), w)).scalars().all()
+    assert {row['id'] for row in lines} == {row['bank_transaction_id'] for row in expected}
+    for row in lines:
+        original = next(item for item in before_lines if item['id'] == row['id'])
+        assert row['bank_account_id'] == bank
+        assert row['import_hash'] == original['import_hash']
+        personal = {'counterparty_name', 'counterparty_iban', 'purpose', 'updated_at'}
+        assert {key: value for key, value in row.items() if key not in personal} == {
+            key: value for key, value in original.items() if key not in personal}
+        assert all(row[column] == 'Gelöscht' for column in ('counterparty_name', 'counterparty_iban', 'purpose'))
+    account = await db.scalar(text('SELECT to_jsonb(b) FROM bank_account b WHERE id=CAST(:id AS uuid)'), {'id': bank})
+    assert account == before_account
+    assert account['account_type'] == 'LAUFEND'
+    assert (await db.execute(text('SELECT to_jsonb(b) FROM accounting_scope_binding b WHERE organization_id=:org ORDER BY id'), w)).scalars().all() == bindings
+    assert (await db.execute(text('SELECT to_jsonb(t) FROM bank_transaction t WHERE organization_id=:org ORDER BY id'),
+        {'org': w['foreign_org']})).scalars().all() == foreign_before
+    assert await db.scalar(text('SELECT to_jsonb(b) FROM bank_account b WHERE id=CAST(:id AS uuid)'), {'id': foreign_bank}) == foreign_account
+    assert await db.scalar(text('''SELECT count(*) FROM payment p LEFT JOIN bank_transaction b
+        ON (b.organization_id,b.bank_account_id,b.id)=(p.organization_id,p.bank_account_id,p.bank_transaction_id)
+        WHERE p.organization_id=:org AND p.bank_transaction_id IS NOT NULL AND b.id IS NULL'''), w) == 0
+    await db.rollback()
+
+
+async def test_operator_erasure_removes_an_empty_weg_draft_without_a_runtime_actor(rent_world, rent_db, export_store):
+    from app.services.organization_deletion_service import run_deletion
+    w = rent_world
+    async with api_client(w) as api:
+        prop = await api.post('/api/properties', json={'name': 'Disposable empty WEG draft', 'management_type': 'WEG'})
+        assert prop.status_code == 201, prop.text
+        draft = await api.post('/api/weg-settlements/asset-reports', json={'property_id': prop.json()['id'],
+            'period_start': '2025-01-01', 'period_end': '2025-12-31'})
+        assert draft.status_code == 201, draft.text
+        assert (await api.post('/api/organizations/deletion')).status_code == 200
+        assert (await api.post('/api/organizations/deletion/confirm', json={'organization_name': 'T23 synthetic'})).status_code == 200
+    async with rent_db.begin():
+        await rent_db.execute(text("SELECT set_config('app.current_user_id','',true)"))
+        assert await run_deletion(rent_db, w['org'], now=datetime.now(timezone.utc) + timedelta(days=8))
+    assert await rent_db.scalar(text('SELECT count(*) FROM settlement_run WHERE id=:run'), {'run': draft.json()['id']}) == 0
+    assert await rent_db.scalar(text('SELECT status FROM organization_deletion WHERE organization_id=:org'), w) == 'deleted_pending_retention'
+    await rent_db.rollback()
+
+
 @pytest.mark.parametrize('scoped', [False, True], ids=['unscoped', 'immutable-scope-bindings'])
 async def test_erasure_keeps_payment_retention_conditional_with_or_without_scope_bindings(
         rent_world, reserve_erasure_db, app_rw_session, scoped):
@@ -149,6 +327,18 @@ async def test_erasure_keeps_payment_retention_conditional_with_or_without_scope
                 'ADR-0012: required dependency of retained voucher or evidence'}
             assert any(row['entity'] == 'tenant_profile' and row['identity']['id'] == str(w['tenant']) for row in plan)
         assert not any(row['entity'] == 'person' and row['identity']['id'] == str(w['person']) for row in plan)
+        payment_rows = (await rent_db.execute(text('SELECT to_jsonb(p) FROM payment p WHERE organization_id=:org'), w)).scalars().all()
+        binding_rows = (await rent_db.execute(text('SELECT to_jsonb(b) FROM accounting_scope_binding b WHERE organization_id=:org ORDER BY id'), w)).scalars().all()
+        await rent_db.rollback()
+        with pytest.raises(DBAPIError) as immutable_draft:
+            async with app_rw_session.bind.begin() as runtime:
+                await runtime.execute(text("SELECT set_config('app.current_org_id',:org,true),set_config('app.current_user_id',:actor,true)"),
+                    {'org': str(w['org']), 'actor': str(w['admin'])})
+                await runtime.execute(text('UPDATE payment SET amount=amount+1 WHERE organization_id=:org AND id=CAST(:id AS uuid)'),
+                    {**w, 'id': bound})
+        assert immutable_draft.value.orig.sqlstate == '23514'
+        assert immutable_draft.value.orig.__cause__.constraint_name == 'reserve_imported_draft_bound'
+        assert 'Imported payment draft follows retained bank movement' in str(immutable_draft.value.orig)
         await rent_db.rollback()
         for draft in (bound, released):
             with pytest.raises(DBAPIError) as runtime_refusal:
@@ -179,6 +369,12 @@ async def test_erasure_keeps_payment_retention_conditional_with_or_without_scope
         expected.update(dict.fromkeys(drafts, 'draft'))
         assert set((await rent_db.execute(text('SELECT payment_id FROM accounting_scope_binding WHERE organization_id=:org AND payment_id IS NOT NULL'), w)).scalars()) == payment_ids
     assert remaining == expected
+    assert {row['id']: row for row in (await rent_db.execute(text('SELECT to_jsonb(p) FROM payment p WHERE organization_id=:org'), w)).scalars()} == {
+        row['id']: row for row in payment_rows if uuid.UUID(row['id']) in expected}
+    assert (await rent_db.execute(text('SELECT to_jsonb(b) FROM accounting_scope_binding b WHERE organization_id=:org ORDER BY id'), w)).scalars().all() == binding_rows
+    retained_bank = (await rent_db.execute(text('SELECT counterparty_name,counterparty_iban,purpose FROM bank_transaction WHERE id=CAST(:id AS uuid)'),
+        {'id': transaction})).one_or_none()
+    assert retained_bank == (('Gelöscht', 'Gelöscht', 'Gelöscht') if scoped else None)
     # The retained scope-bound rent draft has the existing 0147 person handling:
     # unlike a booked voucher it does not prevent tenant anonymization.
     person = (await rent_db.execute(text('SELECT last_name,anonymized_at FROM person WHERE id=:person'), w)).one()
@@ -677,6 +873,10 @@ async def test_retention_catalog_classifies_every_organization_table(rent_db):
     by_name = {row['entity']: row['disposition'] for row in classified}
     assert next((row['disposition'], row['retain_when']) for row in classified if row['entity'] == 'payment') == (
         'conditional', "t.status='booked'")
+    # No independent retention root: real FK closure follows every retained
+    # payment, including drafts kept by immutable accounting scope bindings.
+    assert next((row['disposition'], row['retain_when']) for row in classified if row['entity'] == 'bank_transaction') == (
+        'conditional', 'false')
     for name in ('person_data_domain', 'person_data_grant', 'property_data_domain', 'property_data_grant',
                  'dunning_scope_context', 'property_source_admission', 'special_levy', 'special_levy_allocation',
                  'reserve_ledger_entry'):
@@ -781,12 +981,12 @@ async def test_due_erasure_with_computed_drafts_bound_finance_and_dunning(rent_w
                 headers={'Idempotency-Key': str(uuid.uuid4())})
             assert grant.status_code == 201, grant.text
         created = await api.post('/api/settlements', json={
-            'property_id': str(w['property']), 'lease_agreement_id': str(w['lease']),
+            'heating_advance_payments_total': '0.00', 'property_id': str(w['property']), 'lease_agreement_id': str(w['lease']),
             'period_start': '2026-01-01', 'period_end': '2026-12-31', 'advance_payments_total': '0.00'})
         assert created.status_code == 201, created.text
         run = uuid.UUID(created.json()['id'])
         coverage = await attest(api, 'settlement', str(run),
-            {'advance_payments_total': '0.00', 'advance_payments_source': 'MANUAL'})
+            {'heating_advance_payments_total': '0.00', 'heating_advance_payments_source': 'MANUAL', 'advance_payments_total': '0.00', 'advance_payments_source': 'MANUAL'})
         assert coverage.status_code == 201, coverage.text
         computed = await api.post(f'/api/settlements/{run}/compute', json={})
         assert computed.status_code == 200, computed.text
@@ -1606,3 +1806,29 @@ async def test_deletion_admission_bounds_acl_before_live_principal_check(rent_wo
         assert observed == ['30s'] * 3
     finally:
         event.remove(engine.sync_engine, 'begin', unlimited)
+
+
+async def test_household_lifecycle_guard_blocks_a_previously_authorized_writer(rent_world, rent_db):
+    from app.core.db import get_tenant_session
+    from sqlalchemy.exc import DBAPIError
+    w = rent_world
+    await rent_db.execute(text('''INSERT INTO unit_household(organization_id,unit_id,valid_from,persons,is_vacancy)
+        VALUES (:org,:unit,'2026-01-01',1,false)'''), w)
+    await rent_db.commit()
+    try:
+        async with get_tenant_session(w['org']) as db:
+            await db.execute(text("SELECT set_config('app.current_user_id',:actor,true)"), {'actor': str(w['admin'])})
+            assert await db.scalar(text('SELECT persons FROM unit_household WHERE unit_id=:unit'), w) == 1
+            await rent_db.execute(text('''INSERT INTO organization_deletion(organization_id,status,execute_after)
+                VALUES (:org,'cooling_off',now()+interval '7 days')'''), w)
+            await rent_db.commit()
+            for sql in ("INSERT INTO unit_household(organization_id,unit_id,valid_from,persons,is_vacancy) VALUES (:org,:unit,'2027-01-01',2,false)",
+                        'DELETE FROM unit_household WHERE unit_id=:unit'):
+                with pytest.raises(DBAPIError) as refused:
+                    async with db.begin_nested():
+                        await db.execute(text(sql), w)
+                assert refused.value.orig.sqlstate == 'P0023'
+            assert await db.scalar(text('SELECT count(*) FROM unit_household WHERE unit_id=:unit'), w) == 1
+    finally:
+        await rent_db.execute(text('DELETE FROM organization_deletion WHERE organization_id=:org'), w)
+        await rent_db.commit()

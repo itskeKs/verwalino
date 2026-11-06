@@ -34,8 +34,6 @@ export function DunningBatch({ periodStart, periodEnd, properties }: Props) {
   const [referenceDate, setReferenceDate] = useState("");
   const [threshold, setThreshold] = useState("");
   const [grace, setGrace] = useState("0");
-  const [withInterest, setWithInterest] = useState(false);
-  const [rate, setRate] = useState("");
   const [propertyId, setPropertyId] = useState("");
   const [scopeId, setScopeId] = useState<string | null>(null);
   const [scopeValid, setScopeValid] = useState(true);
@@ -49,7 +47,7 @@ export function DunningBatch({ periodStart, periodEnd, properties }: Props) {
   const busyRef = useRef(false);
   const generation = useRef(0);
   const live = useRef(true);
-  const contextKey = JSON.stringify([sessionKey, periodStart, periodEnd, referenceDate, threshold, grace, withInterest, rate, propertyId, scopeId, scopeValid]);
+  const contextKey = JSON.stringify([sessionKey, periodStart, periodEnd, referenceDate, threshold, grace, propertyId, scopeId, scopeValid]);
   const activeContext = useRef(contextKey);
   const activeSession = useRef(sessionKey);
   useEffect(() => {
@@ -84,11 +82,9 @@ export function DunningBatch({ periodStart, periodEnd, properties }: Props) {
   }
 
   const normalizedThreshold = amount(threshold);
-  const normalizedRate = rate.trim().replace(",", ".");
   const inputValid = validDate(periodStart) && validDate(periodEnd) && periodStart <= periodEnd
     && validDate(referenceDate) && normalizedThreshold !== null
     && /^\d+$/.test(grace) && Number.isSafeInteger(Number(grace))
-    && (!withInterest || /^[+-]?(?:\d+(?:\.\d{1,4})?|\.\d{1,4})$/.test(normalizedRate))
     && policy?.session === sessionKey && (!policy.requiresScope || !!scopeId)
     && scopeValid && (!propertyId || !!scopeId);
   const currentPreview = preview?.key === contextKey ? preview : null;
@@ -101,7 +97,6 @@ export function DunningBatch({ periodStart, periodEnd, properties }: Props) {
     const input: DunningBatchInput = {
       period_start: periodStart, period_end: periodEnd, reference_date: referenceDate,
       threshold: normalizedThreshold!, grace_days: Number(grace),
-      base_interest_rate: withInterest ? normalizedRate : null,
       ...(scopeId ? { accounting_scope_id: scopeId } : {}),
     };
     invalidate(); setCreated(null);
@@ -161,17 +156,15 @@ export function DunningBatch({ periodStart, periodEnd, properties }: Props) {
       <h2>Mahnlauf vorbereiten</h2>
       <p>Zeitraum: {periodStart} bis {periodEnd}. Der Stichtag ist ausdrücklich anzugeben.</p>
       <p>Es entstehen nur Mahnentwürfe. Originale bleiben unverändert; Entwürfe werden nicht ausgestellt, versendet oder als PDF erzeugt.</p>
-      <p>Gebühr ohne Überschreibung (NULL): Es gelten die bestehenden Gebühren der jeweiligen Mahnstufe.</p>
+      <p>Gebühren und Verzugszinsen richten sich nach den Mahneinstellungen der Organisation.</p>
       {policyError && <div role="alert">Berechtigungskontext nicht verfügbar: {policyError} <button type="button" onClick={() => setPolicyRevision(value => value + 1)}>Berechtigung erneut prüfen</button></div>}
       {!policy && !policyError && <p>Berechtigungskontext wird geprüft…</p>}
       {policy?.session === sessionKey && policy.requiresScope && !scopeId && <p>Für diesen Mahnlauf einen MIET-Abrechnungskreis mit Vorbereitungsrecht auswählen.</p>}
-      <fieldset disabled={!!pending} style={{ border: 0, padding: 0 }}>
+      <fieldset disabled={!!pending} className="form-grid min-w-0 border-0 p-0 mb-3">
         <label>Stichtag *<input type="date" value={referenceDate} onChange={e => { invalidate(); setReferenceDate(e.target.value); }} /></label>
         <label>Mindestrückstand (EUR) *<input inputMode="decimal" value={threshold} onChange={e => { invalidate(); setThreshold(e.target.value); }} /></label>
         <label>Karenztage<input inputMode="numeric" value={grace} onChange={e => { invalidate(); setGrace(e.target.value); }} /></label>
-        <label>Verzugszinsen<select value={withInterest ? "yes" : "no"} onChange={e => { invalidate(); setWithInterest(e.target.value === "yes"); }}><option value="no">Ohne Verzugszinsen</option><option value="yes">Mit explizitem Basiszinssatz</option></select></label>
-        {withInterest && <label>Basiszinssatz (%)<input inputMode="decimal" value={rate} onChange={e => { invalidate(); setRate(e.target.value); }} /></label>}
-        <label>Immobilie für Abrechnungskreis<select value={propertyId} onChange={e => { invalidate(); setPropertyId(e.target.value); setScopeId(null); setScopeValid(!e.target.value); }}><option value="">Ohne expliziten Abrechnungskreis</option>{properties.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}</select></label>
+        <label className="min-w-0">Immobilie für Abrechnungskreis<select className="w-full" value={propertyId} onChange={e => { invalidate(); setPropertyId(e.target.value); setScopeId(null); setScopeValid(!e.target.value); }}><option value="">Ohne expliziten Abrechnungskreis</option>{properties.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}</select></label>
         {propertyId && <AccountingScopeSelector key={propertyId} propertyId={propertyId} kind="MIET" capability="prepare" value={scopeId}
           onChange={id => { invalidate(); setScopeId(id); }} onValidityChange={setScopeValid} />}
       </fieldset>

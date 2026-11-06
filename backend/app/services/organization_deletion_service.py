@@ -25,6 +25,7 @@ NOTICE = ('Nach der Löschung ist keine Anmeldung mehr möglich; aufbewahrungspf
 # Mutable configuration retained for structural/delete-privilege reasons, not
 # frozen voucher content. Canonical rule/fact fields remain guard-protected.
 ERASURE_SCRUB_COLUMNS = {
+    'bank_transaction': ('counterparty_name', 'counterparty_iban', 'purpose'),
     'tenant_profile': ('notes',),
     'lease_agreement': ('notes',),
     'vendor': ('notes', 'tax_id', 'vat_id'),

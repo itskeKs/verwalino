@@ -33,9 +33,11 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.temporal import db_exclusive_to_engine_inclusive
+from app.engine.types import OwnerPeriodInput
 from app.engine.mietkonto import (
     AdvanceFilter,
     AdvanceCredit,
+    ExpectedCharge,
     LeaseChargeInput,
     RentChangeInput,
     MietkontoResult,
@@ -52,6 +54,7 @@ from app.engine.mietkonto import (
     tenant_expected_charges,
 )
 from app.models.audit_event import AuditEvent
+from app.models.economic_plan import EconomicPlan
 from app.services.financial_scope_service import FinancialScopeService
 from app.models.payment import Payment
 from app.services.special_levy_service import SpecialLevyService
@@ -77,7 +80,7 @@ from app.repositories.unit_repo import UnitRepository
 # Tenant-bound vs owner-bound vocabulary (kept in sync with the DB CHECK in 0016
 # and the engine vocabulary). The service uses it for the OUT-direction of a
 # Storno and for input validation messages.
-TENANT_TYPES = frozenset({"KALTMIETE", "NK_VORAUSZAHLUNG", "KAUTION"})
+TENANT_TYPES = frozenset({"KALTMIETE", "NK_VORAUSZAHLUNG", "HK_VORAUSZAHLUNG", "KAUTION"})
 OWNER_TYPES = frozenset({"HAUSGELD_VORSCHUSS", "RUECKLAGENANTEIL", "SONDERZAHLUNG"})
 
 
@@ -92,7 +95,7 @@ def _compute_retention_until(value_date: date) -> date:
     return year_end.replace(year=year_end.year + 8)
 
 
-def _to_payment_input(p: Payment) -> PaymentInput:
+def to_payment_input(p: Payment) -> PaymentInput:
     """Map a Payment ORM row to the pure engine's frozen PaymentInput."""
     return PaymentInput(
         payment_id=p.id,
@@ -107,6 +110,7 @@ def _to_payment_input(p: Payment) -> PaymentInput:
         is_booked=(p.status == "booked"),
         is_reversed=(p.reversed_by_id is not None),
         is_reversal=(p.reverses_id is not None),
+        value_date=p.value_date,
     )
 
 
@@ -544,7 +548,7 @@ class PaymentService:
         for lease in sorted(leases, key=lambda item: str(item.id)):
             payments = await self._repo.list_for_lease(lease.id)
             result = deposit_statement(lease.deposit or Decimal("0.00"),
-                                       [_to_payment_input(p) for p in payments])
+                                       [to_payment_input(p) for p in payments])
             if result.expected_amount == 0 and result.paid_amount == 0 and result.refunded_amount == 0:
                 continue
             unit = await UnitRepository(self._session, self._org_id).get_by_id(lease.unit_id)
@@ -575,6 +579,7 @@ class PaymentService:
     async def account_statement_for_lease(
         self, lease_agreement_id: uuid.UUID, period_start: date, period_end: date,
         accounting_scope_id: uuid.UUID | None = None,
+        *, as_of: date | None = None, include_payment_dates: bool = False,
     ) -> MietkontoResult:
         """Soll/Ist/Saldo + offene Posten of one lease over a period (§3.1)."""
         await FinancialScopeService(self._session, self._org_id, self._user_id).select_report_scope(
@@ -589,16 +594,51 @@ class PaymentService:
             valid_from=lease.valid_from,
             valid_to=db_exclusive_to_engine_inclusive(lease.valid_to),
             base_rent=lease.base_rent,
-            advance_payment=lease.advance_payment,
+            advance_payment=lease.advance_payment, heating_advance_payment=lease.heating_advance_payment,
             rent_changes=tuple(RentChangeInput(
-                valid_from=row.valid_from, base_rent=row.base_rent, advance_payment=row.advance_payment,
+                valid_from=row.valid_from, base_rent=row.base_rent, advance_payment=row.advance_payment, heating_advance_payment=row.heating_advance_payment,
             ) for row in rent_changes),
         )
-        charges = tenant_expected_charges(lc, period_start, period_end)
+        unit = await UnitRepository(self._session, self._org_id).get_by_id(lease.unit_id)
+        prop = await PropertyRepository(self._session, self._org_id).get_by_id(unit.property_id) if unit else None
+        if prop is None:
+            raise HTTPException(404, "Property not found")
+        charges = tenant_expected_charges(lc, period_start, period_end, federal_state=prop.federal_state)
         payments = await self._repo.list_for_lease(lease_agreement_id)
         scoped = self._scope_payments_to_period(payments, period_start, period_end)
-        return account_statement(charges, [_to_payment_input(p) for p in scoped
-                                           if p.payment_type != "KAUTION"])
+        return account_statement(charges, [to_payment_input(p) for p in scoped
+                                           if p.payment_type != "KAUTION"], as_of=as_of or date.today(),
+                                 include_payment_dates=include_payment_dates)
+
+    async def owner_plan_charges(
+        self, plan: EconomicPlan, owner_profile_id: uuid.UUID,
+        period_start: date, period_end: date,
+    ) -> list[ExpectedCharge]:
+        """Dated advances for an authorized finalized plan, shared with dunning."""
+        lines = await self._plan_lines.list_for_plan(plan.id)
+        advance_lines = [
+            OwnerAdvanceChargeInput(
+                owner_profile_id=ln.owner_profile_id, unit_id=ln.unit_id,
+                monthly_amount=ln.monthly_amount,
+            )
+            for ln in lines
+            if ln.line_type == "OWNER_ADVANCE"
+            and ln.owner_profile_id is not None and ln.monthly_amount is not None
+        ]
+        history = [OwnerPeriodInput(o.unit_id, o.owner_profile_id, o.valid_from,
+            db_exclusive_to_engine_inclusive(o.valid_to), o.mea_share)
+            for o in await SettlementRunRepository(self._session, self._org_id).ownership_for_property(plan.property_id)]
+        prop = await PropertyRepository(self._session, self._org_id).get_by_id(plan.property_id)
+        if prop is None:
+            raise HTTPException(404, 'Property not found')
+        try:
+            return owner_expected_charges(advance_lines, owner_profile_id,
+                max(period_start, plan.period_start), min(period_end, plan.period_end),
+                owner_periods=history, plan_start=plan.period_start,
+                monthly_due_day=plan.monthly_due_day, federal_state=prop.federal_state)
+        except ValueError as exc:
+            raise HTTPException(422, {"code": "hausgeld_ownership_invalid",
+                "message": "Die Eigentumszeiträume oder Miteigentumsanteile für das Hausgeld sind unvollständig."}) from exc
 
     async def account_statement_for_owner(
         self,
@@ -607,7 +647,7 @@ class PaymentService:
         period_start: date,
         period_end: date,
         accounting_scope_id: uuid.UUID | None = None,
-        *, property_id: uuid.UUID | None = None,
+        *, property_id: uuid.UUID | None = None, as_of: date | None = None,
     ) -> MietkontoResult:
         """Hausgeld Soll/Ist/Saldo of one owner over a period (§2.2/§3.1).
 
@@ -637,21 +677,7 @@ class PaymentService:
             if sphere is not None and (period_start < plan.period_start or period_end > plan.period_end):
                 raise HTTPException(422, 'Report period is outside economic plan')
             if plan.status == "finalized":
-                lines = await self._plan_lines.list_for_plan(economic_plan_id)
-                advance_lines = [
-                    OwnerAdvanceChargeInput(
-                        owner_profile_id=ln.owner_profile_id,
-                        unit_id=ln.unit_id,
-                        monthly_amount=ln.monthly_amount,
-                    )
-                    for ln in lines
-                    if ln.line_type == "OWNER_ADVANCE"
-                    and ln.owner_profile_id is not None
-                    and ln.monthly_amount is not None
-                ]
-                charges = owner_expected_charges(
-                    advance_lines, owner_profile_id, period_start, period_end
-                )
+                charges = await self.owner_plan_charges(plan, owner_profile_id, period_start, period_end)
 
         if sphere is not None and property_id is not None and sphere.property_id != property_id:
             raise HTTPException(422, 'Property differs from accounting scope')
@@ -662,7 +688,7 @@ class PaymentService:
 
         payments = await self._repo.list_for_owner(owner_profile_id, property_id=property_id)
         scoped = self._scope_payments_to_period(payments, period_start, period_end)
-        return account_statement(charges, [_to_payment_input(p) for p in scoped])
+        return account_statement(charges, [to_payment_input(p) for p in scoped], as_of=as_of or date.today())
 
     @staticmethod
     def _scope_payments_to_period(payments, period_start: date, period_end: date):
@@ -695,12 +721,12 @@ class PaymentService:
     # engine, so the value is bit-identical to the MANUAL path (I6-E).
     # ------------------------------------------------------------------
     @staticmethod
-    def _nk_credit_buckets_change(lease, inputs, start, end, old_end, new_end):
+    def _nk_credit_buckets_change(lease, inputs, start, end, old_end, new_end, payment_type="NK_VORAUSZAHLUNG"):
         def buckets(lease_end):
             return tuple(credit
                 for year in range(start.year, end.year + 1)
                 for credit in derive_advance_credits_for_period(inputs, AdvanceFilter(
-                    frozenset({"NK_VORAUSZAHLUNG"}), year, lease.id), start, end,
+                    frozenset({payment_type}), year, lease.id), start, end,
                     lease_start=lease.valid_from, lease_end=lease_end))
 
         return buckets(old_end) != buckets(new_end)
@@ -710,10 +736,14 @@ class PaymentService:
         runs = await self._leases.finalized_derived_statements_ending_after(lease_id, last_day)
         if not runs:
             return False
-        lease, inputs = await self._nk_advance_inputs(lease_id)
-        old_end = db_exclusive_to_engine_inclusive(lease.valid_to)
-        return any(self._nk_credit_buckets_change(lease, inputs, run.period_start, run.period_end,
-            old_end, last_day) for run in runs)
+        for payment_type, source in (("NK_VORAUSZAHLUNG", "advance_payments_source"),
+                ("HK_VORAUSZAHLUNG", "heating_advance_payments_source")):
+            lease, inputs = await self._nk_advance_inputs(lease_id, payment_type=payment_type)
+            old_end = db_exclusive_to_engine_inclusive(lease.valid_to)
+            if any(getattr(run, source) == "DERIVED" and self._nk_credit_buckets_change(
+                    lease, inputs, run.period_start, run.period_end, old_end, last_day, payment_type) for run in runs):
+                return True
+        return False
 
     async def derive_nk_advance_total(
         self, lease_agreement_id: uuid.UUID, period_year: int
@@ -725,25 +755,28 @@ class PaymentService:
             year=period_year,
             lease_agreement_id=lease_agreement_id,
         )
-        return derive_advance_total([_to_payment_input(p) for p in rows], filt)
+        return derive_advance_total([to_payment_input(p) for p in rows], filt)
 
     async def derive_nk_advance_total_for_period(
-        self, lease_agreement_id: uuid.UUID, period_start: date, period_end: date
+        self, lease_agreement_id: uuid.UUID, period_start: date, period_end: date,
+        *, payment_type: str = "NK_VORAUSZAHLUNG",
     ) -> Decimal:
-        """DERIVED NK total with earlier snapshot credits retained after edits."""
-        credits, _excluded = await self.nk_advance_credits_for_period(lease_agreement_id, period_start, period_end)
+        """Derive one component total, retaining earlier frozen credits after edits."""
+        credits, _excluded = await self.nk_advance_credits_for_period(lease_agreement_id, period_start, period_end, payment_type=payment_type)
         return sum((credit.amount for credit in credits), Decimal("0.00"))
 
     async def nk_advance_credits_for_period(
         self, lease_agreement_id: uuid.UUID, period_start: date, period_end: date,
+        *, payment_type: str = "NK_VORAUSZAHLUNG",
     ) -> tuple[tuple[AdvanceCredit, ...], Decimal]:
         """Return auditable year/month buckets plus wholly outside-lease bookings."""
         from app.repositories.settlement_repo import SettlementRunRepository
 
-        lease, inputs = await self._nk_advance_inputs(lease_agreement_id)
+        lease, inputs = await self._nk_advance_inputs(lease_agreement_id, payment_type=payment_type)
         lease_end = db_exclusive_to_engine_inclusive(lease.valid_to)
         finalized = await SettlementRunRepository(self._session, self._org_id).finalized_bk_for_advance_years(
             lease_agreement_id, period_start, period_end)
+        prefix = "heating_" if payment_type == "HK_VORAUSZAHLUNG" else ""
         frozen, seen = [], set()
         for run in finalized:
             payload = run.snapshot_payload or {}
@@ -753,16 +786,16 @@ class PaymentService:
                 continue
             seen.add(bounds)
             data = payload.get("inputs", {})
-            if data.get("advance_payments_source") != "DERIVED":
+            if data.get(prefix + "advance_payments_source") != "DERIVED":
                 continue
-            buckets = data.get("advance_payment_credits")
+            buckets = data.get(prefix + "advance_payment_credits")
             if buckets is None:
                 old_lease = next((row for row in data.get("lease_periods", [])
                     if row["lease_agreement_id"] == str(lease_agreement_id)), {})
                 old_end = date.fromisoformat(old_lease["to"]) if old_lease.get("to") else None
-                if (old_end != lease_end and Decimal(payload["result"]["advance_payments_total"])
+                if (old_end != lease_end and Decimal(payload["result"].get(prefix + "advance_payments_total", "0.00"))
                         and self._nk_credit_buckets_change(lease, inputs,
-                            date.fromisoformat(bounds[0]), date.fromisoformat(bounds[1]), old_end, lease_end)):
+                            date.fromisoformat(bounds[0]), date.fromisoformat(bounds[1]), old_end, lease_end, payment_type)):
                     raise HTTPException(409, {"code": "advance_credit_history_missing",
                         "message": "Der eingefrorene Vorauszahlungsnachweis fehlt. Bitte die frühere Abrechnung korrigieren."})
                 continue
@@ -771,33 +804,34 @@ class PaymentService:
         credits = tuple(credit
             for year in range(period_start.year, period_end.year + 1)
             for credit in derive_advance_credits_for_period(inputs, AdvanceFilter(
-                types=frozenset({"NK_VORAUSZAHLUNG"}),
+                types=frozenset({payment_type}),
                 year=year,
                 lease_agreement_id=lease_agreement_id,
             ), period_start, period_end, lease_start=lease.valid_from,
                 lease_end=lease_end, finalized_credits=tuple(frozen)))
-        return credits, self._uncredited_nk_total(lease, inputs, period_start, period_end)
+        return credits, self._uncredited_nk_total(lease, inputs, period_start, period_end, payment_type)
 
-    async def _nk_advance_inputs(self, lease_agreement_id):
+    async def _nk_advance_inputs(self, lease_agreement_id, *, payment_type="NK_VORAUSZAHLUNG"):
         lease = await self._leases.get_by_id(lease_agreement_id)
         if lease is None:
             raise HTTPException(404, "Lease agreement not found")
-        rows = await self._repo.derived_for_nk_for_lease(lease_agreement_id)
-        return lease, [_to_payment_input(p) for p in rows]
+        rows = await self._repo.derived_for_nk_for_lease(lease_agreement_id, payment_type=payment_type)
+        return lease, [to_payment_input(p) for p in rows]
 
     @staticmethod
-    def _uncredited_nk_total(lease, inputs, period_start, period_end):
+    def _uncredited_nk_total(lease, inputs, period_start, period_end, payment_type="NK_VORAUSZAHLUNG"):
         return sum((uncredited_advance_total(inputs, AdvanceFilter(
-            frozenset({"NK_VORAUSZAHLUNG"}), year, lease.id), lease.valid_from,
+            frozenset({payment_type}), year, lease.id), lease.valid_from,
             db_exclusive_to_engine_inclusive(lease.valid_to), period_start=period_start, period_end=period_end)
             for year in sorted({p.period_year for p in inputs if p.period_year is not None})), Decimal("0.00"))
 
     async def uncredited_nk_advance_total(
         self, lease_agreement_id: uuid.UUID, period_start: date, period_end: date,
+        *, payment_type: str = "NK_VORAUSZAHLUNG",
     ) -> Decimal:
         """Notice-only derivation; manual statement totals need no frozen history."""
-        lease, inputs = await self._nk_advance_inputs(lease_agreement_id)
-        return self._uncredited_nk_total(lease, inputs, period_start, period_end)
+        lease, inputs = await self._nk_advance_inputs(lease_agreement_id, payment_type=payment_type)
+        return self._uncredited_nk_total(lease, inputs, period_start, period_end, payment_type)
 
     async def derive_hausgeld_total(
         self, owner_profile_id: uuid.UUID, period_year: int
@@ -809,17 +843,23 @@ class PaymentService:
             year=period_year,
             owner_profile_id=owner_profile_id,
         )
-        return derive_advance_total([_to_payment_input(p) for p in rows], filt)
+        return derive_advance_total([to_payment_input(p) for p in rows], filt)
 
     async def derive_hausgeld_total_for_period(
-        self, owner_profile_id: uuid.UUID, period_start: date, period_end: date
+        self, owner_profile_id: uuid.UUID, period_start: date, period_end: date,
+        *, property_id: uuid.UUID | None = None,
     ) -> Decimal:
-        """Paid Hausgeld with the same month/day proration as NK advances."""
-        rows = []
-        for year in range(period_start.year, period_end.year + 1):
-            rows.extend(await self._repo.derived_for_hausgeld(owner_profile_id, year))
-        inputs = [_to_payment_input(p) for p in rows]
-        return sum((derive_advance_total_for_period(inputs, AdvanceFilter(
-            types=frozenset({"HAUSGELD_VORSCHUSS"}), year=year,
-            owner_profile_id=owner_profile_id,
-        ), period_start, period_end) for year in range(period_start.year, period_end.year + 1)), Decimal("0.00"))
+        """Prorate assigned Hausgeld; count yearless bookings on their value date."""
+        rows = await self._repo.list_for_owner(owner_profile_id, property_id=property_id)
+        assigned = [to_payment_input(p) for p in rows if p.period_year is not None]
+        assigned_total = sum((sign * derive_advance_total_for_period(
+            [p for p in assigned if p.direction == direction], AdvanceFilter(
+                types=frozenset({"HAUSGELD_VORSCHUSS"}), year=year,
+                owner_profile_id=owner_profile_id,
+            ), period_start, period_end)
+            for direction, sign in (("IN", 1), ("OUT", -1))
+            for year in range(period_start.year, period_end.year + 1)), Decimal("0.00"))
+        scoped = self._scope_payments_to_period(
+            [p for p in rows if p.period_year is None], period_start, period_end)
+        return assigned_total + account_statement([], [to_payment_input(p) for p in scoped
+                                                       if p.payment_type == 'HAUSGELD_VORSCHUSS']).ist_total

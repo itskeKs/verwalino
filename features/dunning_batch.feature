@@ -5,10 +5,11 @@ Feature: Dunning batch
 
   Background:
     Given three unpaid rental agreements in one accounting scope
+    And the organization enables automatic dunning interest
 
   Scenario: Editing and cancelling a preview leaves no notices
     When the manager previews October arrears above 100 EUR as of 15 November 2026
-    Then the preview offers three unselected arrears of 850 EUR each
+    Then the preview offers three unselected arrears of 850 EUR each with 6.23 EUR interest
     When the manager changes the minimum arrears
     Then the reviewed selection is cleared
     When the manager previews and cancels the selection on a phone

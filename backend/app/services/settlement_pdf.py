@@ -107,6 +107,9 @@ def _heating_html(run: SettlementRun) -> str:
                                                  for k in ('start_reading','end_reading') if source.get(k)))
             if source.get('reason'):
                 provenance += '; ' + source['reason']
+            if source.get('split'):
+                from app.engine.meter_consumption import split_weight_note
+                provenance += ' ' + split_weight_note(source['split']) + '.'
             statement_period = (f"<br/>Davon {_esc(r['statement_from'])} – {_esc(r['statement_to'])}: "
                                 if r.get('statement_from') else '')
             rows.append(f"""<tr><td>{_esc(r['period_from'])} – {_esc(r['period_to'])}</td>
@@ -126,6 +129,15 @@ def _heating_html(run: SettlementRun) -> str:
     return ''.join(blocks)
 
 
+def _commercial_cost_ids(payload):
+    inputs = payload.get('inputs', {})
+    ids = {p['cost_entry_id'] for p in inputs.get('cost_positions', [])
+        if p.get('commercial_share_percent') is not None or p.get('commercial_amount') is not None}
+    for period in inputs.get('property_periods', []):
+        ids.update(_commercial_cost_ids(period))
+    return ids
+
+
 def build_settlement_html(
     run: SettlementRun,
     lines: list[SettlementLine],
@@ -139,6 +151,9 @@ def build_settlement_html(
     """
     dn = names or SettlementDisplayNames()
     ordered = sorted(lines, key=lambda l: l.sort_order)
+    payload = run.snapshot_payload or {}
+    commercial_ids = _commercial_cost_ids(payload)
+    frozen_sources = {line.get('sort_order'): line.get('cost_entry_id') for line in payload.get('result', {}).get('lines', [])}
 
     cost_rows = []
     for ln in ordered:
@@ -155,9 +170,10 @@ def build_settlement_html(
         if ln.time_share_days is not None and ln.time_share_total_days is not None:
             zeit = f"{ln.time_share_days} / {ln.time_share_total_days} Tage"
         note = f'<div class="note">{_esc(ln.note)}</div>' if ln.note else ""
+        commercial_line = str(getattr(ln, 'cost_entry_id', None) or frozen_sources.get(ln.sort_order)) in commercial_ids
         cost_rows.append(
             f"<tr>"
-            f"<td>{_esc(ln.label)}{note}</td>"
+            f"<td>{_esc(ln.label)}{'' if commercial_line else note}</td>"
             f"<td>{_esc(key_label)}</td>"
             f"<td class='num'>{_eur(ln.total_amount)}</td>"
             f"<td>{_esc(basis)}</td>"
@@ -165,9 +181,11 @@ def build_settlement_html(
             f"<td class='num'>{_eur(ln.amount)}</td>"
             f"</tr>"
         )
+        if commercial_line and note:
+            # New frozen rules get a full-width explanation. Legacy rows keep
+            # their exact HTML/CSS and PDF bytes, including the original note.
+            cost_rows.append(f'<tr><td colspan="6"><div class="note" style="overflow-wrap:anywhere">{_esc(ln.note)}</div></td></tr>')
 
-    advance = next((l for l in ordered if l.line_type == "ADVANCE_PAYMENT"), None)
-    balance = next((l for l in ordered if l.line_type == "BALANCE"), None)
 
     summary_rows = []
     summary_rows.append(
@@ -175,21 +193,16 @@ def build_settlement_html(
         f"<td colspan='5'>Summe umlagefaehige Kosten (Ihr Anteil)</td>"
         f"<td class='num'>{_eur(run.total_cost)}</td></tr>"
     )
-    if advance is not None:
-        summary_rows.append(
-            f"<tr class='summary'>"
-            f"<td colspan='5'>abzueglich {_esc(advance.label)}</td>"
-            f"<td class='num'>{_eur(advance.amount)}</td></tr>"
-        )
-    if balance is not None:
-        summary_rows.append(
-            f"<tr class='balance'>"
-            f"<td colspan='5'>{_esc(balance.label)}</td>"
-            f"<td class='num'>{_eur(balance.amount)}</td></tr>"
-        )
-
-    for notice in (line for line in ordered if line.line_type == "SUBTOTAL"):
-        summary_rows.append(f"<tr><td colspan='6'>{_esc(notice.label)}</td></tr>")
+    for line in ordered:
+        if line.line_type not in {'ADVANCE_PAYMENT', 'SUBTOTAL', 'BALANCE'}:
+            continue
+        if line.line_type == 'SUBTOTAL' and line.note is None:
+            summary_rows.append(f"<tr><td colspan='6'>{_esc(line.label)}</td></tr>")
+        else:
+            prefix = 'abzüglich ' if line.line_type == 'ADVANCE_PAYMENT' else ''
+            style = 'balance' if line.line_type == 'BALANCE' else 'summary'
+            summary_rows.append(f"<tr class='{style}'><td colspan='5'>{prefix}{_esc(line.label)}</td>"
+                f"<td class='num'>{_eur(line.amount)}</td></tr>")
 
     integrity = ""
     if run.snapshot_sha256:

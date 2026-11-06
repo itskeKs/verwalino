@@ -29,6 +29,77 @@ SYNC_URL = os.environ.get(
 REF = "2026-06-02"
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize('cutoff,expected', [(date(2026, 7, 2), 0), (date(2026, 7, 4), 1)])
+async def test_owner_deadline_count_uses_the_same_statement_and_resolved_due_date(monkeypatch, cutoff, expected):
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+    from app.services.fristen_service import FristenService
+    from app.services.payment_service import PaymentService
+    from app.engine.mietkonto import ExpectedCharge, account_statement
+
+    org, owner, prop, plan_id = [uuid.uuid4() for _ in range(4)]
+    plan = SimpleNamespace(id=plan_id, property_id=prop, period_start=date(2026, 7, 1),
+        period_end=date(2026, 7, 31), status='finalized')
+    service = FristenService(None, org)
+    service._repo = SimpleNamespace(finalized_plans=AsyncMock(return_value=[plan]),
+        plan_owner_ids=AsyncMock(return_value=[owner]))
+    charges = [ExpectedCharge(2026, 7, 'HAUSGELD_VORSCHUSS', Decimal('600.00'), due_date=date(2026, 7, 3))]
+    statement = AsyncMock(return_value=account_statement(charges, []))
+    monkeypatch.setattr(PaymentService, 'account_statement_for_owner', statement)
+    assert await service._owner_overdue_count(cutoff) == expected
+    statement.assert_awaited_once_with(owner, plan_id, plan.period_start, cutoff,
+        None, property_id=prop, as_of=cutoff)
+
+
+@pytest.mark.asyncio
+async def test_repeated_plan_periods_do_not_count_the_same_unpaid_levy_twice(monkeypatch):
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+    from fastapi import HTTPException
+    from app.services.fristen_service import FristenService
+    from app.services.payment_service import PaymentService
+    from app.engine.mietkonto import special_levy_expected_charges, account_statement
+
+    org, prop, owner = [uuid.uuid4() for _ in range(3)]
+    start, end = date(2026, 1, 1), date(2026, 12, 31)
+    plans = [SimpleNamespace(id=uuid.uuid4(), property_id=prop, period_start=start, period_end=end) for _ in range(2)]
+    service = FristenService(None, org)
+    service._repo = SimpleNamespace(finalized_plans=AsyncMock(return_value=plans),
+        plan_owner_ids=AsyncMock(return_value=[owner]))
+    levy = special_levy_expected_charges([(date(2026, 7, 1), Decimal('500.00'))], owner, start, end)
+    statement = AsyncMock(return_value=account_statement(levy, []))
+    monkeypatch.setattr(PaymentService, 'account_statement_for_owner', statement)
+    with pytest.raises(HTTPException) as error:
+        await service._owner_overdue_count(date(2026, 7, 4))
+    assert error.value.status_code == 409
+    assert error.value.detail['code'] == 'hausgeld_plan_ambiguous'
+    statement.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_deadline_heating_charge_preserves_existing_rent_history_policy(monkeypatch):
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+    from app.services.fristen_service import FristenService
+    from app.repositories.lease_rent_change_repo import LeaseRentChangeRepository
+
+    lease = SimpleNamespace(id=uuid.uuid4(), unit_id=uuid.uuid4(), valid_from=date(2026, 1, 1), valid_to=None,
+        base_rent=Decimal('750.00'), advance_payment=Decimal('150.00'), heating_advance_payment=Decimal('90.00'))
+    # Deadline counts previously used the original lease, regardless of history.
+    monkeypatch.setattr(LeaseRentChangeRepository, 'list_for_lease', AsyncMock(return_value=[
+        SimpleNamespace(valid_from=date(2026, 1, 1), base_rent=Decimal('0.00'),
+            advance_payment=Decimal('0.00'), heating_advance_payment=Decimal('0.00'))]))
+    from app.repositories.unit_repo import UnitRepository
+    from app.repositories.property_repo import PropertyRepository
+    monkeypatch.setattr(UnitRepository, 'get_by_id', AsyncMock(return_value=SimpleNamespace(property_id=uuid.uuid4())))
+    monkeypatch.setattr(PropertyRepository, 'get_by_id', AsyncMock(return_value=SimpleNamespace(federal_state='BY')))
+    service = FristenService(None, uuid.uuid4())
+    service._repo = SimpleNamespace(all_leases=AsyncMock(return_value=[lease]))
+    service._payments = SimpleNamespace(list_for_lease=AsyncMock(return_value=[]))
+    assert await service._overdue_count(date(2026, 1, 31)) == 3
+
+
 @pytest_asyncio.fixture
 async def client_a_admin(rent_world):
     async with api_client(rent_world) as client:

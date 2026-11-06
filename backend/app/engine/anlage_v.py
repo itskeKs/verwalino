@@ -57,6 +57,7 @@ class CategoryMapping:
     code: str
     line_key: str | None
     note: str
+    income_management_types: frozenset[str] | None = None
 
 
 def build_category_mapping(rows: Iterable[CategoryMapping]) -> MappingProxyType[str, CategoryMapping]:
@@ -77,10 +78,12 @@ def build_category_mapping(rows: Iterable[CategoryMapping]) -> MappingProxyType[
 DEFAULT_CATEGORY_MAPPING = build_category_mapping([
     CategoryMapping('KALTMIETE', 'rent', '[§/fachlich] Wohnraummiete als Vorschlag; andere Nutzungen, Angehörige und Vorjahresmieten gesondert prüfen.'),
     CategoryMapping('NK_VORAUSZAHLUNG', 'levies', '[§/fachlich] Laufende Umlagen; Abrechnungserstattungen und Nachzahlungen gesondert prüfen.'),
-    CategoryMapping('KAUTION', None, '[§/fachlich] Ausgeschlossen: verwahrte Kaution, keine Miete; eine spätere Verrechnung ist gesondert zu prüfen.'),
-    CategoryMapping('HAUSGELD_VORSCHUSS', None, '[§/fachlich] Ausgeschlossen: WEG-Eigentümervorschuss, keine Vermietungseinnahme.'),
-    CategoryMapping('RUECKLAGENANTEIL', None, '[§/fachlich] Ausgeschlossen: Rücklagenzuführung, keine Vermietungseinnahme.'),
-    CategoryMapping('SONDERZAHLUNG', None, '[§/fachlich] Nicht als Miete angesetzt: Eigentümer-Sonderzahlung; Verwendungszweck gesondert prüfen.'),
+    CategoryMapping('HK_VORAUSZAHLUNG', 'levies', '[§/fachlich] Laufende Umlagen; Abrechnungserstattungen und Nachzahlungen gesondert prüfen.'),
+    CategoryMapping('NACHZAHLUNG', 'levies', '[§/fachlich] Nachzahlung des Mieters aus der Betriebskostenabrechnung als Umlage; Zufluss prüfen.'),
+    CategoryMapping('KAUTION', None, '[§/fachlich] Durchlaufend: verwahrte Kaution, keine Einnahme; im Abgleich nicht mitgezählt. Eine spätere Verrechnung ist gesondert zu prüfen.', frozenset()),
+    CategoryMapping('HAUSGELD_VORSCHUSS', None, '[§/fachlich] Einnahme nur bei WEG-Verwaltung; kein Vermietungsertrag. Sonst im Abgleich nicht mitgezählt.', frozenset({'WEG'})),
+    CategoryMapping('RUECKLAGENANTEIL', None, '[§/fachlich] Einnahme nur bei WEG-Verwaltung; Rücklagenzuführung ist kein Vermietungsertrag. Sonst im Abgleich nicht mitgezählt.', frozenset({'WEG'})),
+    CategoryMapping('SONDERZAHLUNG', None, '[§/fachlich] Einnahme nur bei WEG-Verwaltung; Eigentümer-Sonderzahlung, keine Miete. Sonst im Abgleich nicht mitgezählt.', frozenset({'WEG'})),
     CategoryMapping('GRUNDSTEUER', 'property_tax', '[§/fachlich] Nur vermietungsbezogene Grundsteuer; andere öffentliche Lasten prüfen.'),
     CategoryMapping('KALTWASSER', 'water', '[§/fachlich] Vermietungsbezogene Wasserkosten; Abfluss und Umlage prüfen.'),
     CategoryMapping('ENTWAESSERUNG', 'water', '[§/fachlich] Vermietungsbezogene Abwasserkosten; Abfluss und Umlage prüfen.'),
@@ -112,6 +115,12 @@ DEFAULT_CATEGORY_MAPPING = build_category_mapping([
     CategoryMapping('ERHALTUNGSRUECKLAGE', None, '[§/fachlich] Ausgeschlossen: Rücklagenzuführung ist kein abziehbarer Erhaltungsaufwand; tatsächliche Verwendung zählt.'),
     CategoryMapping('SONDERUMLAGE', None, '[§/fachlich] Keine eindeutige Zuordnung: Mittelzuführung ohne Nachweis der tatsächlichen Verwendung.'),
 ])
+
+
+def counts_as_income(code: str, management_type: str) -> bool:
+    """Keep income eligibility and tax-line assignment in the same mapping table."""
+    mapping = DEFAULT_CATEGORY_MAPPING.get(code)
+    return mapping is None or mapping.income_management_types is None or management_type in mapping.income_management_types
 
 
 class AnlageVAmount(BaseModel):
@@ -152,6 +161,8 @@ class AnlageVSummary(BaseModel):
         'und sonstige Kosten gesondert prüfen. Einnahmen nach Wertstellung, Bruttokosten nach '
         'Rechnungsdatum; steuerlichen Zu-/Abfluss, Eigentümeranteil und Abziehbarkeit prüfen. '
         'Null bedeutet keinen zugeordneten Berichtsbetrag, nicht nachgewiesene steuerliche Vollständigkeit.'
+        ' Nicht als Einnahmen zählende Zahlungstypen bleiben separat unter „Nicht zugeordnet“ sichtbar; '
+        'ihre Beträge sind in den Abgleichsummen nicht enthalten.'
     )
 
 
@@ -189,7 +200,8 @@ def map_property_year(report: PropertyYearReport) -> AnlageVSummary:
         reconciliation = []
         for section, report_total in [('Einnahmen', report.income_total), ('Werbungskosten', report.expense_total)]:
             mapped = sum((totals[key] for key in totals if sections[key] == section), Decimal('0.00'))
-            unassigned = sum((Decimal(row.amount) for row in unmapped if row.section == section), Decimal('0.00'))
+            unassigned = sum((Decimal(row.amount) for row in unmapped if row.section == section
+                              and (section != 'Einnahmen' or counts_as_income(row.code, report._management_type))), Decimal('0.00'))
             difference = Decimal(report_total) - mapped - unassigned
             if difference:
                 raise ValueError(f'Anlage V amounts do not reconcile: {section}')

@@ -61,6 +61,7 @@ testpaths = ["tests"]
 timeout = 600
 timeout_method = "thread"
 markers = [
+    "journey: core acceptance journey twins",
     "browser: browser journeys (opt in with --run-browser)",
     "selfhost: scenario requires the self-hosted deployment policy",
     "hosted: scenario requires the hosted deployment policy",

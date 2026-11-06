@@ -1,5 +1,6 @@
+import { api, ApiError } from "../api/client";
 import { afterEach, expect, it, vi } from "vitest";
-import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { Link, MemoryRouter, Route, Routes } from "react-router-dom";
 import * as endpoints from "../api/endpoints";
 import type { EconomicPlan, OwnerProfile, Person, Property, WegLine, WegRun } from "../api/types";
@@ -28,7 +29,7 @@ const plan: EconomicPlan = {
 function draft(id = runId): WegRun {
   return { id, organization_id: "org", property_id: property.id, run_type: "WEG_JAHRESABRECHNUNG", period_start: "2026-01-01", period_end: "2026-12-31",
     economic_plan_id: plan.id, total_cost: null, balance: null, status: "draft", snapshot_sha256: null,
-    engine_version: "1", finalized_at: null, superseded_by_id: null, lines: [] };
+    engine_version: "1", finalized_at: null, superseded_by_id: null, lines: [], delete_restriction: null };
 }
 function frozenLine(id: string, owner: string, amount: string): WegLine {
   return { id, line_type: "COST", addressee_owner_profile_id: owner, cost_category_code: "WASSER", label: `Festgeschriebener Anteil ${id}`,
@@ -61,6 +62,44 @@ function show() {
   </Routes></MemoryRouter>);
 }
 
+it.each(['draft', 'finalized'] as const)('contains every %s owner statement in its own horizontal scroll container', async status => {
+  const hash = '0123456789abcdef'.repeat(4);
+  const ownerName = 'Anna-Katharina Freifrau von Hohenzollern-Sigmaringen';
+  const fetchMock = install([{ ...draft(), status, snapshot_sha256: status === 'finalized' ? hash : null,
+    lines: [frozenLine('seller', seller, '7200.00'), frozenLine('buyer', buyer, '4800.00')] }]);
+  const original = fetchMock.getMockImplementation()!;
+  fetchMock.mockImplementation((url, init) => url === '/api/persons'
+    ? Promise.resolve(json(people.map(person => person.id === profiles[0].person_id
+      ? { ...person, first_name: 'Anna-Katharina', last_name: 'Freifrau von Hohenzollern-Sigmaringen' } : person)))
+    : original(url, init));
+  show();
+  const owner = await screen.findByRole('heading', { name: ownerName });
+  expect(owner.closest('.settlement-detail')).not.toBeNull();
+  for (const name of [ownerName, 'Berta Neu']) {
+    const heading = screen.getByRole('heading', { name });
+    const table = within(heading.parentElement!).getByRole('table');
+    expect(table.parentElement).toHaveClass('overflow-x-auto');
+  }
+  expect(within(owner.parentElement!).getByRole('cell', { name: '7200.00 EUR' })).toBeVisible();
+  if (status === 'finalized') expect(screen.getByText(hash)).toBeVisible();
+});
+
+it("shows the frozen Hausgeld balance separately from the resolved Spitze", async () => {
+  const run = { ...draft(), status: "finalized" as const,
+    lines: [frozenLine("seller", seller, "6400.00")],
+    owner_results: [{ owner_profile_id: seller, owner_cost_total: "6400.00", plan_soll: "7200.00",
+      paid: "6600.00", abrechnungsspitze: "-800.00", account_balance: "600.00", payment_amount: "-200.00",
+      ownership_periods: [{ unit_number: "1", valid_from: "2026-01-01", valid_to: "2026-06-30" }] }] };
+  install([run]); show();
+  expect(await screen.findByText("Abrechnungsspitze (beschlossen, § 28 Abs. 2 WEG)")).toBeVisible();
+  for (const text of ["Hausgeld-Soll laut Wirtschaftsplan", "Hausgeld gezahlt", "Rückstand / Guthaben aus Hausgeld", "Zahlbetrag",
+    "-800,00 €", "7.200,00 €", "6.600,00 €", "600,00 €", "-200,00 €", "Guthaben zugunsten des Eigentümers"]) {
+    expect(screen.getByText(text)).toBeVisible();
+  }
+  expect(screen.getByText(/Einheit 1: 01.01.2026 bis 30.06.2026/)).toBeVisible();
+  expect(screen.getByText(/Nur die Abrechnungsspitze ist beschlossen/)).toBeVisible();
+});
+
 it('shows the current opening beside the corrected balance input and reason', async () => {
   install(); show();
   expect(await screen.findByText(/Aktueller Anfangsbestand: 0,00/)).toBeInTheDocument();
@@ -70,6 +109,62 @@ it('shows the current opening beside the corrected balance input and reason', as
 });
 const paymentLabel = (name: string) => `Tatsächlich gezahltes Hausgeld · ${name}`;
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); vi.restoreAllMocks(); });
+
+it('keeps delete and ledger identities distinct without React console errors', async () => {
+  const errors = vi.spyOn(console, 'error');
+  install(); show();
+  await screen.findByRole('button', { name: 'Entwurf löschen' });
+  expect(errors).not.toHaveBeenCalled();
+});
+
+it('refreshes deletion eligibility after saving a reserve opening declaration', async () => {
+  let protectedOpening = false;
+  const fetchMock = install();
+  const original = fetchMock.getMockImplementation()!;
+  fetchMock.mockImplementation(async (url: string, init?: RequestInit) => {
+    if (url === '/api/financial-input-coverage' && init?.method === 'POST') protectedOpening = true;
+    const response = await original(url, init);
+    if (url === `/api/weg-settlements/${runId}`) return json({ ...draft(), delete_restriction: protectedOpening
+      ? { code: 'SETTLEMENT_DELETE_HAS_LEDGER', message: 'Entwürfe mit Rücklagenbuch-Einträgen können nicht gelöscht werden.' } : null });
+    if (url.endsWith('/reserve-ledger')) return json({ ...await response.json(), opening_balance: protectedOpening ? '12500.00' : '0.00' });
+    return response;
+  });
+  show();
+  expect(await screen.findByRole('button', { name: 'Entwurf löschen' })).toBeInTheDocument();
+  fireEvent.change(screen.getByLabelText('Rücklagen-Anfangsbestand'), { target: { value: '12500.00' } });
+  fireEvent.change(screen.getByLabelText('Begründung der Rücklagenwerte'), { target: { value: 'Bankbestätigter Anfangsbestand' } });
+  fireEvent.change(screen.getByLabelText('Grundlage der Prüfung'), { target: { value: 'Kontostände vollständig geprüft' } });
+  fireEvent.click(screen.getByRole('checkbox'));
+  fireEvent.click(screen.getByRole('button', { name: 'Datengrundlage speichern' }));
+  await screen.findByText('Entwürfe mit Rücklagenbuch-Einträgen können nicht gelöscht werden.');
+  expect(screen.queryByRole('button', { name: 'Entwurf löschen' })).not.toBeInTheDocument();
+  await waitFor(() => expect(screen.getByText(/Aktueller Anfangsbestand:/)).toHaveTextContent('12.500,00'));
+});
+
+it('deletes an empty annual draft after confirmation', async () => {
+  install();
+  const remove = vi.spyOn(endpoints, 'deleteWegDraft').mockResolvedValue();
+  vi.spyOn(window, 'confirm').mockReturnValue(true);
+  render(<MemoryRouter initialEntries={[`/weg-abrechnungen/${runId}`]}><Routes>
+    <Route path="/weg-abrechnungen/:runId" element={<WegSettlementDetailPage />} />
+    <Route path="/weg-abrechnungen" element={<p>Abrechnungsliste</p>} />
+  </Routes></MemoryRouter>);
+  fireEvent.click(await screen.findByRole('button', { name: 'Entwurf löschen' }));
+  await screen.findByText('Abrechnungsliste');
+  expect(remove).toHaveBeenCalledWith(runId, false);
+});
+
+it('shows a concurrent booking refusal and removes the unavailable delete action', async () => {
+  const { ApiError } = await import('../api/client');
+  install();
+  vi.spyOn(endpoints, 'deleteWegDraft').mockRejectedValue(new ApiError(409,
+    'Entwürfe mit Buchungen können nicht gelöscht werden.', 'SETTLEMENT_DELETE_HAS_BOOKINGS'));
+  vi.spyOn(window, 'confirm').mockReturnValue(true);
+  show();
+  fireEvent.click(await screen.findByRole('button', { name: 'Entwurf löschen' }));
+  expect(await screen.findByRole('alert')).toHaveTextContent('Entwürfe mit Buchungen können nicht gelöscht werden.');
+  expect(screen.queryByRole('button', { name: 'Entwurf löschen' })).not.toBeInTheDocument();
+});
 
 it("reads the subject-bound input-owner IDs through the typed endpoint", async () => {
   const fetchMock = install();
@@ -193,4 +288,40 @@ it('refetches the computation table after a reserve correction', async () => {
   fireEvent.click(screen.getByRole('button', { name: 'Speichern' }));
   await waitFor(() => expect(fetchMock.mock.calls.filter(([url]) => url === `/api/weg-settlements/${runId}`)).toHaveLength(2));
   expect(screen.queryByText('Festgeschriebener Anteil old')).not.toBeInTheDocument();
+});
+
+it.each([
+  [new ApiError(404, "WEG-Abrechnung nicht gefunden."), "WEG-Abrechnung nicht gefunden."],
+  [new ApiError(401, "Unauthorized"), "Nicht authentifiziert."],
+  [new Error("Synthetic network failure"), "Error: Synthetic network failure"],
+])("renders load errors without the API class prefix and preserves auth and fallback: %s", async (error, expected) => {
+  const get = vi.spyOn(api, "get").mockRejectedValue(error);
+  try {
+    show();
+    const rendered = await screen.findByText(expected, { exact: true });
+    expect(rendered.firstChild?.textContent?.trim()).toBe(expected);
+    expect(screen.queryByText(/ApiError:/)).not.toBeInTheDocument();
+  } finally { get.mockRestore(); }
+});
+
+it("renders a missing input-owner companion read as the same German missing run", async () => {
+  install([draft()], () => json({ detail: "WEG-Abrechnung nicht gefunden." }, 404));
+  show();
+  expect((await screen.findByRole("alert")).textContent).toBe("WEG-Abrechnung nicht gefunden.");
+});
+
+it('prefills every input owner including the buyer absent from the frozen plan', async () => {
+  const fetchMock = install();
+  const original = fetchMock.getMockImplementation()!;
+  fetchMock.mockImplementation((url, init) => url.endsWith('/paid-advances-derived')
+    ? Promise.resolve(json([{ owner_profile_id: seller, paid_total: '2400.00' },
+                           { owner_profile_id: buyer, paid_total: '2400.00' }]))
+    : original(url, init));
+  show();
+  const sellerInput = await screen.findByRole('textbox', { name: paymentLabel('Anna Alt') });
+  const buyerInput = await screen.findByRole('textbox', { name: paymentLabel('Berta Neu') });
+  expect(plan.lines.map(line => line.owner_profile_id)).toEqual([seller]);
+  fireEvent.click(screen.getByRole('button', { name: 'Aus Zahlenstand übernehmen' }));
+  await waitFor(() => expect(buyerInput).toHaveValue('2400.00'));
+  expect(sellerInput).toHaveValue('2400.00');
 });

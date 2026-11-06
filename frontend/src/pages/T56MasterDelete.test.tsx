@@ -13,6 +13,7 @@ vi.mock("../components/DsgvoPanel", () => ({ DsgvoPanel: () => null }));
 vi.mock("../api/endpoints", async importOriginal => ({
   ...await importOriginal<typeof endpoints>(),
   getProperty: vi.fn(), getPropertyKnowledge: vi.fn(), listUnits: vi.fn(), getUnit: vi.fn(),
+  getUnitHousehold: vi.fn(),
   getPerson: vi.fn(), listOwnership: vi.fn(), listLeases: vi.fn(), listOwnerProfiles: vi.fn(),
   listTenantProfiles: vi.fn(), listPersons: vi.fn(), listVendors: vi.fn(), listLeaseRentChanges: vi.fn(),
 }));
@@ -20,7 +21,7 @@ const session = { user_id: "user", organization_id: "org", role: "CLERK" };
 const property = { id: "property", name: "Testhaus", management_type: "MIET", fiscal_year_start_month: 1 };
 const unit = { id: "unit", property_id: "property", number: "42" };
 const person = { id: "person", first_name: "Ada", last_name: "Test", can_prepare: true };
-const lease = { id: "lease", unit_id: "unit", tenant_profile_id: "tenant", valid_from: "2025-01-01", valid_to: "2025-12-31", base_rent: "700", advance_payment: "150", deposit: null, notes: "Historie" };
+const lease = { id: "lease", unit_id: "unit", tenant_profile_id: "tenant", valid_from: "2025-01-01", valid_to: "2025-12-31", base_rent: "700", advance_payment: "150", heating_advance_payment: "0.00", deposit: null, notes: "Historie" };
 let fetchMock: ReturnType<typeof vi.fn>;
 let leases: typeof lease[];
 function content(path = "/objekte/property/einheiten/unit", role = "CLERK", user = "user") {
@@ -48,6 +49,7 @@ beforeEach(() => {
   vi.mocked(endpoints.getPropertyKnowledge).mockResolvedValue(null as never);
   vi.mocked(endpoints.listUnits).mockResolvedValue([]);
   vi.mocked(endpoints.getUnit).mockImplementation(async id => ({ ...unit, id, number: id === "other" ? "99" : "42" }) as never);
+  vi.mocked(endpoints.getUnitHousehold).mockResolvedValue([]);
   vi.mocked(endpoints.getPerson).mockResolvedValue(person as never);
   vi.mocked(endpoints.listLeases).mockImplementation(async () => leases);
   for (const fn of [endpoints.listOwnership, endpoints.listOwnerProfiles, endpoints.listTenantProfiles, endpoints.listPersons, endpoints.listVendors, endpoints.listLeaseRentChanges]) vi.mocked(fn).mockResolvedValue([]);

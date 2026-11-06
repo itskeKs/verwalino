@@ -82,6 +82,8 @@ class SettlementRun(Base, UUIDPrimaryKeyMixin, TimestampMixin):
     advance_payments_source: Mapped[str] = mapped_column(
         String(12), nullable=False, default="MANUAL"
     )
+    heating_advance_payments_total: Mapped[Decimal | None] = mapped_column(Numeric(14, 2).evaluates_none(), nullable=True)
+    heating_advance_payments_source: Mapped[str] = mapped_column(String(12), nullable=False, default='MANUAL', server_default='MANUAL')
     total_cost: Mapped[Decimal | None] = mapped_column(Numeric(14, 2), nullable=True)
     balance: Mapped[Decimal | None] = mapped_column(Numeric(14, 2), nullable=True)
 

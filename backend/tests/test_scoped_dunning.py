@@ -1,5 +1,6 @@
 """Dunning snapshots retain exact scope through creation, issue, export and privacy."""
 import uuid
+from datetime import date
 
 import pytest
 from sqlalchemy import text
@@ -8,6 +9,80 @@ from tests.test_financial_scope_boundary import worker_tenant, scope_seed  # noq
 from tests.test_scoped_account_statements import statement_fixture, client, mutate
 
 pytestmark = pytest.mark.asyncio
+
+
+@pytest.fixture(params=['tenant', 'owner'])
+async def creation_case(request, migrator_session, scope_seed):
+    kind = request.param
+    ids = await statement_fixture(migrator_session, scope_seed, 'lease' if kind == 'tenant' else 'owner')
+    await grant(ids, ['read', 'prepare'])
+    body = tenant_body(ids)
+    if kind == 'owner':
+        body.pop('tenant_profile_id')
+        body.pop('lease_agreement_id')
+        body['owner_profile_id'] = str(ids['profile'])
+        ids['plan'] = uuid.uuid4()
+        await mutate(text("INSERT INTO economic_plan(id,organization_id,property_id,plan_year,period_start,period_end,status,engine_version) VALUES (:plan,:org,:property,2025,'2025-01-01','2025-12-31','draft','fixture')"), ids)
+        await mutate(text("INSERT INTO ownership_history(organization_id,unit_id,owner_profile_id,valid_from) VALUES (:org,:unit,:profile,'2025-01-01')"), ids)
+        await mutate(text("INSERT INTO economic_plan_line(organization_id,economic_plan_id,line_type,unit_id,owner_profile_id,label,planned_amount,monthly_amount,sort_order) VALUES (:org,:plan,'OWNER_ADVANCE',:unit,:profile,'Plan source',1200,100,1)"), ids)
+        await mutate(text("INSERT INTO accounting_scope_binding(organization_id,property_id,scope_id,economic_plan_id,origin,reason,reviewed_by) VALUES (:org,:property,:scope,:plan,'REVIEWED','Plan fixture',:actor)"), ids)
+        await mutate(text("UPDATE economic_plan SET status='finalized',finalized_at=now(),finalized_by=:actor,snapshot_payload='{}',snapshot_sha256=:sha WHERE id=:plan"), {**ids, 'sha': 'd'*64})
+        body['economic_plan_id'] = str(ids['plan'])
+    return ids, kind, body
+
+
+async def test_created_draft_is_readable_at_response_start(creation_case, app_rw_session):
+    from httpx import ASGITransport, AsyncClient
+    from app.main import app
+
+    ids, kind, body = creation_case
+    await app_rw_session.execute(text("SELECT set_config('app.current_org_id',:org,true), set_config('app.current_user_id',:actor,true)"),
+                                 {'org': str(ids['org']), 'actor': str(ids['clerk'])})
+    observed = []
+    async with client(ids) as api:
+        async def observe_response(scope, receive, send):
+            async def observe_send(message):
+                if message['type'] == 'http.response.start' and message['status'] == 201:
+                    # Independent app_rw transaction: ASGITransport otherwise waits
+                    # for request-scope cleanup and hides this response-boundary race.
+                    rows = (await app_rw_session.scalars(text(f'SELECT id FROM dunning_notice WHERE {kind}_profile_id=:profile'), {'profile': ids['profile']})).all()
+                    observed.extend(str(row) for row in rows)
+                    for notice_id in observed:
+                        detail = await api.get(f'/api/dunning/{notice_id}')
+                        assert detail.status_code == 200, detail.text
+                        assert detail.json()['status'] == 'draft'
+                await send(message)
+            await app(scope, receive, observe_send)
+
+        async with AsyncClient(transport=ASGITransport(app=observe_response), base_url='http://test', cookies=api.cookies) as writer:
+            response = await writer.post(f'/api/dunning/{kind}', json=body)
+        assert response.status_code == 201, response.text
+        assert observed == [response.json()['id']], 'Draft not committed at http.response.start'
+        assert response.json()['principal_amount'] == ('7100.00' if kind == 'tenant' else '1100.00')
+        assert [row['id'] for row in (await api.get('/api/dunning')).json()] == observed
+
+
+async def test_failed_creation_rolls_back_flushed_draft(creation_case, monkeypatch):
+    from fastapi import HTTPException
+    from app.services.dunning_service import DunningService
+
+    ids, kind, body = creation_case
+    method = f'create_dunning_for_{kind}'
+    original = getattr(DunningService, method)
+
+    async def refuse_after_flush(service, **values):
+        await original(service, **values)
+        raise HTTPException(422, 'Synthetic late validation refusal')
+
+    monkeypatch.setattr(DunningService, method, refuse_after_flush)
+    async with client(ids) as api:
+        response = await api.post(f'/api/dunning/{kind}', json=body)
+        assert response.status_code == 422, response.text
+        assert (await api.get('/api/dunning')).json() == []
+        monkeypatch.setattr(DunningService, method, original)
+        created = await api.post(f'/api/dunning/{kind}', json=body)
+        assert created.status_code == 201, created.text
+        assert len((await api.get('/api/dunning')).json()) == 1
 
 
 async def grant(ids, caps, key='scope'):
@@ -129,7 +204,8 @@ async def test_owner_scope_requires_bound_finalized_plan(migrator_session, scope
         assert 'finalized economic plan' in result.json()['detail']
     ids['plan'] = uuid.uuid4()
     await mutate(text("INSERT INTO economic_plan(id,organization_id,property_id,plan_year,period_start,period_end,status,engine_version) VALUES (:plan,:org,:property,2025,'2025-01-01','2025-12-31','draft','fixture')"), ids)
-    await mutate(text("INSERT INTO economic_plan_line(organization_id,economic_plan_id,line_type,owner_profile_id,label,planned_amount,monthly_amount,sort_order) VALUES (:org,:plan,'OWNER_ADVANCE',:profile,'Plan source',1200,100,1)"), ids)
+    await mutate(text("INSERT INTO ownership_history(organization_id,unit_id,owner_profile_id,valid_from) VALUES (:org,:unit,:profile,'2025-01-01')"), ids)
+    await mutate(text("INSERT INTO economic_plan_line(organization_id,economic_plan_id,line_type,unit_id,owner_profile_id,label,planned_amount,monthly_amount,sort_order) VALUES (:org,:plan,'OWNER_ADVANCE',:unit,:profile,'Plan source',1200,100,1)"), ids)
     await mutate(text("INSERT INTO accounting_scope_binding(organization_id,property_id,scope_id,economic_plan_id,origin,reason,reviewed_by) VALUES (:org,:property,:scope,:plan,'REVIEWED','Plan fixture',:actor)"), ids)
     async with client(ids) as api:
         result = await api.post('/api/dunning/owner', json={**body, 'economic_plan_id': str(ids['plan'])})
@@ -196,6 +272,8 @@ async def test_scope_lookup_audit_privacy_immutability_and_downgrade_guard(migra
         assert created.status_code == 201, created.text
         ids['notice'] = uuid.UUID(created.json()['id'])
         assert (await api.post(f"/api/dunning/{ids['notice']}/issue")).status_code == 200
+        assert (await api.get(f"/api/dsgvo/persons/{ids['person']}/export")).status_code == 409
+        await grant(ids, ['read', 'export'], key='second_scope')
         assert (await api.get(f"/api/dsgvo/persons/{ids['person']}/export")).status_code == 200
     engine = create_async_engine(APP_RW_URL)
     try:
@@ -258,3 +336,101 @@ async def test_inherited_selector_scope_requires_requested_live_capability(migra
     await grant(ids, ['read', 'prepare'])
     async with client(ids) as api:
         assert (await api.get(path, params={'capability': 'prepare'})).status_code == 200
+
+
+async def test_raw_dated_successor_guard_keeps_plan_scope_period_and_recipient_boundaries(migrator_session, scope_seed):
+    from sqlalchemy.ext.asyncio import create_async_engine
+    from sqlalchemy.exc import DBAPIError
+    from tests.conftest import MIGRATOR_URL
+    ids = await statement_fixture(migrator_session, scope_seed, 'owner')
+    ids.update(plan=uuid.uuid4(), buyer=uuid.uuid4(), outsider=uuid.uuid4(), draft=uuid.uuid4())
+    for owner in ('buyer', 'outsider'):
+        await mutate(text('INSERT INTO owner_profile(id,organization_id,person_id) VALUES (:id,:org,:person)'),
+                     {**ids, 'id': ids[owner]})
+    await mutate(text("INSERT INTO ownership_history(organization_id,unit_id,owner_profile_id,valid_from,valid_to) VALUES (:org,:unit,:profile,'2020-01-01','2025-07-01'),(:org,:unit,:buyer,'2025-07-01',NULL)"), ids)
+    for source in ('plan', 'draft'):
+        await mutate(text("INSERT INTO economic_plan(id,organization_id,property_id,plan_year,period_start,period_end,status,engine_version) VALUES (:id,:org,:property,2025,'2025-01-01','2025-12-31','draft','fixture')"), {**ids, 'id': ids[source]})
+        await mutate(text("INSERT INTO economic_plan_line(organization_id,economic_plan_id,line_type,unit_id,owner_profile_id,label,planned_amount,monthly_amount) VALUES (:org,:id,'OWNER_ADVANCE',:unit,:profile,'Original advance',4800,400)"), {**ids, 'id': ids[source]})
+        await mutate(text("INSERT INTO accounting_scope_binding(organization_id,property_id,scope_id,economic_plan_id,origin,reason,reviewed_by) VALUES (:org,:property,:scope,:id,'REVIEWED','Direct guard source',:actor)"), {**ids, 'id': ids[source]})
+    await mutate(text("UPDATE economic_plan SET status='finalized',finalized_at=now(),finalized_by=:actor,snapshot_payload='{}',snapshot_sha256=:sha WHERE id=:plan"), {**ids, 'sha': 'a'*64})
+    engine = create_async_engine(MIGRATOR_URL)
+    try:
+        for owner, source, scope, start, accepted in [
+            ('buyer', 'plan', 'scope', '2025-07-01', True),
+            ('profile', 'plan', 'scope', '2025-01-01', True),
+            ('outsider', 'plan', 'scope', '2025-07-01', False),
+            ('buyer', 'draft', 'scope', '2025-07-01', False),
+            ('buyer', 'plan', 'second_scope', '2025-07-01', False),
+            ('buyer', 'plan', 'scope', '2024-12-01', False),
+            ('buyer', 'plan', 'scope', '2025-01-01', False),
+        ]:
+            async with engine.connect() as connection:
+                transaction = await connection.begin()
+                try:
+                    params = {**ids, 'notice': uuid.uuid4(), 'owner': ids[owner], 'selected': ids[scope],
+                              'source': ids[source], 'start': date.fromisoformat(start),
+                              'end': date(2025, 6, 30) if owner == 'buyer' and start == '2025-01-01' else date(2025, 12, 31)}
+                    await connection.execute(text("INSERT INTO dunning_notice(id,organization_id,owner_profile_id,level,issue_date,due_date,principal_amount,fee_amount,total_amount,included_items,status) VALUES (:notice,:org,:owner,1,'2026-01-15','2026-01-30',2400,0,2400,'[]','draft')"), params)
+                    await connection.execute(text("INSERT INTO dunning_scope_context(organization_id,dunning_notice_id,scope_id,economic_plan_id,period_start,period_end,created_by,reason,origin) VALUES (:org,:notice,:selected,:source,:start,:end,:actor,'Direct successor guard','PREPARED')"), params)
+                    if accepted:
+                        await connection.execute(text('SET CONSTRAINTS ALL IMMEDIATE'))
+                        from importlib import import_module
+                        from alembic.migration import MigrationContext
+                        from alembic.operations import Operations
+                        def check_downgrade(sync):
+                            module = import_module('migrations.versions.0163_dated_successor_dunning')
+                            before = sync.scalar(text("SELECT pg_get_functiondef('validate_dunning_context()'::regprocedure)"))
+                            contexts_sql = text('SELECT to_jsonb(c) FROM dunning_scope_context c ORDER BY organization_id,dunning_notice_id')
+                            before_contexts = sync.execute(contexts_sql).all()
+                            functions_sql = text("""SELECT p.proname,pg_get_function_identity_arguments(p.oid),
+                                pg_get_functiondef(p.oid),p.proacl::text,pg_get_userbyid(p.proowner)
+                                FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace
+                                WHERE n.nspname='public' AND p.proname IN
+                                  ('validate_dunning_context','validate_dunning_context_before0163') ORDER BY 1,2""")
+                            before_functions = sync.execute(functions_sql).all()
+                            point = sync.begin_nested()
+                            try:
+                                with Operations.context(MigrationContext.configure(sync)):
+                                    unrelated = sync.execute(text("""SELECT c.dunning_notice_id
+                                        FROM dunning_scope_context c JOIN dunning_notice n
+                                          ON n.id=c.dunning_notice_id AND n.organization_id=c.organization_id
+                                        WHERE n.id<>:notice AND c.economic_plan_id IS NOT NULL
+                                          AND n.owner_profile_id IS NOT NULL
+                                          AND NOT EXISTS(SELECT 1 FROM economic_plan_line ln
+                                            WHERE ln.organization_id=c.organization_id AND ln.economic_plan_id=c.economic_plan_id
+                                              AND ln.owner_profile_id=n.owner_profile_id AND ln.line_type='OWNER_ADVANCE')"""),
+                                        {'notice': params['notice']}).scalars().all()
+                                    if unrelated:
+                                        with pytest.raises(RuntimeError, match='successor dunning provenance'):
+                                            module.downgrade()
+                                        assert sync.execute(contexts_sql).all() == before_contexts
+                                        assert sync.execute(functions_sql).all() == before_functions
+                                        # Isolate this probe from earlier scenarios only
+                                        # inside its rollback-only historical projection.
+                                        sync.execute(text('ALTER TABLE dunning_scope_context DISABLE TRIGGER USER'))
+                                        sync.execute(text('DELETE FROM dunning_scope_context WHERE dunning_notice_id=ANY(:ids)'),
+                                                     {'ids': unrelated})
+                                        sync.execute(text('ALTER TABLE dunning_scope_context ENABLE TRIGGER USER'))
+                                    if owner == 'buyer':
+                                        with pytest.raises(RuntimeError, match='successor dunning provenance'):
+                                            module.downgrade()
+                                    else:
+                                        module.downgrade()
+                                        restored = sync.scalar(text("SELECT pg_get_functiondef('validate_dunning_context()'::regprocedure)"))
+                                        assert module.DATED not in restored and module.ORIGINAL in restored
+                                        module.upgrade()
+                                assert sync.scalar(text("SELECT pg_get_functiondef('validate_dunning_context()'::regprocedure)")) == before
+                            finally:
+                                point.rollback()
+                            assert sync.execute(contexts_sql).all() == before_contexts
+                            assert sync.execute(functions_sql).all() == before_functions
+                        await connection.run_sync(check_downgrade)
+
+                    else:
+                        with pytest.raises(DBAPIError) as denied:
+                            await connection.execute(text('SET CONSTRAINTS ALL IMMEDIATE'))
+                        assert denied.value.orig.sqlstate == '23514'
+                finally:
+                    await transaction.rollback()
+    finally:
+        await engine.dispose()

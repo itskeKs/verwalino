@@ -279,6 +279,11 @@ async def test_visual_private_columns_helpers_and_downgrade_are_sealed(migrator_
                     assert not db.scalar(text("SELECT has_column_privilege(:role,'allocation_set',:column,'SELECT')"),{'role':role,'column':column})
             point=db.begin_nested()
             try:
+                db.execute(text('TRUNCATE bank_transaction,cost_entry CASCADE'))
+                bank_correction=importlib.import_module('migrations.versions.0172_bank_cost_corrections')
+                bank_evidence=importlib.import_module('migrations.versions.0173_preserve_bank_cost_evidence')
+                bank_evidence.downgrade()
+                bank_correction.downgrade()
                 db.execute(text('TRUNCATE allocation_set CASCADE'))
                 importlib.import_module('migrations.versions.0123_replacement_exception_outcomes').downgrade()
                 importlib.import_module('migrations.versions.0122_allocation_source_replacements').downgrade()
@@ -287,6 +292,8 @@ async def test_visual_private_columns_helpers_and_downgrade_are_sealed(migrator_
                 migration.upgrade()
                 importlib.import_module('migrations.versions.0122_allocation_source_replacements').upgrade()
                 importlib.import_module('migrations.versions.0123_replacement_exception_outcomes').upgrade()
+                bank_correction.upgrade()
+                bank_evidence.upgrade()
                 assert before=={signature:db.scalar(text('SELECT pg_get_functiondef(CAST(:signature AS regprocedure))'),{'signature':signature}) for signature in before}
             finally:point.rollback()
         async with client(ids) as api:
@@ -384,7 +391,9 @@ async def test_visual_mapping_and_actual_financial_followup_keep_source_semantic
     from tests.test_context_mappings import activation
     from tests.test_allocation_corrections import next_review
     from tests.test_correction_followups import declare
+    from tests.financial_coverage_helpers import add_report_recipient
     ids=await fixture(migrator_session,scope_seed)
+    await add_report_recipient(ids)
     out=io.BytesIO();pdf=canvas.Canvas(out)
     for page in range(3):
         pdf.drawString(40,800,'Objekt-ID: '+str(ids['property']) if page==0 else 'Other private invoice page')

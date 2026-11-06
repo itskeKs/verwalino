@@ -22,10 +22,476 @@ from tests.test_invoice_extraction_worker import worker_tenant  # noqa: F401
 import pytest
 from sqlalchemy import text
 
+from tests.settlement_period_support import period_data_cleanup  # noqa: F401
+
 SYNC_URL = os.environ.get(
     "HV_DATABASE_URL_SYNC",
     "postgresql://app_migrator:migrator_secret@localhost:5433/hausverwaltung",
 )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('fixed', [False, True])
+async def test_commercial_preallocation_is_shared_by_all_tenant_drafts_and_frozen(client_a_admin, migrator_session, fixed):
+    from tests.commercial_preallocation_support import commercial_property, commercial_rule, REASON
+    from app.engine.canonical import canonical_sha256
+    api = client_a_admin
+    data = await commercial_property(api)
+    rule = commercial_rule(data, **({'commercial_share_percent': None, 'commercial_amount': '600.00'} if fixed else {}))
+    first = data['rows'][0]['run']['id']
+    result = await api.post(f'/api/settlements/{first}/compute', json={'commercial_preallocations': [rule]})
+    assert result.status_code == 200, result.text
+    results = []
+    for row in data['rows']:
+        url = f"/api/settlements/{row['run']['id']}"
+        saved = (await api.get(url)).json()['extra_inputs']['commercial_preallocations']
+        assert saved[0]['commercial_reason'] == REASON
+        response = await api.post(url + '/finalize', json={})
+        assert response.status_code == 200, response.text
+        results.append(Decimal(response.json()['total_cost']))
+        payload, digest = (await migrator_session.execute(text(
+            'SELECT snapshot_payload,snapshot_sha256 FROM settlement_run WHERE id=:id'), {'id': uuid.UUID(row['run']['id'])})).one()
+        assert canonical_sha256(payload) == digest
+        frozen = payload['inputs']['cost_positions'][0]
+        assert frozen['commercial_reason'] == REASON
+        assert frozen['commercial_amount' if fixed else 'commercial_share_percent'] == ('600.00' if fixed else '50.00')
+        assert 'Vorwegabzug Gewerbe 600,00 €' in response.json()['lines'][0]['note']
+    assert results == list(map(Decimal, ('600.00', '321.43', '278.57')))
+    assert sum(results) == Decimal('1200.00')
+    original = (await api.get(f"/api/cost-entries/{data['cost']['id']}")).json()
+    assert original['gross_amount'] == '1200.00' and original['status'] == 'confirmed'
+
+
+@pytest.mark.parametrize('reason', ['Gastronomie <Sonderlast> & Restmüll', 'Gastronomie <Sonderlast> & ' + 'Erhöhter Restmüllbedarf. ' * 70], ids=['markup', 'long'])
+def test_commercial_pdf_keeps_long_escaped_reasons_below_the_whole_position(reason):
+    from dataclasses import replace
+    from types import SimpleNamespace
+    from lxml import html
+    from app.engine.settlement import compute_bk_settlement
+    from app.engine.snapshot import build_snapshot_payload
+    from app.services.settlement_pdf import build_settlement_html
+    from tests.engine.test_golden import TestGoldenCommercialPreallocation
+    inp = TestGoldenCommercialPreallocation().scenario()
+    inp = replace(inp, cost_positions=(replace(inp.cost_positions[0], commercial_amount=Decimal('600'), commercial_reason=reason),))
+    result = compute_bk_settlement(inp)
+    run = SimpleNamespace(period_start=inp.period_start, period_end=inp.period_end, total_cost=result.total_cost,
+        snapshot_sha256=None, snapshot_payload=build_snapshot_payload(inp, result))
+    rendered = build_settlement_html(run, result.lines)
+    tree = html.fromstring(rendered)
+    notes = tree.xpath('//td[@colspan="6"]/div[@class="note"]')
+    assert len(notes) == 1
+    assert reason in notes[0].text_content()
+    assert 'Vorwegabzug Gewerbe 600,00 €' in notes[0].text_content()
+    assert not tree.xpath('//sonderlast')
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('length', ['earlier_long', 'maximum'])
+@pytest.mark.parametrize('compute_first', [True, False], ids=['compute_then_finalize', 'finalize_direct'])
+async def test_long_commercial_reason_persists_in_lines_snapshot_and_pdf(client_a_admin, migrator_session, length, compute_first):
+    import subprocess
+    from app.engine.canonical import canonical_sha256
+    from tests.commercial_preallocation_support import commercial_property, commercial_rule
+    data = await commercial_property(client_a_admin)
+    reason = 'Gastronomie <Sonderlast> & ' + 'Erhöhter Restmüllbedarf. ' * 70
+    if length == 'maximum':
+        ending = ' Schluss <Original> & vollständig.'
+        reason = (reason * 2)[:2000 - len(ending)] + ending
+        assert len(reason) == 2000
+    url = f"/api/settlements/{data['rows'][1]['run']['id']}"
+    body = {'commercial_preallocations': [commercial_rule(data, commercial_reason=reason)]}
+    if compute_first:
+        answer = await client_a_admin.post(url + '/compute', json=body)
+        assert answer.status_code == 200, answer.text
+        saved = await client_a_admin.get(url)
+        assert saved.status_code == 200, saved.text
+        assert reason in saved.json()['lines'][0]['note']
+    answer = await client_a_admin.post(url + '/finalize', json={} if compute_first else body)
+    assert answer.status_code == 200, answer.text
+    line = answer.json()['lines'][0]
+    assert reason in line['note'] and len(line['note']) > 500
+    assert await migrator_session.scalar(text('SELECT note FROM settlement_line WHERE id=:id'),
+        {'id': uuid.UUID(line['id'])}) == line['note']
+    payload, digest = (await migrator_session.execute(text(
+        'SELECT snapshot_payload,snapshot_sha256 FROM settlement_run WHERE id=:id'),
+        {'id': uuid.UUID(answer.json()['id'])})).one()
+    assert payload['result']['lines'][0]['note'] == line['note']
+    assert payload['inputs']['cost_positions'][0]['commercial_reason'] == reason
+    assert canonical_sha256(payload) == digest == answer.json()['snapshot_sha256']
+    pdf = await client_a_admin.get(url + '/pdf')
+    assert pdf.status_code == 200, pdf.text
+    content = subprocess.run(['pdftotext', '-', '-'], input=pdf.content, capture_output=True, check=True).stdout.decode()
+    assert ' '.join(reason.split()) in ' '.join(content.split())
+    assert (await client_a_admin.get(url + '/pdf')).content == pdf.content
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures('period_data_cleanup')
+async def test_commercial_preallocation_rejects_blank_reason_and_foreign_source(client_a_admin, client_b_admin):
+    from tests.commercial_preallocation_support import commercial_property, commercial_rule
+    api = client_a_admin
+    data = await commercial_property(api)
+    url = f"/api/settlements/{data['rows'][0]['run']['id']}/compute"
+    answer = await api.post(url, json={'commercial_preallocations': [commercial_rule(data, commercial_reason='  ')]})
+    assert answer.status_code == 422, answer.text
+    assert 'Begründung' in answer.text
+    for source_id in [str(uuid.uuid4()), data['cost']['id']]:
+        target_api = api if source_id != data['cost']['id'] else client_b_admin
+        target = data if target_api == api else await commercial_property(target_api)
+        target_url = f"/api/settlements/{target['rows'][0]['run']['id']}/compute"
+        answer = await target_api.post(target_url, json={'commercial_preallocations': [commercial_rule(target, cost_entry_id=source_id)]})
+        assert answer.status_code == 404, answer.text
+
+
+@pytest.mark.asyncio
+async def test_commercial_rule_cannot_diverge_after_a_sibling_is_finalized(client_a_admin):
+    from tests.commercial_preallocation_support import commercial_property, commercial_rule
+    api = client_a_admin
+    data = await commercial_property(api)
+    first, second, _ = [f"/api/settlements/{row['run']['id']}" for row in data['rows']]
+    answer = await api.post(first + '/finalize', json={'commercial_preallocations': [commercial_rule(data)]})
+    assert answer.status_code == 200, answer.text
+    for change in [{'commercial_share_percent': '40'}, {'commercial_share_percent': None, 'commercial_reason': None}]:
+        answer = await api.post(second + '/compute', json={'commercial_preallocations': [commercial_rule(data, **change)]})
+        assert answer.status_code == 409, answer.text
+    answer = await api.post(second + '/compute', json={})
+    assert answer.status_code == 200 and answer.json()['total_cost'] == '321.43', answer.text
+
+
+@pytest.mark.asyncio
+async def test_commercial_preview_is_temporary_and_omitted_inputs_never_replay_stale_sibling_rules(client_a_admin):
+    from tests.commercial_preallocation_support import commercial_property, commercial_rule
+    api = client_a_admin
+    data = await commercial_property(api)
+    first, second, _ = [f"/api/settlements/{row['run']['id']}" for row in data['rows']]
+    answer = await api.post(first + '/compute', json={'commercial_preallocations': [commercial_rule(data)]})
+    assert answer.status_code == 200, answer.text
+    answer = await api.post(second + '/compute', json={})
+    assert answer.status_code == 200 and answer.json()['total_cost'] == '321.43', answer.text
+    changed = commercial_rule(data, commercial_share_percent='40')
+    answer = await api.post(second + '/preview', json={'commercial_preallocations': [changed]})
+    assert answer.status_code == 200 and answer.json()['total_cost'] == '385.71', answer.text
+    assert (await api.get(first)).json()['extra_inputs']['commercial_preallocations'][0]['commercial_share_percent'] == '50.00'
+    answer = await api.post(first + '/compute', json={'commercial_preallocations': [changed]})
+    assert answer.status_code == 200, answer.text
+    answer = await api.post(second + '/compute')
+    assert answer.status_code == 200 and answer.json()['total_cost'] == '385.71', answer.text
+    cleared = commercial_rule(data, commercial_share_percent=None, commercial_reason=None)
+    answer = await api.post(second + '/compute', json={'commercial_preallocations': [cleared]})
+    assert answer.status_code == 200 and answer.json()['total_cost'] == '450.00', answer.text
+    for row in data['rows']:
+        answer = await api.put(f"/api/units/{row['unit']['id']}", json={'usage_type': 'WOHNUNG'})
+        assert answer.status_code == 200, answer.text
+    await attest_fixture(api, 'settlement', data['rows'][0]['run']['id'], {
+        'advance_payments_total': '0.00', 'advance_payments_source': 'MANUAL',
+        'heating_advance_payments_total': '0.00', 'heating_advance_payments_source': 'MANUAL'})
+    answer = await api.post(first + '/compute', json={'commercial_preallocations': [commercial_rule(data)]})
+    assert answer.status_code == 422 and 'Gewerbeeinheit' in answer.text, answer.text
+    assert (await api.get(first)).json()['extra_inputs']['commercial_preallocations'] == []
+
+
+@pytest.mark.parametrize('heating_advance,balance', [('1080.00', '20.00'), ('0.00', '1100.00')])
+def test_operating_and_heating_costs_credit_their_own_advances(heating_advance, balance):
+    from app.engine.settlement import compute_bk_settlement
+    from app.engine.types import CostPositionInput, LeasePeriodInput, PropertyInput, SettlementInput, UnitInput
+    unit, lease, tenant = uuid.uuid4(), uuid.uuid4(), uuid.uuid4()
+    start, end = date(2026, 1, 1), date(2026, 12, 31)
+    positions = tuple(CostPositionInput(uuid.uuid4(), None, code, code, Decimal(amount), start, end,
+        'WOHNFLAECHE', 'UMLAGEFAEHIG') for code, amount in [('GRUNDSTEUER', '1900'), ('MESSDIENST', '1000')])
+    inp = SettlementInput(start, end, PropertyInput(uuid.uuid4(), 'Musterhaus', 'MIET'), lease,
+        (UnitInput(unit, '1', 'WOHNUNG', area=Decimal(70)),),
+        (LeasePeriodInput(lease, unit, tenant, start, None),), (), positions, Decimal('1800'),
+        heating_advance_payments_total=Decimal(heating_advance))
+    result = compute_bk_settlement(inp)
+    assert result.balance == Decimal(balance)
+    assert result.heating_advance_payments_total == Decimal(heating_advance)
+    lines = {line.label: line.amount for line in result.lines}
+    assert lines['Betriebskosten abzüglich Vorauszahlungen'] == Decimal('100')
+    assert lines['Heizkosten abzüglich Vorauszahlungen'] == Decimal('1000') - Decimal(heating_advance)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('batch', [False, True])
+async def test_omitted_heating_total_blocks_finalization_until_derived(client_a_admin, batch):
+    from tests.settlement_period_support import create, period_property, statement
+    api = client_a_admin
+    data = await period_property(api, month=1)
+    response = await api.patch(f"/api/leases/{data['lease']['id']}", json={
+        'base_rent': '750.00', 'advance_payment': '150.00', 'heating_advance_payment': '90.00'})
+    assert response.status_code == 200, response.text
+    categories = (await api.get('/api/cost-categories')).json()
+    for code, amount in [('GRUNDSTEUER', '1900.00'), ('HEIZUNG_ZENTRAL', '1000.00')]:
+        category = next(row for row in categories if row['code'] == code)
+        cost = await create(api, '/api/cost-entries', {
+            'property_id': data['property']['id'], 'cost_category_id': category['id'],
+            'invoice_date': '2026-12-31', 'service_period_from': '2026-01-01',
+            'service_period_to': '2026-12-31', 'gross_amount': amount,
+            'tenant_distribution_key': 'WOHNFLAECHE', 'tenant_apportionable': 'UMLAGEFAEHIG'})
+        response = await api.post(f"/api/cost-entries/{cost['id']}/confirm")
+        assert response.status_code == 200, response.text
+    for kind, amount in [('NK_VORAUSZAHLUNG', '1800.00'), ('HK_VORAUSZAHLUNG', '1080.00')]:
+        payment = await create(api, '/api/payments', {
+            'bank_account_id': data['account']['id'], 'direction': 'IN', 'amount': amount,
+            'value_date': '2026-12-31', 'payment_type': kind, 'period_year': 2026,
+            'tenant_profile_id': data['tenant']['id'], 'lease_agreement_id': data['lease']['id']})
+        assert (await api.post(f"/api/payments/{payment['id']}/book")).status_code == 200
+    payload = statement(data, '2026-01-01', '2026-12-31')
+    if batch:
+        payload.pop('lease_agreement_id')
+        response = await api.post('/api/settlements/batch', json=payload)
+        assert response.status_code == 200, response.text
+        run, = response.json()['created']
+        response = await api.patch(f"/api/settlements/{run['id']}/advance-payments",
+            json={'advance_payments_total': '1800.00'})
+        assert response.status_code == 200, response.text
+        run = response.json()
+    else:
+        run = await create(api, '/api/settlements', {**payload, 'advance_payments_total': '1800.00'})
+    url = f"/api/settlements/{run['id']}"
+    # Reproduce the owner's probe: attest the actual draft values, even if the
+    # creation default incorrectly claims that unknown heating payments are zero.
+    await api.post('/api/financial-input-coverage', json={
+        'subject_kind': 'settlement', 'subject_id': run['id'], 'confirmed_complete': True,
+        'reason': 'Synthetic full-year records reviewed', 'source_document_ids': [],
+        'values': {'advance_payments_total': '1800.00', 'advance_payments_source': 'MANUAL',
+            'heating_advance_payments_total': run['heating_advance_payments_total'],
+            'heating_advance_payments_source': 'MANUAL'}})
+    refused = await api.post(url + '/finalize', json={})
+    assert refused.status_code == 422, refused.text
+    assert refused.json()['detail']['code'] == 'financial_inputs_incomplete'
+    assert run['heating_advance_payments_total'] is None
+    assert (await api.patch(url + '/advance-payments-derived', params={'period_year': 2026})).status_code == 200
+    await attest_fixture(api, 'settlement', run['id'], {
+        'advance_payments_total': '1800.00', 'advance_payments_source': 'DERIVED',
+        'heating_advance_payments_total': '1080.00', 'heating_advance_payments_source': 'DERIVED'})
+    finalized = await api.post(url + '/finalize', json={})
+    assert finalized.status_code == 200, finalized.text
+    assert finalized.json()['balance'] == '20.00'
+
+
+@pytest.mark.parametrize('heating', ['none', 'non_apportionable_position', 'zero_position', 'position', 'advance'])
+def test_statement_and_pdf_keep_single_block_only_without_heating(heating):
+    from dataclasses import replace
+    from types import SimpleNamespace
+    from app.engine.settlement import compute_bk_settlement
+    from app.engine.snapshot import build_snapshot_payload
+    from app.services.settlement_pdf import build_settlement_html
+    from tests.engine.test_golden import TestGolden1FlaecheTrivial, _U
+    inp = TestGolden1FlaecheTrivial()._scenario(_U(21))
+    inp = replace(inp, heating_advance_payments_total=Decimal('0.00'))
+    heating_id = uuid.uuid4()
+    split_advances = heating not in ('none', 'non_apportionable_position')
+    if heating in ('non_apportionable_position', 'zero_position', 'position'):
+        inp = replace(inp, cost_positions=(*inp.cost_positions,
+            replace(inp.cost_positions[0], cost_entry_id=heating_id, category_code='MESSDIENST',
+                gross_amount=Decimal('0.00' if heating == 'zero_position' else '1000.00'),
+                tenant_apportionable='NICHT_UMLAGEFAEHIG' if heating == 'non_apportionable_position' else 'UMLAGEFAEHIG')))
+    elif heating == 'advance':
+        inp = replace(inp, heating_advance_payments_total=Decimal('90.00'))
+    result = compute_bk_settlement(inp)
+    labels = [line.label for line in result.lines]
+    assert any(line.cost_entry_id == heating_id for line in result.lines) == (heating in ('zero_position', 'position'))
+    if not split_advances:
+        assert 'Geleistete Vorauszahlungen' in labels
+        assert 'Heizkosten-Vorauszahlungen' not in labels
+        assert 'Betriebskosten abzüglich Vorauszahlungen' not in labels
+    else:
+        assert 'Betriebskosten-Vorauszahlungen' in labels
+        assert 'Heizkosten-Vorauszahlungen' in labels
+    run = SimpleNamespace(total_cost=result.total_cost, period_start=inp.period_start,
+        period_end=inp.period_end, snapshot_sha256=None, snapshot_payload={})
+    html = build_settlement_html(run, result.lines)
+    assert ('Geleistete Vorauszahlungen' in html) == (not split_advances)
+    assert ('Heizkosten-Vorauszahlungen' in html) == split_advances
+    snapshot = build_snapshot_payload(inp, result)
+    assert snapshot['inputs']['heating_advance_payments_total'] == str(inp.heating_advance_payments_total)
+    assert snapshot['result']['heating_advance_payments_total'] == str(result.heating_advance_payments_total)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('amount', ['0.00', '1000.00'])
+async def test_heating_in_later_fiscal_window_keeps_two_advance_blocks(client_a_admin, amount):
+    import subprocess
+    from tests.settlement_period_support import create, period_property, statement
+
+    api = client_a_admin
+    data = await period_property(api, month=4)
+    categories = (await api.get('/api/cost-categories')).json()
+    category = next(row for row in categories if row['code'] == 'MESSDIENST')
+    cost = await create(api, '/api/cost-entries', {
+        'property_id': data['property']['id'], 'cost_category_id': category['id'],
+        'invoice_date': '2026-04-01', 'service_period_from': '2026-04-01',
+        'service_period_to': '2027-03-31', 'gross_amount': amount,
+        'tenant_distribution_key': 'WOHNFLAECHE', 'tenant_apportionable': 'UMLAGEFAEHIG'})
+    assert (await api.post(f"/api/cost-entries/{cost['id']}/confirm")).status_code == 200
+    run = await create(api, '/api/settlements', {
+        **statement(data, '2026-01-01', '2026-12-31'),
+        'advance_payments_total': '0.00', 'heating_advance_payments_total': '0.00'})
+    await attest_fixture(api, 'settlement', run['id'], {
+        'advance_payments_total': '0.00', 'advance_payments_source': 'MANUAL',
+        'heating_advance_payments_total': '0.00', 'heating_advance_payments_source': 'MANUAL'})
+    response = await api.post(f"/api/settlements/{run['id']}/compute", json={})
+    assert response.status_code == 200, response.text
+    computed = response.json()
+    assert any(line['cost_category_code'] == 'MESSDIENST' for line in computed['lines'])
+    advances = [line['label'] for line in computed['lines'] if line['line_type'] == 'ADVANCE_PAYMENT']
+    assert advances == ['Betriebskosten-Vorauszahlungen', 'Heizkosten-Vorauszahlungen']
+    response = await api.post(f"/api/settlements/{run['id']}/finalize", json={})
+    assert response.status_code == 200, response.text
+    pdf = await api.get(f"/api/settlements/{run['id']}/pdf")
+    assert pdf.status_code == 200, pdf.text
+    content = subprocess.run(['pdftotext', '-', '-'], input=pdf.content, capture_output=True, check=True).stdout.decode()
+    assert 'Heizkosten-Vorauszahlungen' in content
+    assert 'Geleistete Vorauszahlungen' not in content
+
+
+@pytest.mark.asyncio
+async def test_derived_component_totals_have_independent_sources_and_coverage(client_a_admin):
+    from tests.settlement_period_support import create, period_property, statement
+    api = client_a_admin
+    data = await period_property(api, month=1)
+
+    async def payment(kind, amount, book=True):
+        row = await create(api, '/api/payments', {'bank_account_id': data['account']['id'],
+            'direction': 'IN', 'amount': amount, 'value_date': '2026-12-31', 'payment_type': kind,
+            'period_year': 2026, 'tenant_profile_id': data['tenant']['id'], 'lease_agreement_id': data['lease']['id']})
+        if book:
+            response = await api.post(f"/api/payments/{row['id']}/book")
+            assert response.status_code == 200, response.text
+        return row
+
+    await payment('NK_VORAUSZAHLUNG', '1800.00')
+    await payment('HK_VORAUSZAHLUNG', '1080.00')
+    await payment('KALTMIETE', '9000.00')
+    await payment('HK_VORAUSZAHLUNG', '999.00', book=False)
+    reversed_row = await payment('HK_VORAUSZAHLUNG', '60.00')
+    assert (await api.post(f"/api/payments/{reversed_row['id']}/reverse", json={'note': 'Synthetic reversal'})).status_code == 201
+    run = await create(api, '/api/settlements', statement(data, '2026-01-01', '2026-12-31'))
+    url = f"/api/settlements/{run['id']}"
+    response = await api.patch(url + '/advance-payments-derived', params={'period_year': 2026})
+    assert response.status_code == 200, response.text
+    assert (response.json()['advance_payments_total'], response.json()['heating_advance_payments_total']) == ('1800.00', '1080.00')
+    response = await api.patch(url + '/advance-payments', json={'heating_advance_payments_total': '1000.00'})
+    assert response.status_code == 200, response.text
+    assert response.json()['advance_payments_source'] == 'DERIVED'
+    assert response.json()['heating_advance_payments_source'] == 'MANUAL'
+    assert response.json()['advance_payments_total'] == '1800.00'
+    # A later HK booking invalidates only the corresponding derived total.
+    assert (await api.patch(url + '/advance-payments-derived', params={'period_year': 2026})).status_code == 200
+    values = {'advance_payments_total': '1800.00', 'advance_payments_source': 'DERIVED',
+        'heating_advance_payments_total': '1080.00', 'heating_advance_payments_source': 'DERIVED'}
+    await attest_fixture(api, 'settlement', run['id'], values)
+    await payment('HK_VORAUSZAHLUNG', '10.00')
+    response = await api.post(url + '/compute', json={})
+    assert response.status_code == 422, response.text
+    assert response.json()['detail']['blockers'][0]['component'] == 'heating_advance_payments'
+
+
+@pytest.mark.asyncio
+async def test_manual_heating_totals_keep_the_same_sign_as_operating_totals(client_a_admin):
+    from tests.settlement_period_support import create, period_property, statement
+    api = client_a_admin
+    data = await period_property(api, month=1)
+    run = await create(api, '/api/settlements', {**statement(data, '2026-01-01', '2026-12-31'),
+        'advance_payments_total': '0.00', 'heating_advance_payments_total': '-20.00'})
+    url = f"/api/settlements/{run['id']}"
+    await attest_fixture(api, 'settlement', run['id'], {'advance_payments_total': '0.00',
+        'advance_payments_source': 'MANUAL', 'heating_advance_payments_total': '-20.00',
+        'heating_advance_payments_source': 'MANUAL'})
+    response = await api.post(url + '/finalize', json={})
+    assert response.status_code == 200, response.text
+    assert response.json()['balance'] == '20.00'
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('heating_key', ['absent', 'json_null', 'pre_degree_days', 'pre_commercial'])
+async def test_pre_split_finalized_snapshot_keeps_its_digest_and_pdf(client_a_admin, m3_seed, heating_key):
+    """Retain the literal pre-split payload: readers must never fill new keys."""
+    import json
+    from app.engine.canonical import canonical_json, sha256_hex
+    coverage_id = str(uuid.uuid4())
+    payload = {'engine_version': 'm3.1.0', 'run_type': 'BK_MIETER',
+        'period': {'start': '2025-01-01', 'end': '2025-06-30'},
+        'inputs': {'advance_payments_total': '600.00', 'advance_payments_source': 'MANUAL'},
+        'result': {'total_cost': '700.00', 'advance_payments_total': '600.00', 'balance': '100.00'},
+        'financial_input_coverage': {'id': coverage_id, 'source_revision': '0' * 64}}
+    if heating_key == 'json_null':
+        payload['inputs']['heating_advance_payments_total'] = None
+    if heating_key == 'pre_commercial':
+        payload['engine_version'] = 'm3.4.0'
+        payload['inputs']['cost_positions'] = [{'cost_entry_id': m3_seed['ce_muell'],
+            'gross_amount': '480.00', 'tenant_distribution_key': 'EINHEIT'}]
+    if heating_key == 'pre_degree_days':
+        # Literal predecessor trace: no new method or rational-weight fields.
+        payload['engine_version'] = 'm3.2.0'
+        payload['heating_costs'] = [{
+            'kind': 'HEATING', 'method': 'CONSUMPTION', 'base_key': 'AREA',
+            'consumption_fraction': '0.50', 'total_amount': '4000.00',
+            'base_cost_total': '2000.00', 'consumption_cost_total': '2000.00',
+            'base_total_quantity': '25550.000000', 'consumption_total_quantity': '1000.000000',
+            'rows': [{'lease_agreement_id': m3_seed['lease_a'],
+                'period_from': '2025-01-01', 'period_to': '2025-06-30',
+                'weighted_base_quantity': '12670.000000', 'consumption': '495.890411',
+                'base_amount': '991.78', 'consumption_amount': '991.78',
+                'gross_amount': '1983.56', 'reduction_amount': '0.00', 'amount_due': '1983.56',
+                'meter_source': {'source': 'METER', 'reason':
+                    'Zwischenablesung fehlt: Aufteilung des Einheitsverbrauchs nach Tagen. '
+                    'Periodenbasis: 2025-01-01 → 2025-12-31; Tagesanteil 181/365.'}}],
+        }]
+    snapshot_bytes = canonical_json(payload)
+    digest = sha256_hex(snapshot_bytes)
+    run_id = str(uuid.uuid4())
+    import psycopg2
+    with psycopg2.connect(SYNC_URL) as conn, conn.cursor() as cur:
+        cur.execute("""INSERT INTO settlement_run
+            (id,organization_id,property_id,lease_agreement_id,run_type,period_start,period_end,
+             advance_payments_total,advance_payments_source,total_cost,balance,status,
+             snapshot_payload,snapshot_sha256,engine_version,finalized_at)
+            VALUES (%s,%s,%s,%s,'BK_MIETER','2025-01-01','2025-06-30',600,'MANUAL',700,100,
+             'finalized',%s,%s,'m3.1.0',now())""",
+            (run_id, str(m3_seed['org_a_id']), m3_seed['property'], m3_seed['lease_a'], json.dumps(payload), digest))
+        cur.execute("""INSERT INTO coverage_declaration(id,organization_id,settlement_run_id,property_id,
+            period_start,period_end,component,revision,state,values,source_document_ids,source_revision,reason,attestor_id)
+            VALUES (%s,%s,%s,%s,'2025-01-01','2025-06-30','BK_MIETER',1,'known',%s,'[]',%s,'Legacy fixture',%s)""",
+            (coverage_id, str(m3_seed['org_a_id']), run_id, m3_seed['property'], json.dumps(payload['inputs']),
+             '0' * 64, str(m3_seed['user_a_admin_id'])))
+        for order, kind, label, amount in [(0, 'ADVANCE_PAYMENT', 'Geleistete Vorauszahlungen', '600'),
+                (1, 'BALANCE', 'Nachzahlung', '100')]:
+            cur.execute("""INSERT INTO settlement_line(id,organization_id,settlement_run_id,line_type,label,amount,sort_order)
+                VALUES (%s,%s,%s,%s,%s,%s,%s)""", (str(uuid.uuid4()), str(m3_seed['org_a_id']), run_id, kind, label, amount, order))
+    response = await client_a_admin.get(f'/api/settlements/{run_id}/pdf')
+    assert response.status_code == 200, response.text
+    assert response.content.startswith(b'%PDF-')
+    if heating_key == 'pre_commercial':
+        assert (await client_a_admin.get(f'/api/settlements/{run_id}/pdf')).content == response.content
+        read = await client_a_admin.get(f'/api/settlements/{run_id}')
+        assert read.status_code == 200 and read.json()['extra_inputs'] is None
+        assert 'commercial_reason' not in str(payload)
+    if heating_key == 'pre_degree_days':
+        import subprocess
+        content = subprocess.run(['pdftotext', '-', '-'], input=response.content,
+            capture_output=True, check=True).stdout.decode()
+        compact = ' '.join(content.split())
+        assert 'Aufteilung des Einheitsverbrauchs nach Tagen.' in compact
+        assert 'Tagesanteil 181/365' in compact and '991,78' in compact
+        assert 'Gradtagszahlen' not in compact
+        assert (await client_a_admin.get(f'/api/settlements/{run_id}/pdf')).content == response.content
+    with psycopg2.connect(SYNC_URL) as conn, conn.cursor() as cur:
+        cur.execute('SELECT snapshot_payload,snapshot_sha256 FROM settlement_run WHERE id=%s', (run_id,))
+        saved, sha = cur.fetchone()
+        cur.execute("""SELECT financial_computation_state(organization_id,'settlement_run',id)->>'parent_digest',
+            bounded_computation_digest(to_jsonb(r)-'updated_at'-ARRAY['heating_advance_payments_total','heating_advance_payments_source'])
+            FROM settlement_run r WHERE id=%s""", (run_id,))
+        actual_parent, legacy_parent = cur.fetchone()
+        assert actual_parent == legacy_parent
+    assert canonical_json(saved) == snapshot_bytes
+    assert sha256_hex(canonical_json(saved)) == sha == digest
+    for field, value in [('heating_advance_payments_total', '90'), ('heating_advance_payments_source', "'DERIVED'")]:
+        with psycopg2.connect(SYNC_URL) as conn:
+            with pytest.raises(psycopg2.Error, match='GoBD'):
+                with conn.cursor() as cur:
+                    cur.execute(f'UPDATE settlement_run SET {field}={value} WHERE id=%s', (run_id,))
+            conn.rollback()
 
 
 # ===========================================================================
@@ -203,7 +669,7 @@ def _extras_for_exit(m3_seed):
 
 async def _create_run(client, m3_seed, lease_key, advance):
     resp = await client.post("/api/settlements", json={
-        "property_id": m3_seed["property"],
+        'heating_advance_payments_total': '0.00', "property_id": m3_seed["property"],
         "lease_agreement_id": m3_seed[lease_key],
         "period_start": "2025-01-01",
         "period_end": "2025-12-31",
@@ -211,7 +677,7 @@ async def _create_run(client, m3_seed, lease_key, advance):
     })
     assert resp.status_code == 201, resp.text
     await attest_fixture(client, "settlement", resp.json()["id"],
-        {"advance_payments_total": advance, "advance_payments_source": "MANUAL"})
+        {'heating_advance_payments_total': '0.00', 'heating_advance_payments_source': "MANUAL", "advance_payments_total": advance, "advance_payments_source": "MANUAL"})
     return resp.json()["id"]
 
 
@@ -370,8 +836,9 @@ class TestM3Immutability:
     async def test_delete_finalized_run_rejected(self, app_rw_session, m3_seed):
         session = app_rw_session
         await session.execute(
-            text("SELECT set_config('app.current_org_id', :o, true)"),
-            {"o": str(m3_seed["org_a_id"])},
+            text("SELECT set_config('app.current_org_id', :o, true), "
+                 "set_config('app.current_user_id', :actor, true)"),
+            {"o": str(m3_seed["org_a_id"]), "actor": str(m3_seed["user_a_admin_id"])},
         )
         run_id = uuid.uuid4()
         await session.execute(
@@ -642,8 +1109,11 @@ class TestM3ExitEndToEnd:
         assert corrected.status_code == 201, corrected.text
         assert corrected.json()['engine_version'] == original.json()['engine_version'] == 'm3.1.0'
         current = corrected.json()['id']
+        assert corrected.json()['heating_advance_payments_total'] == '0.00'
+        assert corrected.json()['heating_advance_payments_source'] == 'MANUAL'
         await attest_fixture(client_a_admin, 'settlement', current,
-            {'advance_payments_total': '700.00', 'advance_payments_source': 'MANUAL'})
+            {'advance_payments_total': '700.00', 'advance_payments_source': 'MANUAL',
+             'heating_advance_payments_total': '0.00', 'heating_advance_payments_source': 'MANUAL'})
         computed = await client_a_admin.post(f'/api/settlements/{current}/{action}', json=extras)
         assert computed.status_code == 200, computed.text
         assert computed.json()['engine_version'] == 'm3.2.0'
@@ -811,7 +1281,7 @@ class TestM3AdjacentLeaseReadEdge:
 
     async def _create_run(self, client, seed, lease_key):
         resp = await client.post("/api/settlements", json={
-            "property_id": seed["property"],
+            'heating_advance_payments_total': '0.00', "property_id": seed["property"],
             "lease_agreement_id": seed[lease_key],
             "period_start": "2025-01-01",
             "period_end": "2025-12-31",
@@ -819,7 +1289,7 @@ class TestM3AdjacentLeaseReadEdge:
         })
         assert resp.status_code == 201, resp.text
         await attest_fixture(client, "settlement", resp.json()["id"],
-            {"advance_payments_total": "0.00", "advance_payments_source": "MANUAL"})
+            {'heating_advance_payments_total': '0.00', 'heating_advance_payments_source': "MANUAL", "advance_payments_total": "0.00", "advance_payments_source": "MANUAL"})
         return resp.json()["id"]
 
     @pytest.mark.asyncio
@@ -960,7 +1430,7 @@ async def test_derived_advances_for_exact_period(client_a_admin, derived_period_
             with conn.cursor() as cur:
                 cur.execute("UPDATE lease_agreement SET valid_to='2025-10-01' WHERE id=%s", (seed["lease_e"],))
     resp = await client_a_admin.post("/api/settlements", json={
-        "property_id": seed["property"], "lease_agreement_id": seed["lease_e"],
+        'heating_advance_payments_total': '0.00', "property_id": seed["property"], "lease_agreement_id": seed["lease_e"],
         "period_start": start, "period_end": end, "advance_payments_total": "0.00",
     })
     assert resp.status_code == 201, resp.text
@@ -1313,7 +1783,8 @@ async def test_advance_proposal_finalized_tenant_cost(client_a_admin, m3_seed):
     assert response.status_code == 200, response.text
     proposal = response.json()
     assert proposal["lease_agreement_id"] == m3_seed["lease_a"]
-    assert proposal["tenant_cost"] == finalized.json()["total_cost"]
+    assert proposal["tenant_cost"] == "643.97"  # 901.85 less 210.00 heating and 47.88 CO2.
+    assert proposal["heating_tenant_cost"] == "257.88"
     assert proposal["months"] == "6"
     from decimal import ROUND_HALF_UP
     assert Decimal(proposal["monthly_amount"]) == (Decimal(proposal["tenant_cost"]) / 6).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
@@ -1335,13 +1806,13 @@ async def _proposal_run(api, world, db, *, cost="1200.00", start="2026-01-01", e
          "end": date.fromisoformat(end), "cost": Decimal(cost)})
     await db.commit()
     response = await api.post("/api/settlements", json={
-        "property_id": str(world["property"]), "lease_agreement_id": str(world["lease"]),
+        'heating_advance_payments_total': '0.00', "property_id": str(world["property"]), "lease_agreement_id": str(world["lease"]),
         "period_start": start, "period_end": end, "advance_payments_total": "999.00",
     })
     assert response.status_code == 201, response.text
     run_id = response.json()["id"]
     await attest_fixture(api, "settlement", run_id,
-        {"advance_payments_total": "999.00", "advance_payments_source": "MANUAL"})
+        {'heating_advance_payments_total': '0.00', 'heating_advance_payments_source': "MANUAL", "advance_payments_total": "999.00", "advance_payments_source": "MANUAL"})
     response = await api.post(f"/api/settlements/{run_id}/finalize")
     assert response.status_code == 200, response.text
     return run_id, response.json()
@@ -1356,8 +1827,22 @@ def _proposal_snapshot(cost="1200.00", start="2026-01-01", end="2026-12-31", *, 
         snapshot_payload={"run_type": "BK_MIETER", "period": {"start": start, "end": end},
             "inputs": {"lease_periods": [{"lease_agreement_id": str(lease),
                 "from": tenancy_start or start, "to": tenancy_end}]},
-            "result": {"total_cost": cost, "balance": "-99999.00"}},
+            "result": {"total_cost": cost, "balance": "-99999.00", 'lines': [
+                {'line_type': 'COST', 'category_code': 'GRUNDSTEUER', 'amount': cost}]}},
     )
+
+
+def test_legacy_advance_proposal_splits_only_the_frozen_cost_lines():
+    from app.services.settlement_service import SettlementService
+    from copy import deepcopy
+    run = _proposal_snapshot('2900.00')
+    run.snapshot_payload['result']['lines'] = [
+        {'line_type': 'COST', 'category_code': 'GRUNDSTEUER', 'amount': '1900.00'},
+        {'line_type': 'COST', 'category_code': 'MESSDIENST', 'amount': '1000.00'}]
+    frozen = deepcopy(run.snapshot_payload)
+    result = SettlementService._advance_proposal(run)
+    assert (result['monthly_amount'], result['heating_monthly_amount']) == ('158.33', '83.33')
+    assert run.snapshot_payload == frozen
 
 
 @pytest.mark.parametrize("cost,start,end,tenancy_start,tenancy_end,months,amount", [
@@ -1434,7 +1919,10 @@ async def test_proposal_accept_preserves_history_and_frozen_rows(rent_world, ren
             assert result.status_code == 201, result.text
         proposal = (await api.get(url)).json()
         assert proposal == {"lease_agreement_id": str(world["lease"]), "tenant_cost": "1200.00",
-            "months": "12", "monthly_amount": "100.00", "period_start": "2026-01-01", "period_end": "2026-12-31"}
+            "months": "12", "monthly_amount": "100.00", "heating_monthly_amount": "0.00",
+            "current_monthly_amount": "160.00", "current_heating_monthly_amount": "0.00",
+            "heating_tenant_cost": "0.00", "period_start": "2026-01-01", "period_end": "2026-12-31",
+            "accept_from": "2027-01-01"}
         assert frozen["balance"] == "201.00"  # Never balance / months or paid advances.
         before = (await rent_db.execute(text("SELECT snapshot_payload,snapshot_sha256 FROM settlement_run WHERE id=:id"), {"id":uuid.UUID(run_id)})).one()
         payments = (await rent_db.execute(text("SELECT to_jsonb(p) FROM payment p WHERE lease_agreement_id=:lease ORDER BY id"), {"lease":world["lease"]})).all()
@@ -1452,6 +1940,110 @@ async def test_proposal_accept_preserves_history_and_frozen_rows(rent_world, ren
         events = (await rent_db.execute(text("SELECT payload_diff FROM audit_event WHERE entity_id=:lease AND action='lease.rent_change_created'"), {"lease":world["lease"]})).scalars().all()
         assert sum(event["rent_change_id"] == row["id"] for event in events) == 1
         assert len((await api.get(history)).json()) == 3
+
+
+@pytest.mark.asyncio
+async def test_proposal_reports_current_advances_from_lease_and_effective_history(rent_world, rent_db, monkeypatch):
+    from app.services import settlement_service
+
+    class Today(date):
+        @classmethod
+        def today(cls):
+            return cls(2026, 11, 2)
+
+    monkeypatch.setattr(settlement_service, "date", Today)
+    world = rent_world
+    async with api_client(world) as api:
+        lease_url = f"/api/leases/{world['lease']}"
+        response = await api.patch(lease_url, json={"advance_payment": "175.00", "heating_advance_payment": "90.00"})
+        assert response.status_code == 200, response.text
+        run_id, frozen = await _proposal_run(api, world, rent_db)
+        url = f"/api/settlements/{run_id}/advance-proposal"
+        for expected in [("175.00", "90.00"), ("180.00", "95.00")]:
+            response = await api.get(url, params={"accept_from": "2026-12-01"})
+            assert response.status_code == 200, response.text
+            proposal = response.json()
+            assert proposal["accept_from"] == "2026-12-01"
+            assert (proposal["current_monthly_amount"], proposal["current_heating_monthly_amount"]) == expected
+            assert (proposal["monthly_amount"], proposal["heating_monthly_amount"]) == ("100.00", "0.00")
+            if expected == ("175.00", "90.00"):
+                for valid_from, advance, heating in [("2026-06-01", "180.00", "95.00"), ("2027-01-01", "200.00", "110.00")]:
+                    change = await api.post(lease_url + "/rent-changes", json={"valid_from": valid_from,
+                        "base_rent": "750.00", "advance_payment": advance, "heating_advance_payment": heating})
+                    assert change.status_code == 201, change.text
+        accepted = await api.post(url, json={"valid_from": "2026-12-01"})
+        assert accepted.status_code == 201, accepted.text
+        assert (accepted.json()["advance_payment"], accepted.json()["heating_advance_payment"]) == ("100.00", "0.00")
+        assert (await api.get(f"/api/settlements/{run_id}")).json() == frozen
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("today,lease_heating,change_from,change_heating", [
+    ("2026-11-02", "0.00", "2026-12-01", "90.00"),
+    ("2027-08-01", "90.00", "2027-03-01", "0.00"),
+], ids=["scheduled-heating-before-future-acceptance", "backdated-acceptance-before-heating-removal"])
+async def test_proposal_current_is_the_rate_replaced_on_acceptance(
+    rent_world, rent_db, monkeypatch, today, lease_heating, change_from, change_heating,
+):
+    from app.services import settlement_service
+
+    class Today(date):
+        @classmethod
+        def today(cls):
+            return cls.fromisoformat(today)
+
+    monkeypatch.setattr(settlement_service, "date", Today)
+    world = rent_world
+    async with api_client(world) as api:
+        lease_url = f"/api/leases/{world['lease']}"
+        patched = await api.patch(lease_url, json={"heating_advance_payment": lease_heating})
+        assert patched.status_code == 200, patched.text
+        run_id, frozen = await _proposal_run(api, world, rent_db)
+        history_url = lease_url + "/rent-changes"
+        change = await api.post(history_url, json={"valid_from": change_from, "base_rent": "750.00",
+            "advance_payment": "150.00", "heating_advance_payment": change_heating})
+        assert change.status_code == 201, change.text
+        url = f"/api/settlements/{run_id}/advance-proposal"
+        for params in [{}, {"accept_from": "2027-01-01"}]:
+            response = await api.get(url, params=params)
+            assert response.status_code == 200, response.text
+            proposal = response.json()
+            assert (proposal["current_monthly_amount"], proposal["current_heating_monthly_amount"]) == ("150.00", "90.00")
+            assert proposal["accept_from"] == "2027-01-01"
+            assert (proposal["monthly_amount"], proposal["heating_monthly_amount"]) == ("100.00", "0.00")
+        accepted = await api.post(url, json={"valid_from": proposal["accept_from"]})
+        assert accepted.status_code == 201, accepted.text
+        row = accepted.json()
+        assert (row["valid_from"], row["advance_payment"], row["heating_advance_payment"]) == ("2027-01-01", "100.00", "0.00")
+        assert row["base_rent"] == ("750.00" if change_from < "2027-01-01" else "700.00")
+        history = (await api.get(history_url)).json()
+        assert len(history) == 2
+        assert [entry for entry in history if entry["id"] == row["id"]] == [row]
+        assert (await api.get(f"/api/settlements/{run_id}")).json() == frozen
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("change_from,expected", [
+    ("2026-12-31", ("180.00", "90.00")),
+    ("2027-01-01", ("180.00", "90.00")),
+    ("2027-01-02", ("150.00", "0.00")),
+], ids=["strictly-before", "on-acceptance-date", "strictly-after"])
+async def test_proposal_current_uses_history_through_acceptance_date(rent_world, rent_db, change_from, expected):
+    world = rent_world
+    async with api_client(world) as api:
+        run_id, _ = await _proposal_run(api, world, rent_db)
+        change = await api.post(f"/api/leases/{world['lease']}/rent-changes", json={
+            "valid_from": change_from, "base_rent": "750.00",
+            "advance_payment": "180.00", "heating_advance_payment": "90.00"})
+        assert change.status_code == 201, change.text
+        url = f"/api/settlements/{run_id}/advance-proposal"
+        response = await api.get(url, params={"accept_from": "2027-01-01"})
+        assert response.status_code == 200, response.text
+        proposal = response.json()
+        assert (proposal["current_monthly_amount"], proposal["current_heating_monthly_amount"]) == expected
+        assert proposal["accept_from"] == "2027-01-01"
+        assert (await api.get(url)).json() == proposal
+        assert (await api.get(url, params={"accept_from": "not-a-date"})).status_code == 422
 
 
 @pytest.mark.asyncio
@@ -1838,7 +2430,7 @@ async def test_meter_consumption_scope_classification_unit_boundary_and_revocati
     world = metered_m3
     scope, grant_id = _batch_scope(world, units=[world["u4"]] if partial else None)
     created = await client_a_admin.post("/api/settlements", json={
-        "property_id": world["property"], "lease_agreement_id": world["lease_e"],
+        'heating_advance_payments_total': '0.00', "property_id": world["property"], "lease_agreement_id": world["lease_e"],
         "period_start": "2025-01-01", "period_end": "2025-12-31",
         "advance_payments_total": "0.00", "accounting_scope_id": scope})
     assert created.status_code == 201, created.text
@@ -1910,13 +2502,13 @@ async def heiz_world(rent_world, rent_db, request):
             'base_rent':'600.00','advance_payment':'0.00'})
         assert lease.status_code == 201, lease.text
         w['second_lease'] = uuid.UUID(lease.json()['id'])
-        run = await api.post('/api/settlements',json={'property_id':str(w['property']),
+        run = await api.post('/api/settlements',json={'heating_advance_payments_total': '0.00', 'property_id':str(w['property']),
             'lease_agreement_id':str(w['lease']),'period_start':'2026-01-01',
             'period_end':'2026-12-31','advance_payments_total':'0.00'})
         assert run.status_code == 201, run.text
         w['run'] = run.json()['id']
         await attest_fixture(api,'settlement',w['run'],
-            {'advance_payments_total':'0.00','advance_payments_source':'MANUAL'})
+            {'heating_advance_payments_total': '0.00', 'heating_advance_payments_source': 'MANUAL', 'advance_payments_total':'0.00','advance_payments_source':'MANUAL'})
     return w
 
 
@@ -2073,7 +2665,7 @@ async def test_heiz_nutzerwechsel_uses_intermediate_reading_not_day_estimate(hei
         stale=await api.post(f"/api/settlements/{w['run']}/compute",json=_heiz_body(w))
         assert stale.status_code==422 and 'coverage_stale' in stale.text
         await attest_fixture(api,'settlement',w['run'],
-            {'advance_payments_total':'0.00','advance_payments_source':'MANUAL'})
+            {'heating_advance_payments_total': '0.00', 'heating_advance_payments_source': 'MANUAL', 'advance_payments_total':'0.00','advance_payments_source':'MANUAL'})
         result=await api.post(f"/api/settlements/{w['run']}/compute",json=_heiz_body(w))
         assert result.status_code==200,result.text
         # 120 × 181/365 = 59.51 base; 700 × 40/400 = 70 consumption.
@@ -2097,7 +2689,7 @@ async def test_heiz_vacancy_keeps_gross_owner_share(heiz_world,rent_db):
         stale=await api.post(f"/api/settlements/{w['run']}/compute",json=_heiz_body(w))
         assert stale.status_code==422 and 'coverage_stale' in stale.text
         await attest_fixture(api,'settlement',w['run'],
-            {'advance_payments_total':'0.00','advance_payments_source':'MANUAL'})
+            {'heating_advance_payments_total': '0.00', 'heating_advance_payments_source': 'MANUAL', 'advance_payments_total':'0.00','advance_payments_source':'MANUAL'})
         result=await api.post(f"/api/settlements/{w['run']}/compute",json=body)
         assert result.status_code==200,result.text
         assert result.json()['total_cost']=='476.00'
@@ -2153,7 +2745,7 @@ async def test_heiz_scoped_sources_and_revocation(client_a_admin,metered_m3,part
     w=metered_m3
     scope,grant_id=_batch_scope(w,units=[w['u4']] if partial else None)
     run=await client_a_admin.post('/api/settlements',json={
-        'property_id':w['property'],'lease_agreement_id':w['lease_e'],
+        'heating_advance_payments_total': '0.00', 'property_id':w['property'],'lease_agreement_id':w['lease_e'],
         'period_start':'2025-01-01','period_end':'2025-12-31',
         'advance_payments_total':'0.00','accounting_scope_id':scope})
     assert run.status_code==201,run.text
@@ -2189,7 +2781,7 @@ async def test_clipped_water_run_uses_annual_readings_of_unchanged_other_units(c
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("interim,expected", [(False, "146.29"), (True, "129.51")])
+@pytest.mark.parametrize("interim,expected", [(False, "161.54"), (True, "129.51")])
 async def test_clipped_heating_keeps_building_period_pool_and_uses_only_own_interim(heiz_world, rent_db, interim, expected):
     w = heiz_world
     await rent_db.execute(text("UPDATE lease_agreement SET valid_to='2026-07-01' WHERE id=:lease"), w)
@@ -2205,14 +2797,14 @@ async def test_clipped_heating_keeps_building_period_pool_and_uses_only_own_inte
             'tenant_profile_id':str(w['tenant']), 'valid_from':'2026-07-01',
             'base_rent':'700.00', 'advance_payment':'150.00'})
         assert incoming.status_code == 201, incoming.text
-        created = await api.post('/api/settlements', json={'property_id':str(w['property']),
+        created = await api.post('/api/settlements', json={'heating_advance_payments_total': '0.00', 'property_id':str(w['property']),
             'lease_agreement_id':str(w['lease']), 'period_start':'2026-01-01',
             'period_end':'2026-12-31', 'advance_payments_total':'0.00'})
         assert created.status_code == 201, created.text
         run = created.json()['id']
         assert created.json()['period_end'] == '2026-06-30'
         await attest_fixture(api, 'settlement', run,
-            {'advance_payments_total':'0.00', 'advance_payments_source':'MANUAL'})
+            {'heating_advance_payments_total': '0.00', 'heating_advance_payments_source': 'MANUAL', 'advance_payments_total':'0.00', 'advance_payments_source':'MANUAL'})
         result = await api.post(f'/api/settlements/{run}/compute', json=_heiz_body(w))
         assert result.status_code == 200, result.text
         assert _heiz_line(result.json())['total_amount'] == '1000.00'
@@ -2236,13 +2828,13 @@ async def test_december_heating_source_keeps_annual_weights_and_excludes_departe
         assert incoming.status_code == 201, incoming.text
         amounts = []
         for lease in (str(w['lease']), incoming.json()['id'], str(w['second_lease'])):
-            run = await api.post('/api/settlements', json={'property_id':str(w['property']),
+            run = await api.post('/api/settlements', json={'heating_advance_payments_total': '0.00', 'property_id':str(w['property']),
                 'lease_agreement_id':lease, 'period_start':'2026-01-01',
                 'period_end':'2026-12-31', 'advance_payments_total':'0.00'})
             assert run.status_code == 201, run.text
             run_id = run.json()['id']
             await attest_fixture(api, 'settlement', run_id,
-                {'advance_payments_total':'0.00', 'advance_payments_source':'MANUAL'})
+                {'heating_advance_payments_total': '0.00', 'heating_advance_payments_source': 'MANUAL', 'advance_payments_total':'0.00', 'advance_payments_source':'MANUAL'})
             result = await api.post(f'/api/settlements/{run_id}/compute', json=_heiz_body(w))
             assert result.status_code == 200, result.text
             amounts.append(sum((Decimal(row['amount']) for row in result.json()['lines']
@@ -2281,12 +2873,12 @@ async def test_free_window_uses_each_overlapping_property_year(client_a_admin, m
     prop = await client_a_admin.put(f"/api/properties/{w['property']}", json={'fiscal_year_start_month':4})
     assert prop.status_code == 200, prop.text
     created = await client_a_admin.post('/api/settlements', json={
-        'property_id':w['property'], 'lease_agreement_id':w['lease_e'],
+        'heating_advance_payments_total': '0.00', 'property_id':w['property'], 'lease_agreement_id':w['lease_e'],
         'period_start':'2025-01-01', 'period_end':'2025-12-31', 'advance_payments_total':'0.00'})
     assert created.status_code == 201, created.text
     run = created.json()['id']
     await attest_fixture(client_a_admin, 'settlement', run,
-        {'advance_payments_total':'0.00', 'advance_payments_source':'MANUAL'})
+        {'heating_advance_payments_total': '0.00', 'heating_advance_payments_source': 'MANUAL', 'advance_payments_total':'0.00', 'advance_payments_source':'MANUAL'})
     result = await client_a_admin.post(f'/api/settlements/{run}/compute', json=_extras_for_exit(w))
     assert result.status_code == 200, result.text
     water = [row for row in result.json()['lines'] if row['cost_category_code']=='KALTWASSER']
@@ -2457,7 +3049,7 @@ async def test_heating_preserves_exact_slice_when_a_later_slice_cannot_be_resolv
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("interim", [False, True])
-async def test_heating_day_fallback_labels_its_enclosing_readings_and_day_share(heiz_world, rent_db, interim):
+async def test_heating_fallback_labels_its_enclosing_readings_and_degree_day_share(heiz_world, rent_db, interim):
     w = heiz_world
     await rent_db.execute(text("UPDATE lease_agreement SET valid_to='2026-07-01' WHERE id=:lease"), w)
     await rent_db.commit()
@@ -2473,10 +3065,365 @@ async def test_heating_day_fallback_labels_its_enclosing_readings_and_day_share(
             'cost_entry_id':str(w['heat']), 'meter_type':'HEIZUNG', 'base_key':'AREA'})
         assert response.status_code == 200, response.text
         own = sorted((r for r in response.json() if r['unit_id'] == str(w['unit'])), key=lambda r:r['period_from'])
-        for row, days in zip(own[1:] if interim else own, [92, 92] if interim else [181, 184]):
-            total, denominator = (60, 184) if interim else (100, 365)
-            assert abs(Decimal(row['consumption']) - Decimal(total) * days / denominator) < Decimal('1e-25')
+        from fractions import Fraction
+        weights = [Fraction(1310, 23), Fraction(360)] if interim else [Fraction(13410, 23), Fraction(9590, 23)]
+        denominator = sum(weights)
+        for row, weight in zip(own[1:] if interim else own, weights):
+            share = weight / denominator
+            expected = Decimal(60 if interim else 100) * share.numerator / share.denominator
+            assert abs(Decimal(row['consumption']) - expected) < Decimal('1e-25')
             assert row['start_reading']['reading_date'] == ('2026-06-30' if interim else '2026-01-01')
             assert row['end_reading']['reading_date'] == '2026-12-31'
             assert ('Abschnittsbasis' if interim else 'Periodenbasis') in row['reason']
-            assert f'{days}/{denominator}' in row['reason']
+            assert f'Gradtagsanteil {weight} von {denominator} ‰' in row['reason']
+
+
+@pytest.mark.asyncio
+async def test_degree_day_snapshot_freezes_exact_weights_and_ignores_later_readings(heiz_world, rent_db):
+    from app.engine.canonical import canonical_json, sha256_hex
+
+    w = heiz_world
+    await rent_db.execute(text("UPDATE lease_agreement SET valid_to='2026-07-01' WHERE id=:lease"), w)
+    await rent_db.commit()
+    async with api_client(w) as api:
+        incoming = await api.post('/api/leases', json={'unit_id': str(w['unit']),
+            'tenant_profile_id': str(w['tenant']), 'valid_from': '2026-07-01',
+            'base_rent': '700.00', 'advance_payment': '0.00'})
+        assert incoming.status_code == 201, incoming.text
+        await attest_fixture(api, 'settlement', w['run'], {
+            'heating_advance_payments_total': '0.00', 'heating_advance_payments_source': 'MANUAL',
+            'advance_payments_total': '0.00', 'advance_payments_source': 'MANUAL'})
+        url = f"/api/settlements/{w['run']}"
+        result = await api.post(url + '/finalize', json=_heiz_body(w))
+        assert result.status_code == 200, result.text
+        payload, digest = (await rent_db.execute(text(
+            'SELECT snapshot_payload, snapshot_sha256 FROM settlement_run WHERE id=:id'),
+            {'id': uuid.UUID(w['run'])})).one()
+        assert payload['engine_version'] == 'm3.5.0'
+        heat = next(p for p in payload['heating_costs'] if p['kind'] == 'HEATING')
+        own = sorted((r for r in heat['rows'] if r['unit_id'] == str(w['unit'])), key=lambda r:r['period_from'])
+        assert [r['meter_source']['split'] for r in own] == [
+            {'method': 'DEGREE_DAYS', 'weight': '13410/23', 'total_weight': '1000', 'quantity': '1341/23'},
+            {'method': 'DEGREE_DAYS', 'weight': '9590/23', 'total_weight': '1000', 'quantity': '959/23'}]
+        water = next(p for p in payload['heating_costs'] if p['kind'] == 'HOT_WATER')
+        assert all(r['meter_source'].get('split', {}).get('method') == 'DAYS'
+                   for r in water['rows'] if r['unit_id'] == str(w['unit']))
+        snapshot_bytes = canonical_json(payload)
+        assert sha256_hex(snapshot_bytes) == digest == result.json()['snapshot_sha256']
+        pdf = await api.get(url + '/pdf')
+        assert pdf.status_code == 200, pdf.text
+        # A newly available exact interim reading cannot rewrite a final run.
+        added = await api.post(f"/api/meters/{w['meters'][0]}/readings",
+            json={'reading_date': '2026-06-30', 'value': '140'})
+        assert added.status_code == 201, added.text
+        assert (await api.get(url + '/pdf')).content == pdf.content
+        saved = await rent_db.scalar(text('SELECT snapshot_payload FROM settlement_run WHERE id=:id'),
+            {'id': uuid.UUID(w['run'])})
+        assert canonical_json(saved) == snapshot_bytes
+        assert sha256_hex(canonical_json(saved)) == digest
+
+
+@pytest.mark.asyncio
+async def test_person_days_household_replace_all_and_exact_statement_amounts(client_a_admin):
+    from tests.persons_key_support import persons_property, persons_run, ANNA_HOUSEHOLD, BERND_HOUSEHOLD
+    api = client_a_admin
+    data = await persons_property(api)
+    assert (await api.get(f"/api/units/{data['unit']['id']}/household")).json() == ANNA_HOUSEHOLD
+    for bernd, amount, days in [(False, '901.45', '944.000000'), (True, '292.21', '306.000000')]:
+        run = await persons_run(api, data, bernd=bernd)
+        # Legacy per-run values must not override the authoritative history.
+        response = await api.post(f"/api/settlements/{run['id']}/compute", json={'unit_metrics': [
+            {'unit_id': data['unit']['id'], 'person_count': 999}, {'unit_id': data['second']['id'], 'person_count': 999}]})
+        assert response.status_code == 200, response.text
+        assert response.json()['total_cost'] == amount
+        assert response.json()['lines'][0]['distribution_base_share'] == days
+        assert response.json()['lines'][0]['distribution_base_total'] == '1309.000000'
+    response = await api.put(f"/api/units/{data['second']['id']}/household", json=BERND_HOUSEHOLD[:1])
+    assert response.status_code == 200
+    response = await api.post(f"/api/settlements/{run['id']}/compute", json={})
+    assert response.status_code == 422, response.text
+    assert response.json()['detail'] == 'Handeingabe erforderlich: Personenzahl für Einheit 2 ab 01.03.2026 fehlt.'
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('rows', [
+    [{'valid_from': '2026-01-01', 'persons': -1, 'is_vacancy': False}],
+    [{'valid_from': '2026-01-01', 'persons': 1.5, 'is_vacancy': False}],
+    [{'valid_from': '2026-01-01', 'persons': True, 'is_vacancy': False}],
+    [{'valid_from': '2026-01-01', 'persons': 1, 'is_vacancy': False}] * 2,
+])
+async def test_person_days_invalid_replace_all_preserves_saved_households(client_a_admin, rows):
+    from tests.persons_key_support import ANNA_HOUSEHOLD
+    from tests.settlement_period_support import period_property
+    api = client_a_admin
+    data = await period_property(api, month=1)
+    url = f"/api/units/{data['unit']['id']}/household"
+    assert (await api.put(url, json=ANNA_HOUSEHOLD)).status_code == 200
+    response = await api.put(url, json=rows)
+    assert response.status_code == 422, response.text
+    assert (await api.get(url)).json() == ANNA_HOUSEHOLD
+    assert (await api.put(url, json=[])).json() == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('year,rows,amount,days', [
+    (2026, [('02-01', 1), ('02-10', 2)], '783.33', '47.000000'),
+    (2024, [('02-01', 1), ('02-10', 2)], '785.26', '49.000000'),
+    (2026, [('02-01', 0)], '0.00', '0.000000'),
+    (2026, [('02-01', 1)], '625.00', '28.000000'),
+    (2026, [], None, None),
+])
+async def test_person_days_http_handles_midmonth_leap_zero_constant_and_missing(client_a_admin, year, rows, amount, days):
+    from tests.settlement_period_support import create, period_property, statement
+    from tests.financial_coverage_helpers import attest_fixture
+    api = client_a_admin
+    data = await period_property(api, month=1)
+    vacant = await create(api, '/api/units', {'property_id': data['property']['id'], 'number': 'Vacant', 'usage_type': 'WOHNUNG'})
+    for unit, household in [(data['unit'], [{'valid_from': f'{year}-{d}', 'persons': n, 'is_vacancy': False} for d, n in rows]),
+                             (vacant, [{'valid_from': f'{year}-02-01', 'persons': 1, 'is_vacancy': True}])]:
+        assert (await api.put(f"/api/units/{unit['id']}/household", json=household)).status_code == 200
+    end = f'{year}-02-{29 if year == 2024 else 28}'
+    start = f'{year}-02-01'
+    category = next(c for c in (await api.get('/api/cost-categories')).json() if c['code'] == 'GARTENPFLEGE')
+    cost = await create(api, '/api/cost-entries', {'property_id': data['property']['id'], 'cost_category_id': category['id'],
+        'invoice_date': end, 'service_period_from': start, 'service_period_to': end,
+        'gross_amount': '1250.00', 'tenant_distribution_key': 'PERSONENZAHL', 'tenant_apportionable': 'UMLAGEFAEHIG'})
+    assert (await api.post(f"/api/cost-entries/{cost['id']}/confirm")).status_code == 200
+    run = await create(api, '/api/settlements', {**statement(data, start, end),
+        'advance_payments_total': '0.00', 'heating_advance_payments_total': '0.00'})
+    await attest_fixture(api, 'settlement', run['id'], {'advance_payments_total': '0.00', 'advance_payments_source': 'MANUAL',
+        'heating_advance_payments_total': '0.00', 'heating_advance_payments_source': 'MANUAL'})
+    response = await api.post(f"/api/settlements/{run['id']}/compute", json={})
+    if amount is None:
+        assert response.status_code == 422, response.text
+        assert response.json()['detail'] == f'Handeingabe erforderlich: Personenzahl für Einheit 1 ab 01.02.{year} fehlt.'
+    else:
+        assert response.status_code == 200, response.text
+        assert response.json()['total_cost'] == amount
+        assert response.json()['lines'][0]['distribution_base_share'] == days
+
+
+@pytest.mark.asyncio
+async def test_person_days_finalized_snapshot_retains_owner_person_days_and_digest(client_a_admin, migrator_session):
+    from tests.persons_key_support import persons_property, persons_run
+    from app.engine.canonical import canonical_json, canonical_sha256
+    api = client_a_admin
+    data = await persons_property(api)
+    run = await persons_run(api, data)
+    url = f"/api/settlements/{run['id']}"
+    finalized = await api.post(url + '/finalize', json={})
+    assert finalized.status_code == 200, finalized.text
+    query = text('SELECT snapshot_payload,snapshot_sha256 FROM settlement_run WHERE id=:id')
+    payload, digest = (await migrator_session.execute(query, {'id': uuid.UUID(run['id'])})).one()
+    assert canonical_sha256(payload) == digest
+    assert [(v['days'], v['person_days'], v['amount']) for v in payload['vacancy_attribution']] == [(59, 59, '56.34')]
+    before = canonical_json(payload)
+    assert (await api.put(f"/api/units/{data['unit']['id']}/household", json=[])).status_code == 200
+    retained = (await migrator_session.execute(query, {'id': uuid.UUID(run['id'])})).one()
+    assert canonical_json(retained.snapshot_payload) == before
+    assert retained.snapshot_sha256 == digest
+    assert (await api.get(url)).json()['total_cost'] == '901.45'
+    pdf = await api.get(url + '/pdf')
+    assert pdf.status_code == 200 and pdf.content.startswith(b'%PDF-')
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('action', ['compute', 'finalize'])
+@pytest.mark.parametrize('bernd', [False, True])
+async def test_person_days_large_constant_households_persist_raw_bases(client_a_admin, migrator_session, action, bernd):
+    from tests.persons_key_support import persons_property, persons_run
+    from app.engine.canonical import canonical_sha256
+    api = client_a_admin
+    data = await persons_property(api, save_households=False, bernd_from='2026-01-01')
+    for unit in (data['unit'], data['second']):
+        response = await api.put(f"/api/units/{unit['id']}/household", json=[
+            {'valid_from': '2026-01-01', 'persons': 1370, 'is_vacancy': False}])
+        assert response.status_code == 200, response.text
+    runs = [await persons_run(api, data, bernd=target) for target in (False, True)]
+    for run in runs:
+        preview = await api.post(f"/api/settlements/{run['id']}/preview", json={})
+        assert preview.status_code == 200, preview.text
+        assert preview.json()['total_cost'] == '625.00'
+    run = runs[int(bernd)]
+    response = await api.post(f"/api/settlements/{run['id']}/{action}", json={})
+    assert response.status_code == 200, response.text
+    assert response.json()['total_cost'] == '625.00'
+    line = response.json()['lines'][0]
+    assert (Decimal(line['distribution_base_share']), Decimal(line['distribution_base_total'])) == (Decimal(500050), Decimal(1000100))
+    saved = (await migrator_session.execute(text('''SELECT distribution_base_share,distribution_base_total,amount
+        FROM settlement_line WHERE settlement_run_id=:run AND line_type='COST' '''), {'run': uuid.UUID(run['id'])})).one()
+    assert tuple(saved) == (Decimal('500050.000000'), Decimal('1000100.000000'), Decimal('625.00'))
+    payload, digest = (await migrator_session.execute(text('SELECT snapshot_payload,snapshot_sha256 FROM settlement_run WHERE id=:run'),
+        {'run': uuid.UUID(run['id'])})).one()
+    frozen = payload['result']['lines'][0]
+    assert (frozen['distribution_base_share'], frozen['distribution_base_total']) == ('500050.000000', '1000100.000000')
+    if action == 'finalize':
+        assert canonical_sha256(payload) == digest == response.json()['snapshot_sha256']
+
+
+@pytest.mark.asyncio
+async def test_person_days_summaries_skip_vacancy_lookup_but_detail_preserves_it(client_a_admin, monkeypatch):
+    from tests.persons_key_support import persons_property, persons_run
+    from app.services.settlement_service import SettlementService
+
+    api = client_a_admin
+    data = await persons_property(api)
+    run = await persons_run(api, data)
+    url = f"/api/settlements/{run['id']}"
+    computed = await api.post(url + '/compute', json={})
+    assert computed.status_code == 200, computed.text
+    frozen = computed.json()['vacancy_attribution']
+    assert [(row['unit_number'], row['person_days'], row['amount']) for row in frozen] == [('2', 59, '56.34')]
+    lookups = []
+    original = SettlementService.vacancy_disclosure
+
+    async def observe_disclosure(service, saved_run):
+        lookups.append(str(saved_run.id))
+        return await original(service, saved_run)
+
+    monkeypatch.setattr(SettlementService, 'vacancy_disclosure', observe_disclosure)
+    listed = await api.get('/api/settlements', params={'property_id': data['property']['id']})
+    assert listed.status_code == 200, listed.text
+    summary, = listed.json()
+    assert summary['id'] == run['id']
+    assert 'vacancy_attribution' not in summary
+    assert lookups == []
+    preview = await api.post(url + '/preview', json={})
+    assert preview.status_code == 200, preview.text
+    assert 'vacancy_attribution' not in preview.json()
+    assert lookups == []
+    detail = await api.get(url)
+    assert detail.status_code == 200, detail.text
+    assert detail.json()['vacancy_attribution'] == frozen
+    assert lookups == [run['id']]
+    updated = await api.patch(url + '/advance-payments', json={'advance_payments_total': '0.00'})
+    assert updated.status_code == 200, updated.text
+    assert updated.json()['vacancy_attribution'] == frozen
+    assert lookups == [run['id'], run['id']]
+    finalized = await api.post(url + '/finalize', json={})
+    assert finalized.status_code == 200, finalized.text
+    assert finalized.json()['vacancy_attribution'] == frozen
+    assert lookups == [run['id'], run['id'], run['id']]
+
+
+@pytest.mark.asyncio
+async def test_person_days_statement_discloses_frozen_vacancy_without_live_recalculation(client_a_admin, client_b_admin, migrator_session):
+    from tests.persons_key_support import persons_property, persons_run
+    from app.engine.canonical import canonical_json
+    api = client_a_admin
+    data = await persons_property(api)
+    run = await persons_run(api, data)
+    url = f"/api/settlements/{run['id']}"
+    finalized = await api.post(url + '/finalize', json={})
+    assert finalized.status_code == 200, finalized.text
+    payload, digest = (await migrator_session.execute(text('SELECT snapshot_payload,snapshot_sha256 FROM settlement_run WHERE id=:id'),
+        {'id': uuid.UUID(run['id'])})).one()
+    before = canonical_json(payload)
+    assert (await client_b_admin.get(url)).status_code == 404
+    visible = (await api.get(url)).json()['vacancy_attribution']
+    assert len(visible) == 1
+    assert visible[0]['unit_number'] == '2'
+    assert visible[0]['person_days'] == 59 and visible[0]['amount'] == '56.34'
+    assert set(visible[0]) == {'unit_number', 'cost_label', 'days', 'person_days', 'amount'}
+    assert (await api.put(f"/api/units/{data['second']['id']}/household", json=[])).status_code == 200
+    assert (await api.put(f"/api/units/{data['second']['id']}", json={'number': 'Changed after finalization'})).status_code == 200
+    retained = (await api.get(url)).json()
+    assert retained['vacancy_attribution'] == visible
+    assert retained['snapshot_sha256'] == digest
+    stored = await migrator_session.scalar(text('SELECT snapshot_payload FROM settlement_run WHERE id=:id'), {'id': uuid.UUID(run['id'])})
+    assert canonical_json(stored) == before
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('action', ['finalize', 'compute'])
+@pytest.mark.parametrize('cost_scope', ['other', 'same', 'unbound'])
+async def test_person_days_frozen_vacancy_requires_readable_original_cost(client_a_admin, client_a_readonly, cost_scope, action):
+    from tests.persons_key_support import persons_property, persons_run
+
+    api = client_a_admin
+    data = await persons_property(api)
+    run = await persons_run(api, data)
+    url = f"/api/settlements/{run['id']}"
+    saved = await api.post(url + '/' + action, json={})
+    assert saved.status_code == 200, saved.text
+    original = saved.json()
+    admin_id = (await api.get('/api/auth/session')).json()['user_id']
+    reader_id = (await client_a_readonly.get('/api/auth/session')).json()['user_id']
+    scopes = {}
+    for name in ('S', 'T'):
+        scope = await api.post('/api/accounting-scopes', headers={'Idempotency-Key': str(uuid.uuid4())}, json={
+            'property_id': data['property']['id'], 'scope_type': 'MIET', 'label': f'Vacancy source {name}',
+            'valid_from': '2026-01-01', 'whole_property': True, 'units': []})
+        assert scope.status_code == 201, scope.text
+        scopes[name] = '/api/accounting-scopes/' + scope.json()['id']
+        principals = [(admin_id, ['read', 'prepare', 'confirm'])]
+        if name == 'S':
+            principals.append((reader_id, ['read']))
+        for principal, capabilities in principals:
+            granted = await api.post(scopes[name] + '/grants', headers={'Idempotency-Key': str(uuid.uuid4())}, json={
+                'user_id': principal, 'capabilities': capabilities, 'reason': 'Exact vacancy source audience'})
+            assert granted.status_code == 201, granted.text
+    binding = await api.post(scopes['S'] + '/bindings', json={
+        'resource_type': 'settlement_run', 'resource_id': run['id'], 'reason': 'Classify frozen statement'})
+    assert binding.status_code == 201, binding.text
+    if cost_scope != 'unbound':
+        binding = await api.post(scopes['T' if cost_scope == 'other' else 'S'] + '/bindings', json={
+            'resource_type': 'cost_entry', 'resource_id': data['cost']['id'], 'reason': 'Classify original cost source'})
+        assert binding.status_code == 201, binding.text
+    cost = await client_a_readonly.get(f"/api/cost-entries/{data['cost']['id']}")
+    assert cost.status_code == (404 if cost_scope == 'other' else 200), cost.text
+    detail = await client_a_readonly.get(url)
+    assert detail.status_code == 200, detail.text
+    retained = detail.json()
+    assert retained['snapshot_sha256'] == original['snapshot_sha256']
+    assert retained['lines'] == original['lines']
+    if cost_scope == 'other':
+        assert retained.get('vacancy_attribution', []) == []
+    else:
+        assert retained['vacancy_attribution'] == original['vacancy_attribution']
+        assert [(r['unit_number'], r['person_days'], r['amount']) for r in retained['vacancy_attribution']] == [('2', 59, '56.34')]
+    if action == 'compute':
+        # A detail write selects S internally. Source visibility must still
+        # match an ordinary read rather than inherit that narrower write scope.
+        assert (await api.get(f"/api/cost-entries/{data['cost']['id']}")).status_code == 200
+        before_update = await api.get(url)
+        assert before_update.status_code == 200, before_update.text
+        assert before_update.json()['vacancy_attribution'] == original['vacancy_attribution']
+        updated = await api.patch(url + '/advance-payments', json={'advance_payments_total': '0.00'})
+        assert updated.status_code == 200, updated.text
+        assert updated.json().get('vacancy_attribution', []) == original['vacancy_attribution']
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('whole_property', [False, True])
+async def test_person_days_frozen_vacancy_obeys_later_partial_scope_classification(client_a_admin, client_a_readonly, whole_property):
+    from tests.persons_key_support import persons_property, persons_run
+    api = client_a_admin
+    data = await persons_property(api)
+    run = await persons_run(api, data)
+    url = f"/api/settlements/{run['id']}"
+    finalized = await api.post(url + '/finalize', json={})
+    assert finalized.status_code == 200, finalized.text
+    scope = await api.post('/api/accounting-scopes', headers={'Idempotency-Key': str(uuid.uuid4())}, json={
+        'property_id': data['property']['id'], 'scope_type': 'MIET', 'label': 'Later reviewed classification',
+        'valid_from': '2026-01-01', 'whole_property': whole_property,
+        'units': [] if whole_property else [{'unit_id': data['unit']['id']}]})
+    assert scope.status_code == 201, scope.text
+    path = f"/api/accounting-scopes/{scope.json()['id']}"
+    for principal, capabilities in [(api, ['read', 'prepare']), (client_a_readonly, ['read'])]:
+        identity = (await principal.get('/api/auth/session')).json()
+        granted = await api.post(path + '/grants', headers={'Idempotency-Key': str(uuid.uuid4())}, json={
+            'user_id': identity['user_id'], 'capabilities': capabilities, 'reason': 'Reviewed statement audience'})
+        assert granted.status_code == 201, granted.text
+    binding = await api.post(path + '/bindings', json={
+        'resource_type': 'settlement_run', 'resource_id': run['id'], 'reason': 'Classify the existing frozen statement'})
+    assert binding.status_code == 201, binding.text
+    visible = await client_a_readonly.get(url)
+    assert visible.status_code == 200, visible.text
+    rows = visible.json().get('vacancy_attribution', [])
+    if whole_property:
+        assert [(r['unit_number'], r['person_days'], r['amount']) for r in rows] == [('2', 59, '56.34')]
+    else:
+        assert rows == []
+        assert '56.34' not in visible.text
+    assert visible.json()['snapshot_sha256'] == finalized.json()['snapshot_sha256']

@@ -46,6 +46,14 @@ flow is repeatable with
 
 T57 introduced this workflow.
 
+Admins create users in the „Neuen Benutzer anlegen“ card. Its persistent labels
+are „E-Mail“, „Name“, „Startpasswort“ and „Rolle“; email and a 12–128-character
+initial password are required. Fields stack on phones and remain inside the card.
+Tab through the fields, choose the role and submit „Benutzer anlegen“ with Enter.
+While creation is pending the fields and submit action are disabled. A failed
+request keeps all entries for correction or retry; success clears the form and
+refreshes the user list with the chosen role.
+
 Under „Benutzer“ (users), admins edit role and active status or set a new
 password (12–128 characters). Deactivation requires a confirmation; deactivating or
 downgrading oneself is blocked. A reset sends no email and

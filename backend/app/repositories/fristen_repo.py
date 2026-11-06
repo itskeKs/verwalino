@@ -12,15 +12,17 @@ import uuid
 from datetime import date
 from typing import Sequence
 
-from sqlalchemy import func, or_, select, text
+from sqlalchemy import func, select, text
 from fastapi import HTTPException
 
 from app.models.cost_entry import CostEntry
 from app.models.economic_plan import EconomicPlan
+from app.repositories.coverage_declaration_repo import CoverageDeclarationRepository
 from app.models.invoice_document import InvoiceDocument
 from app.models.lease_agreement import LeaseAgreement
 from app.models.property import Property
 from app.models.settlement_run import SettlementRun
+from app.models.special_levy import SpecialLevy, SpecialLevyAllocation
 from app.models.unit import Unit
 
 
@@ -127,6 +129,37 @@ class FristenRepository:
         )
         result = await self._session.execute(stmt)
         return {row[0] for row in result.all()}
+
+    async def finalized_plans(self, reference_date: date, property_id=None) -> Sequence[EconomicPlan]:
+        """Active plans in the selected financial context that have begun."""
+        stmt = select(EconomicPlan).where(EconomicPlan.organization_id == self._org_id,
+            EconomicPlan.status == 'finalized', EconomicPlan.superseded_by_id.is_(None),
+            EconomicPlan.period_start <= reference_date)
+        if property_id is not None:
+            stmt = stmt.where(EconomicPlan.property_id == property_id)
+        return (await self._session.execute(stmt)).scalars().all()
+
+    async def plan_owner_ids(self, plan: EconomicPlan) -> Sequence[uuid.UUID]:
+        """Frozen recipients plus dated successors; never omit a buyer's debt."""
+        owners = await CoverageDeclarationRepository(self._session, self._org_id).owner_ids(plan)
+        return [uuid.UUID(owner) for owner in sorted(owners)]
+
+    async def levy_owner_starts(
+        self, scope_id: uuid.UUID, property_id: uuid.UUID, start: date, end: date,
+    ) -> dict[uuid.UUID, date]:
+        """Find each frozen recipient's first levy due date in the selected scope."""
+        stmt = (
+            select(SpecialLevyAllocation.owner_profile_id, func.min(SpecialLevy.due_date))
+            .join(SpecialLevy)
+            .where(
+                SpecialLevy.organization_id == self._org_id,
+                SpecialLevy.property_id == property_id,
+                SpecialLevy.accounting_scope_id == scope_id,
+                SpecialLevy.due_date.between(start, end),
+            )
+            .group_by(SpecialLevyAllocation.owner_profile_id)
+        )
+        return {owner: due for owner, due in await self._session.execute(stmt)}
 
     # ------------------------------------------------------------------
     # Retention anchor (nachrichtlich INFO)
