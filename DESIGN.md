@@ -105,7 +105,8 @@ for a new status colour reuse a `Badge` tone.
 ### Icons
 
 `lucide-react` only; no custom SVG, no emoji. Icons accompany a text label, except the mobile menu
-button (`aria-label="Navigation umschalten"`) and the topbar key button below `sm` (`title`). Sizes (rem,
+button (`aria-label="Navigation umschalten"`), its close icon (`aria-label="Navigation schließen"`),
+and the topbar key button below `sm` (`title`). Sizes (rem,
 so x 15 px): `h-4 w-4` inside buttons (`Button` forces `[&_svg]:h-4 [&_svg]:w-4`) and in the quick-action
 tile, 1.05 rem in the nav, `h-5 w-5` in the `h-10 w-10` `StatCard` tile. Colour follows the text colour.
 
@@ -208,9 +209,19 @@ scrolls) with the centred `max-w-6xl` content. Topbar right side: role chip (fro
 (opens the password dialog; label hidden below `sm`), "Abmelden". Signed out, `LoginPage` renders alone
 (own `LoginPage.css`, 380 px card); while the session is probed `App.tsx` shows a centred "Lade...".
 
-Below `md` (768 px) the sidebar is off-canvas (`fixed`, slides in via the hamburger, `bg-black/40`
-overlay, closes on link click or overlay click); from `md` it is static. `AppShell.css`, `Sidebar.css`
-and `Topbar.css` exist but are imported nowhere; the shell is styled with utilities only.
+Below `md` (768 px) the hamburger opens a modal navigation drawer over a `bg-black/40`
+overlay. Closed navigation is unmounted. The existing Radix Dialog primitive moves focus to
+“Navigation schließen”, contains Tab and Shift+Tab, and hides the obscured page from assistive
+technology. Escape, the close button, route selection and the backdrop close the drawer and return
+focus to “Navigation umschalten”. Navigation links and the close button have a visible focus ring;
+focused links scroll into view even when Shift+Tab wraps to the last entry.
+From `md` the same navigation is static, outside the dialog. Crossing the breakpoint closes the
+mobile drawer; focus moves from disappearing navigation to the visible toggle, or from the mobile
+toggle/drawer to the active desktop link. A focused closed toggle also transfers focus when it
+disappears: the shell remembers navigation focus and restores it after the new layout mounts.
+The drawer retains its 200 ms slide; while closing it is
+inert until unmounted. `AppShell.css`, `Sidebar.css` and `Topbar.css` exist but are imported nowhere;
+the shell uses utilities and the drawer keyframes in `index.css`.
 
 First-run setup opens when `GET /api/setup` reports `required: true`; the backend
 owns the deployment decision. Required setup takes precedence over login and
@@ -1120,6 +1131,24 @@ and the sixty-receipt import/assignment use the real API. Each pair is desktop/3
 | Assignment after importing a long statement | [before](docs/assets/design/save-lifecycle/r1-before-assignment-after-import-1280.png) · [after](docs/assets/design/save-lifecycle/r1-after-assignment-after-import-1280.png) | [before](docs/assets/design/save-lifecycle/r1-before-assignment-after-import-360.png) · [after](docs/assets/design/save-lifecycle/r1-after-assignment-after-import-360.png) |
 
 ## Screenshots
+
+Mobile keyboard navigation uses the shared test database and synthetic long property names.
+The closed-focus images show the first Tab after loading the dashboard; the Escape images show
+the result of opening navigation and pressing Escape. Desktop layout and existing routes stay the
+same. The current dashboard and property-list images below are refreshed on the same test stack.
+
+| Navigation state | Before | After |
+|---|---|---|
+| Dashboard, 1280 px | [Before](docs/assets/design/navigation-before-dashboard-1280.png) | [After](docs/assets/design/navigation-dashboard-1280.png) |
+| Dashboard, 360 px | [Before](docs/assets/design/navigation-before-dashboard-360.png) | [After](docs/assets/design/navigation-dashboard-360.png) |
+| First keyboard focus, 360 px | [Before](docs/assets/design/navigation-before-closed-focus-360.png) | [After](docs/assets/design/navigation-closed-focus-360.png) |
+| Open drawer, 360 px | [Before](docs/assets/design/navigation-before-open-360.png) | [After](docs/assets/design/navigation-open-360.png) |
+| Escape result, 360 px | [Before](docs/assets/design/navigation-before-escape-360.png) | [After](docs/assets/design/navigation-escape-360.png) |
+| Closed toggle resized to 1280 px | [Before](docs/assets/design/navigation-before-closed-resize-1280.png) | [After](docs/assets/design/navigation-closed-resize-1280.png) |
+
+The resize pair follows keyboard selection of “Objekte” at 360 px and widening the closed drawer
+to 1280 px. Before the correction focus fell to the page body; afterward the active “Objekte”
+navigation link receives visible focus without another keyboard or pointer action.
 
 The cost list uses six synthetic costs for Aprilhaus and Maihaus, including a
 confirmed gardening cost dated `2026-12-31` for `1250.00`. The mobile before image

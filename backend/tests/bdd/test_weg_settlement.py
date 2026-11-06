@@ -338,7 +338,7 @@ def balance_browser(browser_world, weg_balance):
         for width in (1280, 360):
             await b.page.set_viewport_size({'width': width, 'height': 1000})
             if width == 360:
-                await b.page.wait_for_function("document.querySelector('aside').getBoundingClientRect().right <= 0")
+                await expect(b.page.locator("aside")).to_have_count(0)
             region = b.page.get_by_role('region', name='Hausgeld-Abgleich · Anna Berg', exact=True)
             await expect(region).to_be_visible()
             for label, value in (
@@ -522,7 +522,7 @@ def long_statement_browser(browser_world, world, weg_balance):
         for width in (1280, 360):
             await b.page.set_viewport_size({'width': width, 'height': 1000})
             if width == 360:
-                await b.page.wait_for_function("document.querySelector('aside').getBoundingClientRect().right <= 0")
+                await expect(b.page.locator("aside")).to_have_count(0)
             heading = b.page.get_by_role('heading', name=name, exact=True)
             await expect(heading).to_be_visible()
             card = heading.locator('..')

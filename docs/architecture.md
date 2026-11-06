@@ -1369,6 +1369,11 @@ Limits: a probe does not combine an own parent with a foreign child id, and fore
 ### 7.5 App shell & infrastructure (in parallel, roadmap M0)
 
 - **Responsive web app shell** (React/TS): navigation/layout skeleton (desktop + mobile), login page, org context display, placeholder navigation for later modules. No native app.
+- Below 768 px, navigation uses the existing Radix modal dialog: closed links are unmounted,
+  focus stays inside the open drawer, and Escape, its close control, backdrop or route selection
+  return focus to the toggle. Desktop navigation remains static and accessible; breakpoint changes
+  move focus to the visible navigation control. The real-browser regression is
+  [`mobile_navigation.feature`](../features/mobile_navigation.feature).
 - **Auth flow** end-to-end: login → session → tenant context in the backend.
 - **PDF rendering pipeline as a skeleton:** Set up HTML→PDF (Playwright) as a service/stub and wire it to a smoke test (e.g., “Hello-PDF”) — empty in domain terms, but present as infrastructure (roadmap M0). Actual settlement PDFs from M3.
 - **Object storage skeleton:** local FS with a checksum helper function (SHA-256) as a stub; encapsulate the interface so that S3 with Object Lock/WORM can later sit behind it (SDD §16). Domain voucher storage only in M2.

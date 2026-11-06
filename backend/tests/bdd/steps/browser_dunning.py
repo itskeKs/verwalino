@@ -114,7 +114,7 @@ async def readable_issued_amounts(browser_world):
     for width in (1280, 360):
         await page.set_viewport_size({"width": width, "height": 900})
         if width == 360:
-            await page.wait_for_function("document.querySelector('aside').getBoundingClientRect().right <= 0")
+            await expect(page.locator("aside")).to_have_count(0)
         for title, amounts in (
             ("Eingefrorene Zinsberechnung", ["1234.56 EUR", "11.66 EUR"]),
             ("Rueckstandsaufstellung", ["1234.56 EUR"]),
@@ -434,7 +434,7 @@ async def explicit_april_interest_start(browser_world):
     for width in (1280, 360):
         await page.set_viewport_size({"width": width, "height": 900})
         if width == 360:
-            await page.wait_for_function("document.querySelector('aside').getBoundingClientRect().right <= 0")
+            await expect(page.locator("aside")).to_have_count(0)
         if os.environ.get("VERWALINO_CAPTURE_DESIGN") == "1":
             directory = Path(__file__).resolve().parents[4] / "docs/assets/design/dunning-notice"
             await page.locator(".card").filter(has=page.get_by_role("heading", name="Eingefrorene Zinsberechnung", exact=True)).scroll_into_view_if_needed()
@@ -455,6 +455,7 @@ async def explicit_april_interest_start(browser_world):
         await popup.close()
     for width in (1280, 360):
         await page.set_viewport_size({"width": width, "height": 900})
+        await expect(page.locator("aside")).to_have_count(0 if width == 360 else 1)
         start = page.get_by_text("Zinsbeginn:", exact=False).filter(has_text="08.04.2026")
         await expect(start).to_be_visible()
         assert await start.evaluate("element => { const box = element.getBoundingClientRect(); return box.left >= 0 && box.right <= innerWidth; }")

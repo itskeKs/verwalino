@@ -182,7 +182,7 @@ async def clipped_picker_widths(browser_world, request):
     for width in (1280, 360):
         await page.set_viewport_size({"width": width, "height": 1000})
         if width == 360:
-            await page.wait_for_function("document.querySelector('aside').getBoundingClientRect().right <= 0")
+            await expect(page.locator("aside")).to_have_count(0)
         await picker.scroll_into_view_if_needed()
         assert await page.evaluate("document.documentElement.scrollWidth <= window.innerWidth")
         if directory:
@@ -341,7 +341,7 @@ async def capture_notice(browser, request, stage):
     for width in (1280, 360):
         await page.set_viewport_size({"width": width, "height": 1000})
         if width == 360:
-            await page.wait_for_function("document.querySelector('aside').getBoundingClientRect().right <= 0")
+            await expect(page.locator("aside")).to_have_count(0)
         notice = page.get_by_text("Nicht angerechnet: Zahlungen außerhalb des Mietverhältnisses: 1.234,56 €", exact=True)
         await page.get_by_role("heading", name="Berechnete Kostenpositionen").locator("..").scroll_into_view_if_needed()
         if stage == "after":
@@ -564,7 +564,7 @@ async def manual_input_hints(browser_world, request):
     for width in (1280, 360):
         await page.set_viewport_size({"width": width, "height": 1000})
         if width == 360:
-            await page.wait_for_function("document.querySelector('aside').getBoundingClientRect().right <= 0")
+            await expect(page.locator("aside")).to_have_count(0)
         await page.get_by_role("heading", name="Verbrauch", exact=True).scroll_into_view_if_needed()
         await expect(page.get_by_text("Verbrauch der Einheit im gesamten Objekt-Abrechnungsjahr eingeben, auch bei gekürztem Mietzeitraum.", exact=True)).to_be_visible()
         await expect(page.get_by_role("heading", name="Personenzahl", exact=True)).to_be_visible()

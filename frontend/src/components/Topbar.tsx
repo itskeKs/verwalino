@@ -5,7 +5,7 @@
 import { Menu, LogOut, Key } from "lucide-react";
 import { useAuth } from "../auth/useAuth";
 import { Button } from "./ui/button";
-import { useState } from "react";
+import { useState, type Ref } from "react";
 import {
   Dialog,
   DialogContent,
@@ -21,9 +21,11 @@ import { ApiError } from "../api/client";
 
 interface Props {
   onToggleSidebar: () => void;
+  navigationOpen?: boolean;
+  navigationButtonRef?: Ref<HTMLButtonElement>;
 }
 
-export function Topbar({ onToggleSidebar }: Props) {
+export function Topbar({ onToggleSidebar, navigationOpen = false, navigationButtonRef }: Props) {
   const { session, logout } = useAuth();
   const [passwordDialogOpen, setPasswordDialogOpen] = useState(false);
   const [oldPassword, setOldPassword] = useState("");
@@ -82,9 +84,12 @@ export function Topbar({ onToggleSidebar }: Props) {
   return (
     <header className="flex h-16 shrink-0 items-center gap-3 border-b border-border bg-card px-4 md:px-8">
       <button
-        className="flex h-9 w-9 items-center justify-center rounded-md text-foreground hover:bg-accent md:hidden"
+        ref={navigationButtonRef}
+        className="flex h-9 w-9 items-center justify-center rounded-md text-foreground hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring md:hidden"
         onClick={onToggleSidebar}
         aria-label="Navigation umschalten"
+        aria-expanded={navigationOpen}
+        aria-controls="mobile-navigation"
       >
         <Menu className="h-5 w-5" />
       </button>

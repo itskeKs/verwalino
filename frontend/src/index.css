@@ -82,6 +82,16 @@ select {
   min-height: 100vh;
 }
 
+@keyframes navigation-slide-in {
+  from { transform: translateX(-100%); }
+  to { transform: translateX(0); }
+}
+
+@keyframes navigation-slide-out {
+  from { transform: translateX(0); }
+  to { transform: translateX(-100%); }
+}
+
 h1 {
   font-size: 1.5rem;
   font-weight: 600;
