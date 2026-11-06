@@ -5,10 +5,12 @@ from __future__ import annotations
 from datetime import datetime
 from decimal import Decimal
 from pathlib import Path
+from uuid import uuid4
 
 from pytest_bdd import given, parsers, then, when
 
-from tests.bdd.steps.records import create_bank_account, create_property
+from tests.bdd.steps.browser_setup import bank_account, create, rental
+from tests.bdd.steps.records import create_bank_account, create_person, create_property
 
 STATEMENTS = Path(__file__).resolve().parents[2] / "fixtures" / "bank"
 
@@ -180,3 +182,108 @@ def _anna_receipt(world):
 @then("Anna Beispiel's 800 EUR receipt on 07.04.2026 retains her name and IBAN")
 def anna_receipt(world):
     _anna_receipt(world)
+
+
+@given("a rental receipt and an owner for the rented unit")
+def rental_receipt_with_owner(world, seed_data):
+    rental(world, seed_data)
+    account = bank_account(world)
+    content = (b'Buchungstag;Wertstellung;Betrag;Name;Verwendungszweck\n'
+               b'03.01.2026;03.01.2026;700,00;Anna Beispiel;Kaltmiete Januar 2026\n')
+    response = world.act('POST', f"/api/bank-accounts/{account['id']}/imports",
+                         params={'dry_run': 'false'}, files={'file': ('rent.csv', content, 'text/csv')})
+    assert response.status_code == 200, world.describe_response()
+    person = create(world, '/api/persons', {'first_name': 'Frida', 'last_name': 'Sonnenhof'})
+    domain = create(world, '/api/person-data-domains', {'person_id': person['id'], 'reason_code': 'INITIAL_SETUP'}, keyed=True)
+    create(world, f"/api/person-data-domains/{domain['id']}/grants", {
+        'user_id': world.data['user_id'], 'capabilities': ['read', 'prepare', 'export'], 'reason_code': 'TEAM_ACCESS',
+    }, keyed=True)
+    owner = create(world, '/api/owner-profiles', {'person_id': person['id']})
+    create(world, '/api/ownership', {
+        'owner_profile_id': owner['id'], 'unit_id': world.data['units'][0]['id'], 'valid_from': '2026-01-01',
+    })
+    rows = _rental_receipts(world)
+    world.data['rent_owner_id'] = owner['id']
+    world.data['rent_receipt_id'] = next(row['id'] for row in rows if row['purpose'] == 'Kaltmiete Januar 2026')
+
+
+def _rental_receipts(world):
+    response = world.look(world.actor, f"/api/bank-accounts/{world.data['account']['id']}/transactions")
+    assert response.status_code == 200, response.text
+    return response.json()['items']
+
+
+def _assign_base_rent(world, **target):
+    return world.act('POST', f"/api/bank-transactions/{world.data['rent_receipt_id']}/assign", json={'lines': [{
+        'payment_type': 'KALTMIETE', 'amount': '700.00', 'period_year': 2026, 'period_month': 1, **target,
+    }]})
+
+
+@when("the manager submits the owner as the target for base rent")
+def assign_rent_to_owner(world):
+    _assign_base_rent(world, owner_profile_id=world.data['rent_owner_id'])
+
+
+@then("the response explains that rent belongs to a tenancy and nothing is booked")
+def rent_refusal_keeps_receipt_pending(world):
+    assert world.response.status_code == 422, world.describe_response()
+    assert world.response.json()['detail'] == {
+        'code': 'PAYMENT_COUNTERPARTY_TYPE_MISMATCH',
+        'message': 'Dieser Zahlungstyp gehört zu einem Mietverhältnis, nicht zu einem Eigentümer.',
+    }
+    pending_rental_receipt_without_payment(world)
+
+
+@then("the rental receipt remains pending with no payment recorded")
+def pending_rental_receipt_without_payment(world):
+    receipt = next(row for row in _rental_receipts(world) if row['id'] == world.data['rent_receipt_id'])
+    assert receipt['status'] == 'NEU'
+    payments = world.look(world.actor, f"/api/payments?bank_account_id={world.data['account']['id']}")
+    assert payments.status_code == 200 and payments.json() == [], payments.text
+
+
+@when("the manager assigns the same rent to the tenancy")
+def assign_rent_to_tenancy(world):
+    _assign_base_rent(world, lease_agreement_id=world.data['leases'][0]['id'])
+
+
+@then("the bank receipt is assigned and its exact amount is booked to the tenant")
+def rent_booked_to_tenant(world):
+    assert world.response.status_code == 200, world.describe_response()
+    result = world.response.json()
+    assert result['status'] == 'ZUGEORDNET'
+    payment, = result['payments']
+    assert payment['status'] == 'booked'
+    assert payment['tenant_profile_id'] == world.data['tenants'][0]['id']
+    assert Decimal(payment['amount']) == Decimal('700.00')
+
+
+@given("Verwaltung Beta has an owner profile", target_fixture="foreign_rent_owner")
+def foreign_rent_owner(world):
+    organization = "Verwaltung Beta"
+    person = create_person(world, organization, 'Foreign rent owner')
+    response = world.send(world.administrator_of(organization), 'POST', '/api/owner-profiles',
+                          json={'person_id': person.id})
+    assert response.status_code == 201, world.describe_response()
+    return response.json()['id']
+
+
+@when("Verwaltung Alpha tries to record and assign rent to the foreign owner and to an unknown owner",
+      target_fixture="rent_owner_responses")
+def try_rent_with_inaccessible_owners(world, foreign_rent_owner):
+    direct, assignment = [], []
+    for owner_id in (foreign_rent_owner, str(uuid4())):
+        direct.append(world.act('POST', '/api/payments', json={
+            'bank_account_id': world.data['account']['id'], 'direction': 'IN',
+            'value_date': '2026-01-03', 'amount': '700.00', 'payment_type': 'KALTMIETE',
+            'period_year': 2026, 'period_month': 1, 'owner_profile_id': owner_id,
+        }))
+        assignment.append(_assign_base_rent(world, owner_profile_id=owner_id))
+    return direct, assignment
+
+
+@then("both routes report the owners as equally missing")
+def rent_owners_look_equally_missing(rent_owner_responses):
+    for foreign, unknown in rent_owner_responses:
+        assert foreign.status_code == unknown.status_code == 404, (foreign.text, unknown.text)
+        assert foreign.json() == unknown.json()

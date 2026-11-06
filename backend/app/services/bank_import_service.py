@@ -22,7 +22,7 @@ from app.repositories.unit_repo import UnitRepository
 from app.repositories.economic_plan_repo import EconomicPlanRepository
 from app.services.authorization_service import AuthorizationService
 from app.services.financial_scope_service import FinancialScopeService
-from app.services.payment_service import PaymentService, TENANT_TYPES
+from app.services.payment_service import PaymentService, TENANT_TYPES, validate_payment_counterparty
 from app.repositories.bank_account_repo import BankAccountRepository
 from app.repositories.bank_transaction_repo import BankTransactionRepository
 from app.repositories.cost_entry_repo import CostEntryRepository
@@ -248,7 +248,7 @@ class BankImportService:
             if lease.valid_from > end or lease.valid_to is not None and lease.valid_to <= start:
                 raise HTTPException(422, "Payment period is outside lease agreement")
             line["tenant_profile_id"] = profile_id
-        else:
+        elif line.get("owner_profile_id") is not None:
             owners = OwnerProfileRepository(self._session, self._org_id)
             if await owners.get_by_id(line["owner_profile_id"]) is None:
                 raise HTTPException(404, "Owner profile not found")
@@ -280,6 +280,9 @@ class BankImportService:
                     raise HTTPException(422, "Payment period is outside accounting scope")
         for line in lines:
             await self._validate_target(account, line)
+            validate_payment_counterparty(
+                line["payment_type"], line.get("tenant_profile_id"), line.get("owner_profile_id"),
+            )
         payments = PaymentService(self._session, self._org_id, self._user_id)
         booked = []
         for line in lines:
