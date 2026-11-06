@@ -263,7 +263,7 @@ export function SettlementDetailPage() {
   const hasUnallocatedAdvance = advanceLines.some(line => line.label === "Vorauszahlungen ohne Aufteilung");
   const singleAdvanceBlock = advanceLines.length === 1;
   const advanceSummaryLabel = singleAdvanceBlock ? advanceLines[0].label :
-    hasUnallocatedAdvance ? "Vorauszahlungen" :
+    advanceLines.length === 0 || hasUnallocatedAdvance ? "Vorauszahlungen" :
     hasCombinedAdvance ? "Betriebs- und gemeinsame Vorauszahlungen" : "Betriebskosten-Vorauszahlungen";
   const isDraft = run?.status === "draft";
   const isFinalized = run?.status === "finalized";

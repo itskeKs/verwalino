@@ -922,8 +922,11 @@ the statement shows “Vorauszahlungen ohne Aufteilung” and deducts that credi
 once from the overall result. For example, an annual payment of EUR 2,340
 against EUR 1,900 operating and EUR 1,000 heating costs leaves EUR 560 payable.
 The statement reports one overall balance. It carries its booked credits
-once through the existing partial-period and frozen credit rules. Finalized
-statements keep their original snapshot, digest, and document output.
+once through the existing partial-period and frozen credit rules. The rounded
+period total is divided among its booked categories at cumulative boundaries,
+so an annual remainder cannot move a credit from one category to another or
+create a refund. Finalized statements keep their original snapshot, digest,
+and document output.
 
 ### 7.3 Proposing a future advance payment (phase 2, T28)
 

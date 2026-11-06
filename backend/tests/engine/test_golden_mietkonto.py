@@ -152,6 +152,47 @@ def test_annual_unallocated_credit_and_signed_refund_reconcile_after_finalizatio
         Decimal("2370"), Decimal("1200"), Decimal("1170"))
 
 
+@pytest.mark.parametrize("combined_refund", [False, True])
+@pytest.mark.parametrize("december_first", [False, True])
+def test_annual_advance_remainder_preserves_the_two_booked_attributions(combined_refund, december_first):
+    payments = [
+        replace(_pay(1, PT_NK_VORAUSZAHLUNG, "1441.11" if combined_refund else "1440.11"), combined_advance=True),
+        replace(_pay(2, PT_NK_VORAUSZAHLUNG, "0.01"), unallocated_advance=True),
+    ]
+    if combined_refund:
+        payments.append(replace(_pay(3, PT_NK_VORAUSZAHLUNG, "1.00", direction="OUT"), combined_advance=True))
+    filt = AdvanceFilter(frozenset({PT_NK_VORAUSZAHLUNG}), 2025)
+    windows = [(YEAR_START, date(2025, 11, 30)), (date(2025, 12, 1), YEAR_END)]
+    first, second = reversed(windows) if december_first else windows
+    first_credit, = mietkonto.derive_advance_credits_for_period(payments, filt, *first)
+    second_credit, = mietkonto.derive_advance_credits_for_period(payments, filt, *second,
+        finalized_credits=(first_credit,))
+    for credit in (first_credit, second_credit):
+        assert credit.unallocated_amount >= 0
+        assert credit.amount == credit.combined_amount + credit.unallocated_amount
+        assert credit.amount == Decimal("120.01" if credit.period_start.month == 12 else "1320.11")
+    assert first_credit.combined_amount + second_credit.combined_amount == Decimal("1440.11")
+    assert first_credit.unallocated_amount + second_credit.unallocated_amount == Decimal("0.01")
+
+
+def test_reversing_combined_bookings_preserves_the_unsigned_floor_after_a_december_credit():
+    combined = [
+        replace(_pay(1, PT_NK_VORAUSZAHLUNG, "2880.00"), combined_advance=True),
+        replace(_pay(2, PT_NK_VORAUSZAHLUNG, "0.01", direction="OUT"), combined_advance=True),
+    ]
+    unallocated = replace(_pay(3, PT_NK_VORAUSZAHLUNG, "0.01"), unallocated_advance=True)
+    filt = AdvanceFilter(frozenset({PT_NK_VORAUSZAHLUNG}), 2025)
+    december, = mietkonto.derive_advance_credits_for_period(
+        [*combined, unallocated], filt, date(2025, 12, 1), YEAR_END)
+    reversed_combined = [replace(payment, is_reversed=True) for payment in combined]
+    january_to_november, = mietkonto.derive_advance_credits_for_period(
+        [*reversed_combined, unallocated], filt, YEAR_START, date(2025, 11, 30), finalized_credits=(december,))
+
+    assert january_to_november.amount == Decimal("0.00")
+    assert december.amount == Decimal("240.00")
+    assert Decimal("0.00") <= december.unallocated_amount <= Decimal("0.01")
+
+
 @pytest.mark.parametrize("month,amount,first_end,lease_end,frozen,expected", [
     (None, "1200.00", date(2025, 3, 31), date(2025, 9, 30), "300.00", "900.00"),
     (3, "100.00", date(2025, 3, 14), date(2025, 3, 20), "45.16", "54.84"),

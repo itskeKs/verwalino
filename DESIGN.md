@@ -478,7 +478,8 @@ operating, and heating credits separately and shows the overall balance.
 Payments spanning both modes without a component assignment appear as
 “Vorauszahlungen ohne Aufteilung” in the result and PDF. If these payments
 appear alongside component credits, the detail summary labels the amount
-“Vorauszahlungen”.
+“Vorauszahlungen”. A draft without calculated lines uses the same neutral
+summary label until the calculation supplies the breakdown.
 Legacy statements with zero heating advance and no allocated heating cost
 lines retain “Geleistete Vorauszahlungen”. Existing payment totals and
 MANUAL/DERIVED sources still apply. The derivation action fills the recorded
