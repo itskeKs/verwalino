@@ -15,12 +15,7 @@ Dunning levels (locked decision):
   2 = Mahnung (dunning)
   3 = letzte Mahnung (final dunning)
 
-Dunning fee per level [section 18/fachlich -- provisional defaults]:
-  Level 1: 0.00 EUR
-  Level 2: 5.00 EUR
-  Level 3: 10.00 EUR
-  Fees must be appropriate / contractually agreed; provisionally hardcoded,
-  overridable at creation time. Interest is frozen only when a base rate is supplied.
+Fees and any interest are calculated at draft creation and frozen when issued.
 """
 
 from __future__ import annotations
@@ -35,6 +30,10 @@ from sqlalchemy.orm import Mapped, mapped_column, column_property
 
 from app.models.base import Base, UUIDPrimaryKeyMixin, TimestampMixin
 from app.models.dunning_scope_context import DunningScopeContext
+
+
+# Internal snapshot metadata for notices created without a scope context.
+LEASE_SOURCE_KEY = "_dunning_lease_id"
 
 
 class DunningNotice(Base, UUIDPrimaryKeyMixin, TimestampMixin):
@@ -74,7 +73,7 @@ class DunningNotice(Base, UUIDPrimaryKeyMixin, TimestampMixin):
     )  # Sum of overdue arrears
     fee_amount: Mapped[Decimal] = mapped_column(
         Numeric(14, 2), nullable=False
-    )  # Dunning fee [section 18/fachlich: provisional]
+    )  # Dunning fee for this notice
     total_amount: Mapped[Decimal] = mapped_column(
         Numeric(14, 2), nullable=False
     )  # principal + fee + interest

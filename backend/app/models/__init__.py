@@ -169,3 +169,5 @@ from app.models.intake_original import IntakeOriginal
 
 from app.models.special_levy import SpecialLevy, SpecialLevyAllocation
 from app.models.reserve_ledger_entry import ReserveLedgerEntry
+
+from app.models.dunning_settings import BaseInterestRate, DunningSettings

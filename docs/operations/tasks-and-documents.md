@@ -124,11 +124,32 @@ Contracts and handover protocols render built-in bodies through the shared lette
 They neither select nor create editable letter templates; a circular named **Mietvertrag**
 does not affect a contract. General circulars also support the plain-text variables `{{vermieter.name}}`, `{{vermieter.adresse}}`,
 `{{einheit.nummer}}`, `{{einheit.lage}}`, `{{einheit.flaeche}}`, `{{vertrag.beginn}}`,
-`{{vertrag.ende}}`, `{{vertrag.kaltmiete}}`, `{{vertrag.vorauszahlung}}`,
+`{{vertrag.ende}}`, `{{vertrag.kaltmiete}}`, `{{vertrag.vorauszahlung}}`, `{{vertrag.mietaufstellung}}`,
 `{{vertrag.kaution}}`, `{{vertrag.uebergabe}}` and `{{vertrag.vereinbarungen}}`.
 Landlords are prefilled from ownership at the lease start; missing landlord data is visibly
-marked for free-text completion. Rent and the combined advance are the original lease amounts,
-not later rent changes. The contract dialog accepts a document date, handover date and free-text
+marked for free-text completion. Rent amounts use the shared rate history for the document date,
+including a change effective on that day. `vertrag.mietaufstellung` supplies the complete rent
+section used by the built-in contract. When heating is positive, both it and
+`vertrag.vorauszahlung` list **Betriebskosten-Vorauszahlung**, **Heizkosten-Vorauszahlung** and
+**Monatliche Gesamtmiete** on separate lines: EUR 750 net plus EUR 150 operating and EUR 90
+heating produces EUR 990 total. At zero heating, `vertrag.vorauszahlung` remains a single
+amount. Outside the end-of-tenancy summary, an unchanged zero-heating rate keeps the previous
+contract text. Changed rates carry their reference date. Previously issued PDFs and request replays
+retain their stored original bytes.
+
+A contract dated on or after the last tenancy day shows the rent valid on that day and labels it
+“Stand DD.MM.YYYY”. The document date still appears in the heading. The summary includes the
+total at the end of the tenancy even with no heating advance. For example, a lease that ended
+on 28 February at EUR 700 net and EUR 150 operating advance shows EUR 850 in an April contract.
+A scheduled increase from 15 March never applied to that tenancy.
+
+To create a historical circular after the tenancy ends, use its last tenancy day as **Stichtag**
+and put `{{vertrag.mietaufstellung}}` in the template. **Stichtag** determines both the letter date
+and which tenants receive it. The actual creation timestamp is shown separately in the history.
+An April **Stichtag** includes only tenants whose leases cover that April date.
+
+Template authors should use `vertrag.mietaufstellung` without adding an “Originalvertrag” label
+of their own. The contract dialog accepts a document date, handover date and free-text
 agreements. General circulars can also use the new variables, referring to the recipient's
 selected lease; when several leases belong to one recipient, only the existing single selected
 lease is represented. Handover date and agreements are marked as free text outside contract issuance.

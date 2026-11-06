@@ -60,6 +60,9 @@ it('requires deliberate zero for none and clears obsolete amount/key on treatmen
 
 it('retries the exact unknown command after committed history and a denied new allocation', async () => {
   const requests: RequestInit[] = []; let committed: TreatmentReview | null = null;
+  let historyLoads = 0;
+  let resolveRefresh!: (response: Response) => void;
+  const refresh = new Promise<Response>(resolve => { resolveRefresh = resolve; });
   vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => {
     if (init?.method === 'POST') {
       requests.push(init); const body = JSON.parse(String(init.body));
@@ -69,16 +72,25 @@ it('retries the exact unknown command after committed history and a denied new a
       return json({}, 503);
     }
     if (url.includes('/allocation-proposals/new/')) return json({}, 404);
+    // Creating the retained draft reloads its authorization after the form first appears.
+    if (url.includes('/allocation-treatments?') && ++historyLoads === 2) return refresh;
     return json(url.includes('treatment-preview') ? preview : { ...empty, items: committed ? [committed] : [] });
   }));
-  const rendered = render(<AllocationTreatmentPanel {...props} />); await fill(); fireEvent.click(screen.getByRole('button', { name: 'Behandlungsprüfung speichern' })); await screen.findByText(/Keine bestätigte Antwort/);
+  const rendered = render(<AllocationTreatmentPanel {...props} />);
+  await waitFor(() => expect(screen.getByLabelText('Aufwandsart · Zeile 1')).toBeDisabled());
+  resolveRefresh(json(empty));
+  await waitFor(() => expect(screen.getByLabelText('Aufwandsart · Zeile 1')).toBeEnabled());
+  await fill();
+  fireEvent.click(screen.getByRole('button', { name: 'Behandlungsprüfung speichern' }));
+  await screen.findByText(/Keine bestätigte Antwort/);
   rendered.rerender(<AllocationTreatmentPanel {...props} allocationId={null} ready={false} />);
   await waitFor(() => expect(screen.queryByLabelText('Aufwandsart · Zeile 1')).not.toBeInTheDocument());
   rendered.rerender(<AllocationTreatmentPanel {...props} allocationId="new" parentGeneration={1} />);
   await waitFor(() => expect(screen.getByRole('button', { name: 'Dieselbe Behandlungsprüfung erneut senden' })).toBeEnabled());
-  expect(screen.getByText(/Behandlungsprüfung · Version 1/)).toBeInTheDocument();
-  expect(screen.getByLabelText('Aufwandsart · Zeile 1')).toBeDisabled();
+  expect(await screen.findByText(/Behandlungsprüfung · Version 1/)).toBeInTheDocument();
+  await waitFor(() => expect(screen.getByLabelText('Aufwandsart · Zeile 1')).toBeDisabled());
   fireEvent.click(screen.getByRole('button', { name: 'Dieselbe Behandlungsprüfung erneut senden' })); await waitFor(() => expect(requests).toHaveLength(2));
+  await screen.findByText(/Keine bestätigte Antwort/);
   expect(requests[0].body).toBe(requests[1].body);
   expect(JSON.parse(String(requests[1].body)).allocation_proposal_id).toBe('allocation');
   for (const name of ['If-Match', 'Idempotency-Key']) expect(new Headers(requests[0].headers).get(name)).toBe(new Headers(requests[1].headers).get(name));

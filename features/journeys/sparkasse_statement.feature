@@ -3,6 +3,22 @@ Feature: Sparkasse statement
   The original synthetic acceptance statement imports without rewriting dates,
   keeps counterparties for rent suggestions and can be uploaded again safely.
 
+  Scenario Outline: January electricity matches its existing cost without doubling the expense
+    Given an administrator of "Verwaltung Alpha" is signed in
+    And Anna Beispiel's rental account and the January to October Sparkasse statement
+    And a confirmed 60 EUR electricity cost for the January Sparkasse debit
+    When the manager previews the original Sparkasse statement in "Kontoauszug"
+    And the manager confirms the Sparkasse statement
+    Then the browser confirms 31 imported transactions
+    When the manager assigns the January Sparkasse electricity debit at <width> px
+    Then the electricity debit is assigned and the cost has 0 EUR remaining
+    And the yearly electricity expense remains 60 EUR
+
+    Examples:
+      | width |
+      | 1280  |
+      | 360   |
+
   Scenario: Anna's April partial rent is recognised in the original Sparkasse statement
     Given an administrator of "Verwaltung Alpha" is signed in
     And Anna Beispiel's rental account and the January to October Sparkasse statement
