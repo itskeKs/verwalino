@@ -20,7 +20,7 @@ from app.core.tenant import (
     require_write_dep,
 )
 from app.repositories.unit_repo import UnitRepository
-from app.models.unit import Unit
+from app.models.unit import UNIT_NUMBER_MAX_LENGTH, Unit
 from app.services.unit_household_service import UnitHouseholdService
 
 from app.repositories.pagination import Page, PageQuery, page_query, page_rows
@@ -55,6 +55,13 @@ class UnitUpdate(BaseModel):
     usage_type: str | None = None
     mea: str | None = None
     building_part: str | None = None
+
+    def validate_number_length(self) -> None:
+        if self.number is not None and len(self.number) > UNIT_NUMBER_MAX_LENGTH:
+            raise HTTPException(422, detail={
+                "code": "unit_number_too_long",
+                "message": f"Die Bezeichnung darf höchstens {UNIT_NUMBER_MAX_LENGTH} Zeichen lang sein.",
+            })
 
 
 class HouseholdRow(BaseModel):
@@ -137,6 +144,8 @@ async def update_unit(
         raise HTTPException(status_code=404, detail="Unit not found")
 
     await require_property_master(db, auth.organization_id, unit.property_id)
+    # A foreign unit must still return 404, even for an overlong number.
+    body.validate_number_length()
 
     if body.usage_type is not None:
         _validate_usage_type(body.usage_type)

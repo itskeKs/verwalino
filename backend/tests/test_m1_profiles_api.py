@@ -76,6 +76,38 @@ async def test_unit_update(client_a_admin):
     assert data["mea"] == "250.000000"
 
 
+@pytest.mark.asyncio
+async def test_unit_update_rejects_a_number_over_50_characters(client_a_admin, client_b_admin):
+    prop = await client_a_admin.post("/api/properties", json={
+        "name": "Musterhaus",
+        "management_type": "MIET",
+    })
+    assert prop.status_code == 201
+    unit = await client_a_admin.post("/api/units", json={
+        "property_id": prop.json()["id"],
+        "number": "1",
+        "usage_type": "WOHNUNG",
+    })
+    assert unit.status_code == 201
+    path = f"/api/units/{unit.json()['id']}"
+    number = "Ä" * 50
+
+    refused = await client_a_admin.put(path, json={"number": number + "X"})
+    assert refused.status_code == 422
+    assert refused.json()["detail"] == {
+        "code": "unit_number_too_long",
+        "message": "Die Bezeichnung darf höchstens 50 Zeichen lang sein.",
+    }
+    assert (await client_a_admin.get(path)).json()["number"] == "1"
+
+    foreign = await client_b_admin.put(path, json={"number": number + "X"})
+    assert foreign.status_code == 404
+
+    saved = await client_a_admin.put(path, json={"number": number})
+    assert saved.status_code == 200
+    assert saved.json()["number"] == number
+
+
 # ---------------------------------------------------------------------------
 # Owner profile CRUD
 # ---------------------------------------------------------------------------

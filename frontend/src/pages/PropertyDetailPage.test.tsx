@@ -4,6 +4,7 @@ import { Link, MemoryRouter, Route, Routes } from "react-router-dom";
 import { AuthCtx } from "../auth/useAuth";
 import { PropertyDetailPage } from "./PropertyDetailPage";
 import * as endpoints from "../api/endpoints";
+import { ApiError } from "../api/client";
 import type { ManagementType, MeaScaleStatus, Unit } from "../api/types";
 
 vi.mock("../components/AttachmentsPanel", () => ({
@@ -119,6 +120,32 @@ it("keeps the property and panels while a saved unit refreshes", async () => {
   expect(panel).toBeInTheDocument();
   await act(async () => finish({ id: "property", name: "T30 Haus", management_type: "MIET", fiscal_year_start_month: 1 } as never));
   expect(await screen.findByRole("link", { name: "42" })).toBeVisible();
+});
+
+it("shows a rejected unit number at the field and saves after shortening it", async () => {
+  renderMeaProperty("MIET", [null]);
+  const message = "Die Bezeichnung darf höchstens 50 Zeichen lang sein.";
+  const validNumber = "Ä".repeat(50);
+  const tooLong = validNumber + "X";
+  const update = vi.spyOn(endpoints, "updateUnit")
+    .mockRejectedValueOnce(new ApiError(422, message, "unit_number_too_long"))
+    .mockResolvedValueOnce({ number: validNumber } as Unit);
+  fireEvent.click(await screen.findByRole("button", { name: "Bearbeiten" }));
+  const input = screen.getByRole("textbox", { name: "Nummer *" });
+  fireEvent.change(input, { target: { value: tooLong } });
+  fireEvent.click(screen.getByRole("button", { name: "Speichern" }));
+  expect(await screen.findByText(message)).toBeVisible();
+  expect(input).toHaveAccessibleDescription(message);
+  expect(input).toHaveAttribute("aria-invalid", "true");
+  expect(input).toHaveValue(tooLong);
+  expect(update).toHaveBeenNthCalledWith(1, "unit-0", expect.objectContaining({ number: tooLong }));
+
+  fireEvent.change(input, { target: { value: validNumber } });
+  expect(screen.queryByText(message)).not.toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "Speichern" }));
+  expect(await screen.findByRole("status")).toHaveTextContent("Einheit gespeichert.");
+  expect(update).toHaveBeenNthCalledWith(2, "unit-0", expect.objectContaining({ number: validNumber }));
+  expect(screen.queryByRole("heading", { name: "Einheit bearbeiten" })).not.toBeInTheDocument();
 });
 
 it.each([["OWNER_ADMIN", true], ["CLERK", true], ["READ_ONLY", false], ["UNKNOWN", false]] as const)(
