@@ -520,8 +520,10 @@ limit 50/maximum 100). Even without suggestions,
 the account RLS and current scope grants remain authoritative. Within one page
 request, receipts for the same account and month reuse the authorized matching
 targets. Each receipt is evaluated against those targets with its own amount
-and purpose. Hausgeld uses the matching finalized, non-superseded plan. The owner actual filter
-additionally restricts to the bank property, even if the person owns several properties.
+and purpose. Before returning the page, the service rechecks live account, scope
+and source access for every account used in matching. Hausgeld uses the matching
+finalized, non-superseded plan. The owner actual filter additionally restricts to
+the bank property, even if the person owns several properties.
 
 `POST /{id}/assign` validates all rows before the first payment. Positive,
 cent-exact decimal amounts must together cover `abs(bank_transaction.amount)`;

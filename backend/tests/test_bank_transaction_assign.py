@@ -883,3 +883,41 @@ async def test_bank_list_reads_matching_targets_once_per_account_month(bank_seed
         (ids["property"], date(2025, 7, 1)): 1,
         (ids["other_property"], date(2025, 6, 1)): 1,
     }
+
+
+async def test_bank_list_hides_cached_suggestions_after_grant_expires(
+    migrator_session, scope_seed, bank_db, monkeypatch,
+):
+    ids = await statement_fixture(migrator_session, scope_seed, 'lease')
+    await bank_db.execute(text("UPDATE person SET iban='DE89370400440532013000' WHERE id=:person"), ids)
+    await transaction(bank_db, ids, amount='500.00')
+    await transaction(bank_db, ids, amount='400.00')
+
+    await bank_db.execute(text("""
+        UPDATE scope_grant SET revoked_at=clock_timestamp(),revoked_by=:actor
+        WHERE organization_id=:org AND scope_id=:scope AND user_id=:clerk AND revoked_at IS NULL
+    """), ids)
+    expires_at = await bank_db.scalar(text("""
+        INSERT INTO scope_grant(organization_id,scope_id,user_id,capabilities,granted_by,reason,expires_at)
+        VALUES (:org,:scope,:clerk,ARRAY['read'],:actor,'Read before expiry',clock_timestamp()+interval '5 seconds')
+        RETURNING expires_at
+    """), ids)
+    await bank_db.commit()
+
+    original = PaymentService.account_statement_for_lease
+    read_leases = []
+
+    async def wait_for_expiry(service, lease_id, *args, **kwargs):
+        statement = await original(service, lease_id, *args, **kwargs)
+        read_leases.append(lease_id)
+        assert statement.open_items
+        # Expiry can happen even while the request holds the scope ACL lock.
+        await bank_db.execute(text('SELECT pg_sleep_until(:expiry)'), {'expiry': expires_at})
+        return statement
+
+    monkeypatch.setattr(PaymentService, 'account_statement_for_lease', wait_for_expiry)
+    async with scope_client(ids) as api:
+        response = await listing(api, ids)
+    assert read_leases == [ids['lease']]
+    assert response.status_code == 404, response.text
+    assert 'Statement Person' not in response.text
