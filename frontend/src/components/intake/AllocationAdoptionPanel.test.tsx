@@ -1,5 +1,5 @@
 import { afterEach, expect, it, vi } from 'vitest';
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { AllocationAdoptionPanel } from './AllocationAdoptionPanel';
 import type { AdoptionPreview, AllocationSet } from '../../api/allocationAdoptions';
 const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } });
@@ -7,8 +7,10 @@ const preview: AdoptionPreview = { can_adopt: true, preview_digest: 'digest', bl
 const result: AllocationSet = { id: 'set', kind: 'intake_reviewed', source_document_id: 'document', primary_cost_id: 'cost-a', property_id: 'property', scope_id: 'scope', cost_count: 2, financial_state: 'confirmed', reason: 'Reviewed costs and publication', actor_id: 'actor', confirmed_at: '2026-10-03T10:00:00Z', costs: [
   { cost_entry_id: 'cost-a', position: 1, gross_amount: '-59.00', vat_amount: null, tenant_amount: '-10.00' }, { cost_entry_id: 'cost-b', position: 2, gross_amount: '-60.00', vat_amount: null, tenant_amount: '0.00' }] };
 const props = { logicalId: 'logical', reviewId: 'review', ready: true, parentBusy: false, parentGeneration: 0 };
+// Flush the effects from creating the draft before checking whether it is editable.
+const renderAdoption = () => act(async () => render(<AllocationAdoptionPanel {...props} />));
 async function fill() {
-  await screen.findByLabelText('Begründung der Kostenübernahme');
+  await waitFor(() => expect(screen.getByLabelText('Begründung der Kostenübernahme')).toBeEnabled());
   fireEvent.change(screen.getByLabelText('Begründung der Kostenübernahme'), { target: { value: 'Reviewed costs and publication' } });
   fireEvent.click(screen.getByRole('checkbox', { name: /Alle Teilkosten/ })); fireEvent.click(screen.getByRole('checkbox', { name: /Vollständiges Original/ }));
 }
@@ -19,7 +21,7 @@ it('requires separate financial and disclosure acknowledgments, sends exact revi
     if (init?.method === 'POST') { requests.push(init); committed = true; return json(result, 201); }
     return json(url.includes('adoption-preview') ? preview : { item: committed ? result : null });
   }));
-  render(<AllocationAdoptionPanel {...props} />); await screen.findByLabelText('Begründung der Kostenübernahme');
+  await renderAdoption();
   expect(screen.getAllByRole('checkbox').every(item => !(item as HTMLInputElement).checked)).toBe(true);
   await fill(); fireEvent.change(screen.getByLabelText('Begründung der Kostenübernahme'), { target: { value: 'Changed reason' } });
   expect(screen.getAllByRole('checkbox').every(item => !(item as HTMLInputElement).checked)).toBe(true);
@@ -39,7 +41,7 @@ it('keeps an unknown exact command after committed history and denied newer trea
     if (url.includes('/new/')) return json({}, 404);
     return json(url.includes('adoption-preview') ? { ...preview, can_adopt: !committed } : { item: committed ? result : null });
   }));
-  const rendered = render(<AllocationAdoptionPanel {...props} />); await fill(); fireEvent.click(screen.getByRole('button', { name: 'Teilkosten bestätigen und Original freigeben' }));
+  const rendered = await renderAdoption(); await fill(); fireEvent.click(screen.getByRole('button', { name: 'Teilkosten bestätigen und Original freigeben' }));
   await screen.findByText(/Keine bestätigte Antwort/);
   rendered.rerender(<AllocationAdoptionPanel {...props} reviewId="new" parentGeneration={1} />);
   await waitFor(() => expect(screen.getByRole('button', { name: 'Dieselbe Kostenübernahme erneut senden' })).toBeEnabled());
@@ -51,7 +53,7 @@ it('keeps an unknown exact command after committed history and denied newer trea
 it('requires a fresh confirmation after a changed duplicate snapshot', async () => {
   let current = preview;
   vi.stubGlobal('fetch', vi.fn(async (url: string) => json(url.includes('adoption-preview') ? current : { item: null })));
-  const rendered = render(<AllocationAdoptionPanel {...props} />); await fill(); current = { ...preview, preview_digest: 'changed' };
+  const rendered = await renderAdoption(); await fill(); current = { ...preview, preview_digest: 'changed' };
   rendered.rerender(<AllocationAdoptionPanel {...props} parentGeneration={1} />);
   const refresh = await screen.findByRole('button', { name: 'Aktuelle Übernahmegrundlage prüfen' });
   expect(screen.getByRole('button', { name: 'Teilkosten bestätigen und Original freigeben' })).toBeDisabled();
@@ -61,7 +63,7 @@ it('requires a fresh confirmation after a changed duplicate snapshot', async () 
 it('clears a denied retained source and never restores its pending retry', async () => {
   let deny = false;
   vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => init?.method === 'POST' ? json({}, 503) : deny ? json({}, 404) : json(url.includes('adoption-preview') ? preview : { item: null })));
-  const rendered = render(<AllocationAdoptionPanel {...props} />); await fill(); fireEvent.click(screen.getByRole('button', { name: 'Teilkosten bestätigen und Original freigeben' })); await screen.findByText(/Keine bestätigte Antwort/);
+  const rendered = await renderAdoption(); await fill(); fireEvent.click(screen.getByRole('button', { name: 'Teilkosten bestätigen und Original freigeben' })); await screen.findByText(/Keine bestätigte Antwort/);
   deny = true; rendered.rerender(<AllocationAdoptionPanel {...props} parentGeneration={1} />);
   await waitFor(() => expect(screen.queryByLabelText('Begründung der Kostenübernahme')).not.toBeInTheDocument());
   deny = false; rendered.rerender(<AllocationAdoptionPanel {...props} parentGeneration={2} />);
