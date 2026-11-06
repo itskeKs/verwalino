@@ -81,6 +81,7 @@ export function EconomicPlanDetailPage() {
   const [persons, setPersons] = useState<Person[]>([]);
   const [rows, setRows] = useState<CostRow[]>([]);
   const [reserve, setReserve] = useState("");
+  const [computedKey, setComputedKey] = useState<string | null>(null);
   const [reserveError, setReserveError] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -90,10 +91,8 @@ export function EconomicPlanDetailPage() {
   const reserveAmount = normalizePlanAmount(reserve);
   const isDraft = plan?.status === "draft";
   const isFinalized = plan?.status === "finalized";
-  const stored = plan?.draft_inputs;
-  const needsRecompute = canWrite && isDraft && plan.lines.length > 0 && (
-    !stored || calculationKey(rows, reserve) !== calculationKey(editableRows(stored), stored.reserve_contribution_total)
-  );
+  const needsRecompute = canWrite && isDraft && plan.lines.length > 0 &&
+    calculationKey(rows, reserve) !== computedKey;
 
   const reload = useCallback(() => {
     if (!planId) return;
@@ -110,9 +109,12 @@ export function EconomicPlanDetailPage() {
         setPersons(per);
         // Hydrate only on route load, never from compute/finalize action responses.
         const stored = pl.status === "draft" ? pl.draft_inputs : null;
-        setRows(stored ? editableRows(stored) : []);
-        const savedReserve = stored?.reserve_contribution_total ?? pl.reserve_contribution_total;
-        setReserve(normalizePlanAmount(savedReserve) ?? savedReserve);
+        const savedRows = stored ? editableRows(stored) : [];
+        const storedReserve = stored?.reserve_contribution_total ?? pl.reserve_contribution_total;
+        const savedReserve = normalizePlanAmount(storedReserve) ?? storedReserve;
+        setRows(savedRows);
+        setReserve(savedReserve);
+        setComputedKey(stored && pl.lines.length > 0 ? calculationKey(savedRows, savedReserve) : null);
         setReserveError(false);
       })
       .catch((err) => { if (current) setError(err instanceof ApiError ? (err.status === 401 ? "Nicht authentifiziert." : err.message) : String(err)); })
@@ -171,12 +173,13 @@ export function EconomicPlanDetailPage() {
     return { planned_costs, reserve_contribution_total: reserveAmount ?? reserve };
   }
 
-  async function run(fn: () => Promise<EconomicPlan>) {
+  async function run(fn: () => Promise<EconomicPlan>, submittedKey?: string) {
     if (!canWrite || busy) return;
     setBusy(true);
     setActionError(null);
     try {
       setPlan(await fn());
+      if (submittedKey !== undefined) setComputedKey(submittedKey);
     } catch (err) {
       setActionError(err instanceof ApiError ? err.message : String(err));
     } finally {
@@ -194,7 +197,10 @@ export function EconomicPlanDetailPage() {
 
   async function handleCompute() {
     if (!planId || !validateReserve()) return;
-    await run(() => computeEconomicPlan(planId, buildRequest()));
+    const request = buildRequest();
+    // The response can canonicalize amounts and the editor may change while it is pending.
+    const submittedKey = calculationKey(rows, request.reserve_contribution_total);
+    await run(() => computeEconomicPlan(planId, request), submittedKey);
   }
 
   async function handleFinalize() {
