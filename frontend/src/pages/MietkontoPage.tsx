@@ -6,6 +6,8 @@
  */
 
 import { useEffect, useState, useCallback } from "react";
+import { Link } from "react-router-dom";
+import { formatEuro } from "../lib/utils";
 import {
   listLeases,
   listTenantProfiles,
@@ -409,6 +411,27 @@ export function MietkontoPage() {
                 </tbody>
               </table>
             </div>
+          )}
+          {"dunning_notices" in result && result.dunning_notices.length > 0 && (
+            <section className="mt-4">
+              <h3>Ausgestellte Mahnungen</h3>
+              <p className="form-hint">Gebühren und Verzugszinsen dienen hier der Information. Soll, Ist und Saldo bleiben davon unberührt.</p>
+              <div className="overflow-x-auto"><table className="data-table [&_th]:!px-1.5 [&_td]:!px-1.5">
+                <thead><tr><th>Mahnung</th><th>Mahngebühr</th><th>Verzugszinsen</th></tr></thead>
+                <tbody>{result.dunning_notices.map(notice => (
+                  <tr key={notice.id}>
+                    <td><Link to={`/mahnungen/${notice.id}`}>{notice.issue_date.split("-").reverse().join(".")}<br />Stufe {notice.level}</Link></td>
+                    <td className="whitespace-nowrap">{formatEuro(notice.fee_amount)}</td>
+                    <td className="whitespace-nowrap">{formatEuro(notice.interest_amount)}</td>
+                  </tr>
+                ))}</tbody>
+              </table></div>
+            </section>
+          )}
+          {"dunning_notices" in result && scopeId === null && (
+            <p className="form-hint mt-4">
+              Ältere Mahnungen ohne Vertragszuordnung finden Sie unter <Link to="/mahnungen" className="underline">Mahnungen</Link>.
+            </p>
           )}
         </div>
       )}

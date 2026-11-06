@@ -561,6 +561,37 @@ issue times on 5 November 2026 and the explicitly stored 8 April interest start:
 | Before | [View](docs/assets/design/dunning-notice/before-1280.png) | [View](docs/assets/design/dunning-notice/before-360.png) |
 | After | [View](docs/assets/design/dunning-notice/after-1280.png) | [View](docs/assets/design/dunning-notice/after-360.png) |
 
+Under **Mahnungen**, the collapsible **Mahneinstellungen** card contains three
+labelled EUR fields and **Verzugszinsen automatisch berechnen**. The card uses
+the standard responsive form grid, with fees stacked at 360 px. Organization
+administrators can save the form and receive an inline confirmation. Other members
+can read the fees and switch state. New individual notices and batch previews use
+the saved organization policy. The batch form uses the same responsive grid.
+
+The frozen calculation shows the statutory premium and a separate table of
+**Zinsabschnitte** with the date range, amount, principal, annual and base rates
+and day count. The tenant account shows fees and interest in an **Ausgestellte
+Mahnungen** section below the account items. Its amounts use German currency
+formatting and have no effect on Soll, Ist or Saldo. An unscoped tenant ledger
+links to **Mahnungen** for older notices without a verified lease assignment.
+
+Synthetic browser captures at 1280 px and 360 px show the same April arrears
+before and after the policy change. The level-2 PDF changes from a 5.00 EUR fee
+and 3.70 EUR at one rate to a saved 3.00 EUR fee and 3.64 EUR across two rates.
+
+| Surface | 1280 px | 360 px |
+|---|---|---|
+| Dunning settings | [before](docs/assets/design/dunning-settings/settings-before-1280.png) · [after](docs/assets/design/dunning-settings/settings-after-1280.png) | [before](docs/assets/design/dunning-settings/settings-before-360.png) · [after](docs/assets/design/dunning-settings/settings-after-360.png) |
+| Individual notice form | [before](docs/assets/design/dunning-settings/new-notice-before-1280.png) · [after](docs/assets/design/dunning-settings/new-notice-after-1280.png) | [before](docs/assets/design/dunning-settings/new-notice-before-360.png) · [after](docs/assets/design/dunning-settings/new-notice-after-360.png) |
+| Issued detail | [before](docs/assets/design/dunning-settings/detail-before-1280.png) · [after](docs/assets/design/dunning-settings/detail-after-1280.png) | [before](docs/assets/design/dunning-settings/detail-before-360.png) · [after](docs/assets/design/dunning-settings/detail-after-360.png) |
+| Tenant ledger | [before](docs/assets/design/dunning-settings/ledger-before-1280.png) · [after](docs/assets/design/dunning-settings/ledger-after-1280.png) | [before](docs/assets/design/dunning-settings/ledger-before-360.png) · [after](docs/assets/design/dunning-settings/ledger-after-360.png) |
+| Unscoped tenant ledger history link | [before](docs/assets/design/dunning-settings/ledger-history-before-1280.png) · [after](docs/assets/design/dunning-settings/ledger-history-after-1280.png) | [before](docs/assets/design/dunning-settings/ledger-history-before-360.png) · [after](docs/assets/design/dunning-settings/ledger-history-after-360.png) |
+| Dunning batch form | [before](docs/assets/design/dunning-settings/batch-before-1280.png) · [after](docs/assets/design/dunning-settings/batch-after-1280.png) | [before](docs/assets/design/dunning-settings/batch-before-360.png) · [after](docs/assets/design/dunning-settings/batch-after-360.png) |
+
+Issued PDF renderings in A4 format
+[before](docs/assets/design/dunning-settings/pdf-before.png) and
+[after](docs/assets/design/dunning-settings/pdf-after.png).
+
 The WEG settlement detail follows this contract: `settlement-detail` wraps long owner
 names and the complete snapshot SHA-256. Each individual statement uses its own
 `overflow-x-auto` container, natural column widths and unbroken monetary values;

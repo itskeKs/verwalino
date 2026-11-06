@@ -1077,6 +1077,10 @@ export function getDunningSettings(): Promise<DunningSettings> {
   return api.get<DunningSettings>("/api/dunning/settings");
 }
 
+export function saveDunningSettings(body: DunningSettings): Promise<DunningSettings> {
+  return api.put<DunningSettings>("/api/dunning/settings", body);
+}
+
 export function listDunningNotices(params?: {
   tenant_profile_id?: string;
   owner_profile_id?: string;

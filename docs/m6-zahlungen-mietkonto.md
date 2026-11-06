@@ -218,35 +218,54 @@ otherwise be lost. A downgrade-and-upgrade run without such contexts and the ref
 when provenance is already recorded are tested. Issued letters, snapshots and shares
 are not changed retrospectively.
 
-Since Phase 2 (T35), M7 can calculate default interest (Verzugszinsen) for these open
-items from an explicit base interest rate input with an optional configured default:
-`open × (base + 5) / 100 × calendar days since due date / 365`. Per item, rounding to
-the cent (`ROUND_HALF_UP`) happens only once; afterwards the stored interest lines are
-summed. Fees and interest are not themselves charged interest. Example: 700 EUR at a
-base rate of 2.50%, January 2026 due on 6 January, reference date 2 March
-(55 days) → 7.91 EUR interest. The interest snapshot records due
-date, reference date, days, base/annual interest rate and amounts; an issued dunning
-notice, including its PDF, uses exclusively these stored values. The expected/actual
-balance of the account is not supplemented by further account postings as a result.
-Without a configured default, the new interface requires an explicit input; old API
-calls without an interest base and existing letters keep their interest-free
-semantics. No official interest rate is invented and no delivery is claimed. Migration
-0129 protects the new amounts and provenance even against a direct SQL update and
-refuses a downgrade that would lose existing interest bases.
+### Default interest on dunning notices
+
+An administrator sets the three fees and enables interest under **Mahnungen → Mahneinstellungen**.
+All organization members can read the settings. Without saved settings, fees are 0.00 / 2.50 /
+2.50 EUR and interest is off. A per-notice fee override takes precedence. Individual and batch
+drafts use the same organization policy.
+
+With interest enabled, each overdue item accrues simple interest from the day after its due
+date through the notice date. The item is split at base-rate changes and on the booked value
+date of each partial payment. That date uses the reduced principal. The existing period
+assignment, payment allocation, open balances and notice eligibility still apply.
+The annual rate is the statutory base rate plus 5 percentage points for residential leases and
+owners, or 9 for a unit with usage type `GEWERBE`. Each segment accrues
+`principal × annual rate × calendar days / 36500`. Round the sum per item to cents with
+`ROUND_HALF_UP`, then sum the rounded items. Displayed segment amounts use differences between
+rounded running totals so they reconcile to the frozen item amount. Interest accrues on the
+overdue principal only.
+
+Migration 0174 seeds the global `base_interest_rate` catalog with the January and July rates
+from 2002 through July 2026. Verify future entries against the
+[Bundesbank rate history](https://www.bundesbank.de/de/bundesbank/organisation/agb-und-regelungen/basiszinssatz-607820)
+and publish each new half-year through a release migration. The first half-year comes from the
+[Bundesbank's December 2001 announcement](https://www.bundesbank.de/resource/blob/680962/59e9f594e1d5c41d967c8b810a7f3d19/472B63F073F071307366337C94F8C870/2001-12-28-basiszinssatz-46382-download.pdf).
+When a required half-year is missing, the API returns 409 and the user sees which rate is missing.
+
+For 100 EUR due 7 April 2026, the residential notice through 31 October records 84 days
+at 6.27% (1.44 EUR) and 123 days at 6.52% (2.20 EUR), totaling 3.64 EUR in interest.
+The stored snapshot supplies the detail and PDF with dates, principal, days, base and annual
+rates, premium, and interest amounts. Existing issued notices retain their stored fees,
+interest and single-rate snapshots. The tenant ledger displays the fees and interest of
+issued notices for the selected lease separately from Soll, Ist and Saldo. For an unscoped
+notice, the frozen snapshot records its source lease. Historical tenant notices without a
+verified lease assignment remain in **Mahnungen**. The calculation creates no expected charges.
 
 The notice detail shows principal and interest first in the frozen calculation,
 and the open amount first in the arrears table, so these values are readable at
 360 px without scrolling sideways. Other table columns remain scrollable within
 their card. `Ausgestellt am` shows the stored issue instant as `TT.MM.JJJJ, HH:MM`
 in German time (`Europe/Berlin`); API responses carry ISO timestamps with timezone.
-The letter, frozen calculation and PDF are unchanged.
 
 Since T53, individual and selected tenant dunning notices use the same
 history-sensitive tenant ledger path. The non-writing dunning-run preview filters
 principal claims strictly greater than the explicitly chosen threshold. Confirmation
 creates the chosen drafts atomically; changes to sources/escalation make a new preview
 necessary. Repeating a request whose outcome was unclear returns the same original
-drafts after renewed prepare/source admission. No M6 payments are added, old issued
+drafts after renewed prepare/source admission. This includes an exact retry of a committed
+legacy request that used the former rate field. New applies and all previews use the saved
+policy. No M6 payments are added, old issued
 letters/PDFs are not changed and nothing is sent.
 
 ### 2.3 Expected-amount engine as a pure function

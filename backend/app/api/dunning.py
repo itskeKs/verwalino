@@ -18,12 +18,13 @@ from pydantic import BaseModel, Field, StrictStr, field_validator, model_validat
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.config import settings
-from app.core.live_principal import get_live_writer_db
+from app.core.live_principal import get_live_admin_db, get_live_writer_db
 
-from app.core.tenant import AuthContext, get_current_user, get_db, require_write_dep
-from app.models.dunning_notice import DunningNotice
+from app.core.tenant import AuthContext, get_current_user, get_db, require_admin_dep, require_write_dep
+from app.engine.dunning import NOTICE_FORMAT_KEY
+from app.models.dunning_notice import LEASE_SOURCE_KEY, DunningNotice
 from app.repositories.dunning_notice_repo import DunningNoticeRepository
+from app.repositories.dunning_settings_repo import DunningSettingsRepository
 from app.services.dunning_pdf import render_dunning_pdf
 from app.services.dunning_service import DunningService
 from app.services.dunning_batch_service import DunningBatchService
@@ -36,25 +37,18 @@ router = APIRouter(prefix="/api/dunning", tags=["dunning"])
 # ---------------------------------------------------------------------------
 # Schemas
 # ---------------------------------------------------------------------------
-class DunningInterestInput(BaseModel):
-    base_interest_rate: StrictStr | None = None
+class DunningSettingsBody(BaseModel):
+    model_config = {"extra": "forbid", "from_attributes": True}
 
-    @field_validator("base_interest_rate")
-    @classmethod
-    def validate_base_rate(cls, value):
-        if value is not None:
-            rate = _dec(value, "base_interest_rate")
-            if len(rate.as_tuple().digits) > 100 or abs(rate.as_tuple().exponent) > 100:
-                raise ValueError("Base interest rate exceeds supported precision")
-        return value
-
-    def resolved_base_rate(self) -> Decimal | None:
-        if "base_interest_rate" in self.model_fields_set:
-            return _dec(self.base_interest_rate, "base_interest_rate") if self.base_interest_rate is not None else None
-        return settings.dunning_base_interest_rate
+    fee_level_1: Decimal = Field(ge=0, max_digits=14, decimal_places=2, allow_inf_nan=False)
+    fee_level_2: Decimal = Field(ge=0, max_digits=14, decimal_places=2, allow_inf_nan=False)
+    fee_level_3: Decimal = Field(ge=0, max_digits=14, decimal_places=2, allow_inf_nan=False)
+    default_interest_enabled: bool
 
 
-class DunningCreateTenant(DunningInterestInput):
+class DunningCreateTenant(BaseModel):
+    model_config = {"extra": "forbid"}
+
     accounting_scope_id: uuid.UUID | None = None
     tenant_profile_id: str
     lease_agreement_id: str
@@ -65,7 +59,9 @@ class DunningCreateTenant(DunningInterestInput):
     override_fee: str | None = None
 
 
-class DunningCreateOwner(DunningInterestInput):
+class DunningCreateOwner(BaseModel):
+    model_config = {"extra": "forbid"}
+
     accounting_scope_id: uuid.UUID | None = None
     owner_profile_id: str
     period_start: date
@@ -76,7 +72,7 @@ class DunningCreateOwner(DunningInterestInput):
     override_fee: str | None = None
 
 
-class DunningBatchPreview(DunningInterestInput):
+class DunningBatchPreview(BaseModel):
     model_config = {"extra": "forbid"}
 
     period_start: date
@@ -102,6 +98,9 @@ class DunningBatchPreview(DunningInterestInput):
 
 
 class DunningBatchApply(DunningBatchPreview):
+    base_interest_rate: StrictStr | None = Field(
+        default=None, description="Retired field accepted only on an exact replay of an existing legacy batch receipt.",
+    )
     lease_agreement_ids: list[uuid.UUID] = Field(min_length=1, max_length=100)
     expected_source_digest: StrictStr = Field(pattern=r"^[0-9a-fA-F]{64}$")
     request_id: uuid.UUID
@@ -175,7 +174,10 @@ def _to_out(n: DunningNotice) -> DunningOut:
         total_amount=str(n.total_amount),
         interest_amount=str(n.interest_amount),
         interest_snapshot=n.interest_snapshot,
-        included_items=n.included_items,
+        included_items=(
+            [{key: value for key, value in row.items() if key not in {NOTICE_FORMAT_KEY, LEASE_SOURCE_KEY}} for row in n.included_items]
+            if n.included_items is not None else None
+        ),
         status="cancelled" if n.cancelled_at else n.status,
         issued_at=n.issued_at.isoformat() if n.issued_at else None,
         issued_by=str(n.issued_by) if n.issued_by else None,
@@ -222,10 +224,21 @@ async def list_dunning_notices(
     return [_to_out(n) for n in items]
 
 
-@router.get("/settings")
-async def dunning_settings(auth: AuthContext = Depends(get_current_user)):
-    rate = settings.dunning_base_interest_rate
-    return {"base_interest_rate": str(rate) if rate is not None else None}
+@router.get("/settings", response_model=DunningSettingsBody)
+async def dunning_settings(
+    auth: AuthContext = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    return await DunningSettingsRepository(db, auth.organization_id).get()
+
+
+@router.put("/settings", response_model=DunningSettingsBody)
+async def save_dunning_settings(
+    body: DunningSettingsBody,
+    auth: AuthContext = Depends(require_admin_dep),
+    db: AsyncSession = Depends(get_live_admin_db),
+):
+    return await DunningSettingsRepository(db, auth.organization_id).save(body.model_dump())
 
 
 @router.post("/batch/preview", response_model=DunningBatchPreviewOut)
@@ -278,7 +291,6 @@ async def create_dunning_for_tenant(
         period_end=body.period_end,
         reference_date=body.reference_date,
         grace_days=body.grace_days,
-        base_interest_rate=body.resolved_base_rate(),
         override_fee=_dec(body.override_fee, "override_fee") if body.override_fee else None,
     )
     return _to_out(notice)
@@ -299,7 +311,6 @@ async def create_dunning_for_owner(
         economic_plan_id=uuid.UUID(body.economic_plan_id) if body.economic_plan_id else None,
         reference_date=body.reference_date,
         grace_days=body.grace_days,
-        base_interest_rate=body.resolved_base_rate(),
         override_fee=_dec(body.override_fee, "override_fee") if body.override_fee else None,
     )
     return _to_out(notice)

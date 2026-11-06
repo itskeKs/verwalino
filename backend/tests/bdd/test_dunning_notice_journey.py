@@ -41,7 +41,7 @@ def create_dated_owner_drafts(browser_world, dated_owners):
             await b.select('Eigentuemer *', owner)
             await b.select('WEG-Objekt *', w['property'])
             await b.select('Wirtschaftsplan', w['plan'])
-            for label, value in [('Zeitraum von *', '2026-01-01'), ('Zeitraum bis *', '2026-12-31'), ('Stichtag', '2027-01-15'), ('Basiszinssatz (%)', '2.50')]:
+            for label, value in [('Zeitraum von *', '2026-01-01'), ('Zeitraum bis *', '2026-12-31'), ('Stichtag', '2027-01-15')]:
                 await field(b.page, label).fill(value)
             await b.page.get_by_label('Abrechnungskreis suchen', exact=True).fill('WEG Gartenstraße')
             await b.select('Abrechnungskreis', w['scope'])
@@ -81,7 +81,7 @@ def create_ordinary_tenant(browser_world):
         await button(b.page, '+ Neue Mahnung').click()
         await b.select('Mieter *', b.world.data['tenants'][0]['id'])
         await b.select('Mietvertrag *', b.world.data['leases'][0]['id'])
-        for label, value in [('Zeitraum von *', '2026-01-01'), ('Zeitraum bis *', '2026-01-31'), ('Stichtag', '2026-03-02'), ('Basiszinssatz (%)', '2.50')]:
+        for label, value in [('Zeitraum von *', '2026-01-01'), ('Zeitraum bis *', '2026-01-31'), ('Stichtag', '2026-03-02')]:
             await field(b.page, label).fill(value)
         await b.scope()
         return await create_and_open(b, 'tenant')

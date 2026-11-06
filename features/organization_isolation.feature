@@ -131,3 +131,8 @@ Feature: Organization isolation
     Given each organization has a confirmed cost and an outgoing bank debit
     When Verwaltung Alpha tries to assign its debit to Verwaltung Beta's cost
     Then the foreign cost is not found and both debits remain new
+
+  Scenario: Reminder policy belongs to the signed-in organization
+    When Verwaltung Alpha saves its own dunning settings
+    And Verwaltung Beta saves different dunning settings
+    Then each administrator reads only their own dunning settings

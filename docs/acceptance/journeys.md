@@ -127,7 +127,7 @@ The remaining assignment checks still require blind acceptance.
 ## Journey 3: Dunning letter to Anna
 
 **Goal:** Sabine asks Anna in writing for the missing 100.00 € of April.
-**She does:** creates a dunning letter („Mahnung“) for Anna and looks at it as Anna would receive it.
+**She does:** enables automatic interest in **Mahneinstellungen** as an administrator, creates a dunning letter („Mahnung“) for Anna, and opens the issued PDF.
 **Expected:**
 - **Due date:** third working day of the month (§ 556b BGB). In April 2026 the 03.04. (Good
   Friday) and the 06.04. (Easter Monday) are public holidays, and Saturday does not count.
@@ -135,10 +135,7 @@ The remaining assignment checks still require blind acceptance.
   without a reminder (§ 286 Abs. 2 Nr. 1 BGB).
 - Principal 100.00 €, correct tenant, unit, month April 2026.
 - Creating a notice opens its saved draft immediately, without a not-found page,
-  manual reload or second creation. Also check owner drafts with unpaid 2026
-  Hausgeld of 400.00 € per month: Karl Weiß owns January–June and Lena Roth
-  July–December. Create Karl's notice, then Lena's, for the 2026 plan as of
-  15.01.2027; each opens with 2400.00 € principal and exactly its six months.
+  manual reload or second creation.
 - **Default interest** (Anna is a consumer: base rate plus 5 percentage points, § 288 Abs. 1 BGB)
   on 100.00 € from 08.04.2026:
   - 08.04. to 30.06.2026: 84 days at 6.27 % (base rate 1.27 %) = 1.44 €
@@ -147,8 +144,12 @@ The remaining assignment checks still require blind acceptance.
   - **to 31.10.2026 together 3.64 €**, afterwards just under 2 cents per day up to the date of the
     dunning letter. Deviations up to 5 cents (how the first and last day are counted) are not a
     finding.
-- If Verwalino shows no interest, that is a finding of the kind "missing", not an error.
 - The document can be downloaded or printed and is readable on a phone (360 px).
+
+Run the separate owner-draft check with automatic interest off, before enabling it for Anna.
+Use unpaid 2026 Hausgeld of 400.00 € per month, with Karl Weiß owning January–June and
+Lena Roth owning July–December. Create Karl's notice, then Lena's, for the 2026 plan as of
+15.01.2027. Each draft opens immediately with 2400.00 € principal and exactly its six months.
 
 **Checked by:** agent
 **Also at 360 px:** the dunning letter
@@ -160,9 +161,9 @@ scrolling at 1280 and 360 px, plus the German issue-time display. Its April
 scenario checks the explicit `Zinsbeginn: 08.04.2026` in the issued detail at
 both widths and in the downloaded PDF. The separate
 [interest/PDF scenario](../../features/dunning_interest.feature) checks frozen
-amounts and the downloaded PDF; its API scenarios cover the April due date and
-first interest day. The split-rate expectations above remain outside these
-automated checks.
+amounts, both published rates, the issued PDF, and the ledger's separate notice information.
+The [organization settings scenarios](../../features/dunning_settings.feature) also verify
+the second-level fee and the residential and commercial premiums.
 
 ## Journey 4: Rent change for Anna
 

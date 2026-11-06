@@ -24,6 +24,7 @@ import type {
   OwnerProfile,
   Person,
 } from "../api/types";
+import { formatEuro } from "../lib/utils";
 import { ApiError } from "../api/client";
 import { MailDispatch } from "../components/MailDispatch";
 
@@ -333,7 +334,7 @@ export function DunningNoticeDetailPage() {
               </td>
             </tr>
             <tr>
-              <td>Mahngebuehr</td>
+              <td>Mahngebühr</td>
               <td style={{ fontFamily: "var(--mono)" }}>
                 {notice.fee_amount} EUR
               </td>
@@ -363,8 +364,12 @@ export function DunningNoticeDetailPage() {
 
       {notice.interest_snapshot && <section className="card" style={{ marginBottom: "1.5rem" }}>
         <h2>Eingefrorene Zinsberechnung</h2>
-        <p>Basiszinssatz: {notice.interest_snapshot.base_interest_rate} %</p>
-        <p>Jahreszinssatz: {notice.interest_snapshot.annual_rate} % (Basiszinssatz + 5 Prozentpunkte)</p>
+        {notice.interest_snapshot.premium
+          ? <p>Basiszinssatz + {notice.interest_snapshot.premium} Prozentpunkte (§ 288 Abs. {notice.interest_snapshot.premium === 9 ? 2 : 1} BGB)</p>
+          : <>
+            <p>Basiszinssatz: {notice.interest_snapshot.base_interest_rate} %</p>
+            <p>Jahreszinssatz: {notice.interest_snapshot.annual_rate} % (Basiszinssatz + 5 Prozentpunkte)</p>
+          </>}
         <p>Stichtag: <span>{notice.interest_snapshot.reference_date}</span></p>
         <p className="form-hint">Gespeicherte Werte dieser Mahnung; keine Neuberechnung mit heutigen Zinssätzen.</p>
         <div style={{ overflowX: "auto" }}><table className="data-table">
@@ -380,6 +385,22 @@ export function DunningNoticeDetailPage() {
             <td>{item.due_date}</td><td>{item.days}</td>
           </tr>)}</tbody>
         </table></div>
+        {notice.interest_snapshot.premium && <div className="mt-4">
+          <h3>Zinsabschnitte</h3>
+          <div className="overflow-x-auto"><table className="data-table">
+            <thead><tr><th>Zinszeitraum</th><th>Zinsen</th><th>Hauptforderung</th><th>Jahreszinssatz</th><th>Basiszinssatz</th><th>Tage</th><th>Typ</th></tr></thead>
+            <tbody>{notice.interest_snapshot.items.flatMap((item, index) => item.segments?.map(segment =>
+              <tr key={`${index}-${segment.start}`}>
+                <td>{segment.start.split("-").reverse().join(".")} bis {segment.end.split("-").reverse().join(".")}</td>
+                <td className="whitespace-nowrap">{formatEuro(segment.interest)}</td>
+                <td className="whitespace-nowrap">{formatEuro(segment.principal)}</td>
+                <td>{segment.annual_rate.replace(".", ",")} %</td>
+                <td>{segment.base_interest_rate.replace(".", ",")} %</td>
+                <td>{segment.days}</td>
+                <td>{PAYMENT_TYPE_LABELS[item.payment_type] ?? item.payment_type}</td>
+              </tr>) ?? [])}</tbody>
+          </table></div>
+        </div>}
       </section>}
 
       {/* Included items (Rueckstandsaufstellung) */}

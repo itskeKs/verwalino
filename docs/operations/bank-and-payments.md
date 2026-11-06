@@ -194,34 +194,21 @@ a payment list balance of 650 EUR and a cost gross total of 125 EUR including ex
 
 Creating an individual tenant or owner notice opens its saved draft immediately.
 The successful creation response commits the draft before the detail request can
-start; no reload or second creation is needed. Amounts, dates, interest and the
-immutable issued notice retain their existing calculation and snapshot rules.
+start. The draft opens on the first request, and the manager can issue it from there.
 
-Both dunning notice forms require an explicitly reviewed „Basiszinssatz (%)“ (base interest rate).
-Without a configured default the field stays empty; see
-[dunning interest defaults](../../DEPLOY.md#dunning-interest-defaults).
-The app claims no official or automatically current
-interest rate. `GET /api/dunning/settings` returns the default for signed-in members.
-An explicit decimal string `base_interest_rate` overrides it; old
-API calls without it and without configuration remain interest-free, explicit `null`
-disables the calculation. Existing letters/PDFs are not recalculated as a result.
+Under **Mahnungen → Mahneinstellungen**, an administrator can set the fees for all three
+levels and switch on **Verzugszinsen automatisch berechnen**. Other members see the same
+settings read-only. The starting values are 0.00 / 2.50 / 2.50 EUR with interest off.
+A notice's fee override still applies when provided.
 
-The calculation per open item is `amount × (base + 5) / 100 × calendar days / 365`,
-starting the day after the actual due date, with a single `ROUND_HALF_UP` cent rounding. Fees
-and interest are not charged interest. Example: 700 EUR January 2026 rent, due 6 January, reference
-2 March, base 2.50%, 55 days → 7.91 EUR interest and 707.91 EUR total with fee 0. Due date, reference date,
-days, base/annual interest rate, and amounts are saved and shown in detail/PDF;
-later configuration or payment changes do not recalculate the issued dunning notice.
-New `KALTMIETE` and `NK_VORAUSZAHLUNG` interest rows additionally freeze the first
-interest date and explicitly show `Zinsbeginn: TT.MM.JJJJ` in the detail and PDF.
-Older rows without this date retain their existing content and identical PDF
-rendering; no historical date is inferred. Heating, WEG and one-off rows keep
-their existing presentation and calculation.
-Rollback restrictions are documented under
-[migration compatibility](../../DEPLOY.md#migration-compatibility-00290148).
-Issuance alone confirms no receipt. The real UI/PDF flow
-is repeatable with [the dunning interest browser feature](../../features/dunning_interest.feature)
-using `make test-browser`.
+New individual drafts and batch previews read the organization policy. When interest is enabled,
+the detail and issued PDF show the saved calculation split at published rate changes and
+partial payments. A missing published rate prevents draft creation and names the affected
+half-year. Existing notices keep their saved amounts. In **Mietkonto**, **Ausgestellte Mahnungen**
+lists fees and interest for the selected lease as information separate from the account balance.
+The unscoped statement links to **Mahnungen** for historical notices without a verified lease. See the
+[interest calculation](../m6-zahlungen-mietkonto.md#default-interest-on-dunning-notices)
+and [browser feature](../../features/dunning_interest.feature).
 
 ## Dunning run with selected drafts
 
@@ -239,7 +226,7 @@ unclear, the same job is kept for a manual retry;
 its original IDs are returned under renewed complete prepare/source checks,
 not recalculated or duplicated. Old issued letters remain
 unchanged. [The dunning batch browser feature](../../features/dunning_batch.feature) verifies three
-arrears of 850 EUR each and three drafts totaling 2,550 EUR, including
+arrears of 850 EUR each and three drafts totaling 2,568.69 EUR with interest enabled, including
 mobile cancellation and reload (`make test-browser`). Source immutability remains covered by API tests.
 
 ## Monthly rent KPIs
@@ -278,7 +265,7 @@ owner confirmation; it is not covered by this change.
 For April 2026, the counted days are 1, 2 and 7 April. Good Friday (3 April),
 Easter Monday (6 April) and the weekend are excluded. Payment in full on 7 April
 produces no reminder or interest. A 100 EUR shortfall is due on 7 April and
-accrues interest from 8 April (0.02 EUR on that day at a 2.50% base rate).
+accrues interest from 8 April (0.02 EUR on that day at a 1.27% base rate plus 5 percentage points).
 Day-exact initial-month amounts stay unchanged. Count the three working days
 inclusively from the later of month start and lease start, even when the deadline
 falls in the next month or year. A lease starting Saturday, 11 April 2026 has
