@@ -657,7 +657,8 @@ components are introduced. See [reporting instructions](DEPLOY.md#diagnostics-an
 ### Responsive behaviour (down to 360 px)
 
 Verify screens at 360 px with long German names, four-digit amounts and many rows. The page must not
-scroll sideways; wide tables stay within their own horizontal scroll container.
+scroll sideways; wide tables stay within their own horizontal scroll container. Long page headings
+wrap when a single word exceeds the available width.
 
 | Width | Behaviour |
 |---|---|

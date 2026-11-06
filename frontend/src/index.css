@@ -134,7 +134,7 @@
 .app-main { flex: 1; overflow-y: auto; padding: 32px; min-width: 0; }
 .app-page { width: 100%; max-width: 1280px; margin-inline: auto; min-width: 0; }
 .app-page > * { min-width: 0; }
-.app-page h1 { font-size: 1.9rem; line-height: 1.25; letter-spacing: -.04em; }
+.app-page h1 { font-size: 1.9rem; line-height: 1.25; letter-spacing: -.04em; overflow-wrap: anywhere; }
 .app-page .card, .app-page [class*="bg-card"] { box-shadow: none; }
 .app-main button:not([class]), .btn-primary { display: inline-flex; justify-content: center; align-items: center; padding: .5rem .8rem; border: 1px solid hsl(var(--ui-border)); border-radius: calc(var(--radius) - 4px); background: hsl(var(--card)); font-size: .82rem; font-weight: 500; }
 .app-main button:not([class]):hover { background: hsl(var(--accent)); }
