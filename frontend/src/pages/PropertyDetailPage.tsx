@@ -66,9 +66,10 @@ function PropertyDetailPageContent({ propertyId }: { propertyId?: string }) {
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [showUnitForm, setShowUnitForm] = useState(false);
-  const [editUnitId, setEditUnitId] = useState<string | null>(null);
+  const [editingUnit, setEditingUnit] = useState<Unit | null>(null);
   const [unitForm, setUnitForm] = useState<UnitFormData>(EMPTY_UNIT_FORM);
   const [unitNumberError, setUnitNumberError] = useState<string | null>(null);
+  const [unitAreaError, setUnitAreaError] = useState<{ field: "area" | "heated_area"; message: string } | null>(null);
   const [saving, setSaving] = useState(false);
   const [success, setSuccess] = useState<string | null>(null);
   const [knowledge, setKnowledge] = useState<PropertyKnowledgeOverview | null>(null);
@@ -135,14 +136,16 @@ function PropertyDetailPageContent({ propertyId }: { propertyId?: string }) {
 
   function openCreateUnit() {
     setUnitNumberError(null);
-    setEditUnitId(null);
+    setUnitAreaError(null);
+    setEditingUnit(null);
     setUnitForm(EMPTY_UNIT_FORM);
     setShowUnitForm(true);
   }
 
   function openEditUnit(u: Unit) {
     setUnitNumberError(null);
-    setEditUnitId(u.id);
+    setUnitAreaError(null);
+    setEditingUnit(u);
     setUnitForm({
       number: u.number,
       location: u.location,
@@ -162,18 +165,19 @@ function PropertyDetailPageContent({ propertyId }: { propertyId?: string }) {
     setSaving(true);
     setError(null);
     setUnitNumberError(null);
+    setUnitAreaError(null);
     try {
-      if (editUnitId) {
+      if (editingUnit) {
         const body: UnitUpdate = {
           number: unitForm.number,
           location: unitForm.location,
           usage_type: unitForm.usage_type,
         };
-        if (unitForm.area) body.area = unitForm.area;
-        if (unitForm.heated_area) body.heated_area = unitForm.heated_area;
+        if (unitForm.area && unitForm.area !== editingUnit.area) body.area = unitForm.area;
+        if (unitForm.heated_area && unitForm.heated_area !== editingUnit.heated_area) body.heated_area = unitForm.heated_area;
         if (unitForm.mea) body.mea = unitForm.mea;
         body.building_part = unitForm.building_part;
-        await updateUnit(editUnitId, body);
+        await updateUnit(editingUnit.id, body);
       } else {
         const body: UnitCreate = {
           property_id: propertyId,
@@ -189,11 +193,18 @@ function PropertyDetailPageContent({ propertyId }: { propertyId?: string }) {
       }
       setSuccess("Einheit gespeichert.");
       setShowUnitForm(false);
-      setEditUnitId(null);
+      setEditingUnit(null);
       reload();
     } catch (err) {
-      if (err instanceof ApiError && err.status === 422 && err.code === "unit_number_too_long") {
+      if (err instanceof ApiError && (
+        (err.status === 422 && err.code === "unit_number_too_long") ||
+        (err.status === 409 && err.code === "duplicate_unit_number")
+      )) {
         setUnitNumberError(err.message);
+      } else if (err instanceof ApiError && err.status === 422 && (
+        err.code === "invalid_unit_area" || err.code === "invalid_unit_heated_area"
+      )) {
+        setUnitAreaError({ field: err.code === "invalid_unit_area" ? "area" : "heated_area", message: err.message });
       } else if (err instanceof ApiError) {
         setError(err.message);
       } else {
@@ -292,7 +303,7 @@ function PropertyDetailPageContent({ propertyId }: { propertyId?: string }) {
 
       {isWrite && showUnitForm && (
         <div className="card" style={{ marginBottom: "1rem" }}>
-          <h2>{editUnitId ? "Einheit bearbeiten" : "Neue Einheit anlegen"}</h2>
+          <h2>{editingUnit ? "Einheit bearbeiten" : "Neue Einheit anlegen"}</h2>
           <form onSubmit={handleUnitSubmit} className="form-grid">
             <div>
               <label>
@@ -330,24 +341,29 @@ function PropertyDetailPageContent({ propertyId }: { propertyId?: string }) {
                 ))}
               </select>
             </label>
-            <label>
-              Flaeche (m2)
-              <input
-                type="text"
-                inputMode="decimal"
-                value={unitForm.area}
-                onChange={(e) => setUnitForm({ ...unitForm, area: e.target.value })}
-              />
-            </label>
-            <label>
-              Beheizte Flaeche (m2)
-              <input
-                type="text"
-                inputMode="decimal"
-                value={unitForm.heated_area}
-                onChange={(e) => setUnitForm({ ...unitForm, heated_area: e.target.value })}
-              />
-            </label>
+            {([["area", "Flaeche (m2)"], ["heated_area", "Beheizte Flaeche (m2)"]] as const).map(([field, label]) => {
+              const message = unitAreaError?.field === field ? unitAreaError.message : null;
+              const errorId = `unit-${field}-error`;
+              return (
+                <div key={field}>
+                  <label>
+                    {label}
+                    <input
+                      type="text"
+                      inputMode="decimal"
+                      aria-invalid={message !== null}
+                      aria-describedby={message ? errorId : undefined}
+                      value={unitForm[field]}
+                      onChange={(e) => {
+                        if (message) setUnitAreaError(null);
+                        setUnitForm({ ...unitForm, [field]: e.target.value });
+                      }}
+                    />
+                  </label>
+                  {message && <p id={errorId} role="alert" className="error-text mt-1">{message}</p>}
+                </div>
+              );
+            })}
             {showMea && <label>
               MEA (Miteigentumsanteil)
               <input

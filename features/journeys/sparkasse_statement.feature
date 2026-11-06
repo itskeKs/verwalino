@@ -54,3 +54,15 @@ Feature: Sparkasse statement
       | 1280  |
       | 800   |
       | 360   |
+
+  Scenario Outline: A grouped deposit amount is booked to the selected tenancy
+    Given a 2250 EUR receipt imported into a deposit account for an existing tenancy
+    When the manager tries to book the deposit with an invalid amount at <width> px
+    Then the amount is explained in German and the receipt remains unassigned
+    When the manager corrects only the split amount to "2.250,00"
+    Then exactly 2250 EUR is booked as a deposit for the selected tenancy
+
+    Examples:
+      | width |
+      | 1280  |
+      | 360   |

@@ -341,6 +341,8 @@ New screens follow these page structures and use a German noun as their `h1`.
   errors stay inline beside the retained data. Initial errors and not-found replace the page.
   When editing a unit, a name over 50 characters shows “Die Bezeichnung darf höchstens 50 Zeichen lang sein.”
   below “Nummer *”. The field retains the entered name and clears the error when edited.
+  Creating or renaming a unit to a number already in the property shows “Eine Einheit mit dieser
+  Nummer gibt es in diesem Objekt schon.” in the same field error, with the entry kept for correction.
   Property details offer the MEA scale confirmation and unit MEA field for WEG, MISCH and SEV;
   MIET offers them only when an existing unit has a recorded MEA (including zero). Unset MEA
   is not a recorded share. The confirmation card appears only for writers with an unconfirmed
@@ -906,6 +908,12 @@ admin-only nav group.
 
 ### Tone and wording
 
+When declaration import is disabled, the import page shows “Der Import von
+Teilungserklärungen ist für Ihre Organisation nicht eingerichtet. Bitte wenden
+Sie sich an Ihre Administration.” for draft creation, upload and start refusals.
+The message omits the machine code and request ID; upload feedback stays with
+the affected file.
+
 - Use German UI text with real umlauts and formal **Sie**: 47 files address the user as Sie/Ihr, none
   uses du ("Geben Sie Ihr aktuelles Passwort und das neue Passwort ein."). Instructions are otherwise
   impersonal ("Bitte erneut versuchen.", "Bitte ein Objekt auswählen.").
@@ -993,6 +1001,33 @@ inline expressions, with the variants below. The inconsistencies are tracked in 
 | IBAN | shown as stored; SEPA confirmation input removes whitespace and upper-cases it | `normalizedIban` in `components/SepaExport.tsx`; `BankAccountsPage.tsx` prints `iban` raw. There is no IBAN display grouping in the frontend. |
 | Empty value | `—` (kit, newer pages), `-` (older tables), `–` (`BankTransactionsPage.tsx`) | `MandatePage.tsx`, `InvoiceDocumentsPage.tsx`, `BankTransactionsPage.tsx`, respectively |
 | Money input | accept `1234,56` and `1234.56`, send `1234.56` | `moneyInput`, `exactCents`, `normalizePlanAmount` (see above) |
+
+### Unit areas, dunning fees and bank split amounts
+
+- Unit creation and editing accept `75,50` or `75.50` for “Flaeche (m2)” and
+  “Beheizte Flaeche (m2)”. A rejected area shows the German explanation below the
+  affected field and associates it with the input. For example: “Fläche: Bitte eine
+  Zahl wie 75,50 mit höchstens zwei Nachkommastellen eingeben.” Editing the location
+  preserves the stored area values unless a new area is entered.
+- The individual tenant and owner fee fields accept `0,00` as an explicit zero.
+  An empty field uses the standard fee. Invalid text leaves the form open and shows
+  “Mahngebühr: Bitte einen Betrag wie 0,00 eingeben.”
+- “Betrag (EUR)” in the split dialog accepts `2.250,00`. The remaining amount and
+  the booking use the same exact value. Invalid input leaves all split rows editable
+  and identifies the amount by row, starting with “Betrag in Splitzeile 1: Bitte einen
+  positiven Betrag wie 2.250,00 eingeben”. On submission, the dialog scrolls the
+  validation message into view, including at 360 × 640 px.
+- Grouped money requires the decimal comma in these controls. A plain decimal
+  point remains available with up to two fractional digits.
+
+Synthetic data in the portable installation, captured at both viewport widths.
+
+| Form | 1280 px | 360 px |
+| --- | --- | --- |
+| Unit area | [before](docs/assets/design/german-form-inputs/unit-area-before-1280.png) · [after](docs/assets/design/german-form-inputs/unit-area-after-1280.png) | [before](docs/assets/design/german-form-inputs/unit-area-before-360.png) · [after](docs/assets/design/german-form-inputs/unit-area-after-360.png) |
+| Tenant dunning fee | [before](docs/assets/design/german-form-inputs/fee-tenant-before-1280.png) · [after](docs/assets/design/german-form-inputs/fee-tenant-after-1280.png) | [before](docs/assets/design/german-form-inputs/fee-tenant-before-360.png) · [after](docs/assets/design/german-form-inputs/fee-tenant-after-360.png) |
+| Owner dunning fee | [before](docs/assets/design/german-form-inputs/fee-owner-before-1280.png) · [after](docs/assets/design/german-form-inputs/fee-owner-after-1280.png) | [before](docs/assets/design/german-form-inputs/fee-owner-before-360.png) · [after](docs/assets/design/german-form-inputs/fee-owner-after-360.png) |
+| Deposit split | [before](docs/assets/design/german-form-inputs/deposit-before-1280.png) · [after](docs/assets/design/german-form-inputs/deposit-after-1280.png) | [before](docs/assets/design/german-form-inputs/deposit-before-360.png) · [after](docs/assets/design/german-form-inputs/deposit-after-360.png) |
 
 ### Economic plan draft reserve
 
@@ -1212,6 +1247,14 @@ and the sixty-receipt import/assignment use the real API. Each pair is desktop/3
 
 ## Screenshots
 
+The declaration import upload refusal uses a synthetic draft and PDF against
+the portable installer with import disabled.
+
+| Declaration import upload refusal | Desktop (1280 px) | Mobile (360 px) |
+|---|---|---|
+| Before | [Before](docs/assets/design/declaration-import-disabled-before-1280.png) | [Before](docs/assets/design/declaration-import-disabled-before-360.png) |
+| After | [After](docs/assets/design/declaration-import-disabled-after-1280.png) | [After](docs/assets/design/declaration-import-disabled-after-360.png) |
+
 Mobile keyboard navigation uses the shared test database and synthetic long property names.
 The closed-focus images show the first Tab after loading the dashboard; the Escape images show
 the result of opening navigation and pressing Escape. Desktop layout and existing routes stay the
@@ -1332,6 +1375,15 @@ show the same rejected 51-character input on synthetic data.
 |---|---|---|
 | Before: no field error | [Desktop](docs/assets/design/unit-name-validation/before-1280.png) | [Phone](docs/assets/design/unit-name-validation/before-360.png) |
 | After: inline error | [Desktop](docs/assets/design/unit-name-validation/after-1280.png) | [Phone](docs/assets/design/unit-name-validation/after-360.png) |
+
+Submitting “Wohnung 1” twice in a synthetic rental property used to save two rows.
+The unit form now keeps the second entry, explains the conflict below the number
+field, and leaves the original row as the only saved unit.
+
+| Duplicate number submission | 1280 px | 360 px |
+|---|---|---|
+| Before: duplicate saved | [Desktop](docs/assets/design/duplicate-unit-number/before-1280.png) | [Phone](docs/assets/design/duplicate-unit-number/before-360.png) |
+| After: duplicate refused | [Desktop](docs/assets/design/duplicate-unit-number/after-1280.png) | [Phone](docs/assets/design/duplicate-unit-number/after-360.png) |
 
 Earlier dashboard due-task captures from that feature remain in `issue-52-before-*`.
 The upload card is captured in

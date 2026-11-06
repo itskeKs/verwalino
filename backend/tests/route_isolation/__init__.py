@@ -39,6 +39,7 @@ class Probe:
     body:    JSON body, or form fields for multipart routes. A string value ``"{name}"`` is
              replaced by the column ``name`` of the ``ids`` row. ``None``: generated from the
              request schema, with every field named like an ``ids`` column filled from it.
+             A JSON body factory receives the ids to embed them in file contents.
     query, headers: like ``body``; required parameters not given here are generated.
     status:  the answer expected when the request carries foreign ids. 404 is the rule
              (architecture.md 7.4: existence is never revealed); any other value needs ``because``.
@@ -190,10 +191,12 @@ def build_request(method: str, path: str, operation: dict, components: dict, pro
             elif value is not None:
                 request.form[key] = str(value)
     elif "application/json" in content:
-        request.json = (
-            fill(probe.body, ids) if probe.body is not None
-            else example(content["application/json"]["schema"], components, ids)
-        )
+        if callable(probe.body):
+            request.json = probe.body(ids)
+        elif probe.body is not None:
+            request.json = fill(probe.body, ids)
+        else:
+            request.json = example(content["application/json"]["schema"], components, ids)
     return request
 
 
