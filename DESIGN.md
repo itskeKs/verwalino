@@ -957,6 +957,17 @@ with an alert associated through `aria-describedby` and `aria-invalid` on the
 input. Editing the reserve clears the alert. Decimal comma and dot are accepted;
 the request carries an exact decimal string.
 
+The screenshots use synthetic WEG records on a disposable PostgreSQL installation.
+EUR 7,200.00 in planned costs and zero reserve produce a EUR 600.00 monthly advance.
+At 360 px, the result capture is scrolled horizontally to show the monthly amount.
+
+| Draft reserve | 1280 px | 360 px |
+|---|---|---|
+| Before: blank editor and failed calculation | [Desktop](docs/assets/design/economic-plan-reserve/before-1280.png) | [Phone](docs/assets/design/economic-plan-reserve/before-360.png) |
+| After: stored zero in the editor | [Desktop](docs/assets/design/economic-plan-reserve/after-1280.png) | [Phone](docs/assets/design/economic-plan-reserve/after-360.png) |
+| After: calculated advance | [Desktop](docs/assets/design/economic-plan-reserve/result-1280.png) | [Phone](docs/assets/design/economic-plan-reserve/result-360.png) |
+| After: cleared reserve, costs retained | [Desktop](docs/assets/design/economic-plan-reserve/invalid-1280.png) | [Phone](docs/assets/design/economic-plan-reserve/invalid-360.png) |
+
 ### Rent and owner account due-date split
 
 “Mietkonto” retains the full reporting period and adds the labelled date input
