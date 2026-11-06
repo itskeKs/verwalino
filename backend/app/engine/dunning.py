@@ -103,6 +103,7 @@ class OverdueItem:
     open_amount: Decimal  # > 0 (arrears)
     due_date: date | None = None
     payment_changes: tuple[tuple[date, Decimal], ...] = ()
+    combined_advance: bool = False
 
 
 @dataclass(frozen=True)
@@ -126,6 +127,7 @@ class DunningInput:
                 "period_year": it.period_year,
                 "period_month": it.period_month,
                 "payment_type": it.payment_type,
+                **({"combined_advance": True} if it.combined_advance else {}),
                 "soll": str(it.soll),
                 "ist": str(it.ist),
                 "open_amount": str(it.open_amount),
@@ -187,6 +189,7 @@ def find_overdue_items(
                 open_amount=_money(item.open_amount),
                 due_date=item.due_date if item.period_year else item_due,
                 payment_changes=item.payment_changes,
+                combined_advance=item.combined_advance,
             ))
     overdue.sort(key=lambda x: (x.period_year, x.period_month or 0, x.payment_type))
     return overdue
@@ -332,6 +335,7 @@ def _interest_item(
         })
     return {
         "payment_type": item.payment_type,
+        **({"combined_advance": True} if item.combined_advance else {}),
         "period_year": item.period_year, "period_month": item.period_month,
         "due_date": due.isoformat(),
         "interest_start": date.fromordinal(first_day).isoformat() if first_day < through else None,

@@ -897,6 +897,21 @@ Payments (M6) do not exist yet (roadmap: M6 depends on M3). Therefore the **adva
 
 > **[DECISION]** Storage location of the manual advance payment total: **field on the `settlement_run`** (recommended, determined here) vs. a dedicated small table. Recommendation: field on the run — it belongs semantically in the frozen snapshot (what was taken as paid in the settlement is part of the immutable document). Confirm.
 
+### Advance credits by rental rate
+
+The lease and its dated rates may define one combined advance or separate
+operating and heating advances. Positive heating costs still enter the cost
+calculation in either mode. A wholly combined period shows one credit against
+the total. A separate statement shows operating and heating credits and both
+component balances, including an explicit separate heating advance of zero.
+Existing rates with no mode keep the legacy display rule.
+
+For a year with both modes, a monthly combined payment is disclosed as a
+combined credit. The separate operating and heating credits retain their own
+lines. The statement reports one overall balance. It carries its booked credits
+once through the existing partial-period and frozen credit rules. Finalized
+statements keep their original snapshot, digest, and document output.
+
 ### 7.3 Proposing a future advance payment (phase 2, T28)
 
 The historical M3 plan in §7.2 must be distinguished from today's actual path: M6 can
@@ -909,7 +924,9 @@ commercially rounded to the cent once. Example: January through 05.02.2024,
 0.17 EUR / (1 + 5/29) = 0.15 EUR. A missing, negative, or incoherent historical basis
 results in 409, no zero assumption. The optional ISO-date query `accept_from` defaults to
 the day after the settlement period ends and is returned in the payload. Both current
-advances are the rates valid on that date, resolved by the same rent-history lookup as POST.
+advances and their mode come from the rate valid on that date. GET and POST use
+the same lookup. A combined rate uses the full frozen tenant cost as its
+proposal basis, rounded once. A separate rate uses each frozen cost component.
 
 The detail page shows the amount and basis; readers see no adoption control. POST to the
 same URL accepts only `valid_from` and, after live role, scope, and history-prepare checks,

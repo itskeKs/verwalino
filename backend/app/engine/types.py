@@ -17,6 +17,7 @@ from dataclasses import dataclass
 from datetime import date
 from decimal import Decimal
 from fractions import Fraction
+from typing import Literal
 
 
 # ---------------------------------------------------------------------------
@@ -204,6 +205,8 @@ class SettlementInput:
     uncredited_advance_payments_total: Decimal = Decimal("0.00")
     heating_advance_payments_total: Decimal = Decimal('0.00')
     heating_advance_payments_source: str = 'MANUAL'
+    advance_layout: Literal["COMBINED", "SEPARATE", "MIXED"] | None = None
+    combined_advance_payments_total: Decimal = Decimal("0.00")
 
 
 # ---------------------------------------------------------------------------

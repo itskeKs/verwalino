@@ -42,16 +42,38 @@ YEAR_END = date(2025, 12, 31)
 
 
 @pytest.mark.parametrize('lease_start,expected_due', [
+    (date(2026, 4, 1), date(2026, 4, 7)),
     (date(2026, 4, 11), date(2026, 4, 15)),
     (date(2026, 4, 15), date(2026, 4, 17)),
     (date(2026, 4, 30), date(2026, 5, 5)),
     (date(2026, 12, 31), date(2027, 1, 5)),
 ])
-def test_first_rent_and_operating_advance_allow_three_working_days(lease_start, expected_due):
-    lease = LeaseChargeInput(uuid.UUID(int=91), lease_start, None, Decimal('900'), Decimal('150'))
+def test_first_rent_and_both_advances_allow_three_working_days(lease_start, expected_due):
+    lease = LeaseChargeInput(uuid.UUID(int=91), lease_start, None, Decimal('900'), Decimal('150'),
+        heating_advance_payment=Decimal('90'))
     charges = tenant_expected_charges(lease, lease_start, lease_start)
     assert [(charge.payment_type, charge.due_date) for charge in charges] == [
-        (PT_KALTMIETE, expected_due), (PT_NK_VORAUSZAHLUNG, expected_due)]
+        (PT_KALTMIETE, expected_due), (PT_NK_VORAUSZAHLUNG, expected_due),
+        (mietkonto.PT_HK_VORAUSZAHLUNG, expected_due)]
+
+
+@pytest.mark.parametrize("operating,heating", [("240", "0"), ("150", "90")])
+def test_april_rent_and_advances_share_dunning_and_default_interest_dates(operating, heating):
+    from app.engine.dunning import assemble_dunning, find_overdue_items
+
+    lease = LeaseChargeInput(uuid.UUID(int=93), date(2026, 1, 1), None, Decimal("750"),
+        Decimal(operating), heating_advance_payment=Decimal(heating))
+    charges = tenant_expected_charges(lease, date(2026, 4, 1), date(2026, 4, 30))
+    account = account_statement(charges, [])
+    assert account.soll_total == Decimal("990")
+    assert find_overdue_items(account.open_items, date(2026, 4, 6), grace_days=0, current_year=2026) == []
+    reference = date(2026, 4, 8)
+    overdue = find_overdue_items(account.open_items, reference, grace_days=0, current_year=2026)
+    assert len(overdue) == (2 if heating == "0" else 3)
+    notice = assemble_dunning(overdue, 0, reference, rate_periods=((date(2026, 1, 1), Decimal("1.27")),))
+    assert notice.principal_amount == Decimal("990")
+    assert {(item["due_date"], item["interest_start"]) for item in notice.interest_snapshot["items"]} == {
+        ("2026-04-07", "2026-04-08")}
 
 
 @pytest.mark.parametrize('lease_start,expected_due', [
@@ -79,6 +101,22 @@ def test_heating_advance_is_day_exact_across_a_partial_month_and_rent_change():
         (4, 'NK_VORAUSZAHLUNG', Decimal('160.00')), (4, 'HK_VORAUSZAHLUNG', Decimal('100.00'))]
     zero = replace(lease, heating_advance_payment=Decimal(0), rent_changes=())
     assert len(tenant_expected_charges(zero, date(2025, 4, 1), date(2025, 4, 30))) == 2
+
+
+def test_combined_and_operating_credits_in_one_month_are_preserved_across_frozen_periods():
+    lease_id = uuid.UUID(int=91)
+    payments = [
+        PaymentInput(uuid.UUID(int=1), PT_NK_VORAUSZAHLUNG, "IN", Decimal("240"), 2026, 12,
+            lease_agreement_id=lease_id, combined_advance=True),
+        PaymentInput(uuid.UUID(int=2), PT_NK_VORAUSZAHLUNG, "IN", Decimal("150"), 2026, 12,
+            lease_agreement_id=lease_id),
+    ]
+    filt = AdvanceFilter(frozenset({PT_NK_VORAUSZAHLUNG}), 2026, lease_id)
+    first, = mietkonto.derive_advance_credits_for_period(payments, filt, date(2026, 12, 1), date(2026, 12, 15))
+    second, = mietkonto.derive_advance_credits_for_period(payments, filt, date(2026, 12, 16), date(2026, 12, 31),
+        finalized_credits=(first,))
+    assert (first.amount, first.combined_amount) == (Decimal("188.70"), Decimal("116.12"))
+    assert (second.amount, second.combined_amount) == (Decimal("201.30"), Decimal("123.88"))
 
 
 @pytest.mark.parametrize("month,amount,first_end,lease_end,frozen,expected", [

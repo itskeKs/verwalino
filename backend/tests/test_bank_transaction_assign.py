@@ -479,6 +479,28 @@ async def test_heating_purpose_is_suggested_and_booked_as_a_tenant_heating_advan
     assert payment['payment_type'] == 'HK_VORAUSZAHLUNG' and payment['status'] == 'booked'
 
 
+async def test_combined_bank_assignment_books_one_advance_and_rejects_a_second_heating_line(bank_seed, bank_db):
+    api, ids = bank_seed
+    changed = await api.patch(f"/api/leases/{ids['lease']}", json={
+        "base_rent": "750.00", "advance_mode": "COMBINED", "advance_payment": "240.00"})
+    assert changed.status_code == 200, changed.text
+    tid = await transaction(bank_db, ids, amount="990.00")
+    result = await listing(api, ids)
+    assert result.status_code == 200, result.text
+    suggestion = result.json()["items"][0]["suggestions"][0]
+    assert [(row["payment_type"], row["amount"]) for row in suggestion["lines"]] == [
+        ("KALTMIETE", "750.00"), ("NK_VORAUSZAHLUNG", "240.00")]
+    lines = [{key: row[key] for key in ("payment_type", "amount", "period_year", "period_month",
+                                      "lease_agreement_id", "tenant_profile_id")} for row in suggestion["lines"]]
+    refused = await api.post(f"{BASE}/{tid}/assign", json={"lines": [
+        lines[0], {**lines[1], "amount": "150.00"}, {**lines[1], "payment_type": "HK_VORAUSZAHLUNG", "amount": "90.00"}]})
+    assert refused.status_code == 422, refused.text
+    assigned = await api.post(f"{BASE}/{tid}/assign", json={"lines": lines})
+    assert assigned.status_code == 200, assigned.text
+    assert [(row["payment_type"], row["amount"]) for row in assigned.json()["payments"]] == [
+        ("KALTMIETE", "750.00"), ("NK_VORAUSZAHLUNG", "240.00")]
+
+
 async def test_explicit_month_not_value_month_and_partial_splits(bank_seed, bank_db):
     api, ids = bank_seed
     await transaction(bank_db, ids, purpose='Warmmiete März 2025')

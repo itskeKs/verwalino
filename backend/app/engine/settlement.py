@@ -158,7 +158,8 @@ def compute_bk_settlement(inp: SettlementInput) -> EngineResult:
                     pos = replace(pos, heating=replace(pos.heating, slices=slices))
                 positions.append(pos)
             parts.append(replace(inp, period_start=start, period_end=end,
-                cost_positions=tuple(positions), advance_payments_total=Decimal(0), heating_advance_payments_total=Decimal(0)))
+                cost_positions=tuple(positions), advance_payments_total=Decimal(0), heating_advance_payments_total=Decimal(0),
+                combined_advance_payments_total=Decimal(0)))
         inp = replace(inp, allocation_inputs=tuple(parts))
     if inp.allocation_inputs:
         # Provider amounts describe this selected statement, so crossing a
@@ -382,31 +383,33 @@ def _finish_result(inp, cost_lines, computation, vacancy_attr, heating_costs, to
         if period_results else sum((line.amount for line in cost_lines if line.cost_entry_id in heating_ids), Decimal('0.00')))
     balance = _money(total_cost - advance - heating_advance)
 
-    split_advances = bool(heating_ids) or heating_advance != 0
+    layout = inp.advance_layout
+    combined = advance if layout == "COMBINED" else _money(inp.combined_advance_payments_total)
+    split_advances = layout == "SEPARATE" or (layout is None and (bool(heating_ids) or heating_advance != 0))
+    advance_note = f"Quelle: {inp.advance_payments_source}"
+    heating_note = f"Quelle: {inp.heating_advance_payments_source}"
 
-    # Advance-payment + balance lines (BGH: Abzug der Vorauszahlungen + Saldo).
     lines: list[ResultLine] = list(cost_lines)
-    lines.append(
-        ResultLine(
-            line_type="ADVANCE_PAYMENT",
-            label="Betriebskosten-Vorauszahlungen" if split_advances else "Geleistete Vorauszahlungen",
-            amount=advance,
-            sort_order=sort_order,
-            note=f"Quelle: {inp.advance_payments_source}",
-        )
-    )
-    sort_order += 1
+    if layout == "COMBINED" or combined:
+        lines.append(ResultLine(line_type="ADVANCE_PAYMENT", label="Betriebskosten-Vorauszahlungen inkl. Heizkosten",
+            amount=combined, sort_order=sort_order, note=advance_note))
+        sort_order += 1
+    if layout != "COMBINED":
+        lines.append(ResultLine(line_type="ADVANCE_PAYMENT",
+            label="Betriebskosten-Vorauszahlungen" if split_advances or layout == "MIXED" else "Geleistete Vorauszahlungen",
+            amount=advance - combined, sort_order=sort_order, note=advance_note))
+        sort_order += 1
     if split_advances:
-        lines.append(ResultLine(line_type='SUBTOTAL', label='Betriebskosten abzüglich Vorauszahlungen',
-            amount=_money(total_cost - heating_cost - advance), sort_order=sort_order,
-            note=f'Quelle: {inp.advance_payments_source}'))
+        lines.append(ResultLine(line_type="SUBTOTAL", label="Betriebskosten abzüglich Vorauszahlungen",
+            amount=_money(total_cost - heating_cost - advance), sort_order=sort_order, note=advance_note))
         sort_order += 1
-        lines.append(ResultLine(line_type='ADVANCE_PAYMENT', label='Heizkosten-Vorauszahlungen',
-            amount=heating_advance, sort_order=sort_order, note=f'Quelle: {inp.heating_advance_payments_source}'))
+    if split_advances or layout == "MIXED" or heating_advance:
+        lines.append(ResultLine(line_type="ADVANCE_PAYMENT", label="Heizkosten-Vorauszahlungen",
+            amount=heating_advance, sort_order=sort_order, note=heating_note))
         sort_order += 1
-        lines.append(ResultLine(line_type='SUBTOTAL', label='Heizkosten abzüglich Vorauszahlungen',
-            amount=_money(heating_cost - heating_advance), sort_order=sort_order,
-            note=f'Quelle: {inp.heating_advance_payments_source}'))
+    if split_advances:
+        lines.append(ResultLine(line_type="SUBTOTAL", label="Heizkosten abzüglich Vorauszahlungen",
+            amount=_money(heating_cost - heating_advance), sort_order=sort_order, note=heating_note))
         sort_order += 1
     lines.append(
         ResultLine(

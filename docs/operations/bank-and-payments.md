@@ -252,15 +252,14 @@ The overview changes no bookings or leases. Mandatory check:
 
 ## Rent due dates and holiday coverage
 
-New rent calculations stamp `KALTMIETE` and `NK_VORAUSZAHLUNG` with the third
+Rent and advances use the third
 working day under [§ 556b(1) BGB](https://www.gesetze-im-internet.de/bgb/__556b.html).
 Saturday does not count ([BGH VIII ZR 129/09](https://juris.bundesgerichtshof.de/cgi-bin/rechtsprechung/document.py?Art=pm&Blank=1&Datum=2010-7&Gericht=bgh&file=dokument.pdf&linked=urt&nr=52857)).
 Set **Bundesland** in the property's creation/edit form. Empty means nationwide
 holidays; existing properties keep this empty state until explicitly edited.
 A saved change affects newly derived charges, never frozen issued notices/PDFs.
 WEG dues, one-off claims, rates and arrears aggregation retain their existing rules.
-The separate `HK_VORAUSZAHLUNG` line retains its previous due-date rule pending
-owner confirmation; it is not covered by this change.
+The same due date applies to a combined advance and to separate operating and heating advances.
 
 For April 2026, the counted days are 1, 2 and 7 April. Good Friday (3 April),
 Easter Monday (6 April) and the weekend are excluded. Payment in full on 7 April

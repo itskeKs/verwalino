@@ -1615,11 +1615,11 @@ remove `/srv/verwalino/logs/.deploy.lock` once no deploy is running. A stale `/s
 (a run was killed) is removed by hand once no backup is running. Never
 run `docker compose down -v` or delete the volumes.
 
-## Migration compatibility: 0029–0174
+## Migration compatibility: 0029–0175
 
 | Revisions | Effect on existing data and runtime compatibility |
 | --- | --- |
-| 0029–0122 | Adds financial, declaration, source custody and review data structures and guards. The 0028 runtime cannot interpret the new schema or enforce its later security rules. The 0028→0174 rehearsal preserves all old columns and rows with synthetic organization, user, document, draft/failed import and failed extraction-run data, but does not prove every live-data combination. |
+| 0029–0122 | Adds financial, declaration, source custody and review data structures and guards. The 0028 runtime cannot interpret the new schema or enforce its later security rules. The 0028→0175 rehearsal preserves all old columns and rows with synthetic organization, user, document, draft/failed import and failed extraction-run data, but does not prove every live-data combination. |
 | 0123 | Adds nullable replacement evidence and changes exception-completion functions/outcomes. Existing rows retain their old disposition; old clients cannot interpret new replacement outcomes. Downgrade refuses retained evidence. |
 | 0124–0125 | Adds bank transactions and a nullable payment link, then enforces tenant/account coherence and immutable booked links. A 0122 database has no pre-existing links; inconsistent intermediate data is not silently repaired. |
 | 0126–0127 | Adds append-only rent history and frozen special levies; replaces financial/source/report adapters. No old financial rows are rewritten. Older runtimes do not understand the new obligations/history. Their downgrades can drop populated new tables; they are not a safe recovery path. |
@@ -1659,14 +1659,15 @@ run `docker compose down -v` or delete the volumes.
 | 0171 (parent 0170) | Adds a nullable organization-bound existing-cost link to bank lines, outgoing/status/property/scope and exact coverage guards, immutable financial bank evidence and source-filtered remaining coverage. Linked bank lines inherit the retained cost deadline without becoming personal-retention roots. Existing costs, payments and reconciliation totals are unchanged. Downgrade refuses populated cost assignments. |
 | 0172 (parent 0171) | Derives bank coverage across ordinary cost corrections and adds an organization-bound explicit successor for reviewed allocation corrections. The successor total, property and accounting scope are checked under the financial input lock. Bank lines, audit history and original cost links stay intact. Upgrade refuses already covered historical reviewed costs with no explicit lineage. Downgrade restores the previous functions and refuses if coverage is inherited from a superseded cost or an explicit successor is retained. |
 | 0173 (parent 0172) | Prevents rejection of corrections carrying bank coverage and permits released reserve drafts to retain their cancellation evidence when the debit covers an existing cost. Upgrade refuses a retained rejected bank-covered correction, preserving the original evidence for repair. Downgrade restores the previous guards without rewriting rows. Both directions acquire the affected table locks with NOWAIT. |
-| 0174 (head; parent 0173) | Adds organization-owned dunning settings with forced RLS and a read-only statutory base-rate catalog. Keeps issued notices and their frozen amounts. Downgrade refuses saved settings, retained segmented interest, or notices with the organization-policy PDF format. This includes interest-free notices created with the defaults. |
+| 0174 (parent 0173) | Adds organization-owned dunning settings with forced RLS and a read-only statutory base-rate catalog. Keeps issued notices and their frozen amounts. Downgrade refuses saved settings, retained segmented interest, or notices with the organization-policy PDF format. This includes interest-free notices created with the defaults. |
+| 0175 (head; parent 0174) | Records the optional advance mode on original leases and dated rates. Existing rows keep their prior interpretation with a null mode. Downgrade refuses saved explicit modes. |
 
 DDL uses the existing PostgreSQL/Alembic transaction; 0123 also takes financial
 and ACL locks with NOWAIT table locks. Contention or unexpected data/function
 definitions must abort, not trigger repair/deletion. A rollback-only synthetic
-0028→0174 rehearsal compares every old table column/row and retained RLS flags;
-the 0122→0174, 0139→0174 and accepted-source 0140→0174, 0141→0174 and
-0142→0174, 0143→0174, 0144→0174, 0145→0174, 0146→0174, 0147→0174, 0148→0174, 0149→0174, 0150→0174, 0151→0174, 0152→0174, 0153→0174, 0154→0174, 0155→0174, 0159→0174, 0160→0174, 0161→0174, 0162→0174, 0163→0174, 0164→0174, 0165→0174, 0166→0174, 0167→0174, 0168→0174, 0169→0174, 0170→0174, 0171→0174, 0172→0174 and 0173→0174 (accepted sources) rehearsals also
+0028→0175 rehearsal compares every old table column/row and retained RLS flags;
+the 0122→0175, 0139→0175 and accepted-source 0140→0175, 0141→0175 and
+0142→0175, 0143→0175, 0144→0175, 0145→0175, 0146→0175, 0147→0175, 0148→0175, 0149→0175, 0150→0175, 0151→0175, 0152→0175, 0153→0175, 0154→0175, 0155→0175, 0159→0175, 0160→0175, 0161→0175, 0162→0175, 0163→0175, 0164→0175, 0165→0175, 0166→0175, 0167→0175, 0168→0175, 0169→0175, 0170→0175, 0171→0175, 0172→0175, 0173→0175 and 0174→0175 (accepted sources) rehearsals also
 compare existing ACLs, allowing only the explicit organization INSERT/reserve UPDATE revocations and the capability-checked
 0159 binding adapter and the 0168 column-level resolution-link grant;
 it does not prove live data validity or cross-version runtime compatibility.
@@ -1689,10 +1690,10 @@ When adding a migration, update these together in the same release:
 
 ## Deployment boundary and accepted head
 
-The reviewed code targets **0174**. `backend/app/deployment.py` retains `TARGET`,
+The reviewed code targets **0175**. `backend/app/deployment.py` retains `TARGET`,
 `SUPPORTED`, `release_head()` and the read-only schema/role/runtime checks used
-by the migration rehearsals. Those checks accept measured **0028 → 0174**,
-**0122 → 0174**, **0139 → 0174**, **0140 → 0174**, **0141 → 0174**, **0142 → 0174**, **0143 → 0174**, **0144 → 0174**, **0145 → 0174**, **0146 → 0174**, **0147 → 0174**, **0148 → 0174**, **0149 → 0174**, **0150 → 0174**, **0151 → 0174**, **0152 → 0174**, **0153 → 0174**, **0154 → 0174**, **0155 → 0174**, **0159 → 0174**, **0160 → 0174**, **0161 → 0174**, **0162 → 0174**, **0163 → 0174**, **0164 → 0174**, **0165 → 0174**, **0166 → 0174** (accepted sources), **0167 → 0174** (accepted source), **0168 → 0174** (accepted source), **0169 → 0174** (accepted source), **0170 → 0174** (accepted source), **0171 → 0174** (accepted source), **0172 → 0174** (accepted source), **0173 → 0174** (accepted source), or **0174 → 0174**; unknown,
+by the migration rehearsals. Those checks accept measured **0028 → 0175**,
+**0122 → 0175**, **0139 → 0175**, **0140 → 0175**, **0141 → 0175**, **0142 → 0175**, **0143 → 0175**, **0144 → 0175**, **0145 → 0175**, **0146 → 0175**, **0147 → 0175**, **0148 → 0175**, **0149 → 0175**, **0150 → 0175**, **0151 → 0175**, **0152 → 0175**, **0153 → 0175**, **0154 → 0175**, **0155 → 0175**, **0159 → 0175**, **0160 → 0175**, **0161 → 0175**, **0162 → 0175**, **0163 → 0175**, **0164 → 0175**, **0165 → 0175**, **0166 → 0175** (accepted sources), **0167 → 0175** (accepted source), **0168 → 0175** (accepted source), **0169 → 0175** (accepted source), **0170 → 0175** (accepted source), **0171 → 0175** (accepted source), **0172 → 0175** (accepted source), **0173 → 0175** (accepted source), **0174 → 0175** (accepted source), or **0175 → 0175**; unknown,
 missing, multiple or intermediate revisions are rejected. These are code and
 rehearsal boundaries, not a measurement of a running installation.
 

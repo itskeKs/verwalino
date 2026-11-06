@@ -24,6 +24,7 @@ DB-hard; the service sets the consistent values so a normal write succeeds.
 from __future__ import annotations
 
 import uuid
+from calendar import monthrange
 from datetime import date, datetime, timezone
 from decimal import Decimal
 
@@ -37,6 +38,7 @@ from app.engine.types import OwnerPeriodInput
 from app.engine.mietkonto import (
     AdvanceFilter,
     AdvanceCredit,
+    advance_modes_for_period,
     ExpectedCharge,
     LeaseChargeInput,
     RentChangeInput,
@@ -95,7 +97,7 @@ def _compute_retention_until(value_date: date) -> date:
     return year_end.replace(year=year_end.year + 8)
 
 
-def to_payment_input(p: Payment) -> PaymentInput:
+def to_payment_input(p: Payment, *, combined_advance: bool = False) -> PaymentInput:
     """Map a Payment ORM row to the pure engine's frozen PaymentInput."""
     return PaymentInput(
         payment_id=p.id,
@@ -111,6 +113,7 @@ def to_payment_input(p: Payment) -> PaymentInput:
         is_reversed=(p.reversed_by_id is not None),
         is_reversal=(p.reverses_id is not None),
         value_date=p.value_date,
+        combined_advance=combined_advance,
     )
 
 
@@ -398,6 +401,15 @@ class PaymentService:
                 detail=f"Cannot book from status '{payment.status}'",
             )
 
+        if (payment.payment_type == "HK_VORAUSZAHLUNG" and payment.lease_agreement_id is not None
+                and payment.period_year is not None):
+            lease = await self._leases.get_by_id(payment.lease_agreement_id)
+            if lease is None:
+                raise HTTPException(404, "Lease agreement not found")
+            history = await LeaseRentChangeRepository(self._session, self._org_id).list_for_lease(lease.id)
+            if self._assigned_advance_modes(lease, history, payment) == {"COMBINED"}:
+                raise HTTPException(422, "Für diesen Zeitraum enthält die Betriebskosten-Vorauszahlung bereits die Heizkosten.")
+
         await self._require_deposit_sources(payment)
         await self._reserve_evidence(payment, complete=True)
         reserve_plan_unresolved = False
@@ -595,8 +607,9 @@ class PaymentService:
             valid_to=db_exclusive_to_engine_inclusive(lease.valid_to),
             base_rent=lease.base_rent,
             advance_payment=lease.advance_payment, heating_advance_payment=lease.heating_advance_payment,
-            rent_changes=tuple(RentChangeInput(
+            advance_mode=lease.advance_mode, rent_changes=tuple(RentChangeInput(
                 valid_from=row.valid_from, base_rent=row.base_rent, advance_payment=row.advance_payment, heating_advance_payment=row.heating_advance_payment,
+                advance_mode=row.advance_mode,
             ) for row in rent_changes),
         )
         unit = await UnitRepository(self._session, self._org_id).get_by_id(lease.unit_id)
@@ -606,9 +619,8 @@ class PaymentService:
         charges = tenant_expected_charges(lc, period_start, period_end, federal_state=prop.federal_state)
         payments = await self._repo.list_for_lease(lease_agreement_id)
         scoped = self._scope_payments_to_period(payments, period_start, period_end)
-        return account_statement(charges, [to_payment_input(p) for p in scoped
-                                           if p.payment_type != "KAUTION"], as_of=as_of or date.today(),
-                                 include_payment_dates=include_payment_dates)
+        inputs = self._tenant_payment_inputs(lease, rent_changes, [p for p in scoped if p.payment_type != "KAUTION"])
+        return account_statement(charges, inputs, as_of=as_of or date.today(), include_payment_dates=include_payment_dates)
 
     async def owner_plan_charges(
         self, plan: EconomicPlan, owner_profile_id: uuid.UUID,
@@ -768,7 +780,8 @@ class PaymentService:
         """Return auditable year/month buckets plus wholly outside-lease bookings."""
         from app.repositories.settlement_repo import SettlementRunRepository
 
-        lease, inputs = await self._nk_advance_inputs(lease_agreement_id, payment_type=payment_type)
+        lease, inputs = await self._nk_advance_inputs(
+            lease_agreement_id, payment_type=payment_type, classify=True)
         lease_end = db_exclusive_to_engine_inclusive(lease.valid_to)
         finalized = await SettlementRunRepository(self._session, self._org_id).finalized_bk_for_advance_years(
             lease_agreement_id, period_start, period_end)
@@ -796,7 +809,8 @@ class PaymentService:
                         "message": "Der eingefrorene Vorauszahlungsnachweis fehlt. Bitte die frühere Abrechnung korrigieren."})
                 continue
             frozen.extend(AdvanceCredit(row["year"], row["month"], date.fromisoformat(bounds[0]),
-                date.fromisoformat(bounds[1]), Decimal(row["amount"])) for row in buckets)
+                date.fromisoformat(bounds[1]), Decimal(row["amount"]),
+                Decimal(row.get("combined_amount", "0.00"))) for row in buckets)
         credits = tuple(credit
             for year in range(period_start.year, period_end.year + 1)
             for credit in derive_advance_credits_for_period(inputs, AdvanceFilter(
@@ -807,12 +821,37 @@ class PaymentService:
                 lease_end=lease_end, finalized_credits=tuple(frozen)))
         return credits, self._uncredited_nk_total(lease, inputs, period_start, period_end, payment_type)
 
-    async def _nk_advance_inputs(self, lease_agreement_id, *, payment_type="NK_VORAUSZAHLUNG"):
+    async def _nk_advance_inputs(self, lease_agreement_id, *, payment_type="NK_VORAUSZAHLUNG", classify=False):
         lease = await self._leases.get_by_id(lease_agreement_id)
         if lease is None:
             raise HTTPException(404, "Lease agreement not found")
         rows = await self._repo.derived_for_nk_for_lease(lease_agreement_id, payment_type=payment_type)
-        return lease, [to_payment_input(p) for p in rows]
+        if not classify or not rows or payment_type != "NK_VORAUSZAHLUNG":
+            return lease, [to_payment_input(p) for p in rows]
+        history = await LeaseRentChangeRepository(self._session, self._org_id).list_for_lease(lease.id)
+        return lease, self._tenant_payment_inputs(lease, history, rows)
+
+    @classmethod
+    def _tenant_payment_inputs(cls, lease, history, rows):
+        if lease.advance_mode is None and not any(change.advance_mode for change in history):
+            return [to_payment_input(p) for p in rows]
+        return [to_payment_input(p, combined_advance=p.payment_type == "NK_VORAUSZAHLUNG"
+            and p.period_year is not None and p.booked_at is not None
+            and cls._assigned_advance_modes(lease, history, p) == {"COMBINED"}) for p in rows]
+
+    @staticmethod
+    def _assigned_advance_modes(lease, history, payment):
+        # A backdated rate inserted after booking cannot change its meaning.
+        if payment.booked_at is not None:
+            history = [row for row in history if row.created_at <= payment.booked_at]
+        if payment.period_month is None:
+            start, end = date(payment.period_year, 1, 1), date(payment.period_year, 12, 31)
+        else:
+            year, month = payment.period_year, payment.period_month
+            start, end = date(year, month, 1), date(year, month, monthrange(year, month)[1])
+        start = max(start, lease.valid_from)
+        end = min(end, db_exclusive_to_engine_inclusive(lease.valid_to) or end)
+        return advance_modes_for_period(lease, history, start, end) if start <= end else frozenset()
 
     @staticmethod
     def _uncredited_nk_total(lease, inputs, period_start, period_end, payment_type="NK_VORAUSZAHLUNG"):

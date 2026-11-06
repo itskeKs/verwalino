@@ -396,7 +396,7 @@ async def test_revision_chain_head_0131_head_preserves_full_state_and_issued_pdf
     config.set_main_option('script_location', str(Path(__file__).parents[1] / 'migrations'))
     scripts = ScriptDirectory.from_config(config)
     assert scripts.get_heads() == [TARGET]
-    expected_ancestry = [f'{number:04}' for number in range(131, 156)] + ['0159', '0160', '0161', '0162', '0163', '0164', '0165', '0166', '0167', '0168', '0169', '0170', '0171', '0172', '0173', '0174']
+    expected_ancestry = [f'{number:04}' for number in range(131, 156)] + ['0159', '0160', '0161', '0162', '0163', '0164', '0165', '0166', '0167', '0168', '0169', '0170', '0171', '0172', '0173', '0174', '0175']
     assert [r.revision for r in scripts.iterate_revisions(TARGET, '0131')] == expected_ancestry[:0:-1]
     engine = create_engine(MIGRATOR_SYNC_URL)
     try:
@@ -457,6 +457,17 @@ async def test_revision_chain_head_0131_head_preserves_full_state_and_issued_pdf
                 assert version() == (TARGET,)
                 retained = _chain_snapshot(connection)
                 assert any(row['unit_id'] == str(w['unit']) for row in retained['data']['unit_household'])
+                if connection.scalar(text("""SELECT EXISTS(SELECT 1 FROM lease_agreement WHERE advance_mode IS NOT NULL)
+                        OR EXISTS(SELECT 1 FROM lease_rent_change WHERE advance_mode IS NOT NULL)""")):
+                    with pytest.raises(DBAPIError, match='Retain explicit tenant advance modes'):
+                        with connection.begin_nested():
+                            migrate('0174', downgrade=True)
+                    assert _chain_snapshot(connection) == retained
+                    # Only the rollback-only projection omits the unsupported mode.
+                    connection.execute(text('UPDATE lease_agreement SET advance_mode=NULL WHERE advance_mode IS NOT NULL'))
+                    connection.execute(text('ALTER TABLE lease_rent_change DISABLE TRIGGER protect_lease_rent_change'))
+                    connection.execute(text('UPDATE lease_rent_change SET advance_mode=NULL WHERE advance_mode IS NOT NULL'))
+                    connection.execute(text('ALTER TABLE lease_rent_change ENABLE TRIGGER protect_lease_rent_change'))
                 # The removed columns have no pre-bank representation.
                 # Keep the original rows and every other field in this rollback-only projection.
                 if connection.scalar(text('SELECT EXISTS(SELECT 1 FROM cost_entry WHERE bank_coverage_successor_id IS NOT NULL)')):

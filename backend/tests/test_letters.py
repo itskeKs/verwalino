@@ -368,6 +368,28 @@ async def test_lease_contract_uses_template_variables_and_retains_original(rent_
         assert listing.status_code == 200 and row in listing.json()
 
 
+async def test_dated_combined_contract_labels_heating_and_keeps_the_issued_original(rent_world):
+    w = rent_world
+    async with api_client(w) as api:
+        await lease_landlord(api, w)
+        url = f"/api/leases/{w['lease']}"
+        before = await api.post(url + "/contract", json=contract_body())
+        assert before.status_code == 201, before.text
+        old_url = before.json()["pdf_url"]
+        original = (await api.get(old_url)).content
+        changed = await api.post(url + "/rent-changes", json={
+            "valid_from": "2026-04-01", "base_rent": "750.00", "advance_payment": "240.00",
+            "advance_mode": "COMBINED",
+        })
+        assert changed.status_code == 201, changed.text
+        issued = await api.post(url + "/contract", json=contract_body(as_of="2026-04-07"))
+        assert issued.status_code == 201, issued.text
+        current = pdf_text((await api.get(issued.json()["pdf_url"])).content)
+        assert "Betriebskosten-Vorauszahlung inkl. Heizkosten: 240,00 €" in current
+        assert "Monatliche Gesamtmiete: 990,00 €" in current
+        assert (await api.get(old_url)).content == original
+
+
 async def test_lease_contract_ignores_a_circular_template_named_mietvertrag(rent_world):
     async with api_client(rent_world) as api:
         template = await create_template(api, name='Mietvertrag', subject='Rundschreiben', body='Termin für die Hausversammlung')

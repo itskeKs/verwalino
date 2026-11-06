@@ -16,6 +16,8 @@ from datetime import date
 from decimal import Decimal, InvalidOperation
 from typing import Annotated, Literal
 
+from app.engine.mietkonto import AdvanceMode
+
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field, StrictBool, model_validator, field_validator
@@ -89,6 +91,7 @@ class ConsumptionSuggestionOut(BaseModel):
 
 class AdvanceProposalOut(BaseModel):
     accept_from: date
+    advance_mode: AdvanceMode | None = None
     lease_agreement_id: str
     tenant_cost: str
     months: str

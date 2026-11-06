@@ -370,25 +370,27 @@ test database at 1280 × 900 and 360 × 900:
 | New tenancy | [before](docs/assets/design/profile-hints/before-tenancy-1280.png) · [after](docs/assets/design/profile-hints/after-tenancy-1280.png) | [before](docs/assets/design/profile-hints/before-tenancy-360.png) · [after](docs/assets/design/profile-hints/after-tenancy-360.png) |
 | New ownership | [before](docs/assets/design/profile-hints/before-ownership-1280.png) · [after](docs/assets/design/profile-hints/after-ownership-1280.png) | [before](docs/assets/design/profile-hints/before-ownership-360.png) · [after](docs/assets/design/profile-hints/after-ownership-360.png) |
 
-### Separate tenant advances
+### Tenant advance modes
 
-Lease and rent-change forms label the two monthly amounts
-“Betriebskosten-Vorauszahlung (EUR)” and “Heizkosten-Vorauszahlung (EUR)”.
-Heating defaults to zero. Original contracts and full effective-dated history
-show both advances; date changes prefill both from the same historical rate.
-Index and stepped rent preserve both advances.
+Lease and rent-change forms offer “Vorauszahlungsart”. “Gemeinsam inkl.
+Heizkosten” shows one “Betriebskosten-Vorauszahlung inkl. Heizkosten (EUR)”
+field. “Betriebs- und Heizkosten getrennt” shows the operating and heating
+amounts, with heating initially zero. An existing lease with no stored
+choice can retain “Bisherige Vorauszahlungsart”. Dates prefill the mode and
+amounts from the same rate. The history and rent account mark a combined
+amount “inkl. Heizkosten”. The rent-change dialog scrolls within the viewport
+on short or narrow screens.
 
-Tenant payment labels use “Betriebskosten-Vorauszahlung” and
-“Heizkosten-Vorauszahlung”. Statements show both totals and their individual
-MANUAL/DERIVED sources. The existing derivation action loads both components;
-manual edits retain each component's own source. Computed statements and PDFs
-show “Betriebskosten abzüglich Vorauszahlungen”, “Heizkosten abzüglich
-Vorauszahlungen” and the overall balance. When the heating advance total is zero
-and there are no allocated tenant heating cost lines, the page and PDF retain the single
-block “Geleistete Vorauszahlungen” instead; heating cost lines in any fiscal allocation
-window require both blocks, even if their amount is zero. Non-apportionable heating
-positions do not require both blocks. Both snapshot keys remain present.
-Statement totals start unknown (empty fields); “Aus Zahlungen ableiten” derives both.
+Statements show one combined credit when the rate includes heating. Separate
+rates show the operating and heating credits, both component balances, and
+the overall balance. The mixed-year statement lists attributable combined,
+operating, and heating credits separately and shows the overall balance.
+Legacy statements with zero heating advance and no allocated heating cost
+lines retain “Geleistete Vorauszahlungen”. Existing payment totals and
+MANUAL/DERIVED sources still apply. The derivation action fills the recorded
+totals. An entered manual combined amount supplies zero for a previously
+unknown separate heating amount.
+
 The create form and detail editor share `parseGermanAmount` in `lib/germanAmount.ts`:
 both advance fields accept German amounts such as `1.080,00` and API decimals such as
 `1080.00`, sent as cent-exact decimal strings. Invalid input (for example `1,080.00`
@@ -399,26 +401,24 @@ The detail page retains its existing decimal-string `EUR` amounts; the advance
 proposal retains its existing German decimal-string `EUR` format. The advance proposal
 uses its own payload, including the lease's advances valid on the acceptance date, and shows the previous amounts.
 
-Screenshots (test database, synthetic data; before = main, after = this change):
-lease form [1280 before](docs/assets/advance-split/lease-before-1280.png) /
-[after](docs/assets/advance-split/lease-after-1280.png), [360 before](docs/assets/advance-split/lease-before-360.png) /
-[after](docs/assets/advance-split/lease-after-360.png); rent account [1280 before](docs/assets/advance-split/rent-account-before-1280.png) /
-[after](docs/assets/advance-split/rent-account-after-1280.png), [360 before](docs/assets/advance-split/rent-account-before-360.png) /
-[after](docs/assets/advance-split/rent-account-after-360.png); statement with two blocks [1280 before](docs/assets/advance-split/statement-before-1280.png) /
-[after](docs/assets/advance-split/round2-anna-1280.png), [360 before](docs/assets/advance-split/statement-before-360.png) /
-[after](docs/assets/advance-split/round2-anna-360.png); statement with the single block
-[1280](docs/assets/advance-split/round2-bernd-1280.png) / [360](docs/assets/advance-split/round2-bernd-360.png);
-proposal for a lease without heating [1280 before](docs/assets/advance-split/round3-bernd-before-1280.png) /
-[after](docs/assets/advance-split/round3-bernd-after-1280.png), [360 before](docs/assets/advance-split/round3-bernd-before-360.png) /
-[after](docs/assets/advance-split/round3-bernd-after-360.png).
+Synthetic records at 1280 and 360 px show the €990 monthly charge and €20
+annual balance. The baseline uses the two advance amounts. The updated view
+uses the €240 combined amount.
+
+| View | Before 1280 | After 1280 | Before 360 | After 360 |
+|---|---|---|---|---|
+| Lease | [Before](docs/assets/design/advance-modes/lease-before-1280.png) | [After](docs/assets/design/advance-modes/lease-after-1280.png) | [Before](docs/assets/design/advance-modes/lease-before-360.png) | [After](docs/assets/design/advance-modes/lease-after-360.png) |
+| Dated rate | [Before](docs/assets/design/advance-modes/change-before-1280.png) | [After](docs/assets/design/advance-modes/change-after-1280.png) | [Before](docs/assets/design/advance-modes/change-before-360.png) | [After](docs/assets/design/advance-modes/change-after-360.png) |
+| Rent account | [Before](docs/assets/design/advance-modes/ledger-before-1280.png) | [After](docs/assets/design/advance-modes/ledger-after-1280.png) | [Before](docs/assets/design/advance-modes/ledger-before-360.png) | [After](docs/assets/design/advance-modes/ledger-after-360.png) |
+| Statement | [Before](docs/assets/design/advance-modes/statement-before-1280.png) | [After](docs/assets/design/advance-modes/statement-after-1280.png) | [Before](docs/assets/design/advance-modes/statement-before-360.png) | [After](docs/assets/design/advance-modes/statement-after-360.png) |
+
 The date defaults to the day after the settlement period ends. Changing it refetches the
 proposal; acceptance stays disabled until the returned `accept_from` matches the selected date.
-Only when the proposed and current heating advances are both zero does it show just the
-operating advance and basis with “Nur die Betriebskosten-Vorauszahlung wird geändert.”
-Otherwise it shows both monthly amounts and bases with “Beide Vorauszahlungen werden geändert.”,
-including a heating reduction to zero and legacy statements with a single advance block.
-Acceptance creates one rent change and the success message names both written advances,
-including heating zero. Existing form grids,
+A combined rate proposes one amount with the full cost basis and shows “Die gemeinsame
+Vorauszahlung wird geändert.” An explicit separate rate shows both amounts and bases
+with “Beide Vorauszahlungen werden geändert.” A legacy rate retains its existing display
+when both heating amounts are zero. Acceptance creates one rent change and names the
+amounts it saved. Existing form grids,
 wrapping labels and horizontally scrollable tables apply at 360 px. Lease and
 rent-account form controls stay within their grid cells with long tenant names.
 
