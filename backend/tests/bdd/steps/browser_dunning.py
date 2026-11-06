@@ -455,6 +455,7 @@ async def explicit_april_interest_start(browser_world):
         await popup.close()
     for width in (1280, 360):
         await page.set_viewport_size({"width": width, "height": 900})
+        await expect(page.locator("aside")).to_have_count(0 if width == 360 else 1)
         start = page.get_by_text("Zinsbeginn:", exact=False).filter(has_text="08.04.2026")
         await expect(start).to_be_visible()
         assert await start.evaluate("element => { const box = element.getBoundingClientRect(); return box.left >= 0 && box.right <= innerWidth; }")
