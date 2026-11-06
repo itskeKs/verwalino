@@ -992,6 +992,33 @@ inline expressions, with the variants below. The inconsistencies are tracked in 
 | Empty value | `—` (kit, newer pages), `-` (older tables), `–` (`BankTransactionsPage.tsx`) | `MandatePage.tsx`, `InvoiceDocumentsPage.tsx`, `BankTransactionsPage.tsx`, respectively |
 | Money input | accept `1234,56` and `1234.56`, send `1234.56` | `moneyInput`, `exactCents`, `normalizePlanAmount` (see above) |
 
+### Unit areas, dunning fees and bank split amounts
+
+- Unit creation and editing accept `75,50` or `75.50` for “Flaeche (m2)” and
+  “Beheizte Flaeche (m2)”. A rejected area shows the German explanation below the
+  affected field and associates it with the input. For example: “Fläche: Bitte eine
+  Zahl wie 75,50 mit höchstens zwei Nachkommastellen eingeben.” Editing the location
+  preserves the stored area values unless a new area is entered.
+- The individual tenant and owner fee fields accept `0,00` as an explicit zero.
+  An empty field uses the standard fee. Invalid text leaves the form open and shows
+  “Mahngebühr: Bitte einen Betrag wie 0,00 eingeben.”
+- “Betrag (EUR)” in the split dialog accepts `2.250,00`. The remaining amount and
+  the booking use the same exact value. Invalid input leaves all split rows editable
+  and identifies the amount by row, starting with “Betrag in Splitzeile 1: Bitte einen
+  positiven Betrag wie 2.250,00 eingeben”. On submission, the dialog scrolls the
+  validation message into view, including at 360 × 640 px.
+- Grouped money requires the decimal comma in these controls. A plain decimal
+  point remains available with up to two fractional digits.
+
+Synthetic data in the portable installation, captured at both viewport widths.
+
+| Form | 1280 px | 360 px |
+| --- | --- | --- |
+| Unit area | [before](docs/assets/design/german-form-inputs/unit-area-before-1280.png) · [after](docs/assets/design/german-form-inputs/unit-area-after-1280.png) | [before](docs/assets/design/german-form-inputs/unit-area-before-360.png) · [after](docs/assets/design/german-form-inputs/unit-area-after-360.png) |
+| Tenant dunning fee | [before](docs/assets/design/german-form-inputs/fee-tenant-before-1280.png) · [after](docs/assets/design/german-form-inputs/fee-tenant-after-1280.png) | [before](docs/assets/design/german-form-inputs/fee-tenant-before-360.png) · [after](docs/assets/design/german-form-inputs/fee-tenant-after-360.png) |
+| Owner dunning fee | [before](docs/assets/design/german-form-inputs/fee-owner-before-1280.png) · [after](docs/assets/design/german-form-inputs/fee-owner-after-1280.png) | [before](docs/assets/design/german-form-inputs/fee-owner-before-360.png) · [after](docs/assets/design/german-form-inputs/fee-owner-after-360.png) |
+| Deposit split | [before](docs/assets/design/german-form-inputs/deposit-before-1280.png) · [after](docs/assets/design/german-form-inputs/deposit-after-1280.png) | [before](docs/assets/design/german-form-inputs/deposit-before-360.png) · [after](docs/assets/design/german-form-inputs/deposit-after-360.png) |
+
 ### Economic plan draft reserve
 
 A new draft without saved input rows pre-fills “Rücklagenzuführung (Jahr)” with

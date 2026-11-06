@@ -324,8 +324,8 @@ PROBES: dict[str, Probe] = {
     "GET /api/units": Probe(row("property", property_id="id"), status=200, because=EMPTY_FILTER),
     "GET /api/units/page": Probe(row("property", property_id="id"), status=200, because=EMPTY_FILTER),
     "GET /api/units/{unit_id}": Probe(row("unit", unit_id="id")),
-    "POST /api/units": Probe(UNIT_WITH_PROPERTY, body={"property_id": "{property_id}", "number": "{number}", "usage_type": "WOHNUNG"}),
-    "PUT /api/units/{unit_id}": Probe(UNIT_WITH_PROPERTY, body={"number": "{number}"}),
+    "POST /api/units": Probe(UNIT_WITH_PROPERTY, body={"property_id": "{property_id}", "number": "{number}", "usage_type": "WOHNUNG", "area": "abc"}),
+    "PUT /api/units/{unit_id}": Probe(UNIT_WITH_PROPERTY, body={"number": "{number}", "area": "abc"}),
     # app/api/users.py
     "GET /api/users": Probe(),
     "GET /api/users/page": Probe(),

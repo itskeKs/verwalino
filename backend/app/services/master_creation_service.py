@@ -134,6 +134,20 @@ async def create_property(db, auth, body: PropertyCreate, idempotency_key=None):
     return prop
 
 
+def parse_unit_area(value: str, field: str) -> Decimal:
+    """Parse an exact unit area within the same bounds as master-data import."""
+    normalized = value.strip().replace(",", ".")
+    if re.fullmatch(r"[0-9]+(?:\.[0-9]{1,2})?", normalized):
+        amount = Decimal(normalized)
+        if amount <= Decimal("99999999.99"):
+            return amount
+    label = "Fläche" if field == "area" else "Beheizte Fläche"
+    raise HTTPException(422, detail={
+        "code": f"invalid_unit_{field}",
+        "message": f"{label}: Bitte eine Zahl wie 75,50 mit höchstens zwei Nachkommastellen eingeben.",
+    })
+
+
 async def create_unit(db, auth, body: UnitCreate):
     property_id = uuid.UUID(body.property_id)
     if await PropertyRepository(db, auth.organization_id).get_by_id(property_id) is None:
@@ -153,8 +167,8 @@ async def create_unit(db, auth, body: UnitCreate):
         property_id=property_id,
         number=body.number,
         location=body.location,
-        area=Decimal(body.area) if body.area else None,
-        heated_area=Decimal(body.heated_area) if body.heated_area else None,
+        area=parse_unit_area(body.area, "area") if body.area else None,
+        heated_area=parse_unit_area(body.heated_area, "heated_area") if body.heated_area else None,
         usage_type=body.usage_type,
         mea=mea,
         building_part=body.building_part,
