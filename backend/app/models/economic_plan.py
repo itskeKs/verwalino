@@ -58,7 +58,7 @@ class EconomicPlan(Base, UUIDPrimaryKeyMixin, TimestampMixin):
     period_start: Mapped[date] = mapped_column(Date, nullable=False)
     period_end: Mapped[date] = mapped_column(Date, nullable=False)
 
-    # Fälligkeitstag of the monthly Hausgeld (display / future Sollstellung M6).
+    # Resolved calendar day; historical NULL uses day one at the read boundary.
     monthly_due_day: Mapped[int | None] = mapped_column(SmallInteger, nullable=True)
 
     # Planned TOTAL reserve contribution of the year (Vermoegensbildung, NOT a

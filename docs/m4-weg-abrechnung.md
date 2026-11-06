@@ -158,7 +158,7 @@ This gives the plan the **same immutability guarantee** (a resolved economic pla
 | `management_mandate_id` | `UUID NULL` FK→`management_mandate` (`RESTRICT`) | WEG mandate (segregation-of-funds anchor). |
 | `plan_year` | `INTEGER NOT NULL` | Fiscal year (usually calendar year; SDD §12). |
 | `period_start`/`period_end` | `DATE NOT NULL` | Plan period (usually 01.01.–31.12.). `CHECK (period_end >= period_start)`. |
-| `monthly_due_day` | `SMALLINT NULL` | Due day of the monthly Hausgeld (display/later Soll posting (Sollstellung) in M6); purely informational in M4. |
+| `monthly_due_day` | `SMALLINT NULL` | Resolved calendar day for monthly Hausgeld. New input accepts 1–28; omitted/null input defaults to 1. Historical NULL is read as 1; historical days 29–31 use month end if absent, followed by the working-day shift. Stored values and frozen snapshots/PDFs are unchanged. The field stays immutable after finalization. |
 | `reserve_contribution_total` | `NUMERIC(14,2) NOT NULL DEFAULT 0` | planned **total reserve contribution** for the year (not a cost allocation, §3). |
 | `status` | `String(12) NOT NULL DEFAULT 'draft'` | `draft`\|`finalized`. CHECK. Freeze condition `finalized`. |
 | `snapshot_payload` | `JSONB NULL` | canonical, complete plan basis + result (§5.4). |
@@ -367,7 +367,19 @@ data and booked payments are not overwritten, finalized settlements remain froze
 
 For drafts, `GET /api/weg-settlements/{id}/input-owners` returns the complete authorized
 owner set of the settlement period, with READ scope and disclosure checks. The UI uses the
-same set as the coverage validation, not merely the advance payment lines of the plan.
+same set as coverage validation and paid-Hausgeld derivation: owners whose ownership
+overlaps the period plus the original owners of the linked plan's OWNER_ADVANCE lines.
+The latter retain their frozen plan obligations even after a history correction. The shared
+roster comes from `CoverageDeclarationRepository.owner_ids`; the plan Soll allocation stays
+unchanged. Derivation returns `0.00` for an owner without booked payments and retains the
+net booked/reversed payment rules and the property's settlement period.
+
+An empty or whitespace-only paid amount is an unentered value, refused with the existing
+`owner_payment_coverage_missing` blocker in `financial_inputs_incomplete`. Invalid or non-finite
+amounts use `invalid_decimal`. Both responses include `field: paid_total`, `owner_profile_id`
+and a German message naming the owner and the Hausgeld amount to enter. Names are resolved
+only after checking the draft's financial source authority and roster membership. The page
+shows this message through the existing structured-error client.
 Payment details start as unknown; zero amounts require an explicit entry and completeness
 confirmation. A seller until 30.06.2026 and a buyer from 01.07. receive 181/184 EUR for
 actual annual costs of 365 EUR. This flow is verified in the browser, including voucher
@@ -1082,3 +1094,32 @@ or contact-source access. Its deletion metadata then reports only the generic
 German access restriction, without disclosing hidden bookings or other evidence.
 Saving a reserve opening through the input-coverage declaration refreshes both
 the ledger and the draft's deletion eligibility immediately on both pages.
+
+
+## Special-levy resolution authority (#203)
+
+New special levies require a recorded `ANGENOMMEN` resolution from the same
+property and organization. The service checks that recorded result without
+adjudicating votes or quorum. Missing/null references return 422 with
+“Eine Sonderumlage braucht einen Beschluss.” and save nothing; inaccessible or
+foreign references return 404. The existing whole-property WEG scope, due-date
+ownership basis, MEA rounding and source permissions remain authoritative.
+
+Historical unlinked levies continue to feed owner accounts and dunning. The page
+labels them “ohne Beschlussbezug”; a writer with the scope's prepare capability
+can assign an adopted resolution once with `PUT /api/special-levies/{id}/resolution`.
+The database permits only the first reference update and preserves every other
+header column and frozen allocation. Identical retries return the same result;
+competing different links have one winner, with 409 for the other. A successful
+first link records `special_levy.resolution_linked` once. Native archive import
+and operator restore retain historical INSERT compatibility, including null
+references; import selects the archived scope for each header’s native RLS checks
+and restores the prior context afterwards. It does not use ordinary new-creation
+validation.
+
+The register's API/page shows only levy summaries permitted by their native RLS
+and financial/source disclosure grants. A levy links back to the resolution's
+meeting date and TOP, using the frozen register meeting date when available.
+A 1,200 EUR levy on 600/400 MEA yields 720/480 EUR due 1 July 2026; the API/browser
+scenario in [special_levy.feature](../features/special_levy.feature) uses the
+adopted roof repair of 15 May 2026, TOP 3. See [operation](operations/weg.md).

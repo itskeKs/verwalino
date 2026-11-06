@@ -40,7 +40,13 @@ def _stop(process):
 
 
 @pytest.fixture(scope="session")
-def browser_app(seed_data, request):
+def browser_storage():
+    with tempfile.TemporaryDirectory(prefix="verwalino-browser-") as storage:
+        yield storage
+
+
+@pytest.fixture(scope="session")
+def browser_app(seed_data, request, browser_storage):
     """Use an explicit external target or own a guarded local stack."""
     if target_url():
         yield target_url()
@@ -62,7 +68,7 @@ def browser_app(seed_data, request):
     env.update(HV_DECLARATION_IMPORT_ENABLED="false", HV_INVOICE_EXTRACTION_ENABLED="false")
     env["HV_DEPLOYMENT_MODE"] = get_deployment_policy().deployment_mode
     commands = [
-        ([sys.executable, "-m", "uvicorn", "app.main:app", "--host", "127.0.0.1", "--port", "18000"], ROOT / "backend", "http://127.0.0.1:18000/api/health/live"),
+        ([sys.executable, "-m", "uvicorn", "tests.dunning_response_app:app", "--host", "127.0.0.1", "--port", "18000"], ROOT / "backend", "http://127.0.0.1:18000/api/health/live"),
         (["node", "node_modules/vite/bin/vite.js", "--host", "127.0.0.1", "--port", "13000", "--strictPort"], ROOT / "frontend", BASE_URL),
     ]
     def interrupt(signum, frame):
@@ -71,8 +77,7 @@ def browser_app(seed_data, request):
     with ExitStack() as stack:
         previous_handler = signal.signal(signal.SIGTERM, interrupt)
         stack.callback(signal.signal, signal.SIGTERM, previous_handler)
-        storage = stack.enter_context(tempfile.TemporaryDirectory(prefix="verwalino-browser-"))
-        env["HV_DOCUMENT_STORAGE_ROOT"] = storage
+        env["HV_DOCUMENT_STORAGE_ROOT"] = browser_storage
         reporter = request.config.pluginmanager.getplugin("scenario-report")
         for (command, directory, url), name in zip(commands, ("backend", "vite")):
             if reporter:

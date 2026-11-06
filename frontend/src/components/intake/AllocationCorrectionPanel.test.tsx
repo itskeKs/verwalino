@@ -24,6 +24,34 @@ it('requires a reason and all three deliberate acknowledgments; edits reset them
   expect(confirm).toBeDisabled(); expect(screen.getAllByRole('checkbox').every(box => !(box as HTMLInputElement).checked)).toBe(true);
   expect(fetch).toHaveBeenCalledTimes(1);
 });
+it('requires explicit successor IDs and prevents selections that overfill a proposed part', async () => {
+  const base = amounts.costs[0];
+  const coveredPreview = { ...preview, old: { ...amounts, costs: [
+    { ...base, cost_entry_id: 'old-1', bank_covered_amount: '30.00' },
+    { ...base, position: 2, cost_entry_id: 'old-2', bank_covered_amount: '40.00' },
+  ] }, proposed: { ...amounts, costs: [
+    { ...base, allocation_line_id: 'line-1', gross_amount: '59.00' },
+    { ...base, position: 2, allocation_line_id: 'line-2', gross_amount: '60.00' },
+  ] } };
+  const requests: Record<string, unknown>[] = [];
+  vi.stubGlobal('fetch', vi.fn(async (_url: string, options: RequestInit) => {
+    if (options.method !== 'POST') return json(coveredPreview);
+    requests.push(JSON.parse(options.body as string)); return json(receipt, 201);
+  }));
+  render(<AllocationCorrectionPanel {...props} />); await complete();
+  const confirm = screen.getByRole('button', { name: 'Gesamte Aufteilung verbindlich korrigieren' });
+  const first = screen.getByRole('combobox', { name: /Nachfolger für Teil 1/ });
+  const second = screen.getByRole('combobox', { name: /Nachfolger für Teil 2/ });
+  expect(confirm).toBeDisabled();
+  fireEvent.change(first, { target: { value: 'line-2' } });
+  fireEvent.change(second, { target: { value: 'line-2' } });
+  expect(confirm).toBeDisabled();
+  expect(screen.getByRole('alert')).toHaveTextContent('übersteigen den Betrag');
+  fireEvent.change(second, { target: { value: 'line-1' } });
+  expect(confirm).toBeEnabled();
+  fireEvent.click(confirm);
+  await waitFor(() => expect(requests[0]).toMatchObject({ bank_coverage_successors: { 'old-1': 'line-2', 'old-2': 'line-1' } }));
+});
 it('retains the exact unknown command and predecessor through head/review refresh, then reloads current receipts', async () => {
   const posts: { url: string; options: RequestInit }[] = []; let fail = true;
   vi.stubGlobal('fetch', vi.fn(async (url: string, options: RequestInit) => {

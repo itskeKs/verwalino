@@ -348,6 +348,55 @@ New screens follow these page structures and use a German noun as their `h1`.
   open as a card above the list; small edits of master data open `MasterDataEditor` as a dialog.
   Selects, checkboxes and file inputs are the native elements.
 
+Form-grid tracks, direct children and fieldsets may shrink below their content's
+intrinsic width. Native controls stay within their grid cell at 360 px even when
+an unselected option has a long property name. Tasks filters, Letters forms and person document uploads
+use this shared behavior. Standalone native selectors in Reports, Costs, Special
+Levies, Meetings, Resolution Register and Payments are capped at their available
+width while retaining their natural desktop width when it fits. Option text remains complete in the native list, and focus
+indicators remain visible without horizontal page scrolling.
+
+The Tasks create/edit dialog allows both its form grid item and its fieldset to
+shrink with `min-w-0`. This bounds the native property selector and surrounding
+labels to the dialog, including before selection; page width alone does not detect
+clipping inside a modal. The existing single-column form, values and Save/Cancel
+behavior remain unchanged. These synthetic long-selection captures use 360 × 800
+and 1280 × 900 viewports with keyboard focus on the object selector.
+
+| Tasks dialog | 1280 px before / after | 360 px before / after |
+|---|---|---|
+| Create | [before](docs/assets/design/property-selectors/task-dialog-create-before-1280.png) · [after](docs/assets/design/property-selectors/task-dialog-create-after-1280.png) | [before](docs/assets/design/property-selectors/task-dialog-create-before-360.png) · [after](docs/assets/design/property-selectors/task-dialog-create-after-360.png) |
+| Edit | [before](docs/assets/design/property-selectors/task-dialog-edit-before-1280.png) · [after](docs/assets/design/property-selectors/task-dialog-edit-after-1280.png) | [before](docs/assets/design/property-selectors/task-dialog-edit-before-360.png) · [after](docs/assets/design/property-selectors/task-dialog-edit-after-360.png) |
+
+The following captures use synthetic long and short WEG properties on the disposable
+test database. Each selector has keyboard focus; long-name captures follow keyboard
+selection. Desktop is 1280 × 900 px and phone is 360 × 900 px.
+
+| Property selector | Desktop before / after | 360 px before / after |
+|---|---|---|
+| Tasks, unselected | [before](docs/assets/design/property-selectors/before-tasks-empty-1280.png) · [after](docs/assets/design/property-selectors/after-tasks-empty-1280.png) | [before](docs/assets/design/property-selectors/before-tasks-empty-360.png) · [after](docs/assets/design/property-selectors/after-tasks-empty-360.png) |
+| Tasks, long name | [before](docs/assets/design/property-selectors/before-tasks-long-1280.png) · [after](docs/assets/design/property-selectors/after-tasks-long-1280.png) | [before](docs/assets/design/property-selectors/before-tasks-long-360.png) · [after](docs/assets/design/property-selectors/after-tasks-long-360.png) |
+| Letters, unselected | [before](docs/assets/design/property-selectors/before-letters-empty-1280.png) · [after](docs/assets/design/property-selectors/after-letters-empty-1280.png) | [before](docs/assets/design/property-selectors/before-letters-empty-360.png) · [after](docs/assets/design/property-selectors/after-letters-empty-360.png) |
+| Letters, long name | [before](docs/assets/design/property-selectors/before-letters-long-1280.png) · [after](docs/assets/design/property-selectors/after-letters-long-1280.png) | [before](docs/assets/design/property-selectors/before-letters-long-360.png) · [after](docs/assets/design/property-selectors/after-letters-long-360.png) |
+| Reports, unselected | [before](docs/assets/design/property-selectors/before-reports-empty-1280.png) · [after](docs/assets/design/property-selectors/after-reports-empty-1280.png) | [before](docs/assets/design/property-selectors/before-reports-empty-360.png) · [after](docs/assets/design/property-selectors/after-reports-empty-360.png) |
+| Reports, long name | [before](docs/assets/design/property-selectors/before-reports-long-1280.png) · [after](docs/assets/design/property-selectors/after-reports-long-1280.png) | [before](docs/assets/design/property-selectors/before-reports-long-360.png) · [after](docs/assets/design/property-selectors/after-reports-long-360.png) |
+
+Additional affected selectors use the same synthetic records and keyboard checks.
+Costs and expanded cost-form after captures also include a saved `1250.00`
+gardening cost for each property. The table remains populated after filtering and
+scrolls within its card; the original before captures predate these cost fixtures.
+The Payments option combines the account label and full property name.
+
+| View, long selection | Desktop before / after | 360 px before / after |
+|---|---|---|
+| Costs | [before](docs/assets/design/property-selectors/before-costs-long-1280.png) · [after](docs/assets/design/property-selectors/after-costs-long-1280.png) | [before](docs/assets/design/property-selectors/before-costs-long-360.png) · [after](docs/assets/design/property-selectors/after-costs-long-360.png) |
+| Special Levies | [before](docs/assets/design/property-selectors/before-levies-long-1280.png) · [after](docs/assets/design/property-selectors/after-levies-long-1280.png) | [before](docs/assets/design/property-selectors/before-levies-long-360.png) · [after](docs/assets/design/property-selectors/after-levies-long-360.png) |
+| Meetings | [before](docs/assets/design/property-selectors/before-meetings-long-1280.png) · [after](docs/assets/design/property-selectors/after-meetings-long-1280.png) | [before](docs/assets/design/property-selectors/before-meetings-long-360.png) · [after](docs/assets/design/property-selectors/after-meetings-long-360.png) |
+| Resolution Register | [before](docs/assets/design/property-selectors/before-resolutions-long-1280.png) · [after](docs/assets/design/property-selectors/after-resolutions-long-1280.png) | [before](docs/assets/design/property-selectors/before-resolutions-long-360.png) · [after](docs/assets/design/property-selectors/after-resolutions-long-360.png) |
+| Payments account | [before](docs/assets/design/property-selectors/before-payments-long-1280.png) · [after](docs/assets/design/property-selectors/after-payments-long-1280.png) | [before](docs/assets/design/property-selectors/before-payments-long-360.png) · [after](docs/assets/design/property-selectors/after-payments-long-360.png) |
+| Person document upload | [before](docs/assets/design/property-selectors/before-person-long-1280.png) · [after](docs/assets/design/property-selectors/after-person-long-1280.png) | [before](docs/assets/design/property-selectors/before-person-long-360.png) · [after](docs/assets/design/property-selectors/after-person-long-360.png) |
+| Expanded cost form | [before](docs/assets/design/property-selectors/before-costform-long-1280.png) · [after](docs/assets/design/property-selectors/after-costform-long-1280.png) | [before](docs/assets/design/property-selectors/before-costform-long-360.png) · [after](docs/assets/design/property-selectors/after-costform-long-360.png) |
+
 The “Umsatz aufteilen” dialog uses the same form grid. Each split row is a
 full-width card with labels above its fields, two columns from 768 px and one
 column below. The lease/owner target and note span the row. Fieldsets may shrink
@@ -550,6 +599,12 @@ and use the existing `.btn` style for reload, completion and pagination.
 The dashboard's rent KPI form allows its labels to shrink so long property options
 stay within the card, including before a property is selected.
 
+The populated `/kosten` list uses `card overflow-x-auto`: its seven columns remain
+available by scrolling within the card at 360 px. Dates, categories, properties,
+amounts, status, source and keyboard-reachable `Details` links retain their existing
+content. Filtering and opening the creation form keep this table containment.
+Creation-form selector sizing is tracked separately in #284.
+
 The dunning notice detail puts `Hauptforderung` and `Zinsen` first in its frozen
 interest table, and `Offen`, `Soll`, `Ist` before period and type in its arrears
 table. Monetary cells stay unbroken; principal, interest and open amounts are
@@ -571,6 +626,48 @@ issue times on 5 November 2026 and the explicitly stored 8 April interest start:
 |---|---|---|
 | Before | [View](docs/assets/design/dunning-notice/before-1280.png) | [View](docs/assets/design/dunning-notice/before-360.png) |
 | After | [View](docs/assets/design/dunning-notice/after-1280.png) | [View](docs/assets/design/dunning-notice/after-360.png) |
+
+Under **Mahnungen**, the collapsible **Mahneinstellungen** card contains three
+labelled EUR fields and **Verzugszinsen automatisch berechnen**. The card uses
+the standard responsive form grid, with fees stacked at 360 px. Organization
+administrators can save the form and receive an inline confirmation. Other members
+can read the fees and switch state. New individual notices and batch previews use
+the saved organization policy. The batch form uses the same responsive grid.
+
+When the calculation requires an accounting scope and none was selected,
+the existing error above **Neue Mahnung anlegen** says „Wählen Sie einen
+eindeutigen Abrechnungskreis und prüfen Sie noch nicht zugeordnete Daten,
+bevor Sie die Zahlungen berechnen.“ The form keeps its inputs for retry
+and no draft is created.
+
+| Required accounting scope refusal | 1280 px | 360 px |
+|---|---|---|
+| Before | [View](docs/assets/design/dunning-scope-refusal/before-1280.png) | [View](docs/assets/design/dunning-scope-refusal/before-360.png) |
+| After | [View](docs/assets/design/dunning-scope-refusal/after-1280.png) | [View](docs/assets/design/dunning-scope-refusal/after-360.png) |
+
+The frozen calculation shows the statutory premium and a separate table of
+**Zinsabschnitte** with the date range, amount, principal, annual and base rates
+and day count. The tenant account shows fees and interest in an **Ausgestellte
+Mahnungen** section below the account items. Its amounts use German currency
+formatting and have no effect on Soll, Ist or Saldo. An unscoped tenant ledger
+links to **Mahnungen** for older notices without a verified lease assignment.
+
+Synthetic browser captures at 1280 px and 360 px show the same April arrears
+before and after the policy change. The level-2 PDF changes from a 5.00 EUR fee
+and 3.70 EUR at one rate to a saved 3.00 EUR fee and 3.64 EUR across two rates.
+
+| Surface | 1280 px | 360 px |
+|---|---|---|
+| Dunning settings | [before](docs/assets/design/dunning-settings/settings-before-1280.png) · [after](docs/assets/design/dunning-settings/settings-after-1280.png) | [before](docs/assets/design/dunning-settings/settings-before-360.png) · [after](docs/assets/design/dunning-settings/settings-after-360.png) |
+| Individual notice form | [before](docs/assets/design/dunning-settings/new-notice-before-1280.png) · [after](docs/assets/design/dunning-settings/new-notice-after-1280.png) | [before](docs/assets/design/dunning-settings/new-notice-before-360.png) · [after](docs/assets/design/dunning-settings/new-notice-after-360.png) |
+| Issued detail | [before](docs/assets/design/dunning-settings/detail-before-1280.png) · [after](docs/assets/design/dunning-settings/detail-after-1280.png) | [before](docs/assets/design/dunning-settings/detail-before-360.png) · [after](docs/assets/design/dunning-settings/detail-after-360.png) |
+| Tenant ledger | [before](docs/assets/design/dunning-settings/ledger-before-1280.png) · [after](docs/assets/design/dunning-settings/ledger-after-1280.png) | [before](docs/assets/design/dunning-settings/ledger-before-360.png) · [after](docs/assets/design/dunning-settings/ledger-after-360.png) |
+| Unscoped tenant ledger history link | [before](docs/assets/design/dunning-settings/ledger-history-before-1280.png) · [after](docs/assets/design/dunning-settings/ledger-history-after-1280.png) | [before](docs/assets/design/dunning-settings/ledger-history-before-360.png) · [after](docs/assets/design/dunning-settings/ledger-history-after-360.png) |
+| Dunning batch form | [before](docs/assets/design/dunning-settings/batch-before-1280.png) · [after](docs/assets/design/dunning-settings/batch-after-1280.png) | [before](docs/assets/design/dunning-settings/batch-before-360.png) · [after](docs/assets/design/dunning-settings/batch-after-360.png) |
+
+Issued PDF renderings in A4 format
+[before](docs/assets/design/dunning-settings/pdf-before.png) and
+[after](docs/assets/design/dunning-settings/pdf-after.png).
 
 The WEG settlement detail follows this contract: `settlement-detail` wraps long owner
 names and the complete snapshot SHA-256. Each individual statement uses its own
@@ -634,7 +731,9 @@ typo of `btn--primary`), `badge--warning`, `form-hint`, `table-responsive`.
 
 - **Lease documents.** Each lease in unit detail offers “Mietvertrag erstellen” and a retained
   document history. The kit dialog displays “Vorlage; rechtliche Prüfung erforderlich”, an issue
-  date, handover date and a clearly labelled free-text agreement block before saving. The PDF link
+  date, handover date and a clearly labelled free-text agreement block before saving. Its help
+  states that rent amounts apply on the chosen document date or the last tenancy day for a later
+  document. The PDF link
   appears only after issuance succeeds. Inputs remain available after failure; readers see history
   without creation actions. Labels and long names wrap inside the available width.
   The “Übergabeprotokoll” kit dialog captures move-in/out, date, present parties, latest unit-meter
@@ -646,7 +745,29 @@ typo of `btn--primary`), `badge--warning`, `form-hint`, `table-responsive`.
   save keeps inputs, and success reveals the retained PDF and refreshes the unit meter history.
   Network and access failures use German feedback and preserve the draft.
   “Briefe” lists the additional landlord/unit/lease placeholders and explains the single selected
-  original lease used for a recipient with multiple leases.
+  lease used for a recipient with multiple leases. Rent values follow the selected document date.
+  `vertrag.mietaufstellung` supplies the complete rent section shared with the built-in contract.
+  Positive heating produces separate “Betriebskosten-Vorauszahlung”, “Heizkosten-Vorauszahlung”
+  and “Monatliche Gesamtmiete” lines, including in the existing `vertrag.vorauszahlung` placeholder.
+  Zero heating keeps that placeholder a single amount and unchanged leases retain the previous
+  contract text. Changed rates use “Stand DD.MM.YYYY” instead of “Originalvertrag”. The help names
+  the multiline expansion so authors can place the placeholder on its own line.
+  At tenancy end the summary uses the last tenancy day's date and monthly total, including at
+  zero heating. The contract's document date remains separate. A circular continues to select
+  tenants on its **Stichtag**, which also appears as the date on the letter.
+
+  Synthetic browser captures for the dated rent controls and the
+  [issued contract PDF](docs/assets/design/dated-rent-documents/contract-pdf.png).
+
+  | Surface | Before at 1280 px | After at 1280 px | Before at 360 px | After at 360 px |
+  | --- | --- | --- | --- | --- |
+  | Letter placeholder help | [Before](docs/assets/design/dated-rent-documents/letters-before-1280.png) | [After](docs/assets/design/dated-rent-documents/letters-after-1280.png) | [Before](docs/assets/design/dated-rent-documents/letters-before-360.png) | [After](docs/assets/design/dated-rent-documents/letters-after-360.png) |
+  | Contract dialog | [Before](docs/assets/design/dated-rent-documents/contract-before-1280.png) | [After](docs/assets/design/dated-rent-documents/contract-after-1280.png) | [Before](docs/assets/design/dated-rent-documents/contract-before-360.png) | [After](docs/assets/design/dated-rent-documents/contract-after-360.png) |
+  | Contract dialog for an ended tenancy | [Before](docs/assets/design/dated-rent-documents/ended-before-1280.png) | [After](docs/assets/design/dated-rent-documents/ended-after-1280.png) | [Before](docs/assets/design/dated-rent-documents/ended-before-360.png) | [After](docs/assets/design/dated-rent-documents/ended-after-360.png) |
+
+  The same ended tenancy yields EUR 850 in the
+  [April contract](docs/assets/design/dated-rent-documents/ended-contract-pdf.png) and
+  [February circular](docs/assets/design/dated-rent-documents/ended-letter-pdf.png).
 
 - **Tables.** Legacy: `<div class="card paged-table"><table class="data-table">`. Kit:
   `Card > CardContent p-0 > div.overflow-x-auto > table.data-table` (`MandatePage.tsx`). First column is
@@ -826,21 +947,42 @@ inline expressions, with the variants below. The inconsistencies are tracked in 
 | Empty value | `—` (kit, newer pages), `-` (older tables), `–` (`BankTransactionsPage.tsx`) | `MandatePage.tsx`, `InvoiceDocumentsPage.tsx`, `BankTransactionsPage.tsx`, respectively |
 | Money input | accept `1234,56` and `1234.56`, send `1234.56` | `moneyInput`, `exactCents`, `normalizePlanAmount` (see above) |
 
-### Tenant rent account due-date split
+### Rent and owner account due-date split
 
 “Mietkonto” retains the full reporting period and adds the labelled date input
-“Fällig am *” for the tenant view, defaulting to the local current date. Changing
+“Fällig am *” for tenant and owner views, defaulting to the local current date. Changing
 it clears the previous result until “Abrufen” loads the selected cutoff.
 The legacy summary table keeps “Soll gesamt”, “Ist gesamt” and “Saldo”; a positive
-tenant Saldo has no arrears suffix or warning colour. Two rows follow:
+Saldo has no arrears suffix or warning colour. Two rows follow:
 “davon fällig” (positive: “Rückstand”, destructive token; negative: “Guthaben”,
 emerald) and “noch nicht fällig” (neutral). Signed amounts retain the page's
 existing decimal-string `EUR` notation. The detail rows keep the same amounts
 and show the backend due classification
 below the period: “fällig” or “noch nicht fällig” for nonzero signed amounts,
-“ausgeglichen” for zero. Positive tenant open amounts remain neutral; credits
+“ausgeglichen” for zero. Positive open amounts remain neutral; credits
 never carry an arrears label.
-Owner view retains its existing summary and colours and has no cutoff input.
+Owner rows also show “Fällig am DD.MM.YYYY” from the backend, including the
+resolved working-day shift. The full-period balance stays visible as the cutoff changes.
+
+The economic-plan detail displays “Fälligkeit: jeweils zum N. des Monats”
+below its title, using the stored day and showing 1 for historical NULL.
+The creation form defaults to 1, accepts days 1–28, and treats an empty entry
+as the default. Historical explicit values remain visible as stored.
+For historical days 29–31 absent from a month, owner rows show the derived
+month-end date after its working-day shift; the plan label keeps the stored day.
+
+Synthetic 600 EUR monthly Hausgeld, due day 3, at desktop and 360 px:
+
+| Screen | Before desktop | Before 360 px | After desktop | After 360 px |
+|---|---|---|---|---|
+| New plan | [View](docs/assets/design/hausgeld-due/before-create-1280.png) | [View](docs/assets/design/hausgeld-due/before-create-360.png) | [View](docs/assets/design/hausgeld-due/after-create-1280.png) | [View](docs/assets/design/hausgeld-due/after-create-360.png) |
+| Finalized plan | [View](docs/assets/design/hausgeld-due/before-plan-1280.png) | [View](docs/assets/design/hausgeld-due/before-plan-360.png) | [View](docs/assets/design/hausgeld-due/after-plan-1280.png) | [View](docs/assets/design/hausgeld-due/after-plan-360.png) |
+| Owner ledger | [View](docs/assets/design/hausgeld-due/before-ledger-1280.png) | [View](docs/assets/design/hausgeld-due/before-ledger-360.png) | [View](docs/assets/design/hausgeld-due/after-ledger-1280.png) | [View](docs/assets/design/hausgeld-due/after-ledger-360.png) |
+
+| Historical day 31, February 2026 | 1280 px | 360 px |
+|---|---|---|
+| Stored plan day | [View](docs/assets/design/hausgeld-due/legacy-plan-1280.png) | [View](docs/assets/design/hausgeld-due/legacy-plan-360.png) |
+| Derived due date 02.03.2026 | [View](docs/assets/design/hausgeld-due/legacy-ledger-1280.png) | [View](docs/assets/design/hausgeld-due/legacy-ledger-360.png) |
 
 The existing form grid wraps the date input at 360 px. Synthetic full-year
 900 EUR rent, 100 EUR unpaid in April, cutoff 01.11.2026:
@@ -1007,6 +1149,16 @@ same. The current dashboard and property-list images below are refreshed on the 
 The resize pair follows keyboard selection of “Objekte” at 360 px and widening the closed drawer
 to 1280 px. Before the correction focus fell to the page body; afterward the active “Objekte”
 navigation link receives visible focus without another keyboard or pointer action.
+
+The cost list uses six synthetic costs for Aprilhaus and Maihaus, including a
+confirmed gardening cost dated `2026-12-31` for `1250.00`. The mobile before image
+shows the table widening the main page; the after image retains all columns in a
+scrollable card. Desktop keeps the same columns and values.
+
+| Cost table | 1280 px | 360 px |
+|---|---|---|
+| Before | [Desktop](docs/assets/design/cost-table-before-1280.png) | [Phone](docs/assets/design/cost-table-before-360.png) |
+| After | [Desktop](docs/assets/design/cost-table-after-1280.png) | [Phone](docs/assets/design/cost-table-after-360.png) |
 
 Property MEA guidance uses new synthetic MIET and WEG properties on the disposable test
 database, showing the page top and new-unit card at 1280 and 360 CSS px. MIET has neither the scale
@@ -1479,3 +1631,121 @@ stack. The live entry uses the real registration day, not the fixed historic
 | --- | --- | --- |
 | Before | [Desktop](docs/assets/design/register-dates-before-1280.png) | [Phone](docs/assets/design/register-dates-before-360.png) |
 | After | [Desktop](docs/assets/design/register-dates-after-1280.png) | [Phone](docs/assets/design/register-dates-after-360.png) |
+
+
+### Special-levy resolution reference
+
+The Sonderumlagen creation card adds the required “Beschluss *” selector. Choices
+are recorded adopted resolutions of the selected property, labelled with German
+meeting date, TOP and wording. Source loading failures remain visible and can be
+retried; changing the property clears the selection. Existing amount/date inputs
+remain intact after a refused save.
+Clicking “Sonderumlage anlegen” without a selection keeps the native required
+constraint and displays “Eine Sonderumlage braucht einen Beschluss.” in the
+page's alert instead of the browser's default validation bubble. No request is sent.
+
+Unlinked historical levy cards show “ohne Beschlussbezug”. A writer who selects
+the same prepare scope can use “Beschluss einmalig zuordnen” and “Beschluss
+zuordnen”. The hint explains that the reference is permanent and the amount,
+due date and shares remain unchanged. After confirmation, the form becomes the
+resolution link, for example “15.05.2026 · TOP 3”. The fixed allocation table scrolls
+inside its card on narrow screens.
+
+In the Beschluss-Sammlung, disclosed levy links sit beneath the wording, for
+example “Sonderumlage 1.200,00 €, fällig 01.07.2026”. They open the levy card in its
+explicit read scope. Existing horizontal register-table scrolling remains in use
+at 360 px. Register access alone grants no financial disclosure.
+
+| Resolution levy | Desktop | 360 px |
+| --- | --- | --- |
+| Levy before | [Desktop](docs/assets/design/levy-page-before-1280.png) | [Phone](docs/assets/design/levy-page-before-360.png) |
+| Levy after | [Desktop](docs/assets/design/levy-page-after-1280.png) | [Phone](docs/assets/design/levy-page-after-360.png) |
+| Missing resolution before | [Desktop](docs/assets/design/levy-missing-resolution-before-1280.png) | [Phone](docs/assets/design/levy-missing-resolution-before-360.png) |
+| Missing resolution after | [Desktop](docs/assets/design/levy-missing-reference-after-1280.png) | [Phone](docs/assets/design/levy-missing-reference-after-360.png) |
+| Register before | [Desktop](docs/assets/design/levy-register-before-1280.png) | [Phone](docs/assets/design/levy-register-before-360.png) |
+| Register after | [Desktop](docs/assets/design/levy-register-after-1280.png) | [Phone](docs/assets/design/levy-register-after-360.png) |
+
+
+### Commercial preallocation in tenant drafts (#202)
+
+The draft detail offers a “Vorwegabzug Gewerbe” card only when the property has
+at least one commercial unit. Eligible active cost positions use fieldsets with
+the existing form-grid: “Vorwegabzug” selects “Kein Vorwegabzug”, “Prozent” or
+“Festbetrag”; the latter two reveal “Gewerbeanteil (%)” or “Festbetrag (EUR)”
+and the full-width “Begründung” textarea. Decimal comma/dot parsing reuses the
+existing exact string parser. No default share is inferred. Blank reasons and
+invalid values keep inputs, show a German alert and associate the invalid field
+with its explanation. Server refusals retain the entered rule.
+Loaded rules are displayed without becoming edit commands. Requests send only
+positions explicitly edited or removed in this tab. Successful calculation or
+finalization refreshes the displayed rules from the response and clears those
+commands; preview and failed requests retain unsaved edits.
+
+The card explains that “Berechnen” saves a position rule for every affected
+tenant statement, “Vorschau” is temporary, and first finalization locks the rule.
+Internal heating and direct-amount positions do not offer the incompatible rule.
+The existing statement note displays “Vorwegabzug Gewerbe” with its actual
+amount and reason. PDF rules use a full-width explanation immediately below the
+cost position, with escaped/wrapped text. Legacy frozen rows retain their layout.
+
+Synthetic test-database evidence (1280 and 360 px):
+
+| Commercial preallocation | Desktop | 360 px |
+| --- | --- | --- |
+| Before | [View](docs/assets/design/commercial-preallocation/before-1280.png) | [View](docs/assets/design/commercial-preallocation/before-360.png) |
+| After | [View](docs/assets/design/commercial-preallocation/after-1280.png) | [View](docs/assets/design/commercial-preallocation/after-360.png) |
+
+
+### Existing-cost bank assignment (#164)
+
+For outgoing transactions, “Umsatz aufteilen” defaults to “Bestehende Kostenposition”.
+The “Zuordnen als” selector retains “Zahlung (z. B. Erstattung oder Rücklagenentnahme)”
+for the existing payment form. Incoming transactions retain their payment split.
+The cost form uses the shared full-width form grid and bottom actions. Native
+selectors stay within the dialog at 360 px, including long German option labels.
+“Kostenposition” lists only current confirmed same-property costs with remaining
+bank coverage; labels show document number (or invoice date), “offen” and “gesamt”.
+Selecting one shows “Nach Zuordnung noch offen”. Excessive coverage disables
+“Kostenposition zuordnen” with a German error. Failed requests keep the selection;
+“Kostenpositionen neu laden” refreshes availability. Empty and loading states report
+the actual cost list. Successful matching reports “Umsatz zugeordnet.” and updates
+the bank status. No payment/cost creation is implied by this action.
+
+Synthetic −60.00 EUR electricity debit and a confirmed 120.00 EUR position:
+
+| | Desktop | 360 px |
+| --- | --- | --- |
+| Before | [view](docs/assets/design/bank-cost-assignment/before-1280.png) | [view](docs/assets/design/bank-cost-assignment/before-360.png) |
+| After | [view](docs/assets/design/bank-cost-assignment/after-1280.png) | [view](docs/assets/design/bank-cost-assignment/after-360.png) |
+
+For a reviewed allocation correction with assigned debits, “Bankumsätze übernehmen”
+shows each covered old part with its covered amount and an initially empty successor
+selector. Options identify the proposed parts by their visible position and amount;
+the selection uses the reviewed line ID. Parts below the required amount are
+disabled, and confirmation requires valid selections whose combined coverage fits
+each target. The controls use the same full-width fields as the existing review.
+The original bank link stays visible on the original transaction.
+
+Synthetic 119.00 EUR invoice, old parts 59.00 and 60.00 EUR, and a 60.00 EUR debit:
+
+| Reviewed correction | Desktop | 360 px |
+| --- | --- | --- |
+| Before | [view](docs/assets/design/bank-cost-correction/before-1280.png) | [view](docs/assets/design/bank-cost-correction/before-360.png) |
+| After | [view](docs/assets/design/bank-cost-correction/after-1280.png) | [view](docs/assets/design/bank-cost-correction/after-360.png) |
+
+### WEG paid Hausgeld input errors (#183)
+
+“Aus Zahlenstand übernehmen” fills every authorized period/plan owner, including a
+mid-year buyer; owners without booked payments receive `0.00`. Clearing Lena Roth's
+amount and pressing “Berechnen” keeps the inputs and displays the server message:
+“Bitte geben Sie das tatsächlich gezahlte Hausgeld für Lena Roth an, auch bei 0,00 €.”
+Malformed or non-finite amounts ask for a valid Hausgeld amount for the named owner.
+The existing action-error card uses `detail.message`; classification uses the structured
+code, field and owner identifier. The plan Soll and frozen statement displays are unchanged.
+
+Synthetic Gartenstraße 5, Anna/Karl/Lena paid 7200/2400/2400 EUR; Lena's amount then cleared:
+
+| | Desktop | 360 px |
+| --- | --- | --- |
+| Before | [view](docs/assets/design/issue-183-before/paid-hausgeld-1280.png) | [view](docs/assets/design/issue-183-before/paid-hausgeld-360.png) |
+| After | [view](docs/assets/design/issue-183-after/paid-hausgeld-1280.png) | [view](docs/assets/design/issue-183-after/paid-hausgeld-360.png) |

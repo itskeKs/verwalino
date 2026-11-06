@@ -182,6 +182,12 @@ refused before writes; ordinary import
 must not forge historical authority or private evidence. Database refusals expose
 only the entity/source IDs and a stable code, never SQL or target data.
 
+Readable exports include explicit bank coverage successors on costs corrected
+through reviewed allocations. Import continues to refuse reviewed documents
+without their private admission and rejects an explicit successor submitted
+without a native reviewed correction. Supported ordinary archives restore the
+original bank link and derive remaining coverage from the ordinary cost versions.
+
 ## Organization erasure
 
 `POST /api/organizations/deletion` creates a request and returns a retention
@@ -492,6 +498,7 @@ not an immutable field; a separate minimization policy remains an owner decision
 | `bank_transaction` | `import_hash`, `status` | Technical import digest and reconciliation status; counterparty and purpose fields are scrubbed. |
 | `context_decision` | `comparison_note`, `method`, `quotation`, `request_digest`, `snapshot`, `snapshot_digest`, `xml_path` | Retained source, scope or review evidence and its technical provenance. |
 | `cost_entry` | `document_number`, `owner_distribution_key`, `source`, `status`, `tenant_apportionable`, `tenant_distribution_key` | Frozen voucher content, accounting classifications and computation provenance. |
+| `commercial_preallocation` | `commercial_reason` | Shared position-allocation evidence. The existing guard-based catalog retains the protected rule; normal organization erasure preserves it and the statement's frozen copy under the existing retention decision. |
 | `coverage_declaration` | `component`, `reason`, `source_document_ids`, `source_revision`, `state`, `values` | Retained source, scope or review evidence and its technical provenance. |
 | `declaration_extraction_run` | `error_code`, `harness_version`, `model_name`, `prompt_version`, `provider`, `schema_version`, `status` | Technical operation/status/error codes, keys and digests; personal event payloads are scrubbed separately. |
 | `declaration_import` | `approval_idempotency_key`, `approval_request_digest`, `approval_result_json`, `current_stage`, `error_code`, `error_message`, `lease_owner`, `mode`, `status` | Retained source, scope or review evidence and its technical provenance. |

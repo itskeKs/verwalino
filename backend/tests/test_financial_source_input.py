@@ -45,6 +45,35 @@ async def test_rental_calculations_require_current_source_authority(client_a_adm
         assert (await client_a_admin.post(f'/api/settlements/{run}/finalize', json=_extras_for_exit(m3_seed))).status_code == 404
 
 
+async def test_commercial_rule_respects_source_revocation_and_never_writes_denied_inputs(client_a_admin, seed_data, m3_seed, migrator_session):
+    run = await draft(client_a_admin, m3_seed, '0.00')
+    values = {'heating_advance_payments_total': '0.00', 'heating_advance_payments_source': 'MANUAL',
+        'advance_payments_total': '0.00', 'advance_payments_source': 'MANUAL'}
+    assert (await attest(client_a_admin, 'settlement', run, values)).status_code == 201
+    await classify_property_finance(seed_data, m3_seed['property'], scope_type='MIET')
+    await grant_property_contacts(client_a_admin, seed_data, m3_seed['property'])
+    body = {**_extras_for_exit(m3_seed), 'commercial_preallocations': [{
+        'cost_entry_id': m3_seed['ce_grundsteuer'], 'commercial_share_percent': '50',
+        'commercial_amount': None, 'commercial_reason': 'Synthetic commercial burden'}]}
+    params = {'cost': uuid.UUID(m3_seed['ce_grundsteuer'])}
+    async with synthetic_enforcement(seed_data):
+        for action in ('compute', 'preview', 'finalize'):
+            answer = await client_a_admin.post(f'/api/settlements/{run}/{action}', json=body)
+            assert answer.status_code == 404, answer.text
+        assert await migrator_session.scalar(text('SELECT count(*) FROM commercial_preallocation WHERE cost_entry_id=:cost'), params) == 0
+        domain, receipt = await grant(client_a_admin, seed_data, m3_seed['property'], caps=['read'])
+        answer = await client_a_admin.post(f'/api/settlements/{run}/compute', json=body)
+        assert answer.status_code == 200, answer.text
+        assert (await client_a_admin.post(f'/api/property-data-domains/{domain}/grants/{receipt}/revoke')).status_code == 204
+        assert (await client_a_admin.get(f'/api/settlements/{run}')).status_code == 404
+        async with get_tenant_session(seed_data['org_a_id']) as db:
+            await db.execute(text("SELECT set_config('app.current_user_id',:actor,true)"), {'actor': str(seed_data['user_a_admin_id'])})
+            assert await db.scalar(text('SELECT count(*) FROM commercial_preallocation WHERE cost_entry_id=:cost'), params) == 0
+            updated = await db.execute(text("UPDATE commercial_preallocation SET commercial_reason='Denied edit' WHERE cost_entry_id=:cost"), params)
+            assert updated.rowcount == 0
+    assert await migrator_session.scalar(text('SELECT commercial_reason FROM commercial_preallocation WHERE cost_entry_id=:cost'), params) == 'Synthetic commercial burden'
+
+
 async def test_hidden_unproven_source_cannot_produce_plan_or_coverage(client_a_admin, seed_data, m4_seed):
     # Registry evidence is retained. Isolate the blocked original from the
     # shared financial property instead of deleting its registered source.

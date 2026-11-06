@@ -32,8 +32,7 @@ Fläche: {{einheit.flaeche}}
 
 Mietbeginn: {{vertrag.beginn}}
 Mietende: {{vertrag.ende}}
-Monatliche Kaltmiete (Originalvertrag): {{vertrag.kaltmiete}}
-Monatliche Vorauszahlung (Originalvertrag): {{vertrag.vorauszahlung}}
+{{vertrag.mietaufstellung}}
 Kaution: {{vertrag.kaution}}
 Übergabedatum: {{vertrag.uebergabe}}
 

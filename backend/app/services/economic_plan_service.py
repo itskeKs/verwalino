@@ -323,7 +323,7 @@ class EconomicPlanService:
             plan_year=plan_year,
             period_start=period_start if explicit_period else None,
             period_end=period_end if explicit_period else None,
-            monthly_due_day=monthly_due_day,
+            monthly_due_day=monthly_due_day if monthly_due_day is not None else 1,
             reserve_contribution_total=reserve_contribution_total or Decimal("0.00"),
             status="draft",
             engine_version=ENGINE_VERSION,

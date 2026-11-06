@@ -3,6 +3,9 @@
 from __future__ import annotations
 
 from pathlib import Path
+import uuid
+
+from sqlalchemy import text
 
 import pytest
 
@@ -77,7 +80,18 @@ async def finance_seeded(sweep, worker_tenant, scope_seed, store, migrator_sessi
     await upload(api)
 
     # Accounting scopes last: they bind nothing, but a scoped property would change the creates above.
-    await scope_fixture(migrator_session, scope_seed)
+    own = await scope_fixture(migrator_session, scope_seed)
+    await bind(migrator_session, own)
+    levy_ids = {**own, **{key: uuid.uuid4() for key in ('levy', 'unit', 'person', 'owner', 'history')}}
+    for statement in (
+        "INSERT INTO unit(id,organization_id,property_id,number,usage_type,mea) VALUES (:unit,:org,:property,'Levy isolation','WOHNUNG',1000)",
+        "INSERT INTO person(id,organization_id,first_name,last_name) VALUES (:person,:org,'Levy','Isolation')",
+        "INSERT INTO owner_profile(id,organization_id,person_id) VALUES (:owner,:org,:person)",
+        "INSERT INTO ownership_history(id,organization_id,unit_id,owner_profile_id,valid_from) VALUES (:history,:org,:unit,:owner,'2025-01-01')",
+        "INSERT INTO special_levy(id,organization_id,property_id,accounting_scope_id,amount,due_date) VALUES (:levy,:org,:property,:scope,100,'2025-06-01')",
+        "INSERT INTO special_levy_allocation(organization_id,property_id,special_levy_id,unit_id,owner_profile_id,ownership_history_id,mea,amount) VALUES (:org,:property,:levy,:unit,:owner,:history,1000,100)",
+    ):
+        await migrator_session.execute(text(statement), levy_ids)
     # B's own classified whole-property WEG scope: without one, B's unfiltered special-levy list is
     # refused and the sweep could not read it to scan for foreign levies. B's administrator holds the grant.
     own = await scope_fixture(migrator_session, {"org_a_id": sweep.b, "user_a_admin_id": sweep.admin, "user_a_clerk_id": sweep.admin})
@@ -187,7 +201,7 @@ PROBES: dict[str, Probe] = {
     "GET /api/payments/mietkonto/lease/{lease_agreement_id}": Probe(
         row("lease_agreement", lease_agreement_id="id"), query={"as_of": "2026-11-01"}),
     "GET /api/payments/mietkonto/owner/{owner_profile_id}": Probe(
-        row("owner_profile", owner_profile_id="id"), status=200,
+        row("owner_profile", owner_profile_id="id"), status=200, query={"as_of": "2026-07-02"},
         because="in preparation mode the owner is never looked up: the statement is built from the visible "
                 "payments, so it is empty for a foreign and for a random id alike"),
     "GET /api/payments/open-items": Probe(SCOPE),
@@ -238,7 +252,10 @@ PROBES: dict[str, Probe] = {
     # app/api/special_levies.py
     "GET /api/special-levies": Probe(SCOPE),
     "POST /api/special-levies": Probe(SCOPE, body={
-        "property_id": "{property_id}", "accounting_scope_id": "{accounting_scope_id}", "amount": "100.00", "due_date": "2025-06-01"}),
+        "property_id": "{property_id}", "accounting_scope_id": "{accounting_scope_id}", "amount": "100.00", "due_date": "2025-06-01", "resolution_id": "00000000-0000-0000-0000-000000000001"}),
+    "PUT /api/special-levies/{levy_id}/resolution": Probe(
+        other("x.id AS levy_id", "special_levy x"),
+        body={"resolution_id": "00000000-0000-0000-0000-000000000001"}),
     # app/api/weg_settlements.py
     "DELETE /api/weg-settlements/{run_id}": Probe(run(WEG)),
     "DELETE /api/weg-settlements/asset-reports/{run_id}": Probe(run(REPORT)),

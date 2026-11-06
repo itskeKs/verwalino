@@ -54,7 +54,7 @@ it('retains the exact reviewed plan choice through a lost reply', async () => {
   expect(blocked).toHaveBeenLastCalledWith(true);
   fireEvent.click(screen.getByRole('button', { name: 'Dieselbe Planauswahl erneut senden' }));
   await waitFor(() => expect(applied).toHaveBeenCalledOnce());
-  expect(blocked).toHaveBeenLastCalledWith(false);
+  await waitFor(() => expect(blocked).toHaveBeenLastCalledWith(false));
   expect(bodies).toHaveLength(2); expect(bodies[0]).toBe(bodies[1]);
 });
 

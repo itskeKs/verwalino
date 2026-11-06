@@ -27,6 +27,30 @@ SYNC_URL = os.environ.get(
 )
 
 
+@pytest.mark.asyncio
+async def test_owner_statement_exposes_signed_cutoff_balances_and_original_due_dates(monkeypatch):
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+    from app.api import payments
+    from app.engine.mietkonto import ExpectedCharge, account_statement
+
+    cutoff = date(2026, 7, 2)
+    owner = uuid.uuid4()
+    result = account_statement([ExpectedCharge(2026, 7, 'HAUSGELD_VORSCHUSS', Decimal('600.00'),
+        owner_profile_id=owner, due_date=date(2026, 7, 3))], [], as_of=cutoff)
+    statement = AsyncMock(return_value=result)
+    monkeypatch.setattr(payments, 'PaymentService', lambda *args: SimpleNamespace(account_statement_for_owner=statement))
+    response = await payments.owner_statement(owner, date(2026, 7, 1), date(2026, 7, 31),
+        economic_plan_id=None, accounting_scope_id=None, as_of=cutoff,
+        auth=SimpleNamespace(organization_id=uuid.uuid4(), user_id=uuid.uuid4()), db=None)
+    output = response.model_dump(mode='json')
+    assert output['balance'] == output['not_yet_due_balance'] == '600.00'
+    assert output['due_balance'] == '0.00'
+    assert output['open_items'][0]['due_date'] == '2026-07-03'
+    assert output['open_items'][0]['is_due'] is False
+    statement.assert_awaited_once_with(owner, None, date(2026, 7, 1), date(2026, 7, 31), None, as_of=cutoff)
+
+
 # ===========================================================================
 # Seed: TWO properties under org_a (A + B) for the querbuchen test, each with a
 # LAUFEND bank account; a lease + tenant on property A; an owner on property A.

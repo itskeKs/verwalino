@@ -23,6 +23,8 @@ import uuid
 from dataclasses import dataclass, field
 from datetime import date, datetime, timezone
 from decimal import Decimal
+from types import SimpleNamespace
+from typing import NoReturn
 
 from fastapi import HTTPException
 
@@ -67,6 +69,7 @@ from app.services.financial_input_policy import FinancialInputPolicy, incomplete
 from app.models.settlement_line import SettlementLine
 from app.models.settlement_run import SettlementRun
 from app.repositories.audit_repo import AuditRepository
+from app.repositories.coverage_declaration_repo import CoverageDeclarationRepository
 from app.repositories.bank_account_repo import BankAccountRepository
 from app.repositories.reserve_ledger_repo import ReserveLedgerRepository
 from app.repositories.economic_plan_repo import (
@@ -565,6 +568,29 @@ class WegSettlementService:
             for oid, amt in per_owner.items()
         ]
 
+    async def reject_paid_amount(self, run_id: uuid.UUID, owner_id: uuid.UUID, *, missing: bool, capability=ScopeCapability.PREPARE) -> NoReturn:
+        """Resolve an input error only within the authorized draft and owner roster."""
+        run = await self._get_weg_draft_or_404(run_id)
+        await FinancialScopeService(self._session, self._org_id, self._user_id).enter(
+            run, capability=capability, computation=True)
+        owners = await CoverageDeclarationRepository(self._session, self._org_id).owner_ids(run)
+        if str(owner_id) not in owners:
+            raise HTTPException(404, 'Eigentümer der Abrechnung nicht gefunden.')
+        name = 'den Eigentümer'
+        for owner, person in await self._runs.owner_profiles_for_property(run.property_id):
+            if owner.id == owner_id and person is not None:
+                name = ' '.join(part for part in (person.first_name, person.last_name) if part) or name
+                break
+        detail = {
+            'code': 'financial_inputs_incomplete' if missing else 'invalid_decimal',
+            'field': 'paid_total', 'owner_profile_id': str(owner_id),
+            'message': (f'Bitte geben Sie das tatsächlich gezahlte Hausgeld für {name} an, auch bei 0,00 €.'
+                        if missing else f'Bitte geben Sie einen gültigen Hausgeldbetrag für {name} an.'),
+        }
+        if missing:
+            detail['blockers'] = [{'code': 'owner_payment_coverage_missing', 'component': 'paid_advances'}]
+        raise HTTPException(422, detail)
+
     async def derive_paid_advances(
         self, economic_plan_id: uuid.UUID, period_year: int,
         period_start: date | None = None, period_end: date | None = None,
@@ -588,17 +614,14 @@ class WegSettlementService:
         if not start.year <= period_year <= end.year:
             raise HTTPException(422, "Reference year must belong to the settlement period")
         pay_svc = PaymentService(self._session, self._org_id, self._user_id)
-        plan_advances = await self._plan_advances_per_owner(economic_plan_id)
-        ownership = await self._runs.ownership_for_property(plan.property_id)
-        owner_ids = {adv.owner_profile_id for adv in plan_advances} | {
-            row.owner_profile_id for row in ownership
-            if row.valid_from <= end and (row.valid_to is None or row.valid_to > start)
-        }
+        subject = SimpleNamespace(property_id=plan.property_id, period_start=start, period_end=end,
+                                  economic_plan_id=plan.id, run_type='WEG_JAHRESABRECHNUNG')
+        owner_ids = await CoverageDeclarationRepository(self._session, self._org_id).owner_ids(subject)
         result: list[ManualOwnerAdvance] = []
         for owner_id in sorted(owner_ids, key=str):
-            total = await pay_svc.derive_hausgeld_total_for_period(owner_id, start, end, property_id=plan.property_id)
+            total = await pay_svc.derive_hausgeld_total_for_period(uuid.UUID(owner_id), start, end, property_id=plan.property_id)
             result.append(
-                ManualOwnerAdvance(owner_profile_id=owner_id, paid_total=total)
+                ManualOwnerAdvance(owner_profile_id=uuid.UUID(owner_id), paid_total=total)
             )
         return result
 
@@ -686,9 +709,8 @@ class WegSettlementService:
                 oid = uuid.UUID(row['owner_profile_id'])
                 paid_reserve[oid] = paid_reserve.get(oid, Decimal('0.00')) + Decimal(row['amount'])
         plan_advances = await self._plan_advances_per_owner(run.economic_plan_id)
-        expected_owners = {o.owner_profile_id for o in owner_inputs
-                           if o.valid_from <= run.period_end and (o.valid_to is None or o.valid_to >= run.period_start)}
-        provided_owners = [p.owner_profile_id for p in extras.paid_advances]
+        expected_owners = await CoverageDeclarationRepository(self._session, self._org_id).owner_ids(run)
+        provided_owners = [str(p.owner_profile_id) for p in extras.paid_advances]
         if set(provided_owners) != expected_owners or len(provided_owners) != len(set(provided_owners)):
             incomplete("owner_payment_coverage_missing", "paid_advances")
         # The payment amount reads booked ledger truth, never a manual declaration.

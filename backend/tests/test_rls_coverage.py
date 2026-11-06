@@ -65,13 +65,13 @@ TENANT_TABLES = frozenset({
     # M2 Kosten & GoBD-Belegfluss
     "cost_entry", "invoice_document", "operation_receipt", "invoice_processing_attempt",
     # M3 Verteilungs-/Abrechnungs-Engine
-    "settlement_run", "settlement_line", "coverage_declaration", "reserve_ledger_entry",
+    "settlement_run", "settlement_line", "coverage_declaration", "reserve_ledger_entry", "commercial_preallocation",
     # M4 WEG-Abrechnung (Wirtschaftsplan eigene Entitaet)
     "economic_plan", "economic_plan_line", "special_levy", "special_levy_allocation",
     # M6 Zahlungen, Mietkonto & offene Posten
     "payment", "bank_transaction", "sepa_creditor", "sepa_mandate",
     # M7 Mahnwesen
-    "dunning_notice", "dunning_scope_context", "dunning_batch",
+    "dunning_notice", "dunning_scope_context", "dunning_batch", "dunning_settings",
     # M8 Eigentümerversammlung & Beschluss-Sammlung
     "owners_meeting",
     "agenda_item",
@@ -105,7 +105,7 @@ TENANT_TABLES = frozenset({
 GLOBAL_TABLES = frozenset({
     "password_reset_request",  # Authentication precedes tenant selection.
     "signup_request",  # Global pending identity reservation; no tenant yet.
-    "organization", "cost_category", "setup_token", "auth_throttle",
+    "organization", "cost_category", "base_interest_rate", "setup_token", "auth_throttle",
 })
 
 # Alembic's internal table (not a domain table).

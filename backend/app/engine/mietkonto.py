@@ -43,7 +43,7 @@ from dataclasses import dataclass, field, replace
 from datetime import date
 from decimal import Decimal
 
-from app.engine.fristen import FederalState, public_holidays, third_working_day
+from app.engine.fristen import FederalState, owner_due_date, public_holidays, third_working_day
 
 from app.engine.periods import day_count, owner_at, build_owner_cover
 from app.engine.types import OwnerPeriodInput
@@ -168,6 +168,7 @@ class PaymentInput:
     is_booked: bool = True
     is_reversed: bool = False  # True if reversed_by_id IS NOT NULL
     is_reversal: bool = False  # True if reverses_id IS NOT NULL (a Storno row)
+    value_date: date | None = None
 
     @property
     def signed_amount(self) -> Decimal:
@@ -367,6 +368,8 @@ def owner_expected_charges(
     period_end: date,
     *, owner_periods: list[OwnerPeriodInput] | None = None,
     plan_start: date | None = None,
+    monthly_due_day: int | None = None,
+    federal_state: FederalState | None = None,
 ) -> list[ExpectedCharge]:
     """Monthly owner Hausgeld Soll over the period (m6 section 2.2).
 
@@ -438,7 +441,8 @@ def owner_expected_charges(
         if monthly_total and (year, month) >= (period_start.year, period_start.month):
             charges.append(ExpectedCharge(period_year=year, period_month=month,
                 payment_type=PT_HAUSGELD_VORSCHUSS, amount=monthly_total,
-                owner_profile_id=owner_profile_id, days_occupied=days_in_month, days_in_month=days_in_month))
+                owner_profile_id=owner_profile_id, days_occupied=days_in_month, days_in_month=days_in_month,
+                due_date=owner_due_date(year, month, monthly_due_day, federal_state=federal_state)))
     return charges
 
 
@@ -462,6 +466,7 @@ class OpenItem:
     open_amount: Decimal  # soll - ist
     due_date: date | None = None
     is_due: bool | None = None
+    payment_changes: tuple[tuple[date, Decimal], ...] = ()
 
     @property
     def is_arrears(self) -> bool:
@@ -497,7 +502,7 @@ def _ist_key(p: PaymentInput) -> tuple[int | None, int | None, str]:
 def account_statement(
     expected_charges: list[ExpectedCharge],
     payments: list[PaymentInput],
-    *, as_of: date | None = None,
+    *, as_of: date | None = None, include_payment_dates: bool = False,
 ) -> MietkontoResult:
     """Soll vs Ist per (period, type) -> offene Posten + Saldo (m6 section 3.1).
 
@@ -524,12 +529,18 @@ def account_statement(
             dates = dated_soll.setdefault(key, {})
             dates[c.due_date] = dates.get(c.due_date, Decimal("0.00")) + _money(c.amount)
 
+    # Dunning can retain the dates of the same allocations for interest.
+    # Neither the allocation order nor the resulting open balances change.
+    dated_ist: dict[tuple[int | None, int | None, str], dict[date, Decimal]] = {}
     # Aggregate Ist per key (booked, not reversed, not a reversal-of -> net).
     ist_by_key: dict[tuple[int | None, int | None, str], Decimal] = {}
     for p in payments:
         if not p.is_booked or p.is_reversed or p.is_reversal:
             continue
         key = _ist_key(p)
+        if include_payment_dates and p.value_date is not None:
+            daily = dated_ist.setdefault(key, {})
+            daily[p.value_date] = daily.get(p.value_date, Decimal("0")) + p.signed_amount
         ist_by_key[key] = ist_by_key.get(key, Decimal("0.00")) + p.signed_amount
 
     all_keys = set(soll_by_key) | set(ist_by_key)
@@ -542,6 +553,7 @@ def account_statement(
         soll_total += soll
         ist_total += ist
         dates = dated_soll.get(key)
+        changes = sorted(dated_ist.get(key, {}).items())
         if dates:
             # Payments have a month, not a levy ID: consume that month's money
             # oldest due first, exactly once. Future levies must not accelerate
@@ -554,13 +566,31 @@ def account_statement(
                 dates = {**dates, fallback: dates.get(fallback, Decimal("0.00")) + undated}
                 dated_amounts = sorted(dates.items())
             for index, (due, amount) in enumerate(dated_amounts):
-                paid = remaining if index == len(dated_amounts) - 1 else min(remaining, amount)
+                last = index == len(dated_amounts) - 1
+                paid = remaining if last else min(remaining, amount)
                 remaining -= paid
+                # Apply the same oldest-due-first allocation to each day's
+                # cumulative Ist. Pass only the unallocated deltas to the next row.
+                prior = paid - sum((delta for _, delta in changes), Decimal("0")) + remaining
+                allocated = prior if last else min(prior, amount)
+                paid_changes = []
+                remainder_changes = []
+                for day, delta in changes:
+                    prior += delta
+                    next_allocated = prior if last else min(prior, amount)
+                    change = next_allocated - allocated
+                    if change:
+                        paid_changes.append((day, change))
+                    if delta != change:
+                        remainder_changes.append((day, delta - change))
+                    allocated = next_allocated
+                changes = remainder_changes
                 items.append(OpenItem(period_year=key[0], period_month=key[1], payment_type=key[2],
-                    soll=amount, ist=paid, open_amount=_money(amount - paid), due_date=due))
+                    soll=amount, ist=paid, open_amount=_money(amount - paid), due_date=due,
+                    payment_changes=tuple(paid_changes)))
         else:
             items.append(OpenItem(period_year=key[0], period_month=key[1], payment_type=key[2],
-                soll=soll, ist=ist, open_amount=_money(soll - ist)))
+                soll=soll, ist=ist, open_amount=_money(soll - ist), payment_changes=tuple(changes)))
     due_balance = None
     not_yet_due_balance = None
     if as_of is not None:

@@ -100,7 +100,7 @@ import type {
   PaymentCreate,
   DepositAccount,
   OpenItem,
-  MietkontoResult,
+  OwnerMietkontoResult,
   TenantMietkontoResult,
   DunningNotice,
   DunningSettings,
@@ -950,8 +950,9 @@ export function listBankMatchingTransactions(bankAccountId: string, status: Bank
   return api.get<BankMatchingPage>(`/api/bank-transactions?${params}`);
 }
 
-export function assignBankTransaction(id: string, lines: BankAssignmentLine[]): Promise<BankAssignmentResult> {
-  return api.post<BankAssignmentResult>(`/api/bank-transactions/${encodeURIComponent(id)}/assign`, { lines });
+export function assignBankTransaction(id: string, target: BankAssignmentLine[] | string): Promise<BankAssignmentResult> {
+  return api.post<BankAssignmentResult>(`/api/bank-transactions/${encodeURIComponent(id)}/assign`,
+    typeof target === "string" ? { cost_entry_id: target } : { lines: target });
 }
 
 export function ignoreBankTransaction(id: string): Promise<{ id: string; status: "IGNORIERT" }> {
@@ -1035,11 +1036,13 @@ export function ownerStatement(
   periodEnd: string,
   economicPlanId?: string,
   accountingScopeId?: string,
-): Promise<MietkontoResult> {
+  asOf?: string,
+): Promise<OwnerMietkontoResult> {
   let qs = `?period_start=${periodStart}&period_end=${periodEnd}`;
   if (accountingScopeId) qs += `&accounting_scope_id=${encodeURIComponent(accountingScopeId)}`;
   if (economicPlanId) qs += `&economic_plan_id=${encodeURIComponent(economicPlanId)}`;
-  return api.get<MietkontoResult>(`/api/payments/mietkonto/owner/${ownerProfileId}${qs}`);
+  if (asOf) qs += `&as_of=${encodeURIComponent(asOf)}`;
+  return api.get<OwnerMietkontoResult>(`/api/payments/mietkonto/owner/${ownerProfileId}${qs}`);
 }
 
 export function leaseOpenItems(
@@ -1074,6 +1077,10 @@ export function setAdvancePaymentsDerived(
 
 export function getDunningSettings(): Promise<DunningSettings> {
   return api.get<DunningSettings>("/api/dunning/settings");
+}
+
+export function saveDunningSettings(body: DunningSettings): Promise<DunningSettings> {
+  return api.put<DunningSettings>("/api/dunning/settings", body);
 }
 
 export function listDunningNotices(params?: {
@@ -1324,8 +1331,12 @@ export function createSpecialLevy(body: SpecialLevyCreate): Promise<SpecialLevy>
     accounting_scope_id: body.accounting_scope_id,
     amount: body.amount,
     due_date: body.due_date,
-    ...(body.resolution_id !== undefined ? { resolution_id: body.resolution_id } : {}),
+    resolution_id: body.resolution_id,
   });
+}
+
+export function linkSpecialLevyResolution(id: string, resolutionId: string): Promise<SpecialLevy> {
+  return api.put<SpecialLevy>(`/api/special-levies/${encodeURIComponent(id)}/resolution`, { resolution_id: resolutionId });
 }
 
 // General document filing: retain originals, archive metadata only.

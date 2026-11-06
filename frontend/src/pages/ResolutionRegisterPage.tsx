@@ -9,7 +9,7 @@
  */
 
 import { useEffect, useState, useCallback } from "react";
-import { useLocation, useSearchParams } from "react-router-dom";
+import { Link, useLocation, useSearchParams } from "react-router-dom";
 import {
   listRegisterEntries,
   annotateChallenge,
@@ -17,6 +17,7 @@ import {
   listProperties,
 } from "../api/endpoints";
 import type { RegisterEntry, Property } from "../api/types";
+import { formatEuro } from "../lib/utils";
 import { ApiError } from "../api/client";
 
 export function ResolutionRegisterPage() {
@@ -263,6 +264,7 @@ export function ResolutionRegisterPage() {
                     <td>{entry.location || "-"}</td>
                     <td style={{ whiteSpace: "pre-wrap" }}>
                       {entry.wording}
+                      {(entry.special_levies ?? []).map(levy => <p key={levy.id}><Link to={`/sonderumlagen?property_id=${encodeURIComponent(entry.property_id)}&accounting_scope_id=${encodeURIComponent(levy.accounting_scope_id)}#sonderumlage-${levy.id}`}>Sonderumlage {formatEuro(levy.amount)}, fällig {levy.due_date.split("-").reverse().join(".")}</Link></p>)}
                     </td>
                     <td>
                       {editingEntryId === entry.id ? (

@@ -269,6 +269,7 @@ def _chain_0131_projection(head):
 
 async def test_revision_chain_head_0131_head_preserves_full_state_and_issued_pdf(rent_world, rent_db, client_a_admin, seed_data, monkeypatch):
     """Rollback-only whole-chain rehearsal, not a production downgrade strategy."""
+    import json
     import os
     from pathlib import Path
 
@@ -395,7 +396,7 @@ async def test_revision_chain_head_0131_head_preserves_full_state_and_issued_pdf
     config.set_main_option('script_location', str(Path(__file__).parents[1] / 'migrations'))
     scripts = ScriptDirectory.from_config(config)
     assert scripts.get_heads() == [TARGET]
-    expected_ancestry = [f'{number:04}' for number in range(131, 156)] + ['0159', '0160', '0161', '0162', '0163', '0164', '0165', '0166', '0167']
+    expected_ancestry = [f'{number:04}' for number in range(131, 156)] + ['0159', '0160', '0161', '0162', '0163', '0164', '0165', '0166', '0167', '0168', '0169', '0170', '0171', '0172', '0173', '0174']
     assert [r.revision for r in scripts.iterate_revisions(TARGET, '0131')] == expected_ancestry[:0:-1]
     engine = create_engine(MIGRATOR_SYNC_URL)
     try:
@@ -456,11 +457,59 @@ async def test_revision_chain_head_0131_head_preserves_full_state_and_issued_pdf
                 assert version() == (TARGET,)
                 retained = _chain_snapshot(connection)
                 assert any(row['unit_id'] == str(w['unit']) for row in retained['data']['unit_household'])
+                # The removed columns have no pre-bank representation.
+                # Keep the original rows and every other field in this rollback-only projection.
+                if connection.scalar(text('SELECT EXISTS(SELECT 1 FROM cost_entry WHERE bank_coverage_successor_id IS NOT NULL)')):
+                    connection.execute(text('ALTER TABLE cost_entry DISABLE TRIGGER a_protect_adopted_cost'))
+                    connection.execute(text('ALTER TABLE cost_entry DISABLE TRIGGER guard_covered_cost_correction'))
+                    connection.execute(text('UPDATE cost_entry SET bank_coverage_successor_id=NULL WHERE bank_coverage_successor_id IS NOT NULL'))
+                    connection.execute(text('ALTER TABLE cost_entry ENABLE ALWAYS TRIGGER guard_covered_cost_correction'))
+                    connection.execute(text('ALTER TABLE cost_entry ENABLE TRIGGER a_protect_adopted_cost'))
+                if connection.scalar(text('SELECT EXISTS(SELECT 1 FROM bank_transaction WHERE cost_entry_id IS NOT NULL)')):
+                    connection.execute(text('ALTER TABLE bank_transaction DISABLE TRIGGER guard_bank_cost_assignment'))
+                    connection.execute(text('UPDATE bank_transaction SET cost_entry_id=NULL WHERE cost_entry_id IS NOT NULL'))
+                    connection.execute(text('ALTER TABLE bank_transaction ENABLE ALWAYS TRIGGER guard_bank_cost_assignment'))
+                long_note_lines = connection.execute(text('SELECT id FROM settlement_line WHERE char_length(note)>500')).scalars().all()
+                if long_note_lines:
+                    before_notes_projection = _chain_snapshot(connection)
+                    with pytest.raises(RuntimeError, match='Cannot narrow stored settlement notes; repair forward'):
+                        with connection.begin_nested():
+                            migrate('0169', downgrade=True)
+                    assert _chain_snapshot(connection) == before_notes_projection
+                    # The older column cannot represent these notes. Exclude
+                    # them only in this rollback-only historical projection.
+                    connection.execute(text('ALTER TABLE settlement_line DISABLE TRIGGER USER'))
+                    connection.execute(text('DELETE FROM settlement_line WHERE id=ANY(:ids)'), {'ids': long_note_lines})
+                    connection.execute(text('ALTER TABLE settlement_line ENABLE TRIGGER USER'))
+                before_commercial_projection = _chain_snapshot(connection)
+                commercial_snapshots = connection.execute(text("""SELECT id,snapshot_payload FROM settlement_run
+                    WHERE snapshot_payload::text LIKE '%"commercial_reason"%'""")).all()
+                if commercial_snapshots or connection.scalar(text('SELECT EXISTS(SELECT 1 FROM commercial_preallocation)')):
+                    with pytest.raises(RuntimeError, match='Retain commercial preallocation evidence; repair forward'):
+                        with connection.begin_nested():
+                            migrate('0168', downgrade=True)
+                    assert _chain_snapshot(connection) == before_commercial_projection
+                    # Rehearse schemas without commercial rules only after
+                    # proving their guard. Final rollback restores every original.
+                    connection.execute(text('TRUNCATE public.commercial_preallocation'))
+                    def without_commercial_fields(value):
+                        if isinstance(value, dict):
+                            return {key: without_commercial_fields(item) for key, item in value.items()
+                                if key not in {'commercial_share_percent', 'commercial_amount', 'commercial_reason'}}
+                        if isinstance(value, list):
+                            return [without_commercial_fields(item) for item in value]
+                        return value
+                    connection.execute(text('ALTER TABLE public.settlement_run DISABLE TRIGGER USER'))
+                    for run_id, payload in commercial_snapshots:
+                        connection.execute(text('UPDATE settlement_run SET snapshot_payload=CAST(:payload AS jsonb) WHERE id=:id'),
+                            {'id': run_id, 'payload': json.dumps(without_commercial_fields(payload))})
+                    connection.execute(text('ALTER TABLE public.settlement_run ENABLE TRIGGER USER'))
+                before_state_projection = _chain_snapshot(connection)
                 if connection.scalar(text('SELECT EXISTS(SELECT 1 FROM property WHERE federal_state IS NOT NULL)')):
                     with pytest.raises(RuntimeError, match='Cannot discard property holiday context'):
                         with connection.begin_nested():
                             migrate('0165', downgrade=True)
-                    assert _chain_snapshot(connection) == retained
+                    assert _chain_snapshot(connection) == before_state_projection
                     # Only this rollback-only historical projection omits the
                     # new state; all original context is restored at rollback.
                     connection.execute(text('UPDATE property SET federal_state=NULL WHERE federal_state IS NOT NULL'))
@@ -592,7 +641,7 @@ async def test_revision_chain_head_0131_head_preserves_full_state_and_issued_pdf
                 assert without_reserves['data']['settlement_line'] == [
                     row for row in retained['data']['settlement_line']
                     if row['line_type'] not in reserve_line_types and uuid.UUID(row['settlement_run_id']) not in split_runs
-                    and uuid.UUID(row['id']) not in wide_lines]
+                    and uuid.UUID(row['id']) not in wide_lines and uuid.UUID(row['id']) not in long_note_lines]
                 corpus = {
                     table: [row for row in retained['data'][table] if row['organization_id'] == str(w['org'])]
                     for table in ('payment', 'accounting_scope_binding')

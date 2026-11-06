@@ -11,7 +11,7 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 
 const placeholders = ["{{mieter.name}}", "{{mieter.adresse}}", "{{objekt.adresse}}", "{{objekt.name}}", "{{datum}}",
   "{{vermieter.name}}", "{{vermieter.adresse}}", "{{einheit.nummer}}", "{{einheit.lage}}", "{{einheit.flaeche}}",
-  "{{vertrag.beginn}}", "{{vertrag.ende}}", "{{vertrag.kaltmiete}}", "{{vertrag.vorauszahlung}}", "{{vertrag.kaution}}",
+  "{{vertrag.beginn}}", "{{vertrag.ende}}", "{{vertrag.kaltmiete}}", "{{vertrag.vorauszahlung}}", "{{vertrag.mietaufstellung}}", "{{vertrag.kaution}}",
   "{{vertrag.uebergabe}}", "{{vertrag.vereinbarungen}}"];
 const emptyTemplate = (): LetterTemplateInput => ({ name: "", subject: "", body: "" });
 const message = (error: unknown) => error instanceof Error ? error.message : String(error);
@@ -144,7 +144,8 @@ export function LettersPage() {
       <p>Diese Platzhalter exakt einschließlich der doppelten geschweiften Klammern in Betreff oder Brieftext verwenden:</p>
       <ul>{placeholders.map(value => <li key={value}><code>{value}</code></li>)}</ul>
       <p>Das Datum ist der gewählte Stichtag. Kein HTML und keine Skripte: Alle Inhalte werden ausschließlich als Klartext behandelt. Andere Platzhalter werden nicht unterstützt.</p>
-      <p>Vertragsdaten beziehen sich auf den ausgewählten Originalvertrag des Empfängers. Bei mehreren Verträgen wird nur einer verwendet. Übergabedatum und Vereinbarungen werden über „Mietvertrag erstellen“ in der Einheit ergänzt. Vorlage; rechtliche Prüfung erforderlich.</p>
+      <p>Vertragsdaten beziehen sich auf den ausgewählten Mietvertrag des Empfängers. Mietbeträge gelten zum gewählten Stichtag. Bei mehreren Verträgen wird nur einer verwendet. Übergabedatum und Vereinbarungen werden über „Mietvertrag erstellen“ in der Einheit ergänzt. Vorlage; rechtliche Prüfung erforderlich.</p>
+      <p>„vertrag.mietaufstellung“ enthält die Kaltmiete und Vorauszahlungen. Bei Heizkosten-Vorauszahlung über 0 erscheinen Betriebskosten-Vorauszahlung, Heizkosten-Vorauszahlung und Gesamtmiete als eigene Zeilen; auch „vertrag.vorauszahlung“ enthält dann diese Aufstellung. Bei Heizkosten-Vorauszahlung 0 bleibt „vertrag.vorauszahlung“ ein einzelner Betrag.</p>
       <p>Änderungen an einer gespeicherten Vorlage gelten nur für neue Briefe. Bereits erstellte PDFs bleiben unverändert.</p>
     </section>
 

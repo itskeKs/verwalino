@@ -46,6 +46,45 @@ from app.engine.fristen import (
 )
 
 
+@pytest.mark.parametrize("day", range(1, 29))
+def test_owner_due_day_selects_a_calendar_day_before_shifting(day):
+    selected = date(2026, 7, day)
+    expected = selected
+    while expected.weekday() >= 5:
+        expected = date.fromordinal(expected.toordinal() + 1)
+    assert fristen.owner_due_date(2026, 7, day) == expected
+
+
+@pytest.mark.parametrize("year,month,day,state,expected", [
+    (2026, 7, 3, None, date(2026, 7, 3)),
+    (2026, 10, 3, None, date(2026, 10, 5)),
+    (2026, 3, None, None, date(2026, 3, 2)),
+    (2026, 5, 1, None, date(2026, 5, 4)),
+    (2026, 1, 6, 'BY', date(2026, 1, 7)),
+    (2026, 1, 6, None, date(2026, 1, 6)),
+])
+def test_owner_due_date_uses_the_approved_default_and_property_holidays(year, month, day, state, expected):
+    assert fristen.owner_due_date(year, month, day, federal_state=state) == expected
+
+
+@pytest.mark.parametrize('year,month,day,expected', [
+    (2025, 2, 29, date(2025, 2, 28)),
+    (2025, 2, 30, date(2025, 2, 28)),
+    (2026, 2, 31, date(2026, 3, 2)),
+    (2024, 2, 29, date(2024, 2, 29)),
+    (2026, 4, 31, date(2026, 4, 30)),
+    (2023, 12, 31, date(2024, 1, 2)),
+])
+def test_historical_owner_days_clamp_to_month_end_before_the_working_day_shift(year, month, day, expected):
+    assert fristen.owner_due_date(year, month, day) == expected
+
+
+@pytest.mark.parametrize('day', [0, 32])
+def test_owner_due_date_does_not_clamp_invalid_calendar_day_values(day):
+    with pytest.raises(ValueError):
+        fristen.owner_due_date(2026, 7, day)
+
+
 # ---------------------------------------------------------------------------
 # Date arithmetic
 # ---------------------------------------------------------------------------

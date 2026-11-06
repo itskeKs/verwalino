@@ -27,11 +27,11 @@ beforeEach(() => {
     return new Response(JSON.stringify({ items: [{ id: "scope", property_id: params.get("property_id") || "property", label: "Lesebereich", scope_type: params.get("scope_type"), valid_from: "2025-01-01", valid_to: null }], next_cursor: null }), { status: 200, headers: { "Content-Type": "application/json" } });
   }));
 });
-const statement = { soll_total: "7200.00", ist_total: "100.00", balance: "-7100.00", open_items: [] };
+const statement = { soll_total: "7200.00", ist_total: "100.00", balance: "-7100.00", due_balance: "-7100.00", not_yet_due_balance: "0.00", open_items: [] };
 
 it("passes the selected read scope and clears stale results and scope when changing lease", async () => {
-  vi.mocked(endpoints.leaseStatement).mockResolvedValue({ ...statement, due_balance: "-7100.00", not_yet_due_balance: "0.00" });
-  render(<MietkontoPage />);
+  vi.mocked(endpoints.leaseStatement).mockResolvedValue({ ...statement, dunning_notices: [], due_balance: "-7100.00", not_yet_due_balance: "0.00" });
+  render(<MemoryRouter><MietkontoPage /></MemoryRouter>);
   fireEvent.change(await screen.findByLabelText("Mietvertrag *"), { target: { value: "lease" } });
   await screen.findByRole("option", { name: /Lesebereich/ });
   fireEvent.change(screen.getByRole("combobox", { name: "Abrechnungskreis" }), { target: { value: "scope" } });
@@ -46,7 +46,7 @@ it("passes the selected read scope and clears stale results and scope when chang
 it("passes owner scope and plan and freezes query controls until the response arrives", async () => {
   let finish!: (value: typeof statement) => void;
   vi.mocked(endpoints.ownerStatement).mockReturnValue(new Promise(resolve => { finish = resolve; }));
-  render(<MietkontoPage />);
+  render(<MemoryRouter><MietkontoPage /></MemoryRouter>);
   fireEvent.change(await screen.findByLabelText("Ansicht"), { target: { value: "owner" } });
   fireEvent.change(screen.getByLabelText("Eigentuemer *"), { target: { value: "owner" } });
   fireEvent.change(screen.getByLabelText("Wirtschaftsplan (fuer Soll)"), { target: { value: "plan" } });
@@ -55,7 +55,7 @@ it("passes owner scope and plan and freezes query controls until the response ar
   fireEvent.click(screen.getByRole("button", { name: "Abrufen" }));
   expect(screen.getByLabelText("Ansicht")).toBeDisabled();
   expect(screen.getByLabelText("Zeitraum von *")).toBeDisabled();
-  expect(endpoints.ownerStatement).toHaveBeenCalledWith("owner", expect.any(String), expect.any(String), "plan", "scope");
+  expect(endpoints.ownerStatement).toHaveBeenCalledWith("owner", expect.any(String), expect.any(String), "plan", "scope", expect.any(String));
   await act(async () => finish(statement));
   await screen.findByText("100.00 EUR");
   fireEvent.change(screen.getByLabelText("Zeitraum von *"), { target: { value: "2025-01-01" } });
