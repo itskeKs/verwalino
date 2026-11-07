@@ -214,7 +214,7 @@ async def saved_statement_opens(browser_world):
     detail = await first_detail.json()
     assert detail["id"] == run_id
     assert detail["status"] == "draft"
-    await expect(browser_world.page).to_have_url(f"**/abrechnungen/{run_id}")
+    await expect(browser_world.page).to_have_url(f"{browser_world.session.base_url}/abrechnungen/{run_id}")
     await browser_world.row("Mieter", "Periodentest")
     await browser_world.row("Zeitraum", "2025-01-01 bis 2025-09-30")
 
