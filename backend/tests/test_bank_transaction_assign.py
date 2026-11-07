@@ -515,6 +515,28 @@ async def test_heating_purpose_is_suggested_and_booked_as_a_tenant_heating_advan
     assert payment['payment_type'] == 'HK_VORAUSZAHLUNG' and payment['status'] == 'booked'
 
 
+async def test_combined_bank_assignment_books_one_advance_and_rejects_a_second_heating_line(bank_seed, bank_db):
+    api, ids = bank_seed
+    changed = await api.patch(f"/api/leases/{ids['lease']}", json={
+        "base_rent": "750.00", "advance_mode": "COMBINED", "advance_payment": "240.00"})
+    assert changed.status_code == 200, changed.text
+    tid = await transaction(bank_db, ids, amount="990.00")
+    result = await listing(api, ids)
+    assert result.status_code == 200, result.text
+    suggestion = result.json()["items"][0]["suggestions"][0]
+    assert [(row["payment_type"], row["amount"]) for row in suggestion["lines"]] == [
+        ("KALTMIETE", "750.00"), ("NK_VORAUSZAHLUNG", "240.00")]
+    lines = [{key: row[key] for key in ("payment_type", "amount", "period_year", "period_month",
+                                      "lease_agreement_id", "tenant_profile_id")} for row in suggestion["lines"]]
+    refused = await api.post(f"{BASE}/{tid}/assign", json={"lines": [
+        lines[0], {**lines[1], "amount": "150.00"}, {**lines[1], "payment_type": "HK_VORAUSZAHLUNG", "amount": "90.00"}]})
+    assert refused.status_code == 422, refused.text
+    assigned = await api.post(f"{BASE}/{tid}/assign", json={"lines": lines})
+    assert assigned.status_code == 200, assigned.text
+    assert [(row["payment_type"], row["amount"]) for row in assigned.json()["payments"]] == [
+        ("KALTMIETE", "750.00"), ("NK_VORAUSZAHLUNG", "240.00")]
+
+
 async def test_explicit_month_not_value_month_and_partial_splits(bank_seed, bank_db):
     api, ids = bank_seed
     await transaction(bank_db, ids, purpose='Warmmiete März 2025')
@@ -870,3 +892,73 @@ async def test_named_master_data_write_visible_before_response(bank_seed, app_rw
         response = await client.request(method, path, json=body)
     assert response.status_code in (200, 201), response.text
     assert observed == [marker], f'{kind}: saved value not committed at http.response.start'
+
+
+async def test_bank_list_reads_matching_targets_once_per_account_month(bank_seed, bank_db, monkeypatch):
+    from collections import Counter
+    from app.repositories.lease_agreement_repo import LeaseAgreementRepository
+
+    api, ids = bank_seed
+    receipts = [await transaction(bank_db, ids), await transaction(bank_db, ids, amount="700.00"),
+        await transaction(bank_db, ids, purpose="Warmmiete Juli 2025"),
+        await transaction(bank_db, ids, bank="other_bank")]
+    calls = Counter()
+    original = LeaseAgreementRepository.matching_targets
+
+    async def observe(repo, property_id, start, end):
+        calls[property_id, start] += 1
+        return await original(repo, property_id, start, end)
+
+    monkeypatch.setattr(LeaseAgreementRepository, "matching_targets", observe)
+    response = await api.get(BASE)
+    assert response.status_code == 200, response.text
+    listed = {row["id"]: row for row in response.json()["items"]}
+    for receipt, lease in zip(receipts, ("lease", "lease", "lease", "other_lease"), strict=True):
+        lines = listed[receipt]["suggestions"][0]["lines"]
+        assert {line["lease_agreement_id"] for line in lines} == {str(ids[lease])}
+    full, partial = (listed[receipt]["suggestions"][0] for receipt in receipts[:2])
+    assert full["confidence"] == "HIGH"
+    assert partial["confidence"] == "LOW"
+    assert calls == {
+        (ids["property"], date(2025, 6, 1)): 1,
+        (ids["property"], date(2025, 7, 1)): 1,
+        (ids["other_property"], date(2025, 6, 1)): 1,
+    }
+
+
+async def test_bank_list_hides_cached_suggestions_after_grant_expires(
+    migrator_session, scope_seed, bank_db, monkeypatch,
+):
+    ids = await statement_fixture(migrator_session, scope_seed, 'lease')
+    await bank_db.execute(text("UPDATE person SET iban='DE89370400440532013000' WHERE id=:person"), ids)
+    await transaction(bank_db, ids, amount='500.00')
+    await transaction(bank_db, ids, amount='400.00')
+
+    await bank_db.execute(text("""
+        UPDATE scope_grant SET revoked_at=clock_timestamp(),revoked_by=:actor
+        WHERE organization_id=:org AND scope_id=:scope AND user_id=:clerk AND revoked_at IS NULL
+    """), ids)
+    expires_at = await bank_db.scalar(text("""
+        INSERT INTO scope_grant(organization_id,scope_id,user_id,capabilities,granted_by,reason,expires_at)
+        VALUES (:org,:scope,:clerk,ARRAY['read'],:actor,'Read before expiry',clock_timestamp()+interval '5 seconds')
+        RETURNING expires_at
+    """), ids)
+    await bank_db.commit()
+
+    original = PaymentService.account_statement_for_lease
+    read_leases = []
+
+    async def wait_for_expiry(service, lease_id, *args, **kwargs):
+        statement = await original(service, lease_id, *args, **kwargs)
+        read_leases.append(lease_id)
+        assert statement.open_items
+        # Expiry can happen even while the request holds the scope ACL lock.
+        await bank_db.execute(text('SELECT pg_sleep_until(:expiry)'), {'expiry': expires_at})
+        return statement
+
+    monkeypatch.setattr(PaymentService, 'account_statement_for_lease', wait_for_expiry)
+    async with scope_client(ids) as api:
+        response = await listing(api, ids)
+    assert read_leases == [ids['lease']]
+    assert response.status_code == 404, response.text
+    assert 'Statement Person' not in response.text

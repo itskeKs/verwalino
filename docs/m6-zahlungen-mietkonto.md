@@ -170,23 +170,24 @@ The expected amount (Soll) is **derived** (ADR-0009) and computed per (person, p
 ### 2.1 Tenant expected amount (per lease)
 
 ```
-monthly expected without rate change = valid base rent + valid advance payment
+monthly expected without rate change = valid base rent + valid operating and heating advances
                                        (lease_agreement + lease_rent_change)
 ```
 
 - **Effective-date changes (Phase 2, T23):** `lease_rent_change` adds complete base rent/operating/heating rates without overwriting the original contract amounts. Each rate applies from its effective date inclusive; the last previous rate also continues to apply when a query begins later. Several daily segments are summed exactly per month/component and only then rounded; constant rates keep the existing largest-remainder partial-month logic. Example March 2026: 700 EUR through March 14, 750 EUR from March 15 yields 727.42 EUR base rent, operating costs 150 EUR unchanged. History append-only, effective dates unique per lease; organization/parent RLS and prepare permissions apply, financial lock before lease lock. Existing bookings/final snapshots remain unchanged.
 - **Operation (Phase 2, T24):** Every lease history in the unit shows original rates and changes with their source; "Miete ändern ab …" ("Change rent from …") records the full valid base rent/operating/heating rate. The date must lie within the contract limits displayed inclusively, cent-exact strings up to `Numeric(14,2)`, no floating-point arithmetic. Write roles can add entries, READ_ONLY can only read; load/server errors are visible, inputs are kept and the dialog is locked against double actions/closing during the POST. The browser acceptance run demonstrates unchanged original data after reload and 24 tenant ledger items with an annual expected amount of 10,650 EUR for +50 EUR from April 1, 2026.
-- **Letters and lease documents (#219):** The shared `rate_on` resolver supplies the base rent and both advances valid on the document date, inclusive of that day's change. The built-in contract and `vertrag.mietaufstellung` show separate **Betriebskosten-Vorauszahlung** and **Heizkosten-Vorauszahlung** lines when heating is positive, plus **Monatliche Gesamtmiete** (750 + 150 + 90 = 990 EUR). Existing `vertrag.vorauszahlung` templates also expand to those advance/total lines for positive heating. At zero heating the advance stays a single amount; unchanged leases preserve their previous contract text and rendered PDF bytes. A changed rate is dated rather than called “Originalvertrag”. Issued originals and request replays remain stored bytes; source/contact/export checks are unchanged. This does not introduce the optional combined/separate choice tracked in #311. See [document usage](operations/tasks-and-documents.md#lease-contracts-and-handovers-37).
+- **Letters and lease documents (#219):** The shared `rate_on` resolver supplies the base rent and both advances valid on the document date, inclusive of that day's change. The built-in contract and `vertrag.mietaufstellung` show separate **Betriebskosten-Vorauszahlung** and **Heizkosten-Vorauszahlung** lines for explicit separate rates or legacy rates with positive heating, plus **Monatliche Gesamtmiete** (750 + 150 + 90 = 990 EUR). Existing `vertrag.vorauszahlung` templates also expand to those advance/total lines for positive heating. A legacy rate with zero heating keeps its single-amount text; unchanged leases preserve their previous contract text and rendered PDF bytes. A changed rate is dated rather than called “Originalvertrag”. Issued originals and request replays remain stored bytes; source/contact/export checks are unchanged. See [document usage](operations/tasks-and-documents.md#lease-contracts-and-handovers-37).
   A document at the end of a tenancy uses the last inclusive tenancy day as the latest rate date.
   The summary shows that “Stand DD.MM.YYYY” and includes the total even at zero heating. A contract
   dated later still carries its selected document date. A historical circular uses the last tenancy
   day as its existing **Stichtag**, which determines its letter date and recipient set. The
   historical rule leaves the original single-advance rendering in place for unchanged rates
   before the last tenancy day and for open leases.
-- **Separation by component:** The expected amount is maintained separately for `KALTMIETE` (= `base_rent`) and the two advances: `NK_VORAUSZAHLUNG` (= `advance_payment`) and `HK_VORAUSZAHLUNG` (= `heating_advance_payment`). Each advance credits its own statement component (§6.2), the base rent does not. Mixing them would distort the settlement integration.
+- **Advance mode (#311):** “Vorauszahlungsart” records the choice on the original lease or the full effective-dated rate. “Gemeinsam inkl. Heizkosten” uses one `NK_VORAUSZAHLUNG` amount, displayed as including heating in the account and contract. “Betriebs- und Heizkosten getrennt” uses `NK_VORAUSZAHLUNG` for operating costs and `HK_VORAUSZAHLUNG` for a positive heating charge. Omitted mode on a dated change inherits the effective rate's mode. A missing mode on an existing rate keeps its legacy interpretation, including zero heating. The original mode can be corrected before bookings or finalization. Later changes go into the rent history.
+- **Prepayment across a mode change:** The immutable booking audit captures the advance modes in effect over the assigned period at booking. Later tenancy end edits preserve that booking-time evidence. If that month later has separate charges, the account and dunning reconcile the two advance obligations against the joint payment under their common due date. Named payments stay on their original component, including any overpayment. If a named overpayment leaves only the other component due, the joint receipt credits that remaining obligation. Otherwise any unresolved joint balance stays joint, and bank matching leaves a new payment's component assignment to the manager. The recorded payment types and amounts stay frozen.
 - **Mid-year start/end (day-accurate partial months):** If the lease begins/ends in the middle of a month, the expected amount of the partial month is **pro rata**. Basis: monthly, the partial month computed day-accurately via the same `app/engine/periods.py` arithmetic as M3 (day-inclusive, ADR-0004/0006). **[§18/domain F6-4]** whether a partial month is computed day-accurately (`days_occupied_in_month / days_in_month`) or as a flat full/half month — handled differently under leases/in practice. **Provisional assumption:** day-accurate partial month (consistent with M3); clearly marked, requires domain sign-off.
 - **Read boundary:** `lease_agreement.valid_to` is stored half-open; the expected-amount function reads via `db_exclusive_to_engine_inclusive` (ADR-0006) — the **same** read boundary as M3, **one** definition. This way the last rental month counts correctly (no off-by-one at lease end).
-- **Due date:** `KALTMIETE` and `NK_VORAUSZAHLUNG` use the statutory third working day (§ 556b(1) BGB), excluding Saturdays, Sundays and the property's statewide holidays. A missing federal state means nationwide holidays only. Count inclusively from the actual rental interval's start: the later of month start and lease start, including holidays across month/year boundaries. Reporting-period clipping and rent changes never restart the count. Day-exact amounts are unchanged. `HK_VORAUSZAHLUNG` retains its previous date rule pending a separate owner decision. See [holiday coverage](operations/bank-and-payments.md#rent-due-dates-and-holiday-coverage).
+- **Due date:** `KALTMIETE` and both advance types use the statutory third working day (§ 556b(1) BGB), excluding Saturdays, Sundays and the property's statewide holidays. A missing federal state means nationwide holidays only. Count inclusively from the actual rental interval's start: the later of month start and lease start, including holidays across month/year boundaries. Reporting-period clipping and rent changes never restart the count. Day-exact amounts are unchanged. See [holiday coverage](operations/bank-and-payments.md#rent-due-dates-and-holiday-coverage).
 
 ### 2.2 Owner expected amount (per owner, from the finalized economic plan)
 
@@ -420,13 +421,12 @@ amount here. The Hausgeld period derivation applies direction separately.
 
 ### 6.2 Operating and heating statement advances
 
-Issue #67 separates the lease's monthly `advance_payment` (operating costs)
-from `heating_advance_payment` (heating, default zero), including each full
-rent-change history row. The ledger emits an additional `HK_VORAUSZAHLUNG`
-charge only for positive heating rates, with the same partial-month and
-rate-change day calculation. Open items, dunning, SEPA rent collection,
-dashboard rent KPIs and deadlines include it. Existing booked NK payments
-remain operating-cost payments.
+The existing payment types carry the booked amounts. A combined advance uses
+`NK_VORAUSZAHLUNG`; a separate heating advance uses `HK_VORAUSZAHLUNG`.
+Bank suggestions use the expected charges of the assigned period. Recording a
+heating-only line against a wholly combined period is refused. “Warmmiete”
+can cover rent and all advances in the bank assignment. SEPA collects their
+sum in either mode.
 
 The statement retains `advance_payments_total` / `advance_payments_source`
 and adds `heating_advance_payments_total` / `heating_advance_payments_source`.
@@ -444,22 +444,21 @@ derivation returns `advance_credit_history_missing`. Finalized snapshots retain
 their amounts.
 Both totals default to unknown; missing totals block computation, coverage and
 finalization. Finalization freezes both totals and sources.
+For a wholly combined period, entering the manual combined total supplies heating
+zero when there is no existing separate heating total.
 Manual heating totals use the same signed numeric carrier as operating totals;
 monthly lease and rent-change rates remain non-negative. An older rent-change
 request that omits heating preserves the effective heating rate.
-
-Bank matching maps “heizkosten”, “heizung” and “hk” to heating; “warmmiete”
-covers rent and both advances. Each proposal remains subject to confirmation.
-
 
 **Precise assignment:**
 
 | Settlement quantity | M3 field | payments fed (type + period + addressee) |
 | --- | --- | --- |
 | Heating advance payment total | `settlement_run.heating_advance_payments_total` (`source='DERIVED'`) | Active booked `HK_VORAUSZAHLUNG` payments of the same lease, assigned period and lease-covered months/days, independently of operating advances. |
-| Operating advance payment total | `settlement_run.advance_payments_total` (`source='DERIVED'`) | Active booked `NK_VORAUSZAHLUNG` payments of the same lease, assigned period and lease-covered months/days, independently of heating advances. |
+| Operating or combined advance payment total | `settlement_run.advance_payments_total` (`source='DERIVED'`) | Active booked `NK_VORAUSZAHLUNG` payments of the same lease and assigned period. |
 
-- **Each advance credits its matching cost component:** `NK_VORAUSZAHLUNG` credits operating costs and `HK_VORAUSZAHLUNG` credits heating costs. Base rent (`KALTMIETE`) stays in the rent account. A combined bank transfer becomes separate `payment` rows for its components when recorded or split.
+- **Advance attribution:** A booking assigned to a wholly combined rate at booking time credits the overall statement once. Separate operating and heating payments retain their component attribution. A dated change preserves the meaning of earlier bookings, even if their payment date differs from their assigned month. Base rent stays in the rent account. A bank transfer for rent and an advance becomes one row for rent and one row for each assigned advance.
+- **Payments spanning both modes:** An NK booking assigned to a year or month with combined and non-combined rates contributes once to the overall balance under “Vorauszahlungen ohne Aufteilung”. The booking audit supplies the mode evidence. The statement snapshot records the signed amount within its existing period credit buckets so later periods reconcile the credit already given.
 - **Addressee-exact:** On a mid-year tenant change, each tenant has their **own** `lease_agreement_id`; the DERIVED sum per run pulls only the payments of **this** lease (consistent with M3 §3.5: one `settlement_run` per lease).
 - **Period-exact:** The recorded `period_year` and optional `period_month` assign an advance to the statement period; a cross-year statement can include both years. Lease-covered days determine partial-period credits. The bank `value_date` does not replace this assignment: a December advance paid in January still belongs to its recorded December period (M3 §3.4).
 
@@ -554,10 +553,13 @@ manually editable. The API validates again (§6.10); the user interface follows 
 `GET /api/bank-transactions` returns paginated transactions with real suggestions
 (default status `NEU`, explicitly `ALL` for all states, account filter,
 limit 50/maximum 100). Even without suggestions,
-the account RLS and current scope grants remain authoritative. Each list entry
-uses its own calculation context; Hausgeld only from the matching
-finalized, non-superseded economic plan. The owner actual filter
-additionally restricts to the bank property, even if the person owns several properties.
+the account RLS and current scope grants remain authoritative. Within one page
+request, receipts for the same account and month reuse the authorized matching
+targets. Each receipt is evaluated against those targets with its own amount
+and purpose. Before returning the page, the service rechecks live account, scope
+and source access for every account used in matching. Hausgeld uses the matching
+finalized, non-superseded plan. The owner actual filter additionally restricts to
+the bank property, even if the person owns several properties.
 
 `POST /{id}/assign` validates all rows before the first payment. Positive,
 cent-exact decimal amounts must together cover `abs(bank_transaction.amount)`;

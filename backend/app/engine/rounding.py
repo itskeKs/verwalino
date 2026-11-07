@@ -129,6 +129,31 @@ def annual_advance_share_for_period(
     return result
 
 
+def advance_attributions_through(
+    net_credit: Decimal, offset_credit: Decimal, *,
+    combined: Decimal, unallocated: Decimal, operating: Decimal,
+) -> tuple[Decimal, Decimal]:
+    """Split a cumulative bucket credit into combined and unallocated amounts.
+
+    Opposite signs offset by the same cumulative amount. Within each sign,
+    split the rounded credit in fixed order so each share grows monotonically
+    and adjacent windows telescope to the original booked amounts.
+    """
+    def portion(credit: Decimal, booked: Decimal, weight: Decimal) -> Decimal:
+        return _floor_to_cent(Fraction(credit) * Fraction(weight) / Fraction(booked)) if booked else Decimal("0.00")
+
+    combined_credit = unallocated_credit = Decimal("0.00")
+    for sign in (1, -1):
+        available = offset_credit + max(Decimal("0.00"), net_credit * sign)
+        unallocated_weight = max(Decimal("0.00"), unallocated * sign)
+        combined_weight = max(Decimal("0.00"), combined * sign)
+        named_weight = combined_weight + max(Decimal("0.00"), operating * sign)
+        unallocated_part = portion(available, named_weight + unallocated_weight, unallocated_weight)
+        unallocated_credit += sign * unallocated_part
+        combined_credit += sign * portion(available - unallocated_part, named_weight, combined_weight)
+    return combined_credit, unallocated_credit
+
+
 def distribute_amount(
     total: Decimal,
     weights: list[Decimal | Fraction],

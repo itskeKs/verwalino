@@ -1485,7 +1485,8 @@ async def test_reserve_migration_roundtrip_below_oldest_affected_revision(migrat
             before = definitions()
             with Operations.context(MigrationContext.configure(connection)):
                 for revision in revisions:
-                    revision.module.downgrade()
+                    from tests.migration_rehearsal import downgrade_rehearsal_revision
+                    downgrade_rehearsal_revision(revision)
                     if revision.revision == '0149':
                         assert connection.scalar(text("SELECT to_regclass('reserve_ledger_entry')")) is None
                         assert connection.scalar(text("SELECT to_regprocedure('recheck_reserve_computations()')")) is None

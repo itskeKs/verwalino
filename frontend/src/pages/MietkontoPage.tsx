@@ -391,7 +391,9 @@ export function MietkontoPage() {
                         </span>}
                       </td>
                       <td>
-                        {PAYMENT_TYPE_LABELS[item.payment_type] ?? item.payment_type}
+                        {"combined_advance" in item && item.combined_advance
+                          ? "Betriebskosten-Vorauszahlung inkl. Heizkosten"
+                          : PAYMENT_TYPE_LABELS[item.payment_type] ?? item.payment_type}
                       </td>
                       <td style={{ textAlign: "right", fontFamily: "var(--mono)" }}>
                         {item.soll} EUR

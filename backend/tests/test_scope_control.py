@@ -207,6 +207,9 @@ async def test_migration_preserves_policy_oid_and_refuses_to_erase_recorded_cont
             # Rehearse empty downgrade/upgrade transactionally on disposable data;
             # rollback restores the synthetic evidence and keeps Alembic consistent.
             connection.begin_nested()
+            # Establish quiescence for this rollback-only rehearsal. A short
+            # maintenance lock can clear within the test connection's lock timeout.
+            connection.execute(text("LOCK TABLE public.audit_event IN ACCESS EXCLUSIVE MODE"))
             from tests.migration_rehearsal import prepare_historical_revision
             with Operations.context(MigrationContext.configure(connection)):
                 prepare_historical_revision(connection, '0041')

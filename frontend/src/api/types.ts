@@ -547,6 +547,8 @@ export interface OwnershipCreate {
   mea_share?: string | null;
 }
 
+export type AdvanceMode = "COMBINED" | "SEPARATE";
+
 export interface LeaseRecord {
   id: string;
   unit_id: string;
@@ -555,6 +557,7 @@ export interface LeaseRecord {
   valid_to: string | null;
   base_rent: string;
   advance_payment: string;
+  advance_mode?: AdvanceMode | null;
   heating_advance_payment: string;
   deposit: string | null;
   notes: string;
@@ -566,6 +569,7 @@ export interface LeaseRentChange {
   valid_from: string;
   base_rent: string;
   advance_payment: string;
+  advance_mode?: AdvanceMode | null;
   heating_advance_payment: string;
   created_at: string;
 }
@@ -574,6 +578,7 @@ export interface LeaseRentChangeCreate {
   valid_from: string;
   base_rent: string;
   advance_payment: string;
+  advance_mode?: AdvanceMode | null;
   heating_advance_payment: string;
 }
 
@@ -584,6 +589,7 @@ export interface LeaseCreate {
   valid_to?: string | null;
   base_rent: string;
   advance_payment: string;
+  advance_mode?: AdvanceMode | null;
   heating_advance_payment: string;
   deposit?: string | null;
   notes?: string;
@@ -594,6 +600,7 @@ export interface LeaseUpdate {
   notes?: string;
   base_rent?: string;
   advance_payment?: string;
+  advance_mode?: AdvanceMode;
   heating_advance_payment?: string;
   deposit?: string | null;
 }
@@ -805,6 +812,7 @@ export interface SettlementRun {
 
 export interface AdvanceProposal {
   accept_from: string;
+  advance_mode?: AdvanceMode | null;
   heating_tenant_cost: string;
   heating_monthly_amount: string;
   current_monthly_amount: string;
@@ -1221,7 +1229,7 @@ export interface IssuedDunningInfo {
 
 export interface TenantMietkontoResult extends MietkontoResult {
   dunning_notices: IssuedDunningInfo[];
-  open_items: (OpenItem & { is_due: boolean })[];
+  open_items: (OpenItem & { is_due: boolean; combined_advance?: boolean })[];
   due_balance: string;
   not_yet_due_balance: string;
 }

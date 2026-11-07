@@ -140,13 +140,14 @@ does not affect a contract. General circulars also support the plain-text variab
 Landlords are prefilled from ownership at the lease start; missing landlord data is visibly
 marked for free-text completion. Rent amounts use the shared rate history for the document date,
 including a change effective on that day. `vertrag.mietaufstellung` supplies the complete rent
-section used by the built-in contract. When heating is positive, both it and
+section used by the built-in contract. For an explicit separate rate or a legacy rate with
+positive heating, both it and
 `vertrag.vorauszahlung` list **Betriebskosten-Vorauszahlung**, **Heizkosten-Vorauszahlung** and
 **Monatliche Gesamtmiete** on separate lines: EUR 750 net plus EUR 150 operating and EUR 90
-heating produces EUR 990 total. At zero heating, `vertrag.vorauszahlung` remains a single
-amount. Outside the end-of-tenancy summary, an unchanged zero-heating rate keeps the previous
-contract text. Changed rates carry their reference date. Previously issued PDFs and request replays
-retain their stored original bytes.
+heating produces EUR 990 total. An explicit combined rate shows **Betriebskosten-Vorauszahlung
+inkl. Heizkosten** and the total. A legacy rate with zero heating keeps its single-amount text
+outside the end-of-tenancy summary. Changed rates carry their reference date. Previously issued
+PDFs and request replays retain their stored original bytes.
 
 A contract dated on or after the last tenancy day shows the rent valid on that day and labels it
 “Stand DD.MM.YYYY”. The document date still appears in the heading. The summary includes the

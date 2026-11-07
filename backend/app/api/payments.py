@@ -146,6 +146,7 @@ class MietkontoOut(BaseModel):
 
 class TenantOpenItemOut(OpenItemOut):
     is_due: bool
+    combined_advance: bool = False
 
 
 class IssuedDunningInfo(BaseModel):
@@ -266,7 +267,7 @@ async def lease_statement(
         lease_agreement_id, period_start, period_end, accounting_scope_id, as_of=as_of
     )
     statement = _mietkonto_out(result).model_dump()
-    statement['open_items'] = [TenantOpenItemOut(**row, is_due=item.is_due)
+    statement['open_items'] = [TenantOpenItemOut(**row, is_due=item.is_due, combined_advance=item.combined_advance)
         for row, item in zip(statement['open_items'], result.open_items)]
     notices = await DunningNoticeRepository(db, auth.organization_id).issued_for_lease(
         lease_agreement_id, accounting_scope_id,

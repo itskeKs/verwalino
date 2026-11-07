@@ -55,7 +55,7 @@ def document_context(monkeypatch):
     history = AsyncMock(return_value=[])
     monkeypatch.setattr(LeaseRentChangeRepository, 'list_for_lease', history)
     lease = SimpleNamespace(id='lease', unit_id=unit.id, valid_from=date(2026, 1, 1), valid_to=None,
-        base_rent=Decimal('750'), advance_payment=Decimal('150'), heating_advance_payment=Decimal('0'), deposit=None)
+        base_rent=Decimal('750'), advance_payment=Decimal('150'), heating_advance_payment=Decimal('0'), advance_mode=None, deposit=None)
     person = SimpleNamespace(company_name='', first_name='Anna', last_name='Beispiel',
         street='Musterweg 1', zip_code='12345', city='Teststadt')
     prop = SimpleNamespace(name='Sonnenhof', street='Sonnenweg 8', zip_code='12345', city='Teststadt')
@@ -90,7 +90,7 @@ async def test_letters_show_separate_advances_and_exact_total_at_the_document_da
     c = document_context
     c.lease.heating_advance_payment = Decimal('90')
     c.history.return_value = [SimpleNamespace(valid_from=date(2026, 3, 15), base_rent=Decimal('800.01'),
-        advance_payment=Decimal('160.02'), heating_advance_payment=Decimal('100.03'))]
+        advance_payment=Decimal('160.02'), heating_advance_payment=Decimal('100.03'), advance_mode=None)]
     values = await variables(c, day)
     net, operating, heating, total = expected
     assert values['vertrag.kaltmiete'] == net
@@ -109,7 +109,7 @@ async def test_letters_show_separate_advances_and_exact_total_at_the_document_da
 async def test_changed_zero_heating_rate_is_not_labelled_as_the_original_contract(document_context):
     c = document_context
     c.history.return_value = [SimpleNamespace(valid_from=date(2026, 3, 15), base_rent=Decimal('800'),
-        advance_payment=Decimal('160'), heating_advance_payment=Decimal('0'))]
+        advance_payment=Decimal('160'), heating_advance_payment=Decimal('0'), advance_mode=None)]
     values = await variables(c, date(2026, 3, 15))
     rendered = replace_tokens(CONTRACT_TEMPLATE, values)
     assert 'Monatliche Kaltmiete (Stand 15.03.2026): 800,00 €' in rendered
@@ -125,9 +125,9 @@ async def test_end_of_tenancy_rent_includes_last_day_but_excludes_first_day_afte
     c.lease.valid_to = date(2026, 3, 1)
     c.history.return_value = [
         SimpleNamespace(valid_from=date(2026, 2, 28), base_rent=Decimal('700'),
-                        advance_payment=Decimal('150'), heating_advance_payment=Decimal('0')),
+                        advance_payment=Decimal('150'), heating_advance_payment=Decimal('0'), advance_mode=None),
         SimpleNamespace(valid_from=date(2026, 3, 1), base_rent=Decimal('750'),
-                        advance_payment=Decimal('150'), heating_advance_payment=Decimal('90')),
+                        advance_payment=Decimal('150'), heating_advance_payment=Decimal('90'), advance_mode=None),
     ]
     values = await variables(c, day)
     assert values['datum'] == day.strftime('%d.%m.%Y')
@@ -160,3 +160,15 @@ async def test_lease_contract_uses_the_same_dated_rent_summary(document_context,
         assert line in rendered
     assert 'Originalvertrag' not in rendered
     assert save.await_args.kwargs['pdf'] == b'pdf'
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("mode,lines", [
+    ("COMBINED", ["Betriebskosten-Vorauszahlung inkl. Heizkosten: 240,00 €"]),
+    ("SEPARATE", ["Betriebskosten-Vorauszahlung: 240,00 €", "Heizkosten-Vorauszahlung: 0,00 €"]),
+])
+async def test_contract_names_the_explicit_advance_meaning_even_with_zero_heating(document_context, mode, lines):
+    document_context.lease.advance_mode = mode
+    document_context.lease.advance_payment = Decimal("240.00")
+    values = await variables(document_context, date(2026, 4, 7))
+    assert values["vertrag.vorauszahlung"].splitlines() == [*lines, "Monatliche Gesamtmiete: 990,00 €"]

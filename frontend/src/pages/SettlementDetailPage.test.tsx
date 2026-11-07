@@ -12,7 +12,7 @@ import { AuthCtx } from "../auth/useAuth";
 import userEvent from "@testing-library/user-event";
 import { Link, MemoryRouter, Route, Routes } from "react-router-dom";
 import * as api from "../api/endpoints";
-import type { CommercialPreallocationIn, ConsumptionSuggestion, CostEntry, SettlementRun } from "../api/types";
+import type { CommercialPreallocationIn, ConsumptionSuggestion, CostEntry, SettlementLine, SettlementRun } from "../api/types";
 import { ApiError } from "../api/client";
 
 vi.mock("../api/endpoints", async (importOriginal) => ({
@@ -29,6 +29,7 @@ vi.mock("../api/endpoints", async (importOriginal) => ({
   computeSettlement: vi.fn(),
   previewSettlement: vi.fn(),
   finalizeSettlement: vi.fn(),
+  setAdvancePaymentsDerived: vi.fn(),
 }));
 vi.mock("../api/mail", () => ({ getMailDispatch: vi.fn().mockResolvedValue({ recipients: [], attempts: [] }), sendMailDispatch: vi.fn() }));
 vi.mock("../components/FinancialCoverageReview", () => ({
@@ -222,6 +223,47 @@ function deferred<T>() {
   const promise = new Promise<T>((res, rej) => { resolve = res; reject = rej; });
   return { promise, resolve, reject };
 }
+
+it("labels the advance total neutrally when the breakdown has unallocated and heating credits", async () => {
+  const lines: SettlementLine[] = [
+    ["Vorauszahlungen ohne Aufteilung", "193.55"],
+    ["Heizkosten-Vorauszahlungen", "46.45"],
+  ].map(([label, amount], sort_order) => ({
+    id: String(sort_order), line_type: "ADVANCE_PAYMENT", label, amount, sort_order,
+    cost_entry_id: null, cost_category_code: null, distribution_key: null, total_amount: null,
+    distribution_base_total: null, distribution_base_share: null, time_share_days: null,
+    time_share_total_days: null, note: null,
+  }));
+  vi.mocked(api.getSettlement).mockResolvedValue({
+    ...finalized, advance_payments_total: "193.55", heating_advance_payments_total: "46.45", lines,
+  });
+  vi.mocked(api.listCostEntries).mockResolvedValue([]);
+  showProposal();
+
+  expect(await screen.findByRole("row", { name: /^(Vorauszahlungen) 193\.55 EUR/ })).toBeVisible();
+  expect(screen.getByRole("row", { name: "Vorauszahlungen ohne Aufteilung 193.55 EUR" })).toBeVisible();
+  expect(screen.queryByText("Betriebskosten-Vorauszahlungen", { exact: true })).not.toBeInTheDocument();
+});
+
+it("keeps a derived draft total neutral while the response has no breakdown", async () => {
+  const draft: SettlementRun = {
+    ...finalized, status: "draft", advance_payments_total: null, heating_advance_payments_total: null,
+    finalized_at: null, snapshot_sha256: null,
+  };
+  vi.mocked(api.getSettlement).mockResolvedValue(draft);
+  vi.mocked(api.listCostEntries).mockResolvedValue([]);
+  vi.mocked(api.setAdvancePaymentsDerived).mockResolvedValue({
+    ...draft, advance_payments_total: "2340.00", advance_payments_source: "DERIVED",
+    heating_advance_payments_total: "0.00", heating_advance_payments_source: "DERIVED",
+  });
+  vi.spyOn(window, "confirm").mockReturnValue(true);
+  showProposal();
+
+  await userEvent.click(await screen.findByRole("button", { name: "Aus Zahlungen ableiten" }));
+  expect(api.setAdvancePaymentsDerived).toHaveBeenCalledWith("run-1", 2026);
+  expect(await screen.findByRole("row", { name: /^Vorauszahlungen 2340\.00 EUR/ })).toBeVisible();
+  expect(screen.queryByRole("row", { name: /^Betriebskosten-Vorauszahlungen 2340\.00 EUR/ })).not.toBeInTheDocument();
+});
 
 describe('commercial preallocation inputs', () => {
   const reason = 'Gastronomie, Restmüll 2 × 1.100 l <Sonderlast> & Begründung';
@@ -763,7 +805,7 @@ describe("T31 meter consumption prefill", () => {
     fireEvent.change(screen.getByLabelText('Heizkosten-Vorauszahlung (EUR)'), { target: { value: '1000,00' } });
     fireEvent.click(screen.getByRole('button', { name: 'Speichern' }));
     await waitFor(() => expect(save).toHaveBeenCalledExactlyOnceWith('run-1', { heating_advance_payments_total: '1000.00' }));
-    expect(screen.getByText('Betriebskosten-Vorauszahlungen').closest('tr')).toHaveTextContent('(DERIVED)');
+    expect(screen.getByText('Vorauszahlungen', { exact: true }).closest('tr')).toHaveTextContent('(DERIVED)');
     expect(screen.getByText('Heizkosten-Vorauszahlungen').closest('tr')).toHaveTextContent('(MANUAL)');
   });
 

@@ -66,6 +66,13 @@ _MONTH_NAMES = {
 }
 
 
+def _payment_label(item):
+    kind = item.get("payment_type", "")
+    if kind == "NK_VORAUSZAHLUNG" and item.get("combined_advance"):
+        return "Betriebskosten-Vorauszahlung inkl. Heizkosten"
+    return _TYPE_LABELS.get(kind, kind)
+
+
 def _eur(value: Decimal | str | None) -> str:
     """Format a Decimal as German money: 1.234,56 EUR."""
     if value is None:
@@ -107,7 +114,7 @@ def build_dunning_html(
     items = notice.included_items or []
     arrears_rows = []
     for it in items:
-        type_label = _TYPE_LABELS.get(it.get("payment_type", ""), it.get("payment_type", ""))
+        type_label = _payment_label(it)
         year, month = it.get("period_year"), it.get("period_month")
         period = _period_label(year, month)
         monthly_due = ''
@@ -155,7 +162,7 @@ def build_dunning_html(
         if not segmented_interest:
             interest_rows = []
             for item in snapshot["items"]:
-                label = _TYPE_LABELS.get(item["payment_type"], item["payment_type"])
+                label = _payment_label(item)
                 due = date.fromisoformat(item["due_date"]).strftime("%d.%m.%Y")
                 interest_start = ""
                 if item.get("interest_start") and item["payment_type"] in ("KALTMIETE", "NK_VORAUSZAHLUNG"):
@@ -260,7 +267,7 @@ def _segmented_interest(snapshot: dict) -> str:
     reference = date.fromisoformat(snapshot["reference_date"]).strftime("%d.%m.%Y")
     rows = []
     for item in snapshot["items"]:
-        label = _TYPE_LABELS.get(item["payment_type"], item["payment_type"])
+        label = _payment_label(item)
         period = _period_label(item["period_year"], item["period_month"])
         due = date.fromisoformat(item["due_date"]).strftime("%d.%m.%Y")
         for index, segment in enumerate(item["segments"]):

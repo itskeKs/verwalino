@@ -197,7 +197,13 @@ checks cancellation, reopening and finalization at both widths.
 
 **Checked by:** agent
 **Also at 360 px:** no
-**Automated:** not yet
+**Automated:** [rent_change.feature](../../features/rent_change.feature) checks the dated
+history and rent account, including a combined advance of 240.00 EUR and a total of
+990.00 EUR with 750.00 EUR net rent. [advance_split.feature](../../features/advance_split.feature)
+checks the separate and combined annual statement values, the July transition, and April's
+shared due date. The [annual settlement journey](../../features/journeys/rent_change_settlement.feature)
+derives a year-only €2,340 advance after an initial calculation, reopens the draft without the old
+balance, and checks the €560 payable result after recalculation and finalization.
 
 ## Journey 5: Annual overview and Anlage V
 

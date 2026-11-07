@@ -149,10 +149,14 @@ class LetterService:
         total = german_decimal(rate.base_rent + rate.advance_payment + rate.heating_advance_payment)
         # Preserve the legacy single-advance text outside the end-of-tenancy snapshot.
         original = all(getattr(rate, field) == getattr(lease, field) for field in
-                       ('base_rent', 'advance_payment', 'heating_advance_payment'))
-        label = ('Originalvertrag' if original and not rate.heating_advance_payment and not at_tenancy_end
+                       ('base_rent', 'advance_payment', 'heating_advance_payment', 'advance_mode'))
+        label = ('Originalvertrag' if original and rate.advance_mode is None and not rate.heating_advance_payment and not at_tenancy_end
                  else f'Stand {rate_day:%d.%m.%Y}')
-        if rate.heating_advance_payment:
+        if rate.advance_mode == 'COMBINED':
+            advance = (f'Betriebskosten-Vorauszahlung inkl. Heizkosten: {advance}\n'
+                       f'Monatliche Gesamtmiete: {total} €')
+            rent_summary = f'Monatliche Kaltmiete ({label}): {rent}\n{advance}'
+        elif rate.advance_mode == 'SEPARATE' or rate.heating_advance_payment:
             advance = (f'Betriebskosten-Vorauszahlung: {advance}\n'
                        f'Heizkosten-Vorauszahlung: {german_decimal(rate.heating_advance_payment)} €\n'
                        f'Monatliche Gesamtmiete: {total} €')
