@@ -176,6 +176,10 @@ def pytest_collection_modifyitems(config, items):
         if target_url():
             template = getattr(item.obj, "__scenario__", None)
             if template:
+                if Path(template.feature.filename).name == "login_lockout.feature":
+                    # Real expiry exceeds the default 600 seconds. Keep a bounded
+                    # two-minute allowance for setup and the HTTP assertions.
+                    item.add_marker(pytest.mark.timeout(get_deployment_policy().rate_limit_rules.lockout_minutes * 60 + 120))
                 reason = {
                     "organization_isolation.feature": "External isolation requires two organizations; only the bootstrap organization is configured",
                     "first_run_setup.feature": "Setup requires a fresh installation; the external target already has a bootstrap organization",
