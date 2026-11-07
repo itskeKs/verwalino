@@ -253,6 +253,15 @@ the first issue that touches this journey (#160); until then the journey cannot 
 **Also at 360 px:** no
 **Automated:** not yet
 
+## Operating cost draft acceptance check
+
+Create an operating cost statement for a synthetic tenant who leaves on 30 September
+2025. The saved draft opens immediately for that tenant and shows 1 January through
+30 September 2025. The [browser twin](../../features/journeys/operating_cost_draft.feature)
+checks the period picker at desktop and 360 px widths, then saves and checks the first
+detail response. The separate user check in issue #373 repeats creation ten times across
+synthetic leases and periods.
+
 ## Not covered
 
 - **Registration** (hosted operation): the confirmation links point to the public host. It could

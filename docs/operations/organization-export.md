@@ -585,6 +585,7 @@ not an immutable field; a separate minimization policy remains an owner decision
 | `source_security_transition` | `assessment_digest`, `manifest_digest`, `previous_mode`, `reason`, `request_digest`, `target_mode` | Retained source, scope or review evidence and its technical provenance. |
 | `unit` | `building_part`, `location`, `number`, `usage_type` | Required unit identity/location and usage classification. |
 | `user` | `display_name`, `email`, `password_hash` | Replaced by pseudonymous email/display name and unusable password sentinel; no original contact or credential survives. |
+| `user` | `design_theme` | Reset to the database default when the account is anonymized. |
 | `visual_disclosure_attestation` | `content_sha256`, `request_digest` | Retained source, scope or review evidence and its technical provenance. |
 | `visual_disclosure_event` | `kind`, `request_digest` | Technical operation/status/error codes, keys and digests; personal event payloads are scrubbed separately. |
 | `visual_extract_artifact` | `content_sha256`, `reason`, `renderer_profile`, `request_digest`, `source_sha256`, `storage_backend`, `storage_uri`, `storage_version` | Retained source, scope or review evidence and its technical provenance. |

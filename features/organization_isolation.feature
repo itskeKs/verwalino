@@ -8,6 +8,11 @@ Feature: Organization isolation
     And each organization has a property, a person and a bank account of its own
     And an administrator of "Verwaltung Alpha" is signed in
 
+  Scenario: Personal appearance cannot change another organization's users
+    Given the organizations have independent personal designs
+    When Verwaltung Alpha changes its personal design
+    Then Verwaltung Beta keeps its personal design
+
   Scenario: Another organization cannot read or replace household history
     Given a unit with saved household history belongs to Verwaltung Alpha
     When Verwaltung Beta tries to read or replace that unit's households

@@ -5,6 +5,7 @@
 import { settlementPeriodPattern } from "../lib/settlementPeriod";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
+import { Building2, ArrowRight } from "lucide-react";
 import { createProperty, updateProperty } from "../api/endpoints";
 import type { Property, PropertyCreate, ManagementType } from "../api/types";
 import { usePagedList } from "../hooks/usePagedList";
@@ -139,9 +140,9 @@ export function PropertiesPage() {
 
   return (
     <div className="paged-list">
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "1rem" }}>
-        <h1 style={{ margin: 0 }}>Objekte</h1>
-        {isWrite && <div style={{ display: "flex", gap: "0.6rem", flexWrap: "wrap" }}>
+      <div className="property-page-header">
+        <div><p className="section-label">Ihr Bestand</p><h1>Objekte</h1></div>
+        {isWrite && <div className="property-actions">
           <button className="btn" aria-expanded={showMasterImport} aria-controls="master-import-panel" onClick={() => { setMasterImportOpened(true); setShowMasterImport(value => !value); }}>
             CSV-Stammdaten importieren
           </button>
@@ -263,9 +264,9 @@ export function PropertiesPage() {
       {loading && properties.length === 0 ? (
         <p>Lade...</p>
       ) : properties.length === 0 ? (
-        <p className="empty-hint">Keine Objekte vorhanden.</p>
+        <p className="empty-hint">{page.query ? "Keine Objekte für diese Suche gefunden." : "Keine Objekte vorhanden."}</p>
       ) : (
-        <div className="card paged-table">
+        <><div className="card paged-table property-table">
           <table className="data-table">
             <thead>
               <tr>
@@ -297,6 +298,15 @@ export function PropertiesPage() {
             </tbody>
           </table>
         </div>
+        <div className="property-cards">
+          {properties.map(property => <article className="property-card" key={property.id}>
+            <div className="property-card-heading"><Building2 aria-hidden="true" /><span className={`badge badge--${property.management_type.toLowerCase()}`}>{MANAGEMENT_TYPES.find(type => type.value === property.management_type)?.label ?? property.management_type}</span></div>
+            <h2><Link className="link" to={`/objekte/${property.id}`}>{property.name}</Link></h2>
+            <p className="property-card-address">{[property.street, property.zip_code, property.city].filter(Boolean).join(", ") || "Keine Adresse hinterlegt"}</p>
+            <dl><dt>Abrechnungszeitraum</dt><dd>{settlementPeriodPattern(property.fiscal_year_start_month)}</dd></dl>
+            <div className="property-card-actions"><Link className="btn" to={`/objekte/${property.id}`}>Objekt öffnen<ArrowRight size={15} aria-hidden="true" /></Link>{isWrite && <button className="btn" onClick={() => openEdit(property)}>Bearbeiten</button>}</div>
+          </article>)}
+        </div></>
       )}
       <MoreResults available={!!page.nextCursor} loading={loading} onMore={() => void page.loadMore()} />
     </div>

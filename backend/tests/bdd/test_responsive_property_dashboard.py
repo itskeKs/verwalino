@@ -1,4 +1,5 @@
 """Real geometry and interactions for the two narrow-screen page regressions."""
+import hashlib
 import os
 from datetime import date
 from pathlib import Path
@@ -37,8 +38,9 @@ def long_rows(world, seed_data):
             "location": "Vorderhaus mit langem Durchgang zum Garten und Seitenflügel",
             "building_part": "Südlicher Gartenflügel", "usage_type": "WOHNUNG", "area": "1234.56",
         })
+    scenario_suffix = hashlib.sha256(world.data["scenario"].encode()).hexdigest()[:8]
     task = create(world, "/api/tasks", {
-        "title": "Dachflächenfensterinstandsetzungsbesprechung " * 3,
+        "title": "Dachflächenfensterinstandsetzungsbesprechung " * 3 + scenario_suffix,
         "property_id": home["id"], "due_date": date.today().isoformat(),
     })
     world.data.update(responsive_property=home, responsive_task=task)

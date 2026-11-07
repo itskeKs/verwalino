@@ -220,10 +220,10 @@ def downgrade_rehearsal_revision(revision):
 
 
 def project_legacy_advance_modes(connection):
-    """Omit values that revision 0174 cannot represent in a historical savepoint."""
+    """Omit values that revision 0175 cannot represent in a historical savepoint."""
     if (not connection.in_nested_transaction()
-            or connection.scalar(text("SELECT version_num FROM public.alembic_version")) != '0175'):
-        raise RuntimeError('Advance mode projection requires a rollback-only 0175 savepoint')
+            or connection.scalar(text("SELECT version_num FROM public.alembic_version")) != '0176'):
+        raise RuntimeError('Advance mode projection requires a rollback-only 0176 savepoint')
     connection.execute(text('UPDATE public.lease_agreement SET advance_mode=NULL WHERE advance_mode IS NOT NULL'))
     connection.execute(text('ALTER TABLE public.lease_rent_change DISABLE TRIGGER protect_lease_rent_change'))
     connection.execute(text('UPDATE public.lease_rent_change SET advance_mode=NULL WHERE advance_mode IS NOT NULL'))

@@ -9,6 +9,8 @@
 
 import { BrowserRouter, Routes, Route, Navigate, useLocation, useParams } from "react-router-dom";
 import { AuthProvider } from "./auth/AuthContext";
+import { DesignThemeProvider } from "./design/DesignThemeContext";
+import { SettingsPage } from "./pages/SettingsPage";
 import { useAuth } from "./auth/useAuth";
 import { AppShell } from "./components/AppShell";
 import { LoginPage } from "./pages/LoginPage";
@@ -137,6 +139,7 @@ export function AppRoutes() {
     <AppShell>
       <Routes>
         <Route path="/" element={<DashboardPage />} />
+        <Route path="/einstellungen" element={<SettingsPage />} />
         <Route path="/aufgaben" element={<TasksPage />} />
         <Route path="/briefe" element={<LettersPage />} />
         <Route path="/mandate" element={<MandatePage />} />
@@ -219,7 +222,7 @@ export default function App() {
   return (
     <BrowserRouter>
       <AuthProvider>
-        <AppRoutes />
+        <DesignThemeProvider><AppRoutes /></DesignThemeProvider>
       </AuthProvider>
     </BrowserRouter>
   );

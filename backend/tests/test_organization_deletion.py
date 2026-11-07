@@ -1376,15 +1376,22 @@ async def test_due_run_erases_all_unbound_text_preserves_retention_and_blocks_ow
     orphan = export_store.put(f"{w['org']}/orphan.bin", marker.encode(), content_type='text/plain')
     retained = (await rent_db.execute(text("SELECT id,row_to_json(a)::text FROM audit_event a WHERE organization_id=:org"), w)).all()
     async with api_client(w) as api:
+        changed = await api.patch('/api/auth/preferences', json={'design_theme': 'warm'})
+        assert changed.status_code == 200, changed.text
+        assert changed.json() == {'design_theme': 'warm'}
         assert (await api.post('/api/organizations/deletion')).status_code == 200
         assert (await api.post('/api/organizations/deletion/confirm', json={'organization_name': 'T23 synthetic'})).status_code == 200
     await rent_db.rollback()
     from app.services.organization_deletion_service import run_deletion
     future = datetime.now(timezone.utc) + timedelta(days=8)
     async with rent_db.begin():
+        await rent_db.execute(text("""UPDATE "user" SET design_theme='warm' WHERE id=:foreign_admin"""), w)
         await run_deletion(rent_db, w['org'], now=future)
+        assert await rent_db.scalar(text('SELECT design_theme FROM "user" WHERE id=:foreign_admin'), w) == 'warm'
+        await rent_db.execute(text('UPDATE "user" SET design_theme=DEFAULT WHERE id=:foreign_admin'), w)
     async with api_client(w) as former_owner:
         assert (await former_owner.get('/api/auth/session')).status_code == 401
+    assert await rent_db.scalar(text('SELECT design_theme FROM "user" WHERE id=:admin'), w) == 'klar'
     assert not export_store.exists(orphan.uri)
     stored = dict((await rent_db.execute(text("SELECT id,row_to_json(a)::text FROM audit_event a WHERE organization_id=:org"), w)).all())
     assert all({k: v for k, v in json.loads(stored[identity]).items() if k != 'payload_diff'} ==

@@ -283,8 +283,8 @@ def journey_five_expenses(world):
 
 async def _resize_annual_overview(page, width):
     await page.set_viewport_size({'width': width, 'height': 1000})
-    # The viewport can change before AppShell commits its media-query update.
-    navigation = page.get_by_role('navigation')
+    # Wait for the primary navigation to unmount. Mobile shortcuts remain visible.
+    navigation = page.get_by_role('navigation', name='Hauptnavigation', exact=True)
     if width == 360:
         await expect(navigation).to_have_count(0)
     else:

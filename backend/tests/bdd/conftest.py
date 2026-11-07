@@ -207,6 +207,8 @@ def pytest_bdd_step_error(feature, scenario, step, exception, **_):
 from tests.bdd.steps.common import *  # noqa: E402,F401,F403
 from tests.bdd.steps.organization import *  # noqa: E402,F401,F403
 from tests.bdd.steps.password import *  # noqa: E402,F401,F403
+from tests.bdd.steps.personal_design import *  # noqa: E402,F401,F403
+from tests.bdd.steps.browser_personal_design import *  # noqa: E402,F401,F403
 from tests.bdd.steps.bank_import import *  # noqa: E402,F401,F403
 from tests.bdd.steps.reports import *  # noqa: E402,F401,F403
 from tests.bdd.steps.inbox import *  # noqa: E402,F401,F403

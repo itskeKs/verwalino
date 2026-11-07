@@ -15,6 +15,7 @@ import { Topbar } from './Topbar';
 import * as endpoints from '../api/endpoints';
 import { AuthProvider } from '../auth/AuthContext';
 import { ApiError } from '../api/client';
+import { MemoryRouter } from 'react-router-dom';
 
 // Mock all API endpoints used by AuthProvider and Topbar
 vi.mock('../api/endpoints', () => ({
@@ -49,9 +50,9 @@ describe('T14: Password Change Dialog', () => {
 
   function renderWithAuth(children: React.ReactNode) {
     return render(
-      <AuthProvider>
+      <MemoryRouter><AuthProvider>
         {children}
-      </AuthProvider>
+      </AuthProvider></MemoryRouter>
     );
   }
 

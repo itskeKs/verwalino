@@ -1094,11 +1094,12 @@ their streaming responses keep their existing session lifetime.
 Implemented coverage includes all mutations in the economic-plan, payment and WEG
 settlement routers and existing callers of the three shared write guards. Other
 direct write dependencies remain follow-up work, inventoried in the #260 PR.
-The existing BK finalize route also follows this rule: an immediate PDF request
-sees the finalized snapshot; drafts remain blocked with HTTP 409. Regression tests
-observe committed rows from an independent DB connection and request the new detail
-at `http.response.start`. An assertion only after an ASGITransport request completes
-would wait for request cleanup and mask the race.
+Single BK draft creation also follows this rule: the UI can open the saved draft
+as soon as `POST /api/settlements` returns 201. For BK finalization, an immediate
+PDF request sees the finalized snapshot; drafts remain blocked with HTTP 409.
+Regression tests observe committed rows from an independent DB connection and
+request the new detail at `http.response.start`. An assertion only after an
+ASGITransport request completes would wait for request cleanup and mask the race.
 
 - [ ] `app/api/settlements.py`: `POST` (create run, `require_write_dep`), `POST /{id}/compute`, `PATCH /{id}/advance-payments`, `POST /{id}/finalize`, `POST /{id}/correction`, `GET` (list/detail, all roles read), `GET /{id}/pdf` (finalized → PDF stream). READ_ONLY: GET only. Foreign ID → **404** (not 403), as in M0/M2. Register the router in `app/main.py`.
 

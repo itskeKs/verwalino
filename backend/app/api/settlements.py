@@ -485,7 +485,7 @@ async def accept_advance_proposal(
 async def create_settlement(
     body: SettlementRunCreate,
     auth: AuthContext = Depends(require_write_dep),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
 ):
     svc = SettlementService(db, auth.organization_id, auth.user_id)
     run = await svc.create_draft(

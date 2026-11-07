@@ -46,14 +46,6 @@ Feature: Settlement period
     When the manager tries to create a free statement extending beyond tenant A's lease
     Then the statement is refused with a German lease-period error
 
-  @browser
-  Scenario: The statement picker offers the lease-bounded period on desktop and mobile
-    Given an administrator of "Verwaltung Alpha" is signed in
-    And a calendar-year property where tenant A leaves on 30 September and tenant B moves in on 1 October
-    When the manager opens the statement picker for tenant A
-    Then the offered and selected statement period ends on 30 September at desktop and mobile widths
-
-
   Scenario: A yearly advance is shared between adjacent statements without double credit
     Given an administrator of "Verwaltung Alpha" is signed in
     And a calendar-year tenancy with a booked yearly advance of 1200 euros
