@@ -175,18 +175,21 @@ editable for mid-year scopes and gap-closing transitions. Year-only NK advances
 are split across the calendar months the lease actually covers in the assigned
 year; Hausgeld uses all twelve months. A statement credits its covered months, including
 months in the second calendar year of a non-calendar period. The rounding module
-floors each monthly share to cents and assigns the remainder to the last covered month, so
-the last period covering that year receives the remaining cents. For a lease
+rounds each monthly share's magnitude down to cents and assigns the signed remainder
+to the last covered month, so the last period covering that year receives the remaining cents. For a lease
 covering the whole calendar year with 1,200 euros paid, January–June and
 July–December credit 600 euros each; April–December credits
 900 euros. For 1,000 euros, January–November credit 83.33 euros each and December
 83.37 euros. A full calendar year still credits the full amount. Month shares
 do not depend on other drafts or finalization order while lease dates and booked payments are fixed;
-later statements cannot change earlier finalized shares. After a later lease-end
-edit, each year/month bucket uses already finalized snapshot credits in place
-of those windows' current shares, never reducing a new credit below zero. The last
-open statement takes the remainder: 300 euros already finalized from
-a 1,200-euro annual payment leaves 900 euros after entering a September end;
+later statements cannot change earlier finalized shares. After a lease-end edit
+or a change to booked advances, each year/month bucket uses already finalized
+snapshot credits in place of those windows' current shares. Ordinary buckets
+keep the zero floor. For a bucket with an active standalone refund or a negative
+frozen credit, the last open statement takes the signed remainder, including
+when the booked net is zero. A bucket omitted from a known finalized breakdown
+counts as zero for this refund reconciliation. For example, 300 euros already
+finalized from a 1,200-euro annual payment leaves 900 euros after entering a September end;
 245.16 euros already finalized from three 100-euro payments through 14 March
 leaves 54.84 euros after entering an end on 20 March. Frozen credits are read from
 the snapshot, never recomputed. This includes later calendar windows finalized
@@ -230,9 +233,10 @@ shows their combined total. This also works for a newly created lease-clipped st
 The structured amount is frozen in the snapshot;
 the API exposes it in the notice label.
 
-Legacy DERIVED snapshots without year/month credit buckets can still use fixed
-lease dates. After a date edit, `advance_credit_history_missing` (HTTP 409) only
-blocks derivation if a credit bucket in the legacy statement's covered span changes.
+Legacy DERIVED snapshots without year/month credit buckets can still be used
+when their covered buckets are unaffected. Derivation returns
+`advance_credit_history_missing` (HTTP 409) when a credit bucket in the legacy
+statement's span changes after a date edit or needs refund reconciliation.
 Month-assigned advances from January–March remain usable when an end in June is
 entered later; a year-only payment whose covered-month denominator changes still
 requires correction or a confirmed MANUAL total. Create a correction with
@@ -245,9 +249,10 @@ MANUAL statements and never invents a historical credit breakdown.
 
 After a date edit, several open drafts may each include the same outstanding
 difference. Finalizing one freezes its credit; another stale draft must be
-re-derived before finalization (`derived_total_stale`, HTTP 422). Late bookings
-assigned to an already finalized month likewise enter a later statement through
-the frozen-credit difference; the earlier snapshot stays unchanged.
+re-derived before finalization (`derived_total_stale`, HTTP 422). Standalone
+refunds assigned to an already finalized month enter another statement in the
+assigned year through the frozen-credit difference.
+The earlier snapshot stays unchanged.
 
 Automatic form prefill only applies while both date fields are empty. A delayed
 period-offer response preserves dates the user has already entered; choosing an
@@ -879,13 +884,17 @@ documents the retained text.
 
 ```
 expected (total_cost)      = Σ rounded tenant shares of all apportionable cost categories
-actual (advance_payments)  = sum of the tenant's operating cost advance payments in the period
-balance                    = total_cost − advance_payments_total
+actual (operating, heating) = each component's net advance payments in the period
+balance                     = total_cost − advance_payments_total − heating_advance_payments_total
    balance > 0  → additional payment (tenant pays)
    balance < 0  → credit (tenant is refunded)
 ```
 
-`balance`, `total_cost`, `advance_payments_total` are on the `settlement_run` (header) **and** as `settlement_line` (`ADVANCE_PAYMENT`, `BALANCE`) for PDF/verification.
+The settlement subtracts the signed operating and heating advance totals
+from the respective costs. With 50 euros received and 70 euros refunded for
+one component, the derived advance is −20 euros and the refund increases the
+balance due accordingly. The run stores both totals and the balance. Its
+`ADVANCE_PAYMENT` and `BALANCE` lines carry the same values into the PDF.
 
 ### 7.2 Origin of the advance payment total — [DECISION], M3 manual
 
@@ -896,6 +905,35 @@ Payments (M6) do not exist yet (roadmap: M6 depends on M3). Therefore the **adva
 - **M6 transition prepared:** From M6, `advance_payments_source = 'DERIVED'` and the value is drawn from captured `Payment`s (roadmap M6: "real additional payment/credit instead of a manual advance payment total"). The field/`source` discriminator makes the switch clean, without a schema break.
 
 > **[DECISION]** Storage location of the manual advance payment total: **field on the `settlement_run`** (recommended, determined here) vs. a dedicated small table. Recommendation: field on the run — it belongs semantically in the frozen snapshot (what was taken as paid in the settlement is part of the immutable document). Confirm.
+
+### Advance credits by rental rate
+
+The lease and its dated rates may define one combined advance or separate
+operating and heating advances. Positive heating costs still enter the cost
+calculation in either mode. A wholly combined period shows one credit against
+the total. A separate statement shows operating and heating credits and both
+component balances, including an explicit separate heating advance of zero.
+Existing rates with no mode keep the legacy display rule.
+
+For a year with both modes, a monthly combined payment is disclosed as a
+combined credit. The separate operating and heating credits retain their own
+lines. If a booking spans both modes without a clear component assignment,
+the statement shows “Vorauszahlungen ohne Aufteilung” and deducts that credit
+once from the overall result. For example, an annual payment of EUR 2,340
+against EUR 1,900 operating and EUR 1,000 heating costs leaves EUR 560 payable.
+The statement reports one overall balance. It carries its booked credits
+once through the existing partial-period and frozen credit rules. The rounded
+period total is divided among its booked categories at cumulative boundaries,
+so an annual remainder cannot move a credit from one category to another or
+create a refund. Finalized statements keep their original snapshot, digest,
+and document output.
+
+Changing a draft's manual advance values or deriving its advances again clears
+the saved calculation and keeps its structured inputs. The next calculation
+uses the new advance basis. Until then, reopening the draft shows the saved
+advances without the previous balance or component breakdown.
+The tenant advance endpoints return 404 for WEG settlement and asset report
+drafts, which keep their saved inputs and results.
 
 ### 7.3 Proposing a future advance payment (phase 2, T28)
 
@@ -909,7 +947,9 @@ commercially rounded to the cent once. Example: January through 05.02.2024,
 0.17 EUR / (1 + 5/29) = 0.15 EUR. A missing, negative, or incoherent historical basis
 results in 409, no zero assumption. The optional ISO-date query `accept_from` defaults to
 the day after the settlement period ends and is returned in the payload. Both current
-advances are the rates valid on that date, resolved by the same rent-history lookup as POST.
+advances and their mode come from the rate valid on that date. GET and POST use
+the same lookup. A combined rate uses the full frozen tenant cost as its
+proposal basis, rounded once. A separate rate uses each frozen cost component.
 
 The detail page shows the amount and basis; readers see no adoption control. POST to the
 same URL accepts only `valid_from` and, after live role, scope, and history-prepare checks,
@@ -1054,11 +1094,12 @@ their streaming responses keep their existing session lifetime.
 Implemented coverage includes all mutations in the economic-plan, payment and WEG
 settlement routers and existing callers of the three shared write guards. Other
 direct write dependencies remain follow-up work, inventoried in the #260 PR.
-The existing BK finalize route also follows this rule: an immediate PDF request
-sees the finalized snapshot; drafts remain blocked with HTTP 409. Regression tests
-observe committed rows from an independent DB connection and request the new detail
-at `http.response.start`. An assertion only after an ASGITransport request completes
-would wait for request cleanup and mask the race.
+Single BK draft creation also follows this rule: the UI can open the saved draft
+as soon as `POST /api/settlements` returns 201. For BK finalization, an immediate
+PDF request sees the finalized snapshot; drafts remain blocked with HTTP 409.
+Regression tests observe committed rows from an independent DB connection and
+request the new detail at `http.response.start`. An assertion only after an
+ASGITransport request completes would wait for request cleanup and mask the race.
 
 - [ ] `app/api/settlements.py`: `POST` (create run, `require_write_dep`), `POST /{id}/compute`, `PATCH /{id}/advance-payments`, `POST /{id}/finalize`, `POST /{id}/correction`, `GET` (list/detail, all roles read), `GET /{id}/pdf` (finalized → PDF stream). READ_ONLY: GET only. Foreign ID → **404** (not 403), as in M0/M2. Register the router in `app/main.py`.
 

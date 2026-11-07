@@ -68,6 +68,8 @@ shows a German field problem and keeps her input. A separate heating advance may
 - The new MIET property's details and new-unit form ask for no MEA setup while no unit has
   a recorded MEA. A new WEG property's details offer “MEA-Skala bestätigen” with
   “Skala noch nicht bestätigt” and its new-unit form offers “MEA (Miteigentumsanteil)”.
+- If she adds “Wohnung 1” a second time, saving is refused with “Eine Einheit mit dieser Nummer
+  gibt es in diesem Objekt schon.” The form keeps the entered number so she can correct it.
 - **Additional check, deposit:** if Sabine mistakenly enters 2,400.00 € for Anna (more than three
   net rents), saving is refused with „Die Kaution darf höchstens drei Nettokaltmieten betragen
   (2.250,00 €).“ and her input is kept. She then enters the correct 2,250.00 € and saves.
@@ -80,7 +82,7 @@ shows a German field problem and keeps her input. A separate heating advance may
 
 **Checked by:** agent
 **Also at 360 px:** no
-**Automated:** tenancy money entry and deposit refusal/correction at 1280 and 360 px, in [money_inputs.feature](../../features/journeys/money_inputs.feature); new MIET/WEG MEA guidance at both widths in [property_mea.feature](../../features/journeys/property_mea.feature); empty tenant/owner selection, profile designation and return navigation at both widths in [profile_hints.feature](../../features/journeys/profile_hints.feature)
+**Automated:** tenancy money entry and deposit refusal/correction at 1280 and 360 px, in [money_inputs.feature](../../features/journeys/money_inputs.feature); new MIET/WEG MEA guidance at both widths in [property_mea.feature](../../features/journeys/property_mea.feature); duplicate unit number refusal and unit area entry/correction at both widths in [unit_numbers.feature](../../features/journeys/unit_numbers.feature); empty tenant/owner selection, profile designation and return navigation at both widths in [profile_hints.feature](../../features/journeys/profile_hints.feature)
 
 ## Journey 2: Importing the bank statement and assigning the payments
 
@@ -99,9 +101,14 @@ what Verwalino does not assign by itself.
   and “Saldo” stays 1,900.00 €. This compares due dates against currently booked
   allocations; it does not reconstruct past booking history.
 - Bernd: March to October paid in full, nothing open.
-- Anna's 2,250.00 € of 02.01. are the **deposit**, not rent.
+- Anna's 2,250.00 € of 02.01. are the **deposit**, not rent. Split the receipt as “Kaution”,
+  select Anna's tenancy and enter `2.250,00`. Invalid text keeps the split open with
+  guidance for the amount and leaves the receipt unassigned.
 - General electricity (10 × 60.00 € = 600.00 €) and the building insurance (312.00 €) are expenses
   of the property.
+  Enter and confirm the January electricity cost for 60.00 €, then assign its
+  −60.00 € bank debit to that existing cost. The debit becomes “Zugeordnet”, the
+  cost has 0.00 € remaining bank coverage, and the year still counts 60.00 € once.
 - The private Amazon booking (34.99 €) belongs to nothing and is counted nowhere.
 - If Sabine uploads the same file a second time, no booking is created twice.
 
@@ -110,12 +117,15 @@ what Verwalino does not assign by itself.
 **Automated through the browser:** original Sparkasse preview/import, Anna's partial-rent
 suggestion, duplicate detection and refusal of a statement for another account in
 [sparkasse_statement.feature](../../features/journeys/sparkasse_statement.feature);
+the January electricity assignment and unchanged yearly expense run at 1280 and 360 px there;
 manual “60,00” cost entry in [money_inputs.feature](../../features/journeys/money_inputs.feature).
 The Sparkasse twin also opens Anna's April split with a long dwelling label at
 1280, 800 and 360 px: the explanation remains complete, labels sit above fields,
 target and note span the row, and both bottom actions remain reachable. It corrects
 an over-allocation without losing inputs and books 650.00 EUR base rent plus
-150.00 EUR operating advance against her 800.00 EUR receipt.
+150.00 EUR operating advance against her 800.00 EUR receipt. The same twin checks a
+separate synthetic 2,250.00 EUR deposit receipt at 1280 and 360 px: it rejects an
+invalid amount, then books the exact grouped amount to the selected tenancy.
 The full-year account cutoff is automated at 1280 and 360 px in
 [rent_account_due.feature](../../features/journeys/rent_account_due.feature).
 The remaining assignment checks still require blind acceptance.
@@ -123,13 +133,15 @@ The remaining assignment checks still require blind acceptance.
 ## Journey 3: Dunning letter to Anna
 
 **Goal:** Sabine asks Anna in writing for the missing 100.00 € of April.
-**She does:** creates a dunning letter („Mahnung“) for Anna and looks at it as Anna would receive it.
+**She does:** enables automatic interest in **Mahneinstellungen** as an administrator, creates a dunning letter („Mahnung“) for Anna, and opens the issued PDF.
 **Expected:**
 - **Due date:** third working day of the month (§ 556b BGB). In April 2026 the 03.04. (Good
   Friday) and the 06.04. (Easter Monday) are public holidays, and Saturday does not count.
   Working days: 01.04., 02.04., 07.04. → due on **07.04.2026**, in default from **08.04.2026**
   without a reminder (§ 286 Abs. 2 Nr. 1 BGB).
 - Principal 100.00 €, correct tenant, unit, month April 2026.
+- Creating a notice opens its saved draft immediately, without a not-found page,
+  manual reload or second creation.
 - **Default interest** (Anna is a consumer: base rate plus 5 percentage points, § 288 Abs. 1 BGB)
   on 100.00 € from 08.04.2026:
   - 08.04. to 30.06.2026: 84 days at 6.27 % (base rate 1.27 %) = 1.44 €
@@ -138,20 +150,36 @@ The remaining assignment checks still require blind acceptance.
   - **to 31.10.2026 together 3.64 €**, afterwards just under 2 cents per day up to the date of the
     dunning letter. Deviations up to 5 cents (how the first and last day are counted) are not a
     finding.
-- If Verwalino shows no interest, that is a finding of the kind "missing", not an error.
 - The document can be downloaded or printed and is readable on a phone (360 px).
+
+Run the separate owner-draft check with automatic interest off, before enabling it for Anna.
+Use unpaid 2026 Hausgeld of 400.00 € per month, with Karl Weiß owning January–June and
+Lena Roth owning July–December. Create Karl's notice, then Lena's, for the 2026 plan as of
+15.01.2027. Each draft opens immediately with 2400.00 € principal and exactly its six months.
+
+Separately, create a manual plan for one owner with all shares, 7,200.00 € in annual costs
+and zero reserve. Calculate the 600.00 € monthly advance, cancel finalization, return to
+the list and reopen the draft. The annual cost is still editable and the monthly advance
+still shows 600.00 €. Confirm the data basis and finalize; the saved annual and monthly
+advances remain 7,200.00 € and 600.00 € at desktop and 360 px.
 
 **Checked by:** agent
 **Also at 360 px:** the dunning letter
 **Automated:** [readable issued notice](../../features/journeys/dunning_notice.feature)
-checks four-digit principal, interest and open amounts without horizontal
+checks the first detail response for both owner drafts and an ordinary tenant
+draft, with no reload and no duplicate. The tenant and owner fee checks set the
+standard first fee to 2.50 EUR and enter `0,00` in each form at 1280 and 360 px. The
+saved fee is zero; principal and total match with interest off. Owner drafts show their six months at
+1280 and 360 px. It also checks four-digit principal, interest and open amounts without horizontal
 scrolling at 1280 and 360 px, plus the German issue-time display. Its April
 scenario checks the explicit `Zinsbeginn: 08.04.2026` in the issued detail at
 both widths and in the downloaded PDF. The separate
 [interest/PDF scenario](../../features/dunning_interest.feature) checks frozen
-amounts and the downloaded PDF; its API scenarios cover the April due date and
-first interest day. The split-rate expectations above remain outside these
-automated checks.
+amounts, both published rates, the issued PDF, and the ledger's separate notice information.
+The [organization settings scenarios](../../features/dunning_settings.feature) also verify
+the second-level fee and the residential and commercial premiums. The
+[manual plan journey](../../features/journeys/economic_plan_reserve.feature)
+checks cancellation, reopening and finalization at both widths.
 
 ## Journey 4: Rent change for Anna
 
@@ -169,7 +197,13 @@ automated checks.
 
 **Checked by:** agent
 **Also at 360 px:** no
-**Automated:** not yet
+**Automated:** [rent_change.feature](../../features/rent_change.feature) checks the dated
+history and rent account, including a combined advance of 240.00 EUR and a total of
+990.00 EUR with 750.00 EUR net rent. [advance_split.feature](../../features/advance_split.feature)
+checks the separate and combined annual statement values, the July transition, and April's
+shared due date. The [annual settlement journey](../../features/journeys/rent_change_settlement.feature)
+derives a year-only €2,340 advance after an initial calculation, reopens the draft without the old
+balance, and checks the €560 payable result after recalculation and finalization.
 
 ## Journey 5: Annual overview and Anlage V
 
@@ -218,6 +252,15 @@ the first issue that touches this journey (#160); until then the journey cannot 
 **Checked by:** agent
 **Also at 360 px:** no
 **Automated:** not yet
+
+## Operating cost draft acceptance check
+
+Create an operating cost statement for a synthetic tenant who leaves on 30 September
+2025. The saved draft opens immediately for that tenant and shows 1 January through
+30 September 2025. The [browser twin](../../features/journeys/operating_cost_draft.feature)
+checks the period picker at desktop and 360 px widths, then saves and checks the first
+detail response. The separate user check in issue #373 repeats creation ten times across
+synthetic leases and periods.
 
 ## Not covered
 

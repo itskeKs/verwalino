@@ -1,5 +1,5 @@
 import { api } from "./api/client";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { MemoryRouter, useLocation } from "react-router-dom";
 import { AuthProvider } from "./auth/AuthContext";
@@ -10,6 +10,11 @@ import * as letters from "./api/letters";
 let permissionsMode = "PREPARATION";
 let permissionsStatusFails = false;
 let permissionsInventoryFails = false;
+beforeEach(() => {
+  vi.stubGlobal("matchMedia", vi.fn(() => ({
+    matches: true, addEventListener: vi.fn(), removeEventListener: vi.fn(),
+  })));
+});
 function CurrentPath() { return <output aria-label="Aktuelle Route">{useLocation().pathname}</output>; }
 const inventory = { generated_at: "2026-10-31T12:00:00Z", mode: "PREPARATION", counts: {
   properties_total: 5, properties_without_domain: 2, properties_without_current_reader: 3,
@@ -47,16 +52,24 @@ function renderRoutes(path: string, role?: string, setupStatus: { required: bool
 afterEach(() => {
   cleanup();
   vi.restoreAllMocks();
+  vi.unstubAllGlobals();
   permissionsMode = "PREPARATION";
   permissionsStatusFails = false;
   permissionsInventoryFails = false;
+});
+
+it.each(["OWNER_ADMIN", "CLERK", "READ_ONLY"])("opens personal settings for %s", async role => {
+  renderRoutes("/einstellungen", role);
+  expect(await screen.findByRole("heading", { name: "Einstellungen" })).toBeVisible();
+  expect(screen.getByRole("radio", { name: /Klar/ })).toBeInTheDocument();
+  expect(screen.getByRole("radio", { name: /Warm/ })).toBeInTheDocument();
 });
 
 describe("setup status availability", () => {
   it.each([undefined, "OWNER_ADMIN"])("keeps normal routes available after a failed setup check for %s", async role => {
     const log = vi.spyOn(console, "error").mockImplementation(() => {});
     renderRoutes("/objekte", role, new TypeError("network"));
-    expect(await screen.findByRole("heading", { name: role ? "Objekte" : "Hausverwaltung" })).toBeVisible();
+    expect(await screen.findByRole("heading", { name: role ? "Objekte" : "Anmelden" })).toBeVisible();
     expect(screen.queryByText(/Einrichtungsstatus konnte nicht geladen werden/)).toBeNull();
     expect(log).toHaveBeenCalled();
   });
@@ -64,7 +77,7 @@ describe("setup status availability", () => {
   it("opens setup when a later app load can check a fresh installation", async () => {
     vi.spyOn(console, "error").mockImplementation(() => {});
     const firstLoad = renderRoutes("/", undefined, new TypeError("network"));
-    expect(await screen.findByRole("heading", { name: "Hausverwaltung" })).toBeVisible();
+    expect(await screen.findByRole("heading", { name: "Anmelden" })).toBeVisible();
     firstLoad.unmount();
     renderRoutes("/", undefined, { required: true });
     expect(await screen.findByRole("heading", { name: "Verwalino einrichten" })).toBeVisible();
@@ -80,7 +93,7 @@ describe("declaration route authorization", () => {
 
   it("keeps unauthenticated visitors on the login page", async () => {
     renderRoutes("/teilungserklaerung/import/import-1/review");
-    expect(await screen.findByRole("heading", { name: "Hausverwaltung" })).toBeVisible();
+    expect(await screen.findByRole("heading", { name: "Anmelden" })).toBeVisible();
   });
 
   it("keeps property knowledge reachable for read-only users", async () => {
@@ -113,6 +126,9 @@ describe("governance navigation", () => {
 
   it("keeps advanced governance links reachable for admins", async () => {
     renderRoutes("/objekte", "OWNER_ADMIN");
+    await screen.findByRole("heading", { name: "Objekte" });
+    fireEvent.click(screen.getByText("Weitere Bereiche", { selector: "summary" }));
+    fireEvent.click(screen.getByText("Erweitert", { selector: "summary" }));
     expect(await screen.findByRole("link", { name: "Berechtigungen" })).toBeVisible();
     expect(screen.getByText("Erweitert")).toBeVisible();
   });

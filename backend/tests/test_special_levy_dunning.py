@@ -10,6 +10,8 @@ from tests.test_special_levy import (
     levy_db, levy_fixture, scope_seed, worker_tenant, client, create, query,
 )  # noqa: F401
 
+from tests.test_scoped_fristen import add_monitor_plan
+
 from app.engine.dunning import find_overdue_items
 from app.engine.mietkonto import account_statement, special_levy_expected_charges
 
@@ -20,9 +22,9 @@ def test_special_levy_dunning_respects_exact_due_date():
         [(date(2026, 6, 15), Decimal('3000.00'))], owner_id,
         date(2026, 6, 1), date(2026, 6, 30))
     statement = account_statement(charges, [])
-    assert not find_overdue_items(list(statement.open_items), date(2026, 6, 14))
-    assert not find_overdue_items(list(statement.open_items), date(2026, 6, 15))
-    overdue = find_overdue_items(list(statement.open_items), date(2026, 6, 16))
+    assert not find_overdue_items(list(statement.open_items), date(2026, 6, 14), current_year=2026)
+    assert not find_overdue_items(list(statement.open_items), date(2026, 6, 15), current_year=2026)
+    overdue = find_overdue_items(list(statement.open_items), date(2026, 6, 16), current_year=2026)
     assert sum(item.open_amount for item in overdue) == Decimal('3000.00')
 
 
@@ -82,6 +84,12 @@ def dunning_body(ids, **extra):
             'reference_date': '2026-06-16', **extra}
 
 
+async def monitor_open_items(api, ids, reference_date):
+    response = await api.get('/api/fristen', params={**query(ids), 'reference_date': reference_date})
+    assert response.status_code == 200, response.text
+    return next(row for row in response.json() if row['kind'] == 'OFFENE_POSTEN')
+
+
 @pytest.mark.asyncio
 async def test_levy_without_plan_real_dunning_payment_issue_pdf(levy_db, levy_fixture):
     ids = levy_fixture
@@ -93,10 +101,19 @@ async def test_levy_without_plan_real_dunning_payment_issue_pdf(levy_db, levy_fi
         statement = await api.get(f"/api/payments/mietkonto/owner/{ids['owners'][0]}", params={**query(ids), 'period_start': '2026-06-01', 'period_end': '2026-06-30'})
         assert statement.status_code == 200, statement.text
         assert statement.json()['balance'] == '3000.00'
+        async with client(ids, 'readonly') as reader:
+            due_today = await monitor_open_items(reader, ids, '2026-06-15')
+            assert due_today['status'] == 'OK'
+            overdue = await monitor_open_items(reader, ids, '2026-06-16')
+            assert overdue['status'] == 'DUE'
+            assert overdue['detail'].startswith('3 '), overdue
         for day in ('2026-06-14', '2026-06-15'):
             before = await api.post('/api/dunning/owner', json=dunning_body(ids, reference_date=day))
             assert before.status_code == 422, before.text
-            assert 'No overdue items' in before.text
+            assert before.json()['detail'] == (
+                'Für den ausgewählten Eigentümer gibt es im gewählten Zeitraum '
+                'zum Stichtag keine überfälligen Beträge.'
+            ), before.text
         result = await api.post('/api/dunning/owner', json=dunning_body(ids))
         assert result.status_code == 201, result.text
         draft = result.json()
@@ -136,11 +153,11 @@ def test_multiple_levy_dates_apply_monthly_payment_once_and_keep_types_separate(
     assert statement.soll_total == Decimal('1090.00')
     assert statement.ist_total == Decimal('100.00')
     assert statement.balance == Decimal('990.00')
-    overdue = find_overdue_items(list(statement.open_items), date(2026, 6, 16))
+    overdue = find_overdue_items(list(statement.open_items), date(2026, 6, 16), current_year=2026)
     assert {(item.payment_type, item.open_amount) for item in overdue} == {
         ('SONDERZAHLUNG', Decimal('200.00')), ('HAUSGELD_VORSCHUSS', Decimal('90.00'))}
-    assert not find_overdue_items([item for item in statement.open_items if item.payment_type == 'SONDERZAHLUNG'], date(2026, 6, 17), grace_days=2)
-    assert sum(item.open_amount for item in find_overdue_items(list(statement.open_items), date(2026, 6, 26))) == Decimal('990.00')
+    assert not find_overdue_items([item for item in statement.open_items if item.payment_type == 'SONDERZAHLUNG'], date(2026, 6, 17), grace_days=2, current_year=2026)
+    assert sum(item.open_amount for item in find_overdue_items(list(statement.open_items), date(2026, 6, 26), current_year=2026)) == Decimal('990.00')
 
 
 async def book_payment(api, ids, amount, *, payment_type='SONDERZAHLUNG', owner=None, **extra):
@@ -152,6 +169,93 @@ async def book_payment(api, ids, amount, *, payment_type='SONDERZAHLUNG', owner=
     booked = await api.post(f"/api/payments/{payment['id']}/book")
     assert booked.status_code == 200, booked.text
     return payment
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('payment_type', ['SONDERZAHLUNG', 'HAUSGELD_VORSCHUSS'])
+async def test_monitor_refuses_adjacent_plans_using_the_same_monthly_payment(levy_fixture, payment_type):
+    ids = {**levy_fixture, 'profile': levy_fixture['owners'][0], 'unit': levy_fixture['units'][0]}
+    amount = '600.00' if payment_type == 'HAUSGELD_VORSCHUSS' else '0.00'
+    windows = [('2025-07-01', '2025-07-15'), ('2025-07-16', '2025-07-31')]
+    plans = [await add_monitor_plan(ids, 'scope', day=day, amount=amount, start=start, end=end)
+             for (start, end), day in zip(windows, (3, 17), strict=True)]
+    async with client(ids) as api:
+        if payment_type == 'SONDERZAHLUNG':
+            for due in ('2025-07-03', '2025-07-17'):
+                await create(api, ids, due_date=due, amount='2000.00')
+            # Pay both levies for the other owners so their balances cannot mask the error.
+            for owner, total in zip(ids['owners'][1:], ('1200.00', '1600.00'), strict=True):
+                await book_payment(api, ids, total, owner=owner,
+                    value_date='2025-07-03', period_year=2025, period_month=7)
+        await book_payment(api, ids, '600.00', payment_type=payment_type,
+            value_date='2025-07-03', period_year=2025, period_month=7)
+        url = f"/api/payments/mietkonto/owner/{ids['profile']}"
+        for (start, end), plan in zip(windows, plans, strict=True):
+            statement = await api.get(url, params={**query(ids), 'economic_plan_id': str(plan),
+                'period_start': start, 'period_end': end, 'as_of': '2025-07-30'})
+            assert statement.status_code == 200, statement.text
+            assert statement.json()['balance'] == '0.00'
+        if payment_type == 'SONDERZAHLUNG':
+            whole_month = await api.get(url, params={**query(ids),
+                'period_start': '2025-07-01', 'period_end': '2025-07-31', 'as_of': '2025-07-30'})
+            assert whole_month.status_code == 200, whole_month.text
+            assert whole_month.json()['due_balance'] == '600.00'
+        monitor = await api.get('/api/fristen', params={**query(ids), 'reference_date': '2025-07-30'})
+        assert monitor.status_code == 409, monitor.text
+        assert monitor.json()['detail']['code'] == 'hausgeld_plan_ambiguous'
+
+
+@pytest.mark.asyncio
+async def test_monitor_counts_frozen_levies_across_a_plan_boundary_once(levy_fixture):
+    ids = {**levy_fixture, 'profile': levy_fixture['owners'][0], 'unit': levy_fixture['units'][0]}
+    await add_monitor_plan(ids, 'scope', amount='0.00', start='2025-07-16')
+    await add_monitor_plan(ids, 'scope', amount='0.00', start='2025-08-01', end='2025-08-31')
+    async with client(ids) as api:
+        for due in ('2025-07-03', '2025-07-17'):
+            await create(api, ids, due_date=due, amount='2000.00')
+        for owner, amount in zip(ids['owners'], ('600.00', '1200.00', '1600.00'), strict=True):
+            await book_payment(api, ids, amount, owner=owner,
+                value_date='2025-07-03', period_year=2025, period_month=7)
+    async with client(ids, 'readonly') as reader:
+        due_today = await monitor_open_items(reader, ids, '2025-07-17')
+        assert due_today['status'] == 'OK'
+        overdue = await monitor_open_items(reader, ids, '2025-08-15')
+        assert overdue['status'] == 'DUE'
+        assert overdue['detail'].startswith('1 '), overdue
+
+
+@pytest.mark.asyncio
+async def test_automatic_owner_interest_starts_after_the_resolved_hausgeld_due_date(levy_db, levy_fixture):
+    ids = {**levy_fixture, 'profile': levy_fixture['owners'][0], 'unit': levy_fixture['units'][0]}
+    plan = await add_monitor_plan(ids, 'scope', start='2026-07-01', end='2026-07-31')
+    await levy_db.execute(text("""INSERT INTO scope_grant(organization_id,scope_id,user_id,capabilities,granted_by,reason)
+        VALUES (:org,:scope,:actor,ARRAY['read','prepare'],:actor,'Owner interest fixture')"""), ids)
+    await levy_db.commit()
+    async with client(ids, 'actor') as api:
+        settings_path = '/api/dunning/settings'
+        previous = await api.get(settings_path)
+        assert previous.status_code == 200, previous.text
+        enabled = await api.put(settings_path, json={**previous.json(), 'default_interest_enabled': True})
+        assert enabled.status_code == 200, enabled.text
+        try:
+            body = dunning_body(ids, economic_plan_id=str(plan), period_start='2026-07-01', period_end='2026-07-31')
+            early = await api.post('/api/dunning/owner', json={**body, 'reference_date': '2026-07-02'})
+            assert early.status_code == 422, early.text
+            assert early.json()['detail'] == (
+                'Für den ausgewählten Eigentümer gibt es im gewählten Zeitraum '
+                'zum Stichtag keine überfälligen Beträge.'
+            ), early.text
+            late = await api.post('/api/dunning/owner', json={**body, 'reference_date': '2026-07-04'})
+            assert late.status_code == 201, late.text
+            notice = late.json()
+            assert notice['principal_amount'] == '600.00'
+            assert notice['interest_amount'] == '0.11'
+            assert notice['included_items'][0]['due_date'] == '2026-07-03'
+            item = notice['interest_snapshot']['items'][0]
+            assert (item['due_date'], item['interest_start'], item['days']) == ('2026-07-03', '2026-07-04', 1)
+        finally:
+            restored = await api.put(settings_path, json=previous.json())
+            assert restored.status_code == 200, restored.text
 
 
 @pytest.mark.asyncio
@@ -264,7 +368,7 @@ async def test_levy_dunning_source_revocation_fails_closed(levy_db, levy_fixture
         await grant_property_contacts(api, seed, ids['property'])
         domain, receipt = await grant(api, seed, ids['property'], caps=['read', 'prepare', 'export'])
         async with synthetic_enforcement(seed):
-            response = await api.post('/api/dunning/owner', json=dunning_body(ids, base_interest_rate="2.50"))
+            response = await api.post('/api/dunning/owner', json=dunning_body(ids))
             assert response.status_code == 201, response.text
             notice = response.json()['id']
             assert (await api.post(f'/api/dunning/{notice}/issue')).status_code == 200
@@ -290,7 +394,7 @@ async def test_dunning_failure_rolls_back_notice_context_and_audit(levy_db, levy
         raise RuntimeError('injected dunning audit failure')
     monkeypatch.setattr(AuditRepository, 'create', fail)
     async with client(ids, raise_errors=False) as api:
-        result = await api.post('/api/dunning/owner', json=dunning_body(ids, base_interest_rate="2.50"))
+        result = await api.post('/api/dunning/owner', json=dunning_body(ids))
         assert result.status_code == 500, result.text
     for table in ('dunning_notice', 'dunning_scope_context'):
         assert await levy_db.scalar(text(f'SELECT count(*) FROM {table} WHERE organization_id=:org'), ids) == 0
@@ -392,23 +496,24 @@ async def test_same_owner_other_property_payment_and_levy_do_not_cross_scope(lev
 
 
 @pytest.mark.asyncio
-async def test_t35_levy_interest_actual_dates_payment_and_configuration_frozen(levy_db, levy_fixture, monkeypatch, client_b_admin):
+async def test_t35_levy_interest_actual_dates_payment_and_configuration_frozen(levy_db, levy_fixture, client_b_admin):
     import io
     import pdfplumber
-    from app.core.config import settings
     ids = levy_fixture
     await levy_db.execute(text("INSERT INTO scope_grant(organization_id,scope_id,user_id,capabilities,granted_by,reason) VALUES (:org,:scope,:actor,ARRAY['read','prepare','approve','confirm','export'],:actor,'Interest lifecycle test')"), ids)
     await levy_db.commit()
-    monkeypatch.setattr(settings, 'dunning_base_interest_rate', Decimal('2.50'))
     async with client(ids, 'actor') as api:
+        settings_path = "/api/dunning/settings"
+        previous = (await api.get(settings_path)).json()
+        assert (await api.put(settings_path, json={**previous, "default_interest_enabled": True})).status_code == 200
         await create(api, ids, due_date='2026-06-15')
         await create(api, ids, due_date='2026-06-25', amount='2000.00')
         response = await api.post('/api/dunning/owner', json=dunning_body(ids, reference_date='2026-06-26', override_fee='0.00'))
         assert response.status_code == 201, response.text
         draft = response.json()
         assert draft['principal_amount'] == '3600.00'
-        assert draft['interest_amount'] == '6.90'  # 3000 * 7.5% * 11/365 + 600 * 7.5% * 1/365, per-item cents
-        assert draft['total_amount'] == '3606.90'
+        assert draft['interest_amount'] == '5.77'  # 3000 * 6.27% * 11/365 + 600 * 6.27% * 1/365, per-item cents
+        assert draft['total_amount'] == '3605.77'
         assert [(i['due_date'], i['days']) for i in draft['interest_snapshot']['items']] == [('2026-06-15', 11), ('2026-06-25', 1)]
         notice = draft['id']
         assert (await api.post(f'/api/dunning/{notice}/issue')).status_code == 200
@@ -416,9 +521,15 @@ async def test_t35_levy_interest_actual_dates_payment_and_configuration_frozen(l
         assert pdf_before.status_code == 200
         with pdfplumber.open(io.BytesIO(pdf_before.content)) as pdf:
             before_text = '\n'.join(page.extract_text() for page in pdf.pages)
-        assert '6,90' in before_text and '3.606,90' in before_text
-        await book_payment(api, ids, '1000.00')
-        monkeypatch.setattr(settings, 'dunning_base_interest_rate', Decimal('-0.88'))
+        assert '5,77' in before_text and '3.605,77' in before_text
+        await book_payment(api, ids, '1000.00', value_date='2026-06-20')
+        recalculated = await api.post('/api/dunning/owner', json=dunning_body(ids, reference_date='2026-06-26', override_fee='0.00'))
+        assert recalculated.status_code == 201, recalculated.text
+        assert recalculated.json()['principal_amount'] == '2600.00'
+        assert recalculated.json()['interest_amount'] == '4.57'
+        assert [(row['days'], row['principal']) for row in
+                recalculated.json()['interest_snapshot']['items'][0]['segments']] == [(4, '3000.00'), (7, '2000.00')]
+        assert (await api.put(settings_path, json=previous)).status_code == 200
         retained = (await api.get(f'/api/dunning/{notice}')).json()
         for key in ('principal_amount', 'interest_amount', 'interest_snapshot', 'total_amount', 'included_items'):
             assert retained[key] == draft[key]
@@ -428,10 +539,10 @@ async def test_t35_levy_interest_actual_dates_payment_and_configuration_frozen(l
         fresh = await api.post('/api/dunning/owner', json=dunning_body(ids, reference_date='2026-06-26', override_fee='0.00'))
         assert fresh.status_code == 201, fresh.text
         assert fresh.json()['principal_amount'] == '2600.00'
-        assert fresh.json()['interest_snapshot']['base_interest_rate'] == '-0.88'
+        assert fresh.json()['interest_snapshot'] is None
     assert (await client_b_admin.get(f'/api/dunning/{notice}')).status_code == 404
     async with client(ids, 'readonly') as api:
-        assert (await api.post('/api/dunning/owner', json=dunning_body(ids, base_interest_rate='2.50'))).status_code == 403
+        assert (await api.post('/api/dunning/owner', json=dunning_body(ids))).status_code == 403
     await levy_db.execute(text("UPDATE scope_grant SET revoked_at=now(), revoked_by=:actor WHERE organization_id=:org AND scope_id=:scope AND user_id=:actor AND revoked_at IS NULL"), ids)
     await levy_db.commit()
     async with client(ids, 'actor') as api:

@@ -16,6 +16,8 @@ from datetime import date
 from decimal import Decimal, InvalidOperation
 from typing import Annotated, Literal
 
+from app.engine.mietkonto import AdvanceMode
+
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field, StrictBool, model_validator, field_validator
@@ -89,6 +91,7 @@ class ConsumptionSuggestionOut(BaseModel):
 
 class AdvanceProposalOut(BaseModel):
     accept_from: date
+    advance_mode: AdvanceMode | None = None
     lease_agreement_id: str
     tenant_cost: str
     months: str
@@ -454,7 +457,7 @@ async def get_heating_consumption(
         run_id,cost_entry_id,meter_type,base_key)
 
 
-@router.get("/{run_id}/advance-proposal", response_model=AdvanceProposalOut)
+@router.get("/{run_id}/advance-proposal", response_model=AdvanceProposalOut, response_model_exclude_none=True)
 async def get_advance_proposal(
     run_id: uuid.UUID,
     accept_from: date | None = None,
@@ -482,7 +485,7 @@ async def accept_advance_proposal(
 async def create_settlement(
     body: SettlementRunCreate,
     auth: AuthContext = Depends(require_write_dep),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
 ):
     svc = SettlementService(db, auth.organization_id, auth.user_id)
     run = await svc.create_draft(

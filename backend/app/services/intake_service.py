@@ -29,6 +29,12 @@ class IntakeService:
             return await self.db.scalar(text(sql),{'org':self.auth.organization_id,**params})
         except DBAPIError as error:
             code=getattr(error.orig,'sqlstate',None)
+            if code == '23514':
+                constraint = getattr(error.orig.__cause__, 'constraint_name', None)
+                if constraint == 'bank_cost_mapping_required':
+                    raise HTTPException(422, 'Wählen Sie für jede bereits zugeordnete Kostenposition einen neuen Teil.') from None
+                if constraint == 'bank_cost_coverage_floor':
+                    raise HTTPException(422, 'Ein neuer Teil darf nicht unter der Summe der übernommenen Bankumsätze liegen.') from None
             if code in {'42501','22023','23505','23514','23503'}:
                 raise HTTPException({'42501':404,'23505':409}.get(code,422),
                     'Intake context inaccessible' if code=='42501' else 'Intake command conflicts with its manifest or prior receipt') from None

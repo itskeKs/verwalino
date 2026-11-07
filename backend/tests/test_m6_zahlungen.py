@@ -27,6 +27,30 @@ SYNC_URL = os.environ.get(
 )
 
 
+@pytest.mark.asyncio
+async def test_owner_statement_exposes_signed_cutoff_balances_and_original_due_dates(monkeypatch):
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+    from app.api import payments
+    from app.engine.mietkonto import ExpectedCharge, account_statement
+
+    cutoff = date(2026, 7, 2)
+    owner = uuid.uuid4()
+    result = account_statement([ExpectedCharge(2026, 7, 'HAUSGELD_VORSCHUSS', Decimal('600.00'),
+        owner_profile_id=owner, due_date=date(2026, 7, 3))], [], as_of=cutoff)
+    statement = AsyncMock(return_value=result)
+    monkeypatch.setattr(payments, 'PaymentService', lambda *args: SimpleNamespace(account_statement_for_owner=statement))
+    response = await payments.owner_statement(owner, date(2026, 7, 1), date(2026, 7, 31),
+        economic_plan_id=None, accounting_scope_id=None, as_of=cutoff,
+        auth=SimpleNamespace(organization_id=uuid.uuid4(), user_id=uuid.uuid4()), db=None)
+    output = response.model_dump(mode='json')
+    assert output['balance'] == output['not_yet_due_balance'] == '600.00'
+    assert output['due_balance'] == '0.00'
+    assert output['open_items'][0]['due_date'] == '2026-07-03'
+    assert output['open_items'][0]['is_due'] is False
+    statement.assert_awaited_once_with(owner, None, date(2026, 7, 1), date(2026, 7, 31), None, as_of=cutoff)
+
+
 # ===========================================================================
 # Seed: TWO properties under org_a (A + B) for the querbuchen test, each with a
 # LAUFEND bank account; a lease + tenant on property A; an owner on property A.
@@ -502,7 +526,10 @@ async def test_foreign_and_unknown_payment_parents_leave_no_changes(
             "tenant_profile_id": str(m6_seed["tenant_b"])}
     if field == "owner_profile_id":
         body.pop("tenant_profile_id")
-        body.update(payment_type="SONDERZAHLUNG", owner_profile_id=str(m6_seed["owner_b"]))
+        # For POST the foreign or unknown owner must look absent even when the
+        # selected type also disallows an owner. The PATCH setup needs a valid draft.
+        body.update(payment_type="KALTMIETE" if method == "post" else "SONDERZAHLUNG",
+                    owner_profile_id=str(m6_seed["owner_b"]))
     path = "/api/payments"
     if method == "patch":
         draft = await client_b_admin.post(path, json=body)
@@ -522,6 +549,61 @@ async def test_foreign_and_unknown_payment_parents_leave_no_changes(
 
 
 class TestPaymentAPI:
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("payment_type", ["KALTMIETE", "NK_VORAUSZAHLUNG", "HK_VORAUSZAHLUNG"])
+    async def test_rent_draft_requires_a_tenant_instead_of_an_owner(self, client_a_clerk, m6_seed, payment_type):
+        body = {
+            "bank_account_id": str(m6_seed["acct_a"]), "direction": "IN",
+            "amount": "75.25", "value_date": "2025-06-01", "payment_type": payment_type,
+            "period_year": 2025, "period_month": 6,
+        }
+        response = await client_a_clerk.post("/api/payments", json={**body, "owner_profile_id": str(m6_seed["owner"])})
+        assert response.status_code == 422, response.text
+        assert response.json()["detail"] == {
+            "code": "PAYMENT_COUNTERPARTY_TYPE_MISMATCH",
+            "message": "Dieser Zahlungstyp gehört zu einem Mietverhältnis, nicht zu einem Eigentümer.",
+        }
+        response = await client_a_clerk.post("/api/payments", json={
+            **body, "tenant_profile_id": str(m6_seed["tenant"]), "lease_agreement_id": str(m6_seed["lease"]),
+        })
+        assert response.status_code == 201, response.text
+        assert response.json()["tenant_profile_id"] == str(m6_seed["tenant"])
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("payment_type", ["HAUSGELD_VORSCHUSS", "RUECKLAGENANTEIL", "SONDERZAHLUNG"])
+    async def test_owner_draft_requires_an_owner(self, client_a_clerk, m6_seed, payment_type):
+        body = {
+            "bank_account_id": str(m6_seed["acct_a"]), "direction": "IN",
+            "amount": "75.25", "value_date": "2025-06-01", "payment_type": payment_type,
+        }
+        response = await client_a_clerk.post("/api/payments", json=body)
+        assert response.status_code == 422, response.text
+        assert response.json()["detail"] == {
+            "code": "PAYMENT_COUNTERPARTY_TYPE_MISMATCH",
+            "message": "Dieser Zahlungstyp erfordert einen Eigentümer als Gegenpartei.",
+        }
+        response = await client_a_clerk.post("/api/payments", json={**body, "owner_profile_id": str(m6_seed["owner"])})
+        assert response.status_code == 201, response.text
+        assert response.json()["owner_profile_id"] == str(m6_seed["owner"])
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("payment_type", ["KALTMIETE", "HK_VORAUSZAHLUNG"])
+    async def test_create_maps_the_database_counterparty_check(self, client_a_clerk, m6_seed, payment_type, monkeypatch):
+        from app.services import payment_service
+
+        # Exercise the two real CHECK constraints when the service guard does not catch the input.
+        monkeypatch.setattr(payment_service, "validate_payment_counterparty", lambda *_: None)
+        response = await client_a_clerk.post("/api/payments", json={
+            "bank_account_id": str(m6_seed["acct_a"]), "direction": "IN",
+            "amount": "75.25", "value_date": "2025-06-01", "payment_type": payment_type,
+            "owner_profile_id": str(m6_seed["owner"]),
+        })
+        assert response.status_code == 422, response.text
+        assert response.json()["detail"] == {
+            "code": "PAYMENT_COUNTERPARTY_TYPE_MISMATCH",
+            "message": "Dieser Zahlungstyp gehört zu einem Mietverhältnis, nicht zu einem Eigentümer.",
+        }
+
     @pytest.mark.asyncio
     async def test_create_book_list_reverse_flow(self, client_a_clerk, m6_seed):
         # Create draft.

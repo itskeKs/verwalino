@@ -1,13 +1,29 @@
 """Historical migration setup inside rollback-only, guarded test savepoints."""
 from pathlib import Path
 from contextlib import contextmanager
+from importlib import import_module
 import json
 from uuid import UUID
 
+from alembic import op
 from alembic.script import ScriptDirectory
+
+from app.models.base import Base
 from sqlalchemy import text
 
 from tests.conftest import clear_disposable_source_context
+
+
+def rewind_bank_allocation_functions(connection):
+    """Expose pre-bank function bodies for bespoke allocation DDL rehearsals.
+
+    Keep the current schema and retained data in the enclosing savepoint.
+    The caller rolls back all function changes after rehearsing older DDL.
+    """
+    if not connection.in_nested_transaction():
+        raise RuntimeError('Historical allocation functions require a rollback-only savepoint')
+    import_module('migrations.versions.0173_preserve_bank_cost_evidence')._patch_functions(reverse=True)
+    import_module('migrations.versions.0172_bank_cost_corrections').patch_functions(reverse=True)
 
 
 def source_security_function_templates(connection):
@@ -189,6 +205,31 @@ _GRAPH_TABLES = (
 )
 
 
+def downgrade_rehearsal_revision(revision):
+    """Use the same constraint naming convention as migrations/env.py."""
+    options = op.get_context().opts
+    previous = options.get("target_metadata")
+    options["target_metadata"] = Base.metadata
+    try:
+        revision.module.downgrade()
+    finally:
+        if previous is None:
+            options.pop("target_metadata")
+        else:
+            options["target_metadata"] = previous
+
+
+def project_legacy_advance_modes(connection):
+    """Omit values that revision 0175 cannot represent in a historical savepoint."""
+    if (not connection.in_nested_transaction()
+            or connection.scalar(text("SELECT version_num FROM public.alembic_version")) != '0176'):
+        raise RuntimeError('Advance mode projection requires a rollback-only 0176 savepoint')
+    connection.execute(text('UPDATE public.lease_agreement SET advance_mode=NULL WHERE advance_mode IS NOT NULL'))
+    connection.execute(text('ALTER TABLE public.lease_rent_change DISABLE TRIGGER protect_lease_rent_change'))
+    connection.execute(text('UPDATE public.lease_rent_change SET advance_mode=NULL WHERE advance_mode IS NOT NULL'))
+    connection.execute(text('ALTER TABLE public.lease_rent_change ENABLE TRIGGER protect_lease_rent_change'))
+
+
 def prepare_historical_revision(connection, revision, *, graphs=(), actor=None):
     if not connection.in_nested_transaction():
         raise RuntimeError('Historical rehearsal requires a rollback-only savepoint')
@@ -207,7 +248,7 @@ def prepare_historical_revision(connection, revision, *, graphs=(), actor=None):
     clear_disposable_source_context(connection.connection.cursor())
     versions = ScriptDirectory(str(Path(__file__).resolve().parents[1] / 'migrations'))
     for newer in versions.iterate_revisions('head', revision):
-        newer.module.downgrade()
+        downgrade_rehearsal_revision(newer)
     if actor is not None:
         connection.execute(text("SELECT set_config('app.current_user_id',:actor,true)"),
                            {'actor': str(actor)})

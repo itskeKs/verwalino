@@ -67,17 +67,6 @@ class Settings(BaseSettings):
     error_tracking_dsn: SecretStr = SecretStr("")
     error_tracking_environment: str = "selfhost"
 
-    # Operator-supplied percentage, not an assumed official market rate.
-    # None retains legacy zero-interest behavior.
-    dunning_base_interest_rate: Decimal | None = Field(None, allow_inf_nan=False)
-
-    @field_validator("dunning_base_interest_rate", mode="before")
-    @classmethod
-    def validate_dunning_rate(cls, value):
-        if isinstance(value, (float, bool)):
-            raise ValueError("Dunning base interest rate must be an exact decimal")
-        return value
-
     # Public hostname shared with deployment routing; signup always links via HTTPS.
     public_host: str | None = None
 

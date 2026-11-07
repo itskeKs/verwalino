@@ -71,7 +71,7 @@ TENANT_TABLES = frozenset({
     # M6 Zahlungen, Mietkonto & offene Posten
     "payment", "bank_transaction", "sepa_creditor", "sepa_mandate",
     # M7 Mahnwesen
-    "dunning_notice", "dunning_scope_context", "dunning_batch",
+    "dunning_notice", "dunning_scope_context", "dunning_batch", "dunning_settings",
     # M8 Eigentümerversammlung & Beschluss-Sammlung
     "owners_meeting",
     "agenda_item",
@@ -105,7 +105,7 @@ TENANT_TABLES = frozenset({
 GLOBAL_TABLES = frozenset({
     "password_reset_request",  # Authentication precedes tenant selection.
     "signup_request",  # Global pending identity reservation; no tenant yet.
-    "organization", "cost_category", "setup_token", "auth_throttle",
+    "organization", "cost_category", "base_interest_rate", "setup_token", "auth_throttle",
 })
 
 # Alembic's internal table (not a domain table).

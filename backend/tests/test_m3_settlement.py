@@ -23,6 +23,7 @@ import pytest
 from sqlalchemy import text
 
 from tests.settlement_period_support import period_data_cleanup  # noqa: F401
+from tests.write_response_support import create_visible_draft
 
 SYNC_URL = os.environ.get(
     "HV_DATABASE_URL_SYNC",
@@ -679,6 +680,20 @@ async def _create_run(client, m3_seed, lease_key, advance):
     await attest_fixture(client, "settlement", resp.json()["id"],
         {'heating_advance_payments_total': '0.00', 'heating_advance_payments_source': "MANUAL", "advance_payments_total": advance, "advance_payments_source": "MANUAL"})
     return resp.json()["id"]
+
+
+@pytest.mark.asyncio
+async def test_created_settlement_is_readable_at_response_start(client_a_admin, app_rw_session, m3_seed):
+    await app_rw_session.execute(
+        text("SELECT set_config('app.current_org_id', :org, true)"), {"org": str(m3_seed["org_a_id"])},
+    )
+    await app_rw_session.execute(
+        text("SELECT set_config('app.current_user_id', :actor, true)"), {"actor": str(m3_seed["user_a_admin_id"])},
+    )
+    await create_visible_draft(client_a_admin, app_rw_session, "/api/settlements", {
+        "property_id": m3_seed["property"], "lease_agreement_id": m3_seed["lease_b"],
+        "period_start": "2026-01-01", "period_end": "2026-12-31",
+    }, "settlement_run")
 
 
 @pytest.mark.asyncio

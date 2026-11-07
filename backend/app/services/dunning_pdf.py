@@ -8,8 +8,8 @@ All addressees and positions use NAMES (no UUIDs in the rendered document),
 consistent with settlement_pdf.py.
 
 [section 18/fachlich] The exact layout, legal wording, and Zustellungsnachweis
-requirements are product/legal decisions. A functional standard layout is
-provided here with clearly-marked provisional text.
+requirements are product/legal decisions. Older notices retain their original
+rendering, including the original explanatory text.
 """
 
 from __future__ import annotations
@@ -21,6 +21,7 @@ from decimal import Decimal
 from pathlib import Path
 
 from app.core.pdf import render_pdf
+from app.engine.dunning import NOTICE_FORMAT_KEY, SEGMENTED_NOTICE_FORMAT
 from app.models.dunning_notice import DunningNotice
 
 
@@ -65,6 +66,13 @@ _MONTH_NAMES = {
 }
 
 
+def _payment_label(item):
+    kind = item.get("payment_type", "")
+    if kind == "NK_VORAUSZAHLUNG" and item.get("combined_advance"):
+        return "Betriebskosten-Vorauszahlung inkl. Heizkosten"
+    return _TYPE_LABELS.get(kind, kind)
+
+
 def _eur(value: Decimal | str | None) -> str:
     """Format a Decimal as German money: 1.234,56 EUR."""
     if value is None:
@@ -106,11 +114,18 @@ def build_dunning_html(
     items = notice.included_items or []
     arrears_rows = []
     for it in items:
-        type_label = _TYPE_LABELS.get(it.get("payment_type", ""), it.get("payment_type", ""))
-        period = _period_label(it.get("period_year"), it.get("period_month"))
+        type_label = _payment_label(it)
+        year, month = it.get("period_year"), it.get("period_month")
+        period = _period_label(year, month)
+        monthly_due = ''
+        # Yearless payment rows can carry a dunning fallback date in the snapshot.
+        if (it.get('payment_type') == 'HAUSGELD_VORSCHUSS'
+                and int(year or 0) > 0 and month is not None and it.get('due_date')):
+            due = date.fromisoformat(it['due_date']).strftime('%d.%m.%Y')
+            monthly_due = f'<br/><span class="note">Fällig am {due}</span>'
         arrears_rows.append(
             f"<tr>"
-            f"<td>{_esc(period)}</td>"
+            f"<td>{_esc(period)}{monthly_due}</td>"
             f"<td>{_esc(type_label)}</td>"
             f"<td class='num'>{_eur(it.get('soll'))}</td>"
             f"<td class='num'>{_eur(it.get('ist'))}</td>"
@@ -125,46 +140,54 @@ def build_dunning_html(
         f"<td class='num'>{_eur(notice.principal_amount)}</td>"
         f"</tr>"
     ]
-    if notice.fee_amount and notice.fee_amount > 0:
+    snapshot = notice.interest_snapshot
+    segmented_interest = snapshot is not None and "premium" in snapshot
+    new_format = segmented_interest or bool(
+        notice.included_items and notice.included_items[0].get(NOTICE_FORMAT_KEY) == SEGMENTED_NOTICE_FORMAT
+    )
+    if new_format or (notice.fee_amount and notice.fee_amount > 0):
+        fee_label = "Mahngebühr" if new_format else "Mahngebuehr"
         summary_rows.append(
             f"<tr class='summary'>"
-            f"<td colspan='4'>Mahngebuehr (Stufe {notice.level})</td>"
+            f"<td colspan='4'>{fee_label} (Stufe {notice.level})</td>"
             f"<td class='num'>{_eur(notice.fee_amount)}</td>"
             f"</tr>"
         )
     interest_section = ""
-    snapshot = notice.interest_snapshot
     if snapshot is not None:
         summary_rows.append(
             f"<tr class='summary'><td colspan='4'>Verzugszinsen</td>"
             f"<td class='num'>{_eur(notice.interest_amount)}</td></tr>"
         )
-        interest_rows = []
-        for item in snapshot["items"]:
-            label = _TYPE_LABELS.get(item["payment_type"], item["payment_type"])
-            due = date.fromisoformat(item["due_date"]).strftime("%d.%m.%Y")
-            interest_start = ""
-            if item.get("interest_start") and item["payment_type"] in ("KALTMIETE", "NK_VORAUSZAHLUNG"):
-                start = date.fromisoformat(item["interest_start"]).strftime("%d.%m.%Y")
-                interest_start = f"<br/>Zinsbeginn: {start}"
-            interest_rows.append(
-                f"<tr><td>{_esc(_period_label(item['period_year'], item['period_month']))}<br/>{_esc(label)}</td>"
-                f"<td>{due}{interest_start}</td><td class='num'>{item['days']}</td>"
-                f"<td class='num'>{_eur(item['principal'])}</td>"
-                f"<td class='num'>{_eur(item['interest'])}</td></tr>"
+        if not segmented_interest:
+            interest_rows = []
+            for item in snapshot["items"]:
+                label = _payment_label(item)
+                due = date.fromisoformat(item["due_date"]).strftime("%d.%m.%Y")
+                interest_start = ""
+                if item.get("interest_start") and item["payment_type"] in ("KALTMIETE", "NK_VORAUSZAHLUNG"):
+                    start = date.fromisoformat(item["interest_start"]).strftime("%d.%m.%Y")
+                    interest_start = f"<br/>Zinsbeginn: {start}"
+                interest_rows.append(
+                    f"<tr><td>{_esc(_period_label(item['period_year'], item['period_month']))}<br/>{_esc(label)}</td>"
+                    f"<td>{due}{interest_start}</td><td class='num'>{item['days']}</td>"
+                    f"<td class='num'>{_eur(item['principal'])}</td>"
+                    f"<td class='num'>{_eur(item['interest'])}</td></tr>"
+                )
+            base = _esc(snapshot["base_interest_rate"].replace(".", ","))
+            annual = _esc(snapshot["annual_rate"].replace(".", ","))
+            reference = date.fromisoformat(snapshot["reference_date"]).strftime("%d.%m.%Y")
+            interest_section = (
+                f"<h2>Verzugszinsen</h2><p>Basiszinssatz: {base} %; "
+                f"effektiver Jahreszinssatz: {annual} % (Basis + 5 Prozentpunkte). "
+                f"Stichtag: {reference}. Berechnung: Hauptforderung × Jahreszinssatz / 100 × Tage / 365. "
+                "Keine Verzinsung von Gebühren oder Zinsen.</p>"
+                "<table class='lines'><thead><tr><th>Position</th><th>Fälligkeit</th>"
+                "<th>Tage</th><th>Hauptforderung</th><th>Zinsen</th></tr></thead>"
+                f"<tbody>{''.join(interest_rows)}</tbody></table>"
             )
-        base = _esc(snapshot["base_interest_rate"].replace(".", ","))
-        annual = _esc(snapshot["annual_rate"].replace(".", ","))
-        reference = date.fromisoformat(snapshot["reference_date"]).strftime("%d.%m.%Y")
-        interest_section = (
-            f"<h2>Verzugszinsen</h2><p>Basiszinssatz: {base} %; "
-            f"effektiver Jahreszinssatz: {annual} % (Basis + 5 Prozentpunkte). "
-            f"Stichtag: {reference}. Berechnung: Hauptforderung × Jahreszinssatz / 100 × Tage / 365. "
-            "Keine Verzinsung von Gebühren oder Zinsen.</p>"
-            "<table class='lines'><thead><tr><th>Position</th><th>Fälligkeit</th>"
-            "<th>Tage</th><th>Hauptforderung</th><th>Zinsen</th></tr></thead>"
-            f"<tbody>{''.join(interest_rows)}</tbody></table>"
-        )
+        else:
+            interest_section = _segmented_interest(snapshot)
     summary_rows.append(
         f"<tr class='total'>"
         f"<td colspan='4'>Gesamtbetrag</td>"
@@ -181,6 +204,14 @@ def build_dunning_html(
         "Verzugszinsen werden anhand des angegebenen Basiszinssatzes ausgewiesen."
         if snapshot is not None else "Verzugszinsen sind nicht enthalten."
     )
+    if not new_format:
+        footer = f"""<div class="hint">
+    <em>{interest_hint} Mahngebühren müssen angemessen/vertraglich vereinbart sein.</em>
+  </div>"""
+    elif snapshot is None:
+        footer = f'<p class="hint">{interest_hint}</p>'
+    else:
+        footer = ""
     return f"""<!DOCTYPE html>
 <html lang="de">
 <head>
@@ -225,11 +256,40 @@ def build_dunning_html(
 
   {interest_section}
 
-  <div class="hint">
-    <em>{interest_hint} Mahngebühren müssen angemessen/vertraglich vereinbart sein.</em>
-  </div>
+  {footer}
 </body>
 </html>"""
+
+
+def _segmented_interest(snapshot: dict) -> str:
+    premium = snapshot["premium"]
+    paragraph = 2 if premium == 9 else 1
+    reference = date.fromisoformat(snapshot["reference_date"]).strftime("%d.%m.%Y")
+    rows = []
+    for item in snapshot["items"]:
+        label = _payment_label(item)
+        period = _period_label(item["period_year"], item["period_month"])
+        due = date.fromisoformat(item["due_date"]).strftime("%d.%m.%Y")
+        for index, segment in enumerate(item["segments"]):
+            start = date.fromisoformat(segment["start"]).strftime("%d.%m.%Y")
+            end = date.fromisoformat(segment["end"]).strftime("%d.%m.%Y")
+            base = _esc(segment["base_interest_rate"].replace(".", ","))
+            annual = _esc(segment["annual_rate"].replace(".", ","))
+            start_label = "Zinsbeginn: " if index == 0 else ""
+            rows.append(
+                f"<tr><td>{_esc(period)}<br/>{_esc(label)}<br/>Fällig: {due}</td>"
+                f"<td>{start_label}{start}<br/>bis {end}</td>"
+                f"<td>{base} %<br/>{annual} %</td><td class='num'>{_esc(str(segment['days']))}</td>"
+                f"<td class='num'>{_eur(segment['principal'])}</td>"
+                f"<td class='num'>{_eur(segment['interest'])}</td></tr>"
+            )
+    return (
+        f"<h2>Verzugszinsen</h2><p>Basiszinssatz + {_esc(str(premium))} Prozentpunkte (§ 288 Abs. {paragraph} BGB). "
+        f"Stichtag: {reference}. Je Abschnitt: Hauptforderung × Jahreszinssatz / 100 × Tage / 365.</p>"
+        "<table class='lines'><thead><tr><th>Position</th><th>Zinszeitraum</th>"
+        "<th>Basis / jährlich</th><th>Tage</th><th>Hauptforderung</th><th>Zinsen</th></tr></thead>"
+        f"<tbody>{''.join(rows)}</tbody></table>"
+    )
 
 
 def render_dunning_pdf(

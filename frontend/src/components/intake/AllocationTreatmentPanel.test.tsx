@@ -1,5 +1,5 @@
 import { afterEach, expect, it, vi } from 'vitest';
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { AllocationTreatmentPanel } from './AllocationTreatmentPanel';
 import type { TreatmentPreview, TreatmentReview } from '../../api/allocationTreatments';
 
@@ -8,9 +8,14 @@ const preview: TreatmentPreview = { snapshot_digest: 'digest', can_review: true,
   category: { id: 'category', plan_version: 1, code: 'TEST', label: 'Test category', is_active: true, cost_group: 'GEMISCHT_PRUEFEN', reserve_relevant: false, tenant_apportionability_default: 'MANUELL_PRUEFEN', owner_billing_relevant_default: true, owner_distribution_key_default: 'MEA', tenant_distribution_key_default: 'WOHNFLAECHE' } }] } };
 const empty = { items: [], next_before_revision: null };
 const props = { logicalId: 'logical', allocationId: 'allocation', ready: true, parentBusy: false, parentGeneration: 0 };
+// Flush the effects from creating the draft before checking whether it is editable.
+const renderTreatment = () => act(async () => render(<AllocationTreatmentPanel {...props} />));
 function choice(label: string, value: string) { fireEvent.change(screen.getByLabelText(label + ' · Zeile 1'), { target: { value } }); }
+async function waitForEditableTreatment() {
+  await waitFor(() => expect(screen.getByLabelText('Aufwandsart · Zeile 1')).toBeEnabled());
+}
 async function fill() {
-  await screen.findByLabelText('Aufwandsart · Zeile 1');
+  await waitForEditableTreatment();
   choice('Aufwandsart', 'operating_expense'); choice('Steuerbehandlung', 'gross_without_input_vat'); choice('Mieteranteil', 'partial');
   choice('Exakter Mieterbetrag', '-10,00'); choice('Mieterverteilung', 'WOHNFLAECHE'); choice('Eigentümerverteilung', 'MEA');
   choice('Belegbezug der Behandlung', 'Explicit signed invoice line basis');
@@ -24,8 +29,7 @@ it('starts without defaults and validates exact negative partial cents with ackn
   vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => {
     if (init?.method === 'POST') { requests.push(init); return json({}, 503); } return json(url.includes('treatment-preview') ? preview : empty);
   }));
-  render(<AllocationTreatmentPanel {...props} />);
-  await screen.findByLabelText('Aufwandsart · Zeile 1');
+  await renderTreatment();
   for (const label of ['Aufwandsart', 'Steuerbehandlung', 'Mieteranteil', 'Eigentümerverteilung']) expect(screen.getByLabelText(label + ' · Zeile 1')).toHaveValue('');
   await fill(); choice('Exakter Mieterbetrag', '10,00'); expect(screen.getByRole('checkbox')).not.toBeChecked();
   fireEvent.click(screen.getByRole('checkbox')); fireEvent.click(screen.getByRole('button', { name: 'Behandlungsprüfung speichern' }));
@@ -40,7 +44,7 @@ it('starts without defaults and validates exact negative partial cents with ackn
 it('records deliberate unresolved values and MIET not-applicable without invented zero', async () => {
   const requests: RequestInit[] = []; const miet = { ...preview, snapshot: { ...preview.snapshot, scope_type: 'MIET' } };
   vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => { if (init?.method === 'POST') { requests.push(init); return json({}, 503); } return json(url.includes('treatment-preview') ? miet : empty); }));
-  render(<AllocationTreatmentPanel {...props} />); await screen.findByLabelText('Aufwandsart · Zeile 1');
+  await renderTreatment(); await waitForEditableTreatment();
   choice('Aufwandsart', 'unresolved'); choice('Steuerbehandlung', 'unresolved'); choice('Mieteranteil', 'unresolved'); choice('Eigentümerverteilung', 'not_applicable'); choice('Belegbezug der Behandlung', 'Requires further document interpretation');
   fireEvent.change(screen.getByLabelText('Begründung der Behandlungsprüfung'), { target: { value: 'Unresolved questions recorded' } }); fireEvent.click(screen.getByRole('checkbox'));
   expect(screen.queryByLabelText('Exakter Mieterbetrag · Zeile 1')).not.toBeInTheDocument();
@@ -51,7 +55,7 @@ it('records deliberate unresolved values and MIET not-applicable without invente
 it('requires deliberate zero for none and clears obsolete amount/key on treatment change', async () => {
   const requests: RequestInit[] = [];
   vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => { if (init?.method === 'POST') { requests.push(init); return json({}, 503); } return json(url.includes('treatment-preview') ? preview : empty); }));
-  render(<AllocationTreatmentPanel {...props} />); await fill(); choice('Mieteranteil', 'none');
+  await renderTreatment(); await fill(); choice('Mieteranteil', 'none');
   expect(screen.getByLabelText('Exakter Mieterbetrag · Zeile 1')).toHaveValue(''); expect(screen.queryByLabelText('Mieterverteilung · Zeile 1')).not.toBeInTheDocument();
   fireEvent.click(screen.getByRole('checkbox')); fireEvent.click(screen.getByRole('button', { name: 'Behandlungsprüfung speichern' })); await screen.findByText(/Bitte jede Behandlungsart/); expect(requests).toHaveLength(0);
   choice('Exakter Mieterbetrag', '0,00'); fireEvent.click(screen.getByRole('checkbox')); fireEvent.click(screen.getByRole('button', { name: 'Behandlungsprüfung speichern' })); await waitFor(() => expect(requests).toHaveLength(1));
@@ -60,6 +64,9 @@ it('requires deliberate zero for none and clears obsolete amount/key on treatmen
 
 it('retries the exact unknown command after committed history and a denied new allocation', async () => {
   const requests: RequestInit[] = []; let committed: TreatmentReview | null = null;
+  let historyLoads = 0;
+  let resolveRefresh!: (response: Response) => void;
+  const refresh = new Promise<Response>(resolve => { resolveRefresh = resolve; });
   vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => {
     if (init?.method === 'POST') {
       requests.push(init); const body = JSON.parse(String(init.body));
@@ -69,16 +76,24 @@ it('retries the exact unknown command after committed history and a denied new a
       return json({}, 503);
     }
     if (url.includes('/allocation-proposals/new/')) return json({}, 404);
+    // Creating the retained draft reloads its authorization after the form first appears.
+    if (url.includes('/allocation-treatments?') && ++historyLoads === 2) return refresh;
     return json(url.includes('treatment-preview') ? preview : { ...empty, items: committed ? [committed] : [] });
   }));
-  const rendered = render(<AllocationTreatmentPanel {...props} />); await fill(); fireEvent.click(screen.getByRole('button', { name: 'Behandlungsprüfung speichern' })); await screen.findByText(/Keine bestätigte Antwort/);
+  const rendered = await renderTreatment();
+  expect(screen.getByLabelText('Aufwandsart · Zeile 1')).toBeDisabled();
+  resolveRefresh(json(empty));
+  await fill();
+  fireEvent.click(screen.getByRole('button', { name: 'Behandlungsprüfung speichern' }));
+  await screen.findByText(/Keine bestätigte Antwort/);
   rendered.rerender(<AllocationTreatmentPanel {...props} allocationId={null} ready={false} />);
   await waitFor(() => expect(screen.queryByLabelText('Aufwandsart · Zeile 1')).not.toBeInTheDocument());
   rendered.rerender(<AllocationTreatmentPanel {...props} allocationId="new" parentGeneration={1} />);
   await waitFor(() => expect(screen.getByRole('button', { name: 'Dieselbe Behandlungsprüfung erneut senden' })).toBeEnabled());
-  expect(screen.getByText(/Behandlungsprüfung · Version 1/)).toBeInTheDocument();
-  expect(screen.getByLabelText('Aufwandsart · Zeile 1')).toBeDisabled();
+  expect(await screen.findByText(/Behandlungsprüfung · Version 1/)).toBeInTheDocument();
+  await waitFor(() => expect(screen.getByLabelText('Aufwandsart · Zeile 1')).toBeDisabled());
   fireEvent.click(screen.getByRole('button', { name: 'Dieselbe Behandlungsprüfung erneut senden' })); await waitFor(() => expect(requests).toHaveLength(2));
+  await screen.findByText(/Keine bestätigte Antwort/);
   expect(requests[0].body).toBe(requests[1].body);
   expect(JSON.parse(String(requests[1].body)).allocation_proposal_id).toBe('allocation');
   for (const name of ['If-Match', 'Idempotency-Key']) expect(new Headers(requests[0].headers).get(name)).toBe(new Headers(requests[1].headers).get(name));
@@ -87,7 +102,7 @@ it('retries the exact unknown command after committed history and a denied new a
 it('does not automatically reuse treatment on a changed category snapshot', async () => {
   let current = preview;
   vi.stubGlobal('fetch', vi.fn(async (url: string) => json(url.includes('treatment-preview') ? current : empty)));
-  const rendered = render(<AllocationTreatmentPanel {...props} />); await fill(); current = { ...preview, snapshot_digest: 'changed' };
+  const rendered = await renderTreatment(); await fill(); current = { ...preview, snapshot_digest: 'changed' };
   rendered.rerender(<AllocationTreatmentPanel {...props} parentGeneration={1} />);
   const reset = await screen.findByRole('button', { name: 'Neue Behandlungsgrundlage übernehmen' });
   expect(screen.getByLabelText('Exakter Mieterbetrag · Zeile 1')).toHaveValue('-10,00');
@@ -98,7 +113,7 @@ it('does not automatically reuse treatment on a changed category snapshot', asyn
 it('clears an inaccessible retained treatment and cannot resurrect its retry', async () => {
   let deny = false;
   vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => init?.method === 'POST' ? json({}, 503) : deny && url.includes('treatment-preview') ? json({}, 404) : json(url.includes('treatment-preview') ? preview : empty)));
-  const rendered = render(<AllocationTreatmentPanel {...props} />); await fill(); fireEvent.click(screen.getByRole('button', { name: 'Behandlungsprüfung speichern' })); await screen.findByText(/Keine bestätigte Antwort/);
+  const rendered = await renderTreatment(); await fill(); fireEvent.click(screen.getByRole('button', { name: 'Behandlungsprüfung speichern' })); await screen.findByText(/Keine bestätigte Antwort/);
   deny = true; rendered.rerender(<AllocationTreatmentPanel {...props} parentGeneration={1} />);
   await waitFor(() => expect(screen.queryByLabelText('Aufwandsart · Zeile 1')).not.toBeInTheDocument());
   deny = false; rendered.rerender(<AllocationTreatmentPanel {...props} parentGeneration={2} />);

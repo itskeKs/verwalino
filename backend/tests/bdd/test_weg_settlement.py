@@ -130,7 +130,8 @@ def long_owner_balance(world, seed_data):
     return create_balance_world(world, seed_data, owner_name='Anna-Katharina Freifrau von Hohenzollern-Sigmaringen')
 
 
-def create_balance_world(world, seed_data, *, cost_period_end='2026-12-31', owner_name='Anna Berg', second_owner='Berta Vollständig', scope_start='2026-01-01'):
+def create_balance_world(world, seed_data, *, cost_period_end='2026-12-31', owner_name='Anna Berg', second_owner='Berta Vollständig',
+                         scope_start='2026-01-01', monthly_due_day=1):
     world.actor = world.administrator_of('Verwaltung Alpha')
     world.actor_organization = 'Verwaltung Alpha'
     user = str(seed_data['user_a_admin_id'])
@@ -164,7 +165,7 @@ def create_balance_world(world, seed_data, *, cost_period_end='2026-12-31', owne
         'tenant_apportionable': 'NICHT_UMLAGEFAEHIG', 'source': 'MANUAL'})
     assert world.act('POST', f"/api/cost-entries/{cost['id']}/confirm").status_code == 200
     plan = create(world, '/api/economic-plans', {**basis, 'plan_year': 2026,
-        'period_start': '2026-01-01', 'period_end': '2026-12-31'})
+        'period_start': '2026-01-01', 'period_end': '2026-12-31', 'monthly_due_day': monthly_due_day})
     values = {'planned_costs': [{'category_code': 'GARTENPFLEGE', 'label': 'Bewirtschaftung',
         'planned_amount': '12000.00', 'cost_group': 'UMLAGEFAEHIG'}], 'reserve_contribution_total': '0.00'}
     world.run(attest_fixture(world.actor, 'economic_plan', plan['id'], values))
@@ -338,7 +339,7 @@ def balance_browser(browser_world, weg_balance):
         for width in (1280, 360):
             await b.page.set_viewport_size({'width': width, 'height': 1000})
             if width == 360:
-                await b.page.wait_for_function("document.querySelector('aside').getBoundingClientRect().right <= 0")
+                await expect(b.page.locator("aside")).to_have_count(0)
             region = b.page.get_by_role('region', name='Hausgeld-Abgleich · Anna Berg', exact=True)
             await expect(region).to_be_visible()
             for label, value in (
@@ -522,7 +523,7 @@ def long_statement_browser(browser_world, world, weg_balance):
         for width in (1280, 360):
             await b.page.set_viewport_size({'width': width, 'height': 1000})
             if width == 360:
-                await b.page.wait_for_function("document.querySelector('aside').getBoundingClientRect().right <= 0")
+                await expect(b.page.locator("aside")).to_have_count(0)
             heading = b.page.get_by_role('heading', name=name, exact=True)
             await expect(heading).to_be_visible()
             card = heading.locator('..')
@@ -572,3 +573,81 @@ def long_statement_browser(browser_world, world, weg_balance):
 
     b.run(check())
     assert world.look(world.actor, f"/api/weg-settlements/{w['run']}").json() == w['statement']
+
+
+@given('Anna, Karl and Lena have booked their twelve, six and six monthly Hausgeld payments')
+def dated_paid_hausgeld(world, dated_owners):
+    w = dated_owners
+    for owner, months, amount in [(w['owners'][0], range(1, 13), '600.00'),
+                                  (w['owners'][1], range(1, 7), '400.00'),
+                                  (w['buyer'], range(7, 13), '400.00')]:
+        for month in months:
+            payment = create(world, '/api/payments', {'bank_account_id': w['bank'], 'direction': 'IN',
+                'owner_profile_id': owner, 'amount': amount, 'value_date': f'2026-{month:02d}-05',
+                'payment_type': 'HAUSGELD_VORSCHUSS', 'period_year': 2026, 'period_month': month})
+            response = world.act('POST', f"/api/payments/{payment['id']}/book")
+            assert response.status_code == 200, response.text
+
+
+@when('I take over their paid Hausgeld from the booked figures')
+def take_over_dated_payments(world, dated_owners):
+    w = dated_owners
+    response = world.act('POST', f"/api/weg-settlements/{w['run']}/paid-advances-derived")
+    assert response.status_code == 200, response.text
+    w['derived'] = response.json()
+
+
+@then('Anna, Karl and Lena have paid 7200, 2400 and 2400 euros')
+def exact_dated_payments(world, dated_owners):
+    w = dated_owners
+    assert {r['owner_profile_id']: r['paid_total'] for r in w['derived']} == {
+        w['owners'][0]: '7200.00', w['owners'][1]: '2400.00', w['buyer']: '2400.00'}
+    assert set(world.act('GET', f"/api/weg-settlements/{w['run']}/input-owners").json()) == {
+        row['owner_profile_id'] for row in w['derived']}
+
+
+@then("clearing Lena's paid amount asks for her missing Hausgeld in German")
+def missing_lena_payment(world, dated_owners):
+    w = dated_owners
+    values = {'paid_advances': w['derived']}
+    world.run(attest_fixture(world.actor, 'settlement', w['run'], values))
+    body = {'paid_advances': [{**row, 'paid_total': ''} if row['owner_profile_id'] == w['buyer'] else row
+                             for row in w['derived']]}
+    response = world.act('POST', f"/api/weg-settlements/{w['run']}/compute", json=body)
+    assert response.status_code == 422, response.text
+    detail = response.json()['detail']
+    assert isinstance(detail, dict), detail
+    assert detail['code'] == 'financial_inputs_incomplete'
+    assert detail['blockers'][0]['code'] == 'owner_payment_coverage_missing'
+    assert detail['owner_profile_id'] == w['buyer'] and detail['field'] == 'paid_total'
+    assert 'Lena Roth' in detail['message'] and 'Hausgeld' in detail['message']
+
+
+@then("the paid Hausgeld prefill and Lena's missing amount are visible on desktop and phone")
+def paid_hausgeld_browser(browser_world, world, dated_owners, tmp_path):
+    import os
+    from playwright.async_api import expect
+    b, w = browser_world, dated_owners
+    # Coverage is a prerequisite; the UI action under test is prefill and compute.
+    values = {'paid_advances': [{'owner_profile_id': oid, 'paid_total': amount} for oid, amount in
+        [(w['owners'][0], '7200.00'), (w['owners'][1], '2400.00'), (w['buyer'], '2400.00')]]}
+    world.run(attest_fixture(world.actor, 'settlement', w['run'], values))
+
+    async def check():
+        for width in (1280, 360):
+            await b.page.set_viewport_size({'width': width, 'height': 1000})
+            await b.visit(f"/weg-abrechnungen/{w['run']}")
+            await b.page.get_by_role('button', name='Aus Zahlenstand übernehmen').click()
+            for name, amount in [('Anna Berg', '7200.00'), ('Karl Weiß', '2400.00'), ('Lena Roth', '2400.00')]:
+                await expect(b.page.get_by_role('textbox', name=f'Tatsächlich gezahltes Hausgeld · {name}')).to_have_value(amount)
+            await b.page.get_by_role('textbox', name='Tatsächlich gezahltes Hausgeld · Lena Roth').fill('')
+            await b.page.get_by_role('button', name='Berechnen', exact=True).click()
+            alert = b.page.locator('.card').filter(has_text='Fehler:')
+            await expect(alert).to_be_visible()
+            await alert.scroll_into_view_if_needed()
+            directory = Path(os.environ.get('VERWALINO_183_SCREENSHOTS', str(tmp_path)))
+            directory.mkdir(parents=True, exist_ok=True)
+            await b.page.screenshot(path=str(directory / f'paid-hausgeld-{width}.png'), full_page=True)
+        await expect(alert).to_contain_text('Lena Roth')
+        await expect(alert).to_contain_text('Hausgeld')
+    b.run(check())

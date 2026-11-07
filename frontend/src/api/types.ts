@@ -547,6 +547,8 @@ export interface OwnershipCreate {
   mea_share?: string | null;
 }
 
+export type AdvanceMode = "COMBINED" | "SEPARATE";
+
 export interface LeaseRecord {
   id: string;
   unit_id: string;
@@ -555,6 +557,7 @@ export interface LeaseRecord {
   valid_to: string | null;
   base_rent: string;
   advance_payment: string;
+  advance_mode?: AdvanceMode | null;
   heating_advance_payment: string;
   deposit: string | null;
   notes: string;
@@ -566,6 +569,7 @@ export interface LeaseRentChange {
   valid_from: string;
   base_rent: string;
   advance_payment: string;
+  advance_mode?: AdvanceMode | null;
   heating_advance_payment: string;
   created_at: string;
 }
@@ -574,6 +578,7 @@ export interface LeaseRentChangeCreate {
   valid_from: string;
   base_rent: string;
   advance_payment: string;
+  advance_mode?: AdvanceMode | null;
   heating_advance_payment: string;
 }
 
@@ -584,6 +589,7 @@ export interface LeaseCreate {
   valid_to?: string | null;
   base_rent: string;
   advance_payment: string;
+  advance_mode?: AdvanceMode | null;
   heating_advance_payment: string;
   deposit?: string | null;
   notes?: string;
@@ -594,6 +600,7 @@ export interface LeaseUpdate {
   notes?: string;
   base_rent?: string;
   advance_payment?: string;
+  advance_mode?: AdvanceMode;
   heating_advance_payment?: string;
   deposit?: string | null;
 }
@@ -647,6 +654,7 @@ export interface CostEntry {
   confirmed_at: string | null;
   confirmed_by: string | null;
   superseded_by_id: string | null;
+  bank_open_amount?: string | null;
 }
 
 export interface CostEntryCreate {
@@ -804,6 +812,7 @@ export interface SettlementRun {
 
 export interface AdvanceProposal {
   accept_from: string;
+  advance_mode?: AdvanceMode | null;
   heating_tenant_cost: string;
   heating_monthly_amount: string;
   current_monthly_amount: string;
@@ -1033,6 +1042,7 @@ export interface BankTransaction {
   counterparty_iban: string | null;
   purpose: string | null;
   status: BankTransactionStatus;
+  cost_entry_id?: string | null;
 }
 
 export interface BankTransactionPage {
@@ -1209,8 +1219,23 @@ export interface MietkontoResult {
   balance: string;
 }
 
+export interface IssuedDunningInfo {
+  id: string;
+  issue_date: string;
+  level: number;
+  fee_amount: string;
+  interest_amount: string;
+}
+
 export interface TenantMietkontoResult extends MietkontoResult {
-  open_items: (OpenItem & { is_due: boolean })[];
+  dunning_notices: IssuedDunningInfo[];
+  open_items: (OpenItem & { is_due: boolean; combined_advance?: boolean })[];
+  due_balance: string;
+  not_yet_due_balance: string;
+}
+
+export interface OwnerMietkontoResult extends MietkontoResult {
+  open_items: (OpenItem & { is_due: boolean; due_date: string | null })[];
   due_balance: string;
   not_yet_due_balance: string;
 }
@@ -1241,19 +1266,34 @@ export interface DunningNotice {
 }
 
 export interface DunningSettings {
-  base_interest_rate: string | null;
+  fee_level_1: string;
+  fee_level_2: string;
+  fee_level_3: string;
+  default_interest_enabled: boolean;
+}
+
+export interface DunningInterestSegment {
+  start: string;
+  end: string;
+  days: number;
+  principal: string;
+  base_interest_rate: string;
+  annual_rate: string;
+  interest: string;
 }
 
 export interface DunningInterestSnapshot {
-  base_interest_rate: string;
-  annual_rate: string;
+  base_interest_rate?: string;
+  annual_rate?: string;
+  premium?: 5 | 9;
   reference_date: string;
   items: {
     payment_type: string;
     period_year: number | null;
     period_month: number | null;
     due_date: string;
-    interest_start?: string;
+    interest_start?: string | null;
+    segments?: DunningInterestSegment[];
     days: number;
     principal: string;
     interest: string;
@@ -1270,7 +1310,6 @@ export interface DunningIncludedItem {
 }
 
 export interface DunningCreateTenant {
-  base_interest_rate?: string | null;
   accounting_scope_id?: string | null;
   tenant_profile_id: string;
   lease_agreement_id: string;
@@ -1282,7 +1321,6 @@ export interface DunningCreateTenant {
 }
 
 export interface DunningCreateOwner {
-  base_interest_rate?: string | null;
   accounting_scope_id?: string | null;
   owner_profile_id: string;
   period_start: string;
@@ -1847,6 +1885,8 @@ export interface SettlementPeriod {
   period_start: string;
   period_end: string;
 }
+export type DesignTheme = "klar" | "warm";
+export interface UserPreferences { design_theme: DesignTheme }
 
 export interface UnitHouseholdRow {
   valid_from: string;

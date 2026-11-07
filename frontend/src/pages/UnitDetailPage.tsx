@@ -27,6 +27,7 @@ import {
 } from "../api/endpoints";
 import type { IndexmieteInput, IndexmietePreview } from "../api/endpoints";
 import type {
+  AdvanceMode,
   Unit,
   Property,
   OwnershipRecord,
@@ -72,9 +73,34 @@ interface LeaseFormData {
   valid_to: string;
   base_rent: string;
   advance_payment: string;
+  advance_mode: AdvanceMode | null;
   heating_advance_payment: string;
   deposit: string;
   notes: string;
+}
+
+function AdvanceModePicker({ mode, allowLegacy, disabled, onChange }: {
+  mode: AdvanceMode | null;
+  allowLegacy: boolean;
+  disabled?: boolean;
+  onChange: (mode: AdvanceMode | null) => void;
+}) {
+  return <label>Vorauszahlungsart
+    <select aria-label="Vorauszahlungsart" value={mode ?? ""} disabled={disabled}
+      onChange={event => onChange((event.target.value || null) as AdvanceMode | null)}>
+      {allowLegacy && <option value="">Bisherige Vorauszahlungsart</option>}
+      <option value="COMBINED">Gemeinsam inkl. Heizkosten</option>
+      <option value="SEPARATE">Betriebs- und Heizkosten getrennt</option>
+    </select>
+  </label>;
+}
+
+function advanceAmountLabel(mode: AdvanceMode | null | undefined) {
+  return mode === "COMBINED" ? "Betriebskosten-Vorauszahlung inkl. Heizkosten (EUR)" : "Betriebskosten-Vorauszahlung (EUR)";
+}
+
+function advanceCell(rate: LeaseRecord | LeaseRentChange) {
+  return rate.advance_mode === "COMBINED" ? `${rate.advance_payment} inkl. Heizkosten` : rate.advance_payment;
 }
 
 export function UnitDetailPage() {
@@ -115,7 +141,7 @@ function UnitDetailPageContent({ propertyId, unitId }: { propertyId?: string; un
   const [editingLease, setEditingLease] = useState<LeaseRecord | null>(null);
   const [leaseForm, setLeaseForm] = useState<LeaseFormData>({
     tenant_profile_id: "", valid_from: "", valid_to: "",
-    base_rent: "", advance_payment: "", heating_advance_payment: "0.00", deposit: "", notes: "",
+    base_rent: "", advance_payment: "", advance_mode: "SEPARATE", heating_advance_payment: "0.00", deposit: "", notes: "",
   });
   const [leaseFormError, setLeaseFormError] = useState<string | null>(null);
   const [savingLease, setSavingLease] = useState(false);
@@ -226,7 +252,7 @@ function UnitDetailPageContent({ propertyId, unitId }: { propertyId?: string; un
     const amounts = {
       base_rent: rentAmount(leaseForm.base_rent),
       advance_payment: rentAmount(leaseForm.advance_payment),
-      heating_advance_payment: rentAmount(leaseForm.heating_advance_payment),
+      heating_advance_payment: leaseForm.advance_mode === "COMBINED" ? "0.00" : rentAmount(leaseForm.heating_advance_payment),
       deposit: leaseForm.deposit.trim() ? rentAmount(leaseForm.deposit) : null,
     };
     for (const [field, label] of [
@@ -248,6 +274,7 @@ function UnitDetailPageContent({ propertyId, unitId }: { propertyId?: string; un
         valid_from: leaseForm.valid_from,
         base_rent: amounts.base_rent!,
         advance_payment: amounts.advance_payment!,
+        advance_mode: leaseForm.advance_mode,
         heating_advance_payment: amounts.heating_advance_payment!,
       };
       if (leaseForm.valid_to) body.valid_to = leaseForm.valid_to;
@@ -259,6 +286,7 @@ function UnitDetailPageContent({ propertyId, unitId }: { propertyId?: string; un
           notes: leaseForm.notes,
         };
         if (amounts.base_rent !== editingLease.base_rent) changes.base_rent = amounts.base_rent!;
+        if (leaseForm.advance_mode && leaseForm.advance_mode !== editingLease.advance_mode) changes.advance_mode = leaseForm.advance_mode;
         if (amounts.advance_payment !== editingLease.advance_payment) changes.advance_payment = amounts.advance_payment!;
         if (amounts.heating_advance_payment !== editingLease.heating_advance_payment) changes.heating_advance_payment = amounts.heating_advance_payment!;
         if (amounts.deposit !== null && amounts.deposit !== editingLease.deposit) changes.deposit = amounts.deposit;
@@ -449,7 +477,7 @@ function UnitDetailPageContent({ propertyId, unitId }: { propertyId?: string; un
           setLeaseForm({
             tenant_profile_id: tenantProfiles[0]?.id ?? "",
             valid_from: "", valid_to: "",
-            base_rent: "", advance_payment: "", heating_advance_payment: "0.00", deposit: "", notes: "",
+            base_rent: "", advance_payment: "", advance_mode: "SEPARATE", heating_advance_payment: "0.00", deposit: "", notes: "",
           });
           setShowLeaseForm(true);
         }}>
@@ -513,8 +541,10 @@ function UnitDetailPageContent({ propertyId, unitId }: { propertyId?: string; un
                 onChange={(e) => setLeaseForm({ ...leaseForm, base_rent: e.target.value })}
               />
             </label>
+            <AdvanceModePicker mode={leaseForm.advance_mode} allowLegacy={Boolean(editingLease && !editingLease.advance_mode)}
+              disabled={savingLease} onChange={mode => setLeaseForm({ ...leaseForm, advance_mode: mode })} />
             <label>
-              Betriebskosten-Vorauszahlung (EUR) *
+              {advanceAmountLabel(leaseForm.advance_mode)} *
               <input
                 type="text"
                 inputMode="decimal"
@@ -525,13 +555,13 @@ function UnitDetailPageContent({ propertyId, unitId }: { propertyId?: string; un
                 onChange={(e) => setLeaseForm({ ...leaseForm, advance_payment: e.target.value })}
               />
             </label>
-            <label>
+            {leaseForm.advance_mode !== "COMBINED" && <label>
               Heizkosten-Vorauszahlung (EUR) *
               <input type="text" inputMode="decimal" required aria-invalid={leaseFormError !== null && invalidLeaseAmount === "heating_advance_payment"}
                 aria-describedby={leaseFormError && invalidLeaseAmount === "heating_advance_payment" ? "lease-form-error" : undefined}
                 value={leaseForm.heating_advance_payment}
                 onChange={(e) => setLeaseForm({ ...leaseForm, heating_advance_payment: e.target.value })} />
-            </label>
+            </label>}
             <label>
               Kaution (EUR)
               <input
@@ -587,7 +617,7 @@ function UnitDetailPageContent({ propertyId, unitId }: { propertyId?: string; un
                     <td>{la.valid_from}</td>
                     <td>{la.valid_to ?? "offen"}</td>
                     <td>{la.base_rent}</td>
-                    <td>{la.advance_payment}</td><td>{la.heating_advance_payment}</td>
+                    <td>{advanceCell(la)}</td><td>{la.advance_mode === "COMBINED" ? "—" : la.heating_advance_payment}</td>
                     <td>{la.deposit ?? "-"}</td>
                     <td>{canWriteOwnership && <button className="btn" onClick={() => {
                       setEditingLease(la);
@@ -595,7 +625,7 @@ function UnitDetailPageContent({ propertyId, unitId }: { propertyId?: string; un
                       setLeaseForm({
                         tenant_profile_id: la.tenant_profile_id, valid_from: la.valid_from,
                         valid_to: la.valid_to ?? "", base_rent: la.base_rent,
-                        advance_payment: la.advance_payment, heating_advance_payment: la.heating_advance_payment, deposit: la.deposit ?? "", notes: la.notes,
+                        advance_payment: la.advance_payment, advance_mode: la.advance_mode ?? null, heating_advance_payment: la.heating_advance_payment, deposit: la.deposit ?? "", notes: la.notes,
                       });
                       setShowLeaseForm(true);
                     }}>Bearbeiten / beenden</button>}
@@ -748,6 +778,7 @@ function LeaseRentHistory({ lease, tenantLabel }: { lease: LeaseRecord; tenantLa
   const [validFrom, setValidFrom] = useState("");
   const [baseRent, setBaseRent] = useState(lease.base_rent);
   const [advance, setAdvance] = useState(lease.advance_payment);
+  const [advanceMode, setAdvanceMode] = useState<AdvanceMode | null>(lease.advance_mode ?? null);
   const [heatingAdvance, setHeatingAdvance] = useState(lease.heating_advance_payment);
   const [formError, setFormError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
@@ -783,6 +814,7 @@ function LeaseRentHistory({ lease, tenantLabel }: { lease: LeaseRecord; tenantLa
     const rate = rateAt(date);
     setBaseRent(rate.base_rent);
     setAdvance(rate.advance_payment);
+    setAdvanceMode(rate.advance_mode ?? null);
     setHeatingAdvance(rate.heating_advance_payment);
     setFormError(null);
   }
@@ -802,15 +834,16 @@ function LeaseRentHistory({ lease, tenantLabel }: { lease: LeaseRecord; tenantLa
     }
     const base_rent = rentAmount(baseRent);
     const advance_payment = rentAmount(advance);
-    const heating_advance_payment = rentAmount(heatingAdvance);
+    const heating_advance_payment = advanceMode === "COMBINED" ? "0.00" : rentAmount(heatingAdvance);
     if (base_rent === null || advance_payment === null || heating_advance_payment === null) {
-      setFormError("Bitte Kaltmiete und beide Vorauszahlungen als nicht negative EUR-Beträge mit höchstens zwei Nachkommastellen eingeben (maximal 999.999.999.999,99).");
+      setFormError("Bitte Kaltmiete und Vorauszahlungen als nicht negative EUR-Beträge mit höchstens zwei Nachkommastellen eingeben (maximal 999.999.999.999,99).");
       return;
     }
     mutationLock.current = true;
     setSaving(true);
     try {
-      const row = await createLeaseRentChange(lease.id, { valid_from: validFrom, base_rent, advance_payment, heating_advance_payment });
+      const row = await createLeaseRentChange(lease.id, { valid_from: validFrom, base_rent, advance_payment, heating_advance_payment,
+        ...(advanceMode ? { advance_mode: advanceMode } : {}) });
       setRows(previous => [...previous, row].sort((a, b) => a.valid_from.localeCompare(b.valid_from)));
       setOpen(false);
       setRevision(previous => previous + 1);
@@ -927,8 +960,8 @@ function LeaseRentHistory({ lease, tenantLabel }: { lease: LeaseRecord; tenantLa
     <table className="data-table" aria-label={`Miethistorie: ${contractLabel}`}>
       <thead><tr><th>Gültig ab</th><th>Kaltmiete (EUR)</th><th>Betriebskosten-Vorauszahlung (EUR)</th><th>Heizkosten-Vorauszahlung (EUR)</th><th>Quelle</th></tr></thead>
       <tbody>
-        <tr><td>{lease.valid_from}</td><td>{lease.base_rent}</td><td>{lease.advance_payment}</td><td>{lease.heating_advance_payment}</td><td>Originalvertrag</td></tr>
-        {rows.map(row => <tr key={row.id}><td>{row.valid_from}</td><td>{row.base_rent}</td><td>{row.advance_payment}</td><td>{row.heating_advance_payment}</td><td>Mietänderung</td></tr>)}
+        <tr><td>{lease.valid_from}</td><td>{lease.base_rent}</td><td>{advanceCell(lease)}</td><td>{lease.advance_mode === "COMBINED" ? "—" : lease.heating_advance_payment}</td><td>Originalvertrag</td></tr>
+        {rows.map(row => <tr key={row.id}><td>{row.valid_from}</td><td>{row.base_rent}</td><td>{advanceCell(row)}</td><td>{row.advance_mode === "COMBINED" ? "—" : row.heating_advance_payment}</td><td>Mietänderung</td></tr>)}
       </tbody>
     </table>
     {loading && <p role="status">Lade Mietänderungen…</p>}
@@ -966,7 +999,8 @@ function LeaseRentHistory({ lease, tenantLabel }: { lease: LeaseRecord; tenantLa
           {indexPreview && <div role="status" aria-label="Indexmietvorschau">
             <p>Bisherige Kaltmiete: {indexPreview.previous_base_rent} EUR (seit {indexPreview.previous_valid_from})</p>
             <p>Neue Kaltmiete: {indexPreview.base_rent} EUR</p>
-            <p>Vorauszahlungen unverändert: Betriebskosten {indexPreview.advance_payment} EUR / Heizkosten {indexPreview.heating_advance_payment} EUR</p>
+            <p>Vorauszahlungen unverändert: Betriebskosten {indexPreview.advance_payment} EUR{rateAt(indexPreview.valid_from).advance_mode === "COMBINED"
+              ? " inkl. Heizkosten" : ` / Heizkosten ${indexPreview.heating_advance_payment} EUR`}</p>
             <p>Gültig ab: {indexPreview.valid_from}</p>
           </div>}
           {formError && <p role="alert" className="error-text">{formError}</p>}
@@ -979,17 +1013,18 @@ function LeaseRentHistory({ lease, tenantLabel }: { lease: LeaseRecord; tenantLa
       </DialogContent>
     </Dialog>
     <Dialog open={open} onOpenChange={next => { if (!mutationLock.current) setOpen(next); }}>
-      <DialogContent>
+      <DialogContent className="max-h-[90dvh] overflow-y-auto">
         <DialogTitle>Miete ändern</DialogTitle>
         <DialogDescription>
           {contractLabel}. Neue volle Monatsrate ab Stichtag. Originalvertrag, Buchungen und finalisierte Dokumente werden nicht geändert; keine Neuberechnung wird ausgelöst.
         </DialogDescription>
         <form onSubmit={submit} noValidate>
           <label>Gültig ab<Input type="date" value={validFrom} min={lease.valid_from} max={lease.valid_to ?? undefined} disabled={saving} onChange={event => selectDate(event.target.value)} /></label>
-          <p>Vorbelegung: {source === lease ? "Originalvertrag" : `Mietänderung ab ${source.valid_from}`} · KALT {source.base_rent} EUR / Betriebskosten {source.advance_payment} EUR / Heizkosten {source.heating_advance_payment} EUR. Bei Datumswechsel werden alle drei Beträge neu vorbelegt.</p>
+          <p>Vorbelegung: {source === lease ? "Originalvertrag" : `Mietänderung ab ${source.valid_from}`} · KALT {source.base_rent} EUR / Betriebskosten {source.advance_payment} EUR{source.advance_mode === "COMBINED" ? " inkl. Heizkosten" : ` / Heizkosten ${source.heating_advance_payment} EUR`}. Bei Datumswechsel werden die gültigen Beträge neu vorbelegt.</p>
           <label>Kaltmiete (EUR)<Input inputMode="decimal" value={baseRent} disabled={saving} onChange={event => setBaseRent(event.target.value)} /></label>
-          <label>Betriebskosten-Vorauszahlung (EUR)<Input inputMode="decimal" value={advance} disabled={saving} onChange={event => setAdvance(event.target.value)} /></label>
-          <label>Heizkosten-Vorauszahlung (EUR)<Input inputMode="decimal" value={heatingAdvance} disabled={saving} onChange={event => setHeatingAdvance(event.target.value)} /></label>
+          <AdvanceModePicker mode={advanceMode} allowLegacy={!source.advance_mode} disabled={saving} onChange={setAdvanceMode} />
+          <label>{advanceAmountLabel(advanceMode)}<Input inputMode="decimal" value={advance} disabled={saving} onChange={event => setAdvance(event.target.value)} /></label>
+          {advanceMode !== "COMBINED" && <label>Heizkosten-Vorauszahlung (EUR)<Input inputMode="decimal" value={heatingAdvance} disabled={saving} onChange={event => setHeatingAdvance(event.target.value)} /></label>}
           {formError && <p role="alert" className="error-text">{formError}</p>}
           <div className="form-actions">
             <button type="submit" className="btn btn--primary" disabled={saving}>Mietänderung speichern</button>

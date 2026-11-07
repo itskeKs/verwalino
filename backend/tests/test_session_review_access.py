@@ -283,6 +283,7 @@ async def test_revision_chain_head_0131_head_preserves_full_state_and_issued_pdf
     from app.deployment import TARGET
     from app.models.base import Base
     from tests.conftest import MIGRATOR_SYNC_URL
+    from tests.migration_rehearsal import project_legacy_advance_modes
     from tests.test_letters import contract_body, create_template, issue_body
     from tests.test_reserve_ledger import reserve_world, finalize
     from tests.financial_coverage_helpers import attest_fixture, reserve_evidence
@@ -313,6 +314,8 @@ async def test_revision_chain_head_0131_head_preserves_full_state_and_issued_pdf
     assert os.environ.get('HV_DECLARATION_TEST_DATABASE_PROFILE', 'local') == 'local'
     w = rent_world
     async with api_client(w) as admin:
+        mode = await admin.patch(f"/api/leases/{w['lease']}", json={'advance_mode': 'SEPARATE'})
+        assert mode.status_code == 200, mode.text
         household = await admin.put(f"/api/units/{w['unit']}/household", json=[
             {'valid_from': '2026-01-01', 'persons': 2, 'is_vacancy': False},
         ])
@@ -396,7 +399,7 @@ async def test_revision_chain_head_0131_head_preserves_full_state_and_issued_pdf
     config.set_main_option('script_location', str(Path(__file__).parents[1] / 'migrations'))
     scripts = ScriptDirectory.from_config(config)
     assert scripts.get_heads() == [TARGET]
-    expected_ancestry = [f'{number:04}' for number in range(131, 156)] + ['0159', '0160', '0161', '0162', '0163', '0164', '0165', '0166', '0167', '0168', '0169', '0170']
+    expected_ancestry = [f'{number:04}' for number in range(131, 156)] + ['0159', '0160', '0161', '0162', '0163', '0164', '0165', '0166', '0167', '0168', '0169', '0170', '0171', '0172', '0173', '0174', '0175', '0176', '0177']
     assert [r.revision for r in scripts.iterate_revisions(TARGET, '0131')] == expected_ancestry[:0:-1]
     engine = create_engine(MIGRATOR_SYNC_URL)
     try:
@@ -457,12 +460,40 @@ async def test_revision_chain_head_0131_head_preserves_full_state_and_issued_pdf
                 assert version() == (TARGET,)
                 retained = _chain_snapshot(connection)
                 assert any(row['unit_id'] == str(w['unit']) for row in retained['data']['unit_household'])
+                connection.execute(text('LOCK TABLE public.lease_agreement, public.lease_rent_change, '
+                                        'public.audit_event IN ACCESS EXCLUSIVE MODE'))
+                with pytest.raises(DBAPIError, match='Retain explicit tenant advance modes'):
+                    with connection.begin_nested():
+                        migrate('0175', downgrade=True)
+                assert _chain_snapshot(connection) == retained
+                with connection.begin_nested():
+                    migrate('0176', downgrade=True)
+                    project_legacy_advance_modes(connection)
+                    # Compare the subsequent full chain with a projected head.
+                    migrate(TARGET, downgrade=False)
+                # Historical schemas have no design column. The final
+                # rollback comparison retains the original preferences.
+                connection.execute(text("""UPDATE public."user"
+                    SET design_theme='klar' WHERE design_theme<>'klar'"""))
+                # The removed columns have no pre-bank representation.
+                # Keep the original rows and every other field in this rollback-only projection.
+                if connection.scalar(text('SELECT EXISTS(SELECT 1 FROM cost_entry WHERE bank_coverage_successor_id IS NOT NULL)')):
+                    connection.execute(text('ALTER TABLE cost_entry DISABLE TRIGGER a_protect_adopted_cost'))
+                    connection.execute(text('ALTER TABLE cost_entry DISABLE TRIGGER guard_covered_cost_correction'))
+                    connection.execute(text('UPDATE cost_entry SET bank_coverage_successor_id=NULL WHERE bank_coverage_successor_id IS NOT NULL'))
+                    connection.execute(text('ALTER TABLE cost_entry ENABLE ALWAYS TRIGGER guard_covered_cost_correction'))
+                    connection.execute(text('ALTER TABLE cost_entry ENABLE TRIGGER a_protect_adopted_cost'))
+                if connection.scalar(text('SELECT EXISTS(SELECT 1 FROM bank_transaction WHERE cost_entry_id IS NOT NULL)')):
+                    connection.execute(text('ALTER TABLE bank_transaction DISABLE TRIGGER guard_bank_cost_assignment'))
+                    connection.execute(text('UPDATE bank_transaction SET cost_entry_id=NULL WHERE cost_entry_id IS NOT NULL'))
+                    connection.execute(text('ALTER TABLE bank_transaction ENABLE ALWAYS TRIGGER guard_bank_cost_assignment'))
                 long_note_lines = connection.execute(text('SELECT id FROM settlement_line WHERE char_length(note)>500')).scalars().all()
                 if long_note_lines:
+                    before_notes_projection = _chain_snapshot(connection)
                     with pytest.raises(RuntimeError, match='Cannot narrow stored settlement notes; repair forward'):
                         with connection.begin_nested():
                             migrate('0169', downgrade=True)
-                    assert _chain_snapshot(connection) == retained
+                    assert _chain_snapshot(connection) == before_notes_projection
                     # The older column cannot represent these notes. Exclude
                     # them only in this rollback-only historical projection.
                     connection.execute(text('ALTER TABLE settlement_line DISABLE TRIGGER USER'))

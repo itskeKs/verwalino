@@ -201,7 +201,7 @@ PROBES: dict[str, Probe] = {
     "GET /api/payments/mietkonto/lease/{lease_agreement_id}": Probe(
         row("lease_agreement", lease_agreement_id="id"), query={"as_of": "2026-11-01"}),
     "GET /api/payments/mietkonto/owner/{owner_profile_id}": Probe(
-        row("owner_profile", owner_profile_id="id"), status=200,
+        row("owner_profile", owner_profile_id="id"), status=200, query={"as_of": "2026-07-02"},
         because="in preparation mode the owner is never looked up: the statement is built from the visible "
                 "payments, so it is empty for a foreign and for a random id alike"),
     "GET /api/payments/open-items": Probe(SCOPE),

@@ -309,3 +309,19 @@ it("renders a missing input-owner companion read as the same German missing run"
   show();
   expect((await screen.findByRole("alert")).textContent).toBe("WEG-Abrechnung nicht gefunden.");
 });
+
+it('prefills every input owner including the buyer absent from the frozen plan', async () => {
+  const fetchMock = install();
+  const original = fetchMock.getMockImplementation()!;
+  fetchMock.mockImplementation((url, init) => url.endsWith('/paid-advances-derived')
+    ? Promise.resolve(json([{ owner_profile_id: seller, paid_total: '2400.00' },
+                           { owner_profile_id: buyer, paid_total: '2400.00' }]))
+    : original(url, init));
+  show();
+  const sellerInput = await screen.findByRole('textbox', { name: paymentLabel('Anna Alt') });
+  const buyerInput = await screen.findByRole('textbox', { name: paymentLabel('Berta Neu') });
+  expect(plan.lines.map(line => line.owner_profile_id)).toEqual([seller]);
+  fireEvent.click(screen.getByRole('button', { name: 'Aus Zahlenstand übernehmen' }));
+  await waitFor(() => expect(buyerInput).toHaveValue('2400.00'));
+  expect(sellerInput).toHaveValue('2400.00');
+});

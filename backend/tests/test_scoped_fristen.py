@@ -13,6 +13,7 @@ pytestmark = pytest.mark.asyncio
 
 async def add_cost(ids, scope, start='2025-01-01', end='2025-12-31'):
     params = {**ids, 'cost': uuid.uuid4(), 'sphere': ids[scope], 'start': date.fromisoformat(start), 'end': date.fromisoformat(end)}
+    params['year'] = params['start'].year
     await mutate(text("""INSERT INTO cost_entry(id,organization_id,property_id,cost_category_id,cost_category_plan_version,
         invoice_date,service_period_from,service_period_to,gross_amount,tenant_apportionable,status,source,confirmed_at,confirmed_by)
         SELECT :cost,:org,:property,id,1,:start,:start,:end,100,'UMLAGEFAEHIG','confirmed','MANUAL',now(),:actor
@@ -44,11 +45,58 @@ async def test_weg_monitor_omits_tenant_debt_and_out_of_term_plan_obligations(mi
         assert result.status_code == 200, result.text
         kinds = {row['kind'] for row in result.json()}
         assert {'WEG_JAHRESABRECHNUNG', 'WEG_VERMOEGENSBERICHT'} <= kinds
-        assert not kinds & {'BK_ABRECHNUNG', 'OFFENE_POSTEN', 'WIRTSCHAFTSPLAN'}
+        assert not kinds & {'BK_ABRECHNUNG', 'WIRTSCHAFTSPLAN'}
+        assert next(row for row in result.json() if row['kind'] == 'OFFENE_POSTEN')['status'] == 'OK'
         # The second WEG remains open; it has no costs but needs a next-year plan.
         second = await api.get('/api/fristen', params={'reference_date': '2026-12-31', 'accounting_scope_id': str(ids['second_scope'])})
         assert second.status_code == 200, second.text
-        assert {row['kind'] for row in second.json()} == {'WIRTSCHAFTSPLAN', 'BELEG_AUFBEWAHRUNG'}
+        assert {row['kind'] for row in second.json()} == {'WIRTSCHAFTSPLAN', 'BELEG_AUFBEWAHRUNG', 'OFFENE_POSTEN'}
+
+
+async def add_monitor_plan(ids, sphere, day=3, amount='600.00', *, start='2025-07-01', end='2025-07-31'):
+    params = {**ids, 'plan': uuid.uuid4(), 'sphere': ids[sphere], 'day': day, 'amount': amount,
+        'start': date.fromisoformat(start), 'end': date.fromisoformat(end)}
+    params['year'] = params['start'].year
+    await mutate(text("""INSERT INTO economic_plan(id,organization_id,property_id,plan_year,period_start,period_end,monthly_due_day,status,engine_version)
+        VALUES (:plan,:org,:property,:year,:start,:end,:day,'draft','fixture')"""), params)
+    await mutate(text("""INSERT INTO economic_plan_line(id,organization_id,economic_plan_id,line_type,owner_profile_id,unit_id,label,planned_amount,monthly_amount)
+        VALUES (gen_random_uuid(),:org,:plan,'OWNER_ADVANCE',:profile,:unit,'Resolved Hausgeld',CAST(:amount AS numeric),CAST(:amount AS numeric))"""), params)
+    await mutate(text("INSERT INTO accounting_scope_binding(organization_id,property_id,scope_id,economic_plan_id,origin,reason,reviewed_by) VALUES (:org,:property,:sphere,:plan,'REVIEWED','Resolved monthly due day',:actor)"), params)
+    await mutate(text("UPDATE economic_plan SET status='finalized' WHERE id=:plan"), params)
+    return params['plan']
+
+
+async def test_owner_monitor_and_ledger_share_due_dates_without_other_scope_debt(migrator_session, scope_seed):
+    ids = await statement_fixture(migrator_session, scope_seed, 'owner')
+    await mutate(text("INSERT INTO ownership_history(id,organization_id,unit_id,owner_profile_id,valid_from) VALUES (gen_random_uuid(),:org,:unit,:profile,'2020-01-01')"), ids)
+    ids['plan'] = await add_monitor_plan(ids, 'scope')
+    await add_monitor_plan(ids, 'second_scope', day=1, amount='1800.00')
+    async with client(ids) as api:
+        for cutoff, expected in [('2025-07-02', 'OK'), ('2025-07-04', 'DUE')]:
+            response = await api.get('/api/fristen', params={'reference_date': cutoff, 'accounting_scope_id': str(ids['scope'])})
+            assert response.status_code == 200, response.text
+            overdue = next(row for row in response.json() if row['kind'] == 'OFFENE_POSTEN')
+            assert overdue['status'] == expected
+            if expected == 'DUE':
+                assert overdue['detail'].startswith('1 ')
+            ledger = await api.get(f"/api/payments/mietkonto/owner/{ids['profile']}", params={
+                'period_start': '2025-07-01', 'period_end': '2025-07-31',
+                'accounting_scope_id': str(ids['scope']), 'economic_plan_id': str(ids['plan']), 'as_of': cutoff})
+            assert ledger.status_code == 200, ledger.text
+            assert ledger.json()['open_items'][0]['due_date'] == '2025-07-03'
+            assert ledger.json()['due_balance'] == ('600.00' if expected == 'DUE' else '0.00')
+
+
+@pytest.mark.parametrize('second_end', ['2025-07-31', '2025-07-15'])
+async def test_monitor_refuses_overlapping_active_plans_including_nonidentical_periods(migrator_session, scope_seed, second_end):
+    ids = await statement_fixture(migrator_session, scope_seed, 'owner')
+    await mutate(text("INSERT INTO ownership_history(id,organization_id,unit_id,owner_profile_id,valid_from) VALUES (gen_random_uuid(),:org,:unit,:profile,'2020-01-01')"), ids)
+    await add_monitor_plan(ids, 'scope')
+    await add_monitor_plan(ids, 'scope', end=second_end)
+    async with client(ids) as api:
+        response = await api.get('/api/fristen', params={'reference_date': '2025-07-04', 'accounting_scope_id': str(ids['scope'])})
+        assert response.status_code == 409, response.text
+        assert response.json()['detail']['code'] == 'hausgeld_plan_ambiguous'
 
 
 async def test_monitor_live_scope_denial_and_invalid_reference_date(migrator_session, scope_seed):
@@ -86,9 +134,9 @@ async def test_partial_fiscal_year_requires_reviewed_coverage(migrator_session, 
 
 async def test_malformed_lease_does_not_become_zero_overdue(migrator_session, scope_seed, monkeypatch):
     ids = await statement_fixture(migrator_session, scope_seed, 'lease')
-    def invalid(*args):
+    def invalid(*args, **kwargs):
         raise ValueError('Malformed calculation input')
-    monkeypatch.setattr('app.services.fristen_service.tenant_expected_charges', invalid)
+    monkeypatch.setattr('app.services.payment_service.tenant_expected_charges', invalid)
     async with client(ids) as api:
         response = await api.get('/api/fristen', params={'reference_date': '2025-12-31', 'accounting_scope_id': str(ids['scope'])})
         assert response.status_code == 409

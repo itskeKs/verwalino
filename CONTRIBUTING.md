@@ -85,7 +85,9 @@ AGENTS.md retains the safety baseline and tests/CI check parity.
   self-host/hosted deploy contracts and canary tests; fake curl/wget, Docker and cosign,
   plus a local fake HTTP server, no network downloads or database.
   `python3 -B scripts/test-install.py` and `python3 -B scripts/test-install-scenarios.py`
-  also run standalone with stdlib only.
+  also run standalone with stdlib only. The self-host and install test runners stop their owned
+  subprocess groups on Ctrl-C, SIGTERM or command timeout before removing their test directories.
+  A SIGKILL delivered to the runner cannot run Python cleanup.
 - **`make test-scenario-issues`** — scenario failure fingerprints, deduplication and regression
   filing; Python stdlib, fake GitHub, no network or database.
 - **`make docs-check`** — relative links and images in every Markdown file outside `docs/archive/`.

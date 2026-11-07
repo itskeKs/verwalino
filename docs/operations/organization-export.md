@@ -182,6 +182,12 @@ refused before writes; ordinary import
 must not forge historical authority or private evidence. Database refusals expose
 only the entity/source IDs and a stable code, never SQL or target data.
 
+Readable exports include explicit bank coverage successors on costs corrected
+through reviewed allocations. Import continues to refuse reviewed documents
+without their private admission and rejects an explicit successor submitted
+without a native reviewed correction. Supported ordinary archives restore the
+original bank link and derive remaining coverage from the ordinary cost versions.
+
 ## Organization erasure
 
 `POST /api/organizations/deletion` creates a request and returns a retention
@@ -466,6 +472,7 @@ not an immutable field; a separate minimization policy remains an owner decision
 
 | Table | Surviving text/JSON columns | Reason or transformation |
 | --- | --- | --- |
+| `lease_agreement`, `lease_rent_change` | `advance_mode` | Controlled advance-mode vocabulary. |
 | `access_coverage_review` | `manifest_digest` | Technical operation/status/error codes, keys and digests; personal event payloads are scrubbed separately. |
 | `access_coverage_snapshot` | `manifest`, `manifest_digest`, `request_digest` | Retained source, scope or review evidence and its technical provenance. |
 | `access_disposition_acceptance` | `assessment`, `assessment_digest`, `manifest_digest`, `reason`, `request_digest` | Retained source, scope or review evidence and its technical provenance. |
@@ -578,6 +585,7 @@ not an immutable field; a separate minimization policy remains an owner decision
 | `source_security_transition` | `assessment_digest`, `manifest_digest`, `previous_mode`, `reason`, `request_digest`, `target_mode` | Retained source, scope or review evidence and its technical provenance. |
 | `unit` | `building_part`, `location`, `number`, `usage_type` | Required unit identity/location and usage classification. |
 | `user` | `display_name`, `email`, `password_hash` | Replaced by pseudonymous email/display name and unusable password sentinel; no original contact or credential survives. |
+| `user` | `design_theme` | Reset to the database default when the account is anonymized. |
 | `visual_disclosure_attestation` | `content_sha256`, `request_digest` | Retained source, scope or review evidence and its technical provenance. |
 | `visual_disclosure_event` | `kind`, `request_digest` | Technical operation/status/error codes, keys and digests; personal event payloads are scrubbed separately. |
 | `visual_extract_artifact` | `content_sha256`, `reason`, `renderer_profile`, `request_digest`, `source_sha256`, `storage_backend`, `storage_uri`, `storage_version` | Retained source, scope or review evidence and its technical provenance. |

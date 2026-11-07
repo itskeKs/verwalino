@@ -5,6 +5,7 @@ from sqlalchemy import text
 from app.core.db import get_worker_session_factory
 from app.core.intake_inspection import result
 from app.workers.workflow import process_once
+from tests.migration_rehearsal import rewind_bank_allocation_functions
 from tests.test_financial_scope_boundary import worker_tenant,scope_seed  # noqa: F401
 from tests.test_invoice_source_custody import store,fixture
 from tests.test_scoped_account_statements import client,mutate
@@ -146,6 +147,7 @@ async def test_logical_migration_preserves_evidence_and_function_identity(migrat
                 db.execute(text('TRUNCATE exception_completion CASCADE'))
                 db.execute(text('TRUNCATE financial_computation_attestation CASCADE'))
                 db.execute(text('TRUNCATE allocation_correction_context,allocation_correction_completion'))
+                rewind_bank_allocation_functions(db)
                 importlib.import_module('migrations.versions.0123_replacement_exception_outcomes').downgrade()
                 importlib.import_module('migrations.versions.0122_allocation_source_replacements').downgrade()
                 importlib.import_module('migrations.versions.0121_visual_allocation_sources').downgrade()

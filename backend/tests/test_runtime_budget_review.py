@@ -226,7 +226,8 @@ async def test_budget_migration_retains_evidence_and_preserves_historical_report
                 from alembic.script import ScriptDirectory
                 versions = ScriptDirectory(str(Path(__file__).resolve().parents[1] / 'migrations'))
                 for revision in versions.iterate_revisions('head', '0088'):
-                    revision.module.downgrade()
+                    from tests.migration_rehearsal import downgrade_rehearsal_revision
+                    downgrade_rehearsal_revision(revision)
                 migration.downgrade()
                 for version in (1,2):
                     db.execute(text("INSERT INTO access_coverage_snapshot(organization_id,generated_by,request_key,request_digest,manifest_digest,manifest,item_count,finding_count,checker_version) VALUES(:org,:actor,:request,repeat('a',64),repeat('b',64),jsonb_build_object('checker_version',:version,'items','[]'::jsonb),0,0,:version)"),

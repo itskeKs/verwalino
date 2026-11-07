@@ -84,9 +84,8 @@ async def core_seeded(isolated_batch_seed, rent_world, attachment_store, attachm
     exported = await api.post("/api/organizations/export")
     assert exported.status_code == 200, exported.text
 
-    # The two apply bodies carry the digest of organization B's own preview, known only at run time.
+    # The apply body carries the digest of organization B's own preview, known only at run time.
     BATCH_APPLY["expected_source_digest"] = (await created(sweep.client, "/api/dunning/batch/preview", json=BATCH))["source_digest"]
-    IMPORT_APPLY["expected_digest"] = (await created(sweep.client, "/api/properties/import/preview", json=import_body()))["source_digest"]
     try:
         yield
     finally:
@@ -143,7 +142,19 @@ MANDATE_DOCUMENT = row("mandate_document", mandate_id="management_mandate_id", d
 
 BATCH = {"period_start": "2025-01-01", "period_end": "2025-06-30", "reference_date": "2025-07-01", "threshold": "0.00"}
 BATCH_APPLY = {**BATCH, "lease_agreement_ids": ["{lease_agreement_id}"], "expected_source_digest": "", "request_id": str(uuid.uuid4())}
-IMPORT_APPLY = {**import_body(), "expected_digest": "", "request_id": str(uuid.uuid4())}
+UNIT_WITH_PROPERTY = row("unit", unit_id="id", property_id="property_id", number="number")
+
+
+def import_foreign_unit(ids):
+    return import_body([{
+        "kind": "unit", "key": "U1", "property_key": ids["property_id"],
+        "number": ids["number"], "usage_type": "WOHNUNG",
+    }])
+
+
+def apply_foreign_unit_import(ids):
+    # Both foreign and missing references must fail before the digest comparison.
+    return {**import_foreign_unit(ids), "expected_digest": "0" * 64, "request_id": str(uuid.uuid4())}
 
 
 PROBES: dict[str, Probe] = {
@@ -165,6 +176,8 @@ PROBES: dict[str, Probe] = {
     "POST /api/attachments/{attachment_id}/archive": Probe(row("attachment", attachment_id="id")),
     # app/api/auth.py
     "GET /api/auth/session": Probe(),
+    "GET /api/auth/preferences": Probe(),
+    "PATCH /api/auth/preferences": Probe(body={"design_theme": "klar"}),
     # app/api/cost_categories.py
     "GET /api/cost-categories": Probe(),
     # app/api/dsgvo.py
@@ -177,6 +190,11 @@ PROBES: dict[str, Probe] = {
     "GET /api/dunning": Probe(
         row("tenant_profile", tenant_profile_id="id"), status=200, because=EMPTY_FILTER),
     "GET /api/dunning/settings": Probe(),
+    # Keep B's policy semantically identical to the pre-seeded batch preview.
+    "PUT /api/dunning/settings": Probe(body={
+        "fee_level_1": "0.00", "fee_level_2": "2.50", "fee_level_3": "2.50",
+        "default_interest_enabled": False,
+    }),
     "GET /api/dunning/{dunning_id}": Probe(row("dunning_notice", dunning_id="id")),
     "GET /api/dunning/{dunning_id}/pdf": Probe(row("dunning_notice", dunning_id="id")),
     "POST /api/dunning/batch": Probe(row("lease_agreement", lease_agreement_id="id"), body=BATCH_APPLY),
@@ -288,8 +306,8 @@ PROBES: dict[str, Probe] = {
     "GET /api/properties/page": Probe(),
     "GET /api/properties/{property_id}": Probe(row("property", property_id="id")),
     "POST /api/properties": Probe(),
-    "POST /api/properties/import/apply": Probe(body=IMPORT_APPLY),
-    "POST /api/properties/import/preview": Probe(body=import_body()),
+    "POST /api/properties/import/apply": Probe(UNIT_WITH_PROPERTY, body=apply_foreign_unit_import),
+    "POST /api/properties/import/preview": Probe(UNIT_WITH_PROPERTY, body=import_foreign_unit),
     "POST /api/properties/{property_id}/mea-scale/confirm": Probe(row("property", property_id="id")),
     "PUT /api/properties/{property_id}": Probe(row("property", property_id="id")),
     # app/api/tasks.py
@@ -308,8 +326,8 @@ PROBES: dict[str, Probe] = {
     "GET /api/units": Probe(row("property", property_id="id"), status=200, because=EMPTY_FILTER),
     "GET /api/units/page": Probe(row("property", property_id="id"), status=200, because=EMPTY_FILTER),
     "GET /api/units/{unit_id}": Probe(row("unit", unit_id="id")),
-    "POST /api/units": Probe(row("property", property_id="id"), body={"property_id": "{property_id}", "number": "1", "usage_type": "WOHNUNG"}),
-    "PUT /api/units/{unit_id}": Probe(row("unit", unit_id="id")),
+    "POST /api/units": Probe(UNIT_WITH_PROPERTY, body={"property_id": "{property_id}", "number": "{number}", "usage_type": "WOHNUNG", "area": "abc"}),
+    "PUT /api/units/{unit_id}": Probe(UNIT_WITH_PROPERTY, body={"number": "{number}", "area": "abc"}),
     # app/api/users.py
     "GET /api/users": Probe(),
     "GET /api/users/page": Probe(),

@@ -81,6 +81,19 @@ it('submits separate advances in one effective-dated rent change', async () => {
     advance_payment: '150.00', heating_advance_payment: '90.00', valid_from: '2026-04-01',
   });
 });
+it("submits a combined advance as one amount in the dated rate", async () => {
+  show();
+  const dialog = await openChange();
+  date("2026-04-01");
+  fireEvent.change(within(dialog).getByLabelText("Vorauszahlungsart"), { target: { value: "COMBINED" } });
+  expect(within(dialog).queryByLabelText("Heizkosten-Vorauszahlung (EUR)", { exact: true })).toBeNull();
+  money("Betriebskosten-Vorauszahlung inkl. Heizkosten (EUR)", "240,00");
+  save();
+  await waitFor(() => expect(dialog).not.toBeInTheDocument());
+  expect(JSON.parse(posts()[0][1].body as string)).toMatchObject({
+    advance_mode: "COMBINED", advance_payment: "240.00", heating_advance_payment: "0.00",
+  });
+});
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
 beforeEach(() => {
   vi.resetAllMocks(); vi.mocked(endpoints.getUnitHousehold).mockResolvedValue([]); history = []; failure = null;
@@ -175,6 +188,8 @@ it("creates a lease contract only after confirming its legal caveat", async () =
   fireEvent.click(await screen.findByRole('button', { name: 'Mietvertrag erstellen' }));
   const dialog = await screen.findByRole('dialog', { name: 'Mietvertrag erstellen' });
   expect(within(dialog).getByText(/Vorlage; rechtliche Prüfung erforderlich/)).toBeVisible();
+  expect(within(dialog).getByText(/Die Mietbeträge gelten zum gewählten Dokumentdatum/)).toBeVisible();
+  expect(within(dialog).getByText(/nach Mietende, zeigt das PDF die Beträge vom letzten Miettag/)).toBeVisible();
   expect(posts()).toHaveLength(0);
   fireEvent.change(within(dialog).getByLabelText('Übergabedatum'), { target: { value: '2026-01-02' } });
   fireEvent.change(within(dialog).getByLabelText('Freitext: weitere Vereinbarungen'), { target: { value: 'Gartenmitbenutzung prüfen' } });

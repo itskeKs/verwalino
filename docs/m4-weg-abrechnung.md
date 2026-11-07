@@ -158,7 +158,7 @@ This gives the plan the **same immutability guarantee** (a resolved economic pla
 | `management_mandate_id` | `UUID NULL` FK→`management_mandate` (`RESTRICT`) | WEG mandate (segregation-of-funds anchor). |
 | `plan_year` | `INTEGER NOT NULL` | Fiscal year (usually calendar year; SDD §12). |
 | `period_start`/`period_end` | `DATE NOT NULL` | Plan period (usually 01.01.–31.12.). `CHECK (period_end >= period_start)`. |
-| `monthly_due_day` | `SMALLINT NULL` | Due day of the monthly Hausgeld (display/later Soll posting (Sollstellung) in M6); purely informational in M4. |
+| `monthly_due_day` | `SMALLINT NULL` | Resolved calendar day for monthly Hausgeld. New input accepts 1–28; omitted/null input defaults to 1. Historical NULL is read as 1; historical days 29–31 use month end if absent, followed by the working-day shift. Stored values and frozen snapshots/PDFs are unchanged. The field stays immutable after finalization. |
 | `reserve_contribution_total` | `NUMERIC(14,2) NOT NULL DEFAULT 0` | planned **total reserve contribution** for the year (not a cost allocation, §3). |
 | `status` | `String(12) NOT NULL DEFAULT 'draft'` | `draft`\|`finalized`. CHECK. Freeze condition `finalized`. |
 | `snapshot_payload` | `JSONB NULL` | canonical, complete plan basis + result (§5.4). |
@@ -367,7 +367,19 @@ data and booked payments are not overwritten, finalized settlements remain froze
 
 For drafts, `GET /api/weg-settlements/{id}/input-owners` returns the complete authorized
 owner set of the settlement period, with READ scope and disclosure checks. The UI uses the
-same set as the coverage validation, not merely the advance payment lines of the plan.
+same set as coverage validation and paid-Hausgeld derivation: owners whose ownership
+overlaps the period plus the original owners of the linked plan's OWNER_ADVANCE lines.
+The latter retain their frozen plan obligations even after a history correction. The shared
+roster comes from `CoverageDeclarationRepository.owner_ids`; the plan Soll allocation stays
+unchanged. Derivation returns `0.00` for an owner without booked payments and retains the
+net booked/reversed payment rules and the property's settlement period.
+
+An empty or whitespace-only paid amount is an unentered value, refused with the existing
+`owner_payment_coverage_missing` blocker in `financial_inputs_incomplete`. Invalid or non-finite
+amounts use `invalid_decimal`. Both responses include `field: paid_total`, `owner_profile_id`
+and a German message naming the owner and the Hausgeld amount to enter. Names are resolved
+only after checking the draft's financial source authority and roster membership. The page
+shows this message through the existing structured-error client.
 Payment details start as unknown; zero amounts require an explicit entry and completeness
 confirmation. A seller until 30.06.2026 and a buyer from 01.07. receive 181/184 EUR for
 actual annual costs of 365 EUR. This flow is verified in the browser, including voucher
@@ -470,6 +482,10 @@ target-year prepare are separate, complete permission checks. The confirmed pref
 persisted in the uncomputed draft and remains editable after reload; the source digest and
 original IDs are retained as provenance in the later normal computation. No automatic
 data-basis attestation, cost change, finalization, or resolution.
+
+After a manual draft is calculated, reopening restores the cost rows and reserve used for
+that result. Changes made in the editor require another calculation before finalizing a
+previously calculated draft. The existing data-basis confirmation still applies.
 
 ### 5.2 Outputs (SDD §10)
 

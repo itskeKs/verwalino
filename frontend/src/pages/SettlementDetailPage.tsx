@@ -129,8 +129,9 @@ function AdvanceProposalSection({ runId, periodEnd }: { runId: string; periodEnd
   const [result, setResult] = useState<LeaseRentChange | null>(null);
   const busy = useRef(false);
   const mounted = useRef(false);
-  const singleAdvanceBlock = proposal !== null && [proposal.heating_monthly_amount, proposal.current_heating_monthly_amount]
-    .every(value => /^0+(?:\.0+)?$/.test(value));
+  const combinedProposal = proposal?.advance_mode === "COMBINED";
+  const singleAdvanceBlock = combinedProposal || (proposal != null && !proposal.advance_mode &&
+    [proposal.heating_monthly_amount, proposal.current_heating_monthly_amount].every(value => /^0+(?:\.0+)?$/.test(value)));
 
   useEffect(() => {
     mounted.current = true;
@@ -189,17 +190,17 @@ function AdvanceProposalSection({ runId, periodEnd }: { runId: string; periodEnd
         <button className="btn" onClick={() => setRetry((value) => value + 1)} disabled={loading}>Erneut versuchen</button>
       </>}
       {proposal && <>
-        <p>Betriebskosten-Vorauszahlung: <strong>{formatProposalMoney(proposal.monthly_amount)}</strong> monatlich (bisher {formatProposalMoney(proposal.current_monthly_amount)})</p>
+        <p>Betriebskosten-Vorauszahlung{combinedProposal ? " inkl. Heizkosten" : ""}: <strong>{formatProposalMoney(proposal.monthly_amount)}</strong> monatlich (bisher {formatProposalMoney(proposal.current_monthly_amount)})</p>
         {!singleAdvanceBlock && <p>Heizkosten-Vorauszahlung: <strong>{formatProposalMoney(proposal.heating_monthly_amount)}</strong> monatlich (bisher {formatProposalMoney(proposal.current_heating_monthly_amount)})</p>}
-        <p>Grundlage Betriebskosten: {formatProposalMoney(proposal.tenant_cost)} Mieteranteil / {proposal.months.replace(".", ",")} Monate
+        <p>Grundlage Betriebskosten{combinedProposal ? " inkl. Heizkosten" : ""}: {formatProposalMoney(proposal.tenant_cost)} Mieteranteil / {proposal.months.replace(".", ",")} Monate
           {" "}({proposal.period_start} bis {proposal.period_end}).</p>
         {!singleAdvanceBlock && <p>Grundlage Heizkosten: {formatProposalMoney(proposal.heating_tenant_cost)} Mieteranteil / {proposal.months.replace(".", ",")} Monate.</p>}
-        <p>{singleAdvanceBlock ? "Nur die Betriebskosten-Vorauszahlung wird geändert." : "Beide Vorauszahlungen werden geändert."} Die Kaltmiete bleibt die am gewählten Tag gültige Rate.
+        <p>{combinedProposal ? "Die gemeinsame Vorauszahlung wird geändert." : singleAdvanceBlock ? "Nur die Betriebskosten-Vorauszahlung wird geändert." : "Beide Vorauszahlungen werden geändert."} Die Kaltmiete bleibt die am gewählten Tag gültige Rate.
           Der ursprüngliche Mietvertrag und die finalisierte Abrechnung bleiben unverändert.</p>
         {applyError && <p role="alert">{applyError}</p>}
         {result && <p role="status">Miethistorie ergänzt: ab {result.valid_from}, Kaltmiete {formatProposalMoney(result.base_rent)},
-          {" "}Betriebskosten-Vorauszahlung {formatProposalMoney(result.advance_payment)},
-          {" "}Heizkosten-Vorauszahlung {formatProposalMoney(result.heating_advance_payment)} monatlich.</p>}
+          {" "}Betriebskosten-Vorauszahlung{result.advance_mode === "COMBINED" ? " inkl. Heizkosten" : ""} {formatProposalMoney(result.advance_payment)}
+          {result.advance_mode !== "COMBINED" && `, Heizkosten-Vorauszahlung ${formatProposalMoney(result.heating_advance_payment)}`} monatlich.</p>}
       </>}
       {canApply && !result && (proposal || !isProposalDate(validFrom)) && <form onSubmit={handleApply} noValidate>
         <label>Übernehmen ab
@@ -257,8 +258,13 @@ export function SettlementDetailPage() {
   const [previewRun, setPreviewRun] = useState<SettlementRun | null>(null);
   const [showPreview, setShowPreview] = useState(false);
 
-  const singleAdvanceBlock = run?.lines.some(line =>
-    line.line_type === "ADVANCE_PAYMENT" && line.label === "Geleistete Vorauszahlungen") ?? false;
+  const advanceLines = run?.lines.filter(line => line.line_type === "ADVANCE_PAYMENT") ?? [];
+  const hasCombinedAdvance = advanceLines.some(line => line.label === "Betriebskosten-Vorauszahlungen inkl. Heizkosten");
+  const hasUnallocatedAdvance = advanceLines.some(line => line.label === "Vorauszahlungen ohne Aufteilung");
+  const singleAdvanceBlock = advanceLines.length === 1;
+  const advanceSummaryLabel = singleAdvanceBlock ? advanceLines[0].label :
+    advanceLines.length === 0 || hasUnallocatedAdvance ? "Vorauszahlungen" :
+    hasCombinedAdvance ? "Betriebs- und gemeinsame Vorauszahlungen" : "Betriebskosten-Vorauszahlungen";
   const isDraft = run?.status === "draft";
   const isFinalized = run?.status === "finalized";
 
@@ -1071,7 +1077,7 @@ export function SettlementDetailPage() {
               <td>{run.run_type}</td>
             </tr>
             <tr>
-              <td>{singleAdvanceBlock ? "Geleistete Vorauszahlungen" : "Betriebskosten-Vorauszahlungen"}</td>
+              <td>{advanceSummaryLabel}</td>
               <td>
                 <span style={{ fontFamily: "var(--mono)" }}>
                   {run.advance_payments_total ?? "-"} EUR
