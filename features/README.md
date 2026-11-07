@@ -249,7 +249,17 @@ variables and the local test DB lock are unnecessary for this path. Browser
 requests are limited to the selected origin. The feature name `Verwaltung Alpha`
 aliases the signed-in admin's organization, regardless of its actual name.
 Password scenarios create disposable users through `/api/users`; they never change
-the bootstrap admin's password. Use only a dedicated disposable installation:
+the bootstrap admin's password. Reserve contribution/correction and empty-year
+deletion scenarios create their two-owner WEG, 600/400 MEA shares, confirmed costs,
+bank accounts and draft reports through the same HTTP target. The contribution
+setup books 1300 euros of Hausgeld, assigns 100 euros to reserves and finalizes the
+7000-euro cost / 6000-euro reserve plan through the public APIs; it needs no direct
+database fixture. Local PR tests use the same setup and retain the original
+financial, correction-history and desktop/mobile assertions.
+The empty-year setup preserves the original unbound legacy drafts using the
+preparation-mode API; a reviewed accounting-scope binding would correctly prevent
+their deletion. Contribution scenarios use an explicit accounting scope and grants.
+Use only a dedicated disposable installation:
 scenarios create synthetic records and leave them there, and traces/responses can
 contain their data and session cookies. Keep credentials out of shell tracing.
 Before any scenario runs, the session signs in as the admin and requires
