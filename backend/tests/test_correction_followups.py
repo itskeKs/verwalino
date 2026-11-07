@@ -9,6 +9,7 @@ from tests.test_scope_payment_reconciliation import read_value
 from tests.test_allocation_adoptions import confirm_grant
 from tests.test_allocation_correction_preview import prepared,preview_url
 from tests.test_allocation_corrections import command
+from tests.financial_coverage_helpers import add_report_recipient
 
 pytestmark=pytest.mark.asyncio
 
@@ -53,6 +54,7 @@ async def declare(api,target,values,source,reason='Review current source and ful
 
 
 async def corrected_report(api,ids,finalized=False,extra_parent=False):
+    await add_report_recipient(ids)
     old,allocation,review,_=await prepared(api,ids)
     await mutate(text("INSERT INTO accounting_scope_binding(organization_id,property_id,scope_id,bank_account_id,origin,reason,reviewed_by) VALUES(:org,:property,:scope,:bank,'REVIEWED','Exact report account',:actor)"),ids)
     await mutate(text('UPDATE scope_grant SET revoked_at=clock_timestamp(),revoked_by=:actor WHERE organization_id=:org AND scope_id=:scope AND user_id=:clerk AND revoked_at IS NULL'),ids)

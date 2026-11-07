@@ -31,7 +31,11 @@ class PaymentRepository(TenantRepository[Payment]):
             'SELECT payment_computation_context_valid(:org,:lease,:owner)'),
             {'org': self._org_id, 'lease': lease_id, 'owner': owner_id})
         if not allowed:
-            raise HTTPException(409, 'Select an exact accounting scope and review unclassified inputs before calculating payments')
+            raise HTTPException(
+                409,
+                'Wählen Sie einen eindeutigen Abrechnungskreis und prüfen Sie noch nicht zugeordnete Daten, '
+                'bevor Sie die Zahlungen berechnen.',
+            )
 
     # ------------------------------------------------------------------
     # General queries

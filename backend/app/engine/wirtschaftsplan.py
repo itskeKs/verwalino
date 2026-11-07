@@ -25,11 +25,11 @@ from __future__ import annotations
 import uuid
 from decimal import Decimal
 
+from app.engine.periods import owner_at
 from app.engine.rounding import CENT, DistributionError, distribute_amount
 from app.engine.types import (
     COST_GROUP_NICHT_UMLAGEFAEHIG,
     COST_GROUP_UMLAGEFAEHIG,
-    OwnerPeriodInput,
     PlanOwnerResult,
     PlanResult,
     PlannedCostInput,
@@ -44,21 +44,6 @@ MONTHS = 12
 
 def _money(value: Decimal) -> Decimal:
     return value.quantize(CENT)
-
-
-def _owners_at(
-    owner_periods: list[OwnerPeriodInput],
-    unit_id: uuid.UUID,
-    day,
-) -> list[OwnerPeriodInput]:
-    """All owner records covering `unit_id` on `day` (co-owners possible)."""
-    return [
-        op
-        for op in owner_periods
-        if op.unit_id == unit_id
-        and op.valid_from <= day
-        and (op.valid_to is None or op.valid_to >= day)
-    ]
 
 
 def _validate(inp: WirtschaftsplanInput) -> None:
@@ -132,7 +117,7 @@ def compute_wirtschaftsplan(inp: WirtschaftsplanInput) -> PlanResult:
     for unit in participating:
         unit_mea = weights[unit.id]
         unit_share = unit_mea / weight_sum
-        owners_here = _owners_at(owner_periods, unit.id, inp.period_start)
+        owners_here = owner_at(owner_periods, unit.id, inp.period_start)
         if not owners_here:
             raise WegValidationError(
                 f"No owner for unit {unit.number} ({unit.id}) at plan start "

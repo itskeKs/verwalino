@@ -91,6 +91,10 @@ def build_snapshot_payload(inp: SettlementInput, result: EngineResult) -> dict:
                     "heated_area": _q(u.heated_area),
                     "mea": _q(u.mea),
                     "person_count": u.person_count,
+                    **({"household": [
+                        {"valid_from": r.valid_from.isoformat(), "persons": r.persons, "is_vacancy": r.is_vacancy}
+                        for r in sorted(u.household, key=lambda r: (r.is_vacancy, r.valid_from))
+                    ]} if u.household else {}),
                     "consumption": _q(u.consumption),
                     **({"consumption_periods": [
                         {"from": a.isoformat(), "to": b.isoformat(), "consumption": str(q)}
@@ -132,6 +136,10 @@ def build_snapshot_payload(inp: SettlementInput, result: EngineResult) -> dict:
                     "tenant_distribution_key": p.tenant_distribution_key,
                     "tenant_apportionable": p.tenant_apportionable,
                     "apportionable_tenant_amount": _m(p.apportionable_tenant_amount),
+                    **({"commercial_share_percent": _m(p.commercial_share_percent),
+                        "commercial_amount": _m(p.commercial_amount),
+                        "commercial_reason": p.commercial_reason}
+                       if p.commercial_share_percent is not None or p.commercial_amount is not None else {}),
                     "external_amounts": [
                         {
                             "unit_id": str(e.unit_id),
@@ -180,6 +188,7 @@ def build_snapshot_payload(inp: SettlementInput, result: EngineResult) -> dict:
                 "unit_id": str(v.unit_id),
                 "owner_profile_id": str(v.owner_profile_id) if v.owner_profile_id else None,
                 "days": v.days,
+                **({"person_days": v.person_days} if v.person_days is not None else {}),
                 "amount": _m(v.amount),
             }
             for v in sorted(

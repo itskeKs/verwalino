@@ -7,7 +7,7 @@ Date: 2026-06-02 -- Context: M8 -- Reference: SDD section 6.10, WEG section 24 p
 
 The resolution register (WEG section 24 para. 7) is a legally required,
 consecutively numbered register of all resolutions of a homeowners'
-association. Each entry contains the date, place, wording and, where applicable,
+association. Each entry contains the meeting date, the separate entry date, place, wording and, where applicable,
 a challenge/annulment annotation. The register is open to inspection
 (for owners and their legal successors).
 
@@ -36,8 +36,16 @@ in a stricter variant: the freeze applies **from INSERT**, not from
 a status transition. There is no "draft" status for register entries.
 
 Frozen columns (any change -> RAISE EXCEPTION):
-- `organization_id`, `property_id`, `sequence_number`, `entry_date`,
+- `organization_id`, `property_id`, `sequence_number`, `resolution_date`, `entry_date`,
   `location`, `wording`, `resolution_id`, `created_at`
+
+`resolution_date` and `location` are copied from the related meeting at entry;
+`entry_date` records the actual day of registration. The API, register page and
+new PDF extracts show “Datum der Versammlung” before “Eingetragen am”. Revision
+0167 backfills the meeting date only through an unambiguous, tenant- and
+property-consistent resolution/meeting relationship, preserving every old field.
+It refuses inconsistent or orphan sources instead of inventing a date. Downgrade
+refuses when the frozen date cannot be reconstructed exactly from that relationship.
 
 Permitted mutations:
 - `challenge_annotation` (challenge/annulment annotation) -- can be

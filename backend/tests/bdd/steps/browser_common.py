@@ -42,6 +42,10 @@ async def ledger(browser, *, start="2026-01-01", end="2026-12-31"):
 
 async def ledger_row(browser, period, kind, expected):
     page = browser.page
-    row = page.get_by_role("row").filter(has=page.get_by_role("cell", name=period, exact=True)).filter(
+    row = page.get_by_role("row").filter(has=page.get_by_text(period, exact=True)).filter(
         has=page.get_by_role("cell", name=kind, exact=True))
-    await expect(row.get_by_role("cell")).to_have_text([period, kind, *[f"{value} EUR" for value in expected]])
+    cells = row.get_by_role("cell")
+    await expect(cells).to_have_count(5)
+    await expect(cells.nth(0).get_by_text(period, exact=True)).to_be_visible()
+    for index, value in enumerate([kind, *[f"{value} EUR" for value in expected]], start=1):
+        await expect(cells.nth(index)).to_have_text(value)

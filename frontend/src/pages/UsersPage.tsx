@@ -64,18 +64,28 @@ function CreateUserForm({ onSuccess }: { onSuccess: () => void }) {
     <form onSubmit={handleSubmit} className="card" style={{ marginBottom: "1rem" }}>
       <h3>Neuen Benutzer anlegen</h3>
       {error && <p role="alert" className="error-text">{error}</p>}
-      <fieldset disabled={creating} style={{ border: 0, padding: 0 }}>
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "0.5rem" }}>
-          <input type="email" placeholder="E-Mail *" value={email} onChange={e => setEmail(e.target.value)} required />
-          <input type="text" placeholder="Name" value={displayName} onChange={e => setDisplayName(e.target.value)} />
-          <input type="password" autoComplete="new-password" minLength={12} maxLength={128} placeholder="Startpasswort *" value={password} onChange={e => setPassword(e.target.value)} required />
-          <select value={role} onChange={e => setRole(e.target.value)}>
-            {roles.map(option => <option key={option.value} value={option.value}>{option.label}</option>)}
-          </select>
+      <fieldset disabled={creating} className="m-0 min-w-0 border-0 p-0">
+        <div className="form-grid">
+          <label className="min-w-0">E-Mail *
+            <input className="min-w-0 w-full" type="email" placeholder="E-Mail *" value={email} onChange={e => setEmail(e.target.value)} required />
+          </label>
+          <label className="min-w-0">Name
+            <input className="min-w-0 w-full" type="text" placeholder="Name" value={displayName} onChange={e => setDisplayName(e.target.value)} />
+          </label>
+          <label className="min-w-0">Startpasswort *
+            <input className="min-w-0 w-full" type="password" autoComplete="new-password" minLength={12} maxLength={128} placeholder="Startpasswort *" value={password} onChange={e => setPassword(e.target.value)} required />
+          </label>
+          <label className="min-w-0">Rolle
+            <select className="min-w-0 w-full" value={role} onChange={e => setRole(e.target.value)}>
+              {roles.map(option => <option key={option.value} value={option.value}>{option.label}</option>)}
+            </select>
+          </label>
+          <div className="form-actions">
+            <Button type="submit" disabled={creating}>
+              {creating ? "Erstelle…" : "Benutzer anlegen"}
+            </Button>
+          </div>
         </div>
-        <button type="submit" disabled={creating} style={{ marginTop: "0.5rem" }}>
-          {creating ? "Erstelle…" : "Benutzer anlegen"}
-        </button>
       </fieldset>
     </form>
   );

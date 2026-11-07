@@ -47,6 +47,31 @@ function withRequestId(response: Response, detail: string): string {
   return detail;
 }
 
+async function responseError(response: Response): Promise<ApiError> {
+  let detail = response.statusText;
+  let code: string | undefined;
+  let technicalDetails: string | undefined;
+  try {
+    const body = await response.json();
+    if (typeof body.detail === "string" && body.detail) {
+      detail = body.detail;
+      // Legacy endpoints send uppercase machine codes as the entire detail.
+      if (/^[A-Z][A-Z0-9]*(?:_[A-Z0-9]+)+$/.test(detail)) code = detail;
+    } else if (body.detail) {
+      if (typeof body.detail.code === "string") code = body.detail.code;
+      if (typeof body.detail.message === "string") {
+        detail = body.detail.message;
+        technicalDetails = importDetails(body.detail);
+      } else if (code === "financial_inputs_incomplete") {
+        detail = financialInputMessage(body.detail);
+      } else detail = "Eingaben unvollständig oder ungültig. Bitte die angegebenen Felder prüfen.";
+    }
+  } catch {
+    // Use the status text when the response body cannot be parsed.
+  }
+  return new ApiError(response.status, withRequestId(response, detail), code, technicalDetails);
+}
+
 async function request<T>(
   url: string,
   options: RequestInit = {},
@@ -61,28 +86,7 @@ async function request<T>(
     },
   });
 
-  if (!res.ok) {
-    let detail = res.statusText;
-    let code: string | undefined;
-    let technicalDetails: string | undefined;
-    try {
-      const body = await res.json();
-      if (body.detail) {
-        if (typeof body.detail.code === "string") code = body.detail.code;
-        if (typeof body.detail === "string") detail = body.detail;
-        else if (typeof body.detail.message === "string") {
-          detail = body.detail.message;
-          technicalDetails = importDetails(body.detail);
-        } else if (body.detail.code === "financial_inputs_incomplete") {
-          detail = financialInputMessage(body.detail);
-        }
-        else detail = "Eingaben unvollständig oder ungültig. Bitte die angegebenen Felder prüfen.";
-      }
-    } catch {
-      // ignore JSON parse errors on error responses
-    }
-    throw new ApiError(res.status, withRequestId(res, detail), code, technicalDetails);
-  }
+  if (!res.ok) throw await responseError(res);
 
   if (url === "/api/auth/login" || url === "/api/auth/logout") lastErrorRequestId = null;
 
@@ -138,27 +142,7 @@ export async function uploadFormData<T>(
     body: formData,
   });
 
-  if (!res.ok) {
-    let detail = res.statusText;
-    let code: string | undefined;
-    let technicalDetails: string | undefined;
-    try {
-      const body = await res.json();
-      if (body.detail) {
-        if (typeof body.detail.code === "string") code = body.detail.code;
-        if (typeof body.detail === "string") detail = body.detail;
-        else if (typeof body.detail.message === "string") {
-          detail = body.detail.message;
-          technicalDetails = importDetails(body.detail);
-        } else if (body.detail.code === "financial_inputs_incomplete") {
-          detail = financialInputMessage(body.detail);
-        } else detail = "Eingaben unvollständig oder ungültig. Bitte die angegebenen Felder prüfen.";
-      }
-    } catch {
-      // ignore
-    }
-    throw new ApiError(res.status, withRequestId(res, detail), code, technicalDetails);
-  }
+  if (!res.ok) throw await responseError(res);
 
   return res.json() as Promise<T>;
 }

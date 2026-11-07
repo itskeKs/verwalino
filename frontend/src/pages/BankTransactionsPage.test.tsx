@@ -192,6 +192,13 @@ const utilities = { ...cold, payment_type: "NK_VORAUSZAHLUNG", amount: "150.00",
 const suggestion = { target_name: "Anna Muster", confidence: "HIGH", lines: [cold, utilities], reasons: ["IBAN und Warmmiete passen"], requires_review: false, unallocated_amount: "0.00" };
 const warm = { ...transaction, amount: "850.00", suggestions: [suggestion] };
 const targets: Record<string, unknown> = {
+  "/api/cost-entries": [
+    { id: "cost", property_id: "property", status: "confirmed", superseded_by_id: null, document_number: "Strom Sonnenhof", invoice_date: "2026-01-01", gross_amount: "120.00", bank_open_amount: "60.00" },
+    { id: "paid", property_id: "property", status: "confirmed", superseded_by_id: null, document_number: "Bezahlt", gross_amount: "60.00", bank_open_amount: "0.00" },
+    { id: "draft", property_id: "property", status: "needs_review", superseded_by_id: null, document_number: "Entwurf", bank_open_amount: "60.00" },
+    { id: "old", property_id: "property", status: "confirmed", superseded_by_id: "cost", document_number: "Ersetzt", bank_open_amount: "60.00" },
+    { id: "foreign", property_id: "foreign", status: "confirmed", superseded_by_id: null, document_number: "Fremd", bank_open_amount: "60.00" },
+  ],
   "/api/units": [{ id: "unit", property_id: "property", number: "1" }, { id: "foreign-unit", property_id: "foreign", number: "Fremd" }],
   "/api/leases": [{ id: "lease", unit_id: "unit", tenant_profile_id: "tenant", valid_from: "2025-01-01", valid_to: null }, { id: "foreign-lease", unit_id: "foreign-unit", tenant_profile_id: "tenant", valid_from: "2025-01-01", valid_to: null }],
   "/api/tenant-profiles": [{ id: "tenant", person_id: "person" }],
@@ -215,6 +222,43 @@ function assignmentSetup(item: unknown = warm, role = "OWNER_ADMIN", mutation?: 
 }
 const posts = (fetchMock: ReturnType<typeof assignmentSetup>) => fetchMock.mock.calls.filter(([, options]) => options?.method === "POST");
 
+it("assigns a negative bank debit to one existing cost and shows the remaining coverage", async () => {
+  const fetchMock = assignmentSetup({ ...warm, amount: "-60.00", suggestions: [] });
+  fireEvent.click(await screen.findByRole("button", { name: "Aufteilen" }));
+  const dialog = await screen.findByRole("dialog", { name: "Umsatz aufteilen" });
+  const picker = await within(dialog).findByLabelText("Kostenposition");
+  expect(within(picker).getByRole("option", { name: /Strom Sonnenhof.*60,00.*120,00/ })).toBeInTheDocument();
+  for (const excluded of ["Bezahlt", "Entwurf", "Ersetzt", "Fremd"]) expect(within(picker).queryByRole("option", { name: new RegExp(excluded) })).not.toBeInTheDocument();
+  fireEvent.change(picker, { target: { value: "cost" } });
+  fireEvent.click(within(dialog).getByRole("button", { name: "Kostenposition zuordnen" }));
+  await waitFor(() => expect(posts(fetchMock)).toHaveLength(1));
+  expect(JSON.parse(posts(fetchMock)[0][1]!.body as string)).toEqual({ cost_entry_id: "cost" });
+});
+
+it("keeps outgoing refund and reserve assignment available when choosing payment booking", async () => {
+  assignmentSetup({ ...warm, amount: "-60.00", suggestions: [] });
+  fireEvent.click(await screen.findByRole("button", { name: "Aufteilen" }));
+  const mode = await screen.findByLabelText("Zuordnen als");
+  fireEvent.change(mode, { target: { value: "payment" } });
+  expect(await screen.findByLabelText("Zahlungsart")).toBeInTheDocument();
+  expect(screen.getByRole("option", { name: "Rücklagenentnahme" })).toBeInTheDocument();
+});
+
+it("keeps the selected cost after a concurrent coverage conflict and can refresh the costs", async () => {
+  const fetchMock = assignmentSetup({ ...warm, amount: "-60.00", suggestions: [] }, "OWNER_ADMIN", async () =>
+    json({ detail: "Der offene Betrag wurde inzwischen geändert." }, 409));
+  fireEvent.click(await screen.findByRole("button", { name: "Aufteilen" }));
+  const picker = await screen.findByLabelText("Kostenposition");
+  await screen.findByRole("option", { name: /Strom Sonnenhof/ });
+  fireEvent.change(picker, { target: { value: "cost" } });
+  fireEvent.click(screen.getByRole("button", { name: "Kostenposition zuordnen" }));
+  expect(await screen.findByRole("alert")).toHaveTextContent("Der offene Betrag wurde inzwischen geändert.");
+  expect(picker).toHaveValue("cost");
+  fireEvent.click(screen.getByRole("button", { name: "Kostenpositionen neu laden" }));
+  await waitFor(() => expect(fetchMock.mock.calls.filter(([url]) => url.startsWith("/api/cost-entries?")).length).toBe(2));
+  expect(picker).toHaveValue("");
+});
+
 it("lays out split rows as full-width form grids with shared actions at the bottom", async () => {
   assignmentSetup();
   fireEvent.click(await screen.findByRole("button", { name: "Aufteilen" }));
@@ -234,6 +278,29 @@ it("lays out split rows as full-width form grids with shared actions at the bott
   expect(submit.parentElement).toHaveClass("form-actions");
   expect(cancel.parentElement).toBe(submit.parentElement);
   expect(form.lastElementChild).toBe(submit.parentElement);
+});
+
+it("shows a structured rent counterparty refusal in the split form and allows retry", async () => {
+  const message = "Dieser Zahlungstyp gehört zu einem Mietverhältnis, nicht zu einem Eigentümer.";
+  const mutation = vi.fn()
+    .mockResolvedValueOnce(json({ detail: { code: "PAYMENT_COUNTERPARTY_TYPE_MISMATCH", message } }, 422))
+    .mockResolvedValueOnce(json({ id: "tx", status: "ZUGEORDNET", payments: [] }));
+  const fetchMock = assignmentSetup(warm, "OWNER_ADMIN", mutation);
+  fireEvent.click(await screen.findByRole("button", { name: "Aufteilen" }));
+  const dialog = await screen.findByRole("dialog", { name: "Umsatz aufteilen" });
+  await within(dialog).findAllByRole("option", { name: /Anna Muster.*2025-01-01/ });
+  expect(within(dialog).queryByLabelText("Eigentümer")).not.toBeInTheDocument();
+
+  const submit = within(dialog).getByRole("button", { name: "Zuordnung buchen" });
+  fireEvent.click(submit);
+  expect(await within(dialog).findByRole("alert")).toHaveTextContent(message);
+  expect(within(dialog).getAllByLabelText("Betrag (EUR)")[0]).toHaveValue("700.00");
+  expect(within(dialog).getAllByLabelText("Mietvertrag")[0]).toHaveValue("lease");
+  expect(submit).toBeEnabled();
+
+  fireEvent.click(submit);
+  await waitFor(() => expect(dialog).not.toBeInTheDocument());
+  expect(posts(fetchMock)).toHaveLength(2);
 });
 
 it("locks split fields and actions during a double submission and retains inputs after refusal", async () => {
@@ -403,8 +470,32 @@ it.each(["-850.00", "0", "850.001", "1e3", "1000000000000.00", "NaN"])("verhinde
   await screen.findAllByRole("option", { name: /Anna Muster.*2025-01-01/ });
   fireEvent.change(screen.getAllByLabelText("Betrag (EUR)")[0], { target: { value: amount } });
   fireEvent.click(screen.getByRole("button", { name: "Zuordnung buchen" }));
-  expect(await screen.findByRole("alert")).toHaveTextContent(/positive Beträge/);
+  expect(await screen.findByRole("alert")).toHaveTextContent(/Betrag.*positiven Betrag/);
   expect(posts(fetchMock)).toHaveLength(0);
+});
+
+it("retains an invalid deposit amount and then books the grouped amount to the selected lease", async () => {
+  const fetchMock = assignmentSetup({ ...warm, amount: "2250.00", suggestions: [] });
+  fireEvent.click(await screen.findByRole("button", { name: "Aufteilen" }));
+  await screen.findByRole("option", { name: /Anna Muster.*2025-01-01/ });
+  fireEvent.change(screen.getByLabelText("Zahlungsart"), { target: { value: "KAUTION" } });
+  fireEvent.change(screen.getByLabelText("Mietvertrag"), { target: { value: "lease" } });
+  const amount = screen.getByLabelText("Betrag (EUR)");
+  const book = screen.getByRole("button", { name: "Zuordnung buchen" });
+  fireEvent.change(amount, { target: { value: "abc" } });
+  fireEvent.click(book);
+  expect(await screen.findByRole("alert")).toHaveTextContent(/Betrag.*2\.250,00/);
+  expect(amount).toHaveValue("abc");
+  expect(screen.getByLabelText("Mietvertrag")).toHaveValue("lease");
+  expect(posts(fetchMock)).toHaveLength(0);
+
+  fireEvent.change(amount, { target: { value: "2.250,00" } });
+  expect(screen.getByText("Restbetrag: 0,00 €")).toBeVisible();
+  fireEvent.click(book);
+  await waitFor(() => expect(posts(fetchMock)).toHaveLength(1));
+  expect(JSON.parse(posts(fetchMock)[0][1]!.body as string).lines).toEqual([
+    expect.objectContaining({ payment_type: "KAUTION", amount: "2250.00", lease_agreement_id: "lease" }),
+  ]);
 });
 
 it("entfernt Splitzeilen ohne versteckte Restbuchung und prüft Perioden", async () => {
@@ -525,6 +616,7 @@ it('keeps a reserve payout without evidence as a draft and explains the next ste
     json({ id: 'tx', status: 'ZUGEORDNET', payments: [{ id: 'payout', status: 'draft' }] }));
   await screen.findByText('Heizung');
   fireEvent.click(screen.getByRole('button', { name: /Aufteilen/ }));
+  fireEvent.change(await screen.findByLabelText('Zuordnen als'), { target: { value: 'payment' } });
   fireEvent.change(await screen.findByLabelText('Zahlungsart'), { target: { value: 'RUECKLAGENENTNAHME' } });
   fireEvent.change(screen.getByLabelText('Betrag (EUR)'), { target: { value: '200,01' } });
   expect(screen.queryByLabelText('Mietvertrag')).not.toBeInTheDocument();

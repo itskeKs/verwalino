@@ -1,11 +1,13 @@
 """Steps for features about what organizations see and may change.
 
-Vocabulary: a *record* is a property, a person or a bank account (see
+Vocabulary: a *record* is a property, a person, a bank account or a unit (see
 ``records.py``); "the <record> of "<organization>"" is the one the Given step
 created for that organization.
 """
 
 from __future__ import annotations
+
+from uuid import uuid4
 
 import pytest
 from pytest_bdd import given, parsers, then, when
@@ -14,6 +16,7 @@ from tests.bdd.steps.records import (
     create_bank_account,
     create_person,
     create_property,
+    create_unit,
     kind_named,
     record_of,
 )
@@ -69,6 +72,12 @@ def organizations_have_records(world, organization_records):
     world.records.update(organization_records)
 
 
+@given(parsers.parse('"{organization}" has a unit named "{name}"'))
+def organization_has_unit(world, organization, name):
+    parent = record_of(world, organization, kind_named("property"))
+    create_unit(world, organization, name, property_id=parent.id)
+
+
 @when(parsers.parse("the user lists the {kinds}"))
 def user_lists(world, kinds):
     kind = kind_named(kinds)
@@ -87,6 +96,47 @@ def user_opens(world, kind, organization):
 def user_renames(world, kind, organization, new_name):
     record = record_of(world, organization, kind_named(kind))
     world.act(record.kind.change_method, f"{record.kind.path}/{record.id}", json={record.kind.name_field: new_name})
+
+
+@when(parsers.parse('the user submits an invalid area for that unit and for a new unit in "{organization}"'))
+def invalid_foreign_unit_area(world, organization):
+    unit = record_of(world, organization, kind_named("unit"))
+    home = record_of(world, organization, kind_named("property"))
+    world.data["foreign_area_attempts"] = [
+        world.act("PUT", f"/api/units/{unit.id}", json={"area": "abc"}),
+        world.act("POST", "/api/units", json={
+            "property_id": home.id, "number": "New unit", "usage_type": "WOHNUNG", "area": "abc",
+        }),
+    ]
+
+
+@then("neither attempt reveals the foreign property or unit")
+def foreign_area_refused(world):
+    for response in world.data["foreign_area_attempts"]:
+        assert response.status_code == 404, response.text
+
+
+@when(parsers.parse('the user tries to add or import another "{number}" into the property of "{organization}"'))
+def user_adds_foreign_unit(world, number, organization):
+    from tests.test_master_import import body
+
+    property_id = record_of(world, organization, kind_named("property")).id
+    unit = {"property_id": property_id, "number": number, "usage_type": "WOHNUNG"}
+    value = body([{
+        "kind": "unit", "key": "U1", "property_key": property_id, "number": number, "usage_type": "WOHNUNG",
+    }])
+    world.data["foreign_unit_creates"] = [
+        world.act("POST", "/api/units", json=unit),
+        world.act("POST", "/api/properties/import/apply", json={
+            **value, "expected_digest": "0" * 64, "request_id": str(uuid4()),
+        }),
+    ]
+
+
+@then("the property is reported as not found for both attempts")
+def foreign_unit_creates_refused(world):
+    for response in world.data["foreign_unit_creates"]:
+        assert response.status_code == 404, response.text
 
 
 @then(parsers.parse('the list shows the {kinds} of "{organization}"'))
@@ -184,3 +234,30 @@ def reserve_correction_unchanged(world):
     _, path = world.data['reserve_correction']
     assert all(response.status_code == 404 for response in world.data['reserve_refusals'])
     assert world.look(world.administrator_of('Verwaltung Alpha'), path.rsplit('/overrides/', 1)[0]).json() == world.data['reserve_ledger_before']
+
+
+@given("a unit with saved household history belongs to Verwaltung Alpha")
+def household_alpha(world):
+    from tests.settlement_period_support import create
+    from tests.persons_key_support import ANNA_HOUSEHOLD
+    parent = record_of(world, 'Verwaltung Alpha', kind_named('property'))
+    api = world.administrator_of('Verwaltung Alpha')
+    unit = world.run(create(api, '/api/units', {'property_id': parent.id, 'number': 'Household isolation', 'usage_type': 'WOHNUNG'}))
+    response = world.send(api, 'PUT', f"/api/units/{unit['id']}/household", json=ANNA_HOUSEHOLD)
+    assert response.status_code == 200, response.text
+    world.data['household_unit'] = unit['id']
+
+
+@when("Verwaltung Beta tries to read or replace that unit's households")
+def household_foreign(world):
+    beta = world.administrator_of('Verwaltung Beta')
+    url = f"/api/units/{world.data['household_unit']}/household"
+    world.data['household_refusals'] = [world.send(beta, 'GET', url), world.send(beta, 'PUT', url, json=[])]
+
+
+@then("the households are not found and Verwaltung Alpha retains its rows")
+def household_retained(world):
+    from tests.persons_key_support import ANNA_HOUSEHOLD
+    assert all(r.status_code == 404 for r in world.data['household_refusals'])
+    response = world.look(world.administrator_of('Verwaltung Alpha'), f"/api/units/{world.data['household_unit']}/household")
+    assert response.json() == ANNA_HOUSEHOLD

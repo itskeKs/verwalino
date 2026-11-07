@@ -45,10 +45,14 @@ from __future__ import annotations
 
 from calendar import monthrange
 from datetime import date
-from decimal import Decimal, ROUND_FLOOR
+from decimal import Decimal, ROUND_FLOOR, ROUND_HALF_UP
 from fractions import Fraction
 
 CENT = Decimal("0.01")
+
+
+def round_money(value: Decimal) -> Decimal:
+    return value.quantize(CENT, rounding=ROUND_HALF_UP)
 
 
 class DistributionError(ValueError):
@@ -115,13 +119,39 @@ def annual_advance_share_for_period(
         return Decimal("0.00")
     total = total.quantize(CENT)
     count = end.month - start.month + 1
-    monthly = _floor_to_cent(total / count)
+    # Round the magnitude down so a negative total cannot leave a positive remainder.
+    monthly = _floor_to_cent(abs(total) / count).copy_sign(total)
     result = Decimal("0.00")
     for month in range(start.month, end.month + 1):
         share = total - monthly * (count - 1) if month == end.month else monthly
         result += monthly_advance_share_for_period(share, year, month, period_start, period_end,
             lease_start=lease_start, lease_end=lease_end)
     return result
+
+
+def advance_attributions_through(
+    net_credit: Decimal, offset_credit: Decimal, *,
+    combined: Decimal, unallocated: Decimal, operating: Decimal,
+) -> tuple[Decimal, Decimal]:
+    """Split a cumulative bucket credit into combined and unallocated amounts.
+
+    Opposite signs offset by the same cumulative amount. Within each sign,
+    split the rounded credit in fixed order so each share grows monotonically
+    and adjacent windows telescope to the original booked amounts.
+    """
+    def portion(credit: Decimal, booked: Decimal, weight: Decimal) -> Decimal:
+        return _floor_to_cent(Fraction(credit) * Fraction(weight) / Fraction(booked)) if booked else Decimal("0.00")
+
+    combined_credit = unallocated_credit = Decimal("0.00")
+    for sign in (1, -1):
+        available = offset_credit + max(Decimal("0.00"), net_credit * sign)
+        unallocated_weight = max(Decimal("0.00"), unallocated * sign)
+        combined_weight = max(Decimal("0.00"), combined * sign)
+        named_weight = combined_weight + max(Decimal("0.00"), operating * sign)
+        unallocated_part = portion(available, named_weight + unallocated_weight, unallocated_weight)
+        unallocated_credit += sign * unallocated_part
+        combined_credit += sign * portion(available - unallocated_part, named_weight, combined_weight)
+    return combined_credit, unallocated_credit
 
 
 def distribute_amount(

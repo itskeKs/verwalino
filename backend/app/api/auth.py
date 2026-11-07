@@ -3,14 +3,16 @@
 from __future__ import annotations
 
 import uuid
+from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Response, status
-from pydantic import BaseModel, field_validator
+from pydantic import BaseModel, ConfigDict, field_validator
+from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, text
 
 from app.core import rate_limit
 from app.core.auth_db import lookup_login_principal, validate_session_principal
-from app.core.live_principal import require_live_principal
+from app.core.live_principal import get_live_member_db, require_live_principal
 from app.core.config import settings
 from app.core.db import get_session_factory, set_tenant_context
 from app.core.security import (
@@ -21,9 +23,10 @@ from app.core.security import (
     validate_new_password,
     verify_password,
 )
-from app.core.tenant import AuthContext, get_current_user
+from app.core.tenant import AuthContext, get_current_user, get_db
 from app.core.rate_limit import ThrottleRequest, throttled
 from app.models.user import User
+from app.services.user_preferences_service import UserPreferencesService
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
 _DUMMY_PASSWORD_HASH = hash_password("runtime-auth-dummy-password")
@@ -50,6 +53,31 @@ class LoginResponse(BaseModel):
     user_id: str
     organization_id: str
     role: str
+
+
+class UserPreferences(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+    design_theme: Literal['klar', 'warm']
+
+
+@router.get('/preferences', response_model=UserPreferences)
+async def preferences(
+    auth: AuthContext = Depends(get_current_user),
+    db: AsyncSession = Depends(get_live_member_db),
+):
+    return await UserPreferencesService(db, auth).get()
+
+
+@router.patch('/preferences', response_model=UserPreferences)
+async def update_preferences(
+    body: UserPreferences,
+    auth: AuthContext = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    # Every user UPDATE acquires the exclusive ACL lock (migration 0138).
+    # Acquire it before any user row lock, including for personal read-only users.
+    await require_live_principal(db, auth, writer=False, exclusive=True)
+    return await UserPreferencesService(db, auth).update(body.design_theme)
 
 
 class PasswordChangeRequest(BaseModel):

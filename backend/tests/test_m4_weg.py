@@ -25,6 +25,88 @@ SYNC_URL = os.environ.get(
 )
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize('day', [0, 29, 30, 31])
+async def test_new_plan_refuses_due_days_outside_one_through_twenty_eight(client_a_admin, m4_seed, day):
+    response = await client_a_admin.post('/api/economic-plans', json={
+        'property_id': m4_seed['property'], 'plan_year': 2026, 'monthly_due_day': day})
+    assert response.status_code == 422, response.text
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('due_input', [{}, {'monthly_due_day': None}])
+async def test_new_plan_defaults_an_omitted_or_null_due_day_to_one(client_a_admin, m4_seed, due_input):
+    response = await client_a_admin.post('/api/economic-plans', json={
+        'property_id': m4_seed['property'], 'plan_year': 2026, **due_input})
+    assert response.status_code == 201, response.text
+    assert response.json()['monthly_due_day'] == 1
+
+
+@pytest.mark.parametrize('day', range(1, 29))
+def test_new_plan_accepts_each_resolved_due_day(day):
+    from app.api.economic_plans import EconomicPlanCreate
+
+    assert EconomicPlanCreate(property_id=str(uuid.uuid4()), plan_year=2026,
+        monthly_due_day=day).monthly_due_day == day
+
+
+@pytest.mark.parametrize('day', [0, 29, 30, 31])
+def test_plan_request_refuses_due_days_outside_one_through_twenty_eight(day):
+    from pydantic import ValidationError
+    from app.api.economic_plans import EconomicPlanCreate
+
+    with pytest.raises(ValidationError):
+        EconomicPlanCreate(property_id=str(uuid.uuid4()), plan_year=2026, monthly_due_day=day)
+
+
+@pytest.mark.asyncio
+async def test_historical_null_plan_keeps_its_frozen_payload_and_pdf_while_defaulting_to_first(
+    client_a_admin, m4_seed,
+):
+    # NULL is the original API default and remains a valid frozen historical value.
+    plan_id = await _create_and_finalize_plan(client_a_admin, m4_seed, legacy_due_day=None)
+    before = (await client_a_admin.get(f'/api/economic-plans/{plan_id}')).json()
+    pdf_before = (await client_a_admin.get(f'/api/economic-plans/{plan_id}/pdf')).content
+    with psycopg2.connect(SYNC_URL) as connection, connection.cursor() as cursor:
+        cursor.execute('SELECT monthly_due_day, snapshot_payload, snapshot_sha256 FROM economic_plan WHERE id=%s', (plan_id,))
+        frozen_before = cursor.fetchone()
+    result = await client_a_admin.get(f"/api/payments/mietkonto/owner/{m4_seed['owner_a']}", params={
+        'economic_plan_id': plan_id, 'period_start': '2025-03-01', 'period_end': '2025-03-31',
+        'as_of': '2025-03-02'})
+    assert result.status_code == 200, result.text
+    assert result.json()['open_items'][0]['due_date'] == '2025-03-03'
+    assert result.json()['due_balance'] == '0.00'
+    assert (await client_a_admin.get(f'/api/economic-plans/{plan_id}')).json() == before
+    assert (await client_a_admin.get(f'/api/economic-plans/{plan_id}/pdf')).content == pdf_before
+    with psycopg2.connect(SYNC_URL) as connection, connection.cursor() as cursor:
+        cursor.execute('SELECT monthly_due_day, snapshot_payload, snapshot_sha256 FROM economic_plan WHERE id=%s', (plan_id,))
+        assert cursor.fetchone() == frozen_before
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('day', [29, 30, 31])
+@pytest.mark.parametrize('year,month,last,cutoff,due', [
+    (2025, '07', 31, '2025-07-28', None),
+    (2025, '02', 28, '2025-02-27', '2025-02-28'),
+    (2026, '02', 28, '2026-03-01', '2026-03-02'),
+])
+async def test_historical_explicit_due_days_remain_frozen_with_the_approved_month_end_rule(
+    client_a_admin, m4_seed, day, year, month, last, cutoff, due,
+):
+    plan_id = await _create_and_finalize_plan(client_a_admin, m4_seed, legacy_due_day=day, plan_year=year)
+    before = (await client_a_admin.get(f'/api/economic-plans/{plan_id}')).json()
+    pdf_before = (await client_a_admin.get(f'/api/economic-plans/{plan_id}/pdf')).content
+    response = await client_a_admin.get(f"/api/payments/mietkonto/owner/{m4_seed['owner_a']}", params={
+        'economic_plan_id': plan_id, 'period_start': f'{year}-{month}-01', 'period_end': f'{year}-{month}-{last}',
+        'as_of': cutoff})
+    assert response.status_code == 200, response.text
+    assert response.json()['open_items'][0]['due_date'] == (due or f'{year}-{month}-{min(day, last)}')
+    assert response.json()['due_balance'] == '0.00'
+    assert (await client_a_admin.get(f'/api/economic-plans/{plan_id}')).json() == before
+    assert before['monthly_due_day'] == day
+    assert (await client_a_admin.get(f'/api/economic-plans/{plan_id}/pdf')).content == pdf_before
+
+
 # ===========================================================================
 # Seed: a WEG (org_a) -- 2 units MEA 600/400, two owners; cost entries from
 # three spheres (umlagefaehig / nicht umlagefaehig / Erhaltungsruecklage).
@@ -142,16 +224,19 @@ def m4_withdrawal_seed(m4_seed):
     return {**m4_seed, 'ce_garten': str(receipt)}
 
 
-async def _create_and_finalize_plan(client, m4_seed, reserve="6000.00"):
+async def _create_and_finalize_plan(client, m4_seed, reserve="6000.00", *, legacy_due_day=..., plan_year=2025):
     """Create + finalize a Wirtschaftsplan with the two owners' MEA shares."""
     resp = await client.post("/api/economic-plans", json={
         "property_id": m4_seed["property"],
-        "plan_year": 2025,
-        "period_start": "2025-01-01",
-        "period_end": "2025-12-31",
+        "plan_year": plan_year,
+        "period_start": f"{plan_year}-01-01",
+        "period_end": f"{plan_year}-12-31",
     })
     assert resp.status_code == 201, resp.text
     plan_id = resp.json()["id"]
+    if legacy_due_day is not ...:
+        with psycopg2.connect(SYNC_URL) as connection, connection.cursor() as cursor:
+            cursor.execute('UPDATE economic_plan SET monthly_due_day=%s WHERE id=%s', (legacy_due_day, plan_id))
     # Planned: Gartenpflege 4000 + Verwalter 3000 = 7000 cost; reserve 6000.
     body = {
         "planned_costs": [
@@ -408,9 +493,16 @@ async def test_previous_edited_values_compute_without_changing_final_original(cl
     draft = response.json()
     inputs = draft["draft_inputs"]
     assert (await api.post(f"/api/economic-plans/{draft['id']}/compute", json=inputs)).status_code == 422
+    # The detail editor can submit more precision than the initial adoption form.
+    next(row for row in inputs["planned_costs"] if row["category_code"] == "GARTENPFLEGE")["planned_amount"] = "4100.251"
     await attest_fixture(api, "economic_plan", draft["id"], inputs)
     computed = await api.post(f"/api/economic-plans/{draft['id']}/compute", json=inputs)
     assert computed.status_code == 200, computed.text
+    reopened = await api.get(f"/api/economic-plans/{draft['id']}")
+    assert reopened.status_code == 200, reopened.text
+    for response in (computed, reopened):
+        row = next(row for row in response.json()["draft_inputs"]["planned_costs"] if row["category_code"] == "GARTENPFLEGE")
+        assert row["planned_amount"] == "4100.251"
     owner_lines = [line for line in computed.json()["lines"] if line["line_type"] == "OWNER_ADVANCE"]
     assert sorted(Decimal(line["planned_amount"]) for line in owner_lines) == [Decimal("5440.10"), Decimal("8160.15")]
     assert (await api.get(f"/api/economic-plans/{old_id}")).json() == original
@@ -682,7 +774,8 @@ class TestM4Rbac:
 # ===========================================================================
 class TestM4PlanImmutability:
     @pytest.mark.asyncio
-    async def test_update_finalized_plan_rejected(self, app_rw_session, m4_seed, client_a_admin):
+    @pytest.mark.parametrize('column', ['reserve_contribution_total', 'monthly_due_day'])
+    async def test_update_finalized_plan_rejected(self, app_rw_session, m4_seed, client_a_admin, column):
         plan_id = await _create_and_finalize_plan(client_a_admin, m4_seed)
         await app_rw_session.execute(
             text("SELECT set_config('app.current_org_id', :oid, true)"),
@@ -690,7 +783,7 @@ class TestM4PlanImmutability:
         )
         with pytest.raises(Exception, match="GoBD|finalized"):
             await app_rw_session.execute(
-                text("UPDATE economic_plan SET reserve_contribution_total = 999 WHERE id = :id"),
+                text(f"UPDATE economic_plan SET {column} = 3 WHERE id = :id"),
                 {"id": plan_id},
             )
 
@@ -1364,6 +1457,105 @@ async def test_weg_owner_change_keeps_each_owners_own_bookings(client_a_admin, m
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize('transfer', ['2025-01-01', '2025-12-31', '2025-07-01'])
+async def test_documents_resolve_owners_on_their_key_date_and_freeze_them(
+    client_a_admin, client_b_admin, m4_seed, migrator_session, transfer,
+):
+    from tests.test_reserve_ledger import pdf_text
+    old, new, unit = m4_seed['owner_b'], m4_seed['owner_a'], m4_seed['u2']
+    with psycopg2.connect(SYNC_URL) as conn:
+        with conn.cursor() as cur:
+            cur.execute('UPDATE ownership_history SET valid_to=%s WHERE unit_id=%s', (transfer, unit))
+            cur.execute('INSERT INTO ownership_history (id, organization_id, unit_id, owner_profile_id, valid_from) '
+                'VALUES (%s,%s,%s,%s,%s)', (str(uuid.uuid4()), str(m4_seed['org_a_id']), unit, new, transfer))
+    plan_id = await _create_and_finalize_plan(client_a_admin, m4_seed)
+    response = await client_a_admin.post('/api/weg-settlements/asset-reports', json={
+        'property_id': m4_seed['property'], 'period_start': '2025-01-01', 'period_end': '2025-12-31'})
+    report_id = response.json()['id']
+    body = {'bank_balances': [{'bank_account_id': m4_seed['bank_giro'], 'label': 'Giro', 'account_type': 'LAUFEND', 'balance': '0.00'},
+        {'bank_account_id': m4_seed['bank_ruecklage'], 'label': 'Reserve', 'account_type': 'RUECKLAGE', 'balance': '0.00'}],
+        'receivables': [], 'payables': []}
+    await attest_fixture(client_a_admin, 'settlement', report_id, body)
+    response = await client_a_admin.post(f'/api/weg-settlements/asset-reports/{report_id}/finalize', json=body)
+    assert response.status_code == 200, response.text
+    frozen = []
+    for path, expected, key in [(f'economic-plans/{plan_id}', new if transfer == '2025-01-01' else old, '2025-01-01'),
+                                (f'weg-settlements/asset-reports/{report_id}', new, '2025-12-31')]:
+        resource = path.replace('weg-settlements/asset-reports/', 'weg-settlements/')
+        response = await client_a_admin.get('/api/' + resource)
+        assert response.status_code == 200, response.text
+        recipients = response.json()['addressees']
+        assert len(recipients) == 2  # One per unit, including the unchanged unit 1.
+        recipient = next(r for r in recipients if r['unit_id'] == unit)
+        assert recipient['owner_profile_id'] == expected and recipient['key_date'] == key
+        assert (await client_b_admin.get('/api/' + resource)).status_code == 404
+        assert (await client_b_admin.get('/api/' + path + '/pdf')).status_code == 404
+        pdf = (await client_a_admin.get('/api/' + path + '/pdf')).content
+        assert 'Eigentümer am ' + '.'.join(reversed(key.split('-'))) in pdf_text(pdf)
+        frozen.append((path, response.json(), pdf))
+    # Later master-data changes must not change finalized recipients or PDFs.
+    with psycopg2.connect(SYNC_URL) as conn:
+        with conn.cursor() as cur:
+            cur.execute("UPDATE person SET first_name='Changed' WHERE id=%s", (m4_seed['person_a'],))
+    for path, data, pdf in frozen:
+        assert (await client_a_admin.get('/api/' + path.replace('weg-settlements/asset-reports/', 'weg-settlements/'))).json() == data
+        assert (await client_a_admin.get('/api/' + path + '/pdf')).content == pdf
+
+
+@pytest.mark.asyncio
+async def test_asset_report_recipients_have_authoritative_retention_bindings(worker_tenant, client_b_admin):
+    # The whole-organization planner must use this report's bounded corpus,
+    # independently of unrelated financial fixtures accumulated by the shard.
+    client_a_admin, seed = worker_tenant
+    m4_seed = _seed_weg(seed)
+    response = await client_a_admin.post('/api/weg-settlements/asset-reports', json={
+        'property_id': m4_seed['property'], 'period_start': '2025-01-01', 'period_end': '2025-12-31'})
+    report_id = response.json()['id']
+    body = {'bank_balances': [{'bank_account_id': m4_seed['bank_giro'], 'label': 'Giro', 'account_type': 'LAUFEND', 'balance': '0.00'},
+        {'bank_account_id': m4_seed['bank_ruecklage'], 'label': 'Reserve', 'account_type': 'RUECKLAGE', 'balance': '0.00'}],
+        'receivables': [], 'payables': []}
+    await attest_fixture(client_a_admin, 'settlement', report_id, body)
+    response = await client_a_admin.post(f'/api/weg-settlements/asset-reports/{report_id}/finalize', json=body)
+    assert response.status_code == 200, response.text
+    with psycopg2.connect(SYNC_URL) as conn:
+        with conn.cursor() as cur:
+            cur.execute('SELECT entity FROM privacy_retention_facts(%s,%s) WHERE kind=%s',
+                (str(m4_seed['org_a_id']), m4_seed['person_b'], 'settlement_run'))
+            assert report_id in {str(row[0]) for row in cur.fetchall()}
+            cur.execute("SELECT retention_until FROM organization_retention_plan(%s) WHERE entity='person' AND identity->>'id'=%s",
+                (str(m4_seed['org_a_id']), m4_seed['person_b']))
+            assert cur.fetchone()[0] == date(2034, 12, 31)
+
+            cur.execute('UPDATE ownership_history SET valid_to=%s WHERE owner_profile_id=%s',
+                ('2026-01-01', m4_seed['owner_b']))
+    url = f"/api/dsgvo/persons/{m4_seed['person_b']}"
+    before_pdf = (await client_a_admin.get(f'/api/weg-settlements/asset-reports/{report_id}/pdf')).content
+    status = await client_a_admin.get(url + '/status')
+    assert status.status_code == 200, status.text
+    assert status.json()['decision'] == 'RESTRICT'
+    assert status.json()['governing_retention_until'] == '2034-12-31'
+    assert any(b['entity_id'] == report_id for b in status.json()['bindings'])
+    assert (await client_b_admin.get(url + '/status')).status_code == 404
+    deletion = await client_a_admin.post(url + '/request-deletion')
+    assert deletion.status_code == 200, deletion.text
+    assert deletion.json()['applied'] == 'RESTRICTED'
+    disclosure = await client_a_admin.get(url + '/export')
+    assert disclosure.status_code == 200, disclosure.text
+    assert disclosure.json()['person']['first_name'] == 'Berta'
+    assert (await client_a_admin.get(f'/api/weg-settlements/asset-reports/{report_id}/pdf')).content == before_pdf
+    from importlib import import_module
+    from alembic.migration import MigrationContext
+    from alembic.operations import Operations
+    from sqlalchemy import create_engine
+    engine = create_engine(SYNC_URL)
+    try:
+        with engine.connect() as connection, connection.begin(), Operations.context(MigrationContext.configure(connection)):
+            with pytest.raises(RuntimeError, match='Cannot remove retained'):
+                import_module('migrations.versions.0162_report_recipient_retention').downgrade()
+    finally:
+        engine.dispose()
+
+
 @pytest.mark.parametrize("path, message", [
     ("economic-plans", "Wirtschaftsplan nicht gefunden."),
     ("payments", "Zahlung nicht gefunden."),
@@ -1401,3 +1593,277 @@ async def test_foreign_details_match_missing_german_responses(client_a_admin, cl
         missing = await client_b_admin.get("/api/" + path.format(id=uuid.UUID(int=0)))
         assert foreign.status_code == missing.status_code == 404
         assert foreign.json() == missing.json() == {"detail": message}
+
+
+# Resolution authority for special levies uses the existing frozen-levy fixtures.
+from tests.test_special_levy import (  # noqa: E402,F401
+    levy_db, levy_fixture, scope_seed, worker_tenant, client as levy_client,
+    body as levy_body, create as create_levy,
+)
+
+
+@pytest.mark.asyncio
+async def test_resolution_levy_missing_reference_creates_nothing(levy_db, levy_fixture):
+    ids = levy_fixture
+    async with levy_client(ids) as api:
+        for supplied in (False, True):
+            payload = levy_body(ids)
+            if supplied:
+                payload['resolution_id'] = None
+            else:
+                payload.pop('resolution_id')
+            answer = await api.post('/api/special-levies', json=payload)
+            assert answer.status_code == 422, answer.text
+            assert answer.json()['detail'] == 'Eine Sonderumlage braucht einen Beschluss.'
+    assert await levy_db.scalar(text('SELECT count(*) FROM special_levy WHERE organization_id=:org'), ids) == 0
+    assert await levy_db.scalar(text("SELECT count(*) FROM audit_event WHERE organization_id=:org AND entity_type='special_levy'"), ids) == 0
+
+
+async def legacy_levy(db, ids):
+    """Synthetic historical row through the trusted migrator, never ordinary creation."""
+    levy = uuid.uuid4()
+    params = {**ids, 'levy': levy}
+    await db.execute(text("INSERT INTO special_levy(id,organization_id,property_id,accounting_scope_id,amount,due_date) VALUES (:levy,:org,:property,:scope,1200,'2026-07-01')"), params)
+    for unit, owner, history, mea in zip(ids['units'], ids['owners'], ids['histories'], ids.get('legacy_meas', [300, 300, 400]), strict=True):
+        await db.execute(text("INSERT INTO special_levy_allocation(organization_id,property_id,special_levy_id,unit_id,owner_profile_id,ownership_history_id,mea,amount) VALUES (:org,:property,:levy,:unit,:owner,:history,:mea,:amount)"),
+            {**params, 'unit': unit, 'owner': owner, 'history': history, 'mea': mea, 'amount': Decimal('1.20') * mea})
+    await db.commit()
+    return levy
+
+
+@pytest.mark.asyncio
+async def test_resolution_levy_links_once_and_preserves_all_frozen_evidence(levy_db, levy_fixture):
+    ids = levy_fixture
+    levy = await legacy_levy(levy_db, ids)
+    params = {'levy': levy}
+    before = await levy_db.scalar(text('SELECT to_jsonb(l) FROM special_levy l WHERE id=:levy'), params)
+    allocations = (await levy_db.execute(text('SELECT to_jsonb(a) FROM special_levy_allocation a WHERE special_levy_id=:levy ORDER BY id'), params)).scalars().all()
+    await levy_db.commit()
+    async with levy_client(ids) as api:
+        route = f'/api/special-levies/{levy}/resolution'
+        for _ in range(2):
+            answer = await api.put(route, json={'resolution_id': str(ids['resolution'])})
+            assert answer.status_code == 200, answer.text
+            assert answer.json()['resolution_id'] == str(ids['resolution'])
+        for reference in (None, str(uuid.uuid4())):
+            answer = await api.put(route, json={'resolution_id': reference})
+            assert answer.status_code in (409, 422), answer.text
+    after = await levy_db.scalar(text('SELECT to_jsonb(l) FROM special_levy l WHERE id=:levy'), params)
+    assert {k: v for k, v in after.items() if k != 'resolution_id'} == {k: v for k, v in before.items() if k != 'resolution_id'}
+    assert (await levy_db.execute(text('SELECT to_jsonb(a) FROM special_levy_allocation a WHERE special_levy_id=:levy ORDER BY id'), params)).scalars().all() == allocations
+    assert await levy_db.scalar(text("SELECT count(*) FROM audit_event WHERE entity_id=:levy AND action='special_levy.resolution_linked'"), params) == 1
+
+
+@pytest.mark.asyncio
+async def test_resolution_levy_rejects_unadopted_sources_for_creation_and_link(levy_db, levy_fixture):
+    ids = levy_fixture
+    await levy_db.execute(text("UPDATE resolution SET result='ABGELEHNT' WHERE id=:resolution"), ids)
+    levy = await legacy_levy(levy_db, ids)
+    async with levy_client(ids) as api:
+        answer = await api.post('/api/special-levies', json=levy_body(ids))
+        assert answer.status_code == 422, answer.text
+        answer = await api.put(f'/api/special-levies/{levy}/resolution', json={'resolution_id': str(ids['resolution'])})
+        assert answer.status_code == 422, answer.text
+    assert await levy_db.scalar(text('SELECT resolution_id FROM special_levy WHERE id=:id'), {'id': levy}) is None
+
+
+@pytest.mark.asyncio
+async def test_resolution_levy_concurrent_link_is_atomic(levy_db, levy_fixture):
+    import asyncio
+    ids = levy_fixture
+    levy = await legacy_levy(levy_db, ids)
+    other = uuid.uuid4()
+    await levy_db.execute(text("INSERT INTO resolution(id,organization_id,meeting_id,wording,votes_yes,votes_no,votes_abstain,result) VALUES (:id,:org,:meeting,'Second authority',2,0,0,'ANGENOMMEN')"), {**ids, 'id': other})
+    await levy_db.commit()
+    async def link(reference):
+        async with levy_client(ids) as api:
+            return await api.put(f'/api/special-levies/{levy}/resolution', json={'resolution_id': str(reference)})
+    answers = await asyncio.gather(link(ids['resolution']), link(other))
+    assert sorted(a.status_code for a in answers) == [200, 409]
+    winner = next(a.json()['resolution_id'] for a in answers if a.status_code == 200)
+    answers = await asyncio.gather(link(winner), link(winner))
+    assert [a.status_code for a in answers] == [200, 200]
+    assert await levy_db.scalar(text('SELECT resolution_id::text FROM special_levy WHERE id=:id'), {'id': levy}) == winner
+
+
+@pytest.mark.asyncio
+async def test_resolution_levy_foreign_property_missing_and_readonly_links_are_refused(levy_db, levy_fixture, client_b_admin):
+    ids = levy_fixture
+    levy = await legacy_levy(levy_db, ids)
+    foreign = uuid.uuid4()
+    meeting = uuid.uuid4()
+    await levy_db.execute(text("INSERT INTO owners_meeting(id,organization_id,property_id,meeting_date,location,meeting_type,status) VALUES (:id,:org,:other_property,'2026-05-15','','ORDENTLICH','HELD')"), {**ids, 'id': meeting})
+    await levy_db.execute(text("INSERT INTO resolution(id,organization_id,meeting_id,wording,votes_yes,votes_no,votes_abstain,result) VALUES (:id,:org,:meeting,'Foreign roof',2,0,0,'ANGENOMMEN')"), {**ids, 'id': foreign, 'meeting': meeting})
+    await levy_db.commit()
+    route = f'/api/special-levies/{levy}/resolution'
+    response = await client_b_admin.post('/api/properties', json={'name': 'Foreign authority', 'management_type': 'WEG'})
+    assert response.status_code == 201, response.text
+    response = await client_b_admin.post('/api/meetings', json={'property_id': response.json()['id'],
+        'meeting_date': '2026-05-15', 'meeting_type': 'ORDENTLICH', 'location': 'Foreign meeting'})
+    assert response.status_code == 201, response.text
+    response = await client_b_admin.post('/api/meetings/resolutions', json={'meeting_id': response.json()['id'],
+        'wording': 'Foreign authority', 'votes_yes': 1, 'votes_no': 0, 'votes_abstain': 0, 'result': 'ANGENOMMEN'})
+    assert response.status_code == 201, response.text
+    foreign_org = uuid.UUID(response.json()['id'])
+    async with levy_client(ids) as api:
+        for reference in (foreign, foreign_org, uuid.uuid4()):
+            response = await api.post('/api/special-levies', json=levy_body(ids, resolution_id=str(reference)))
+            assert response.status_code == 404, response.text
+            response = await api.put(route, json={'resolution_id': str(reference)})
+            assert response.status_code == 404, response.text
+    async with levy_client(ids, 'readonly') as api:
+        assert (await api.put(route, json={'resolution_id': str(ids['resolution'])})).status_code == 403
+    assert (await client_b_admin.put(route, json={'resolution_id': str(ids['resolution'])})).status_code == 404
+    assert (await client_b_admin.post('/api/special-levies', json=levy_body(ids))).status_code == 404
+    assert await levy_db.scalar(text('SELECT resolution_id FROM special_levy WHERE id=:id'), {'id': levy}) is None
+
+
+@pytest.mark.asyncio
+async def test_resolution_levy_register_does_not_disclose_without_financial_read(levy_db, levy_fixture):
+    ids = levy_fixture
+    async with levy_client(ids) as api:
+        levy = await create_levy(api, ids)
+        entry = await api.post(f"/api/meetings/resolutions/{ids['resolution']}/register")
+        assert entry.status_code == 201, entry.text
+        answer = await api.get(f"/api/meetings/register/{ids['property']}")
+        assert answer.status_code == 200
+        assert answer.json()[0]['special_levies'][0]['id'] == levy['id']
+    await levy_db.execute(text('UPDATE scope_grant SET revoked_at=now(),revoked_by=:actor WHERE id=:grant'), ids)
+    await levy_db.commit()
+    async with levy_client(ids) as api:
+        answer = await api.get(f"/api/meetings/register/{ids['property']}")
+        assert answer.status_code == 200, answer.text
+        assert answer.json()[0]['special_levies'] == []
+        assert (await api.put(f"/api/special-levies/{levy['id']}/resolution", json={'resolution_id': str(ids['resolution'])})).status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_resolution_levy_database_link_keeps_every_other_column_immutable(levy_db, levy_fixture):
+    from tests.test_financial_scope_boundary import actor
+    from sqlalchemy.exc import DBAPIError
+    ids = levy_fixture
+    levy = await legacy_levy(levy_db, ids)
+    ids['levy'] = levy
+    await actor(levy_db, ids)
+    await levy_db.execute(text("SELECT set_config('app.current_scope_id',:scope,true)"), {'scope': str(ids['scope'])})
+    for statement in (
+        'UPDATE special_levy SET resolution_id=:resolution,amount=1 WHERE id=:levy',
+        'UPDATE special_levy SET resolution_id=NULL WHERE id=:levy',
+        'UPDATE special_levy_allocation SET amount=1 WHERE special_levy_id=:levy',
+    ):
+        with pytest.raises(DBAPIError):
+            async with levy_db.begin_nested():
+                await levy_db.execute(text(statement), ids)
+    await levy_db.execute(text('UPDATE special_levy SET resolution_id=:resolution WHERE id=:levy'), ids)
+    for statement in ('UPDATE special_levy SET resolution_id=NULL WHERE id=:levy',
+        'UPDATE special_levy SET resolution_id=:resolution WHERE id=:levy'):
+        with pytest.raises(DBAPIError):
+            async with levy_db.begin_nested():
+                await levy_db.execute(text(statement), ids)
+    await levy_db.rollback()
+
+
+def test_resolution_levy_migration_roundtrip_restores_guard_and_column_grants(run_migrations):
+    from alembic.migration import MigrationContext
+    from alembic.operations import Operations
+    from sqlalchemy import create_engine
+    from tests.conftest import MIGRATOR_SYNC_URL
+    import importlib
+    migration = importlib.import_module('migrations.versions.0168_special_levy_resolution')
+    engine = create_engine(MIGRATOR_SYNC_URL)
+    try:
+        with engine.begin() as db, Operations.context(MigrationContext.configure(db)):
+            point = db.begin_nested()
+            try:
+                before = db.scalar(text("SELECT pg_get_functiondef('guard_special_levy()'::regprocedure)"))
+                assert db.scalar(text("SELECT has_column_privilege('app_rw','special_levy','resolution_id','UPDATE')"))
+                migration.downgrade()
+                assert not db.scalar(text("SELECT has_column_privilege('app_rw','special_levy','resolution_id','UPDATE')"))
+                migration.upgrade()
+                assert db.scalar(text("SELECT pg_get_functiondef('guard_special_levy()'::regprocedure)")) == before
+                assert not db.scalar(text("SELECT has_column_privilege('app_rw','special_levy','amount','UPDATE')"))
+            finally:
+                point.rollback()
+    finally:
+        engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_resolution_levy_legacy_account_and_dunning_remain_frozen_after_link(levy_db, levy_fixture):
+    ids = levy_fixture
+    levy = await legacy_levy(levy_db, ids)
+    params = {'accounting_scope_id': str(ids['scope']), 'period_start': '2026-07-01', 'period_end': '2026-07-31'}
+    async with levy_client(ids) as api:
+        path = f"/api/payments/mietkonto/owner/{ids['owners'][0]}"
+        before = await api.get(path, params=params)
+        assert before.status_code == 200 and before.json()['balance'] == '360.00', before.text
+        notice = await api.post('/api/dunning/owner', json={**params,
+            'owner_profile_id': str(ids['owners'][0]), 'reference_date': '2026-07-02'})
+        assert notice.status_code == 201, notice.text
+        assert notice.json()['principal_amount'] == '360.00'
+        frozen = await levy_db.scalar(text('SELECT to_jsonb(n) FROM dunning_notice n WHERE id=:id'), {'id': uuid.UUID(notice.json()['id'])})
+        await levy_db.commit()
+        linked = await api.put(f'/api/special-levies/{levy}/resolution', json={'resolution_id': str(ids['resolution'])})
+        assert linked.status_code == 200, linked.text
+        after = await api.get(path, params=params)
+        assert after.status_code == 200 and after.json() == before.json()
+    assert await levy_db.scalar(text('SELECT to_jsonb(n) FROM dunning_notice n WHERE id=:id'), {'id': uuid.UUID(notice.json()['id'])}) == frozen
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('action', ['compute', 'finalize', 'coverage'])
+@pytest.mark.parametrize('value', ['', '   ', 'not-a-number', 'NaN', 'Infinity'])
+async def test_paid_amount_errors_identify_the_owner_in_german(client_a_admin, client_b_admin, m4_seed, action, value):
+    api, w = client_a_admin, m4_seed
+    plan = await _create_and_finalize_plan(api, w)
+    response = await api.post('/api/weg-settlements', json={'property_id': w['property'],
+        'economic_plan_id': plan, 'period_start': '2025-01-01', 'period_end': '2025-12-31'})
+    assert response.status_code == 201, response.text
+    run = response.json()['id']
+    body = {'paid_advances': [{'owner_profile_id': w['owner_a'], 'paid_total': value},
+                             {'owner_profile_id': w['owner_b'], 'paid_total': '0.00'}]}
+    url = f'/api/weg-settlements/{run}/{action}'
+    if action == 'coverage':
+        url = '/api/financial-input-coverage'
+        body = {'subject_kind': 'settlement', 'subject_id': run, 'values': body,
+                'reason': 'Reviewed synthetic payments', 'source_document_ids': [], 'confirmed_complete': True}
+    response = await api.post(url, json=body)
+    assert response.status_code == 422, response.text
+    detail = response.json()['detail']
+    assert isinstance(detail, dict), detail
+    assert detail['field'] == 'paid_total'
+    assert detail['owner_profile_id'] == w['owner_a']
+    assert 'Hausgeld' in detail['message'] and 'Invalid decimal' not in detail['message']
+    if not value.strip():
+        assert detail['code'] == 'financial_inputs_incomplete'
+        assert detail['blockers'][0]['code'] == 'owner_payment_coverage_missing'
+    else:
+        assert detail['code'] == 'invalid_decimal'
+    foreign = await client_b_admin.post(url, json=body)
+    assert foreign.status_code == 404, foreign.text
+
+
+@pytest.mark.asyncio
+async def test_input_roster_keeps_original_plan_owner_after_history_correction(client_a_admin, m4_seed, app_rw_session):
+    api, w = client_a_admin, m4_seed
+    plan = await _create_and_finalize_plan(api, w)
+    history = (await api.get('/api/ownership', params={'unit_id': w['u2']})).json()[0]
+    response = await api.patch(f"/api/ownership/{history['id']}", json={'valid_to': '2024-12-31'})
+    assert response.status_code == 200, response.text
+    response = await api.post('/api/weg-settlements', json={'property_id': w['property'],
+        'economic_plan_id': plan, 'period_start': '2025-01-01', 'period_end': '2025-12-31'})
+    assert response.status_code == 201, response.text
+    run = response.json()['id']
+    derived = await api.post(f'/api/weg-settlements/{run}/paid-advances-derived')
+    assert derived.status_code == 200, derived.text
+    roster = await api.get(f'/api/weg-settlements/{run}/input-owners')
+    assert roster.status_code == 200, roster.text
+    assert set(roster.json()) == {row['owner_profile_id'] for row in derived.json()} == {w['owner_a'], w['owner_b']}
+    assert all(row['paid_total'] == '0.00' for row in derived.json())
+    from app.repositories.coverage_declaration_repo import CoverageDeclarationRepository
+    from app.repositories.economic_plan_repo import EconomicPlanRepository
+
+    org = uuid.UUID(str(w['org_a_id']))
+    await app_rw_session.execute(text("SELECT set_config('app.current_org_id',:org,true)"), {'org': str(org)})
+    original = await EconomicPlanRepository(app_rw_session, org).get_by_id(uuid.UUID(plan))
+    assert await CoverageDeclarationRepository(app_rw_session, org).owner_ids(original) == {w['owner_a'], w['owner_b']}

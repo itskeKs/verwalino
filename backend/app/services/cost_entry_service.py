@@ -16,6 +16,7 @@ from decimal import Decimal
 from fastapi import HTTPException
 from app.core.rbac import ScopeCapability, status
 from sqlalchemy import text
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.storage import DocumentStore, get_store, verify_document_integrity
@@ -164,6 +165,19 @@ class CostEntryService:
         )
         return entry
 
+    async def _save_update(self, entry: CostEntry) -> CostEntry:
+        try:
+            return await self._repo.update(entry)
+        except IntegrityError as error:
+            constraint = getattr(error.orig.__cause__, 'constraint_name', None)
+            if constraint == 'bank_cost_coverage_floor':
+                raise HTTPException(409, 'Der Betrag darf nicht unter den bereits zugeordneten Bankumsätzen liegen.') from error
+            if constraint == 'bank_cost_rejection':
+                raise HTTPException(409, 'Eine Korrektur mit zugeordneten Bankumsätzen kann nicht verworfen werden.') from error
+            if constraint == 'bank_cost_chain_boundary':
+                raise HTTPException(409, 'Die Korrektur muss im selben Objekt und Abrechnungskreis bleiben.') from error
+            raise
+
     async def update_draft(
         self, entry_id: uuid.UUID, updates: dict
     ) -> CostEntry:
@@ -193,7 +207,7 @@ class CostEntryService:
 
         with self._session.no_autoflush:
             await self._validate_scope(entry, selecting_vendor=selecting_vendor)
-        entry = await self._repo.update(entry)
+        entry = await self._save_update(entry)
 
         if changed:
             await self._audit.create(
@@ -227,6 +241,7 @@ class CostEntryService:
         if store is None:
             store = get_store()
 
+        await FinancialScopeService(self._session, self._org_id, self._user_id).lock_inputs()
         entry = await self._repo.get_by_id_for_update(entry_id)
         if entry is None:
             raise HTTPException(status_code=404, detail="Cost entry not found")
@@ -267,7 +282,7 @@ class CostEntryService:
         entry.status = "confirmed"
         entry.confirmed_at = now
         entry.confirmed_by = self._user_id
-        entry = await self._repo.update(entry)
+        entry = await self._save_update(entry)
 
         # 3. Release attached document if present
         doc = await self._doc_repo.get_active_for_cost_entry(entry_id)
@@ -328,6 +343,7 @@ class CostEntryService:
 
     async def reject(self, entry_id: uuid.UUID) -> CostEntry:
         """Reject a cost entry (discard from workflow)."""
+        await FinancialScopeService(self._session, self._org_id, self._user_id).lock_inputs()
         entry = await self._repo.get_by_id_for_update(entry_id)
         if entry is None:
             raise HTTPException(status_code=404, detail="Cost entry not found")
@@ -340,7 +356,7 @@ class CostEntryService:
             )
 
         entry.status = "rejected"
-        entry = await self._repo.update(entry)
+        entry = await self._save_update(entry)
 
         await self._audit.create(
             AuditEvent(
@@ -441,7 +457,7 @@ class CostEntryService:
 
         # Link original to new version (the only allowed mutation on confirmed rows)
         original.superseded_by_id = new_entry.id
-        await self._repo.update(original)
+        await self._save_update(original)
 
         # Audit events
         await self._audit.create(

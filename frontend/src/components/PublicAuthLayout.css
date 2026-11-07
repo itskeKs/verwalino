@@ -1,0 +1,197 @@
+.public-auth {
+  min-height: 100dvh;
+  display: grid;
+  align-items: center;
+  padding: 40px 24px;
+  background: hsl(var(--background));
+  color: hsl(var(--foreground));
+}
+.public-auth-layout {
+  display: grid;
+  grid-template-columns: minmax(0, .9fr) minmax(0, 1.1fr);
+  align-items: center;
+  gap: 64px;
+  width: 100%;
+  max-width: 1000px;
+  margin-inline: auto;
+}
+.public-auth-brand {
+  min-width: 0;
+  padding: 36px 0;
+}
+.public-auth-wordmark {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  color: hsl(var(--primary));
+  font-size: 2rem;
+  font-weight: 700;
+  letter-spacing: -.06em;
+}
+.public-auth-mark {
+  display: grid;
+  place-items: center;
+  width: 52px;
+  height: 54px;
+  flex-shrink: 0;
+  border-radius: 15px;
+  background: hsl(var(--primary));
+  color: hsl(var(--primary-foreground));
+}
+.public-auth-mark svg {
+  width: 30px;
+  height: 30px;
+  stroke-width: 1.8;
+}
+.public-auth-context {
+  margin-top: 36px;
+  padding-top: 28px;
+  border-top: 1px solid hsl(var(--ui-border));
+}
+.public-auth-context p:first-child {
+  margin-bottom: 10px;
+  font-size: 1.65rem;
+  letter-spacing: -.035em;
+  font-weight: 550;
+}
+.public-auth-context p:last-child {
+  color: hsl(var(--muted-foreground));
+  font-size: .9rem;
+  line-height: 1.7;
+}
+.public-auth .public-auth-card {
+  min-width: 0;
+  width: 100%;
+  background: hsl(var(--card));
+  border-radius: 20px;
+  box-shadow: 0 12px 40px hsl(var(--primary) / .045);
+}
+.public-auth .public-auth-header {
+  padding: 32px 32px 24px;
+  gap: 10px;
+}
+.public-auth-header h1 {
+  margin: 0;
+  font-size: 1.85rem;
+  line-height: 1.2;
+  font-weight: 650;
+  letter-spacing: -.045em;
+  overflow-wrap: anywhere;
+}
+.public-auth-header p {
+  line-height: 1.65;
+}
+.public-auth .public-auth-content {
+  padding: 0 32px 32px;
+  display: grid;
+  gap: 20px;
+  min-width: 0;
+}
+.public-auth form, .public-auth fieldset {
+  min-width: 0;
+}
+.public-auth form {
+  display: grid;
+  gap: 20px;
+}
+.public-auth .public-auth-field {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+}
+.public-auth input {
+  height: 46px;
+  font-size: 16px;
+}
+.public-auth button {
+  min-height: 46px;
+  height: auto;
+  padding-block: 12px;
+  white-space: normal;
+  line-height: 1.4;
+}
+.public-auth a {
+  display: inline-flex;
+  align-items: center;
+  min-height: 44px;
+  overflow-wrap: anywhere;
+}
+.public-auth .public-auth-recovery {
+  display: flex;
+  width: fit-content;
+  margin: 4px 0 0 auto;
+  font-size: .9rem;
+}
+.public-auth-footer {
+  border-top: 1px solid hsl(var(--ui-border));
+  padding-top: 14px;
+  font-size: .9rem;
+}
+.public-auth-message {
+  padding: 14px 16px;
+  border: 1px solid;
+  border-radius: 10px;
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+  font-size: .95rem;
+}
+.public-auth-message--alert {
+  color: hsl(var(--destructive));
+  border-color: hsl(var(--destructive) / .22);
+  background: hsl(var(--destructive) / .04);
+}
+.public-auth-message--status {
+  color: hsl(var(--foreground));
+  border-color: hsl(var(--ui-border));
+  background: hsl(var(--accent) / .5);
+}
+.public-auth-message:focus {
+  outline: 2px solid hsl(var(--ring));
+  outline-offset: 3px;
+}
+.public-auth .public-auth-note {
+  color: hsl(var(--muted-foreground));
+  font-size: .9rem;
+  line-height: 1.7;
+  overflow-wrap: anywhere;
+}
+
+@media (max-width: 767px) {
+  .public-auth {
+    align-items: start;
+    padding: 28px 18px;
+  }
+  .public-auth-layout {
+    display: block;
+    max-width: 480px;
+  }
+  .public-auth-brand {
+    padding: 0 4px 26px;
+  }
+  .public-auth-wordmark {
+    gap: 10px;
+    font-size: 1.5rem;
+  }
+  .public-auth-mark {
+    width: 38px;
+    height: 40px;
+    border-radius: 11px;
+  }
+  .public-auth-mark svg {
+    width: 23px;
+    height: 23px;
+  }
+  .public-auth-context {
+    display: none;
+  }
+  .public-auth .public-auth-header {
+    padding: 26px 22px 22px;
+  }
+  .public-auth-header h1 {
+    margin: 0;
+    font-size: 1.65rem;
+  }
+  .public-auth .public-auth-content {
+    padding: 0 22px 24px;
+  }
+}

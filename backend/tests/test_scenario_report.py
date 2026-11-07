@@ -201,6 +201,7 @@ def test_browser_capture_keeps_trace_and_screenshot_only_on_failure(tmp_path, mo
     class Browser:
         def __init__(self, session, world):
             self.errors = []
+            self.bank_trace = None
             self.context = Context()
             self.page = Page()
         async def start(self, *, trace):

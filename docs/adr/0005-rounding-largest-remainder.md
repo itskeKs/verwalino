@@ -87,7 +87,7 @@ and owner vacancy shares, independently of statement order. Individual property
 period totals across several cells can differ by cents from a single day share
 of the source total; the complete source still reconciles.
 
-Month-assigned NK advances use the same cumulative rule, with the denominator
+Month-assigned operating and heating advances use the same cumulative rule, with the denominator
 restricted to the lease's occupied days in the assigned month. One statement
 covering all those days credits the full booked payment, even if the lease begins
 or ends mid-month. Day proration applies only between statements of the same
@@ -97,9 +97,9 @@ payment again: ten 100-euro payments for a lease starting 15 March credit
 245.16 and 954.84 euros from twelve 100-euro payments.
 
 Year-only advances divide equally over calendar months the lease actually covers
-in that assigned year, including its partial first/last month. Floor each month
-share to cents and give the remainder to the last covered month; split a month
-between statements using its occupied lease days as above. A July-start lease's
+in that assigned year, including its partial first/last month. Round each monthly
+share's magnitude down to cents and give the signed remainder to the last covered
+month. Split a month between statements using its occupied lease days as above. A July-start lease's
 only July–December statement therefore credits its full 600-euro annual payment.
 Without a lease span (Hausgeld), all twelve calendar months apply, and December
 retains the remainder: 1,000 euros becomes eleven shares of 83.33 and one of 83.37.
@@ -110,10 +110,14 @@ The independence from other statements holds while lease dates and booked paymen
 lease end is entered later, each assigned year/month bucket substitutes the
 credits in already finalized snapshots for those windows' currently calculated
 shares. The current statement receives its occupied-month/day share plus that
-difference, floored at zero. Several open drafts may each include the same
+difference. Ordinary buckets retain the zero floor. A bucket with an active
+standalone tenant refund or a negative frozen credit uses the signed difference,
+even when its booked net is zero. A bucket omitted from a known breakdown is
+treated as zero for this refund reconciliation. Several open drafts may each include the same
 outstanding difference; finalizing one makes the others stale until re-derived.
-The last open statement receives the remainder. Late bookings for a finalized
-month also enter the next statement through this difference. A statement in a later calendar window
+The last open statement receives the remainder, subject to the bucket's floor.
+A late refund assigned to a finalized month enters another statement in the same
+assigned year through this difference. A statement in a later calendar window
 that was finalized first also counts, so corrections and reordered finalization
 cannot apply the same difference again. Already credited amounts come
 from frozen snapshot buckets, never a recalculation of the finalized result.
@@ -126,11 +130,11 @@ structured German HTTP 409 only when it falls before an active finalized
 DERIVED statement's last day and changes one of its credit buckets, including an
 end on or before that statement's start. MANUAL statements do
 not block date edits, and an end on the statement's last day is allowed.
-Legacy derived snapshots without per-year/month credits remain usable with fixed
-lease dates. After a date edit, a changed credit bucket within the legacy span
-requires correction or a confirmed manual total (`advance_credit_history_missing`,
-HTTP 409 on derivation); the application
-does not invent a historical breakdown or mutate a finalized snapshot.
+Legacy derived snapshots without per-year/month credits remain usable when their
+covered buckets are unaffected. A changed credit bucket after a date edit or a
+refund-related bucket in the legacy span requires correction or a confirmed
+manual total (`advance_credit_history_missing`, HTTP 409 on derivation). The
+original snapshot remains immutable.
 
 Active booked advances assigned entirely outside the lease remain credited at
 zero (including an assigned year before the lease begins). Their total appears

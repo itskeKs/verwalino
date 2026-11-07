@@ -220,3 +220,13 @@ async def test_lowering_rent_checks_the_resulting_deposit_pair(client_a_admin, l
     else:
         assert stored["base_rent"] == changes["base_rent"]
         assert stored["deposit"] == changes.get("deposit", lease["deposit"])
+
+
+@pytest.mark.asyncio
+async def test_creation_persists_combined_mode_and_booked_original_cannot_change_mode(client_a_admin, lease_seed):
+    lease = await create_lease(client_a_admin, lease_seed, advance_mode="COMBINED", advance_payment="240.00")
+    assert lease["advance_mode"] == "COMBINED"
+    assert lease["heating_advance_payment"] == "0.00"
+    book_payment(lease_seed, lease["id"])
+    refused = await client_a_admin.patch(f"/api/leases/{lease['id']}", json={"advance_mode": "SEPARATE"})
+    assert refused.status_code == 409, refused.text
