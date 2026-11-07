@@ -297,3 +297,101 @@ def test_external_privacy_export_waits_once_only_for_the_supported_cooldown(monk
             privacy_export(World())
     assert sleeps == expected_sleeps
     assert len(calls) == len(statuses)
+
+
+@pytest.mark.parametrize('mode,failures,minutes', [('selfhost', 10, 15), ('hosted', 5, 30)])
+@pytest.mark.parametrize('external', [False, True])
+@pytest.mark.parametrize('already_elapsed', [37, 2000])
+def test_login_lockout_waits_for_the_target_clock_without_password_retries(
+    monkeypatch, mode, failures, minutes, external, already_elapsed,
+):
+    import asyncio
+    from datetime import datetime, timedelta, timezone
+    from types import SimpleNamespace
+    import httpx
+    from app.core.config import Settings, settings
+    from app.core import rate_limit
+    from tests.bdd.steps import login_lockout, password
+    from tests.bdd.conftest import pytest_collection_modifyitems
+
+    monkeypatch.setattr(settings, 'deployment_mode', Settings(_env_file=None, deployment_mode=mode).deployment_mode)
+    monkeypatch.setenv('VERWALINO_TARGET_URL', 'http://synthetic.invalid' if external else '')
+    now = [100.0]
+    real_utcnow = rate_limit.utcnow
+    requests, sleeps = [], []
+    locked_at = [None]
+    monkeypatch.setattr(login_lockout, 'monotonic', lambda: now[0], raising=False)
+
+    async def sleep(seconds):
+        assert external, 'In-process lockout must keep its deterministic clock'
+        assert 0 < seconds <= 60
+        sleeps.append(seconds)
+        now[0] += seconds
+    monkeypatch.setattr(asyncio, 'sleep', sleep)
+
+    class World:
+        data = {'email': 'disposable@example.test'}
+        anonymous = SimpleNamespace(cookies=SimpleNamespace(clear=lambda: None))
+        def run(self, coroutine):
+            return asyncio.run(coroutine)
+        def look(self, client, path):
+            assert external and path == '/api/meta'
+            return httpx.Response(200, json={'deployment_mode': mode})
+        def send(self, client, method, path, *, json):
+            assert (method, path) == ('POST', '/api/auth/login')
+            assert json['email'] == self.data['email']
+            requests.append(json['password'])
+            now[0] += 0.25  # Include the final HTTP response in the deadline.
+            if external:
+                assert rate_limit.utcnow is real_utcnow
+                clock = now[0]
+            else:
+                clock = rate_limit.utcnow().timestamp()
+            if len(requests) == failures:
+                locked_at[0] = clock
+            status = 401 if json['password'] == password.WRONG_PASSWORD or clock < locked_at[0] + minutes * 60 else 200
+            self.response = httpx.Response(status)
+            return self.response
+        def describe_response(self):
+            return str(self.response.status_code)
+
+    world = World()
+    login_lockout.too_many_wrong_passwords(world, monkeypatch)
+    assert requests == [password.WRONG_PASSWORD] * failures
+    password.cannot_sign_in(world, 'current')
+    assert world.response.status_code == 401
+    now[0] += already_elapsed
+    login_lockout.lockout_has_elapsed(world)
+    if external:
+        assert 'login_clock' not in world.data
+        assert sum(sleeps) == pytest.approx(max(0, minutes * 60 + 2 - 0.25 - already_elapsed))
+    else:
+        assert world.data['login_clock'] == datetime(2026, 10, 30, 12, tzinfo=timezone.utc) + timedelta(minutes=minutes)
+        assert sleeps == []
+    password.can_sign_in(world, 'current')
+    assert world.response.status_code == 200
+    assert requests == [password.WRONG_PASSWORD] * failures + [password.CURRENT_PASSWORD] * 2
+
+    markers = []
+    item = SimpleNamespace(
+        obj=SimpleNamespace(__scenario__=SimpleNamespace(feature=SimpleNamespace(filename='login_lockout.feature'))),
+        get_closest_marker=lambda name: None, add_marker=markers.append,
+    )
+    pytest_collection_modifyitems(SimpleNamespace(), [item])
+    assert [(mark.name, mark.args) for mark in markers] == ([('timeout', (minutes * 60 + 120,))] if external else [])
+
+
+def test_external_login_lockout_refuses_a_mismatched_target_mode_before_password_attempts(monkeypatch):
+    from types import SimpleNamespace
+    import httpx
+    from app.core.config import settings
+    from tests.bdd.steps import login_lockout
+
+    monkeypatch.setattr(settings, 'deployment_mode', 'selfhost')
+    monkeypatch.setenv('VERWALINO_TARGET_URL', 'http://synthetic.invalid')
+    def forbidden(*args, **kwargs):
+        pytest.fail('A mismatched target must not receive password attempts')
+    world = SimpleNamespace(data={}, anonymous=None, send=forbidden,
+        look=lambda client, path: httpx.Response(200, json={'deployment_mode': 'hosted'}))
+    with pytest.raises(AssertionError, match='deployment mode'):
+        login_lockout.too_many_wrong_passwords(world, monkeypatch)
