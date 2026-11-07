@@ -7,6 +7,7 @@ import { Dialog, DialogContent, DialogDescription, DialogTitle } from './ui/dial
 import { formatEuro as euro } from '../lib/utils';
 
 const day = (value: string) => value.split('-').reverse().join('.');
+const reasonPrivacyHint = 'Bitte keine personenbezogenen Daten eintragen.';
 const labels: Record<string, string> = { PLANNED: 'Geplant (Soll)', CONTRIBUTION: 'Gebuchte Zuführung', WITHDRAWAL: 'Finanzierte Entnahme',
   OVERRIDE: 'Begründete Korrektur', OPENING: 'Anfangsbestand', ADJUSTMENT: 'Sonstige Korrektur', FUNDING: 'Finanzierte Entnahme verknüpfen',
   LATE_CASH: 'Nachträgliche Buchungen zum abgeschlossenen Jahr', UNASSIGNED: 'Ohne Planbezug' };
@@ -45,6 +46,8 @@ export function ReserveLedgerPanel({ runId, propertyId, status, onChanged, onOpe
   const [cost, setCost] = useState('');
   const [register, setRegister] = useState('');
   const lockReasonId = useId();
+  const reasonHintId = useId();
+  const reductionReasonHintId = useId();
   const normalized = normalizeAmount(amount);
   const openingDifference = ledger && validAmount(normalized) ? decimalAmount(cents(normalized) - cents(ledger.opening_balance)) : null;
   const locked = status !== 'draft' || ledger?.frozen;
@@ -169,7 +172,10 @@ export function ReserveLedgerPanel({ runId, propertyId, status, onChanged, onOpe
           <fieldset disabled={saving || disabled} className="form-grid" style={{ gridTemplateColumns: 'minmax(0, 1fr)' }}>
             <p>Einheit: {reduction?.unit_number}. Verbleibende Korrektur: {euro(reduction?.current_amount ?? '0.00')}.</p>
             <label>Verbleibender Korrekturbetrag *<input required inputMode="decimal" value={reducedTo} onChange={event => setReducedTo(event.target.value)} /></label>
-            <label>Begründung *<textarea required maxLength={2000} value={reductionReason} onChange={event => setReductionReason(event.target.value)} /></label>
+            <div>
+              <label>Begründung *<textarea required maxLength={2000} aria-describedby={reductionReasonHintId} value={reductionReason} onChange={event => setReductionReason(event.target.value)} /></label>
+              <p id={reductionReasonHintId} className="text-sm text-muted-foreground">{reasonPrivacyHint}</p>
+            </div>
             {reductionError && <p role="alert" className="error-text">{reductionError}</p>}
           </fieldset>
           <div className="form-actions">
@@ -210,7 +216,10 @@ export function ReserveLedgerPanel({ runId, propertyId, status, onChanged, onOpe
           <ReserveEvidenceFields propertyId={propertyId} cost={cost} register={register} onChange={(cost, register) => { setCost(cost); setRegister(register); }} />}
         {component === 'OPENING' && <><p>Anfangsbestand korrigieren: Dies ist nur im ersten Rücklagenjahr vor der Finalisierung zulässig. Aktueller Anfangsbestand: {ledger && euro(ledger.opening_balance)}.</p>
           <p aria-live="polite">Differenz: {openingDifference === null ? 'Bitte geben Sie einen gültigen Gesamtbestand ein.' : `${cents(openingDifference) > 0n ? '+' : ''}${euro(openingDifference)}`}</p></>}
-        <label>Begründung *<textarea required maxLength={2000} value={reason} onChange={e => setReason(e.target.value)} /></label>
+        <div>
+          <label>Begründung *<textarea required maxLength={2000} aria-describedby={reasonHintId} value={reason} onChange={e => setReason(e.target.value)} /></label>
+          <p id={reasonHintId} className="text-sm text-muted-foreground">{reasonPrivacyHint}</p>
+        </div>
         {formError && <p role="alert" className="error-text">{formError}</p>}
       </fieldset>
         <div className="form-actions"><button className="btn btn--primary" disabled={saving || disabled || (component === 'FUNDING' && !sources)} type="submit">{saving ? 'Speichern…' : 'Speichern'}</button>

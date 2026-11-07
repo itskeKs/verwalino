@@ -36,6 +36,13 @@ No schema/RLS change.
 
 ## Maintenance reserve ledger privileges
 
+Both “Korrektur erfassen” and “Korrektur ändern / löschen” show the hint
+“Bitte keine personenbezogenen Daten eintragen.” immediately below the
+“Begründung *” field, linked as its accessible description. This is guidance
+when entering free text. Individual erasure follows the accepted retained-recipient
+and incidental-name boundary described below and in
+[ADR-0012](adr/0012-gdpr-erasure-vs-gobd-retention.md); the hint changes none of it.
+
 `reserve_ledger_entry` is append-only. Migration `0149` revokes all table
 privileges from `PUBLIC`, `app_rw`, `app_worker` and `app_review`, then grants
 `SELECT`, `INSERT`, `UPDATE` and `DELETE` to `app_rw`. Migration `0070` grants

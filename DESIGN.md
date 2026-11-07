@@ -1698,6 +1698,18 @@ Restbetrag mehr möglich. Bitte verwenden Sie „Korrektur löschen“.”, nami
 visible delete action; a positive limit keeps “Sie können für diese Korrektur
 höchstens … € beibehalten.” The same shared
 panel and scrollable dialog apply to both reserve pages at 1280 and 360 px.
+In both “Korrektur erfassen” and “Korrektur ändern / löschen”, the reason
+field is immediately followed by the muted hint “Bitte keine personenbezogenen
+Daten eintragen.”, linked to the textarea with `aria-describedby`. The hint is
+entry guidance and does not itself validate or scrub the free text.
+
+| Reason hint evidence | 1280 px before / after | 360 px before / after |
+| --- | --- | --- |
+| WEG settlement: capture correction | [before](docs/assets/design/reserve-reason-hint/weg-create-before-1280.png) · [after](docs/assets/design/reserve-reason-hint/weg-create-after-1280.png) | [before](docs/assets/design/reserve-reason-hint/weg-create-before-360.png) · [after](docs/assets/design/reserve-reason-hint/weg-create-after-360.png) |
+| WEG settlement: change / delete correction | [before](docs/assets/design/reserve-reason-hint/weg-reduce-before-1280.png) · [after](docs/assets/design/reserve-reason-hint/weg-reduce-after-1280.png) | [before](docs/assets/design/reserve-reason-hint/weg-reduce-before-360.png) · [after](docs/assets/design/reserve-reason-hint/weg-reduce-after-360.png) |
+| Asset report: capture correction | [before](docs/assets/design/reserve-reason-hint/asset-create-before-1280.png) · [after](docs/assets/design/reserve-reason-hint/asset-create-after-1280.png) | [before](docs/assets/design/reserve-reason-hint/asset-create-before-360.png) · [after](docs/assets/design/reserve-reason-hint/asset-create-after-360.png) |
+| Asset report: change / delete correction | [before](docs/assets/design/reserve-reason-hint/asset-reduce-before-1280.png) · [after](docs/assets/design/reserve-reason-hint/asset-reduce-after-1280.png) | [before](docs/assets/design/reserve-reason-hint/asset-reduce-before-360.png) · [after](docs/assets/design/reserve-reason-hint/asset-reduce-after-360.png) |
+
 Deleting an already-zero correction reports “Diese Korrektur ist bereits vollständig
 aufgehoben. Es ist kein Restbetrag mehr vorhanden.” and preserves the reason.
 The same dialog can restore the correction from zero with a new reason.
