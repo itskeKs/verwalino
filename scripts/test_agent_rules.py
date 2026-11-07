@@ -113,16 +113,20 @@ class AgentRuleTests(unittest.TestCase):
 
     def test_session_cleanup_policy_is_shared_by_all_hosts(self):
         required = (
-            "Every session removes what it created when its task is merged, closed or abandoned.",
-            "Before a new task, check for and remove your own leftovers.",
-            "Remove your own worktrees and local branches after the PR is merged or closed;",
+            "Every agent cleans up after itself. What a session creates, it removes when its task ends:",
+            "Before starting, a session checks for leftovers (`git worktree list`, `docker ps -a`, its scratch directory, its processes) and cleans up first.",
+            "Remove only your own worktrees and local branches once their PR is merged or closed.",
+            "Check the PR state, that a merge landed on `main` when applicable, that the tree is clean and that no process or other live user uses it before removal;",
+            "Use supported archival for app-managed worktrees; never bypass its primary, pinned or shared-worktree protections.",
             "never discard uncommitted work.",
-            "Remove your own separately authorized acceptance/verifier stacks completely:",
-            "containers, volumes (including anonymous volumes), networks and local images used only by that project.",
-            "Stop your own dev servers, free their ports and terminate every background process you started, including installer-harness children.",
-            "Remove scratch files and temporary artefacts you wrote",
-            "remove only your own inactive lock files.",
-            "Never touch other sessions' resources:",
+            "compose projects it started for separately authorized acceptance or verifier runs, completely:",
+            "containers, volumes (including anonymous volumes), networks and local images used only by that project, never the production instance and never the shared test database",
+            "background processes it started (dev servers, watchers, browsers, test runs), including installer-harness children; free their ports;",
+            "scratch directories, briefs, logs, screenshots and reports, once their content is in the issue or PR; temporary files under its own unique prefix and screenshots outside tracked docs in any case; keep committed deliverables;",
+            "remove only your own inactive lock files, after checking that no run holds them.",
+            "It removes only what it created itself.",
+            "Never touch other sessions' resources: worktrees, branches, containers, volumes, networks, images, processes or ports (including `verwalino-review-*`, `verwalino-abnahme-*`, `.claude/worktrees/*`, `.coddy/worktrees/*` and other issue worktrees).",
+            "Leftovers of another session or of the owner are reported, not deleted; a merged or closed PR alone never authorizes their removal.",
             "A matching name or label alone does not establish ownership. Never prune Docker globally.",
             "Leave production (`docker-compose.prod.yml`, project `hausverwaltung` on the owner's Mac, `verwalino` on the hosted server) and shared test project `infra` untouched.",
             "Never remove `/tmp/verwalino-testdb.lock` while another run holds it.",
@@ -139,7 +143,7 @@ class AgentRuleTests(unittest.TestCase):
                 for sentence in required:
                     self.assertTrue(sentence in normalized, f"{relative}: missing cleanup contract: {sentence}")
                 if relative != "AGENTS.md":
-                    section = agents.split("## Session cleanup\n", 1)[1].split("\n## ", 1)[0].strip()
+                    section = agents.split("## Worktrees and cleanup\n", 1)[1].split("\n## ", 1)[0].strip()
                     self.assertEqual(body.split("\n", 1)[1].strip(), section)
 
     def test_hooks_configuration_wires_both_events_to_the_adapter(self):
@@ -166,7 +170,7 @@ class AgentRuleTests(unittest.TestCase):
                 payload = {"hook_event_name": "SessionStart", "source": source}
                 self.assertEqual(self.attached_topics(payload), expected)
                 self.assertIn("The software is German", self.run_hook(payload))
-                self.assertIn("Every session removes what it created", self.run_hook(payload))
+                self.assertIn("Every agent cleans up after itself", self.run_hook(payload))
 
     def test_a_migration_patch_attaches_migrations_and_not_frontend_rules(self):
         payload = {"hook_event_name": "PreToolUse", "tool_name": "apply_patch",

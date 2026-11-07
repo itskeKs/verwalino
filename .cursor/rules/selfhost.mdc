@@ -16,7 +16,7 @@ alwaysApply: false
 # Self-host and containers
 
 - Follow AGENTS.md's Databases and containers rules, including its narrow
-  separately authorized exceptions and Session cleanup rule. Never delete production
+  separately authorized exceptions and Worktrees and cleanup rule. Never delete production
   `pgdata` or `documents` volumes or test on production; never `docker compose down -v`.
   Remove only your own disposable acceptance resources as allowed by that exception;
   follow `docs/operations/acceptance-cleanup.md`.
