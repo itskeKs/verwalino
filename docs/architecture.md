@@ -1077,6 +1077,10 @@ sources. No implicit contact profiles, lease agreements or self-approvals.
 
 **`property`** (property, SDD §6.1): `organization_id` FK, `name`, address, **`management_type`** (`MIET`|`WEG`|`SEV`|`MISCH`), settlement period convention. RLS active.
 
+Property detail loading maps `ApiError.status === 404` to “Objekt nicht gefunden.”
+Missing and foreign-organization IDs retain identical HTTP 404 responses.
+The existing German 401 notice and `String(err)` fallback for other load errors remain.
+
 **`unit`** (unit, SDD §6.1): `organization_id`, `property_id` FK, `number`, `location`, **`area NUMERIC(10,2)`** (living/usable area), **`heated_area NUMERIC(10,2)`** (heated area), `usage_type` (Wohnung|Gewerbe|Stellplatz|Sonstige, i.e., residential|commercial|parking space|other), **`mea NUMERIC(12,6)`** (co-ownership share — exact, not float). Optional distribution peculiarities. RLS active.
 
 Unit creation and editing accept an ungrouped decimal comma or dot for `area` and

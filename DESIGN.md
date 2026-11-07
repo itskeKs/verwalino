@@ -1336,6 +1336,22 @@ Desktop is 1280 px and phone is 360 px. No production data is used.
 | Economic-plan list load failure | [before](docs/assets/design/missing-weg-objects/before-wirtschaftsplaene-list-1280.png) · [after](docs/assets/design/missing-weg-objects/after-wirtschaftsplaene-list-1280.png) | [before](docs/assets/design/missing-weg-objects/before-wirtschaftsplaene-list-360.png) · [after](docs/assets/design/missing-weg-objects/after-wirtschaftsplaene-list-360.png) |
 | WEG list load failure | [before](docs/assets/design/missing-weg-objects/before-weg-abrechnungen-list-1280.png) · [after](docs/assets/design/missing-weg-objects/after-weg-abrechnungen-list-1280.png) | [before](docs/assets/design/missing-weg-objects/before-weg-abrechnungen-list-360.png) · [after](docs/assets/design/missing-weg-objects/after-weg-abrechnungen-list-360.png) |
 
+### Missing property detail
+
+Property detail loading displays exactly “Objekt nicht gefunden.” for
+`ApiError.status === 404`, without the “ApiError:” class prefix or the backend's
+English detail. The existing “Nicht authentifiziert.” notice for 401 and
+`String(err)` fallback for other load errors remain, using the same inline error style.
+
+These captures use an absent property ID against the running local API and frontend
+with synthetic organizations on the test database, at 1280 px and 360 px. The before
+images preserve the original reproduction; the after images show the current design
+after integration with main on 2026-11-07.
+
+| View | Desktop before / after | 360 px before / after |
+|---|---|---|
+| Missing property | [before](docs/assets/design/missing-property/before-1280.png) · [after](docs/assets/design/missing-property/after-1280.png) | [before](docs/assets/design/missing-property/before-360.png) · [after](docs/assets/design/missing-property/after-360.png) |
+
 ### Master-data save lifecycle
 
 Property units, person creation/editing and profile designation, unit ownership/lease saves,
