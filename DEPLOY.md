@@ -908,7 +908,13 @@ format and command behavior; a complete running self-host installation restore
 has not yet been accepted.
 Run the opt-in rehearsal with `make test-selfhost-format`: it sets
 `VERWALINO_FORMAT_TEST=1`, acquires `/tmp/verwalino-testdb.lock` itself and uses
-only its own scratch databases in `infra-postgres-1` at `127.0.0.1:55432`.
+only its own freshly created, initially empty source and restore databases in
+`infra-postgres-1` at `127.0.0.1:55432`. The separate `--noconftest` process
+excludes the normal migration, seeding and application-engine fixtures. Format
+mode is refused by the regular test session before fixtures; the scratch harness
+rejects connections and dump/restore commands for any database it did not create.
+The source receives the released migrations and synthetic records; both owned
+databases are dropped on exit. The shared database is neither reset nor seeded.
 Ordinary test runs skip it with a reason; it also skips when Docker is missing.
 
 Declaration import/Q&A, SMTP and the ordinary invoice worker are disabled in
@@ -1609,11 +1615,11 @@ remove `/srv/verwalino/logs/.deploy.lock` once no deploy is running. A stale `/s
 (a run was killed) is removed by hand once no backup is running. Never
 run `docker compose down -v` or delete the volumes.
 
-## Migration compatibility: 0029–0149
+## Migration compatibility: 0029–0177
 
 | Revisions | Effect on existing data and runtime compatibility |
 | --- | --- |
-| 0029–0122 | Adds financial, declaration, source custody and review data structures and guards. The 0028 runtime cannot interpret the new schema or enforce its later security rules. The 0028→0149 rehearsal preserves all old columns and rows with synthetic organization, user, document, draft/failed import and failed extraction-run data, but does not prove every live-data combination. |
+| 0029–0122 | Adds financial, declaration, source custody and review data structures and guards. The 0028 runtime cannot interpret the new schema or enforce its later security rules. The 0028→0177 rehearsal preserves all old columns and rows with synthetic organization, user, document, draft/failed import and failed extraction-run data, but does not prove every live-data combination. |
 | 0123 | Adds nullable replacement evidence and changes exception-completion functions/outcomes. Existing rows retain their old disposition; old clients cannot interpret new replacement outcomes. Downgrade refuses retained evidence. |
 | 0124–0125 | Adds bank transactions and a nullable payment link, then enforces tenant/account coherence and immutable booked links. A 0122 database has no pre-existing links; inconsistent intermediate data is not silently repaired. |
 | 0126–0127 | Adds append-only rent history and frozen special levies; replaces financial/source/report adapters. No old financial rows are rewritten. Older runtimes do not understand the new obligations/history. Their downgrades can drop populated new tables; they are not a safe recovery path. |
@@ -1630,15 +1636,42 @@ run `docker compose down -v` or delete the volumes.
 | 0146 (accepted source) | Adds member-checked organization usage and reference-count functions for deduplicated document bytes (including visual extracts), complete property/unit counts and monthly USD usage. Adds nullable, nonnegative letter size metadata; old originals remain unchanged and `quota-recount` records legacy sizes in the existing audit log. Downgrade removes the functions and reconstructible size column, preserving originals and events. Older runtimes do not enforce hosted quotas. |
 | 0147 (accepted source) | Adds organization erasure state, import admission metadata and lifecycle guards. Populated downgrade refuses. |
 | 0148 (accepted source) | Reconciles expired personal retention in the aggregate preview; immutable vouchers/originals stay unchanged. Populated downgrade refuses to discard the reconciled decision semantics. |
-| 0149 (head; parent 0148) | Adds the append-only maintenance reserve ledger with tenant/source RLS, coherent payout/cost/resolution links, lifecycle protection and computation-source locks. Adds counterparty-neutral `RUECKLAGENENTNAHME` payments. The retention catalog discovers the immutable evidence through its DELETE guard. Existing finalized snapshots and booked payments remain untouched. Populated ledger or payout evidence blocks downgrade; an empty downgrade restores the previous payment vocabulary and source digest. |
+| 0149 (parent 0148) | Adds the append-only maintenance reserve ledger with tenant/source RLS, coherent payout/cost/resolution links, lifecycle protection and computation-source locks. Adds counterparty-neutral `RUECKLAGENENTNAHME` payments. The retention catalog discovers the immutable evidence through its DELETE guard. Existing finalized snapshots and booked payments remain untouched. Populated ledger or payout evidence blocks downgrade; an empty downgrade restores the previous payment vocabulary and source digest. |
+| 0150 (parent 0149) | Adds separate nonnegative heating advances to leases/history, tenant-bound HK payments and independent settlement totals/sources. Old frozen snapshots and digests retain their original shape. Existing draft statements need re-attestation after 0150 because the heating totals and sources now count as inputs. Empty downgrade restores the exact financial guard definitions; populated heating advances, HK payments or heating statement totals refuse downgrade. |
+| 0151 (parent 0150) | Allows deletion of empty WEG annual and asset-report drafts. A statement-level financial-inputs lock precedes row locks; the database refuses retained bookings, reserve entries, scope bindings and financial evidence. The retention catalog keeps settlement runs conditional and includes these dependencies. Existing frozen snapshots and rows are untouched; downgrade restores the previous catalog and removes only the new deletion functions/triggers. |
+| 0152 (parent 0151) | Repairs draft-deletion statement locking: runtime sessions require a valid organization principal before locking only that organization. Visible drafts remain creatable/readable without full source access; deletion metadata then reports a generic access restriction instead of revealing hidden dependencies. Downgrade restores the 0151 function bodies without changing financial rows or snapshots. |
+| 0153 (parent 0152) | Classifies bank transactions as dependency-only conditional retention. Existing FK closure retains precisely the bank lines and accounts needed by immutable payments/evidence; no new voucher or person deadline is seeded. The erasure service neutralizes counterparty name/IBAN/purpose while leaving own-account metadata, payment bytes, bank links and import hashes unchanged. No account or evidence guard changes. Upgrade changes no rows; downgrade restores the exact previous catalog, ownership and grants. |
+| 0154 (parent 0153) | Allows reasoned positive unit-contribution counter-entries up to the original amount and the currently booked backing. Updates only the reserve guard; existing ledger rows, audit events, ownership, grants and RLS remain intact. The shared financial-input lock serializes the cap with bookings. Downgrade restores the prior guard exactly when no positive counter-entry exists, otherwise refuses without rewriting history. |
+| 0155 (parent 0154) | Sets only `reserve_ledger_entry.guard_reserve_ledger` to `ENABLE ALWAYS`, retaining append-only UPDATE/DELETE protection in replica sessions. Other triggers, data, rights and retention classification are unchanged. Downgrade restores ordinary `ENABLE TRIGGER`. The opt-in backup/restore rehearsal preserves the 300.00/-200.00 unit-correction pair and its 100.00 remainder, then checks the restored guard in replica mode. |
+| 0159 (parent 0155) | Shares the private person-binding catalog between disclosure, individual erasure and organization personal-retention classification. Includes structured booked-payment recipients with their stored deadline or the existing value-date fallback. No financial/evidence data or runtime table grants change. The checked direct-binding adapter preserves person/source/financial admission. Downgrade restores prior functions exactly and refuses recorded organization decisions or restricted booked recipients. Reserved revisions 0156–0158 are outside this linear release ancestry. |
+
+| 0160 (parent 0159) | Extracts the existing evidence-date precedence and eight-year rule into private shared deadline functions consumed by individual bindings and organization planning. A manual cost uses the later invoice/service date plus retained original deadlines; missing original dates use the existing original metadata fallback. Recipient lines retain their own source dates and the parent period, without inheriting sibling-owner dates. Existing financial rows, snapshots, digests and grants remain unchanged. Function-only downgrade restores the exact 0159 functions and ACLs; 0159's persisted-decision guards remain in force below it. |
+| 0161 (parent 0160) | Adds targeted incidental reserve reason/audit cleaning only when the existing person command actually anonymizes an eligible person. Shared retention facts/deadlines still restrict retained booked recipients. Complete known longer names and surrounding text survive; identifying spans use `*` only when needed to fit 2,000 characters. A private person statement lock preserves contact permissions. Runtime reserve UPDATE is revoked; existing guards, retained originals, amounts and frozen snapshots/digests stay intact. Upgrade rewrites no rows; downgrade restores the exact previous functions/grant and removes the private helpers/triggers, retaining already scrubbed text. |
+| 0162 (parent 0161) | Adds frozen asset-report recipients to the shared person-retention catalog and organization dependency graph. Both use the same recipient extractor and existing source deadline, including report-line evidence dates. Existing snapshots, names, amounts and grants are unchanged. Downgrade refuses while finalized addressed reports exist, otherwise restores the prior private functions exactly. |
+| 0163 (parent 0162) | Extends the dunning context guard to dated successors of units in a finalized plan within the same organization and bound WEG scope. Original plan recipients remain valid for earlier claims. No rows, snapshots or amounts are rewritten. Downgrade refuses while successor-backed contexts exist; otherwise restores the exact former validator. |
+| 0164 (parent 0163) | Adds `unit_household` with independent dated occupied/vacancy counts, forced RLS and a composite organization/unit FK. No prior counts are inferred and no existing rows or snapshots are rewritten. New persons-key calculations require saved history. Downgrade refuses while household rows exist. |
+| 0165 (parent 0164) | Widens both persisted settlement bases to `NUMERIC(28,6)` without rescaling or changing existing values, and installs the existing organization lifecycle guard on `unit_household`. Downgrade holds the type-change lock and refuses any raw basis outside `NUMERIC(12,6)`; representable rows are retained exactly. |
+| 0166 (parent 0165) | Adds nullable `property.federal_state` with the sixteen state codes. Existing properties remain NULL (nationwide holidays); no state is inferred from addresses. Existing claims, letters and snapshots are unchanged. Downgrade refuses while a state is saved, otherwise removes the empty field. |
+| 0167 (parent 0166) | Adds non-null immutable `resolution_register_entry.resolution_date`, copied from the related meeting. Backfill locks the register and its source tables, verifies the resolution, meeting, property and organization relationship, and refuses orphan or inconsistent sources. Every existing field, including `entry_date`, remains unchanged. New PDFs/page/API distinguish meeting date from entry date. Import of older organization archives derives only their missing meeting date through the same valid source relationship. Downgrade restores the prior trigger and removes the new column only while every date is exactly reconstructible from its valid source; otherwise repair forward. |
+| 0168 (parent 0167) | Adds only column-level UPDATE of `special_levy.resolution_id` behind the existing scope/source predicates and a guard allowing one null-to-adopted same-property reference. All other header fields and allocation rows remain immutable. Existing rows are not rewritten; historical archive/restore INSERT compatibility remains intact, while ordinary service/API creation requires an adopted reference. Downgrade restores the exact prior guard and removes the UPDATE policy/grant, retaining all existing references and evidence. |
+| 0169 (parent 0168) | Adds a shared commercial preallocation per confirmed cost position with percent or fixed amount and required reason. Forced RLS follows the source cost; source authority, organization lifecycle and computation evidence guards apply. Changing or removing a rule after an active finalized tenant statement uses the source is refused. Existing costs, statements and digests are not rewritten. Populated rules or snapshots prevent downgrade. |
+| 0170 (parent 0169) | Widens only `settlement_line.note` from `varchar(500)` to `text` so accepted 2,000-character commercial reasons and their explanation persist in full. Existing values, nulls, snapshots, hashes and PDF rendering remain unchanged. Upgrade and downgrade take the table type-change lock with NOWAIT. Downgrade refuses any stored note longer than 500 characters before narrowing; no truncation or row rewriting. |
+| 0171 (parent 0170) | Adds a nullable organization-bound existing-cost link to bank lines, outgoing/status/property/scope and exact coverage guards, immutable financial bank evidence and source-filtered remaining coverage. Linked bank lines inherit the retained cost deadline without becoming personal-retention roots. Existing costs, payments and reconciliation totals are unchanged. Downgrade refuses populated cost assignments. |
+| 0172 (parent 0171) | Derives bank coverage across ordinary cost corrections and adds an organization-bound explicit successor for reviewed allocation corrections. The successor total, property and accounting scope are checked under the financial input lock. Bank lines, audit history and original cost links stay intact. Upgrade refuses already covered historical reviewed costs with no explicit lineage. Downgrade restores the previous functions and refuses if coverage is inherited from a superseded cost or an explicit successor is retained. |
+| 0173 (parent 0172) | Prevents rejection of corrections carrying bank coverage and permits released reserve drafts to retain their cancellation evidence when the debit covers an existing cost. Upgrade refuses a retained rejected bank-covered correction, preserving the original evidence for repair. Downgrade restores the previous guards without rewriting rows. Both directions acquire the affected table locks with NOWAIT. |
+| 0174 (parent 0173) | Adds organization-owned dunning settings with forced RLS and a read-only statutory base-rate catalog. Keeps issued notices and their frozen amounts. Downgrade refuses saved settings, retained segmented interest, or notices with the organization-policy PDF format. This includes interest-free notices created with the defaults. |
+| 0175 (parent 0174) | Adds user-owned `design_theme` (`klar` or `warm`) with a server default of `klar` for existing and new users. Login/session responses, memberships and business data retain their existing shape. Downgrade locks the user table and refuses while any non-default selection exists. Default-only downgrade removes the column. |
+| 0176 (parent 0175) | Records the optional advance mode on original leases and dated rates. Existing rows keep their prior interpretation with a null mode. Downgrade refuses saved explicit modes. |
+| 0177 (head; parent 0176) | Freezes original advance mode when any booking or finalized statement exists, including when the writer cannot read the associated books. Indexes booked-payment audit lookups. Downgrade removes the guard and index and retains existing records. |
 
 DDL uses the existing PostgreSQL/Alembic transaction; 0123 also takes financial
 and ACL locks with NOWAIT table locks. Contention or unexpected data/function
 definitions must abort, not trigger repair/deletion. A rollback-only synthetic
-0028→0149 rehearsal compares every old table column/row and retained RLS flags;
-the 0122→0149, 0139→0149 and accepted-source 0140→0149, 0141→0149 and
-0142→0149, 0143→0149, 0144→0149, 0145→0149, 0146→0149, 0147→0149 and 0148→0149 (accepted sources) rehearsals also
-compare existing ACLs, allowing only the explicit organization INSERT revocation;
+0028→0177 rehearsal compares every old table column/row and retained RLS flags;
+the 0122→0177, 0139→0177 and accepted-source 0140→0177, 0141→0177 and
+0142→0177, 0143→0177, 0144→0177, 0145→0177, 0146→0177, 0147→0177, 0148→0177, 0149→0177, 0150→0177, 0151→0177, 0152→0177, 0153→0177, 0154→0177, 0155→0177, 0159→0177, 0160→0177, 0161→0177, 0162→0177, 0163→0177, 0164→0177, 0165→0177, 0166→0177, 0167→0177, 0168→0177, 0169→0177, 0170→0177, 0171→0177, 0172→0177, 0173→0177, 0174→0177, 0175→0177 and 0176→0177 (accepted sources) rehearsals also
+compare existing ACLs, allowing only the explicit organization INSERT/reserve UPDATE revocations and the capability-checked
+0159 binding adapter and the 0168 column-level resolution-link grant;
 it does not prove live data validity or cross-version runtime compatibility.
 
 ### Release-target checklist
@@ -1659,10 +1692,10 @@ When adding a migration, update these together in the same release:
 
 ## Deployment boundary and accepted head
 
-The reviewed code targets **0149**. `backend/app/deployment.py` retains `TARGET`,
+The reviewed code targets **0177**. `backend/app/deployment.py` retains `TARGET`,
 `SUPPORTED`, `release_head()` and the read-only schema/role/runtime checks used
-by the migration rehearsals. Those checks accept measured **0028 → 0149**,
-**0122 → 0149**, **0139 → 0149**, **0140 → 0149**, **0141 → 0149**, **0142 → 0149**, **0143 → 0149**, **0144 → 0149**, **0145 → 0149**, **0146 → 0149**, **0147 → 0149**, **0148 → 0149** (accepted sources), or **0149 → 0149**; unknown,
+by the migration rehearsals. Those checks accept measured **0028 → 0177**,
+**0122 → 0177**, **0139 → 0177**, **0140 → 0177**, **0141 → 0177**, **0142 → 0177**, **0143 → 0177**, **0144 → 0177**, **0145 → 0177**, **0146 → 0177**, **0147 → 0177**, **0148 → 0177**, **0149 → 0177**, **0150 → 0177**, **0151 → 0177**, **0152 → 0177**, **0153 → 0177**, **0154 → 0177**, **0155 → 0177**, **0159 → 0177**, **0160 → 0177**, **0161 → 0177**, **0162 → 0177**, **0163 → 0177**, **0164 → 0177**, **0165 → 0177**, **0166 → 0177** (accepted sources), **0167 → 0177** (accepted source), **0168 → 0177** (accepted source), **0169 → 0177** (accepted source), **0170 → 0177** (accepted source), **0171 → 0177** (accepted source), **0172 → 0177** (accepted source), **0173 → 0177** (accepted source), **0174 → 0177** (accepted source), **0175 → 0177** (accepted source), **0176 → 0177** (accepted source), or **0177 → 0177**; unknown,
 missing, multiple or intermediate revisions are rejected. These are code and
 rehearsal boundaries, not a measurement of a running installation.
 
@@ -1827,14 +1860,12 @@ in the existing snapshot path; finalized originals are never recomputed.
 Missing/ambiguous readings fail closed rather than selecting an estimate.
 This local validation does not change the production gate or authorize deployment.
 
-### Dunning interest defaults
+### Dunning settings and statutory base rates
 
-`HV_DUNNING_BASE_INTEREST_RATE` is an optional decimal basis-rate default for
-new dunning notices, not an automatically maintained official rate. An explicit
-request can override or disable it; the notice freezes its rate, reference date,
-day counts and interest amounts. Existing issued notices are not recalculated
-when configuration changes. The UI permits a deliberate rate entry when no
-default is configured. This documentation does not change any runtime setting.
+Administrators manage fees and automatic interest under **Mahnungen → Mahneinstellungen**.
+The runtime reads the global statutory catalog seeded by migration 0174. Each release that
+adds a half-year rate verifies it against the Bundesbank publication. See
+[Default interest on dunning notices](docs/m6-zahlungen-mietkonto.md#default-interest-on-dunning-notices).
 
 ## Inbox worker
 

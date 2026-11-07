@@ -25,6 +25,7 @@ from pathlib import Path
 from app.core.pdf import render_pdf
 from app.models.settlement_line import SettlementLine
 from app.models.settlement_run import SettlementRun
+from app.services.weg_owner_balance import owner_balance_results
 
 _CSS = (Path(__file__).resolve().parent.parent / "templates" / "weg_abrechnung.css").read_text(
     encoding="utf-8"
@@ -74,6 +75,10 @@ def _esc(text: str | None) -> str:
     return html.escape(text or "")
 
 
+def _date(value: str) -> str:
+    return '.'.join(reversed(value.split('-')))
+
+
 def build_weg_jahresabrechnung_html(
     run: SettlementRun,
     lines: list[SettlementLine],
@@ -96,10 +101,14 @@ def build_weg_jahresabrechnung_html(
         per_owner.setdefault(str(ln.addressee_owner_profile_id), []).append(ln)
 
     owner_blocks = []
+    balances = {o['owner_profile_id']: o for o in owner_balance_results(run.snapshot_payload)}
     for owner_id, olines in per_owner.items():
         owner_name = dn.owner_names.get(owner_id, "Eigentuemer")
+        balance = balances.get(owner_id)
         rows = []
         for ln in olines:
+            if balance and ln.line_type in ('PLAN_ADVANCE', 'ABRECHNUNGSSPITZE', 'ADVANCE_PAYMENT'):
+                continue
             if ln.line_type in ("COST", "RESERVE_CONTRIBUTION"):
                 key_label = _KEY_LABELS.get(ln.distribution_key or "", ln.distribution_key or "")
                 basis = ""
@@ -144,13 +153,42 @@ def build_weg_jahresabrechnung_html(
                     f"<tr class='plan'><td colspan='5'>{_esc(ln.label)}</td>"
                     f"<td class='num'>{_eur(ln.amount)}</td></tr>"
                 )
+        balance_section = ''
+        if balance:
+            balance_rows = ''.join(
+                f"<tr class='{('spitze' if key == 'abrechnungsspitze' else 'cost-total' if key == 'payment_amount' else '')}'>"
+                f"<td>{label}</td><td class='num'>{_eur(Decimal(balance[key]))}</td></tr>"
+                for key, label in (
+                    ('abrechnungsspitze', 'Abrechnungsspitze (beschlossen, § 28 Abs. 2 WEG)'),
+                    ('plan_soll', 'Hausgeld-Soll laut Wirtschaftsplan'),
+                    ('paid', 'Hausgeld gezahlt'),
+                    ('account_balance', 'Rückstand / Guthaben aus Hausgeld'),
+                    ('payment_amount', 'Zahlbetrag'))
+            )
+            ownership = '<br>'.join(
+                f"Einheit {_esc(p['unit_number'])}: {_date(p['valid_from'])} bis {_date(p['valid_to'])}"
+                for p in balance['ownership_periods']
+            )
+            direction = ('Guthaben zugunsten des Eigentümers' if Decimal(balance['payment_amount']) < 0 else
+                         'Zahlung an die Gemeinschaft' if Decimal(balance['payment_amount']) > 0 else 'Ausgeglichen')
+            balance_section = (
+                f"<table class='lines'>{balance_rows}</table><p>{direction}</p>"
+                '<p>Nur die Abrechnungsspitze ist beschlossen; Rückstände werden aus dem Wirtschaftsplan geschuldet. '
+                'Der Zahlbetrag verrechnet die Spitze mit Rückstand oder Guthaben aus Hausgeld und begründet keinen neuen Anspruch.</p>'
+                '<p>Quelle: Soll aus dem verknüpften Wirtschaftsplan; gezahlt aus gebuchten, nicht stornierten '
+                'Hausgeldzahlungen dieses Eigentümers und Objekts im Abrechnungszeitraum '
+                '(Periodenzuordnung, einschließlich Erstattungen). '
+                'Offene oder ungebuchte Zahlungen zählen nicht. '
+                'Bei Eigentümerwechsel bleiben Zahlungen beim zugeordneten Eigentümer.</p>'
+                f'<p>Eigentümerzuordnung im Abrechnungszeitraum:<br>{ownership}</p>'
+            )
         owner_blocks.append(
             f"<div class='owner-block'>"
             f"<div class='owner-name'>{_esc(owner_name)}</div>"
             f"<table class='lines'><thead><tr>"
             f"<th>Kostenart</th><th>Schluessel</th><th class='num'>Gesamtkosten</th>"
             f"<th>Anteil (Basis)</th><th>Zeitanteil</th><th class='num'>Ihr Betrag</th>"
-            f"</tr></thead><tbody>{''.join(rows)}</tbody></table></div>"
+            f"</tr></thead><tbody>{''.join(rows)}</tbody></table>{balance_section}</div>"
         )
 
     # Object-wide reserve development table.
@@ -217,11 +255,8 @@ def build_weg_jahresabrechnung_html(
     gefuehrt.
   </div>
   <div class="disclaimer">
-    Hinweis (vorlaeufig, [§18/fachlich]): Das endgueltige Layout, der genaue
-    Beschlusswortlaut und ein etwaiger Ausweis haushaltsnaher Dienstleistungen
-    nach § 35a EStG sind fachlich abzustimmen. Diese Abrechnung ist vor
-    Beschlussfassung durch fachkundige Stelle (Steuerberater/Fachanwalt fuer
-    WEG-Recht) zu pruefen.
+    Diese Abrechnung ist vor Beschlussfassung durch eine fachkundige Stelle
+    (Steuerberater/Fachanwalt für WEG-Recht) zu prüfen.
   </div>
   {integrity}
 </body>

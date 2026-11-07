@@ -19,7 +19,7 @@ from fastapi import APIRouter, Depends, HTTPException, Response
 from pydantic import BaseModel
 
 from sqlalchemy import text
-from sqlalchemy.exc import DBAPIError
+from sqlalchemy.exc import DBAPIError, IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.tenant import AuthContext, get_current_user, get_db, require_write_dep
@@ -28,12 +28,13 @@ from app.core.csv_exports import csv_text, csv_money
 from app.core.rbac import ScopeCapability
 from app.core.storage import attachment_content_disposition
 from app.repositories.bank_account_repo import BankAccountRepository
+from app.repositories.dunning_notice_repo import DunningNoticeRepository
 from app.repositories.tenant_profile_repo import TenantProfileRepository
 from app.repositories.owner_profile_repo import OwnerProfileRepository
 from app.services.property_master_service import require_property_master
 from app.models.payment import Payment
 from app.repositories.payment_repo import PaymentRepository
-from app.services.payment_service import PaymentService
+from app.services.payment_service import PaymentService, payment_counterparty_error
 from app.services.reserve_ledger_service import ReserveLedgerService
 from app.services.financial_scope_service import FinancialScopeService
 from app.repositories.lease_agreement_repo import LeaseAgreementRepository
@@ -143,6 +144,36 @@ class MietkontoOut(BaseModel):
     balance: str
 
 
+class TenantOpenItemOut(OpenItemOut):
+    is_due: bool
+    combined_advance: bool = False
+
+
+class IssuedDunningInfo(BaseModel):
+    id: uuid.UUID
+    issue_date: date
+    level: int
+    fee_amount: Decimal
+    interest_amount: Decimal
+
+
+class TenantMietkontoOut(MietkontoOut):
+    open_items: list[TenantOpenItemOut]
+    due_balance: str
+    not_yet_due_balance: str
+    dunning_notices: list[IssuedDunningInfo]
+
+
+class OwnerOpenItemOut(TenantOpenItemOut):
+    due_date: date | None
+
+
+class OwnerMietkontoOut(MietkontoOut):
+    open_items: list[OwnerOpenItemOut]
+    due_balance: str
+    not_yet_due_balance: str
+
+
 def _to_out(p: Payment) -> PaymentOut:
     return PaymentOut(
         reserve_cost_entry_id=str(p.reserve_cost_entry_id) if p.reserve_cost_entry_id else None,
@@ -221,37 +252,51 @@ async def deposits(
                           for key, value in row.items()}) for row in rows]
 
 
-@router.get("/mietkonto/lease/{lease_agreement_id}", response_model=MietkontoOut)
+@router.get("/mietkonto/lease/{lease_agreement_id}", response_model=TenantMietkontoOut)
 async def lease_statement(
     lease_agreement_id: uuid.UUID,
     period_start: date,
     period_end: date,
     accounting_scope_id: uuid.UUID | None = None,
+    as_of: date | None = None,
     auth: AuthContext = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
     svc = PaymentService(db, auth.organization_id, auth.user_id)
     result = await svc.account_statement_for_lease(
-        lease_agreement_id, period_start, period_end, accounting_scope_id
+        lease_agreement_id, period_start, period_end, accounting_scope_id, as_of=as_of
     )
-    return _mietkonto_out(result)
+    statement = _mietkonto_out(result).model_dump()
+    statement['open_items'] = [TenantOpenItemOut(**row, is_due=item.is_due, combined_advance=item.combined_advance)
+        for row, item in zip(statement['open_items'], result.open_items)]
+    notices = await DunningNoticeRepository(db, auth.organization_id).issued_for_lease(
+        lease_agreement_id, accounting_scope_id,
+    )
+    return TenantMietkontoOut(**statement, due_balance=str(result.due_balance),
+        not_yet_due_balance=str(result.not_yet_due_balance),
+        dunning_notices=[IssuedDunningInfo.model_validate(row) for row in notices])
 
 
-@router.get("/mietkonto/owner/{owner_profile_id}", response_model=MietkontoOut)
+@router.get("/mietkonto/owner/{owner_profile_id}", response_model=OwnerMietkontoOut)
 async def owner_statement(
     owner_profile_id: uuid.UUID,
     period_start: date,
     period_end: date,
     economic_plan_id: uuid.UUID | None = None,
     accounting_scope_id: uuid.UUID | None = None,
+    as_of: date | None = None,
     auth: AuthContext = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
     svc = PaymentService(db, auth.organization_id, auth.user_id)
     result = await svc.account_statement_for_owner(
-        owner_profile_id, economic_plan_id, period_start, period_end, accounting_scope_id
+        owner_profile_id, economic_plan_id, period_start, period_end, accounting_scope_id, as_of=as_of
     )
-    return _mietkonto_out(result)
+    statement = _mietkonto_out(result).model_dump()
+    statement['open_items'] = [OwnerOpenItemOut(**row, is_due=item.is_due, due_date=item.due_date)
+        for row, item in zip(statement['open_items'], result.open_items)]
+    return OwnerMietkontoOut(**statement,
+        due_balance=str(result.due_balance), not_yet_due_balance=str(result.not_yet_due_balance))
 
 
 @router.get("/open-items", response_model=list[LeaseOpenItemsOut])
@@ -451,7 +496,7 @@ async def get_payment(
     repo = PaymentRepository(db, auth.organization_id)
     payment = await repo.get_by_id(payment_id)
     if payment is None:
-        raise HTTPException(status_code=404, detail="Payment not found")
+        raise HTTPException(status_code=404, detail="Zahlung nicht gefunden.")
     return _to_out(payment)
 
 
@@ -462,22 +507,31 @@ async def create_payment(
     db: AsyncSession = Depends(get_live_writer_db),
 ):
     svc = PaymentService(db, auth.organization_id, auth.user_id)
-    payment = await svc.create_draft(
-        bank_account_id=uuid.UUID(body.bank_account_id),
-        direction=body.direction,
-        amount=_dec(body.amount, "amount"),
-        value_date=body.value_date,
-        payment_type=body.payment_type,
-        tenant_profile_id=uuid.UUID(body.tenant_profile_id) if body.tenant_profile_id else None,
-        owner_profile_id=uuid.UUID(body.owner_profile_id) if body.owner_profile_id else None,
-        lease_agreement_id=uuid.UUID(body.lease_agreement_id) if body.lease_agreement_id else None,
-        period_year=body.period_year,
-        period_month=body.period_month,
-        settlement_run_id=uuid.UUID(body.settlement_run_id) if body.settlement_run_id else None,
-        reserve_cost_entry_id=body.reserve_cost_entry_id,
-        reserve_register_entry_id=body.reserve_register_entry_id,
-        note=body.note,
-    )
+    try:
+        payment = await svc.create_draft(
+            bank_account_id=uuid.UUID(body.bank_account_id),
+            direction=body.direction,
+            amount=_dec(body.amount, "amount"),
+            value_date=body.value_date,
+            payment_type=body.payment_type,
+            tenant_profile_id=uuid.UUID(body.tenant_profile_id) if body.tenant_profile_id else None,
+            owner_profile_id=uuid.UUID(body.owner_profile_id) if body.owner_profile_id else None,
+            lease_agreement_id=uuid.UUID(body.lease_agreement_id) if body.lease_agreement_id else None,
+            period_year=body.period_year,
+            period_month=body.period_month,
+            settlement_run_id=uuid.UUID(body.settlement_run_id) if body.settlement_run_id else None,
+            reserve_cost_entry_id=body.reserve_cost_entry_id,
+            reserve_register_entry_id=body.reserve_register_entry_id,
+            note=body.note,
+        )
+    except IntegrityError as exc:
+        constraint = getattr(getattr(exc.orig, "__cause__", None), "constraint_name", None)
+        if getattr(exc.orig, "sqlstate", None) == "23514" and constraint in {
+            "ck_payment_ck_payment_counterparty_type",  # naming convention applied to 0016
+            "ck_payment_heating_counterparty",
+        }:
+            raise payment_counterparty_error(body.payment_type) from exc
+        raise
     return _to_out(payment)
 
 

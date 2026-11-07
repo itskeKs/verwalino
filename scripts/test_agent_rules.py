@@ -16,7 +16,7 @@ ROOT = Path(__file__).resolve().parents[1]
 HOOK = ROOT / ".codex/hooks/attach_rules.py"
 TOPICS = {"language", "migrations", "api-layer", "engine", "gobd",
           "frontend-ui", "testing", "selfhost", "docs",
-          "architecture", "domain", "ai-pipeline", "session-cleanup"}
+          "architecture", "domain", "ai-pipeline", "session-cleanup", "issue-scope"}
 
 
 def read_rule(path: Path) -> tuple[dict, str]:
@@ -115,16 +115,18 @@ class AgentRuleTests(unittest.TestCase):
         required = (
             "Every agent cleans up after itself. What a session creates, it removes when its task ends:",
             "Before starting, a session checks for leftovers (`git worktree list`, `docker ps -a`, its scratch directory, its processes) and cleans up first.",
-            "git worktrees and local branches once their PR is merged or closed (above);",
+            "Remove only your own worktrees and local branches once their PR is merged or closed.",
+            "Check the PR state, that a merge landed on `main` when applicable, that the tree is clean and that no process or other live user uses it before removal;",
+            "Use supported archival for app-managed worktrees; never bypass its primary, pinned or shared-worktree protections.",
             "never discard uncommitted work.",
             "compose projects it started for separately authorized acceptance or verifier runs, completely:",
             "containers, volumes (including anonymous volumes), networks and local images used only by that project, never the production instance and never the shared test database",
             "background processes it started (dev servers, watchers, browsers, test runs), including installer-harness children; free their ports;",
             "scratch directories, briefs, logs, screenshots and reports, once their content is in the issue or PR; temporary files under its own unique prefix and screenshots outside tracked docs in any case; keep committed deliverables;",
-            "lock files it holds (`/tmp/verwalino-testdb.lock` and the like), only when no process of its own uses them any more.",
-            "It removes only what it created itself, with one exception: `../verwalino-issue-N` and `../verwalino-review-N` worktrees whose PR is merged or closed (above).",
-            "Never touch other sessions' resources: worktrees, branches, containers, volumes, networks, images, processes or ports (including `verwalino-review-*` with an open PR, `verwalino-abnahme-*`, `.claude/worktrees/*`, `.coddy/worktrees/*` and other issue worktrees).",
-            "Every other leftover of another session or of the owner is reported, not deleted.",
+            "remove only your own inactive lock files, after checking that no run holds them.",
+            "It removes only what it created itself.",
+            "Never touch other sessions' resources: worktrees, branches, containers, volumes, networks, images, processes or ports (including `verwalino-review-*`, `verwalino-abnahme-*`, `.claude/worktrees/*`, `.coddy/worktrees/*` and other issue worktrees).",
+            "Leftovers of another session or of the owner are reported, not deleted; a merged or closed PR alone never authorizes their removal.",
             "A matching name or label alone does not establish ownership. Never prune Docker globally.",
             "Leave production (`docker-compose.prod.yml`, project `hausverwaltung` on the owner's Mac, `verwalino` on the hosted server) and shared test project `infra` untouched.",
             "Never remove `/tmp/verwalino-testdb.lock` while another run holds it.",
@@ -162,7 +164,7 @@ class AgentRuleTests(unittest.TestCase):
     def test_session_start_returns_only_the_always_on_rules(self):
         expected = {path.stem for path in (ROOT / ".cursor/rules").glob("*.mdc")
                     if read_rule(path)[0]["alwaysApply"]}
-        self.assertEqual(expected, {"language", "docs", "session-cleanup"})
+        self.assertEqual(expected, {"language", "docs", "session-cleanup", "issue-scope"})
         for source in ("startup", "resume", "clear", "compact", "fork"):
             with self.subTest(source=source):
                 payload = {"hook_event_name": "SessionStart", "source": source}

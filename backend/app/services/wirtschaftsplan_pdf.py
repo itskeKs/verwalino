@@ -18,6 +18,7 @@ from decimal import Decimal
 from pathlib import Path
 
 from app.core.pdf import render_pdf
+from app.services.document_addressee_pdf import addressed_copies
 from app.models.economic_plan import EconomicPlan
 from app.models.economic_plan_line import EconomicPlanLine
 
@@ -51,6 +52,9 @@ def build_wirtschaftsplan_html(
     lines: list[EconomicPlanLine],
     names: WirtschaftsplanDisplayNames | None = None,
 ) -> str:
+    addressed = addressed_copies(plan, lines, names, build_wirtschaftsplan_html, plan=True)
+    if addressed is not None:
+        return addressed
     dn = names or WirtschaftsplanDisplayNames()
     ordered = sorted(lines, key=lambda l: l.sort_order)
 
@@ -128,10 +132,9 @@ def build_wirtschaftsplan_html(
     Erhaltungsruecklage ist Vermoegensbildung und keine Kostenumlage.
   </div>
   <div class="disclaimer">
-    Hinweis (SDD section 10): Der Wirtschaftsplan ist eine <strong>Unterlage/ein
-    Vorschlag fuer die Beschlussfassung</strong> der Eigentuemerversammlung und
-    selbst <strong>kein Beschluss</strong>. Das endgueltige Layout ist fachlich
-    abzustimmen.
+    Hinweis: Der Wirtschaftsplan ist eine <strong>Unterlage/ein
+    Vorschlag für die Beschlussfassung</strong> der Eigentümerversammlung und
+    selbst <strong>kein Beschluss</strong>.
   </div>
   {integrity}
 </body>

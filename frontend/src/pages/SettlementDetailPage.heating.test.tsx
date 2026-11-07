@@ -151,10 +151,10 @@ it("restores saved external, manual and generic overrides as well as internal in
   vi.mocked(api.listCostEntries).mockResolvedValue([{ id: "heat", cost_category_id: "cat", tenant_distribution_key: "EXTERNE_ABRECHNUNG" }, { id: "external", tenant_distribution_key: "EXTERNE_ABRECHNUNG" }, { id: "manual", tenant_distribution_key: "MANUELLER_BETRAG" }, { id: "water", tenant_distribution_key: "VERBRAUCH" }, { id: "persons", tenant_distribution_key: "PERSONENZAHL" }] as never);
   show(); fireEvent.click(await screen.findByRole("button", { name: "Strukturierte Eingaben anzeigen" }));
   expect(await screen.findByLabelText("external")).toHaveValue("12.34"); expect(screen.getByLabelText("manual")).toHaveValue("5.67");
-  expect(screen.getByLabelText("Verbrauch (1)")).toHaveValue("0"); expect(screen.getByLabelText("Personenzahl (1)")).toHaveValue(2);
+  expect(screen.getByLabelText("Verbrauch (1)")).toHaveValue("0"); expect(screen.queryByLabelText("Personenzahl (1)")).not.toBeInTheDocument();
   await waitFor(() => expect(screen.getByRole("button", { name: "Berechnen" })).toBeEnabled());
   fireEvent.click(screen.getByRole("button", { name: "Berechnen" }));
-  await waitFor(() => expect(api.computeSettlement).toHaveBeenCalledWith("run-1", saved));
+  await waitFor(() => expect(api.computeSettlement).toHaveBeenCalledWith("run-1", { ...saved, unit_metrics: [{ ...saved.unit_metrics[0], person_count: null }] }));
 });
 it.each(["READ_ONLY", "UNKNOWN"])("does not offer internal heating controls to %s", async role => {
   show(role); await screen.findByRole("heading", { level: 1 });

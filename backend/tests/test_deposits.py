@@ -324,7 +324,7 @@ async def enforce_sources(api, w):
 async def test_enforced_property_and_label_sources_fail_closed(deposit_world, rent_db, revoked_source):
     w = deposit_world
     async with api_client(w) as api:
-        response = await api.patch(f"/api/leases/{w['hidden_lease']}", json={"deposit": "2600.00"})
+        response = await api.patch(f"/api/leases/{w['hidden_lease']}", json={"deposit": "2100.00"})
         assert response.status_code == 200, response.text
     await scoped_world(rent_db, w)
     async with api_client(w) as admin:
@@ -428,12 +428,12 @@ async def test_original_lease_documents_and_finalized_snapshot_unchanged(deposit
     async with api_client(w) as api:
         await pay(api, w, bank_account_id=w["rent_bank"], payment_type="NK_VORAUSZAHLUNG", amount="150.00", period_year=2026, period_month=3)
         response = await api.post("/api/settlements", json={
-            "property_id": str(w["property"]), "lease_agreement_id": str(w["lease"]),
+            'heating_advance_payments_total': '0.00', "property_id": str(w["property"]), "lease_agreement_id": str(w["lease"]),
             "period_start": "2026-01-01", "period_end": "2026-04-30", "advance_payments_total": "150.00"})
         assert response.status_code == 201, response.text
         run_id = response.json()["id"]
         await attest_fixture(api, "settlement", run_id, {
-            "advance_payments_total": "150.00", "advance_payments_source": "MANUAL"})
+            'heating_advance_payments_total': '0.00', 'heating_advance_payments_source': "MANUAL", "advance_payments_total": "150.00", "advance_payments_source": "MANUAL"})
         response = await api.post(f"/api/settlements/{run_id}/finalize", json={})
         assert response.status_code == 200, response.text
         finalized = response.json()
@@ -484,7 +484,7 @@ async def test_one_denied_lease_source_cannot_disappear_from_whole_property_repo
     async with api_client(w) as admin:
         response = await admin.post("/api/leases", json={
             "unit_id": str(extra), "tenant_profile_id": str(w["hidden_tenant"]),
-            "valid_from": "2026-01-01", "base_rent": "100.00", "advance_payment": "0.00", "deposit": "700.00"})
+            "valid_from": "2026-01-01", "base_rent": "250.00", "advance_payment": "0.00", "deposit": "700.00"})
         assert response.status_code == 201, response.text
         extra_lease = response.json()["id"]
     await scoped_world(rent_db, w, whole=True)

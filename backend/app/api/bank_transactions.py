@@ -13,11 +13,11 @@ from app.api.bank_accounts import BankTransactionOut
 from app.api.payments import PaymentOut, _to_out
 from app.core.tenant import AuthContext, get_current_user, get_db, require_write_dep
 from app.services.bank_import_service import BankImportService
-from app.services.payment_service import OWNER_TYPES, TENANT_TYPES
+from app.services.payment_service import OWNER_TYPES
 
 router = APIRouter(prefix="/api/bank-transactions", tags=["bank-transactions"])
 Status = Literal["NEU", "ZUGEORDNET", "IGNORIERT"]
-PaymentType = Literal["KALTMIETE", "NK_VORAUSZAHLUNG", "KAUTION", "HAUSGELD_VORSCHUSS", "RUECKLAGENANTEIL", "RUECKLAGENENTNAHME", "SONDERZAHLUNG", "NACHZAHLUNG"]
+PaymentType = Literal["KALTMIETE", "NK_VORAUSZAHLUNG", "HK_VORAUSZAHLUNG", "KAUTION", "HAUSGELD_VORSCHUSS", "RUECKLAGENANTEIL", "RUECKLAGENENTNAHME", "SONDERZAHLUNG", "NACHZAHLUNG"]
 
 
 class AssignmentLine(BaseModel):
@@ -41,18 +41,25 @@ class AssignmentLine(BaseModel):
             if tenant or owner or self.tenant_profile_id:
                 raise ValueError('Reserve payouts have no personal counterparty')
             return self
-        if tenant == owner or owner and self.tenant_profile_id is not None:
+        # Let the service report the missing owner with the same typed error
+        # as direct payment creation. Keep the split target shape checks.
+        missing_owner = self.payment_type in OWNER_TYPES and not owner and self.tenant_profile_id is None
+        if (tenant and owner or owner and self.tenant_profile_id is not None
+                or not (tenant or owner or missing_owner)):
             raise ValueError("Choose exactly one lease or owner target")
-        if self.payment_type in TENANT_TYPES and not tenant:
-            raise ValueError("Tenant payments require a lease")
-        if self.payment_type in OWNER_TYPES and not owner:
-            raise ValueError("Owner payments require an owner")
         return self
 
 
 class AssignmentIn(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    lines: Annotated[list[AssignmentLine], Field(min_length=1, max_length=100)]
+    lines: Annotated[list[AssignmentLine] | None, Field(min_length=1, max_length=100)] = None
+    cost_entry_id: uuid.UUID | None = None
+
+    @model_validator(mode='after')
+    def exactly_one_assignment(self):
+        if (self.lines is None) == (self.cost_entry_id is None):
+            raise ValueError('Bitte Zahlungszeilen oder genau eine bestehende Kostenposition wählen.')
+        return self
 
 
 class MatchLineOut(BaseModel):
@@ -115,10 +122,12 @@ async def assign_transaction(
     transaction_id: uuid.UUID,
     body: AssignmentIn,
     auth: AuthContext = Depends(require_write_dep),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
 ):
-    transaction, payments = await BankImportService(db, auth.organization_id, auth.user_id).assign(
-        transaction_id, [line.model_dump() for line in body.lines])
+    service = BankImportService(db, auth.organization_id, auth.user_id)
+    transaction, payments = await (
+        service.assign_cost(transaction_id, body.cost_entry_id) if body.cost_entry_id is not None
+        else service.assign(transaction_id, [line.model_dump() for line in body.lines]))
     return {"id": transaction.id, "status": transaction.status,
             "payments": [_to_out(payment) for payment in payments]}
 
@@ -127,6 +136,6 @@ async def assign_transaction(
 async def ignore_transaction(
     transaction_id: uuid.UUID,
     auth: AuthContext = Depends(require_write_dep),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
 ):
     return await BankImportService(db, auth.organization_id, auth.user_id).ignore(transaction_id)

@@ -51,7 +51,7 @@ const STATUS_CSS: Record<string, string> = {
 
 const PAYMENT_TYPE_LABELS: Record<string, string> = {
   KALTMIETE: "Kaltmiete",
-  NK_VORAUSZAHLUNG: "NK-Vorauszahlung",
+  NK_VORAUSZAHLUNG: "Betriebskosten-Vorauszahlung", HK_VORAUSZAHLUNG: "Heizkosten-Vorauszahlung",
   KAUTION: "Kaution",
   HAUSGELD_VORSCHUSS: "Hausgeld-Vorschuss",
   RUECKLAGENANTEIL: "Ruecklagenanteil",
@@ -132,7 +132,7 @@ export function PaymentDetailPage() {
         if (err instanceof ApiError && err.status === 401) {
           setError("Nicht authentifiziert.");
         } else {
-          setError(String(err));
+          setError(err instanceof ApiError ? err.message : String(err));
         }
       })
       .finally(() => setLoading(false));

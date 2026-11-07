@@ -25,6 +25,7 @@ NOTICE = ('Nach der Löschung ist keine Anmeldung mehr möglich; aufbewahrungspf
 # Mutable configuration retained for structural/delete-privilege reasons, not
 # frozen voucher content. Canonical rule/fact fields remain guard-protected.
 ERASURE_SCRUB_COLUMNS = {
+    'bank_transaction': ('counterparty_name', 'counterparty_iban', 'purpose'),
     'tenant_profile': ('notes',),
     'lease_agreement': ('notes',),
     'vendor': ('notes', 'tax_id', 'vat_id'),
@@ -349,9 +350,9 @@ async def run_deletion(db, org, *, now=None, nowait=False):
       WHERE organization_id=:org AND NOT(id=ANY(CAST(:retained AS uuid[])))'''), {'org': org, 'now': now, 'retained': person_ids})
     await scrub_retained_payloads(db, org, tables, hashes, scrub)
     # Account ids are audit identities, never an entitlement to retain credentials
-    # or live contact data. The generation trigger invalidates every old cookie.
+    # or personal preferences. The generation trigger invalidates every old cookie.
     await db.execute(text('''UPDATE "user" SET email=id::text||'@deleted.invalid',display_name='Gelöscht',
-        password_hash='!',is_active=false WHERE organization_id=:org'''), {'org': org})
+        password_hash='!',design_theme=DEFAULT,is_active=false WHERE organization_id=:org'''), {'org': org})
     await db.execute(text('DELETE FROM password_reset_request WHERE organization_id=:org'), {'org': org})
     for name, columns in ERASURE_SCRUB_COLUMNS.items():
         assignments = []

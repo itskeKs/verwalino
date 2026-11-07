@@ -109,7 +109,8 @@ readings across these dates or on the same day count as one counter value, selec
 in stable date/ID order. Conflicting values require manual entry with a clear
 reason. Property-period opening/closing readings never compete as interim readings.
 Exact interim readings split its consumption;
-missing interim readings split the known unit consumption by days, by analogy to
+missing interim readings for ordinary consumption keys split the known unit
+consumption by days, by analogy to
 §9b HeizkostenV. Other units need only their own period readings. Manual period
 consumption without interim readings uses the same day fallback, with a reason
 shown in suggestions and frozen in the automatic source snapshot. Interim readings
@@ -119,9 +120,9 @@ tenant-change reading cannot replace a missing year-end reading and manufacture 
 zero for the successor. Readings at a lease/vacancy boundary remain ordinary period
 reading candidates within the existing ±31-day tolerance. Missing or ambiguous period quantities require manual input
 with a reason; they are not estimated. Manual unit consumption always denotes the
-**whole property-year quantity**, including for clipped statements. Person counts
-are per-unit property-year weights and must be entered consistently in every run
-belonging to that property year.
+**whole property-year quantity**, including for clipped statements. From `m3.4.0`,
+person counts instead come from the saved unit household history (§2.3), shared
+by every new statement; per-run legacy person inputs no longer override them.
 
 For two units using 1,000 units each and a 1,000-euro water pool, A (January–September),
 B (October–December), and C (all year) receive 373.97 / 126.03 / 500.00 euros with
@@ -131,7 +132,9 @@ interim pattern never changes these building shares. Heating keeps its separate
 base/consumption pools as described in §5.1, delimited by the invoice service period.
 Annual slice quantities set each unit's consumption weight; their source-period
 intersections set occupant proportions within that unit (day fallback if those
-quantities sum to zero). A December-only heating invoice cannot charge a departed
+quantities sum to zero). For automatic heating fallback slices, intersections retain
+the exact degree-day proportions rather than prorating their quantities by days.
+A December-only heating invoice cannot charge a departed
 September tenant. Day-split consumption quantities remain unrounded Decimal strings
 in snapshots (up to the engine's 50-digit precision); these are calculation evidence,
 not money or display precision. Only monetary allocation is rounded to cents.
@@ -172,18 +175,21 @@ editable for mid-year scopes and gap-closing transitions. Year-only NK advances
 are split across the calendar months the lease actually covers in the assigned
 year; Hausgeld uses all twelve months. A statement credits its covered months, including
 months in the second calendar year of a non-calendar period. The rounding module
-floors each monthly share to cents and assigns the remainder to the last covered month, so
-the last period covering that year receives the remaining cents. For a lease
+rounds each monthly share's magnitude down to cents and assigns the signed remainder
+to the last covered month, so the last period covering that year receives the remaining cents. For a lease
 covering the whole calendar year with 1,200 euros paid, January–June and
 July–December credit 600 euros each; April–December credits
 900 euros. For 1,000 euros, January–November credit 83.33 euros each and December
 83.37 euros. A full calendar year still credits the full amount. Month shares
 do not depend on other drafts or finalization order while lease dates and booked payments are fixed;
-later statements cannot change earlier finalized shares. After a later lease-end
-edit, each year/month bucket uses already finalized snapshot credits in place
-of those windows' current shares, never reducing a new credit below zero. The last
-open statement takes the remainder: 300 euros already finalized from
-a 1,200-euro annual payment leaves 900 euros after entering a September end;
+later statements cannot change earlier finalized shares. After a lease-end edit
+or a change to booked advances, each year/month bucket uses already finalized
+snapshot credits in place of those windows' current shares. Ordinary buckets
+keep the zero floor. For a bucket with an active standalone refund or a negative
+frozen credit, the last open statement takes the signed remainder, including
+when the booked net is zero. A bucket omitted from a known finalized breakdown
+counts as zero for this refund reconciliation. For example, 300 euros already
+finalized from a 1,200-euro annual payment leaves 900 euros after entering a September end;
 245.16 euros already finalized from three 100-euro payments through 14 March
 leaves 54.84 euros after entering an end on 20 March. Frozen credits are read from
 the snapshot, never recomputed. This includes later calendar windows finalized
@@ -227,9 +233,10 @@ shows their combined total. This also works for a newly created lease-clipped st
 The structured amount is frozen in the snapshot;
 the API exposes it in the notice label.
 
-Legacy DERIVED snapshots without year/month credit buckets can still use fixed
-lease dates. After a date edit, `advance_credit_history_missing` (HTTP 409) only
-blocks derivation if a credit bucket in the legacy statement's covered span changes.
+Legacy DERIVED snapshots without year/month credit buckets can still be used
+when their covered buckets are unaffected. Derivation returns
+`advance_credit_history_missing` (HTTP 409) when a credit bucket in the legacy
+statement's span changes after a date edit or needs refund reconciliation.
 Month-assigned advances from January–March remain usable when an end in June is
 entered later; a year-only payment whose covered-month denominator changes still
 requires correction or a confirmed MANUAL total. Create a correction with
@@ -242,9 +249,10 @@ MANUAL statements and never invents a historical credit breakdown.
 
 After a date edit, several open drafts may each include the same outstanding
 difference. Finalizing one freezes its credit; another stale draft must be
-re-derived before finalization (`derived_total_stale`, HTTP 422). Late bookings
-assigned to an already finalized month likewise enter a later statement through
-the frozen-credit difference; the earlier snapshot stays unchanged.
+re-derived before finalization (`derived_total_stale`, HTTP 422). Standalone
+refunds assigned to an already finalized month enter another statement in the
+assigned year through the frozen-credit difference.
+The earlier snapshot stays unchanged.
 
 Automatic form prefill only applies while both date fields are empty. A delayed
 period-offer response preserves dates the user has already entered; choosing an
@@ -333,9 +341,11 @@ SDD §16: "All final settlement results … are stored as **immutable snapshots*
 | `tenant_profile_id` | `UUID NULL` FK→`tenant_profile` (`RESTRICT`) | denormalized addressee (audit/display). |
 | **Expected/actual (Soll/Ist) (§7):** | | |
 | `advance_payments_total` | `NUMERIC(14,2) NULL` | Sum of the operating cost advance payments made by the tenant in the period — **manually capturable in M3** (M6 replaces this with the real `Payment` sum). |
+| `heating_advance_payments_total` | `NUMERIC(14,2) NULL` | Heating advances; independent of operating-cost advances. Migration 0150 backfills existing rows with 0, then drops the default. NULL means unknown and blocks computation. |
+| `heating_advance_payments_source` | `String(12) NOT NULL DEFAULT 'MANUAL'` | Independent MANUAL/DERIVED heating source. |
 | `advance_payments_source` | `String(12) NOT NULL DEFAULT 'MANUAL'` | `MANUAL` (M3) \| `DERIVED` (M6, from payments). CHECK. Makes the origin audit-proof. |
 | `total_cost` | `NUMERIC(14,2) NULL` | Sum of the apportioned expected shares (redundant header value; must be == Σ `settlement_line.amount` of the expected lines). |
-| `balance` | `NUMERIC(14,2) NULL` | `total_cost − advance_payments_total`; > 0 = additional payment due, < 0 = credit (§7). |
+| `balance` | `NUMERIC(14,2) NULL` | `total_cost − advance_payments_total − heating_advance_payments_total`; > 0 = additional payment due, < 0 = credit (§7). |
 | **Snapshot/immutability (ADR-0003):** | | |
 | `status` | `String(12) NOT NULL DEFAULT 'draft'` | `draft` \| `finalized`. CHECK. Freeze condition: `finalized`. |
 | `snapshot_payload` | `JSONB NULL` | **Canonical, complete** calculation basis + result (§1.7). NULL in a fresh `draft` before the first calculation; set from the first calculation; frozen from `finalized`. |
@@ -363,8 +373,8 @@ A `settlement_line` is **one reported item** of the settlement: usually one cost
 | `label` | `String(255) NOT NULL` | Display name of the line. |
 | `distribution_key` | `String(20) NULL` | **Applied** distribution key (BGH requirement: "apportionment key per item"). CHECK against the §8 vocabulary. |
 | `total_amount` | `NUMERIC(14,2) NULL` | **Total costs of the cost category** in the period (BGH requirement), before distribution. |
-| `distribution_base_total` | `NUMERIC(12,6) NULL` | Denominator of the key (e.g., total living area, total MEA, sum of consumption) — makes the calculation path traceable. |
-| `distribution_base_share` | `NUMERIC(12,6) NULL` | Numerator of the addressee (e.g., their living area/their consumption). |
+| `distribution_base_total` | `NUMERIC(28,6) NULL` | Denominator of the key (e.g., total living area, total MEA, sum of consumption) — makes the calculation path traceable. |
+| `distribution_base_share` | `NUMERIC(28,6) NULL` | Numerator of the addressee (e.g., their living area/their consumption). |
 | `time_share_days` | `INTEGER NULL` | occupied days (ADR-0004) — for intra-year items. |
 | `time_share_total_days` | `INTEGER NULL` | Days of the service period (denominator of the time apportionment). |
 | `amount` | `NUMERIC(14,2) NOT NULL` | **The rounded amount attributed to the addressee** (ADR-0005). For `BALANCE` the balance (signed). |
@@ -459,7 +469,7 @@ Every key reduces to **a weight vector** `wᵢ ≥ 0` over the units/addressees 
 | `WOHNFLAECHE` | `unit.area` | Σ areas | M1 `unit.area` |
 | `BEHEIZTE_FLAECHE` | `unit.heated_area` | Σ heated areas | M1 `unit.heated_area` |
 | `EINHEIT` | `1` per participating unit (per-unit head count) | Number of units | derived |
-| `PERSONENZAHL` | Number of persons in the unit in the period | Σ persons | **[OPEN/§18]** data source (see 2.3) |
+| `PERSONENZAHL` | Person-days in the actual occupied/vacancy slice | Σ person-days across participating units and slices | `unit_household` (§2.3) |
 | `VERBRAUCH` | Measured consumption of the unit (`meter_reading` difference) | Σ consumption | M1 `meter`/`meter_reading` |
 | `EXTERNE_ABRECHNUNG` | — (no weight; **direct** per-unit amount) | — | external values (§5) |
 | `MANUELLER_BETRAG` | — (no weight; **direct** per-unit amount) | — | manual input |
@@ -473,13 +483,75 @@ unit_share_i (exact) = G * wᵢ / Σw          (Decimal, unrounded)
 → distribute_amount(G, [wᵢ]) yields the rounded, sum-exact cent amounts (ADR-0005).
 ```
 
-- **Denominator = sum of the participating units**, not "all units of the property blindly". Who "participates" follows from the cost item and the settlement sphere (e.g., parking spaces without living area do not participate in a living-area key, having weight 0; a commercial unit may be excluded depending on the advance deduction (Vorwegabzug) **[OPEN/§18]**, §6.3).
+- **Denominator = sum of the participating units**, not "all units of the property blindly". Who "participates" follows from the cost item and the settlement sphere (e.g., parking spaces without living area do not participate in a living-area key, having weight 0; an explicitly configured commercial preallocation partitions eligible units into groups before applying the key, §6.3).
 - **Missing base quantity** (`area`/`mea` is NULL) for a participating unit → **hard error/escalation**, **no** silent 0 (that would redistribute costs unnoticed). The engine validates before calculating (§2.6).
 - **MEA with co-ownership:** If a unit with multiple fractional owners participates (`ownership_history.mea_share`), the **owner** sphere (M4) is split further by `mea_share`. For the **tenant BK** (M3), the addressee is the unit's tenant; the unit's MEA is its weight (fractional ownership is irrelevant here, because the tenant uses the whole unit).
 
-### 2.3 `PERSONENZAHL` — key defined, data source open
+### 2.3 `PERSONENZAHL` — saved dated household sizes
 
-The distribution mathematics is identical to 2.2 (weight = number of persons in the unit). **[OPEN/§18]** is the **data source**: M1 does not model a time-dependent number of persons per unit/lease. Options: (a) a field on `lease_agreement` (number of persons, possibly with its own small history for intra-year changes), (b) a dedicated small temporal table. **Provisional assumption for M3 test cases:** the number of persons is a per-lease value (constant over the lease period); intra-year changes in the number of persons are **not** represented in M3. Clearly marked as an assumption; professional/product clarification before a productive person-count key. The engine accepts the number of persons as **input** (pure function), so the data-source decision does not touch the engine.
+From `m3.4.0` (#201), `unit_household` is the single source for new tenant
+statements. A row contains `valid_from`, an integer `persons ≥ 0`, and
+`is_vacancy`. Occupied and vacancy rows form independent streams; a value is
+valid from its date through the day before the next row in the same stream.
+No household names are stored. `GET /api/units/{id}/household` returns the rows;
+`PUT` atomically replaces the entire list, including deletion with `[]`.
+Duplicate dates within a stream and invalid counts are refused before replacement.
+The table has forced organization RLS and a composite organization/unit FK;
+writes require the unit's master-data preparation authority.
+
+For each cost's inclusive service period, integrate persons × days separately
+for every tenant/vacancy cover. The denominator is the sum of these person-days
+across all units. Distribute the cost once with the existing largest-remainder
+rule, preserving integer weights until cent rounding. Tenant changes with
+different household sizes therefore use each tenant's actual person-days, not
+a unit amount split uniformly by days. A clipped statement selects cumulative
+person-day-weighted cents from that balanced source cover, so adjacent statements
+reconcile even across a household change or a leap day.
+
+The editor offers **one person as an editable vacancy suggestion**. Saving is
+required before it can affect a calculation. Only the matching saved stream can
+supply a day: neither occupied nor vacancy values substitute for missing input
+in the other stream. Missing data blocks with
+“Handeingabe erforderlich: Personenzahl für Einheit 2 ab 01.03.2026 fehlt.”
+An explicitly saved zero is present input with zero weight. A total of zero
+person-days cannot distribute a cost. Vacancy shares stay with the owner.
+
+The 2026 Musterhaus example has unit 1 at two persons through May and three
+from June: **944 person-days**. Unit 2 has **306 occupied person-days** from
+March and **59 vacancy person-days**, total **1,309**. A 1,250-euro cost yields
+**901.45 / 292.21 / 56.34 euros** for Anna / Bernd / owner, exactly 1,250 euros.
+The position note and result snapshot retain the person-day numerator and
+denominator; snapshot inputs retain the dated rows and vacancy attribution
+also retains its person-days.
+
+Migration `0164` creates an empty history. There is no persisted unit person-count
+column, and potentially conflicting prior per-run values are not guessed into
+one. Existing finalized runs retain their original payload, digest and rendering;
+they do not reread today's household rows. Old `unit_metrics[].person_count` is
+retained for reading frozen inputs, but is ignored by new M3 computations. The
+unchanged M4 owner/plan persons-key input remains separate existing debt.
+
+Migration `0165` widens both existing persisted bases from `NUMERIC(12,6)` to
+`NUMERIC(28,6)`, retaining the six-place scale and all raw values. Two constant
+households of 1,370 persons each have 500,050 / 1,000,100 person-days and receive
+625.00 euros each from a 1,250.00-euro pool in preview, compute and finalization.
+No person-count cap, normalized quota or additional rounding is introduced.
+Downgrade refuses values whose absolute magnitude reaches 1,000,000, before any
+narrowing, under the same table lock. The revision also installs the existing
+organization lifecycle guard on `unit_household`, including writes made by a
+previously authorized database session during cooling-off.
+
+The ordinary authorized statement view exposes saved vacancy attribution as
+“Leerstand – Eigentümeranteile”: frozen unit number, cost label, vacancy days,
+person-days and owner amount. The Musterhaus result directly shows unit 2's
+59 person-days and 56.34 euros. The current accounting-scope unit set limits this
+disclosure even if a full-property frozen statement is later classified into a
+partial scope. Each displayed vacancy share also requires current read access
+to its original cost source through the ordinary cost-entry visibility rules;
+a readable statement alone does not disclose a separately restricted cost.
+This source read check is independent of a detail update's selected write scope.
+Owner identities and live household values are not added. Old
+snapshots without saved vacancy person-days and existing PDFs keep their rendering.
 
 ### 2.4 `VERBRAUCH` (consumption-based)
 
@@ -654,13 +726,28 @@ area/heated area or explicit volume × days; under
 costs use the building's full-period consumption denominator. Exact interim readings
 split the changed unit's consumption-dependent share. The final reading of the previous
 user is the opening reading of the subsequent user. Without an interim reading, known
-unit-period consumption is split by degree-days if available, otherwise by days; the
-current engine has no degree-day inputs, so it uses days. Basic costs always split by
-days. This does not estimate missing unit-period consumption under §9a: missing or
+unit-period heating consumption is split by the fixed degree-day table selected in
+[issue #200](https://github.com/itskeKs/verwalino/issues/200#issuecomment-6625008327).
+Hot-water consumption and basic costs always split by days. The documented constant
+in `engine/heizkosten.py` follows the
+[published table](https://www.ista.com/de/kontakt-service/fachwissen/gradtagszahlentabelle/):
+January 170, February 150, March 130, April 80, May 40, September 30, October 80,
+November 120 and December 160 per mille. June–August share 40 per mille over 92 days.
+Each non-summer month uses its actual calendar length, including leap February;
+partial months and the summer block retain exact rational day weights. No regional
+configuration or rounded monthly summer thirds are used. Between usable measured
+boundaries, only occupants lacking an exact interim reading share the segment's
+known consumption by these weights. An exact interim reading retains priority.
+For a 1 July 2026 change, January–June has 13410/23 per mille out of 1000:
+a EUR 2,000 heating consumption pool allocates EUR 1,166.09 / EUR 833.91, while
+a EUR 400 hot-water consumption pool allocates EUR 198.36 / EUR 201.64.
+Only allocated monetary results are rounded to cents. This does not estimate missing
+unit-period consumption under §9a: missing or
 ambiguous period readings still require transparent manual values. Heating suggestions
-retain independently measured slices when another slice cannot be resolved. A day-based
+retain independently measured slices when another slice cannot be resolved. A fallback
 slice shows the enclosing readings as its period or segment basis and explicitly states
-its day share; those readings are not presented as a direct slice measurement. A 10,000-euro pool
+its degree-day or day share; those readings are not presented as a direct slice
+measurement. A 10,000-euro pool
 with 70% consumption and the 600/400/1,000 quantities from §3 gives A/B/C
 3,221.92 / 1,778.08 / 5,000.00 euros, totaling exactly 10,000.00 euros. Vacancy
 retains the gross owner share; only for tenants, in the explicitly chosen
@@ -669,7 +756,15 @@ non-consumption-based mode, is the §12 deduction reported.
 Compute stores `extra_inputs` in the draft, preview does not. A missing request body uses
 the stored intent, explicit empty arrays remove it. Automatic sources are read afresh every
 time; Finalize freezes the intent, measured values/IDs, base/consumption pools, bases, and
-gross/reduction/payable amount before the hash. The renderer reads only this data. GET
+gross/reduction/payable amount before the hash. The renderer reads only this data.
+From engine version `m3.3.0`, fallback
+sources additionally freeze `split.method` (`DEGREE_DAYS` or `DAYS`) and the exact
+rational `weight`, `total_weight` and segment `quantity` strings. Rational quantities
+remain exact through source-period restriction and the central largest-remainder
+ranking, including tied remainders; Decimal-only allocation retains its existing path. PDF position notes show these stored
+shares with “Aufteilung nach Gradtagszahlen (§ 9b HeizkostenV)” for heat. Older
+finalized payloads retain their original day notes, canonical bytes and digests;
+rendering never fills in the new fields or recalculates them. GET
 `/{run_id}/heating-consumption` is live-, source-, and financial-scope-protected and
 blocked for final runs. No new schema, no implicit combined heating-system pool, and no
 change to existing metering-service/CO2 snapshots.
@@ -717,12 +812,69 @@ SDD §7.2/§8/§9: for `GEMISCHT_PRUEFEN` (caretaker), `TEILWEISE_PRUEFEN` (CO2)
 
 **Caretaker share (`GEMISCHT_PRUEFEN`):** The administration/repair/maintenance share is extracted **up front** (in the cost item); M3 apportions the remaining apportionable part stored in `apportionable_tenant_amount` according to the selected key. The engine checks that an `apportionable_tenant_amount` is set for `GEMISCHT_PRUEFEN` (otherwise escalation).
 
-### 6.3 Commercial advance deduction (Vorwegabzug) — [OPEN/§18]
+### 6.3 Commercial preallocation (Vorwegabzug Gewerbe, #202)
 
-SDD §18: "Whether and how commercial units require an **advance deduction (Vorwegabzug)** (different apportionment logic, VAT option)." In mixed use (residential + commercial), an **advance deduction** of the costs attributable to commercial use **before** distribution to the apartments may be legally required (if commercial use causes significantly higher costs). **M3 does not decide this unilaterally.**
+The manager explicitly chooses a percentage (0–100, at most two decimal places)
+or a nonnegative cent-exact fixed amount, with a nonblank reason of at most 2,000
+characters. There is no automatic significance threshold, inferred deduction or
+VAT calculation. Without an entered rule, the existing allocation is unchanged.
+The assessment of commercial extra burden remains with the manager; see
+[§556a(1) BGB](https://www.gesetze-im-internet.de/bgb/__556a.html) and
+[BGH VIII ZR 78/05](https://juris.bundesgerichtshof.de/cgi-bin/rechtsprechung/document.py?Art=pm&Blank=1&Datum=2006-3&Gericht=bgh&file=dokument.pdf&linked=urt&nr=35689).
 
-- **Provisional assumption for M3 test cases (clearly marked):** **No** automatic advance deduction in M3. `unit.usage_type = GEWERBE` exists in the model and is carried in the snapshot; a commercial unit participates in the distribution under the **selected key** like any other unit (e.g., by area). A desired advance deduction is represented **manually** in M3 (a dedicated cost item for the commercial share with `MANUELLER_BETRAG`/exclusion of the apartments), not computed automatically.
-- The **automatic** advance-deduction logic (and VAT option for commercial use) is a delimited building block to be signed off professionally (recommendation: later specification round / with tax advisor). Recorded here, **not guessed away**.
+`commercial_preallocation` stores one shared rule per organization/cost entry,
+separately from the immutable confirmed cost and adopted treatment evidence.
+The existing compute/finalize request accepts optional `commercial_preallocations`
+with `cost_entry_id`, `commercial_share_percent`, `commercial_amount` and
+`commercial_reason`. Omitting a position retains its rule; sending all three
+values as null removes an unfinalized rule. Compute/finalize saves atomically;
+preview applies hypothetical inputs without saving. Draft GET reads current
+shared rules rather than replaying a sibling's old compute extras.
+The draft page submits only positions explicitly edited or removed in that tab,
+so untouched loaded rules cannot overwrite a sibling's later changes. Successful
+compute/finalize responses refresh the displayed rules and clear saved commands;
+preview and failed requests retain unsaved commands.
+Accepted reasons retain their full 2,000-character limit. Persisted line notes use
+`text` (revision 0170), preserving the complete reason and engine explanation in
+the relational lines, frozen snapshot and escaped PDF output.
+
+The pure `m3.5.0` engine splits the position's **effective tenant amount** into
+commercial and remaining pools with the existing exact-cent rounding. Excluded
+owner-funded/non-apportionable amounts are not redistributed. Commercial units
+are `usage_type=GEWERBE`; all other eligible units remain in the remainder,
+including parking/other uses when they participate in the selected key. Each
+group reuses the existing key eligibility and complete tenant/vacancy cover,
+person-days, consumption splits and cumulative day shares for short windows.
+Consumption pools retain their property-year bounds. The commercial source pool
+is balanced once, then apportioned over the existing day-balanced property-year
+cent pools with the same rounding function. Each period retains its original
+total; percentage and equivalent fixed rules agree across fiscal boundaries.
+Missing positive key bases fail rather than losing a group's amount. Direct
+manual/external amounts and internal HeizkostenV pools cannot be combined with
+this rule because they already specify a different allocation mechanism.
+
+For EUR 1,200 waste over a 60 m² shop and 75/65 m² flats, no rule gives
+EUR 360 / 450 / 390. An explicit 50% or EUR 600 commercial rule gives
+EUR 600 / 321.43 / 278.57, totaling exactly EUR 1,200. Every affected statement
+and PDF shows “Vorwegabzug Gewerbe 600,00 € – Gastronomie, Restmüll 2 × 1.100 l”,
+plus the group's distribution amount and key bases. PDF explanations occupy a
+full-width row for readable long reasons and escape entered markup.
+
+The snapshot freezes the rule, usage types, bases, occupant inputs and results.
+Once an active finalized tenant statement references the cost, changing or
+removing its shared rule is refused, including introducing a rule after a
+legacy baseline was finalized. An unchanged rule remains usable by siblings.
+Confirmed source corrections continue through the existing correction path;
+no rule is silently copied to a new source. Organization archives restore rules
+(including those of superseded confirmed sources) before statement snapshots,
+even when foreign-key dependencies require further import passes. Old finalized snapshots/digests and
+their original PDF layout remain unchanged. Rule reads/writes follow the source
+organization, financial scope and source disclosure/authority checks.
+The existing guard-based organization retention catalog retains the protected
+live rule. Normal organization erasure therefore preserves its reason, the
+finalized amount and snapshot digest without a trigger or RLS bypass; the
+[survivor inventory](operations/organization-export.md#catalog-survivor-contract)
+documents the retained text.
 
 ---
 
@@ -732,13 +884,17 @@ SDD §18: "Whether and how commercial units require an **advance deduction (Vorw
 
 ```
 expected (total_cost)      = Σ rounded tenant shares of all apportionable cost categories
-actual (advance_payments)  = sum of the tenant's operating cost advance payments in the period
-balance                    = total_cost − advance_payments_total
+actual (operating, heating) = each component's net advance payments in the period
+balance                     = total_cost − advance_payments_total − heating_advance_payments_total
    balance > 0  → additional payment (tenant pays)
    balance < 0  → credit (tenant is refunded)
 ```
 
-`balance`, `total_cost`, `advance_payments_total` are on the `settlement_run` (header) **and** as `settlement_line` (`ADVANCE_PAYMENT`, `BALANCE`) for PDF/verification.
+The settlement subtracts the signed operating and heating advance totals
+from the respective costs. With 50 euros received and 70 euros refunded for
+one component, the derived advance is −20 euros and the refund increases the
+balance due accordingly. The run stores both totals and the balance. Its
+`ADVANCE_PAYMENT` and `BALANCE` lines carry the same values into the PDF.
 
 ### 7.2 Origin of the advance payment total — [DECISION], M3 manual
 
@@ -750,6 +906,35 @@ Payments (M6) do not exist yet (roadmap: M6 depends on M3). Therefore the **adva
 
 > **[DECISION]** Storage location of the manual advance payment total: **field on the `settlement_run`** (recommended, determined here) vs. a dedicated small table. Recommendation: field on the run — it belongs semantically in the frozen snapshot (what was taken as paid in the settlement is part of the immutable document). Confirm.
 
+### Advance credits by rental rate
+
+The lease and its dated rates may define one combined advance or separate
+operating and heating advances. Positive heating costs still enter the cost
+calculation in either mode. A wholly combined period shows one credit against
+the total. A separate statement shows operating and heating credits and both
+component balances, including an explicit separate heating advance of zero.
+Existing rates with no mode keep the legacy display rule.
+
+For a year with both modes, a monthly combined payment is disclosed as a
+combined credit. The separate operating and heating credits retain their own
+lines. If a booking spans both modes without a clear component assignment,
+the statement shows “Vorauszahlungen ohne Aufteilung” and deducts that credit
+once from the overall result. For example, an annual payment of EUR 2,340
+against EUR 1,900 operating and EUR 1,000 heating costs leaves EUR 560 payable.
+The statement reports one overall balance. It carries its booked credits
+once through the existing partial-period and frozen credit rules. The rounded
+period total is divided among its booked categories at cumulative boundaries,
+so an annual remainder cannot move a credit from one category to another or
+create a refund. Finalized statements keep their original snapshot, digest,
+and document output.
+
+Changing a draft's manual advance values or deriving its advances again clears
+the saved calculation and keeps its structured inputs. The next calculation
+uses the new advance basis. Until then, reopening the draft shows the saved
+advances without the previous balance or component breakdown.
+The tenant advance endpoints return 404 for WEG settlement and asset report
+drafts, which keep their saved inputs and results.
+
 ### 7.3 Proposing a future advance payment (phase 2, T28)
 
 The historical M3 plan in §7.2 must be distinguished from today's actual path: M6 can
@@ -760,7 +945,11 @@ period. Whole calendar months count as one, partial months as occupied days/cale
 of the month. Calendar weights stay exactly rational; money stays Decimal and is
 commercially rounded to the cent once. Example: January through 05.02.2024,
 0.17 EUR / (1 + 5/29) = 0.15 EUR. A missing, negative, or incoherent historical basis
-results in 409, no zero assumption.
+results in 409, no zero assumption. The optional ISO-date query `accept_from` defaults to
+the day after the settlement period ends and is returned in the payload. Both current
+advances and their mode come from the rate valid on that date. GET and POST use
+the same lookup. A combined rate uses the full frozen tenant cost as its
+proposal basis, rounded once. A separate rate uses each frozen cost component.
 
 The detail page shows the amount and basis; readers see no adoption control. POST to the
 same URL accepts only `valid_from` and, after live role, scope, and history-prepare checks,
@@ -894,7 +1083,23 @@ financial values stay `null`.
 Under `/abrechnungen`, "BK-Sammellauf" (BK batch run) guides through property, period, and
 scope; result counts and list are refreshed, and the same period is repeatable.
 
-Implemented BK behavior: `POST /api/settlements/{id}/finalize` ends the DB transaction through `Depends(get_db, scope="function")` **before** the HTTP success response. Thus an immediately following PDF request already sees the finalized snapshot; drafts remain blocked with HTTP 409. The regression test checks the stored status from an independent DB session at `http.response.start`, since ASGITransport alone waits for the later request cleanup and thereby masks this race condition.
+Write transactions must complete **before** the HTTP success response starts. Use
+`Depends(get_db, scope="function")` on the inner session dependency, including inside
+`get_live_writer_db`, `get_live_publication_db` and `get_live_admin_db`; function scope
+on an outer helper alone does not move the inner transaction's cleanup. A failed
+handler, response validation or commit must roll back without sending success.
+`get_live_member_db` and direct read dependencies retain request scope, so reads and
+their streaming responses keep their existing session lifetime.
+
+Implemented coverage includes all mutations in the economic-plan, payment and WEG
+settlement routers and existing callers of the three shared write guards. Other
+direct write dependencies remain follow-up work, inventoried in the #260 PR.
+Single BK draft creation also follows this rule: the UI can open the saved draft
+as soon as `POST /api/settlements` returns 201. For BK finalization, an immediate
+PDF request sees the finalized snapshot; drafts remain blocked with HTTP 409.
+Regression tests observe committed rows from an independent DB connection and
+request the new detail at `http.response.start`. An assertion only after an
+ASGITransport request completes would wait for request cleanup and mask the race.
 
 - [ ] `app/api/settlements.py`: `POST` (create run, `require_write_dep`), `POST /{id}/compute`, `PATCH /{id}/advance-payments`, `POST /{id}/finalize`, `POST /{id}/correction`, `GET` (list/detail, all roles read), `GET /{id}/pdf` (finalized → PDF stream). READ_ONLY: GET only. Foreign ID → **404** (not 403), as in M0/M2. Register the router in `app/main.py`.
 
@@ -926,8 +1131,8 @@ Implemented BK behavior: `POST /api/settlements/{id}/finalize` ends the DB trans
 | **M3-A4** | Tenant share for CO2/heating arrives as **input** (`apportionable_tenant_amount`/external); the engine does **not** compute the tier model itself. | An own 10-tier calculation would be a delimited additional building block to be signed off professionally. | Tax advisor/metering service (§5) |
 | **M3-A5** | **No** automatic commercial advance deduction in M3; commercial use participates by key; advance deduction manual if needed. | Automatic advance deduction is its own building block. | Tax advisor/attorney specializing in the field (§6.3) |
 | **M3-A6** | Advance payment total **manual** on the run (`advance_payments_source='MANUAL'`); M6 replaces it with `DERIVED`. | M6 connection prepared via the `source` discriminator. | (Roadmap M6) |
-| **M3-A7** | Number of persons (`PERSONENZAHL` key) as a per-lease value, constant over the lease period (M1 does not model this time-dependently). | A time-dependent number of persons would need a model extension. | Product (§2.3) |
-| **M3-A8** | External values and unit-period consumption must be **complete & plausible**; missing → escalation. Missing interim readings split known consumption by days (§3). | Substitute/estimation procedure (HeizkostenV) is its own professional building block. | Tax advisor/metering service (§2.4/§5) |
+| **M3-A7** | Superseded by saved dated household sizes in `m3.4.0` (#201). | Independent occupied/vacancy streams and person-days (§2.3). | Implemented |
+| **M3-A8** | External values and unit-period consumption must be **complete & plausible**; missing → escalation. Missing interim readings split known heating consumption by degree days (§5.1), hot water/ordinary consumption by days (§3). | Substitute/estimation procedure (HeizkostenV) is its own professional building block. | Tax advisor/metering service (§2.4/§5) |
 
 ---
 
@@ -945,7 +1150,7 @@ Implemented BK behavior: `POST /api/settlements/{id}/finalize` ends the DB trans
 | **O3-2** | CO2 10-tier: compute ourselves vs. adopt tenant share | [OPEN/§18] | provisionally **adopt** (`apportionable_tenant_amount`); own tier logic = separate building block requiring sign-off | before production use |
 | **O3-3** | Commercial advance deduction (different apportionment logic, VAT option) | [OPEN/§18] | provisionally **none** automatically; manual if needed; tax advisor/attorney specializing in the field | later round |
 | **O3-4** | Exact PDF structure of the BK statement (layout, objection-deadline notice) | [OPEN/§18] | data fully ready; layout with product/domain side | before production use |
-| **O3-5** | Data source/logic `PERSONENZAHL`, consumption substitute procedure | [OPEN/§18] | provisional assumptions (M3-A7/A8); clarify professionally | before production use of these keys |
+| **O3-5** | `PERSONENZAHL` source resolved by #201 (§2.3); consumption substitute procedure remains separate. | partly resolved | saved household history; M3-A8 remains | consumption follow-up |
 
 > **No self-certification (stance):** This design makes the distribution, the pro rata periods, the rounding, and the expected/actual calculation (Soll/Ist) **transparent, deterministic, and reproducible** (golden tests + property-based invariants as the objective yardstick). It **cannot** guarantee that a concrete BK statement withstands court or audit scrutiny in an individual case. The professional correctness of the rules (esp. CO2 tiers, commercial advance deduction, external heating costs, retention) must be signed off by a **tax advisor/attorney specializing in the field** before productive use.
 
@@ -959,3 +1164,45 @@ Implemented BK behavior: `POST /api/settlements/{id}/finalize` ends the DB trans
 - **Exact PDF layout / objection-deadline texts:** SDD §18 (§8.1).
 - **§ 35a EStG disclosure** in owner settlements: M4/SDD §18.
 - **Final legal sign-off:** tax advisor/attorney specializing in the field — not replaceable by this document.
+
+## Separate operating and heating advances (#67)
+
+Both advance totals start unknown and block finalization until they are entered or
+derived and attested. When the heating total is zero and there are no allocated
+tenant heating cost lines, the statement and PDF retain the single “Geleistete Vorauszahlungen”
+block; otherwise they show both component blocks. Snapshots always retain both totals.
+
+`HEATING_CATEGORY_CODES` in `engine/types.py` is the single documented set:
+`HEIZUNG_ZENTRAL`, `WARMWASSER_ZENTRAL`, `MESSDIENST`, `CO2_KOSTEN`.
+A position in this set, or carrying a heating configuration, belongs to heating;
+all other billable positions belong to operating costs. Classification does not
+change the HeizkostenV allocation. Both component results use the existing
+cent-exact allocated tenant shares. The overall balance is total cost minus
+both advance totals; heating advance zero preserves the former overall result.
+The single advance block applies only when the heating advance is zero and no
+allocated tenant heating cost lines occur in any fiscal allocation window, including
+zero-amount lines. Non-apportionable heating positions do not require two blocks.
+An allocated tenant heating cost line exists only when allocation produces a tenant cost line for the position: an explicit zero-amount line counts, but a distribution key that produces no line does not.
+Page and PDF follow the engine's stored advance-line labels.
+
+New snapshots freeze both advance totals/sources, the heating tenant-cost share
+and the component result lines. Old finalized payloads remain unchanged: readers
+use the stored lines and canonical bytes without adding missing heating keys,
+so their SHA-256 and PDF remain valid. New computations use the bumped engine
+version. Corrections copy both totals and sources into the new draft.
+
+The advance proposal divides the frozen operating and heating tenant-cost
+shares separately by the same exact calendar-month weight. Accepting creates
+one full rent-change row, preserving the effective base rent. The proposal payload
+includes both current advances from the rent-history rate valid on the acceptance date,
+falling back to the lease. The page passes its selected date to GET and refetches on date
+changes; acceptance stays disabled until a matching proposal returns. It shows previous
+amounts and both proposals and bases whenever
+the proposed heating advance is nonzero or differs from the current heating advance,
+including a reduction to zero and legacy statements with a single advance block.
+Only when the proposed and current heating advances are both zero does the proposal
+show just the operating amount and basis with “Nur die Betriebskosten-Vorauszahlung
+wird geändert.”; acceptance then writes unchanged heating zero. Otherwise it says
+“Beide Vorauszahlungen werden geändert.” The success message names both written advances. Old snapshots
+without a heating subtotal derive the split from frozen cost lines and heating
+pools; an incomplete frozen basis refuses the proposal.

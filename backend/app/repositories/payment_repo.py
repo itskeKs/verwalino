@@ -31,7 +31,11 @@ class PaymentRepository(TenantRepository[Payment]):
             'SELECT payment_computation_context_valid(:org,:lease,:owner)'),
             {'org': self._org_id, 'lease': lease_id, 'owner': owner_id})
         if not allowed:
-            raise HTTPException(409, 'Select an exact accounting scope and review unclassified inputs before calculating payments')
+            raise HTTPException(
+                409,
+                'Wählen Sie einen eindeutigen Abrechnungskreis und prüfen Sie noch nicht zugeordnete Daten, '
+                'bevor Sie die Zahlungen berechnen.',
+            )
 
     # ------------------------------------------------------------------
     # General queries
@@ -137,9 +141,9 @@ class PaymentRepository(TenantRepository[Payment]):
         return result.scalars().all()
 
     async def derived_for_nk_for_lease(
-        self, lease_agreement_id: uuid.UUID,
+        self, lease_agreement_id: uuid.UUID, *, payment_type: str = "NK_VORAUSZAHLUNG",
     ) -> Sequence[Payment]:
-        """Booked NK for crediting, including outside assignments for the notice.
+        """Booked component advances for crediting, including outside assignments for the notice.
 
         Keep the full assigned amounts; the engine selects month shares using
         the lease span as well as the statement span (also for year-only rows).
@@ -147,7 +151,7 @@ class PaymentRepository(TenantRepository[Payment]):
         await self.require_computation_context(lease_id=lease_agreement_id)
         stmt = (
             self._booked_active()
-            .where(Payment.payment_type == "NK_VORAUSZAHLUNG")
+            .where(Payment.payment_type == payment_type)
             .where(Payment.lease_agreement_id == lease_agreement_id)
             .where(Payment.period_year.is_not(None))
         )
@@ -155,7 +159,7 @@ class PaymentRepository(TenantRepository[Payment]):
         return result.scalars().all()
 
     async def derived_for_hausgeld(
-        self, owner_profile_id: uuid.UUID, period_year: int
+        self, owner_profile_id: uuid.UUID, period_year: int,
     ) -> Sequence[Payment]:
         """booked, active HAUSGELD_VORSCHUSS payments for one owner + year (§6.3)."""
         await self.require_computation_context(owner_id=owner_profile_id)

@@ -13,6 +13,34 @@ from tests.test_rent_changes import rent_db, rent_world, api_client, post_change
 ROOT = '/api/reports/dashboard-kpis'
 
 
+@pytest.mark.asyncio
+async def test_dashboard_and_deadlines_include_the_dated_october_heating_charge(rent_world):
+    w = rent_world
+    cutoff = {'reference_date': '2026-10-31'}
+
+    async def overdue_count(api):
+        response = await api.get('/api/fristen', params=cutoff)
+        assert response.status_code == 200, response.text
+        overdue = next(row for row in response.json() if row['kind'] == 'OFFENE_POSTEN')
+        return int(overdue['detail'].split()[0])
+
+    async with api_client(w) as api:
+        before = await overdue_count(api)
+        # Two leases in this organization each have rent and operating charges
+        # for January through October. The foreign lease does not contribute.
+        assert before == 2 * 10 * 2
+        response = await api.post(f"/api/leases/{w['lease']}/rent-changes", json={
+            'valid_from': '2026-10-01', 'base_rent': '750.00', 'advance_payment': '150.00',
+            'heating_advance_payment': '90.00'})
+        assert response.status_code == 201, response.text
+        response = await api.get(ROOT, params=query(w))
+        assert response.status_code == 200, response.text
+        assert response.json()['expected_rent'] == '990.00'
+        # The changed base rent replaces October's original charge. Only the
+        # new heating obligation increases the overdue item count.
+        assert await overdue_count(api) == before + 1
+
+
 def query(world, **values):
     return {'property_id': str(world['property']), 'year': 2026, 'month': 10, **values}
 

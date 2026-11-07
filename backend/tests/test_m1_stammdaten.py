@@ -181,6 +181,7 @@ async def test_foreign_and_unknown_parents_are_not_found_before_writing(
 async def test_parent_foreign_keys_roundtrip_and_reject_existing_invalid_references(
     client_a_admin, client_b_admin, migrator_session, seed_data,
 ):
+    from tests.test_session_review_access import _chain_snapshot
     import importlib
     from alembic.migration import MigrationContext
     from alembic.operations import Operations
@@ -233,8 +234,18 @@ async def test_parent_foreign_keys_roundtrip_and_reject_existing_invalid_referen
     engine = create_engine(MIGRATOR_SYNC_URL)
     try:
         with engine.begin() as db, Operations.context(MigrationContext.configure(db)):
+            retained = _chain_snapshot(db)
+            # PostgreSQL must reject removing a unique parent still referenced
+            # by the newer household FK; the refusal itself changes no state.
+            with pytest.raises(DBAPIError, match='uq_unit_org_id'):
+                with db.begin_nested():
+                    migration.downgrade()
+            assert _chain_snapshot(db) == retained
             point = db.begin_nested()
             try:
+                # The historical round trip predates this FK. Its original
+                # rows and constraint are restored by the enclosing savepoint.
+                db.execute(text('ALTER TABLE unit_household DROP CONSTRAINT fk_unit_household_unit_org'))
                 tables = sorted(set(rows) | {"unit", "tenant_profile", "vendor"})
 
                 def constraints():
@@ -283,12 +294,13 @@ async def test_parent_foreign_keys_roundtrip_and_reject_existing_invalid_referen
                 assert constraints() == current
             finally:
                 point.rollback()
+            assert _chain_snapshot(db) == retained
     finally:
         engine.dispose()
-        async with AsyncSession(migrator_session.bind) as cleanup:
-            await cleanup.execute(text("DELETE FROM settlement_run WHERE id=:id"),
-                                  {"id": uuid.UUID(foreign_report.json()["id"])})
-            await cleanup.commit()
+        cleanup = await client_b_admin.delete(
+            f"/api/weg-settlements/asset-reports/{foreign_report.json()['id']}"
+        )
+        assert cleanup.status_code == 204, cleanup.text
 
 
 class TestOwnershipExclude:

@@ -15,13 +15,14 @@ from datetime import date
 from decimal import Decimal, InvalidOperation
 from typing import Literal
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Response
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.exc import DBAPIError
 
+from app.schemas.document_addressee import DocumentAddressee
 from app.core.rbac import ScopeCapability
 from app.repositories.coverage_declaration_repo import CoverageDeclarationRepository
 from app.core.tenant import AuthContext, get_current_user, get_db, require_write_dep
@@ -38,6 +39,7 @@ from app.services.render_names import (
 )
 from app.services.vermoegensbericht_pdf import render_vermoegensbericht_pdf
 from app.services.weg_jahresabrechnung_pdf import render_weg_jahresabrechnung_pdf
+from app.services.weg_owner_balance import owner_balance_results
 from app.services.weg_settlement_service import (
     AssetItemEntry,
     AssetReportInputs,
@@ -46,7 +48,10 @@ from app.services.weg_settlement_service import (
     WegComputeExtras,
     WegSettlementService,
 )
-from app.services.reserve_ledger_service import ReserveLedgerService, _raise_reserve_opening_error
+from app.services.reserve_ledger_service import (
+    CONTRIBUTION_EXCEEDS_BOOKED, CORRECTION_ALREADY_ZERO, CORRECTION_AMOUNT_INVALID,
+    ReserveLedgerService, _raise_reserve_opening_error,
+)
 
 router = APIRouter(prefix="/api/weg-settlements", tags=["weg-settlements"])
 
@@ -140,7 +145,25 @@ class WegLineOut(BaseModel):
     note: str | None
 
 
+class OwnerBalancePeriodOut(BaseModel):
+    unit_number: str
+    valid_from: str
+    valid_to: str
+
+
+class OwnerBalanceOut(BaseModel):
+    owner_profile_id: str
+    owner_cost_total: str
+    abrechnungsspitze: str
+    plan_soll: str
+    paid: str
+    account_balance: str
+    payment_amount: str
+    ownership_periods: list[OwnerBalancePeriodOut]
+
+
 class WegRunOut(BaseModel):
+    addressees: list[DocumentAddressee] = []
     id: str
     organization_id: str
     property_id: str
@@ -156,6 +179,8 @@ class WegRunOut(BaseModel):
     finalized_at: str | None
     superseded_by_id: str | None
     lines: list[WegLineOut] = []
+    owner_results: list[OwnerBalanceOut] = []
+    delete_restriction: dict[str, str] | None = None
 
 
 def _dec(value: str | None, field: str) -> Decimal | None:
@@ -170,20 +195,24 @@ def _dec(value: str | None, field: str) -> Decimal | None:
         raise HTTPException(status_code=422, detail=f"Invalid decimal for {field}: {value}")
 
 
-def _weg_extras(body: WegComputeRequest | None) -> WegComputeExtras:
+async def _weg_extras(body: WegComputeRequest | None, svc: WegSettlementService, run_id: uuid.UUID, *, capability=ScopeCapability.PREPARE) -> WegComputeExtras:
     if body is None:
         return WegComputeExtras()
+    paid = []
+    for item in body.paid_advances:
+        owner_id = uuid.UUID(item.owner_profile_id)
+        try:
+            amount = Decimal(item.paid_total)
+            if not amount.is_finite():
+                raise ValueError('finite amount required')
+        except (InvalidOperation, ValueError):
+            await svc.reject_paid_amount(run_id, owner_id, missing=not item.paid_total.strip(), capability=capability)
+        paid.append(ManualOwnerAdvance(owner_profile_id=owner_id, paid_total=amount))
     return WegComputeExtras(
         reserve_override_reason=body.reserve_override_reason,
         reserve_opening_balance=_dec(body.reserve_opening_balance, "reserve_opening_balance"),
         reserve_withdrawals_total=_dec(body.reserve_withdrawals_total, "reserve_withdrawals_total"),
-        paid_advances=[
-            ManualOwnerAdvance(
-                owner_profile_id=uuid.UUID(p.owner_profile_id),
-                paid_total=_dec(p.paid_total, "paid_total"),
-            )
-            for p in body.paid_advances
-        ],
+        paid_advances=paid,
     )
 
 
@@ -226,8 +255,10 @@ def _line_out(ln: SettlementLine) -> WegLineOut:
     )
 
 
-def _run_out(run: SettlementRun, lines: list[SettlementLine]) -> WegRunOut:
+def _run_out(run: SettlementRun, lines: list[SettlementLine], *, delete_restriction=None) -> WegRunOut:
     return WegRunOut(
+        addressees=(run.snapshot_payload or {}).get("addressees", []),
+        owner_results=owner_balance_results(run.snapshot_payload),
         id=str(run.id),
         organization_id=str(run.organization_id),
         property_id=str(run.property_id),
@@ -243,7 +274,13 @@ def _run_out(run: SettlementRun, lines: list[SettlementLine]) -> WegRunOut:
         finalized_at=str(run.finalized_at) if run.finalized_at else None,
         superseded_by_id=str(run.superseded_by_id) if run.superseded_by_id else None,
         lines=[_line_out(ln) for ln in lines],
+        delete_restriction=delete_restriction,
     )
+
+
+async def _checked_run_out(db, auth, run, lines):
+    restriction = await WegSettlementService(db, auth.organization_id, auth.user_id).delete_restriction(run.id)
+    return _run_out(run, lines, delete_restriction=restriction)
 
 
 # ---------------------------------------------------------------------------
@@ -283,7 +320,6 @@ async def reserve_override(run_id: uuid.UUID, body: ReserveOverrideRequest,
         if code in {'23514', '23505', '23503'}:
             constraint = getattr(getattr(exc.orig, '__cause__', None), 'constraint_name', None)
             if constraint == 'reserve_contribution_exceeds_booked':
-                from app.services.reserve_ledger_service import CONTRIBUTION_EXCEEDS_BOOKED
                 raise HTTPException(422, CONTRIBUTION_EXCEEDS_BOOKED) from None
             if constraint == 'reserve_assignment_amount':
                 raise HTTPException(422, {'code': 'RESERVE_ASSIGNMENT_EXCEEDS_PAYMENT',
@@ -315,14 +351,16 @@ async def _reduce_reserve_contribution(run_id, entry_id, reduced_to, reason, aut
         _raise_reserve_opening_error(exc)
         constraint = getattr(getattr(exc.orig, '__cause__', None), 'constraint_name', None)
         if getattr(exc.orig, 'sqlstate', None) == '23514':
+            if constraint == 'reserve_amount_invalid':
+                raise HTTPException(422, CORRECTION_AMOUNT_INVALID) from None
+            if constraint == 'reserve_correction_already_zero':
+                raise HTTPException(422, CORRECTION_ALREADY_ZERO) from None
             if constraint == 'reserve_contribution_exceeds_booked':
-                from app.services.reserve_ledger_service import CONTRIBUTION_EXCEEDS_BOOKED, _euro
                 original = await service.repo.get_by_id(entry_id)
                 if original is not None:
                     current = await service.repo.current_contribution_amount(original)
-                    limit = min(current, await service.repo.contribution_headroom(run, original.unit_id) + current)
-                    raise HTTPException(422, {**CONTRIBUTION_EXCEEDS_BOOKED,
-                        'message': f'Sie können für diese Korrektur höchstens {_euro(limit)} beibehalten.'}) from None
+                    _, detail = await service.contribution_reduction_limit(run, original, current)
+                    raise HTTPException(422, detail) from None
                 raise HTTPException(422, CONTRIBUTION_EXCEEDS_BOOKED) from None
             if constraint == 'reserve_correction_reason_required':
                 raise HTTPException(422, {'code': 'RESERVE_CORRECTION_REASON_REQUIRED',
@@ -339,7 +377,7 @@ async def reduce_reserve_contribution(run_id: uuid.UUID, entry_id: uuid.UUID, bo
     return await _reduce_reserve_contribution(run_id, entry_id, body.reduced_to, body.reason, auth, db)
 
 
-@router.delete('/{run_id}/reserve-ledger/overrides/{entry_id}', status_code=201)
+@router.post('/{run_id}/reserve-ledger/overrides/{entry_id}/delete', status_code=201)
 async def delete_reserve_contribution(run_id: uuid.UUID, entry_id: uuid.UUID, body: ReserveCorrectionReason = ReserveCorrectionReason(),
         auth: AuthContext = Depends(require_write_dep), db: AsyncSession = Depends(get_db, scope='function')):
     return await _reduce_reserve_contribution(run_id, entry_id, Decimal('0.00'), body.reason, auth, db)
@@ -379,10 +417,25 @@ async def get_weg_run(
     runs_repo = SettlementRunRepository(db, auth.organization_id)
     run = await runs_repo.get_by_id(run_id)
     if run is None or run.run_type not in ("WEG_JAHRESABRECHNUNG", "VERMOEGENSBERICHT"):
-        raise HTTPException(status_code=404, detail="WEG settlement run not found")
+        raise HTTPException(status_code=404, detail="WEG-Abrechnung nicht gefunden.")
     lines_repo = SettlementLineRepository(db, auth.organization_id)
     lines = await lines_repo.list_for_run(run_id)
-    return _run_out(run, list(lines))
+    restriction = await WegSettlementService(db, auth.organization_id, auth.user_id).delete_restriction(run_id)
+    return _run_out(run, list(lines), delete_restriction=restriction)
+
+
+@router.delete('/{run_id}', status_code=204)
+async def delete_weg_draft(run_id: uuid.UUID, auth: AuthContext = Depends(require_write_dep),
+                           db: AsyncSession = Depends(get_db, scope="function")):
+    await WegSettlementService(db, auth.organization_id, auth.user_id).delete_empty_draft(run_id)
+    return Response(status_code=204)
+
+
+@router.delete('/asset-reports/{run_id}', status_code=204)
+async def delete_asset_report_draft(run_id: uuid.UUID, auth: AuthContext = Depends(require_write_dep),
+                                   db: AsyncSession = Depends(get_db, scope="function")):
+    await WegSettlementService(db, auth.organization_id, auth.user_id).delete_empty_draft(run_id, asset_report=True)
+    return Response(status_code=204)
 
 
 # ---------------------------------------------------------------------------
@@ -396,7 +449,7 @@ async def input_owners(
 ):
     run = await SettlementRunRepository(db, auth.organization_id).get_by_id(run_id)
     if run is None or run.run_type != 'WEG_JAHRESABRECHNUNG':
-        raise HTTPException(404, 'WEG settlement run not found')
+        raise HTTPException(404, 'WEG-Abrechnung nicht gefunden.')
     await FinancialScopeService(db, auth.organization_id, auth.user_id).enter(
         run, capability=ScopeCapability.READ)
     # Draft visibility alone does not authorize disclosure of its complete sources.
@@ -415,20 +468,20 @@ async def plan_successor_preview(run_id: uuid.UUID, auth: AuthContext = Depends(
 
 @router.patch('/{run_id}/economic-plan', response_model=WegRunOut)
 async def select_plan_successor(run_id: uuid.UUID, body: PlanSuccessorSelection,
-                                auth: AuthContext = Depends(require_write_dep), db: AsyncSession = Depends(get_db)):
+                                auth: AuthContext = Depends(require_write_dep), db: AsyncSession = Depends(get_db, scope="function")):
     if not body.confirmed or not body.reason.strip():
         raise HTTPException(422, 'Explicit review and reason required')
     run = await WegSettlementService(db, auth.organization_id, auth.user_id).select_plan_successor(
         run_id, body.expected_plan_id, body.successor_id, body.reason.strip())
     lines = await SettlementLineRepository(db, auth.organization_id).list_for_run(run.id)
-    return _run_out(run, list(lines))
+    return await _checked_run_out(db, auth, run, list(lines))
 
 
 @router.post("", response_model=WegRunOut, status_code=201)
 async def create_weg_run(
     body: WegRunCreate,
     auth: AuthContext = Depends(require_write_dep),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
 ):
     svc = WegSettlementService(db, auth.organization_id, auth.user_id)
     try:
@@ -443,7 +496,7 @@ async def create_weg_run(
     except DBAPIError as exc:
         _raise_reserve_opening_error(exc)
         raise
-    return _run_out(run, [])
+    return await _checked_run_out(db, auth, run, [])
 
 
 @router.post("/{run_id}/compute", response_model=WegRunOut)
@@ -451,13 +504,13 @@ async def compute_weg_run(
     run_id: uuid.UUID,
     body: WegComputeRequest | None = None,
     auth: AuthContext = Depends(require_write_dep),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
 ):
     svc = WegSettlementService(db, auth.organization_id, auth.user_id)
-    run, _result = await svc.compute_weg(run_id, _weg_extras(body))
+    run, _result = await svc.compute_weg(run_id, await _weg_extras(body, svc, run_id))
     lines_repo = SettlementLineRepository(db, auth.organization_id)
     lines = await lines_repo.list_for_run(run_id)
-    return _run_out(run, list(lines))
+    return await _checked_run_out(db, auth, run, list(lines))
 
 
 @router.post("/{run_id}/finalize", response_model=WegRunOut)
@@ -469,10 +522,10 @@ async def finalize_weg_run(
     db: AsyncSession = Depends(get_db, scope="function"),
 ):
     svc = WegSettlementService(db, auth.organization_id, auth.user_id)
-    run = await svc.finalize_weg(run_id, _weg_extras(body))
+    run = await svc.finalize_weg(run_id, await _weg_extras(body, svc, run_id))
     lines_repo = SettlementLineRepository(db, auth.organization_id)
     lines = await lines_repo.list_for_run(run_id)
-    return _run_out(run, list(lines))
+    return await _checked_run_out(db, auth, run, list(lines))
 
 
 # ---------------------------------------------------------------------------
@@ -487,7 +540,7 @@ class PaidAdvancesResult(BaseModel):
 async def derive_paid_advances_route(
     run_id: uuid.UUID,
     auth: AuthContext = Depends(require_write_dep),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
 ):
     """Derive paid advances per owner from actual payments (nachrichtlich)."""
     svc = WegSettlementService(db, auth.organization_id, auth.user_id)
@@ -513,7 +566,7 @@ async def derive_paid_advances_route(
 async def create_asset_report(
     body: AssetReportCreate,
     auth: AuthContext = Depends(require_write_dep),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
 ):
     svc = WegSettlementService(db, auth.organization_id, auth.user_id)
     try:
@@ -527,7 +580,7 @@ async def create_asset_report(
     except DBAPIError as exc:
         _raise_reserve_opening_error(exc)
         raise
-    return _run_out(run, [])
+    return await _checked_run_out(db, auth, run, [])
 
 
 @router.post("/asset-reports/{run_id}/compute", response_model=WegRunOut)
@@ -535,13 +588,13 @@ async def compute_asset_report(
     run_id: uuid.UUID,
     body: AssetReportComputeRequest | None = None,
     auth: AuthContext = Depends(require_write_dep),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
 ):
     svc = WegSettlementService(db, auth.organization_id, auth.user_id)
     run, _result = await svc.compute_asset_report(run_id, _report_inputs(body))
     lines_repo = SettlementLineRepository(db, auth.organization_id)
     lines = await lines_repo.list_for_run(run_id)
-    return _run_out(run, list(lines))
+    return await _checked_run_out(db, auth, run, list(lines))
 
 
 @router.post("/asset-reports/{run_id}/finalize", response_model=WegRunOut)
@@ -556,7 +609,7 @@ async def finalize_asset_report(
     run = await svc.finalize_asset_report(run_id, _report_inputs(body))
     lines_repo = SettlementLineRepository(db, auth.organization_id)
     lines = await lines_repo.list_for_run(run_id)
-    return _run_out(run, list(lines))
+    return await _checked_run_out(db, auth, run, list(lines))
 
 
 # ---------------------------------------------------------------------------

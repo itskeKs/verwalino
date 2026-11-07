@@ -52,22 +52,24 @@ enforcement; every baseline and safety rule here stays in force.
   response fields, parameters, configuration keys, endpoints or options the issue does not name,
   and do not refactor neighbours in passing. One issue, one branch, one PR. `Closes #N` only when
   every acceptance box is done; otherwise `Refs #N` plus what remains.
+- Cut before coding: an issue that touches more than one domain mechanism (for example a ledger
+  plus its evidence rules plus an import) is split into issues of one mechanism each, one PR per
+  issue, before the first branch is created. The session that notices the size proposes the cut in
+  the issue and waits for the owner's word only if the cut changes the acceptance.
 - Red first: the scenario and the unit tests fail without the change, then the smallest change
   turns them green, then refactor with the tests still green.
 - A finding outside the scope becomes a new issue (or a line in the PR description), not extra code.
-- Cut before coding: an issue that touches more than one domain mechanism (for example a
-  ledger plus its evidence rules plus an import) is split into issues of one mechanism each,
-  one PR per issue, before the first branch exists.
-- Three rounds, then freeze: after the third verifier or review round on a PR its
-  scope is frozen. It merges when CI is green and no finding remains in the blocker categories
-  (wrong money amount, tenant isolation, immutability of booked records, data protection); every
-  other finding becomes a follow-up issue with a user check, not another round. Blind acceptance
-  runs: at most two per PR; a repeat checks only the changed steps.
 - Implementers push only their own PR branch, open the PR and stop; the maintainer review session
   merges, nobody else. Never push to `main`. A risky PR (migrations, isolation or RLS, money,
   GoBD, auth, backup and restore) gets a parallel,
   blind cross-review by independent reviewers before the merge (`.coddy/crossreview.json`);
   that is recommended, not a chain.
+- Three rounds, then freeze: after the third verifier or review round on a PR its scope is frozen.
+  The PR merges when CI is green and no finding remains in the four blocker categories (wrong
+  money amount, organization isolation, GoBD immutability, GDPR). Every other finding becomes a
+  follow-up issue with a user check, not another round. Blind acceptance runs at most twice per
+  PR; a repeated run checks only the changed steps
+  ([docs/acceptance/README.md](docs/acceptance/README.md#runs-and-rounds-per-pr)).
 - Progress is code, tests and a commit. Do not create state, contract, receipt, evidence, handoff,
   hash or audit files, do not build sequential repair or review chains that pass such files
   along, and write no new plan, log or status documents; decisions go into the issue, the PR
@@ -76,18 +78,20 @@ enforcement; every baseline and safety rule here stays in force.
 ## Worktrees and cleanup
 
 Work in a git worktree outside the main checkout with a predictable name: `../verwalino-issue-N`
-for an issue, `../verwalino-review-N` for a PR under review. A worktree lives exactly as long as
-its PR and belongs to the issue or PR, not to the session that created it: once that is merged
-or closed, check that the merge landed on `main`, that the tree is clean and that nothing runs
-there, then `git worktree remove <dir> && git branch -D <branch>`. The maintainer session that
-merges removes its review worktree and the issue worktree of the merged PR; every new session
-removes stale worktrees of its kind before it starts. An existing `../verwalino-issue-N` means
-issue N is being worked on. For an abandoned task without a PR, first preserve work that must
-be kept; never discard uncommitted work.
+for an issue, `../verwalino-review-N` for a PR under review. App-managed worktrees use the
+supported managed location instead. An existing issue worktree means that issue is being worked on;
+do not take it over.
+
+Remove only your own worktrees and local branches once their PR is merged or closed.
+Check the PR state, that a merge landed on `main` when applicable, that the tree is clean
+and that no process or other live user uses it before removal; never discard uncommitted work.
+For ordinary worktrees use `git worktree remove <dir> && git branch -D <branch>`.
+Use supported archival for app-managed worktrees; never bypass its primary, pinned or
+shared-worktree protections. For an abandoned task without a PR, first preserve work that must
+be kept.
 
 Every agent cleans up after itself. What a session creates, it removes when its task ends:
 
-- git worktrees and local branches once their PR is merged or closed (above);
 - compose projects it started for separately authorized acceptance or verifier runs, completely:
   containers, volumes (including anonymous volumes), networks and local images used only by
   that project, never the production instance and never the shared test database (see
@@ -97,17 +101,16 @@ Every agent cleans up after itself. What a session creates, it removes when its 
   in any case; keep committed deliverables;
 - background processes it started (dev servers, watchers, browsers, test runs), including
   installer-harness children; free their ports;
-- lock files it holds (`/tmp/verwalino-testdb.lock` and the like), only when no process of
-  its own uses them any more.
+- remove only your own inactive lock files, after checking that no run holds them.
 
 Before starting, a session checks for leftovers (`git worktree list`, `docker ps -a`, its
-scratch directory, its processes) and cleans up first. It removes only what it created itself,
-with one exception: `../verwalino-issue-N` and `../verwalino-review-N` worktrees whose PR is
-merged or closed (above). Never touch other sessions' resources: worktrees, branches, containers,
-volumes, networks, images, processes or ports (including `verwalino-review-*` with an open PR,
-`verwalino-abnahme-*`, `.claude/worktrees/*`, `.coddy/worktrees/*` and other issue worktrees).
-Every other leftover of another session or of the owner is reported, not deleted. A matching
-name or label alone does not establish ownership. Never prune Docker globally.
+scratch directory, its processes) and cleans up first. It removes only what it created itself.
+Never touch other sessions' resources: worktrees, branches, containers, volumes, networks,
+images, processes or ports (including `verwalino-review-*`, `verwalino-abnahme-*`,
+`.claude/worktrees/*`, `.coddy/worktrees/*` and other issue worktrees).
+Leftovers of another session or of the owner are reported, not deleted; a merged or closed
+PR alone never authorizes their removal. A matching name or label alone does not establish
+ownership. Never prune Docker globally.
 
 Leave production (`docker-compose.prod.yml`, project `hausverwaltung` on the owner's Mac,
 `verwalino` on the hosted server) and shared test project `infra` untouched.
@@ -192,14 +195,14 @@ files with `rg -n` and line ranges.
 
 A session has exactly one task: one issue (it ends when its pull request is open or its rework is
 pushed) or one PR under review (it ends when that is merged, sent back or parked).
-The next issue or PR gets a new session with an empty context, never the same chat and
-never a fork of it: every further task in the same chat pays for the whole previous history on
-every step. A session that ends hands the next task over by starting its successor with the
-filled-in brief, or by naming it in its report. Sessions do not message each other; what another
-session must know is a comment on the issue or PR. Only one maintainer session runs at a
-time; it holds `/tmp/verwalino-maintainer.lock` (a `mkdir`, with the PR number and start time in
-`info`) from its start to its cleanup and releases it before it starts any successor. The review
-worktree is detached on `origin/<branch>`, because the issue worktree holds the branch.
+A subsequent task normally starts in a fresh session with an empty context; name the next task
+in the report and wait for the owner's explicit instruction before creating another session.
+Owner-authorized coordination and messages between a coordinator and its assigned workers
+remain allowed; decisions another session needs are recorded in the issue or PR.
+Only one maintainer session runs at a time; it holds `/tmp/verwalino-maintainer.lock`
+(a `mkdir`, with the PR number and start time in `info`) from its start to its cleanup.
+Check for a live holder before acquiring it; remove only your own inactive lock.
+The review worktree is detached on `origin/<branch>`, because the issue worktree holds the branch.
 
 ## Databases and containers
 

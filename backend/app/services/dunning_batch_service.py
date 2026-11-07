@@ -9,7 +9,7 @@ from fastapi import HTTPException
 from sqlalchemy import select, text
 
 from app.core.rbac import ScopeCapability
-from app.engine.dunning import DEFAULT_DUE_DAYS, DEFAULT_FEES, MAX_LEVEL
+from app.engine.dunning import DEFAULT_DUE_DAYS, MAX_LEVEL
 from app.models.dunning_batch import DunningBatch
 from app.models.dunning_notice import DunningNotice
 from app.repositories.lease_rent_change_repo import LeaseRentChangeRepository
@@ -37,8 +37,7 @@ class DunningBatchService:
         return dict(period_start=body.period_start, period_end=body.period_end,
             reference_date=body.reference_date, grace_days=body.grace_days,
             accounting_scope_id=body.accounting_scope_id,
-            override_fee=Decimal(body.override_fee) if body.override_fee is not None else None,
-            base_interest_rate=body.resolved_base_rate())
+            override_fee=Decimal(body.override_fee) if body.override_fee is not None else None)
 
     async def preview(self, body):
         args = self._arguments(body)
@@ -83,12 +82,14 @@ class DunningBatchService:
             })
             if len(candidates) > 500:
                 raise HTTPException(422, 'Dunning preview exceeds 500 candidates; narrow the accounting scope or period')
-        parameters = {key: value for key, value in body.model_dump(mode='json').items()
-            if key not in {'lease_agreement_ids', 'expected_source_digest', 'request_id'}}
+        parameters = body.model_dump(mode='json', exclude={
+            'lease_agreement_ids', 'expected_source_digest', 'request_id', 'base_interest_rate',
+        })
         return {'candidates': candidates, 'source_digest': _digest({
             'parameters': parameters, 'resolved_arguments': args,
             'scope': _row(sphere) if sphere is not None else None,
-            'defaults': {'fees': DEFAULT_FEES, 'due_days': DEFAULT_DUE_DAYS, 'max_level': MAX_LEVEL},
+            'terms': await self.dunning.terms(),
+            'defaults': {'due_days': DEFAULT_DUE_DAYS, 'max_level': MAX_LEVEL},
             'sources': sources, 'candidates': candidates,
         })}
 
@@ -111,14 +112,27 @@ class DunningBatchService:
         await self.context.financial.lock_inputs()
         await self.session.execute(text('SELECT pg_advisory_xact_lock(hashtextextended(:key,0))'),
             {'key': f'dunning-batch:{self.org_id}:{self.user_id}:{body.request_id}'})
-        payload = body.model_dump(mode='json')
-        payload['base_interest_rate_supplied'] = 'base_interest_rate' in body.model_fields_set
+        legacy_rate_supplied = 'base_interest_rate' in body.model_fields_set
+        payload = body.model_dump(mode='json', exclude={'base_interest_rate'})
         request_digest = _digest(payload)
         batch = await self.session.get(DunningBatch, (self.org_id, self.user_id, body.request_id))
         if batch is not None:
-            if batch.request_digest != request_digest:
+            # The old digest included the original decimal string and
+            # distinguished an explicit null from an absent field.
+            matching_digests = {_digest(dict(
+                payload, base_interest_rate=body.base_interest_rate,
+                base_interest_rate_supplied=legacy_rate_supplied,
+            ))}
+            if not legacy_rate_supplied:
+                matching_digests.add(request_digest)
+            if batch.request_digest not in matching_digests:
                 raise HTTPException(409, 'Request ID already used with a different payload')
             return await self._authorize_results(batch.result)
+        if legacy_rate_supplied:
+            raise HTTPException(422, {
+                'code': 'retired_base_interest_rate',
+                'message': 'Ein Basiszinssatz wird nur für die identische Wiederholung eines früheren Mahnlaufs akzeptiert.',
+            })
 
         preview = await self.preview(body)
         if preview['source_digest'] != body.expected_source_digest:

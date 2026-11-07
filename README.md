@@ -41,7 +41,8 @@ Screenshots show demo data.
 ## Features
 
 - **Access and organization:** login, user administration, admin/clerk/read-only
-  roles, password changes and session revocation, management mandates, and a
+  roles, password changes and session revocation, personal Klar/Warm design
+  settings, management mandates, and a
   dashboard with deadlines, due tasks, and monthly rent figures.
 - **Properties and units:** rental, WEG, SEV, and mixed properties; unit areas and
   co-ownership shares (MEA); meters and readings; CSV master-data import;
@@ -62,7 +63,7 @@ Screenshots show demo data.
 - **WEG:** economic plans and prior-year proposals, annual settlements and PDFs,
   paid owner contributions (Hausgeld), asset reports, special levies, day-accurate
   owner changes, meetings, minutes, resolution register, and invitation PDFs.
-- **Dunning, deadlines, tasks:** three dunning levels, fees and default interest,
+- **Dunning, deadlines, tasks:** three dunning levels, organization-specific fees and optional automatic default interest,
   selected draft batches, a derived deadline monitor, and tasks with follow-ups
   from property and unit pages and on the dashboard.
 - **Documents, communication, reports:** property/unit/person documents, letter

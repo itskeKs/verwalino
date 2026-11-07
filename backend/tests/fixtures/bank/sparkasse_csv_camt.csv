@@ -1,0 +1,3 @@
+"Auftragskonto";"Buchungstag";"Valutadatum";"Buchungstext";"Verwendungszweck";"Glaeubiger ID";"Mandatsreferenz";"Kundenreferenz (End-to-End)";"Sammlerreferenz";"Lastschrift Ursprungsbetrag";"Auslagenersatz Ruecklastschrift";"Beguenstigter/Zahlungspflichtiger";"Kontonummer/IBAN";"BIC (SWIFT-Code)";"Betrag";"Waehrung";"Info"
+"DE75512108001245126199";"07.04.26";"07.04.26";"GUTSCHR. UEBERWEISUNG";"Miete April";"";"";"NOTPROVIDED";"";"";"";"Anna Beispiel";"DE89370400440532013000";"COBADEFFXXX";"800,00";"EUR";"Umsatz gebucht"
+"DE75512108001245126199";"15.01.26";"15.01.26";"FOLGELASTSCHRIFT";"Abschlag Allgemeinstrom Musterstr 1";"DE98ZZZ09999999999";"MS-4711";"";"";"";"";"Stadtwerke Musterstadt";"DE02120300000000202051";"BYLADEM1001";"-60,00";"EUR";"Umsatz gebucht"

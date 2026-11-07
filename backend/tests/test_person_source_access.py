@@ -205,6 +205,9 @@ async def test_person_migration_keeps_custody_and_roundtrips_legacy_without_back
     engine=create_engine(MIGRATOR_SYNC_URL)
     try:
         with engine.begin() as db,Operations.context(MigrationContext.configure(db)):
+            # Allow transient autovacuum to finish before exercising the custody guard.
+            db.execute(text("SET LOCAL lock_timeout='5s'"))
+            db.execute(text('LOCK TABLE '+','.join(migration.TABLES)+' IN ACCESS EXCLUSIVE MODE'))
             assert db.scalar(text('SELECT created_by FROM person WHERE id=:id'),{'id':uuid.UUID(person)})==seed_data['user_a_admin_id']
             with pytest.raises(DBAPIError,match='Retain contact custody'):
                 with db.begin_nested(): migration.downgrade()

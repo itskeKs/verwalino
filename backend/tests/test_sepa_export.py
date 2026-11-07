@@ -89,6 +89,23 @@ async def configure(api, w):
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("mode,operating,heating", [
+    ("COMBINED", "240.00", "0.00"), ("SEPARATE", "150.00", "90.00"),
+])
+async def test_sepa_collects_the_same_total_in_both_advance_modes(sepa_world, mode, operating, heating):
+    w = sepa_world
+    async with api_client(w) as api:
+        await configure(api, w)
+        changed = await api.post(f"/api/leases/{w['lease']}/rent-changes", json={
+            'valid_from': '2026-10-01', 'base_rent': '750.00', 'advance_payment': operating,
+            'advance_mode': mode, 'heating_advance_payment': heating})
+        assert changed.status_code == 201, changed.text
+        response = await api.post('/api/payments/sepa/preview', json=export_body(w))
+        assert response.status_code == 200, response.text
+        assert response.json()['total'] == response.json()['rows'][0]['amount'] == '990.00'
+
+
+@pytest.mark.asyncio
 async def test_sepa_october_persisted_mandate_real_xsds_and_no_booking(sepa_world, rent_db):
     w = sepa_world
     async with api_client(w) as api:

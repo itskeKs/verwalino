@@ -10,7 +10,8 @@ Feature: Maintenance reserve ledger
   refunds, net of reversals), less the signed contributions already credited to the unit.
   Both totals are floored at zero before subtraction; direct reserve payments enter neither.
   Displayed headroom is at least zero; a negative raw headroom prevents computation and finalization.
-  Draft unit corrections can be reduced or deleted with a reason and retained reversal;
+  Draft unit corrections can be changed or deleted with a reason and retained counter-entry;
+  restoration cannot exceed the original correction or its currently booked backing.
   finalization freezes them. A positive remainder stays within its new booked limit.
 
   Scenario: Booked reserve contributions fund the annual reserve development
@@ -19,6 +20,12 @@ Feature: Maintenance reserve ledger
     And I finalize the WEG settlement with the reviewed ledger
     Then the reserve closing balance includes the cash contribution
     And the finalized reserve ledger remains unchanged
+
+  @browser
+  Scenario: A finalized asset report shows plain German reserve lines
+    Given a WEG with a finalized reserve plan and a booked reserve contribution
+    When I finalize an asset report with an opening of 3000 euros
+    Then the asset report shows four plain reserve labels and every amount in German format on desktop and mobile
 
   @browser
   Scenario: Late closed-year cash is visible in the next open reserve period
@@ -64,6 +71,18 @@ Feature: Maintenance reserve ledger
     When I correct the unit contribution by 300 euros
     Then only 200 euros remain assignable and a further 300 euros is refused
 
+  Scenario: An accidentally reduced unit correction can be restored within its original amount
+    Given a WEG with partially assigned Hausgeld and a finalized reserve plan
+    When I correct the unit contribution by 300 euros
+    And I reduce the correction to 100 euros and restore it with a reason
+    Then the correction is 300 euros and both counter-entries remain visible
+
+  @browser
+  Scenario: Restoring a contribution correction retains its history on desktop and mobile
+    Given a WEG with partially assigned Hausgeld and a finalized reserve plan
+    When I correct the unit contribution by 300 euros
+    Then I can restore an accidental reduction and see when nothing remains to delete on both reserve pages
+
   Scenario: A positive adjustment only reduces existing receipt withdrawals
     Given a WEG with a finalized reserve plan and a booked reserve contribution
     When I correct a receipt without withdrawals by plus one euro
@@ -96,3 +115,27 @@ Feature: Maintenance reserve ledger
     Given a WEG with partially assigned Hausgeld and a finalized reserve plan
     When I correct the unit contribution by 300 euros
     Then reducing and deleting the contribution correction remains usable on both reserve pages
+
+  Scenario: Removing an accidentally opened empty year permits the first real reserve import
+    Given an empty asset report for 2020 precedes the first real report for 2025
+    When I delete the accidentally opened 2020 draft
+    Then the 2020 report disappears and I can import 12500 euros for 2025 with a reason
+
+  @browser
+  Scenario: An unbacked contribution correction explains how to delete it
+    Given a WEG with partially assigned Hausgeld and a finalized reserve plan
+    When I correct the unit contribution by 300 euros
+    And the backing Hausgeld is reversed
+    Then keeping 100 euros directs me to delete the correction on desktop and mobile
+
+  Scenario: A retained repayment recipient remains identifiable after a deletion request
+    Given a retained repayment to Anna and an incidental 300 euro reserve note about Eva
+    When I request deletion of the actual repayment recipient Anna
+    Then Anna remains identifiable and the repayment evidence and reserve rows stay unchanged
+    And the complete finalized statement and its original digest remain identical
+
+  Scenario: Erasing an unbound incidental contact cleans only the reserve reason copies
+    Given a retained repayment to Anna and an incidental 300 euro reserve note about Eva
+    When I request deletion of the genuinely unbound incidental contact Eva
+    Then only Eva is removed from the live reserve reason and its exact audit copy for 300 euros
+    And the complete finalized statement and its original digest remain identical

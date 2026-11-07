@@ -82,6 +82,7 @@ class PropertyOut(BaseModel):
     city: str
     management_type: str
     fiscal_year_start_month: int
+    federal_state: str | None
     construction_year: int | None
     total_area: str | None
     mea_denominator: int | None
@@ -201,6 +202,8 @@ async def update_property(
         if val is not None:
             setattr(prop, field, val)
 
+    if "federal_state" in body.model_fields_set:
+        prop.federal_state = body.federal_state
     if "construction_year" in body.model_fields_set:
         prop.construction_year = body.construction_year
     if "total_area" in body.model_fields_set:
@@ -282,6 +285,7 @@ def _to_out(p: Property) -> PropertyOut:
         city=p.city,
         management_type=p.management_type,
         fiscal_year_start_month=p.fiscal_year_start_month,
+        federal_state=p.federal_state,
         construction_year=p.construction_year,
         total_area=format(p.total_area, ".2f") if p.total_area is not None else None,
         mea_denominator=p.mea_denominator,

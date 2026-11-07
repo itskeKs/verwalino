@@ -28,8 +28,11 @@ async def require_live_principal(db: AsyncSession, auth: AuthContext, *, writer:
 
 async def get_live_writer_db(
     auth: AuthContext = Depends(require_write_dep),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
 ) -> AsyncSession:
+    # Scope belongs on the inner yielding dependency: finish the transaction
+    # before response.start, including failures at commit. Outer scope alone
+    # does not move get_db's request-scoped cleanup.
     await require_live_principal(db, auth, writer=True)
     return db
 
@@ -47,7 +50,7 @@ async def get_live_review_db(auth: AuthContext = Depends(require_write_dep)):
 
 async def get_live_publication_db(
     auth: AuthContext = Depends(require_write_dep),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
 ) -> AsyncSession:
     # Publication may create grants; acquire exclusive BEFORE any shared ACL or
     # source row locks to avoid concurrent shared-to-exclusive upgrade deadlocks.
@@ -65,7 +68,7 @@ async def get_live_member_db(
 
 async def get_live_admin_db(
     auth: AuthContext = Depends(require_admin_dep),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
 ) -> AsyncSession:
     await require_live_principal(db, auth, writer=False, administrator=True)
     return db

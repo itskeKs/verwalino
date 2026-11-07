@@ -7,7 +7,6 @@ export interface DunningBatchInput {
   reference_date: string;
   threshold: string;
   grace_days: number;
-  base_interest_rate: string | null;
   accounting_scope_id?: string;
 }
 

@@ -10,8 +10,38 @@ from tests.test_property_source_access import grant
 from tests.test_property_source_enforcement import synthetic_enforcement, change_mode
 from tests.test_scoped_account_statements import mutate
 from tests.contact_source_fixtures import grant_property_contacts
+from tests.test_invoice_extraction_worker import worker_tenant  # noqa: F401
 
 pytestmark = pytest.mark.asyncio
+
+
+async def test_delete_metadata_preserves_pristine_visibility_without_disclosing_hidden_results(worker_tenant):
+    from tests.test_reserve_ledger import reserve_world, finalize
+    from tests.test_weg_draft_deletion import asset_draft
+    from tests.financial_coverage_helpers import attest_fixture
+    api, seed = worker_tenant
+    w = await reserve_world(api, seed)
+    frozen = w['run']
+    await finalize(api, w)
+    computed = await asset_draft(api, w, 2025)
+    values = {'bank_balances': [{'bank_account_id': w[key], 'label': key, 'account_type': kind, 'balance': '0.00'}
+        for key, kind in [('bank_giro', 'LAUFEND'), ('bank_ruecklage', 'RUECKLAGE')]], 'receivables': [], 'payables': []}
+    await attest_fixture(api, 'settlement', computed, values)
+    response = await api.post(f'/api/weg-settlements/asset-reports/{computed}/compute', json=values)
+    assert response.status_code == 200, response.text
+    pristine = await asset_draft(api, w, 2026)
+    for run in (frozen, computed, pristine):
+        await bind_output(seed, w['property'], run, kind='settlement_run', linked_plan=w['plan'] if run == frozen else None)
+    async with synthetic_enforcement(seed):
+        async with get_tenant_session(seed['org_a_id']) as db:
+            await db.execute(text("SELECT set_config('app.current_user_id',:actor,true)"), {'actor': str(seed['user_a_admin_id'])})
+            for run, visible, reason in (
+                (pristine, 1, 'SETTLEMENT_DELETE_SOURCE_ACCESS_REQUIRED'),
+                (frozen, 0, 'NOT_FOUND'), (computed, 0, 'NOT_FOUND'), (str(uuid.uuid4()), 0, 'NOT_FOUND'),
+            ):
+                args = {'org': seed['org_a_id'], 'run': uuid.UUID(run)}
+                assert await db.scalar(text('SELECT count(*) FROM settlement_run WHERE id=:run'), args) == visible
+                assert await db.scalar(text('SELECT weg_draft_delete_reason(:org,:run)'), args) == reason
 
 
 async def bind_output(seed, property_id, subject, *, kind='economic_plan', scope_type='WEG', linked_plan=None, caps=None):
@@ -93,7 +123,7 @@ async def test_saved_plan_rows_and_pdf_require_current_source_access(client_a_ad
 
 async def test_saved_rental_sources_cannot_be_read_from_raw_child_rows(client_a_admin, seed_data, m3_seed):
     run = await draft(client_a_admin, m3_seed, '0.00')
-    values = {'advance_payments_total':'0.00','advance_payments_source':'MANUAL'}
+    values = {'heating_advance_payments_total': '0.00', 'heating_advance_payments_source': 'MANUAL', 'advance_payments_total':'0.00','advance_payments_source':'MANUAL'}
     assert (await attest(client_a_admin, 'settlement', run, values)).status_code == 201
     result = await client_a_admin.post(f'/api/settlements/{run}/finalize', json=_extras_for_exit(m3_seed))
     assert result.status_code == 200, result.text
@@ -113,7 +143,7 @@ async def test_each_pdf_family_checks_source_export_before_render(client_a_admin
         property_id = m3_seed['property']
         endpoint = '/api/settlements'
         subject = await draft(client_a_admin, m3_seed, '0.00')
-        values = {'advance_payments_total':'0.00','advance_payments_source':'MANUAL'}
+        values = {'heating_advance_payments_total': '0.00', 'heating_advance_payments_source': 'MANUAL', 'advance_payments_total':'0.00','advance_payments_source':'MANUAL'}
         final_values = _extras_for_exit(m3_seed)
         renderer = 'app.api.settlements.render_settlement_pdf'
     else:
@@ -157,13 +187,18 @@ async def test_each_pdf_family_checks_source_export_before_render(client_a_admin
     finally: await clear_disclosure_grants()
 
 
-async def test_disclosure_migration_retains_strict_state_and_roundtrips(seed_data):
+async def test_disclosure_migration_retains_strict_state_and_roundtrips(seed_data, client_a_admin):
     import importlib
     from sqlalchemy import create_engine
     from sqlalchemy.exc import DBAPIError
     from alembic.migration import MigrationContext
     from alembic.operations import Operations
     from tests.conftest import MIGRATOR_SYNC_URL
+    from tests.commercial_preallocation_support import commercial_property, commercial_rule
+    commercial = await commercial_property(client_a_admin)
+    response = await client_a_admin.post(f"/api/settlements/{commercial['rows'][0]['run']['id']}/compute",
+        json={'commercial_preallocations': [commercial_rule(commercial)]})
+    assert response.status_code == 200, response.text
     migration = importlib.import_module('migrations.versions.0060_financial_source_disclosure')
     engine = create_engine(MIGRATOR_SYNC_URL)
     try:
@@ -173,19 +208,26 @@ async def test_disclosure_migration_retains_strict_state_and_roundtrips(seed_dat
                     with db.begin_nested(): migration.downgrade()
                 savepoint = db.begin_nested()
                 try:
-                    # Preserve later reserve rows; detach/recreate only the policies
+                    # Preserve later reserve/commercial rows; detach/recreate only the policies
                     # that reference this historical function, within this savepoint.
-                    reserve_policies = db.execute(text("SELECT policyname,cmd,qual,with_check FROM pg_policies WHERE tablename='reserve_ledger_entry' ORDER BY policyname")).all()
-                    for name, *_ in reserve_policies:
-                        db.execute(text(f'DROP POLICY {name} ON reserve_ledger_entry'))
+                    later_tables = ('reserve_ledger_entry', 'commercial_preallocation')
+                    rows = {table: db.execute(text(f'SELECT * FROM {table} ORDER BY id')).all() for table in later_tables}
+                    assert any(row.cost_entry_id == uuid.UUID(commercial['cost']['id']) for row in rows['commercial_preallocation'])
+                    policy_query = text("SELECT tablename,policyname,permissive,roles,cmd,qual,with_check FROM pg_policies WHERE schemaname='public' AND tablename IN ('reserve_ledger_entry','commercial_preallocation') ORDER BY tablename,policyname")
+                    later_policies = db.execute(policy_query).all()
+                    for table, name, *_ in later_policies:
+                        db.execute(text(f'DROP POLICY {name} ON {table}'))
                     db.execute(text('TRUNCATE property_source_security'))
                     migration.downgrade()
                     assert db.scalar(text("SELECT to_regprocedure('property_financial_disclosure_access(uuid,uuid,text)')")) is None
                     migration.upgrade()
-                    for name, command, using, check in reserve_policies:
+                    for table, name, permissive, roles, command, using, check in later_policies:
                         clauses = (f' USING ({using})' if using else '') + (f' WITH CHECK ({check})' if check else '')
-                        db.execute(text(f'CREATE POLICY {name} ON reserve_ledger_entry FOR {command}{clauses}'))
-                    assert db.execute(text("SELECT policyname,cmd,qual,with_check FROM pg_policies WHERE tablename='reserve_ledger_entry' ORDER BY policyname")).all() == reserve_policies
+                        role_list = ','.join(db.dialect.identifier_preparer.quote(role) for role in roles)
+                        db.execute(text(f'CREATE POLICY {name} ON {table} AS {permissive} FOR {command} TO {role_list}{clauses}'))
+                    assert db.execute(policy_query).all() == later_policies
+                    for table in later_tables:
+                        assert db.execute(text(f'SELECT * FROM {table} ORDER BY id')).all() == rows[table]
                     assert db.scalar(text("SELECT count(*) FROM pg_policy WHERE polname='financial_source_disclosure' AND NOT polpermissive")) == 5
                     assert not db.scalar(text("SELECT has_function_privilege('app_rw','property_complete_graph_actor_access(uuid,uuid,uuid,text,boolean)','EXECUTE')"))
                     for function in ['property_complete_graph_actor_access(uuid,uuid,uuid,text,boolean)',

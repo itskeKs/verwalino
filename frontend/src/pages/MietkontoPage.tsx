@@ -2,10 +2,12 @@
  * Mietkonto page -- Soll/Ist/Saldo + offene Posten per lease or owner.
  *
  * M6 Mietkonto: select a lease or owner, date range, then view the
- * account statement. Rueckstand (open debt) shown in red, Guthaben in green.
+ * account statement. Only the due balance is labelled as arrears.
  */
 
 import { useEffect, useState, useCallback } from "react";
+import { Link } from "react-router-dom";
+import { formatEuro } from "../lib/utils";
 import {
   listLeases,
   listTenantProfiles,
@@ -24,7 +26,8 @@ import type {
   Person,
   Unit,
   Property,
-  MietkontoResult,
+  OwnerMietkontoResult,
+  TenantMietkontoResult,
   EconomicPlan,
 } from "../api/types";
 import { AccountingScopeSelector } from "../components/AccountingScopeSelector";
@@ -32,7 +35,7 @@ import { ApiError } from "../api/client";
 
 const PAYMENT_TYPE_LABELS: Record<string, string> = {
   KALTMIETE: "Kaltmiete",
-  NK_VORAUSZAHLUNG: "NK-Vorauszahlung",
+  NK_VORAUSZAHLUNG: "Betriebskosten-Vorauszahlung", HK_VORAUSZAHLUNG: "Heizkosten-Vorauszahlung",
   KAUTION: "Kaution",
   HAUSGELD_VORSCHUSS: "Hausgeld-Vorschuss",
   RUECKLAGENANTEIL: "Ruecklagenanteil",
@@ -64,9 +67,13 @@ export function MietkontoPage() {
   const currentYear = new Date().getFullYear();
   const [periodStart, setPeriodStart] = useState(`${currentYear}-01-01`);
   const [periodEnd, setPeriodEnd] = useState(`${currentYear}-12-31`);
+  const [asOf, setAsOf] = useState(() => {
+    const today = new Date();
+    return `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, "0")}-${String(today.getDate()).padStart(2, "0")}`;
+  });
 
   // Result
-  const [result, setResult] = useState<MietkontoResult | null>(null);
+  const [result, setResult] = useState<OwnerMietkontoResult | TenantMietkontoResult | null>(null);
   const [querying, setQuerying] = useState(false);
 
   const loadLookups = useCallback(() => {
@@ -129,13 +136,14 @@ export function MietkontoPage() {
     if (viewMode === "lease" && !selectedLeaseId) return;
     if (viewMode === "owner" && !selectedOwnerId) return;
     if (!periodStart || !periodEnd) return;
+    if (!asOf) return;
 
     setQuerying(true);
     setError(null);
     setResult(null);
     try {
       if (viewMode === "lease") {
-        const r = await leaseStatement(selectedLeaseId, periodStart, periodEnd, scopeId || undefined);
+        const r = await leaseStatement(selectedLeaseId, periodStart, periodEnd, scopeId || undefined, asOf);
         setResult(r);
       } else {
         const r = await ownerStatement(
@@ -144,6 +152,7 @@ export function MietkontoPage() {
           periodEnd,
           selectedPlanId || undefined,
           scopeId || undefined,
+          asOf,
         );
         setResult(r);
       }
@@ -183,7 +192,7 @@ export function MietkontoPage() {
       {/* Selection form */}
       <div className="card" style={{ marginBottom: "1.5rem" }}>
         <h2>Kontoauszug abrufen</h2>
-        <fieldset disabled={querying} className="form-grid" style={{ border: 0, padding: 0, margin: 0, minWidth: 0 }} onChangeCapture={() => { setResult(null); setError(null); }}>
+        <fieldset disabled={querying} className="form-grid [&>*]:min-w-0 [&_input]:min-w-0 [&_select]:min-w-0" style={{ border: 0, padding: 0, margin: 0, minWidth: 0 }} onChangeCapture={() => { setResult(null); setError(null); }}>
           <label>
             Ansicht
             <select
@@ -280,6 +289,11 @@ export function MietkontoPage() {
             />
           </label>
 
+          <label>
+            Fällig am *
+            <input type="date" required value={asOf} onChange={(e) => setAsOf(e.target.value)} />
+          </label>
+
           <div className="form-actions">
             <button
               className="btn btn--primary"
@@ -321,14 +335,28 @@ export function MietkontoPage() {
                     fontFamily: "var(--mono)",
                     fontWeight: 700,
                     fontSize: "1.05rem",
-                    color: balanceColor(result.balance),
+                    color: parseFloat(result.balance) > 0 ? undefined : balanceColor(result.balance),
                   }}
                 >
                   {result.balance} EUR
-                  {parseFloat(result.balance) > 0 && " (Rueckstand)"}
                   {parseFloat(result.balance) < 0 && " (Guthaben)"}
                 </td>
               </tr>
+              {"due_balance" in result && <>
+                <tr>
+                  <td>davon fällig</td>
+                  <td className={parseFloat(result.due_balance) > 0 ? "text-destructive" : parseFloat(result.due_balance) < 0 ? "text-emerald-700" : undefined}
+                    style={{ fontFamily: "var(--mono)" }}>
+                    {result.due_balance} EUR
+                    {parseFloat(result.due_balance) > 0 && " (Rückstand)"}
+                    {parseFloat(result.due_balance) < 0 && " (Guthaben)"}
+                  </td>
+                </tr>
+                <tr>
+                  <td>noch nicht fällig</td>
+                  <td style={{ fontFamily: "var(--mono)" }}>{result.not_yet_due_balance} EUR</td>
+                </tr>
+              </>}
             </tbody>
           </table>
 
@@ -352,12 +380,20 @@ export function MietkontoPage() {
                   {result.open_items.map((item, idx) => (
                     <tr key={idx}>
                       <td>
-                        {item.period_year
+                        <span>{item.period_year
                           ? `${item.period_year}${item.period_month ? "/" + String(item.period_month).padStart(2, "0") : ""}`
-                          : "-"}
+                          : "-"}</span>
+                        {"is_due" in item && <span className="block text-xs text-muted-foreground">
+                          {Number(item.open_amount) === 0 ? "ausgeglichen" : item.is_due ? "fällig" : "noch nicht fällig"}
+                        </span>}
+                        {"due_date" in item && item.due_date && <span className="block text-xs text-muted-foreground">
+                          Fällig am {item.due_date.split("-").reverse().join(".")}
+                        </span>}
                       </td>
                       <td>
-                        {PAYMENT_TYPE_LABELS[item.payment_type] ?? item.payment_type}
+                        {"combined_advance" in item && item.combined_advance
+                          ? "Betriebskosten-Vorauszahlung inkl. Heizkosten"
+                          : PAYMENT_TYPE_LABELS[item.payment_type] ?? item.payment_type}
                       </td>
                       <td style={{ textAlign: "right", fontFamily: "var(--mono)" }}>
                         {item.soll} EUR
@@ -370,7 +406,7 @@ export function MietkontoPage() {
                           textAlign: "right",
                           fontFamily: "var(--mono)",
                           fontWeight: 600,
-                          color: openAmountColor(item.open_amount),
+                          color: parseFloat(item.open_amount) > 0 ? undefined : openAmountColor(item.open_amount),
                         }}
                       >
                         {item.open_amount} EUR
@@ -380,6 +416,27 @@ export function MietkontoPage() {
                 </tbody>
               </table>
             </div>
+          )}
+          {"dunning_notices" in result && result.dunning_notices.length > 0 && (
+            <section className="mt-4">
+              <h3>Ausgestellte Mahnungen</h3>
+              <p className="form-hint">Gebühren und Verzugszinsen dienen hier der Information. Soll, Ist und Saldo bleiben davon unberührt.</p>
+              <div className="overflow-x-auto"><table className="data-table [&_th]:!px-1.5 [&_td]:!px-1.5">
+                <thead><tr><th>Mahnung</th><th>Mahngebühr</th><th>Verzugszinsen</th></tr></thead>
+                <tbody>{result.dunning_notices.map(notice => (
+                  <tr key={notice.id}>
+                    <td><Link to={`/mahnungen/${notice.id}`}>{notice.issue_date.split("-").reverse().join(".")}<br />Stufe {notice.level}</Link></td>
+                    <td className="whitespace-nowrap">{formatEuro(notice.fee_amount)}</td>
+                    <td className="whitespace-nowrap">{formatEuro(notice.interest_amount)}</td>
+                  </tr>
+                ))}</tbody>
+              </table></div>
+            </section>
+          )}
+          {"dunning_notices" in result && scopeId === null && (
+            <p className="form-hint mt-4">
+              Ältere Mahnungen ohne Vertragszuordnung finden Sie unter <Link to="/mahnungen" className="underline">Mahnungen</Link>.
+            </p>
           )}
         </div>
       )}

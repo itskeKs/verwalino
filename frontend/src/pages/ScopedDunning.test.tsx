@@ -19,7 +19,7 @@ const notice = { id: "notice", accounting_scope_id: "scope", tenant_profile_id: 
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); vi.restoreAllMocks(); });
 beforeEach(() => {
   vi.resetAllMocks();
-  vi.mocked(endpoints.getDunningSettings).mockResolvedValue({ base_interest_rate: "2.50" });
+  vi.mocked(endpoints.getDunningSettings).mockResolvedValue({ fee_level_1: "0.00", fee_level_2: "2.50", fee_level_3: "2.50", default_interest_enabled: false });
   vi.mocked(endpoints.listProperties).mockResolvedValue([{ id: "property", name: "Sonnenhof", management_type: "WEG" }] as never);
   const resolved = (name: "listLeases" | "listTenantProfiles" | "listOwnerProfiles" | "listPersons" | "listUnits" | "listEconomicPlans" | "listDunningNotices", value: unknown) => vi.mocked(endpoints[name]).mockResolvedValue(value as never);
   resolved("listLeases", [{ id: "lease", unit_id: "unit", tenant_profile_id: "tenant", valid_from: "2025-01-01" }, { id: "other", unit_id: "unit", tenant_profile_id: "tenant", valid_from: "2025-02-01" }]);
@@ -44,15 +44,23 @@ it("preserves and displays the open-items scope, retains it after an error, and 
   const selector = await screen.findByRole("combobox", { name: "Abrechnungskreis" });
   await waitFor(() => expect(selector).toHaveValue("scope"));
   await waitFor(() => expect(screen.getByRole("button", { name: "Mahnung erstellen" })).toBeEnabled());
+  for (const invalid of ["abc", "2.500"]) {
+    fireEvent.change(screen.getByLabelText("Mahngebuehr (Override)"), { target: { value: invalid } });
+    fireEvent.click(screen.getByRole("button", { name: "Mahnung erstellen" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("Mahngebühr: Bitte einen Betrag wie 0,00 eingeben.");
+    expect(screen.getByLabelText("Mahngebuehr (Override)")).toHaveValue(invalid);
+    expect(endpoints.createDunningForTenant).not.toHaveBeenCalled();
+  }
+  fireEvent.change(screen.getByLabelText("Mahngebuehr (Override)"), { target: { value: "0,00" } });
   fireEvent.click(screen.getByRole("button", { name: "Mahnung erstellen" }));
-  await screen.findByText("Review history");
-  expect(endpoints.createDunningForTenant).toHaveBeenCalledWith(expect.objectContaining({ accounting_scope_id: "scope", lease_agreement_id: "lease", period_start: "2025-01-01" }));
+  expect(await screen.findByRole("alert")).toHaveTextContent("Review history");
+  expect(endpoints.createDunningForTenant).toHaveBeenCalledWith(expect.objectContaining({ accounting_scope_id: "scope", lease_agreement_id: "lease", period_start: "2025-01-01", override_fee: "0.00" }));
   expect(selector).toHaveValue("scope");
   fireEvent.change(screen.getByLabelText("Mietvertrag *"), { target: { value: "other" } });
   expect(screen.getByRole("combobox", { name: "Abrechnungskreis" })).toHaveValue("");
 });
 
-it("passes the explicit owner plan and WEG preparation scope", async () => {
+it("passes the owner plan and WEG scope and announces a refused submission", async () => {
   vi.mocked(endpoints.createDunningForOwner).mockRejectedValue(new ApiError(422, "Plan not finalized"));
   render(<MemoryRouter><DunningNoticesPage /></MemoryRouter>);
   await screen.findByText("Keine Mahnungen vorhanden.");
@@ -62,9 +70,11 @@ it("passes the explicit owner plan and WEG preparation scope", async () => {
   fireEvent.change(screen.getByLabelText("Wirtschaftsplan"), { target: { value: "plan" } });
   await screen.findByRole("option", { name: /Mietkreis · WEG/ });
   fireEvent.change(screen.getByRole("combobox", { name: "Abrechnungskreis" }), { target: { value: "scope" } });
+  fireEvent.change(screen.getByLabelText("Mahngebuehr (Override)"), { target: { value: "0,00" } });
   fireEvent.click(screen.getByRole("button", { name: "Mahnung erstellen" }));
-  await screen.findByText("Plan not finalized");
-  expect(endpoints.createDunningForOwner).toHaveBeenCalledWith(expect.objectContaining({ accounting_scope_id: "scope", economic_plan_id: "plan", owner_profile_id: "owner" }));
+  expect(await screen.findByRole("alert")).toHaveTextContent("Plan not finalized");
+  expect(screen.getByRole("combobox", { name: "Abrechnungskreis" })).toHaveValue("scope");
+  expect(endpoints.createDunningForOwner).toHaveBeenCalledWith(expect.objectContaining({ accounting_scope_id: "scope", economic_plan_id: "plan", owner_profile_id: "owner", override_fee: "0.00" }));
 });
 
 it("does not present unavailable notices as an empty result and offers retry", async () => {

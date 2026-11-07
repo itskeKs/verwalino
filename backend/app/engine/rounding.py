@@ -45,9 +45,14 @@ from __future__ import annotations
 
 from calendar import monthrange
 from datetime import date
-from decimal import Decimal, ROUND_FLOOR
+from decimal import Decimal, ROUND_FLOOR, ROUND_HALF_UP
+from fractions import Fraction
 
 CENT = Decimal("0.01")
+
+
+def round_money(value: Decimal) -> Decimal:
+    return value.quantize(CENT, rounding=ROUND_HALF_UP)
 
 
 class DistributionError(ValueError):
@@ -59,8 +64,11 @@ class DistributionError(ValueError):
     """
 
 
-def _floor_to_cent(value: Decimal) -> Decimal:
-    """Floor a Decimal to 2 places toward -inf (see module docstring)."""
+def _floor_to_cent(value: Decimal | Fraction) -> Decimal:
+    """Floor a Decimal or exact fraction to cents toward -inf (see module docstring)."""
+    if isinstance(value, Fraction):
+        cents = value * 100
+        return Decimal(cents.numerator // cents.denominator) * CENT
     return value.quantize(CENT, rounding=ROUND_FLOOR)
 
 
@@ -111,7 +119,8 @@ def annual_advance_share_for_period(
         return Decimal("0.00")
     total = total.quantize(CENT)
     count = end.month - start.month + 1
-    monthly = _floor_to_cent(total / count)
+    # Round the magnitude down so a negative total cannot leave a positive remainder.
+    monthly = _floor_to_cent(abs(total) / count).copy_sign(total)
     result = Decimal("0.00")
     for month in range(start.month, end.month + 1):
         share = total - monthly * (count - 1) if month == end.month else monthly
@@ -120,9 +129,34 @@ def annual_advance_share_for_period(
     return result
 
 
+def advance_attributions_through(
+    net_credit: Decimal, offset_credit: Decimal, *,
+    combined: Decimal, unallocated: Decimal, operating: Decimal,
+) -> tuple[Decimal, Decimal]:
+    """Split a cumulative bucket credit into combined and unallocated amounts.
+
+    Opposite signs offset by the same cumulative amount. Within each sign,
+    split the rounded credit in fixed order so each share grows monotonically
+    and adjacent windows telescope to the original booked amounts.
+    """
+    def portion(credit: Decimal, booked: Decimal, weight: Decimal) -> Decimal:
+        return _floor_to_cent(Fraction(credit) * Fraction(weight) / Fraction(booked)) if booked else Decimal("0.00")
+
+    combined_credit = unallocated_credit = Decimal("0.00")
+    for sign in (1, -1):
+        available = offset_credit + max(Decimal("0.00"), net_credit * sign)
+        unallocated_weight = max(Decimal("0.00"), unallocated * sign)
+        combined_weight = max(Decimal("0.00"), combined * sign)
+        named_weight = combined_weight + max(Decimal("0.00"), operating * sign)
+        unallocated_part = portion(available, named_weight + unallocated_weight, unallocated_weight)
+        unallocated_credit += sign * unallocated_part
+        combined_credit += sign * portion(available - unallocated_part, named_weight, combined_weight)
+    return combined_credit, unallocated_credit
+
+
 def distribute_amount(
     total: Decimal,
-    weights: list[Decimal],
+    weights: list[Decimal | Fraction],
 ) -> list[Decimal]:
     """Distribute `total` (cent-exact) over `weights` via Largest-Remainder.
 
@@ -146,7 +180,12 @@ def distribute_amount(
     if n == 0:
         raise DistributionError("distribute_amount: empty weight vector")
 
-    weight_sum = Decimal(0)
+    # Rational heating weights must remain exact through remainder ranking.
+    # Decimal-only callers retain their existing calculation path.
+    rational = any(isinstance(w, Fraction) for w in weights)
+    if rational:
+        weights = [Fraction(w) for w in weights]
+    weight_sum = Fraction(0) if rational else Decimal(0)
     for i, w in enumerate(weights):
         if w < 0:
             raise DistributionError(
@@ -167,10 +206,10 @@ def distribute_amount(
         return [total]
 
     # Step 1 + 2: exact shares and their floors.
-    exact_shares: list[Decimal] = []
+    exact_shares: list[Decimal | Fraction] = []
     floors: list[Decimal] = []
     for w in weights:
-        e = (total * w) / weight_sum
+        e = (Fraction(total) * w if rational else total * w) / weight_sum
         exact_shares.append(e)
         floors.append(_floor_to_cent(e))
 
@@ -197,7 +236,7 @@ def distribute_amount(
     # Step 4 + 5: rank indices by largest fractional remainder, tie-broken by
     # larger exact share, then by stable input order (index). We sort a list
     # of indices; Python's sort is stable, so equal keys keep input order.
-    fractional = [exact_shares[i] - floors[i] for i in range(n)]
+    fractional = [exact_shares[i] - (Fraction(floors[i]) if rational else floors[i]) for i in range(n)]
     order = sorted(
         range(n),
         key=lambda i: (fractional[i], exact_shares[i]),

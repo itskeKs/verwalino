@@ -23,8 +23,9 @@ class Kind:
 PROPERTY = Kind("property", "properties", "/api/properties", "name", "PUT")
 PERSON = Kind("person", "persons", "/api/persons", "last_name", "PUT")
 BANK_ACCOUNT = Kind("bank account", "bank accounts", "/api/bank-accounts", "label", "PATCH")
+UNIT = Kind("unit", "units", "/api/units", "number", "PUT")
 
-KINDS = (PROPERTY, PERSON, BANK_ACCOUNT)
+KINDS = (PROPERTY, PERSON, BANK_ACCOUNT, UNIT)
 
 
 def kind_named(word: str) -> Kind:
@@ -61,6 +62,14 @@ def create_person(world: World, organization: str, name: str) -> Record:
     client = world.administrator_of(organization)
     record = _create(world, client, PERSON, {"last_name": name}, organization)
     world.records[(organization, PERSON.singular)] = record
+    return record
+
+
+def create_unit(world: World, organization: str, number: str, *, property_id: str) -> Record:
+    client = world.administrator_of(organization)
+    payload = {"property_id": property_id, "number": number, "usage_type": "WOHNUNG"}
+    record = _create(world, client, UNIT, payload, organization)
+    world.records[(organization, UNIT.singular)] = record
     return record
 
 

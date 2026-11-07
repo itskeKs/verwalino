@@ -28,11 +28,11 @@ from tests.financial_coverage_helpers import attest_fixture
 pytestmark = pytest.mark.asyncio
 
 
-def api_client(world, actor="admin", *, foreign=False):
+def api_client(world, actor="admin", *, foreign=False, raise_app_exceptions=True):
     org = world["foreign_org"] if foreign else world["org"]
     user = world["foreign_admin"] if foreign else world[actor]
     return httpx.AsyncClient(
-        transport=httpx.ASGITransport(app=app), base_url="http://test",
+        transport=httpx.ASGITransport(app=app, raise_app_exceptions=raise_app_exceptions), base_url="http://test",
         cookies={settings.session_cookie_name: create_session_token(user, org)},
     )
 
@@ -138,6 +138,55 @@ async def test_empty_history_for_existing_lease(rent_world):
         response = await api.get(history_url(rent_world))
     assert response.status_code == 200, response.text
     assert response.json() == []
+
+
+async def test_heating_advance_is_preserved_in_history_and_foreign_mutations_are_refused(rent_world):
+    w = rent_world
+    async with api_client(w) as api:
+        response = await api.patch(f"/api/leases/{w['lease']}", json={'heating_advance_payment': '90.00'})
+        assert response.status_code == 200, response.text
+        assert response.json()['heating_advance_payment'] == '90.00'
+        response = await api.post(history_url(w), json={**change(), 'heating_advance_payment': '100.00'})
+        assert response.status_code == 201, response.text
+        assert response.json()['heating_advance_payment'] == '100.00'
+        response = await api.patch(f"/api/leases/{w['foreign_lease']}", json={'heating_advance_payment': '999.00'})
+        assert response.status_code == 404
+        response = await api.post(history_url(w, 'foreign_lease'), json={**change(), 'heating_advance_payment': '999.00'})
+        assert response.status_code == 404
+
+
+async def test_index_and_staffel_preserve_both_effective_advances(rent_world):
+    async with api_client(rent_world) as api:
+        response = await api.patch(f"/api/leases/{rent_world['lease']}", json={'heating_advance_payment': '90.00'})
+        assert response.status_code == 200, response.text
+        url = history_url(rent_world)
+        response = await api.post(url + '/index/preview', json=index_body())
+        assert response.status_code == 200, response.text
+        preview = response.json()
+        assert preview['heating_advance_payment'] == '90.00'
+        adopted = await api.post(url + '/index', json=index_adopt(preview))
+        assert adopted.status_code == 201, adopted.text
+        assert (adopted.json()['advance_payment'], adopted.json()['heating_advance_payment']) == ('150.00', '90.00')
+        response = await api.post(url + '/staffel', json={'staffel_start_date': '2028-01-01',
+            'staffel_increase_amount': '20.00', 'staffel_interval_months': 12, 'staffel_steps': 2})
+        assert response.status_code == 201, response.text
+        assert all((row['advance_payment'], row['heating_advance_payment']) == ('150.00', '90.00') for row in response.json())
+
+
+async def test_omitting_heating_from_a_rent_change_preserves_the_effective_rate(rent_world):
+    async with api_client(rent_world) as api:
+        response = await api.patch(f"/api/leases/{rent_world['lease']}", json={'heating_advance_payment': '90.00'})
+        assert response.status_code == 200, response.text
+        response = await api.post(history_url(rent_world), json=change())
+        assert response.status_code == 201, response.text
+        assert response.json()['heating_advance_payment'] == '90.00'
+
+
+@pytest.mark.parametrize('amount', ['-0.01', 'NaN', 'Infinity', '0.001'])
+async def test_heating_advance_rejects_nonfinite_negative_and_subcent_amounts(rent_world, amount):
+    async with api_client(rent_world) as api:
+        assert (await api.patch(f"/api/leases/{rent_world['lease']}", json={'heating_advance_payment': amount})).status_code == 422
+        assert (await api.post(history_url(rent_world), json={**change(), 'heating_advance_payment': amount})).status_code == 422
 
 
 async def test_history_sorted_persistent_after_new_request_and_original_unchanged(rent_world, rent_db):
@@ -318,7 +367,7 @@ async def test_concurrent_duplicate_has_exactly_one_created_row(rent_world, rent
           AND action='lease.rent_change_created'"""), w)).all()
     assert len(audit) == 1
     assert audit[0].actor_user_id == w["admin"]
-    assert audit[0].payload_diff == {"rent_change_id": created["id"], **change()}
+    assert audit[0].payload_diff == {"rent_change_id": created["id"], **change(), "heating_advance_payment": "0.00"}
 
 
 async def test_authentication_reader_and_foreign_lease_non_disclosure(rent_world):
@@ -483,14 +532,14 @@ async def test_rent_change_leaves_booked_payments_and_finalized_snapshot_untouch
             assert response.status_code == 200, response.text
             booked_ids.append(payment_id)
         response = await api.post("/api/settlements", json={
-            "property_id": str(w["property"]), "lease_agreement_id": str(w["lease"]),
+            'heating_advance_payments_total': '0.00', "property_id": str(w["property"]), "lease_agreement_id": str(w["lease"]),
             "period_start": "2026-01-01", "period_end": "2026-04-30",
             "advance_payments_total": "150.00",
         })
         assert response.status_code == 201, response.text
         run_id = response.json()["id"]
         await attest_fixture(api, "settlement", run_id, {
-            "advance_payments_total": "150.00", "advance_payments_source": "MANUAL",
+            'heating_advance_payments_total': '0.00', 'heating_advance_payments_source': "MANUAL", "advance_payments_total": "150.00", "advance_payments_source": "MANUAL",
         })
         response = await api.post(f"/api/settlements/{run_id}/finalize", json={})
         assert response.status_code == 200, response.text
@@ -829,7 +878,7 @@ async def test_index_preview_and_adopt_preserve_history_and_advance(rent_world):
         assert response.status_code == 200, response.text
         preview = response.json()
         assert preview == {"previous_valid_from": "2026-01-01", "previous_base_rent": "700.00",
-                           "valid_from": "2027-01-01", "base_rent": "731.82", "advance_payment": "150.00"}
+                           "valid_from": "2027-01-01", "base_rent": "731.82", "advance_payment": "150.00", "heating_advance_payment": "0.00"}
         assert (await api.get(history_url(rent_world))).json() == []
         created = await api.post(url, json=index_adopt(preview))
         assert created.status_code == 201, created.text
@@ -926,3 +975,205 @@ async def test_index_advance_only_change_does_not_restart_base_rent_year(rent_wo
         history = (await api.get(history_url(rent_world))).json()
         assert history[0] == old
         assert history[1]["advance_payment"] == "175.00"
+
+
+async def test_combined_advance_is_persistent_and_dated_zero_can_be_separate(rent_world, rent_db):
+    world = rent_world
+    lease_url = f"/api/leases/{world['lease']}"
+    async with api_client(world) as api:
+        response = await api.patch(lease_url, json={"advance_mode": "COMBINED", "advance_payment": "240.00"})
+        assert response.status_code == 200, response.text
+        assert response.json().get("advance_mode") == "COMBINED"
+        response = await api.post(history_url(world), json={
+            **change("2026-07-01"), "advance_mode": "SEPARATE", "heating_advance_payment": "0.00"})
+        assert response.status_code == 201, response.text
+        response = await api.post(history_url(world), json=change("2026-10-01"))
+        assert response.status_code == 201, response.text
+        response = await api.get(history_url(world))
+        assert response.status_code == 200, response.text
+        assert [(row["advance_mode"], row["heating_advance_payment"]) for row in response.json()] == [
+            ("SEPARATE", "0.00"), ("SEPARATE", "0.00")]
+    audit = (await rent_db.execute(text("""SELECT payload_diff->>'advance_mode' FROM audit_event
+        WHERE organization_id=:org AND entity_id=:lease AND action='lease.rent_change_created'"""), world)).scalars().all()
+    assert audit == ["SEPARATE", "SEPARATE"]
+
+
+async def test_combined_advance_cannot_also_carry_a_separate_heating_amount(rent_world):
+    world = rent_world
+    invalid = {"advance_mode": "COMBINED", "heating_advance_payment": "1.00"}
+    async with api_client(world) as api:
+        response = await api.patch(f"/api/leases/{world['lease']}", json=invalid)
+        assert response.status_code == 422, response.text
+        response = await api.post(history_url(world), json={**change(), **invalid})
+        assert response.status_code == 422, response.text
+    async with api_client(world, foreign=True) as foreign:
+        response = await foreign.patch(f"/api/leases/{world['lease']}", json={"advance_mode": "COMBINED"})
+        assert response.status_code == 404, response.text
+        response = await foreign.post(history_url(world), json={**change(), "advance_mode": "COMBINED"})
+        assert response.status_code == 404, response.text
+
+
+async def test_combined_prepayment_keeps_its_meaning_after_a_later_split(rent_world):
+    world = rent_world
+    lease = str(world["lease"])
+    tenant = str(world["tenant"])
+    async with api_client(world) as api:
+        bank = await api.post("/api/bank-accounts", json={
+            "property_id": str(world["property"]), "account_type": "LAUFEND", "label": "Prepayment"})
+        assert bank.status_code == 201, bank.text
+        changed = await api.patch(f"/api/leases/{lease}", json={
+            "base_rent": "750.00", "advance_payment": "240.00", "advance_mode": "COMBINED"})
+        assert changed.status_code == 200, changed.text
+        bookings = []
+        for kind, amount in [("KALTMIETE", "750.00"), ("NK_VORAUSZAHLUNG", "240.00")]:
+            draft = await api.post("/api/payments", json={
+                "bank_account_id": bank.json()["id"], "direction": "IN", "amount": amount,
+                "payment_type": kind, "value_date": "2026-03-25", "period_year": 2026, "period_month": 4,
+                "tenant_profile_id": tenant, "lease_agreement_id": lease,
+            })
+            assert draft.status_code == 201, draft.text
+            booked = await api.post(f"/api/payments/{draft.json()['id']}/book")
+            assert booked.status_code == 200, booked.text
+            bookings.append(booked.json())
+        changed = await api.post(history_url(world), json={
+            **change("2026-04-01"), "advance_mode": "SEPARATE", "heating_advance_payment": "90.00"})
+        assert changed.status_code == 201, changed.text
+
+        body = await statement(api, world, "2026-04-01", "2026-04-30")
+        assert body["soll_total"] == body["ist_total"] == "990.00"
+        assert all(Decimal(row["open_amount"]) == 0 for row in body["open_items"])
+        notice = await api.post("/api/dunning/tenant", json={
+            "lease_agreement_id": lease, "tenant_profile_id": tenant,
+            "period_start": "2026-04-01", "period_end": "2026-04-30", "reference_date": "2026-04-08",
+        })
+        assert notice.status_code == 422, notice.text
+        assert notice.json()["detail"] == "No overdue items found for this tenant in the given period"
+        for original in bookings:
+            response = await api.get(f"/api/payments/{original['id']}")
+            assert response.json() == original
+
+
+async def advance_test_account(api, world, **extra):
+    response = await api.post("/api/bank-accounts", json={
+        "property_id": str(world["property"]), "account_type": "LAUFEND", "label": "Synthetic advances", **extra})
+    assert response.status_code == 201, response.text
+    return response.json()["id"]
+
+
+async def advance_test_draft(api, world, bank, kind, amount, **period):
+    return await api.post("/api/payments", json={
+        "bank_account_id": bank, "direction": "IN", "amount": amount, "payment_type": kind,
+        "value_date": "2026-04-01", "tenant_profile_id": str(world["tenant"]),
+        "lease_agreement_id": str(world["lease"]), "period_year": 2026, "period_month": 4, **period})
+
+
+async def advance_test_book(api, world, bank, kind, amount):
+    draft = await advance_test_draft(api, world, bank, kind, amount)
+    assert draft.status_code == 201, draft.text
+    result = await api.post(f"/api/payments/{draft.json()['id']}/book")
+    assert result.status_code == 200, result.text
+    return result.json()
+
+
+async def test_booked_advance_meaning_survives_lease_end_extension(rent_world):
+    w = rent_world
+    url = f"/api/leases/{w['lease']}"
+    async with api_client(w) as api:
+        bank = await advance_test_account(api, w)
+        assert (await api.patch(url, json={"advance_mode": "COMBINED", "advance_payment": "240.00"})).status_code == 200
+        changed = await api.post(history_url(w), json={
+            **change("2026-04-16", base_rent="700.00"), "advance_mode": "SEPARATE", "heating_advance_payment": "90.00"})
+        assert changed.status_code == 201, changed.text
+        assert (await api.patch(url, json={"valid_to": "2026-04-15"})).status_code == 200
+        original = await advance_test_book(api, w, bank, "NK_VORAUSZAHLUNG", "240.00")
+        assert (await api.patch(url, json={"valid_to": "2026-04-30"})).status_code == 200
+        result = await statement(api, w, "2026-04-01", "2026-04-30")
+        assert all(Decimal(row["open_amount"]) == 0 for row in result["open_items"] if row["payment_type"] != "KALTMIETE")
+        assert (await api.get(f"/api/payments/{original['id']}")).json() == original
+
+
+async def test_combined_prepayment_cannot_reassign_later_operating_overpayment(rent_world):
+    w = rent_world
+    async with api_client(w) as api:
+        bank = await advance_test_account(api, w)
+        url = f"/api/leases/{w['lease']}"
+        assert (await api.patch(url, json={"advance_mode": "COMBINED", "advance_payment": "240.00"})).status_code == 200
+        await advance_test_book(api, w, bank, "NK_VORAUSZAHLUNG", "40.00")
+        changed = await api.post(history_url(w), json={
+            **change("2026-04-01"), "advance_mode": "SEPARATE", "heating_advance_payment": "90.00"})
+        assert changed.status_code == 201, changed.text
+        await advance_test_book(api, w, bank, "KALTMIETE", "750.00")
+        await advance_test_book(api, w, bank, "NK_VORAUSZAHLUNG", "200.00")
+        result = await statement(api, w, "2026-04-01", "2026-04-30")
+        advances = [Decimal(row["open_amount"]) for row in result["open_items"] if row["payment_type"] != "KALTMIETE"]
+        assert sorted(advances) == [Decimal("-50"), Decimal("50")]
+        notice = await api.post("/api/dunning/tenant", json={
+            "lease_agreement_id": str(w["lease"]), "tenant_profile_id": str(w["tenant"]),
+            "period_start": "2026-04-01", "period_end": "2026-04-30", "reference_date": "2026-04-08"})
+        assert notice.status_code == 201, notice.text
+        assert notice.json()["principal_amount"] == "50.00"
+
+
+async def test_deadline_and_ledger_use_same_dated_advance_charges(rent_world):
+    w = rent_world
+    async with api_client(w) as api:
+        assert (await api.patch(f"/api/leases/{w['lease']}", json={"valid_to": "2026-03-31"})).status_code == 200
+        lease = await api.post("/api/leases", json={
+            "unit_id": str(w["unit"]), "tenant_profile_id": str(w["tenant"]), "valid_from": "2026-04-01",
+            "base_rent": "750.00", "advance_payment": "150.00", "heating_advance_payment": "90.00",
+            "advance_mode": "SEPARATE"})
+        assert lease.status_code == 201, lease.text
+        # Other original fixture leases also appear in the organization-wide monitor.
+        cutoff = {"reference_date": "2026-04-30"}
+        before = await api.get("/api/fristen", params=cutoff)
+        assert before.status_code == 200, before.text
+        w = {**w, "lease": lease.json()["id"]}
+        changed = await api.post(history_url(w), json={
+            **change("2026-04-01", advance_payment="240.00"), "advance_mode": "COMBINED"})
+        assert changed.status_code == 201, changed.text
+        bank = await advance_test_account(api, w)
+        await advance_test_book(api, w, bank, "KALTMIETE", "750.00")
+        await advance_test_book(api, w, bank, "NK_VORAUSZAHLUNG", "240.00")
+        account = await statement(api, w, "2026-04-01", "2026-04-30")
+        assert all(Decimal(row["open_amount"]) == 0 for row in account["open_items"])
+        after = await api.get("/api/fristen", params=cutoff)
+        assert after.status_code == 200, after.text
+        counts = [int(next(row["detail"] for row in response.json() if row["kind"] == "OFFENE_POSTEN").split()[0])
+                  for response in (before, after)]
+        assert counts[0] - counts[1] == 3
+
+
+async def test_heating_booking_rejects_invalid_assignment_year(rent_world):
+    w = rent_world
+    async with api_client(w, raise_app_exceptions=False) as api:
+        bank = await advance_test_account(api, w)
+        draft = await advance_test_draft(api, w, bank, "HK_VORAUSZAHLUNG", "90.00", period_year=0)
+        if draft.status_code == 201:
+            draft = await api.post(f"/api/payments/{draft.json()['id']}/book")
+        assert draft.status_code == 422, draft.text
+        assert "Zuordnungsjahr" in draft.json()["detail"]
+
+
+async def test_hidden_booked_payment_still_protects_original_advance_mode(rent_world):
+    w = rent_world
+    lease = f"/api/leases/{w['lease']}"
+    async with api_client(w) as admin, api_client(w, "clerk") as clerk:
+        changed = await admin.patch(lease, json={"advance_mode": "COMBINED"})
+        assert changed.status_code == 200, changed.text
+        scope = await admin.post("/api/accounting-scopes", headers={"Idempotency-Key": str(uuid.uuid4())}, json={
+            "property_id": str(w["property"]), "scope_type": "MIET", "label": "Restricted books",
+            "valid_from": "2026-01-01", "valid_to": "2026-12-31", "whole_property": True})
+        assert scope.status_code == 201, scope.text
+        scope_id = scope.json()["id"]
+        grant = await admin.post(f"/api/accounting-scopes/{scope_id}/grants",
+            headers={"Idempotency-Key": str(uuid.uuid4())}, json={
+                "user_id": str(w["admin"]), "capabilities": ["read", "prepare", "confirm"],
+                "reason": "Restricted accounting test"})
+        assert grant.status_code == 201, grant.text
+        bank = await advance_test_account(admin, w, accounting_scope_id=scope_id)
+        booked = await advance_test_book(admin, w, bank, "NK_VORAUSZAHLUNG", "150.00")
+        assert (await clerk.get(f"/api/payments/{booked['id']}")).status_code == 404
+        notes = await clerk.patch(lease, json={"notes": "Ordinary lease edit"})
+        assert notes.status_code == 200, notes.text
+        denied = await clerk.patch(lease, json={"advance_mode": "SEPARATE"})
+        assert denied.status_code == 409, denied.text

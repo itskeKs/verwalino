@@ -14,6 +14,13 @@ from app.repositories.base import TenantRepository
 class UserRepository(TenantRepository[User]):
     model = User
 
+    async def set_design_theme(self, user_id: uuid.UUID, design_theme: str) -> User | None:
+        user = await self.get_by_id_for_update(user_id)
+        if user is not None:
+            user.design_theme = design_theme
+            await self._session.flush()
+        return user
+
     async def get_by_email(self, email: str) -> User | None:
         canonical_email = func.pg_catalog.lower(func.pg_catalog.btrim(User.email))
         stmt = self._base_query().where(canonical_email == email)

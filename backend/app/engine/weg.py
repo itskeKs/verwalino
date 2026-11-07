@@ -128,15 +128,15 @@ def _participates(unit: UnitInput, key: str) -> bool:
 def _effective_total(pos: WegCostPositionInput) -> Decimal:
     """The owner-relevant total to distribute (m4 section 4.5, [F4-3]).
 
-    The owner sphere distributes the GROSS amount (the owner bears the full cost
-    by MEA). For direct keys the per-unit amounts sum to the total.
+    Evidenced reserve financing is deducted before distribution. For direct
+    keys the original per-unit amounts provide the distribution weights.
     """
     key = pos.owner_distribution_key
     if key == "EXTERNE_ABRECHNUNG":
-        return sum((e.tenant_amount for e in pos.external_amounts), Decimal(0))
+        return sum((e.tenant_amount for e in pos.external_amounts), Decimal(0)) - pos.reserve_funded_amount
     if key == "MANUELLER_BETRAG":
-        return sum((m.amount for m in pos.manual_amounts), Decimal(0))
-    return pos.gross_amount
+        return sum((m.amount for m in pos.manual_amounts), Decimal(0)) - pos.reserve_funded_amount
+    return pos.gross_amount - pos.reserve_funded_amount
 
 
 def _co_owner_shares(
@@ -195,6 +195,10 @@ def _validate(inp: WegSettlementInput) -> None:
         raise WegValidationError("WEG settlement has no units")
 
     for pos in inp.cost_positions:
+        if pos.reserve_funded_amount < 0 or (pos.reserve_funded_amount and _effective_total(pos) < 0):
+            raise WegValidationError(
+                f"Cost position {pos.category_code} ({pos.cost_entry_id}) has invalid reserve financing"
+            )
         if (
             day_count(
                 max(pos.service_period_from, inp.period_start),
@@ -284,7 +288,7 @@ def _distribute_one_position(
         for uid, amt in items:
             per_unit[uid] = per_unit.get(uid, Decimal(0)) + amt
         s = sum(per_unit.values(), Decimal(0))
-        if s != total:
+        if s != total + pos.reserve_funded_amount:
             raise DistributionError(
                 f"Position {pos.category_code} ({pos.cost_entry_id}): sum of "
                 f"per-unit {key} amounts ({s}) != effective total ({total})."
@@ -476,12 +480,12 @@ def compute_weg_jahresabrechnung(inp: WegSettlementInput) -> WegResult:
     plan_by_owner = {a.owner_profile_id: _money(a.plan_advance_total) for a in inp.plan_advances}
     paid_by_owner = {a.owner_profile_id: _money(a.plan_advance_total) for a in inp.paid_advances}
 
-    # The complete set of owners = those with cost cells ∪ those with a plan
-    # advance (an owner with a plan but zero cost still gets a Spitze = -plan).
+    # Payment-only owners still need their own account balance and credit;
+    # this does not add any costs or plan Soll to their resolved Spitze.
     if inp.reserve_paid_contributions is not None:
         owner_reserve = {item.owner_profile_id: item.plan_advance_total for item in inp.reserve_paid_contributions}
     billed_owner_ids = set(owner_cost_lines) | set(plan_by_owner)
-    all_owner_ids = billed_owner_ids | set(owner_reserve)
+    all_owner_ids = billed_owner_ids | set(owner_reserve) | set(paid_by_owner)
 
     owners: list[OwnerResult] = []
     plan_advances_total = Decimal("0.00")
@@ -493,6 +497,8 @@ def compute_weg_jahresabrechnung(inp: WegSettlementInput) -> WegResult:
         owner_cost_total = _money(uml + nicht)
         plan_advance = plan_by_owner.get(owner_id, Decimal("0.00"))
         spitze = _money(owner_cost_total - plan_advance)
+        paid = paid_by_owner.get(owner_id)
+        account_balance = _money(plan_advance - paid) if paid is not None else None
         plan_advances_total += plan_advance
         abr_total += spitze
         owners.append(
@@ -506,8 +512,10 @@ def compute_weg_jahresabrechnung(inp: WegSettlementInput) -> WegResult:
                 plan_advance=plan_advance,
                 abrechnungsspitze=spitze,
                 paid_advances=paid_by_owner.get(owner_id),
+                account_balance=account_balance,
+                payment_amount=_money(spitze + account_balance) if account_balance is not None else None,
                 reserve_notice='Rücklagenzahlung ohne Kosten- oder Planposition. Bitte prüfen Sie die Eigentümerzuordnung.'
-                    if owner_id not in billed_owner_ids else None,
+                    if owner_id not in billed_owner_ids and owner_id in owner_reserve else None,
             )
         )
 

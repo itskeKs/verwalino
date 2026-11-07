@@ -26,7 +26,7 @@ import uuid
 import json
 from calendar import monthrange
 from dataclasses import asdict, dataclass, field, replace
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP, localcontext
 from fractions import Fraction
 from types import SimpleNamespace
@@ -34,17 +34,20 @@ from types import SimpleNamespace
 from fastapi import HTTPException
 from app.core.rbac import ScopeCapability
 from sqlalchemy import text
+from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.temporal import db_exclusive_to_engine_inclusive
 from app.engine.canonical import canonical_json, sha256_hex
 from app.engine.periods import validate_settlement_period, period_for_date, build_unit_cover, property_period_windows
 from app.engine.rounding import DistributionError
-from app.engine.mietkonto import _money
+from app.engine.person_days import MissingHouseholdError
+from app.engine.mietkonto import AdvanceMode, _money, advance_modes_for_period
 from app.services.lease_rent_change_service import LeaseRentChangeService
 from app.services.heating_input_service import HeatingConfig, HeatingSliceOverride, HeatingInputService, property_period_run
 from app.engine.settlement import EngineValidationError, compute_bk_settlement
 from app.engine.snapshot import build_snapshot_payload
+from app.engine.types import HEATING_CATEGORY_CODES
 from app.engine.meter_consumption import MeterReadingInput, MeterConsumptionError, split_consumption
 from app.repositories.meter_repo import MeterRepository, MeterReadingRepository
 from app.services.render_names import (
@@ -63,6 +66,7 @@ from app.engine.types import (
     PropertyInput,
     SettlementInput,
     UnitInput,
+    HouseholdInput,
 )
 from app.models.audit_event import AuditEvent
 from app.services.financial_scope_service import FinancialScopeService
@@ -72,12 +76,39 @@ from app.models.property import Property
 from app.models.settlement_line import SettlementLine
 from app.models.settlement_run import SettlementRun
 from app.repositories.audit_repo import AuditRepository
+from app.repositories.cost_entry_repo import CostEntryRepository
+from app.repositories.commercial_preallocation_repo import CommercialPreallocationRepository
+from app.repositories.lease_agreement_repo import LeaseAgreementRepository
+from app.repositories.lease_rent_change_repo import LeaseRentChangeRepository
 from app.repositories.settlement_repo import (
     SettlementLineRepository,
     SettlementRunRepository,
 )
 
-ENGINE_VERSION = "m3.1.0"
+ENGINE_VERSION = "m3.5.0"
+
+
+def frozen_vacancy_attribution(run: SettlementRun, allowed_units: set[str], allowed_costs: set[str]) -> list[dict]:
+    """Project only retained person-day results from an authorized run.
+
+    The caller supplies readable source IDs and unit IDs read under the
+    statement's exact current scope.
+    No owner identity or live household/master data is added to that disclosure.
+    Older snapshots without saved person-days keep their existing rendering.
+    """
+    payload = run.snapshot_payload or {}
+    attribution = [v for v in payload.get('vacancy_attribution', []) if v.get('person_days') is not None]
+    if not attribution:
+        return []
+    inputs = payload.get('inputs', {})
+    units = {u['id']: u['number'] for u in inputs.get('units', [])}
+    labels = {p['cost_entry_id']: p['category_code'] for p in inputs.get('cost_positions', [])}
+    labels.update({line['cost_entry_id']: line['label'] for line in payload.get('result', {}).get('lines', [])
+                   if line.get('cost_entry_id')})
+    return [dict(unit_number=units[v['unit_id']], cost_label=labels[v['cost_entry_id']],
+                 days=v['days'], person_days=v['person_days'], amount=v['amount'])
+            for v in attribution if v['unit_id'] in allowed_units and v['unit_id'] in units
+            and v['cost_entry_id'] in allowed_costs and v['cost_entry_id'] in labels]
 
 
 class SettlementPeriodConflict(HTTPException):
@@ -108,11 +139,19 @@ class ManualAmountEntry:
 
 @dataclass
 class UnitMetric:
-    """Per-unit consumption / person count for VERBRAUCH / PERSONENZAHL."""
+    """Consumption input plus legacy person-count data kept for frozen runs."""
 
     unit_id: uuid.UUID
     consumption: Decimal | None = None
     person_count: int | None = None
+
+
+@dataclass
+class CommercialPreallocationEntry:
+    cost_entry_id: uuid.UUID
+    commercial_share_percent: Decimal | None = None
+    commercial_amount: Decimal | None = None
+    commercial_reason: str | None = None
 
 
 @dataclass
@@ -123,6 +162,7 @@ class ComputeExtras:
     manual_amounts: list[ManualAmountEntry] = field(default_factory=list)
     unit_metrics: list[UnitMetric] = field(default_factory=list)
     heating_inputs: list[HeatingConfig] = field(default_factory=list)
+    commercial_preallocations: list[CommercialPreallocationEntry] | None = None
 
 
 def decode_compute_extras(payload: dict) -> ComputeExtras:
@@ -131,6 +171,11 @@ def decode_compute_extras(payload: dict) -> ComputeExtras:
         return date.fromisoformat(value) if value is not None else None
 
     return ComputeExtras(
+        commercial_preallocations=[CommercialPreallocationEntry(uuid.UUID(e['cost_entry_id']),
+            Decimal(e['commercial_share_percent']) if e.get('commercial_share_percent') is not None else None,
+            Decimal(e['commercial_amount']) if e.get('commercial_amount') is not None else None,
+            e.get('commercial_reason')) for e in payload['commercial_preallocations']]
+            if payload.get('commercial_preallocations') is not None else None,
         external_amounts=[ExternalAmountEntry(uuid.UUID(e['cost_entry_id']),uuid.UUID(e['unit_id']),
             Decimal(e['tenant_amount']),day(e.get('period_from')),day(e.get('period_to')))
             for e in payload.get('external_amounts',[])],
@@ -177,7 +222,56 @@ class SettlementService:
         self._audit = AuditRepository(session, org_id)
         self._meter_sources: list[dict] = []
 
+    async def vacancy_disclosure(self, run: SettlementRun) -> list[dict]:
+        attribution = [v for v in (run.snapshot_payload or {}).get('vacancy_attribution', [])
+                       if v.get('person_days') is not None]
+        if not attribution:
+            return []
+        # Source read grants are independent of a detail write's selected scope.
+        # RLS still checks the live actor and each original source's exact grant.
+        selected = await self._session.scalar(text("SELECT current_setting('app.current_scope_id',true)"))
+        if selected:
+            await self._session.execute(text("SELECT set_config('app.current_scope_id','',true)"))
+        readable = await CostEntryRepository(self._session, self._org_id).readable_ids(
+            {uuid.UUID(v['cost_entry_id']) for v in attribution})
+        # Restore only after a successful read; on failure the request rolls back
+        # SET LOCAL rather than issuing SQL in a possibly aborted transaction.
+        if selected:
+            await self._session.execute(text("SELECT set_config('app.current_scope_id',:scope,true)"),
+                                        {'scope': selected})
+        # A finalized legacy output can later receive a partial classification.
+        # Select that exact current scope before applying unit/source RLS; the
+        # frozen property's wider input universe is not a disclosure grant.
+        async with FinancialScopeService(self._session, self._org_id, self._user_id).using(run):
+            allowed = {str(u.id) for u in await self._runs.units_for_property(run.property_id)}
+            return frozen_vacancy_attribution(run, allowed, {str(entry_id) for entry_id in readable})
+
     async def advance_proposal(self, run_id: uuid.UUID, *, accept_from: date | None = None):
+        run = await self._load_advance_proposal(run_id, ScopeCapability.READ)
+        accept_from = accept_from if accept_from is not None else run.period_end + timedelta(days=1)
+        return await self._advance_proposal_at(run, accept_from)
+
+    async def _advance_proposal_at(self, run: SettlementRun, accept_from: date):
+        lease = await LeaseAgreementRepository(self._session, self._org_id).get_by_id(run.lease_agreement_id)
+        if lease is None:
+            raise HTTPException(404, "Lease agreement not found")
+        current = await LeaseRentChangeService(self._session, self._org_id, self._user_id).rate_on(lease, accept_from)
+        return self._advance_proposal(run, current.advance_mode) | {
+            "accept_from": accept_from.isoformat(),
+            "advance_mode": current.advance_mode,
+            "current_monthly_amount": f"{current.advance_payment:.2f}",
+            "current_heating_monthly_amount": f"{current.heating_advance_payment:.2f}",
+        }
+
+    async def accept_advance_proposal(self, run_id: uuid.UUID, *, accept_from: date):
+        run = await self._load_advance_proposal(run_id, ScopeCapability.PREPARE)
+        proposal = await self._advance_proposal_at(run, accept_from)
+        return await LeaseRentChangeService(self._session, self._org_id, self._user_id).create(
+            run.lease_agreement_id, accept_from, Decimal(proposal["monthly_amount"]),
+            heating_advance_payment=Decimal(proposal["heating_monthly_amount"]),
+        )
+
+    async def _load_advance_proposal(self, run_id: uuid.UUID, capability: ScopeCapability):
         scope = FinancialScopeService(self._session, self._org_id, self._user_id)
         # Serialize with corrections, ACL/source changes and T23 writes. Re-read
         # under the lock so a concurrent correction cannot accept a stale run.
@@ -185,18 +279,13 @@ class SettlementService:
         run = await self._runs.get_by_id(run_id)
         if run is None:
             raise HTTPException(404, "Settlement run not found")
-        await scope.enter(run, capability=ScopeCapability.READ if accept_from is None else ScopeCapability.PREPARE)
+        await scope.enter(run, capability=capability)
         if run.status != "finalized" or run.superseded_by_id is not None or run.run_type != "BK_MIETER":
             raise HTTPException(409, "Advance proposal requires an active finalized BK settlement")
-        proposal = self._advance_proposal(run)
-        if accept_from is None:
-            return proposal
-        return await LeaseRentChangeService(self._session, self._org_id, self._user_id).create(
-            run.lease_agreement_id, accept_from, Decimal(proposal["monthly_amount"]),
-        )
+        return run
 
     @staticmethod
-    def _advance_proposal(run: SettlementRun) -> dict:
+    def _advance_proposal(run: SettlementRun, mode: AdvanceMode | None = None) -> dict:
         """Use only frozen inclusive engine dates and finalized tenant costs."""
         try:
             payload = run.snapshot_payload
@@ -218,6 +307,35 @@ class SettlementService:
             cost = Decimal(payload["result"]["total_cost"])
             if not cost.is_finite() or cost < 0 or cost != run.total_cost or start > end:
                 raise ValueError("Invalid finalized cost or tenancy")
+            if 'heating_cost_total' in payload['result']:
+                heating_cost = Decimal(payload['result']['heating_cost_total'])
+            else:
+                # Pre-split statements still contain their immutable cost
+                # lines and configured heating pools. Never infer from live
+                # costs, or turn an unavailable split into heating zero.
+                frozen_lines = payload['result']['lines']
+                if not isinstance(frozen_lines, list):
+                    raise ValueError('Missing frozen cost lines')
+                heating_ids = {pool['cost_entry_id'] for pool in payload.get('heating_costs', [])}
+                heating_cost = frozen_total = Decimal('0.00')
+                for line in frozen_lines:
+                    if not isinstance(line, dict):
+                        raise ValueError('Invalid frozen cost line')
+                    if line['line_type'] != 'COST':
+                        continue
+                    amount = Decimal(line['amount'])
+                    if not amount.is_finite() or amount < 0:
+                        raise ValueError('Invalid frozen cost amount')
+                    frozen_total += amount
+                    if line['category_code'] in HEATING_CATEGORY_CODES or line.get('cost_entry_id') in heating_ids:
+                        heating_cost += amount
+                if frozen_total != cost:
+                    raise ValueError('Incomplete frozen cost lines')
+            if not heating_cost.is_finite() or not 0 <= heating_cost <= cost:
+                raise ValueError("Invalid frozen heating cost")
+            operating_cost = cost - heating_cost
+            if mode == "COMBINED":
+                operating_cost, heating_cost = cost, Decimal("0.00")
             # Calendar weights remain exact even across different partial
             # months. Only the DTO renders a repeating fraction as a Decimal.
             month_weight = Fraction(0)
@@ -232,15 +350,16 @@ class SettlementService:
                 context.prec = 28
                 context.rounding = ROUND_HALF_UP
                 months = Decimal(month_weight.numerator) / Decimal(month_weight.denominator)
-                amount = _money(cost * Decimal(month_weight.denominator) / Decimal(month_weight.numerator))
-            if amount >= Decimal("1000000000000"):
+                amount = _money(operating_cost * Decimal(month_weight.denominator) / Decimal(month_weight.numerator))
+                heating_amount = _money(heating_cost * Decimal(month_weight.denominator) / Decimal(month_weight.numerator))
+            if max(amount, heating_amount) >= Decimal("1000000000000"):
                 raise ValueError("Proposed advance exceeds rental amount storage")
         except (KeyError, TypeError, ValueError, InvalidOperation, OverflowError) as exc:
             raise HTTPException(409, "Frozen settlement lacks a valid advance proposal basis") from exc
         return {
             "lease_agreement_id": str(run.lease_agreement_id),
-            "tenant_cost": f"{cost:.2f}", "months": format(months, "f"),
-            "monthly_amount": f"{amount:.2f}",
+            "tenant_cost": f"{operating_cost:.2f}", "heating_tenant_cost": f"{heating_cost:.2f}", "months": format(months, "f"),
+            "monthly_amount": f"{amount:.2f}", "heating_monthly_amount": f"{heating_amount:.2f}",
             "period_start": period_start, "period_end": period_end,
         }
 
@@ -277,11 +396,11 @@ class SettlementService:
         period_start: date,
         period_end: date,
         advance_payments_total: Decimal | None = None,
+        heating_advance_payments_total: Decimal | None = None,
         management_mandate_id: uuid.UUID | None = None,
         accounting_scope_id: uuid.UUID | None = None,
     ) -> SettlementRun:
         """Create a draft BK_MIETER run for one lease/addressee."""
-        from app.repositories.lease_agreement_repo import LeaseAgreementRepository
 
         lease_repo = LeaseAgreementRepository(self._session, self._org_id)
         lease = await lease_repo.get_by_id(lease_agreement_id)
@@ -301,6 +420,8 @@ class SettlementService:
             lease_agreement_id=lease_agreement_id,
             tenant_profile_id=lease.tenant_profile_id,
             advance_payments_total=advance_payments_total,
+            heating_advance_payments_total=heating_advance_payments_total,
+            heating_advance_payments_source="MANUAL",
             advance_payments_source="MANUAL",
             status="draft",
             engine_version=ENGINE_VERSION,
@@ -316,6 +437,9 @@ class SettlementService:
             if prop is None or (period_start, period_end) != period_for_date(prop.fiscal_year_start_month, period_start):
                 raise self._outside_lease()
         run.period_start, run.period_end = period_start, period_end = clipped
+        if (advance_payments_total is not None and heating_advance_payments_total is None
+                and await self._advance_modes_for_run(run, lease) == {"COMBINED"}):
+            run.heating_advance_payments_total = Decimal("0.00")
         if await self._runs.has_conflicting_period(run):
             raise SettlementPeriodConflict()
         run = await self._runs.create(run)
@@ -396,12 +520,22 @@ class SettlementService:
         return created, skipped, errors
 
     async def set_advance_payments(
-        self, run_id: uuid.UUID, amount: Decimal
+        self, run_id: uuid.UUID, amount: Decimal | None = None, *, heating_amount: Decimal | None = None
     ) -> SettlementRun:
         """Set the manual advance-payment total on a draft run (section 7.2)."""
-        run = await self._get_draft_or_404(run_id)
-        run.advance_payments_total = amount
-        run.advance_payments_source = "MANUAL"
+        run = await self._get_tenant_advance_draft(run_id)
+        previous = rental_values(run)
+        if amount is not None:
+            run.advance_payments_total = amount
+            run.advance_payments_source = "MANUAL"
+        if (amount is not None and heating_amount is None and run.heating_advance_payments_total is None
+                and await self._advance_modes_for_run(run) == {"COMBINED"}):
+            heating_amount = Decimal("0.00")
+        if heating_amount is not None:
+            run.heating_advance_payments_total = heating_amount
+            run.heating_advance_payments_source = "MANUAL"
+        if rental_values(run) != previous:
+            await self._invalidate_advance_calculation(run)
         await self._runs.update(run)
         await self._audit.create(
             AuditEvent(
@@ -409,7 +543,8 @@ class SettlementService:
                 entity_type="settlement_run",
                 entity_id=run.id,
                 action="settlement.advance_payments_set",
-                payload_diff={"advance_payments_total": str(amount)},
+                payload_diff={key: str(value) if isinstance(value, Decimal) else value
+                    for key, value in rental_values(run).items()},
             )
         )
         return run
@@ -417,20 +552,10 @@ class SettlementService:
     async def set_advance_payments_derived(
         self, run_id: uuid.UUID, period_year: int
     ) -> SettlementRun:
-        """Derive the BK advance-payment total from booked NK payments (M6 §6.2).
-
-        Minimal-additive bridge (advance_payments_source MANUAL -> DERIVED): the
-        M3 engine is UNCHANGED -- it still reads run.advance_payments_total; this
-        only fills that value from the booked, non-reversed NK_VORAUSZAHLUNG
-        payments of THIS lease + settlement period. The reference year must
-        belong to the period, including for cross-year periods. The pure
-        derivation is bit-identical to the MANUAL value (I6-E). MANUAL stays the
-        default/fallback; this path is opt-in. E6-8: derived fresh on demand;
-        finalize then freezes whatever value is current into the snapshot.
-        """
+        """Derive both component totals from active bookings within the lease period."""
         from app.services.payment_service import PaymentService
 
-        run = await self._get_draft_or_404(run_id)
+        run = await self._get_tenant_advance_draft(run_id)
         if not run.period_start.year <= period_year <= run.period_end.year:
             raise HTTPException(422, "DERIVED reference year must belong to the settlement period")
         if run.lease_agreement_id is None:
@@ -443,8 +568,13 @@ class SettlementService:
         total = await pay_svc.derive_nk_advance_total_for_period(
             run.lease_agreement_id, run.period_start, run.period_end
         )
+        run.heating_advance_payments_total = await pay_svc.derive_nk_advance_total_for_period(
+            run.lease_agreement_id, run.period_start, run.period_end, payment_type="HK_VORAUSZAHLUNG")
+        run.heating_advance_payments_source = "DERIVED"
         run.advance_payments_total = total
         run.advance_payments_source = "DERIVED"
+        # The attribution can change even when the derived amounts stay equal.
+        await self._invalidate_advance_calculation(run)
         await self._runs.update(run)
         await self._audit.create(
             AuditEvent(
@@ -455,11 +585,28 @@ class SettlementService:
                 payload_diff={
                     "advance_payments_total": str(total),
                     "advance_payments_source": "DERIVED",
+                    "heating_advance_payments_total": str(run.heating_advance_payments_total),
+                    "heating_advance_payments_source": "DERIVED",
                     "period_year": str(period_year),
                 },
             )
         )
         return run
+
+    async def _get_tenant_advance_draft(self, run_id: uuid.UUID) -> SettlementRun:
+        run = await self._get_draft_or_404(run_id)
+        if run.run_type != "BK_MIETER":
+            raise HTTPException(404, "Financial draft not found")
+        return run
+
+    async def _invalidate_advance_calculation(self, run: SettlementRun) -> None:
+        # Keep the saved calculation inputs so the manager can calculate again.
+        extras = (run.snapshot_payload or {}).get("extra_inputs")
+        run.snapshot_payload = {"extra_inputs": extras} if extras is not None else None
+        run.snapshot_sha256 = None
+        run.total_cost = None
+        run.balance = None
+        await self._lines.delete_for_run(run.id)
 
     # ------------------------------------------------------------------
     # compute (draft, repeatable) and preview
@@ -477,6 +624,7 @@ class SettlementService:
         rather than persisting a partial/wrong result.
         """
         run = await self._get_draft_or_404(run_id)
+        await self._save_commercial_preallocations(run, extras)
         computation_basis = await begin_computation(self._session, self._org_id, run, 'compute')
         inp, result = await self._compute_engine(run, extras)
 
@@ -532,6 +680,7 @@ class SettlementService:
           run from commit. Any error -> rollback (no half-finalized run).
         """
         run = await self._get_draft_or_404(run_id)
+        await self._save_commercial_preallocations(run, extras)
         computation_basis = await begin_computation(self._session, self._org_id, run, 'finalize')
         if await self._runs.has_conflicting_period(run):
             raise SettlementPeriodConflict()
@@ -621,6 +770,8 @@ class SettlementService:
             tenant_profile_id=original.tenant_profile_id,
             advance_payments_total=original.advance_payments_total,
             advance_payments_source=original.advance_payments_source,
+            heating_advance_payments_total=original.heating_advance_payments_total,
+            heating_advance_payments_source=original.heating_advance_payments_source,
             status="draft",
             engine_version=original.engine_version,
         )
@@ -654,6 +805,62 @@ class SettlementService:
     # ------------------------------------------------------------------
     # internals
     # ------------------------------------------------------------------
+    @staticmethod
+    def _commercial_values(rule):
+        return {name: getattr(rule, name) for name in (
+            'commercial_share_percent', 'commercial_amount', 'commercial_reason')}
+
+    async def current_extra_inputs(self, run):
+        """Drafts read the shared position rules; finalized evidence stays literal."""
+        frozen = (run.snapshot_payload or {}).get('extra_inputs')
+        if run.status != 'draft':
+            return frozen
+        async with FinancialScopeService(self._session, self._org_id, self._user_id).using(run):
+            entries = await self._runs.active_cost_entries_for_period(run.property_id, run.period_start, run.period_end)
+            rules = await CommercialPreallocationRepository(self._session, self._org_id).for_costs([e.id for e, _ in entries])
+        values = [{'cost_entry_id': str(rule.cost_entry_id), **{key: str(value) if isinstance(value, Decimal) else value
+            for key, value in self._commercial_values(rule).items()}} for rule in rules.values()]
+        return {**(frozen or {}), 'commercial_preallocations': values}
+
+    async def _commercial_command_sources(self, run, extras):
+        commands = extras.commercial_preallocations or []
+        ids = [rule.cost_entry_id for rule in commands]
+        if len(ids) != len(set(ids)):
+            raise HTTPException(422, 'Vorwegabzug Gewerbe: eine Kostenposition darf nur einmal vorkommen.')
+        entries = await self._runs.active_cost_entries_for_period(run.property_id, run.period_start, run.period_end)
+        sources = {entry.id: entry for entry, _ in entries}
+        if not set(ids) <= sources.keys():
+            raise HTTPException(404, 'Kostenposition nicht gefunden.')
+        return sources
+
+    async def _save_commercial_preallocations(self, run, extras):
+        if extras is None or not extras.commercial_preallocations:
+            return
+        await FinancialScopeService(self._session, self._org_id, self._user_id).enter(
+            run, capability=ScopeCapability.PREPARE, computation=True)
+        sources = await self._commercial_command_sources(run, extras)
+        repo = CommercialPreallocationRepository(self._session, self._org_id)
+        existing = await repo.for_costs([rule.cost_entry_id for rule in extras.commercial_preallocations])
+        for rule in extras.commercial_preallocations:
+            values = self._commercial_values(rule)
+            old = existing.get(rule.cost_entry_id)
+            if old is not None and self._commercial_values(old) == values:
+                continue
+            if old is None and rule.commercial_share_percent is None and rule.commercial_amount is None:
+                continue
+            try:
+                await repo.save(sources[rule.cost_entry_id], values)
+            except DBAPIError as error:
+                if getattr(error.orig, 'sqlstate', None) == '42501':
+                    raise HTTPException(404, 'Kostenposition nicht gefunden.') from None
+                if getattr(error.orig, 'sqlstate', None) == 'P2020':
+                    raise HTTPException(409, {'code': 'commercial_preallocation_finalized', 'message':
+                        'Vorwegabzug Gewerbe bereits finalisiert. Die Regel dieser Kostenposition kann nicht mehr geändert werden.'}) from None
+                raise
+            await self._audit.create(AuditEvent(actor_user_id=self._user_id, entity_type='cost_entry',
+                entity_id=rule.cost_entry_id, action='settlement.commercial_preallocation_changed',
+                payload_diff={key: str(value) if isinstance(value, Decimal) else value for key, value in values.items()}))
+
     async def _get_draft_or_404(self, run_id: uuid.UUID) -> SettlementRun:
         scope = FinancialScopeService(self._session, self._org_id, self._user_id)
         run = await self._runs.get_by_id(run_id)
@@ -689,7 +896,15 @@ class SettlementService:
         payload = build_snapshot_payload(inp, result)
         if inp.advance_payments_source == "DERIVED":
             payload["inputs"]["advance_payment_credits"] = [
-                {"year": c.year, "month": c.month, "amount": str(c.amount)} for c in self._advance_credits]
+                {"year": c.year, "month": c.month, "amount": str(c.amount),
+                 **({"combined_amount": str(c.combined_amount)} if c.combined_amount else {}),
+                 **({"unallocated_amount": str(c.unallocated_amount)} if c.unallocated_amount else {})}
+                for c in self._advance_credits]
+        if inp.heating_advance_payments_source == "DERIVED":
+            payload["inputs"]["heating_advance_payment_credits"] = [
+                {"year": c.year, "month": c.month, "amount": str(c.amount)} for c in self._heating_advance_credits]
+        if inp.advance_layout is not None:
+            payload["inputs"]["advance_layout"] = inp.advance_layout
         if self._meter_sources:
             payload["inputs"]["meter_consumption_sources"] = self._meter_sources
         payload['extra_inputs'] = self._extra_payload
@@ -714,7 +929,9 @@ class SettlementService:
         if found is None or found[1] is None or found[1].code not in {'HEIZUNG_ZENTRAL','WARMWASSER_ZENTRAL'}:
             raise HTTPException(404,'Heating cost source not found')
         units = await self._runs.units_for_property(run.property_id)
-        return await HeatingInputService(self._session,self._org_id,self._runs).candidates(run,found[0],units,meter_type,base_key)
+        kind = 'HEATING' if found[1].code == 'HEIZUNG_ZENTRAL' else 'HOT_WATER'
+        return await HeatingInputService(self._session,self._org_id,self._runs).candidates(
+            run,found[0],units,meter_type,base_key,kind=kind)
 
     async def _consumption_candidates(self, run, units, entries):
         kinds = {category.code for entry, category in entries
@@ -779,9 +996,16 @@ class SettlementService:
         self._coverage = await FinancialInputPolicy(self._session, self._org_id, self._user_id).require(run, "settlement", rental_values(run))
         if extras is None:
             extras = decode_compute_extras((run.snapshot_payload or {}).get('extra_inputs',{}))
+            # Saved extras are evidence of the last run, never a command to
+            # overwrite a position rule subsequently changed by another draft.
+            extras.commercial_preallocations = None
+        if extras.commercial_preallocations:
+            await self._commercial_command_sources(run, extras)
         self._extra_payload = json.loads(json.dumps(asdict(extras),default=str))
+        self._commercial_payload = {}
         self._heating_sources = {}
         inp = await self._load_engine_input(run, extras)
+        self._extra_payload['commercial_preallocations'] = list(self._commercial_payload.values())
         from app.services.payment_service import PaymentService
 
         payments = PaymentService(self._session, self._org_id, self._user_id)
@@ -792,15 +1016,46 @@ class SettlementService:
         else:
             excluded = await payments.uncredited_nk_advance_total(
                 run.lease_agreement_id, run.period_start, run.period_end)
-        inp = replace(inp, uncredited_advance_payments_total=excluded)
+        self._heating_advance_credits = ()
+        if run.heating_advance_payments_source == "DERIVED":
+            self._heating_advance_credits, heating_excluded = await payments.nk_advance_credits_for_period(
+                run.lease_agreement_id, run.period_start, run.period_end, payment_type="HK_VORAUSZAHLUNG")
+        else:
+            heating_excluded = await payments.uncredited_nk_advance_total(
+                run.lease_agreement_id, run.period_start, run.period_end, payment_type="HK_VORAUSZAHLUNG")
+        modes = await self._advance_modes_for_run(run)
+        layout = None
+        combined = sum((credit.combined_amount for credit in self._advance_credits), Decimal("0.00"))
+        unallocated = sum((credit.unallocated_amount for credit in self._advance_credits), Decimal("0.00"))
+        if "COMBINED" in modes or combined or unallocated:
+            full_combined = modes == {"COMBINED"} and not unallocated and (
+                run.advance_payments_source == "MANUAL" or combined == run.advance_payments_total)
+            layout = "COMBINED" if full_combined and not run.heating_advance_payments_total else "MIXED"
+        elif "SEPARATE" in modes:
+            layout = "SEPARATE"
+        inp = replace(inp, uncredited_advance_payments_total=excluded + heating_excluded,
+            advance_layout=layout, combined_advance_payments_total=combined,
+            unallocated_advance_payments_total=unallocated)
         try:
             result = compute_bk_settlement(inp)
+        except MissingHouseholdError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
         except (EngineValidationError, DistributionError, PeriodOverlapError) as exc:
             # Escalate fail-loud as a 422 (do not persist a wrong/partial run).
             # PeriodOverlapError: a genuine (EXCLUDE-bypassing) lease overlap is a
             # 4xx data problem, not a 500 server fault.
             raise HTTPException(status_code=422, detail=f"Berechnung nicht moeglich: {exc}")
         return inp, result
+
+    async def _advance_modes_for_run(self, run: SettlementRun, lease=None):
+        if lease is None:
+            lease = await LeaseAgreementRepository(self._session, self._org_id).get_by_id(run.lease_agreement_id)
+        if lease is None:
+            raise HTTPException(404, "Lease agreement not found")
+        history = await LeaseRentChangeRepository(self._session, self._org_id).list_for_lease(lease.id)
+        start = max(run.period_start, lease.valid_from)
+        end = min(run.period_end, db_exclusive_to_engine_inclusive(lease.valid_to) or run.period_end)
+        return advance_modes_for_period(lease, history, start, end) if start <= end else frozenset()
 
     async def _load_engine_input(
         self, run: SettlementRun, extras: ComputeExtras
@@ -833,12 +1088,14 @@ class SettlementService:
                     for c in extras.heating_inputs if c.cost_entry_id in ids]
                 context = SimpleNamespace(property_id=run.property_id, lease_agreement_id=run.lease_agreement_id,
                     period_start=start, period_end=end, advance_payments_total=Decimal(0),
+                    heating_advance_payments_total=Decimal(0), heating_advance_payments_source=run.heating_advance_payments_source,
                     advance_payments_source=run.advance_payments_source)
                 parts.append(await self._load_engine_input(context, replace(extras, heating_inputs=heating)))
                 sources.extend(self._meter_sources)
             self._meter_sources = sources
             return replace(parts[0], period_start=run.period_start, period_end=run.period_end,
-                advance_payments_total=run.advance_payments_total, allocation_inputs=tuple(parts))
+                advance_payments_total=run.advance_payments_total, heating_advance_payments_total=run.heating_advance_payments_total,
+                allocation_inputs=tuple(parts))
 
         units = await self._runs.units_for_property(run.property_id)
         leases = await self._runs.leases_for_property(run.property_id)
@@ -857,7 +1114,7 @@ class SettlementService:
                    if e.service_period_from <= run.period_end and e.service_period_to >= run.period_start]
         generic_entries = [(e,c) for e,c in entries if e.id not in heating_configs]
 
-        # Per-unit metric overrides (consumption / person count).
+        # Only consumption uses per-run metric overrides.
         metric_by_unit = {m.unit_id: m for m in extras.unit_metrics}
         self._meter_sources = []
         needs_consumption = any(entry.tenant_distribution_key == "VERBRAUCH"
@@ -887,6 +1144,11 @@ class SettlementService:
                     self._meter_sources.append(source)
                 consumptions[unit.id] = value
 
+        from app.repositories.unit_household_repo import UnitHouseholdRepository
+        household_by_unit = {}
+        for row in await UnitHouseholdRepository(self._session, self._org_id).for_units([u.id for u in units]):
+            household_by_unit.setdefault(row.unit_id, []).append(HouseholdInput(row.valid_from, row.persons, row.is_vacancy))
+
         def unit_input(u) -> UnitInput:
             m = metric_by_unit.get(u.id)
             return UnitInput(
@@ -896,7 +1158,7 @@ class SettlementService:
                 area=u.area,
                 heated_area=u.heated_area,
                 mea=u.mea,
-                person_count=m.person_count if m else None,
+                household=tuple(household_by_unit.get(u.id, [])),
                 consumption=consumptions.get(u.id, m.consumption if m else None),
                 consumption_periods=self._consumption_periods.get(u.id, ()),
             )
@@ -915,7 +1177,7 @@ class SettlementService:
                 tenant_profile_id=l.tenant_profile_id,
                 valid_from=l.valid_from,
                 valid_to=db_exclusive_to_engine_inclusive(l.valid_to),
-                advance_payment=l.advance_payment,
+                advance_payment=l.advance_payment, heating_advance_payment=l.heating_advance_payment,
             )
             for l in leases
         )
@@ -939,6 +1201,8 @@ class SettlementService:
             man_by_entry.setdefault(m.cost_entry_id, []).append(m)
 
         position_inputs = []
+        commercial_rules = await CommercialPreallocationRepository(self._session, self._org_id).for_costs([e.id for e, _ in entries])
+        commercial_rules.update({rule.cost_entry_id: rule for rule in extras.commercial_preallocations or []})
         for entry, category in entries:
             code = category.code if category is not None else "UNBEKANNT"
             label = category.label if category is not None else code
@@ -956,6 +1220,11 @@ class SettlementService:
                 for m in man_by_entry.get(entry.id, [])
             )
             heating = None
+            rule = commercial_rules.get(entry.id)
+            commercial = self._commercial_values(rule) if rule is not None else {}
+            if rule is not None and (rule.commercial_share_percent is not None or rule.commercial_amount is not None):
+                self._commercial_payload[str(entry.id)] = {'cost_entry_id': str(entry.id), **{
+                    key: str(value) if isinstance(value, Decimal) else value for key, value in commercial.items()}}
             if entry.id in heating_configs:
                 if ext or man:
                     raise HTTPException(422,'Heizkosten intern und externe/manuelle Geldbeträge dürfen nicht kombiniert werden')
@@ -977,6 +1246,7 @@ class SettlementService:
                     external_amounts=ext,
                     manual_amounts=man,
                     heating=heating,
+                    **commercial,
                 )
             )
 
@@ -994,6 +1264,8 @@ class SettlementService:
             cost_positions=tuple(position_inputs),
             advance_payments_total=run.advance_payments_total,
             advance_payments_source=run.advance_payments_source,
+            heating_advance_payments_total=run.heating_advance_payments_total,
+            heating_advance_payments_source=run.heating_advance_payments_source,
             engine_version=ENGINE_VERSION,
         )
 

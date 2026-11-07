@@ -1,9 +1,11 @@
 from decimal import Decimal
+from urllib.parse import urlsplit
+
 from pytest_bdd import given, when, then, parsers
 from tests.settlement_period_support import period_property, booked, statement, create
 from tests.settlement_period_support import period_data_cleanup  # noqa: F401
 from tests.financial_coverage_helpers import attest_fixture
-from tests.bdd.steps.browser_common import browser_step
+from tests.bdd.steps.browser_common import browser_step, submit
 
 
 @given("a mixed property with a tenancy and an April settlement start")
@@ -45,7 +47,7 @@ def credited(world):
 def finalize_statement(world):
     run_id = world.data["period_run"]["id"]
     world.run(attest_fixture(world.actor, "settlement", run_id,
-        {"advance_payments_total": "200.00", "advance_payments_source": "DERIVED"}))
+        {'heating_advance_payments_total': '0.00', 'heating_advance_payments_source': "DERIVED", "advance_payments_total": "200.00", "advance_payments_source": "DERIVED"}))
     answer = world.act("POST", f"/api/settlements/{run_id}/finalize", json={})
     assert answer.status_code == 200, world.describe_response()
 
@@ -89,7 +91,7 @@ def successive_tenants(world, period_data_cleanup):
 
 def finalize_tenant_statement(world, data, start, end):
     run = world.run(create(world.actor, "/api/settlements", {
-        **statement(data, start, end), "advance_payments_total": "0.00",
+        **statement(data, start, end), 'heating_advance_payments_total': '0.00', "advance_payments_total": "0.00",
     }))
     finalize_zero_advance_statement(world, run["id"])
     return world.response.json()
@@ -97,7 +99,7 @@ def finalize_tenant_statement(world, data, start, end):
 
 def finalize_zero_advance_statement(world, run_id):
     world.run(attest_fixture(world.actor, "settlement", run_id, {
-        "advance_payments_total": "0.00", "advance_payments_source": "MANUAL",
+        'heating_advance_payments_total': '0.00', 'heating_advance_payments_source': "MANUAL", "advance_payments_total": "0.00", "advance_payments_source": "MANUAL",
     }))
     answer = world.act("POST", f"/api/settlements/{run_id}/finalize", json={})
     assert answer.status_code == 200, world.describe_response()
@@ -182,7 +184,7 @@ async def clipped_picker_widths(browser_world, request):
     for width in (1280, 360):
         await page.set_viewport_size({"width": width, "height": 1000})
         if width == 360:
-            await page.wait_for_function("document.querySelector('aside').getBoundingClientRect().right <= 0")
+            await expect(page.locator("aside")).to_have_count(0)
         await picker.scroll_into_view_if_needed()
         assert await page.evaluate("document.documentElement.scrollWidth <= window.innerWidth")
         if directory:
@@ -191,11 +193,37 @@ async def clipped_picker_widths(browser_world, request):
             attach_artifact(request.node, capture)
 
 
+@when("the manager saves tenant A's statement")
+@browser_step
+async def save_statement_from_picker(browser_world):
+    path = "/api/settlements"
+    async with browser_world.page.expect_response(
+        lambda response: response.request.method == "GET" and urlsplit(response.url).path.rsplit("/", 1)[0] == path
+    ) as first_detail:
+        created = await submit(browser_world, "Anlegen", path)
+    browser_world.world.data["saved_statement"] = (created["id"], await first_detail.value)
+
+
+@then("the draft opens immediately for tenant A from 1 January through 30 September 2025")
+@browser_step
+async def saved_statement_opens(browser_world):
+    from playwright.async_api import expect
+
+    run_id, first_detail = browser_world.world.data["saved_statement"]
+    assert first_detail.status == 200, f"First draft detail read: {first_detail.status} {await first_detail.text()}"
+    detail = await first_detail.json()
+    assert detail["id"] == run_id
+    assert detail["status"] == "draft"
+    await expect(browser_world.page).to_have_url(f"{browser_world.session.base_url}/abrechnungen/{run_id}")
+    await browser_world.row("Mieter", "Periodentest")
+    await browser_world.row("Zeitraum", "2025-01-01 bis 2025-09-30")
+
+
 @when("the manager repeats A's January through September statement")
 def repeat_former_tenant_statement(world):
     world.data["repeated_tenant_statement"] = world.run(create(world.actor, "/api/settlements", {
         **statement(world.data["successive_tenants"]["A"], "2025-01-01", "2025-09-30"),
-        "advance_payments_total": "0.00",
+        'heating_advance_payments_total': '0.00', "advance_payments_total": "0.00",
     }))
 
 
@@ -256,7 +284,7 @@ def adjacent_yearly_advance_statements(world):
         derived = world.act("PATCH", f"/api/settlements/{run['id']}/advance-payments-derived", params={"period_year": 2025})
         assert derived.status_code == 200, world.describe_response()
         world.run(attest_fixture(world.actor, "settlement", run["id"], {
-            "advance_payments_total": derived.json()["advance_payments_total"], "advance_payments_source": "DERIVED",
+            'heating_advance_payments_total': '0.00', 'heating_advance_payments_source': "DERIVED", "advance_payments_total": derived.json()["advance_payments_total"], "advance_payments_source": "DERIVED",
         }))
         final = world.act("POST", f"/api/settlements/{run['id']}/finalize", json={})
         assert final.status_code == 200, world.describe_response()
@@ -276,7 +304,7 @@ def finalize_derived_statement(world, data, start, end):
     derived = world.act("PATCH", f"/api/settlements/{run['id']}/advance-payments-derived", params={"period_year": 2025})
     assert derived.status_code == 200, world.describe_response()
     world.run(attest_fixture(world.actor, "settlement", run["id"], {
-        "advance_payments_total": derived.json()["advance_payments_total"], "advance_payments_source": "DERIVED"}))
+        'heating_advance_payments_total': '0.00', 'heating_advance_payments_source': "DERIVED", "advance_payments_total": derived.json()["advance_payments_total"], "advance_payments_source": "DERIVED"}))
     final = world.act("POST", f"/api/settlements/{run['id']}/finalize", json={})
     assert final.status_code == 200, world.describe_response()
     return final.json()
@@ -325,7 +353,7 @@ def compute_notice_draft(world):
     answer = world.act("PATCH", f"/api/settlements/{run['id']}/advance-payments-derived", params={"period_year": 2025})
     assert answer.status_code == 200, world.describe_response()
     world.run(attest_fixture(world.actor, "settlement", run["id"], {
-        "advance_payments_total": answer.json()["advance_payments_total"], "advance_payments_source": "DERIVED"}))
+        'heating_advance_payments_total': '0.00', 'heating_advance_payments_source': "DERIVED", "advance_payments_total": answer.json()["advance_payments_total"], "advance_payments_source": "DERIVED"}))
     answer = world.act("POST", f"/api/settlements/{run['id']}/compute", json={})
     assert answer.status_code == 200, world.describe_response()
 
@@ -341,7 +369,7 @@ async def capture_notice(browser, request, stage):
     for width in (1280, 360):
         await page.set_viewport_size({"width": width, "height": 1000})
         if width == 360:
-            await page.wait_for_function("document.querySelector('aside').getBoundingClientRect().right <= 0")
+            await expect(page.locator("aside")).to_have_count(0)
         notice = page.get_by_text("Nicht angerechnet: Zahlungen außerhalb des Mietverhältnisses: 1.234,56 €", exact=True)
         await page.get_by_role("heading", name="Berechnete Kostenpositionen").locator("..").scroll_into_view_if_needed()
         if stage == "after":
@@ -393,7 +421,7 @@ def finalize_lease_bounded_advances(world, total):
     assert answer.status_code == 200, world.describe_response()
     assert Decimal(answer.json()["advance_payments_total"]) == Decimal(total)
     world.run(attest_fixture(world.actor, "settlement", run["id"], {
-        "advance_payments_total": total, "advance_payments_source": "DERIVED"}))
+        'heating_advance_payments_total': '0.00', 'heating_advance_payments_source': "DERIVED", "advance_payments_total": total, "advance_payments_source": "DERIVED"}))
     answer = world.act("POST", f"/api/settlements/{run['id']}/finalize", json={})
     assert answer.status_code == 200, world.describe_response()
 
@@ -486,6 +514,7 @@ def legacy_statement(world, period_data_cleanup, status):
     data = world.run(period_property(world.actor, month=1))
     run = world.run(create(world.actor, "/api/settlements", {
         **statement(data, "2025-01-01", "2025-12-31"), "advance_payments_total": "0.00",
+        "heating_advance_payments_total": "0.00",
     }))
     # Seed the historical oversized span before freezing; the edit guard now
     # prevents constructing this legacy state by shortening after finalization.
@@ -522,11 +551,17 @@ def legacy_draft_error(world):
     assert world.response.json()["detail"]["code"] == "settlement_period_conflict"
 
 
-@given("a person-based cost source for that property")
+@given("a person-based cost source and dated households for that property")
 def person_based_cost(world):
     data = world.data["successive_tenants"]["A"]
     confirmed_period_cost(world, data, "MUELLBESEITIGUNG", "1234.56",
                           "2025-01-01", "2025-12-31", "PERSONENZAHL")
+    world.data["household_units"] = [meter["unit_id"] for meter in world.data["water_meters"]]
+    for unit_id in world.data["household_units"]:
+        answer = world.act("PUT", f"/api/units/{unit_id}/household", json=[
+            {"valid_from": "2025-01-01", "persons": 2, "is_vacancy": False},
+        ])
+        assert answer.status_code == 200, world.describe_response()
     world.data["manual_run"] = world.run(create(world.actor, "/api/settlements", statement(data, "2025-01-01", "2025-12-31")))
 
 
@@ -541,30 +576,46 @@ async def open_manual_inputs(browser_world):
     await page.get_by_role("button", name="Strukturierte Eingaben anzeigen", exact=True).click()
 
 
-@then("manual consumption and persons explain the property-year basis on desktop and mobile")
+@then("annual consumption and saved household history are accessible on desktop and mobile")
 @browser_step
 async def manual_input_hints(browser_world, request):
+    import re
+
     from playwright.async_api import expect
     from tests.bdd.report import artifact_directory, attach_artifact
 
     page = browser_world.page
     assert "/abrechnungen/" in page.url
     assert await page.title() == "Hausverwaltung"
-    await expect(page.get_by_role("heading", name="Verbrauch / Personenzahl", exact=True)).to_be_visible()
+    await expect(page.get_by_role("heading", name="Verbrauch", exact=True)).to_be_visible()
     directory = artifact_directory(request.node)
     for width in (1280, 360):
         await page.set_viewport_size({"width": width, "height": 1000})
         if width == 360:
-            await page.wait_for_function("document.querySelector('aside').getBoundingClientRect().right <= 0")
-        await page.get_by_role("heading", name="Verbrauch / Personenzahl", exact=True).scroll_into_view_if_needed()
+            await expect(page.locator("aside")).to_have_count(0)
+        await page.get_by_role("heading", name="Verbrauch", exact=True).scroll_into_view_if_needed()
+        await expect(page.get_by_text("Verbrauch der Einheit im gesamten Objekt-Abrechnungsjahr eingeben, auch bei gekürztem Mietzeitraum.", exact=True)).to_be_visible()
+        await expect(page.get_by_role("heading", name="Personenzahl", exact=True)).to_be_visible()
+        await expect(page.get_by_text("Personenzahlen und Leerstand in der Haushaltshistorie jeder Einheit pflegen. Die Abrechnung verwendet die gespeicherten Personentage.", exact=True)).to_be_visible()
+        await expect(page.get_by_label(re.compile(r"^Personenzahl \("))).to_have_count(0)
+        await expect(page.get_by_role("link", name=re.compile(r"^Haushalt für Einheit .* bearbeiten$"))).to_have_count(2)
+        field = page.get_by_role("textbox", name="Verbrauch (1)", exact=True)
+        await field.fill("1000")
+        await expect(field).to_have_value("1000")
         if directory:
             capture = directory / f"settlement-inputs-{width}.png"
             await page.screenshot(path=str(capture), full_page=True, animations="disabled")
             attach_artifact(request.node, capture)
         assert await page.evaluate("document.documentElement.scrollWidth <= window.innerWidth")
-    await expect(page.get_by_text("Verbrauch der Einheit im gesamten Objekt-Abrechnungsjahr eingeben, auch bei gekürztem Mietzeitraum.", exact=True)).to_be_visible()
-    await expect(page.get_by_text("Personenzahlen je Einheit für das gesamte Objekt-Abrechnungsjahr in allen zugehörigen Abrechnungen gleich eingeben.", exact=True)).to_be_visible()
-    field = page.get_by_role("textbox", name="Verbrauch (1)", exact=True)
-    await field.fill("1000")
-    await expect(field).to_have_value("1000")
+        property_id = browser_world.world.data["successive_tenants"]["A"]["property"]["id"]
+        for number, unit_id in enumerate(browser_world.world.data["household_units"], start=1):
+            link = page.get_by_role("link", name=f"Haushalt für Einheit {number} bearbeiten", exact=True)
+            path = f"/objekte/{property_id}/einheiten/{unit_id}"
+            await expect(link).to_have_attribute("href", path)
+            await link.click()
+            await expect(page).to_have_url(re.compile(re.escape(path) + "$"))
+            await expect(page.get_by_role("heading", name="Personen im Haushalt", exact=True)).to_be_visible()
+            await expect(page.get_by_text("2 Personen ab 01.01.2025", exact=True)).to_be_visible()
+            await page.go_back()
+            await page.get_by_role("button", name="Strukturierte Eingaben anzeigen", exact=True).click()
     assert not browser_world.errors

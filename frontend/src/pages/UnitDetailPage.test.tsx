@@ -20,19 +20,20 @@ vi.mock("../components/MeterPanel", () => ({
 
 vi.mock("../api/endpoints", async (importOriginal) => ({
   ...await importOriginal<typeof endpoints>(),
+  getUnitHousehold: vi.fn(), replaceUnitHousehold: vi.fn(),
   getUnit: vi.fn(), getProperty: vi.fn(), listOwnership: vi.fn(), listLeases: vi.fn(),
   listOwnerProfiles: vi.fn(), listTenantProfiles: vi.fn(), listPersons: vi.fn(),
   createOwnership: vi.fn(), createLease: vi.fn(), patchLease: vi.fn(),
 }));
 
-const original: LeaseRecord = { id: "lease", unit_id: "unit", tenant_profile_id: "tenant", valid_from: "2025-01-01", valid_to: null, base_rent: "700.00", advance_payment: "150.00", deposit: null, notes: "Notiz" };
-const march = { id: "change", lease_agreement_id: "lease", valid_from: "2026-03-15", base_rent: "725.00", advance_payment: "175.00", created_at: "2026-01-01T12:00:00Z" };
+const original: LeaseRecord = { id: "lease", unit_id: "unit", tenant_profile_id: "tenant", valid_from: "2025-01-01", valid_to: null, base_rent: "700.00", advance_payment: "150.00", heating_advance_payment: "0.00", deposit: null, notes: "Notiz" };
+const march = { id: "change", lease_agreement_id: "lease", valid_from: "2026-03-15", base_rent: "725.00", advance_payment: "175.00", heating_advance_payment: "0.00", created_at: "2026-01-01T12:00:00Z" };
 const staffelRows = [
   { ...march, id: "staffel-1", valid_from: "2027-01-31", base_rent: "750.00" },
   { ...march, id: "staffel-2", valid_from: "2028-01-31", base_rent: "775.00" },
   { ...march, id: "staffel-3", valid_from: "2029-01-31", base_rent: "800.00" },
 ];
-const indexPreview = { valid_from: "2027-01-01", previous_valid_from: "2026-01-01", previous_base_rent: "600.00", base_rent: "627.27", advance_payment: "150.00" };
+const indexPreview = { valid_from: "2027-01-01", previous_valid_from: "2026-01-01", previous_base_rent: "600.00", base_rent: "627.27", advance_payment: "150.00", heating_advance_payment: "0.00" };
 const indexInput = { old_index: "110", new_index: "115", declaration_received_on: "2026-11-15" };
 let history: typeof march[];
 let failure: number | "network" | null;
@@ -54,9 +55,48 @@ function date(value: string) { fireEvent.change(screen.getByLabelText("Gültig a
 function money(label: string, value: string) { fireEvent.change(screen.getByLabelText(label, { exact: true }), { target: { value } }); }
 function save() { fireEvent.click(screen.getByRole("button", { name: "Mietänderung speichern" })); }
 function posts() { return fetchMock.mock.calls.filter(([, options]) => options?.method === "POST"); }
+
+it("keeps unit panels mounted while a saved lease refreshes", async () => {
+  let finish!: (value: never) => void;
+  show();
+  const panel = await screen.findByRole("region", { name: "Zähler" });
+  vi.mocked(endpoints.getUnit).mockReturnValueOnce(new Promise(resolve => { finish = resolve; }));
+  fireEvent.click(screen.getByRole("button", { name: "Bearbeiten / beenden" }));
+  fireEvent.change(screen.getByLabelText("Notizen"), { target: { value: "Neue Notiz" } });
+  fireEvent.click(screen.getByRole("button", { name: /^Speichern$/ }));
+  expect(await screen.findByRole("status")).toHaveTextContent("Mietvertrag gespeichert.");
+  expect(panel).toBeInTheDocument();
+  await act(async () => finish({ id: "unit", number: "1" } as never));
+});
+
+it('submits separate advances in one effective-dated rent change', async () => {
+  show();
+  const dialog = await openChange();
+  date('2026-04-01');
+  money('Betriebskosten-Vorauszahlung (EUR)', '150,00');
+  money('Heizkosten-Vorauszahlung (EUR)', '90,00');
+  save();
+  await waitFor(() => expect(dialog).not.toBeInTheDocument());
+  expect(JSON.parse(posts()[0][1].body as string)).toMatchObject({
+    advance_payment: '150.00', heating_advance_payment: '90.00', valid_from: '2026-04-01',
+  });
+});
+it("submits a combined advance as one amount in the dated rate", async () => {
+  show();
+  const dialog = await openChange();
+  date("2026-04-01");
+  fireEvent.change(within(dialog).getByLabelText("Vorauszahlungsart"), { target: { value: "COMBINED" } });
+  expect(within(dialog).queryByLabelText("Heizkosten-Vorauszahlung (EUR)", { exact: true })).toBeNull();
+  money("Betriebskosten-Vorauszahlung inkl. Heizkosten (EUR)", "240,00");
+  save();
+  await waitFor(() => expect(dialog).not.toBeInTheDocument());
+  expect(JSON.parse(posts()[0][1].body as string)).toMatchObject({
+    advance_mode: "COMBINED", advance_payment: "240.00", heating_advance_payment: "0.00",
+  });
+});
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
 beforeEach(() => {
-  vi.resetAllMocks(); history = []; failure = null;
+  vi.resetAllMocks(); vi.mocked(endpoints.getUnitHousehold).mockResolvedValue([]); history = []; failure = null;
   fetchMock = vi.fn(async (url: string, options?: RequestInit) => {
     if (options?.method === "POST") {
       if (failure === "network") throw new TypeError("Netzwerk nicht erreichbar");
@@ -84,7 +124,7 @@ beforeEach(() => {
   vi.mocked(endpoints.listOwnership).mockResolvedValue([]);
   vi.mocked(endpoints.listLeases).mockResolvedValue([{
     id: "lease", unit_id: "unit", tenant_profile_id: "tenant", valid_from: "2025-01-01",
-    valid_to: null, base_rent: "500.00", advance_payment: "100.00", deposit: null, notes: "Notiz",
+    valid_to: null, base_rent: "500.00", advance_payment: "100.00", heating_advance_payment: "0.00", deposit: null, notes: "Notiz",
   }]);
   vi.mocked(endpoints.listOwnerProfiles).mockResolvedValue([]);
   vi.mocked(endpoints.listTenantProfiles).mockResolvedValue([]);
@@ -100,6 +140,43 @@ it.each([['OWNER_ADMIN', true], ['CLERK', true], ['READ_ONLY', false], ['UNKNOWN
   expect(panel).toHaveAttribute("data-can-write", String(canWrite));
 });
 
+it.each(['OWNER_ADMIN', 'CLERK'])("guides %s from empty tenant and owner lists to persons", async role => {
+  vi.mocked(endpoints.listPersons).mockResolvedValue([
+    { id: 'anna', first_name: 'Anna', last_name: 'Beispiel' },
+    { id: 'bernd', first_name: 'Bernd', last_name: 'Test' },
+  ] as never);
+  show(role);
+  fireEvent.click(await screen.findByRole('button', { name: '+ Mietvertrag' }));
+  const tenantHint = screen.getByText(/Noch keine Person als Mieter gekennzeichnet/);
+  expect(tenantHint).toHaveTextContent('Rollen / Profile → „Als Mieter kennzeichnen“');
+  expect(within(tenantHint).getByRole('link', { name: 'Personen' })).toHaveAttribute('href', '/personen');
+  expect(within(screen.getByRole('combobox', { name: 'Mieter *' })).getAllByRole('option')).toHaveLength(1);
+  fireEvent.click(screen.getByRole('button', { name: '+ Eigentum' }));
+  const ownerHint = screen.getByText(/Noch keine Person als Eigentümer gekennzeichnet/);
+  expect(ownerHint).toHaveTextContent('Rollen / Profile → „Als Eigentuemer kennzeichnen“');
+  expect(within(ownerHint).getByRole('link', { name: 'Personen' })).toHaveAttribute('href', '/personen');
+});
+
+it('omits each hint when its profile list is populated', async () => {
+  vi.mocked(endpoints.listPersons).mockResolvedValue([{ id: 'anna', first_name: 'Anna', last_name: 'Beispiel' }] as never);
+  vi.mocked(endpoints.listTenantProfiles).mockResolvedValue([{ id: 'tenant-anna', person_id: 'anna' }] as never);
+  vi.mocked(endpoints.listOwnerProfiles).mockResolvedValue([{ id: 'owner-anna', person_id: 'anna' }] as never);
+  show();
+  fireEvent.click(await screen.findByRole('button', { name: '+ Mietvertrag' }));
+  fireEvent.click(screen.getByRole('button', { name: '+ Eigentum' }));
+  expect(screen.queryByText(/Noch keine Person als/)).not.toBeInTheDocument();
+  expect(within(screen.getByRole('combobox', { name: 'Mieter *' })).getByRole('option', { name: 'Anna Beispiel' })).toBeInTheDocument();
+  expect(within(screen.getByRole('combobox', { name: 'Eigentuemer *' })).getByRole('option', { name: 'Anna Beispiel' })).toBeInTheDocument();
+});
+
+it.each(['READ_ONLY', 'UNKNOWN'])("keeps profile guidance inside write forms for %s", async role => {
+  show(role);
+  await screen.findByRole('region', { name: 'Zähler' });
+  expect(screen.queryByRole('button', { name: '+ Mietvertrag' })).not.toBeInTheDocument();
+  expect(screen.queryByRole('button', { name: '+ Eigentum' })).not.toBeInTheDocument();
+  expect(screen.queryByText(/Noch keine Person als/)).not.toBeInTheDocument();
+});
+
 it("creates a lease contract only after confirming its legal caveat", async () => {
   fetchMock.mockImplementation(async (url: string, options?: RequestInit) => {
     if (url.endsWith('/contract') && options?.method === 'POST') return new Response(JSON.stringify({
@@ -111,6 +188,8 @@ it("creates a lease contract only after confirming its legal caveat", async () =
   fireEvent.click(await screen.findByRole('button', { name: 'Mietvertrag erstellen' }));
   const dialog = await screen.findByRole('dialog', { name: 'Mietvertrag erstellen' });
   expect(within(dialog).getByText(/Vorlage; rechtliche Prüfung erforderlich/)).toBeVisible();
+  expect(within(dialog).getByText(/Die Mietbeträge gelten zum gewählten Dokumentdatum/)).toBeVisible();
+  expect(within(dialog).getByText(/nach Mietende, zeigt das PDF die Beträge vom letzten Miettag/)).toBeVisible();
   expect(posts()).toHaveLength(0);
   fireEvent.change(within(dialog).getByLabelText('Übergabedatum'), { target: { value: '2026-01-02' } });
   fireEvent.change(within(dialog).getByLabelText('Freitext: weitere Vereinbarungen'), { target: { value: 'Gartenmitbenutzung prüfen' } });
@@ -273,12 +352,12 @@ it("loads dated history with a clear original-contract source", async () => {
 it("posts April 750/150 exactly, keeps original lease money and persists on reload", async () => {
   vi.mocked(endpoints.listLeases).mockResolvedValue([original]);
   const view = show(); await openChange(); date("2026-04-01");
-  expect(screen.getByLabelText("Vorauszahlung (EUR)", { exact: true })).toHaveValue("150.00");
+  expect(screen.getByLabelText("Betriebskosten-Vorauszahlung (EUR)", { exact: true })).toHaveValue("150.00");
   money("Kaltmiete (EUR)", "750,00"); save();
   await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
   expect(posts()).toHaveLength(1);
   expect(posts()[0][0]).toBe("/api/leases/lease/rent-changes");
-  expect(JSON.parse(posts()[0][1].body)).toEqual({ valid_from: "2026-04-01", base_rent: "750.00", advance_payment: "150.00" });
+  expect(JSON.parse(posts()[0][1].body)).toEqual({ valid_from: "2026-04-01", base_rent: "750.00", advance_payment: "150.00", heating_advance_payment: "0.00" });
   expect(original.base_rent).toBe("700.00"); expect(original.advance_payment).toBe("150.00");
   expect(endpoints.patchLease).not.toHaveBeenCalled(); expect(endpoints.createLease).not.toHaveBeenCalled();
   expect(await screen.findByText("2026-04-01")).toBeVisible();
@@ -287,12 +366,12 @@ it("posts April 750/150 exactly, keeps original lease money and persists on relo
 
 it("prefills the full rate at the chosen date, preserving NK on a subsequent change", async () => {
   vi.mocked(endpoints.listLeases).mockResolvedValue([original]);
-  history = [march, { ...march, id: "later", valid_from: "2026-06-01", base_rent: "800.00", advance_payment: "200.00" }];
+  history = [march, { ...march, id: "later", valid_from: "2026-06-01", base_rent: "800.00", advance_payment: "200.00", heating_advance_payment: "0.00" }];
   show(); await openChange(); date("2026-02-01");
   expect(screen.getByLabelText("Kaltmiete (EUR)", { exact: true })).toHaveValue("700.00");
   date("2026-04-01");
   expect(screen.getByLabelText("Kaltmiete (EUR)", { exact: true })).toHaveValue("725.00");
-  expect(screen.getByLabelText("Vorauszahlung (EUR)", { exact: true })).toHaveValue("175.00");
+  expect(screen.getByLabelText("Betriebskosten-Vorauszahlung (EUR)", { exact: true })).toHaveValue("175.00");
   money("Kaltmiete (EUR)", "750"); save();
   await waitFor(() => expect(posts()).toHaveLength(1));
   expect(JSON.parse(posts()[0][1].body).advance_payment).toBe("175.00");
@@ -300,10 +379,10 @@ it("prefills the full rate at the chosen date, preserving NK on a subsequent cha
 
 it.each([409, 422, 403, 404, "network"] as const)("preserves inputs and retries after POST failure %s", async status => {
   failure = status; show(); await openChange(); date("2026-04-01");
-  money("Kaltmiete (EUR)", "750,25"); money("Vorauszahlung (EUR)", "175,10"); save();
+  money("Kaltmiete (EUR)", "750,25"); money("Betriebskosten-Vorauszahlung (EUR)", "175,10"); save();
   expect(await within(screen.getByRole("dialog")).findByRole("alert")).toBeVisible();
   expect(screen.getByLabelText("Kaltmiete (EUR)", { exact: true })).toHaveValue("750,25");
-  expect(screen.getByLabelText("Vorauszahlung (EUR)", { exact: true })).toHaveValue("175,10");
+  expect(screen.getByLabelText("Betriebskosten-Vorauszahlung (EUR)", { exact: true })).toHaveValue("175,10");
   failure = null; save();
   await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument()); expect(posts()).toHaveLength(2);
 });
@@ -313,7 +392,7 @@ it("loads history read-only without exposing the change action", async () => {
   expect(screen.queryByRole("button", { name: /^Miete ändern ab/ })).not.toBeInTheDocument();
 });
 
-it.each(["", "-1", "1e3", "1.001", "NaN", "1.234,56", "1000000000000"])("rejects invalid money %s without POST", async value => {
+it.each(["", "-1", "1e3", "1.001", "NaN", "1.23,56", "1000000000000"])("rejects invalid money %s without POST", async value => {
   show(); await openChange(); date("2026-04-01"); money("Kaltmiete (EUR)", value); save();
   expect(await within(screen.getByRole("dialog")).findByRole("alert")).toBeVisible(); expect(posts()).toHaveLength(0);
 });
@@ -326,7 +405,7 @@ it.each(["", "2024-12-31", "2026-05-01", "2026-02-30"])("rejects invalid or out-
 
 it("accepts the inclusive lease end and a zero advance", async () => {
   vi.mocked(endpoints.listLeases).mockResolvedValue([{ ...original, valid_to: "2026-04-30" }]);
-  show(); await openChange(); date("2026-04-30"); money("Vorauszahlung (EUR)", "0"); save();
+  show(); await openChange(); date("2026-04-30"); money("Betriebskosten-Vorauszahlung (EUR)", "0"); save();
   await waitFor(() => expect(posts()).toHaveLength(1)); expect(JSON.parse(posts()[0][1].body).advance_payment).toBe("0.00");
 });
 
@@ -347,9 +426,9 @@ it("locks double submission synchronously until completion", async () => {
 });
 
 it("couples the selected contract and its history exactly", async () => {
-  vi.mocked(endpoints.listLeases).mockResolvedValue([original, { ...original, id: "lease-two", base_rent: "900.00", advance_payment: "250.00" }]);
+  vi.mocked(endpoints.listLeases).mockResolvedValue([original, { ...original, id: "lease-two", base_rent: "900.00", advance_payment: "250.00", heating_advance_payment: "0.00" }]);
   show(); await openChange(1); date("2026-04-01");
-  expect(screen.getByLabelText("Vorauszahlung (EUR)", { exact: true })).toHaveValue("250.00"); save();
+  expect(screen.getByLabelText("Betriebskosten-Vorauszahlung (EUR)", { exact: true })).toHaveValue("250.00"); save();
   await waitFor(() => expect(posts()).toHaveLength(1)); expect(posts()[0][0]).toBe("/api/leases/lease-two/rent-changes");
   expect(fetchMock.mock.calls.some(([url]) => url === "/api/leases/lease/rent-changes")).toBe(true);
 });
@@ -371,39 +450,39 @@ it("cancels without mutation", async () => {
 });
 
 it("never prefills another contract's history", async () => {
-  vi.mocked(endpoints.listLeases).mockResolvedValue([original, { ...original, id: "lease-two", valid_from: "2026-01-01", base_rent: "900.00", advance_payment: "250.00" }]);
-  const secondChange = { ...march, id: "second-change", lease_agreement_id: "lease-two", base_rent: "950.00", advance_payment: "275.00" };
+  vi.mocked(endpoints.listLeases).mockResolvedValue([original, { ...original, id: "lease-two", valid_from: "2026-01-01", base_rent: "900.00", advance_payment: "250.00", heating_advance_payment: "0.00" }]);
+  const secondChange = { ...march, id: "second-change", lease_agreement_id: "lease-two", base_rent: "950.00", advance_payment: "275.00", heating_advance_payment: "0.00" };
   fetchMock.mockImplementation(async (url: string, options?: RequestInit) => {
     if (options?.method === "POST") return new Response(JSON.stringify({ ...secondChange, ...JSON.parse(options.body as string), id: "new-second-change" }), { status: 201 });
     return new Response(JSON.stringify(url.includes("lease-two") ? [secondChange] : [march]), { status: 200 });
   });
   show(); await openChange(1); date("2026-04-01");
   expect(screen.getByLabelText("Kaltmiete (EUR)", { exact: true })).toHaveValue("950.00");
-  expect(screen.getByLabelText("Vorauszahlung (EUR)", { exact: true })).toHaveValue("275.00");
+  expect(screen.getByLabelText("Betriebskosten-Vorauszahlung (EUR)", { exact: true })).toHaveValue("275.00");
   save(); await waitFor(() => expect(posts()).toHaveLength(1));
   expect(posts()[0][0]).toBe("/api/leases/lease-two/rent-changes");
-  expect(JSON.parse(posts()[0][1].body)).toEqual({ valid_from: "2026-04-01", base_rent: "950.00", advance_payment: "275.00" });
+  expect(JSON.parse(posts()[0][1].body)).toEqual({ valid_from: "2026-04-01", base_rent: "950.00", advance_payment: "275.00", heating_advance_payment: "0.00" });
 });
 
 it.each(["", "-0.01", "0.001", "Infinity"])("rejects invalid advance %s without POST", async value => {
-  show(); await openChange(); date("2026-04-01"); money("Vorauszahlung (EUR)", value); save();
+  show(); await openChange(); date("2026-04-01"); money("Betriebskosten-Vorauszahlung (EUR)", value); save();
   expect(await within(screen.getByRole("dialog")).findByRole("alert")).toBeVisible(); expect(posts()).toHaveLength(0);
 });
 
 it("normalizes cent amounts exactly without floating-point rounding", async () => {
   show("CLERK"); await openChange(); date("2026-04-01");
-  money("Kaltmiete (EUR)", "000750,29"); money("Vorauszahlung (EUR)", "0.01"); save();
+  money("Kaltmiete (EUR)", "000750,29"); money("Betriebskosten-Vorauszahlung (EUR)", "0.01"); save();
   await waitFor(() => expect(posts()).toHaveLength(1));
-  expect(JSON.parse(posts()[0][1].body)).toEqual({ valid_from: "2026-04-01", base_rent: "750.29", advance_payment: "0.01" });
+  expect(JSON.parse(posts()[0][1].body)).toEqual({ valid_from: "2026-04-01", base_rent: "750.29", advance_payment: "0.01", heating_advance_payment: "0.00" });
 });
 
 it("accepts the full Numeric(14,2) API bound without truncation", async () => {
   show(); await openChange(); date("2026-04-01");
   money("Kaltmiete (EUR)", "999999999999.99");
-  money("Vorauszahlung (EUR)", "999999999999,99"); save();
+  money("Betriebskosten-Vorauszahlung (EUR)", "999999999999,99"); save();
   await waitFor(() => expect(posts()).toHaveLength(1));
   expect(JSON.parse(posts()[0][1].body)).toEqual({
-    valid_from: "2026-04-01", base_rent: "999999999999.99", advance_payment: "999999999999.99",
+    valid_from: "2026-04-01", base_rent: "999999999999.99", advance_payment: "999999999999.99", heating_advance_payment: "0.00",
   });
 });
 
@@ -840,4 +919,89 @@ it("T57 hides lease creation and edit/end for READ_ONLY while keeping dated hist
   expect(screen.queryByRole("button", { name: "Bearbeiten / beenden" })).not.toBeInTheDocument();
   expect(endpoints.createLease).not.toHaveBeenCalled();
   expect(endpoints.patchLease).not.toHaveBeenCalled();
+});
+
+it.each([false, true])("normalizes German lease money on save (editing=%s)", async editing => {
+  vi.mocked(endpoints.listTenantProfiles).mockResolvedValue([{ id: "tenant", person_id: "person" }] as never);
+  show();
+  fireEvent.click(await screen.findByRole("button", { name: editing ? "Bearbeiten / beenden" : "+ Mietvertrag" }));
+  if (!editing) {
+    fireEvent.change(screen.getByLabelText("Mieter *"), { target: { value: "tenant" } });
+    fireEvent.change(screen.getByLabelText("Vertragsbeginn *"), { target: { value: "2026-01-01" } });
+  }
+  for (const [label, value] of [["Kaltmiete (EUR) *", "750,00"], ["Betriebskosten-Vorauszahlung (EUR) *", "150,00"], ["Heizkosten-Vorauszahlung (EUR) *", "90,00"], ["Kaution (EUR)", "2.250,00"]]) {
+    fireEvent.change(screen.getByLabelText(label), { target: { value } });
+  }
+  fireEvent.click(screen.getByRole("button", { name: "Speichern" }));
+  const amounts = { base_rent: "750.00", advance_payment: "150.00", heating_advance_payment: "90.00", deposit: "2250.00" };
+  await waitFor(() => editing
+    ? expect(endpoints.patchLease).toHaveBeenCalledWith("lease", expect.objectContaining(amounts))
+    : expect(endpoints.createLease).toHaveBeenCalledWith(expect.objectContaining(amounts)));
+});
+
+it.each(["Kaltmiete (EUR) *", "Betriebskosten-Vorauszahlung (EUR) *", "Heizkosten-Vorauszahlung (EUR) *", "Kaution (EUR)"])("keeps invalid lease input and reports a German field error for %s", async label => {
+  show();
+  fireEvent.click(await screen.findByRole("button", { name: "Bearbeiten / beenden" }));
+  const input = screen.getByLabelText(label);
+  fireEvent.change(input, { target: { value: "abc" } });
+  fireEvent.click(screen.getByRole("button", { name: "Speichern" }));
+  expect(await screen.findByRole("alert")).toHaveTextContent(/gültigen EUR-Betrag/);
+  expect(input).toHaveValue("abc");
+  expect(input).toHaveAttribute("aria-invalid", "true");
+  expect(endpoints.patchLease).not.toHaveBeenCalled();
+  expect(endpoints.createLease).not.toHaveBeenCalled();
+});
+
+
+it('saves independent household streams with an editable vacancy suggestion and explicit zero', async () => {
+  const user = userEvent.setup();
+  vi.mocked(endpoints.replaceUnitHousehold).mockImplementation(async (_id, rows) => rows);
+  show();
+  await user.click(await screen.findByRole('button', { name: 'Haushalt bearbeiten' }));
+  await user.click(screen.getByRole('button', { name: 'Leerstand hinzufügen' }));
+  expect(screen.getByLabelText('Personenzahl Leerstand')).toHaveValue(1);
+  expect(endpoints.replaceUnitHousehold).not.toHaveBeenCalled();
+  fireEvent.change(screen.getByLabelText('Personen im Leerstand ab'), { target: { value: '2026-01-01' } });
+  await user.clear(screen.getByLabelText('Personenzahl Leerstand'));
+  await user.type(screen.getByLabelText('Personenzahl Leerstand'), '2');
+  await user.click(screen.getByRole('button', { name: 'Belegung hinzufügen' }));
+  fireEvent.change(screen.getByLabelText('Personen im Haushalt ab'), { target: { value: '2026-03-01' } });
+  await user.type(screen.getByLabelText('Personenzahl Belegung'), '0');
+  await user.click(screen.getByRole('button', { name: 'Haushalt speichern' }));
+  expect(endpoints.replaceUnitHousehold).toHaveBeenCalledWith('unit', [
+    { valid_from: '2026-01-01', persons: 2, is_vacancy: true },
+    { valid_from: '2026-03-01', persons: 0, is_vacancy: false },
+  ]);
+  expect(await screen.findByText('0 Personen ab 01.03.2026', { exact: true })).toBeVisible();
+});
+
+it('preserves household edits after a refused save', async () => {
+  const user = userEvent.setup();
+  vi.mocked(endpoints.replaceUnitHousehold).mockRejectedValue(new Error('Speichern fehlgeschlagen'));
+  show();
+  await user.click(await screen.findByRole('button', { name: 'Haushalt bearbeiten' }));
+  await user.click(screen.getByRole('button', { name: 'Leerstand hinzufügen' }));
+  fireEvent.change(screen.getByLabelText('Personen im Leerstand ab'), { target: { value: '2026-01-01' } });
+  await user.click(screen.getByRole('button', { name: 'Haushalt speichern' }));
+  expect(await screen.findByRole('alert')).toHaveTextContent('Speichern fehlgeschlagen');
+  expect(screen.getByLabelText('Personen im Leerstand ab')).toHaveValue('2026-01-01');
+  expect(screen.getByLabelText('Personenzahl Leerstand')).toHaveValue(1);
+});
+
+it('shows saved household history without edit actions for readonly members', async () => {
+  vi.mocked(endpoints.getUnitHousehold).mockResolvedValue([{ valid_from: '2026-01-01', persons: 2, is_vacancy: false }]);
+  show('READONLY');
+  expect(await screen.findByText('2 Personen ab 01.01.2026', { exact: true })).toBeVisible();
+  expect(screen.queryByRole('button', { name: 'Haushalt bearbeiten' })).not.toBeInTheDocument();
+});
+
+it('keeps a long household history and large saved counts readable', async () => {
+  vi.mocked(endpoints.getUnitHousehold).mockResolvedValue(Array.from({ length: 24 }, (_, index) => ({
+    valid_from: `${2000 + index}-01-01`, persons: 2147483647, is_vacancy: false,
+  })));
+  show('READONLY');
+  const items = await screen.findAllByText(/^2\.147\.483\.647 Personen ab/);
+  expect(items).toHaveLength(24);
+  expect(items[0]).toHaveTextContent('01.01.2000');
+  expect(items[23]).toHaveTextContent('01.01.2023');
 });

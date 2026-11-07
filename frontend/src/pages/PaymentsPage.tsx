@@ -57,7 +57,8 @@ const STATUS_CSS: Record<string, string> = {
 
 const PAYMENT_TYPE_OPTIONS: { value: string; label: string }[] = [
   { value: "KALTMIETE", label: "Kaltmiete" },
-  { value: "NK_VORAUSZAHLUNG", label: "NK-Vorauszahlung" },
+  { value: "NK_VORAUSZAHLUNG", label: "Betriebskosten-Vorauszahlung" },
+  { value: "HK_VORAUSZAHLUNG", label: "Heizkosten-Vorauszahlung" },
   { value: "KAUTION", label: "Kaution" },
   { value: "HAUSGELD_VORSCHUSS", label: "Hausgeld-Vorschuss" },
   { value: "RUECKLAGENANTEIL", label: "Ruecklagenanteil" },
@@ -67,7 +68,7 @@ const PAYMENT_TYPE_OPTIONS: { value: string; label: string }[] = [
 
 const PAYMENT_TYPE_LABELS: Record<string, string> = {
   KALTMIETE: "Kaltmiete",
-  NK_VORAUSZAHLUNG: "NK-Vorauszahlung",
+  NK_VORAUSZAHLUNG: "Betriebskosten-Vorauszahlung", HK_VORAUSZAHLUNG: "Heizkosten-Vorauszahlung",
   KAUTION: "Kaution",
   HAUSGELD_VORSCHUSS: "Hausgeld-Vorschuss",
   RUECKLAGENANTEIL: "Ruecklagenanteil",
@@ -81,7 +82,7 @@ const DIRECTION_LABELS: Record<string, string> = {
 };
 
 // Tenant-bound types: counterparty = tenant
-const TENANT_TYPES = new Set(["KALTMIETE", "NK_VORAUSZAHLUNG", "KAUTION"]);
+const TENANT_TYPES = new Set(["KALTMIETE", "NK_VORAUSZAHLUNG", "HK_VORAUSZAHLUNG", "KAUTION"]);
 
 function makeEmptyForm(): PaymentCreate {
   return {
@@ -181,7 +182,7 @@ export function PaymentsPage() {
         if (err instanceof ApiError && err.status === 401) {
           setError("Nicht authentifiziert. Bitte erneut anmelden.");
         } else {
-          setError(String(err));
+          setError(err instanceof ApiError ? err.message : String(err));
         }
       })
       .finally(() => { if (current()) setLoading(false); });

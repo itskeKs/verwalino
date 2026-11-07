@@ -24,6 +24,7 @@ import type {
   OwnerProfile,
   Person,
 } from "../api/types";
+import { formatEuro } from "../lib/utils";
 import { ApiError } from "../api/client";
 import { MailDispatch } from "../components/MailDispatch";
 
@@ -46,7 +47,7 @@ const LEVEL_LABELS: Record<number, string> = {
 
 const PAYMENT_TYPE_LABELS: Record<string, string> = {
   KALTMIETE: "Kaltmiete",
-  NK_VORAUSZAHLUNG: "NK-Vorauszahlung",
+  NK_VORAUSZAHLUNG: "Betriebskosten-Vorauszahlung", HK_VORAUSZAHLUNG: "Heizkosten-Vorauszahlung",
   KAUTION: "Kaution",
   HAUSGELD_VORSCHUSS: "Hausgeld-Vorschuss",
   RUECKLAGENANTEIL: "Ruecklagenanteil",
@@ -201,6 +202,10 @@ export function DunningNoticeDetailPage() {
   if (!notice) return <p className="error-text">Mahnung nicht gefunden.</p>;
 
   const includedItems = notice.included_items ?? [];
+  const issuedAt = notice.issued_at ? new Date(notice.issued_at).toLocaleString("de-DE", {
+    timeZone: "Europe/Berlin", day: "2-digit", month: "2-digit", year: "numeric",
+    hour: "2-digit", minute: "2-digit",
+  }) : null;
 
   return (
     <div>
@@ -258,7 +263,7 @@ export function DunningNoticeDetailPage() {
           Die gespeicherten Inhalte dürfen nicht nachträglich geändert werden. Die Ausstellung allein ist kein Zustellnachweis.
           {notice.issued_at && (
             <div style={{ marginTop: "0.25rem", fontSize: "0.82rem" }}>
-              Ausgestellt am: {notice.issued_at}
+              Ausgestellt am: {issuedAt}
             </div>
           )}
         </div>
@@ -298,7 +303,7 @@ export function DunningNoticeDetailPage() {
             {notice.issued_at && (
               <tr>
                 <td>Ausgestellt am</td>
-                <td>{notice.issued_at}</td>
+                <td>{issuedAt}</td>
               </tr>
             )}
             {notice.note && (
@@ -329,7 +334,7 @@ export function DunningNoticeDetailPage() {
               </td>
             </tr>
             <tr>
-              <td>Mahngebuehr</td>
+              <td>Mahngebühr</td>
               <td style={{ fontFamily: "var(--mono)" }}>
                 {notice.fee_amount} EUR
               </td>
@@ -359,19 +364,43 @@ export function DunningNoticeDetailPage() {
 
       {notice.interest_snapshot && <section className="card" style={{ marginBottom: "1.5rem" }}>
         <h2>Eingefrorene Zinsberechnung</h2>
-        <p>Basiszinssatz: {notice.interest_snapshot.base_interest_rate} %</p>
-        <p>Jahreszinssatz: {notice.interest_snapshot.annual_rate} % (Basiszinssatz + 5 Prozentpunkte)</p>
+        {notice.interest_snapshot.premium
+          ? <p>Basiszinssatz + {notice.interest_snapshot.premium} Prozentpunkte (§ 288 Abs. {notice.interest_snapshot.premium === 9 ? 2 : 1} BGB)</p>
+          : <>
+            <p>Basiszinssatz: {notice.interest_snapshot.base_interest_rate} %</p>
+            <p>Jahreszinssatz: {notice.interest_snapshot.annual_rate} % (Basiszinssatz + 5 Prozentpunkte)</p>
+          </>}
         <p>Stichtag: <span>{notice.interest_snapshot.reference_date}</span></p>
         <p className="form-hint">Gespeicherte Werte dieser Mahnung; keine Neuberechnung mit heutigen Zinssätzen.</p>
         <div style={{ overflowX: "auto" }}><table className="data-table">
-          <thead><tr><th>Typ</th><th>Periode</th><th>Fälligkeit</th><th>Tage</th><th>Hauptforderung</th><th>Zinsen</th></tr></thead>
+          <thead><tr><th>Hauptforderung</th><th>Zinsen</th><th>Typ</th><th>Periode</th><th>Fälligkeit</th><th>Tage</th></tr></thead>
           <tbody>{notice.interest_snapshot.items.map((item, index) => <tr key={index}>
+            <td className="whitespace-nowrap">
+              <span>{item.principal} EUR</span>
+              {item.interest_start && ["KALTMIETE", "NK_VORAUSZAHLUNG"].includes(item.payment_type) &&
+                <div className="text-xs font-normal">Zinsbeginn:<br />{item.interest_start.split("-").reverse().join(".")}</div>}
+            </td><td className="whitespace-nowrap">{item.interest} EUR</td>
             <td>{PAYMENT_TYPE_LABELS[item.payment_type] ?? item.payment_type}</td>
             <td>{item.period_year === null ? "-" : `${item.period_year}${item.period_month === null ? "" : `/${String(item.period_month).padStart(2, "0")}`}`}</td>
             <td>{item.due_date}</td><td>{item.days}</td>
-            <td>{item.principal} EUR</td><td>{item.interest} EUR</td>
           </tr>)}</tbody>
         </table></div>
+        {notice.interest_snapshot.premium && <div className="mt-4">
+          <h3>Zinsabschnitte</h3>
+          <div className="overflow-x-auto"><table className="data-table">
+            <thead><tr><th>Zinszeitraum</th><th>Zinsen</th><th>Hauptforderung</th><th>Jahreszinssatz</th><th>Basiszinssatz</th><th>Tage</th><th>Typ</th></tr></thead>
+            <tbody>{notice.interest_snapshot.items.flatMap((item, index) => item.segments?.map(segment =>
+              <tr key={`${index}-${segment.start}`}>
+                <td>{segment.start.split("-").reverse().join(".")} bis {segment.end.split("-").reverse().join(".")}</td>
+                <td className="whitespace-nowrap">{formatEuro(segment.interest)}</td>
+                <td className="whitespace-nowrap">{formatEuro(segment.principal)}</td>
+                <td>{segment.annual_rate.replace(".", ",")} %</td>
+                <td>{segment.base_interest_rate.replace(".", ",")} %</td>
+                <td>{segment.days}</td>
+                <td>{PAYMENT_TYPE_LABELS[item.payment_type] ?? item.payment_type}</td>
+              </tr>) ?? [])}</tbody>
+          </table></div>
+        </div>}
       </section>}
 
       {/* Included items (Rueckstandsaufstellung) */}
@@ -382,11 +411,11 @@ export function DunningNoticeDetailPage() {
             <table className="data-table">
               <thead>
                 <tr>
-                  <th>Periode</th>
-                  <th>Typ</th>
+                  <th style={{ textAlign: "right" }}>Offen</th>
                   <th style={{ textAlign: "right" }}>Soll</th>
                   <th style={{ textAlign: "right" }}>Ist</th>
-                  <th style={{ textAlign: "right" }}>Offen</th>
+                  <th>Periode</th>
+                  <th>Typ</th>
                 </tr>
               </thead>
               <tbody>
@@ -394,31 +423,8 @@ export function DunningNoticeDetailPage() {
                   const hasOpenAmount = /[1-9]/.test(item.open_amount);
                   return (
                     <tr key={idx}>
-                      <td>
-                        {item.period_year
-                          ? `${item.period_year}${item.period_month ? "/" + String(item.period_month).padStart(2, "0") : ""}`
-                          : "-"}
-                      </td>
-                      <td>
-                        {PAYMENT_TYPE_LABELS[item.payment_type] ?? item.payment_type}
-                      </td>
                       <td
-                        style={{
-                          textAlign: "right",
-                          fontFamily: "var(--mono)",
-                        }}
-                      >
-                        {item.soll} EUR
-                      </td>
-                      <td
-                        style={{
-                          textAlign: "right",
-                          fontFamily: "var(--mono)",
-                        }}
-                      >
-                        {item.ist} EUR
-                      </td>
-                      <td
+                        className="whitespace-nowrap"
                         style={{
                           textAlign: "right",
                           fontFamily: "var(--mono)",
@@ -427,6 +433,32 @@ export function DunningNoticeDetailPage() {
                         }}
                       >
                         {item.open_amount} EUR
+                      </td>
+                      <td
+                        className="whitespace-nowrap"
+                        style={{
+                          textAlign: "right",
+                          fontFamily: "var(--mono)",
+                        }}
+                      >
+                        {item.soll} EUR
+                      </td>
+                      <td
+                        className="whitespace-nowrap"
+                        style={{
+                          textAlign: "right",
+                          fontFamily: "var(--mono)",
+                        }}
+                      >
+                        {item.ist} EUR
+                      </td>
+                      <td>
+                        {item.period_year
+                          ? `${item.period_year}${item.period_month ? "/" + String(item.period_month).padStart(2, "0") : ""}`
+                          : "-"}
+                      </td>
+                      <td>
+                        {PAYMENT_TYPE_LABELS[item.payment_type] ?? item.payment_type}
                       </td>
                     </tr>
                   );

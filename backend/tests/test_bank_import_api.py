@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import asyncio
 import uuid
+from contextlib import closing
 from decimal import Decimal
 from pathlib import Path
 
@@ -10,6 +11,7 @@ import psycopg2
 import pytest
 
 from tests.conftest import MIGRATOR_SYNC_URL
+from tests.test_invoice_extraction_worker import worker_tenant  # noqa: F401
 
 CSV = (
     "Buchungstag;Wertstellung;Betrag;Name;IBAN;Verwendungszweck;Währung\n"
@@ -36,6 +38,24 @@ def import_accounts(seed_data):
             )
             accounts[tenant] = str(account_id)
     return accounts
+
+
+@pytest.fixture
+def reserve_import_account(worker_tenant):
+    """Keep reserve matching independent of shared financial scope state."""
+    api, seed = worker_tenant
+    property_id, account_id = uuid.uuid4(), uuid.uuid4()
+    with closing(psycopg2.connect(MIGRATOR_SYNC_URL)) as connection:
+        with connection, connection.cursor() as cursor:
+            cursor.execute(
+                "INSERT INTO property (id,organization_id,name,management_type) VALUES (%s,%s,%s,'WEG')",
+                (str(property_id), str(seed["org_a_id"]), "Reserve import test"),
+            )
+            cursor.execute(
+                "INSERT INTO bank_account (id,organization_id,property_id,account_type,label,iban) VALUES (%s,%s,%s,'LAUFEND','Reserve import test',%s)",
+                (str(account_id), str(seed["org_a_id"]), str(property_id), "DE02120300000000202051"),
+            )
+    return api, str(account_id)
 
 
 def stored(account_id):
@@ -278,12 +298,17 @@ async def test_raw_upload_limit_protects_new_import_path():
 
 
 @pytest.mark.anyio
-async def test_imported_reserve_payout_stays_draft_until_both_references_exist(client_a_admin, import_accounts):
-    api = client_a_admin
-    account = import_accounts['a']
+async def test_imported_reserve_payout_stays_draft_until_both_references_exist(reserve_import_account):
+    api, account = reserve_import_account
     assert (await upload(api, account, dry_run=False)).status_code == 200
     page = await api.get('/api/bank-transactions', params={'bank_account_id': account})
-    outgoing = next(row for row in page.json()['items'] if Decimal(row['amount']) < 0)
+    assert page.status_code == 200, page.text
+    data = page.json()
+    assert isinstance(data, dict)
+    assert isinstance(data.get('items'), list)
+    assert len(data['items']) == 3
+    assert data['next_offset'] is None
+    outgoing = next(row for row in data['items'] if Decimal(row['amount']) < 0)
     assigned = await api.post(f"/api/bank-transactions/{outgoing['id']}/assign", json={'lines': [{
         'payment_type': 'RUECKLAGENENTNAHME', 'amount': '200.01', 'period_year': 2026, 'period_month': 1}]})
     assert assigned.status_code == 200, assigned.text
@@ -301,8 +326,26 @@ async def test_imported_reserve_payout_stays_draft_until_both_references_exist(c
     assert (await api.get(f"/api/payments/{draft['id']}")).status_code == 404
     assert (await api.delete(f"/api/payments/{draft['id']}")).status_code == 404
     page = await api.get('/api/bank-transactions', params={'bank_account_id': account})
-    assert next(row for row in page.json()['items'] if row['id'] == outgoing['id'])['status'] == 'NEU'
+    assert page.status_code == 200, page.text
+    data = page.json()
+    assert isinstance(data, dict)
+    assert isinstance(data.get('items'), list)
+    assert len(data['items']) == 3
+    assert data['next_offset'] is None
+    assert next(row for row in data['items'] if row['id'] == outgoing['id'])['status'] == 'NEU'
     retyped = await api.post(f"/api/bank-transactions/{outgoing['id']}/assign", json={'lines': [{
         'payment_type': 'RUECKLAGENENTNAHME', 'amount': '200.01', 'period_year': 2026, 'period_month': 1}]})
     assert retyped.status_code == 200, retyped.text
     assert retyped.json()['payments'][0]['id'] != draft['id']
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("dry_run", [True, False])
+async def test_sparkasse_row_account_cannot_target_another_iban(client_a_admin, import_accounts, dry_run):
+    response = await upload(
+        client_a_admin, import_accounts["a"],
+        content=(FIXTURES / "sparkasse_csv_camt.csv").read_text().replace('.26"', '.2026"').encode(), dry_run=dry_run,
+    )
+    assert response.status_code == 422, response.text
+    assert response.json()["detail"] == "IBAN im Kontoauszug stimmt nicht mit dem gewählten Bankkonto überein."
+    assert stored(import_accounts["a"]) == []

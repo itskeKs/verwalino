@@ -34,6 +34,108 @@ stack does not start this worker and disables automatic extraction.
 Operating details and release boundaries: [DEPLOY.md](../DEPLOY.md).
 No schema/RLS change.
 
+## Maintenance reserve ledger privileges
+
+`reserve_ledger_entry` is append-only. Migration `0149` revokes all table
+privileges from `PUBLIC`, `app_rw`, `app_worker` and `app_review`, then grants
+`SELECT`, `INSERT`, `UPDATE` and `DELETE` to `app_rw`. Migration `0070` grants
+`app_rw` to `app_worker` with `INHERIT TRUE`, so the worker has the same table
+privileges. `app_review` has none. The update and delete grants let attempts
+that pass row-level security (RLS) reach the `guard_reserve_ledger` trigger.
+For each such row, the trigger rejects the change with SQLSTATE `23514` and
+constraint `reserve_ledger_append_only`.
+
+Migration `0161` revokes runtime UPDATE on the ledger (also inherited by the
+worker), retaining SELECT/INSERT and the DELETE guard. Runtime UPDATE fails with
+`42501`; the guard remains `ENABLE ALWAYS`. Its only reason-update exception is
+the existing individual privacy command's actual anonymization branch. The
+authoritative shared retention facts from `0159`/`0160` still decide eligibility:
+a retained booked repayment to Anna Beispiel restricts her instead of erasing
+her identity or evidence. An unbound Eva Muster mentioned incidentally as
+“Abstimmung mit Eva Muster” can be anonymized, replacing the name with `Gelöscht`
+in the live reason and its exact corresponding audit copy. This follows the
+[owner clarification](https://github.com/itskeKs/verwalino/issues/222#issuecomment-6625055904).
+
+Only complete names/company names are matched, literally and case-insensitively,
+with normalized whitespace and word/hyphen boundaries. Known longer identities
+in the same organization (for example Maria Eva Muster) protect their original
+spans. If `Gelöscht` would exceed the 2,000-character reason limit, only the
+identifying spans use `*`; surrounding text is not truncated. Audit selection
+requires the same organization, settlement-run entity, entry ID and original
+reason for `reserve.override_added`, `reserve.contribution_reduced` and
+`reserve.contribution_restored`. Other JSON fields, metadata and historical
+`prev_event_hash` remain unchanged; the old hash does not certify modified bytes.
+
+Private person context is established/restored only around actual anonymization.
+A separate person statement trigger acquires the existing tenant financial lock
+after the existing shared ACL trigger, before tuple locks. It adds synchronization
+without a new contact policy: actorless PREPARATION writes remain permitted;
+strict-mode RLS/revocation and the special privacy checks remain authoritative.
+An unwritable strict context takes no financial lock. Known overlapping identities
+are prepared once per erasure, then cached/restored for canonical guard checks.
+Forged flags or runtime-owned nested triggers receive no UPDATE authority.
+
+Amounts, rows, references and frozen snapshots/digests are untouched. A finalized
+statement can retain the original frozen reason; exports show those unchanged
+snapshots alongside the cleaned live rows. This is no general free-text scrub.
+
+All nine foreign keys on `reserve_ledger_entry` use PostgreSQL's default
+`NO ACTION` deletion rule, as created by migration `0149`; the ORM leaves
+`ondelete` unset to match. The reserve ledger tests compare every foreign key's
+ordered source and target columns and `pg_constraint.confdeltype` with the model,
+including the organization, property and unit scope columns.
+
+Before `0161` revokes runtime UPDATE, `SELECT … FOR UPDATE` can lock rows that pass
+both the `reserve_read` and `reserve_no_update` policies. They require a match
+on the current organization, settlement scope access for `read` and `prepare`,
+and property financial disclosure access for `read`. A row that passes only
+`reserve_read` is visible to an ordinary `SELECT` and is filtered out of the
+locking query. A lock on a qualifying row can delay a competing lock, update
+or delete without changing any ledger values.
+
+### Contribution reduction audit path
+
+The supported application paths for changing a unit contribution correction are
+`POST /api/weg-settlements/{run_id}/reserve-ledger/overrides/{entry_id}/reduce`
+(with `reduced_to` and `reason`) and
+`POST /api/weg-settlements/{run_id}/reserve-ledger/overrides/{entry_id}/delete`
+(with `reason`, reducing the remainder to zero). Both return 201 for the new
+counter-entry. The delete action uses a POST body so intermediaries that discard
+DELETE bodies cannot lose the reason. An absent or blank reason returns 422
+`RESERVE_CORRECTION_REASON_REQUIRED`; the former DELETE route is not registered.
+The shared reserve panel on
+annual settlements and asset reports uses these endpoints. Both call
+`ReserveLedgerService.reduce_contribution`, which appends the counter-entry,
+writes exactly one `reserve.contribution_reduced` event for a reduction/deletion
+or `reserve.contribution_restored` for an increase, and invalidates the
+draft computation in the same transaction. The event retains the actor, reason,
+original and counter-entry IDs, and old/new remaining amounts; no retained
+ledger row is updated or deleted.
+
+Owner decision #223 permits restoration, including from zero, through a new
+reasoned counter-entry. The remaining amount may not exceed the original amount
+or raw `reserve_contribution_headroom` plus the current remainder. The existing
+headroom formula is unchanged. Service validation and migration `0154`'s guard
+apply this same cap under the organization financial-input lock; a concurrent
+Hausgeld booking/reversal cannot make the check and insert observe different
+backing. For example, 300.00 → 100.00 → 300.00 retains -200.00 and +200.00;
+400.00 is refused even with additional headroom. Lost backing can still cap the
+result at 200.00. Deleting an already-zero correction returns 422
+`RESERVE_AMOUNT_INVALID`: “Diese Korrektur ist bereits vollständig aufgehoben.
+Es ist kein Restbetrag mehr vorhanden.” The named database constraint is
+`reserve_correction_already_zero`. Existing reduction events, references and
+payloads remain unchanged; restoration never reassigns their audit evidence.
+
+Direct SQL INSERT is not a supported application path for these corrections.
+The `app_rw` INSERT privilege lets the service persist ledger entries; it does
+not make arbitrary SQL equivalent to an application operation. A direct
+counter-entry of -300.00 against a 300.00 correction leaves 0.00 and retains its
+reason and original reference, but `guard_reserve_ledger` does not emit
+`reserve.contribution_reduced` or invalidate a draft computation. RLS,
+tenant-bound foreign keys, reason/amount/scope/finalization checks and append-only
+protection still apply. Use the service-backed endpoints for audited product
+corrections. See the [reserve correction rules](m4-weg-abrechnung.md#maintenance-reserve-ledger-36).
+
 ## Portable Operation (2026-10-23)
 
 `scripts/self-host.sh` and `infra/docker-compose.yml` provide the portable
@@ -411,7 +513,16 @@ when supplied, otherwise the application version. Before sending, the pure
 scrubber removes bodies, user identities, frame locals and source snippets,
 and masks recognizable personal data, credentials and query values in messages
 and breadcrumbs. The same text filter protects formatted logs; SQLAlchemy hides
-bound parameters. No person directory is loaded: names are matched heuristically,
+bound parameters. Canonical hexadecimal UUID spans (`8-4-4-4-12`, case-insensitive)
+are excluded from IBAN and phone matching so diagnostic identifiers, including
+all-numeric UUIDs, remain complete. Phone matching treats excluded UUID edges as
+token boundaries and retains surrounding phone-grammar separators, including
+whitespace, while masking adjacent phone numbers. Other
+IBAN-shaped candidates are conservatively redacted even with an invalid country,
+length or checksum; the filter does not validate bank details. UUID-shaped values
+in credentials or URL queries still follow the normal secret/query redaction.
+Text filtering remains bounded to the first 8192 characters per string.
+No person directory is loaded: names are matched heuristically,
 so this is not a guarantee for arbitrary names or unrecognized free text.
 Transport tests stay offline. Configuration, hosted GlitchTip and log lookup are
 documented in [DEPLOY.md](../DEPLOY.md#request-ids-and-optional-error-tracking).
@@ -966,7 +1077,17 @@ sources. No implicit contact profiles, lease agreements or self-approvals.
 
 **`property`** (property, SDD §6.1): `organization_id` FK, `name`, address, **`management_type`** (`MIET`|`WEG`|`SEV`|`MISCH`), settlement period convention. RLS active.
 
+Property detail loading maps `ApiError.status === 404` to “Objekt nicht gefunden.”
+Missing and foreign-organization IDs retain identical HTTP 404 responses.
+The existing German 401 notice and `String(err)` fallback for other load errors remain.
+
 **`unit`** (unit, SDD §6.1): `organization_id`, `property_id` FK, `number`, `location`, **`area NUMERIC(10,2)`** (living/usable area), **`heated_area NUMERIC(10,2)`** (heated area), `usage_type` (Wohnung|Gewerbe|Stellplatz|Sonstige, i.e., residential|commercial|parking space|other), **`mea NUMERIC(12,6)`** (co-ownership share — exact, not float). Optional distribution peculiarities. RLS active.
+
+Unit creation and editing accept an ungrouped decimal comma or dot for `area` and
+`heated_area`, such as `75,50`. The fields store exact nonnegative values up to
+`99999999.99` with at most two fractional digits. An authorized request with an
+invalid area receives a field-specific 422 after the property or unit access checks.
+
 
 **`person`** (SDD §6.2): `organization_id`, contact data, optional bank data. **GDPR fields (Section 3.3):** `deletion_requested_at`, `processing_restricted`, `anonymized_at`. RLS active. Owner/tenant/vendor as separate logics (SDD §6.2) — either specializations of `person` (`owner_profile`, `tenant_profile`, `vendor`) or separate tables with a person reference; **[DECISION] for M1**, proposed here as 1:1 profiles, since one person can have several roles (e.g., owner *and* also a tenant themselves).
 
@@ -1124,7 +1245,12 @@ existing tasks remain editable if the assignee is later deactivated.
 
 The task UI adopts property/unit contexts without automatic
 saving; the dashboard reads open tasks with a local, inclusive
-seven-day limit. This operational data is not made dependent on the selection of a
+seven-day limit. Due-task text and pagination wrap within the dashboard card on
+phones, and reload, completion and pagination use the shared button style.
+The dashboard rent KPI form keeps long property choices inside the card at 360 px.
+Property details keep wide unit rows in their own horizontal scroll container;
+unit actions wrap and document upload fields fit the card at 360 px.
+This operational data is not made dependent on the selection of a
 financial scope. The separate read path `/api/fristen/context`
 checks, under live/ACL and existing source rules, the admissibility of the
 organization-wide deadline monitor, without loading financial report rows.
@@ -1253,6 +1379,11 @@ Limits: a probe does not combine an own parent with a foreign child id, and fore
 ### 7.5 App shell & infrastructure (in parallel, roadmap M0)
 
 - **Responsive web app shell** (React/TS): navigation/layout skeleton (desktop + mobile), login page, org context display, placeholder navigation for later modules. No native app.
+- Below 768 px, navigation uses the existing Radix modal dialog: closed links are unmounted,
+  focus stays inside the open drawer, and Escape, its close control, backdrop or route selection
+  return focus to the toggle. Desktop navigation remains static and accessible; breakpoint changes
+  move focus to the visible navigation control. The real-browser regression is
+  [`mobile_navigation.feature`](../features/mobile_navigation.feature).
 - **Auth flow** end-to-end: login → session → tenant context in the backend.
 - **PDF rendering pipeline as a skeleton:** Set up HTML→PDF (Playwright) as a service/stub and wire it to a smoke test (e.g., “Hello-PDF”) — empty in domain terms, but present as infrastructure (roadmap M0). Actual settlement PDFs from M3.
 - **Object storage skeleton:** local FS with a checksum helper function (SHA-256) as a stub; encapsulate the interface so that S3 with Object Lock/WORM can later sit behind it (SDD §16). Domain voucher storage only in M2.
@@ -1420,6 +1551,28 @@ restriction versus anonymization. Immutable vouchers, originals and audit
 evidence plus required dependencies are retained, with hashes checked at erasure.
 Revision 0148 also reconciles expired person bindings in the preview; operator
 erasure anonymizes those personal fields while preserving immutable originals.
+Revision 0159 makes `person_retention_categories()` the private category source
+for individual disclosure/export, the authoritative person command and the
+organization plan's personal-data roots. Python reads direct bindings through
+`person_retention_view()` after person and complete financial/source admission;
+raw facts and the category catalog remain unavailable to runtime roles. Booked
+payments bind their structured tenant/owner recipient, including outgoing
+repayments and reversal rows. Their stored deadline governs; historical NULL
+payment deadlines use the existing value-date year-end rule, without modifying
+the booking. An expired payment permits anonymization; a draft alone does not
+bind the person. Individual operations leave financial rows and audit evidence
+unchanged. Revision 0160 shares the actual deadline path as well: the private
+`retention_base_until()` preserves the existing organization date precedence;
+`retention_source_until()` combines the governing dates of a voucher and its
+retained sources. A manual cost dated in 2020 for services in 2017 therefore
+binds its supplier through 2028 in both erasure paths, even without a document.
+Released originals with missing explicit deadlines keep the existing metadata
+fallback. Settlement/plan addressees use their own retained line dates and the
+parent period; another owner's line never extends that recipient's deadline.
+Multiple lines for one recipient produce one binding with the latest applicable
+date. The organization's additional generic FK dependencies and historical
+owner-name fallback remain private.
+
 Seven-day cooling-off is enforced in both HTTP authentication and database write
 triggers. Final erasure invalidates every account/session; retained records have
 an operator-only path described in [DEPLOY.md](../DEPLOY.md#organization-erasure-and-retained-record-access).

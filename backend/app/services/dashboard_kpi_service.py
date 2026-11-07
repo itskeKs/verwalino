@@ -20,10 +20,10 @@ from app.models.tenant_profile import TenantProfile
 from app.models.unit import Unit
 from app.repositories.lease_rent_change_repo import LeaseRentChangeRepository
 from app.repositories.payment_repo import PaymentRepository
-from app.services.payment_service import _to_payment_input
+from app.services.payment_service import to_payment_input
 from app.services.report_service import Money, ReportService
 
-RENT_TYPES = frozenset({'KALTMIETE', 'NK_VORAUSZAHLUNG'})
+RENT_TYPES = frozenset({'KALTMIETE', 'NK_VORAUSZAHLUNG', 'HK_VORAUSZAHLUNG'})
 
 
 class DashboardKpis(BaseModel):
@@ -115,9 +115,9 @@ class DashboardKpiService:
 
         amounts = [p.amount for p in payments]
         for lease in leases:
-            amounts.extend((lease.base_rent, lease.advance_payment))
+            amounts.extend((lease.base_rent, lease.advance_payment, lease.heating_advance_payment))
             for change in histories[lease.id]:
-                amounts.extend((change.base_rent, change.advance_payment))
+                amounts.extend((change.base_rent, change.advance_payment, change.heating_advance_payment))
         # Include room for the full supported calendar, all rows, rate-days
         # and aggregation; never inherit a caller's low Decimal precision.
         with localcontext() as arithmetic:
@@ -138,28 +138,28 @@ class DashboardKpiService:
         for payment in payments:
             if payment.period_year is None or payment.period_month is None:
                 unassigned_count += 1
-                unassigned_amount += _to_payment_input(payment).signed_amount
+                unassigned_amount += to_payment_input(payment).signed_amount
                 continue
             if (payment.period_year, payment.period_month) <= (end.year, end.month):
-                assigned[payment.lease_agreement_id].append(_to_payment_input(payment))
+                assigned[payment.lease_agreement_id].append(to_payment_input(payment))
         for lease in leases:
             lease_input = LeaseChargeInput(
                 lease_agreement_id=lease.id, valid_from=lease.valid_from,
                 valid_to=db_exclusive_to_engine_inclusive(lease.valid_to),
-                base_rent=lease.base_rent, advance_payment=lease.advance_payment,
+                base_rent=lease.base_rent, advance_payment=lease.advance_payment, heating_advance_payment=lease.heating_advance_payment,
                 rent_changes=tuple(RentChangeInput(
                     valid_from=row.valid_from, base_rent=row.base_rent,
-                    advance_payment=row.advance_payment,
+                    advance_payment=row.advance_payment, heating_advance_payment=row.heating_advance_payment,
                 ) for row in histories[lease.id]),
             )
             lease_payments = assigned[lease.id]
-            current = account_statement(tenant_expected_charges(lease_input, start, end),
+            current = account_statement(tenant_expected_charges(lease_input, start, end, federal_state=prop.federal_state),
                 [p for p in lease_payments if (p.period_year, p.period_month) == (start.year, start.month)])
             expected += current.soll_total
             received += current.ist_total
             if lease.valid_from <= end:
                 cumulative = account_statement(
-                    tenant_expected_charges(lease_input, lease.valid_from, end),
+                    tenant_expected_charges(lease_input, lease.valid_from, end, federal_state=prop.federal_state),
                     [p for p in lease_payments if (p.period_year, p.period_month)
                      >= (lease.valid_from.year, lease.valid_from.month)])
                 if cumulative.balance > zero:

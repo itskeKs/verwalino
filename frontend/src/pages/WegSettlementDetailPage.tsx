@@ -1,4 +1,5 @@
 import { ReserveLedgerPanel } from "../components/ReserveLedgerPanel";
+import { WegDraftDelete } from "../components/WegDraftDelete";
 import { FinancialCoverageReview } from "../components/FinancialCoverageReview";
 import { FinancialCorrectionControls, PlanSuccessorSelector } from "../components/FinancialCorrectionControls";
 /**
@@ -23,6 +24,8 @@ import { ApiError } from "../api/client";
 
 const STATUS_LABELS: Record<string, string> = { draft: "Entwurf", finalized: "Finalisiert" };
 const STATUS_CSS: Record<string, string> = { draft: "badge--draft", finalized: "badge--confirmed" };
+const eur = (value: string) => new Intl.NumberFormat("de-DE", { style: "currency", currency: "EUR" }).format(Number(value));
+const germanDate = (value: string) => value.split("-").reverse().join(".");
 
 const LINE_LABELS: Record<string, string> = {
   OWNER_COST_TOTAL: "Summe Ist-Kosten (Ihr Anteil)",
@@ -72,7 +75,7 @@ export function WegSettlementDetailPage() {
         setRun(r); setProperties(pr); setOwnerProfiles(op); setPersons(per);
         setPaidOwners(inputOwners);
       })
-      .catch((err) => { if (active) setError(err instanceof ApiError && err.status === 401 ? "Nicht authentifiziert." : String(err)); })
+      .catch((err) => { if (active) setError(err instanceof ApiError ? (err.status === 401 ? "Nicht authentifiziert." : err.message) : String(err)); })
       .finally(() => { if (active) setLoading(false); });
     return () => { active = false; pageGeneration.current += 1; };
   }, [runId, generation]);
@@ -145,7 +148,7 @@ export function WegSettlementDetailPage() {
   }
 
   return (
-    <div>
+    <div className="settlement-detail">
       <p style={{ marginBottom: "0.5rem" }}>
         <Link to="/weg-abrechnungen" className="link">&larr; Alle WEG-Abrechnungen</Link>
       </p>
@@ -155,6 +158,8 @@ export function WegSettlementDetailPage() {
           {STATUS_LABELS[run.status] ?? run.status}
         </span>
       </h1>
+
+      <WegDraftDelete key={`delete-${run.id}`} run={run} disabled={busy || planBusy} />
 
       {actionError && (
         <div className="card" style={{ marginBottom: "1rem", background: "#ffebee", borderColor: "#ef9a9a" }}>
@@ -186,6 +191,7 @@ export function WegSettlementDetailPage() {
         <fieldset disabled={busy || planBusy} className="card" style={{ marginBottom: "1rem" }}>
           <h2>Berechnung & begründete Rücklagenwerte</h2>
           <p>Zuführungen und Entnahmen werden aus Buchungen abgeleitet; Korrekturen erfolgen mit Bezug im Rücklagenbuch. Den Anfangsbestand können Sie im ersten Rücklagenjahr mit Begründung importieren.</p>
+          <p>Für den Zahlbetrag zählen ausschließlich gebuchte, nicht stornierte Hausgeldzahlungen. Manuelle Angaben ersetzen keine Buchung.</p>
           {paidOwners.map((id) => <label key={id}>Tatsächlich gezahltes Hausgeld · {ownerName(id)}
             <input inputMode="decimal" placeholder="Unbekannt" value={paidValues[id] ?? ""} onChange={(e) => setPaidValues({ ...paidValues, [id]: e.target.value })} />
           </label>)}
@@ -203,7 +209,7 @@ export function WegSettlementDetailPage() {
               <textarea rows={3} value={reserveReason} maxLength={2000} onChange={e => setReserveReason(e.target.value)} />
             </label>
           </div>
-      {run.status === "draft" && <FinancialCoverageReview key={ledgerVersion} kind="settlement" subjectId={run.id} values={req()} onSaved={() => setLedgerRefresh(v => v + 1)} />}
+      {run.status === "draft" && <FinancialCoverageReview key={ledgerVersion} kind="settlement" subjectId={run.id} values={req()} onSaved={() => { void run_(() => getWegRun(run.id)); }} />}
           <div className="form-actions" style={{ marginTop: "1rem" }}>
             <button className="btn btn--primary" disabled={busy} onClick={() => runId && run_(() => computeWegRun(runId, req()))}>
               {busy ? "Berechnen..." : "Berechnen"}
@@ -230,28 +236,51 @@ export function WegSettlementDetailPage() {
         ownerIds.map((oid) => (
           <div className="card" key={oid} style={{ marginBottom: "1rem" }}>
             <h3 style={{ marginTop: 0 }}>{ownerName(oid === "—" ? null : oid)}</h3>
-            <table className="data-table">
-              <thead><tr><th>Position</th><th>Schlüssel</th><th style={{ textAlign: "right" }}>Gesamt</th><th style={{ textAlign: "right" }}>Betrag</th></tr></thead>
-              <tbody>
-                {ownerLines(oid).map((l) => {
-                  const isSummary = l.line_type !== "COST" && l.line_type !== "RESERVE_CONTRIBUTION";
-                  const isSpitze = l.line_type === "ABRECHNUNGSSPITZE";
-                  return (
-                    <tr key={l.id} style={isSummary ? { fontWeight: isSpitze ? 700 : 600 } : undefined}>
-                      <td>
-                        {LINE_LABELS[l.line_type] ?? l.label}
-                        {l.note ? <div style={{ fontSize: "0.78rem", color: "var(--text-muted)", fontStyle: "italic" }}>{l.note}</div> : null}
-                      </td>
-                      <td>{l.distribution_key ?? ""}</td>
-                      <td style={{ fontFamily: "var(--mono)", textAlign: "right" }}>{l.total_amount != null ? `${l.total_amount} EUR` : ""}</td>
-                      <td style={{ fontFamily: "var(--mono)", textAlign: "right", color: isSpitze ? spitzeColor(l.amount) : undefined }}>
-                        {l.amount} EUR
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
+            {run.owner_results?.filter(o => o.owner_profile_id === oid).map(o => (
+              <section key={o.owner_profile_id} className="weg-owner-balance" aria-label={`Hausgeld-Abgleich · ${ownerName(oid)}`}>
+                <p>Kostenanteil (Ist): {eur(o.owner_cost_total)}</p>
+                <dl>
+                  {([
+                    ["Abrechnungsspitze (beschlossen, § 28 Abs. 2 WEG)", o.abrechnungsspitze],
+                    ["Hausgeld-Soll laut Wirtschaftsplan", o.plan_soll],
+                    ["Hausgeld gezahlt", o.paid],
+                    ["Rückstand / Guthaben aus Hausgeld", o.account_balance],
+                    ["Zahlbetrag", o.payment_amount],
+                  ] as const).map(([label, value]) => <div key={label}>
+                    <dt>{label}</dt><dd>{eur(value)}</dd>
+                  </div>)}
+                </dl>
+                <p><strong>{Number(o.payment_amount) < 0 ? "Guthaben zugunsten des Eigentümers" : Number(o.payment_amount) > 0 ? "Zahlung an die Gemeinschaft" : "Ausgeglichen"}</strong></p>
+                <p>Nur die Abrechnungsspitze ist beschlossen; Rückstände werden aus dem Wirtschaftsplan geschuldet. Der Zahlbetrag verrechnet die Spitze mit Rückstand oder Guthaben aus Hausgeld und begründet keinen neuen Anspruch.</p>
+                <p>Quelle: Soll aus dem verknüpften Wirtschaftsplan; gezahlt aus gebuchten, nicht stornierten Hausgeldzahlungen dieses Eigentümers und Objekts im Abrechnungszeitraum (Periodenzuordnung, einschließlich Erstattungen). Offene oder ungebuchte Zahlungen zählen nicht. Bei Eigentümerwechsel bleiben Zahlungen beim zugeordneten Eigentümer.</p>
+                <p>Eigentümerzuordnung im Abrechnungszeitraum:</p>
+                {o.ownership_periods.map((p, i) => <p key={i}>Einheit {p.unit_number}: {germanDate(p.valid_from)} bis {germanDate(p.valid_to)}</p>)}
+              </section>
+            ))}
+            <div className="overflow-x-auto">
+              <table className="data-table weg-statement-table">
+                <thead><tr><th>Position</th><th>Schlüssel</th><th style={{ textAlign: "right" }}>Gesamt</th><th style={{ textAlign: "right" }}>Betrag</th></tr></thead>
+                <tbody>
+                  {ownerLines(oid).filter(l => !run.owner_results?.some(o => o.owner_profile_id === oid) || !["PLAN_ADVANCE", "ABRECHNUNGSSPITZE", "ADVANCE_PAYMENT"].includes(l.line_type)).map((l) => {
+                    const isSummary = l.line_type !== "COST" && l.line_type !== "RESERVE_CONTRIBUTION";
+                    const isSpitze = l.line_type === "ABRECHNUNGSSPITZE";
+                    return (
+                      <tr key={l.id} style={isSummary ? { fontWeight: isSpitze ? 700 : 600 } : undefined}>
+                        <td>
+                          {LINE_LABELS[l.line_type] ?? l.label}
+                          {l.note ? <div style={{ fontSize: "0.78rem", color: "var(--text-muted)", fontStyle: "italic" }}>{l.note}</div> : null}
+                        </td>
+                        <td>{l.distribution_key ?? ""}</td>
+                        <td className="whitespace-nowrap" style={{ fontFamily: "var(--mono)", textAlign: "right" }}>{l.total_amount != null ? `${l.total_amount} EUR` : ""}</td>
+                        <td className="whitespace-nowrap" style={{ fontFamily: "var(--mono)", textAlign: "right", color: isSpitze ? spitzeColor(l.amount) : undefined }}>
+                          {l.amount} EUR
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
           </div>
         ))
       )}

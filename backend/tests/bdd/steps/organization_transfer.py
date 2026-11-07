@@ -250,6 +250,42 @@ def execute_deletion(world, rent_db):
     assert world.run(execute())
 
 
+@given('its administrator imports and books a synthetic rent payment')
+def imported_rent_voucher(world, rent_db):
+    from sqlalchemy import text
+    from tests.test_organization_deletion import import_erasure_payments
+
+    async def prepare():
+        bank, _, payments = await import_erasure_payments(world.actor, world.data['export_source'])
+        row = await rent_db.scalar(text('SELECT to_jsonb(p) FROM payment p WHERE id=CAST(:id AS uuid)'),
+            {'id': payments['700.00']})
+        bank_row = await rent_db.scalar(text('SELECT to_jsonb(b) FROM bank_transaction b WHERE id=CAST(:id AS uuid)'),
+            {'id': row['bank_transaction_id']})
+        account = await rent_db.scalar(text('SELECT to_jsonb(b) FROM bank_account b WHERE id=CAST(:id AS uuid)'), {'id': bank})
+        await rent_db.rollback()
+        return bank, row, bank_row, account
+    world.data['bank_erasure'] = world.run(prepare())
+
+
+@then('the imported voucher and own account are unchanged and its bank line is anonymized')
+def anonymous_bank_dependencies(world, rent_db):
+    from sqlalchemy import text
+
+    async def verify():
+        bank, before, bank_before, account_before = world.data['bank_erasure']
+        after = await rent_db.scalar(text('SELECT to_jsonb(p) FROM payment p WHERE id=CAST(:id AS uuid)'), {'id': before['id']})
+        assert after == before
+        row = await rent_db.scalar(text('SELECT to_jsonb(b) FROM bank_transaction b WHERE id=CAST(:id AS uuid)'),
+            {'id': before['bank_transaction_id']})
+        assert row['bank_account_id'] == bank
+        assert row['import_hash'] == bank_before['import_hash']
+        assert all(row[key] == 'Gelöscht' for key in ('counterparty_name', 'counterparty_iban', 'purpose'))
+        account = await rent_db.scalar(text('SELECT to_jsonb(b) FROM bank_account b WHERE id=CAST(:id AS uuid)'), {'id': bank})
+        assert account == account_before
+        await rent_db.rollback()
+    world.run(verify())
+
+
 @then('the original remains unchanged and the former owner cannot sign in')
 def erased_organization(world, export_store):
     source = world.data['export_source']

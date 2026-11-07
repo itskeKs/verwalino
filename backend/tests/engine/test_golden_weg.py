@@ -13,6 +13,7 @@ Pure-function tests -- no DB, no server.
 from __future__ import annotations
 
 import uuid
+from dataclasses import replace
 from datetime import date
 from decimal import Decimal
 
@@ -47,6 +48,116 @@ def _cost_line(owner_result, category_code):
     return next(
         ln for ln in owner_result.cost_lines if ln.category_code == category_code
     )
+
+
+@pytest.mark.parametrize('cost,plan,paid,spitze,balance,payment', [
+    ('6400.00', '7200.00', '6600.00', '-800.00', '600.00', '-200.00'),
+    ('8000.00', '7200.00', '7500.00', '800.00', '-300.00', '500.00'),
+    ('6400.00', '7200.00', '7200.00', '-800.00', '0.00', '-800.00'),
+    ('6400.01', '7200.02', '6600.03', '-800.01', '599.99', '-200.02'),
+])
+def test_owner_payment_amount_keeps_the_resolved_spitze(cost, plan, paid, spitze, balance, payment):
+    inp = TestGolden2Abrechnungsspitze()._scenario()
+    inp = replace(inp, units=(inp.units[0],), owner_periods=(inp.owner_periods[0],),
+        cost_positions=(replace(inp.cost_positions[0], gross_amount=Decimal(cost)),),
+        plan_advances=(OwnerAdvanceInput(_U(21), Decimal(plan)),),
+        paid_advances=(OwnerAdvanceInput(_U(21), Decimal(paid)),))
+    result = compute_weg_jahresabrechnung(inp)
+    owner = result.owners[0]
+    assert owner.abrechnungsspitze == Decimal(spitze)
+    assert owner.account_balance == Decimal(balance)
+    assert owner.payment_amount == Decimal(payment)
+    saved = build_weg_snapshot_payload(inp, result)['result']['owners'][0]
+    assert {key: saved[key] for key in ('plan_soll', 'paid', 'account_balance', 'payment_amount')} == {
+        'plan_soll': plan, 'paid': paid, 'account_balance': balance, 'payment_amount': payment}
+
+
+def test_owner_change_never_transfers_payments_to_the_successor():
+    inp = TestGolden2Abrechnungsspitze()._scenario()
+    inp = replace(inp, units=(inp.units[0],), owner_periods=(
+        replace(inp.owner_periods[0], valid_to=date(2025, 6, 30)),
+        replace(inp.owner_periods[0], owner_profile_id=_U(22), valid_from=date(2025, 7, 1)),),
+        cost_positions=(replace(inp.cost_positions[0], gross_amount=Decimal('3650.00')),),
+        plan_advances=(OwnerAdvanceInput(_U(21), Decimal('1800.00')), OwnerAdvanceInput(_U(22), Decimal('1800.00'))),
+        paid_advances=(OwnerAdvanceInput(_U(21), Decimal('1600.00')), OwnerAdvanceInput(_U(22), Decimal('1900.00'))))
+    old, new = compute_weg_jahresabrechnung(inp).owners
+    assert (old.abrechnungsspitze, old.account_balance, old.payment_amount) == (Decimal('10'), Decimal('200'), Decimal('210'))
+    assert (new.abrechnungsspitze, new.account_balance, new.payment_amount) == (Decimal('40'), Decimal('-100'), Decimal('-60'))
+
+
+def test_payment_only_successor_keeps_credit_without_changing_original_owners():
+    inp = TestGolden2Abrechnungsspitze()._scenario()
+    inp = replace(inp,
+        owner_periods=(inp.owner_periods[0], replace(inp.owner_periods[1], valid_to=date(2025, 6, 30)),
+            replace(inp.owner_periods[1], owner_profile_id=_U(23), valid_from=date(2025, 7, 1))),
+        cost_positions=tuple(replace(p, service_period_to=date(2025, 6, 30)) for p in inp.cost_positions),
+        paid_advances=(OwnerAdvanceInput(_U(21), Decimal('5000.00')), OwnerAdvanceInput(_U(22), Decimal('4000.00'))))
+    original = compute_weg_jahresabrechnung(inp)
+    inp = replace(inp, paid_advances=(*inp.paid_advances, OwnerAdvanceInput(_U(23), Decimal('1900.00'))))
+    result = compute_weg_jahresabrechnung(inp)
+    successor = next((o for o in result.owners if o.owner_profile_id == _U(23)), None)
+    assert successor is not None, 'An owner with only booked payments must have a result'
+    assert (successor.owner_cost_total, successor.plan_advance, successor.abrechnungsspitze) == (Decimal('0.00'),) * 3
+    assert (successor.paid_advances, successor.account_balance, successor.payment_amount) == (Decimal('1900.00'), Decimal('-1900.00'), Decimal('-1900.00'))
+    assert successor.reserve_notice is None
+    assert tuple(o for o in result.owners if o.owner_profile_id != _U(23)) == original.owners
+    assert result.abrechnungsspitze_total == original.abrechnungsspitze_total
+    saved = build_weg_snapshot_payload(inp, result)['result']['owners']
+    assert next(o['payment_amount'] for o in saved if o['owner_profile_id'] == str(_U(23))) == '-1900.00'
+
+
+@pytest.mark.parametrize('funded, expected', [
+    ('0.00', ('4200.00', '2800.00')),
+    ('400.00', ('3960.00', '2640.00')),
+    ('1000.00', ('3600.00', '2400.00')),
+])
+def test_reserve_financing_is_deducted_before_owner_distribution(funded, expected):
+    inp = TestGolden2Abrechnungsspitze()._scenario()
+    ordinary = replace(inp.cost_positions[0], gross_amount=Decimal('6000.00'))
+    repair = replace(ordinary, cost_entry_id=_U(51), category_code='REPARATUR',
+                     gross_amount=Decimal('1000.00'), reserve_funded_amount=Decimal(funded))
+    inp = replace(inp, cost_positions=(ordinary, repair),
+                  reserve=ReserveInput(opening_balance=Decimal('5000.00'),
+                                       withdrawals_total=Decimal(funded)))
+    result = compute_weg_jahresabrechnung(inp)
+    assert result.cost_total == Decimal('7000.00') - Decimal(funded)
+    for owner_id, total in zip((_U(21), _U(22)), expected):
+        owner = _owner_result(result, owner_id)
+        assert owner.owner_cost_total == Decimal(total)
+        assert owner.subtotal_umlagefaehig == Decimal(total)
+        assert owner.abrechnungsspitze == Decimal(total) - next(
+            a.plan_advance_total for a in inp.plan_advances if a.owner_profile_id == owner_id)
+        assert _cost_line(owner, 'REPARATUR').total_amount == Decimal('1000.00') - Decimal(funded)
+    assert result.reserve.closing_balance == Decimal('5000.00') - Decimal(funded)
+    payload = build_weg_snapshot_payload(inp, result)
+    position = next(p for p in payload['inputs']['cost_positions'] if p['category_code'] == 'REPARATUR')
+    assert position['gross_amount'] == '1000.00'
+    assert position.get('reserve_funded_amount', '0.00') == funded
+    assert ('reserve_funded_amount' in position) is (Decimal(funded) != 0)
+
+
+@pytest.mark.parametrize('key', ['MANUELLER_BETRAG', 'EXTERNE_ABRECHNUNG'])
+def test_financing_preserves_direct_owner_weights(key):
+    from app.engine.types import ExternalAmountInput, ManualAmountInput
+    inp = TestGolden2Abrechnungsspitze()._scenario()
+    pos = replace(inp.cost_positions[0], gross_amount=Decimal('1000.00'),
+        owner_distribution_key=key, reserve_funded_amount=Decimal('400.00'),
+        manual_amounts=tuple(ManualAmountInput(unit_id=unit.id, amount=Decimal(amount))
+                            for unit, amount in zip(inp.units, ('700.00', '300.00'))),
+        external_amounts=tuple(ExternalAmountInput(unit_id=unit.id, tenant_amount=Decimal(amount))
+                              for unit, amount in zip(inp.units, ('700.00', '300.00'))))
+    result = compute_weg_jahresabrechnung(replace(inp, cost_positions=(pos,)))
+    assert _owner_result(result, _U(21)).owner_cost_total == Decimal('420.00')
+    assert _owner_result(result, _U(22)).owner_cost_total == Decimal('180.00')
+    assert result.cost_total == Decimal('600.00')
+
+
+@pytest.mark.parametrize('funded', ['-0.01', '10000.01'])
+def test_invalid_financing_cannot_create_a_negative_owner_cost(funded):
+    inp = TestGolden2Abrechnungsspitze()._scenario()
+    pos = replace(inp.cost_positions[0], reserve_funded_amount=Decimal(funded))
+    with pytest.raises(WegValidationError, match='invalid reserve financing'):
+        compute_weg_jahresabrechnung(replace(inp, cost_positions=(pos,)))
 
 
 # ===========================================================================
@@ -550,3 +661,11 @@ class TestWegFailLoud:
         )
         with pytest.raises(WegValidationError, match="owner_distribution_key"):
             compute_weg_jahresabrechnung(inp)
+
+
+def test_refund_only_hausgeld_is_a_negative_payment_not_an_unpaid_zero():
+    inp = TestGolden2Abrechnungsspitze()._scenario()
+    inp = replace(inp, paid_advances=(OwnerAdvanceInput(_U(21), Decimal('-50.01')),))
+    owner = _owner_result(compute_weg_jahresabrechnung(inp), _U(21))
+    assert owner.account_balance == Decimal('5550.01')
+    assert owner.payment_amount == Decimal('6050.01')

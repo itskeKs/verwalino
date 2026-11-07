@@ -61,7 +61,11 @@ async def attest(body: Attestation, auth: AuthContext = Depends(require_write_de
                 raise HTTPException(409, "Advance payment input changed; reload before attesting")
         elif subject.run_type == "WEG_JAHRESABRECHNUNG":
             from app.api.weg_settlements import WegComputeRequest, _weg_extras
-            values = _weg_extras(WegComputeRequest.model_validate(body.values))
+            from app.services.weg_settlement_service import WegSettlementService
+            from app.core.rbac import ScopeCapability
+            values = await _weg_extras(WegComputeRequest.model_validate(body.values),
+                WegSettlementService(db, auth.organization_id, auth.user_id), subject.id,
+                capability=ScopeCapability.CONFIRM)
         elif subject.run_type == "VERMOEGENSBERICHT":
             from app.api.weg_settlements import AssetReportComputeRequest, _report_inputs
             values = _report_inputs(AssetReportComputeRequest.model_validate(body.values))

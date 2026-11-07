@@ -32,6 +32,10 @@ from app.repositories.base import TenantRepository
 class SettlementRunRepository(TenantRepository[SettlementRun]):
     model = SettlementRun
 
+    async def weg_delete_reason(self, run_id: uuid.UUID) -> str | None:
+        """Authoritative dependency check, including evidence hidden by RLS."""
+        return await self._session.scalar(select(func.weg_draft_delete_reason(self._org_id, run_id)))
+
     async def list_active(self) -> Sequence[SettlementRun]:
         """Runs that have not been superseded by a correction (E-4)."""
         stmt = (

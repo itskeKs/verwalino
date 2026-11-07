@@ -2,7 +2,18 @@ import { afterEach, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { ReserveLedgerPanel } from './ReserveLedgerPanel';
 
-afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
+afterEach(() => { cleanup(); vi.unstubAllGlobals(); vi.restoreAllMocks(); });
+
+it('keeps distinct monthly plan rows with the same source id free of React key warnings', async () => {
+  const errors = vi.spyOn(console, 'error');
+  vi.stubGlobal('fetch', vi.fn(async () => json({ ...ledger, entries: [
+    { id: 'plan-line-1', kind: 'PLANNED', date: '2025-01-01', amount: '250.00', owner_name: 'Änne Groß' },
+    { id: 'plan-line-1', kind: 'PLANNED', date: '2025-02-01', amount: '250.00', owner_name: 'Änne Groß' },
+  ] })));
+  render(<ReserveLedgerPanel runId="run-1" propertyId="property-1" status="draft" onChanged={() => {}} />);
+  await screen.findByText('01.02.2025');
+  expect(errors).not.toHaveBeenCalled();
+});
 
 it('distinguishes withdrawal corrections from funded cash and links readable evidence', async () => {
   vi.stubGlobal('fetch', vi.fn(async () => json({ ...ledger, entries: [
@@ -242,23 +253,23 @@ it.each([
 
 it.each(['reduce', 'delete'])('audits a draft contribution %s with a mandatory reason', async operation => {
   const changed = vi.fn();
-  const fetchMock = vi.fn(async (_url: string, init?: RequestInit) => init?.method === 'POST' || init?.method === 'DELETE'
+  const fetchMock = vi.fn(async (_url: string, init?: RequestInit) => init?.method === 'POST'
     ? json({ id: 'reversal-1' }, 201) : json({ ...ledger, entries: [
       { id: 'correction-1', kind: 'OVERRIDE', component: 'CONTRIBUTION', date: '2025-12-31',
         amount: '800.00', current_amount: '500.00', unit_id: 'unit-1', unit_number: 'Änne Groß mit langem Namen', reason: 'Hausgeld geprüft' },
     ] }));
   vi.stubGlobal('fetch', fetchMock);
   render(<ReserveLedgerPanel runId="run-1" propertyId="property-1" status="draft" onChanged={changed} />);
-  fireEvent.click(await screen.findByRole('button', { name: 'Korrektur verringern / löschen' }));
+  fireEvent.click(await screen.findByRole('button', { name: 'Korrektur ändern / löschen' }));
   expect(screen.getByLabelText('Verbleibender Korrekturbetrag *')).toHaveValue('500,00');
-  fireEvent.click(screen.getByRole('button', { name: operation === 'delete' ? 'Korrektur löschen' : 'Korrektur verringern' }));
+  fireEvent.click(screen.getByRole('button', { name: operation === 'delete' ? 'Korrektur löschen' : 'Korrektur speichern' }));
   expect(await screen.findByRole('alert')).toHaveTextContent('Bitte begründen Sie die Rücklagenkorrektur.');
   fireEvent.change(screen.getByLabelText('Begründung *'), { target: { value: 'Hausgeld storniert und abgeglichen' } });
   fireEvent.change(screen.getByLabelText('Verbleibender Korrekturbetrag *'), { target: { value: '200,00' } });
-  fireEvent.click(screen.getByRole('button', { name: operation === 'delete' ? 'Korrektur löschen' : 'Korrektur verringern' }));
+  fireEvent.click(screen.getByRole('button', { name: operation === 'delete' ? 'Korrektur löschen' : 'Korrektur speichern' }));
   await waitFor(() => expect(changed).toHaveBeenCalledOnce());
-  expect(fetchMock).toHaveBeenCalledWith(`/api/weg-settlements/run-1/reserve-ledger/overrides/correction-1${operation === 'reduce' ? '/reduce' : ''}`,
-    expect.objectContaining({ method: operation === 'reduce' ? 'POST' : 'DELETE', body: JSON.stringify(operation === 'reduce'
+  expect(fetchMock).toHaveBeenCalledWith(`/api/weg-settlements/run-1/reserve-ledger/overrides/correction-1/${operation}`,
+    expect.objectContaining({ method: 'POST', body: JSON.stringify(operation === 'reduce'
       ? { reduced_to: '200.00', reason: 'Hausgeld storniert und abgeglichen' } : { reason: 'Hausgeld storniert und abgeglichen' }) }));
 });
 
@@ -268,7 +279,28 @@ it('hides contribution reduction controls on finalized and reversed entries', as
   ] })));
   render(<ReserveLedgerPanel runId="run-1" propertyId="property-1" status="finalized" onChanged={() => {}} />);
   await screen.findByText('Begründete Korrektur · Zuführungskorrektur');
-  expect(screen.queryByRole('button', { name: 'Korrektur verringern / löschen' })).not.toBeInTheDocument();
+  expect(screen.queryByRole('button', { name: 'Korrektur ändern / löschen' })).not.toBeInTheDocument();
+});
+
+it.each(['100.00', '0.00'])('restores a correction from %s with a reason and a new counter-entry', async current => {
+  const changed = vi.fn();
+  const fetchMock = vi.fn(async (_url: string, init?: RequestInit) => init?.method === 'POST'
+    ? json({ id: 'restoration' }, 201) : json({ ...ledger, entries: [
+      { id: 'original', kind: 'OVERRIDE', component: 'CONTRIBUTION', date: '2025-12-31',
+        amount: '300.00', current_amount: current, unit_id: 'unit-1', unit_number: '1' },
+      { id: 'earlier', kind: 'OVERRIDE', component: 'CONTRIBUTION', date: '2025-12-31',
+        amount: '-200.00', reverses_entry_id: 'original', unit_id: 'unit-1' },
+    ] }));
+  vi.stubGlobal('fetch', fetchMock);
+  render(<ReserveLedgerPanel runId="run-1" propertyId="property-1" status="draft" onChanged={changed} />);
+  fireEvent.click(await screen.findByRole('button', { name: 'Korrektur ändern / löschen' }));
+  expect(screen.getByRole('dialog')).toHaveTextContent('ursprünglichen Betrag');
+  fireEvent.change(screen.getByLabelText('Verbleibender Korrekturbetrag *'), { target: { value: '300,00' } });
+  fireEvent.change(screen.getByLabelText('Begründung *'), { target: { value: 'Versehentlich verringert' } });
+  fireEvent.click(screen.getByRole('button', { name: 'Korrektur speichern' }));
+  await waitFor(() => expect(changed).toHaveBeenCalledOnce());
+  expect(fetchMock).toHaveBeenCalledWith('/api/weg-settlements/run-1/reserve-ledger/overrides/original/reduce',
+    expect.objectContaining({ method: 'POST', body: JSON.stringify({ reduced_to: '300.00', reason: 'Versehentlich verringert' }) }));
 });
 
 it('retains the reduced amount and reason after a booked-headroom refusal', async () => {
@@ -278,10 +310,10 @@ it('retains the reduced amount and reason after a booked-headroom refusal', asyn
     : json({ ...ledger, entries: [{ id: 'correction-1', kind: 'OVERRIDE', component: 'CONTRIBUTION',
       date: '2025-12-31', amount: '500.00', current_amount: '500.00', unit_id: 'unit-1', unit_number: '1' }] })));
   render(<ReserveLedgerPanel runId="run-1" propertyId="property-1" status="draft" onChanged={() => {}} />);
-  fireEvent.click(await screen.findByRole('button', { name: 'Korrektur verringern / löschen' }));
+  fireEvent.click(await screen.findByRole('button', { name: 'Korrektur ändern / löschen' }));
   fireEvent.change(screen.getByLabelText('Verbleibender Korrekturbetrag *'), { target: { value: '300,00' } });
   fireEvent.change(screen.getByLabelText('Begründung *'), { target: { value: 'Hausgeld abgeglichen' } });
-  fireEvent.click(screen.getByRole('button', { name: 'Korrektur verringern' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Korrektur speichern' }));
   expect(await screen.findByRole('alert')).toHaveTextContent(message);
   expect(screen.getByLabelText('Verbleibender Korrekturbetrag *')).toHaveValue('300,00');
   expect(screen.getByLabelText('Begründung *')).toHaveValue('Hausgeld abgeglichen');

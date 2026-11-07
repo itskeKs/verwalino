@@ -12,7 +12,7 @@ import { AuthCtx } from "../auth/useAuth";
 import userEvent from "@testing-library/user-event";
 import { Link, MemoryRouter, Route, Routes } from "react-router-dom";
 import * as api from "../api/endpoints";
-import type { ConsumptionSuggestion, CostEntry, SettlementRun } from "../api/types";
+import type { CommercialPreallocationIn, ConsumptionSuggestion, CostEntry, SettlementLine, SettlementRun } from "../api/types";
 import { ApiError } from "../api/client";
 
 vi.mock("../api/endpoints", async (importOriginal) => ({
@@ -27,7 +27,9 @@ vi.mock("../api/endpoints", async (importOriginal) => ({
   listCostCategories: vi.fn().mockResolvedValue([]),
   listCostEntries: vi.fn(),
   computeSettlement: vi.fn(),
+  previewSettlement: vi.fn(),
   finalizeSettlement: vi.fn(),
+  setAdvancePaymentsDerived: vi.fn(),
 }));
 vi.mock("../api/mail", () => ({ getMailDispatch: vi.fn().mockResolvedValue({ recipients: [], attempts: [] }), sendMailDispatch: vi.fn() }));
 vi.mock("../components/FinancialCoverageReview", () => ({
@@ -83,7 +85,7 @@ describe("SettlementDetailPage with database distribution keys", () => {
       id: "run-1", organization_id: "org-1", property_id: "property-1", unit_id: "unit-1",
       management_mandate_id: null, lease_agreement_id: "lease-1", tenant_profile_id: "tenant-1",
       run_type: "BK_MIETER", period_start: "2025-01-01", period_end: "2025-12-31",
-      status: "draft", advance_payments_total: "0.00", advance_payments_source: "MANUAL",
+      status: "draft", advance_payments_total: "0.00", advance_payments_source: "MANUAL", heating_advance_payments_total: "0.00", heating_advance_payments_source: "MANUAL",
       total_cost: null, balance: null, snapshot_sha256: null, engine_version: "m3.1.0",
       finalized_at: null, finalized_by: null, superseded_by_id: null, lines: [],
     };
@@ -105,14 +107,14 @@ describe("SettlementDetailPage with database distribution keys", () => {
 
     await user.click(await screen.findByRole("button", { name: "Strukturierte Eingaben anzeigen" }));
     await user.type(await screen.findByLabelText(/^Verbrauch \(/), "30");
-    await user.type(screen.getByLabelText(/^Personenzahl \(/), "2");
+    expect(screen.queryByLabelText(/^Personenzahl \(/)).not.toBeInTheDocument();
     await user.type(screen.getByLabelText("heating"), "210.00");
     await user.type(screen.getByLabelText("manual"), "12.34");
     const expected = {
       heating_inputs: [],
       external_amounts: [{ cost_entry_id: "heating", unit_id: "unit-1", tenant_amount: "210.00" }],
       manual_amounts: [{ cost_entry_id: "manual", unit_id: "unit-1", amount: "12.34" }],
-      unit_metrics: [{ unit_id: "unit-1", consumption: "30", person_count: 2 }],
+      unit_metrics: [{ unit_id: "unit-1", consumption: "30", person_count: null }],
     };
     expect(screen.queryByRole("button", { name: "PDF herunterladen" })).toBeNull();
     await user.click(screen.getByRole("button", { name: "Berechnen" }));
@@ -187,22 +189,24 @@ const finalized: SettlementRun = {
   id: "run-1", organization_id: "org", property_id: "property-1", unit_id: "unit-1",
   management_mandate_id: null, lease_agreement_id: "lease-1", tenant_profile_id: "tenant-1",
   run_type: "BK_MIETER", period_start: "2026-01-01", period_end: "2026-12-31",
-  status: "finalized", advance_payments_total: "1800.00", advance_payments_source: "MANUAL",
+  status: "finalized", advance_payments_total: "1800.00", advance_payments_source: "MANUAL", heating_advance_payments_total: "0.00", heating_advance_payments_source: "MANUAL",
   total_cost: "1200.00", balance: "-600.00", snapshot_sha256: "original-snapshot",
   engine_version: "m3.1.0", finalized_at: "2027-01-01", finalized_by: "user",
   superseded_by_id: null, lines: [],
 };
 const proposal = {
+  accept_from: "2027-01-01",
   lease_agreement_id: "lease-1", tenant_cost: "1200.00", months: "12",
-  monthly_amount: "100.00", period_start: "2026-01-01", period_end: "2026-12-31",
+  current_monthly_amount: "150.00", current_heating_monthly_amount: "0.00",
+  monthly_amount: "100.00", heating_monthly_amount: "0.00", heating_tenant_cost: "0.00", period_start: "2026-01-01", period_end: "2026-12-31",
 };
 const originalLease = {
   id: "lease-1", unit_id: "unit-1", tenant_profile_id: "tenant-1", valid_from: "2025-01-01",
-  valid_to: null, base_rent: "700.00", advance_payment: "150.00", deposit: null, notes: "Original",
+  valid_to: null, base_rent: "700.00", advance_payment: "150.00", heating_advance_payment: "0.00", deposit: null, notes: "Original",
 };
 const applied = {
   id: "change-1", lease_agreement_id: "lease-1", valid_from: "2027-01-01",
-  base_rent: "725.00", advance_payment: "100.00", created_at: "2026-10-20T12:00:00Z",
+  base_rent: "725.00", advance_payment: "100.00", heating_advance_payment: "0.00", created_at: "2026-10-20T12:00:00Z",
 };
 function auth(role: string) {
   return { loading: false, session: { user_id: "user", organization_id: "org", role }, login: vi.fn(), logout: vi.fn() };
@@ -219,10 +223,189 @@ function deferred<T>() {
   const promise = new Promise<T>((res, rej) => { resolve = res; reject = rej; });
   return { promise, resolve, reject };
 }
+
+it("labels the advance total neutrally when the breakdown has unallocated and heating credits", async () => {
+  const lines: SettlementLine[] = [
+    ["Vorauszahlungen ohne Aufteilung", "193.55"],
+    ["Heizkosten-Vorauszahlungen", "46.45"],
+  ].map(([label, amount], sort_order) => ({
+    id: String(sort_order), line_type: "ADVANCE_PAYMENT", label, amount, sort_order,
+    cost_entry_id: null, cost_category_code: null, distribution_key: null, total_amount: null,
+    distribution_base_total: null, distribution_base_share: null, time_share_days: null,
+    time_share_total_days: null, note: null,
+  }));
+  vi.mocked(api.getSettlement).mockResolvedValue({
+    ...finalized, advance_payments_total: "193.55", heating_advance_payments_total: "46.45", lines,
+  });
+  vi.mocked(api.listCostEntries).mockResolvedValue([]);
+  showProposal();
+
+  expect(await screen.findByRole("row", { name: /^(Vorauszahlungen) 193\.55 EUR/ })).toBeVisible();
+  expect(screen.getByRole("row", { name: "Vorauszahlungen ohne Aufteilung 193.55 EUR" })).toBeVisible();
+  expect(screen.queryByText("Betriebskosten-Vorauszahlungen", { exact: true })).not.toBeInTheDocument();
+});
+
+it("keeps a derived draft total neutral while the response has no breakdown", async () => {
+  const draft: SettlementRun = {
+    ...finalized, status: "draft", advance_payments_total: null, heating_advance_payments_total: null,
+    finalized_at: null, snapshot_sha256: null,
+  };
+  vi.mocked(api.getSettlement).mockResolvedValue(draft);
+  vi.mocked(api.listCostEntries).mockResolvedValue([]);
+  vi.mocked(api.setAdvancePaymentsDerived).mockResolvedValue({
+    ...draft, advance_payments_total: "2340.00", advance_payments_source: "DERIVED",
+    heating_advance_payments_total: "0.00", heating_advance_payments_source: "DERIVED",
+  });
+  vi.spyOn(window, "confirm").mockReturnValue(true);
+  showProposal();
+
+  await userEvent.click(await screen.findByRole("button", { name: "Aus Zahlungen ableiten" }));
+  expect(api.setAdvancePaymentsDerived).toHaveBeenCalledWith("run-1", 2026);
+  expect(await screen.findByRole("row", { name: /^Vorauszahlungen 2340\.00 EUR/ })).toBeVisible();
+  expect(screen.queryByRole("row", { name: /^Betriebskosten-Vorauszahlungen 2340\.00 EUR/ })).not.toBeInTheDocument();
+});
+
+describe('commercial preallocation inputs', () => {
+  const reason = 'Gastronomie, Restmüll 2 × 1.100 l <Sonderlast> & Begründung';
+  const rule: CommercialPreallocationIn = {
+    cost_entry_id: '00000000-0000-0000-0000-000000000001',
+    commercial_share_percent: '50.00', commercial_amount: null, commercial_reason: reason,
+  };
+  function withRules(rules: CommercialPreallocationIn[]): SettlementRun {
+    return { ...finalized, status: 'draft', lines: [], extra_inputs: {
+      commercial_preallocations: rules, external_amounts: [], manual_amounts: [], unit_metrics: [],
+    } };
+  }
+  function draft(commercial = true, rules: CommercialPreallocationIn[] = []) {
+    vi.mocked(api.computeSettlement).mockReset();
+    vi.mocked(api.previewSettlement).mockReset();
+    vi.mocked(api.finalizeSettlement).mockReset();
+    vi.mocked(api.getSettlement).mockResolvedValue(withRules(rules));
+    vi.mocked(api.listCostEntries).mockResolvedValue((rules.length ? rules : [rule]).map(item => createCostEntry({
+      id: item.cost_entry_id, tenant_distribution_key: 'WOHNFLAECHE',
+      service_period_from: '2026-01-01', service_period_to: '2026-12-31',
+    })));
+    vi.mocked(api.listUnits).mockResolvedValue(commercial ? [{ id: 'shop', property_id: 'property-1', usage_type: 'GEWERBE', number: 'Laden' }] as never : []);
+    vi.mocked(api.computeSettlement).mockResolvedValue({ ...finalized, status: 'draft' });
+    showProposal();
+  }
+
+  it.each(['Berechnen', 'Finalisieren'])('does not replay a loaded rule on untouched %s', async action => {
+    draft(true, [rule]);
+    const current = { ...rule, commercial_share_percent: '40.00' };
+    vi.mocked(api.computeSettlement).mockResolvedValue(withRules([current]));
+    vi.mocked(api.finalizeSettlement).mockResolvedValue({ ...withRules([current]), status: 'finalized' });
+    vi.spyOn(window, 'confirm').mockReturnValue(true);
+    expect(await screen.findByLabelText('Gewerbeanteil (%)', { exact: true })).toHaveValue('50.00');
+    fireEvent.click(screen.getByRole('button', { name: action }));
+    const endpoint = action === 'Berechnen' ? api.computeSettlement : api.finalizeSettlement;
+    await waitFor(() => expect(endpoint).toHaveBeenCalledOnce());
+    expect(vi.mocked(endpoint).mock.calls[0][1]).not.toHaveProperty('commercial_preallocations');
+    if (action === 'Berechnen') {
+      await waitFor(() => expect(screen.getByLabelText('Gewerbeanteil (%)', { exact: true })).toHaveValue('40.00'));
+    }
+  });
+
+  it.each(['percentage', 'removal'])('does not replay a saved %s after a sibling changes the rule', async edit => {
+    draft(true, [rule]);
+    const mode = await screen.findByLabelText('Vorwegabzug', { exact: true });
+    const saved = { ...rule, commercial_share_percent: '45.00' };
+    if (edit === 'removal') fireEvent.change(mode, { target: { value: 'none' } });
+    else fireEvent.change(screen.getByLabelText('Gewerbeanteil (%)', { exact: true }), { target: { value: '45,00' } });
+    vi.mocked(api.computeSettlement).mockResolvedValueOnce(withRules(edit === 'removal' ? [] : [saved]));
+    fireEvent.click(screen.getByRole('button', { name: 'Berechnen' }));
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Berechnen' })).toBeEnabled());
+    expect(api.computeSettlement).toHaveBeenLastCalledWith('run-1', expect.objectContaining({
+      commercial_preallocations: [edit === 'removal'
+        ? { ...rule, commercial_share_percent: null, commercial_reason: null } : saved],
+    }));
+    expect(mode).toHaveValue(edit === 'removal' ? 'none' : 'percent');
+    const sibling = { ...rule, commercial_share_percent: '40.00' };
+    vi.mocked(api.computeSettlement).mockResolvedValueOnce(withRules([sibling]));
+    fireEvent.click(screen.getByRole('button', { name: 'Berechnen' }));
+    await waitFor(() => expect(api.computeSettlement).toHaveBeenCalledTimes(2));
+    expect(vi.mocked(api.computeSettlement).mock.calls[1][1]).not.toHaveProperty('commercial_preallocations');
+    await waitFor(() => expect(screen.getByLabelText('Gewerbeanteil (%)', { exact: true })).toHaveValue('40.00'));
+
+    vi.spyOn(window, 'confirm').mockReturnValue(true);
+    vi.mocked(api.finalizeSettlement).mockResolvedValue({ ...withRules([sibling]), status: 'finalized' });
+    fireEvent.click(screen.getByRole('button', { name: 'Finalisieren' }));
+    await waitFor(() => expect(api.finalizeSettlement).toHaveBeenCalledOnce());
+    expect(vi.mocked(api.finalizeSettlement).mock.calls[0][1]).not.toHaveProperty('commercial_preallocations');
+  });
+
+  it('sends only the edited position and retains its removal through preview and failed saves', async () => {
+    const untouched = { ...rule, cost_entry_id: '00000000-0000-0000-0000-000000000002' };
+    draft(true, [rule, untouched]);
+    const modes = await screen.findAllByLabelText('Vorwegabzug', { exact: true });
+    expect(modes).toHaveLength(2);
+    fireEvent.change(modes[0], { target: { value: 'none' } });
+    const removal = { ...rule, commercial_share_percent: null, commercial_reason: null };
+    vi.mocked(api.previewSettlement).mockResolvedValue(withRules([untouched]));
+    fireEvent.click(screen.getByRole('button', { name: 'Vorschau' }));
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Berechnen' })).toBeEnabled());
+    expect(api.previewSettlement).toHaveBeenLastCalledWith('run-1', expect.objectContaining({ commercial_preallocations: [removal] }));
+    expect(modes[0]).toHaveValue('none');
+
+    vi.mocked(api.computeSettlement).mockRejectedValueOnce(new ApiError(409, 'Regel bereits finalisiert'));
+    fireEvent.click(screen.getByRole('button', { name: 'Berechnen' }));
+    await screen.findByText('Regel bereits finalisiert');
+    vi.spyOn(window, 'confirm').mockReturnValue(true);
+    vi.mocked(api.finalizeSettlement).mockRejectedValueOnce(new ApiError(409, 'Finalisierung abgelehnt'));
+    fireEvent.click(screen.getByRole('button', { name: 'Finalisieren' }));
+    await screen.findByText('Finalisierung abgelehnt');
+    for (const endpoint of [api.computeSettlement, api.finalizeSettlement]) {
+      expect(endpoint).toHaveBeenLastCalledWith('run-1', expect.objectContaining({ commercial_preallocations: [removal] }));
+    }
+    vi.mocked(api.computeSettlement).mockResolvedValueOnce(withRules([untouched]));
+    fireEvent.click(screen.getByRole('button', { name: 'Berechnen' }));
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Berechnen' })).toBeEnabled());
+    expect(api.computeSettlement).toHaveBeenLastCalledWith('run-1', expect.objectContaining({ commercial_preallocations: [removal] }));
+    expect(modes[0]).toHaveValue('none');
+    expect(modes[1]).toHaveValue('percent');
+  });
+
+  it('refuses a blank reason, retains inputs on server refusal and sends exact percentage intent', async () => {
+    draft();
+    const mode = await screen.findByLabelText('Vorwegabzug', { exact: true });
+    fireEvent.change(mode, { target: { value: 'percent' } });
+    fireEvent.change(screen.getByLabelText('Gewerbeanteil (%)', { exact: true }), { target: { value: '50,00' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Berechnen' }));
+    expect(await screen.findByRole('alert')).toHaveTextContent('Begründung');
+    expect(api.computeSettlement).not.toHaveBeenCalled();
+    fireEvent.change(screen.getByLabelText('Begründung', { exact: true }), { target: { value: reason } });
+    vi.mocked(api.computeSettlement).mockRejectedValueOnce(new ApiError(409, 'Regel bereits finalisiert'));
+    fireEvent.click(screen.getByRole('button', { name: 'Berechnen' }));
+    await screen.findByText('Regel bereits finalisiert');
+    expect(screen.getByLabelText('Begründung', { exact: true })).toHaveValue(reason);
+    expect(api.computeSettlement).toHaveBeenLastCalledWith('run-1', expect.objectContaining({ commercial_preallocations: [{
+      cost_entry_id: '00000000-0000-0000-0000-000000000001', commercial_share_percent: '50.00', commercial_amount: null, commercial_reason: reason,
+    }] }));
+  });
+
+  it('supports a German fixed amount and explicit removal', async () => {
+    draft();
+    const mode = await screen.findByLabelText('Vorwegabzug', { exact: true });
+    fireEvent.change(mode, { target: { value: 'fixed' } });
+    fireEvent.change(screen.getByLabelText('Festbetrag (EUR)', { exact: true }), { target: { value: '600,00' } });
+    fireEvent.change(screen.getByLabelText('Begründung', { exact: true }), { target: { value: reason } });
+    fireEvent.click(screen.getByRole('button', { name: 'Berechnen' }));
+    await waitFor(() => expect(api.computeSettlement).toHaveBeenCalledWith('run-1', expect.objectContaining({ commercial_preallocations: [expect.objectContaining({ commercial_share_percent: null, commercial_amount: '600.00' })] })));
+    fireEvent.change(mode, { target: { value: 'none' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Berechnen' }));
+    await waitFor(() => expect(api.computeSettlement).toHaveBeenLastCalledWith('run-1', expect.objectContaining({ commercial_preallocations: [expect.objectContaining({ commercial_share_percent: null, commercial_amount: null, commercial_reason: null })] })));
+  });
+
+  it('offers no commercial fields for a property without a commercial unit', async () => {
+    draft(false);
+    await screen.findByRole('button', { name: 'Berechnen' });
+    expect(screen.queryByLabelText('Vorwegabzug', { exact: true })).not.toBeInTheDocument();
+  });
+});
 let fetchProposal: ReturnType<typeof vi.fn>;
 function posts() { return fetchProposal.mock.calls.filter(([, options]) => options?.method === "POST"); }
 function date(value: string) { fireEvent.change(screen.getByLabelText("Übernehmen ab", { exact: true }), { target: { value } }); }
-function accept() { fireEvent.click(screen.getByRole("button", { name: "Vorauszahlung übernehmen" })); }
+function accept() { fireEvent.click(screen.getByRole("button", { name: "Vorauszahlungen übernehmen" })); }
 
 describe("T28 monthly advance proposal", () => {
   beforeEach(() => {
@@ -230,20 +413,130 @@ describe("T28 monthly advance proposal", () => {
     vi.mocked(api.getSettlement).mockReset().mockResolvedValue(structuredClone(finalized));
     vi.mocked(api.listCostEntries).mockResolvedValue([]);
     vi.mocked(api.listLeases).mockResolvedValue([originalLease]);
-    fetchProposal = vi.fn(async (_url: string, options?: RequestInit) => new Response(
-      JSON.stringify(options?.method === "POST" ? applied : proposal), { status: options?.method === "POST" ? 201 : 200 },
+    fetchProposal = vi.fn(async (url: string, options?: RequestInit) => new Response(
+      JSON.stringify(options?.method === "POST" ? applied : { ...proposal,
+        accept_from: new URL(url, "http://test").searchParams.get("accept_from") ?? proposal.accept_from }),
+      { status: options?.method === "POST" ? 201 : 200 },
     ));
     vi.stubGlobal("fetch", fetchProposal);
   });
 
   it("provides helpers with exact URL and date-only payload", async () => {
     expect(await api.getAdvanceProposal("run-1")).toEqual(proposal);
-    const dateOnly = { valid_from: "2027-01-01", base_rent: "1.00", advance_payment: "999.00" };
+    expect(await api.getAdvanceProposal("run-1", "2027-02-01")).toEqual({ ...proposal, accept_from: "2027-02-01" });
+    const dateOnly = { valid_from: "2027-01-01", base_rent: "1.00", advance_payment: "999.00", heating_advance_payment: "0.00" };
     expect(await api.applyAdvanceProposal("run-1", dateOnly)).toEqual(applied);
     expect(fetchProposal.mock.calls.map(([url]) => url)).toEqual([
-      "/api/settlements/run-1/advance-proposal", "/api/settlements/run-1/advance-proposal",
+      "/api/settlements/run-1/advance-proposal", "/api/settlements/run-1/advance-proposal?accept_from=2027-02-01",
+      "/api/settlements/run-1/advance-proposal",
     ]);
     expect(JSON.parse(posts()[0][1].body)).toEqual({ valid_from: "2027-01-01" });
+  });
+
+  it.each([
+    ["legacy heating costs", "Geleistete Vorauszahlungen", "0.00", "83.33", "1000.00", true],
+    ["nonzero heating basis rounded to zero", "Geleistete Vorauszahlungen", "0.00", "0.00", "0.01", false],
+    ["nonzero heating advance", "Geleistete Vorauszahlungen", "0.00", "83.33", "0.00", true],
+    ["Bernd without heating", "Geleistete Vorauszahlungen", "0.00", "0.00", "0.00", false],
+    ["split statement with unchanged heating zero", "Betriebskosten-Vorauszahlungen", "0.00", "0.00", "0.00", false],
+    ["split statement reducing heating to zero", "Betriebskosten-Vorauszahlungen", "90.00", "0.00", "0.00", true],
+    ["unchanged nonzero heating", "Geleistete Vorauszahlungen", "90.00", "90.00", "1080.00", true],
+  ])("shows the proposal payload and every accepted value for %s", async (_case, label, currentHeating, heatingAmount, heatingBasis, showHeating) => {
+    vi.mocked(api.getSettlement).mockResolvedValue({ ...finalized, lines: [{
+      id: "advance-1", cost_entry_id: null, line_type: "ADVANCE_PAYMENT", cost_category_code: null,
+      label,
+      distribution_key: null, total_amount: null, distribution_base_total: null, distribution_base_share: null,
+      time_share_days: null, time_share_total_days: null, amount: "1800.00", sort_order: 1, note: null,
+    }] });
+    fetchProposal.mockImplementation(async (_url: string, options?: RequestInit) => new Response(JSON.stringify(
+      options?.method === "POST" ? { ...applied, advance_payment: "158.33", heating_advance_payment: heatingAmount }
+        : { ...proposal, monthly_amount: "158.33", tenant_cost: "1900.00",
+          current_heating_monthly_amount: currentHeating,
+          heating_monthly_amount: heatingAmount, heating_tenant_cost: heatingBasis },
+    ), { status: options?.method === "POST" ? 201 : 200 }));
+    showProposal();
+    const region = await screen.findByRole("region", { name: "Vorauszahlungsvorschlag" });
+    await within(region).findByText("158,33 EUR");
+    expect(region).toHaveTextContent("Betriebskosten-Vorauszahlung: 158,33 EUR monatlich");
+    expect(region).toHaveTextContent("Grundlage Betriebskosten: 1.900,00 EUR Mieteranteil / 12 Monate");
+    if (!showHeating) {
+      expect(region).not.toHaveTextContent("Heizkosten-Vorauszahlung");
+      expect(region).not.toHaveTextContent("Grundlage Heizkosten");
+      expect(region).toHaveTextContent("Nur die Betriebskosten-Vorauszahlung wird geändert.");
+    } else {
+      expect(region).toHaveTextContent(`Heizkosten-Vorauszahlung: ${heatingAmount.replace(".", ",")} EUR monatlich (bisher ${currentHeating.replace(".", ",")} EUR)`);
+      const formattedBasis = heatingBasis === "1000.00" ? "1.000,00" : heatingBasis === "1080.00" ? "1.080,00" : heatingBasis.replace(".", ",");
+      expect(region).toHaveTextContent(`Grundlage Heizkosten: ${formattedBasis} EUR Mieteranteil / 12 Monate`);
+      expect(region).toHaveTextContent("Beide Vorauszahlungen werden geändert.");
+    }
+    expect(region).toHaveTextContent("Betriebskosten-Vorauszahlung: 158,33 EUR monatlich (bisher 150,00 EUR)");
+    accept();
+    const status = await within(region).findByRole("status");
+    expect(status).toHaveTextContent("Miethistorie ergänzt");
+    expect(status).toHaveTextContent("Kaltmiete 725,00 EUR");
+    expect(status).toHaveTextContent("Betriebskosten-Vorauszahlung 158,33 EUR");
+    expect(status).toHaveTextContent(`Heizkosten-Vorauszahlung ${heatingAmount.replace(".", ",")} EUR`);
+    expect(posts()).toHaveLength(1);
+    expect(JSON.parse(posts()[0][1].body)).toEqual({ valid_from: "2027-01-01" });
+  });
+
+  it("refetches the chosen date and updates previous amounts and the single-line mode", async () => {
+    const pending = deferred<Response>();
+    showProposal();
+    const region = await screen.findByRole("region", { name: "Vorauszahlungsvorschlag" });
+    await within(region).findByText("100,00 EUR");
+    expect(region).toHaveTextContent("Nur die Betriebskosten-Vorauszahlung wird geändert.");
+    fetchProposal.mockReturnValueOnce(pending.promise);
+    date("2027-02-01");
+    const button = screen.getByRole("button", { name: "Vorauszahlungen übernehmen" });
+    expect(button).toBeDisabled();
+    fireEvent.submit(button.closest("form")!);
+    expect(posts()).toHaveLength(0);
+    await waitFor(() => expect(fetchProposal).toHaveBeenLastCalledWith(
+      "/api/settlements/run-1/advance-proposal?accept_from=2027-02-01", expect.anything(),
+    ));
+    await act(async () => pending.resolve(new Response(JSON.stringify({ ...proposal, accept_from: "2027-02-01",
+      current_monthly_amount: "180.00", current_heating_monthly_amount: "90.00" }))));
+    expect(region).toHaveTextContent("Betriebskosten-Vorauszahlung: 100,00 EUR monatlich (bisher 180,00 EUR)");
+    expect(region).toHaveTextContent("Heizkosten-Vorauszahlung: 0,00 EUR monatlich (bisher 90,00 EUR)");
+    expect(region).toHaveTextContent("Beide Vorauszahlungen werden geändert.");
+    expect(button).toBeEnabled();
+    date("2027-03-01");
+    await waitFor(() => expect(button).toBeEnabled());
+    expect(region).toHaveTextContent("Nur die Betriebskosten-Vorauszahlung wird geändert.");
+    expect(region).not.toHaveTextContent("Heizkosten-Vorauszahlung");
+    accept();
+    await within(region).findByText(/Miethistorie ergänzt/);
+    expect(JSON.parse(posts()[0][1].body)).toEqual({ valid_from: "2027-03-01" });
+  });
+
+  it("keeps acceptance disabled when the returned proposal belongs to another date", async () => {
+    showProposal(); await screen.findByText("100,00 EUR");
+    fetchProposal.mockResolvedValueOnce(new Response(JSON.stringify(proposal)));
+    date("2027-02-01");
+    expect(await screen.findByRole("alert")).toHaveTextContent(/gewählten Datum/);
+    const button = screen.getByRole("button", { name: "Vorauszahlungen übernehmen" });
+    expect(button).toBeDisabled();
+    fireEvent.submit(button.closest("form")!);
+    expect(posts()).toHaveLength(0);
+  });
+
+  it("ignores a late proposal for an earlier acceptance date", async () => {
+    const pending = deferred<Response>();
+    showProposal(); await screen.findByText("100,00 EUR");
+    fetchProposal.mockReturnValueOnce(pending.promise);
+    date("2027-02-01");
+    await waitFor(() => expect(fetchProposal).toHaveBeenCalledWith(
+      "/api/settlements/run-1/advance-proposal?accept_from=2027-02-01", expect.anything(),
+    ));
+    date("2027-03-01");
+    const button = screen.getByRole("button", { name: "Vorauszahlungen übernehmen" });
+    await waitFor(() => expect(button).toBeEnabled());
+    await act(async () => pending.resolve(new Response(JSON.stringify({ ...proposal, accept_from: "2027-02-01",
+      current_heating_monthly_amount: "90.00" }))));
+    expect(screen.getByLabelText("Übernehmen ab", { exact: true })).toHaveValue("2027-03-01");
+    expect(screen.getByText(/Nur die Betriebskosten-Vorauszahlung wird geändert/)).toBeVisible();
+    expect(button).toBeEnabled();
   });
 
   it.each(["OWNER_ADMIN", "CLERK"])("offers basis, date and acceptance to %s without changing lease or snapshot", async (role) => {
@@ -251,7 +544,7 @@ describe("T28 monthly advance proposal", () => {
     showProposal(role);
     const region = await screen.findByRole("region", { name: "Vorauszahlungsvorschlag" });
     expect(await within(region).findByText("100,00 EUR")).toBeVisible();
-    expect(region).toHaveTextContent("Neue Vorauszahlung");
+    expect(region).toHaveTextContent("Betriebskosten-Vorauszahlung");
     expect(region).toHaveTextContent("1.200,00 EUR");
     expect(region).toHaveTextContent("12 Monate");
     expect(region).toHaveTextContent(/Kaltmiete.*gewählten Tag/);
@@ -274,7 +567,7 @@ describe("T28 monthly advance proposal", () => {
   it.each(["READ_ONLY", "UNKNOWN"])("shows proposal without acceptance controls for %s", async (role) => {
     showProposal(role); expect(await screen.findByText("100,00 EUR")).toBeVisible();
     expect(screen.queryByLabelText("Übernehmen ab", { exact: true })).toBeNull();
-    expect(screen.queryByRole("button", { name: "Vorauszahlung übernehmen" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Vorauszahlungen übernehmen" })).toBeNull();
     expect(posts()).toHaveLength(0);
   });
 
@@ -298,13 +591,14 @@ describe("T28 monthly advance proposal", () => {
 
   it.each([403, 404, 409, 422, "network"])("retains proposal/date after POST %s and allows retry", async (failure) => {
     showProposal(); await screen.findByText("100,00 EUR"); date("2026-03-15");
+    await waitFor(() => expect(screen.getByRole("button", { name: "Vorauszahlungen übernehmen" })).toBeEnabled());
     if (failure === "network") fetchProposal.mockRejectedValueOnce(new TypeError("Netzwerk nicht erreichbar"));
     else fetchProposal.mockResolvedValueOnce(new Response(JSON.stringify({ detail: "Serverprüfung fehlgeschlagen" }), { status: Number(failure) }));
     accept();
     expect(await screen.findByRole("alert")).toHaveTextContent(failure === "network" ? "Netzwerk nicht erreichbar" : "Serverprüfung fehlgeschlagen");
     expect(screen.getByLabelText("Übernehmen ab", { exact: true })).toHaveValue("2026-03-15");
     expect(screen.getByText("100,00 EUR")).toBeVisible();
-    await waitFor(() => expect(screen.getByRole("button", { name: "Vorauszahlung übernehmen" })).toBeEnabled());
+    await waitFor(() => expect(screen.getByRole("button", { name: "Vorauszahlungen übernehmen" })).toBeEnabled());
     accept(); await screen.findByText(/Miethistorie ergänzt/);
     expect(JSON.parse(posts()[1][1].body)).toEqual({ valid_from: "2026-03-15" });
   });
@@ -313,7 +607,9 @@ describe("T28 monthly advance proposal", () => {
     showProposal(); await screen.findByText("100,00 EUR"); date(""); accept();
     expect(await screen.findByRole("alert")).toHaveTextContent(/gültiges Datum/);
     expect(posts()).toHaveLength(0);
-    date("2025-02-28"); accept(); await screen.findByText(/Miethistorie ergänzt/);
+    date("2025-02-28");
+    await waitFor(() => expect(screen.getByRole("button", { name: "Vorauszahlungen übernehmen" })).toBeEnabled());
+    accept(); await screen.findByText(/Miethistorie ergänzt/);
     expect(JSON.parse(posts()[0][1].body)).toEqual({ valid_from: "2025-02-28" });
   });
 
@@ -335,17 +631,17 @@ describe("T28 monthly advance proposal", () => {
   });
 
   it("does not turn an unknown financial amount into zero", async () => {
-    fetchProposal.mockResolvedValueOnce(new Response(JSON.stringify({ ...proposal, monthly_amount: "", tenant_cost: "" })));
+    fetchProposal.mockResolvedValueOnce(new Response(JSON.stringify({ ...proposal, monthly_amount: "", tenant_cost: "", heating_monthly_amount: "", heating_tenant_cost: "" })));
     showProposal();
     const region = await screen.findByRole("region", { name: "Vorauszahlungsvorschlag" });
-    expect(await within(region).findByText("Nicht verfügbar")).toBeVisible();
-    expect(region).not.toHaveTextContent("0,00 EUR");
+    expect(await within(region).findAllByText("Nicht verfügbar")).toHaveLength(2);
+    expect(region).not.toHaveTextContent(/(?:Vorauszahlung:|Grundlage Betriebskosten:|Grundlage Heizkosten:) 0,00 EUR/);
   });
 
   it("disables date/submit and synchronously prevents double submissions", async () => {
     const pending = deferred<Response>();
     showProposal(); await screen.findByText("100,00 EUR"); fetchProposal.mockReturnValueOnce(pending.promise);
-    const button = screen.getByRole("button", { name: "Vorauszahlung übernehmen" });
+    const button = screen.getByRole("button", { name: "Vorauszahlungen übernehmen" });
     const form = button.closest("form")!;
     act(() => { fireEvent.submit(form); fireEvent.submit(form); });
     expect(posts()).toHaveLength(1); expect(button).toBeDisabled();
@@ -360,9 +656,16 @@ describe("T28 monthly advance proposal", () => {
   });
 
   it.each([["2026-02-28", "2026-03-01"], ["2024-02-28", "2024-02-29"], ["9999-12-31", ""]])("defaults next day after %s when representable", async (end, expected) => {
-    fetchProposal.mockResolvedValueOnce(new Response(JSON.stringify({ ...proposal, period_end: end })));
-    showProposal(); await screen.findByText("100,00 EUR");
-    expect(screen.getByLabelText("Übernehmen ab", { exact: true })).toHaveValue(expected);
+    vi.mocked(api.getSettlement).mockResolvedValue({ ...finalized, period_end: end });
+    showProposal();
+    expect(await screen.findByLabelText("Übernehmen ab", { exact: true })).toHaveValue(expected);
+    if (expected) {
+      await screen.findByText("100,00 EUR");
+      expect(fetchProposal).toHaveBeenCalledWith(`/api/settlements/run-1/advance-proposal?accept_from=${expected}`, expect.anything());
+    } else {
+      expect(fetchProposal).not.toHaveBeenCalled();
+      expect(screen.getByRole("button", { name: "Vorauszahlungen übernehmen" })).toBeDisabled();
+    }
   });
 
   it("ignores late GET after navigation to a draft", async () => {
@@ -380,7 +683,7 @@ describe("T28 monthly advance proposal", () => {
     vi.mocked(api.getSettlement).mockResolvedValueOnce(finalized).mockResolvedValueOnce({ ...finalized, id: "run-2" });
     showProposal(); await screen.findByText("100,00 EUR"); fetchProposal.mockReturnValueOnce(pending.promise); accept();
     fireEvent.click(screen.getByRole("link", { name: "Andere Abrechnung" }));
-    await waitFor(() => expect(fetchProposal).toHaveBeenCalledWith("/api/settlements/run-2/advance-proposal", expect.anything()));
+    await waitFor(() => expect(fetchProposal).toHaveBeenCalledWith("/api/settlements/run-2/advance-proposal?accept_from=2027-01-01", expect.anything()));
     await screen.findByText("100,00 EUR");
     await act(async () => pending.resolve(new Response(JSON.stringify(applied), { status: 201 })));
     expect(screen.queryByText(/Miethistorie ergänzt/)).toBeNull();
@@ -429,6 +732,94 @@ async function showConsumption() {
   return screen.findByLabelText(/^Verbrauch \(1/);
 }
 describe("T31 meter consumption prefill", () => {
+  it('normalizes both German advance amounts when saving the statement', async () => {
+    const save = vi.spyOn(api, 'setAdvancePayments').mockResolvedValue({ ...consumptionDraft,
+      advance_payments_total: '1080.00', heating_advance_payments_total: '1080.00' });
+    showProposal();
+    fireEvent.click(await screen.findByRole('button', { name: 'Aendern' }));
+    for (const field of ['Betriebskosten', 'Heizkosten']) {
+      fireEvent.change(screen.getByLabelText(`${field}-Vorauszahlung (EUR)`), { target: { value: '1.080,00' } });
+    }
+    fireEvent.click(screen.getByRole('button', { name: 'Speichern' }));
+    await waitFor(() => expect(save).toHaveBeenCalledExactlyOnceWith('run-1', {
+      advance_payments_total: '1080.00', heating_advance_payments_total: '1080.00',
+    }));
+  });
+
+  it.each([
+    ['Betriebskosten', '1,080.00'], ['Betriebskosten', 'abc'],
+    ['Heizkosten', '1,080.00'], ['Heizkosten', 'abc'],
+  ])('rejects invalid %s advance %s locally with a German field error', async (field, value) => {
+    const save = vi.spyOn(api, 'setAdvancePayments').mockResolvedValue(consumptionDraft);
+    showProposal();
+    fireEvent.click(await screen.findByRole('button', { name: 'Aendern' }));
+    const input = screen.getByLabelText(`${field}-Vorauszahlung (EUR)`);
+    fireEvent.change(input, { target: { value } });
+    fireEvent.click(screen.getByRole('button', { name: 'Speichern' }));
+    expect(await screen.findByRole('alert')).toHaveTextContent(
+      `Bitte geben Sie die ${field}-Vorauszahlung als gültigen EUR-Betrag ein.`,
+    );
+    expect(input).toHaveAttribute('aria-invalid', 'true');
+    expect(input).toHaveValue(value);
+    expect(save).not.toHaveBeenCalled();
+  });
+
+  it('renders both component results and the overall balance in the existing EUR format', async () => {
+    const labels = ['Betriebskosten abzüglich Vorauszahlungen', 'Heizkosten abzüglich Vorauszahlungen'];
+    vi.mocked(api.getSettlement).mockResolvedValueOnce({ ...consumptionDraft, total_cost: '2900.00', balance: '20.00',
+      advance_payments_total: '1800.00', heating_advance_payments_total: '1080.00',
+      lines: labels.map((label, index) => ({ id: `partial-${index}`, cost_entry_id: null, line_type: 'SUBTOTAL',
+        label, amount: index ? '-80.00' : '100.00', sort_order: index, cost_category_code: null,
+        distribution_key: null, total_amount: null, distribution_base_total: null, distribution_base_share: null,
+        time_share_days: null, time_share_total_days: null, note: 'Quelle: DERIVED' })) });
+    showProposal();
+    expect((await screen.findByText(labels[0])).closest('tr')).toHaveTextContent('100.00 EUR');
+    expect(screen.getByText(labels[1]).closest('tr')).toHaveTextContent('-80.00 EUR');
+    expect(screen.getByText('1080.00 EUR')).toBeVisible();
+    expect(screen.getByText('20.00 EUR')).toBeVisible();
+  });
+
+  it('keeps Bernd on one advance block without heating costs or advances', async () => {
+    vi.mocked(api.getSettlement).mockResolvedValueOnce({ ...consumptionDraft,
+      advance_payments_total: '1440.00', heating_advance_payments_total: '0.00', total_cost: '970.00', balance: '-470.00',
+      lines: [{ id: 'advance', cost_entry_id: null, line_type: 'ADVANCE_PAYMENT',
+        label: 'Geleistete Vorauszahlungen', amount: '1440.00', sort_order: 0,
+        cost_category_code: null, distribution_key: null, total_amount: null,
+        distribution_base_total: null, distribution_base_share: null,
+        time_share_days: null, time_share_total_days: null, note: 'Quelle: MANUAL' }] });
+    vi.mocked(api.listCostEntries).mockResolvedValueOnce([]);
+    showProposal();
+    expect(await screen.findAllByText('Geleistete Vorauszahlungen')).toHaveLength(2);
+    expect(screen.queryByText('Heizkosten-Vorauszahlungen')).toBeNull();
+    expect(screen.queryByText('Betriebskosten abzüglich Vorauszahlungen')).toBeNull();
+  });
+
+  it('changes only the heating total and preserves the operating derived source', async () => {
+    const run = { ...consumptionDraft, advance_payments_total: '1800.00', advance_payments_source: 'DERIVED',
+      heating_advance_payments_total: '1080.00', heating_advance_payments_source: 'DERIVED' };
+    vi.mocked(api.getSettlement).mockResolvedValueOnce(run);
+    const save = vi.spyOn(api, 'setAdvancePayments').mockResolvedValue({ ...run,
+      heating_advance_payments_total: '1000.00', heating_advance_payments_source: 'MANUAL' });
+    showProposal();
+    fireEvent.click(await screen.findByRole('button', { name: 'Aendern' }));
+    fireEvent.change(screen.getByLabelText('Heizkosten-Vorauszahlung (EUR)'), { target: { value: '1000,00' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Speichern' }));
+    await waitFor(() => expect(save).toHaveBeenCalledExactlyOnceWith('run-1', { heating_advance_payments_total: '1000.00' }));
+    expect(screen.getByText('Vorauszahlungen', { exact: true }).closest('tr')).toHaveTextContent('(DERIVED)');
+    expect(screen.getByText('Heizkosten-Vorauszahlungen').closest('tr')).toHaveTextContent('(MANUAL)');
+  });
+
+  it('keeps an unchanged unknown operating total when entering heating advances', async () => {
+    const run = { ...consumptionDraft, advance_payments_total: null };
+    vi.mocked(api.getSettlement).mockResolvedValueOnce(run);
+    const save = vi.spyOn(api, 'setAdvancePayments').mockResolvedValue({ ...run, heating_advance_payments_total: '90.00' });
+    showProposal();
+    fireEvent.click(await screen.findByRole('button', { name: 'Aendern' }));
+    fireEvent.change(screen.getByLabelText('Heizkosten-Vorauszahlung (EUR)'), { target: { value: '90.00' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Speichern' }));
+    await waitFor(() => expect(save).toHaveBeenCalledExactlyOnceWith('run-1', { heating_advance_payments_total: '90.00' }));
+  });
+
   it("shows excluded payments as a notice without a second financial amount", async () => {
     const notice = "Nicht angerechnet: Zahlungen außerhalb des Mietverhältnisses: 1.234,56 €";
     vi.mocked(api.getSettlement).mockResolvedValueOnce({ ...consumptionDraft, lines: [{
@@ -476,7 +867,7 @@ describe("T31 meter consumption prefill", () => {
     ]);
     await showConsumption();
     expect(screen.getByText("Verbrauch der Einheit im gesamten Objekt-Abrechnungsjahr eingeben, auch bei gekürztem Mietzeitraum." )).toBeVisible();
-    expect(screen.getByText("Personenzahlen je Einheit für das gesamte Objekt-Abrechnungsjahr in allen zugehörigen Abrechnungen gleich eingeben." )).toBeVisible();
+    expect(screen.getByText("Personenzahlen und Leerstand in der Haushaltshistorie jeder Einheit pflegen. Die Abrechnung verwendet die gespeicherten Personentage." )).toBeVisible();
   });
   it("shows a day fallback reason alongside the actual meter basis", async () => {
     vi.mocked(api.getConsumptionSuggestions).mockResolvedValue(consumptionRows.map(row => ({
@@ -555,4 +946,19 @@ describe("T31 meter consumption prefill", () => {
       heating_inputs: [], external_amounts: [], manual_amounts: [], unit_metrics: [{ unit_id: "unit-1", consumption: "0", person_count: null }],
     });
   });
+});
+
+it('shows the frozen owner vacancy result directly without deriving a remainder', async () => {
+  vi.mocked(api.getSettlement).mockResolvedValue({ ...finalized, vacancy_attribution: [
+    { unit_number: '2', cost_label: 'Gartenpflege', days: 59, person_days: 59, amount: '56.34' },
+  ] } as SettlementRun);
+  vi.mocked(api.listCostEntries).mockResolvedValue([]);
+  render(<AuthCtx.Provider value={auth('OWNER_ADMIN')}><MemoryRouter initialEntries={['/abrechnungen/run-1']}>
+    <Routes><Route path='/abrechnungen/:runId' element={<SettlementDetailPage />} /></Routes>
+  </MemoryRouter></AuthCtx.Provider>);
+  const section = await screen.findByRole('region', { name: 'Leerstand – Eigentümeranteile' });
+  expect(section).toHaveTextContent('Einheit 2');
+  expect(section).toHaveTextContent('59 Personentage');
+  expect(section).toHaveTextContent('56,34');
+  expect(section).toHaveTextContent('€');
 });

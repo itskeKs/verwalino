@@ -16,6 +16,8 @@ import uuid
 from dataclasses import dataclass
 from datetime import date
 from decimal import Decimal
+from fractions import Fraction
+from typing import Literal
 
 
 # ---------------------------------------------------------------------------
@@ -51,6 +53,17 @@ APPORTIONABLE_AMOUNT_REQUIRED = frozenset(
 # tenant_apportionable values handled via direct per-unit external amounts.
 EXTERNAL_APPORTIONABLE = frozenset({"UMLAGEFAEHIG_EXTERN_PRUEFEN"})
 
+# Tenant statement classification (#67). A configured heating position also
+# belongs to heating, even when its category is outside this fixed set.
+HEATING_CATEGORY_CODES = frozenset({'HEIZUNG_ZENTRAL', 'WARMWASSER_ZENTRAL', 'MESSDIENST', 'CO2_KOSTEN'})
+
+
+@dataclass(frozen=True)
+class HouseholdInput:
+    valid_from: date
+    persons: int
+    is_vacancy: bool = False
+
 
 @dataclass(frozen=True)
 class UnitInput:
@@ -62,15 +75,15 @@ class UnitInput:
     area: Decimal | None = None
     heated_area: Decimal | None = None
     mea: Decimal | None = None
-    # Person count for the PERSONENZAHL key. PROVISIONAL (M3-A7, section 2.3):
-    # taken per-unit (constant over the settlement period); the engine takes
-    # it as input so the data-source decision does not touch the engine.
+    # Legacy frozen field, retained for older snapshots and the unchanged M4
+    # pure input contract. New M3 calculations exclusively use household.
     person_count: int | None = None
     # Self-measured consumption for the VERBRAUCH key (already a difference of
     # meter readings; section 2.4). Engine takes the resulting quantity.
     consumption: Decimal | None = None
     # Full-period occupant quantities; empty means day-based split within unit.
     consumption_periods: tuple[tuple[date, date, Decimal], ...] = ()
+    household: tuple[HouseholdInput, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -88,6 +101,7 @@ class LeasePeriodInput:
     valid_to: date | None
     advance_payment: Decimal | None = None
     tenant_name: str = ""
+    heating_advance_payment: Decimal | None = None
 
 
 @dataclass(frozen=True)
@@ -152,6 +166,9 @@ class CostPositionInput:
     external_amounts: tuple[ExternalAmountInput, ...] = ()
     manual_amounts: tuple[ManualAmountInput, ...] = ()
     heating: HeatingPositionInput | None = None
+    commercial_share_percent: Decimal | None = None
+    commercial_amount: Decimal | None = None
+    commercial_reason: str | None = None
 
 
 @dataclass(frozen=True)
@@ -186,6 +203,11 @@ class SettlementInput:
     engine_version: str = "m3.1.0"
     allocation_inputs: tuple[SettlementInput, ...] = ()
     uncredited_advance_payments_total: Decimal = Decimal("0.00")
+    heating_advance_payments_total: Decimal = Decimal('0.00')
+    heating_advance_payments_source: str = 'MANUAL'
+    advance_layout: Literal["COMBINED", "SEPARATE", "MIXED"] | None = None
+    combined_advance_payments_total: Decimal = Decimal("0.00")
+    unallocated_advance_payments_total: Decimal = Decimal("0.00")
 
 
 # ---------------------------------------------------------------------------
@@ -243,6 +265,8 @@ class EngineResult:
     heating_costs: tuple[HeatingAllocationResult, ...] = ()
     period_results: tuple[EngineResult, ...] = ()
     period_inputs: tuple[SettlementInput, ...] = ()
+    heating_cost_total: Decimal = Decimal('0.00')
+    heating_advance_payments_total: Decimal = Decimal('0.00')
 
 
 @dataclass(frozen=True)
@@ -254,6 +278,7 @@ class VacancyShare:
     owner_profile_id: uuid.UUID | None
     days: int
     amount: Decimal
+    person_days: int | None = None
 
 
 # ===========================================================================
@@ -284,7 +309,7 @@ class WegCostPositionInput:
     """A WEG cost position to distribute over owners (m4 section 4).
 
     The owner sphere reads `owner_distribution_key` (NOT tenant_distribution_key)
-    and distributes the `gross_amount` (the owner bears the full cost share by
+    and distributes the `gross_amount` less evidenced reserve financing (by
     MEA; what a letting owner may pass on to a tenant is the separate M3 sphere
     -- m4 section 4.5, [F4-3]). A position whose category is `reserve_relevant`
     is treated as a RESERVE CONTRIBUTION (Vermoegensbildung), NOT as cost, and
@@ -309,6 +334,8 @@ class WegCostPositionInput:
     # still distributes to owners by the delivered per-unit amounts).
     external_amounts: tuple[ExternalAmountInput, ...] = ()
     manual_amounts: tuple[ManualAmountInput, ...] = ()
+    # Net evidenced reserve financing of this cost's correction chain.
+    reserve_funded_amount: Decimal = Decimal("0.00")
 
 
 @dataclass(frozen=True)
@@ -504,6 +531,8 @@ class OwnerResult:
     # Spitze (m4 section 2.1). None if not supplied.
     paid_advances: Decimal | None = None
     reserve_notice: str | None = None
+    account_balance: Decimal | None = None
+    payment_amount: Decimal | None = None
 
 
 @dataclass(frozen=True)
@@ -602,6 +631,7 @@ class HeatingUnitInput:
     unit_id: uuid.UUID
     base_quantity: Decimal
     consumption: Decimal | None
+    consumption_weight: Fraction | None = None
 
 
 @dataclass(frozen=True)
@@ -668,6 +698,8 @@ class HeatingSliceInput:
     owner_profile_id: uuid.UUID | None
     base_quantity: Decimal
     consumption: Decimal | None
+    consumption_split_method: str | None = None
+    consumption_weight: Fraction | None = None
 
 
 @dataclass(frozen=True)

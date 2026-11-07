@@ -92,6 +92,22 @@ Remaining property-management features from the gap list in
 13. #39 Photos for properties and units
 14. #40 Automatic bank retrieval (PSD2/FinTS)
 
+### 6 Later domain gaps (from #197)
+
+Each item becomes an issue only when the owner picks it up:
+
+1. Budgetplan per Erhaltungsmaßnahme (§ 21 WEG): funding kind (reserve, levy, loan, saving), cost bearing and the approving owners and MEA per measure
+2. Voting principle, quorum and Umlaufbeschluss (§§ 23, 25 WEG): per-owner votes instead of counts
+3. Untergemeinschaften: costs, plans, reserves and resolutions scoped to a subcommunity with its own MEA denominator
+4. Settlement groups across properties (Wirtschaftseinheit) and property-specific distribution keys
+5. Tickets and maintenance planning: damage reports with contractor, status and due date; maintenance contracts with intervals and a device register
+6. Inbound e-mail (IMAP) into the Posteingang: attachments adopted as documents, matched to a person
+7. Postal dispatch API with letter status for statements and dunning notices (hosted offering)
+8. Leasing pipeline: vacancies, leases ending within 90 days, prospects, self-disclosure form with Art. 13 GDPR text
+9. Monthly owner report for rental management: rent received, costs, fee and reserve per owner, in German and English
+10. Owner portal, and change proposals from the portals with staff approval (after #41)
+11. Outbound XRechnung / Dauermietrechnung for VAT-liable commercial leases (after #71)
+
 ## Open decisions
 
 Only the owner can decide #26 (legal obligations before a public hosted launch, milestone 4).
