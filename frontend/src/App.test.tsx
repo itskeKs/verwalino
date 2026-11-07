@@ -69,7 +69,7 @@ describe("setup status availability", () => {
   it.each([undefined, "OWNER_ADMIN"])("keeps normal routes available after a failed setup check for %s", async role => {
     const log = vi.spyOn(console, "error").mockImplementation(() => {});
     renderRoutes("/objekte", role, new TypeError("network"));
-    expect(await screen.findByRole("heading", { name: role ? "Objekte" : "Hausverwaltung" })).toBeVisible();
+    expect(await screen.findByRole("heading", { name: role ? "Objekte" : "Anmelden" })).toBeVisible();
     expect(screen.queryByText(/Einrichtungsstatus konnte nicht geladen werden/)).toBeNull();
     expect(log).toHaveBeenCalled();
   });
@@ -77,7 +77,7 @@ describe("setup status availability", () => {
   it("opens setup when a later app load can check a fresh installation", async () => {
     vi.spyOn(console, "error").mockImplementation(() => {});
     const firstLoad = renderRoutes("/", undefined, new TypeError("network"));
-    expect(await screen.findByRole("heading", { name: "Hausverwaltung" })).toBeVisible();
+    expect(await screen.findByRole("heading", { name: "Anmelden" })).toBeVisible();
     firstLoad.unmount();
     renderRoutes("/", undefined, { required: true });
     expect(await screen.findByRole("heading", { name: "Verwalino einrichten" })).toBeVisible();
@@ -93,7 +93,7 @@ describe("declaration route authorization", () => {
 
   it("keeps unauthenticated visitors on the login page", async () => {
     renderRoutes("/teilungserklaerung/import/import-1/review");
-    expect(await screen.findByRole("heading", { name: "Hausverwaltung" })).toBeVisible();
+    expect(await screen.findByRole("heading", { name: "Anmelden" })).toBeVisible();
   });
 
   it("keeps property knowledge reachable for read-only users", async () => {
