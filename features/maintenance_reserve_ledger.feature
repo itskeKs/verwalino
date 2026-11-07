@@ -116,6 +116,12 @@ Feature: Maintenance reserve ledger
     When I correct the unit contribution by 300 euros
     Then reducing and deleting the contribution correction remains usable on both reserve pages
 
+  @browser
+  Scenario: Both reserve correction dialogs discourage personal data on desktop and mobile
+    Given a WEG with partially assigned Hausgeld and a finalized reserve plan
+    When I correct the unit contribution by 300 euros
+    Then both correction dialogs show the personal data hint on both reserve pages
+
   Scenario: Removing an accidentally opened empty year permits the first real reserve import
     Given an empty asset report for 2020 precedes the first real report for 2025
     When I delete the accidentally opened 2020 draft

@@ -99,6 +99,11 @@ defines the narrow guard/privilege exception. No general free-text erasure or ne
 contact ACL policy is introduced; amounts, references and frozen content/digests
 remain unchanged, including any original frozen reason.
 
+Both reserve correction dialogs advise “Bitte keine personenbezogenen Daten
+eintragen.” below “Begründung *”. This entry guidance complements the narrowly
+bounded erasure above; it does not change eligibility, retained evidence or the
+immutability exception.
+
 ### 5. Purge after retention expiry
 
 A person with `deletion_requested_at` and a binding becomes **purgeable** as soon as `retention_until < today` holds for **all** bindings: then §4 (anonymization) applies subsequently. The purge is a separate, deliberate operation (no automatism in the MVP).
