@@ -47,6 +47,8 @@ it("explains mismatching passwords without submitting and preserves failed form 
   open(); await fill("Different-password-123");
   await userEvent.click(screen.getByRole("button", { name: "Konto erstellen" }));
   expect(await screen.findByRole("alert")).toHaveTextContent("Passwörter stimmen nicht überein");
+  expect(screen.getByRole("alert")).toHaveFocus();
+  expect(screen.getByLabelText("Passwort", { exact: true })).toHaveAccessibleDescription("Verwenden Sie 12 bis 128 Zeichen.");
   expect(vi.mocked(fetch).mock.calls.every(([url]) => url === "/api/meta")).toBe(true);
   fireEvent.change(screen.getByLabelText("Passwort wiederholen"), { target: { value: password } });
   vi.mocked(fetch).mockResolvedValueOnce(json({ detail: "Registrierung derzeit nicht verfügbar." }, 503));
@@ -136,9 +138,27 @@ it("retries a mistyped password with the same confirmation token", async () => {
   fireEvent.change(field, { target: { value: "Mistyped-password-123" } });
   await userEvent.click(screen.getByRole("button", { name: "E-Mail bestätigen" }));
   expect(await screen.findByRole("alert")).toHaveTextContent("Passwort nicht korrekt");
+  expect(screen.getByRole("alert")).toHaveFocus();
+  expect(field).toHaveValue("Mistyped-password-123");
   expect(sessionStorage.getItem(tokenKey)).toBe("private-token");
   fireEvent.change(field, { target: { value: password } });
   await userEvent.click(screen.getByRole("button", { name: "E-Mail bestätigen" }));
   await waitFor(() => expect(complete).toHaveBeenCalledOnce());
   expect(sessionStorage.getItem(tokenKey)).toBeNull();
+});
+
+it("keeps labelled signup fields disabled during one pending request", async () => {
+  open(); await fill();
+  let finish: (response: Response) => void = () => {};
+  vi.mocked(fetch).mockImplementationOnce(() => new Promise<Response>(resolve => { finish = resolve; }));
+  const action = screen.getByRole("button", { name: "Konto erstellen" });
+  fireEvent.submit(action.closest("form")!);
+  fireEvent.submit(action.closest("form")!);
+  expect(screen.getByRole("button", { name: "Registrierung läuft …" })).toBeDisabled();
+  expect(screen.getByLabelText("Organisation")).toBeDisabled();
+  expect(screen.getByLabelText("E-Mail", { exact: true })).toHaveAttribute("autocomplete", "email");
+  expect(screen.queryByRole("textbox", { name: "Website" })).not.toBeInTheDocument();
+  expect(vi.mocked(fetch).mock.calls.filter(([url]) => url === "/api/signup")).toHaveLength(1);
+  finish(json({ message }));
+  expect(await screen.findByRole("status")).toHaveTextContent(message);
 });

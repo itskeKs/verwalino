@@ -1,3 +1,4 @@
+import { api, ApiError } from "../api/client";
 import { afterEach, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
@@ -93,4 +94,18 @@ it.each(['booked', 'evidenced'])('offers no release for a %s imported payout', a
   render(<MemoryRouter initialEntries={['/zahlungen/payout']}><Routes><Route path="/zahlungen/:paymentId" element={<PaymentDetailPage />} /></Routes></MemoryRouter>);
   await screen.findByRole('heading', { name: /Zahlung/ });
   expect(screen.queryByRole('button', { name: 'Zuordnung lösen' })).not.toBeInTheDocument();
+});
+
+it.each([
+  [new ApiError(404, "Zahlung nicht gefunden."), "Zahlung nicht gefunden."],
+  [new ApiError(401, "Unauthorized"), "Nicht authentifiziert."],
+  [new Error("Synthetic network failure"), "Error: Synthetic network failure"],
+])("renders load errors without the API class prefix and preserves auth and fallback: %s", async (error, expected) => {
+  const get = vi.spyOn(api, "get").mockRejectedValue(error);
+  try {
+    render(<MemoryRouter initialEntries={["/zahlungen/missing"]}><Routes><Route path="/zahlungen/:paymentId" element={<PaymentDetailPage />} /></Routes></MemoryRouter>);
+    const rendered = await screen.findByText(expected, { exact: true });
+    expect(rendered.firstChild?.textContent?.trim()).toBe(expected);
+    expect(screen.queryByText(/ApiError:/)).not.toBeInTheDocument();
+  } finally { get.mockRestore(); }
 });

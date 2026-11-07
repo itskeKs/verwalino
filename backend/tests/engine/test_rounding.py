@@ -78,3 +78,17 @@ class TestDistributeAmountEdgeCases:
         a = distribute_amount(Decimal("1234.56"), weights)
         b = distribute_amount(Decimal("1234.56"), weights)
         assert a == b
+
+
+@pytest.mark.parametrize("total,weights,expected", [
+    ("11.50", [(1341, 23), (959, 23)], ["6.71", "4.79"]),
+    ("-11.50", [(1341, 23), (959, 23)], ["-6.71", "-4.79"]),
+    ("0.01", [(1, 3), (1, 3), (1, 3)], ["0.01", "0.00", "0.00"]),
+])
+def test_rational_weights_keep_exact_remainder_ties_and_stable_cent_totals(total, weights, expected):
+    from fractions import Fraction
+    from app.engine.rounding import distribute_amount
+
+    result = distribute_amount(Decimal(total), [Fraction(*w) for w in weights])
+    assert result == [Decimal(amount) for amount in expected]
+    assert sum(result) == Decimal(total)

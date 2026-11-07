@@ -34,7 +34,7 @@ export function WegSettlementsPage() {
     setLoading(true);
     Promise.all([listWegRuns("WEG_JAHRESABRECHNUNG"), listProperties(), listEconomicPlans()])
       .then(([r, pr, pl]) => { setRuns(r); setProperties(pr); setPlans(pl); })
-      .catch((err) => setError(err instanceof ApiError && err.status === 401 ? "Nicht authentifiziert." : String(err)))
+      .catch((err) => setError(err instanceof ApiError ? (err.status === 401 ? "Nicht authentifiziert." : err.message) : String(err)))
       .finally(() => setLoading(false));
   }, []);
 

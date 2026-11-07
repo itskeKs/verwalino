@@ -252,3 +252,36 @@ class TestUnauthenticatedAccess:
         for path in ["/api/mandates", "/api/users", "/api/organizations/me"]:
             resp = await client_unauth.get(path)
             assert resp.status_code == 401, f"Expected 401 for {path}, got {resp.status_code}"
+
+
+@pytest.mark.asyncio
+async def test_household_rls_hides_foreign_rows_and_rejects_foreign_writes(client_a_admin, app_rw_session, seed_data):
+    from sqlalchemy.exc import DBAPIError
+    from tests.settlement_period_support import create
+    prop = await create(client_a_admin, '/api/properties', {'name': 'Household RLS', 'management_type': 'MIET'})
+    unit = await create(client_a_admin, '/api/units', {'property_id': prop['id'], 'number': '1', 'usage_type': 'WOHNUNG'})
+    rows = [{'valid_from': '2026-01-01', 'persons': 2, 'is_vacancy': False}]
+    assert (await client_a_admin.put(f"/api/units/{unit['id']}/household", json=rows)).status_code == 200
+    session = app_rw_session
+    await session.execute(text("SELECT set_config('app.current_org_id', :org, true)"), {'org': str(seed_data['org_b_id'])})
+    assert not (await session.execute(text('SELECT * FROM unit_household'))).all()
+    with pytest.raises(DBAPIError):
+        async with session.begin_nested():
+            await session.execute(text("""INSERT INTO unit_household(organization_id,unit_id,valid_from,persons,is_vacancy)
+                VALUES (:org,:unit,'2027-01-01',1,false)"""), {'org': seed_data['org_a_id'], 'unit': uuid.UUID(unit['id'])})
+    await session.execute(text("SELECT set_config('app.current_org_id', '', true)"))
+    assert not (await session.execute(text('SELECT * FROM unit_household'))).all()
+
+
+@pytest.mark.asyncio
+async def test_household_composite_fk_and_nonnegative_count_survive_privileged_writes(client_a_admin, migrator_session, seed_data):
+    from sqlalchemy.exc import IntegrityError
+    from tests.settlement_period_support import create
+    prop = await create(client_a_admin, '/api/properties', {'name': 'Household FK', 'management_type': 'MIET'})
+    unit = await create(client_a_admin, '/api/units', {'property_id': prop['id'], 'number': '1', 'usage_type': 'WOHNUNG'})
+    for org, persons, code in [(seed_data['org_b_id'], 1, '23503'), (seed_data['org_a_id'], -1, '23514')]:
+        with pytest.raises(IntegrityError) as caught:
+            async with migrator_session.begin_nested():
+                await migrator_session.execute(text("""INSERT INTO unit_household(organization_id,unit_id,valid_from,persons,is_vacancy)
+                    VALUES (:org,:unit,'2026-01-01',:persons,false)"""), {'org': org, 'unit': uuid.UUID(unit['id']), 'persons': persons})
+        assert caught.value.orig.sqlstate == code

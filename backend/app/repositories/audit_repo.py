@@ -5,7 +5,7 @@ from __future__ import annotations
 import uuid
 from typing import Sequence
 
-from sqlalchemy import insert, select
+from sqlalchemy import insert, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.audit_event import AuditEvent
@@ -31,6 +31,17 @@ class AuditRepository:
             entity_id=event.entity_id, action=event.action,
             payload_diff=event.payload_diff, prev_event_hash=event.prev_event_hash,
         ))
+
+    async def booked_advance_modes(self, payment_ids: list[uuid.UUID]) -> dict[uuid.UUID, list[str]]:
+        rows = await self._session.execute(select(AuditEvent.entity_id, AuditEvent.payload_diff["assigned_advance_modes"])
+            .where(AuditEvent.organization_id == self._org_id, AuditEvent.entity_id.in_(payment_ids),
+                   text("audit_event.entity_type = 'payment' AND audit_event.action = 'payment.booked'"))
+            .order_by(AuditEvent.occurred_at, AuditEvent.id))
+        modes = {}
+        for payment_id, recorded in rows:
+            if isinstance(recorded, list):
+                modes.setdefault(payment_id, recorded)
+        return modes
 
     async def list_for_entity(
         self, entity_type: str, entity_id: uuid.UUID

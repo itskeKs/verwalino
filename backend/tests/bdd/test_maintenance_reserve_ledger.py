@@ -1,6 +1,7 @@
 """Bind the maintenance reserve happy path through the HTTP API."""
 from pathlib import Path
 
+import pytest
 from pytest_bdd import given, when, then, scenarios
 
 from tests.bdd.steps.browser_setup import create
@@ -10,14 +11,188 @@ from tests.financial_coverage_helpers import attest_fixture
 scenarios(str(Path(__file__).resolve().parents[3] / 'features/maintenance_reserve_ledger.feature'))
 
 
+def privacy_export(world):
+    import asyncio
+    import json
+    from tests.bdd.world import target_url
+    from tests.test_organization_export import unpack
+    response = world.act('POST', '/api/organizations/export')
+    if target_url() and response.status_code == 429:
+        # The public endpoint's cooldown is one minute. Do not patch a remote
+        # process or retry unrelated refusals; one bounded wait must suffice.
+        delay = response.headers.get('Retry-After', '')
+        assert delay.isascii() and delay.isdecimal() and 0 < int(delay) <= 60, response.text
+        world.run(asyncio.sleep(int(delay)))
+        response = world.act('POST', '/api/organizations/export')
+    assert response.status_code == 200, response.text
+    files = unpack(response.content)
+    return {entity: {row['id']: row for row in
+        (json.loads(line) for line in files[f'entities/{entity}.jsonl'].splitlines())}
+        for entity in ('person', 'payment', 'reserve_ledger_entry', 'audit_event', 'settlement_run')}
+
+
+@given('a retained repayment to Anna and an incidental 300 euro reserve note about Eva', target_fixture='reserve_privacy_case')
+def reserve_privacy_case(world, seed_data, reserve_retention_context, monkeypatch):
+    from datetime import timedelta
+    from app.services import organization_export_service
+    from tests.test_reserve_ledger import reserve_erasure_case, retained_anna, finalize
+    from tests.bdd.world import target_url
+    source = reserve_retention_context
+    seed = {**seed_data, 'org_a_id': source['org'], 'user_a_admin_id': source['admin']}
+    if target_url():
+        w = reserve_correction_property(world, seed, actor=source['client'])
+        w['plan'] = reserve_correction_plan(world, w)
+        report = create(world, '/api/weg-settlements', {'property_id': w['property'],
+            'accounting_scope_id': w['scope'], 'economic_plan_id': w['plan'],
+            'period_start': '2025-01-01', 'period_end': '2025-12-31'})
+        w['run'] = report['id']
+        w['person'] = create(world, '/api/persons', {'first_name': 'Eva', 'last_name': 'Muster'})['id']
+        entry = create(world, f"/api/weg-settlements/{w['run']}/reserve-ledger/overrides", {
+            'component': 'OPENING', 'amount': '300.00', 'reason': 'Abstimmung mit Eva Muster'})
+        w['entry'] = entry['id']
+    else:
+        monkeypatch.setattr(organization_export_service, 'EXPORT_INTERVAL', timedelta(0))
+        w = world.run(reserve_erasure_case(world.actor, seed))
+    w['anna'], w['payment'] = world.run(retained_anna(world.actor, source['property']))
+    w['frozen'] = world.run(finalize(world.actor, w))
+    w['before_export'] = privacy_export(world)
+    return w
+
+
+@when('I request deletion of the actual repayment recipient Anna')
+def request_retained_anna(world, reserve_privacy_case):
+    person = reserve_privacy_case['anna']['id']
+    response = world.act('POST', f'/api/dsgvo/persons/{person}/request-deletion')
+    assert response.status_code == 200, response.text
+    assert response.json()['applied'] == 'RESTRICTED'
+    assert response.json()['bindings'] == [{'kind': 'BOOKED_PAYMENT', 'entity_type': 'payment',
+        'entity_id': reserve_privacy_case['payment']['id'],
+        'retention_until': reserve_privacy_case['payment']['retention_until']}]
+
+
+@then('Anna remains identifiable and the repayment evidence and reserve rows stay unchanged')
+def retained_repayment_export(world, reserve_privacy_case):
+    w = reserve_privacy_case
+    after = privacy_export(world)
+    person = after['person'][w['anna']['id']]
+    assert (person['first_name'], person['last_name']) == ('Anna', 'Beispiel')
+    assert person['processing_restricted'] and person['anonymized_at'] is None
+    assert after['payment'] == w['before_export']['payment']
+    assert after['reserve_ledger_entry'] == w['before_export']['reserve_ledger_entry']
+    w['after_export'] = after
+
+
+@when('I request deletion of the genuinely unbound incidental contact Eva')
+def request_incidental_eva(world, reserve_privacy_case):
+    response = world.act('POST', f"/api/dsgvo/persons/{reserve_privacy_case['person']}/request-deletion")
+    assert response.status_code == 200, response.text
+    assert response.json()['applied'] == 'ANONYMIZED'
+    assert response.json()['bindings'] == []
+
+
+@then('only Eva is removed from the live reserve reason and its exact audit copy for 300 euros')
+def incidental_reason_export(world, reserve_privacy_case):
+    from copy import deepcopy
+    from decimal import Decimal
+    w = reserve_privacy_case
+    after = privacy_export(world)
+    expected = deepcopy(w['before_export'])
+    expected['reserve_ledger_entry'][w['entry']]['reason'] = 'Abstimmung mit Gelöscht'
+    for event in expected['audit_event'].values():
+        if (event.get('payload_diff') or {}).get('entry_id') == w['entry']:
+            event['payload_diff']['reason'] = 'Abstimmung mit Gelöscht'
+    assert after['reserve_ledger_entry'] == expected['reserve_ledger_entry']
+    assert Decimal(str(after['reserve_ledger_entry'][w['entry']]['amount'])) == Decimal('300.00')
+    for identifier, event in expected['audit_event'].items():
+        if event['action'].startswith('reserve.'):
+            assert after['audit_event'][identifier] == event
+    assert after['person'][w['anna']['id']] == expected['person'][w['anna']['id']]
+    assert after['payment'] == expected['payment']
+    w['after_export'] = after
+
+
+@then('the complete finalized statement and its original digest remain identical')
+def preserved_privacy_snapshot(world, reserve_privacy_case):
+    from app.engine.canonical import canonical_sha256
+    w = reserve_privacy_case
+    before = w['before_export']['settlement_run'][w['run']]
+    after = w['after_export']['settlement_run'][w['run']]
+    assert after == before
+    assert canonical_sha256(after['snapshot_payload']) == before['snapshot_sha256'] == w['frozen']['snapshot_sha256']
+
+
+def reserve_correction_property(world, seed_data, *, scoped=True, actor=None):
+    """Build the two-owner reserve fixture through the selected HTTP target."""
+    world.actor = actor or world.administrator_of('Verwaltung Alpha')
+    world.actor_organization = 'Verwaltung Alpha'
+    user = str(seed_data['user_a_admin_id'])
+    home = create(world, '/api/properties', {'name': 'WEG Hauptstrasse 5',
+        'management_type': 'WEG', 'mea_denominator': 1000,
+        'data_audience': {'label': 'Reserve corrections', 'reason': 'Synthetic reserve corrections',
+            'grants': [{'user_id': user, 'capabilities': ['read', 'prepare', 'approve', 'export'],
+                'reason': 'Synthetic reserve corrections'}]}}, keyed=True)
+    w = {'property': home['id']}
+    for number, mea, name, suffix in [('1', '600', 'Anton', 'a'), ('2', '400', 'Berta', 'b')]:
+        unit = create(world, '/api/units', {'property_id': home['id'], 'number': number,
+            'usage_type': 'WOHNUNG', 'mea': mea, 'area': mea, 'heated_area': mea})
+        person = create(world, '/api/persons', {'first_name': name, 'last_name': 'Eigentuemer'})
+        owner = create(world, '/api/owner-profiles', {'person_id': person['id']})
+        create(world, '/api/ownership', {'unit_id': unit['id'], 'owner_profile_id': owner['id'],
+            'valid_from': '2000-01-01'})
+        w.update({f'u{number}': unit['id'], f'owner_{suffix}': owner['id']})
+    basis = {'property_id': home['id']}
+    if scoped:
+        scope = create(world, '/api/accounting-scopes', {'property_id': home['id'], 'scope_type': 'WEG',
+            'label': 'WEG Rücklagenkreis', 'valid_from': '2000-01-01', 'whole_property': True}, keyed=True)
+        w['scope'] = scope['id']
+        create(world, f"/api/accounting-scopes/{scope['id']}/grants", {'user_id': user,
+            'capabilities': ['read', 'prepare', 'approve', 'confirm', 'export'],
+            'reason': 'Synthetic reserve corrections'}, keyed=True)
+        basis['accounting_scope_id'] = scope['id']
+    for key, kind, label in [('bank_giro', 'LAUFEND', 'Girokonto'),
+                             ('bank_ruecklage', 'RUECKLAGE', 'Ruecklagenkonto')]:
+        account = create(world, '/api/bank-accounts', {**basis, 'account_type': kind, 'label': label})
+        w[key] = account['id']
+    categories = world.act('GET', '/api/cost-categories')
+    assert categories.status_code == 200, categories.text
+    categories = {row['code']: row for row in categories.json()}
+    for code, amount in [('GARTENPFLEGE', '4000.00'), ('WEG_VERWALTERKOSTEN', '3000.00'),
+                         ('ERHALTUNGSRUECKLAGE', '6000.00')]:
+        category = categories[code]
+        cost = create(world, '/api/cost-entries', {**basis, 'cost_category_id': category['id'],
+            'cost_category_plan_version': category['plan_version'], 'document_number': f'RE-{code}',
+            'invoice_date': '2025-06-01', 'service_period_from': '2025-01-01',
+            'service_period_to': '2025-12-31', 'gross_amount': amount, 'owner_distribution_key': 'MEA',
+            'tenant_distribution_key': 'MEA', 'tenant_apportionable': 'NICHT_UMLAGEFAEHIG', 'source': 'MANUAL'})
+        response = world.act('POST', f"/api/cost-entries/{cost['id']}/confirm")
+        assert response.status_code == 200, response.text
+    return w
+
+
+def reserve_correction_plan(world, w):
+    """Finalize the same 7000-euro costs and 6000-euro reserve on its scope."""
+    plan = create(world, '/api/economic-plans', {'property_id': w['property'],
+        'accounting_scope_id': w['scope'], 'period_start': '2025-01-01',
+        'period_end': '2025-12-31', 'plan_year': 2025})
+    values = {'planned_costs': [
+        {'category_code': 'GARTENPFLEGE', 'label': 'Gartenpflege', 'planned_amount': '4000.00', 'cost_group': 'UMLAGEFAEHIG'},
+        {'category_code': 'WEG_VERWALTERKOSTEN', 'label': 'Verwalter', 'planned_amount': '3000.00', 'cost_group': 'NICHT_UMLAGEFAEHIG'},
+    ], 'reserve_contribution_total': '6000.00'}
+    world.run(attest_fixture(world.actor, 'economic_plan', plan['id'], values))
+    response = world.act('POST', f"/api/economic-plans/{plan['id']}/finalize", json=values)
+    assert response.status_code == 200, response.text
+    return plan['id']
+
+
 @given('an empty asset report for 2020 precedes the first real report for 2025', target_fixture='stray_reserve_draft')
 def stray_reserve_draft(world, seed_data):
-    from tests.test_m4_weg import _seed_weg
-    from tests.test_weg_draft_deletion import asset_draft
-    world.actor = world.administrator_of('Verwaltung Alpha')
-    w = _seed_weg(seed_data)
-    w['stray'] = world.run(asset_draft(world.actor, w, 2020))
-    w['real'] = world.run(asset_draft(world.actor, w, 2025))
+    # The original deletable legacy draft has no immutable accounting-scope binding.
+    w = reserve_correction_property(world, seed_data, scoped=False)
+    for key, year in [('stray', 2020), ('real', 2025)]:
+        report = create(world, '/api/weg-settlements/asset-reports', {
+            'property_id': w['property'],
+            'period_start': f'{year}-01-01', 'period_end': f'{year}-12-31'})
+        w[key] = report['id']
     return w
 
 
@@ -661,6 +836,7 @@ def evidence_forms(world, reserve_scenario, browser_world, request, tmp_path):
             await page.get_by_role('button', name='Abbrechen', exact=True).click()
             await browser_world.visit(f"/bankkonten/{w['bank_giro']}/umsaetze")
             await page.get_by_role('button', name='Aufteilen', exact=True).click()
+            await page.get_by_label('Zuordnen als', exact=True).select_option('payment')
             await page.get_by_label('Zahlungsart', exact=True).select_option('RUECKLAGENENTNAHME')
             await page.get_by_label('Betrag (EUR)', exact=True).fill('100,00')
             await expect(page.get_by_role('button', name='Als Entwurf übernehmen', exact=True)).to_be_enabled()
@@ -711,16 +887,33 @@ def evidence_forms(world, reserve_scenario, browser_world, request, tmp_path):
 
 @given('a WEG with partially assigned Hausgeld and a finalized reserve plan', target_fixture='reserve_scenario')
 def partially_assigned_hausgeld(world, seed_data):
-    from tests.test_reserve_ledger import unit_correction_world
-    world.actor = world.administrator_of('Verwaltung Alpha')
-    world.actor_organization = 'Verwaltung Alpha'
-    w = world.run(unit_correction_world(world.actor, seed_data))
+    from tests.test_reserve_ledger import payment
+    w = reserve_correction_property(world, seed_data)
+    w['cash'] = world.run(payment(world.actor, w, '1300.00', kind='HAUSGELD_VORSCHUSS'))
+    basis = {'property_id': w['property'], 'accounting_scope_id': w['scope'],
+        'period_start': '2025-01-01', 'period_end': '2025-12-31'}
+    report = create(world, '/api/weg-settlements/asset-reports', basis)
+    w['run'] = report['id']
+    response = world.act('POST', f"/api/weg-settlements/{w['run']}/reserve-ledger/overrides", json={
+        'component': 'CONTRIBUTION', 'payment_id': w['cash'], 'amount': '100.00', 'reason': 'Partial cash assignment'})
+    assert response.status_code == 201, response.text
+    w['plan'] = reserve_correction_plan(world, w)
     response = world.act('PUT', f"/api/units/{w['u1']}", json={'number': 'Wohnung 1 · Vorderhaus Südflügel · Aufgang Änne'})
     assert response.status_code == 200, response.text
-    run = create(world, '/api/weg-settlements', {'property_id': w['property'], 'economic_plan_id': w['plan'],
-        'period_start': '2025-01-01', 'period_end': '2025-12-31'})
+    run = create(world, '/api/weg-settlements', {**basis, 'economic_plan_id': w['plan']})
     w['weg_run'] = run['id']
     return w
+
+
+@pytest.mark.parametrize('setup', [partially_assigned_hausgeld, stray_reserve_draft])
+def test_reserve_scenario_setup_never_connects_to_a_local_database(world, seed_data, monkeypatch, setup):
+    def forbidden(*args, **kwargs):
+        pytest.fail('Reserve scenario setup must use the configured HTTP target, not a direct database connection')
+
+    with monkeypatch.context() as guard:
+        guard.setattr('psycopg2.connect', forbidden)
+        w = setup(world, seed_data)
+    assert world.act('GET', f"/api/properties/{w['property']}").status_code == 200
 
 
 @when('I correct the unit contribution by 300 euros')
@@ -742,6 +935,83 @@ def unit_contribution_cap(world, reserve_scenario):
         'amount': '300.00', 'reason': 'Would exceed remaining cash'})
     assert refused.status_code == 422, refused.text
     assert refused.json()['detail']['code'] == 'RESERVE_CONTRIBUTION_EXCEEDS_BOOKED'
+
+
+@when('I reduce the correction to 100 euros and restore it with a reason')
+def restore_unit_contribution(world, reserve_scenario):
+    w = reserve_scenario
+    path = f"/api/weg-settlements/{w['run']}/reserve-ledger/overrides/{w['correction']}/reduce"
+    for amount, reason in [('100.00', 'Wrong correction selected'), ('300.00', 'Versehentlich verringert')]:
+        response = world.act('POST', path, json={'reduced_to': amount, 'reason': reason})
+        assert response.status_code == 201, response.text
+
+
+@then('the correction is 300 euros and both counter-entries remain visible')
+def restored_unit_contribution(world, reserve_scenario):
+    w = reserve_scenario
+    ledger = world.look(world.actor, f"/api/weg-settlements/{w['run']}/reserve-ledger").json()
+    assert next(row for row in ledger['entries'] if row.get('id') == w['correction'])['current_amount'] == '300.00'
+    assert [row['amount'] for row in ledger['entries'] if row.get('reverses_entry_id') == w['correction']] == ['-200.00', '200.00']
+
+
+@then('I can restore an accidental reduction and see when nothing remains to delete on both reserve pages')
+def restore_contribution_forms(world, reserve_scenario, browser_world, tmp_path):
+    import os
+    from playwright.async_api import expect
+    w = reserve_scenario
+    directory = Path(__file__).resolve().parents[3] / 'docs/assets/design/reserve-correction-restoration' if os.environ.get('VERWALINO_CAPTURE_DESIGN') == '1' else tmp_path
+
+    async def inspect():
+        page = browser_world.page
+        errors = []
+        page.on('pageerror', lambda error: errors.append(str(error)))
+        for kind, route in [('weg', f"/weg-abrechnungen/{w['weg_run']}"), ('asset', f"/vermoegensberichte/{w['run']}")]:
+            for width in (1280, 360):
+                await page.set_viewport_size({'width': width, 'height': 800})
+                await browser_world.visit(route)
+                panel = page.get_by_role('region', name='Rücklagenbuch')
+                change = panel.get_by_role('button', name='Korrektur ändern / löschen', exact=True)
+                dialog = page.get_by_role('dialog')
+
+                async def open_correction(amount, reason):
+                    await change.click()
+                    await dialog.get_by_label('Verbleibender Korrekturbetrag *', exact=True).fill(amount)
+                    await dialog.get_by_role('textbox', name='Begründung *', exact=True).fill(reason)
+
+                await open_correction('100,00', 'Falsche Korrektur gewählt')
+                await dialog.get_by_role('button', name='Korrektur speichern', exact=True).click()
+                await expect(dialog).not_to_be_visible()
+                await expect(panel.get_by_text('Verbleibende Korrektur:', exact=False)).to_contain_text('100,00')
+                await open_correction('400,00', 'Versehentlich verringert')
+                await dialog.get_by_role('button', name='Korrektur speichern', exact=True).click()
+                await expect(dialog.get_by_role('alert')).to_have_text('Sie können für diese Korrektur höchstens 300,00 € beibehalten.')
+                await expect(dialog.get_by_label('Verbleibender Korrekturbetrag *', exact=True)).to_have_value('400,00')
+                await expect(dialog.get_by_role('textbox', name='Begründung *', exact=True)).to_have_value('Versehentlich verringert')
+                assert await page.evaluate('document.documentElement.scrollWidth <= window.innerWidth')
+                assert await dialog.evaluate('(el) => el.scrollWidth <= el.clientWidth')
+                await expect(dialog.get_by_role('button', name='Korrektur speichern', exact=True)).to_be_in_viewport()
+                await expect(dialog.get_by_role('button', name='Korrektur löschen', exact=True)).to_be_in_viewport()
+                await page.screenshot(path=str(directory / f'{kind}-after-{width}.png'), animations='disabled')
+                await dialog.get_by_label('Verbleibender Korrekturbetrag *', exact=True).fill('300,00')
+                await dialog.get_by_role('button', name='Korrektur speichern', exact=True).click()
+                await expect(dialog).not_to_be_visible()
+                await expect(panel.get_by_text('Verbleibende Korrektur:', exact=False)).to_contain_text('300,00')
+                await expect(panel.get_by_text('Wiederherstellung einer Zuführungskorrektur', exact=True).last).to_be_visible()
+                await open_correction('0,00', 'Korrektur vollständig aufgehoben')
+                await dialog.get_by_role('button', name='Korrektur löschen', exact=True).click()
+                await expect(dialog).not_to_be_visible()
+                await open_correction('0,00', 'Erneut aufheben')
+                await dialog.get_by_role('button', name='Korrektur löschen', exact=True).click()
+                await expect(dialog.get_by_role('alert')).to_have_text('Diese Korrektur ist bereits vollständig aufgehoben. Es ist kein Restbetrag mehr vorhanden.')
+                await page.screenshot(path=str(directory / f'{kind}-zero-{width}.png'), animations='disabled')
+                # The same rule permits restoration from zero, ready for the next viewport.
+                await dialog.get_by_label('Verbleibender Korrekturbetrag *', exact=True).fill('300,00')
+                await dialog.get_by_role('textbox', name='Begründung *', exact=True).fill('Versehentlich verringert')
+                await dialog.get_by_role('button', name='Korrektur speichern', exact=True).click()
+                await expect(dialog).not_to_be_visible()
+        assert not errors, errors
+
+    browser_world.run(inspect())
 
 
 @when('I attest a derived contribution or withdrawal total')
@@ -815,8 +1085,8 @@ def unit_correction_form(world, reserve_scenario, browser_world, tmp_path):
 def delete_unbacked_contribution(world, reserve_scenario):
     w = reserve_scenario
     assert world.act('POST', f"/api/payments/{w['cash']}/reverse").status_code == 201
-    response = world.act('DELETE', f"/api/weg-settlements/{w['run']}/reserve-ledger/overrides/{w['correction']}",
-        json={'reason': 'Returned Hausgeld reconciled'})
+    response = world.act('POST', f"/api/weg-settlements/{w['run']}/reserve-ledger/overrides/{w['correction']}/delete",
+        json={'reason': 'Fehlbuchung'})
     assert response.status_code == 201, response.text
     w['reversal'] = response.json()['id']
 
@@ -828,6 +1098,7 @@ def contribution_release_finalizes(world, reserve_scenario):
     assert ledger['contributions_total'] == '0.00'
     row = next(row for row in ledger['entries'] if row.get('id') == w['reversal'])
     assert row['amount'] == '-300.00' and row['reverses_entry_id'] == w['correction']
+    assert row['reason'] == 'Fehlbuchung'
     values = {'bank_balances': [
         {'bank_account_id': w['bank_giro'], 'label': 'Giro', 'account_type': 'LAUFEND', 'balance': '0.00'},
         {'bank_account_id': w['bank_ruecklage'], 'label': 'Reserve', 'account_type': 'RUECKLAGE', 'balance': '0.00'}],
@@ -863,10 +1134,10 @@ def contribution_reduction_forms(world, reserve_scenario, browser_world, tmp_pat
                 await page.set_viewport_size({'width': width, 'height': 800})
                 await browser_world.visit(route)
                 panel = page.get_by_role('region', name='Rücklagenbuch')
-                await panel.get_by_role('button', name='Korrektur verringern / löschen', exact=True).click()
+                await panel.get_by_role('button', name='Korrektur ändern / löschen', exact=True).click()
                 dialog = page.get_by_role('dialog')
-                await expect(dialog).to_have_accessible_name('Korrektur verringern / löschen')
-                await dialog.get_by_role('button', name='Korrektur verringern', exact=True).click()
+                await expect(dialog).to_have_accessible_name('Korrektur ändern / löschen')
+                await dialog.get_by_role('button', name='Korrektur speichern', exact=True).click()
                 await expect(dialog.get_by_role('alert')).to_have_text('Bitte begründen Sie die Rücklagenkorrektur.')
                 await page.screenshot(path=str(directory / f'round18-{kind}-contribution-after-{width}.png'), animations='disabled')
                 await expect(dialog.get_by_role('button', name='Korrektur löschen', exact=True)).to_be_in_viewport()
@@ -876,17 +1147,17 @@ def contribution_reduction_forms(world, reserve_scenario, browser_world, tmp_pat
                 await dialog.get_by_label('Verbleibender Korrekturbetrag *', exact=True).fill('200,00' if width == 1280 else '100,00')
                 # Exercise one reduction per page; other visits check the same remaining original.
                 if kind == 'weg':
-                    await dialog.get_by_role('button', name='Korrektur verringern', exact=True).click()
+                    await dialog.get_by_role('button', name='Korrektur speichern', exact=True).click()
                     await expect(dialog).not_to_be_visible()
                     await expect(panel.get_by_text('Verbleibende Korrektur:', exact=False)).to_contain_text('200,00' if width == 1280 else '100,00')
                 else:
                     await dialog.get_by_role('button', name='Abbrechen', exact=True).click()
-        await panel.get_by_role('button', name='Korrektur verringern / löschen', exact=True).click()
+        await panel.get_by_role('button', name='Korrektur ändern / löschen', exact=True).click()
         dialog = page.get_by_role('dialog')
         await dialog.get_by_label('Begründung *', exact=True).fill('Verbleibende Korrektur vollständig aufgehoben')
         await dialog.get_by_role('button', name='Korrektur löschen', exact=True).click()
         await expect(dialog).not_to_be_visible()
-        await expect(panel.get_by_role('button', name='Korrektur verringern / löschen', exact=True)).to_have_count(0)
+        await expect(panel.get_by_role('button', name='Korrektur ändern / löschen', exact=True)).to_have_count(1)
         await expect(panel.get_by_text('Verbleibende Korrektur:', exact=False)).to_contain_text('0,00')
         assert not errors, errors
     browser_world.run(inspect())
@@ -910,10 +1181,12 @@ def correction_reason_privacy_hint(world, reserve_scenario, browser_world, tmp_p
             for width in (1280, 360):
                 await page.set_viewport_size({'width': width, 'height': 800})
                 await browser_world.visit(route)
+                if width == 360:
+                    await page.wait_for_function("() => { const aside = document.querySelector('aside'); return !aside || aside.getBoundingClientRect().right <= 0; }")
                 assert page.url.endswith(route) and await page.title()
                 panel = page.get_by_role('region', name='Rücklagenbuch')
                 await expect(panel.get_by_text('Verbleibende Korrektur:', exact=False)).to_contain_text('300,00')
-                for action, name in [('Korrektur erfassen', 'create'), ('Korrektur verringern / löschen', 'reduce')]:
+                for action, name in [('Korrektur erfassen', 'create'), ('Korrektur ändern / löschen', 'reduce')]:
                     await panel.get_by_role('button', name=action, exact=True).click()
                     dialog = page.get_by_role('dialog')
                     if name == 'create':
@@ -964,14 +1237,14 @@ def unbacked_correction_action(world, reserve_scenario, browser_world, tmp_path)
                 await page.set_viewport_size({'width': width, 'height': 800})
                 await browser_world.visit(route)
                 panel = page.get_by_role('region', name='Rücklagenbuch')
-                await panel.get_by_role('button', name='Korrektur verringern / löschen', exact=True).click()
+                await panel.get_by_role('button', name='Korrektur ändern / löschen', exact=True).click()
                 dialog = page.get_by_role('dialog')
                 amount = dialog.get_by_label('Verbleibender Korrekturbetrag *', exact=True)
                 reason = dialog.get_by_role('textbox', name='Begründung *', exact=True)
                 await amount.fill('100,00')
                 await reason.fill('Nach Hausgeld-Storno verbleibende Korrektur abstimmen')
                 async with page.expect_response(lambda response: response.url.endswith('/reduce')) as pending:
-                    await dialog.get_by_role('button', name='Korrektur verringern', exact=True).click()
+                    await dialog.get_by_role('button', name='Korrektur speichern', exact=True).click()
                 response = await pending.value
                 assert response.status == 422, await response.text()
                 assert (await response.json())['detail']['code'] == 'RESERVE_CONTRIBUTION_EXCEEDS_BOOKED'
@@ -987,12 +1260,12 @@ def unbacked_correction_action(world, reserve_scenario, browser_world, tmp_path)
                 await dialog.get_by_role('button', name='Abbrechen', exact=True).click()
         assert not errors, errors
         assert messages == [message] * 4
-        await panel.get_by_role('button', name='Korrektur verringern / löschen', exact=True).click()
+        await panel.get_by_role('button', name='Korrektur ändern / löschen', exact=True).click()
         dialog = page.get_by_role('dialog')
         await dialog.get_by_role('textbox', name='Begründung *', exact=True).fill('Nicht mehr gedeckte Korrektur vollständig aufheben')
         await dialog.get_by_role('button', name='Korrektur löschen', exact=True).click()
         await expect(dialog).not_to_be_visible()
-        await expect(panel.get_by_role('button', name='Korrektur verringern / löschen', exact=True)).to_have_count(0)
+        await expect(panel.get_by_role('button', name='Korrektur ändern / löschen', exact=True)).to_have_count(1)
         await expect(panel.get_by_text('Verbleibende Korrektur:', exact=False)).to_contain_text('0,00')
 
     browser_world.run(inspect())

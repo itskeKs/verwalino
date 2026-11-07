@@ -187,7 +187,7 @@ def test_external_browser_app_does_not_start_local_processes(monkeypatch):
     from types import SimpleNamespace
     with synthetic_target() as (url, _, calls):
         monkeypatch.setenv("VERWALINO_TARGET_URL", url)
-        fixture = browser_app.__wrapped__({}, SimpleNamespace())
+        fixture = browser_app.__wrapped__({}, SimpleNamespace(), browser_storage=None)
         assert next(fixture) == url
         with pytest.raises(StopIteration):
             next(fixture)
@@ -199,3 +199,199 @@ def test_external_selection_cannot_fall_through_to_local_database_migrations(mon
     monkeypatch.setattr(conftest, "MIGRATOR_SYNC_URL", None)
     with pytest.raises(RuntimeError, match="supported only by tests/bdd"):
         next(conftest.run_migrations.__wrapped__())
+
+
+@pytest.mark.parametrize('isolated', [None, 'supplier', 'anna', 'eva'])
+def test_retention_setup_uses_only_http_and_keeps_privacy_archives_in_empty_organizations(monkeypatch, isolated):
+    import asyncio
+    from types import SimpleNamespace
+    import httpx
+    from tests.bdd.world import World
+    from tests.bdd.steps.person_retention import retention_setup
+
+    monkeypatch.setenv('VERWALINO_TARGET_URL', 'http://synthetic.invalid')
+    prefix = {'supplier': 'VERWALINO_TARGET_RETENTION', 'anna': 'VERWALINO_TARGET_RETENTION_ANNA',
+        'eva': 'VERWALINO_TARGET_RETENTION_EVA'}.get(isolated, 'VERWALINO_TARGET_RETENTION')
+    monkeypatch.setenv(prefix + '_EMAIL', 'supplier@example.test')
+    monkeypatch.setenv(prefix + '_PASSWORD', 'disposable-supplier-password')
+    requests = []
+
+    def answer(request):
+        requests.append(request)
+        if request.url.path == '/api/auth/login':
+            assert json.loads(request.content) == {
+                'email': 'supplier@example.test', 'password': 'disposable-supplier-password'}
+            return httpx.Response(200, json={'user_id': 'supplier-admin', 'organization_id': 'supplier-org'})
+        if request.url.path == '/api/properties' and request.method == 'GET':
+            return httpx.Response(200, json=[])
+        assert request.url.path == '/api/properties' and request.method == 'POST'
+        grant = json.loads(request.content)['data_audience']['grants'][0]
+        assert grant['user_id'] == ('supplier-admin' if isolated else 'alpha-admin')
+        assert set(grant['capabilities']) == {'read', 'prepare', 'approve', 'export'}
+        return httpx.Response(201, json={'id': 'retention-property'})
+
+    factory = httpx.AsyncClient
+    def client(**kwargs):
+        return factory(transport=httpx.MockTransport(answer), **kwargs)
+    monkeypatch.setattr(httpx, 'AsyncClient', client)
+    def forbidden(name):
+        pytest.fail(f'External retention requested local fixture {name}')
+    with asyncio.Runner() as runner:
+        admin = client(base_url='http://synthetic.invalid')
+        world = World(runner.get_loop(), [admin], admin)
+        world._organizations = {'Verwaltung Alpha': admin}
+        request = SimpleNamespace(getfixturevalue=forbidden)
+        source = retention_setup(world, request, {'org_a_id': 'alpha-org', 'user_a_admin_id': 'alpha-admin'},
+            isolated=isolated)
+        try:
+            context = next(source)
+            assert context['property'] == 'retention-property'
+            assert context['org'] == ('supplier-org' if isolated else 'alpha-org')
+            assert world.actor is context['client']
+        finally:
+            source.close()
+            runner.run(admin.aclose())
+    assert [r.url.path for r in requests] == (
+        ['/api/auth/login', '/api/properties', '/api/properties'] if isolated else ['/api/properties'])
+
+
+@pytest.mark.parametrize('statuses,header,expected_sleeps', [
+    ([429, 200], '60', [60]),
+    ([429, 429], '60', [60]),
+    ([429], None, []),
+    ([429], '61', []),
+    ([403], '60', []),
+])
+def test_external_privacy_export_waits_once_only_for_the_supported_cooldown(monkeypatch, statuses, header, expected_sleeps):
+    import asyncio
+    import io
+    import tarfile
+    import httpx
+    from tests.bdd.test_maintenance_reserve_ledger import privacy_export
+
+    monkeypatch.setenv('VERWALINO_TARGET_URL', 'http://synthetic.invalid')
+    archive = io.BytesIO()
+    with tarfile.open(fileobj=archive, mode='w:gz') as tar:
+        for entity in ('person', 'payment', 'reserve_ledger_entry', 'audit_event', 'settlement_run'):
+            content = json.dumps({'id': entity}).encode()
+            info = tarfile.TarInfo(f'entities/{entity}.jsonl')
+            info.size = len(content)
+            tar.addfile(info, io.BytesIO(content))
+    calls, sleeps = [], []
+    async def sleep(seconds):
+        sleeps.append(seconds)
+    monkeypatch.setattr(asyncio, 'sleep', sleep)
+    class World:
+        def act(self, method, path):
+            assert (method, path) == ('POST', '/api/organizations/export')
+            calls.append(path)
+            status = statuses[len(calls) - 1]
+            return httpx.Response(status, content=archive.getvalue() if status == 200 else b'refused',
+                headers={'Retry-After': header} if header else {})
+        def run(self, coroutine):
+            return asyncio.run(coroutine)
+    if statuses[-1] == 200:
+        assert privacy_export(World())['person'] == {'person': {'id': 'person'}}
+    else:
+        with pytest.raises(AssertionError):
+            privacy_export(World())
+    assert sleeps == expected_sleeps
+    assert len(calls) == len(statuses)
+
+
+@pytest.mark.parametrize('mode,failures,minutes', [('selfhost', 10, 15), ('hosted', 5, 30)])
+@pytest.mark.parametrize('external', [False, True])
+@pytest.mark.parametrize('already_elapsed', [37, 2000])
+def test_login_lockout_waits_for_the_target_clock_without_password_retries(
+    monkeypatch, mode, failures, minutes, external, already_elapsed,
+):
+    import asyncio
+    from datetime import datetime, timedelta, timezone
+    from types import SimpleNamespace
+    import httpx
+    from app.core.config import Settings, settings
+    from app.core import rate_limit
+    from tests.bdd.steps import login_lockout, password
+    from tests.bdd.conftest import pytest_collection_modifyitems
+
+    monkeypatch.setattr(settings, 'deployment_mode', Settings(_env_file=None, deployment_mode=mode).deployment_mode)
+    monkeypatch.setenv('VERWALINO_TARGET_URL', 'http://synthetic.invalid' if external else '')
+    now = [100.0]
+    real_utcnow = rate_limit.utcnow
+    requests, sleeps = [], []
+    locked_at = [None]
+    monkeypatch.setattr(login_lockout, 'monotonic', lambda: now[0], raising=False)
+
+    async def sleep(seconds):
+        assert external, 'In-process lockout must keep its deterministic clock'
+        assert 0 < seconds <= 60
+        sleeps.append(seconds)
+        now[0] += seconds
+    monkeypatch.setattr(asyncio, 'sleep', sleep)
+
+    class World:
+        data = {'email': 'disposable@example.test'}
+        anonymous = SimpleNamespace(cookies=SimpleNamespace(clear=lambda: None))
+        def run(self, coroutine):
+            return asyncio.run(coroutine)
+        def look(self, client, path):
+            assert external and path == '/api/meta'
+            return httpx.Response(200, json={'deployment_mode': mode})
+        def send(self, client, method, path, *, json):
+            assert (method, path) == ('POST', '/api/auth/login')
+            assert json['email'] == self.data['email']
+            requests.append(json['password'])
+            now[0] += 0.25  # Include the final HTTP response in the deadline.
+            if external:
+                assert rate_limit.utcnow is real_utcnow
+                clock = now[0]
+            else:
+                clock = rate_limit.utcnow().timestamp()
+            if len(requests) == failures:
+                locked_at[0] = clock
+            status = 401 if json['password'] == password.WRONG_PASSWORD or clock < locked_at[0] + minutes * 60 else 200
+            self.response = httpx.Response(status)
+            return self.response
+        def describe_response(self):
+            return str(self.response.status_code)
+
+    world = World()
+    login_lockout.too_many_wrong_passwords(world, monkeypatch)
+    assert requests == [password.WRONG_PASSWORD] * failures
+    password.cannot_sign_in(world, 'current')
+    assert world.response.status_code == 401
+    now[0] += already_elapsed
+    login_lockout.lockout_has_elapsed(world)
+    if external:
+        assert 'login_clock' not in world.data
+        assert sum(sleeps) == pytest.approx(max(0, minutes * 60 + 2 - 0.25 - already_elapsed))
+    else:
+        assert world.data['login_clock'] == datetime(2026, 10, 30, 12, tzinfo=timezone.utc) + timedelta(minutes=minutes)
+        assert sleeps == []
+    password.can_sign_in(world, 'current')
+    assert world.response.status_code == 200
+    assert requests == [password.WRONG_PASSWORD] * failures + [password.CURRENT_PASSWORD] * 2
+
+    markers = []
+    item = SimpleNamespace(
+        obj=SimpleNamespace(__scenario__=SimpleNamespace(feature=SimpleNamespace(filename='login_lockout.feature'))),
+        get_closest_marker=lambda name: None, add_marker=markers.append,
+    )
+    pytest_collection_modifyitems(SimpleNamespace(), [item])
+    assert [(mark.name, mark.args) for mark in markers] == ([('timeout', (minutes * 60 + 120,))] if external else [])
+
+
+def test_external_login_lockout_refuses_a_mismatched_target_mode_before_password_attempts(monkeypatch):
+    from types import SimpleNamespace
+    import httpx
+    from app.core.config import settings
+    from tests.bdd.steps import login_lockout
+
+    monkeypatch.setattr(settings, 'deployment_mode', 'selfhost')
+    monkeypatch.setenv('VERWALINO_TARGET_URL', 'http://synthetic.invalid')
+    def forbidden(*args, **kwargs):
+        pytest.fail('A mismatched target must not receive password attempts')
+    world = SimpleNamespace(data={}, anonymous=None, send=forbidden,
+        look=lambda client, path: httpx.Response(200, json={'deployment_mode': 'hosted'}))
+    with pytest.raises(AssertionError, match='deployment mode'):
+        login_lockout.too_many_wrong_passwords(world, monkeypatch)

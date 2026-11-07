@@ -22,7 +22,8 @@ from app.services.master_delete_service import MasterDeleteService, master_delet
 from app.core.live_principal import get_live_member_db, get_live_writer_db
 from app.services.history_source_access import require_history_prepare
 from app.services.financial_scope_service import FinancialScopeService
-from app.services.lease_rent_change_service import LeaseRentChangeService
+from app.services.lease_rent_change_service import LeaseRentChangeService, require_matching_advance_amounts
+from app.engine.mietkonto import AdvanceMode
 from app.services.payment_service import PaymentService
 from app.core.temporal import (
     db_exclusive_to_api_inclusive,
@@ -36,6 +37,7 @@ from app.models.lease_rent_change import LeaseRentChange
 from app.repositories.lease_rent_change_repo import LeaseRentChangeRepository
 from app.services.lease_document_service import LeaseDocumentService
 from app.services.meter_service import ReadingCreate
+from app.engine.deposit import validate_deposit
 
 router = APIRouter(prefix="/api/leases", tags=["leases"])
 
@@ -122,6 +124,7 @@ class LeaseOut(BaseModel):
     valid_to: date | None
     base_rent: str
     advance_payment: str
+    advance_mode: AdvanceMode | None = None
     heating_advance_payment: str
     deposit: str | None
     notes: str
@@ -137,10 +140,11 @@ class LeaseCreate(BaseModel):
     tenant_profile_id: str
     valid_from: date
     valid_to: date | None = None
-    base_rent: str
-    advance_payment: str
+    base_rent: RentAmount
+    advance_payment: RentAmount
+    advance_mode: AdvanceMode | None = None
     heating_advance_payment: RentAmount = Decimal('0.00')
-    deposit: str | None = None
+    deposit: RentAmount | None = None
     notes: str = ""
 
 
@@ -171,10 +175,16 @@ async def create_lease(
     repo = LeaseAgreementRepository(db, auth.organization_id)
     unit_id = uuid.UUID(body.unit_id)
     tenant_profile_id = uuid.UUID(body.tenant_profile_id)
-    if await UnitRepository(db, auth.organization_id).get_by_id(unit_id) is None:
+    unit = await UnitRepository(db, auth.organization_id).get_by_id(unit_id)
+    if unit is None:
         raise HTTPException(404, "Unit not found")
     if await TenantProfileRepository(db, auth.organization_id).get_by_id(tenant_profile_id) is None:
         raise HTTPException(404, "Tenant profile not found")
+    require_matching_advance_amounts(body.advance_mode, body.heating_advance_payment)
+    try:
+        validate_deposit(unit.usage_type, body.base_rent, body.deposit)
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
     # API write edge (ADR-0006): the user enters the INCLUSIVE last occupied day
     # ("endet 30.06." -> 2025-06-30); storage is HALF-OPEN [valid_from, valid_to)
     # so persist the EXCLUSIVE bound (last day + 1). valid_from is already the
@@ -186,10 +196,11 @@ async def create_lease(
         tenant_profile_id=tenant_profile_id,
         valid_from=body.valid_from,
         valid_to=inclusive_last_day_to_db_exclusive(body.valid_to),
-        base_rent=Decimal(body.base_rent),
-        advance_payment=Decimal(body.advance_payment),
-        heating_advance_payment=Decimal(body.heating_advance_payment),
-        deposit=Decimal(body.deposit) if body.deposit else None,
+        base_rent=body.base_rent,
+        advance_payment=body.advance_payment,
+        heating_advance_payment=body.heating_advance_payment,
+        advance_mode=body.advance_mode,
+        deposit=body.deposit,
         notes=body.notes,
     )
     await require_history_prepare(db, auth.organization_id, "lease_agreement", la)
@@ -208,10 +219,11 @@ async def create_lease(
 class LeaseUpdate(BaseModel):
     valid_to: date | None = None
     notes: str | None = None
-    base_rent: str | None = None
-    advance_payment: str | None = None
+    base_rent: RentAmount | None = None
+    advance_payment: RentAmount | None = None
+    advance_mode: AdvanceMode | None = None
     heating_advance_payment: RentAmount | None = None
-    deposit: str | None = None
+    deposit: RentAmount | None = None
 
 
 @router.patch("/{lease_id}", response_model=LeaseOut, status_code=200)
@@ -232,13 +244,13 @@ async def update_lease(
         raise HTTPException(status_code=404, detail="Lease agreement not found")
 
     await require_history_prepare(db, auth.organization_id, "lease_agreement", existing)
-    amount_fields = {"base_rent", "advance_payment", "heating_advance_payment", "deposit"}
-    changes_amount = any(
+    rate_fields = {"base_rent", "advance_payment", "heating_advance_payment", "deposit", "advance_mode"}
+    changes_terms = any(
         getattr(body, field) is not None
-        and Decimal(getattr(body, field)) != getattr(existing, field)
-        for field in amount_fields & body.model_fields_set
+        and getattr(body, field) != getattr(existing, field)
+        for field in rate_fields & body.model_fields_set
     )
-    if changes_amount and (
+    if changes_terms and (
         await repo.has_booked_payments(lease_id)
         or await repo.has_finalized_settlement(lease_id)
     ):
@@ -246,6 +258,18 @@ async def update_lease(
             status_code=409,
             detail="Cannot change amounts: has booked payments or finalized settlement",
         )
+    heating = body.heating_advance_payment if body.heating_advance_payment is not None else existing.heating_advance_payment
+    require_matching_advance_amounts(body.advance_mode or existing.advance_mode, heating)
+    if any(getattr(body, field) is not None for field in {"base_rent", "deposit"} & body.model_fields_set):
+        unit = await UnitRepository(db, auth.organization_id).get_by_id(existing.unit_id)
+        if unit is None:
+            raise HTTPException(404, "Unit not found")
+        base_rent = body.base_rent if body.base_rent is not None else existing.base_rent
+        deposit = body.deposit if body.deposit is not None else existing.deposit
+        try:
+            validate_deposit(unit.usage_type, base_rent, deposit)
+        except ValueError as exc:
+            raise HTTPException(422, str(exc)) from exc
     if "valid_to" in body.model_fields_set:
         if body.valid_to is not None and body.valid_to < existing.valid_from:
             raise HTTPException(422, "Lease end must not precede its start")
@@ -258,13 +282,15 @@ async def update_lease(
         existing.valid_to = inclusive_last_day_to_db_exclusive(body.valid_to)
     if body.notes is not None:
         existing.notes = body.notes
-    for field in amount_fields & body.model_fields_set:
+    for field in rate_fields & body.model_fields_set:
         value = getattr(body, field)
         if value is not None:
-            setattr(existing, field, Decimal(value))
+            setattr(existing, field, value)
     try:
         await db.flush()
     except IntegrityError as exc:
+        if getattr(exc.orig.__cause__, "constraint_name", None) == "original_advance_mode_frozen":
+            raise HTTPException(409, "Cannot change amounts: has booked payments or finalized settlement") from exc
         if "excl_lease_no_overlap" in str(exc):
             raise HTTPException(409, "Overlapping lease period for this unit") from exc
         raise
@@ -277,6 +303,7 @@ class RentChangeCreate(BaseModel):
     valid_from: date
     base_rent: RentAmount
     advance_payment: RentAmount
+    advance_mode: AdvanceMode | None = None
     heating_advance_payment: RentAmount = Field(default=Decimal("0.00"), description="Omitted values preserve the effective heating advance.")
 
 
@@ -312,6 +339,7 @@ class RentChangeOut(BaseModel):
     valid_from: date
     base_rent: str
     advance_payment: str
+    advance_mode: AdvanceMode | None = None
     heating_advance_payment: str
     created_at: datetime
 
@@ -321,7 +349,7 @@ def _rent_change_out(row: LeaseRentChange) -> RentChangeOut:
         id=str(row.id), lease_agreement_id=str(row.lease_agreement_id),
         valid_from=row.valid_from, base_rent=f"{row.base_rent:.2f}",
         advance_payment=f"{row.advance_payment:.2f}",
-        heating_advance_payment=f"{row.heating_advance_payment:.2f}", created_at=row.created_at,
+        heating_advance_payment=f"{row.heating_advance_payment:.2f}", advance_mode=row.advance_mode, created_at=row.created_at,
     )
 
 
@@ -347,6 +375,7 @@ async def create_rent_change(
     row = await LeaseRentChangeService(db, auth.organization_id, auth.user_id).create(
         lease_id, body.valid_from, body.advance_payment, base_rent=body.base_rent,
         heating_advance_payment=body.heating_advance_payment if 'heating_advance_payment' in body.model_fields_set else None,
+        advance_mode=body.advance_mode,
     )
     return _rent_change_out(row)
 
@@ -409,6 +438,7 @@ def _to_out(la: LeaseAgreement) -> LeaseOut:
         base_rent=str(la.base_rent),
         advance_payment=str(la.advance_payment),
         heating_advance_payment=str(la.heating_advance_payment),
+        advance_mode=la.advance_mode,
         deposit=str(la.deposit) if la.deposit is not None else None,
         notes=la.notes,
     )

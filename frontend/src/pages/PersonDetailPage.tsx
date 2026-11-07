@@ -26,8 +26,13 @@ import { DsgvoPanel } from "../components/DsgvoPanel";
 import { MasterDataDelete } from "../components/MasterDataDelete";
 
 export function PersonDetailPage() {
-  const navigate = useNavigate();
   const { personId } = useParams<{ personId: string }>();
+  return <PersonDetailPageContent key={personId} personId={personId} />;
+}
+
+function PersonDetailPageContent({ personId }: { personId?: string }) {
+  const navigate = useNavigate();
+
   const { session } = useAuth();
   const isWrite = session?.role === "OWNER_ADMIN" || session?.role === "CLERK";
   const requestVersion = useRef(0);
@@ -39,6 +44,7 @@ export function PersonDetailPage() {
   const [loading, setLoading] = useState(true);
   const [actionError, setActionError] = useState<string | null>(null);
   const [actionLoading, setActionLoading] = useState(false);
+  const [success, setSuccess] = useState<string | null>(null);
 
   // Vendor form state
   const [showVendorForm, setShowVendorForm] = useState(false);
@@ -50,8 +56,6 @@ export function PersonDetailPage() {
     const version = ++requestVersion.current;
     setLoading(true);
     setError(null);
-    setPerson(null);
-    setShowVendorForm(false);
     Promise.all([
       getPerson(personId),
       listOwnerProfiles(personId),
@@ -67,6 +71,7 @@ export function PersonDetailPage() {
       })
       .catch((err) => {
         if (version !== requestVersion.current) return;
+        if (err instanceof ApiError && [401, 403, 404].includes(err.status)) setPerson(null);
         if (err instanceof ApiError && err.status === 401) {
           setError("Nicht authentifiziert.");
         } else {
@@ -81,10 +86,13 @@ export function PersonDetailPage() {
 
   async function addOwnerProfile() {
     if (!personId) return;
+    setSuccess(null);
     setActionLoading(true);
     setActionError(null);
     try {
-      await createOwnerProfile(personId);
+      const profile = await createOwnerProfile(personId);
+      setOwnerProfiles(current => [...current, profile]);
+      setSuccess("Eigentümerprofil gespeichert.");
       reload();
     } catch (err) {
       setActionError(err instanceof ApiError ? err.message : String(err));
@@ -95,10 +103,13 @@ export function PersonDetailPage() {
 
   async function addTenantProfile() {
     if (!personId) return;
+    setSuccess(null);
     setActionLoading(true);
     setActionError(null);
     try {
-      await createTenantProfile(personId);
+      const profile = await createTenantProfile(personId);
+      setTenantProfiles(current => [...current, profile]);
+      setSuccess("Mieterprofil gespeichert.");
       reload();
     } catch (err) {
       setActionError(err instanceof ApiError ? err.message : String(err));
@@ -110,14 +121,17 @@ export function PersonDetailPage() {
   async function handleVendorSubmit(e: React.FormEvent) {
     e.preventDefault();
     if (!personId) return;
+    setSuccess(null);
     setActionLoading(true);
     setActionError(null);
     try {
-      await createVendor({
+      const vendor = await createVendor({
         person_id: personId,
         tax_id: vendorTaxId || undefined,
         vat_id: vendorVatId || undefined,
       });
+      setVendors(current => [...current, vendor]);
+      setSuccess("Dienstleister gespeichert.");
       setShowVendorForm(false);
       setVendorTaxId("");
       setVendorVatId("");
@@ -129,7 +143,7 @@ export function PersonDetailPage() {
     }
   }
 
-  if (loading) return <p>Lade...</p>;
+  if (loading && !person) return <p>Lade...</p>;
   if (error && !person) return <p className="error-text">{error}</p>;
   if (!person) return <p className="error-text">Person nicht gefunden.</p>;
 
@@ -139,7 +153,7 @@ export function PersonDetailPage() {
   const isAdmin = session?.role === "OWNER_ADMIN";
 
   return (
-    <div>
+    <div style={{ overflowAnchor: "none" }}>
       <p style={{ marginBottom: "0.5rem" }}>
         <Link to="/personen" className="link">&larr; Alle Personen</Link>
       </p>
@@ -148,6 +162,7 @@ export function PersonDetailPage() {
 
       {error && <p className="error-text">{error}</p>}
       {actionError && <p className="error-text">{actionError}</p>}
+      {success && <p role="status" className="sticky top-0 z-10 bg-background py-2">{success}</p>}
 
       <div className="card" style={{ marginBottom: "1.5rem" }}>
         <h2>Kontaktdaten</h2>
@@ -251,8 +266,8 @@ export function PersonDetailPage() {
             {isWrite && person.can_prepare && <MasterDataEditor title="Dienstleister bearbeiten"
               initial={{ tax_id: v.tax_id, vat_id: v.vat_id, notes: v.notes }}
               fields={[{ key: "tax_id", label: "Steuer-Nr.", maxLength: 20, nullable: true }, { key: "vat_id", label: "USt-IdNr.", maxLength: 20, nullable: true }, { key: "notes", label: "Notizen", maxLength: 1000 }]}
-              save={changes => updateVendor(v.id, changes)} onSaved={reload}
-              active={v.is_active !== false} endLabel="Dienstleister beenden" setActive={is_active => updateVendor(v.id, { is_active })} />}
+              save={changes => { setSuccess(null); return updateVendor(v.id, changes); }} onSaved={() => { setSuccess("Dienstleister gespeichert."); reload(); }}
+              active={v.is_active !== false} endLabel="Dienstleister beenden" setActive={is_active => { setSuccess(null); return updateVendor(v.id, { is_active }); }} />}
             <table className="info-table">
               <tbody>
                 <tr><td>Steuer-Nr.</td><td>{v.tax_id ?? "-"}</td></tr>

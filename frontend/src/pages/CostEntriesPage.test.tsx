@@ -452,3 +452,49 @@ describe("T40 filtered list CSV", () => {
     expect(document.querySelector("a[download]")).toBeNull(); expect(csv()).toBeEnabled();
   });
 });
+
+describe("German cost money inputs", () => {
+  let fetchMock: Mock;
+  beforeEach(() => {
+    fetchMock = vi.fn(async (url: string, options?: RequestInit) => {
+      const body = options?.method === "POST" ? { id: "new-cost", ...JSON.parse(options.body as string) } :
+        url.startsWith("/api/accounting-scopes") ? { items: [], next_cursor: null } :
+        url === "/api/properties" ? [{ id: "property", name: "Testhaus" }] :
+        url === "/api/cost-categories" ? [{ id: "category", code: "STROM", label: "Strom", plan_version: 1, tenant_apportionability_default: "UMLAGEFAEHIG" }] : [];
+      return new Response(JSON.stringify(body), { status: options?.method === "POST" ? 201 : 200 });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+  });
+  afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
+  async function form() {
+    render(<AuthCtx.Provider value={{ loading: false, session: { user_id: "admin", organization_id: "org", role: "OWNER_ADMIN" }, login: vi.fn(), logout: vi.fn() }}><MemoryRouter><CostEntriesPage /></MemoryRouter></AuthCtx.Provider>);
+    fireEvent.click(await screen.findByRole("button", { name: /Neue Kostenposition/ }));
+    await screen.findAllByRole("option", { name: "Testhaus" });
+    fireEvent.change(screen.getByLabelText("Objekt *"), { target: { value: "property" } });
+    fireEvent.change(screen.getByLabelText("Kategorie *"), { target: { value: "category" } });
+    for (const label of ["Rechnungsdatum *", "Leistungszeitraum von *", "Leistungszeitraum bis *"]) {
+      fireEvent.change(screen.getByLabelText(label), { target: { value: "2026-01-01" } });
+    }
+    fireEvent.change(screen.getByLabelText("Bruttobetrag *"), { target: { value: "60,00" } });
+  }
+  const writes = () => fetchMock.mock.calls.filter(([, options]) => options?.method === "POST");
+  it("sends canonical strings for comma and grouped cost inputs and retains optional zeros", async () => {
+    await form();
+    for (const [label, value] of [["USt-Betrag", "0,00"], ["USt-Satz (%)", "19,00"], ["Umlagefaehiger Betrag (Mieter)", "2.250,00"]]) {
+      fireEvent.change(screen.getByLabelText(label), { target: { value } });
+    }
+    fireEvent.click(screen.getByRole("button", { name: "Speichern" }));
+    await waitFor(() => expect(writes()).toHaveLength(1));
+    expect(JSON.parse(writes()[0][1].body)).toMatchObject({ gross_amount: "60.00", vat_amount: "0.00", vat_rate: "19.00", apportionable_tenant_amount: "2250.00" });
+  });
+  it.each(["Bruttobetrag *", "USt-Betrag", "USt-Satz (%)", "Umlagefaehiger Betrag (Mieter)"])("blocks invalid %s with a German field error", async label => {
+    await form();
+    const input = screen.getByLabelText(label);
+    fireEvent.change(input, { target: { value: "abc" } });
+    fireEvent.click(screen.getByRole("button", { name: "Speichern" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent(/gültigen/);
+    expect(input).toHaveAttribute("aria-invalid", "true");
+    expect(input).toHaveValue("abc");
+    expect(writes()).toHaveLength(0);
+  });
+});

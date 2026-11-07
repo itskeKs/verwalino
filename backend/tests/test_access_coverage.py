@@ -175,7 +175,8 @@ async def test_capture_waits_for_live_admin_and_migration_retains_snapshots(migr
                     from alembic.script import ScriptDirectory
                     versions = ScriptDirectory(str(Path(__file__).resolve().parents[1] / 'migrations'))
                     for revision in versions.iterate_revisions('head', '0088'):
-                        revision.module.downgrade()
+                        from tests.migration_rehearsal import downgrade_rehearsal_revision
+                        downgrade_rehearsal_revision(revision)
                     importlib.import_module('migrations.versions.0088_runtime_budget_review').downgrade()
                     importlib.import_module('migrations.versions.0087_projected_access_coverage').downgrade()
                     proposal_migration.downgrade()

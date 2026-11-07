@@ -20,6 +20,74 @@ from httpx import ASGITransport, AsyncClient
 
 from tests.conftest import MIGRATOR_SYNC_URL
 from tests.financial_coverage_helpers import attest_fixture
+from tests.write_response_support import create_visible_draft
+from sqlalchemy import text
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('kind', ['plan', 'payment', 'weg'])
+async def test_created_weg_record_committed_before_response(t13_seed, client_a_admin, app_rw_session, kind):
+    seed = t13_seed
+    await app_rw_session.execute(text("SELECT set_config('app.current_org_id', :org, true)"),
+                                 {'org': str(seed['org_a_id'])})
+    period = {'property_id': seed['property_id'], 'period_start': '2025-01-01', 'period_end': '2025-12-31'}
+    if kind == 'plan':
+        path, table, payload = '/api/economic-plans', 'economic_plan', {**period, 'plan_year': 2025}
+    elif kind == 'payment':
+        path, table = '/api/payments', 'payment'
+        payload = {'bank_account_id': seed['bank_giro'],
+                   'owner_profile_id': seed['owner_a'], 'direction': 'IN', 'amount': '600.00',
+                   'value_date': '2026-01-05', 'payment_type': 'HAUSGELD_VORSCHUSS'}
+    else:
+        plan = await _create_and_finalize_plan(client_a_admin, seed['property_id'], seed['mandate_id'])
+        path, table, payload = '/api/weg-settlements', 'settlement_run', {**period, 'economic_plan_id': plan}
+    await create_visible_draft(client_a_admin, app_rw_session, path, payload, table)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('failure', ['handler', 'serialization', 'commit'])
+async def test_failed_payment_save_never_sends_success(t13_seed, client_a_admin, app_rw_session, monkeypatch, failure):
+    from sqlalchemy import event
+    from app.api import payments
+    from app.main import app
+
+    seed, created, statuses = t13_seed, [], []
+    original = payments.PaymentService.create_draft
+
+    def fail_commit(session):
+        raise RuntimeError('Synthetic commit failure')
+
+    async def failing_save(self, **kwargs):
+        payment = await original(self, **kwargs)
+        created.append(payment.id)
+        if failure == 'handler':
+            raise RuntimeError('Synthetic handler failure after flush')
+        if failure == 'commit':
+            event.listen(self._session.sync_session, 'before_commit', fail_commit, once=True)
+        return payment
+
+    monkeypatch.setattr(payments.PaymentService, 'create_draft', failing_save)
+    if failure == 'serialization':
+        monkeypatch.setattr(payments, '_to_out', lambda payment: {'id': str(payment.id)})
+
+    async def observe_response(scope, receive, send):
+        async def observe_send(message):
+            if message['type'] == 'http.response.start':
+                statuses.append(message['status'])
+            await send(message)
+        await app(scope, receive, observe_send)
+
+    async with AsyncClient(transport=ASGITransport(app=observe_response, raise_app_exceptions=False),
+                           base_url='http://test', cookies=client_a_admin.cookies) as client:
+        response = await client.post('/api/payments', json={
+            'bank_account_id': seed['bank_giro'], 'owner_profile_id': seed['owner_a'],
+            'direction': 'IN', 'amount': '600.00', 'value_date': '2026-01-05',
+            'payment_type': 'HAUSGELD_VORSCHUSS'})
+    assert response.status_code == 500 and statuses == [500]
+    assert len(created) == 1
+    await app_rw_session.execute(text("SELECT set_config('app.current_org_id', :org, true)"),
+                                 {'org': str(seed['org_a_id'])})
+    assert await app_rw_session.scalar(text('SELECT id FROM payment WHERE id=:id'), {'id': created[0]}) is None
 
 
 @pytest.mark.asyncio
@@ -270,15 +338,19 @@ def t13_seed(seed_data):
     }
 
 
-async def _create_and_finalize_plan(client, property_id, mandate_id, reserve="6000.00"):
+async def _create_and_finalize_plan(client, property_id, mandate_id, reserve="6000.00", observer=None):
     """Create + finalize a Wirtschaftsplan with the two owners' MEA shares."""
-    resp = await client.post("/api/economic-plans", json={
+    payload = {
         "property_id": property_id,
         "plan_year": 2025,
         "period_start": "2025-01-01",
         "period_end": "2025-12-31",
         "management_mandate_id": str(mandate_id),
-    })
+    }
+    if observer is None:
+        resp = await client.post('/api/economic-plans', json=payload)
+    else:
+        resp = await create_visible_draft(client, observer, '/api/economic-plans', payload, 'economic_plan')
     assert resp.status_code == 201, resp.text
     plan_id = resp.json()["id"]
     # Planned: Gartenpflege 4000 + Verwalter 3000 = 7000 cost; reserve 6000.
@@ -296,7 +368,7 @@ async def _create_and_finalize_plan(client, property_id, mandate_id, reserve="60
 
 
 @pytest.mark.asyncio
-async def test_full_weg_journey(t13_seed, journey_client: AsyncClient):
+async def test_full_weg_journey(t13_seed, journey_client: AsyncClient, app_rw_session):
     client_a_admin = journey_client
     """Full WEG journey: economic plan, Hausgeld, costs, annual settlement (T09), asset report, resolution collection."""
     seed = t13_seed
@@ -306,6 +378,8 @@ async def test_full_weg_journey(t13_seed, journey_client: AsyncClient):
     owner_b = seed["owner_b"]
     mandate_id = seed["mandate_a_id"]
     bank_giro = seed["bank_giro"]
+    await app_rw_session.execute(text("SELECT set_config('app.current_org_id', :org, true)"),
+                                 {'org': str(org)})
 
     # 1. Verify MEA scale on units
     resp = await client_a_admin.get(f"/api/units?property_id={property_id}")
@@ -334,6 +408,13 @@ async def test_full_weg_journey(t13_seed, journey_client: AsyncClient):
     total_paid = sum(decimal.Decimal(p["amount"]) for p in payments)
     assert total_paid == decimal.Decimal("12000.00")
 
+    # Saving a draft must already make its detail available, before response
+    # cleanup; unbooked Hausgeld must not change the year's booked payments.
+    await create_visible_draft(client_a_admin, app_rw_session, '/api/payments', {
+        'bank_account_id': bank_giro, 'owner_profile_id': owner_a,
+        'direction': 'IN', 'amount': '600.00', 'value_date': '2025-01-05',
+        'payment_type': 'HAUSGELD_VORSCHUSS'}, 'payment')
+
     # 3. Verify costs (3 categories) using correct route /api/cost-entries
     resp = await client_a_admin.get(f"/api/cost-entries?property_id={property_id}")
     assert resp.status_code == 200, resp.text
@@ -341,17 +422,16 @@ async def test_full_weg_journey(t13_seed, journey_client: AsyncClient):
     assert len(costs) == 3
 
     # 4. Create and finalize economic plan
-    plan_id = await _create_and_finalize_plan(client_a_admin, property_id, mandate_id)
+    plan_id = await _create_and_finalize_plan(client_a_admin, property_id, mandate_id, observer=app_rw_session)
 
     # 5. Create WEG settlement with economic_plan_id
-    resp = await client_a_admin.post(
-        "/api/weg-settlements",
-        json={
+    resp = await create_visible_draft(
+        client_a_admin, app_rw_session, "/api/weg-settlements", {
             "property_id": property_id,
             "economic_plan_id": plan_id,
             "period_start": "2025-01-01",
             "period_end": "2025-12-31",
-        },
+        }, 'settlement_run',
     )
     assert resp.status_code == 201, resp.text
     settlement = resp.json()

@@ -17,7 +17,7 @@ import pytest
 import pytest_asyncio
 
 from tests.bdd.world import World, admin_credentials, target_url
-from tests.bdd.browser import browser_app, browser_session, browser_world  # noqa: F401
+from tests.bdd.browser import browser_app, browser_session, browser_storage, browser_world  # noqa: F401
 
 # Reused as-is: a throw-away user that may change its password without
 # touching the shared seed users (see tests/test_auth_password.py).
@@ -176,13 +176,20 @@ def pytest_collection_modifyitems(config, items):
         if target_url():
             template = getattr(item.obj, "__scenario__", None)
             if template:
+                if Path(template.feature.filename).name == "login_lockout.feature":
+                    # Real expiry exceeds the default 600 seconds. Keep a bounded
+                    # two-minute allowance for setup and the HTTP assertions.
+                    item.add_marker(pytest.mark.timeout(get_deployment_policy().rate_limit_rules.lockout_minutes * 60 + 120))
                 reason = {
                     "organization_isolation.feature": "External isolation requires two organizations; only the bootstrap organization is configured",
                     "first_run_setup.feature": "Setup requires a fresh installation; the external target already has a bootstrap organization",
                     "inbox_review_chain.feature": "needs the in-process invoice worker and direct database fixtures",
                     "organization_deletion.feature": "needs direct database fixtures and the in-process deletion CLI",
                     "organization_export_import.feature": "needs direct database fixtures and in-process archive storage",
+                    "bank_cost_correction.feature": "needs local reviewed intake and its document store",
                     "password_reset.feature": "needs the Mailpit test mailbox",
+                    "profile_hints.feature": "needs a fresh organization seeded through the local database fixture",
+                    "cost_table_browser.feature": "needs an isolated organization seeded through the local database fixture",
                 }.get(Path(template.feature.filename).name)
                 if reason:
                     item.add_marker(pytest.mark.skip(reason=reason))
@@ -204,6 +211,8 @@ def pytest_bdd_step_error(feature, scenario, step, exception, **_):
 from tests.bdd.steps.common import *  # noqa: E402,F401,F403
 from tests.bdd.steps.organization import *  # noqa: E402,F401,F403
 from tests.bdd.steps.password import *  # noqa: E402,F401,F403
+from tests.bdd.steps.personal_design import *  # noqa: E402,F401,F403
+from tests.bdd.steps.browser_personal_design import *  # noqa: E402,F401,F403
 from tests.bdd.steps.bank_import import *  # noqa: E402,F401,F403
 from tests.bdd.steps.reports import *  # noqa: E402,F401,F403
 from tests.bdd.steps.inbox import *  # noqa: E402,F401,F403
@@ -212,9 +221,13 @@ from tests.bdd.steps.lease_documents import *  # noqa: E402,F401,F403
 from tests.bdd.steps.diagnostics import *  # noqa: E402,F401,F403
 from tests.bdd.steps.browser_setup import *  # noqa: E402,F401,F403
 from tests.bdd.steps.browser_bank import *  # noqa: E402,F401,F403
+from tests.bdd.steps.browser_costs import *  # noqa: E402,F401,F403
 from tests.bdd.steps.browser_rent import *  # noqa: E402,F401,F403
 from tests.bdd.steps.browser_dunning import *  # noqa: E402,F401,F403
+from tests.bdd.steps.browser_mobile_navigation import *  # noqa: E402,F401,F403
+from tests.bdd.steps.browser_users import *  # noqa: E402,F401,F403
 from tests.bdd.steps.settlement_period import *  # noqa: E402,F401,F403
+from tests.bdd.steps.heating_settlement import *  # noqa: E402,F401,F403
 from tests.bdd.steps.advance_split import *  # noqa: E402,F401,F403
 from tests.bdd.steps.login_lockout import *  # noqa: E402,F401,F403
 from tests.bdd.mailpit import mailpit  # noqa: E402,F401
@@ -223,4 +236,23 @@ from tests.bdd.steps.signup import *  # noqa: E402,F401,F403
 from tests.bdd.steps.password_reset import *  # noqa: E402,F401,F403
 from tests.bdd.steps.quotas import *  # noqa: E402,F401,F403
 from tests.bdd.steps.organization_transfer import *  # noqa: E402,F401,F403
+from tests.bdd.steps.person_retention import *  # noqa: E402,F401,F403
 from tests.bdd.steps.source_access import *  # noqa: E402,F401,F403
+from tests.bdd.steps.property_selectors import *  # noqa: E402,F401,F403
+from tests.bdd.steps.persons_key import *  # noqa: E402,F401,F403
+
+from tests.bdd.steps.meetings import *  # noqa: E402,F401,F403
+from tests.bdd.steps.special_levy import *  # noqa: E402,F401,F403
+from tests.bdd.steps.vorwegabzug import *  # noqa: E402,F401,F403
+
+
+@pytest.fixture
+def reset_dunning_settings(world):
+    response = world.act("GET", "/api/dunning/settings")
+    assert response.status_code == 200, world.describe_response()
+    previous = response.json()
+    yield
+    if "fee_level_1" in previous:
+        world.actor = world.administrator_of("Verwaltung Alpha")
+        response = world.act("PUT", "/api/dunning/settings", json=previous)
+        assert response.status_code == 200, world.describe_response()

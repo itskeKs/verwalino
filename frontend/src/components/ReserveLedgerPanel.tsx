@@ -115,7 +115,7 @@ export function ReserveLedgerPanel({ runId, propertyId, status, onChanged, onOpe
       if (remove) await deleteReserveContribution(runId, reduction.id, reductionReason.trim());
       else await reduceReserveContribution(runId, reduction.id, target, reductionReason.trim());
       setReduction(null); setVersion(v => v + 1); onChanged();
-    } catch (err) { setReductionError(err instanceof Error ? err.message : 'Korrektur konnte nicht verringert werden.'); }
+    } catch (err) { setReductionError(err instanceof Error ? err.message : 'Korrektur konnte nicht geändert werden.'); }
     finally { setSaving(false); }
   }
 
@@ -142,17 +142,17 @@ export function ReserveLedgerPanel({ runId, propertyId, status, onChanged, onOpe
           <tbody>{ledger.entries.map((entry, index) => <tr key={`${entry.id ?? entry.kind}-${entry.date}-${index}`}>
             <td style={{ whiteSpace: 'nowrap' }}>{day(entry.date)}</td>
             <td style={{ overflowWrap: 'anywhere' }}>{labels[entry.kind] ?? entry.kind}{entry.component && ` · ${(entry.kind === 'OVERRIDE' ? componentLabels : labels)[entry.component] ?? entry.component}`}
-              {entry.reverses_entry_id && <div>Verringerung einer Zuführungskorrektur</div>}
+              {entry.reverses_entry_id && <div>{cents(entry.amount) > 0n ? 'Wiederherstellung einer Zuführungskorrektur' : 'Verringerung einer Zuführungskorrektur'}</div>}
               {entry.current_amount !== undefined && <div>Verbleibende Korrektur: {euro(entry.current_amount)}</div>}
               {entry.reason && <div style={{ overflowWrap: 'anywhere' }}>{entry.reason}</div>}
               {entry.owner_name && <div>Eigentümer: {entry.owner_name}</div>}
               {entry.payment_id && <div><a className="link" href={`/zahlungen/${entry.payment_id}`}>Zahlung: {entry.payment_note || `${day(entry.date)} · ${euro(entry.amount)}`}</a></div>}
               {entry.unit_id && <div>Einheit: {entry.unit_number ?? 'Nicht verfügbar'}</div>}
               {entry.cost_entry_id && <div><a className="link" href={`/kosten/${entry.cost_entry_id}`}>Kostenbeleg: {entry.cost_document_number || 'Beleg öffnen'}</a></div>}
-              {!locked && entry.id && entry.current_amount !== undefined && cents(entry.current_amount) > 0n &&
+              {!locked && entry.id && entry.current_amount !== undefined &&
                 <button className="btn btn--secondary" disabled={disabled} onClick={() => {
                   setReduction(entry); setReducedTo(entry.current_amount!.replace('.', ',')); setReductionReason(''); setReductionError('');
-                }}>Korrektur verringern / löschen</button>}
+                }}>Korrektur ändern / löschen</button>}
               {entry.register_entry_id && <div><a className="link" href={`/beschluss-sammlung?property_id=${propertyId}#beschluss-${entry.register_entry_id}`}>Beschluss{entry.register_sequence_number ? ` Nr. ${entry.register_sequence_number}` : ' öffnen'}</a></div>}
             </td><td style={{ whiteSpace: 'nowrap', fontFamily: 'var(--mono)' }}>{euro(entry.amount)}</td>
           </tr>)}</tbody></table>
@@ -166,8 +166,8 @@ export function ReserveLedgerPanel({ runId, propertyId, status, onChanged, onOpe
     </>}
     <Dialog open={reduction !== null} onOpenChange={value => { if (!saving && !value) setReduction(null); }}>
       <DialogContent className="reserve-correction-dialog">
-        <DialogTitle>Korrektur verringern / löschen</DialogTitle>
-        <DialogDescription>Die Verringerung wird mit Ihrer Begründung als Gegenbuchung festgehalten. Beim Löschen wird der verbleibende Korrekturbetrag vollständig aufgehoben.</DialogDescription>
+        <DialogTitle>Korrektur ändern / löschen</DialogTitle>
+        <DialogDescription>Jede Änderung wird mit Ihrer Begründung als neue Gegenbuchung festgehalten. Sie können die Korrektur bis zum ursprünglichen Betrag und nur im Rahmen des gebuchten Hausgelds wiederherstellen. Beim Löschen wird der verbleibende Korrekturbetrag vollständig aufgehoben.</DialogDescription>
         <form noValidate onSubmit={event => { event.preventDefault(); void reduce(false); }}>
           <fieldset disabled={saving || disabled} className="form-grid" style={{ gridTemplateColumns: 'minmax(0, 1fr)' }}>
             <p>Einheit: {reduction?.unit_number}. Verbleibende Korrektur: {euro(reduction?.current_amount ?? '0.00')}.</p>
@@ -179,7 +179,7 @@ export function ReserveLedgerPanel({ runId, propertyId, status, onChanged, onOpe
             {reductionError && <p role="alert" className="error-text">{reductionError}</p>}
           </fieldset>
           <div className="form-actions">
-            <button className="btn btn--primary" disabled={saving || disabled} type="submit">Korrektur verringern</button>
+            <button className="btn btn--primary" disabled={saving || disabled} type="submit">Korrektur speichern</button>
             <button className="btn btn--danger" disabled={saving || disabled} type="button" onClick={() => void reduce(true)}>Korrektur löschen</button>
             <button className="btn btn--secondary" disabled={saving} type="button" onClick={() => setReduction(null)}>Abbrechen</button>
           </div>

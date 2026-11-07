@@ -1,14 +1,16 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { parseGermanAmount } from "../lib/germanAmount";
+import { ApiError } from "../api/client";
 import { Link, useParams, useSearchParams } from "react-router-dom";
 import {
   getBankAccount, importBankTransactions, listBankMatchingTransactions,
   assignBankTransaction, ignoreBankTransaction, listUnits, listLeases,
-  listOwnership, listTenantProfiles, listOwnerProfiles, listPersons,
+  listOwnership, listTenantProfiles, listOwnerProfiles, listPersons, listCostEntries,
 } from "../api/endpoints";
 import type {
   BankAccount, BankImportResult, BankTransactionWithSuggestions, BankTransactionStatus,
   BankAssignmentLine, BankMatchSuggestion, BankMatchLine, LeaseRecord,
-  OwnerProfile, TenantProfile, Person, Unit, OwnershipRecord,
+  OwnerProfile, TenantProfile, Person, Unit, OwnershipRecord, CostEntry,
 } from "../api/types";
 import { ReserveEvidenceFields } from "../components/ReserveEvidenceFields";
 import { useAuth } from "../auth/useAuth";
@@ -44,7 +46,8 @@ export function BankTransactionsPage() {
 
 function AccountTransactions({ id }: { id: string }) {
   const { session } = useAuth();
-  const canWrite = session?.role === "OWNER_ADMIN" || session?.role === "CLERK";
+  const [accessDenied, setAccessDenied] = useState(false);
+  const canWrite = !accessDenied && (session?.role === "OWNER_ADMIN" || session?.role === "CLERK");
   const [searchParams, setSearchParams] = useSearchParams();
   const [account, setAccount] = useState<BankAccount | null>(null);
   const [accountError, setAccountError] = useState<string | null>(null);
@@ -68,7 +71,23 @@ function AccountTransactions({ id }: { id: string }) {
   const importLock = useRef(false);
   const fileVersion = useRef(0);
   const mounted = useRef(false);
+  const accessVersion = useRef(0);
   const showImport = canWrite && searchParams.get("import") === "1";
+
+  const loseAccess = useCallback(() => {
+    accessVersion.current++;
+    fileVersion.current++;
+    setAccessDenied(true);
+    setEditing(null);
+    setItems([]);
+    setAccount(null);
+    setNextOffset(null);
+    setFile(null);
+    setPreview(null);
+    setBusy(false);
+    setMutating(false);
+    setMutationError(null);
+  }, []);
 
   useEffect(() => {
     mounted.current = true;
@@ -76,28 +95,35 @@ function AccountTransactions({ id }: { id: string }) {
   }, []);
 
   useEffect(() => {
+    if (accessDenied) return;
     let cancelled = false;
+    const version = accessVersion.current;
     getBankAccount(id).then(value => {
-      if (!cancelled) setAccount(value);
+      if (!cancelled && version === accessVersion.current) setAccount(value);
     }).catch(error => {
-      if (!cancelled) setAccountError(errorMessage(error));
+      if (!cancelled && version === accessVersion.current) setAccountError(errorMessage(error));
     });
     return () => { cancelled = true; };
-  }, [id]);
+  }, [id, accessDenied]);
 
   useEffect(() => {
     let cancelled = false;
+    const version = accessVersion.current;
     listBankMatchingTransactions(id, status === "" ? "ALL" : status, offset).then(result => {
-      if (cancelled) return;
+      if (cancelled || version !== accessVersion.current) return;
+      setAccessDenied(false);
       setItems(result.items);
       setNextOffset(result.next_offset);
     }).catch(error => {
-      if (!cancelled) setListError(errorMessage(error));
+      if (!cancelled && version === accessVersion.current) {
+        if (error instanceof ApiError && [401, 403, 404].includes(error.status)) loseAccess();
+        setListError(errorMessage(error));
+      }
     }).finally(() => {
       if (!cancelled) setLoading(false);
     });
     return () => { cancelled = true; };
-  }, [id, status, offset, revision]);
+  }, [id, status, offset, revision, loseAccess]);
 
   function resetList() {
     setLoading(true);
@@ -122,9 +148,10 @@ function AccountTransactions({ id }: { id: string }) {
     setSuccess(null);
     if (dryRun) setPreview(null);
     const version = fileVersion.current;
+    const access = accessVersion.current;
     try {
       const result = await importBankTransactions(id, file, dryRun);
-      if (!mounted.current) return;
+      if (!mounted.current || access !== accessVersion.current) return;
       if (dryRun) {
         if (version === fileVersion.current) setPreview(result);
       } else {
@@ -137,34 +164,36 @@ function AccountTransactions({ id }: { id: string }) {
         setRevision(value => value + 1);
       }
     } catch (error) {
-      if (mounted.current && version === fileVersion.current) setImportError(errorMessage(error));
+      if (mounted.current && access === accessVersion.current && version === fileVersion.current) setImportError(errorMessage(error));
     } finally {
       importLock.current = false;
-      if (mounted.current) setBusy(false);
+      if (mounted.current && access === accessVersion.current) setBusy(false);
     }
   }
 
-  async function mutate(item: BankTransactionWithSuggestions, lines?: BankAssignmentLine[]) {
+  async function mutate(item: BankTransactionWithSuggestions, lines?: BankAssignmentLine[] | string) {
     if (!canWrite || item.status !== "NEU" || mutationLock.current) return;
     mutationLock.current = true;
     setMutating(true);
     setMutationError(null);
     setSuccess(null);
+    const access = accessVersion.current;
     try {
-      const result = lines ? await assignBankTransaction(item.id, lines) : null;
-      if (!lines) await ignoreBankTransaction(item.id);
-      if (!mounted.current) return;
+      const result = lines ? await assignBankTransaction(item.id, lines) : await ignoreBankTransaction(item.id);
+      if (!mounted.current || access !== accessVersion.current) return;
       setEditing(null);
-      setSuccess(result?.payments.some(payment => payment.status === 'draft')
+      setItems(current => current.map(row => row.id === item.id ? { ...row, status: result.status, suggestions: [] } : row));
+      setSuccess('payments' in result && result.payments.some(payment => payment.status === 'draft')
         ? 'Rücklagenentnahme als Entwurf übernommen. Bitte ergänzen Sie in der Zahlung den bestätigten Kostenbeleg und den Beschluss vor dem Buchen.'
         : lines ? "Umsatz zugeordnet." : "Umsatz ignoriert.");
-      resetList();
+      setListError(null);
+      setLoading(true);
       setRevision(value => value + 1);
     } catch (error) {
-      if (mounted.current) setMutationError(errorMessage(error));
+      if (mounted.current && access === accessVersion.current) setMutationError(errorMessage(error));
     } finally {
       mutationLock.current = false;
-      if (mounted.current) setMutating(false);
+      if (mounted.current && access === accessVersion.current) setMutating(false);
     }
   }
 
@@ -186,7 +215,7 @@ function AccountTransactions({ id }: { id: string }) {
   }
 
   return (
-    <div className="paged-list">
+    <div className="paged-list" style={{ overflowAnchor: "none" }}>
       <Link to="/bankkonten">← Bankkonten</Link>
       <h1>Umsätze{account ? ` – ${account.label}` : ""}</h1>
       {account?.iban && <p>{account.iban}</p>}
@@ -203,7 +232,6 @@ function AccountTransactions({ id }: { id: string }) {
         <label>Kontoauszug<input type="file" accept=".csv,text/csv,.xml,application/xml,text/xml,.zip,application/zip" disabled={busy && preview !== null} onChange={event => changeFile(event.target.files?.[0] ?? null)} /></label>
         <button type="button" className="btn" disabled={!file || busy} onClick={() => void runImport(true)}>{busy ? "Bitte warten…" : "Vorschau erstellen"}</button>
         {importError && <p role="alert" className="error-text">{importError}</p>}
-        {success && <p role="status">{success}</p>}
         {preview && <div>
           <h3>Importvorschau</h3>
           <p>{preview.count} Umsätze: {preview.new_count} neu, {preview.duplicate_count} Dubletten.</p>
@@ -221,7 +249,7 @@ function AccountTransactions({ id }: { id: string }) {
       </section>}
 
       {!editing && mutationError && <p role="alert" className="error-text">{mutationError}</p>}
-      {!showImport && success && <p role="status">{success}</p>}
+      {success && <p role="status" className="sticky top-0 z-10 bg-background py-2">{success}</p>}
       {editing && canWrite && <SplitDialog transaction={editing} account={account} busy={mutating} error={mutationError}
         onClose={() => { if (!mutationLock.current) { setEditing(null); setMutationError(null); } }}
         onSubmit={lines => void mutate(editing, lines)} />}
@@ -234,10 +262,11 @@ function AccountTransactions({ id }: { id: string }) {
         <option value="">Alle</option>
         {Object.entries(STATUS_LABELS).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
       </select>
-      {loading ? <p>Lade Umsätze…</p> : listError ? <div>
+      {listError && <div>
         <p role="alert" className="error-text">{listError}</p>
         <button className="btn" onClick={() => { resetList(); setRevision(value => value + 1); }}>Erneut laden</button>
-      </div> : items.length === 0 ? <p className="empty-hint">Keine Umsätze vorhanden.</p> : <div className="card paged-table">
+      </div>}
+      {loading && items.length === 0 ? <p>Lade Umsätze…</p> : items.length === 0 ? !listError && <p className="empty-hint">Keine Umsätze vorhanden.</p> : <div className="card paged-table">
         <table className="data-table">
           <thead><tr><th>Buchung</th><th>Wertstellung</th><th>Gegenpartei</th><th>IBAN</th><th>Verwendungszweck</th><th>Betrag</th><th>Status</th><th>Vorschläge / Aktionen</th></tr></thead>
           <tbody>{items.map(item => <tr key={item.id}>
@@ -286,6 +315,10 @@ function decimal(value: bigint): string {
 function positiveAmount(value: string): string | null {
   const amount = cents(value);
   return amount !== null && amount > 0n && amount <= 99999999999999n ? decimal(amount) : null;
+}
+// A bare dot remains the API decimal separator, so "850.001" stays invalid.
+function splitInput(value: string): string {
+  return value.includes(",") ? parseGermanAmount(value) ?? "" : value;
 }
 function validLine(line: BankAssignmentLine): boolean {
   const lease = Boolean(line.lease_agreement_id);
@@ -349,8 +382,27 @@ function SplitDialog({ transaction, account, busy, error, onClose, onSubmit }: {
   busy: boolean;
   error: string | null;
   onClose: () => void;
-  onSubmit: (lines: BankAssignmentLine[]) => void;
+  onSubmit: (lines: BankAssignmentLine[] | string) => void;
 }) {
+  const outgoing = (cents(transaction.amount) ?? 0n) < 0n;
+  const [mode, setMode] = useState<"cost" | "payment">(outgoing ? "cost" : "payment");
+  const [costs, setCosts] = useState<CostEntry[] | null>(null);
+  const [costError, setCostError] = useState<string | null>(null);
+  const [costId, setCostId] = useState("");
+  const [costRevision, setCostRevision] = useState(0);
+  useEffect(() => {
+    if (!account || mode !== "cost") return;
+    let cancelled = false;
+    listCostEntries({ property_id: account.property_id, status: "confirmed" })
+      .then(items => {
+        if (!cancelled) {
+          setCosts(items.filter(item => item.property_id === account.property_id && item.status === "confirmed"
+            && !item.superseded_by_id && item.bank_open_amount != null && (cents(item.bank_open_amount) ?? 0n) > 0n));
+          setCostError(null);
+        }
+      }).catch(cause => { if (!cancelled) setCostError(errorMessage(cause)); });
+    return () => { cancelled = true; };
+  }, [account, mode, costRevision]);
   function row(key: number, line?: BankMatchLine): SplitRow {
     const [year, month] = transaction.value_date.split("-");
     const payment_type = line?.payment_type ?? "KALTMIETE";
@@ -365,10 +417,14 @@ function SplitDialog({ transaction, account, busy, error, onClose, onSubmit }: {
   });
   const [targets, setTargets] = useState<TargetData | null>(null);
   const [targetError, setTargetError] = useState<string | null>(null);
-  const [validation, setValidation] = useState<string | null>(null);
+  const [validation, setValidation] = useState<{ message: string } | null>(null);
+  const validationRef = useRef<HTMLParagraphElement>(null);
+  useEffect(() => {
+    if (validation) validationRef.current?.scrollIntoView?.({ block: "nearest" });
+  }, [validation]);
   const [targetRevision, setTargetRevision] = useState(0);
   useEffect(() => {
-    if (!account) return;
+    if (!account || mode !== "payment") return;
     let cancelled = false;
     Promise.all([listUnits(account.property_id), listLeases(), listOwnerProfiles(), listTenantProfiles(), listPersons(), listOwnership()])
       .then(([units, leases, owners, tenants, persons, ownership]) => {
@@ -381,7 +437,7 @@ function SplitDialog({ transaction, account, busy, error, onClose, onSubmit }: {
         setTargetError(null);
       }).catch(cause => { if (!cancelled) setTargetError(errorMessage(cause)); });
     return () => { cancelled = true; };
-  }, [account, targetRevision]);
+  }, [account, targetRevision, mode]);
 
   function name(personId?: string) {
     const person = targets?.persons.find(person => person.id === personId);
@@ -394,12 +450,16 @@ function SplitDialog({ transaction, account, busy, error, onClose, onSubmit }: {
   function submit() {
     if (busy || !targets) return;
     const lines: BankAssignmentLine[] = [];
-    for (const item of rows) {
-      const amount = positiveAmount(item.amount);
+    for (const [index, item] of rows.entries()) {
+      const amount = positiveAmount(splitInput(item.amount));
+      if (amount === null) {
+        setValidation({ message: `Betrag in Splitzeile ${index + 1}: Bitte einen positiven Betrag wie 2.250,00 eingeben (max. 12 Vorkommastellen und 2 Nachkommastellen).` });
+        return;
+      }
       const lease = item.targetKind === "lease" ? targets.leases.find(lease => lease.id === item.target) : undefined;
       const owner = item.targetKind === "owner" ? targets.owners.find(owner => owner.id === item.target) : undefined;
-      if (!amount || !/^\d{1,4}$/.test(item.period_year) || !/^\d{1,2}$/.test(item.period_month) || (item.payment_type !== "RUECKLAGENENTNAHME" && !lease && !owner)) {
-        setValidation("Bitte positive Beträge (max. 12 Vorkommastellen, 2 Nachkommastellen), Periode und ein gültiges Ziel im Bankobjekt angeben.");
+      if (!/^\d{1,4}$/.test(item.period_year) || !/^\d{1,2}$/.test(item.period_month) || (item.payment_type !== "RUECKLAGENENTNAHME" && !lease && !owner)) {
+        setValidation({ message: "Bitte Periode und ein gültiges Ziel im Bankobjekt angeben." });
         return;
       }
       const line: BankAssignmentLine = {
@@ -407,61 +467,88 @@ function SplitDialog({ transaction, account, busy, error, onClose, onSubmit }: {
         ...(item.payment_type === "RUECKLAGENENTNAHME" ? { reserve_cost_entry_id: item.reserve_cost_entry_id, reserve_register_entry_id: item.reserve_register_entry_id } : lease ? { lease_agreement_id: lease.id, tenant_profile_id: lease.tenant_profile_id } : { owner_profile_id: owner!.id }),
         ...(item.note.trim() ? { note: item.note.trim() } : {}),
       };
-      if (!validLine(line)) { setValidation("Bitte Zahlungsart, Ziel und gültige Periode prüfen."); return; }
+      if (!validLine(line)) { setValidation({ message: "Bitte Zahlungsart, Ziel und gültige Periode prüfen." }); return; }
       lines.push(line);
     }
-    if (!coversTransaction(lines, transaction.amount)) { setValidation("Die Summe der positiven Splitbeträge muss den Umsatz vollständig abdecken."); return; }
+    if (!coversTransaction(lines, transaction.amount)) { setValidation({ message: "Die Summe der positiven Splitbeträge muss den Umsatz vollständig abdecken." }); return; }
     setValidation(null);
     onSubmit(lines);
   }
   const total = cents(transaction.amount);
-  const entered = rows.map(item => cents(item.amount));
+  const entered = rows.map(item => cents(splitInput(item.amount)));
   const remaining = total !== null && entered.every(amount => amount !== null)
     ? (total < 0n ? -total : total) - entered.reduce<bigint>((sum, amount) => sum + amount!, 0n) : null;
+  const selectedCost = costs?.find(cost => cost.id === costId);
+  const exceedsCost = selectedCost && total !== null && -total > cents(selectedCost.bank_open_amount!)!;
 
   return <Dialog open onOpenChange={open => { if (!open && !busy) onClose(); }}>
     <DialogContent style={{ width: 'calc(100% - 2rem)', gridTemplateColumns: 'minmax(0, 1fr)' }} className="max-w-3xl max-h-[90vh] overflow-y-auto" onEscapeKeyDown={event => { if (busy) event.preventDefault(); }} onPointerDownOutside={event => { if (busy) event.preventDefault(); }}>
       <DialogTitle>Umsatz aufteilen</DialogTitle>
-      <DialogDescription>{transaction.counterparty_name ?? "Unbekannte Gegenpartei"} · {money(transaction.amount)} · {transaction.amount.startsWith("-") ? "Ausgang (OUT)" : "Eingang (IN)"}. Splitbeträge immer positiv, z. B. 700,00. Die Buchungsberechtigung wird serverseitig geprüft.</DialogDescription>
+      <DialogDescription>{transaction.counterparty_name ?? "Unbekannte Gegenpartei"} · {money(transaction.amount)} · {outgoing ? "Ausgang (OUT)" : "Eingang (IN)"}. {mode === "cost" ? "Ordnen Sie den vollständigen Umsatz einer bestehenden bestätigten Kostenposition zu. Teilzahlungen auf eine Kostenposition sind möglich." : "Splitbeträge immer positiv, z. B. 700,00. Die Buchungsberechtigung wird serverseitig geprüft."}</DialogDescription>
+      {outgoing && <div className="form-grid min-w-0"><label className="form-full-width min-w-0">Zuordnen als<select className="min-w-0 w-full" aria-label="Zuordnen als" value={mode} disabled={busy} onChange={event => setMode(event.target.value as "cost" | "payment")}>
+        <option value="cost">Bestehende Kostenposition</option><option value="payment">Zahlung (z. B. Erstattung oder Rücklagenentnahme)</option>
+      </select></label></div>}
+      {mode === "cost" ? <form className="form-grid min-w-0" onSubmit={event => {
+        event.preventDefault();
+        if (!busy && selectedCost && !exceedsCost) onSubmit(selectedCost.id);
+      }}>
+        <label className="form-full-width min-w-0">Kostenposition<select aria-label="Kostenposition" value={costId} disabled={busy || !costs} onChange={event => setCostId(event.target.value)}>
+          <option value="">Kostenposition wählen</option>
+          {costs?.map(cost => <option key={cost.id} value={cost.id}>{cost.document_number || `Rechnung vom ${date(cost.invoice_date)}`} · offen: {money(cost.bank_open_amount!)} · gesamt: {money(cost.gross_amount)}</option>)}
+        </select></label>
+        {!costs && !costError && <p className="form-full-width">Lade Kostenpositionen…</p>}
+        {costs?.length === 0 && <p className="form-full-width">Keine offenen bestätigten Kostenpositionen für dieses Objekt verfügbar.</p>}
+        {selectedCost && <p className="form-full-width">Nach Zuordnung noch offen: {money(decimal(cents(selectedCost.bank_open_amount!)! + total!))}</p>}
+        {exceedsCost && <p role="alert" className="error-text form-full-width">Der Umsatz überschreitet den offenen Betrag der Kostenposition.</p>}
+        {(error || costError) && <p role="alert" className="error-text form-full-width">{error || costError}</p>}
+        <div className="form-actions">
+          <button type="submit" className="btn btn--primary" disabled={busy || !selectedCost || Boolean(exceedsCost)}>{busy ? "Bitte warten…" : "Kostenposition zuordnen"}</button>
+          <button type="button" className="btn" disabled={busy} onClick={() => { setCostId(""); setCostRevision(value => value + 1); }}>Kostenpositionen neu laden</button>
+          <button type="button" className="btn" disabled={busy} onClick={onClose}>Abbrechen</button>
+        </div>
+      </form> : <>
       {(transaction.suggestions ?? []).map((suggestion, index) => <div key={index}>
         <SuggestionDetails suggestion={suggestion} />
         {transaction.suggestions.length > 1 && <button type="button" className="btn" disabled={busy} onClick={() => { setRows(suggestion.lines.length ? suggestion.lines.slice(0, 100).map((line, index) => row(index, line)) : [row(0)]); setValidation(null); }}>Vorschlag {index + 1} laden: {suggestion.target_name}</button>}
       </div>)}
       {targetError && <div><p role="alert" className="error-text">{targetError}</p><button className="btn" onClick={() => setTargetRevision(value => value + 1)}>Ziele erneut laden</button></div>}
       {!targets && !targetError && <p>Lade Ziele…</p>}
-      {validation && <p role="alert" className="error-text">{validation}</p>}
+      {validation && <p ref={validationRef} role="alert" className="error-text">{validation.message}</p>}
       {error && <p role="alert" className="error-text">{error}</p>}
-      <form style={{ minWidth: 0 }} onSubmit={event => { event.preventDefault(); submit(); }} noValidate>
-        <fieldset style={{ minWidth: 0 }} disabled={busy || !targets}>
-          {rows.map((item, index) => <fieldset key={item.key} style={{ minWidth: 0 }} className={`card ${item.payment_type === 'RUECKLAGENENTNAHME' ? 'form-grid reserve-payment-form' : ''}`}>
+      <form className="form-grid min-w-0" onSubmit={event => { event.preventDefault(); submit(); }} noValidate>
+        <fieldset className="contents min-w-0" disabled={busy || !targets}>
+          {rows.map((item, index) => <fieldset key={item.key} className={`card form-grid form-full-width min-w-0 ${item.payment_type === 'RUECKLAGENENTNAHME' ? 'reserve-payment-form' : ''}`}>
             <legend>Splitzeile {index + 1}</legend>
-            <label>Zahlungsart<select aria-label="Zahlungsart" value={item.payment_type} onChange={event => {
+            <label className="min-w-0">Zahlungsart<select aria-label="Zahlungsart" value={item.payment_type} onChange={event => {
               const payment_type = event.target.value as BankAssignmentLine["payment_type"];
               const targetKind = OWNER_TYPES.has(payment_type) ? "owner" : TENANT_TYPES.has(payment_type) ? "lease" : item.targetKind;
               update(item.key, { payment_type, targetKind, target: targetKind === item.targetKind ? item.target : "" });
             }}>{Object.entries(PAYMENT_TYPES).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
-            <label>Betrag (EUR)<input inputMode="decimal" value={item.amount} onChange={event => update(item.key, { amount: event.target.value })} /></label>
-            <label>Periode Jahr<input type="number" min="1" max="9999" value={item.period_year} onChange={event => update(item.key, { period_year: event.target.value })} /></label>
-            <label>Periode Monat<input type="number" min="1" max="12" value={item.period_month} onChange={event => update(item.key, { period_month: event.target.value })} /></label>
-            {item.payment_type === "NACHZAHLUNG" && <label>Zielart<select aria-label="Zielart" value={item.targetKind} onChange={event => update(item.key, { targetKind: event.target.value as SplitRow["targetKind"], target: "" })}><option value="lease">Mietvertrag</option><option value="owner">Eigentümer</option></select></label>}
+            <label className="min-w-0">Betrag (EUR)<input inputMode="decimal" value={item.amount} onChange={event => update(item.key, { amount: event.target.value })} /></label>
+            <label className="min-w-0">Periode Jahr<input type="number" min="1" max="9999" value={item.period_year} onChange={event => update(item.key, { period_year: event.target.value })} /></label>
+            <label className="min-w-0">Periode Monat<input type="number" min="1" max="12" value={item.period_month} onChange={event => update(item.key, { period_month: event.target.value })} /></label>
+            {item.payment_type === "NACHZAHLUNG" && <label className="min-w-0">Zielart<select aria-label="Zielart" value={item.targetKind} onChange={event => update(item.key, { targetKind: event.target.value as SplitRow["targetKind"], target: "" })}><option value="lease">Mietvertrag</option><option value="owner">Eigentümer</option></select></label>}
             {item.payment_type === 'RUECKLAGENENTNAHME' ? <ReserveEvidenceFields propertyId={account?.property_id}
               cost={item.reserve_cost_entry_id || ''} register={item.reserve_register_entry_id || ''} required={false}
-              onChange={(cost, register) => update(item.key, { reserve_cost_entry_id: cost || null, reserve_register_entry_id: register || null })} /> : item.targetKind === "lease" ? <label>Mietvertrag<select aria-label="Mietvertrag" value={item.target} onChange={event => update(item.key, { target: event.target.value })}>
+              onChange={(cost, register) => update(item.key, { reserve_cost_entry_id: cost || null, reserve_register_entry_id: register || null })} /> : item.targetKind === "lease" ? <label className="form-full-width min-w-0">Mietvertrag<select aria-label="Mietvertrag" value={item.target} onChange={event => update(item.key, { target: event.target.value })}>
               <option value="">Mietvertrag wählen</option>
               {targets?.leases.map(lease => <option key={lease.id} value={lease.id}>{name(targets.tenants.find(tenant => tenant.id === lease.tenant_profile_id)?.person_id)} · Einheit {targets.units.find(unit => unit.id === lease.unit_id)?.number} · ab {lease.valid_from}{lease.valid_to ? ` bis ${lease.valid_to}` : " (laufend)"}</option>)}
-            </select></label> : <label>Eigentümer<select aria-label="Eigentümer" value={item.target} onChange={event => update(item.key, { target: event.target.value })}>
+            </select></label> : <label className="form-full-width min-w-0">Eigentümer<select aria-label="Eigentümer" value={item.target} onChange={event => update(item.key, { target: event.target.value })}>
               <option value="">Eigentümer wählen</option>
               {targets?.owners.map(owner => <option key={owner.id} value={owner.id}>{name(owner.person_id)} · Einheit {targets.ownership.filter(record => record.owner_profile_id === owner.id).map(record => targets.units.find(unit => unit.id === record.unit_id)?.number).join(", ")}</option>)}
             </select></label>}
-            <label>Notiz<input maxLength={500} value={item.note} onChange={event => update(item.key, { note: event.target.value })} /></label>
-            <button type="button" className="btn" disabled={rows.length <= 1} onClick={() => { setRows(current => current.filter(other => other.key !== item.key)); setValidation(null); }}>Zeile entfernen</button>
+            <label className="form-full-width min-w-0">Notiz<input maxLength={500} value={item.note} onChange={event => update(item.key, { note: event.target.value })} /></label>
+            <div className="form-actions"><button type="button" className="btn" disabled={rows.length <= 1} onClick={() => { setRows(current => current.filter(other => other.key !== item.key)); setValidation(null); }}>Zeile entfernen</button></div>
           </fieldset>)}
-          <button type="button" className="btn" disabled={rows.length >= 100} onClick={() => setRows(current => [...current, row(Math.max(...current.map(item => item.key)) + 1)])}>Zeile hinzufügen</button>
-          <p>Restbetrag: {remaining === null ? "Beträge eingeben" : money(decimal(remaining))}</p>
-          <button type="submit" className="btn btn--primary">{busy ? 'Bitte warten…' : rows.some(item => item.payment_type === 'RUECKLAGENENTNAHME' && (!item.reserve_cost_entry_id || !item.reserve_register_entry_id)) ? 'Als Entwurf übernehmen' : 'Zuordnung buchen'}</button>
+          <button type="button" className="btn form-full-width justify-self-start" disabled={rows.length >= 100} onClick={() => setRows(current => [...current, row(Math.max(...current.map(item => item.key)) + 1)])}>Zeile hinzufügen</button>
+          <p className="form-full-width">Restbetrag: {remaining === null ? "Beträge eingeben" : money(decimal(remaining))}</p>
         </fieldset>
-        <button type="button" className="btn" disabled={busy} onClick={onClose}>Abbrechen</button>
+        <div className="form-actions">
+          <button type="submit" className="btn btn--primary" disabled={busy || !targets}>{busy ? 'Bitte warten…' : rows.some(item => item.payment_type === 'RUECKLAGENENTNAHME' && (!item.reserve_cost_entry_id || !item.reserve_register_entry_id)) ? 'Als Entwurf übernehmen' : 'Zuordnung buchen'}</button>
+          <button type="button" className="btn" disabled={busy} onClick={onClose}>Abbrechen</button>
+        </div>
       </form>
+      </>}
     </DialogContent>
   </Dialog>;
 }

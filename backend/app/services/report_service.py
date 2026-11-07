@@ -5,13 +5,14 @@ from typing import Annotated, Literal
 from uuid import UUID
 
 from fastapi import HTTPException
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, PrivateAttr
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.repositories.cost_entry_repo import CostEntryRepository
 from app.repositories.payment_repo import PaymentRepository
 from app.repositories.property_repo import PropertyRepository
+from app.engine.anlage_v import counts_as_income
 from app.services.financial_scope_service import FinancialScopeService
 
 Money = Annotated[str, Field(pattern=r"^-?\d+\.\d{2}$")]
@@ -31,6 +32,8 @@ class ReportExpense(BaseModel):
 
 
 class PropertyYearReport(BaseModel):
+    # Internal mapping context; not part of the report's public API or schema.
+    _management_type: str = PrivateAttr(default='MIET')
     property_id: UUID
     property_name: str
     year: int
@@ -46,7 +49,9 @@ class PropertyYearReport(BaseModel):
     balance: Money
     footnote: str = (
         'Fachliche Jahresübersicht nach Wertstellungs- und Rechnungsdatum; '
-        'keine vollständige Steuererklärung und keine steuerliche Einordnung der Zahlungstypen.'
+        'Kautionen bleiben separat sichtbar und zählen nicht als Einnahmen. '
+        'Hausgeld-Vorschüsse, Rücklagenanteile und Eigentümer-Sonderzahlungen zählen nur bei WEG als Einnahmen. '
+        'Keine vollständige Steuererklärung und keine steuerliche Einordnung der Zahlungstypen.'
     )
 
 
@@ -107,10 +112,11 @@ class ReportService:
         with localcontext() as arithmetic:
             arithmetic.prec = max(28, max((len(amount.as_tuple().digits) for amount in amounts),
                                          default=1) + len(str(len(amounts) + 1)) + 2)
-            income_total = sum((row.amount for row in income_rows), Decimal('0.00'))
+            income_total = sum((row.amount for row in income_rows
+                                if counts_as_income(row.payment_type, prop.management_type)), Decimal('0.00'))
             expense_total = sum((row.amount for row in expense_rows), Decimal('0.00'))
             balance = income_total - expense_total
-        return PropertyYearReport(
+        report = PropertyYearReport(
             property_id=prop.id, property_name=prop.name, year=year,
             period_start=start, period_end=end, accounting_scope_id=sphere.id if sphere else None,
             income=[ReportIncome(payment_type=row.payment_type, amount=format(row.amount, '.2f')) for row in income_rows],
@@ -120,3 +126,5 @@ class ReportService:
             income_total=format(income_total, '.2f'), expense_total=format(expense_total, '.2f'),
             balance=format(balance, '.2f'),
         )
+        report._management_type = prop.management_type
+        return report

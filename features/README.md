@@ -100,6 +100,19 @@ process's mode only selects tags and cannot change that server's policy. A
 nightly run in both modes, including a server started with
 `HV_DEPLOYMENT_MODE=hosted`, is tracked in #103.
 
+The `save_lifecycle.feature` browser journey saves units, people, profiles, leases and bank
+accounts and assigns a receipt at desktop and 360 px. It pauses each real post-save read to
+check retained content and scroll, then verifies the new values without a manual reload.
+Its delayed-editor examples confirm contact-editor invalidation after a structured access refusal
+and a second bank edit against the last confirmed account data. The
+[`post_import_assignment` journey](journeys/post_import_assignment.feature) imports sixty receipts
+through the UI, assigns a lower row on the import page and requires a viewport-visible receipt
+without changing the statement's scroll position at 1280 and 360 px.
+The [`mobile_navigation` feature](mobile_navigation.feature) checks closed-drawer Tab focus,
+Escape, focus containment, route/close/backdrop dismissal, and static desktop navigation across
+767/768 px, including automatic focus after a closed mobile toggle disappears at 768 and 1280 px.
+Its synthetic captures use the existing `VERWALINO_CAPTURE_DESIGN=1` opt-in.
+
 ## How the step library is organised
 
 - `features/<name>.feature` - the spec.
@@ -236,7 +249,17 @@ variables and the local test DB lock are unnecessary for this path. Browser
 requests are limited to the selected origin. The feature name `Verwaltung Alpha`
 aliases the signed-in admin's organization, regardless of its actual name.
 Password scenarios create disposable users through `/api/users`; they never change
-the bootstrap admin's password. Use only a dedicated disposable installation:
+the bootstrap admin's password. Reserve contribution/correction and empty-year
+deletion scenarios create their two-owner WEG, 600/400 MEA shares, confirmed costs,
+bank accounts and draft reports through the same HTTP target. The contribution
+setup books 1300 euros of Hausgeld, assigns 100 euros to reserves and finalizes the
+7000-euro cost / 6000-euro reserve plan through the public APIs; it needs no direct
+database fixture. Local PR tests use the same setup and retain the original
+financial, correction-history and desktop/mobile assertions.
+The empty-year setup preserves the original unbound legacy drafts using the
+preparation-mode API; a reviewed accounting-scope binding would correctly prevent
+their deletion. Contribution scenarios use an explicit accounting scope and grants.
+Use only a dedicated disposable installation:
 scenarios create synthetic records and leave them there, and traces/responses can
 contain their data and session cookies. Keep credentials out of shell tracing.
 Before any scenario runs, the session signs in as the admin and requires
@@ -245,8 +268,38 @@ target aborts with "target is not a fresh installation; refusing to write scenar
 data"; failed authentication or an unverifiable list also aborts. Start with a
 new disposable installation for each run, including reruns after a partial failure.
 
+Person-retention scenarios create their repayment records through HTTP. The supplier
+scenario additionally requires `VERWALINO_TARGET_RETENTION_EMAIL` and
+`VERWALINO_TARGET_RETENTION_PASSWORD` for an admin in a separate, empty synthetic
+organization, created with the existing `self-host.sh admin --org NAME --email EMAIL
+--password-stdin` command on the owned disposable installation. Only the supplier
+fixture consumes these credentials; it refuses Alpha's organization or an organization
+with properties. This keeps the original 2020 invoice / 2017 service and the exact
+2028-12-31 organization-wide retention maximum independent of Alpha's newer payments.
+Reserve privacy scenarios reuse the HTTP WEG setup, retain Anna's booked repayment
+and Eva's 300-euro note, and compare the original archive rows and finalized digest.
+Each gets its own empty organization, through the same installer bootstrap, with
+`VERWALINO_TARGET_RETENTION_ANNA_EMAIL` / `VERWALINO_TARGET_RETENTION_ANNA_PASSWORD`
+and `VERWALINO_TARGET_RETENTION_EVA_EMAIL` / `VERWALINO_TARGET_RETENTION_EVA_PASSWORD`,
+respectively. Repeated Eva names in unrelated fixtures must not create additional
+matching reason copies in the organization-wide archive comparison.
+On external targets, a `429` export response with a numeric `Retry-After` of at most
+60 seconds permits one bounded wait and one retry; other refusals fail immediately.
+Local runs retain their isolated database fixtures and accelerated export clock.
+
+The login-lockout scenario checks `/api/meta` against the configured deployment mode
+before submitting wrong passwords. It keeps the disposable password user and exact
+refusal/success assertions. In-process runs advance their deterministic clock;
+external runs wait for the real policy duration (selfhost: ten failures, fifteen
+minutes; hosted: five failures, thirty minutes), measured from the final failed
+response with a two-second expiry tolerance. The wait uses monotonic time, subtracts
+time already elapsed, and sleeps in chunks of at most sixty seconds without password
+polling. Only this external scenario receives a timeout of the policy duration plus
+two minutes for setup and HTTP assertions; the workflow budget remains unchanged.
+
 **External-target coverage:** all ten scenarios of `organization_isolation.feature` are
-skipped on external targets because only one bootstrap organization is configured.
+skipped on external targets because no Beta administrator is configured for that
+feature; the additional retention logins belong only to their dedicated fixtures.
 The three `first_run_setup.feature` scenarios are also skipped: they require a
 fresh installation, while the external target already has its bootstrap organization.
 The `inbox_review_chain.feature` scenario is in-process-only: it needs the
@@ -255,10 +308,19 @@ run skips it too. The same applies to `organization_deletion.feature` (direct
 database fixtures and the in-process deletion CLI), `organization_export_import.feature`
 (direct database fixtures and in-process archive storage) and `password_reset.feature`
 (the Mailpit test mailbox).
+The four `journeys/profile_hints.feature` browser examples seed a fresh organization
+through the local database fixture and are skipped on external targets; they run
+against the local browser stack and in PR CI's browser job.
+The populated cost-table browser regression also requires a locally seeded,
+isolated organization and is skipped on external targets; local PR browser CI
+checks it at 360 and 1280 px without depending on earlier scenarios' records.
 Each skipped scenario records its reason in the report. Local runs continue to
 exercise both organizations, all isolation scenarios, first-run setup, the inbox
 review chain, deletion, export/import and password reset; PR CI retains this
 coverage through `make test-backend`.
+The response-start race scenario in `weg_settlement.feature` also requires the
+in-process ASGI app and an independent test DB connection; external targets skip
+only that scenario. The save-and-open browser scenario runs against either target.
 `make test-bdd`, `make test-browser` and `make test-scenarios-report` explicitly
 select the local stack even if target variables are inherited; use direct pytest
 for external targets.
@@ -271,7 +333,9 @@ initializes the installer's own `verwalino` Compose project on port 18080, build
 the checkout on the GitHub runner, starts/migrates it,
 redacts the one-time browser setup token from installer logs, bootstraps an admin
 through the reviewed CLI alternative `self-host.sh admin --password-stdin`, waits for readiness,
-and runs all features against that instance. The job collects installer logs and
+and runs all features against that instance. Host-side scenario dependencies include
+`poppler-utils` for PDF text assertions; setup verifies `pdftotext` before pytest runs.
+The job collects installer logs and
 the last 2 MiB of backend logs into `report/logs/` after execution, propagates pytest
 failures, always attempts normal stop, publishes the Markdown job summary, and
 uploads `report/` as `scenarios-selfhost-<UTC date>`.
@@ -279,6 +343,9 @@ Download it from the workflow run's **Artifacts** area; retention is **90 days**
 Artifacts are the history store; there is no dashboard or separate history database.
 The job does not back up the disposable installation; it only stops it, and the
 GitHub runner's lifecycle removes its storage.
+It also bootstraps the three separate retention organizations with independent random,
+masked passwords passed through stdin. These passwords live only in that run's
+environment; each additional login is used only by its corresponding retention fixture.
 
 Only `mode: [selfhost]` is implemented. Report metadata uses the same validated
 `HV_DEPLOYMENT_MODE` policy as scenario tag selection and defaults to `selfhost`;
@@ -337,6 +404,15 @@ worker or use an existing dev stack; start only the disposable database first.
 Do not wrap these targets in another acquisition of the same lock. Direct pytest
 commands and separately running dev stacks must hold that lock too; release it between runs.
 
+The local browser server wraps the real app with a test-only scheduling gate for
+individual dunning notices and operating cost statements. After sending a successful
+creation response, it holds request cleanup until the first detail read completes
+(bounded to five seconds). No responses or data are replaced. This exposes uncommitted
+drafts deterministically because function-scoped transactions commit before the response
+starts. The [dunning journey](journeys/dunning_notice.feature) and the
+[operating cost draft journey](journeys/operating_cost_draft.feature) assert that the
+first detail read succeeds without reload. External targets use their ordinary server.
+
 **CI decision:** the separate browser job runs `make test-browser` on PRs. The locked
 Chromium download and `playwright install --with-deps chromium` give a deterministic,
 short setup, with no host Chrome dependency; the job uses the same disposable
@@ -362,4 +438,4 @@ grows with the fixes: a finding from a blind acceptance run first fails as a ste
 its journey, then the fix turns it green. Twins use the browser harness above and run with
 `make test-browser`, in CI on every PR; they do not replace the blind run, which checks that a
 user finds the way at all. A twin is written with the first issue that touches its journey, not
-in advance, so none exists yet.
+in advance.

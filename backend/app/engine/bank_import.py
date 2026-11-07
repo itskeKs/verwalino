@@ -1,6 +1,6 @@
 """Pure, fail-closed bank statement parsers; no database or filesystem access.
 
-CSV: German semicolon fields plus documented DKB Giro legacy/2023 headers.
+CSV: German semicolon fields plus documented DKB Giro legacy/2023 and Sparkasse CSV-CAMT headers.
 Format source and supported scope are linked in README.md. Amounts are signed
 EUR Decimals, never floats. A parse error rejects the entire input.
 """
@@ -44,14 +44,16 @@ _COLUMNS = {
     "booking_date": {"buchungstag", "buchungsdatum"},
     "value_date": {"wertstellung", "valutadatum"},
     "amount": {"betrag", "betrag (eur)", "betrag (€)"},
-    "counterparty_name": {"name", "gegenkonto name", "auftraggeber / begünstigter"},
-    "counterparty_iban": {"iban", "gegenkonto iban"},
+    "counterparty_name": {"name", "gegenkonto name", "auftraggeber / begünstigter", "beguenstigter/zahlungspflichtiger"},
+    "counterparty_iban": {"iban", "gegenkonto iban", "kontonummer/iban"},
     "purpose": {"verwendungszweck"},
-    "currency": {"währung"},
+    "currency": {"währung", "waehrung"},
     "sender": {"zahlungspflichtige*r"},
     "recipient": {"zahlungsempfänger*in"},
     "direction": {"umsatztyp"},
     "status": {"status"},
+    "account_iban": {"auftragskonto"},
+    "info": {"info"},
 }
 _REQUIRED = {"booking_date", "value_date", "amount"}
 _AMOUNT = re.compile(r"[+-]?(?:[0-9]{1,3}(?:\.[0-9]{3})+|[0-9]+)(?:,[0-9]{1,2})?")
@@ -117,7 +119,7 @@ def _text(value: str, field: str, limit: int, line: int) -> str | None:
     return value or None
 
 
-def _csv_row(values: list[str], columns: dict[str, int], line: int) -> BankImportRow:
+def _csv_row(values: list[str], columns: dict[str, int], line: int, *, sparkasse_csv_camt: bool) -> BankImportRow:
     def get(field: str) -> str:
         return values[columns[field]].strip() if field in columns else ""
 
@@ -129,6 +131,9 @@ def _csv_row(values: list[str], columns: dict[str, int], line: int) -> BankImpor
     if "status" in columns and get("status").casefold() != "gebucht":
         raise BankImportError(f"Zeile {line}: Status muss Gebucht sein; vorgemerkte Umsätze sind nicht importierbar.")
 
+    if sparkasse_csv_camt and get("info").casefold() != "umsatz gebucht":
+        raise BankImportError(f"Zeile {line}: Status muss Umsatz gebucht sein; vorgemerkte Umsätze sind nicht importierbar.")
+
     amount = _parse_amount(get("amount"), line)
     name = get("counterparty_name")
     if dkb_2023:
@@ -138,8 +143,8 @@ def _csv_row(values: list[str], columns: dict[str, int], line: int) -> BankImpor
         name = get("sender" if direction == "Eingang" else "recipient")
     iban = re.sub(r"\s+", "", get("counterparty_iban")).upper()
     return BankImportRow(
-        booking_date=_parse_date(get("booking_date"), "Buchungsdatum", line, short_year=dkb_2023),
-        value_date=_parse_date(get("value_date"), "Valutadatum", line, short_year=dkb_2023),
+        booking_date=_parse_date(get("booking_date"), "Buchungsdatum", line, short_year=dkb_2023 or sparkasse_csv_camt),
+        value_date=_parse_date(get("value_date"), "Valutadatum", line, short_year=dkb_2023 or sparkasse_csv_camt),
         amount=amount,
         counterparty_name=_text(name, "Name", 255, line),
         counterparty_iban=_text(iban, "IBAN", 34, line),
@@ -190,6 +195,7 @@ def parse_csv(content: bytes, *, account_iban: str | None = None) -> list[BankIm
     columns = None
     width = 0
     dkb_legacy = False
+    sparkasse_csv_camt = False
     accounts: set[str] = set()
     rows = []
     try:
@@ -207,16 +213,23 @@ def parse_csv(content: bytes, *, account_iban: str | None = None) -> list[BankIm
                 if _REQUIRED.issubset(candidate):
                     columns = candidate
                     width = len(values)
+                    header = {value.strip().casefold() for value in values}
                     dkb_legacy = {
                         "buchungstext", "kontonummer", "blz", "betrag (eur)",
                         "auftraggeber / begünstigter",
-                    }.issubset({value.strip().casefold() for value in values})
+                    }.issubset(header)
+                    sparkasse_csv_camt = {
+                        "auftragskonto", "beguenstigter/zahlungspflichtiger",
+                        "kontonummer/iban", "waehrung", "info",
+                    }.issubset(header)
                 elif reader.line_num >= MAX_HEADER_ROWS:
                     break
                 continue
             if len(values) != width:
                 raise BankImportError(f"Zeile {reader.line_num}: falsche Spaltenanzahl (erwartet {width}, erhalten {len(values)}).")
-            row = _csv_row(values, columns, reader.line_num)
+            if sparkasse_csv_camt:
+                accounts.add(re.sub(r"\s+", "", values[columns["account_iban"]]).upper())
+            row = _csv_row(values, columns, reader.line_num, sparkasse_csv_camt=sparkasse_csv_camt)
             if dkb_legacy and row.purpose == "Tagessaldo":
                 continue
             rows.append(row)

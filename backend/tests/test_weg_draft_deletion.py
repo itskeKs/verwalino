@@ -7,6 +7,7 @@ import pytest
 from sqlalchemy import text
 from sqlalchemy.exc import DBAPIError
 
+from tests.financial_coverage_helpers import attest_fixture
 from tests.test_m4_weg import _seed_weg, _create_and_finalize_plan
 from tests.test_reserve_ledger import payment, reserve_world, finalize, paid
 
@@ -16,6 +17,55 @@ async def asset_draft(api, world, year=2020):
         'property_id': world['property'], 'period_start': f'{year}-01-01', 'period_end': f'{year}-12-31'})
     assert response.status_code == 201, response.text
     return response.json()['id']
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('asset_report', [False, True])
+async def test_tenant_advance_routes_preserve_other_computed_drafts(
+        client_a_admin, seed_data, migrator_session, asset_report):
+    api = client_a_admin
+    w = await reserve_world(api, seed_data)
+    run = w['run']
+    values = paid(w)
+    compute_url = f'/api/weg-settlements/{run}/compute'
+    if asset_report:
+        await finalize(api, w)
+        run = await asset_draft(api, w, 2025)
+        values = {'bank_balances': [
+            {'bank_account_id': w['bank_giro'], 'label': 'Girokonto', 'account_type': 'LAUFEND', 'balance': '1234.56'},
+            {'bank_account_id': w['bank_ruecklage'], 'label': 'Rücklagenkonto', 'account_type': 'RUECKLAGE', 'balance': '0.00'},
+        ], 'receivables': [{'label': 'Offene Forderung', 'amount': '78.90'}],
+            'payables': [{'label': 'Offene Verbindlichkeit', 'amount': '34.56'}]}
+        compute_url = f'/api/weg-settlements/asset-reports/{run}/compute'
+    await attest_fixture(api, 'settlement', run, values)
+    computed = await api.post(compute_url, json=values)
+    assert computed.status_code == 200, computed.text
+
+    async def saved_draft():
+        return (await migrator_session.execute(text("""
+            SELECT to_jsonb(r) AS run,
+                (SELECT jsonb_agg(to_jsonb(l) ORDER BY l.id)
+                 FROM settlement_line l WHERE l.settlement_run_id=r.id) AS lines
+            FROM settlement_run r WHERE r.id=:id
+        """), {'id': uuid.UUID(run)})).one()
+
+    before = await saved_draft()
+    assert before.run['status'] == 'draft' and before.lines
+    assert before.run['snapshot_payload']['inputs']
+    if asset_report:
+        inputs = before.run['snapshot_payload']['inputs']
+        assert {row['balance'] for row in inputs['bank_balances']} == {'1234.56', '0.00'}
+        assert inputs['receivables'] == values['receivables']
+        assert inputs['payables'] == values['payables']
+
+    path = f'/api/settlements/{run}'
+    for suffix, kwargs in (
+        ('advance-payments', {'json': {'advance_payments_total': '12.34', 'heating_advance_payments_total': '5.67'}}),
+        ('advance-payments-derived', {'params': {'period_year': 2025}}),
+    ):
+        response = await api.patch(f'{path}/{suffix}', **kwargs)
+        assert await saved_draft() == before
+        assert response.status_code == 404, response.text
 
 
 @pytest.mark.asyncio

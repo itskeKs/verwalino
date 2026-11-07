@@ -10,7 +10,8 @@ import { Button } from "../components/ui/button";
 const PAYMENT_TYPE_LABELS: Record<string, string> = {
   KALTMIETE: "Kaltmiete",
   NK_VORAUSZAHLUNG: "Betriebskosten-Vorauszahlung", HK_VORAUSZAHLUNG: "Heizkosten-Vorauszahlung",
-  KAUTION: "Kaution",
+  KAUTION: "Kaution (durchlaufend)",
+  NACHZAHLUNG: "Nachzahlung (Mieter)",
   HAUSGELD_VORSCHUSS: "Hausgeld-Vorschuss",
   RUECKLAGENANTEIL: "Ruecklagenanteil",
   SONDERZAHLUNG: "Sonder-/Nachzahlung",
@@ -236,13 +237,17 @@ export function ReportsPage() {
       <p>Zeitraum: {report.period_start} – {report.period_end}</p>
       <p>Einnahmen nach Wertstellungsdatum.</p>
       <p>Ausgaben nach Rechnungsdatum, bestätigte Bruttokosten.</p>
-      <table aria-label="Einnahmen"><thead><tr><th scope="col">Zahlungstyp</th><th scope="col">Betrag (EUR)</th></tr></thead><tbody>
-        {report.income.map(row => <tr key={row.payment_type}><td>{PAYMENT_TYPE_LABELS[row.payment_type] ?? `Unbekannter Zahlungstyp (${row.payment_type})`}</td><td>{money(row.amount)}</td></tr>)}
-      </tbody></table>
+      <div className="overflow-x-auto">
+        <table aria-label="Einnahmen"><thead><tr><th scope="col">Zahlungstyp</th><th scope="col">Betrag (EUR)</th></tr></thead><tbody>
+          {report.income.map(row => <tr key={row.payment_type}><td>{PAYMENT_TYPE_LABELS[row.payment_type] ?? `Unbekannter Zahlungstyp (${row.payment_type})`}</td><td>{money(row.amount)}</td></tr>)}
+        </tbody></table>
+      </div>
       {report.income.length === 0 && <p>Keine Einnahmen im Zeitraum.</p>}
-      <table aria-label="Ausgaben"><thead><tr><th scope="col">Kategorie</th><th scope="col">Code</th><th scope="col">Umlagefähigkeit</th><th scope="col">Betrag (EUR)</th></tr></thead><tbody>
-        {report.expenses.map((row, index) => <tr key={`${row.category_id}-${row.tenant_apportionability}-${index}`}><td>{row.category_name}</td><td>{row.category_code}</td><td>{APPORTIONABILITY_LABELS[fromDbApportionability(row.tenant_apportionability)] ?? "Umlagefähigkeit unbekannt"}</td><td>{money(row.amount)}</td></tr>)}
-      </tbody></table>
+      <div className="overflow-x-auto">
+        <table aria-label="Ausgaben"><thead><tr><th scope="col">Kategorie</th><th scope="col">Code</th><th scope="col">Umlagefähigkeit</th><th scope="col">Betrag (EUR)</th></tr></thead><tbody>
+          {report.expenses.map((row, index) => <tr key={`${row.category_id}-${row.tenant_apportionability}-${index}`}><td>{row.category_name}</td><td>{row.category_code}</td><td>{APPORTIONABILITY_LABELS[fromDbApportionability(row.tenant_apportionability)] ?? "Umlagefähigkeit unbekannt"}</td><td>{money(row.amount)}</td></tr>)}
+        </tbody></table>
+      </div>
       {report.expenses.length === 0 && <p>Keine Ausgaben im Zeitraum.</p>}
       <dl><dt>Einnahmen</dt><dd>{money(report.income_total)}</dd><dt>Ausgaben</dt><dd>{money(report.expense_total)}</dd><dt>Saldo</dt><dd>{money(report.balance)}</dd></dl>
       <p>Teilweise umlagefaehige Kosten erfordern eine Prüfung; es erfolgt keine automatische Aufteilung.</p>

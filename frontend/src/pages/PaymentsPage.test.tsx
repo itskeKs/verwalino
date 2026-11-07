@@ -1,3 +1,4 @@
+import { api, ApiError } from "../api/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { MemoryRouter, useLocation } from "react-router-dom";
@@ -372,4 +373,18 @@ describe("T40 filtered list CSV", () => {
     expect(revokeUrl).toHaveBeenCalledWith("blob:test-csv");
     expect(document.querySelector("a[download]")).toBeNull(); expect(csv()).toBeEnabled();
   });
+});
+
+it.each([
+  [new ApiError(404, "Zahlungen konnten nicht geladen werden."), "Zahlungen konnten nicht geladen werden."],
+  [new ApiError(401, "Unauthorized"), "Nicht authentifiziert. Bitte erneut anmelden."],
+  [new Error("Synthetic network failure"), "Error: Synthetic network failure"],
+])("renders load errors without the API class prefix and preserves auth and fallback: %s", async (error, expected) => {
+  const get = vi.spyOn(api, "get").mockRejectedValue(error);
+  try {
+    render(<MemoryRouter><PaymentsPage /></MemoryRouter>);
+    const rendered = await screen.findByText(expected, { exact: true });
+    expect(rendered.firstChild?.textContent?.trim()).toBe(expected);
+    expect(screen.queryByText(/ApiError:/)).not.toBeInTheDocument();
+  } finally { get.mockRestore(); }
 });

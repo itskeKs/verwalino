@@ -17,7 +17,21 @@ REQUEST_HEADER_ALLOWLIST = ("content-type", "content-length", "accept", "user-ag
 # Underscores delimit filename parts; preceding digits may delimit an IBAN.
 _EMAIL = re.compile(r"(?<![^\W_]|[.!#$%&'*+/=?^`{|}~-])[\w.!#$%&'*+/=?^`{|}~-]{1,64}@(?:[^\W_]|-){1,63}(?:\.(?:[^\W_]|-){1,63}){1,127}(?![^\W_]|[.-])")
 _IBAN = re.compile(r"(?<![^\W\d_])[A-Z]{2}\d{2}(?:[ -]?[A-Z0-9]){11,30}(?![^\W_])", re.I)
-_PHONE = re.compile(r"(?<![\w.+/-])(?:\+\d|\(\d|\d)[\d ()/-]{5,62}\d(?![\w.-])")
+_UUID = re.compile(r"(?<![a-f0-9])[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}(?![a-f0-9])", re.I)
+_PHONE_NUMBER = r"(?:\+\d|\(\d|\d)[\d ()/-]{5,62}\d"
+# A protected UUID is a token boundary. Keep the existing anchors elsewhere;
+# capture phone-grammar separators at those edges so they survive redaction.
+# The leading separator branch is lazy to retain a semantic '(' phone prefix.
+_PHONE_AT_UUID = {
+    (left, right): re.compile(
+        rf"(?P<prefix>{'^[ ()/-]*?|' if left else ''}(?<![\w.+/-]))"
+        rf"(?P<number>{_PHONE_NUMBER})"
+        rf"(?P<suffix>{'[ ()/-]*$|' if right else ''}(?![\w.-]))"
+    )
+    for left in (False, True)
+    for right in (False, True)
+}
+_PHONE = _PHONE_AT_UUID[False, False]
 _ISO_DATE = re.compile(r"\d{4}-\d{2}-\d{2}")
 _ADDRESS = re.compile(r"(?<![\w-])[\w-]{1,64}(?:straße|strasse|str\.)[ \t]{1,8}\d{1,6}[a-z]?(?:[ \t]{0,4}[-/][ \t]{0,4}\d{1,6}[a-z]?)?(?!\w)", re.I)
 _TITLE_WORD = r"[A-ZÀ-ÖØ-Þ][a-zßà-öø-ÿ]{1,63}(?:-[A-ZÀ-ÖØ-Þ][a-zßà-öø-ÿ]{1,31})?"
@@ -63,13 +77,28 @@ def _mask_assignments(value: str) -> str:
     return "".join(parts)
 
 
+def _mask_outside_uuids(value: str, pattern: re.Pattern, replacement) -> str:
+    # Exclude canonical UUID spans from IBAN/phone matching. Other candidates
+    # retain their existing conservative filtering, without bank validation.
+    parts = []
+    start = 0
+    for identity in (*_UUID.finditer(value), None):
+        end = identity.start() if identity is not None else len(value)
+        matcher = _PHONE_AT_UUID[start > 0, identity is not None] if pattern is _PHONE else pattern
+        parts.append(matcher.sub(replacement, value[start:end]))
+        if identity is not None:
+            parts.append(identity[0])
+            start = identity.end()
+    return "".join(parts)
+
+
 def _mask_phone(match: re.Match) -> str:
-    number = match[0]
+    number = match["number"]
     if _ISO_DATE.fullmatch(number):
-        return number
+        return match[0]
     if number.startswith(("+", "0", "(")) or any(separator in number for separator in " ()/-"):
-        return "[redacted:phone]"
-    return number
+        return match["prefix"] + "[redacted:phone]" + match["suffix"]
+    return match[0]
 
 
 def _mask_names(value: str, *, error_context: bool) -> str:
@@ -100,9 +129,9 @@ def scrub_text(value: str, *, error_context: bool = False) -> str:
     value = _BEARER.sub("[redacted:token]", value)
     value = _JWT.sub("[redacted:token]", value)
     value = _EMAIL.sub("[redacted:email]", value)
-    value = _IBAN.sub("[redacted:iban]", value)
+    value = _mask_outside_uuids(value, _IBAN, "[redacted:iban]")
     value = _ADDRESS.sub("[redacted:address]", value)
-    value = _PHONE.sub(_mask_phone, value)
+    value = _mask_outside_uuids(value, _PHONE, _mask_phone)
     value = _KEY_VALUE.sub(r"\1([redacted:name])", value)
     value = _OWNER_NAME.sub(r"\1[redacted:name]\2", value)
     value = _mask_names(value, error_context=error_context)

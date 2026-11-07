@@ -2,6 +2,33 @@
 
 Rent history, graduated and index-linked rent, security deposits, and ownership changes.
 
+## Selecting a tenant or owner
+
+The unit's new tenancy and ownership forms list people with the matching profile.
+If that list is empty, a German hint links to “Personen”. Open the person's page,
+find “Rollen / Profile”, and choose “Als Mieter kennzeichnen” or
+“Als Eigentuemer kennzeichnen”. Return via “Objekte” to the unit and reopen the
+form: the marked person is selectable; unmarked people remain absent. The hint
+disappears once a matching profile exists. These forms and their hints follow
+the existing admin/clerk write access; profile designation stays on the person's page.
+
+## Entering tenancy amounts
+
+The new/edit tenancy form accepts decimal commas or dots and German grouped
+amounts such as “2.250,00”. Base rent, operating-cost advance, heating advance
+and the optional deposit are sent as exact decimal strings, for example
+“750.00”, “150.00”, “90.00” and “2250.00”. Empty deposits stay omitted; zero
+heating advances remain valid. Invalid entries keep the form open with a German
+message next to the affected field.
+
+Lease create/update requests use the existing rent-change amount contract:
+finite, non-negative amounts with at most two decimal places and twelve integer
+digits. Raw comma strings, “NaN”, negative amounts and overflow return HTTP 422
+with the affected field, before persistence. The API does not parse German
+notation. Booked/finalized amount locks and organization isolation still apply.
+The [money-input journey twin](../../features/journeys/money_inputs.feature)
+checks saving and reloading these amounts on desktop and at 360 px.
+
 ## Rent changes with effective date
 
 `GET /api/leases/{id}/rent-changes` returns the chronological history;
@@ -92,6 +119,16 @@ Deployment constraints are documented under the
 `scripts/acceptance/t44_indexmiete_browser.cjs` verifies the real UI flow.
 
 ## Security deposits (Kautionen)
+
+For residential units (`WOHNUNG`), creating a lease or editing its deposit or original
+base rent refuses an agreed deposit above three monthly net base rents, excluding
+operating/heating advances ([§ 551 Abs. 1 BGB](https://www.gesetze-im-internet.de/bgb/__551.html)).
+At 750 EUR rent, 2,400 EUR is refused with „Die Kaution darf höchstens drei Nettokaltmieten
+betragen (2.250,00 €).“; 2,250 EUR and less are accepted. A rent reduction that puts the
+existing deposit above the new limit is refused too; rent and deposit can be corrected
+together. A refusal returns 422 and saves none of the submitted changes. Other unit usage
+types, including commercial (`GEWERBE`), are exempt. Existing financial-history locks
+still apply. Notes/end-only edits do not revalidate legacy deposit amounts.
 
 `/kautionen` shows per lease the agreed expected amount (Soll) from `lease.deposit`, booked
 deposits received, actual repayments, and the held balance. For this,

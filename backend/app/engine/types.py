@@ -16,6 +16,8 @@ import uuid
 from dataclasses import dataclass
 from datetime import date
 from decimal import Decimal
+from fractions import Fraction
+from typing import Literal
 
 
 # ---------------------------------------------------------------------------
@@ -57,6 +59,13 @@ HEATING_CATEGORY_CODES = frozenset({'HEIZUNG_ZENTRAL', 'WARMWASSER_ZENTRAL', 'ME
 
 
 @dataclass(frozen=True)
+class HouseholdInput:
+    valid_from: date
+    persons: int
+    is_vacancy: bool = False
+
+
+@dataclass(frozen=True)
 class UnitInput:
     """A unit participating in the property (frozen copy of `unit` row)."""
 
@@ -66,15 +75,15 @@ class UnitInput:
     area: Decimal | None = None
     heated_area: Decimal | None = None
     mea: Decimal | None = None
-    # Person count for the PERSONENZAHL key. PROVISIONAL (M3-A7, section 2.3):
-    # taken per-unit (constant over the settlement period); the engine takes
-    # it as input so the data-source decision does not touch the engine.
+    # Legacy frozen field, retained for older snapshots and the unchanged M4
+    # pure input contract. New M3 calculations exclusively use household.
     person_count: int | None = None
     # Self-measured consumption for the VERBRAUCH key (already a difference of
     # meter readings; section 2.4). Engine takes the resulting quantity.
     consumption: Decimal | None = None
     # Full-period occupant quantities; empty means day-based split within unit.
     consumption_periods: tuple[tuple[date, date, Decimal], ...] = ()
+    household: tuple[HouseholdInput, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -157,6 +166,9 @@ class CostPositionInput:
     external_amounts: tuple[ExternalAmountInput, ...] = ()
     manual_amounts: tuple[ManualAmountInput, ...] = ()
     heating: HeatingPositionInput | None = None
+    commercial_share_percent: Decimal | None = None
+    commercial_amount: Decimal | None = None
+    commercial_reason: str | None = None
 
 
 @dataclass(frozen=True)
@@ -193,6 +205,9 @@ class SettlementInput:
     uncredited_advance_payments_total: Decimal = Decimal("0.00")
     heating_advance_payments_total: Decimal = Decimal('0.00')
     heating_advance_payments_source: str = 'MANUAL'
+    advance_layout: Literal["COMBINED", "SEPARATE", "MIXED"] | None = None
+    combined_advance_payments_total: Decimal = Decimal("0.00")
+    unallocated_advance_payments_total: Decimal = Decimal("0.00")
 
 
 # ---------------------------------------------------------------------------
@@ -263,6 +278,7 @@ class VacancyShare:
     owner_profile_id: uuid.UUID | None
     days: int
     amount: Decimal
+    person_days: int | None = None
 
 
 # ===========================================================================
@@ -515,6 +531,8 @@ class OwnerResult:
     # Spitze (m4 section 2.1). None if not supplied.
     paid_advances: Decimal | None = None
     reserve_notice: str | None = None
+    account_balance: Decimal | None = None
+    payment_amount: Decimal | None = None
 
 
 @dataclass(frozen=True)
@@ -613,6 +631,7 @@ class HeatingUnitInput:
     unit_id: uuid.UUID
     base_quantity: Decimal
     consumption: Decimal | None
+    consumption_weight: Fraction | None = None
 
 
 @dataclass(frozen=True)
@@ -679,6 +698,8 @@ class HeatingSliceInput:
     owner_profile_id: uuid.UUID | None
     base_quantity: Decimal
     consumption: Decimal | None
+    consumption_split_method: str | None = None
+    consumption_weight: Fraction | None = None
 
 
 @dataclass(frozen=True)

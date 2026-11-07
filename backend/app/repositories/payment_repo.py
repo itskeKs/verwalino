@@ -31,7 +31,11 @@ class PaymentRepository(TenantRepository[Payment]):
             'SELECT payment_computation_context_valid(:org,:lease,:owner)'),
             {'org': self._org_id, 'lease': lease_id, 'owner': owner_id})
         if not allowed:
-            raise HTTPException(409, 'Select an exact accounting scope and review unclassified inputs before calculating payments')
+            raise HTTPException(
+                409,
+                'Wählen Sie einen eindeutigen Abrechnungskreis und prüfen Sie noch nicht zugeordnete Daten, '
+                'bevor Sie die Zahlungen berechnen.',
+            )
 
     # ------------------------------------------------------------------
     # General queries
@@ -155,7 +159,7 @@ class PaymentRepository(TenantRepository[Payment]):
         return result.scalars().all()
 
     async def derived_for_hausgeld(
-        self, owner_profile_id: uuid.UUID, period_year: int
+        self, owner_profile_id: uuid.UUID, period_year: int,
     ) -> Sequence[Payment]:
         """booked, active HAUSGELD_VORSCHUSS payments for one owner + year (§6.3)."""
         await self.require_computation_context(owner_id=owner_profile_id)

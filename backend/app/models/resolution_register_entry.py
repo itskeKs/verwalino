@@ -8,13 +8,13 @@ KEY INVARIANTS (DB-enforced):
   1. UNIQUE (organization_id, property_id, sequence_number) -- no duplicates,
      no gaps (gaps prevented by service-layer max+1; uniqueness prevents duplicates;
      collision => error/retry).
-  2. IMMUTABLE once created: wording, sequence_number, entry_date, resolution_id,
+  2. IMMUTABLE once created: wording, sequence_number, resolution_date, entry_date, resolution_id,
      property_id, organization_id, location are NEVER changed.
      The ONLY allowed mutation is setting/updating the challenge_annotation
      (Anfechtungs-/Aufhebungsvermerk).
   3. DELETE is ALWAYS forbidden (DB trigger).
 
-The immutability trigger (migration 0020) follows ADR-0003 pattern but with
+The immutability trigger (migrations 0020 and 0167) follows ADR-0003 pattern but with
 a stricter variant: the entry is immutable from INSERT, not from a status
 transition. Only challenge_annotation and updated_at can be mutated.
 """
@@ -50,6 +50,9 @@ class ResolutionRegisterEntry(Base, UUIDPrimaryKeyMixin, TimestampMixin):
 
     # Lückenlos fortlaufende Nummer je WEG (property)
     sequence_number: Mapped[int] = mapped_column(nullable=False)
+
+    # Meeting date copied at registration, immutable independently of the source
+    resolution_date: Mapped[date] = mapped_column(Date, nullable=False)
 
     # Date the entry was added to the register
     entry_date: Mapped[date] = mapped_column(Date, nullable=False)

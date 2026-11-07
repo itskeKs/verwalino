@@ -140,8 +140,24 @@ async def test_export_and_pause_recheck_while_unclassified_upload_is_denied(migr
         set_store(None)
 
 
-async def test_expiry_during_storage_cannot_commit_scoped_metadata(migrator_session, scope_seed, tmp_path, monkeypatch):
-    import time
+@pytest.fixture
+async def grant_clock(migrator_session):
+    # Freeze only the grant predicate's clock; keep the real authorization and
+    # RLS checks, including their function OID, owner and execute privileges.
+    definition = await read_value("SELECT pg_get_functiondef('public.has_scope_capability_at_mode(uuid,uuid,text,uuid,text)'::regprocedure)", {})
+    assert definition.count('clock_timestamp()') == 1
+    async def set_clock(instant):
+        await mutate(text(definition.replace('clock_timestamp()', f"TIMESTAMPTZ '{instant}'")), {})
+    try:
+        await set_clock('2025-01-01 UTC')
+        yield set_clock
+    finally:
+        await mutate(text(definition), {})
+
+
+@pytest.mark.parametrize('expiry_phase', ['before_admission', 'during_storage'])
+async def test_expiry_during_storage_cannot_commit_scoped_metadata(migrator_session, scope_seed, tmp_path, monkeypatch, grant_clock, expiry_phase):
+    from anyio import from_thread
     from app.core.storage import LocalFsDocumentStore, set_store
     store = LocalFsDocumentStore(tmp_path)
     set_store(store)
@@ -149,19 +165,21 @@ async def test_expiry_during_storage_cannot_commit_scoped_metadata(migrator_sess
     endpoint = f"/api/mandates/{ids['mandate']}/documents"
     try:
         await mutate(text('UPDATE scope_grant SET revoked_at=clock_timestamp(),revoked_by=:actor WHERE organization_id=:org AND scope_id=:source_scope AND revoked_at IS NULL'), ids)
-        await mutate(text("INSERT INTO scope_grant(organization_id,scope_id,user_id,capabilities,granted_by,reason,expires_at) VALUES(:org,:source_scope,:clerk,ARRAY['read','prepare'],:actor,'Short source grant',clock_timestamp()+interval '1 second')"), ids)
+        await mutate(text("INSERT INTO scope_grant(organization_id,scope_id,user_id,capabilities,granted_by,reason,created_at,expires_at) VALUES(:org,:source_scope,:clerk,ARRAY['read','prepare'],:actor,'Expiring source grant','2025-01-01 UTC','2025-01-02 UTC')"), ids)
         original_put = store.put
         calls = []
-        def delayed_put(*args, **kwargs):
+        def expiring_put(*args, **kwargs):
             calls.append(True)
             result = original_put(*args, **kwargs)
-            time.sleep(1.1)
+            from_thread.run(grant_clock, '2025-01-03 UTC')
             return result
-        monkeypatch.setattr(store, 'put', delayed_put)
+        monkeypatch.setattr(store, 'put', expiring_put)
+        if expiry_phase == 'before_admission':
+            await grant_clock('2025-01-03 UTC')
         async with client(ids) as api:
             response = await api.post(endpoint, **upload(ids))
             assert response.status_code == 404, response.text
-        assert calls == [True]
+        assert calls == ([True] if expiry_phase == 'during_storage' else [])
         assert await read_value('SELECT count(*) FROM mandate_document WHERE management_mandate_id=:mandate', ids) == 0
     finally:
         set_store(None)

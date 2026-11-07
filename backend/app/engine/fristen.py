@@ -32,8 +32,10 @@ only (datetime.date), calendar arithmetic, no timezone.
 from __future__ import annotations
 
 import uuid
+from calendar import monthrange
 from dataclasses import dataclass, field
-from datetime import date
+from datetime import date, timedelta
+from typing import Literal
 
 # ---------------------------------------------------------------------------
 # Deadline kinds (controlled vocabulary, stable string keys for the API/UI).
@@ -534,3 +536,97 @@ def build_fristenmonitor(
         )
 
     return sorted(items, key=_key)
+
+
+# State codes follow ISO 3166-2:DE. Only statewide holidays are derivable here;
+# Augsburg, Bavarian Assumption and local Corpus Christi need municipality data.
+FederalState = Literal[
+    'BW', 'BY', 'BE', 'BB', 'HB', 'HH', 'HE', 'MV',
+    'NI', 'NW', 'RP', 'SL', 'SN', 'ST', 'SH', 'TH',
+]
+
+
+def public_holidays(year: int, federal_state: FederalState | None = None) -> frozenset[date]:
+    """German nationwide/statewide holidays; modern rules with dated additions.
+
+    Sources and historical boundaries are documented in bank-and-payments.md.
+    An absent state deliberately includes only holidays shared nationwide.
+    """
+    # Gregorian Easter (Meeus/Jones/Butcher), using integer arithmetic only.
+    a = year % 19
+    b, c = divmod(year, 100)
+    d, e = divmod(b, 4)
+    f = (b + 8) // 25
+    g = (b - f + 1) // 3
+    h = (19 * a + b - d - g + 15) % 30
+    i, k = divmod(c, 4)
+    l = (32 + 2 * e + 2 * i - h - k) % 7
+    m = (a + 11 * h + 22 * l) // 451
+    month, day = divmod(h + l - 7 * m + 114, 31)
+    easter = date(year, month, day + 1)
+    holidays = {date(year, month, day) for month, day in
+                ((1, 1), (5, 1), (10, 3), (12, 25), (12, 26))}
+    holidays.update(easter + timedelta(days=offset) for offset in (-2, 1, 39, 50))
+    if federal_state in ('BW', 'BY', 'ST'):
+        holidays.add(date(year, 1, 6))
+    if federal_state in ('BW', 'BY', 'HE', 'NW', 'RP', 'SL'):
+        holidays.add(easter + timedelta(days=60))
+    if federal_state == 'BB':
+        holidays.update((easter, easter + timedelta(days=49)))
+    if federal_state == 'SL':
+        holidays.add(date(year, 8, 15))
+    if federal_state in ('BW', 'BY', 'NW', 'RP', 'SL'):
+        holidays.add(date(year, 11, 1))
+    if (year == 2017 or federal_state in ('BB', 'MV', 'SN', 'ST', 'TH')
+            or year >= 2018 and federal_state in ('HB', 'HH', 'NI', 'SH')):
+        holidays.add(date(year, 10, 31))
+    if federal_state == 'BE' and year >= 2019 or federal_state == 'MV' and year >= 2023:
+        holidays.add(date(year, 3, 8))
+    if federal_state == 'TH' and year >= 2019:
+        holidays.add(date(year, 9, 20))
+    if federal_state == 'SN':
+        last = date(year, 11, 22)
+        holidays.add(last - timedelta(days=(last.weekday() - 2) % 7))
+    if federal_state == 'BE':
+        if year in (2020, 2025):
+            holidays.add(date(year, 5, 8))
+        if year == 2028:
+            holidays.add(date(year, 6, 17))
+    return frozenset(holidays)
+
+
+def third_working_day(
+    year: int, month: int, holidays: frozenset[date], *, start_date: date | None = None,
+) -> date:
+    """Rent deadline under § 556b(1) BGB, BGH VIII ZR 129/09: no Saturdays.
+
+    Count inclusively from the actual rental interval's start (month start by
+    default). The caller supplies holidays for every year the count can touch.
+    """
+    current = start_date if start_date is not None else date(year, month, 1)
+    remaining = 3
+    while True:
+        if current.weekday() < 5 and current not in holidays:
+            remaining -= 1
+            if remaining == 0:
+                return current
+        current += timedelta(days=1)
+
+
+def owner_due_date(
+    year: int, month: int, monthly_due_day: int | None = None,
+    *, federal_state: FederalState | None = None,
+) -> date:
+    """Select the resolved calendar day, then shift under § 193 BGB.
+
+    Unlike tenant rent, this does not count three working days. Historical
+    NULL means day one. Historical 29–31 clamp to month end before the shift;
+    stored resolution values and frozen documents remain unchanged.
+    """
+    day = monthly_due_day if monthly_due_day is not None else 1
+    if not 1 <= day <= 31:
+        raise ValueError('Monthly due day must be between 1 and 31')
+    current = date(year, month, min(day, monthrange(year, month)[1]))
+    while current.weekday() >= 5 or current in public_holidays(current.year, federal_state):
+        current += timedelta(days=1)
+    return current

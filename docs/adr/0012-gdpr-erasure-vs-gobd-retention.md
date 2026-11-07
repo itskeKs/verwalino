@@ -80,19 +80,29 @@ bindings, and former users' email addresses are scrubbed as well. The audit row,
 event, actor structure and timestamps remain. The narrow immutability exception
 and hash treatment are defined in the
 [ADR-0003 amendment](0003-gobd-immutability-mechanism.md#amendment--2026-10-31-personal-audit-payloads-during-organization-erasure).
-This resolves the audit-payload question for organization erasure. M9's individual
-person operation still anonymizes master data only. In particular, individual
-person erasure leaves `reserve_ledger_entry.reason`, its copies in the audit
-payloads of `reserve.override_added` and `reserve.contribution_reduced`, and
-existing `reserve_override_reason` values unchanged. A name typed into a reason
-survives even when the person's master data is anonymized. Both reserve correction
-dialogs advise “Bitte keine personenbezogenen Daten eintragen.”; this prevents
-neither entry nor retention of names. Person-specific reason/audit scrubbing
-remains an open owner decision in #222, requiring a separate narrow immutability
-exception because the reserve ledger rejects updates. The organization-erasure
-decision above does not authorize that exception. **Frozen voucher snapshots
-remain untouched**. Other retained original/evidence content follows the
+This resolves the audit-payload question for organization erasure. **Frozen voucher
+snapshots remain untouched**. Other retained original/evidence content follows the
 [operator inventory](../operations/organization-export.md).
+
+**Owner clarification, 2026-11-04 (#256):** a structured recipient of a retained
+booked repayment is restricted and remains identifiable. The shared category and
+deadline functions from `0159`/`0160` decide that binding before any anonymization;
+`0161` introduces no additional retention classification. Only when the existing
+individual command actually anonymizes an eligible person does it also clean
+complete identifying names in incidental live reserve reasons and exact linked
+audit copies. Thus “Abstimmung mit Eva Muster” can become “Abstimmung mit Gelöscht”
+for unbound Eva while retained repayment recipient Anna keeps her identity and
+original evidence. Known longer names and surrounding wording remain intact;
+only identifying spans use `*` if the accepted 2,000-character limit requires it.
+The [ADR-0003 amendment](0003-gobd-immutability-mechanism.md#amendment--2026-11-04-eligible-incidental-reserve-reason-erasure)
+defines the narrow guard/privilege exception. No general free-text erasure or new
+contact ACL policy is introduced; amounts, references and frozen content/digests
+remain unchanged, including any original frozen reason.
+
+Both reserve correction dialogs advise “Bitte keine personenbezogenen Daten
+eintragen.” below “Begründung *”. This entry guidance complements the narrowly
+bounded erasure above; it does not change eligibility, retained evidence or the
+immutability exception.
 
 ### 5. Purge after retention expiry
 
@@ -104,7 +114,7 @@ The purge is realized via the **guarded `anonymize` operation**: the pure functi
 
 ### 6. Reconciliation invariant (guaranteed DB-side by I2)
 
-**Retention-bound vouchers/snapshots are NEVER changed or deleted by the GDPR path.** This is not a new commitment but coincides with ADR-0003: `cost_entry` (confirmed), `invoice_document` (released), `settlement_run`/`settlement_line` (finalized), `payment` (booked), `dunning_notice` (issued) are immutable via trigger + revoked grants. The GDPR service does **not** touch these tables in a mutating way at all — it changes only `person` fields. Retention is thus the legal basis against the erasure claim, and the render-time resolution of bound documents remains correct until retention expires.
+**Retention-bound vouchers/snapshots are NEVER changed or deleted by the GDPR path.** This is not a new commitment but coincides with ADR-0003: `cost_entry` (confirmed), `invoice_document` (released), `settlement_run`/`settlement_line` (finalized), `payment` (booked), `dunning_notice` (issued) are immutable via trigger + revoked grants. The GDPR service does **not** touch these tables in a mutating way at all; individual erasure changes person fields and only the bounded live reserve reason/audit copies in §4. Retention is thus the legal basis against the erasure claim, and the render-time resolution of bound documents remains correct until retention expires.
 
 ### 7. Access request / export (`export_person_data`)
 
@@ -143,11 +153,11 @@ Implementation of the polish item deferred in `roadmap.md` as "snapshot name fre
 - Finalized documents are **self-contained**: their render is immune to later master data changes/anonymization (§9) — render correctness no longer depends solely on the restriction of processing of the bound person, but additionally on the frozen name (defense-in-depth).
 - The decision "restrict vs. anonymize" is a **pure, tested function** — traceable and verifiable (golden/reconciliation tests).
 - Finalized documents of bound persons stay render-correct until retention expires.
-- No new DB mutation path on retention-bound tables → I2 remains untouched.
+- Retained originals stay immutable; §4 defines only the bounded incidental reserve reason/audit exception.
 
 **Negative / to note:**
 - The binding determination must be complete; a **forgotten** binding source would anonymize wrongly (hence conservatively broad, §1, and secured by tests).
 - The relevant `retention_until` is **provisional** (calendar-year end + 8 years) — a legal assumption, not a fact.
-- Remainders of PII outside `person` (free text, audit payload) are **not** part of this mechanic (§4 [§18/domain]).
+- Other PII outside `person` and the explicit §4 exception (free text, unrelated audit payload) remains outside this mechanic (§4 [§18/domain]).
 
 **No self-certification:** This concept makes the erasure/retention conflict *transparent, traceable and auditable* and discloses all assumptions. Whether it is privacy-/audit-proof in a specific case must be signed off by the data protection officer and tax advisor/specialist attorney — in particular all points marked **[§18/domain]**.

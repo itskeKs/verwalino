@@ -9,7 +9,12 @@ No database or backend server needed -- pure unit tests.
 """
 
 from pathlib import Path
+from datetime import date
+from decimal import Decimal
+from io import BytesIO
+from uuid import UUID
 
+import pdfplumber
 import pytest
 
 from app.core.pdf import (
@@ -22,6 +27,136 @@ from app.core.pdf import (
 
 
 TEMPLATES_DIR = Path(__file__).resolve().parent.parent / "app" / "templates"
+
+AUTHOR_MARKERS = ("ADR-", "SDD", "[§", "[section", "Ausbaustufe", " section ",
+                  "abzustimmen", "vorlaeufig", "provisorisch", "MVP")
+
+
+def recipient_documents():
+    """Synthetic 2026 examples with stored amounts, never a production database."""
+    from app.models.dunning_notice import DunningNotice
+    from app.models.economic_plan import EconomicPlan
+    from app.models.economic_plan_line import EconomicPlanLine
+    from app.models.owners_meeting import OwnersMeeting
+    from app.models.resolution_register_entry import ResolutionRegisterEntry
+    from app.models.settlement_line import SettlementLine
+    from app.models.settlement_run import SettlementRun
+    from app.services.dunning_pdf import build_dunning_html, DunningDisplayNames
+    from app.services.meeting_pdf import (
+        build_invitation_html, build_niederschrift_html, build_register_html, MeetingDisplayNames,
+    )
+    from app.services.vermoegensbericht_pdf import build_vermoegensbericht_html, VermoegensberichtDisplayNames
+    from app.services.weg_jahresabrechnung_pdf import build_weg_jahresabrechnung_html, WegDisplayNames
+    from app.services.wirtschaftsplan_pdf import build_wirtschaftsplan_html, WirtschaftsplanDisplayNames
+
+    start, end = date(2026, 1, 1), date(2026, 12, 31)
+    owner = UUID(int=1)
+    run = SettlementRun(period_start=start, period_end=end, snapshot_payload={},
+                        snapshot_sha256="a" * 64, engine_version="m4.1.0")
+    asset_lines = [SettlementLine(line_type=kind, label=label, amount=Decimal(amount),
+                                  sort_order=i, note=note) for i, (kind, label, amount, note) in enumerate([
+        ("RESERVE_OPENING", "Anfangsbestand", "20000.00", "Anfangsbestand laut Rücklagenbuch"),
+        ("RESERVE_CONTRIBUTION", "Zuführung", "6000.00", None),
+        ("RESERVE_WITHDRAWAL", "Entnahmen", "8000.00", "Entnahmen laut Rücklagenbuch"),
+        ("RESERVE_CLOSING", "Endbestand", "18000.00", None),
+        ("BANK_BALANCE", "Girokonto", "15000.00", "Stichtagssaldo (Verwalter-Angabe, kein Buchungssaldo)"),
+        ("RECEIVABLE", "Hausgeldrückstand", "500.00", None),
+        ("PAYABLE", "Offene Handwerkerrechnung", "1200.00", None),
+    ])]
+    legacy_lines = [SettlementLine(line_type=kind, label=label, amount=Decimal(amount),
+                                   sort_order=i, note=note) for i, (kind, label, amount, note) in enumerate([
+        ("RESERVE_OPENING", "Anfangsbestand", "20000.00", "Anfangsbestand (in dieser Ausbaustufe manuell erfasst)"),
+        ("RESERVE_WITHDRAWAL", "Entnahmen", "8000.00", "Entnahmen im Zeitraum (in dieser Ausbaustufe manuell erfasst)"),
+    ])]
+    plan = EconomicPlan(plan_year=2026, period_start=start, period_end=end,
+                        snapshot_sha256="b" * 64, engine_version="m4.1.0")
+    plan_lines = [EconomicPlanLine(line_type="PLANNED_COST", label="Gartenpflege", sort_order=0,
+                                   planned_amount=Decimal("4000.00")),
+                  EconomicPlanLine(line_type="RESERVE_CONTRIBUTION", label="Erhaltungsrücklage", sort_order=1,
+                                   planned_amount=Decimal("2000.00"), note="Vermögensbildung (keine Kostenumlage)"),
+                  EconomicPlanLine(line_type="OWNER_ADVANCE", owner_profile_id=owner, sort_order=2,
+                                   planned_amount=Decimal("6000.00"), monthly_amount=Decimal("500.00"))]
+    annual_lines = [SettlementLine(line_type="OWNER_COST_TOTAL", label="Ist-Kosten", sort_order=0,
+                                   amount=Decimal("4000.00"), addressee_owner_profile_id=owner)]
+    notice = DunningNotice(level=2, issue_date=date(2026, 11, 1), due_date=date(2026, 11, 15),
+                           principal_amount=Decimal("100.00"), fee_amount=Decimal("2.50"),
+                           total_amount=Decimal("102.50"), interest_snapshot=None, included_items=[{
+                               "payment_type": "KALTMIETE", "period_year": 2026, "period_month": 4,
+                               "soll": "800.00", "ist": "700.00", "open_amount": "100.00",
+                           }])
+    interest_notice = DunningNotice(level=2, issue_date=notice.issue_date, due_date=notice.due_date,
+        principal_amount=notice.principal_amount, fee_amount=notice.fee_amount,
+        total_amount=Decimal("102.68"), interest_amount=Decimal("0.18"),
+        included_items=notice.included_items, interest_snapshot={
+            "base_interest_rate": "1.52", "annual_rate": "6.52", "reference_date": "2026-10-31", "items": [{
+                "payment_type": "KALTMIETE", "period_year": 2026, "period_month": 10,
+                "due_date": "2026-10-21", "days": 10, "principal": "100.00", "interest": "0.18",
+            }],
+        })
+    meeting = OwnersMeeting(meeting_date=date(2026, 11, 30), location="Gemeinschaftsraum",
+                            meeting_type="ORDENTLICH", status="HELD", protocol_text="Die Sitzung ist eröffnet.",
+                            invitation_text="Wir laden Sie zur Versammlung ein.")
+    entries = [ResolutionRegisterEntry(sequence_number=1, resolution_date=date(2026, 6, 15), entry_date=date(2026, 11, 1),
+                location=meeting.location, wording="Der Wirtschaftsplan wird beschlossen.", challenge_annotation=None)]
+    property_name = "Gartenstraße 5"
+    meeting_names = MeetingDisplayNames(property_name=property_name)
+    return {
+        "asset_report": build_vermoegensbericht_html(run, asset_lines, VermoegensberichtDisplayNames(property_name=property_name)),
+        "legacy_asset_report": build_vermoegensbericht_html(run, legacy_lines, VermoegensberichtDisplayNames(property_name=property_name)),
+        "economic_plan": build_wirtschaftsplan_html(plan, plan_lines, WirtschaftsplanDisplayNames(property_name=property_name)),
+        "annual_settlement": build_weg_jahresabrechnung_html(run, annual_lines, WegDisplayNames(property_name=property_name)),
+        "dunning": build_dunning_html(notice, DunningDisplayNames(person_name="Anna Müller")),
+        "dunning_interest": build_dunning_html(interest_notice, DunningDisplayNames(person_name="Anna Müller")),
+        "minutes": build_niederschrift_html(meeting, [], [], meeting_names),
+        "register": build_register_html(entries, meeting_names),
+        "invitation": build_invitation_html(meeting, [], [("Anna Müller", property_name, "12345 Musterstadt")], meeting_names, False),
+    }
+
+
+RECIPIENT_DOCUMENTS = (
+    "asset_report", "legacy_asset_report", "economic_plan", "annual_settlement",
+    "dunning", "dunning_interest", "minutes", "register", "invitation",
+)
+
+
+@pytest.mark.parametrize("document", RECIPIENT_DOCUMENTS[:-1])
+def test_recipient_html_has_no_author_notes(document):
+    html = recipient_documents()[document]
+    for marker in AUTHOR_MARKERS:
+        assert marker not in html, (document, marker)
+
+
+@pytest.mark.parametrize("document", RECIPIENT_DOCUMENTS)
+def test_rendered_recipient_pdf_keeps_explanations_without_author_notes(document):
+    with pdfplumber.open(BytesIO(render_pdf(recipient_documents()[document]))) as pdf:
+        text = " ".join(" ".join(page.extract_text().split()) for page in pdf.pages)
+    for marker in AUTHOR_MARKERS:
+        assert marker not in text, (document, marker)
+    expected = {
+        "asset_report": ("manuelle Angaben der Verwaltung", "kein automatischer Buchungssaldo", "18.000,00 EUR"),
+        "legacy_asset_report": ("Anfangsbestand (Verwalter-Angabe)", "Entnahmen im Zeitraum (Verwalter-Angabe)"),
+        "economic_plan": ("Vorschlag für die Beschlussfassung", "kein Beschluss", "500,00 EUR"),
+        "annual_settlement": ("§ 28 Abs. 2 WEG", "4.000,00 EUR"),
+        "dunning": ("102,50 EUR", "Verzugszinsen sind nicht enthalten."),
+        "dunning_interest": ("102,68 EUR", "Verzugszinsen werden anhand des angegebenen Basiszinssatzes ausgewiesen."),
+        "minutes": ("automatisch erzeugter Protokollentwurf",),
+        "register": ("gemäß § 24 Abs. 7 WEG", "jedem Eigentümer auf Verlangen Einsicht zu gewähren"),
+        "invitation": ("Anna Müller", "Einladung zur Eigentümerversammlung"),
+    }
+    for phrase in expected[document]:
+        assert phrase in text, (document, phrase)
+
+
+def test_legacy_asset_notes_are_presented_without_mutating_stored_lines():
+    from app.models.settlement_line import SettlementLine
+    from app.services.vermoegensbericht_pdf import _row
+
+    original = "Anfangsbestand (in dieser Ausbaustufe manuell erfasst)"
+    line = SettlementLine(line_type="RESERVE_OPENING", label="Anfangsbestand", amount=Decimal("20000.00"), note=original)
+    assert "Anfangsbestand (Verwalter-Angabe)" in _row(line)
+    assert line.note == original
+    line.note = "Beleg <A> mit Vermerk zur Ausbaustufe"
+    assert "Beleg &lt;A&gt; mit Vermerk zur Ausbaustufe" in _row(line)
 
 
 class TestWeasyPrintRenderer:
@@ -108,3 +243,57 @@ class TestPdfRendererProtocol:
         """By default, the module uses WeasyPrintRenderer."""
         renderer = get_renderer()
         assert isinstance(renderer, WeasyPrintRenderer)
+
+
+@pytest.mark.parametrize('kind,expected', [
+    ('wirtschaftsplan', '65023c9dd39fc06f31b1663ef3c3e366e90683580129bdb568fe4a4dcc6b06b5'),
+    ('vermoegensbericht', '61b970ecfbc9dc3b7038c8063bc124393dad0709fa69fb457edf20b49748e6a4'),
+])
+def test_legacy_finalized_document_html_keeps_its_original_content(kind, expected):
+    from datetime import date
+    from hashlib import sha256
+    from types import SimpleNamespace
+    from app.services.wirtschaftsplan_pdf import build_wirtschaftsplan_html, WirtschaftsplanDisplayNames
+    from app.services.vermoegensbericht_pdf import build_vermoegensbericht_html, VermoegensberichtDisplayNames
+    # Digests captured from the original renderers, before dated addressees.
+    doc = SimpleNamespace(period_start=date(2025, 1, 1), period_end=date(2025, 12, 31), plan_year=2025,
+        snapshot_payload={'display_names': {'schema_version': 1, 'values': {}}},
+        snapshot_sha256='legacy-digest', engine_version='legacy')
+    render, names = ((build_wirtschaftsplan_html, WirtschaftsplanDisplayNames()) if kind == 'wirtschaftsplan'
+        else (build_vermoegensbericht_html, VermoegensberichtDisplayNames()))
+    assert sha256(render(doc, [], names).encode()).hexdigest() == expected
+
+
+@pytest.mark.parametrize('kind,expected', [
+    ('dunning', '5bb62e2b96ff3f23f04f5e103e8c465dc50cd6a239f1d8ea7023c973e90550c4'),
+    ('dunning_interest', 'f274d3a14ba4bb516552c2fbbd171e78d970a9b802af96bb5869ceaba6beed43'),
+])
+def test_legacy_dunning_html_is_identical_without_a_frozen_interest_start(kind, expected):
+    from hashlib import sha256
+    assert sha256(recipient_documents()[kind].encode()).hexdigest() == expected
+
+
+@pytest.mark.parametrize('payment_type', ['KALTMIETE', 'NK_VORAUSZAHLUNG'])
+def test_dunning_pdf_names_only_the_stored_interest_start_in_mixed_snapshot_rows(payment_type):
+    from types import SimpleNamespace
+    from app.services.dunning_pdf import build_dunning_html
+    legacy = {'payment_type': payment_type, 'period_year': 2026, 'period_month': 4,
+        'due_date': '2026-04-07', 'days': 1, 'principal': '100.00', 'interest': '0.02'}
+    notice = SimpleNamespace(level=1, issue_date=date(2026, 4, 8), due_date=date(2026, 4, 22),
+        principal_amount=Decimal('200.00'), fee_amount=Decimal('0'), total_amount=Decimal('200.04'),
+        interest_amount=Decimal('0.04'), included_items=[], interest_snapshot={
+            'base_interest_rate': '2.50', 'annual_rate': '7.50', 'reference_date': '2026-04-08',
+            'items': [legacy, {**legacy, 'interest_start': '2026-04-08'}]})
+    html = build_dunning_html(notice)
+    assert html.count('Zinsbeginn: 08.04.2026') == 1
+
+
+def test_register_extract_labels_meeting_date_before_the_preserved_entry_date():
+    html = recipient_documents()['register']
+    assert html.index('Datum der Versammlung') < html.index('Eingetragen am')
+    with pdfplumber.open(BytesIO(render_pdf(html))) as pdf:
+        text = " ".join(page.extract_text() or '' for page in pdf.pages)
+    assert '15.06.2026' in text
+    assert '01.11.2026' in text
+    assert text.index('15.06.2026') < text.index('01.11.2026')
+    assert 'Gemeinschaftsraum' in text

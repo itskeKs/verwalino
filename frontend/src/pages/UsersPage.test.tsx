@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { act, fireEvent, render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
 import { api, ApiError, getLastErrorRequestId } from '../api/client';
@@ -15,7 +15,7 @@ vi.mock('../auth/useAuth', () => ({ useAuth: () => ({ session: {
 vi.mock('../api/endpoints', () => ({ createUser: vi.fn() }));
 vi.mock('../hooks/usePagedList', () => ({ usePagedList: () => ({
   items: [], loading: false, error: null, nextCursor: null,
-  setQuery: vi.fn(), loadMore: vi.fn(),
+  setQuery: vi.fn(), loadMore: vi.fn(), reload: vi.fn(),
 }) }));
 
 beforeEach(() => { vi.clearAllMocks(); auth.role = 'OWNER_ADMIN'; vi.mocked(getLastErrorRequestId).mockReturnValue(null); });
@@ -29,12 +29,17 @@ describe('UsersPage error boundaries', () => {
     vi.mocked(createUser).mockRejectedValueOnce(error);
     const user = userEvent.setup();
     render(<MemoryRouter><UsersPage /></MemoryRouter>);
-    await user.type(screen.getByPlaceholderText('E-Mail *'), 'synthetic@example.de');
-    await user.type(screen.getByPlaceholderText('Startpasswort *'), 'SyntheticPassword123!');
+    await user.type(screen.getByLabelText('E-Mail *'), 'team-audit@example.invalid');
+    await user.type(screen.getByLabelText('Name'), 'Katharina Muster-Beispielhausen');
+    await user.type(screen.getByLabelText('Startpasswort *'), 'SyntheticPassword123!');
+    await user.selectOptions(screen.getByRole('combobox', { name: 'Rolle' }), 'READ_ONLY');
     await user.click(screen.getByRole('button', { name: /^Benutzer anlegen$/ }));
     expect(await screen.findByText(error.message, { exact: true })).toBeVisible();
-    expect(createUser).toHaveBeenCalledExactlyOnceWith('synthetic@example.de', 'SyntheticPassword123!', '', 'CLERK');
-    expect(screen.getByPlaceholderText('E-Mail *')).toHaveValue('synthetic@example.de');
+    expect(createUser).toHaveBeenCalledExactlyOnceWith('team-audit@example.invalid', 'SyntheticPassword123!', 'Katharina Muster-Beispielhausen', 'READ_ONLY');
+    expect(screen.getByLabelText('E-Mail *')).toHaveValue('team-audit@example.invalid');
+    expect(screen.getByLabelText('Name')).toHaveValue('Katharina Muster-Beispielhausen');
+    expect(screen.getByLabelText('Startpasswort *')).toHaveValue('SyntheticPassword123!');
+    expect(screen.getByRole('combobox', { name: 'Rolle' })).toHaveValue('READ_ONLY');
     expect(screen.getByRole('button', { name: /^Benutzer anlegen$/ })).toBeEnabled();
   });
 
@@ -43,6 +48,64 @@ describe('UsersPage error boundaries', () => {
     render(<MemoryRouter><UsersPage /></MemoryRouter>);
     expect(screen.queryByRole('button', { name: /^Benutzer anlegen$/ })).not.toBeInTheDocument();
     expect(createUser).not.toHaveBeenCalled();
+  });
+});
+
+describe('user creation', () => {
+  it('keeps visible associated labels after typing and submits the selected role by keyboard while locking pending fields', async () => {
+    let resolve!: () => void;
+    vi.mocked(createUser).mockImplementationOnce(() => new Promise<void>(done => { resolve = done; }));
+    const user = userEvent.setup();
+    render(<MemoryRouter><UsersPage /></MemoryRouter>);
+    const email = screen.getByLabelText('E-Mail *');
+    const name = screen.getByLabelText('Name');
+    const password = screen.getByLabelText('Startpasswort *');
+    const role = screen.getByRole('combobox', { name: 'Rolle' });
+    const form = email.closest('form')!;
+    await user.click(email);
+    await user.type(email, 'team-audit@example.invalid');
+    await user.tab(); expect(name).toHaveFocus();
+    await user.keyboard('Katharina Muster-Beispielhausen');
+    await user.tab(); expect(password).toHaveFocus();
+    await user.keyboard('SyntheticPassword123!');
+    await user.tab(); expect(role).toHaveFocus();
+    await user.selectOptions(role, 'READ_ONLY');
+    for (const label of ['E-Mail *', 'Name', 'Startpasswort *', 'Rolle']) {
+      expect(within(form).getByText(label, { exact: true })).toBeVisible();
+    }
+    await user.tab();
+    expect(screen.getByRole('button', { name: 'Benutzer anlegen' })).toHaveFocus();
+    await user.keyboard('{Enter}');
+    expect(createUser).toHaveBeenCalledExactlyOnceWith('team-audit@example.invalid', 'SyntheticPassword123!', 'Katharina Muster-Beispielhausen', 'READ_ONLY');
+    for (const control of [email, name, password, role, screen.getByRole('button', { name: 'Erstelle…' })]) {
+      expect(control).toBeDisabled();
+    }
+    await act(async () => resolve());
+    expect(email).toHaveValue(''); expect(name).toHaveValue(''); expect(password).toHaveValue('');
+    expect(role).toHaveValue('CLERK');
+    expect(screen.getByRole('button', { name: 'Benutzer anlegen' })).toBeEnabled();
+  });
+
+  it('retains native email validation and the initial password length limits', async () => {
+    const user = userEvent.setup();
+    render(<MemoryRouter><UsersPage /></MemoryRouter>);
+    const email = screen.getByLabelText('E-Mail *');
+    const password = screen.getByLabelText('Startpasswort *');
+    expect(email).toHaveAttribute('type', 'email'); expect(email).toBeRequired();
+    expect(password).toHaveAttribute('type', 'password'); expect(password).toBeRequired();
+    expect(password).toHaveAttribute('minlength', '12'); expect(password).toHaveAttribute('maxlength', '128');
+    await user.type(email, 'invalid-email');
+    await user.type(password, 'SyntheticPassword123!');
+    await user.click(screen.getByRole('button', { name: 'Benutzer anlegen' }));
+    expect(email).toBeInvalid(); expect(createUser).not.toHaveBeenCalled();
+    fireEvent.change(email, { target: { value: 'team-audit@example.invalid' } });
+    for (const value of ['short', 'x'.repeat(129)]) {
+      fireEvent.change(password, { target: { value } });
+      fireEvent.submit(email.closest('form')!);
+      expect(within(email.closest('form')!).getByRole('alert')).toHaveTextContent('E-Mail und ein Passwort mit 12 bis 128 Zeichen sind erforderlich.');
+      expect(createUser).not.toHaveBeenCalled();
+      expect(password).toHaveValue(value);
+    }
   });
 });
 

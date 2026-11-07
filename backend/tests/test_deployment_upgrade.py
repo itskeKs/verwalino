@@ -3,12 +3,15 @@ import io
 import subprocess
 import tarfile
 import uuid
+from datetime import date
+from decimal import Decimal
 
 import pytest
 from alembic.migration import MigrationContext
 from alembic.operations import Operations
 from alembic.script import ScriptDirectory
 from sqlalchemy import create_engine, text
+from sqlalchemy.exc import DBAPIError
 
 from app import deployment
 from app.core.config import settings
@@ -16,10 +19,108 @@ from app.core.declaration_test_database import require_disposable_database_setti
 from tests.test_rent_changes import rent_db, rent_world  # noqa: F401
 
 
-def test_bank_retention_migration_is_the_next_release_revision():
-    revision = ScriptDirectory('migrations').get_revision('0153')
-    assert revision.down_revision == '0152'
-    assert deployment.TARGET == '0153'
+@pytest.mark.asyncio
+async def test_advance_mode_downgrade_refuses_to_erase_dated_meaning(rent_world):
+    from tests.test_rent_changes import api_client
+
+    async with api_client(rent_world) as api:
+        created = await api.post(f"/api/leases/{rent_world['lease']}/rent-changes", json={
+            "valid_from": "2026-07-01", "base_rent": "750.00", "advance_payment": "240.00",
+            "advance_mode": "COMBINED",
+        })
+        assert created.status_code == 201, created.text
+    _, _, url = require_disposable_database_settings(settings)
+    engine = create_engine(url)
+    try:
+        with engine.connect() as connection, connection.begin():
+            with pytest.raises(DBAPIError, match='Retain explicit tenant advance modes'):
+                with connection.begin_nested(), Operations.context(MigrationContext.configure(connection)):
+                    ScriptDirectory('migrations').get_revision('0176').module.downgrade()
+            assert connection.scalar(text("SELECT advance_mode FROM lease_rent_change WHERE id=:id"),
+                {"id": created.json()["id"]}) == "COMBINED"
+    finally:
+        engine.dispose()
+
+
+def test_eligible_reserve_erasure_is_the_next_release_revision():
+    revision = ScriptDirectory('migrations').get_revision('0161')
+    assert revision.down_revision == '0160'
+    assert deployment.TARGET == '0177'
+
+
+@pytest.mark.asyncio
+async def test_bank_cost_downgrade_preserves_populated_assignments(rent_world):
+    from tests.test_bank_transaction_assign import cost_assignment_graph
+    from tests.test_rent_changes import api_client
+    async with api_client(rent_world) as api:
+        cost, _, tids = await cost_assignment_graph(api, rent_world['property'])
+        successor = await api.post(f'/api/cost-entries/{cost}/correction', json={'gross_amount': '120.00'})
+        assert successor.status_code == 201, successor.text
+    _, _, url = require_disposable_database_settings(settings)
+    engine = create_engine(url)
+    try:
+        with engine.connect() as connection, connection.begin():
+            before = connection.scalar(text('SELECT to_jsonb(b) FROM bank_transaction b WHERE id=CAST(:id AS uuid)'), {'id': tids[0]})
+            with pytest.raises(RuntimeError, match='Retain bank cost assignments'):
+                with connection.begin_nested(), Operations.context(MigrationContext.configure(connection)):
+                    ScriptDirectory('migrations').get_revision('0171').module.downgrade()
+            with pytest.raises(RuntimeError, match='Retain coverage across corrected costs'):
+                with connection.begin_nested(), Operations.context(MigrationContext.configure(connection)):
+                    ScriptDirectory('migrations').get_revision('0173').module.downgrade()
+                    ScriptDirectory('migrations').get_revision('0172').module.downgrade()
+            assert connection.scalar(text('SELECT to_jsonb(b) FROM bank_transaction b WHERE id=CAST(:id AS uuid)'), {'id': tids[0]}) == before
+    finally:
+        engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_commercial_preallocation_downgrade_preserves_saved_rules(client_a_admin):
+    from tests.commercial_preallocation_support import commercial_property, commercial_rule
+    data = await commercial_property(client_a_admin)
+    response = await client_a_admin.post(f"/api/settlements/{data['rows'][0]['run']['id']}/compute",
+        json={'commercial_preallocations': [commercial_rule(data)]})
+    assert response.status_code == 200, response.text
+    _, _, url = require_disposable_database_settings(settings)
+    engine = create_engine(url)
+    try:
+        with engine.connect() as connection, connection.begin():
+            with pytest.raises(RuntimeError, match='Retain commercial preallocation evidence'):
+                with connection.begin_nested(), Operations.context(MigrationContext.configure(connection)):
+                    ScriptDirectory('migrations').get_revision('0169').module.downgrade()
+            assert connection.scalar(text('SELECT count(*) FROM commercial_preallocation WHERE cost_entry_id=:cost'),
+                {'cost': uuid.UUID(data['cost']['id'])}) == 1
+    finally:
+        engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_statement_note_downgrade_refuses_complete_long_explanation(client_a_admin):
+    from tests.commercial_preallocation_support import commercial_property, commercial_rule
+    data = await commercial_property(client_a_admin)
+    reason = 'Gastronomie <Sonderlast> & ' + 'ü' * 1973
+    assert len(reason) == 2000
+    response = await client_a_admin.post(f"/api/settlements/{data['rows'][0]['run']['id']}/finalize",
+        json={'commercial_preallocations': [commercial_rule(data, commercial_reason=reason)]})
+    assert response.status_code == 200, response.text
+    line = response.json()['lines'][0]
+    _, _, url = require_disposable_database_settings(settings)
+    engine = create_engine(url)
+    try:
+        with engine.connect() as connection, connection.begin():
+            before = connection.execute(text('SELECT snapshot_payload,snapshot_sha256 FROM settlement_run WHERE id=:id'),
+                {'id': uuid.UUID(response.json()['id'])}).one()
+            with pytest.raises(RuntimeError, match='Cannot narrow stored settlement notes; repair forward'):
+                with connection.begin_nested(), Operations.context(MigrationContext.configure(connection)):
+                    ScriptDirectory('migrations').get_revision('0170').module.downgrade()
+            assert connection.scalar(text('SELECT note FROM settlement_line WHERE id=:id'),
+                {'id': uuid.UUID(line['id'])}) == line['note']
+            assert reason in line['note']
+            assert connection.scalar(text("""SELECT data_type FROM information_schema.columns
+                WHERE table_schema='public' AND table_name='settlement_line' AND column_name='note'""")) == 'text'
+            assert connection.execute(text('SELECT snapshot_payload,snapshot_sha256 FROM settlement_run WHERE id=:id'),
+                {'id': uuid.UUID(response.json()['id'])}).one() == before
+    finally:
+        engine.dispose()
 
 
 @pytest.mark.asyncio
@@ -108,15 +209,15 @@ def test_reject_unknown_or_ambiguous_database_version(heads):
 
 def test_release_graph_is_exact_and_linear(tmp_path):
     graph = ScriptDirectory('migrations')
-    assert deployment.release_head(graph) == '0153'
+    assert deployment.release_head(graph) == '0177'
     (tmp_path / 'versions').mkdir()
     (tmp_path / 'versions' / 'unexpected.py').write_text(
-        "revision='0154'\ndown_revision=None\nbranch_labels=None\ndepends_on=None\n")
+        "revision='0156'\ndown_revision=None\nbranch_labels=None\ndepends_on=None\n")
     with pytest.raises(ValueError, match='release'):
         deployment.release_head(ScriptDirectory(str(tmp_path)))
 
 
-@pytest.mark.parametrize('schema', ['0028', '0122', '0139', '0140', '0141', '0142', '0143', '0144', '0145', '0146', '0147', '0148', '0149', '0150', '0151', '0152', '0153'])  # accepted sources plus target
+@pytest.mark.parametrize('schema', ['0028', '0122', '0139', '0140', '0141', '0142', '0143', '0144', '0145', '0146', '0147', '0148', '0149', '0150', '0151', '0152', '0153', '0154', '0155', '0159', '0160', '0161', '0162', '0163', '0164', '0165', '0166', '0167', '0168', '0169', '0170', '0171', '0172', '0173', '0174', '0175', '0176', '0177'])  # accepted sources plus target
 def test_measured_release_schema_is_a_supported_upgrade_source(schema):
     assert deployment.supported_schema((schema,)) == schema
 
@@ -146,7 +247,7 @@ def test_preflight_rejects_unsafe_roles_without_repairing_them(statement):
         engine.dispose()
 
 
-def seed_pre_split_upgrade(connection, org, actor):
+def seed_pre_split_upgrade(connection, org, actor, *, household=False, notes=False):
     """Create an actual 0149 lease/history and finalized legacy snapshot."""
     import json
     from app.engine.canonical import canonical_sha256
@@ -167,6 +268,17 @@ def seed_pre_split_upgrade(connection, org, actor):
         'inputs': {'advance_payments_total': '1800.00', 'advance_payments_source': 'MANUAL'},
         'result': {'total_cost': '2900.00', 'advance_payments_total': '1800.00', 'balance': '1100.00'},
         'financial_input_coverage': {'id': ids['coverage'], 'source_revision': '0' * 64}}
+    if household:
+        payload['inputs']['units'] = [{'id': ids['unit'], 'person_count': 2}]
+        payload['extra_inputs'] = {'unit_metrics': [{'unit_id': ids['unit'], 'person_count': 2}]}
+    if notes:
+        boundary_note = ('Ältere <Begründung> & ' + 'vollständig ' * 50)[:500]
+        assert len(boundary_note) == 500
+        payload['result']['lines'] = [dict(line_type='COST', label='Legacy note fixture',
+            distribution_key='WOHNFLAECHE', total_amount='2900.00', distribution_base_total='70',
+            distribution_base_share='70', time_share_days=365, time_share_total_days=365,
+            amount=amount, sort_order=index, note=note)
+            for index, (amount, note) in enumerate((('2700.00', boundary_note), ('100.00', None), ('100.00', '')))]
     connection.execute(text("""INSERT INTO settlement_run(id,organization_id,property_id,lease_agreement_id,
         run_type,period_start,period_end,advance_payments_total,advance_payments_source,total_cost,balance,
         status,snapshot_payload,snapshot_sha256,engine_version,finalized_at,finalized_by)
@@ -177,6 +289,13 @@ def seed_pre_split_upgrade(connection, org, actor):
         VALUES (:coverage,:org,:run,:property,'2026-01-01','2026-12-31','BK_MIETER',1,'known',CAST(:inputs AS jsonb),
             '[]',:revision,'Pre-split upgrade fixture',:actor)"""), {**values,
         'payload': json.dumps(payload), 'sha': canonical_sha256(payload), 'inputs': json.dumps(payload['inputs']), 'revision': '0' * 64})
+    if notes:
+        connection.execute(text("""INSERT INTO settlement_line(organization_id,settlement_run_id,line_type,label,
+            distribution_key,total_amount,distribution_base_total,distribution_base_share,time_share_days,
+            time_share_total_days,amount,sort_order,note)
+            VALUES (:org,:run,:line_type,:label,:distribution_key,:total_amount,:distribution_base_total,
+                :distribution_base_share,:time_share_days,:time_share_total_days,:amount,:sort_order,:note)"""),
+            [{**values, **line} for line in payload['result']['lines']])
     # Existing installation rows are committed before a release. Drain our
     # rollback-only fixture's deferred events before rehearsing its ALTERs.
     connection.execute(text('SET CONSTRAINTS ALL IMMEDIATE'))
@@ -185,12 +304,45 @@ def seed_pre_split_upgrade(connection, org, actor):
     return values, parent
 
 
+
+def legacy_household_render(connection, values):
+    from types import SimpleNamespace
+    from decimal import Decimal
+    from app.engine.canonical import canonical_json, canonical_sha256
+    from app.engine.types import ResultLine
+    from app.services.settlement_pdf import build_settlement_html
+    row = connection.execute(text('SELECT * FROM settlement_run WHERE id=:run'), values).mappings().one()
+    run = SimpleNamespace(**row)
+    assert canonical_sha256(run.snapshot_payload) == run.snapshot_sha256
+    assert run.snapshot_payload['inputs']['units'][0]['person_count'] == 2
+    line = ResultLine('COST', 'Legacy Personenzahl', Decimal('2900.00'), 0,
+        distribution_key='PERSONENZAHL', total_amount=Decimal('2900.00'),
+        distribution_base_share=Decimal(2), distribution_base_total=Decimal(2),
+        time_share_days=365, time_share_total_days=365)
+    return canonical_json(run.snapshot_payload), run.snapshot_sha256, build_settlement_html(run, [line])
+
+
+def legacy_note_render(connection, values):
+    from types import SimpleNamespace
+    from app.engine.canonical import canonical_json, canonical_sha256
+    from app.services.settlement_pdf import build_settlement_html, render_settlement_pdf
+    row = connection.execute(text('SELECT * FROM settlement_run WHERE id=:run'), values).mappings().one()
+    lines = connection.execute(text('SELECT * FROM settlement_line WHERE settlement_run_id=:run ORDER BY sort_order'),
+        values).mappings().all()
+    run = SimpleNamespace(**row)
+    assert canonical_sha256(run.snapshot_payload) == run.snapshot_sha256
+    assert [line['note'] for line in lines] == [line['note'] for line in run.snapshot_payload['result']['lines']]
+    rendered_lines = [SimpleNamespace(**line) for line in lines]
+    return (lines, canonical_json(run.snapshot_payload), run.snapshot_sha256,
+        build_settlement_html(run, rendered_lines), render_settlement_pdf(run, rendered_lines))
+
+
 def rehearse_initial_upgrade(starting_schema='0122'):
     """Rehearse before the shared fixture reaches head or creates retained data."""
     _, _, url = require_disposable_database_settings(settings)
     engine = create_engine(url)
     graph = ScriptDirectory('migrations')
-    revisions = list(graph.iterate_revisions('0153', starting_schema))
+    revisions = list(graph.iterate_revisions('0177', starting_schema))
     try:
         with engine.connect() as connection:
             transaction = connection.begin()
@@ -238,6 +390,12 @@ def rehearse_initial_upgrade(starting_schema='0122'):
                         {'org': org, 'failed': failed})
                 if starting_schema == '0149':
                     legacy_split, legacy_parent = seed_pre_split_upgrade(connection, org, actor)
+                if starting_schema in ('0163', '0164'):
+                    legacy_household, _ = seed_pre_split_upgrade(connection, org, actor, household=True)
+                    legacy_household_view = legacy_household_render(connection, legacy_household)
+                if starting_schema == '0169':
+                    legacy_notes, legacy_note_parent = seed_pre_split_upgrade(connection, org, actor, notes=True)
+                    legacy_note_view = legacy_note_render(connection, legacy_notes)
                 # Compare every old column of every pre-upgrade table, including
                 # seeded users/memberships/mandates/audit, without normalizing data.
                 tables = connection.scalars(text("SELECT tablename FROM pg_tables WHERE schemaname='public' ORDER BY tablename")).all()
@@ -257,9 +415,58 @@ def rehearse_initial_upgrade(starting_schema='0122'):
                 # Only organization INSERT is intentionally revoked by browser setup.
                 with connection.begin_nested() as expected:
                     connection.execute(text("REVOKE INSERT ON public.organization FROM app_rw"))
+                    if 'reserve_ledger_entry' in tables:
+                        connection.execute(text('REVOKE UPDATE ON public.reserve_ledger_entry FROM app_rw'))
                     expected_security = connection.execute(text("SELECT c.relname,c.relrowsecurity,c.relforcerowsecurity,c.relacl::text FROM pg_class c WHERE c.relnamespace='public'::regnamespace AND c.relname=ANY(:tables) ORDER BY c.relname"), {'tables': tables}).all()
                     expected.rollback()
                 for revision in reversed(revisions):
+                    if revision.revision == '0161' and starting_schema == '0160':
+                        def reason_erasure_contract():
+                            functions = connection.execute(text("""SELECT oid::regprocedure::text,pg_get_functiondef(oid),
+                                proacl::text,proowner,proconfig,prosecdef FROM pg_proc
+                                WHERE pronamespace='public'::regnamespace ORDER BY oid::regprocedure::text""")).all()
+                            triggers = connection.execute(text("""SELECT c.relname,t.tgname,t.tgenabled::text,pg_get_triggerdef(t.oid)
+                                FROM pg_trigger t JOIN pg_class c ON c.oid=t.tgrelid
+                                WHERE c.relnamespace='public'::regnamespace ORDER BY c.relname,t.tgname""")).all()
+                            relations = connection.execute(text("""SELECT relname,relacl::text,relowner,relrowsecurity,relforcerowsecurity
+                                FROM pg_class WHERE relnamespace='public'::regnamespace ORDER BY relname""")).all()
+                            return {row[0]: tuple(row[1:]) for row in functions}, triggers, relations
+                        previous_reason_erasure = reason_erasure_contract()
+                    if revision.revision == '0160' and starting_schema == '0159':
+                        deadline_signatures = ['person_retention_categories()',
+                            'person_retention_bindings(uuid,uuid,text)', 'organization_retention_plan(uuid)']
+                        def deadline_contract(signatures):
+                            return [tuple(connection.execute(text("""SELECT pg_get_functiondef(oid),proacl::text,
+                                proowner,proconfig FROM pg_proc WHERE oid=CAST(:signature AS regprocedure)"""),
+                                {'signature': signature}).one()) for signature in signatures]
+                        previous_deadlines = deadline_contract(deadline_signatures)
+                    if revision.revision == '0159' and starting_schema == '0155':
+                        retained_signatures = ['privacy_retention_facts(uuid,uuid)',
+                            'privacy_financial_context_complete(uuid,uuid,text)', 'organization_retention_plan(uuid)']
+                        def person_retention_contract(signatures):
+                            return [tuple(connection.execute(text("""SELECT pg_get_functiondef(oid),proacl::text,
+                                proowner,proconfig FROM pg_proc WHERE oid=CAST(:signature AS regprocedure)"""),
+                                {'signature': signature}).one()) for signature in signatures]
+                        previous_person_retention = person_retention_contract(retained_signatures)
+                    if revision.revision == '0155':
+                        def always_guard_contract():
+                            triggers = {(row[0], row[1]): tuple(row[2:]) for row in connection.execute(text("""
+                                SELECT c.relname,t.tgname,t.tgenabled::text,pg_get_triggerdef(t.oid)
+                                FROM pg_trigger t JOIN pg_class c ON c.oid=t.tgrelid
+                                WHERE c.relnamespace='public'::regnamespace"""))}
+                            relations = connection.execute(text("""SELECT relname,relowner,relacl::text,
+                                relrowsecurity,relforcerowsecurity FROM pg_class
+                                WHERE relnamespace='public'::regnamespace ORDER BY oid""")).all()
+                            functions = connection.execute(text("""SELECT oid,prosrc,proacl::text,proowner,proconfig
+                                FROM pg_proc WHERE pronamespace='public'::regnamespace ORDER BY oid""")).all()
+                            catalog = connection.execute(text('SELECT * FROM organization_retention_catalog() ORDER BY entity')).all()
+                            return triggers, relations, functions, catalog
+                        previous_always_contract = always_guard_contract()
+                    if revision.revision == '0154':
+                        def contribution_guard_contract():
+                            return tuple(connection.execute(text("""SELECT pg_get_functiondef(oid),proacl::text,proowner
+                                FROM pg_proc WHERE oid='public.guard_reserve_ledger()'::regprocedure""")).one())
+                        previous_contribution_guard = contribution_guard_contract()
                     if revision.revision == '0153':
                         def bank_catalog_contract():
                             rows = {row[0]: tuple(row[1:]) for row in connection.execute(
@@ -313,7 +520,144 @@ def rehearse_initial_upgrade(starting_schema='0122'):
                         def split_definitions():
                             return [connection.scalar(text("SELECT pg_get_functiondef(CAST(:s AS regprocedure))"), {"s": signature}) for signature in signatures]
                         before_split = split_definitions()
+                    if (starting_schema, revision.revision) == ('0171', '0172'):
+                        guard_sql = text("SELECT pg_get_functiondef('guard_bank_cost_assignment()'::regprocedure)")
+                        guard_before = connection.scalar(guard_sql)
+                    if (starting_schema, revision.revision) == ('0172', '0173'):
+                        def bank_evidence_contract():
+                            return (
+                                [connection.execute(text("""SELECT pg_get_functiondef(oid),proacl::text,
+                                    proowner,proconfig,prosecdef FROM pg_proc WHERE oid=CAST(:signature AS regprocedure)"""),
+                                    {'signature': signature}).one() for signature, _ in revision.module.PATCHES],
+                                connection.execute(text("""SELECT pg_get_triggerdef(oid),tgenabled
+                                    FROM pg_trigger WHERE tgrelid='payment'::regclass AND tgname='guard_payment_cost_bank'""")).one(),
+                            )
+                        evidence_before = bank_evidence_contract()
                     revision.module.upgrade()
+                    if (starting_schema, revision.revision) == ('0174', '0175'):
+                        theme_sql = text('SELECT design_theme FROM public."user" WHERE id=:id')
+                        assert connection.scalar(theme_sql, {'id': actor}) == 'klar'
+                        with pytest.raises(DBAPIError, match='discard personal design preferences'):
+                            with connection.begin_nested():
+                                connection.execute(text('''UPDATE public."user"
+                                    SET design_theme='warm' WHERE id=:id'''), {'id': actor})
+                                revision.module.downgrade()
+                        assert connection.scalar(theme_sql, {'id': actor}) == 'klar'
+                        revision.module.downgrade()
+                        assert not connection.scalar(text("""SELECT EXISTS(
+                            SELECT 1 FROM information_schema.columns
+                            WHERE table_schema='public' AND table_name='user' AND column_name='design_theme')"""))
+                        revision.module.upgrade()
+                        assert connection.scalar(theme_sql, {'id': actor}) == 'klar'
+                    if (starting_schema, revision.revision) == ('0173', '0174'):
+                        assert connection.scalar(text("SELECT count(*) FROM base_interest_rate")) == 50
+                        assert connection.execute(text("""
+                            SELECT valid_from, rate_percent FROM base_interest_rate
+                            WHERE valid_from >= '2026-01-01' ORDER BY valid_from
+                        """)).all() == [(date(2026, 1, 1), Decimal("1.27")), (date(2026, 7, 1), Decimal("1.52"))]
+                        assert connection.scalar(text("SELECT count(*) FROM dunning_settings")) == 0
+                        assert connection.scalar(text("""
+                            SELECT relrowsecurity AND relforcerowsecurity FROM pg_class
+                            WHERE oid='dunning_settings'::regclass
+                        """))
+                        assert not connection.scalar(text("SELECT has_table_privilege('app_rw','base_interest_rate','INSERT,UPDATE,DELETE')"))
+                        revision.module.downgrade()
+                        assert connection.scalar(text("SELECT to_regclass('public.dunning_settings')")) is None
+                        assert connection.scalar(text("SELECT to_regclass('public.base_interest_rate')")) is None
+                        revision.module.upgrade()
+                    if (starting_schema, revision.revision) == ('0172', '0173'):
+                        evidence_after = bank_evidence_contract()
+                        assert evidence_after != evidence_before
+                        revision.module.downgrade()
+                        assert bank_evidence_contract() == evidence_before
+                        revision.module.upgrade()
+                        assert bank_evidence_contract() == evidence_after
+                    if (starting_schema, revision.revision) == ('0171', '0172'):
+                        guard_after = connection.scalar(guard_sql)
+                        revision.module.downgrade()
+                        assert connection.scalar(guard_sql) == guard_before
+                        assert connection.scalar(text("SELECT to_regprocedure('bank_cost_covered(uuid,uuid)')")) is None
+                        revision.module.upgrade()
+                        assert connection.scalar(guard_sql) == guard_after
+                    if (starting_schema, revision.revision) == ('0169', '0170'):
+                        note_type = text("""SELECT data_type,character_maximum_length FROM information_schema.columns
+                            WHERE table_schema='public' AND table_name='settlement_line' AND column_name='note'""")
+                        assert connection.execute(note_type).one() == ('text', None)
+                        assert legacy_note_render(connection, legacy_notes) == legacy_note_view
+                        revision.module.downgrade()
+                        assert connection.execute(note_type).one() == ('character varying', 500)
+                        assert legacy_note_render(connection, legacy_notes) == legacy_note_view
+                        revision.module.upgrade()
+                        assert connection.execute(note_type).one() == ('text', None)
+                        assert legacy_note_render(connection, legacy_notes) == legacy_note_view
+                        assert connection.scalar(text("SELECT financial_computation_state(:org,'settlement_run',:run)->>'parent_digest'"),
+                            legacy_notes) == legacy_note_parent
+                    if (starting_schema, revision.revision) in {('0163', '0164'), ('0164', '0165')}:
+                        assert not connection.scalar(text('SELECT EXISTS(SELECT 1 FROM unit_household)'))
+                        assert legacy_household_render(connection, legacy_household) == legacy_household_view
+                    if revision.revision == '0161' and starting_schema == '0160':
+                        upgraded_reason_erasure = reason_erasure_contract()
+                        changed = {'apply_person_privacy(uuid,uuid,text)', 'guard_reserve_ledger()', 'guard_audit_event_payload()'}
+                        added = {'reserve_erasure_name_pattern(text)', 'prepare_person_reserve_erasure(uuid)',
+                                 'person_reserve_erasure_text(uuid,text)', 'erase_person_reserve_reasons()', 'lock_person_reserve_names()'}
+                        assert upgraded_reason_erasure[0].keys() - previous_reason_erasure[0].keys() == added
+                        assert {key: value for key, value in upgraded_reason_erasure[0].items() if key not in changed | added} == {
+                            key: value for key, value in previous_reason_erasure[0].items() if key not in changed}
+                        for key in changed:
+                            assert upgraded_reason_erasure[0][key][1:] == previous_reason_erasure[0][key][1:]
+                        assert [row for row in upgraded_reason_erasure[1] if row[1] not in {
+                            'b_lock_person_reserve_names', 'z_erase_person_reserve_reasons'}] == previous_reason_erasure[1]
+                        with connection.begin_nested() as reason_rehearsal:
+                            revision.module.downgrade()
+                            assert reason_erasure_contract() == previous_reason_erasure
+                            revision.module.upgrade()
+                            assert reason_erasure_contract() == upgraded_reason_erasure
+                            reason_rehearsal.rollback()
+                    if revision.revision == '0160' and starting_schema == '0159':
+                        shared_deadline_signatures = deadline_signatures + ['retention_base_until(jsonb)',
+                            'retention_source_until(text,jsonb)']
+                        upgraded_deadlines = deadline_contract(shared_deadline_signatures)
+                        with connection.begin_nested() as deadline_rehearsal:
+                            revision.module.downgrade()
+                            assert deadline_contract(deadline_signatures) == previous_deadlines
+                            assert connection.scalar(text("SELECT to_regprocedure('retention_base_until(jsonb)')")) is None
+                            revision.module.upgrade()
+                            assert deadline_contract(shared_deadline_signatures) == upgraded_deadlines
+                            deadline_rehearsal.rollback()
+                    if revision.revision == '0159' and starting_schema == '0155':
+                        shared_signatures = retained_signatures + ['person_retention_categories()',
+                            'person_retention_bindings(uuid,uuid,text)', 'person_retention_view(uuid,uuid,text)']
+                        upgraded_person_retention = person_retention_contract(shared_signatures)
+                        with connection.begin_nested() as person_rehearsal:
+                            revision.module.downgrade()
+                            assert person_retention_contract(retained_signatures) == previous_person_retention
+                            assert connection.scalar(text("SELECT to_regprocedure('person_retention_categories()')")) is None
+                            revision.module.upgrade()
+                            assert person_retention_contract(shared_signatures) == upgraded_person_retention
+                            person_rehearsal.rollback()
+                    if revision.revision == '0155':
+                        upgraded_always_contract = always_guard_contract()
+                        key = ('reserve_ledger_entry', 'guard_reserve_ledger')
+                        assert previous_always_contract[0][key][0] == 'O'
+                        expected_triggers = {**previous_always_contract[0],
+                            key: ('A', previous_always_contract[0][key][1])}
+                        assert upgraded_always_contract == (expected_triggers, *previous_always_contract[1:])
+                        with connection.begin_nested() as always_rehearsal:
+                            revision.module.downgrade()
+                            assert always_guard_contract() == previous_always_contract
+                            revision.module.upgrade()
+                            assert always_guard_contract() == upgraded_always_contract
+                            always_rehearsal.rollback()
+                    if revision.revision == '0154':
+                        upgraded_contribution_guard = contribution_guard_contract()
+                        assert upgraded_contribution_guard[1:] == previous_contribution_guard[1:]
+                        assert 'allowed:=LEAST(original.amount,' in upgraded_contribution_guard[0]
+                        with connection.begin_nested() as contribution_rehearsal:
+                            revision.module.downgrade()
+                            assert contribution_guard_contract() == previous_contribution_guard
+                            revision.module.upgrade()
+                            assert contribution_guard_contract() == upgraded_contribution_guard
+                            contribution_rehearsal.rollback()
                     if revision.revision == '0153':
                         expected_bank_catalog = {**previous_bank_catalog, 'bank_transaction': (['id'], 'conditional', 'false')}
                         upgraded_bank_catalog, upgraded_bank_function = bank_catalog_contract()
@@ -397,6 +741,8 @@ def rehearse_initial_upgrade(starting_schema='0122'):
 """
                         else:
                             continue
+                        if name == 'guard_audit_event_payload':
+                            clause = graph.get_revision('0161').module.AUDIT_EXCEPTION + clause
                         assert definition.count('    BEGIN\n') == 1, name
                         expected[name] = (definition.replace('    BEGIN\n', '    BEGIN\n' + clause, 1), grants, owner)
                     actual = {name: (definition, grants, owner) for name, definition, grants, owner in trigger_definitions()
@@ -436,16 +782,16 @@ def rehearse_initial_upgrade(starting_schema='0122'):
         engine.dispose()
 
 
-@pytest.mark.parametrize('starting_schema', ['0122', '0139', '0140', '0141', '0142', '0143', '0144', '0145', '0146', '0147', '0148', '0149', '0150', '0151', '0152'])  # accepted sources
-def test_upgrade_to_0153_preserves_existing_rows_and_security(run_migrations, starting_schema):
+@pytest.mark.parametrize('starting_schema', ['0122', '0139', '0140', '0141', '0142', '0143', '0144', '0145', '0146', '0147', '0148', '0149', '0150', '0151', '0152', '0153', '0154', '0155', '0159', '0160', '0161', '0162', '0163', '0164', '0165', '0166', '0167', '0168', '0169', '0170', '0171', '0172', '0173', '0174', '0175', '0176'])  # accepted sources
+def test_upgrade_to_0177_preserves_existing_rows_and_security(run_migrations, starting_schema):
     # The actual rehearsal ran before any retained domain-test originals existed.
     # Its SQL/data/security assertions fail fixture setup if preservation fails.
-    assert run_migrations[f'upgrade_{starting_schema}_to_0153_tables'] > 50
-    assert deployment.database_check('preflight') == '0153'
+    assert run_migrations[f'upgrade_{starting_schema}_to_0177_tables'] > 50
+    assert deployment.database_check('preflight') == '0177'
 
 
-def test_upgrade_0028_to_0153_preserves_existing_rows_and_rls(run_migrations):
-    assert run_migrations['upgrade_0028_to_0153_tables'] > 20
+def test_upgrade_0028_to_0177_preserves_existing_rows_and_rls(run_migrations):
+    assert run_migrations['upgrade_0028_to_0177_tables'] > 20
 
 
 def test_document_archive_restore_is_exact_and_refuses_overwrite(tmp_path):
@@ -558,7 +904,7 @@ def test_cli_preflight_and_actual_runtime_credentials_are_read_only():
            'CI', 'HV_DECLARATION_TEST_DATABASE_PROFILE') if name in os.environ}
     env['HV_DATABASE_URL_WORKER'] = runtime.set(username='app_worker', password='worker_secret').render_as_string(hide_password=False)
     env.setdefault('HV_DATABASE_URL_REVIEW', runtime.set(username='app_review', password='review_secret').render_as_string(hide_password=False))
-    for arguments, expected in [(['preflight'], '0153'), (['runtime', 'app_rw'], ''),
+    for arguments, expected in [(['preflight'], '0177'), (['runtime', 'app_rw'], ''),
                                 (['runtime', 'app_review'], ''), (['runtime', 'app_worker'], '')]:
         result = subprocess.run([sys.executable, '-m', 'app.deployment', *arguments],
                                 env=env, capture_output=True, text=True)
@@ -589,5 +935,135 @@ def test_quiescence_rejects_another_database_client():
             connection.execute(text('SELECT 1'))
             with pytest.raises(ValueError, match='clients'):
                 deployment.database_check('quiescent')
+    finally:
+        engine.dispose()
+
+
+def test_report_recipients_are_the_next_release_revision():
+    revision = ScriptDirectory('migrations').get_revision('0162')
+    assert revision.down_revision == '0161'
+    assert deployment.TARGET == '0177'
+
+
+def test_report_retention_empty_downgrade_restores_functions_and_upgrade_is_reversible(run_migrations):
+    from importlib import import_module
+    _, _, url = require_disposable_database_settings(settings)
+    engine = create_engine(url)
+    try:
+        with engine.connect() as connection, connection.begin():
+            signatures = ('person_retention_categories()', 'retention_source_until(text,jsonb)', 'organization_retention_plan(uuid)')
+            before = [connection.scalar(text('SELECT pg_get_functiondef(CAST(:signature AS regprocedure))'), {'signature': sig}) for sig in signatures]
+            snapshots_sql = text('SELECT to_jsonb(r) FROM settlement_run r ORDER BY id')
+            before_snapshots = connection.execute(snapshots_sql).all()
+            functions_sql = text("""SELECT p.proname,pg_get_function_identity_arguments(p.oid),
+                pg_get_functiondef(p.oid),p.proacl::text,pg_get_userbyid(p.proowner)
+                FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace
+                WHERE n.nspname='public' AND p.prokind IN ('f','p','w') ORDER BY 1,2""")
+            before_functions = connection.execute(functions_sql).all()
+            triggers_sql = text("""SELECT tgname,tgenabled,pg_get_triggerdef(oid)
+                FROM pg_trigger WHERE tgrelid='settlement_run'::regclass
+                AND NOT tgisinternal ORDER BY tgname""")
+            before_triggers = connection.execute(triggers_sql).all()
+            module = import_module('migrations.versions.0162_report_recipient_retention')
+            point = connection.begin_nested()
+            try:
+                with Operations.context(MigrationContext.configure(connection)):
+                    addressed_reports = connection.execute(text("""SELECT id FROM settlement_run
+                        WHERE status='finalized' AND run_type='VERMOEGENSBERICHT'
+                          AND jsonb_array_length(CASE WHEN jsonb_typeof(snapshot_payload->'addressees')='array'
+                            THEN snapshot_payload->'addressees' ELSE '[]'::jsonb END)>0""")).scalars().all()
+                    if addressed_reports:
+                        with pytest.raises(RuntimeError, match='Cannot remove retained asset-report recipient bindings'):
+                            module.downgrade()
+                        assert connection.execute(snapshots_sql).all() == before_snapshots
+                        assert connection.execute(functions_sql).all() == before_functions
+                        assert connection.execute(triggers_sql).all() == before_triggers
+                        # Earlier scenarios retain addressed reports. Only this
+                        # rollback-only historical projection omits the new key.
+                        connection.execute(text('ALTER TABLE settlement_run DISABLE TRIGGER USER'))
+                        connection.execute(text("UPDATE settlement_run SET snapshot_payload=snapshot_payload-'addressees' WHERE id=ANY(:ids)"),
+                                           {'ids': addressed_reports})
+                        connection.execute(text('ALTER TABLE settlement_run ENABLE TRIGGER USER'))
+                    bank_cost = import_module('migrations.versions.0171_bank_cost_assignment')
+                    bank_cost.retention(reverse=True)
+                    historical_before = [connection.scalar(text('SELECT pg_get_functiondef(CAST(:signature AS regprocedure))'),
+                        {'signature': sig}) for sig in signatures]
+                    module.downgrade()
+                    module.upgrade()
+                    historical_after = [connection.scalar(text('SELECT pg_get_functiondef(CAST(:signature AS regprocedure))'),
+                        {'signature': sig}) for sig in signatures]
+                    assert historical_after == historical_before
+            finally:
+                point.rollback()
+            assert connection.execute(snapshots_sql).all() == before_snapshots
+            assert connection.execute(functions_sql).all() == before_functions
+            assert connection.execute(triggers_sql).all() == before_triggers
+            assert [connection.scalar(text('SELECT pg_get_functiondef(CAST(:signature AS regprocedure))'), {'signature': sig}) for sig in signatures] == before
+    finally:
+        engine.dispose()
+
+
+def test_dated_successor_dunning_is_the_next_release_revision():
+    revision = ScriptDirectory('migrations').get_revision('0163')
+    assert revision.down_revision == '0162'
+    assert deployment.TARGET == '0177'
+
+
+@pytest.mark.parametrize('column', ['distribution_base_total', 'distribution_base_share'])
+@pytest.mark.parametrize('value', ['1000000.000000', '-1000000.000000'])
+def test_person_day_basis_downgrade_refuses_unrepresentable_values_without_changing_state(run_migrations, column, value):
+    from tests.test_session_review_access import _chain_snapshot
+    revision = ScriptDirectory('migrations').get_revision('0165')
+    _, _, url = require_disposable_database_settings(settings)
+    engine = create_engine(url)
+    try:
+        with engine.connect() as connection, connection.begin(), Operations.context(MigrationContext.configure(connection)):
+            org, actor = str(uuid.uuid4()), str(uuid.uuid4())
+            connection.execute(text("INSERT INTO organization(id,name) VALUES (:org,'Wide basis guard')"), {'org': org})
+            connection.execute(text('''INSERT INTO "user"(id,organization_id,email,password_hash,display_name)
+                VALUES (:actor,:org,:email,'synthetic-not-a-login','Wide basis actor')'''), {'actor': actor, 'org': org, 'email': actor+'@basis.invalid'})
+            connection.execute(text("INSERT INTO membership(organization_id,user_id,role) VALUES (:org,:actor,'OWNER_ADMIN')"), {'org': org, 'actor': actor})
+            values, _ = seed_pre_split_upgrade(connection, org, actor)
+            # A draft line isolates each column's representability boundary.
+            draft = connection.scalar(text('''INSERT INTO settlement_run(organization_id,property_id,lease_agreement_id,run_type,
+                period_start,period_end,status,engine_version) VALUES (:org,:property,:lease,'BK_MIETER','2026-01-01','2026-12-31','draft','test') RETURNING id'''), values)
+            connection.execute(text(f'''INSERT INTO settlement_line(organization_id,settlement_run_id,line_type,label,amount,{column})
+                VALUES (:org,:run,'COST','Raw basis guard',0,CAST(:value AS numeric))'''), {'org': org, 'run': draft, 'value': value})
+            retained = _chain_snapshot(connection)
+            with pytest.raises(RuntimeError, match='Cannot narrow stored settlement bases'):
+                with connection.begin_nested():
+                    revision.module.downgrade()
+            assert _chain_snapshot(connection) == retained
+            connection.rollback()
+    finally:
+        engine.dispose()
+
+
+def test_property_state_migration_preserves_rows_and_refuses_lossy_downgrade(run_migrations):
+    from importlib import import_module
+    module = import_module('migrations.versions.0166_property_federal_state')
+    assert module.down_revision == '0165'
+    _, _, url = require_disposable_database_settings(settings)
+    engine = create_engine(url)
+    try:
+        with engine.connect() as connection, connection.begin() as transaction, Operations.context(MigrationContext.configure(connection)):
+            org = str(uuid.uuid4())
+            prop = str(uuid.uuid4())
+            connection.execute(text("INSERT INTO organization(id,name) VALUES (:org,'Calendar rehearsal')"), {'org': org})
+            connection.execute(text("INSERT INTO property(id,organization_id,name,management_type) VALUES (:id,:org,'Legacy','MIET')"), {'id': prop, 'org': org})
+            before = connection.execute(text("SELECT to_jsonb(p)-'federal_state' FROM property p WHERE id=:id"), {'id': prop}).scalar_one()
+            assert connection.scalar(text('SELECT federal_state FROM property WHERE id=:id'), {'id': prop}) is None
+            # Other tests may have selected a state. The rollback-only projection
+            # clears context solely to exercise the empty downgrade contract.
+            connection.execute(text('UPDATE property SET federal_state=NULL WHERE federal_state IS NOT NULL'))
+            connection.execute(text('SET CONSTRAINTS ALL IMMEDIATE'))
+            module.downgrade()
+            module.upgrade()
+            assert connection.execute(text("SELECT to_jsonb(p)-'federal_state' FROM property p WHERE id=:id"), {'id': prop}).scalar_one() == before
+            connection.execute(text("UPDATE property SET federal_state='BY' WHERE id=:id"), {'id': prop})
+            with pytest.raises(RuntimeError, match='Cannot discard property holiday context'):
+                module.downgrade()
+            assert connection.scalar(text('SELECT federal_state FROM property WHERE id=:id'), {'id': prop}) == 'BY'
+            transaction.rollback()
     finally:
         engine.dispose()
