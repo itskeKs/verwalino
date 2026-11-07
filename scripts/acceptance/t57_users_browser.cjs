@@ -203,7 +203,7 @@ async function login(state, who, secret, status = 200) {
   if (status === 200) await state.page.getByRole('link', { name: 'Objekte', exact: true }).waitFor();
   else {
     assert.equal(typeof value.detail, 'string'); assert.ok(value.detail.length > 0);
-    await eventually(async () => assert.equal(await state.page.locator('.login-form__error').innerText(), value.detail));
+    await eventually(async () => assert.equal(await state.page.getByRole('alert').innerText(), value.detail));
     assert.equal(await button(state.page, 'Anmelden').isVisible(), true);
     assert.equal(await button(state.page, 'Benutzer anlegen').count(), 0);
   }

@@ -259,8 +259,7 @@ horizontal navigation for Warm, plus a column of **Topbar**
 and `main` (the scroll container; the window itself never scrolls) with centred content.
 Klar has a pale 220 px desktop sidebar with grouped disclosures; Warm has petrol
 horizontal desktop navigation with the same grouped links in dropdowns. Topbar right side: role chip (from `sm`), "Passwort ändern"
-(opens the password dialog; label hidden below `sm`), "Abmelden". Signed out, `LoginPage` renders alone
-(own `LoginPage.css`, 380 px card); while the session is probed `App.tsx` shows a centred "Lade...".
+(opens the password dialog; label hidden below `sm`), "Abmelden". Signed out, `LoginPage` uses the shared public-auth layout; while the session is probed `App.tsx` shows a centred "Lade...".
 
 Below 768 px, a shortcut row offers Übersicht, Objekte and Posteingang.
 Below 768 px in Klar and 1024 px in Warm, the hamburger opens a modal navigation drawer over a `bg-black/40`
@@ -287,6 +286,26 @@ existing "Lade..." state applies; if that check fails, login and signed-in pages
 requires a later successful app load. This changes route availability without
 adding visual elements.
 
+### Public authentication
+
+Login, hosted registration and its confirmation share `PublicAuthLayout`, the
+Verwalino house mark and the existing Klar semantic tokens. A centred desktop
+grid places a restrained brand/context block beside a white kit card. Below
+768 px the compact wordmark sits above the card, and the context block is hidden.
+The form remains first in the mobile page flow after the brand.
+
+The heading names the current action, with persistent labels and kit inputs at
+16 px and at least 44 px high. Full-width primary buttons state the pending action.
+Login and signup disable their fields while submitting and retain useful input
+after failure. Errors use `role="alert"` and receive focus so feedback above a
+long phone form scrolls into view. The generic signup receipt uses `role="status"`
+and receives focus when it replaces the form. Secondary links have 44 px targets;
+long descriptions and feedback wrap inside the card.
+
+Public pages keep the signed-out Klar default. The saved personal design loads
+after authentication. The public layout adds no appearance control or browser
+preference.
+
 ### Hosted registration
 
 `/signup` and `/signup/confirm` are standalone pages, gated by confirmed hosted
@@ -297,9 +316,8 @@ throttling return 403 and clear it; success clears it too.
 Hosted login adds the text link “Konto erstellen”; selfhost login has no signup link.
 Login and signup show "Lade..." while metadata loads; metadata errors leave login available.
 
-Registration uses the setup pattern: centred `max-w-lg` kit `Card`, `p-4 sm:p-6`,
-`min-w-0`, a wrapping `h1` “Konto erstellen”, labelled `Input` controls at `h-11`,
-and one full-width large primary button. Fields are “Organisation”, “Name”,
+Registration uses the shared public-auth card, a wrapping `h1` “Konto erstellen”,
+labelled kit `Input` controls and one full-width large primary button. Fields are “Organisation”, “Name”,
 “E-Mail”, “Passwort” and “Passwort wiederholen”; passwords explain the 12–128
 character requirement. The honeypot is hidden from layout, assistive technology
 and keyboard focus. Busy forms retain their inputs and disable their fieldset.
@@ -308,7 +326,7 @@ before submitting. “Zur Anmeldung” remains available.
 
 On acceptance the form is replaced by the server's generic `role="status"` receipt:
 “Wenn die Adresse frei ist, haben wir eine E-Mail geschickt”. Passwords are cleared.
-A muted note explains checking spam and the ten-minute resend interval. The ghost
+A muted note explains checking spam and the ten-minute resend interval. The outlined
 button “Erneut senden” requests another link; it shows the same conditional receipt
 without claiming delivery. Failure keeps the receipt and offers retry.
 
@@ -1411,6 +1429,11 @@ synthetic browser-intercepted API responses, without starting a backend or acces
 | List (Klar) | `/objekte` | [desktop](docs/assets/design/themes-klar-properties-1280.png) | [phone](docs/assets/design/themes-klar-properties-360.png) |
 | Detail | `/objekte/:id` | [`detail-objekt-desktop.png`](docs/assets/design/detail-objekt-desktop.png) | [`detail-objekt-360.png`](docs/assets/design/detail-objekt-360.png) |
 | Detail upload | `/objekte/:id`, documents card | [`detail-upload-desktop.png`](docs/assets/design/detail-upload-desktop.png) | [`detail-upload-360.png`](docs/assets/design/detail-upload-360.png) |
+| Public login | `/login` | [Desktop](docs/assets/design/login-desktop.png) | [Phone](docs/assets/design/login-360.png) |
+| Login error | `/login`, incorrect credentials | [Desktop](docs/assets/design/login-error-1280.png) | [Phone](docs/assets/design/login-error-360.png) |
+| Login pending | `/login`, request in progress | — | [Phone](docs/assets/design/login-pending-360.png) |
+| Signup password mismatch | `/signup`, focused error after submit | — | [Phone](docs/assets/design/signup-error-360.png) |
+| Login before redesign | `/login` | [Desktop](docs/assets/design/login-before-desktop.png) | [Phone](docs/assets/design/login-before-360.png) |
 | Hosted signup | `/signup` | [`signup-desktop.png`](docs/assets/design/signup-desktop.png) | [`signup-360.png`](docs/assets/design/signup-360.png) |
 | Signup confirmation, retryable password error | `/signup/confirm` | [`signup-confirm-desktop.png`](docs/assets/design/signup-confirm-desktop.png) | [`signup-confirm-360.png`](docs/assets/design/signup-confirm-360.png) |
 | Signup receipt | `/signup`, accepted request | — | [`signup-receipt-360.png`](docs/assets/design/signup-receipt-360.png) |
@@ -1425,8 +1448,13 @@ synthetic browser-intercepted API responses, without starting a backend or acces
 <a href="docs/assets/design/dialog-password-desktop.png"><img src="docs/assets/design/dialog-password-desktop.png" alt="Dialog: Passwort ändern" width="720"></a>
 
 The hosted quota images use the running frontend with synthetic API responses.
-The signup and password recovery images use synthetic deployment metadata and
-captured API responses. These are visual/360 px geometry checks, not end-to-end proof.
+Signup and confirmation images use synthetic deployment metadata and API responses
+to exercise layout, feedback, pending, receipt and retry states. Password recovery
+images use the same visual method. Login baseline/normal images also use synthetic
+responses; the login-error images come from the real test application and synthetic
+account in `features/public_auth_design.feature`. That scenario verifies correction
+of an invalid password through successful login at 1280 and 360 px. Visual captures
+of registration do not prove live mail delivery or account activation.
 
 The dashboard images show the greeting and separate organization context for the
 fresh synthetic organization “Sabine Muster Hausverwaltung” at 1280 × 900 and

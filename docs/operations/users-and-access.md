@@ -1,6 +1,26 @@
 # Users and access
 
-Password changes, user administration, and session invalidation.
+Sign-in, registration, password changes, user administration and session invalidation.
+
+## Signing in and registering
+
+The public pages share Verwalino branding, labelled form fields and the Klar design.
+Sign in with your email address and password. During the request the fields are
+disabled and the button reads “Anmeldung läuft …”. A failed request keeps the email
+and password for correction; the error receives focus and scrolls into view.
+Your personal design loads after you sign in.
+
+Hosted login offers “Konto erstellen”. Enter the organization, your name and email,
+then choose and repeat a password with 12–128 characters. Mismatching passwords
+are explained before submitting. While registration runs, the form stays visible
+and disabled. Its generic receipt asks you to check your email and spam folder;
+it preserves the existing ten-minute resend rule and offers “Erneut senden”.
+A resend failure keeps the receipt available.
+
+The confirmation page asks for the password chosen during registration. A mistyped
+password keeps the link available for another attempt. Invalid links require a
+new registration request. Self-hosted login has no “Konto erstellen” action. “Passwort vergessen?” appears
+when mail is available.
 
 ## Choosing your personal design
 

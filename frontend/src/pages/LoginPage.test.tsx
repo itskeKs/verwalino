@@ -40,11 +40,17 @@ describe("LoginPage", () => {
     await user.type(screen.getByLabelText("Passwort"), "not-the-right-password");
     await user.click(screen.getByRole("button", { name: "Anmelden" }));
 
-    expect(screen.getByRole("button", { name: "..." })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Anmeldung läuft …" })).toBeDisabled();
+    expect(screen.getByRole("form", { name: "Anmelden" })).toHaveAttribute("aria-busy", "true");
+    expect(screen.getByLabelText("E-Mail")).toBeDisabled();
+    expect(screen.getByLabelText("Passwort")).toBeDisabled();
 
     resolveLogin?.(jsonResponse({ detail: "Invalid credentials" }, 401));
 
-    expect(await screen.findByText("Invalid credentials")).toBeInTheDocument();
+    expect(await screen.findByRole("alert")).toHaveTextContent("Invalid credentials");
+    expect(screen.getByRole("alert")).toHaveFocus();
+    expect(screen.getByLabelText("E-Mail")).toHaveValue("alpha@example.test");
+    expect(screen.getByLabelText("Passwort")).toHaveAttribute("autocomplete", "current-password");
     expect(screen.getByRole("button", { name: "Anmelden" })).toBeEnabled();
   });
 });
