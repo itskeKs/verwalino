@@ -1519,6 +1519,8 @@ in this repository and sends its completed SHA as `staging <sha>` with the exist
 The target verifies main ancestry, exports its own runtime files and validates the hosted wrapper with
 that revision's snippets before image pulls or service operations. The three public Caddy snippets are
 exported with mode 0644 so the isolated validator can read them; private configuration stays mode 0600.
+The staging app and operations containers each mount one writable `/tmp` tmpfs, limited to 128 MiB
+with `noexec` and `nosuid`.
 It then resolves a registry digest without moving the
 production checkout, migrates and recreates only staging, checks readiness and prints the previous successful
 SHA. To roll back staging, send `staging <previous-sha>` with the same key; an older image must be compatible

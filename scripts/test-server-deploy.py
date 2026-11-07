@@ -1484,6 +1484,15 @@ class WorkflowTests(unittest.TestCase):
 
 @unittest.skipIf(yaml is None, "PyYAML is not installed")
 class StagingLayoutTests(unittest.TestCase):
+    def test_staging_tmpfs_options_remain_one_absolute_mount_for_operations_and_app(self):
+        compose = yaml.safe_load((ROOT / "infra/docker-compose.staging.yml").read_text())
+        services = {"operations": compose["x-operations"],
+                    "migrate": compose["services"]["migrate"],
+                    "staging-app": compose["services"]["staging-app"]}
+        for name, service in services.items():
+            with self.subTest(service=name):
+                self.assertEqual(service["tmpfs"], ["/tmp:rw,noexec,nosuid,size=128m"])
+
     def test_hosted_wrapper_imports_all_sites_with_separate_application_networks(self):
         wrapper = (ROOT / "infra/Caddyfile.hosted").read_text()
         imports = [line for line in wrapper.splitlines() if line.startswith("import ")]
