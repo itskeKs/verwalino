@@ -1,4 +1,6 @@
 import { HeatingInputs } from "../components/HeatingInputs";
+import { CommercialPreallocationInputs } from "../components/CommercialPreallocationInputs";
+import { commercialRulesPayload } from "../lib/commercialPreallocation";
 import { heatingPayload, useHeatingCandidates } from "../lib/heatingInputs";
 import { FinancialCoverageReview } from "../components/FinancialCoverageReview";
 import { parseGermanAmount } from "../lib/germanAmount";
@@ -20,6 +22,7 @@ import { parseGermanAmount } from "../lib/germanAmount";
  */
 
 import { useEffect, useState, useCallback, useRef } from "react";
+import { formatEuro } from "../lib/utils";
 import { useParams, Link, useNavigate } from "react-router-dom";
 import {
   getSettlement,
@@ -48,6 +51,7 @@ import type {
   SettlementRun,
   SettlementLine,
   ComputeRequest,
+  CommercialPreallocationIn,
   HeatingConfig,
   ExternalAmountIn,
   ManualAmountIn,
@@ -125,8 +129,9 @@ function AdvanceProposalSection({ runId, periodEnd }: { runId: string; periodEnd
   const [result, setResult] = useState<LeaseRentChange | null>(null);
   const busy = useRef(false);
   const mounted = useRef(false);
-  const singleAdvanceBlock = proposal !== null && [proposal.heating_monthly_amount, proposal.current_heating_monthly_amount]
-    .every(value => /^0+(?:\.0+)?$/.test(value));
+  const combinedProposal = proposal?.advance_mode === "COMBINED";
+  const singleAdvanceBlock = combinedProposal || (proposal != null && !proposal.advance_mode &&
+    [proposal.heating_monthly_amount, proposal.current_heating_monthly_amount].every(value => /^0+(?:\.0+)?$/.test(value)));
 
   useEffect(() => {
     mounted.current = true;
@@ -185,17 +190,17 @@ function AdvanceProposalSection({ runId, periodEnd }: { runId: string; periodEnd
         <button className="btn" onClick={() => setRetry((value) => value + 1)} disabled={loading}>Erneut versuchen</button>
       </>}
       {proposal && <>
-        <p>Betriebskosten-Vorauszahlung: <strong>{formatProposalMoney(proposal.monthly_amount)}</strong> monatlich (bisher {formatProposalMoney(proposal.current_monthly_amount)})</p>
+        <p>Betriebskosten-Vorauszahlung{combinedProposal ? " inkl. Heizkosten" : ""}: <strong>{formatProposalMoney(proposal.monthly_amount)}</strong> monatlich (bisher {formatProposalMoney(proposal.current_monthly_amount)})</p>
         {!singleAdvanceBlock && <p>Heizkosten-Vorauszahlung: <strong>{formatProposalMoney(proposal.heating_monthly_amount)}</strong> monatlich (bisher {formatProposalMoney(proposal.current_heating_monthly_amount)})</p>}
-        <p>Grundlage Betriebskosten: {formatProposalMoney(proposal.tenant_cost)} Mieteranteil / {proposal.months.replace(".", ",")} Monate
+        <p>Grundlage Betriebskosten{combinedProposal ? " inkl. Heizkosten" : ""}: {formatProposalMoney(proposal.tenant_cost)} Mieteranteil / {proposal.months.replace(".", ",")} Monate
           {" "}({proposal.period_start} bis {proposal.period_end}).</p>
         {!singleAdvanceBlock && <p>Grundlage Heizkosten: {formatProposalMoney(proposal.heating_tenant_cost)} Mieteranteil / {proposal.months.replace(".", ",")} Monate.</p>}
-        <p>{singleAdvanceBlock ? "Nur die Betriebskosten-Vorauszahlung wird geändert." : "Beide Vorauszahlungen werden geändert."} Die Kaltmiete bleibt die am gewählten Tag gültige Rate.
+        <p>{combinedProposal ? "Die gemeinsame Vorauszahlung wird geändert." : singleAdvanceBlock ? "Nur die Betriebskosten-Vorauszahlung wird geändert." : "Beide Vorauszahlungen werden geändert."} Die Kaltmiete bleibt die am gewählten Tag gültige Rate.
           Der ursprüngliche Mietvertrag und die finalisierte Abrechnung bleiben unverändert.</p>
         {applyError && <p role="alert">{applyError}</p>}
         {result && <p role="status">Miethistorie ergänzt: ab {result.valid_from}, Kaltmiete {formatProposalMoney(result.base_rent)},
-          {" "}Betriebskosten-Vorauszahlung {formatProposalMoney(result.advance_payment)},
-          {" "}Heizkosten-Vorauszahlung {formatProposalMoney(result.heating_advance_payment)} monatlich.</p>}
+          {" "}Betriebskosten-Vorauszahlung{result.advance_mode === "COMBINED" ? " inkl. Heizkosten" : ""} {formatProposalMoney(result.advance_payment)}
+          {result.advance_mode !== "COMBINED" && `, Heizkosten-Vorauszahlung ${formatProposalMoney(result.heating_advance_payment)}`} monatlich.</p>}
       </>}
       {canApply && !result && (proposal || !isProposalDate(validFrom)) && <form onSubmit={handleApply} noValidate>
         <label>Übernehmen ab
@@ -239,6 +244,9 @@ export function SettlementDetailPage() {
   const [manualAmounts, setManualAmounts] = useState<ManualAmountIn[]>([]);
   const [unitMetrics, setUnitMetrics] = useState<UnitMetricIn[]>([]);
   const [heatingConfigs, setHeatingConfigs] = useState<HeatingConfig[]>([]);
+  const [commercialRules, setCommercialRules] = useState<CommercialPreallocationIn[]>([]);
+  const [commercialCommands, setCommercialCommands] = useState<CommercialPreallocationIn[]>([]);
+  const [commercialAttempted, setCommercialAttempted] = useState(false);
   const [showInputs, setShowInputs] = useState(false);
   const [consumptionSuggestions, setConsumptionSuggestions] = useState<ConsumptionSuggestion[]>([]);
   const [manualConsumptionIds, setManualConsumptionIds] = useState<Set<string>>(new Set());
@@ -250,14 +258,23 @@ export function SettlementDetailPage() {
   const [previewRun, setPreviewRun] = useState<SettlementRun | null>(null);
   const [showPreview, setShowPreview] = useState(false);
 
-  const singleAdvanceBlock = run?.lines.some(line =>
-    line.line_type === "ADVANCE_PAYMENT" && line.label === "Geleistete Vorauszahlungen") ?? false;
+  const advanceLines = run?.lines.filter(line => line.line_type === "ADVANCE_PAYMENT") ?? [];
+  const hasCombinedAdvance = advanceLines.some(line => line.label === "Betriebskosten-Vorauszahlungen inkl. Heizkosten");
+  const hasUnallocatedAdvance = advanceLines.some(line => line.label === "Vorauszahlungen ohne Aufteilung");
+  const singleAdvanceBlock = advanceLines.length === 1;
+  const advanceSummaryLabel = singleAdvanceBlock ? advanceLines[0].label :
+    advanceLines.length === 0 || hasUnallocatedAdvance ? "Vorauszahlungen" :
+    hasCombinedAdvance ? "Betriebs- und gemeinsame Vorauszahlungen" : "Betriebskosten-Vorauszahlungen";
   const isDraft = run?.status === "draft";
   const isFinalized = run?.status === "finalized";
 
   const heatingCandidates = useHeatingCandidates(runId ?? "", heatingConfigs, canEditHeating && isDraft && run?.id === runId);
   const heatingBlocked = heatingConfigs.length > 0 && heatingCandidates.blocked;
   const genericEntries = costEntries.filter(entry => !heatingConfigs.some(config => config.cost_entry_id === entry.id));
+  const commercialOptions = genericEntries.filter(entry => entry.superseded_by_id === null && entry.tenant_apportionable !== 'NICHT_UMLAGEFAEHIG'
+    && entry.service_period_from <= (run?.period_end ?? '') && entry.service_period_to >= (run?.period_start ?? '')
+    && ['MEA', 'AREA', 'HEATED_AREA', 'UNIT_COUNT', 'PERSON_COUNT', 'CONSUMPTION'].includes(fromDbDistributionKey(entry.tenant_distribution_key ?? '')))
+    .map(entry => ({ id: entry.id, label: categories.find(category => category.id === entry.cost_category_id)?.label ?? 'Kostenposition' }));
   const consumptionBlocked = needsConsumption(genericEntries) && (consumptionLoading || Boolean(consumptionError));
   const heatingOptions = costEntries.flatMap(entry => {
     const category = categories.find(category => category.id === entry.cost_category_id);
@@ -265,8 +282,19 @@ export function SettlementDetailPage() {
     return [{ id: entry.id, label: category.label, kind: category.code === "HEIZUNG_ZENTRAL" ? "HEATING" as const : "HOT_WATER" as const }];
   });
 
+  function updateCommercialRule(rule: CommercialPreallocationIn) {
+    const update = (current: CommercialPreallocationIn[]) => [
+      ...current.filter(item => item.cost_entry_id !== rule.cost_entry_id), rule,
+    ];
+    setCommercialRules(update);
+    setCommercialCommands(update);
+  }
+
   function initStructuredInputs(entries: CostEntry[], r: SettlementRun) {
     setHeatingConfigs(r.extra_inputs?.heating_inputs ?? []);
+    setCommercialRules(r.extra_inputs?.commercial_preallocations ?? []);
+    setCommercialCommands([]);
+    setCommercialAttempted(false);
     setManualConsumptionIds(new Set());
     setConsumptionSuggestions([]);
     setConsumptionError(null);
@@ -294,11 +322,11 @@ export function SettlementDetailPage() {
       }));
     setManualAmounts(manuals.map(row => r.extra_inputs?.manual_amounts?.find(saved => saved.cost_entry_id === row.cost_entry_id && saved.unit_id === row.unit_id) ?? row));
 
-    // Unit metrics: if any entry needs consumption or person count
+    // New persons calculations use the unit history; retain old frozen extras for display.
     const hasConsumption = needsConsumption(entries);
-    const hasPersons = needsPersonCount(entries);
+    const hasPersons = r.status !== "draft" && needsPersonCount(entries);
     if (hasConsumption || hasPersons) {
-      setUnitMetrics(r.extra_inputs?.unit_metrics?.length ? r.extra_inputs.unit_metrics : [
+      setUnitMetrics(r.extra_inputs?.unit_metrics?.length ? r.extra_inputs.unit_metrics.map(row => ({ ...row, person_count: hasPersons ? row.person_count : null })) : [
         {
           unit_id: unitId,
           consumption: hasConsumption ? "" : null,
@@ -327,8 +355,7 @@ export function SettlementDetailPage() {
       setManualConsumptionIds(new Set(saved.filter(row => row.consumption != null).map(row => row.unit_id)));
       setUnitMetrics(previous => sources.length ? sources.map(source => ({
         unit_id: source.unit_id, consumption: saved.find(row => row.unit_id === source.unit_id)?.consumption ?? source.consumption ?? "",
-        person_count: needsPersonCount(entries)
-          ? previous.find(row => row.unit_id === source.unit_id)?.person_count ?? undefined : null,
+        person_count: null,
       })) : previous);
     } catch (err) {
       if (generation === loadGeneration.current) setConsumptionError(err instanceof ApiError ? err.message : String(err));
@@ -430,16 +457,18 @@ export function SettlementDetailPage() {
   }
 
   function buildComputeRequest(): ComputeRequest {
+    setCommercialAttempted(true);
     return {
+      ...(commercialCommands.length ? { commercial_preallocations: commercialRulesPayload(commercialCommands) } : {}),
       heating_inputs: heatingPayload(heatingConfigs),
       external_amounts: externalAmounts.filter((e) => e.tenant_amount !== "" && !heatingConfigs.some(config => config.cost_entry_id === e.cost_entry_id)),
       manual_amounts: manualAmounts.filter((m) => m.amount !== "" && !heatingConfigs.some(config => config.cost_entry_id === m.cost_entry_id)),
       unit_metrics: unitMetrics
-        .filter((u) => (needsConsumption(genericEntries) && manualConsumptionIds.has(u.unit_id) && u.consumption) || u.person_count != null)
+        .filter((u) => needsConsumption(genericEntries) && manualConsumptionIds.has(u.unit_id) && u.consumption)
         .map((u) => ({
           ...u,
           consumption: needsConsumption(genericEntries) && manualConsumptionIds.has(u.unit_id) ? u.consumption?.replace(",", ".") || null : null,
-          person_count: u.person_count ?? null,
+          person_count: null,
         })),
     };
   }
@@ -508,6 +537,9 @@ export function SettlementDetailPage() {
     try {
       const result = await computeSettlement(runId, buildComputeRequest());
       setRun(result);
+      setCommercialRules(result.extra_inputs?.commercial_preallocations ?? []);
+      setCommercialCommands([]);
+      setCommercialAttempted(false);
     } catch (err) {
       if (err instanceof ApiError) {
         setActionError(err.message);
@@ -550,6 +582,9 @@ export function SettlementDetailPage() {
     try {
       const result = await finalizeSettlement(runId, buildComputeRequest());
       setRun(result);
+      setCommercialRules(result.extra_inputs?.commercial_preallocations ?? []);
+      setCommercialCommands([]);
+      setCommercialAttempted(false);
       setShowPreview(false);
     } catch (err) {
       if (err instanceof ApiError) {
@@ -723,12 +758,20 @@ export function SettlementDetailPage() {
     const hasExternals = visibleExternals.length > 0;
     const hasManuals = manualAmounts.length > 0;
     const hasMetrics = unitMetrics.length > 0;
+    const hasHouseholds = run?.status === "draft" && needsPersonCount(genericEntries);
 
-    if (!hasExternals && !hasManuals && !hasMetrics) return null;
+    if (!hasExternals && !hasManuals && !hasMetrics && !hasHouseholds) return null;
 
     return (
       <div className="card" style={{ marginBottom: "1rem" }}>
         <h2>Strukturierte Eingaben</h2>
+        {hasHouseholds && <>
+          <h3>Personenzahl</h3>
+          <p>Personenzahlen und Leerstand in der Haushaltshistorie jeder Einheit pflegen. Die Abrechnung verwendet die gespeicherten Personentage.</p>
+          <ul>{units.filter(unit => unit.property_id === run?.property_id).map(unit => <li key={unit.id}>
+            <Link className="link" to={`/objekte/${encodeURIComponent(unit.property_id)}/einheiten/${encodeURIComponent(unit.id)}`}>Haushalt für Einheit {unit.number} bearbeiten</Link>
+          </li>)}</ul>
+        </>}
         {needsConsumption(genericEntries) && consumptionLoading && <p>Zählerbasis wird geladen …</p>}
         {needsConsumption(genericEntries) && consumptionError && <p role="alert">{consumptionError} <button type="button" className="btn"
           onClick={handleConsumptionRetry}>Zählerbasis erneut laden</button></p>}
@@ -797,14 +840,14 @@ export function SettlementDetailPage() {
         {hasMetrics && (
           <>
             <h3 style={{ fontSize: "0.95rem", margin: "0.75rem 0 0.5rem" }}>
-              Verbrauch / Personenzahl
+              {run?.status === "draft" ? "Verbrauch" : "Verbrauch / Personenzahl"}
             </h3>
             {needsConsumption(genericEntries) && (
               <p id="settlement-consumption-period-hint" className="hint">
                 Verbrauch der Einheit im gesamten Objekt-Abrechnungsjahr eingeben, auch bei gekürztem Mietzeitraum.
               </p>
             )}
-            {needsPersonCount(genericEntries) && (
+            {run?.status !== "draft" && needsPersonCount(genericEntries) && (
               <p id="settlement-person-period-hint" className="hint">
                 Personenzahlen je Einheit für das gesamte Objekt-Abrechnungsjahr in allen zugehörigen Abrechnungen gleich eingeben.
               </p>
@@ -847,7 +890,7 @@ export function SettlementDetailPage() {
                         </small>)}
                     </label>
                   )}
-                  {m.person_count !== null && (
+                  {run?.status !== "draft" && m.person_count !== null && (
                     <label>
                       Personenzahl ({getUnitLabel(m.unit_id)})
                       <input
@@ -1034,7 +1077,7 @@ export function SettlementDetailPage() {
               <td>{run.run_type}</td>
             </tr>
             <tr>
-              <td>{singleAdvanceBlock ? "Geleistete Vorauszahlungen" : "Betriebskosten-Vorauszahlungen"}</td>
+              <td>{advanceSummaryLabel}</td>
               <td>
                 <span style={{ fontFamily: "var(--mono)" }}>
                   {run.advance_payments_total ?? "-"} EUR
@@ -1173,6 +1216,9 @@ export function SettlementDetailPage() {
 
       {isDraft && canEditHeating && heatingOptions.length > 0 && <HeatingInputs options={heatingOptions} configs={heatingConfigs}
         onChange={setHeatingConfigs} candidates={heatingCandidates} disabled={actionLoading} />}
+      {isDraft && canEditHeating && commercialOptions.length > 0 && units.some(unit => unit.property_id === run.property_id && unit.usage_type === 'GEWERBE')
+        && <CommercialPreallocationInputs options={commercialOptions} rules={commercialRules} onChange={updateCommercialRule}
+          disabled={actionLoading} attempted={commercialAttempted} />}
       {isDraft && canEditHeating && heatingBlocked && <p>Interne Heizkosten: gültige Angaben und passende, vollständig geladene Zeiträume sind vor Berechnen, Vorschau und Finalisieren erforderlich.</p>}
 
       {/* Structured inputs (draft only) */}
@@ -1292,6 +1338,16 @@ export function SettlementDetailPage() {
           </div>
         </div>
       )}
+
+      {!!run.vacancy_attribution?.length && <section className="card" aria-label="Leerstand – Eigentümeranteile">
+        <h2>Leerstand – Eigentümeranteile</h2>
+        <p className="hint">Aus der gespeicherten Berechnung. Diese Anteile verbleiben beim Eigentümer.</p>
+        <ul className="space-y-3">{run.vacancy_attribution.map((share, index) => <li key={index}>
+          <strong>Einheit {share.unit_number} · {share.cost_label}</strong>
+          <div>{share.person_days.toLocaleString('de-DE')} Personentage · {share.days.toLocaleString('de-DE')} Tage</div>
+          <div className="font-semibold tabular-nums">{formatEuro(share.amount)} (Eigentümer)</div>
+        </li>)}</ul>
+      </section>}
 
       {/* Computed lines (persisted) */}
       <div className="card">

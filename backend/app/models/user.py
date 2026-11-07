@@ -31,8 +31,10 @@ class User(Base, UUIDPrimaryKeyMixin, TimestampMixin):
     is_active: Mapped[bool] = mapped_column(default=True, nullable=False)
 
     session_version: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
+    design_theme: Mapped[str] = mapped_column(String(8), nullable=False, server_default="klar", default="klar")
 
     __table_args__ = (
+        CheckConstraint("design_theme IN ('klar', 'warm')", name="ck_user_design_theme"),
         CheckConstraint("session_version >= 0", name="ck_user_session_version_nonnegative"),
         UniqueConstraint("organization_id", "id", name="uq_user_organization_id_id"),
         UniqueConstraint("organization_id", "email", name="uq_user_org_email"),

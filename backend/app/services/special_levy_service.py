@@ -13,10 +13,9 @@ from app.engine.rounding import distribute_amount
 from app.models.audit_event import AuditEvent
 from app.models.ownership_history import OwnershipHistory
 from app.models.property import Property
-from app.models.resolution import Resolution
-from app.models.owners_meeting import OwnersMeeting
 from app.models.special_levy import SpecialLevy, SpecialLevyAllocation
 from app.models.unit import Unit
+from app.repositories.special_levy_repo import SpecialLevyRepository
 from app.services.authorization_service import AuthorizationService
 from app.services.financial_scope_service import FinancialScopeService
 
@@ -25,6 +24,7 @@ class SpecialLevyService:
     def __init__(self, session, org_id, user_id):
         self.db, self.org, self.user = session, org_id, user_id
         self.context = FinancialScopeService(session, org_id, user_id)
+        self.repo = SpecialLevyRepository(session, org_id)
 
     async def scope(self, scope_id, property_id=None, *, write=False):
         if scope_id is None:
@@ -42,6 +42,8 @@ class SpecialLevyService:
         return sphere
 
     async def create(self, *, property_id, accounting_scope_id, amount, due_date, resolution_id=None):
+        if resolution_id is None:
+            raise HTTPException(422, "Eine Sonderumlage braucht einen Beschluss.")
         sphere = await self.scope(accounting_scope_id, property_id, write=True)
         levy = SpecialLevy(id=uuid.uuid4(), organization_id=self.org, property_id=property_id,
             accounting_scope_id=accounting_scope_id, amount=amount, due_date=due_date, resolution_id=resolution_id)
@@ -53,12 +55,7 @@ class SpecialLevyService:
         prop = await self.db.scalar(select(Property).where(Property.organization_id == self.org, Property.id == property_id).with_for_update())
         if prop is None:
             raise HTTPException(404, "Property not accessible")
-        if resolution_id is not None:
-            resolution = await self.db.scalar(select(Resolution).join(OwnersMeeting, OwnersMeeting.id == Resolution.meeting_id).where(
-                Resolution.organization_id == self.org, Resolution.id == resolution_id,
-                OwnersMeeting.organization_id == self.org, OwnersMeeting.property_id == property_id).with_for_update())
-            if resolution is None:
-                raise HTTPException(404, "Resolution not accessible in this property")
+        await self.require_resolution(resolution_id, property_id)
         units = list((await self.db.scalars(select(Unit).where(Unit.organization_id == self.org,
             Unit.property_id == property_id).order_by(Unit.id).with_for_update())).all())
         if not units:
@@ -98,6 +95,36 @@ class SpecialLevyService:
                 "due_date": due_date.isoformat(), "property_id": str(property_id), "accounting_scope_id": str(accounting_scope_id)}))
         await self.db.flush()
         return levy, allocations
+
+    async def require_resolution(self, resolution_id, property_id):
+        resolution = await self.repo.resolution(resolution_id, property_id)
+        if resolution is None:
+            raise HTTPException(404, "Beschluss in diesem Objekt nicht gefunden.")
+        if resolution.result != "ANGENOMMEN":
+            raise HTTPException(422, "Eine Sonderumlage braucht einen angenommenen Beschluss.")
+        return resolution
+
+    async def link_resolution(self, levy_id, resolution_id):
+        # Share creation's ACL/input lock order before locking the frozen row.
+        await self.context.lock_inputs()
+        levy = await self.repo.get(levy_id)
+        if levy is None:
+            raise HTTPException(404, "Sonderumlage nicht gefunden.")
+        await self.scope(levy.accounting_scope_id, levy.property_id, write=True)
+        levy = await self.repo.get(levy_id, lock=True)
+        if levy is None:
+            raise HTTPException(404, "Sonderumlage nicht gefunden.")
+        if levy.resolution_id is not None:
+            if levy.resolution_id != resolution_id:
+                raise HTTPException(409, "Der Beschlussbezug ist bereits festgeschrieben.")
+            return levy, await self.repo.allocations(levy.id)
+        await self.require_resolution(resolution_id, levy.property_id)
+        await self.repo.link_resolution(levy, resolution_id)
+        self.db.add(AuditEvent(organization_id=self.org, actor_user_id=self.user,
+            entity_type="special_levy", entity_id=levy.id, action="special_levy.resolution_linked",
+            payload_diff={"resolution_id": str(resolution_id)}))
+        await self.db.flush()
+        return levy, await self.repo.allocations(levy.id)
 
     async def list(self, accounting_scope_id=None, property_id=None):
         if accounting_scope_id is None:

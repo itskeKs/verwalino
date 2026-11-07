@@ -21,12 +21,14 @@ from urllib.request import urlopen
 import pytest
 from playwright.async_api import Error as PlaywrightError, TimeoutError as PlaywrightTimeoutError, async_playwright, expect
 
+from tests.bank_browser_trace import BankPageTrace, BankTraceLog, TRACE_FILE_ENV
 from tests.bdd.report import artifact_directory, attach_artifact
 from tests.bdd.world import admin_credentials, target_url
 
 ROOT = Path(__file__).resolve().parents[3]
 BASE_URL = "http://127.0.0.1:13000"
 VIEWPORT = {"width": 1440, "height": 1000}
+_BANK_TRACE = pytest.StashKey[BankTraceLog]()
 
 
 def _stop(process):
@@ -40,7 +42,13 @@ def _stop(process):
 
 
 @pytest.fixture(scope="session")
-def browser_app(seed_data, request):
+def browser_storage():
+    with tempfile.TemporaryDirectory(prefix="verwalino-browser-") as storage:
+        yield storage
+
+
+@pytest.fixture(scope="session")
+def browser_app(seed_data, request, browser_storage):
     """Use an explicit external target or own a guarded local stack."""
     if target_url():
         yield target_url()
@@ -62,7 +70,7 @@ def browser_app(seed_data, request):
     env.update(HV_DECLARATION_IMPORT_ENABLED="false", HV_INVOICE_EXTRACTION_ENABLED="false")
     env["HV_DEPLOYMENT_MODE"] = get_deployment_policy().deployment_mode
     commands = [
-        ([sys.executable, "-m", "uvicorn", "app.main:app", "--host", "127.0.0.1", "--port", "18000"], ROOT / "backend", "http://127.0.0.1:18000/api/health/live"),
+        ([sys.executable, "-m", "uvicorn", "tests.dunning_response_app:app", "--host", "127.0.0.1", "--port", "18000"], ROOT / "backend", "http://127.0.0.1:18000/api/health/live"),
         (["node", "node_modules/vite/bin/vite.js", "--host", "127.0.0.1", "--port", "13000", "--strictPort"], ROOT / "frontend", BASE_URL),
     ]
     def interrupt(signum, frame):
@@ -71,9 +79,15 @@ def browser_app(seed_data, request):
     with ExitStack() as stack:
         previous_handler = signal.signal(signal.SIGTERM, interrupt)
         stack.callback(signal.signal, signal.SIGTERM, previous_handler)
-        storage = stack.enter_context(tempfile.TemporaryDirectory(prefix="verwalino-browser-"))
-        env["HV_DOCUMENT_STORAGE_ROOT"] = storage
+        env["HV_DOCUMENT_STORAGE_ROOT"] = browser_storage
         reporter = request.config.pluginmanager.getplugin("scenario-report")
+        terminal = request.config.pluginmanager.getplugin("terminalreporter")
+        env.pop(TRACE_FILE_ENV, None)
+        bank_trace = None
+        if terminal is not None:
+            trace_file = stack.enter_context(tempfile.NamedTemporaryFile(prefix="verwalino-bank-browser-"))
+            bank_trace = BankTraceLog(Path(trace_file.name), terminal)
+            request.config.stash[_BANK_TRACE] = bank_trace
         for (command, directory, url), name in zip(commands, ("backend", "vite")):
             if reporter:
                 log_directory = reporter.directory / "logs"
@@ -81,7 +95,11 @@ def browser_app(seed_data, request):
                 log = stack.enter_context((log_directory / f"{name}.log").open("w+"))
             else:
                 log = stack.enter_context(tempfile.TemporaryFile(mode="w+"))
-            process = subprocess.Popen(command, cwd=directory, env=env, stdout=log, stderr=log, start_new_session=True)
+            process_env = env
+            if name == "backend" and bank_trace is not None:
+                process_env = {**env, TRACE_FILE_ENV: str(bank_trace.path)}
+                stack.callback(bank_trace.report_failures)
+            process = subprocess.Popen(command, cwd=directory, env=process_env, stdout=log, stderr=log, start_new_session=True)
             stack.callback(_stop, process)
             deadline = time.monotonic() + 30
             while process.poll() is None and time.monotonic() < deadline:
@@ -146,6 +164,7 @@ class BrowserWorld:
         self.session = session
         self.world = world
         self.errors = []
+        self.bank_trace = None
 
     def run(self, coroutine):
         return self.session.run(coroutine)
@@ -168,7 +187,11 @@ class BrowserWorld:
             }
             origin = urlsplit(self.session.base_url)
             if (url.scheme, url.netloc) == (origin.scheme, origin.netloc) or internal_pdf_asset:
-                await route.continue_()
+                headers = self.bank_trace.headers(route.request, url) if self.bank_trace else None
+                if headers is None:
+                    await route.continue_()
+                else:
+                    await route.continue_(headers=headers)
             else:
                 self.errors.append(f"External request: {route.request.url}")
                 await route.abort()
@@ -176,6 +199,10 @@ class BrowserWorld:
         self.page = await self.context.new_page()
         self.page.set_default_timeout(10000)
         self.page.on("pageerror", lambda error: self.errors.append(str(error)))
+
+    def observe_bank_save(self, config, width):
+        if log := config.stash.get(_BANK_TRACE, None):
+            self.bank_trace = BankPageTrace(log, self.page, width)
 
     async def visit(self, path):
         await self.page.goto(path)
@@ -235,4 +262,12 @@ def browser_world(world, browser_session, request):
                     browser.run(browser.context.tracing.stop())
         finally:
             if hasattr(browser, "context"):
-                browser.run(browser.context.close())
+                try:
+                    if browser.bank_trace:
+                        browser.bank_trace.snapshot("before_browser_close")
+                finally:
+                    try:
+                        browser.run(browser.context.close())
+                    finally:
+                        if browser.bank_trace:
+                            browser.bank_trace.snapshot("after_browser_close")

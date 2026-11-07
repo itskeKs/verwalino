@@ -20,6 +20,7 @@ vi.mock("../components/MeterPanel", () => ({
 
 vi.mock("../api/endpoints", async (importOriginal) => ({
   ...await importOriginal<typeof endpoints>(),
+  getUnitHousehold: vi.fn(), replaceUnitHousehold: vi.fn(),
   getUnit: vi.fn(), getProperty: vi.fn(), listOwnership: vi.fn(), listLeases: vi.fn(),
   listOwnerProfiles: vi.fn(), listTenantProfiles: vi.fn(), listPersons: vi.fn(),
   createOwnership: vi.fn(), createLease: vi.fn(), patchLease: vi.fn(),
@@ -80,9 +81,22 @@ it('submits separate advances in one effective-dated rent change', async () => {
     advance_payment: '150.00', heating_advance_payment: '90.00', valid_from: '2026-04-01',
   });
 });
+it("submits a combined advance as one amount in the dated rate", async () => {
+  show();
+  const dialog = await openChange();
+  date("2026-04-01");
+  fireEvent.change(within(dialog).getByLabelText("Vorauszahlungsart"), { target: { value: "COMBINED" } });
+  expect(within(dialog).queryByLabelText("Heizkosten-Vorauszahlung (EUR)", { exact: true })).toBeNull();
+  money("Betriebskosten-Vorauszahlung inkl. Heizkosten (EUR)", "240,00");
+  save();
+  await waitFor(() => expect(dialog).not.toBeInTheDocument());
+  expect(JSON.parse(posts()[0][1].body as string)).toMatchObject({
+    advance_mode: "COMBINED", advance_payment: "240.00", heating_advance_payment: "0.00",
+  });
+});
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
 beforeEach(() => {
-  vi.resetAllMocks(); history = []; failure = null;
+  vi.resetAllMocks(); vi.mocked(endpoints.getUnitHousehold).mockResolvedValue([]); history = []; failure = null;
   fetchMock = vi.fn(async (url: string, options?: RequestInit) => {
     if (options?.method === "POST") {
       if (failure === "network") throw new TypeError("Netzwerk nicht erreichbar");
@@ -174,6 +188,8 @@ it("creates a lease contract only after confirming its legal caveat", async () =
   fireEvent.click(await screen.findByRole('button', { name: 'Mietvertrag erstellen' }));
   const dialog = await screen.findByRole('dialog', { name: 'Mietvertrag erstellen' });
   expect(within(dialog).getByText(/Vorlage; rechtliche Prüfung erforderlich/)).toBeVisible();
+  expect(within(dialog).getByText(/Die Mietbeträge gelten zum gewählten Dokumentdatum/)).toBeVisible();
+  expect(within(dialog).getByText(/nach Mietende, zeigt das PDF die Beträge vom letzten Miettag/)).toBeVisible();
   expect(posts()).toHaveLength(0);
   fireEvent.change(within(dialog).getByLabelText('Übergabedatum'), { target: { value: '2026-01-02' } });
   fireEvent.change(within(dialog).getByLabelText('Freitext: weitere Vereinbarungen'), { target: { value: 'Gartenmitbenutzung prüfen' } });
@@ -934,4 +950,58 @@ it.each(["Kaltmiete (EUR) *", "Betriebskosten-Vorauszahlung (EUR) *", "Heizkoste
   expect(input).toHaveAttribute("aria-invalid", "true");
   expect(endpoints.patchLease).not.toHaveBeenCalled();
   expect(endpoints.createLease).not.toHaveBeenCalled();
+});
+
+
+it('saves independent household streams with an editable vacancy suggestion and explicit zero', async () => {
+  const user = userEvent.setup();
+  vi.mocked(endpoints.replaceUnitHousehold).mockImplementation(async (_id, rows) => rows);
+  show();
+  await user.click(await screen.findByRole('button', { name: 'Haushalt bearbeiten' }));
+  await user.click(screen.getByRole('button', { name: 'Leerstand hinzufügen' }));
+  expect(screen.getByLabelText('Personenzahl Leerstand')).toHaveValue(1);
+  expect(endpoints.replaceUnitHousehold).not.toHaveBeenCalled();
+  fireEvent.change(screen.getByLabelText('Personen im Leerstand ab'), { target: { value: '2026-01-01' } });
+  await user.clear(screen.getByLabelText('Personenzahl Leerstand'));
+  await user.type(screen.getByLabelText('Personenzahl Leerstand'), '2');
+  await user.click(screen.getByRole('button', { name: 'Belegung hinzufügen' }));
+  fireEvent.change(screen.getByLabelText('Personen im Haushalt ab'), { target: { value: '2026-03-01' } });
+  await user.type(screen.getByLabelText('Personenzahl Belegung'), '0');
+  await user.click(screen.getByRole('button', { name: 'Haushalt speichern' }));
+  expect(endpoints.replaceUnitHousehold).toHaveBeenCalledWith('unit', [
+    { valid_from: '2026-01-01', persons: 2, is_vacancy: true },
+    { valid_from: '2026-03-01', persons: 0, is_vacancy: false },
+  ]);
+  expect(await screen.findByText('0 Personen ab 01.03.2026', { exact: true })).toBeVisible();
+});
+
+it('preserves household edits after a refused save', async () => {
+  const user = userEvent.setup();
+  vi.mocked(endpoints.replaceUnitHousehold).mockRejectedValue(new Error('Speichern fehlgeschlagen'));
+  show();
+  await user.click(await screen.findByRole('button', { name: 'Haushalt bearbeiten' }));
+  await user.click(screen.getByRole('button', { name: 'Leerstand hinzufügen' }));
+  fireEvent.change(screen.getByLabelText('Personen im Leerstand ab'), { target: { value: '2026-01-01' } });
+  await user.click(screen.getByRole('button', { name: 'Haushalt speichern' }));
+  expect(await screen.findByRole('alert')).toHaveTextContent('Speichern fehlgeschlagen');
+  expect(screen.getByLabelText('Personen im Leerstand ab')).toHaveValue('2026-01-01');
+  expect(screen.getByLabelText('Personenzahl Leerstand')).toHaveValue(1);
+});
+
+it('shows saved household history without edit actions for readonly members', async () => {
+  vi.mocked(endpoints.getUnitHousehold).mockResolvedValue([{ valid_from: '2026-01-01', persons: 2, is_vacancy: false }]);
+  show('READONLY');
+  expect(await screen.findByText('2 Personen ab 01.01.2026', { exact: true })).toBeVisible();
+  expect(screen.queryByRole('button', { name: 'Haushalt bearbeiten' })).not.toBeInTheDocument();
+});
+
+it('keeps a long household history and large saved counts readable', async () => {
+  vi.mocked(endpoints.getUnitHousehold).mockResolvedValue(Array.from({ length: 24 }, (_, index) => ({
+    valid_from: `${2000 + index}-01-01`, persons: 2147483647, is_vacancy: false,
+  })));
+  show('READONLY');
+  const items = await screen.findAllByText(/^2\.147\.483\.647 Personen ab/);
+  expect(items).toHaveLength(24);
+  expect(items[0]).toHaveTextContent('01.01.2000');
+  expect(items[23]).toHaveTextContent('01.01.2023');
 });

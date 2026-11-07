@@ -48,6 +48,19 @@ Feature: WEG settlement and the owner's Hausgeld balance
     When I finalize their WEG annual settlement
     Then the Einzelabrechnung shows all four amounts and the payment without horizontal scrolling
 
+  Scenario: Plan and asset report use their key date after a July owner change
+    Given Karl Weiß owns unit 2 until June and Lena Roth owns it from July
+    When I finalize the asset report for their whole year
+    Then the plan names Karl at the year start and the report names Lena at the year end
+    And Karl and Lena each owe six monthly Hausgeld advances of 400 euros
+    And their issued dunning notices each request only their six unpaid advances
+    And the annual settlement still lists both ownership periods
+
+  @browser
+  Scenario: The document addressees and key dates fit desktop and a 360 pixel phone
+    Given Karl Weiß owns unit 2 until June and Lena Roth owns it from July
+    When I finalize the asset report for their whole year
+    Then both document pages show their dated addressees at desktop and phone widths
   @browser
   Scenario Outline: Long owner statements keep complete amounts inside their cards
     Given Anna-Katharina Freifrau von Hohenzollern-Sigmaringen has Anna's WEG plan and costs
@@ -59,3 +72,16 @@ Feature: WEG settlement and the owner's Hausgeld balance
       | state     |
       | computed  |
       | finalized |
+
+  Scenario: Paid Hausgeld includes the buyer and identifies her missing amount
+    Given Karl Weiß owns unit 2 until June and Lena Roth owns it from July
+    And Anna, Karl and Lena have booked their twelve, six and six monthly Hausgeld payments
+    When I take over their paid Hausgeld from the booked figures
+    Then Anna, Karl and Lena have paid 7200, 2400 and 2400 euros
+    And clearing Lena's paid amount asks for her missing Hausgeld in German
+
+  @browser
+  Scenario: Paid Hausgeld prefill and missing buyer amount fit desktop and phone
+    Given Karl Weiß owns unit 2 until June and Lena Roth owns it from July
+    And Anna, Karl and Lena have booked their twelve, six and six monthly Hausgeld payments
+    Then the paid Hausgeld prefill and Lena's missing amount are visible on desktop and phone

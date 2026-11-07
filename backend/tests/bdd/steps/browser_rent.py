@@ -163,3 +163,44 @@ async def no_rent_payments(browser_world):
     await ledger(browser_world)
     await browser_world.row("Soll gesamt", "10200.00 EUR")
     await browser_world.row("Ist gesamt", "0.00 EUR")
+
+
+@when("the manager records 750 EUR rent and a 240 EUR combined advance from 1 April 2026")
+@browser_step
+async def record_combined_change(browser_world):
+    data = browser_world.world.data
+    await browser_world.visit(f"/objekte/{data['property']['id']}/einheiten/{data['units'][0]['id']}")
+    page = browser_world.page
+    await page.get_by_role("button", name="Miete ändern ab", exact=False).click()
+    dialog = page.get_by_role("dialog", name="Miete ändern", exact=True)
+    await field(dialog, "Gültig ab").fill("2026-04-01")
+    await field(dialog, "Vorauszahlungsart").select_option("COMBINED")
+    await field(dialog, "Kaltmiete (EUR)").fill("750,00")
+    await field(dialog, "Betriebskosten-Vorauszahlung inkl. Heizkosten (EUR)").fill("240,00")
+    await expect(field(dialog, "Heizkosten-Vorauszahlung (EUR)")).to_have_count(0)
+    await button(dialog, "Mietänderung speichern").click()
+    await expect(dialog).not_to_be_visible()
+
+
+@then("the reloaded history names heating as included in the 240 EUR advance")
+@browser_step
+async def combined_history(browser_world):
+    page = browser_world.page
+    await page.reload()
+    table = page.get_by_role("table", name="Miethistorie:", exact=False)
+    row = table.get_by_role("row").filter(has=page.get_by_role("cell", name="2026-04-01", exact=True))
+    await expect(row.get_by_role("cell")).to_have_text([
+        "2026-04-01", "750.00", "240.00 inkl. Heizkosten", "—", "Mietänderung"])
+
+
+@then("the April rent account shows one advance including heating and 990 EUR in total")
+@browser_step
+async def combined_ledger(browser_world):
+    await ledger(browser_world, start="2026-04-01", end="2026-04-30")
+    await browser_world.row("Soll gesamt", "990.00 EUR")
+    await ledger_row(browser_world, "2026/04", "Kaltmiete", ["750.00", "0.00", "750.00"])
+    await ledger_row(browser_world, "2026/04", "Betriebskosten-Vorauszahlung inkl. Heizkosten",
+        ["240.00", "0.00", "240.00"])
+    table = browser_world.page.get_by_role("table").filter(
+        has=browser_world.page.get_by_role("columnheader", name="Offen", exact=True))
+    await expect(table.locator("tbody tr")).to_have_count(2)

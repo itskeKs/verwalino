@@ -1,15 +1,16 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { parseGermanAmount } from "../lib/germanAmount";
 import { ApiError } from "../api/client";
 import { Link, useParams, useSearchParams } from "react-router-dom";
 import {
   getBankAccount, importBankTransactions, listBankMatchingTransactions,
   assignBankTransaction, ignoreBankTransaction, listUnits, listLeases,
-  listOwnership, listTenantProfiles, listOwnerProfiles, listPersons,
+  listOwnership, listTenantProfiles, listOwnerProfiles, listPersons, listCostEntries,
 } from "../api/endpoints";
 import type {
   BankAccount, BankImportResult, BankTransactionWithSuggestions, BankTransactionStatus,
   BankAssignmentLine, BankMatchSuggestion, BankMatchLine, LeaseRecord,
-  OwnerProfile, TenantProfile, Person, Unit, OwnershipRecord,
+  OwnerProfile, TenantProfile, Person, Unit, OwnershipRecord, CostEntry,
 } from "../api/types";
 import { ReserveEvidenceFields } from "../components/ReserveEvidenceFields";
 import { useAuth } from "../auth/useAuth";
@@ -170,7 +171,7 @@ function AccountTransactions({ id }: { id: string }) {
     }
   }
 
-  async function mutate(item: BankTransactionWithSuggestions, lines?: BankAssignmentLine[]) {
+  async function mutate(item: BankTransactionWithSuggestions, lines?: BankAssignmentLine[] | string) {
     if (!canWrite || item.status !== "NEU" || mutationLock.current) return;
     mutationLock.current = true;
     setMutating(true);
@@ -315,6 +316,10 @@ function positiveAmount(value: string): string | null {
   const amount = cents(value);
   return amount !== null && amount > 0n && amount <= 99999999999999n ? decimal(amount) : null;
 }
+// A bare dot remains the API decimal separator, so "850.001" stays invalid.
+function splitInput(value: string): string {
+  return value.includes(",") ? parseGermanAmount(value) ?? "" : value;
+}
 function validLine(line: BankAssignmentLine): boolean {
   const lease = Boolean(line.lease_agreement_id);
   const owner = Boolean(line.owner_profile_id);
@@ -377,8 +382,27 @@ function SplitDialog({ transaction, account, busy, error, onClose, onSubmit }: {
   busy: boolean;
   error: string | null;
   onClose: () => void;
-  onSubmit: (lines: BankAssignmentLine[]) => void;
+  onSubmit: (lines: BankAssignmentLine[] | string) => void;
 }) {
+  const outgoing = (cents(transaction.amount) ?? 0n) < 0n;
+  const [mode, setMode] = useState<"cost" | "payment">(outgoing ? "cost" : "payment");
+  const [costs, setCosts] = useState<CostEntry[] | null>(null);
+  const [costError, setCostError] = useState<string | null>(null);
+  const [costId, setCostId] = useState("");
+  const [costRevision, setCostRevision] = useState(0);
+  useEffect(() => {
+    if (!account || mode !== "cost") return;
+    let cancelled = false;
+    listCostEntries({ property_id: account.property_id, status: "confirmed" })
+      .then(items => {
+        if (!cancelled) {
+          setCosts(items.filter(item => item.property_id === account.property_id && item.status === "confirmed"
+            && !item.superseded_by_id && item.bank_open_amount != null && (cents(item.bank_open_amount) ?? 0n) > 0n));
+          setCostError(null);
+        }
+      }).catch(cause => { if (!cancelled) setCostError(errorMessage(cause)); });
+    return () => { cancelled = true; };
+  }, [account, mode, costRevision]);
   function row(key: number, line?: BankMatchLine): SplitRow {
     const [year, month] = transaction.value_date.split("-");
     const payment_type = line?.payment_type ?? "KALTMIETE";
@@ -393,10 +417,14 @@ function SplitDialog({ transaction, account, busy, error, onClose, onSubmit }: {
   });
   const [targets, setTargets] = useState<TargetData | null>(null);
   const [targetError, setTargetError] = useState<string | null>(null);
-  const [validation, setValidation] = useState<string | null>(null);
+  const [validation, setValidation] = useState<{ message: string } | null>(null);
+  const validationRef = useRef<HTMLParagraphElement>(null);
+  useEffect(() => {
+    if (validation) validationRef.current?.scrollIntoView?.({ block: "nearest" });
+  }, [validation]);
   const [targetRevision, setTargetRevision] = useState(0);
   useEffect(() => {
-    if (!account) return;
+    if (!account || mode !== "payment") return;
     let cancelled = false;
     Promise.all([listUnits(account.property_id), listLeases(), listOwnerProfiles(), listTenantProfiles(), listPersons(), listOwnership()])
       .then(([units, leases, owners, tenants, persons, ownership]) => {
@@ -409,7 +437,7 @@ function SplitDialog({ transaction, account, busy, error, onClose, onSubmit }: {
         setTargetError(null);
       }).catch(cause => { if (!cancelled) setTargetError(errorMessage(cause)); });
     return () => { cancelled = true; };
-  }, [account, targetRevision]);
+  }, [account, targetRevision, mode]);
 
   function name(personId?: string) {
     const person = targets?.persons.find(person => person.id === personId);
@@ -422,12 +450,16 @@ function SplitDialog({ transaction, account, busy, error, onClose, onSubmit }: {
   function submit() {
     if (busy || !targets) return;
     const lines: BankAssignmentLine[] = [];
-    for (const item of rows) {
-      const amount = positiveAmount(item.amount);
+    for (const [index, item] of rows.entries()) {
+      const amount = positiveAmount(splitInput(item.amount));
+      if (amount === null) {
+        setValidation({ message: `Betrag in Splitzeile ${index + 1}: Bitte einen positiven Betrag wie 2.250,00 eingeben (max. 12 Vorkommastellen und 2 Nachkommastellen).` });
+        return;
+      }
       const lease = item.targetKind === "lease" ? targets.leases.find(lease => lease.id === item.target) : undefined;
       const owner = item.targetKind === "owner" ? targets.owners.find(owner => owner.id === item.target) : undefined;
-      if (!amount || !/^\d{1,4}$/.test(item.period_year) || !/^\d{1,2}$/.test(item.period_month) || (item.payment_type !== "RUECKLAGENENTNAHME" && !lease && !owner)) {
-        setValidation("Bitte positive Beträge (max. 12 Vorkommastellen, 2 Nachkommastellen), Periode und ein gültiges Ziel im Bankobjekt angeben.");
+      if (!/^\d{1,4}$/.test(item.period_year) || !/^\d{1,2}$/.test(item.period_month) || (item.payment_type !== "RUECKLAGENENTNAHME" && !lease && !owner)) {
+        setValidation({ message: "Bitte Periode und ein gültiges Ziel im Bankobjekt angeben." });
         return;
       }
       const line: BankAssignmentLine = {
@@ -435,29 +467,53 @@ function SplitDialog({ transaction, account, busy, error, onClose, onSubmit }: {
         ...(item.payment_type === "RUECKLAGENENTNAHME" ? { reserve_cost_entry_id: item.reserve_cost_entry_id, reserve_register_entry_id: item.reserve_register_entry_id } : lease ? { lease_agreement_id: lease.id, tenant_profile_id: lease.tenant_profile_id } : { owner_profile_id: owner!.id }),
         ...(item.note.trim() ? { note: item.note.trim() } : {}),
       };
-      if (!validLine(line)) { setValidation("Bitte Zahlungsart, Ziel und gültige Periode prüfen."); return; }
+      if (!validLine(line)) { setValidation({ message: "Bitte Zahlungsart, Ziel und gültige Periode prüfen." }); return; }
       lines.push(line);
     }
-    if (!coversTransaction(lines, transaction.amount)) { setValidation("Die Summe der positiven Splitbeträge muss den Umsatz vollständig abdecken."); return; }
+    if (!coversTransaction(lines, transaction.amount)) { setValidation({ message: "Die Summe der positiven Splitbeträge muss den Umsatz vollständig abdecken." }); return; }
     setValidation(null);
     onSubmit(lines);
   }
   const total = cents(transaction.amount);
-  const entered = rows.map(item => cents(item.amount));
+  const entered = rows.map(item => cents(splitInput(item.amount)));
   const remaining = total !== null && entered.every(amount => amount !== null)
     ? (total < 0n ? -total : total) - entered.reduce<bigint>((sum, amount) => sum + amount!, 0n) : null;
+  const selectedCost = costs?.find(cost => cost.id === costId);
+  const exceedsCost = selectedCost && total !== null && -total > cents(selectedCost.bank_open_amount!)!;
 
   return <Dialog open onOpenChange={open => { if (!open && !busy) onClose(); }}>
     <DialogContent style={{ width: 'calc(100% - 2rem)', gridTemplateColumns: 'minmax(0, 1fr)' }} className="max-w-3xl max-h-[90vh] overflow-y-auto" onEscapeKeyDown={event => { if (busy) event.preventDefault(); }} onPointerDownOutside={event => { if (busy) event.preventDefault(); }}>
       <DialogTitle>Umsatz aufteilen</DialogTitle>
-      <DialogDescription>{transaction.counterparty_name ?? "Unbekannte Gegenpartei"} · {money(transaction.amount)} · {transaction.amount.startsWith("-") ? "Ausgang (OUT)" : "Eingang (IN)"}. Splitbeträge immer positiv, z. B. 700,00. Die Buchungsberechtigung wird serverseitig geprüft.</DialogDescription>
+      <DialogDescription>{transaction.counterparty_name ?? "Unbekannte Gegenpartei"} · {money(transaction.amount)} · {outgoing ? "Ausgang (OUT)" : "Eingang (IN)"}. {mode === "cost" ? "Ordnen Sie den vollständigen Umsatz einer bestehenden bestätigten Kostenposition zu. Teilzahlungen auf eine Kostenposition sind möglich." : "Splitbeträge immer positiv, z. B. 700,00. Die Buchungsberechtigung wird serverseitig geprüft."}</DialogDescription>
+      {outgoing && <div className="form-grid min-w-0"><label className="form-full-width min-w-0">Zuordnen als<select className="min-w-0 w-full" aria-label="Zuordnen als" value={mode} disabled={busy} onChange={event => setMode(event.target.value as "cost" | "payment")}>
+        <option value="cost">Bestehende Kostenposition</option><option value="payment">Zahlung (z. B. Erstattung oder Rücklagenentnahme)</option>
+      </select></label></div>}
+      {mode === "cost" ? <form className="form-grid min-w-0" onSubmit={event => {
+        event.preventDefault();
+        if (!busy && selectedCost && !exceedsCost) onSubmit(selectedCost.id);
+      }}>
+        <label className="form-full-width min-w-0">Kostenposition<select aria-label="Kostenposition" value={costId} disabled={busy || !costs} onChange={event => setCostId(event.target.value)}>
+          <option value="">Kostenposition wählen</option>
+          {costs?.map(cost => <option key={cost.id} value={cost.id}>{cost.document_number || `Rechnung vom ${date(cost.invoice_date)}`} · offen: {money(cost.bank_open_amount!)} · gesamt: {money(cost.gross_amount)}</option>)}
+        </select></label>
+        {!costs && !costError && <p className="form-full-width">Lade Kostenpositionen…</p>}
+        {costs?.length === 0 && <p className="form-full-width">Keine offenen bestätigten Kostenpositionen für dieses Objekt verfügbar.</p>}
+        {selectedCost && <p className="form-full-width">Nach Zuordnung noch offen: {money(decimal(cents(selectedCost.bank_open_amount!)! + total!))}</p>}
+        {exceedsCost && <p role="alert" className="error-text form-full-width">Der Umsatz überschreitet den offenen Betrag der Kostenposition.</p>}
+        {(error || costError) && <p role="alert" className="error-text form-full-width">{error || costError}</p>}
+        <div className="form-actions">
+          <button type="submit" className="btn btn--primary" disabled={busy || !selectedCost || Boolean(exceedsCost)}>{busy ? "Bitte warten…" : "Kostenposition zuordnen"}</button>
+          <button type="button" className="btn" disabled={busy} onClick={() => { setCostId(""); setCostRevision(value => value + 1); }}>Kostenpositionen neu laden</button>
+          <button type="button" className="btn" disabled={busy} onClick={onClose}>Abbrechen</button>
+        </div>
+      </form> : <>
       {(transaction.suggestions ?? []).map((suggestion, index) => <div key={index}>
         <SuggestionDetails suggestion={suggestion} />
         {transaction.suggestions.length > 1 && <button type="button" className="btn" disabled={busy} onClick={() => { setRows(suggestion.lines.length ? suggestion.lines.slice(0, 100).map((line, index) => row(index, line)) : [row(0)]); setValidation(null); }}>Vorschlag {index + 1} laden: {suggestion.target_name}</button>}
       </div>)}
       {targetError && <div><p role="alert" className="error-text">{targetError}</p><button className="btn" onClick={() => setTargetRevision(value => value + 1)}>Ziele erneut laden</button></div>}
       {!targets && !targetError && <p>Lade Ziele…</p>}
-      {validation && <p role="alert" className="error-text">{validation}</p>}
+      {validation && <p ref={validationRef} role="alert" className="error-text">{validation.message}</p>}
       {error && <p role="alert" className="error-text">{error}</p>}
       <form className="form-grid min-w-0" onSubmit={event => { event.preventDefault(); submit(); }} noValidate>
         <fieldset className="contents min-w-0" disabled={busy || !targets}>
@@ -492,6 +548,7 @@ function SplitDialog({ transaction, account, busy, error, onClose, onSubmit }: {
           <button type="button" className="btn" disabled={busy} onClick={onClose}>Abbrechen</button>
         </div>
       </form>
+      </>}
     </DialogContent>
   </Dialog>;
 }

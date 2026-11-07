@@ -93,3 +93,16 @@ async def test_prepare_without_confirm_cannot_book_but_can_ignore(migrator_sessi
         ignored = await api.post(f"/api/bank-transactions/{ids['transaction']}/ignore")
         assert ignored.status_code == 200, ignored.text
         assert ignored.json()["status"] == "IGNORIERT"
+
+
+async def test_read_scope_cannot_receive_counterparty_validation_for_a_write(migrator_session, scope_seed):
+    ids = await bank_transactions(migrator_session, scope_seed)
+    await grant(ids, ["read"])
+    async with client(ids) as api:
+        response = await api.get(f"/api/bank-accounts/{ids['bank']}")
+        assert response.status_code == 200, response.text
+        response = await api.post("/api/payments", json={
+            "bank_account_id": str(ids["bank"]), "direction": "IN", "amount": "75.25",
+            "value_date": "2025-06-03", "payment_type": "KALTMIETE",
+        })
+        assert response.status_code == 404, response.text

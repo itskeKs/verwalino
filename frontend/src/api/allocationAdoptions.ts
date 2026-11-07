@@ -29,14 +29,19 @@ export interface CorrectionPreview {
 }
 interface CorrectionAmounts {
   gross_amount: string; service_period_from: string; service_period_to: string;
-  costs: { position: number; gross_amount: string; vat_amount: string | null; tenant_amount: string | null }[];
+  costs: { position: number; gross_amount: string; vat_amount: string | null; tenant_amount: string | null;
+    cost_entry_id?: string; allocation_line_id?: string; bank_covered_amount?: string }[];
 }
 export const correctionPreviewApi = {
   get: (setId: string, reviewId: string, signal?: AbortSignal) => api.get<CorrectionPreview>(
     `/api/allocation-sets/${setId}/correction-preview?treatment_review_id=${encodeURIComponent(reviewId)}`, { signal }),
 };
 
-export interface CorrectionCommand extends AdoptionCommand { downstream_followups_reviewed: true }
+interface CorrectionAcknowledgment {
+  downstream_followups_reviewed: true;
+  bank_coverage_successors?: Record<string, string>;
+}
+export interface CorrectionCommand extends AdoptionCommand, CorrectionAcknowledgment {}
 export interface CorrectionResult {
   allocation: AllocationSet;
   receipt: { id: string; predecessor_id: string; successor_id: string; reason: string; actor_id: string; confirmed_at: string; preview_digest: string;
@@ -72,7 +77,7 @@ export interface VisualFinancialCommand {
   costs_confirmed: true; retained_visual_source_reviewed: true;
 }
 export interface VisualAdoptionCommand extends VisualFinancialCommand { disclosure_id: string }
-export interface VisualCorrectionCommand extends VisualFinancialCommand { downstream_followups_reviewed: true }
+export interface VisualCorrectionCommand extends VisualFinancialCommand, CorrectionAcknowledgment {}
 export const visualAllocationApi = {
   preview: (review: string, disclosure: string, signal?: AbortSignal) => api.get<VisualAdoptionPreview>(
     `/api/allocation-treatments/${review}/visual-adoption-preview?disclosure_id=${encodeURIComponent(disclosure)}`, { signal }),

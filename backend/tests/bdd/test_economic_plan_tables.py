@@ -94,7 +94,7 @@ def contained_tables(browser_world, world, table_plan):
         for width in (360, 1280):
             await b.page.set_viewport_size({"width": width, "height": 900})
             if width == 360:
-                await b.page.wait_for_function("document.querySelector('aside').getBoundingClientRect().right <= 0")
+                await b.page.wait_for_function("() => { const aside = document.querySelector('aside'); return !aside || aside.getBoundingClientRect().right <= 0; }")
             await tables[0].evaluate("el => el.closest('.card').scrollIntoView({block: 'start'})")
             await capture(width)
             geometry = await b.page.locator("main").evaluate("el => ({width: el.clientWidth, content: el.scrollWidth})")

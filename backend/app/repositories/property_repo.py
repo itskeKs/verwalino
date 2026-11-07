@@ -19,11 +19,6 @@ class PropertyRepository(TenantRepository[Property]):
         return bool(await self._session.scalar(text('SELECT financial_property_exists(:org,:property)'),
             {'org': self._org_id, 'property': property_id}))
 
-    async def get_by_id_for_update(self, property_id: uuid.UUID) -> Property | None:
-        stmt = self._base_query().where(Property.id == property_id).with_for_update()
-        result = await self._session.execute(stmt)
-        return result.scalar_one_or_none()
-
     async def list_effective_rules_for_update(
         self, property_id: uuid.UUID
     ) -> tuple[PropertyRule, ...]:

@@ -191,7 +191,7 @@ def batch_request(**changes):
     return {
         "period_start": "2025-01-01", "period_end": "2025-06-30",
         "reference_date": "2025-07-01", "threshold": "2399.99",
-        "grace_days": 0, "base_interest_rate": None, **changes,
+        "grace_days": 0, **changes,
     }
 
 
@@ -255,6 +255,33 @@ async def test_batch_stale_and_unknown_selection_are_atomic(isolated_batch_seed)
 
 
 @pytest.mark.asyncio
+async def test_batch_policy_change_requires_refresh_and_same_policy_is_saved(isolated_batch_seed):
+    client, seed = isolated_batch_seed
+    body = batch_request()
+    old = await batch_preview(client, body)
+    path = "/api/dunning/settings"
+    settings = (await client.get(path)).json()
+    answer = await client.put(path, json={**settings, "fee_level_1": "3.00", "default_interest_enabled": True})
+    assert answer.status_code == 200, answer.text
+
+    request = selected_batch(body, old, [seed["lease_m7"]])
+    before = (await client.get("/api/dunning")).json()
+    stale = await client.post("/api/dunning/batch", json=request)
+    assert stale.status_code == 409, stale.text
+    assert (await client.get("/api/dunning")).json() == before
+
+    preview = await batch_preview(client, body)
+    candidate = next(row for row in preview["candidates"] if row["lease_agreement_id"] == str(seed["lease_m7"]))
+    assert candidate["fee_amount"] == "3.00"
+    assert Decimal(candidate["interest_amount"]) > 0
+    created = await client.post("/api/dunning/batch", json={**request, "expected_source_digest": preview["source_digest"]})
+    assert created.status_code == 201, created.text
+    assert {key: created.json()[0][key] for key in ("fee_amount", "interest_amount", "total_amount")} == {
+        key: candidate[key] for key in ("fee_amount", "interest_amount", "total_amount")
+    }
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("threshold", ["-1.00", "NaN", "Infinity", "1.001"])
 async def test_batch_invalid_threshold(client_a_admin, m7_seed, threshold):
     response = await client_a_admin.post("/api/dunning/batch/preview", json=batch_request(threshold=threshold))
@@ -302,7 +329,7 @@ async def test_batch_real_history_invalidates_preview_and_single_draft_agrees(re
         single = await api.post("/api/dunning/tenant", json={
             "tenant_profile_id": str(w["tenant"]), "lease_agreement_id": str(w["lease"]),
             "period_start": body["period_start"], "period_end": body["period_end"],
-            "reference_date": body["reference_date"], "base_interest_rate": None})
+            "reference_date": body["reference_date"]})
         assert single.status_code == 201, single.text
         assert Decimal(single.json()["principal_amount"]) == Decimal("880.97")
 
@@ -550,7 +577,7 @@ async def test_batch_escalation_change_invalidates_basis_and_preserves_issued_no
         created = await api.post("/api/dunning/tenant", json={
             "tenant_profile_id": str(w["tenant"]), "lease_agreement_id": str(w["lease"]),
             "period_start": body["period_start"], "period_end": body["period_end"],
-            "reference_date": body["reference_date"], "base_interest_rate": None})
+            "reference_date": body["reference_date"]})
         assert created.status_code == 201, created.text
         issued = await api.post(f"/api/dunning/{created.json()['id']}/issue")
         assert issued.status_code == 200, issued.text
@@ -563,8 +590,8 @@ async def test_batch_escalation_change_invalidates_basis_and_preserves_issued_no
         row = next(row for row in current["candidates"] if row["lease_agreement_id"] == str(w["lease"]))
         assert row["level"] == 2
         assert Decimal(row["principal_amount"]) == Decimal("850.00")
-        assert Decimal(row["fee_amount"]) == Decimal("5.00")
-        assert Decimal(row["total_amount"]) == Decimal("855.00")
+        assert Decimal(row["fee_amount"]) == Decimal("2.50")
+        assert Decimal(row["total_amount"]) == Decimal("852.50")
         created = await api.post("/api/dunning/batch", json=selected_batch(body, current, [w["lease"]]))
         assert created.status_code == 201, created.text
         assert (await api.get(f"/api/dunning/{original['id']}")).json() == original
@@ -612,7 +639,7 @@ class TestDunningEngine:
         ]
 
         ref_date = date(2025, 7, 1)
-        overdue = find_overdue_items(items, ref_date, grace_days=0)
+        overdue = find_overdue_items(items, ref_date, grace_days=0, current_year=2026)
         assert len(overdue) == 2
         assert all(it.open_amount > 0 for it in overdue)
         assert overdue[0].payment_type == "KALTMIETE"
@@ -628,11 +655,11 @@ class TestDunningEngine:
         ]
         # June 2025 due date is June 1; ref_date June 2 with 5 days grace
         # -> deadline June 6, ref June 2 is NOT past deadline.
-        overdue = find_overdue_items(items, date(2025, 6, 2), grace_days=5)
+        overdue = find_overdue_items(items, date(2025, 6, 2), grace_days=5, current_year=2026)
         assert len(overdue) == 0
 
         # But with ref_date July 1 (past June 6) it IS overdue.
-        overdue = find_overdue_items(items, date(2025, 7, 1), grace_days=5)
+        overdue = find_overdue_items(items, date(2025, 7, 1), grace_days=5, current_year=2026)
         assert len(overdue) == 1
 
     def test_escalation_levels(self):
@@ -648,8 +675,8 @@ class TestDunningEngine:
         from app.engine.dunning import dunning_fee
 
         assert dunning_fee(1) == Decimal("0.00")
-        assert dunning_fee(2) == Decimal("5.00")
-        assert dunning_fee(3) == Decimal("10.00")
+        assert dunning_fee(2) == Decimal("2.50")
+        assert dunning_fee(3) == Decimal("2.50")
 
     def test_dunning_fee_custom(self):
         from app.engine.dunning import dunning_fee
@@ -696,13 +723,13 @@ class TestDunningEngine:
             OverdueItem(period_year=2025, period_month=3, payment_type="KALTMIETE",
                         soll=Decimal("500.00"), ist=Decimal("0.00"), open_amount=Decimal("500.00")),
         ]
-        # 1 prior issued -> level 2, fee 5.00
+        # 1 prior issued -> level 2, fee 2.50
         result = assemble_dunning(items, existing_notice_count=1,
                                    issue_date=date(2025, 7, 15))
         assert result is not None
         assert result.level == 2
-        assert result.fee_amount == Decimal("5.00")
-        assert result.total_amount == Decimal("505.00")
+        assert result.fee_amount == Decimal("2.50")
+        assert result.total_amount == Decimal("502.50")
 
     def test_assemble_dunning_level3_with_fee(self):
         from app.engine.dunning import OverdueItem, assemble_dunning
@@ -711,13 +738,13 @@ class TestDunningEngine:
             OverdueItem(period_year=2025, period_month=3, payment_type="KALTMIETE",
                         soll=Decimal("500.00"), ist=Decimal("0.00"), open_amount=Decimal("500.00")),
         ]
-        # 2 prior issued -> level 3, fee 10.00
+        # 2 prior issued -> level 3, fee 2.50
         result = assemble_dunning(items, existing_notice_count=2,
                                    issue_date=date(2025, 8, 1))
         assert result is not None
         assert result.level == 3
-        assert result.fee_amount == Decimal("10.00")
-        assert result.total_amount == Decimal("510.00")
+        assert result.fee_amount == Decimal("2.50")
+        assert result.total_amount == Decimal("502.50")
 
     def test_assemble_dunning_no_overdue_returns_none(self):
         from app.engine.dunning import assemble_dunning
@@ -949,6 +976,48 @@ class TestDunningChecks:
 # API: create / issue / list / delete / PDF + RBAC
 # ===========================================================================
 class TestDunningAPI:
+    @pytest.mark.parametrize('dated', [False, True])
+    def test_owner_notice_names_snapshot_due_day_and_preserves_legacy_html(self, dated):
+        from hashlib import sha256
+        from types import SimpleNamespace
+        from app.services.dunning_pdf import build_dunning_html
+
+        monthly = {'period_year': 2026, 'period_month': 7, 'payment_type': 'HAUSGELD_VORSCHUSS',
+            'soll': '600.00', 'ist': '0.00', 'open_amount': '600.00'}
+        if dated:
+            monthly['due_date'] = '2026-07-03'
+        notice = SimpleNamespace(level=1, principal_amount=Decimal('650.00'), fee_amount=Decimal('0.00'),
+            interest_amount=Decimal('0.00'), interest_snapshot=None, total_amount=Decimal('650.00'),
+            issue_date=date(2026, 7, 4), due_date=date(2026, 7, 18), included_items=[monthly,
+                {'period_year': 2026, 'period_month': 7, 'payment_type': 'SONDERZAHLUNG',
+                 'soll': '50.00', 'ist': '0.00', 'open_amount': '50.00', 'due_date': '2026-07-01'}])
+        html = build_dunning_html(notice)
+        if dated:
+            assert 'Fällig am 03.07.2026' in html
+        else:
+            # Fingerprint of the pre-date-rendering template, including an old dated levy.
+            assert sha256(html.encode()).hexdigest() == 'dc4f5138fea695bd60344a59af98be9defbe8edcc32227a47e5591126975b112'
+
+    def test_owner_notice_omits_the_fallback_date_for_a_payment_without_a_period(self):
+        from types import SimpleNamespace
+        from app.engine.dunning import assemble_dunning, find_overdue_items
+        from app.engine.mietkonto import PaymentInput, account_statement
+        from app.services.dunning_pdf import build_dunning_html
+
+        issue_date = date(2026, 7, 4)
+        payment = PaymentInput(uuid.uuid4(), 'HAUSGELD_VORSCHUSS', 'OUT', Decimal('600.00'),
+            period_year=None, period_month=None)
+        statement = account_statement([], [payment])
+        overdue = find_overdue_items(list(statement.open_items), issue_date, current_year=2026)
+        draft = assemble_dunning(overdue, 0, issue_date)
+        items = draft.items_snapshot()
+        assert items == [{'period_year': 0, 'period_month': None, 'payment_type': 'HAUSGELD_VORSCHUSS',
+            'soll': '0.00', 'ist': '-600.00', 'open_amount': '600.00', 'due_date': '2026-01-01',
+            '_dunning_format': 2}]
+
+        issued = SimpleNamespace(**vars(draft), included_items=items, status='issued')
+        assert 'Fällig am 01.01.2026' not in build_dunning_html(issued)
+
     @pytest.mark.parametrize("issued_at", [None, datetime(2026, 11, 1, 12, 26, 4, 611054, tzinfo=_tz.utc)])
     def test_issue_time_serializes_as_iso_with_timezone(self, issued_at):
         from app.api.dunning import _to_out
@@ -1175,7 +1244,7 @@ async def test_t35_migration_roundtrip_preserves_old_letters(migrator_session, m
     from sqlalchemy import create_engine
     from tests.conftest import MIGRATOR_SYNC_URL
     await _set_org(migrator_session, m7_seed["org_a_id"])
-    await TestDunningImmutability()._insert_issued(migrator_session, m7_seed)
+    legacy_id = await TestDunningImmutability()._insert_issued(migrator_session, m7_seed)
     await migrator_session.commit()
     migration = importlib.import_module("migrations.versions.0129_dunning_interest")
     engine = create_engine(MIGRATOR_SYNC_URL)
@@ -1183,6 +1252,16 @@ async def test_t35_migration_roundtrip_preserves_old_letters(migrator_session, m
         with engine.begin() as connection, Operations.context(MigrationContext.configure(connection)):
             point = connection.begin_nested()
             try:
+                # Rehearse 0129 with a pre-interest notice. Other tests may
+                # have issued interest-bearing notices in this disposable DB.
+                # The savepoint restores them and their dependencies.
+                connection.execute(text("""
+                    CREATE TEMP TABLE dunning_0129_fixture AS
+                    SELECT * FROM dunning_notice WHERE id=:legacy
+                """), {"legacy": legacy_id})
+                connection.execute(text("TRUNCATE public.dunning_notice CASCADE"))
+                connection.execute(text("INSERT INTO dunning_notice SELECT * FROM dunning_0129_fixture"))
+                connection.execute(text("SET CONSTRAINTS ALL IMMEDIATE"))
                 before = connection.execute(text("SELECT to_jsonb(n) - 'interest_amount' - 'interest_snapshot' FROM dunning_notice n WHERE status='issued' ORDER BY id")).scalars().all()
                 assert before, "Roundtrip must cover existing issued letters"
                 function = connection.scalar(text("SELECT pg_get_functiondef('trg_dunning_notice_immutability()'::regprocedure)"))
@@ -1210,66 +1289,47 @@ class TestT35Interest:
         }
 
     @pytest.mark.asyncio
-    async def test_t35_settings(self, client_a_admin, monkeypatch):
-        from app.core.config import settings
-        monkeypatch.setattr(settings, "dunning_base_interest_rate", Decimal("2.50"))
-        response = await client_a_admin.get("/api/dunning/settings")
-        assert response.status_code == 200, response.text
-        assert response.json() == {"base_interest_rate": "2.50"}
-
-    @pytest.mark.asyncio
-    @pytest.mark.parametrize("rate", [2.5, 2, True, "NaN", "Infinity", "-Infinity", "bogus", "", "1e999999"])
-    async def test_t35_invalid_rates(self, client_a_admin, m7_seed, rate):
+    async def test_removed_manual_rate_is_rejected(self, client_a_admin, m7_seed):
         response = await client_a_admin.post("/api/dunning/tenant", json=self.tenant_body(
-            m7_seed, base_interest_rate=rate))
+            m7_seed, base_interest_rate="2.50"))
         assert response.status_code == 422, response.text
 
     @pytest.mark.asyncio
-    async def test_t35_api_and_pdf_snapshot(self, client_a_admin, m7_seed):
+    async def test_t35_api_and_pdf_snapshot(self, client_a_admin, m7_seed, enabled_dunning_interest):
         import io
         import pdfplumber
         response = await client_a_admin.post("/api/dunning/tenant", json=self.tenant_body(
-            m7_seed, base_interest_rate="2.50"))
+            m7_seed))
         assert response.status_code == 201, response.text
         notice = response.json()
         assert notice["principal_amount"] == "600.00"
-        assert notice["interest_amount"] == "7.39"
-        assert notice["total_amount"] == "607.39"
-        assert [item["days"] for item in notice["interest_snapshot"]["items"]] == [60, 60]
+        assert notice["interest_amount"] == "6.70"
+        assert notice["total_amount"] == "606.70"
+        assert [item["days"] for item in notice["interest_snapshot"]["items"]] == [56, 56]
         response = await client_a_admin.post(f'/api/dunning/{notice["id"]}/issue')
         assert response.status_code == 200, response.text
         response = await client_a_admin.get(f'/api/dunning/{notice["id"]}/pdf')
         assert response.status_code == 200, response.text
         with pdfplumber.open(io.BytesIO(response.content)) as pdf:
             text = "\n".join(page.extract_text() for page in pdf.pages)
-        for value in ("Basiszinssatz", "2,50", "7,50", "30.04.2025", "60", "7,39", "607,39"):
+        for value in ("Basiszinssatz", "2,27", "7,27", "30.04.2025", "56", "6,70", "606,70"):
             assert value in text
 
     @pytest.mark.asyncio
-    @pytest.mark.parametrize("configured,supplied,expected", [
-        ("2.50", "missing", "7.39"), ("-0.88", "missing", "4.07"),
-        ("2.50", "-0.88", "4.07"), ("2.50", None, "0.00"),
-        (None, "missing", "0.00"), (None, None, "0.00"),
-    ])
-    async def test_t35_configuration_override_and_null(self, client_a_admin, m7_seed, monkeypatch, configured, supplied, expected):
-        from app.core.config import settings
-        monkeypatch.setattr(settings, "dunning_base_interest_rate", Decimal(configured) if configured else None)
-        extra = {} if supplied == "missing" else {"base_interest_rate": supplied}
-        response = await client_a_admin.post("/api/dunning/tenant", json=self.tenant_body(m7_seed, **extra))
-        assert response.status_code == 201, response.text
-        body = response.json()
-        assert body["interest_amount"] == expected
-        assert Decimal(body["total_amount"]) == Decimal("600.00") + Decimal(expected)
-        if expected == "0.00":
-            assert body["interest_snapshot"] is None
-        else:
-            assert body["interest_snapshot"]["base_interest_rate"] == (configured if supplied == "missing" else supplied)
+    async def test_missing_rate_returns_conflict_without_creating_a_draft(
+        self, client_a_admin, m7_seed, enabled_dunning_interest,
+    ):
+        before = (await client_a_admin.get("/api/dunning")).json()
+        response = await client_a_admin.post("/api/dunning/tenant", json=self.tenant_body(
+            m7_seed, reference_date="2027-01-01"))
+        assert response.status_code == 409, response.text
+        assert response.json()["detail"]["code"] == "base_interest_rate_missing"
+        assert "01.01.2027" in response.json()["detail"]["message"]
+        assert (await client_a_admin.get("/api/dunning")).json() == before
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize("extra", [
-        {"base_interest_rate": "99999999999999999999999999999"},
         {"override_fee": "1000000000000"}, {"override_fee": "NaN"},
-        {"base_interest_rate": "0." + "1" * 101},
     ])
     async def test_t35_overflow_returns_422(self, client_a_admin, m7_seed, extra):
         response = await client_a_admin.post("/api/dunning/tenant", json=self.tenant_body(m7_seed, **extra))
@@ -1284,14 +1344,14 @@ class TestT35Interest:
         assert (await client_a_readonly.get("/api/dunning/settings")).status_code == 200
 
     @pytest.mark.asyncio
-    async def test_t35_issued_interest_sql_immutable_and_downgrade_guard(self, client_a_admin, m7_seed, app_rw_session):
+    async def test_t35_issued_interest_sql_immutable_and_downgrade_guard(self, client_a_admin, m7_seed, app_rw_session, enabled_dunning_interest):
         import importlib
         from alembic.migration import MigrationContext
         from alembic.operations import Operations
         from sqlalchemy import create_engine
         from sqlalchemy.exc import DBAPIError
         from tests.conftest import MIGRATOR_SYNC_URL
-        response = await client_a_admin.post("/api/dunning/tenant", json=self.tenant_body(m7_seed, base_interest_rate="2.50"))
+        response = await client_a_admin.post("/api/dunning/tenant", json=self.tenant_body(m7_seed))
         assert response.status_code == 201, response.text
         notice = response.json()
         assert (await client_a_admin.post(f'/api/dunning/{notice["id"]}/issue')).status_code == 200
@@ -1310,46 +1370,41 @@ class TestT35Interest:
                 with pytest.raises(DBAPIError, match="Cannot downgrade while interest-backed"):
                     with connection.begin_nested():
                         migration.downgrade()
-                assert connection.scalar(text("SELECT interest_amount FROM dunning_notice WHERE id=:id"), {"id": notice["id"]}) == Decimal("7.39")
+                assert connection.scalar(text("SELECT interest_amount FROM dunning_notice WHERE id=:id"), {"id": notice["id"]}) == Decimal("6.70")
         finally:
             engine.dispose()
 
 
-def test_t35_settings_exact_decimal_env(monkeypatch):
-    from app.core.config import Settings
-    from pydantic import ValidationError
-    monkeypatch.setenv("HV_DUNNING_BASE_INTEREST_RATE", "-0.88")
-    assert Settings(_env_file=None).dunning_base_interest_rate == Decimal("-0.88")
-    for bad in [2.5, True, "NaN", "Infinity"]:
-        with pytest.raises(ValidationError):
-            Settings(_env_file=None, dunning_base_interest_rate=bad)
-
-
 @pytest.mark.asyncio
-async def test_t35_legacy_pdf_has_no_new_interest_disclosure(client_a_admin, m7_seed, monkeypatch):
+async def test_draft_without_interest_stays_interest_free_after_enabling(client_a_admin, m7_seed):
     import io
     import pdfplumber
-    from app.core.config import settings
-    response = await client_a_admin.post('/api/dunning/tenant', json=TestT35Interest.tenant_body(m7_seed, base_interest_rate=None))
+    response = await client_a_admin.post('/api/dunning/tenant', json=TestT35Interest.tenant_body(m7_seed))
     assert response.status_code == 201, response.text
     notice = response.json()
     assert notice['interest_amount'] == '0.00'
     assert notice['interest_snapshot'] is None
-    monkeypatch.setattr(settings, 'dunning_base_interest_rate', Decimal('2.50'))
-    assert (await client_a_admin.post(f'/api/dunning/{notice["id"]}/issue')).status_code == 200
-    response = await client_a_admin.get(f'/api/dunning/{notice["id"]}/pdf')
-    assert response.status_code == 200
-    with pdfplumber.open(io.BytesIO(response.content)) as pdf:
-        text = '\n'.join(page.extract_text() for page in pdf.pages)
-    assert 'Basiszinssatz' not in text
-    assert '600,00' in text
-    assert (await client_a_admin.get(f'/api/dunning/{notice["id"]}')).json()['interest_snapshot'] is None
+    path = "/api/dunning/settings"
+    assert (await client_a_admin.put(path, json={**DUNNING_DEFAULT_SETTINGS, "default_interest_enabled": True})).status_code == 200
+    try:
+        assert (await client_a_admin.post(f'/api/dunning/{notice["id"]}/issue')).status_code == 200
+        response = await client_a_admin.get(f'/api/dunning/{notice["id"]}/pdf')
+        assert response.status_code == 200
+        with pdfplumber.open(io.BytesIO(response.content)) as pdf:
+            text = '\n'.join(page.extract_text() for page in pdf.pages)
+        assert 'Basiszinssatz' not in text
+        assert 'Mahngebühr (Stufe' in text and '0,00 EUR' in text
+        assert 'vertraglich vereinbart' not in text
+        assert '600,00' in text
+        assert (await client_a_admin.get(f'/api/dunning/{notice["id"]}')).json()['interest_snapshot'] is None
+    finally:
+        assert (await client_a_admin.put(path, json=DUNNING_DEFAULT_SETTINGS)).status_code == 200
 
 
 @pytest.mark.asyncio
-async def test_t35_raw_sql_draft_total_and_provenance_consistency(client_a_admin, m7_seed, app_rw_session):
+async def test_t35_raw_sql_draft_total_and_provenance_consistency(client_a_admin, m7_seed, app_rw_session, enabled_dunning_interest):
     from sqlalchemy.exc import DBAPIError
-    response = await client_a_admin.post('/api/dunning/tenant', json=TestT35Interest.tenant_body(m7_seed, base_interest_rate='2.50'))
+    response = await client_a_admin.post('/api/dunning/tenant', json=TestT35Interest.tenant_body(m7_seed))
     assert response.status_code == 201, response.text
     notice = response.json()
     await _set_org(app_rw_session, m7_seed['org_a_id'])
@@ -1358,7 +1413,7 @@ async def test_t35_raw_sql_draft_total_and_provenance_consistency(client_a_admin
         with pytest.raises(DBAPIError, match='ck_dunning_notice_(total_sum|interest_provenance)'):
             async with app_rw_session.begin_nested():
                 await app_rw_session.execute(text(sql), {'id': uuid.UUID(notice['id'])})
-    assert await app_rw_session.scalar(text('SELECT interest_amount FROM dunning_notice WHERE id=:id'), {'id': uuid.UUID(notice['id'])}) == Decimal('7.39')
+    assert await app_rw_session.scalar(text('SELECT interest_amount FROM dunning_notice WHERE id=:id'), {'id': uuid.UUID(notice['id'])}) == Decimal('6.70')
 
 
 @pytest.mark.asyncio
@@ -1369,11 +1424,253 @@ async def test_t35_aggregated_open_item_overflow_returns_422(client_a_admin, m7_
     item = OpenItem(2025, 3, 'KALTMIETE', Decimal('1000000000000.00'), Decimal('0'), Decimal('1000000000000.00'))
     calls = []
 
-    def overflowing_statement(*args):
+    def overflowing_statement(*args, **kwargs):
         calls.append(args)
         return SimpleNamespace(open_items=[item])
 
     monkeypatch.setattr(payment_service, 'account_statement', overflowing_statement)
-    response = await client_a_admin.post('/api/dunning/tenant', json=TestT35Interest.tenant_body(m7_seed, base_interest_rate='2.50'))
+    response = await client_a_admin.post('/api/dunning/tenant', json=TestT35Interest.tenant_body(m7_seed))
     assert len(calls) == 1, 'Overflow must be injected into the canonical tenant statement'
     assert response.status_code == 422, response.text
+
+
+@pytest.mark.asyncio
+async def test_property_state_reaches_normal_tenant_dunning(client_a_admin, m7_seed, enabled_dunning_interest):
+    body = TestT35Interest.tenant_body(m7_seed, period_start='2026-01-01', period_end='2026-01-31',
+        reference_date='2026-01-07')
+    # Nationwide third working day is 6 January; Bavaria excludes Epiphany.
+    response = await client_a_admin.post('/api/dunning/tenant', json=body)
+    assert response.status_code == 201, response.text
+    assert {item['due_date'] for item in response.json()['interest_snapshot']['items']} == {'2026-01-06'}
+    original = response.json()
+    issued = await client_a_admin.post(f"/api/dunning/{original['id']}/issue")
+    assert issued.status_code == 200, issued.text
+    frozen_pdf = (await client_a_admin.get(f"/api/dunning/{original['id']}/pdf")).content
+    changed = await client_a_admin.put(f"/api/properties/{m7_seed['prop_m7']}", json={'federal_state': 'BY'})
+    assert changed.status_code == 200, changed.text
+    response = await client_a_admin.post('/api/dunning/tenant', json=body)
+    assert response.status_code == 422, response.text
+    response = await client_a_admin.post('/api/dunning/tenant', json={**body, 'reference_date':'2026-01-08'})
+    assert response.status_code == 201, response.text
+    assert {item['due_date'] for item in response.json()['interest_snapshot']['items']} == {'2026-01-07'}
+    reloaded = (await client_a_admin.get(f"/api/dunning/{original['id']}")).json()
+    assert reloaded['interest_snapshot'] == original['interest_snapshot']
+    assert (await client_a_admin.get(f"/api/dunning/{original['id']}/pdf")).content == frozen_pdf
+
+
+DUNNING_DEFAULT_SETTINGS = {
+    "fee_level_1": "0.00", "fee_level_2": "2.50", "fee_level_3": "2.50",
+    "default_interest_enabled": False,
+}
+
+
+@pytest.mark.asyncio
+async def test_organization_dunning_settings_require_a_live_admin(
+    client_a_admin, client_a_clerk, client_a_readonly, client_b_admin, seed_data,
+):
+    path = "/api/dunning/settings"
+    assert (await client_a_readonly.get(path)).json() == DUNNING_DEFAULT_SETTINGS
+    updated = {**DUNNING_DEFAULT_SETTINGS, "fee_level_2": "3.00",
+               "fee_level_3": "4.00", "default_interest_enabled": True}
+    for client in (client_a_clerk, client_a_readonly):
+        assert (await client.put(path, json=updated)).status_code == 403
+    assert (await client_a_admin.put(path, json={**updated, "fee_level_1": "-0.01"})).status_code == 422
+    assert (await client_a_admin.put(path, json={**updated, "organization_id": str(seed_data["org_b_id"])})).status_code == 422
+    try:
+        response = await client_a_admin.put(path, json=updated)
+        assert response.status_code == 200, response.text
+        assert (await client_a_readonly.get(path)).json() == updated
+        assert (await client_b_admin.get(path)).json() == DUNNING_DEFAULT_SETTINGS
+    finally:
+        await client_a_admin.put(path, json=DUNNING_DEFAULT_SETTINGS)
+
+
+
+@pytest_asyncio.fixture
+async def enabled_dunning_interest(client_a_admin):
+    path = "/api/dunning/settings"
+    original = (await client_a_admin.get(path)).json()
+    response = await client_a_admin.put(path, json={**original, "default_interest_enabled": True})
+    assert response.status_code == 200, response.text
+    try:
+        yield
+    finally:
+        response = await client_a_admin.put(path, json=original)
+        assert response.status_code == 200, response.text
+
+
+@pytest.mark.asyncio
+async def test_0174_downgrade_refuses_default_policy_notice_without_interest(isolated_batch_seed, monkeypatch):
+    from contextlib import nullcontext
+    from types import SimpleNamespace
+
+    import sqlalchemy
+    from alembic import command
+    from alembic.config import Config
+    from sqlalchemy.exc import DBAPIError
+    from tests.migration_rehearsal import project_legacy_advance_modes
+
+    client, seed = isolated_batch_seed
+    payload = TestT35Interest.tenant_body(seed)
+    del payload["override_fee"]
+    draft = await client.post("/api/dunning/tenant", json=payload)
+    assert draft.status_code == 201, draft.text
+    notice = draft.json()
+    assert notice["fee_amount"] == "0.00"
+    assert notice["interest_snapshot"] is None
+    issued = await client.post(f"/api/dunning/{notice['id']}/issue")
+    assert issued.status_code == 200, issued.text
+
+    cfg = Config("alembic.ini")
+    cfg.attributes["hv_declaration_test_database"] = True
+    engine = sqlalchemy.create_engine(SYNC_URL)
+    try:
+        with engine.connect() as connection:
+            params = {"id": notice["id"], "org": notice["organization_id"]}
+            assert connection.scalar(text("SELECT count(*) FROM dunning_settings WHERE organization_id=:org"), params) == 0
+            assert connection.scalar(text("""
+                SELECT status='issued' AND interest_snapshot IS NULL AND included_items->0->>'_dunning_format'='2'
+                FROM dunning_notice WHERE id=:id
+            """), params)
+            with monkeypatch.context() as patch:
+                patch.setattr(sqlalchemy, "engine_from_config",
+                              lambda *args, **kwargs: SimpleNamespace(connect=lambda: nullcontext(connection)))
+                with connection.begin_nested() as historical:
+                    connection.execute(text("LOCK TABLE public.lease_agreement, public.lease_rent_change, "
+                                            "public.audit_event IN ACCESS EXCLUSIVE MODE"))
+                    command.downgrade(cfg, "0176")
+                    connection.execute(text("SET CONSTRAINTS ALL IMMEDIATE"))
+                    project_legacy_advance_modes(connection)
+                    # Historical dunning schemas cannot retain appearance preferences.
+                    connection.execute(text("""UPDATE public."user"
+                        SET design_theme='klar' WHERE design_theme<>'klar'"""))
+                    # Isolate the one default-policy notice from other test evidence.
+                    connection.execute(text("CREATE TEMP TABLE default_policy_notice AS SELECT * FROM dunning_notice WHERE id=:id"), params)
+                    connection.execute(text("TRUNCATE public.dunning_settings, public.dunning_notice CASCADE"))
+                    connection.execute(text("INSERT INTO dunning_notice SELECT * FROM default_policy_notice"))
+                    with pytest.raises(DBAPIError, match="Previous releases cannot render retained organization-policy notices"):
+                        with connection.begin_nested():
+                            command.downgrade(cfg, "0173")
+                    historical.rollback()
+            assert connection.scalar(text("SELECT version_num FROM alembic_version")) == "0177"
+            assert connection.scalar(text("SELECT to_regclass('public.dunning_settings')")) is not None
+            assert connection.scalar(text("SELECT count(*) FROM dunning_notice WHERE id=:id"), params) == 1
+    finally:
+        engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_yearless_owner_payout_does_not_create_historical_arrears(
+    isolated_batch_seed, rent_db, monkeypatch,
+):
+    from app.services import dunning_service
+
+    class CurrentDate(date):
+        @classmethod
+        def today(cls):
+            return cls(2026, 11, 5)
+
+    monkeypatch.setattr(dunning_service, "date", CurrentDate)
+    client, seed = isolated_batch_seed
+    await rent_db.execute(text("""
+        INSERT INTO payment (organization_id, bank_account_id, property_id,
+            direction, amount, value_date, payment_type, owner_profile_id,
+            status, booked_at, booked_by)
+        VALUES (:org, :account, :property, 'OUT', 100, '2025-05-15', 'SONDERZAHLUNG',
+            :owner, 'booked', '2025-05-15 10:00+00', :actor)
+    """), {"org": seed["org_a_id"], "account": seed["acct_m7"],
+           "property": seed["prop_m7"], "owner": seed["owner_m7"], "actor": seed["user_a_admin_id"]})
+    await rent_db.commit()
+
+    response = await client.post("/api/dunning/owner", json={
+        "owner_profile_id": str(seed["owner_m7"]), "period_start": "2025-05-01",
+        "period_end": "2025-05-31", "reference_date": "2025-05-31",
+    })
+    assert response.status_code == 422, response.text
+    assert (await client.get("/api/dunning")).json() == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("sent, rate", [(False, None), (True, None), (True, "-0.8800")])
+async def test_exact_legacy_batch_receipt_replay(isolated_batch_seed, rent_db, rent_world, sent, rate):
+    import hashlib
+    import json
+
+    from app.models.dunning_batch import DunningBatch
+
+    client, seed = isolated_batch_seed
+    created = await client.post("/api/dunning/tenant", json=TestT35Interest.tenant_body(seed))
+    assert created.status_code == 201, created.text
+    notice = created.json()
+
+    # The pre-upgrade request digest included the raw rate text and whether it
+    # was present. Seed the receipt shape independently of the new serializer.
+    body = batch_request(
+        lease_agreement_ids=[str(seed["lease_m7"])],
+        expected_source_digest="a" * 64, request_id=str(uuid.uuid4()),
+    )
+    old = dict(body, accounting_scope_id=None, override_fee=None,
+               base_interest_rate=rate, base_interest_rate_supplied=sent)
+    digest = hashlib.sha256(json.dumps(old, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+    rent_db.add(DunningBatch(
+        organization_id=seed["org_a_id"], actor_user_id=seed["user_a_admin_id"],
+        request_id=uuid.UUID(body["request_id"]), request_digest=digest,
+        result=[{"lease_agreement_id": str(seed["lease_m7"]), "notice_id": notice["id"]}],
+    ))
+    await rent_db.commit()
+
+    exact = {**body, "base_interest_rate": rate} if sent else body
+    replay = await client.post("/api/dunning/batch", json=exact)
+    assert replay.status_code == 201, replay.text
+    assert replay.json() == [notice]
+    changed = {**body, "base_interest_rate": "0.00"} if not sent else body
+    assert (await client.post("/api/dunning/batch", json=changed)).status_code == 409
+    if sent and rate is not None:
+        assert (await client.post("/api/dunning/batch", json={**body, "base_interest_rate": "-0.88"})).status_code == 409
+    for actor in (api_client(rent_world, "clerk"), api_client(rent_world, foreign=True)):
+        async with actor:
+            assert (await actor.post("/api/dunning/batch", json={**body, "base_interest_rate": rate})).status_code == 422
+    fresh = {**body, "request_id": str(uuid.uuid4()), "base_interest_rate": rate}
+    assert (await client.post("/api/dunning/batch", json=fresh)).status_code == 422
+    assert (await client.post("/api/dunning/batch/preview", json=batch_request(base_interest_rate=rate))).status_code == 422
+    assert (await client.get("/api/dunning")).json() == [notice]
+
+
+@pytest.mark.asyncio
+async def test_unscoped_ledger_requires_exact_lease_provenance(isolated_batch_seed, rent_db):
+    client, seed = isolated_batch_seed
+    unit = await client.post("/api/units", json={
+        "property_id": str(seed["prop_m7"]), "number": "M7-2", "usage_type": "WOHNUNG",
+    })
+    assert unit.status_code == 201, unit.text
+    lease = await client.post("/api/leases", json={
+        "unit_id": unit.json()["id"], "tenant_profile_id": str(seed["tenant_m7"]),
+        "valid_from": "2025-01-01", "base_rent": "550.00", "advance_payment": "50.00",
+    })
+    assert lease.status_code == 201, lease.text
+    other_lease = lease.json()["id"]
+    await _set_org(rent_db, seed["org_a_id"])
+    legacy_id = await TestDunningImmutability()._insert_issued(rent_db, seed)
+    await rent_db.commit()
+    legacy_path = f"/api/dunning/{legacy_id}"
+    legacy = await client.get(legacy_path)
+    assert legacy.status_code == 200, legacy.text
+    legacy_pdf = await client.get(f"{legacy_path}/pdf")
+    assert legacy_pdf.status_code == 200
+    draft = await client.post("/api/dunning/tenant", json=TestT35Interest.tenant_body(seed))
+    assert draft.status_code == 201, draft.text
+    notice_id = draft.json()["id"]
+    issued = await client.post(f"/api/dunning/{notice_id}/issue")
+    assert issued.status_code == 200, issued.text
+
+    for lease_id, expected_ids in ((seed["lease_m7"], [notice_id]), (other_lease, [])):
+        ledger = await client.get(f"/api/payments/mietkonto/lease/{lease_id}", params={
+            "period_start": "2025-03-01", "period_end": "2025-03-31",
+        })
+        assert ledger.status_code == 200, ledger.text
+        assert [row["id"] for row in ledger.json()["dunning_notices"]] == expected_ids
+    history = await client.get("/api/dunning", params={"tenant_profile_id": str(seed["tenant_m7"])})
+    assert history.status_code == 200, history.text
+    assert {row["id"] for row in history.json()} == {notice_id, str(legacy_id)}
+    assert (await client.get(legacy_path)).json() == legacy.json()
+    assert (await client.get(f"{legacy_path}/pdf")).content == legacy_pdf.content

@@ -74,7 +74,7 @@ async def follow_hint(browser_world, kind, width):
     await page.get_by_label('E-Mail', exact=True).fill(b.world.data['profile_email'])
     await page.get_by_label('Passwort', exact=True).fill('testpass1234')
     await button(page, 'Anmelden').click()
-    await expect(page.get_by_role('link', name='Objekte', exact=True)).to_be_visible()
+    await expect(page.get_by_role('heading', name='Objekte', exact=True)).to_be_visible()
     d = b.world.data
     await b.visit(f"/objekte/{d['profile_property']['id']}/einheiten/{d['profile_unit']['id']}")
     action, select, role = labels(kind)

@@ -172,6 +172,10 @@ def _suggestion(
     items = sorted((item for item in target.open_items
                     if item.open_amount > 0 and (item.period_year, item.period_month) == (year, month)
                     and item.payment_type in allowed), key=lambda item: item.payment_type)
+    if any(item.reconciled_advance for item in items):
+        # The net debt is known, but a new payment still needs its component
+        # assignment under the separate rate. Leave that choice to the manager.
+        return None
     total = sum((item.open_amount for item in items), Decimal("0.00"))
     if not items or transaction.amount > total:
         return None

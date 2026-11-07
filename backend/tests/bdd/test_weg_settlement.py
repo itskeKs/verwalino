@@ -130,7 +130,8 @@ def long_owner_balance(world, seed_data):
     return create_balance_world(world, seed_data, owner_name='Anna-Katharina Freifrau von Hohenzollern-Sigmaringen')
 
 
-def create_balance_world(world, seed_data, *, cost_period_end='2026-12-31', owner_name='Anna Berg'):
+def create_balance_world(world, seed_data, *, cost_period_end='2026-12-31', owner_name='Anna Berg', second_owner='Berta Vollständig',
+                         scope_start='2026-01-01', monthly_due_day=1):
     world.actor = world.administrator_of('Verwaltung Alpha')
     world.actor_organization = 'Verwaltung Alpha'
     user = str(seed_data['user_a_admin_id'])
@@ -140,7 +141,7 @@ def create_balance_world(world, seed_data, *, cost_period_end='2026-12-31', owne
             'grants': [{'user_id': user, 'capabilities': ['read', 'prepare', 'approve', 'export'],
                         'reason': 'Synthetic settlement'}]}}, keyed=True)
     owners, units = [], []
-    for number, mea, name in [('1', '600', owner_name), ('2', '400', 'Berta Vollständig')]:
+    for number, mea, name in [('1', '600', owner_name), ('2', '400', second_owner)]:
         unit = create(world, '/api/units', {'property_id': home['id'], 'number': number,
             'usage_type': 'WOHNUNG', 'mea': mea, 'area': '100'})
         units.append(unit['id'])
@@ -150,7 +151,7 @@ def create_balance_world(world, seed_data, *, cost_period_end='2026-12-31', owne
             'valid_from': '2020-01-01'})
         owners.append(owner['id'])
     scope = create(world, '/api/accounting-scopes', {'property_id': home['id'], 'scope_type': 'WEG',
-        'label': 'WEG Gartenstraße', 'valid_from': '2026-01-01', 'whole_property': True}, keyed=True)
+        'label': 'WEG Gartenstraße', 'valid_from': scope_start, 'whole_property': True}, keyed=True)
     create(world, f"/api/accounting-scopes/{scope['id']}/grants", {'user_id': user,
         'capabilities': ['read', 'prepare', 'approve', 'confirm', 'export'], 'reason': 'Synthetic settlement'}, keyed=True)
     basis = {'property_id': home['id'], 'accounting_scope_id': scope['id']}
@@ -164,7 +165,7 @@ def create_balance_world(world, seed_data, *, cost_period_end='2026-12-31', owne
         'tenant_apportionable': 'NICHT_UMLAGEFAEHIG', 'source': 'MANUAL'})
     assert world.act('POST', f"/api/cost-entries/{cost['id']}/confirm").status_code == 200
     plan = create(world, '/api/economic-plans', {**basis, 'plan_year': 2026,
-        'period_start': '2026-01-01', 'period_end': '2026-12-31'})
+        'period_start': '2026-01-01', 'period_end': '2026-12-31', 'monthly_due_day': monthly_due_day})
     values = {'planned_costs': [{'category_code': 'GARTENPFLEGE', 'label': 'Bewirtschaftung',
         'planned_amount': '12000.00', 'cost_group': 'UMLAGEFAEHIG'}], 'reserve_contribution_total': '0.00'}
     world.run(attest_fixture(world.actor, 'economic_plan', plan['id'], values))
@@ -229,7 +230,7 @@ def cross_year_successor_payment(world, weg_balance):
     assert next(row['paid_total'] for row in derived.json() if row['owner_profile_id'] == w['successor']) == '1900.00'
     w['ledger_before'] = owner_ledger(world, w, w['successor'])
     assert {key: w['ledger_before'][key] for key in ('soll_total', 'ist_total', 'balance')} == {
-        'soll_total': '0.00', 'ist_total': '1900.00', 'balance': '-1900.00'}
+        'soll_total': '2400.00', 'ist_total': '1900.00', 'balance': '500.00'}
     w['payments_before'] = world.act('GET', '/api/payments').json()
 
 
@@ -338,7 +339,7 @@ def balance_browser(browser_world, weg_balance):
         for width in (1280, 360):
             await b.page.set_viewport_size({'width': width, 'height': 1000})
             if width == 360:
-                await b.page.wait_for_function("document.querySelector('aside').getBoundingClientRect().right <= 0")
+                await expect(b.page.locator("aside")).to_have_count(0)
             region = b.page.get_by_role('region', name='Hausgeld-Abgleich · Anna Berg', exact=True)
             await expect(region).to_be_visible()
             for label, value in (
@@ -365,6 +366,135 @@ def balance_browser(browser_world, weg_balance):
     b.run(check())
 
 
+@given('Karl Weiß owns unit 2 until June and Lena Roth owns it from July', target_fixture='dated_owners')
+def dated_owners(world, seed_data):
+    w = create_balance_world(world, seed_data, second_owner='Karl Weiß', scope_start='2020-01-01')
+    old = world.act('GET', f"/api/ownership?unit_id={w['units'][1]}").json()[0]
+    response = world.act('PATCH', f"/api/ownership/{old['id']}", json={'valid_to': '2026-06-30'})
+    assert response.status_code == 200, response.text
+    person = create_person(world, 'Verwaltung Alpha', 'Lena Roth')
+    buyer = create(world, '/api/owner-profiles', {'person_id': person.id})
+    create(world, '/api/ownership', {'unit_id': w['units'][1], 'owner_profile_id': buyer['id'],
+        'valid_from': '2026-07-01'})
+    w['buyer'] = buyer['id']
+    return w
+
+
+@when('I finalize the asset report for their whole year')
+def dated_asset_report(world, dated_owners):
+    w = dated_owners
+    report = create(world, '/api/weg-settlements/asset-reports', {'property_id': w['property'],
+        'accounting_scope_id': w['scope'], 'period_start': '2026-01-01', 'period_end': '2026-12-31'})
+    values = {'bank_balances': [{'bank_account_id': w['bank'], 'label': 'Giro',
+        'account_type': 'LAUFEND', 'balance': '0.00'}], 'receivables': [], 'payables': []}
+    world.run(attest_fixture(world.actor, 'settlement', report['id'], values))
+    response = world.act('POST', f"/api/weg-settlements/asset-reports/{report['id']}/finalize", json=values)
+    assert response.status_code == 200, response.text
+    w['report'] = report['id']
+    previous = create(world, '/api/weg-settlements/asset-reports', {'property_id': w['property'],
+        'accounting_scope_id': w['scope'], 'period_start': '2025-01-01', 'period_end': '2025-12-31'})
+    world.run(attest_fixture(world.actor, 'settlement', previous['id'], values))
+    response = world.act('POST', f"/api/weg-settlements/asset-reports/{previous['id']}/finalize", json=values)
+    assert response.status_code == 200, response.text
+    w['previous_report'] = previous['id']
+    plan = create(world, '/api/economic-plans', {'property_id': w['property'], 'accounting_scope_id': w['scope'],
+        'plan_year': 2027, 'period_start': '2027-01-01', 'period_end': '2027-12-31'})
+    plan_values = {'planned_costs': [{'category_code': 'GARTENPFLEGE', 'label': 'Bewirtschaftung',
+        'planned_amount': '12000.00', 'cost_group': 'UMLAGEFAEHIG'}], 'reserve_contribution_total': '0.00'}
+    world.run(attest_fixture(world.actor, 'economic_plan', plan['id'], plan_values))
+    response = world.act('POST', f"/api/economic-plans/{plan['id']}/finalize", json=plan_values)
+    assert response.status_code == 200, response.text
+    w['next_plan'] = plan['id']
+
+    import os
+    directory = os.environ.get('VERWALINO_207_SCREENSHOTS')
+    if directory:
+        Path(directory).mkdir(parents=True, exist_ok=True)
+        for label, path in [('plan', f"economic-plans/{w['plan']}"),
+                            ('report', f"weg-settlements/asset-reports/{w['report']}")]:
+            Path(directory, label + '.pdf').write_bytes(world.look(world.actor, '/api/' + path + '/pdf').content)
+
+
+@then('the plan names Karl at the year start and the report names Lena at the year end')
+def dated_document_recipients(world, dated_owners):
+    w = dated_owners
+    for path, name, key_date in [(f"economic-plans/{w['plan']}", 'Karl Weiß', '2026-01-01'),
+                                  (f"weg-settlements/asset-reports/{w['report']}", 'Lena Roth', '2026-12-31'),
+                                  (f"economic-plans/{w['next_plan']}", 'Lena Roth', '2027-01-01'),
+                                  (f"weg-settlements/asset-reports/{w['previous_report']}", 'Karl Weiß', '2025-12-31')]:
+        data = world.look(world.actor, '/api/' + path.replace('weg-settlements/asset-reports/', 'weg-settlements/')).json()
+        recipients = [a for a in data['addressees'] if a['unit_id'] == w['units'][1]]
+        assert len(recipients) == 1
+        assert recipients[0]['owner_name'] == name and recipients[0]['key_date'] == key_date
+        content = pdf_text(world.look(world.actor, f'/api/{path}/pdf').content)
+        assert name in content
+        assert 'Eigentümer am ' + '.'.join(reversed(key_date.split('-'))) in content
+        assert ('Lena Roth' if name == 'Karl Weiß' else 'Karl Weiß') not in content
+
+
+@then('Karl and Lena each owe six monthly Hausgeld advances of 400 euros')
+def dated_owner_ledgers(world, dated_owners):
+    w = dated_owners
+    for owner, months in [(w['owners'][1], list(range(1, 7))), (w['buyer'], list(range(7, 13)))]:
+        ledger = owner_ledger(world, w, owner)
+        assert ledger['soll_total'] == '2400.00'
+        assert [r['period_month'] for r in ledger['open_items']] == months
+        assert all(r['soll'] == '400.00' for r in ledger['open_items'])
+
+
+@then('their issued dunning notices each request only their six unpaid advances')
+def dated_owner_dunning(world, dated_owners):
+    w = dated_owners
+    for owner, months in [(w['owners'][1], list(range(1, 7))), (w['buyer'], list(range(7, 13)))]:
+        notice = create(world, '/api/dunning/owner', {
+            'owner_profile_id': owner, 'economic_plan_id': w['plan'],
+            'accounting_scope_id': w['scope'], 'period_start': '2026-01-01',
+            'period_end': '2026-12-31', 'reference_date': '2027-01-15'})
+        assert notice['principal_amount'] == '2400.00'
+        assert [r['period_month'] for r in notice['included_items']] == months
+        assert all(r['open_amount'] == '400.00' for r in notice['included_items'])
+        issued = world.act('POST', f"/api/dunning/{notice['id']}/issue")
+        assert issued.status_code == 200, issued.text
+        assert issued.json()['status'] == 'issued'
+        assert issued.json()['principal_amount'] == '2400.00'
+
+
+@then('the annual settlement still lists both ownership periods')
+def dated_annual_periods(world, dated_owners):
+    w = dated_owners
+    values = {'paid_advances': [{'owner_profile_id': oid, 'paid_total': '0.00'} for oid in [*w['owners'], w['buyer']]]}
+    world.run(attest_fixture(world.actor, 'settlement', w['run'], values))
+    response = world.act('POST', f"/api/weg-settlements/{w['run']}/finalize", json=values)
+    assert response.status_code == 200, response.text
+    results = {o['owner_profile_id']: o for o in response.json()['owner_results']}
+    for oid, start, end in [(w['owners'][1], '2026-01-01', '2026-06-30'),
+                             (w['buyer'], '2026-07-01', '2026-12-31')]:
+        assert results[oid]['ownership_periods'] == [{'unit_number': '2', 'valid_from': start, 'valid_to': end}]
+
+
+@then('both document pages show their dated addressees at desktop and phone widths')
+def dated_document_browser(browser_world, dated_owners):
+    import os
+    from playwright.async_api import expect
+    b, w = browser_world, dated_owners
+    async def check():
+        for label, path, name, day in [('plan', f"/wirtschaftsplaene/{w['plan']}", 'Karl Weiß', '01.01.2026'),
+                                        ('report', f"/vermoegensberichte/{w['report']}", 'Lena Roth', '31.12.2026')]:
+            for width in (1280, 360):
+                await b.page.set_viewport_size({'width': width, 'height': 1000})
+                await b.visit('/wirtschaftsplaene' if label == 'plan' else '/vermoegensberichte')
+                await b.page.locator(f'a[href="{path}"]').click()
+                await expect(b.page.get_by_role('heading', name='Übersicht', exact=True)).to_be_visible()
+                await b.page.wait_for_timeout(400)
+                directory = os.environ.get('VERWALINO_207_SCREENSHOTS')
+                if directory:
+                    Path(directory).mkdir(parents=True, exist_ok=True)
+                    await b.page.screenshot(path=str(Path(directory) / f'{label}-{width}.png'), full_page=True)
+                region = b.page.get_by_role('region', name='Dokumentempfänger')
+                await expect(region).to_contain_text(name)
+                await expect(region).to_contain_text('Eigentümer am ' + day)
+                assert await region.evaluate('(e) => e.scrollWidth <= e.clientWidth')
+    b.run(check())
 @when(parsers.parse('I prepare their {state} WEG annual settlement'))
 def prepare_long_statement(world, weg_balance, state):
     assert state in ('computed', 'finalized')
@@ -393,7 +523,7 @@ def long_statement_browser(browser_world, world, weg_balance):
         for width in (1280, 360):
             await b.page.set_viewport_size({'width': width, 'height': 1000})
             if width == 360:
-                await b.page.wait_for_function("document.querySelector('aside').getBoundingClientRect().right <= 0")
+                await expect(b.page.locator("aside")).to_have_count(0)
             heading = b.page.get_by_role('heading', name=name, exact=True)
             await expect(heading).to_be_visible()
             card = heading.locator('..')
@@ -443,3 +573,81 @@ def long_statement_browser(browser_world, world, weg_balance):
 
     b.run(check())
     assert world.look(world.actor, f"/api/weg-settlements/{w['run']}").json() == w['statement']
+
+
+@given('Anna, Karl and Lena have booked their twelve, six and six monthly Hausgeld payments')
+def dated_paid_hausgeld(world, dated_owners):
+    w = dated_owners
+    for owner, months, amount in [(w['owners'][0], range(1, 13), '600.00'),
+                                  (w['owners'][1], range(1, 7), '400.00'),
+                                  (w['buyer'], range(7, 13), '400.00')]:
+        for month in months:
+            payment = create(world, '/api/payments', {'bank_account_id': w['bank'], 'direction': 'IN',
+                'owner_profile_id': owner, 'amount': amount, 'value_date': f'2026-{month:02d}-05',
+                'payment_type': 'HAUSGELD_VORSCHUSS', 'period_year': 2026, 'period_month': month})
+            response = world.act('POST', f"/api/payments/{payment['id']}/book")
+            assert response.status_code == 200, response.text
+
+
+@when('I take over their paid Hausgeld from the booked figures')
+def take_over_dated_payments(world, dated_owners):
+    w = dated_owners
+    response = world.act('POST', f"/api/weg-settlements/{w['run']}/paid-advances-derived")
+    assert response.status_code == 200, response.text
+    w['derived'] = response.json()
+
+
+@then('Anna, Karl and Lena have paid 7200, 2400 and 2400 euros')
+def exact_dated_payments(world, dated_owners):
+    w = dated_owners
+    assert {r['owner_profile_id']: r['paid_total'] for r in w['derived']} == {
+        w['owners'][0]: '7200.00', w['owners'][1]: '2400.00', w['buyer']: '2400.00'}
+    assert set(world.act('GET', f"/api/weg-settlements/{w['run']}/input-owners").json()) == {
+        row['owner_profile_id'] for row in w['derived']}
+
+
+@then("clearing Lena's paid amount asks for her missing Hausgeld in German")
+def missing_lena_payment(world, dated_owners):
+    w = dated_owners
+    values = {'paid_advances': w['derived']}
+    world.run(attest_fixture(world.actor, 'settlement', w['run'], values))
+    body = {'paid_advances': [{**row, 'paid_total': ''} if row['owner_profile_id'] == w['buyer'] else row
+                             for row in w['derived']]}
+    response = world.act('POST', f"/api/weg-settlements/{w['run']}/compute", json=body)
+    assert response.status_code == 422, response.text
+    detail = response.json()['detail']
+    assert isinstance(detail, dict), detail
+    assert detail['code'] == 'financial_inputs_incomplete'
+    assert detail['blockers'][0]['code'] == 'owner_payment_coverage_missing'
+    assert detail['owner_profile_id'] == w['buyer'] and detail['field'] == 'paid_total'
+    assert 'Lena Roth' in detail['message'] and 'Hausgeld' in detail['message']
+
+
+@then("the paid Hausgeld prefill and Lena's missing amount are visible on desktop and phone")
+def paid_hausgeld_browser(browser_world, world, dated_owners, tmp_path):
+    import os
+    from playwright.async_api import expect
+    b, w = browser_world, dated_owners
+    # Coverage is a prerequisite; the UI action under test is prefill and compute.
+    values = {'paid_advances': [{'owner_profile_id': oid, 'paid_total': amount} for oid, amount in
+        [(w['owners'][0], '7200.00'), (w['owners'][1], '2400.00'), (w['buyer'], '2400.00')]]}
+    world.run(attest_fixture(world.actor, 'settlement', w['run'], values))
+
+    async def check():
+        for width in (1280, 360):
+            await b.page.set_viewport_size({'width': width, 'height': 1000})
+            await b.visit(f"/weg-abrechnungen/{w['run']}")
+            await b.page.get_by_role('button', name='Aus Zahlenstand übernehmen').click()
+            for name, amount in [('Anna Berg', '7200.00'), ('Karl Weiß', '2400.00'), ('Lena Roth', '2400.00')]:
+                await expect(b.page.get_by_role('textbox', name=f'Tatsächlich gezahltes Hausgeld · {name}')).to_have_value(amount)
+            await b.page.get_by_role('textbox', name='Tatsächlich gezahltes Hausgeld · Lena Roth').fill('')
+            await b.page.get_by_role('button', name='Berechnen', exact=True).click()
+            alert = b.page.locator('.card').filter(has_text='Fehler:')
+            await expect(alert).to_be_visible()
+            await alert.scroll_into_view_if_needed()
+            directory = Path(os.environ.get('VERWALINO_183_SCREENSHOTS', str(tmp_path)))
+            directory.mkdir(parents=True, exist_ok=True)
+            await b.page.screenshot(path=str(directory / f'paid-hausgeld-{width}.png'), full_page=True)
+        await expect(alert).to_contain_text('Lena Roth')
+        await expect(alert).to_contain_text('Hausgeld')
+    b.run(check())

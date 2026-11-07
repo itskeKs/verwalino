@@ -296,3 +296,17 @@ class TestPropertyPeriods:
         expected = (date(2025, 12, 1), date(2026, 11, 30))
         assert period_for_date(12, date(2025, 12, 31)) == expected
         assert period_for_date(12, date(2026, 1, 1)) == expected
+
+
+@pytest.mark.parametrize('transfer', [date(2026, 1, 1), date(2026, 12, 31), date(2026, 7, 1)])
+def test_owner_at_uses_both_inclusive_bounds_and_keeps_coowners(transfer):
+    from datetime import timedelta
+    from app.engine.periods import owner_at
+    from app.engine.types import OwnerPeriodInput
+    unit, seller, buyer, coowner = [uuid.UUID(int=n) for n in range(1, 5)]
+    history = [OwnerPeriodInput(unit, seller, date(2020, 1, 1), transfer - timedelta(days=1)),
+               OwnerPeriodInput(unit, buyer, transfer, None),
+               OwnerPeriodInput(unit, coowner, date(2020, 1, 1), None)]
+    assert {o.owner_profile_id for o in owner_at(history, unit, transfer)} == {buyer, coowner}
+    assert {o.owner_profile_id for o in owner_at(history, unit, transfer - timedelta(days=1))} == {seller, coowner}
+    assert owner_at(history, uuid.UUID(int=99), transfer) == []

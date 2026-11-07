@@ -1,4 +1,25 @@
 """Explicit evidence for synthetic positive accounting fixtures."""
+async def add_report_recipient(ids):
+    """Give an otherwise empty report property a named owner at its key dates."""
+    from uuid import uuid4
+    from sqlalchemy import text
+    from tests.test_scoped_account_statements import mutate
+
+    await mutate(text("""WITH person AS (
+        INSERT INTO person(id,organization_id,first_name,last_name)
+        VALUES (:person,:org,'Synthetic','Report owner') RETURNING id
+      ), owner AS (
+        INSERT INTO owner_profile(id,organization_id,person_id)
+        SELECT :owner,:org,id FROM person RETURNING id
+      ), unit AS (
+        INSERT INTO unit(id,organization_id,property_id,number,usage_type)
+        VALUES (:unit,:org,:property,'Report fixture','WOHNUNG') RETURNING id
+      )
+      INSERT INTO ownership_history(organization_id,unit_id,owner_profile_id,valid_from)
+      SELECT :org,unit.id,owner.id,'2025-01-01' FROM unit CROSS JOIN owner"""),
+      {**ids, 'person': uuid4(), 'owner': uuid4(), 'unit': uuid4()})
+
+
 async def attest_fixture(client, kind, subject_id, values):
     response = await client.post("/api/financial-input-coverage", json={
         "subject_kind": kind, "subject_id": subject_id, "values": values,
