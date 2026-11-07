@@ -199,3 +199,101 @@ def test_external_selection_cannot_fall_through_to_local_database_migrations(mon
     monkeypatch.setattr(conftest, "MIGRATOR_SYNC_URL", None)
     with pytest.raises(RuntimeError, match="supported only by tests/bdd"):
         next(conftest.run_migrations.__wrapped__())
+
+
+@pytest.mark.parametrize('isolated', [None, 'supplier', 'anna', 'eva'])
+def test_retention_setup_uses_only_http_and_keeps_privacy_archives_in_empty_organizations(monkeypatch, isolated):
+    import asyncio
+    from types import SimpleNamespace
+    import httpx
+    from tests.bdd.world import World
+    from tests.bdd.steps.person_retention import retention_setup
+
+    monkeypatch.setenv('VERWALINO_TARGET_URL', 'http://synthetic.invalid')
+    prefix = {'supplier': 'VERWALINO_TARGET_RETENTION', 'anna': 'VERWALINO_TARGET_RETENTION_ANNA',
+        'eva': 'VERWALINO_TARGET_RETENTION_EVA'}.get(isolated, 'VERWALINO_TARGET_RETENTION')
+    monkeypatch.setenv(prefix + '_EMAIL', 'supplier@example.test')
+    monkeypatch.setenv(prefix + '_PASSWORD', 'disposable-supplier-password')
+    requests = []
+
+    def answer(request):
+        requests.append(request)
+        if request.url.path == '/api/auth/login':
+            assert json.loads(request.content) == {
+                'email': 'supplier@example.test', 'password': 'disposable-supplier-password'}
+            return httpx.Response(200, json={'user_id': 'supplier-admin', 'organization_id': 'supplier-org'})
+        if request.url.path == '/api/properties' and request.method == 'GET':
+            return httpx.Response(200, json=[])
+        assert request.url.path == '/api/properties' and request.method == 'POST'
+        grant = json.loads(request.content)['data_audience']['grants'][0]
+        assert grant['user_id'] == ('supplier-admin' if isolated else 'alpha-admin')
+        assert set(grant['capabilities']) == {'read', 'prepare', 'approve', 'export'}
+        return httpx.Response(201, json={'id': 'retention-property'})
+
+    factory = httpx.AsyncClient
+    def client(**kwargs):
+        return factory(transport=httpx.MockTransport(answer), **kwargs)
+    monkeypatch.setattr(httpx, 'AsyncClient', client)
+    def forbidden(name):
+        pytest.fail(f'External retention requested local fixture {name}')
+    with asyncio.Runner() as runner:
+        admin = client(base_url='http://synthetic.invalid')
+        world = World(runner.get_loop(), [admin], admin)
+        world._organizations = {'Verwaltung Alpha': admin}
+        request = SimpleNamespace(getfixturevalue=forbidden)
+        source = retention_setup(world, request, {'org_a_id': 'alpha-org', 'user_a_admin_id': 'alpha-admin'},
+            isolated=isolated)
+        try:
+            context = next(source)
+            assert context['property'] == 'retention-property'
+            assert context['org'] == ('supplier-org' if isolated else 'alpha-org')
+            assert world.actor is context['client']
+        finally:
+            source.close()
+            runner.run(admin.aclose())
+    assert [r.url.path for r in requests] == (
+        ['/api/auth/login', '/api/properties', '/api/properties'] if isolated else ['/api/properties'])
+
+
+@pytest.mark.parametrize('statuses,header,expected_sleeps', [
+    ([429, 200], '60', [60]),
+    ([429, 429], '60', [60]),
+    ([429], None, []),
+    ([429], '61', []),
+    ([403], '60', []),
+])
+def test_external_privacy_export_waits_once_only_for_the_supported_cooldown(monkeypatch, statuses, header, expected_sleeps):
+    import asyncio
+    import io
+    import tarfile
+    import httpx
+    from tests.bdd.test_maintenance_reserve_ledger import privacy_export
+
+    monkeypatch.setenv('VERWALINO_TARGET_URL', 'http://synthetic.invalid')
+    archive = io.BytesIO()
+    with tarfile.open(fileobj=archive, mode='w:gz') as tar:
+        for entity in ('person', 'payment', 'reserve_ledger_entry', 'audit_event', 'settlement_run'):
+            content = json.dumps({'id': entity}).encode()
+            info = tarfile.TarInfo(f'entities/{entity}.jsonl')
+            info.size = len(content)
+            tar.addfile(info, io.BytesIO(content))
+    calls, sleeps = [], []
+    async def sleep(seconds):
+        sleeps.append(seconds)
+    monkeypatch.setattr(asyncio, 'sleep', sleep)
+    class World:
+        def act(self, method, path):
+            assert (method, path) == ('POST', '/api/organizations/export')
+            calls.append(path)
+            status = statuses[len(calls) - 1]
+            return httpx.Response(status, content=archive.getvalue() if status == 200 else b'refused',
+                headers={'Retry-After': header} if header else {})
+        def run(self, coroutine):
+            return asyncio.run(coroutine)
+    if statuses[-1] == 200:
+        assert privacy_export(World())['person'] == {'person': {'id': 'person'}}
+    else:
+        with pytest.raises(AssertionError):
+            privacy_export(World())
+    assert sleeps == expected_sleeps
+    assert len(calls) == len(statuses)

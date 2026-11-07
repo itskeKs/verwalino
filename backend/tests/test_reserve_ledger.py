@@ -3907,3 +3907,57 @@ def test_contribution_deletion_uses_only_the_post_action_route():
     base = '/api/weg-settlements/{run_id}/reserve-ledger/overrides/{entry_id}'
     assert 'POST ' + base + '/delete' in routes
     assert 'DELETE ' + base not in routes
+
+
+@pytest.fixture
+async def retention_loop():
+    import asyncio
+    return asyncio.get_running_loop()
+
+
+@pytest.mark.parametrize('erase', ['anna', 'eva'])
+def test_external_retention_setup_preserves_the_original_privacy_assertions(
+        retention_loop, client_a_admin, client_b_admin, client_unauth, seed_data, monkeypatch, erase, rent_world, export_store):
+    from tests.bdd.world import World
+    from tests.bdd.test_maintenance_reserve_ledger import (
+        reserve_privacy_case, request_retained_anna, retained_repayment_export,
+        request_incidental_eva, incidental_reason_export, preserved_privacy_snapshot,
+    )
+    world = World(retention_loop, [client_a_admin, client_b_admin], client_unauth)
+    isolated_client = api_client(rent_world)
+    from types import SimpleNamespace
+    from datetime import timedelta
+    from tests.bdd.steps.person_retention import retention_setup
+    from tests.bdd.steps.person_retention import repayment_only, review_person, repayment_binding, erase_recipient, restricted_recipient
+
+    def forbidden(*args, **kwargs):
+        pytest.fail('External retention setup requested a local database fixture or connection')
+
+    # Exercise the external setup path against the real local HTTP app. Only
+    # the test's in-process server clock is accelerated; remote cooldown behavior
+    # is covered separately in test_scenario_target.py.
+    with monkeypatch.context() as guard:
+        guard.setattr('tests.bdd.world.target_url', lambda: 'http://synthetic.invalid')
+        guard.setattr('tests.bdd.steps.person_retention.target_url', lambda: 'http://synthetic.invalid')
+        guard.setattr('psycopg2.connect', forbidden)
+        guard.setattr(world, 'administrator_of', lambda name: isolated_client)
+        guard.setattr('app.services.organization_export_service.EXPORT_INTERVAL', timedelta(0))
+        source = retention_setup(world, SimpleNamespace(getfixturevalue=forbidden), {**seed_data, 'org_a_id': rent_world['org'], 'user_a_admin_id': rent_world['admin']})
+        try:
+            context = next(source)
+            repayment_only(world, context)
+            review_person(world)
+            repayment_binding(world)
+            erase_recipient(world)
+            restricted_recipient(world)
+            w = reserve_privacy_case(world, seed_data, context, monkeypatch)
+            if erase == 'anna':
+                request_retained_anna(world, w)
+                retained_repayment_export(world, w)
+            else:
+                request_incidental_eva(world, w)
+                incidental_reason_export(world, w)
+            preserved_privacy_snapshot(world, w)
+        finally:
+            source.close()
+            world.run(isolated_client.aclose())

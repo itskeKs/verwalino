@@ -42,6 +42,9 @@ jobs:
       HV_DEPLOYMENT_MODE: ${{ matrix.mode }}
       VERWALINO_TARGET_URL: http://127.0.0.1:18080
       VERWALINO_TARGET_ADMIN_EMAIL: nightly@example.test
+      VERWALINO_TARGET_RETENTION_EMAIL: nightly-retention@example.test
+      VERWALINO_TARGET_RETENTION_ANNA_EMAIL: nightly-retention-anna@example.test
+      VERWALINO_TARGET_RETENTION_EVA_EMAIL: nightly-retention-eva@example.test
     steps:
       - name: Checkout repository
         uses: actions/checkout@v6
@@ -56,6 +59,11 @@ jobs:
           password=$(openssl rand -hex 24)
           printf '::add-mask::%s\n' "$password"
           printf 'VERWALINO_TARGET_ADMIN_PASSWORD=%s\n' "$password" >> "$GITHUB_ENV"
+          for fixture in RETENTION RETENTION_ANNA RETENTION_EVA; do
+            retention_password=$(openssl rand -hex 24)
+            printf '::add-mask::%s\n' "$retention_password"
+            printf 'VERWALINO_TARGET_%s_PASSWORD=%s\n' "$fixture" "$retention_password" >> "$GITHUB_ENV"
+          done
 
       - name: Initialize and start self-host installation
         run: |
@@ -64,11 +72,22 @@ jobs:
           bash scripts/self-host.sh start 2>&1 |
             sed -E 's/^(Setup token: ).*/\1[redacted]/' |
             tee -a "$RUNNER_TEMP/scenario-selfhost.log"
+
           # Use the reviewed CLI alternative after start issues a browser setup token.
           printf '%s\n' "$VERWALINO_TARGET_ADMIN_PASSWORD" |
             bash scripts/self-host.sh admin --org "Verwaltung Alpha" \
               --email "$VERWALINO_TARGET_ADMIN_EMAIL" --password-stdin 2>&1 |
             tee -a "$RUNNER_TEMP/scenario-selfhost.log"
+          # Isolate the supplier's retention maximum and each privacy archive.
+          # Each fixture consumes only its corresponding disposable admin.
+          for fixture in RETENTION RETENTION_ANNA RETENTION_EVA; do
+            email_key="VERWALINO_TARGET_${fixture}_EMAIL"
+            password_key="VERWALINO_TARGET_${fixture}_PASSWORD"
+            printf '%s\n' "${!password_key}" |
+              bash scripts/self-host.sh admin --org "Aufbewahrungsprüfung $fixture" \
+                --email "${!email_key}" --password-stdin 2>&1 |
+              tee -a "$RUNNER_TEMP/scenario-selfhost.log"
+          done
 
       - name: Wait for application readiness
         run: curl --fail --silent --show-error --retry 30 --retry-delay 2 --retry-connrefused http://127.0.0.1:18080/api/health/ready

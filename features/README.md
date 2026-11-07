@@ -268,8 +268,28 @@ target aborts with "target is not a fresh installation; refusing to write scenar
 data"; failed authentication or an unverifiable list also aborts. Start with a
 new disposable installation for each run, including reruns after a partial failure.
 
+Person-retention scenarios create their repayment records through HTTP. The supplier
+scenario additionally requires `VERWALINO_TARGET_RETENTION_EMAIL` and
+`VERWALINO_TARGET_RETENTION_PASSWORD` for an admin in a separate, empty synthetic
+organization, created with the existing `self-host.sh admin --org NAME --email EMAIL
+--password-stdin` command on the owned disposable installation. Only the supplier
+fixture consumes these credentials; it refuses Alpha's organization or an organization
+with properties. This keeps the original 2020 invoice / 2017 service and the exact
+2028-12-31 organization-wide retention maximum independent of Alpha's newer payments.
+Reserve privacy scenarios reuse the HTTP WEG setup, retain Anna's booked repayment
+and Eva's 300-euro note, and compare the original archive rows and finalized digest.
+Each gets its own empty organization, through the same installer bootstrap, with
+`VERWALINO_TARGET_RETENTION_ANNA_EMAIL` / `VERWALINO_TARGET_RETENTION_ANNA_PASSWORD`
+and `VERWALINO_TARGET_RETENTION_EVA_EMAIL` / `VERWALINO_TARGET_RETENTION_EVA_PASSWORD`,
+respectively. Repeated Eva names in unrelated fixtures must not create additional
+matching reason copies in the organization-wide archive comparison.
+On external targets, a `429` export response with a numeric `Retry-After` of at most
+60 seconds permits one bounded wait and one retry; other refusals fail immediately.
+Local runs retain their isolated database fixtures and accelerated export clock.
+
 **External-target coverage:** all ten scenarios of `organization_isolation.feature` are
-skipped on external targets because only one bootstrap organization is configured.
+skipped on external targets because no Beta administrator is configured for that
+feature; the additional retention logins belong only to their dedicated fixtures.
 The three `first_run_setup.feature` scenarios are also skipped: they require a
 fresh installation, while the external target already has its bootstrap organization.
 The `inbox_review_chain.feature` scenario is in-process-only: it needs the
@@ -313,6 +333,9 @@ Download it from the workflow run's **Artifacts** area; retention is **90 days**
 Artifacts are the history store; there is no dashboard or separate history database.
 The job does not back up the disposable installation; it only stops it, and the
 GitHub runner's lifecycle removes its storage.
+It also bootstraps the three separate retention organizations with independent random,
+masked passwords passed through stdin. These passwords live only in that run's
+environment; each additional login is used only by its corresponding retention fixture.
 
 Only `mode: [selfhost]` is implemented. Report metadata uses the same validated
 `HV_DEPLOYMENT_MODE` policy as scenario tag selection and defaults to `selfhost`;
