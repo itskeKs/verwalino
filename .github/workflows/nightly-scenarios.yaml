@@ -86,7 +86,8 @@ jobs:
         run: |
           uv sync --locked --extra dev --extra ops --extra ocr
           uv run --locked --extra dev playwright install --with-deps chromium
-          sudo apt-get install -y --no-install-recommends libpangoft2-1.0-0 fonts-dejavu-core
+          sudo apt-get install -y --no-install-recommends libpangoft2-1.0-0 fonts-dejavu-core poppler-utils
+          pdftotext -v
 
       - name: Run all API and browser features
         working-directory: backend

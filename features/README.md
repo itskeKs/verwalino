@@ -293,7 +293,9 @@ initializes the installer's own `verwalino` Compose project on port 18080, build
 the checkout on the GitHub runner, starts/migrates it,
 redacts the one-time browser setup token from installer logs, bootstraps an admin
 through the reviewed CLI alternative `self-host.sh admin --password-stdin`, waits for readiness,
-and runs all features against that instance. The job collects installer logs and
+and runs all features against that instance. Host-side scenario dependencies include
+`poppler-utils` for PDF text assertions; setup verifies `pdftotext` before pytest runs.
+The job collects installer logs and
 the last 2 MiB of backend logs into `report/logs/` after execution, propagates pytest
 failures, always attempts normal stop, publishes the Markdown job summary, and
 uploads `report/` as `scenarios-selfhost-<UTC date>`.
