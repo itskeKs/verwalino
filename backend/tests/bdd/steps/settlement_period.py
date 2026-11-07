@@ -1,9 +1,11 @@
 from decimal import Decimal
+from urllib.parse import urlsplit
+
 from pytest_bdd import given, when, then, parsers
 from tests.settlement_period_support import period_property, booked, statement, create
 from tests.settlement_period_support import period_data_cleanup  # noqa: F401
 from tests.financial_coverage_helpers import attest_fixture
-from tests.bdd.steps.browser_common import browser_step
+from tests.bdd.steps.browser_common import browser_step, submit
 
 
 @given("a mixed property with a tenancy and an April settlement start")
@@ -189,6 +191,32 @@ async def clipped_picker_widths(browser_world, request):
             capture = directory / f"statement-after-{width}.png"
             await page.screenshot(path=str(capture), full_page=True, animations="disabled")
             attach_artifact(request.node, capture)
+
+
+@when("the manager saves tenant A's statement")
+@browser_step
+async def save_statement_from_picker(browser_world):
+    path = "/api/settlements"
+    async with browser_world.page.expect_response(
+        lambda response: response.request.method == "GET" and urlsplit(response.url).path.rsplit("/", 1)[0] == path
+    ) as first_detail:
+        created = await submit(browser_world, "Anlegen", path)
+    browser_world.world.data["saved_statement"] = (created["id"], await first_detail.value)
+
+
+@then("the draft opens immediately for tenant A from 1 January through 30 September 2025")
+@browser_step
+async def saved_statement_opens(browser_world):
+    from playwright.async_api import expect
+
+    run_id, first_detail = browser_world.world.data["saved_statement"]
+    assert first_detail.status == 200, f"First draft detail read: {first_detail.status} {await first_detail.text()}"
+    detail = await first_detail.json()
+    assert detail["id"] == run_id
+    assert detail["status"] == "draft"
+    await expect(browser_world.page).to_have_url(f"{browser_world.session.base_url}/abrechnungen/{run_id}")
+    await browser_world.row("Mieter", "Periodentest")
+    await browser_world.row("Zeitraum", "2025-01-01 bis 2025-09-30")
 
 
 @when("the manager repeats A's January through September statement")
