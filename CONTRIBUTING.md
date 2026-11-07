@@ -18,6 +18,9 @@ untouched. Report cleanup in one line, never in a repository file.
 - Browser setup (once, and after Playwright lock updates):
   `cd backend && uv run --locked --extra dev playwright install chromium`.
 - Frontend dependencies: `cd frontend && npm ci` (`make frontend-deps` does it when needed).
+- Hosted-server contract tests use GNU tar, matching the Debian server and Ubuntu CI.
+  On macOS, install it with `brew install gnu-tar`; the harness selects `gtar` itself.
+  BSD tar can close an archive pipe before Git finishes writing its final padded record.
 - Test database: `docker compose -f infra/docker-compose.declaration-test.yml up -d` starts
   `infra-postgres-1` on `127.0.0.1:55432` (in-memory, recreated on restart);
   `source scripts/test-env.sh` sets the connection variables. Never point tests at the production
