@@ -1147,12 +1147,18 @@ class StagingDeployTests(ServerCase):
         self.assertTrue(exported.parent.stat().st_mode & stat.S_IXOTH)
 
     def test_staging_archive_preserves_runtime_contents_and_modes_with_both_producers(self):
+        expected_modes = {
+            "docker-compose.staging.yml": 0o640,
+            "db/prod-init.sh": 0o755,
+            "Caddyfile": 0o644,
+            "Caddyfile.staging": 0o644,
+            "Caddyfile.site": 0o644,
+        }
         for producer in ({}, {"FAKE_REAL_ARCHIVE": "1", "REAL_GIT": shutil.which("git")}):
             with self.subTest(producer=producer):
                 result = self.deploy(**producer)
                 self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-                for name in ("docker-compose.staging.yml", "db/prod-init.sh", "Caddyfile",
-                             "Caddyfile.staging", "Caddyfile.site"):
+                for name, mode in expected_modes.items():
                     exported = self.srv / "staging/infra" / name
                     if producer.get("FAKE_REAL_ARCHIVE"):
                         expected = subprocess.check_output(
@@ -1160,8 +1166,10 @@ class StagingDeployTests(ServerCase):
                     else:
                         expected = (ROOT / "infra" / name).read_bytes()
                     self.assertEqual(exported.read_bytes(), expected)
-                    self.assertEqual(stat.S_IMODE(exported.stat().st_mode),
-                                     0o755 if name == "db/prod-init.sh" else 0o640)
+                    self.assertEqual(stat.S_IMODE(exported.stat().st_mode), mode, name)
+                for config in (self.config, self.staging):
+                    self.assertEqual(stat.S_IMODE(config.stat().st_mode), 0o600)
+                self.assertEqual(self.config.read_bytes(), self.production)
                 shutil.rmtree(self.srv / "staging")
 
     def test_archive_producer_failure_stops_before_docker_and_preserves_staging_config(self):

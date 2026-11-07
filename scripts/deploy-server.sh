@@ -234,6 +234,9 @@ main() {
             infra/Caddyfile infra/Caddyfile.staging infra/Caddyfile.site | tar -x -C "$ROOT/staging"
         # Postgres runs init scripts as another uid; undo the deploy user's umask.
         chmod 755 "$ROOT/staging/infra/db" "$ROOT/staging/infra/db/prod-init.sh"
+        # The isolated Caddy validator cannot bypass the operator-owned files' modes.
+        chmod 644 "$ROOT/staging/infra/Caddyfile" "$ROOT/staging/infra/Caddyfile.staging" \
+            "$ROOT/staging/infra/Caddyfile.site"
         if [[ -f "$ROOT/config/Caddyfile.hosted" ]]; then
             step='validate hosted proxy extension'
             validate_hosted_proxy "$ROOT/staging/infra"
