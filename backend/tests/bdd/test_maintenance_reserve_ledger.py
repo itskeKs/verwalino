@@ -12,9 +12,18 @@ scenarios(str(Path(__file__).resolve().parents[3] / 'features/maintenance_reserv
 
 
 def privacy_export(world):
+    import asyncio
     import json
+    from tests.bdd.world import target_url
     from tests.test_organization_export import unpack
     response = world.act('POST', '/api/organizations/export')
+    if target_url() and response.status_code == 429:
+        # The public endpoint's cooldown is one minute. Do not patch a remote
+        # process or retry unrelated refusals; one bounded wait must suffice.
+        delay = response.headers.get('Retry-After', '')
+        assert delay.isascii() and delay.isdecimal() and 0 < int(delay) <= 60, response.text
+        world.run(asyncio.sleep(int(delay)))
+        response = world.act('POST', '/api/organizations/export')
     assert response.status_code == 200, response.text
     files = unpack(response.content)
     return {entity: {row['id']: row for row in
@@ -23,15 +32,28 @@ def privacy_export(world):
 
 
 @given('a retained repayment to Anna and an incidental 300 euro reserve note about Eva', target_fixture='reserve_privacy_case')
-def reserve_privacy_case(world, seed_data, rent_world, export_client, monkeypatch):
+def reserve_privacy_case(world, seed_data, reserve_retention_context, monkeypatch):
     from datetime import timedelta
     from app.services import organization_export_service
     from tests.test_reserve_ledger import reserve_erasure_case, retained_anna, finalize
-    monkeypatch.setattr(organization_export_service, 'EXPORT_INTERVAL', timedelta(0))
-    world.actor = export_client
-    seed = {**seed_data, 'org_a_id': rent_world['org'], 'user_a_admin_id': rent_world['admin']}
-    w = world.run(reserve_erasure_case(world.actor, seed))
-    w['anna'], w['payment'] = world.run(retained_anna(world.actor, rent_world['property']))
+    from tests.bdd.world import target_url
+    source = reserve_retention_context
+    seed = {**seed_data, 'org_a_id': source['org'], 'user_a_admin_id': source['admin']}
+    if target_url():
+        w = reserve_correction_property(world, seed, actor=source['client'])
+        w['plan'] = reserve_correction_plan(world, w)
+        report = create(world, '/api/weg-settlements', {'property_id': w['property'],
+            'accounting_scope_id': w['scope'], 'economic_plan_id': w['plan'],
+            'period_start': '2025-01-01', 'period_end': '2025-12-31'})
+        w['run'] = report['id']
+        w['person'] = create(world, '/api/persons', {'first_name': 'Eva', 'last_name': 'Muster'})['id']
+        entry = create(world, f"/api/weg-settlements/{w['run']}/reserve-ledger/overrides", {
+            'component': 'OPENING', 'amount': '300.00', 'reason': 'Abstimmung mit Eva Muster'})
+        w['entry'] = entry['id']
+    else:
+        monkeypatch.setattr(organization_export_service, 'EXPORT_INTERVAL', timedelta(0))
+        w = world.run(reserve_erasure_case(world.actor, seed))
+    w['anna'], w['payment'] = world.run(retained_anna(world.actor, source['property']))
     w['frozen'] = world.run(finalize(world.actor, w))
     w['before_export'] = privacy_export(world)
     return w
@@ -99,9 +121,9 @@ def preserved_privacy_snapshot(world, reserve_privacy_case):
     assert canonical_sha256(after['snapshot_payload']) == before['snapshot_sha256'] == w['frozen']['snapshot_sha256']
 
 
-def reserve_correction_property(world, seed_data, *, scoped=True):
+def reserve_correction_property(world, seed_data, *, scoped=True, actor=None):
     """Build the two-owner reserve fixture through the selected HTTP target."""
-    world.actor = world.administrator_of('Verwaltung Alpha')
+    world.actor = actor or world.administrator_of('Verwaltung Alpha')
     world.actor_organization = 'Verwaltung Alpha'
     user = str(seed_data['user_a_admin_id'])
     home = create(world, '/api/properties', {'name': 'WEG Hauptstrasse 5',
@@ -145,6 +167,21 @@ def reserve_correction_property(world, seed_data, *, scoped=True):
         response = world.act('POST', f"/api/cost-entries/{cost['id']}/confirm")
         assert response.status_code == 200, response.text
     return w
+
+
+def reserve_correction_plan(world, w):
+    """Finalize the same 7000-euro costs and 6000-euro reserve on its scope."""
+    plan = create(world, '/api/economic-plans', {'property_id': w['property'],
+        'accounting_scope_id': w['scope'], 'period_start': '2025-01-01',
+        'period_end': '2025-12-31', 'plan_year': 2025})
+    values = {'planned_costs': [
+        {'category_code': 'GARTENPFLEGE', 'label': 'Gartenpflege', 'planned_amount': '4000.00', 'cost_group': 'UMLAGEFAEHIG'},
+        {'category_code': 'WEG_VERWALTERKOSTEN', 'label': 'Verwalter', 'planned_amount': '3000.00', 'cost_group': 'NICHT_UMLAGEFAEHIG'},
+    ], 'reserve_contribution_total': '6000.00'}
+    world.run(attest_fixture(world.actor, 'economic_plan', plan['id'], values))
+    response = world.act('POST', f"/api/economic-plans/{plan['id']}/finalize", json=values)
+    assert response.status_code == 200, response.text
+    return plan['id']
 
 
 @given('an empty asset report for 2020 precedes the first real report for 2025', target_fixture='stray_reserve_draft')
@@ -860,15 +897,7 @@ def partially_assigned_hausgeld(world, seed_data):
     response = world.act('POST', f"/api/weg-settlements/{w['run']}/reserve-ledger/overrides", json={
         'component': 'CONTRIBUTION', 'payment_id': w['cash'], 'amount': '100.00', 'reason': 'Partial cash assignment'})
     assert response.status_code == 201, response.text
-    plan = create(world, '/api/economic-plans', {**basis, 'plan_year': 2025})
-    values = {'planned_costs': [
-        {'category_code': 'GARTENPFLEGE', 'label': 'Gartenpflege', 'planned_amount': '4000.00', 'cost_group': 'UMLAGEFAEHIG'},
-        {'category_code': 'WEG_VERWALTERKOSTEN', 'label': 'Verwalter', 'planned_amount': '3000.00', 'cost_group': 'NICHT_UMLAGEFAEHIG'},
-    ], 'reserve_contribution_total': '6000.00'}
-    world.run(attest_fixture(world.actor, 'economic_plan', plan['id'], values))
-    response = world.act('POST', f"/api/economic-plans/{plan['id']}/finalize", json=values)
-    assert response.status_code == 200, response.text
-    w['plan'] = plan['id']
+    w['plan'] = reserve_correction_plan(world, w)
     response = world.act('PUT', f"/api/units/{w['u1']}", json={'number': 'Wohnung 1 · Vorderhaus Südflügel · Aufgang Änne'})
     assert response.status_code == 200, response.text
     run = create(world, '/api/weg-settlements', {**basis, 'economic_plan_id': w['plan']})
