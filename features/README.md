@@ -287,6 +287,16 @@ On external targets, a `429` export response with a numeric `Retry-After` of at 
 60 seconds permits one bounded wait and one retry; other refusals fail immediately.
 Local runs retain their isolated database fixtures and accelerated export clock.
 
+The login-lockout scenario checks `/api/meta` against the configured deployment mode
+before submitting wrong passwords. It keeps the disposable password user and exact
+refusal/success assertions. In-process runs advance their deterministic clock;
+external runs wait for the real policy duration (selfhost: ten failures, fifteen
+minutes; hosted: five failures, thirty minutes), measured from the final failed
+response with a two-second expiry tolerance. The wait uses monotonic time, subtracts
+time already elapsed, and sleeps in chunks of at most sixty seconds without password
+polling. Only this external scenario receives a timeout of the policy duration plus
+two minutes for setup and HTTP assertions; the workflow budget remains unchanged.
+
 **External-target coverage:** all ten scenarios of `organization_isolation.feature` are
 skipped on external targets because no Beta administrator is configured for that
 feature; the additional retention logins belong only to their dedicated fixtures.
