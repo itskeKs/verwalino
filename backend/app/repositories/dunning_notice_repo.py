@@ -8,10 +8,12 @@ from __future__ import annotations
 import uuid
 from typing import Sequence
 
-from sqlalchemy import func, select
+from sqlalchemy import and_, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.dunning_notice import DunningNotice
+from app.models.dunning_notice import LEASE_SOURCE_KEY, DunningNotice
+from app.models.dunning_scope_context import DunningScopeContext
+from app.models.lease_agreement import LeaseAgreement
 from app.repositories.base import TenantRepository
 
 
@@ -49,6 +51,28 @@ class DunningNoticeRepository(TenantRepository[DunningNotice]):
         )
         result = await self._session.execute(stmt)
         return result.scalars().all()
+
+    async def issued_for_lease(self, lease_id: uuid.UUID, scope_id: uuid.UUID | None):
+        tenant_id = select(LeaseAgreement.tenant_profile_id).where(
+            LeaseAgreement.organization_id == self._org_id, LeaseAgreement.id == lease_id,
+        ).scalar_subquery()
+        context = DunningScopeContext
+        stmt = select(
+            DunningNotice.id, DunningNotice.issue_date, DunningNotice.level,
+            DunningNotice.fee_amount, DunningNotice.interest_amount,
+        ).outerjoin(context, and_(
+            context.organization_id == DunningNotice.organization_id,
+            context.dunning_notice_id == DunningNotice.id,
+        )).where(
+            DunningNotice.organization_id == self._org_id,
+            DunningNotice.tenant_profile_id == tenant_id,
+            DunningNotice.status == "issued",
+            DunningNotice.cancelled_at.is_(None),
+            context.scope_id == scope_id,
+            (context.lease_agreement_id == lease_id if scope_id is not None
+             else DunningNotice.included_items[0][LEASE_SOURCE_KEY].astext == str(lease_id)),
+        ).order_by(DunningNotice.issue_date.desc(), DunningNotice.id)
+        return (await self._session.execute(stmt)).mappings().all()
 
     async def count_issued_for_tenant(self, tenant_profile_id: uuid.UUID) -> int:
         """Count issued dunning notices for a tenant (for escalation level)."""

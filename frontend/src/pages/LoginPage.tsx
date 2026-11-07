@@ -6,7 +6,10 @@ import { type FormEvent, useState } from "react";
 import { Link } from "react-router-dom";
 import { useAuth } from "../auth/useAuth";
 import { ApiError } from "../api/client";
-import "./LoginPage.css";
+import { PublicAuthLayout, PublicAuthMessage } from "../components/PublicAuthLayout";
+import { Button } from "../components/ui/button";
+import { Input } from "../components/ui/input";
+import { Label } from "../components/ui/label";
 
 export function LoginPage({ signupEnabled = false, mailAvailable = false }: { signupEnabled?: boolean; mailAvailable?: boolean }) {
   const { login } = useAuth();
@@ -33,48 +36,25 @@ export function LoginPage({ signupEnabled = false, mailAvailable = false }: { si
   }
 
   return (
-    <div className="login-page">
-      <form className="login-form" onSubmit={handleSubmit}>
-        <h1 className="login-form__title">Hausverwaltung</h1>
-        <p className="login-form__subtitle">Bitte anmelden</p>
-
-        {error && <div className="login-form__error">{error}</div>}
-
-        <label className="login-form__label">
-          E-Mail
-          <input
-            type="email"
-            className="login-form__input"
-            value={email}
-            onChange={(e) => setEmail(e.target.value)}
-            required
-            autoComplete="email"
-            autoFocus
-          />
-        </label>
-
-        <label className="login-form__label">
-          Passwort
-          <input
-            type="password"
-            className="login-form__input"
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-            required
-            autoComplete="current-password"
-          />
-        </label>
-
-        <button
-          type="submit"
-          className="login-form__submit"
-          disabled={loading}
-        >
-          {loading ? "..." : "Anmelden"}
-        </button>
-        {mailAvailable && <Link className="link" to="/passwort-vergessen">Passwort vergessen?</Link>}
-        {signupEnabled && <Link className="link" to="/signup">Konto erstellen</Link>}
+    <PublicAuthLayout title="Anmelden" description="Melden Sie sich mit Ihrem Benutzerkonto an.">
+      <form onSubmit={handleSubmit} aria-labelledby="public-auth-title" aria-busy={loading} aria-describedby={error ? "login-error" : undefined}>
+        {error && <PublicAuthMessage id="login-error">{error}</PublicAuthMessage>}
+        <fieldset disabled={loading} className="min-w-0 space-y-5">
+          <div className="public-auth-field">
+            <Label htmlFor="login-email">E-Mail</Label>
+            <Input id="login-email" type="email" value={email} onChange={(event) => setEmail(event.target.value)} required autoComplete="email" autoFocus />
+          </div>
+          <div className="public-auth-field">
+            <Label htmlFor="login-password">Passwort</Label>
+            <Input id="login-password" type="password" value={password} onChange={(event) => setPassword(event.target.value)} required autoComplete="current-password" />
+          </div>
+          {mailAvailable && <Link className="link public-auth-recovery" to="/passwort-vergessen">Passwort vergessen?</Link>}
+          <Button type="submit" size="lg" className="w-full" disabled={loading}>
+            {loading ? "Anmeldung läuft …" : "Anmelden"}
+          </Button>
+        </fieldset>
       </form>
-    </div>
+      {signupEnabled && <p className="public-auth-footer"><Link className="link" to="/signup">Konto erstellen</Link></p>}
+    </PublicAuthLayout>
   );
 }

@@ -6,6 +6,7 @@ from dataclasses import asdict
 from decimal import Decimal
 from datetime import date
 from calendar import monthrange
+from contextlib import asynccontextmanager
 
 from fastapi import HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -22,9 +23,12 @@ from app.repositories.unit_repo import UnitRepository
 from app.repositories.economic_plan_repo import EconomicPlanRepository
 from app.services.authorization_service import AuthorizationService
 from app.services.financial_scope_service import FinancialScopeService
-from app.services.payment_service import PaymentService, TENANT_TYPES
+from app.services.payment_service import PaymentService, TENANT_TYPES, validate_payment_counterparty
 from app.repositories.bank_account_repo import BankAccountRepository
 from app.repositories.bank_transaction_repo import BankTransactionRepository
+from app.repositories.cost_entry_repo import CostEntryRepository
+from app.models.audit_event import AuditEvent
+from app.repositories.audit_repo import AuditRepository
 
 PREVIEW_LIMIT = 100
 
@@ -97,15 +101,31 @@ class BankImportService:
         rows = await self._transactions.list_page(
             bank_account_id=bank_account_id, status=status, limit=limit, offset=offset)
         items = []
+        targets_by_period: dict[tuple[uuid.UUID, int, int], list[MatchTarget]] = {}
         for row in rows[:limit]:
-            suggestions = await self._suggestions(row) if row.status == "NEU" else ()
+            suggestions = await self._suggestions(row, targets_by_period) if row.status == "NEU" else ()
             items.append({key: getattr(row, key) for key in (
                 "id", "bank_account_id", "booking_date", "value_date", "amount",
-                "counterparty_name", "counterparty_iban", "purpose", "status")}
+                "counterparty_name", "counterparty_iban", "purpose", "status", "cost_entry_id")}
                 | {"suggestions": suggestions})
+        # ACL locks stabilize inputs, but time-limited grants can still expire.
+        # Check all matching accounts before releasing any cached suggestions.
+        for account_id in dict.fromkeys(key[0] for key in targets_by_period):
+            async with self._matching_scope(account_id):
+                pass
         return {"items": items, "next_offset": offset + limit if len(rows) > limit else None}
 
-    async def _suggestions(self, transaction):
+    @asynccontextmanager
+    async def _matching_scope(self, account_id):
+        account = await self._accounts.get_by_id(account_id)
+        if account is None:
+            raise HTTPException(404, "Bank account not found")
+        context = self._context()
+        async with context.using(account, computation=True) as scope_id:
+            sphere = await context.select_read_scope(scope_id)
+            yield account, context, scope_id, sphere
+
+    async def _suggestions(self, transaction, targets_by_period):
         row = BankImportRow(**{key: getattr(transaction, key) for key in (
             "booking_date", "value_date", "amount", "counterparty_name",
             "counterparty_iban", "purpose", "import_hash")})
@@ -113,18 +133,17 @@ class BankImportService:
         if period is None or row.amount <= 0:
             return ()
         year, month, _ = period
+        key = (transaction.bank_account_id, year, month)
+        if key in targets_by_period:
+            return suggest_matches(row, targets_by_period[key])
         month_start = date(year, month, 1)
         month_end = date(year, month, monthrange(year, month)[1])
-        account = await self._accounts.get_by_id(transaction.bank_account_id)
-        if account is None:
-            raise HTTPException(404, "Bank account not found")
-        context = self._context()
         payments = PaymentService(self._session, self._org_id, self._user_id)
         targets = []
-        async with context.using(account, computation=True) as scope_id:
-            sphere = await context.select_read_scope(scope_id)
+        async with self._matching_scope(transaction.bank_account_id) as (account, context, scope_id, sphere):
             if sphere is not None and (month_end < sphere.valid_from
                     or sphere.valid_to is not None and month_start > sphere.valid_to):
+                targets_by_period[key] = []
                 return ()
             start, end = date(year, 1, 1), date(year, 12, 31)
             if sphere is not None:
@@ -162,9 +181,12 @@ class BankImportService:
                         targets.append(MatchTarget(
                             name=f"{person.first_name} {person.last_name}".strip(), iban=person.iban,
                             open_items=statement.open_items, owner_profile_id=owner.id))
+        # This request holds the source locks while it uses these targets.
+        # Match each receipt separately, including its amount and purpose.
+        targets_by_period[key] = targets
         return suggest_matches(row, targets)
 
-    async def _pending_transaction(self, transaction_id):
+    async def _transaction_for_update(self, transaction_id):
         # Tenant filter + populate_existing in the shared repository are
         # essential after waiting for a concurrent assignment/ignore to commit.
         transaction = await self._transactions.get_by_id_for_update(transaction_id)
@@ -173,9 +195,57 @@ class BankImportService:
         account = await self._accounts.get_by_id(transaction.bank_account_id)
         if account is None:
             raise HTTPException(404, "Bank account not found")
-        if transaction.status != "NEU":
+        return transaction, account
+
+    async def _pending_transaction(self, transaction_id):
+        transaction, account = await self._transaction_for_update(transaction_id)
+        if transaction.status != 'NEU':
             raise HTTPException(409, "Bank transaction has already been processed")
         return transaction, account
+
+    async def assign_cost(self, transaction_id, cost_entry_id):
+        context = self._context()
+        await context.lock_inputs()
+        transaction, account = await self._transaction_for_update(transaction_id)
+        scope_id = await context.enter(account, capability=ScopeCapability.PREPARE)
+        costs = CostEntryRepository(self._session, self._org_id)
+        cost = await costs.get_by_id_for_update(cost_entry_id)
+        if cost is None:
+            raise HTTPException(404, 'Kostenposition nicht gefunden.')
+        retry = transaction.status == 'ZUGEORDNET' and transaction.cost_entry_id == cost.id
+        if transaction.status != 'NEU' and not retry:
+            raise HTTPException(409, "Bank transaction has already been processed")
+        if scope_id is not None:
+            sphere = await AuthorizationService(self._session, AuthContext(
+                self._user_id, self._org_id, 'live database role required')).require(scope_id, ScopeCapability.CONFIRM)
+            if sphere.scope_type not in {'MIET', 'WEG'}:
+                raise HTTPException(422, 'Dieser Abrechnungskreis unterstützt keine Bankzuordnung.')
+            if transaction.value_date < sphere.valid_from or sphere.valid_to is not None and transaction.value_date > sphere.valid_to:
+                raise HTTPException(422, 'Das Wertstellungsdatum liegt außerhalb des Abrechnungskreises.')
+        async with context.using(cost, capability=ScopeCapability.PREPARE) as cost_scope:
+            if cost_scope != scope_id:
+                raise HTTPException(422, 'Kostenposition und Bankkonto müssen zum selben Abrechnungskreis gehören.')
+            if cost_scope is not None:
+                await AuthorizationService(self._session, AuthContext(
+                    self._user_id, self._org_id, 'live database role required')).require(cost_scope, ScopeCapability.CONFIRM)
+        if transaction.amount >= 0 or cost.property_id != account.property_id:
+            raise HTTPException(422, 'Kostenposition und ausgehender Umsatz müssen zum selben Objekt gehören.')
+        if retry:
+            return transaction, []
+        if cost.status != 'confirmed' or cost.superseded_by_id is not None:
+            raise HTTPException(409, 'Bitte eine aktuelle bestätigte Kostenposition wählen.')
+        remaining = (await costs.bank_open_amounts([cost.id]))[cost.id]
+        if remaining is None:
+            raise HTTPException(404, 'Kostenposition nicht gefunden.')
+        if -transaction.amount > remaining:
+            raise HTTPException(409, 'Der Umsatz überschreitet den offenen Betrag der Kostenposition. Bitte laden Sie die Kostenpositionen neu.')
+        transaction.cost_entry_id = cost.id
+        transaction.status = 'ZUGEORDNET'
+        await self._transactions.update(transaction)
+        await AuditRepository(self._session, self._org_id).create(AuditEvent(
+            actor_user_id=self._user_id, entity_type='cost_entry', entity_id=cost.id,
+            action='cost_entry.bank_transaction_assigned', payload_diff={'bank_transaction_id': str(transaction.id)}))
+        return transaction, []
 
     async def _validate_target(self, account, line):
         if line["payment_type"] == "RUECKLAGENENTNAHME":
@@ -197,7 +267,7 @@ class BankImportService:
             if lease.valid_from > end or lease.valid_to is not None and lease.valid_to <= start:
                 raise HTTPException(422, "Payment period is outside lease agreement")
             line["tenant_profile_id"] = profile_id
-        else:
+        elif line.get("owner_profile_id") is not None:
             owners = OwnerProfileRepository(self._session, self._org_id)
             if await owners.get_by_id(line["owner_profile_id"]) is None:
                 raise HTTPException(404, "Owner profile not found")
@@ -206,6 +276,7 @@ class BankImportService:
                 raise HTTPException(422, "Owner is outside bank account property or payment period")
 
     async def assign(self, transaction_id, lines):
+        await self._context().lock_inputs()
         transaction, account = await self._pending_transaction(transaction_id)
         if sum((line["amount"] for line in lines), Decimal("0.00")) != abs(transaction.amount):
             raise HTTPException(422, "Split amounts must cover the bank transaction exactly")
@@ -228,6 +299,9 @@ class BankImportService:
                     raise HTTPException(422, "Payment period is outside accounting scope")
         for line in lines:
             await self._validate_target(account, line)
+            validate_payment_counterparty(
+                line["payment_type"], line.get("tenant_profile_id"), line.get("owner_profile_id"),
+            )
         payments = PaymentService(self._session, self._org_id, self._user_id)
         booked = []
         for line in lines:

@@ -158,7 +158,7 @@ This gives the plan the **same immutability guarantee** (a resolved economic pla
 | `management_mandate_id` | `UUID NULL` FK→`management_mandate` (`RESTRICT`) | WEG mandate (segregation-of-funds anchor). |
 | `plan_year` | `INTEGER NOT NULL` | Fiscal year (usually calendar year; SDD §12). |
 | `period_start`/`period_end` | `DATE NOT NULL` | Plan period (usually 01.01.–31.12.). `CHECK (period_end >= period_start)`. |
-| `monthly_due_day` | `SMALLINT NULL` | Due day of the monthly Hausgeld (display/later Soll posting (Sollstellung) in M6); purely informational in M4. |
+| `monthly_due_day` | `SMALLINT NULL` | Resolved calendar day for monthly Hausgeld. New input accepts 1–28; omitted/null input defaults to 1. Historical NULL is read as 1; historical days 29–31 use month end if absent, followed by the working-day shift. Stored values and frozen snapshots/PDFs are unchanged. The field stays immutable after finalization. |
 | `reserve_contribution_total` | `NUMERIC(14,2) NOT NULL DEFAULT 0` | planned **total reserve contribution** for the year (not a cost allocation, §3). |
 | `status` | `String(12) NOT NULL DEFAULT 'draft'` | `draft`\|`finalized`. CHECK. Freeze condition `finalized`. |
 | `snapshot_payload` | `JSONB NULL` | canonical, complete plan basis + result (§5.4). |
@@ -367,7 +367,19 @@ data and booked payments are not overwritten, finalized settlements remain froze
 
 For drafts, `GET /api/weg-settlements/{id}/input-owners` returns the complete authorized
 owner set of the settlement period, with READ scope and disclosure checks. The UI uses the
-same set as the coverage validation, not merely the advance payment lines of the plan.
+same set as coverage validation and paid-Hausgeld derivation: owners whose ownership
+overlaps the period plus the original owners of the linked plan's OWNER_ADVANCE lines.
+The latter retain their frozen plan obligations even after a history correction. The shared
+roster comes from `CoverageDeclarationRepository.owner_ids`; the plan Soll allocation stays
+unchanged. Derivation returns `0.00` for an owner without booked payments and retains the
+net booked/reversed payment rules and the property's settlement period.
+
+An empty or whitespace-only paid amount is an unentered value, refused with the existing
+`owner_payment_coverage_missing` blocker in `financial_inputs_incomplete`. Invalid or non-finite
+amounts use `invalid_decimal`. Both responses include `field: paid_total`, `owner_profile_id`
+and a German message naming the owner and the Hausgeld amount to enter. Names are resolved
+only after checking the draft's financial source authority and roster membership. The page
+shows this message through the existing structured-error client.
 Payment details start as unknown; zero amounts require an explicit entry and completeness
 confirmation. A seller until 30.06.2026 and a buyer from 01.07. receive 181/184 EUR for
 actual annual costs of 365 EUR. This flow is verified in the browser, including voucher
@@ -419,6 +431,39 @@ recomputed by this fix. See [ADR-0013](adr/0013-reserve-financed-owner-costs.md)
 
 ---
 
+### Dated document addressees after an ownership change (#207)
+
+The economic plan uses the first day of its plan period; the asset report uses
+its report date (`period_end`). Each unit's addressed copy names the owner and
+“Eigentümer am DD.MM.YYYY”. The existing property-wide download combines these
+individual copies. The asset figures cover the complete report period, without
+splitting them at the transfer. Concurrent co-owners remain separate recipients;
+a missing dated owner or name refuses computation instead of inventing a recipient.
+
+The shared `engine.periods.owner_at` reads inclusive engine bounds after the
+existing exclusive-to-inclusive storage conversion. Newly computed documents
+store their unit, owner, name and key date in the existing snapshot; finalization
+hashes and freezes those values. The page and PDF use that frozen list. Old
+finalized snapshots without it keep their original rendering and digest; reads
+do not backfill new recipients. Migration 0162 adds new report recipients to
+both individual and organization retention through the existing shared catalog,
+recipient extractor and source deadlines. Report-line evidence dates extend the
+same deadline in both paths. An ended ownership alone does not permit erasing a
+retained report recipient; frozen names and documents remain unchanged.
+
+The live Hausgeld account follows dated ownership using only the unit's frozen
+plan advances. Continuing co-owners keep their original rounded monthly amounts;
+only departing owners' advances pass to dated successors. A transfer month is
+split by inclusive ownership days, with the existing cent distribution; an
+ambiguous transfer refuses calculation rather than shifting unrelated shares.
+For unit 2, Karl Weiß through 30 June 2026 and Lena Roth from 1 July, a monthly
+400.00 EUR produces 2,400.00 EUR for each. The 2026 plan names Karl and the
+31 December report names Lena. Annual-settlement ownership periods and its
+existing frozen plan basis remain unchanged; this does not decide contractual
+liability between seller and buyer.
+
+---
+
 ## 5. Economic Plan — Forward-Looking
 
 ### 5.1 Inputs (SDD §10)
@@ -438,12 +483,22 @@ persisted in the uncomputed draft and remains editable after reload; the source 
 original IDs are retained as provenance in the later normal computation. No automatic
 data-basis attestation, cost change, finalization, or resolution.
 
+After a manual draft is calculated, reopening restores the cost rows and reserve used for
+that result. Changes made in the editor require another calculation before finalizing a
+previously calculated draft. The existing data-basis confirmation still applies.
+
 ### 5.2 Outputs (SDD §10)
 
 - **Plan amount per category** (`PLANNED_COST` lines, + subtotals allocable/non-allocable/reserve).
 - **Share per unit/owner** (`OWNER_ADVANCE` lines, by MEA).
 - **Monthly Hausgeld proposal** per owner (`monthly_amount`, §5.3).
 - **Share of allocable/non-allocable costs** and **reserve share separately** (via `cost_group` + `RESERVE_CONTRIBUTION`).
+
+The calculated and finalized detail views keep the owner advances and calculated
+costs in separate horizontal scroll containers on narrow screens. Monetary values
+remain unbroken, descriptive labels wrap, and the finalized snapshot hash wraps
+inside its card. This affects presentation only; calculated and frozen values are
+unchanged. See the [responsive design contract](../DESIGN.md#responsive-behaviour-down-to-360-px).
 
 The economic plan is **not** a WEG resolution — it produces proposals/documents for passing a resolution (SDD §10); the resolution is documented in M8 (resolution register, Beschluss-Sammlung).
 
@@ -1049,3 +1104,32 @@ or contact-source access. Its deletion metadata then reports only the generic
 German access restriction, without disclosing hidden bookings or other evidence.
 Saving a reserve opening through the input-coverage declaration refreshes both
 the ledger and the draft's deletion eligibility immediately on both pages.
+
+
+## Special-levy resolution authority (#203)
+
+New special levies require a recorded `ANGENOMMEN` resolution from the same
+property and organization. The service checks that recorded result without
+adjudicating votes or quorum. Missing/null references return 422 with
+“Eine Sonderumlage braucht einen Beschluss.” and save nothing; inaccessible or
+foreign references return 404. The existing whole-property WEG scope, due-date
+ownership basis, MEA rounding and source permissions remain authoritative.
+
+Historical unlinked levies continue to feed owner accounts and dunning. The page
+labels them “ohne Beschlussbezug”; a writer with the scope's prepare capability
+can assign an adopted resolution once with `PUT /api/special-levies/{id}/resolution`.
+The database permits only the first reference update and preserves every other
+header column and frozen allocation. Identical retries return the same result;
+competing different links have one winner, with 409 for the other. A successful
+first link records `special_levy.resolution_linked` once. Native archive import
+and operator restore retain historical INSERT compatibility, including null
+references; import selects the archived scope for each header’s native RLS checks
+and restores the prior context afterwards. It does not use ordinary new-creation
+validation.
+
+The register's API/page shows only levy summaries permitted by their native RLS
+and financial/source disclosure grants. A levy links back to the resolution's
+meeting date and TOP, using the frozen register meeting date when available.
+A 1,200 EUR levy on 600/400 MEA yields 720/480 EUR due 1 July 2026; the API/browser
+scenario in [special_levy.feature](../features/special_levy.feature) uses the
+adopted roof repair of 15 May 2026, TOP 3. See [operation](operations/weg.md).

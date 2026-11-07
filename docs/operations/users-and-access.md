@@ -1,6 +1,45 @@
 # Users and access
 
-Password changes, user administration, and session invalidation.
+Sign-in, registration, password changes, user administration and session invalidation.
+
+## Signing in and registering
+
+The public pages share Verwalino branding, labelled form fields and the Klar design.
+Sign in with your email address and password. During the request the fields are
+disabled and the button reads “Anmeldung läuft …”. A failed request keeps the email
+and password for correction; the error receives focus and scrolls into view.
+Your personal design loads after you sign in.
+
+Hosted login offers “Konto erstellen”. Enter the organization, your name and email,
+then choose and repeat a password with 12–128 characters. Mismatching passwords
+are explained before submitting. While registration runs, the form stays visible
+and disabled. Its generic receipt asks you to check your email and spam folder;
+it preserves the existing ten-minute resend rule and offers “Erneut senden”.
+A resend failure keeps the receipt available.
+
+The confirmation page asks for the password chosen during registration. A mistyped
+password keeps the link available for another attempt. Invalid links require a
+new registration request. Self-hosted login has no “Konto erstellen” action. “Passwort vergessen?” appears
+when mail is available.
+
+## Choosing your personal design
+
+Open “Einstellungen” from the top bar or the navigation's “Persönlich” group.
+Every signed-in role, including read-only, can choose **Klar** or **Warm**.
+Klar is the default for new and existing accounts: pale side navigation and blue
+accents. Warm uses petrol horizontal desktop navigation, cream surfaces and
+property cards. On phones, the navigation stays at the top; the menu contains all
+other areas available to your role.
+
+Choose a preview and press “Design speichern”. Until the server confirms, the
+choice is marked “Noch nicht gespeichert.” and the previous design stays active.
+Failed saves retain the choice for another attempt. A failed initial load offers
+“Erneut laden” and does not overwrite an existing saved preference. A successful
+save applies immediately without clearing work on the current page.
+
+The choice belongs to your user account, survives reloads and future logins, and
+does not change a colleague's design. Both designs provide the same functions and
+permissions. No additional appearance options or browser-local preferences exist.
 
 ## Recovering a forgotten password
 
@@ -26,6 +65,14 @@ flow is repeatable with
 ## User management
 
 T57 introduced this workflow.
+
+Admins create users in the „Neuen Benutzer anlegen“ card. Its persistent labels
+are „E-Mail“, „Name“, „Startpasswort“ and „Rolle“; email and a 12–128-character
+initial password are required. Fields stack on phones and remain inside the card.
+Tab through the fields, choose the role and submit „Benutzer anlegen“ with Enter.
+While creation is pending the fields and submit action are disabled. A failed
+request keeps all entries for correction or retry; success clears the form and
+refreshes the user list with the chosen role.
 
 Under „Benutzer“ (users), admins edit role and active status or set a new
 password (12–128 characters). Deactivation requires a confirmation; deactivating or

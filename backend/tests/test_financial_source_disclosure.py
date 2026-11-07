@@ -187,13 +187,18 @@ async def test_each_pdf_family_checks_source_export_before_render(client_a_admin
     finally: await clear_disclosure_grants()
 
 
-async def test_disclosure_migration_retains_strict_state_and_roundtrips(seed_data):
+async def test_disclosure_migration_retains_strict_state_and_roundtrips(seed_data, client_a_admin):
     import importlib
     from sqlalchemy import create_engine
     from sqlalchemy.exc import DBAPIError
     from alembic.migration import MigrationContext
     from alembic.operations import Operations
     from tests.conftest import MIGRATOR_SYNC_URL
+    from tests.commercial_preallocation_support import commercial_property, commercial_rule
+    commercial = await commercial_property(client_a_admin)
+    response = await client_a_admin.post(f"/api/settlements/{commercial['rows'][0]['run']['id']}/compute",
+        json={'commercial_preallocations': [commercial_rule(commercial)]})
+    assert response.status_code == 200, response.text
     migration = importlib.import_module('migrations.versions.0060_financial_source_disclosure')
     engine = create_engine(MIGRATOR_SYNC_URL)
     try:
@@ -203,19 +208,26 @@ async def test_disclosure_migration_retains_strict_state_and_roundtrips(seed_dat
                     with db.begin_nested(): migration.downgrade()
                 savepoint = db.begin_nested()
                 try:
-                    # Preserve later reserve rows; detach/recreate only the policies
+                    # Preserve later reserve/commercial rows; detach/recreate only the policies
                     # that reference this historical function, within this savepoint.
-                    reserve_policies = db.execute(text("SELECT policyname,cmd,qual,with_check FROM pg_policies WHERE tablename='reserve_ledger_entry' ORDER BY policyname")).all()
-                    for name, *_ in reserve_policies:
-                        db.execute(text(f'DROP POLICY {name} ON reserve_ledger_entry'))
+                    later_tables = ('reserve_ledger_entry', 'commercial_preallocation')
+                    rows = {table: db.execute(text(f'SELECT * FROM {table} ORDER BY id')).all() for table in later_tables}
+                    assert any(row.cost_entry_id == uuid.UUID(commercial['cost']['id']) for row in rows['commercial_preallocation'])
+                    policy_query = text("SELECT tablename,policyname,permissive,roles,cmd,qual,with_check FROM pg_policies WHERE schemaname='public' AND tablename IN ('reserve_ledger_entry','commercial_preallocation') ORDER BY tablename,policyname")
+                    later_policies = db.execute(policy_query).all()
+                    for table, name, *_ in later_policies:
+                        db.execute(text(f'DROP POLICY {name} ON {table}'))
                     db.execute(text('TRUNCATE property_source_security'))
                     migration.downgrade()
                     assert db.scalar(text("SELECT to_regprocedure('property_financial_disclosure_access(uuid,uuid,text)')")) is None
                     migration.upgrade()
-                    for name, command, using, check in reserve_policies:
+                    for table, name, permissive, roles, command, using, check in later_policies:
                         clauses = (f' USING ({using})' if using else '') + (f' WITH CHECK ({check})' if check else '')
-                        db.execute(text(f'CREATE POLICY {name} ON reserve_ledger_entry FOR {command}{clauses}'))
-                    assert db.execute(text("SELECT policyname,cmd,qual,with_check FROM pg_policies WHERE tablename='reserve_ledger_entry' ORDER BY policyname")).all() == reserve_policies
+                        role_list = ','.join(db.dialect.identifier_preparer.quote(role) for role in roles)
+                        db.execute(text(f'CREATE POLICY {name} ON {table} AS {permissive} FOR {command} TO {role_list}{clauses}'))
+                    assert db.execute(policy_query).all() == later_policies
+                    for table in later_tables:
+                        assert db.execute(text(f'SELECT * FROM {table} ORDER BY id')).all() == rows[table]
                     assert db.scalar(text("SELECT count(*) FROM pg_policy WHERE polname='financial_source_disclosure' AND NOT polpermissive")) == 5
                     assert not db.scalar(text("SELECT has_function_privilege('app_rw','property_complete_graph_actor_access(uuid,uuid,uuid,text,boolean)','EXECUTE')"))
                     for function in ['property_complete_graph_actor_access(uuid,uuid,uuid,text,boolean)',

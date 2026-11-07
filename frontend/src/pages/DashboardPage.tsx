@@ -74,12 +74,6 @@ function todayIso(): string {
   return calendarIso(new Date());
 }
 
-function greeting(): string {
-  const h = new Date().getHours();
-  if (h < 11) return "Guten Morgen";
-  if (h < 18) return "Guten Tag";
-  return "Guten Abend";
-}
 
 export function DashboardPage() {
   const { session } = useAuth();
@@ -157,14 +151,22 @@ function DashboardContent() {
   });
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-6 dashboard-page">
       {/* Header */}
       <div>
         <p className="text-sm text-muted-foreground">{dateLabel}</p>
-        <h1 className="mt-0.5 text-2xl font-semibold tracking-tight">
-          {greeting()}
-          {org ? `, ${org.name}` : ""}
-        </h1>
+        {org?.name && <p className="mt-0.5 break-words text-sm font-medium text-muted-foreground">{org.name}</p>}
+        <h1 className="mt-0.5 text-2xl font-semibold tracking-tight">Guten Tag</h1>
+      </div>
+
+      <div className="dashboard-priority">
+        <DueTasks key={`${session?.organization_id}:${session?.user_id}:${session?.role}`} canWrite={session?.role === "OWNER_ADMIN" || session?.role === "CLERK"} />
+        <section className="dashboard-portfolio" aria-label="Ihr Bestand">
+          <div className="flex items-center justify-between gap-3"><h2>Ihr Bestand</h2><Link to="/objekte" className="link">Alle Objekte</Link></div>
+          <p className="dashboard-portfolio-count">{masterLoading ? "…" : propertyCount ?? "—"}<span>zugängliche Objekte</span></p>
+          {properties?.slice(0, 3).map(property => <Link className="dashboard-property-link" key={property.id} to={`/objekte/${property.id}`}><span>{property.name}<small>{property.management_type === "MIET" ? "Mietobjekt" : property.management_type === "MISCH" ? "Mischobjekt" : property.management_type}</small></span><ChevronRight aria-hidden="true" /></Link>)}
+          {properties?.length === 0 && !masterLoading && <p className="text-sm text-muted-foreground">Keine zugänglichen Objekte vorhanden.</p>}
+        </section>
       </div>
 
       <div className="form-grid max-w-xl">
@@ -216,8 +218,6 @@ function DashboardContent() {
       </div>
 
       <DashboardKpis properties={properties} requiresScope={scopeRequired} sessionKey={`${session?.organization_id}:${session?.user_id}:${session?.role}`} />
-
-      <DueTasks key={`${session?.organization_id}:${session?.user_id}:${session?.role}`} canWrite={session?.role === "OWNER_ADMIN" || session?.role === "CLERK"} />
 
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
         {/* Handlungsbedarf */}
@@ -354,13 +354,13 @@ function DueTasks({ canWrite }: { canWrite: boolean }) {
     } catch (reason) { if (alive.current && request === generation.current) setError(String(reason)); }
     finally { locked.current = false; if (alive.current) { setPending(false); setLoading(false); } }
   }
-  return <Card role="region" aria-label="Fällige Aufgaben"><CardHeader className="flex-row items-center justify-between"><CardTitle>Fällige Aufgaben</CardTitle><Link to="/aufgaben">Alle Aufgaben</Link></CardHeader><CardContent>
+  return <Card className="dashboard-due-tasks" role="region" aria-label="Fällige Aufgaben"><CardHeader className="flex-row items-center justify-between gap-3"><CardTitle>Fällige Aufgaben</CardTitle><Link to="/aufgaben" className="link">Alle Aufgaben</Link></CardHeader><CardContent>
     <p className="text-sm text-muted-foreground">Offene Aufgaben bis einschließlich {formatDate(dueUntil)} · alle zugänglichen Zuständigkeiten</p>
     {loading && <p role="status">Aufgaben werden geladen…</p>}
     {error && <p role="alert">Aufgaben: {error}</p>}
     <button className="btn" disabled={pending || loading} onClick={() => setRevision(n => n + 1)}>Aufgaben erneut laden</button>
-    {tasks && <ul>{tasks.map(task => <li key={task.id} className="flex flex-wrap items-center gap-3 py-3"><div className="min-w-0 flex-1 [overflow-wrap:anywhere]"><p>{task.title}</p><p className="text-sm">Fällig am {task.due_date ? formatDate(task.due_date) : "—"}{task.property_name ? ` · ${task.property_name}` : ""}</p></div>{canWrite && <button className="btn" disabled={pending || loading} onClick={() => void complete(task)}>Erledigen</button>}</li>)}</ul>}
+    {tasks && <ul className="dashboard-task-list">{tasks.map(task => <li key={task.id} className="flex flex-wrap items-center gap-3 py-3"><div className="min-w-0 flex-1 [overflow-wrap:anywhere]"><p className="font-medium">{task.title}</p><p className="text-sm text-muted-foreground">Fällig am {task.due_date ? formatDate(task.due_date) : "—"}{task.property_name ? ` · ${task.property_name}` : ""}</p></div>{canWrite && <button className="btn" disabled={pending || loading} onClick={() => void complete(task)}>Erledigen</button>}</li>)}</ul>}
     {tasks?.length === 0 && !loading && !error && <p>Keine fälligen Aufgaben in diesem Zeitraum.</p>}
-    <div className="flex flex-wrap gap-3"><button className="btn" disabled={pending || loading || offset === 0} onClick={() => { setTasks(null); setOffset(Math.max(0, offset - 50)); }}>Vorherige Aufgaben</button><button className="btn" disabled={pending || loading || nextOffset === null} onClick={() => { if (nextOffset !== null) { setTasks(null); setOffset(nextOffset); } }}>Weitere Aufgaben</button></div>
+    <div className="dashboard-task-pages"><button className="btn" disabled={pending || loading || offset === 0} onClick={() => { setTasks(null); setOffset(Math.max(0, offset - 50)); }}>Vorherige Aufgaben</button><button className="btn" disabled={pending || loading || nextOffset === null} onClick={() => { if (nextOffset !== null) { setTasks(null); setOffset(nextOffset); } }}>Weitere Aufgaben</button></div>
   </CardContent></Card>;
 }

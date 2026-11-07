@@ -15,7 +15,7 @@ VERSION = 2
 ENTITY_ORDER = (
     "organization", "management_mandate", "property", "unit", "person",
     "tenant_profile", "owner_profile", "vendor", "lease_agreement",
-    "lease_rent_change", "ownership_history", "cost_category", "cost_entry",
+    "lease_rent_change", "ownership_history", "cost_category", "cost_entry", "commercial_preallocation",
     "bank_account", "bank_transaction", "payment", "settlement_run",
     "settlement_line", "economic_plan", "economic_plan_line", "special_levy",
     "special_levy_allocation", "dunning_notice", "meter", "meter_reading",

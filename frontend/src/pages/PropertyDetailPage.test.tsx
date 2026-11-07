@@ -138,6 +138,105 @@ it("keeps the property and panels while a saved unit refreshes", async () => {
   expect(await screen.findByRole("link", { name: "42" })).toBeVisible();
 });
 
+it("shows a rejected unit number at the field and saves after shortening it", async () => {
+  renderMeaProperty("MIET", [null]);
+  const message = "Die Bezeichnung darf höchstens 50 Zeichen lang sein.";
+  const validNumber = "Ä".repeat(50);
+  const tooLong = validNumber + "X";
+  const update = vi.spyOn(endpoints, "updateUnit")
+    .mockRejectedValueOnce(new ApiError(422, message, "unit_number_too_long"))
+    .mockResolvedValueOnce({ number: validNumber } as Unit);
+  fireEvent.click(await screen.findByRole("button", { name: "Bearbeiten" }));
+  const input = screen.getByRole("textbox", { name: "Nummer *" });
+  fireEvent.change(input, { target: { value: tooLong } });
+  fireEvent.click(screen.getByRole("button", { name: "Speichern" }));
+  expect(await screen.findByText(message)).toBeVisible();
+  expect(input).toHaveAccessibleDescription(message);
+  expect(input).toHaveAttribute("aria-invalid", "true");
+  expect(input).toHaveValue(tooLong);
+  expect(update).toHaveBeenNthCalledWith(1, "unit-0", expect.objectContaining({ number: tooLong }));
+
+  fireEvent.change(input, { target: { value: validNumber } });
+  expect(screen.queryByText(message)).not.toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "Speichern" }));
+  expect(await screen.findByRole("status")).toHaveTextContent("Einheit gespeichert.");
+  expect(update).toHaveBeenNthCalledWith(2, "unit-0", expect.objectContaining({ number: validNumber }));
+  expect(screen.queryByRole("heading", { name: "Einheit bearbeiten" })).not.toBeInTheDocument();
+});
+
+it("keeps a refused duplicate number in the new unit form for correction", async () => {
+  renderMeaProperty("MIET", [null]);
+  const message = "Eine Einheit mit dieser Nummer gibt es in diesem Objekt schon.";
+  vi.spyOn(endpoints, "createUnit")
+    .mockRejectedValueOnce(new ApiError(409, message, "duplicate_unit_number"))
+    .mockResolvedValueOnce({ id: "new-unit" } as Unit);
+  fireEvent.click(await screen.findByRole("button", { name: "+ Neue Einheit" }));
+  const input = screen.getByRole("textbox", { name: "Nummer *" });
+  fireEvent.change(input, { target: { value: "1" } });
+  fireEvent.click(screen.getByRole("button", { name: "Speichern" }));
+  expect(await screen.findByRole("alert")).toHaveTextContent(message);
+  expect(input).toHaveAccessibleDescription(message);
+  expect(input).toHaveValue("1");
+
+  fireEvent.change(input, { target: { value: "2" } });
+  expect(screen.queryByText(message)).not.toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "Speichern" }));
+  expect(await screen.findByRole("status")).toHaveTextContent("Einheit gespeichert.");
+});
+
+it("saves a location edit without resubmitting legacy negative areas", async () => {
+  const unit: Unit = {
+    id: "unit-0", property_id: "property", number: "1", location: "Gartenflügel",
+    usage_type: "WOHNUNG", area: "-12.50", heated_area: "-4.00", mea: null, building_part: "",
+  };
+  vi.mocked(endpoints.listUnits).mockResolvedValueOnce([unit]);
+  renderMeaProperty("MIET", [null]);
+  const update = vi.spyOn(endpoints, "updateUnit").mockImplementation(async (_id, body) => {
+    if ("area" in body || "heated_area" in body) {
+      throw new ApiError(422, "Fläche: Bitte eine Zahl wie 75,50 eingeben.", "invalid_unit_area");
+    }
+    const saved = { ...unit, location: body.location ?? unit.location };
+    vi.mocked(endpoints.listUnits).mockResolvedValue([saved]);
+    return saved;
+  });
+  fireEvent.click(await screen.findByRole("button", { name: "Bearbeiten" }));
+  expect(screen.getByRole("textbox", { name: "Flaeche (m2)" })).toHaveValue("-12.50");
+  expect(screen.getByRole("textbox", { name: "Beheizte Flaeche (m2)" })).toHaveValue("-4.00");
+  fireEvent.change(screen.getByRole("textbox", { name: "Lage" }), { target: { value: "Vorderhaus" } });
+  fireEvent.click(screen.getByRole("button", { name: "Speichern" }));
+
+  expect(await screen.findByRole("status")).toHaveTextContent("Einheit gespeichert.");
+  expect(update).toHaveBeenCalledWith("unit-0", expect.objectContaining({ location: "Vorderhaus" }));
+  expect(await screen.findByRole("cell", { name: "Vorderhaus" })).toBeVisible();
+  expect(screen.getByRole("cell", { name: "-12.50" })).toBeVisible();
+  expect(screen.getByRole("cell", { name: "-4.00" })).toBeVisible();
+});
+
+it.each([
+  ["area", "Flaeche (m2)", "Beheizte Flaeche (m2)", "Fläche"],
+  ["heated_area", "Beheizte Flaeche (m2)", "Flaeche (m2)", "Beheizte Fläche"],
+])("keeps an invalid %s editable and associates the server explanation", async (field, label, otherLabel, name) => {
+  renderMeaProperty("MIET", [null]);
+  const message = `${name}: Bitte eine Zahl wie 75,50 mit höchstens zwei Nachkommastellen eingeben.`;
+  const update = vi.spyOn(endpoints, "updateUnit")
+    .mockRejectedValueOnce(new ApiError(422, message, `invalid_unit_${field}`))
+    .mockResolvedValueOnce({ id: "unit-0" } as Unit);
+  fireEvent.click(await screen.findByRole("button", { name: "Bearbeiten" }));
+  const input = screen.getByRole("textbox", { name: label });
+  fireEvent.change(input, { target: { value: "abc" } });
+  fireEvent.click(screen.getByRole("button", { name: "Speichern" }));
+  expect(await screen.findByText(message)).toBeVisible();
+  expect(input).toHaveAccessibleDescription(message);
+  expect(input).toHaveValue("abc");
+  expect(screen.getByRole("textbox", { name: otherLabel })).not.toHaveAccessibleDescription();
+
+  fireEvent.change(input, { target: { value: "75,50" } });
+  expect(screen.queryByText(message)).not.toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "Speichern" }));
+  expect(await screen.findByRole("status")).toHaveTextContent("Einheit gespeichert.");
+  expect(update).toHaveBeenLastCalledWith("unit-0", expect.objectContaining({ [field]: "75,50" }));
+});
+
 it.each([["OWNER_ADMIN", true], ["CLERK", true], ["READ_ONLY", false], ["UNKNOWN", false]] as const)(
   "binds the property meter panel without a unit and with role %s", async (role, canWrite) => {
     render(<AuthCtx.Provider value={{ loading: false, session: { user_id: "user", organization_id: "org", role }, login: vi.fn(), logout: vi.fn() }}>

@@ -25,14 +25,17 @@ import uuid
 from dataclasses import dataclass, replace
 from datetime import date
 from decimal import Decimal
+from fractions import Fraction
 
 from app.engine.periods import (
     CoverPeriod,
     KIND_TENANT,
+    KIND_VACANCY,
     overlap_days,
     time_factor,
 )
 from app.engine.rounding import DistributionError, distribute_amount, day_share_for_period
+from app.engine.person_days import person_days, person_day_share
 from app.engine.types import (
     APPORTIONABLE_AMOUNT_REQUIRED,
     CostPositionInput,
@@ -72,8 +75,6 @@ def _unit_weight(unit: UnitInput, key: str) -> Decimal:
         val = unit.heated_area
     elif key == "EINHEIT":
         return Decimal(1)
-    elif key == "PERSONENZAHL":
-        val = None if unit.person_count is None else Decimal(unit.person_count)
     elif key == "VERBRAUCH":
         val = unit.consumption
     else:
@@ -216,6 +217,17 @@ def distribute_position(
                     continue
                 weight = amt * f  # exact contribution of this cell
                 cell_specs.append((unit.id, cover, weight, amt, None))
+    elif key == "PERSONENZAHL":
+        # Integrate each actual occupant/vacancy cell before rounding. A dated
+        # change never becomes a uniform time split of a unit's annual share.
+        weighted = [(u.id, c, Decimal(person_days(u, max(c.start, sp_from), min(c.end, sp_to),
+                        is_vacancy=c.kind == KIND_VACANCY)))
+                    for u in units for c in covers_by_unit.get(u.id, [])
+                    if overlap_days(c.start, c.end, sp_from, sp_to)]
+        weight_sum = sum((w for _, _, w in weighted), Decimal(0))
+        if weight_sum == 0:
+            raise DistributionError("Summe der Personentage ist null; keine Verteilung möglich.")
+        cell_specs = [(uid, cover, w / weight_sum, w, weight_sum) for uid, cover, w in weighted]
     elif key in WEIGHTED_KEYS:
         participating = [u for u in units if _participates(u, key)]
         weights = {u.id: _unit_weight(u, key) for u in participating}
@@ -250,7 +262,9 @@ def distribute_position(
         return []
 
     # Single Largest-Remainder pass over all cells (ADR-0005).
-    cell_weights = [spec[2] for spec in cell_specs]
+    # Preserve integer person-day weights through the single rounding pass;
+    # pre-normalized repeating decimals would perturb exact remainder ties.
+    cell_weights = [Fraction(spec[3]) if key == 'PERSONENZAHL' else spec[2] for spec in cell_specs]
     rounded = distribute_amount(total, cell_weights)
 
     sp_total = _sp_total_days(sp_from, sp_to)
@@ -266,8 +280,16 @@ def distribute_position(
         cover = replace(cover, start=start, end=end)
         if key != "EXTERNE_ABRECHNUNG":
             source_start, source_end = max(source_cover.start, sp_from), min(source_cover.end, sp_to)
-            amount = day_share_for_period(amount, source_start, source_end, start, end)
-            selection_factor = time_factor(source_start, source_end, start, end)
+            if key == "PERSONENZAHL":
+                unit = units_by_id[unit_id]
+                vacancy = cover.kind == KIND_VACANCY
+                amount = person_day_share(amount, unit, source_start, source_end, start, end, is_vacancy=vacancy)
+                selected = Decimal(person_days(unit, start, end, is_vacancy=vacancy))
+                selection_factor = selected / base_share if base_share else Decimal(0)
+                base_share = selected
+            else:
+                amount = day_share_for_period(amount, source_start, source_end, start, end)
+                selection_factor = time_factor(source_start, source_end, start, end)
             exact_weight *= selection_factor
             unit = units_by_id[unit_id]
             if key == "VERBRAUCH" and unit.consumption_periods:
@@ -322,8 +344,6 @@ def _participates(unit: UnitInput, key: str) -> bool:
         return unit.area is not None and unit.area > 0
     if key == "BEHEIZTE_FLAECHE":
         return unit.heated_area is not None and unit.heated_area > 0
-    if key == "PERSONENZAHL":
-        return unit.person_count is not None and unit.person_count > 0
     if key == "VERBRAUCH":
         return unit.consumption is not None and unit.consumption > 0
     return False

@@ -1,3 +1,4 @@
+import { DocumentAddressees } from "../components/DocumentAddressees";
 import { FinancialCoverageReview } from "../components/FinancialCoverageReview";
 /**
  * Wirtschaftsplan detail (M4): planned-cost editor, compute (per-owner monthly
@@ -15,6 +16,7 @@ import {
   listCostCategories,
   listOwnerProfiles,
   listPersons,
+  listUnits,
 } from "../api/endpoints";
 import type {
   EconomicPlan,
@@ -24,9 +26,11 @@ import type {
   CostCategory,
   OwnerProfile,
   Person,
+  Unit,
 } from "../api/types";
 import { AuthCtx } from "../auth/useAuth";
 import { ApiError } from "../api/client";
+import { normalizePlanAmount } from "../api/previousPlan";
 
 const STATUS_LABELS: Record<string, string> = { draft: "Entwurf", finalized: "Finalisiert" };
 const STATUS_CSS: Record<string, string> = { draft: "badge--draft", finalized: "badge--confirmed" };
@@ -40,6 +44,33 @@ interface CostRow {
   category_id: string | null;
 }
 
+function editableRows(stored: NonNullable<EconomicPlan["draft_inputs"]>): CostRow[] {
+  return stored.planned_costs.map(row => ({
+    category_code: row.category_code,
+    label: row.label,
+    planned_amount: row.planned_amount,
+    distribution_key: row.distribution_key ?? "MEA",
+    cost_group: row.cost_group ?? "UMLAGEFAEHIG",
+    category_id: row.category_id ?? null,
+  }));
+}
+
+function comparableCostAmount(value: string): string {
+  // Match the attested decimal string without rounding or changing the request.
+  const match = /^(-?)([0-9]+)(?:\.([0-9]+))?$/.exec(value);
+  if (!match) return value;
+  const [, sign, whole, fraction = ""] = match;
+  const significantFraction = fraction.replace(/0+$/, "");
+  return sign + whole.replace(/^0+(?=[0-9])/, "") + (significantFraction ? `.${significantFraction}` : "");
+}
+
+function calculationKey(rows: CostRow[], reserve: string) {
+  return JSON.stringify([
+    rows.map(row => ({ ...row, planned_amount: comparableCostAmount(row.planned_amount) })),
+    normalizePlanAmount(reserve) ?? reserve,
+  ]);
+}
+
 export function EconomicPlanDetailPage() {
   const { planId } = useParams<{ planId: string }>();
   const navigate = useNavigate();
@@ -50,37 +81,48 @@ export function EconomicPlanDetailPage() {
   const [categories, setCategories] = useState<CostCategory[]>([]);
   const [ownerProfiles, setOwnerProfiles] = useState<OwnerProfile[]>([]);
   const [persons, setPersons] = useState<Person[]>([]);
+  const [units, setUnits] = useState<Unit[]>([]);
   const [rows, setRows] = useState<CostRow[]>([]);
   const [reserve, setReserve] = useState("");
+  const [computedKey, setComputedKey] = useState<string | null>(null);
+  const [reserveError, setReserveError] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
+  const reserveAmount = normalizePlanAmount(reserve);
   const isDraft = plan?.status === "draft";
   const isFinalized = plan?.status === "finalized";
+  const needsRecompute = canWrite && isDraft && plan.lines.length > 0 &&
+    calculationKey(rows, reserve) !== computedKey;
 
   const reload = useCallback(() => {
     if (!planId) return;
     let current = true;
     setLoading(true);
     setError(null);
-    Promise.all([getEconomicPlan(planId), listProperties(), listCostCategories(), listOwnerProfiles(), listPersons()])
-      .then(([pl, pr, c, op, per]) => {
+    Promise.all([
+      getEconomicPlan(planId).then(async pl => ({ pl, units: await listUnits(pl.property_id).catch(() => []) })),
+      listProperties(), listCostCategories(), listOwnerProfiles(), listPersons(),
+    ])
+      .then(([{ pl, units }, pr, c, op, per]) => {
         if (!current) return;
         setPlan(pl);
         setProperties(pr);
         setCategories(c);
         setOwnerProfiles(op);
         setPersons(per);
+        setUnits(units);
         // Hydrate only on route load, never from compute/finalize action responses.
         const stored = pl.status === "draft" ? pl.draft_inputs : null;
-        setRows(stored ? stored.planned_costs.map(row => ({
-          category_code: row.category_code, label: row.label, planned_amount: row.planned_amount,
-          distribution_key: row.distribution_key ?? "MEA", cost_group: row.cost_group ?? "UMLAGEFAEHIG",
-          category_id: row.category_id ?? null,
-        })) : []);
-        setReserve(stored ? stored.reserve_contribution_total : pl.status === "finalized" ? pl.reserve_contribution_total : "");
+        const savedRows = stored ? editableRows(stored) : [];
+        const storedReserve = stored?.reserve_contribution_total ?? pl.reserve_contribution_total;
+        const savedReserve = normalizePlanAmount(storedReserve) ?? storedReserve;
+        setRows(savedRows);
+        setReserve(savedReserve);
+        setComputedKey(stored && pl.lines.length > 0 ? calculationKey(savedRows, savedReserve) : null);
+        setReserveError(false);
       })
       .catch((err) => { if (current) setError(err instanceof ApiError ? (err.status === 401 ? "Nicht authentifiziert." : err.message) : String(err)); })
       .finally(() => { if (current) setLoading(false); });
@@ -98,6 +140,12 @@ export function EconomicPlanDetailPage() {
     const per = op ? persons.find((p) => p.id === op.person_id) : undefined;
     if (!per) return opId.slice(0, 8);
     return [per.first_name, per.last_name].filter(Boolean).join(" ") || "—";
+  }
+  function unitLabel(unitId: string | null): string {
+    if (!unitId) return "Einheit nicht zugeordnet";
+    const unit = units.find(u => u.id === unitId);
+    if (!unit?.number.trim()) return `Einheit (Bezeichnung nicht verfügbar; ID: ${unitId})`;
+    return `Einheit ${unit.number}${unit.location ? ` – ${unit.location}` : ""}`;
   }
 
   function addRow() {
@@ -135,15 +183,16 @@ export function EconomicPlanDetailPage() {
         cost_group: r.cost_group,
         category_id: r.category_id,
       }));
-    return { planned_costs, reserve_contribution_total: reserve };
+    return { planned_costs, reserve_contribution_total: reserveAmount ?? reserve };
   }
 
-  async function run(fn: () => Promise<EconomicPlan>) {
+  async function run(fn: () => Promise<EconomicPlan>, submittedKey?: string) {
     if (!canWrite || busy) return;
     setBusy(true);
     setActionError(null);
     try {
       setPlan(await fn());
+      if (submittedKey !== undefined) setComputedKey(submittedKey);
     } catch (err) {
       setActionError(err instanceof ApiError ? err.message : String(err));
     } finally {
@@ -151,8 +200,24 @@ export function EconomicPlanDetailPage() {
     }
   }
 
+  function validateReserve() {
+    // The database stores up to 12 integer digits and two decimal places.
+    if (reserveAmount !== null && reserveAmount.length <= 15) return true;
+    setActionError(null);
+    setReserveError(true);
+    return false;
+  }
+
+  async function handleCompute() {
+    if (!planId || !validateReserve()) return;
+    const request = buildRequest();
+    // The response can canonicalize amounts and the editor may change while it is pending.
+    const submittedKey = calculationKey(rows, request.reserve_contribution_total);
+    await run(() => computeEconomicPlan(planId, request), submittedKey);
+  }
+
   async function handleFinalize() {
-    if (!planId) return;
+    if (!planId || needsRecompute || !validateReserve()) return;
     if (!window.confirm("Wirtschaftsplan finalisieren? Danach unveränderbar (GoBD); Änderung nur als Korrektur.")) return;
     await run(() => finalizeEconomicPlan(planId, buildRequest()));
   }
@@ -188,6 +253,7 @@ export function EconomicPlanDetailPage() {
           {STATUS_LABELS[plan.status] ?? plan.status}
         </span>
       </h1>
+      <p>Fälligkeit: jeweils zum {plan.monthly_due_day ?? 1}. des Monats</p>
 
       {actionError && (
         <div className="card" style={{ marginBottom: "1rem", background: "#ffebee", borderColor: "#ef9a9a" }}>
@@ -199,7 +265,7 @@ export function EconomicPlanDetailPage() {
         <div className="card" style={{ marginBottom: "1rem", background: "#fff8e1", borderColor: "#ffcc02" }}>
           <strong>GoBD:</strong> Finalisiert und unveränderbar. Änderungen nur als Korrektur.
           {plan.snapshot_sha256 && (
-            <div style={{ marginTop: "0.5rem", fontSize: "0.82rem" }}>Snapshot SHA-256: <code>{plan.snapshot_sha256}</code></div>
+            <div style={{ marginTop: "0.5rem", fontSize: "0.82rem" }}>Snapshot SHA-256: <code className="break-all">{plan.snapshot_sha256}</code></div>
           )}
         </div>
       )}
@@ -209,12 +275,14 @@ export function EconomicPlanDetailPage() {
         </div>
       )}
 
+      <DocumentAddressees addressees={plan.addressees} />
+
       <div className="card" style={{ marginBottom: "1.5rem" }}>
         <h2>Übersicht</h2>
         <table className="info-table"><tbody>
           <tr><td>Objekt</td><td><Link to={`/objekte/${plan.property_id}`} className="link">{propName(plan.property_id)}</Link></td></tr>
           <tr><td>Zeitraum</td><td>{plan.period_start} bis {plan.period_end}</td></tr>
-          <tr><td>Rücklagenzuführung</td><td style={{ fontFamily: "var(--mono)" }}>{plan.reserve_contribution_total} EUR</td></tr>
+          {!needsRecompute && <tr><td>Rücklagenzuführung</td><td style={{ fontFamily: "var(--mono)" }}>{plan.reserve_contribution_total} EUR</td></tr>}
           <tr><td>Engine-Version</td><td><code>{plan.engine_version}</code></td></tr>
           {plan.finalized_at && <tr><td>Finalisiert am</td><td>{plan.finalized_at}</td></tr>}
         </tbody></table>
@@ -254,17 +322,28 @@ export function EconomicPlanDetailPage() {
             <button className="btn btn--small" onClick={addRow}>+ Position</button>
           </div>
           <div className="form-grid" style={{ marginTop: "1rem" }}>
-            <label>
-              Rücklagenzuführung (Jahr)
-              <input type="text" inputMode="decimal" placeholder="0.00" value={reserve} onChange={(e) => setReserve(e.target.value)} />
-            </label>
+            <div>
+              <label>
+                Rücklagenzuführung (Jahr)
+                <input type="text" inputMode="decimal" placeholder="0.00" value={reserve}
+                  aria-invalid={reserveError}
+                  aria-describedby={reserveError ? "economic-plan-reserve-error" : undefined}
+                  onChange={(e) => { setReserve(e.target.value); setReserveError(false); }} />
+              </label>
+              {reserveError && (
+                <p id="economic-plan-reserve-error" role="alert" className="error-text">
+                  Bitte geben Sie die Rücklagenzuführung als gültigen EUR-Betrag ein.
+                </p>
+              )}
+            </div>
           </div>
       {plan.status === "draft" && <FinancialCoverageReview kind="economic_plan" subjectId={plan.id} values={buildRequest()} />}
+          {needsRecompute && <p role="status">Die Berechnung passt nicht zu den aktuellen Eingaben. Bitte vor dem Finalisieren neu berechnen.</p>}
           <div className="form-actions" style={{ marginTop: "1rem" }}>
-            <button className="btn btn--primary" disabled={busy} onClick={() => planId && run(() => computeEconomicPlan(planId, buildRequest()))}>
+            <button className="btn btn--primary" disabled={busy} onClick={handleCompute}>
               {busy ? "Berechnen..." : "Berechnen"}
             </button>
-            <button className="btn btn--primary" style={{ background: "#2e7d32", borderColor: "#2e7d32" }} disabled={busy} onClick={handleFinalize}>
+            <button className="btn btn--primary" style={{ background: "#2e7d32", borderColor: "#2e7d32" }} disabled={busy || needsRecompute} onClick={handleFinalize}>
               Finalisieren
             </button>
           </div>
@@ -278,42 +357,49 @@ export function EconomicPlanDetailPage() {
         </div>
       )}
 
-      {ownerLines.length > 0 && (
+      {!needsRecompute && ownerLines.length > 0 && (
         <div className="card" style={{ marginBottom: "1rem" }}>
           <h2>Hausgeld-Vorschüsse je Eigentümer</h2>
-          <table className="data-table">
-            <thead><tr><th>Eigentümer</th><th>Anteilsbasis</th><th style={{ textAlign: "right" }}>Jahresvorschuss</th><th style={{ textAlign: "right" }}>monatlich</th></tr></thead>
-            <tbody>
-              {ownerLines.map((l: EconomicPlanLine) => (
-                <tr key={l.id}>
-                  <td>{ownerName(l.owner_profile_id)}</td>
-                  <td style={{ fontFamily: "var(--mono)" }}>
-                    {l.distribution_base_share != null && l.distribution_base_total != null ? `${l.distribution_base_share} / ${l.distribution_base_total}` : "-"}
-                  </td>
-                  <td style={{ fontFamily: "var(--mono)", textAlign: "right" }}>{l.planned_amount} EUR</td>
-                  <td style={{ fontFamily: "var(--mono)", textAlign: "right", fontWeight: 600 }}>{l.monthly_amount ? `${l.monthly_amount} EUR` : "-"}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+          <div className="overflow-x-auto">
+            <table className="data-table">
+              <thead><tr><th>Eigentümer / Einheit</th><th>Anteilsbasis</th><th style={{ textAlign: "right" }}>Jahresvorschuss</th><th style={{ textAlign: "right" }}>monatlich</th></tr></thead>
+              <tbody>
+                {ownerLines.map((l: EconomicPlanLine) => (
+                  <tr key={l.id}>
+                    <td className="whitespace-normal">
+                      <div>{ownerName(l.owner_profile_id)}</div>
+                      <div className="break-words text-sm text-muted-foreground">{unitLabel(l.unit_id)}</div>
+                    </td>
+                    <td style={{ fontFamily: "var(--mono)" }}>
+                      {l.distribution_base_share != null && l.distribution_base_total != null ? `${l.distribution_base_share} / ${l.distribution_base_total}` : "-"}
+                    </td>
+                    <td className="whitespace-nowrap" style={{ fontFamily: "var(--mono)", textAlign: "right" }}>{l.planned_amount} EUR</td>
+                    <td className="whitespace-nowrap" style={{ fontFamily: "var(--mono)", textAlign: "right", fontWeight: 600 }}>{l.monthly_amount ? `${l.monthly_amount} EUR` : "-"}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         </div>
       )}
 
-      {costLines.length > 0 && (
+      {!needsRecompute && costLines.length > 0 && (
         <div className="card">
           <h2>Geplante Kosten (berechnet)</h2>
-          <table className="data-table">
-            <thead><tr><th>Position</th><th>Verteilerschlüssel</th><th style={{ textAlign: "right" }}>Geplant</th></tr></thead>
-            <tbody>
-              {costLines.map((l) => (
-                <tr key={l.id}>
-                  <td>{l.label}{l.note ? <div style={{ fontSize: "0.78rem", color: "var(--text-muted)", fontStyle: "italic" }}>{l.note}</div> : null}</td>
-                  <td>{l.distribution_key ?? "-"}</td>
-                  <td style={{ fontFamily: "var(--mono)", textAlign: "right" }}>{l.planned_amount} EUR</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+          <div className="overflow-x-auto">
+            <table className="data-table">
+              <thead><tr><th>Position</th><th>Verteilerschlüssel</th><th style={{ textAlign: "right" }}>Geplant</th></tr></thead>
+              <tbody>
+                {costLines.map((l) => (
+                  <tr key={l.id}>
+                    <td className="whitespace-normal">{l.label}{l.note ? <div style={{ fontSize: "0.78rem", color: "var(--text-muted)", fontStyle: "italic" }}>{l.note}</div> : null}</td>
+                    <td>{l.distribution_key ?? "-"}</td>
+                    <td className="whitespace-nowrap" style={{ fontFamily: "var(--mono)", textAlign: "right" }}>{l.planned_amount} EUR</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         </div>
       )}
     </div>

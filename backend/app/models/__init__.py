@@ -8,6 +8,7 @@ from app.models.audit_event import AuditEvent
 # M1 Stammdaten
 from app.models.property import Property
 from app.models.unit import Unit
+from app.models.unit_household import UnitHousehold
 from app.models.person import Person
 from app.models.owner_profile import OwnerProfile
 from app.models.tenant_profile import TenantProfile
@@ -28,6 +29,7 @@ from app.models.document_ref import DocumentRef
 # M3 Verteilungs-/Abrechnungs-Engine (Betriebskostenabrechnung Mieter)
 from app.models.settlement_run import SettlementRun
 from app.models.settlement_line import SettlementLine
+from app.models.commercial_preallocation import CommercialPreallocation
 
 # M4 WEG-Abrechnung (Wirtschaftsplan eigene Entitaet; Jahresabrechnung +
 # Vermoegensbericht als settlement_run run_types)
@@ -167,3 +169,5 @@ from app.models.intake_original import IntakeOriginal
 
 from app.models.special_levy import SpecialLevy, SpecialLevyAllocation
 from app.models.reserve_ledger_entry import ReserveLedgerEntry
+
+from app.models.dunning_settings import BaseInterestRate, DunningSettings
