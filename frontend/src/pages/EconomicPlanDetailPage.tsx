@@ -16,6 +16,7 @@ import {
   listCostCategories,
   listOwnerProfiles,
   listPersons,
+  listUnits,
 } from "../api/endpoints";
 import type {
   EconomicPlan,
@@ -25,6 +26,7 @@ import type {
   CostCategory,
   OwnerProfile,
   Person,
+  Unit,
 } from "../api/types";
 import { AuthCtx } from "../auth/useAuth";
 import { ApiError } from "../api/client";
@@ -79,6 +81,7 @@ export function EconomicPlanDetailPage() {
   const [categories, setCategories] = useState<CostCategory[]>([]);
   const [ownerProfiles, setOwnerProfiles] = useState<OwnerProfile[]>([]);
   const [persons, setPersons] = useState<Person[]>([]);
+  const [units, setUnits] = useState<Unit[]>([]);
   const [rows, setRows] = useState<CostRow[]>([]);
   const [reserve, setReserve] = useState("");
   const [computedKey, setComputedKey] = useState<string | null>(null);
@@ -99,14 +102,18 @@ export function EconomicPlanDetailPage() {
     let current = true;
     setLoading(true);
     setError(null);
-    Promise.all([getEconomicPlan(planId), listProperties(), listCostCategories(), listOwnerProfiles(), listPersons()])
-      .then(([pl, pr, c, op, per]) => {
+    Promise.all([
+      getEconomicPlan(planId).then(async pl => ({ pl, units: await listUnits(pl.property_id).catch(() => []) })),
+      listProperties(), listCostCategories(), listOwnerProfiles(), listPersons(),
+    ])
+      .then(([{ pl, units }, pr, c, op, per]) => {
         if (!current) return;
         setPlan(pl);
         setProperties(pr);
         setCategories(c);
         setOwnerProfiles(op);
         setPersons(per);
+        setUnits(units);
         // Hydrate only on route load, never from compute/finalize action responses.
         const stored = pl.status === "draft" ? pl.draft_inputs : null;
         const savedRows = stored ? editableRows(stored) : [];
@@ -133,6 +140,12 @@ export function EconomicPlanDetailPage() {
     const per = op ? persons.find((p) => p.id === op.person_id) : undefined;
     if (!per) return opId.slice(0, 8);
     return [per.first_name, per.last_name].filter(Boolean).join(" ") || "—";
+  }
+  function unitLabel(unitId: string | null): string {
+    if (!unitId) return "Einheit nicht zugeordnet";
+    const unit = units.find(u => u.id === unitId);
+    if (!unit?.number.trim()) return `Einheit (Bezeichnung nicht verfügbar; ID: ${unitId})`;
+    return `Einheit ${unit.number}${unit.location ? ` – ${unit.location}` : ""}`;
   }
 
   function addRow() {
@@ -349,11 +362,14 @@ export function EconomicPlanDetailPage() {
           <h2>Hausgeld-Vorschüsse je Eigentümer</h2>
           <div className="overflow-x-auto">
             <table className="data-table">
-              <thead><tr><th>Eigentümer</th><th>Anteilsbasis</th><th style={{ textAlign: "right" }}>Jahresvorschuss</th><th style={{ textAlign: "right" }}>monatlich</th></tr></thead>
+              <thead><tr><th>Eigentümer / Einheit</th><th>Anteilsbasis</th><th style={{ textAlign: "right" }}>Jahresvorschuss</th><th style={{ textAlign: "right" }}>monatlich</th></tr></thead>
               <tbody>
                 {ownerLines.map((l: EconomicPlanLine) => (
                   <tr key={l.id}>
-                    <td className="whitespace-normal">{ownerName(l.owner_profile_id)}</td>
+                    <td className="whitespace-normal">
+                      <div>{ownerName(l.owner_profile_id)}</div>
+                      <div className="break-words text-sm text-muted-foreground">{unitLabel(l.unit_id)}</div>
+                    </td>
                     <td style={{ fontFamily: "var(--mono)" }}>
                       {l.distribution_base_share != null && l.distribution_base_total != null ? `${l.distribution_base_share} / ${l.distribution_base_total}` : "-"}
                     </td>

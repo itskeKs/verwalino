@@ -12,3 +12,13 @@ Feature: Economic plan tables stay inside their cards
       | state      |
       | calculated |
       | finalized  |
+
+  Scenario Outline: One owner's advances identify the unit belonging to each amount
+    Given one WEG owner holds Vorderhaus and Hinterhaus with unequal shares
+    When I calculate and display their <state> economic plan
+    Then each unit identifies its own annual and monthly advance on desktop and phone
+
+    Examples:
+      | state      |
+      | calculated |
+      | finalized  |
