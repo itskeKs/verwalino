@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from decimal import Decimal
 from hashlib import sha256
 import json
+import logging
 import re
 from typing import Any, ClassVar, Mapping
 
@@ -45,6 +46,83 @@ _ROUTE_REASON_CODES = frozenset(
         "DOMAIN_BLOCKER",
     }
 )
+
+_SCHEMA_EXCEPTION_CLASSES = frozenset({'ValidationError', 'JSONDecodeError', 'APIResponseValidationError'})
+_SCHEMA_ERROR_CODES = frozenset({
+    'missing', 'extra_forbidden', 'union_tag_invalid', 'union_tag_not_found', 'literal_error',
+    'value_error', 'assertion_error', 'json_invalid', 'json_type', 'model_type', 'model_attributes_type',
+    'string_type', 'string_too_short', 'string_too_long', 'string_pattern_mismatch',
+    'int_type', 'int_parsing', 'int_from_float', 'bool_type', 'bool_parsing', 'float_type', 'float_parsing',
+    'finite_number', 'greater_than', 'greater_than_equal', 'less_than', 'less_than_equal',
+    'date_type', 'date_parsing', 'date_from_datetime_parsing', 'date_from_datetime_inexact',
+    'list_type', 'too_short', 'too_long',
+    'fact_core_field_unsupported', 'fact_mea_type', 'fact_denominator_type', 'fact_area_type',
+})
+_SCHEMA_DIAGNOSTIC_PREFIX = 'event=DECLARATION_SCHEMA_VALIDATION data='
+
+
+def _schema_options(node, root, depth=0):
+    if not isinstance(node, Mapping) or depth >= 12:
+        return
+    reference = node.get('$ref')
+    if isinstance(reference, str) and reference.startswith('#/$defs/'):
+        yield from _schema_options(root.get('$defs', {}).get(reference.removeprefix('#/$defs/')), root, depth + 1)
+        return
+    yield node
+    for keyword in ('anyOf', 'oneOf'):
+        for branch in node.get(keyword, []):
+            yield from _schema_options(branch, root, depth + 1)
+
+
+def _safe_schema_location(location, schema):
+    """Keep a schema-valid prefix; never retain unknown field or dictionary keys."""
+    if not isinstance(location, (tuple, list)):
+        return [], True
+    frontier = [schema]
+    safe = []
+    for segment in location[:12]:
+        following = []
+        for current in frontier:
+            for node in _schema_options(current, schema):
+                if type(segment) is int and 0 <= segment <= 9999 and 'items' in node:
+                    following.append(node['items'])
+                elif isinstance(segment, str):
+                    if segment in node.get('properties', {}):
+                        following.append(node['properties'][segment])
+                    mapping = node.get('discriminator', {}).get('mapping', {})
+                    if segment in mapping:
+                        following.append({'$ref': mapping[segment]})
+        if not following:
+            return safe, True
+        safe.append(segment)
+        frontier = following
+    return safe, len(location) > 12
+
+
+def log_schema_validation_diagnostic(*, exception_class, errors, schema, pass_id, stage) -> None:
+    """One bounded allowlisted worker-log event; durable ledger shape stays fixed."""
+    if pass_id not in _PASS_IDS or stage not in _STAGES:
+        raise ValueError('invalid schema diagnostic pass')
+    projected = []
+    for error in errors[:8]:
+        code = error.get('type')
+        location, truncated = _safe_schema_location(error.get('loc'), schema)
+        projected.append({
+            'code': code if isinstance(code, str) and code in _SCHEMA_ERROR_CODES else 'unknown_validation_error',
+            'location': location, 'location_truncated': truncated,
+        })
+    payload = {
+        'exception_class': exception_class if exception_class in _SCHEMA_EXCEPTION_CLASSES else 'UNKNOWN_SCHEMA_EXCEPTION',
+        'pass_id': pass_id, 'stage': stage, 'error_count': min(len(errors), 1_000_000),
+        'errors': projected, 'truncated': len(errors) > 8,
+    }
+    while True:
+        encoded = json.dumps(payload, ensure_ascii=True, separators=(',', ':'))
+        if len((_SCHEMA_DIAGNOSTIC_PREFIX + encoded).encode('utf-8')) <= 2048:
+            break
+        projected.pop()
+        payload['truncated'] = True
+    logging.getLogger(__name__).warning('%s%s', _SCHEMA_DIAGNOSTIC_PREFIX, encoded)
 
 
 def _validate_identifier(value: object, field_name: str, *, maximum: int = _MAX_IDENTIFIER_LENGTH) -> str:

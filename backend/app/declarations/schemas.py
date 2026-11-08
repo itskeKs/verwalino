@@ -5,6 +5,7 @@ from datetime import date
 from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic_core import PydanticCustomError
 
 
 class StrictModel(BaseModel):
@@ -128,17 +129,17 @@ class FactPayload(StrictModel):
             },
         }
         if prefix not in allowed or self.field not in allowed[prefix]:
-            raise ValueError("unsupported fixed-core subject or field")
+            raise PydanticCustomError('fact_core_field_unsupported', "Value error, unsupported fixed-core subject or field")
         if self.field == "mea" and not isinstance(self.normalized_value, MeaFraction):
-            raise ValueError("mea requires a MEA value")
+            raise PydanticCustomError('fact_mea_type', "Value error, mea requires a MEA value")
         if self.field == "mea_denominator" and not isinstance(
             self.normalized_value, IntegerValue
         ):
-            raise ValueError("mea_denominator requires an INTEGER value")
+            raise PydanticCustomError('fact_denominator_type', "Value error, mea_denominator requires an INTEGER value")
         if self.field in {"area", "heated_area"} and not isinstance(
             self.normalized_value, DecimalValue
         ):
-            raise ValueError("area fields require a DECIMAL value")
+            raise PydanticCustomError('fact_area_type', "Value error, area fields require a DECIMAL value")
         return self
 
 

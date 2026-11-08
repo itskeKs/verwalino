@@ -520,4 +520,15 @@ wire model; inherited local validation remains unchanged. Offline SDK transport
 checks verify serialization, not live provider acceptance. Pass metadata uses `default`
 when reasoning is omitted for a model with no known effort contract.
 
+SDK parse failures emit `event=DECLARATION_SCHEMA_VALIDATION` in the declaration
+worker/container logs. Retrieve this event from those logs; support bundles
+deliberately omit its details. It contains only allowlisted exception/error codes,
+pass/stage enums and schema-defined location prefixes. The four fixed-core
+after-validator codes distinguish unsupported fields, MEA types, denominator
+types and area types. Retention is bounded to eight errors, twelve location
+segments, array indices from 0 through 9999 and 2048 UTF-8 bytes per event.
+Unknown path suffixes and codes are discarded or replaced by fixed fallbacks.
+Messages, inputs, contexts, bodies, source text and credentials are excluded.
+Durable pass metadata, validation decisions and usage/retry limits are unchanged.
+
 For Luna Q&A, explicit cache mode is sent without breakpoints, disabling implicit cache writes and their surcharge. No cache parameter is added for unverified models.

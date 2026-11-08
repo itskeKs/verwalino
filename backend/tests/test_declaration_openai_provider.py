@@ -11,6 +11,7 @@ from dataclasses import dataclass
 from decimal import Decimal
 import io
 import json
+import logging
 from json import JSONDecodeError
 from types import SimpleNamespace
 
@@ -208,7 +209,7 @@ def _schema_nodes(value):
     ('recheck', TargetedRecheckOutput, RECHECK_PROMPT),
 ], ids=['inventory', 'core', 'rules', 'reconcile', 'recheck'])
 async def test_real_sdk_wire_schema_matches_reservations_and_fingerprints(
-    method, output_type, prompt, fake_declaration_provider, text_document_input, low_quality_target_page,
+    method, output_type, prompt, fake_declaration_provider, text_document_input, low_quality_target_page, caplog,
 ):
     inventory = (await fake_declaration_provider.inventory([], max_output_tokens=10)).output
     core = (await fake_declaration_provider.extract_core([], max_output_tokens=10)).output
@@ -257,6 +258,7 @@ async def test_real_sdk_wire_schema_matches_reservations_and_fingerprints(
     assert result.usage.input_tokens == 100
     assert result.usage.output_tokens == 5
     assert result.usage.attempt_count == 1
+    assert not any('event=DECLARATION_SCHEMA_VALIDATION' in record.getMessage() for record in caplog.records)
 
 
 @pytest.mark.parametrize('mutation', ['duplicate', 'non_disjoint', 'optional_kind', 'unknown_union'])
@@ -369,6 +371,97 @@ def test_wire_conversion_preserves_original_local_discriminators_and_defaults():
     assert CoreExtractionOutput.model_json_schema() == original
     assert 'oneOf' in original['$defs']['FactPayload']['properties']['normalized_value']
     assert 'kind' not in original['$defs']['MeaFraction']['required']
+
+
+@pytest.mark.asyncio
+async def test_real_sdk_parse_failure_logs_only_schema_defined_locations(fake_declaration_provider, text_document_input, caplog, migrator_session, seed_data):
+    core = (await fake_declaration_provider.extract_core([], max_output_tokens=10)).output.model_dump(mode='json')
+    core['facts'][0]['normalized_value']['value'] = {'private-input': 'private-source-content'}
+    core['facts'][0]['normalized_value']['confidence'] = 'private-nested-extra'
+    core['facts'][1]['private-extra-path'] = 'private-extra-value'
+    calls = []
+
+    def respond(request):
+        calls.append(request)
+        return httpx2.Response(200, json=_sdk_response(core, 'gpt-5.6-luna'))
+
+    with caplog.at_level(logging.WARNING, logger='app.declarations.observability'):
+        async with AsyncOpenAI(api_key='synthetic-sdk-key', base_url='https://api.openai.com/v1', max_retries=0,
+                               http_client=httpx2.AsyncClient(transport=httpx2.MockTransport(respond))) as client:
+            with pytest.raises(ProviderFailure) as raised:
+                await OpenAiDeclarationProvider(client=client, token_encoder=FixedTokenEncoder(10)).extract_core([text_document_input], max_output_tokens=10)
+
+    records = [record for record in caplog.records if record.name == 'app.declarations.observability']
+    assert len(records) == 1
+    record, = records
+    assert record.exc_info is None and record.stack_info is None
+    assert len(record.getMessage().encode('utf-8')) <= 2048
+    assert 'private-' not in record.getMessage()
+    data = json.loads(record.getMessage().removeprefix('event=DECLARATION_SCHEMA_VALIDATION data='))
+    assert data['exception_class'] == 'ValidationError'
+    assert data['pass_id'] == 'extract_core' and data['stage'] == 'provider'
+    expected = [
+        {'code': 'string_type', 'location': ['facts', 0, 'normalized_value', 'TEXT', 'value'], 'location_truncated': False},
+        {'code': 'extra_forbidden', 'location': ['facts', 0, 'normalized_value', 'TEXT'], 'location_truncated': True},
+        {'code': 'extra_forbidden', 'location': ['facts', 1], 'location_truncated': True},
+    ]
+    assert sorted(data['errors'], key=json.dumps) == sorted(expected, key=json.dumps)
+    assert raised.value.code == 'PROVIDER_SCHEMA_FAILURE'
+    assert raised.value.usage is None and raised.value.usage_complete is False
+    assert len(calls) == 1
+    assert len(raised.value.metadata.as_safe_dict()) == 23
+    await _assert_metadata_persists(migrator_session, seed_data, raised.value.metadata)
+
+
+@pytest.mark.asyncio
+async def test_real_sdk_fixed_core_guard_diagnostic_is_actionable(fake_declaration_provider, text_document_input, caplog):
+    core = (await fake_declaration_provider.extract_core([], max_output_tokens=10)).output.model_dump(mode='json')
+    core['facts'][0].update(subject_key='unit:1', field='mea')
+    calls = []
+
+    def respond(request):
+        calls.append(request)
+        return httpx2.Response(200, json=_sdk_response(core, 'gpt-5.6-luna'))
+
+    with caplog.at_level(logging.WARNING, logger='app.declarations.observability'):
+        async with AsyncOpenAI(api_key='synthetic-sdk-key', base_url='https://api.openai.com/v1', max_retries=0,
+                               http_client=httpx2.AsyncClient(transport=httpx2.MockTransport(respond))) as client:
+            with pytest.raises(ProviderFailure) as raised:
+                await OpenAiDeclarationProvider(client=client, token_encoder=FixedTokenEncoder(10)).extract_core([text_document_input], max_output_tokens=10)
+
+    record, = [record for record in caplog.records if record.name == 'app.declarations.observability']
+    data = json.loads(record.getMessage().removeprefix('event=DECLARATION_SCHEMA_VALIDATION data='))
+    assert data['errors'] == [{'code': 'fact_mea_type', 'location': ['facts', 0], 'location_truncated': False}]
+    assert raised.value.code == 'PROVIDER_SCHEMA_FAILURE' and len(calls) == 1
+
+
+@pytest.mark.asyncio
+async def test_diagnostic_logging_failure_preserves_sdk_failure_and_usage_guard(fake_declaration_provider, text_document_input, monkeypatch):
+    core = (await fake_declaration_provider.extract_core([], max_output_tokens=10)).output.model_dump(mode='json')
+    core['facts'][0].update(subject_key='unit:1', field='mea')
+    diagnostic_calls = []
+    requests = []
+
+    def broken_logging(*args, **kwargs):
+        diagnostic_calls.append(True)
+        raise RuntimeError('private-logging-failure')
+
+    monkeypatch.setattr(logging.getLogger('app.declarations.observability'), 'warning', broken_logging)
+
+    def respond(request):
+        requests.append(request)
+        return httpx2.Response(200, json=_sdk_response(core, 'gpt-5.6-luna'))
+
+    async with AsyncOpenAI(api_key='synthetic-sdk-key', base_url='https://api.openai.com/v1', max_retries=0,
+                           http_client=httpx2.AsyncClient(transport=httpx2.MockTransport(respond))) as client:
+        with pytest.raises(ProviderFailure) as raised:
+            await OpenAiDeclarationProvider(client=client, token_encoder=FixedTokenEncoder(10)).extract_core([text_document_input], max_output_tokens=10)
+
+    assert diagnostic_calls == [True]
+    assert raised.value.code == 'PROVIDER_SCHEMA_FAILURE'
+    assert raised.value.usage is None and raised.value.usage_complete is False
+    assert len(requests) == 1
+    assert 'private-' not in str(raised.value)
 
 
 def _usage(

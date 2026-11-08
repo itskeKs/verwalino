@@ -58,6 +58,7 @@ from app.declarations.observability import (
     ProviderPassMetadata,
     StaticContractFingerprints,
     fingerprint_static_contract,
+    log_schema_validation_diagnostic,
 )
 from app.declarations.schemas import (
     CoreExtractionOutput,
@@ -1218,6 +1219,22 @@ class OpenAiDeclarationProvider:
                 )
                 raise ProviderFailure(code, True, "OpenAI server request failed.", attempt_metadata=(metadata,)) from None
             if self._is_schema_exception(error):
+                try:
+                    exception_class = (
+                        'ValidationError' if isinstance(error, ValidationError)
+                        else 'JSONDecodeError' if isinstance(error, JSONDecodeError)
+                        else 'APIResponseValidationError' if isinstance(error, APIResponseValidationError)
+                        else 'UNKNOWN_SCHEMA_EXCEPTION'
+                    )
+                    errors = error.errors(include_url=False, include_context=False, include_input=False) if isinstance(error, ValidationError) else []
+                    log_schema_validation_diagnostic(
+                        exception_class=exception_class, errors=errors,
+                        schema=output_type.model_json_schema(), pass_id=pass_id, stage=stage,
+                    )
+                except Exception:
+                    # Diagnostic failures must never replace the provider failure
+                    # or expose the original exception through fallback logging.
+                    pass
                 metadata = self._metadata(
                     pass_id=pass_id,
                     attempt_no=attempt_no,

@@ -116,3 +116,22 @@ def test_inventory_relation_is_data_only() -> None:
         }
     )
     assert output.documents[0].relations[0].relation_type == "AMENDS"
+
+
+@pytest.mark.parametrize('subject,field,code,message,valid_value', [
+    ('property:main', 'private-field', 'fact_core_field_unsupported', 'unsupported fixed-core subject or field', {'kind': 'TEXT', 'value': 'Synthetic'}),
+    ('unit:1', 'mea', 'fact_mea_type', 'mea requires a MEA value', {'kind': 'MEA', 'numerator': 1, 'denominator': 1000}),
+    ('property:main', 'mea_denominator', 'fact_denominator_type', 'mea_denominator requires an INTEGER value', {'kind': 'INTEGER', 'value': 1000}),
+    ('unit:1', 'area', 'fact_area_type', 'area fields require a DECIMAL value', {'kind': 'DECIMAL', 'value': '12.5'}),
+], ids=['unsupported-field', 'mea', 'denominator', 'area'])
+def test_fixed_core_guard_codes_preserve_rejections_and_valid_counterparts(subject, field, code, message, valid_value):
+    fact = {'subject_key': subject, 'field': field, 'raw_value': 'Synthetic',
+            'normalized_value': {'kind': 'TEXT', 'value': 'Synthetic'}, 'confidence': .99,
+            'evidence': [{'document_key': 'synthetic', 'pdf_page': 1, 'quote': 'Synthetic'}]}
+    with pytest.raises(ValidationError) as raised:
+        FactPayload.model_validate(fact)
+    error, = raised.value.errors(include_context=False, include_input=False, include_url=False)
+    assert error['type'] == code
+    assert error['msg'] == 'Value error, ' + message
+    fact.update(field='street' if field == 'private-field' else field, normalized_value=valid_value)
+    assert FactPayload.model_validate(fact).normalized_value.kind == valid_value['kind']
