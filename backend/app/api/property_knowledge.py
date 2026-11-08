@@ -51,39 +51,20 @@ router = APIRouter(
 )
 
 
-def get_knowledge_provider():
-    """Lazily construct the optional adapter only when this endpoint needs it."""
-    global _knowledge_provider_cache
-    if not settings.declaration_qa_enabled:
-        return None
-    key = settings.openai_api_key.get_secret_value() if settings.openai_api_key else ""
-    if not key:
-        return None
-    if _knowledge_provider_cache is None:
-        from openai import AsyncOpenAI
-
-        from app.declarations.openai_knowledge_provider import OpenAIKnowledgeProvider
-
-        _knowledge_provider_cache = OpenAIKnowledgeProvider(client=AsyncOpenAI(api_key=key))
-    return _knowledge_provider_cache
+def get_knowledge_provider(effective):
+    """Construct one organization-bound client per question; never cache keys."""
+    from app.declarations.openai_knowledge_provider import create_knowledge_provider
+    return create_knowledge_provider(effective)
 
 
 def get_knowledge_provider_source(request: Request):
-    """Return, but do not invoke, the override-aware provider constructor."""
-    return request.app.dependency_overrides.get(
-        get_knowledge_provider, get_knowledge_provider,
-    )
+    override = request.app.dependency_overrides.get(get_knowledge_provider)
+    return (lambda effective: override()) if override is not None else get_knowledge_provider
 
 
 async def close_knowledge_provider() -> None:
-    """Close the lazily cached SDK client during application shutdown."""
-    global _knowledge_provider_cache
-    provider, _knowledge_provider_cache = _knowledge_provider_cache, None
-    close = getattr(getattr(provider, "_client", None), "close", None)
-    if close is not None:
-        result = close()
-        if inspect.isawaitable(result):
-            await result
+    """Compatibility shutdown hook: request clients close with their request."""
+    return None
 
 
 @router.get("/{property_id}/rules", response_model=list[RuleOut])

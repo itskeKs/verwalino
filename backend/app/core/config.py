@@ -90,7 +90,6 @@ class Settings(BaseSettings):
     invoice_queue_limit: int = Field(100, ge=1, le=1000)
 
     # --- Declaration import / PDF preflight ---
-    declaration_import_enabled: bool = False
     declaration_max_pdf_bytes: int = MAX_UPLOAD_BYTES
     declaration_max_documents: int = 10
     declaration_max_pages: int = 500
@@ -105,14 +104,9 @@ class Settings(BaseSettings):
 
     # --- Declaration import / OpenAI provider ---
     # Server-only secret. Do not place a real value in the project .env.
-    openai_api_key: SecretStr | None = None
-    declaration_primary_model: str = "gpt-5.6-luna"
-    declaration_escalation_model: str = "gpt-5.4-mini"
-    declaration_primary_reasoning_effort: str = "medium"
-    declaration_escalation_reasoning_effort: str = "none"
     declaration_prompt_version: str = "declaration-v1"
     declaration_schema_version: str = "1"
-    declaration_harness_version: str = "1"
+    declaration_harness_version: str = "2"
     declaration_provider_timeout_seconds: int = 60
     declaration_max_cost_usd: Decimal = Decimal("1.00")
     declaration_max_recheck_pages: int = 12
@@ -133,16 +127,7 @@ class Settings(BaseSettings):
     declaration_search_trigram_threshold: Decimal = Decimal("0.25")
     # Reverify these standard short-context rates whenever model, service tier,
     # processing region, or pricing changes.
-    declaration_primary_input_usd_per_million: Decimal = Decimal("0.20")
-    declaration_primary_output_usd_per_million: Decimal = Decimal("1.20")
-    declaration_primary_cached_input_usd_per_million: Decimal = Decimal("0.02")
-    declaration_primary_cache_write_multiplier: Decimal = Decimal("1.25")
-    declaration_escalation_input_usd_per_million: Decimal = Decimal("0.75")
-    declaration_escalation_output_usd_per_million: Decimal = Decimal("4.50")
-    declaration_escalation_cached_input_usd_per_million: Decimal = Decimal("0.075")
     # --- Property knowledge Q&A (optional; no key is required at startup) ---
-    declaration_qa_enabled: bool = False
-    declaration_qa_model: str = "gpt-5.6-luna"
     declaration_qa_timeout_seconds: int = 30
     declaration_qa_max_hits: int = 20
     declaration_qa_max_input_tokens: int = 20_000
@@ -151,8 +136,6 @@ class Settings(BaseSettings):
     declaration_qa_budget_window_minutes: int = 60
     declaration_qa_reservation_seconds: int = 120
     declaration_qa_max_concurrency: int = 4
-    declaration_qa_input_usd_per_million: Decimal = Decimal("0.20")
-    declaration_qa_output_usd_per_million: Decimal = Decimal("1.20")
 
     @field_validator("declaration_search_trigram_threshold")
     @classmethod
@@ -185,34 +168,11 @@ class Settings(BaseSettings):
 
     @field_validator(
         "declaration_qa_max_cost_usd",
-        "declaration_qa_input_usd_per_million",
-        "declaration_qa_output_usd_per_million",
     )
     @classmethod
     def _validate_positive_qa_decimal(cls, value: Decimal) -> Decimal:
         if not value.is_finite() or value <= 0:
             raise ValueError("Q&A monetary values must be positive and finite")
-        return value
-
-    @field_validator(
-        "declaration_primary_input_usd_per_million",
-        "declaration_primary_output_usd_per_million",
-        "declaration_primary_cached_input_usd_per_million",
-        "declaration_escalation_input_usd_per_million",
-        "declaration_escalation_output_usd_per_million",
-        "declaration_escalation_cached_input_usd_per_million",
-    )
-    @classmethod
-    def _validate_declaration_rates(cls, value: Decimal) -> Decimal:
-        if not value.is_finite() or value <= 0:
-            raise ValueError("declaration model rates must be positive and finite")
-        return value
-
-    @field_validator("declaration_primary_cache_write_multiplier")
-    @classmethod
-    def _validate_cache_write_multiplier(cls, value: Decimal) -> Decimal:
-        if value != Decimal("1.25"):
-            raise ValueError("declaration cache write multiplier must be exactly 1.25")
         return value
 
     @model_validator(mode="after")
@@ -225,22 +185,6 @@ class Settings(BaseSettings):
             raise ValueError(
                 "declaration_qa_reservation_seconds must include a finalization margin"
             )
-        return self
-
-    @model_validator(mode="after")
-    def _validate_declaration_efforts(self) -> "Settings":
-        supported_efforts = {
-            "gpt-5.6-luna": frozenset({"none", "low", "medium", "high", "xhigh", "max"}),
-            "gpt-5.4-mini": frozenset({"none", "low", "medium", "high", "xhigh"}),
-        }
-        if self.declaration_primary_reasoning_effort not in supported_efforts.get(
-            self.declaration_primary_model, frozenset()
-        ):
-            raise ValueError("primary declaration reasoning effort is not supported by its model")
-        if self.declaration_escalation_reasoning_effort not in supported_efforts.get(
-            self.declaration_escalation_model, frozenset()
-        ):
-            raise ValueError("escalation declaration reasoning effort is not supported by its model")
         return self
 
     # --- Region / Compliance ---

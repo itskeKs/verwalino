@@ -127,7 +127,8 @@ class DeclarationImportWorker:
             if not _REQUIRED_IMPORT_COLUMNS.issubset(found):
                 return False
             return bool(await session.scalar(text("""
-                SELECT to_regprocedure('public.next_declaration_queue_metadata(uuid,timestamp with time zone)') IS NOT NULL
+                SELECT to_regclass('public.organization_ai_settings') IS NOT NULL
+                   AND to_regprocedure('public.next_declaration_queue_metadata(uuid,timestamp with time zone)') IS NOT NULL
                    AND to_regprocedure('public.lock_declaration_lease_metadata(uuid,uuid,uuid,bigint,uuid,text[])') IS NOT NULL
                    AND to_regprocedure('public.claim_declaration_work(uuid,text,integer)') IS NOT NULL
                    AND to_regprocedure('public.renew_declaration_work(uuid,uuid,uuid,bigint,uuid,integer)') IS NOT NULL
@@ -154,6 +155,11 @@ class DeclarationImportWorker:
             organization_ids = organization_ids[start:] + organization_ids[:start]
         for organization_id in organization_ids:
             async with self._tenant_session_factory(organization_id) as session:
+                from app.services.ai_settings_service import effective_ai_settings
+                effective = await effective_ai_settings(session, organization_id)
+                if not effective.import_enabled or not effective.api_key or not effective.model:
+                    continue
+                self._active_ai = effective
                 lease = await DeclarationImportRepository(
                     session, organization_id
                 ).claim_next(
@@ -218,9 +224,16 @@ class DeclarationImportWorker:
             lease = renewed
 
     async def _run_claimed(self, lease: WorkerLease) -> WorkerResult:
-        if self._pipeline is None:
-            raise RuntimeError("DeclarationImportWorker requires a pipeline")
-        pipeline_task = asyncio.create_task(self._pipeline.run(lease))
+        pipeline = self._pipeline
+        owned_provider = None
+        if pipeline is None:
+            from app.declarations.openai_provider import OpenAiDeclarationProvider
+            from app.declarations.pipeline import DeclarationPipeline
+            effective = self._active_ai
+            owned_provider = OpenAiDeclarationProvider(api_key=effective.api_key.get_secret_value(),
+                primary_model=effective.model, escalation_model=effective.model)
+            pipeline = DeclarationPipeline(owned_provider, tenant_session_factory=self._tenant_session_factory)
+        pipeline_task = asyncio.create_task(pipeline.run(lease))
         heartbeat_task = asyncio.create_task(self._heartbeat(lease))
         try:
             done, _pending = await asyncio.wait(
@@ -260,12 +273,18 @@ class DeclarationImportWorker:
                 if not task.done():
                     task.cancel()
             await asyncio.gather(pipeline_task, heartbeat_task, return_exceptions=True)
+            if owned_provider is not None and owned_provider._client is not None:
+                await owned_provider._client.close()
 
     async def run_once(self, *, organization_id: uuid.UUID | None = None) -> WorkerResult:
         # A disabled import feature must not acquire a lease or invoke external
         # parsing. The independent healthcheck still probes worker readiness.
-        if not self._settings.declaration_import_enabled:
-            return WorkerResult("DECLARATION_IMPORT_DISABLED")
+        if organization_id is not None:
+            from app.services.ai_settings_service import effective_ai_settings
+            async with self._tenant_session_factory(organization_id) as session:
+                effective = await effective_ai_settings(session, organization_id)
+            if not effective.import_enabled or not effective.api_key or not effective.model:
+                return WorkerResult("DECLARATION_IMPORT_DISABLED")
         if not await self.schema_ready():
             return WorkerResult("SCHEMA_NOT_READY")
         lease = await self.claim_one(organization_id) if organization_id is not None else await self.claim_one()
@@ -354,8 +373,7 @@ async def _main() -> None:
     from app.declarations.openai_provider import OpenAiDeclarationProvider
     from app.declarations.pipeline import DeclarationPipeline
 
-    provider = OpenAiDeclarationProvider()
-    await DeclarationImportWorker(DeclarationPipeline(provider)).run_forever()
+    await DeclarationImportWorker().run_forever()
 
 
 def main(argv: list[str] | None = None) -> int:

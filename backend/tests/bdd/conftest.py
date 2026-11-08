@@ -17,6 +17,8 @@ import pytest
 import pytest_asyncio
 
 from tests.bdd.world import World, admin_credentials, target_url
+from tests.bdd.steps.ai_settings import *  # noqa: F401,F403
+from tests.bdd.steps.browser_declaration import *  # noqa: F401,F403
 from tests.bdd.browser import browser_app, browser_session, browser_storage, browser_world  # noqa: F401
 
 # Reused as-is: a throw-away user that may change its password without

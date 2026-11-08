@@ -1,5 +1,6 @@
 """Release installer contracts: stdlib only, fake downloads/Docker, no network."""
 
+import ast
 import hashlib
 import errno
 import json
@@ -15,6 +16,10 @@ from installer_test_process import install_interrupt_handlers, run, unittest_mai
 
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = ROOT / "install.sh"
+RELEASE_TARGET = next(ast.literal_eval(node.value) for node in ast.parse(
+    (ROOT / "backend/app/deployment.py").read_text()).body
+    if isinstance(node, ast.Assign) and any(isinstance(target, ast.Name) and target.id == "TARGET"
+                                            for target in node.targets))
 TAG = "v1.2.3"
 DIGEST = "sha256:" + "a" * 64
 IMAGE = "ghcr.io/itskeks/verwalino@" + DIGEST
@@ -61,6 +66,8 @@ elif name == "docker":
         sys.exit(int(os.environ.get("DAEMON_FAIL", "0")))
     elif args == ["info", "-f", "{{.ServerVersion}}"]:
         print(os.environ.get("DOCKER_VERSION", "27.0.0"))
+    elif args and args[0] == "run" and args[-2:] == ["-c", "from app.deployment import TARGET; print(TARGET)"]:
+        print(os.environ["INSTALL_TEST_RELEASE_TARGET"])
     elif "psql" in args:
         if any("SELECT count(*)" in arg for arg in args):
             print("0")
@@ -129,7 +136,8 @@ class InstallTests(unittest.TestCase):
                     if not key.startswith(("VERWALINO_", "INSTALL_TEST_"))}
         self.env.update(PATH=str(self.binary), INSTALL_TEST_BUNDLE=str(self.bundle),
                         INSTALL_TEST_LOG=str(self.log), INSTALL_TEST_PYTHON=sys.executable,
-                        INSTALL_TEST_HELPER=str(self.helper), INSTALL_TEST_PORT=TEST_PORT)
+                        INSTALL_TEST_HELPER=str(self.helper), INSTALL_TEST_PORT=TEST_PORT,
+                        INSTALL_TEST_RELEASE_TARGET=RELEASE_TARGET)
 
     def checksums(self):
         (self.bundle / "SHA256SUMS").write_text("".join(
@@ -406,9 +414,17 @@ class InstallTests(unittest.TestCase):
             if path.is_file():
                 self.assertNotIn(token.encode(), path.read_bytes())
         self.assertTrue(os.access(self.dest / "infra/db/prod-init.sh", os.X_OK))
-        # Skip the installer's and the doctor's host queries; every remaining call is project-scoped.
+        # The image target is read without privileges, network, ports or mounts.
+        probes = [args for args in self.calls("docker") if args[0] == "run"]
+        self.assertTrue(probes)
+        self.assertTrue(all(args == [
+            "run", "--rm", "--pull", "never", "--network", "none", "--read-only",
+            "--user", "10001:10001", "--cap-drop", "ALL", "--security-opt", "no-new-privileges",
+            "--entrypoint", "python", IMAGE, "-c", "from app.deployment import TARGET; print(TARGET)"
+        ] for args in probes))
+        # Remaining operations use only the installer project and shipped manifest.
         calls = [args for args in self.calls("docker")[2:]
-                 if args[0] != "info" and args != ["compose", "version", "--short"]]
+                 if args[0] not in ("info", "run") and args != ["compose", "version", "--short"]]
         self.assertTrue(calls)
         for args in calls:
             self.assertEqual(args[args.index("--project-name") + 1], "verwalino")
@@ -416,6 +432,8 @@ class InstallTests(unittest.TestCase):
         compose = (self.dest / "infra/docker-compose.yml").read_text()
         self.assertIn("./db/prod-init.sh:", compose)
         self.assertIn(["pull", "app"], [args[-2:] for args in calls])
+        self.assertTrue(any(args[-7:] == ["up", "-d", "--no-deps", "--wait", "--wait-timeout", "120", "declaration-worker"]
+                            for args in calls))
 
     def test_real_helper_initializes_and_starts_when_default_port_is_occupied(self):
         (self.bundle / "self-host.sh").write_bytes((ROOT / "scripts/self-host.sh").read_bytes())

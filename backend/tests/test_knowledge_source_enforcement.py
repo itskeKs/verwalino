@@ -1,12 +1,13 @@
 """Q&A validates complete source authority at each short phase, including cost closure."""
 import pytest
+from tests.ai_settings_support import configure_ai
 from sqlalchemy import text
 from app.api.property_knowledge import get_knowledge_provider
 from app.declarations.fake_knowledge_provider import FakeKnowledgeProvider
 from app.main import app
 from tests.test_property_source_enforcement import synthetic_enforcement,change_mode
 
-pytestmark=pytest.mark.asyncio
+pytestmark=[pytest.mark.asyncio, pytest.mark.usefixtures("configured_ai")]
 
 
 async def test_strict_query_without_source_grant_never_calls_provider(approved_knowledge_graph,seed_data,client_a_admin,migrator_session):
@@ -33,7 +34,7 @@ async def configure_budget(seed):
     from app.core.runtime_budget import attest_runtime_budget,runtime_budget_policy
     async with get_tenant_session(seed['org_a_id']) as db:
         await db.execute(text("SELECT set_config('app.current_user_id',:actor,true)"),{'actor':str(seed['user_a_admin_id'])})
-        proof = await attest_runtime_budget(db,seed['org_a_id'],seed['user_a_admin_id'],runtime_budget_policy())
+        proof = await attest_runtime_budget(db,seed['org_a_id'],seed['user_a_admin_id'],runtime_budget_policy(enabled=True))
         state = await db.scalar(text('SELECT runtime_budget_status(:org)'),{'org':seed['org_a_id']})
         await db.execute(text("SELECT review_runtime_budget(:org,:request,:prior,:digest,'Synthetic configured Q&A policy')"),
             {'org':seed['org_a_id'],'request':uuid.uuid4(),'prior':uuid.UUID(state['review']['id']) if state['review'] else None,'digest':proof['policy_digest']})
@@ -43,7 +44,7 @@ async def configure_budget(seed):
 async def granted_graph(api,seed,graph):
     from app.core.config import settings
     with pytest.MonkeyPatch.context() as budget_settings:
-        budget_settings.setattr(settings,'declaration_qa_enabled',True)
+        configure_ai(seed['org_a_id'], qa_enabled=True)
         import uuid
         from tests.test_bound_source_access import classify
         domain,grant_id=await grant(api,seed,graph.property_id,caps=['read','prepare','approve'])
@@ -250,7 +251,7 @@ async def test_strict_reserve_owns_window_expiry_and_caps_atomic_admission(appro
         async with get_tenant_session(graph.organization_id) as db:
             await db.execute(text("SELECT set_config('app.current_user_id',:actor,true)"),{'actor':str(seed_data['user_a_admin_id'])})
             from app.core.runtime_budget import attest_runtime_budget,runtime_budget_policy
-            await attest_runtime_budget(db,graph.organization_id,seed_data['user_a_admin_id'],runtime_budget_policy())
+            await attest_runtime_budget(db,graph.organization_id,seed_data['user_a_admin_id'],runtime_budget_policy(enabled=True))
             params={'org':graph.organization_id,'property':graph.property_id,'amount':settings.declaration_qa_max_cost_usd+Decimal('0.000001')}
             command=text("SELECT * FROM reserve_knowledge_query(:org,:property,'fake','policy',:amount)")
             assert (await db.execute(command,params)).first() is None
@@ -337,7 +338,7 @@ async def test_concurrent_strict_reservations_share_one_org_budget(approved_know
             async with get_tenant_session(graph.organization_id) as db:
                 await db.execute(text("SELECT set_config('app.current_user_id',:actor,true)"),{'actor':str(seed_data['user_a_admin_id'])})
                 from app.core.runtime_budget import attest_runtime_budget,runtime_budget_policy
-                await attest_runtime_budget(db,graph.organization_id,seed_data['user_a_admin_id'],runtime_budget_policy())
+                await attest_runtime_budget(db,graph.organization_id,seed_data['user_a_admin_id'],runtime_budget_policy(enabled=True))
                 await barrier.wait()
                 return (await db.execute(text("SELECT * FROM reserve_knowledge_query(:org,:property,'fake','parallel',:amount)"),
                     {'org':graph.organization_id,'property':graph.property_id,'amount':settings.declaration_qa_max_cost_usd*Decimal('0.6')})).first()

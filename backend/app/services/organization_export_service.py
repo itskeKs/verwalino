@@ -100,7 +100,7 @@ async def inventory(db):
           SELECT 1 FROM pg_attribute org WHERE org.attrelid=c.oid AND org.attname='organization_id'))
       GROUP BY c.oid,c.relname ORDER BY c.relname"""))).mappings().all()
     # Password-reset links are global authentication infrastructure, never data.
-    return {r["name"]: r for r in rows if r["name"] not in {"password_reset_request", "organization_deletion"}}
+    return {r["name"]: r for r in rows if r["name"] not in {"password_reset_request", "organization_deletion", "organization_ai_settings"}}
 
 
 def export_predicate(name, columns):

@@ -161,19 +161,19 @@ exception text. Status endpoints stay with their aggregated metadata.
 Luna places the static developer block before dynamic document data and
 uses an explicit cache breakpoint and a 30-minute cache. The
 stable key contains only model, pass, and prompt, schema and
-harness version/hash. Mini receives **no** explicit caching. The
-configuration for Luna cache writes is
-`declaration_primary_cache_write_multiplier` or
-`HV_DECLARATION_PRIMARY_CACHE_WRITE_MULTIPLIER` and is validated to `1.25`.
+harness version/hash. Mini receives **no** explicit caching. Its cache-write multiplier is the documented `1.25` constant in `core/ai_models.py`, not an environment setting.
 
 Costs are calculated conservatively from ordinary input, cached input,
 cache write and output tokens. Invalid partitions, negative
-counters, missing rates or cache writes for Mini fail closed to
+counters or unsupported cache writes for Mini fail closed to
 `PROVIDER_USAGE_INVALID`; a cheaper estimate does not justify a loss of
 quality.
 
-`HV_OPENAI_API_KEY` is an exclusively server-side deployment secret:
-never in the frontend, Git, project `.env`, browser or ticket. Only after the local
+An organization administrator enters the OpenAI key in **Einstellungen**. The key
+is encrypted at rest using the deployment session secret, never returned by the
+API, and never included in logs, product archives or tickets. The same selected
+model is used for extraction, escalation and Q&A. Each request/job reads the current
+organization settings; clients are closed after the request/job. Only after the local
 precheck are bounded, permitted page contents sent to the provider.
 `store=false` is set, **is not ZDR** and triggers no retention commitment.
 API data is not used for training by default; without approved extended controls,
@@ -204,15 +204,14 @@ therefore in the egress network, and the database remains reachable exclusively 
 
 The OpenAI client is hard-wired to `https://api.openai.com/v1`. The harness has
 no URL, browser or tool capability and transmits only the intended
-structured output requests. When imports are enabled, the worker checks the two
-configured model IDs via the non-billable Models
-API (short timeout, at most one SDK retry) before a promotion. For this, the deploy starts, after
-the API health check but before the consuming worker, a one-off
-`compose run --rm --no-deps` container with an explicit Python entrypoint. The
-normal worker entrypoint and its endless loop do not run in it. Neither
-PDF/prompt contents nor Responses calls are transmitted, and the key
-is read exclusively from its container environment. A failure preserves
-the previous runtime state and prevents the promotion.
+structured output requests. The existing non-billable smoke command now requires
+an organization context: `python -m app.workers.declaration_provider_smoke
+--organization-id UUID`. It reads that organization's enabled import configuration
+through the same effective-settings function and retrieves the selected model only.
+It never submits PDF/prompt contents or Responses calls. Missing, disabled or
+unconfigured organizations fail with a sanitized message. Live comparison evals
+likewise require `--organization-id UUID`; offline fake evals need no organization,
+credential or network. Comparison candidates remain evaluation-only inputs.
 
 The non-internal Docker network is not a domain firewall. Anyone who must restrict egress to OpenAI
 additionally needs a host/network allowlist. The
@@ -249,7 +248,7 @@ separate explicit authorization and compares exactly `luna_medium`,
 `luna_low`, `terra_primary` and `luna_with_mini_router`.
 
 **Phase A — Activation and values:** Before **any path method**, exactly
-`HV_DECLARATION_LIVE_EVAL=1`, a server-side API key,
+`HV_DECLARATION_LIVE_EVAL=1`, a valid `--organization-id UUID`,
 `--provider live --live --compare-models`, a non-empty value for
 `HV_DECLARATION_REAL_PDF_MANIFEST` and the three positive, caller-verified
 Terra rates are checked. If any of these values is missing or invalid,
@@ -261,14 +260,15 @@ must exactly match `HV_DECLARATION_REAL_PDF_MANIFEST`, comply with case limits a
 SHA-256 check per case. In this phase, the manifest and declared PDFs are read and hashed locally. A mismatching hash
 prevents capability, adapter, provider and transmission — it does not claim
 that the file was never opened. Only after a successful Phase B is the
-capability created and an adapter constructed. Manifest, PDFs and report
+organization's enabled persisted AI settings loaded through the worker role, then the
+capability created and an adapter constructed. No environment API key is read. Manifest, PDFs and report
 never belong in the repository.
 
 ```bash
 cd backend
 ./.venv/bin/python -m app.evals.declaration_knowledge \
   --fixtures tests/fixtures/declaration_eval_cases.json \
-  --provider live --live --compare-models \
+  --provider live --live --compare-models --organization-id UUID \
   --manifest /absolute/external/path/manifest.json \
   --report-dir /absolute/external/path/reports
 ```
@@ -503,3 +503,17 @@ as blockers. Do not remove source policies or rewrite historical notices to reso
 coverage gaps. Activation requires reviewed legacy coverage and the guarded
 transition; use the
 [activation runbook](accounting-scope-setup.md#owner-activation-runbook).
+
+
+## Organization settings (0178)
+
+See [deployment and upgrade instructions](../../DEPLOY.md#organization-ai-settings-and-upgrade-to-0178).
+The administrator may set a shared monthly import/Q&A limit in USD. Only known
+prices are enforced; unknown-price models remain selectable and the page explains
+that they are not limited. Known requests explicitly use the standard service tier
+and no implicit SDK retry. Monetary unknowns are recorded as unpriced zero estimates,
+not as a claim that OpenAI is free. Token/time limits remain bounded. The extraction
+harness version is `2` for these request-shape changes. Pass metadata uses `default`
+when reasoning is omitted for a model with no known effort contract.
+
+For Luna Q&A, explicit cache mode is sent without breakpoints, disabling implicit cache writes and their surcharge. No cache parameter is added for unverified models.

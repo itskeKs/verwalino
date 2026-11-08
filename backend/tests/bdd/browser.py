@@ -67,7 +67,7 @@ def browser_app(seed_data, request, browser_storage):
     env.update({key: os.environ[key] for key in (
         "HV_DATABASE_URL", "HV_DATABASE_URL_MIGRATOR", "HV_DATABASE_URL_SYNC", "HV_DATABASE_URL_REVIEW",
     )})
-    env.update(HV_DECLARATION_IMPORT_ENABLED="false", HV_INVOICE_EXTRACTION_ENABLED="false")
+    env.update(HV_INVOICE_EXTRACTION_ENABLED="false")
     env["HV_DEPLOYMENT_MODE"] = get_deployment_policy().deployment_mode
     commands = [
         ([sys.executable, "-m", "uvicorn", "tests.dunning_response_app:app", "--host", "127.0.0.1", "--port", "18000"], ROOT / "backend", "http://127.0.0.1:18000/api/health/live"),

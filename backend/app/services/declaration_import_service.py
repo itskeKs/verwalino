@@ -27,9 +27,11 @@ ACTIVE_OR_COMPLETE_STATUSES = {
 }
 
 
-def require_declaration_import_enabled() -> None:
+async def require_declaration_import_enabled(db, organization_id) -> None:
     """Reject write-side import work when the deployment switch is off."""
-    if not settings.declaration_import_enabled:
+    from app.services.ai_settings_service import effective_ai_settings
+    effective = await effective_ai_settings(db, organization_id)
+    if not effective.import_enabled or not effective.api_key or not effective.model:
         raise HTTPException(status_code=503, detail=DECLARATION_IMPORT_DISABLED)
 
 
@@ -45,7 +47,7 @@ class DeclarationImportService:
     async def create(
         self, mode: str, target_property_id: uuid.UUID | None
     ) -> DeclarationImport:
-        require_declaration_import_enabled()
+        await require_declaration_import_enabled(self._session, self._org_id)
         if mode not in {"NEW_PROPERTY", "EXISTING_PROPERTY"}:
             raise HTTPException(status_code=422, detail="Invalid import mode")
         if mode == "EXISTING_PROPERTY" and target_property_id is None:
@@ -103,7 +105,7 @@ class DeclarationImportService:
         document_role: str,
         sequence_no: int,
     ) -> PropertyDocument:
-        require_declaration_import_enabled()
+        await require_declaration_import_enabled(self._session, self._org_id)
         item = await self._get_for_update(import_id)
         self._require_draft(item)
         if await self._imports.count_documents(import_id) >= settings.declaration_max_documents:
@@ -172,7 +174,7 @@ class DeclarationImportService:
         return document, link
 
     async def _queue_command(self, import_id: uuid.UUID, key: uuid.UUID, operation: str):
-        require_declaration_import_enabled()
+        await require_declaration_import_enabled(self._session, self._org_id)
         await self._imports.lock_acl()
         role = await self._session.scalar(text("SELECT scope_actor_role(:org)"), {"org": self._org_id})
         if role not in {"OWNER_ADMIN", "CLERK"}:
@@ -208,8 +210,8 @@ class DeclarationImportService:
             if (await self._imports.count_extraction_runs(import_id) >= settings.declaration_max_attempts
                 or item.estimated_cost_usd >= item.max_cost_usd):
                 raise HTTPException(status_code=409, detail="RETRY_BUDGET_EXHAUSTED")
-        from app.services.quota_service import require_ai_budget
-        await require_ai_budget(self._session, self._org_id, item.max_cost_usd)
+        from app.services.ai_settings_service import require_organization_ai_budget
+        await require_organization_ai_budget(self._session, self._org_id, item.max_cost_usd)
         receipt_id = await self._session.scalar(text("SELECT record_declaration_queue_request(:org,:job,:key,:operation)"),
             {"org": self._org_id, "job": import_id, "key": key, "operation": operation})
         await self._session.refresh(item)

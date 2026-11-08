@@ -7,6 +7,8 @@ from json import JSONDecodeError
 from types import SimpleNamespace
 
 import pytest
+pytestmark = pytest.mark.usefixtures("configured_ai")
+from tests.ai_settings_support import configure_ai
 
 from app.declarations.knowledge_schemas import KnowledgeHit, KnowledgeSource
 
@@ -326,6 +328,9 @@ async def test_openai_adapter_uses_data_only_tool_free_strict_request() -> None:
     assert call["text_format"] is ProviderKnowledgeAnswer
     assert call["store"] is False
     assert call["tools"] == []
+    assert call["service_tier"] == 'default'
+    assert call['prompt_cache_options'] == {'mode':'explicit','ttl':'30m'}
+    assert 'prompt_cache_breakpoint' not in __import__('json').dumps(call['input'])
     assert call["timeout"] == 31
     assert call["max_output_tokens"] == 73
     assert call["input"][0]["role"] == "developer"
@@ -738,7 +743,7 @@ async def test_query_endpoint_uses_injected_provider_and_returns_exact_sources(
         assert run is not None
         assert run.status == "FINALIZED"
         assert run.provider == "RecordingProvider"
-        assert run.model == settings.declaration_qa_model
+        assert run.model == "gpt-5.6-luna"
         assert run.input_tokens == 17
         assert run.output_tokens == 11
         assert run.estimated_cost_usd == Decimal("0.000017")
@@ -831,12 +836,13 @@ async def test_query_endpoint_disabled_and_transport_outage_do_not_break_search(
 
     route = f"/api/properties/{approved_knowledge_graph.property_id}/knowledge/query"
     search_route = f"/api/properties/{approved_knowledge_graph.property_id}/knowledge/search"
+    configure_ai(approved_knowledge_graph.organization_id, qa_enabled=False)
     disabled = await client_a_admin.post(route, json={"question": "Heizkosten"})
     assert disabled.status_code == 503
     assert disabled.json()["detail"] == "QA_DISABLED"
     assert (await client_a_admin.get(search_route, params={"q": "Heizkosten"})).status_code == 200
 
-    monkeypatch.setattr(settings, "declaration_qa_enabled", True)
+    configure_ai(approved_knowledge_graph.organization_id, qa_enabled=True)
     app.dependency_overrides[get_knowledge_provider] = lambda: FakeKnowledgeProvider(mode="timeout")
     try:
         unavailable = await client_a_admin.post(route, json={"question": "Heizkosten"})
@@ -1062,9 +1068,12 @@ async def test_provider_construction_is_deferred_until_known_property_has_hits(
     from app.api.property_knowledge import close_knowledge_provider
     from app.core.config import settings
 
-    monkeypatch.setattr(settings, "declaration_qa_enabled", True)
-    monkeypatch.setattr(settings, "declaration_qa_model", "unverified-model")
-    monkeypatch.setattr(settings, "openai_api_key", SecretStr("synthetic-not-a-key"))
+    configure_ai(approved_knowledge_graph.organization_id, qa_enabled=True)
+    configure_ai(approved_knowledge_graph.organization_id, model="unverified-model")
+    def unavailable(_effective):
+        from app.declarations.knowledge_provider import ProviderUnavailable
+        raise ProviderUnavailable()
+    monkeypatch.setattr('app.declarations.openai_knowledge_provider.create_knowledge_provider', unavailable)
     await close_knowledge_provider()
     try:
         foreign = await client_b_admin.post(
@@ -1352,3 +1361,29 @@ async def test_live_reservation_is_not_reclaimed_during_configured_provider_time
 async def _set_query_actor(session, actor):
     from sqlalchemy import text
     await session.execute(text("SELECT set_config('app.current_user_id', :actor, true)"), {"actor": str(actor)})
+
+
+async def test_organization_monthly_limit_stops_known_qa_but_unpriced_model_remains_usable(
+    approved_knowledge_graph, client_a_admin, configured_ai,
+):
+    from app.api.property_knowledge import get_knowledge_provider
+    from app.declarations.fake_knowledge_provider import FakeKnowledgeProvider
+    from app.declarations.provider import ProviderUsage
+    from app.main import app
+    route=f'/api/properties/{approved_knowledge_graph.property_id}/knowledge/query'
+    provider=FakeKnowledgeProvider()
+    app.dependency_overrides[get_knowledge_provider]=lambda:provider
+    try:
+        configured_ai(approved_knowledge_graph.organization_id, monthly_limit_usd=Decimal('0'))
+        refused=await client_a_admin.post(route,json={'question':'Heizkosten'})
+        assert refused.status_code==409,refused.text
+        assert refused.json()['detail']['code']=='ORGANIZATION_AI_BUDGET_EXCEEDED'
+        assert not provider.calls
+        configured_ai(approved_knowledge_graph.organization_id, model='future-model', monthly_limit_usd=Decimal('0'))
+        provider=FakeKnowledgeProvider(usage=ProviderUsage(17,11,Decimal('0'),1))
+        provider._model='future-model'
+        admitted=await client_a_admin.post(route,json={'question':'Heizkosten'})
+        assert admitted.status_code==200,admitted.text
+        assert len(provider.calls)==1
+    finally:
+        app.dependency_overrides.pop(get_knowledge_provider,None)

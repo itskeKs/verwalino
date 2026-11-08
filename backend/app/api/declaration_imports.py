@@ -106,7 +106,7 @@ async def upload_document(
 ):
     # Fail before consuming the multipart stream when imports are disabled,
     # then enforce the deploy-time byte limit during the bounded read.
-    require_declaration_import_enabled()
+    await require_declaration_import_enabled(db, auth.organization_id)
     file_bytes = await read_upload_limited(file, settings.declaration_max_pdf_bytes)
     service = DeclarationImportService(db, auth.organization_id, auth.user_id)
     document = await service.upload_document(

@@ -20,6 +20,9 @@ class AccessCoverageService:
         return self._policy
 
     async def attest_policy(self):
+        from app.services.ai_settings_service import effective_ai_settings
+        effective = await effective_ai_settings(self.db, self.auth.organization_id)
+        self._policy = runtime_budget_policy(enabled=effective.qa_enabled)
         await attest_runtime_budget(self.db,self.auth.organization_id,self.auth.user_id,self.policy())
 
     async def runtime_budget_status(self):

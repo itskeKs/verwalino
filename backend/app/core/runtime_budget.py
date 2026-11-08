@@ -7,8 +7,8 @@ from app.core.config import settings
 from app.core.db import get_review_tenant_session
 
 
-def runtime_budget_policy() -> str:
-    return json.dumps({'enabled':settings.declaration_qa_enabled,
+def runtime_budget_policy(*, enabled: bool = False) -> str:
+    return json.dumps({'enabled':enabled,
         'max_cost_usd':str(settings.declaration_qa_max_cost_usd),
         'window_minutes':settings.declaration_qa_budget_window_minutes,
         'reservation_seconds':settings.declaration_qa_reservation_seconds})

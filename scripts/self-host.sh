@@ -100,7 +100,7 @@ Usage: bash scripts/self-host.sh COMMAND
   restore FILE [--yes]          Replace data in a stopped installation
   update [--image REGISTRY/IMAGE@sha256:DIGEST] [--yes]
                                 Back up, migrate and check; restore on failure
-Default: local HTTP on 127.0.0.1:18080; no AI, SMTP or extraction worker.
+Default: local HTTP on 127.0.0.1:18080; AI is off until an administrator configures it in Einstellungen; no SMTP.
 Optional outbound mail: add HV_SMTP_HOST and HV_SMTP_FROM to the private config.
 HV_SMTP_PORT (587), HV_SMTP_SECURITY (starttls or tls; default starttls),
 HV_SMTP_USERNAME/HV_SMTP_PASSWORD (together), HV_SMTP_TIMEOUT_SECONDS (15; 1-60).
@@ -277,7 +277,16 @@ stop_inbox_worker() {
     if [[ -n "$container_id" ]]; then compose stop inbox-worker; fi
 }
 
-stop_writers() { stop_inbox_worker && compose stop app migrate bootstrap; }
+stop_writers() { stop_inbox_worker && compose stop app declaration-worker migrate bootstrap; }
+
+start_declaration_worker_for_schema() {
+    # The portable worker first shipped with organization AI settings in 0178.
+    # Restoring an older image must retain that release's app-only topology.
+    [[ "$1" =~ ^[0-9]{4}$ ]] || return 1
+    if [[ "$1" > 0177 ]]; then
+        compose up -d --no-deps --wait --wait-timeout 120 declaration-worker
+    fi
+}
 
 config_fingerprint() {
     local key
@@ -752,7 +761,7 @@ backup() {
 
 writers_stopped() {
     local running
-    running=$(compose ps --all --status running --status restarting --status paused --quiet app migrate bootstrap inbox-worker) || return 1
+    running=$(compose ps --all --status running --status restarting --status paused --quiet app declaration-worker migrate bootstrap inbox-worker) || return 1
     [[ -z "$running" ]]
 }
 
@@ -888,6 +897,7 @@ update_recovery() {
         docker compose --project-name verwalino --env-file "$CONFIG" -f "$ROOT/infra/docker-compose.yml" --profile ops >&2
     if [[ "$VERWALINO_MODE" = https ]]; then printf '%q ' --profile https >&2; fi
     printf '%q ' up -d --no-build --pull never --wait --wait-timeout 120 db app >&2
+    if [[ "$BACKUP_SCHEMA" > 0177 ]]; then printf '%q ' declaration-worker >&2; fi
     if [[ "$VERWALINO_MODE" = https ]]; then printf '%q ' caddy >&2; fi
     printf '\nThen run doctor and both health probes before resuming writes.\n' >&2
 }
@@ -902,8 +912,9 @@ update_rollback() {
     fi
     restore "$BACKUP_ARCHIVE" --yes || { update_recovery restore 'snapshot restore did not complete; half-migrated data may remain; see restore diagnostics above'; return 1; }
     if ! { compose up -d --wait --wait-timeout 120 db &&
-        compose up -d --no-deps --wait --wait-timeout 120 app && app_health; }; then
-        compose stop app || printf 'Could not stop the previous app after failed readiness.\n' >&2
+        compose up -d --no-deps --wait --wait-timeout 120 app && app_health &&
+        start_declaration_worker_for_schema "$BACKUP_SCHEMA"; }; then
+        compose stop app declaration-worker || printf 'Could not stop the previous app after failed readiness.\n' >&2
         update_recovery 'previous app readiness' 'restored from the backup'
         return 1
     fi
@@ -937,6 +948,7 @@ update_apply() {
     compose run --rm --no-deps -T migrate
     compose up -d --no-deps --wait --wait-timeout 120 app
     app_health
+    start_declaration_worker_for_schema "$target"
     schema=$(doctor_sql 'SELECT version_num FROM alembic_version')
     [[ "$schema" = "$target" ]] || fail 'Migrated database does not match the new image release target.'
     UPDATE_ACTIVE=0
@@ -1192,10 +1204,11 @@ case "$command" in
         compose up -d --wait --wait-timeout 120 db
         # Do not run migrations alongside an already running writer.
         stop_inbox_worker
-        compose stop app
+        compose stop app declaration-worker
         compose run --rm --no-deps -T migrate
         prepare_setup
         compose up -d --no-deps --wait --wait-timeout 120 app
+        start_declaration_worker_for_schema "$(image_target)"
         if [[ "$VERWALINO_MODE" = https ]]; then
             compose up -d --no-deps caddy
             APP_URL="https://$VERWALINO_DOMAIN"

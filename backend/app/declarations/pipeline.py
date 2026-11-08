@@ -22,6 +22,7 @@ from typing import Any, Callable, Generic, Sequence, TypeVar
 from sqlalchemy import select
 
 from app.core.config import Settings, settings
+from app.core.ai_models import model_price
 from app.core.locking import is_lock_timeout
 from app.core.db import get_worker_tenant_session
 from app.core.storage import DocumentStore, get_store
@@ -98,6 +99,7 @@ class _Ledger:
     max_output_tokens: int
     max_cost_usd: Decimal
     configured: Settings
+    model: str | None = None
     initial_input_tokens: int = 0
     initial_output_tokens: int = 0
     initial_cost_usd: Decimal = Decimal("0")
@@ -130,23 +132,9 @@ class _Ledger:
             raise PipelineFailure("IMPORT_TOKEN_BUDGET_EXCEEDED")
         if self.input_tokens + reserved_input > self.max_input_tokens:
             raise PipelineFailure("IMPORT_TOKEN_BUDGET_EXCEEDED")
-        if escalation:
-            in_rate = max(
-                self.configured.declaration_escalation_input_usd_per_million,
-                self.configured.declaration_escalation_cached_input_usd_per_million,
-            )
-        else:
-            primary_input_rate = self.configured.declaration_primary_input_usd_per_million
-            in_rate = max(
-                primary_input_rate,
-                self.configured.declaration_primary_cached_input_usd_per_million,
-                primary_input_rate * self.configured.declaration_primary_cache_write_multiplier,
-            )
-        out_rate = (
-            self.configured.declaration_escalation_output_usd_per_million
-            if escalation
-            else self.configured.declaration_primary_output_usd_per_million
-        )
+        price = model_price(self.model or ('gpt-5.4-mini' if escalation else 'gpt-5.6-luna'))
+        in_rate = max(price.input, price.cached, price.input * (price.cache_write_multiplier or 1)) if price else Decimal('0')
+        out_rate = price.output if price else Decimal('0')
         cost = (Decimal(reserved_input) * in_rate + Decimal(output) * out_rate) / Decimal(1_000_000)
         if self.cost_usd + cost > self.max_cost_usd:
             raise PipelineFailure("IMPORT_COST_BUDGET_EXCEEDED")
@@ -288,6 +276,7 @@ class DeclarationPipeline:
                 max_output_tokens=self._settings.declaration_max_output_tokens,
                 max_cost_usd=Decimal(imported.max_cost_usd),
                 configured=self._settings,
+                model=getattr(self._provider, "_primary_model", None),
             )
             ledger.initial_input_tokens = ledger.input_tokens
             ledger.initial_output_tokens = ledger.output_tokens
@@ -1164,10 +1153,10 @@ class DeclarationPipeline:
             imported = await repo.lock_current_lease(lease, {"PREFLIGHT"})
             if imported is None:
                 raise PipelineFailure("LEASE_LOST")
-            from app.services.quota_service import require_ai_budget
+            from app.services.ai_settings_service import require_organization_ai_budget
             from fastapi import HTTPException
             try:
-                await require_ai_budget(session, lease.organization_id, imported.max_cost_usd)
+                await require_organization_ai_budget(session, lease.organization_id, imported.max_cost_usd, model=getattr(self._provider, "_primary_model", None))
             except HTTPException as error:
                 raise PipelineFailure("ORGANIZATION_AI_BUDGET_EXCEEDED") from error
             run = DeclarationExtractionRun(
@@ -1175,7 +1164,7 @@ class DeclarationPipeline:
                 import_id=lease.import_id,
                 status="RUNNING",
                 provider=type(self._provider).__name__,
-                model_name=self._settings.declaration_primary_model,
+                model_name=getattr(self._provider, "_primary_model", "gpt-5.6-luna"),
                 prompt_version=self._settings.declaration_prompt_version,
                 schema_version=self._settings.declaration_schema_version,
                 harness_version=self._settings.declaration_harness_version,

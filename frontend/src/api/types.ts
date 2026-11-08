@@ -1893,3 +1893,14 @@ export interface UnitHouseholdRow {
   persons: number;
   is_vacancy: boolean;
 }
+export interface OrganizationAiSettings {
+  provider: 'openai';
+  key_set: boolean;
+  model: string | null;
+  import_enabled: boolean;
+  qa_enabled: boolean;
+  monthly_limit_usd: string | null;
+  price_known: boolean;
+}
+export interface AiModel { id: string; evaluated: boolean; price_known: boolean }
+export type OrganizationAiSettingsBody = Omit<OrganizationAiSettings, 'key_set' | 'price_known'> & { api_key?: string | null };

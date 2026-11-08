@@ -76,12 +76,13 @@ def test_default_client_pins_the_official_openai_destination(
     monkeypatch.setattr(openai_provider, "AsyncOpenAI", CapturingAsyncOpenAI)
 
     OpenAiDeclarationProvider(
-        configured_settings=Settings(openai_api_key=SecretStr("unit-test-key")),
+        api_key="unit-test-key",
     )
 
     assert captured == {
         "api_key": "unit-test-key",
         "base_url": "https://api.openai.com/v1",
+        "max_retries": 0,
     }
 
 
@@ -114,6 +115,21 @@ class MockClient:
         self.responses = RecordingParse(outcomes)
 
 
+async def test_arbitrary_listed_model_uses_provider_defaults_and_persistable_unpriced_metadata(text_document_input, migrator_session, seed_data):
+    from sqlalchemy import text
+    from app.core.db import get_tenant_session
+    output = DocumentInventoryOutput(documents=[{'document_key':'declaration-main','document_type':'DECLARATION','title':'Synthetic'}])
+    client = MockClient([MockResponse(output, _usage(output_tokens=5), model='future-model')])
+    provider = OpenAiDeclarationProvider(client=client, primary_model='future-model', escalation_model='future-model', token_encoder=FixedTokenEncoder(10))
+    result = await provider.inventory([text_document_input], max_output_tokens=10)
+    call = client.responses.calls[0]
+    assert 'reasoning' not in call
+    assert call['service_tier'] == 'default'
+    assert result.usage.cost_usd == 0
+    assert result.metadata.reasoning_effort == 'default'
+    await _assert_metadata_persists(migrator_session, seed_data, result.metadata)
+
+
 class LocalTokenEncoder:
     """Deterministic test double: mocked tests must not fetch tokenizer data."""
 
@@ -128,6 +144,18 @@ class FixedTokenEncoder:
 
     def encode(self, value: str) -> list[int]:
         return [0] * self.token_count
+
+
+async def test_luna_only_recheck_uses_the_selected_model_and_verified_image_bound(low_quality_target_page, migrator_session, seed_data):
+    client = MockClient([MockResponse(TargetedRecheckOutput(), _usage(input_tokens=100, output_tokens=5))])
+    provider = OpenAiDeclarationProvider(client=client, primary_model='gpt-5.6-luna', escalation_model='gpt-5.6-luna', token_encoder=FixedTokenEncoder(10))
+    estimate = provider.estimate_reservation('recheck', documents=[low_quality_target_page], issue_codes=['LOW_PAGE_QUALITY'], subject_keys=['rule:heating'], max_output_tokens=10)
+    assert estimate.input_tokens >= 3001
+    result = await provider.recheck([low_quality_target_page], ['LOW_PAGE_QUALITY'], ['rule:heating'], max_output_tokens=10)
+    assert client.responses.calls[0]['model'] == 'gpt-5.6-luna'
+    assert result.metadata.configured_model == 'gpt-5.6-luna'
+    assert result.metadata.reasoning_effort == 'medium'
+    await _assert_metadata_persists(migrator_session, seed_data, result.metadata)
 
 
 class CapturingTokenEncoder:
@@ -849,13 +877,13 @@ async def test_recheck_image_reservation_fails_closed_before_sdk_call(
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("model", "detail"),
-    [("gpt-5.6-luna", "high"), ("gpt-5.4-mini", "low")],
+    [("unverified-image-model", "high"), ("gpt-5.4-mini", "low")],
 )
 async def test_unverified_image_model_or_detail_fails_closed_before_sdk_call(
     model: str, detail: str
 ) -> None:
     client = MockClient([])
-    provider = _provider(client)
+    provider = OpenAiDeclarationProvider(client=client, primary_model=model, escalation_model=model, token_encoder=LocalTokenEncoder())
 
     with pytest.raises(ProviderFailure) as exc_info:
         await provider._run(
@@ -1238,7 +1266,6 @@ async def test_nonpositive_output_cap_fails_before_sdk_call(
 @pytest.mark.parametrize(
     "kwargs, output_tokens, code",
     [
-        ({"primary_model": "unknown"}, 1, "MODEL_RATE_NOT_CONFIGURED"),
         ({"max_input_tokens": 1}, 1, "OPENAI_INPUT_BUDGET_EXCEEDED"),
         ({"max_cost_usd": Decimal("0.00000001")}, 1, "OPENAI_COST_BUDGET_EXCEEDED"),
     ],
@@ -1324,46 +1351,38 @@ async def test_unknown_escalation_rate_fails_before_sdk_call(
             [low_quality_target_page], ["LOW_PAGE_QUALITY"], ["rule:heating"], max_output_tokens=10
         )
 
-    assert exc_info.value.code == "MODEL_RATE_NOT_CONFIGURED"
+    assert exc_info.value.code == "OPENAI_IMAGE_RATE_NOT_CONFIGURED"
     assert client.responses.calls == []
 
 
-@pytest.mark.parametrize(
-    "field,rate",
-    [
-        ("declaration_primary_input_usd_per_million", Decimal("0")),
-        ("declaration_primary_output_usd_per_million", Decimal("-1")),
-        ("declaration_escalation_input_usd_per_million", Decimal("0")),
-        ("declaration_escalation_output_usd_per_million", Decimal("-1")),
-    ],
-)
-def test_nonpositive_model_rate_fails_before_sdk_call(
-    field: str, rate: Decimal
-) -> None:
-    from pydantic import ValidationError
-
-    from app.core.config import Settings
-
-    with pytest.raises(ValidationError):
-        Settings(**{field: rate})
+def test_known_catalog_prices_are_positive_and_fixed():
+    from app.core.ai_models import MODEL_PRICES
+    for price in MODEL_PRICES.values():
+        assert all(value.is_finite() and value > 0 for value in (price.input, price.output, price.cached))
 
 
-@pytest.mark.parametrize("rate", [Decimal("NaN"), Decimal("Infinity")])
-def test_nonfinite_model_rate_is_rejected_by_settings(rate: Decimal) -> None:
-    from pydantic import ValidationError
+def test_removed_environment_key_and_models_are_not_settings_fields(monkeypatch):
+    monkeypatch.setenv('HV_OPENAI_API_KEY', 'synthetic-ignored-secret')
+    monkeypatch.setenv('HV_DECLARATION_PRIMARY_MODEL', 'ignored-model')
+    configured = Settings()
+    assert 'openai_api_key' not in Settings.model_fields
+    assert 'declaration_primary_model' not in Settings.model_fields
+    assert 'synthetic-ignored-secret' not in repr(configured)
 
-    from app.core.config import Settings
 
-    with pytest.raises(ValidationError):
-        Settings(declaration_primary_input_usd_per_million=rate)
-
-
-def test_settings_defaults_and_secret_redaction() -> None:
-    from pydantic import SecretStr
-    from app.core.config import Settings
-
-    configured = Settings(openai_api_key="not-a-real-key")
-    assert configured.declaration_primary_model == "gpt-5.6-luna"
-    assert configured.declaration_primary_input_usd_per_million == Decimal("0.20")
-    assert isinstance(configured.openai_api_key, SecretStr)
-    assert "not-a-real-key" not in repr(configured)
+async def _assert_metadata_persists(db, seed, metadata):
+    import uuid
+    from sqlalchemy import text
+    from app.declarations.observability import PassLedgerEntry
+    from app.repositories.declaration_import_repo import DeclarationImportRepository
+    savepoint = await db.begin_nested()
+    try:
+        import_id, run_id = uuid.uuid4(), uuid.uuid4()
+        params={'org':seed['org_a_id'],'actor':seed['user_a_admin_id'],'job':import_id,'run':run_id}
+        await db.execute(text("INSERT INTO declaration_import(id,organization_id,mode,status,initiated_by,max_cost_usd) VALUES(:job,:org,'NEW_PROPERTY','PREFLIGHT',:actor,1)"),params)
+        await db.execute(text("INSERT INTO declaration_extraction_run(id,organization_id,import_id,provider,model_name,prompt_version,schema_version,harness_version) VALUES(:run,:org,:job,'openai','test','test','test','2')"),params)
+        rows=await DeclarationImportRepository(db,seed['org_a_id']).append_pass_entries(run_id,(PassLedgerEntry.from_metadata(metadata),))
+        assert rows[0].safe_metadata['configured_model']==metadata.configured_model
+        assert rows[0].safe_metadata['reasoning_effort']==metadata.reasoning_effort
+    finally:
+        await savepoint.rollback()

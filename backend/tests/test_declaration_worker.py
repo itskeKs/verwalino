@@ -74,12 +74,35 @@ def seed_data(seed_data, monkeypatch):
 
 
 @pytest.fixture(autouse=True)
-def enable_declaration_imports(monkeypatch) -> None:
-    monkeypatch.setattr(settings, "declaration_import_enabled", True)
+def enable_declaration_imports(configured_ai) -> None:
+    pass
 
 
 def test_declaration_import_worker_module_is_available() -> None:
     assert DeclarationImportWorker is not None
+
+
+async def test_worker_reads_changed_key_model_and_switch_at_the_next_job(seed_data, configured_ai):
+    org, actor = seed_data['org_a_id'], seed_data['user_a_admin_id']
+    seen = []
+    class Pipeline:
+        async def run(self, lease):
+            seen.append((worker._active_ai.model, worker._active_ai.api_key.get_secret_value()))
+            async with get_tenant_session(org) as db:
+                assert await DeclarationImportRepository(db, org).transition_with_lease(lease, {'QUEUED'}, 'FAILED', {
+                    'current_stage':'failed', 'error_code':'SYNTHETIC', 'error_message':'SYNTHETIC',
+                    'lease_owner':None, 'lease_token':None, 'lease_expires_at':None,
+                })
+    worker = DeclarationImportWorker(Pipeline())
+    await _create_import(org, actor, status='QUEUED')
+    await worker.run_once(organization_id=org)
+    configured_ai(org, model='future-model', api_key='synthetic-replaced-key')
+    await _create_import(org, actor, status='QUEUED')
+    await worker.run_once(organization_id=org)
+    configured_ai(org, import_enabled=False)
+    assert (await worker.run_once(organization_id=org)).code == 'DECLARATION_IMPORT_DISABLED'
+    assert [model for model, key in seen] == ['gpt-5.6-luna', 'future-model']
+    assert [key for model, key in seen] == ['synthetic-test-key', 'synthetic-replaced-key']
 
 
 @pytest.mark.parametrize(
@@ -384,7 +407,8 @@ async def test_schema_guard_short_circuits_without_tenant_enumeration() -> None:
 
 
 @pytest.mark.asyncio
-async def test_disabled_worker_does_not_probe_schema_or_claim_work() -> None:
+async def test_disabled_worker_does_not_probe_schema_or_claim_work(seed_data, configured_ai) -> None:
+    configured_ai(seed_data["org_a_id"], import_enabled=False)
     @asynccontextmanager
     async def unscoped_never_called():
         raise AssertionError("disabled worker must not probe schema or claim work")
@@ -392,11 +416,10 @@ async def test_disabled_worker_does_not_probe_schema_or_claim_work() -> None:
 
     worker = DeclarationImportWorker(
         object(),
-        configured=settings.model_copy(update={"declaration_import_enabled": False}),
         unscoped_session_factory=unscoped_never_called,
     )
 
-    assert (await worker.run_once()).code == "DECLARATION_IMPORT_DISABLED"
+    assert (await worker.run_once(organization_id=seed_data["org_a_id"])).code == "DECLARATION_IMPORT_DISABLED"
 
 
 @pytest.mark.asyncio

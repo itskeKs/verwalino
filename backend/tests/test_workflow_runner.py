@@ -121,8 +121,9 @@ async def test_declaration_adapter_claims_only_the_dispatched_tenant(worker_tena
     from tests.test_declaration_worker import _create_import
     from app.core.db import get_worker_tenant_session
     from app.repositories.declaration_import_repo import DeclarationImportRepository
-    monkeypatch.setattr(settings,'declaration_import_enabled',True)
     _,isolated=worker_tenant;org=isolated['org_a_id']
+    from tests.ai_settings_support import configure_ai
+    configure_ai(org)
     own=await _create_import(org,isolated['user_a_admin_id'],status='QUEUED')
     foreign=await _create_import(seed_data['org_b_id'],seed_data['user_b_admin_id'],status='QUEUED')
     seen=[]
@@ -150,9 +151,10 @@ async def test_declaration_adapter_claims_only_the_dispatched_tenant(worker_tena
 async def test_disabled_declaration_and_discovery_failure_are_safe(monkeypatch,caplog):
     from app.core.config import settings
     from app.workers.workflow_runner import WorkflowRunner,build_adapters
-    monkeypatch.setattr(settings,'declaration_import_enabled',False)
     class ForbiddenWorker:
-        async def run_once(self,**kwargs):raise AssertionError('Disabled declaration was invoked')
+        async def run_once(self,**kwargs):
+            from app.workers.declaration_import import WorkerResult
+            return WorkerResult('DECLARATION_IMPORT_DISABLED')
     async def organizations():return (uuid.UUID(int=1),)
     runner=WorkflowRunner(organizations,build_adapters(['declaration_import'],declaration_worker=ForbiddenWorker()))
     assert (await runner.run_once()).code=='IDLE'

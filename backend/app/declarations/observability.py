@@ -30,7 +30,7 @@ _FORBIDDEN_FIELDS = frozenset(
 )
 _PASS_IDS = frozenset({"inventory", "extract_core", "extract_rules", "reconcile", "recheck"})
 _STAGES = frozenset({"provider", "schema_repair"})
-_REASONING_EFFORTS = frozenset({"none", "low", "medium", "high", "xhigh", "max"})
+_REASONING_EFFORTS = frozenset({"default", "none", "low", "medium", "high", "xhigh", "max"})
 _ROUTE_ACTIONS = frozenset({"NONE", "VISION_RECHECK", "HUMAN_REVIEW"})
 _ROUTE_REASON_CODES = frozenset(
     {

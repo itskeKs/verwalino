@@ -45,6 +45,8 @@ def unpack(content):
 
 async def test_admin_exports_visible_rows_without_credentials_or_foreign_data(rent_world, export_store):
     w = rent_world
+    from tests.ai_settings_support import configure_ai
+    configure_ai(w['org'], api_key='synthetic-export-secret')
     async with api_client(w) as api:
         response = await api.post("/api/organizations/export")
         assert response.status_code == 200, response.text
@@ -57,6 +59,9 @@ async def test_admin_exports_visible_rows_without_credentials_or_foreign_data(re
         for name, digest in manifest["sha256"].items():
             assert hashlib.sha256(files[name]).hexdigest() == digest
         assert "README.md" in files
+        assert 'organization_ai_settings' not in manifest['entity_order']
+        assert b'synthetic-export-secret' not in b''.join(files.values())
+        assert b'encrypted_api_key' not in b''.join(files.values())
         people = [json.loads(line) for line in files["entities/person.jsonl"].splitlines()]
         assert {p["id"] for p in people} == {str(w["person"]), str(w["hidden_person"])}
         users = [json.loads(line) for line in files["entities/user.jsonl"].splitlines()]

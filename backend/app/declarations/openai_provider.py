@@ -32,6 +32,7 @@ from openai import (
 from pydantic import ValidationError
 
 from app.core.config import Settings, settings
+from app.core.ai_models import MODEL_PRICES
 from app.declarations.prompts import (
     CORE_EXTRACTION_PROMPT,
     INVENTORY_PROMPT,
@@ -73,7 +74,7 @@ _LUNA_SHORT_CONTEXT_MAX_INPUT_TOKENS = 272_000
 # The documented 2,500-patch cap times the 1.2 multiplier is 3,000.
 # OpenAI notes that final billing may differ by one token due to rounding, so
 # reserve the upper boundary instead of the nominal estimate.
-_GPT_54_MINI_HIGH_IMAGE_INPUT_TOKENS = 3_001
+_VERIFIED_HIGH_IMAGE_INPUT_TOKENS = 3_001
 _PNG_DATA_URL = re.compile(r"^data:image/png;base64,([A-Za-z0-9+/]*={0,2})$")
 _PNG_SIGNATURE = b"\x89PNG\r\n\x1a\n"
 _STATIC_HARNESS = (
@@ -145,6 +146,8 @@ class OpenAiDeclarationProvider:
         self,
         *,
         client: Any | None = None,
+        api_key: str | None = None,
+        reasoning_effort: str | None = None,
         primary_model: str | None = None,
         escalation_model: str | None = None,
         timeout_seconds: int | None = None,
@@ -157,8 +160,8 @@ class OpenAiDeclarationProvider:
         monotonic_clock: Callable[[], float] = time.monotonic,
     ) -> None:
         configured = configured_settings or settings
-        self._primary_model = primary_model or configured.declaration_primary_model
-        self._escalation_model = escalation_model or configured.declaration_escalation_model
+        self._primary_model = primary_model or "gpt-5.6-luna"
+        self._escalation_model = escalation_model or self._primary_model
         self._timeout_seconds = (
             timeout_seconds
             if timeout_seconds is not None
@@ -191,8 +194,8 @@ class OpenAiDeclarationProvider:
         # tokenizer download. Production uses the official tokenizer package.
         self._token_encoder = token_encoder
         self._monotonic_clock = monotonic_clock
-        self._primary_reasoning_effort = configured.declaration_primary_reasoning_effort
-        self._escalation_reasoning_effort = configured.declaration_escalation_reasoning_effort
+        self._primary_reasoning_effort = reasoning_effort or ("medium" if self._primary_model == "gpt-5.6-luna" else "none" if self._primary_model == "gpt-5.4-mini" else None)
+        self._escalation_reasoning_effort = (self._primary_reasoning_effort if self._escalation_model == self._primary_model else "none" if self._escalation_model == "gpt-5.4-mini" else None)
         self._prompt_version = configured.declaration_prompt_version
         self._schema_version = configured.declaration_schema_version
         self._harness_version = configured.declaration_harness_version
@@ -201,39 +204,21 @@ class OpenAiDeclarationProvider:
         if client is not None:
             self._client = client
         else:
-            api_key = (
-                configured.openai_api_key.get_secret_value().strip()
-                if configured.openai_api_key is not None
-                else ""
-            )
             self._client = (
-                AsyncOpenAI(api_key=api_key, base_url=_OPENAI_API_BASE_URL)
+                AsyncOpenAI(api_key=api_key, base_url=_OPENAI_API_BASE_URL, max_retries=0)
                 if api_key
                 else None
             )
 
     def _configured_rates(self, configured: Settings) -> dict[str, _Rates]:
-        rates: dict[str, _Rates] = {}
-        # Rates are tied to the verified model IDs. A renamed model must be
-        # explicitly reverified instead of inheriting a stale price.
-        if self._primary_model == "gpt-5.6-luna":
-            rates[self._primary_model] = _Rates(
-                configured.declaration_primary_input_usd_per_million,
-                configured.declaration_primary_output_usd_per_million,
-                configured.declaration_primary_cached_input_usd_per_million,
-                configured.declaration_primary_cache_write_multiplier,
-            )
-        if self._escalation_model == "gpt-5.4-mini":
-            rates[self._escalation_model] = _Rates(
-                configured.declaration_escalation_input_usd_per_million,
-                configured.declaration_escalation_output_usd_per_million,
-                configured.declaration_escalation_cached_input_usd_per_million,
-                None,
-            )
-        return rates
+        return {model: _Rates(price.input, price.output, price.cached, price.cache_write_multiplier)
+                if (price := MODEL_PRICES.get(model)) else _Rates(Decimal('0'), Decimal('0'), Decimal('0'), None)
+                for model in {self._primary_model, self._escalation_model}}
 
     def _validate_configured_rates(self) -> None:
-        for rates in self._rates.values():
+        for model, rates in self._rates.items():
+            if model not in MODEL_PRICES:
+                continue
             if (
                 not rates.input_usd_per_million.is_finite()
                 or rates.input_usd_per_million <= 0
@@ -594,10 +579,6 @@ class OpenAiDeclarationProvider:
         output_type: type[T],
         max_output_tokens: int,
     ) -> ProviderCallResult[T]:
-        from app.core.quotas import check_quota, get_quota_plan
-        decision = check_quota(0, get_quota_plan(), "ai_budget_usd", Decimal("0.000001"))
-        if not decision.allowed:
-            raise ProviderFailure("ORGANIZATION_AI_BUDGET_EXCEEDED", False, decision.message)
         self._validate_output_allowance(max_output_tokens)
         self._require_model_rate(model)
         self._require_client()
@@ -884,9 +865,12 @@ class OpenAiDeclarationProvider:
             "input": input_payload,
             "text": {"format": self._sdk_text_format(output_type)},
             "store": False,
+            "service_tier": "default",
             "max_output_tokens": max_output_tokens,
-            "reasoning": {"effort": self._reasoning_effort(model)},
         }
+        effort = self._reasoning_effort(model)
+        if effort is not None:
+            envelope["reasoning"] = {"effort": effort}
         if self._uses_explicit_cache(model):
             fingerprints = self._fingerprints(developer_prompt, output_type)
             envelope["prompt_cache_key"] = self._prompt_cache_key(
@@ -924,7 +908,7 @@ class OpenAiDeclarationProvider:
     def _uses_explicit_cache(self, model: str) -> bool:
         return model == self._primary_model == "gpt-5.6-luna"
 
-    def _reasoning_effort(self, model: str) -> str:
+    def _reasoning_effort(self, model: str) -> str | None:
         if model == self._primary_model:
             return self._primary_reasoning_effort
         if model == self._escalation_model:
@@ -1022,7 +1006,7 @@ class OpenAiDeclarationProvider:
         ]
         if not images:
             return 0
-        if model != "gpt-5.4-mini" or any(
+        if model not in {"gpt-5.4-mini", "gpt-5.6-luna"} or any(
             image.get("detail") != "high" for image in images
         ):
             raise ProviderFailure(
@@ -1030,7 +1014,7 @@ class OpenAiDeclarationProvider:
                 False,
                 "Image token reservation is not configured for this model or detail.",
             )
-        return len(images) * _GPT_54_MINI_HIGH_IMAGE_INPUT_TOKENS
+        return len(images) * _VERIFIED_HIGH_IMAGE_INPUT_TOKENS
 
     async def _attempt(
         self,
@@ -1060,13 +1044,13 @@ class OpenAiDeclarationProvider:
                 input=request_kwargs["input"],
                 text_format=output_type,
                 store=request_kwargs["store"],
+                service_tier=request_kwargs["service_tier"],
                 timeout=self._timeout_seconds,
                 max_output_tokens=request_kwargs["max_output_tokens"],
-                reasoning=request_kwargs["reasoning"],
                 **{
                     key: value
                     for key, value in request_kwargs.items()
-                    if key in {"prompt_cache_key", "prompt_cache_options"}
+                    if key in {"prompt_cache_key", "prompt_cache_options", "reasoning"}
                 },
             )
         except Exception as error:
@@ -1366,7 +1350,7 @@ class OpenAiDeclarationProvider:
             stage=stage,
             configured_model=model,
             returned_model_id=returned_model_id,
-            reasoning_effort=self._reasoning_effort(model),
+            reasoning_effort=self._reasoning_effort(model) or "default",
             request_id=request_id,
             prompt_version=self._prompt_version,
             prompt_sha256=fingerprints.prompt_sha256,
@@ -1410,8 +1394,8 @@ class OpenAiDeclarationProvider:
         input_tokens = getattr(raw_usage, "input_tokens", None)
         output_tokens = getattr(raw_usage, "output_tokens", None)
         input_details = getattr(raw_usage, "input_tokens_details", None)
-        cached_input_tokens = getattr(input_details, "cached_tokens", None)
-        cache_write_input_tokens = getattr(input_details, "cache_write_tokens", None)
+        cached_input_tokens = getattr(input_details, "cached_tokens", None if model in MODEL_PRICES else 0)
+        cache_write_input_tokens = getattr(input_details, "cache_write_tokens", None if self._uses_explicit_cache(model) else 0)
         if (
             isinstance(input_tokens, bool)
             or isinstance(output_tokens, bool)

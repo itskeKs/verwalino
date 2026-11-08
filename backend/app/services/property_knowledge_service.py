@@ -663,16 +663,14 @@ def _stored_cost(value: Decimal) -> Decimal:
     return value.quantize(_MICRO_USD, rounding=ROUND_UP)
 
 
-def _configured_cost(input_tokens: int, output_tokens: int) -> Decimal:
-    return (
-        Decimal(input_tokens) * settings.declaration_qa_input_usd_per_million
-        + Decimal(output_tokens) * settings.declaration_qa_output_usd_per_million
-    ) / Decimal("1000000")
+def _configured_cost(input_tokens: int, output_tokens: int, model: str = "gpt-5.6-luna") -> Decimal:
+    from app.core.ai_models import token_cost
+    return token_cost(model, input_tokens, output_tokens)
 
 
 def _provider_identity(provider: KnowledgeAnswerProvider) -> tuple[str, str]:
     """Ledger metadata is deliberately limited to provider class and configured model."""
-    return type(provider).__name__, str(getattr(provider, "_model", settings.declaration_qa_model))
+    return type(provider).__name__, str(getattr(provider, "_model", "gpt-5.6-luna"))
 
 
 def _usage_for_reservation(
@@ -703,7 +701,7 @@ def _usage_for_reservation(
         else 0
     )
     sanitized = ProviderUsage(input_tokens, output_tokens, cost_usd, sanitized_attempt_count)
-    expected_cost = _configured_cost(input_tokens, output_tokens)
+    expected_cost = _configured_cost(input_tokens, output_tokens, reservation.model)
     if (
         input_tokens > reservation.reserved_input_tokens
         or output_tokens > reservation.max_output_tokens
@@ -745,22 +743,27 @@ async def query_property_knowledge(
     # unknown/foreign identifier remains a stable 404 even under load.
     async with get_tenant_session(organization_id) as session:
         await _knowledge_actor(session, organization_id, actor_user_id, property_id, session_version)
+        from app.services.ai_settings_service import effective_ai_settings
+        effective = await effective_ai_settings(session, organization_id)
         service = PropertyKnowledgeService(session, organization_id)
         prepared = await service.prepare_question(property_id, question)
         if not prepared.hits:
             return service._not_documented_answer()
-    from app.services.quota_service import require_quota
-    require_quota(0, "ai_budget_usd", Decimal("0.000001"))
+    if provider is None and not effective.qa_enabled:
+        raise KnowledgeQueryUnavailable("QA_DISABLED")
+    owned_provider = provider is None
     if provider is None and provider_factory is not None:
         try:
-            provider = provider_factory()
+            provider = provider_factory(effective)
         except Exception:
             raise KnowledgeQueryUnavailable("QA_TEMPORARILY_UNAVAILABLE") from None
     if provider is None:
         raise KnowledgeQueryUnavailable(
-            "QA_DISABLED" if not settings.declaration_qa_enabled else "QA_TEMPORARILY_UNAVAILABLE"
+            "QA_DISABLED" if not effective.qa_enabled else "QA_TEMPORARILY_UNAVAILABLE"
         )
     if not guard.acquire(settings.declaration_qa_max_concurrency):
+        if owned_provider and getattr(provider, '_client', None):
+            await provider._client.close()
         raise KnowledgeQueryBudgetExceeded("QA_CONCURRENCY_EXCEEDED")
     try:
         async with get_tenant_session(organization_id) as session:
@@ -785,11 +788,12 @@ async def query_property_knowledge(
                 raise KnowledgeQueryUnavailable("QA_TEMPORARILY_UNAVAILABLE")
             now = datetime.now(timezone.utc)
             window_start = _utc_window_start(now, settings.declaration_qa_budget_window_minutes)
+            provider_name, model = _provider_identity(provider)
             reserved_cost = _stored_cost(_configured_cost(
-                estimate.input_tokens, settings.declaration_qa_max_output_tokens,
+                estimate.input_tokens, settings.declaration_qa_max_output_tokens, model,
             ))
-            from app.services.quota_service import require_ai_budget
-            await require_ai_budget(session, organization_id, reserved_cost)
+            from app.services.ai_settings_service import require_organization_ai_budget
+            await require_organization_ai_budget(session, organization_id, reserved_cost, model=model)
             repository = PropertyKnowledgeQueryRepository(session, organization_id)
             provider_name, model = _provider_identity(provider)
             reservation = await repository.reserve_query(
@@ -888,3 +892,5 @@ async def query_property_knowledge(
         return answer
     finally:
         guard.release()
+        if owned_provider and getattr(provider, '_client', None):
+            await provider._client.close()

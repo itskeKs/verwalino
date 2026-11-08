@@ -174,3 +174,8 @@ Feature: Organization isolation
     When Verwaltung Alpha saves its own dunning settings
     And Verwaltung Beta saves different dunning settings
     Then each administrator reads only their own dunning settings
+
+  Scenario: AI settings cannot be read or changed by another organization
+    Given Verwaltung Alpha has configured its own AI model
+    When Verwaltung Beta tries to read and change Alpha's AI settings
+    Then the AI settings are reported missing and Alpha keeps its model

@@ -2059,3 +2059,29 @@ Synthetic Gartenstraße 5, Anna/Karl/Lena paid 7200/2400/2400 EUR; Lena's amount
 | --- | --- | --- |
 | Before | [view](docs/assets/design/issue-183-before/paid-hausgeld-1280.png) | [view](docs/assets/design/issue-183-before/paid-hausgeld-360.png) |
 | After | [view](docs/assets/design/issue-183-after/paid-hausgeld-1280.png) | [view](docs/assets/design/issue-183-after/paid-hausgeld-360.png) |
+
+
+### Organization AI settings
+
+Einstellungen retains personal design selection for every role. An `OWNER_ADMIN`
+additionally sees „KI für Ihre Organisation“ in a separate existing card. Visible
+labels identify OpenAI, the password-only write-only API-key field, model list,
+import/Q&A switches and optional monthly USD limit. The key status explains preserve,
+replace and remove behavior; removal turns both functions off. Errors keep useful
+inputs, and a confirmed save clears the typed key and states that the next request
+or job uses the change. Keys are never read back or stored in browser persistence.
+
+All provider-listed model IDs remain selectable in a native select. „geprüft“ means
+actual evaluation promotion evidence; the initial registry is empty. Unknown-price
+models show that their monthly limit is not enforced. German copy explains shared
+UTC monthly reservation accounting and document transmission to OpenAI. The form
+uses existing Button, Input, Label, card, spacing and error/status styles; it stays
+usable at 360 px with long model names. Personal settings screenshots above include
+the administrator's organization card after this change.
+
+
+| Organization AI settings | Desktop | 360 px |
+|---|---|---|
+| Before | [personal settings](docs/assets/design/ai-settings/settings-before-1280.png) | [personal settings](docs/assets/design/ai-settings/settings-before-360.png) |
+| Klar | [AI card](docs/assets/design/ai-settings/settings-after-klar-1280.png) | [AI card](docs/assets/design/ai-settings/settings-after-klar-360.png) |
+| Warm | [AI card](docs/assets/design/ai-settings/settings-after-warm-1280.png) | [AI card](docs/assets/design/ai-settings/settings-after-warm-360.png) |

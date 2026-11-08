@@ -705,7 +705,7 @@ def test_tesseract_temp_byte_limit_is_enforced_when_renderer_errors(
 def test_settings_have_declaration_preflight_defaults() -> None:
     settings = Settings()
 
-    assert settings.declaration_import_enabled is False
+    assert "declaration_import_enabled" not in Settings.model_fields
     assert settings.declaration_max_pdf_bytes == 25 * 1024 * 1024
     assert settings.declaration_max_documents == 10
     assert settings.declaration_max_pages == 500

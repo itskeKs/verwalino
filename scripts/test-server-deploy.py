@@ -4,6 +4,7 @@ Real git archive only reads local inputs; Docker is always faked.
 
 Run in backend/ with uv run python ../scripts/test-server-deploy.py.
 """
+import ast
 import datetime
 import hashlib
 import json
@@ -31,6 +32,10 @@ BOOTSTRAP = ROOT / "scripts/server-bootstrap.sh"
 BACKUP = ROOT / "scripts/server-backup.sh"
 DEPLOY = ROOT / "scripts/deploy-server.sh"
 INSTALLER = ROOT / "scripts/self-host.sh"
+RELEASE_TARGET = next(ast.literal_eval(node.value) for node in ast.parse(
+    (ROOT / "backend/app/deployment.py").read_text()).body
+    if isinstance(node, ast.Assign) and any(isinstance(target, ast.Name) and target.id == "TARGET"
+                                            for target in node.targets))
 with socket.socket() as port_probe:  # init refuses an occupied port, so never depend on the default one
     port_probe.bind(("127.0.0.1", 0))
     TEST_PORT = str(port_probe.getsockname()[1])
@@ -153,6 +158,9 @@ if args[0] == "compose":
     sys.exit(0)
 if args[0] == "pull":
     sys.exit(17 if "pull" in fail else 0)
+if args[0] == "run" and args[-2:] == ["-c", "from app.deployment import TARGET; print(TARGET)"]:
+    out(env["FAKE_RELEASE_TARGET"] + "\n")
+    sys.exit(0)
 if args[0] == "run" and "validate" in args:
     sys.exit(17 if "validate" in fail else 0)
 if args[0] == "image":
@@ -242,7 +250,7 @@ class ServerCase(unittest.TestCase):
         self.env.update(PATH=f"{binary}:{os.environ['PATH']}", VERWALINO_SERVER_ROOT=str(self.srv),
                         VERWALINO_CONFIG=str(self.config), FAKE_LOG=str(self.log),
                         FAKE_STATE=str(self.base / "state"), FAKE_ROOT=str(ROOT),
-                        FAKE_DATE_EPOCH="1793553343")  # 2026-11-01T17:15:43Z; override per call to advance
+                        FAKE_DATE_EPOCH="1793553343", FAKE_RELEASE_TARGET=RELEASE_TARGET)  # 2026-11-01T17:15:43Z; override per call to advance
 
     def install_config(self, image=OLD_DIGEST):
         """Create the installer config the way a maintainer does."""
@@ -531,15 +539,21 @@ class DeployTests(ServerCase):
         self.assertEqual(result.returncode, 0, result.stdout)
         prefix = ["compose", "--project-name", "verwalino", "--env-file", str(self.config),
                   "-f", str(ROOT / "infra/docker-compose.yml"), "--profile", "ops", "--profile", "https"]
+        probes = [c["args"] for c in self.calls("docker") if c["args"][-2:] == ["-c", "from app.deployment import TARGET; print(TARGET)"]]
+        self.assertEqual(probes, [[
+            "run", "--rm", "--pull", "never", "--network", "none", "--read-only",
+            "--user", "10001:10001", "--cap-drop", "ALL", "--security-opt", "no-new-privileges",
+            "--entrypoint", "python", NEW_DIGEST, "-c", "from app.deployment import TARGET; print(TARGET)"]])
         vectors = [c["args"] for c in self.calls("docker") if c["args"][0] == "compose"]
         self.assertEqual(vectors, [prefix + tail for tail in [
             ["ps", "--status", "running", "--quiet", "app"], ["pull", "app"],
             ["up", "-d", "--wait", "--wait-timeout", "120", "db"],
-            ["ps", "--all", "--quiet", "inbox-worker"], ["stop", "app"],
+            ["ps", "--all", "--quiet", "inbox-worker"], ["stop", "app", "declaration-worker"],
             ["run", "--rm", "--no-deps", "-T", "migrate"],
             ["exec", "-T", "db", "psql", "--no-psqlrc", "-U", "app_migrator", "-d", "hausverwaltung",
              "--set", "ON_ERROR_STOP=1", "-Atc", "SELECT count(*) FROM public.organization"],
             ["up", "-d", "--no-deps", "--wait", "--wait-timeout", "120", "app"],
+            ["up", "-d", "--no-deps", "--wait", "--wait-timeout", "120", "declaration-worker"],
             ["up", "-d", "--no-deps", "caddy"],
         ]])
 

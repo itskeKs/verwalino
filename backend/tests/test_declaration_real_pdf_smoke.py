@@ -155,7 +155,9 @@ async def test_bounded_adapter_preserves_actual_recheck_router_evidence(monkeypa
         lambda **_kwargs: provider,
     )
     adapter = BoundedProductionDeclarationPipelineAdapter(
-        capability=module._LiveEvaluationCapability(module._LIVE_CAPABILITY_SEAL)
+        capability=module._LiveEvaluationCapability(module._LIVE_CAPABILITY_SEAL,
+            _effective=__import__('app.services.ai_settings_service',fromlist=['EffectiveAiSettings']).EffectiveAiSettings(
+                api_key=__import__('pydantic').SecretStr('synthetic-eval-key'), model='gpt-5.6-luna', import_enabled=True))
     )
 
     report = await adapter.evaluate((entry,))
@@ -166,21 +168,14 @@ async def test_bounded_adapter_preserves_actual_recheck_router_evidence(monkeypa
     assert recheck.route_reason_codes == ("EVIDENCE_QUOTE_NOT_FOUND",)
 
 
-def test_real_pdf_smoke_requires_all_explicit_live_gates(tmp_path: Path) -> None:
-    missing = live_eval_missing_gates(provider="live", live=True, compare_models=True)
-    if missing:
-        pytest.skip("real-PDF smoke evaluation is opt-in")
-
-    manifest = os.environ["HV_DECLARATION_REAL_PDF_MANIFEST"]
-
-    report_path = run_real_pdf_smoke(
-        manifest_path=manifest,
-        report_dir=tmp_path,
-        provider="live",
-        live=True,
-        compare_models=True,
-    )
-    assert report_path.is_file()
+def test_real_pdf_smoke_requires_explicit_organization_and_live_gates(tmp_path: Path) -> None:
+    # The operator selects the persisted credential with the CLI's required
+    # organization context; an inherited environment key can never enable it.
+    missing = live_eval_missing_gates({}, provider="live", live=True, compare_models=True)
+    assert 'ORGANIZATION_ID_REQUIRED' in missing
+    with pytest.raises(LiveHarnessUnavailable, match='explicit live gates'):
+        run_real_pdf_smoke(manifest_path=tmp_path/'absent.json', report_dir=tmp_path,
+                           provider='live', live=True, compare_models=True, environ={})
 
 
 class _RecordingProductionAdapter:
@@ -212,7 +207,6 @@ def _comparison_environ(manifest_path: Path) -> dict[str, str]:
     return {
         "HV_DECLARATION_REAL_PDF_MANIFEST": str(manifest_path),
         "HV_DECLARATION_LIVE_EVAL": "1",
-        "HV_OPENAI_API_KEY": "caller-provided-only",
         "HV_DECLARATION_COMPARE_TERRA_INPUT_USD_PER_MILLION": "1.00",
         "HV_DECLARATION_COMPARE_TERRA_OUTPUT_USD_PER_MILLION": "5.00",
         "HV_DECLARATION_COMPARE_TERRA_CACHED_INPUT_USD_PER_MILLION": "0.10",
@@ -231,6 +225,7 @@ def test_live_comparison_requires_compare_models_flag_authorization_external_man
 
     with pytest.raises(LiveHarnessUnavailable, match="explicit live gates"):
         run_real_pdf_smoke(
+            organization_id='11111111-1111-4111-8111-111111111111',
             manifest_path=manifest_path,
             report_dir=tmp_path,
             provider="live",
@@ -253,6 +248,7 @@ def test_live_comparison_does_not_open_pdf_when_any_gate_is_missing(monkeypatch,
 
     with pytest.raises(LiveHarnessUnavailable, match="explicit live gates"):
         run_real_pdf_smoke(
+            organization_id='11111111-1111-4111-8111-111111111111',
             manifest_path=manifest_path,
             report_dir=tmp_path,
             provider="live",
@@ -286,6 +282,7 @@ def test_live_comparison_rejects_invalid_terra_rates_before_any_path_access(
 
     with pytest.raises(LiveHarnessUnavailable, match="Terra rates are invalid"):
         run_real_pdf_smoke(
+            organization_id='11111111-1111-4111-8111-111111111111',
             manifest_path=manifest_path,
             report_dir=tmp_path,
             provider="live",
@@ -312,6 +309,7 @@ def test_live_comparison_requires_exact_live_environment_gate_before_path_access
 
     with pytest.raises(LiveHarnessUnavailable, match="explicit live gates"):
         run_real_pdf_smoke(
+            organization_id='11111111-1111-4111-8111-111111111111',
             manifest_path=manifest_path,
             report_dir=tmp_path,
             provider="live",
@@ -353,6 +351,7 @@ def test_live_comparison_report_contains_model_comparison_and_safe_pass_metadata
         return _ClosableAdapter()
 
     report_path = run_real_pdf_smoke(
+        organization_id='11111111-1111-4111-8111-111111111111',
         manifest_path=manifest_path,
         report_dir=tmp_path,
         provider="live",
@@ -392,6 +391,7 @@ def test_live_comparison_rejects_mutable_adapter_reuse(monkeypatch, tmp_path: Pa
 
     with pytest.raises(LiveHarnessUnavailable, match="fresh adapter"):
         run_real_pdf_smoke(
+            organization_id='11111111-1111-4111-8111-111111111111',
             manifest_path=manifest_path,
             report_dir=tmp_path,
             provider="live",
@@ -417,6 +417,7 @@ def test_live_comparison_maps_adapter_cleanup_failure_safely(monkeypatch, tmp_pa
 
     with pytest.raises(LiveHarnessUnavailable, match="adapter cleanup failed"):
         run_real_pdf_smoke(
+            organization_id='11111111-1111-4111-8111-111111111111',
             manifest_path=manifest_path,
             report_dir=tmp_path,
             provider="live",
@@ -450,6 +451,7 @@ def test_injected_production_pipeline_adapter_writes_only_sanitized_metrics(tmp_
         return adapter
 
     report_path = run_real_pdf_smoke(
+        organization_id='11111111-1111-4111-8111-111111111111',
         manifest_path=manifest_path,
         report_dir=tmp_path,
         provider="live",
@@ -471,6 +473,7 @@ def test_injected_production_pipeline_adapter_writes_only_sanitized_metrics(tmp_
 def test_real_smoke_enforces_gates_even_when_an_adapter_is_injected(tmp_path: Path) -> None:
     with pytest.raises(LiveHarnessUnavailable, match="explicit live gates"):
         run_real_pdf_smoke(
+            organization_id='11111111-1111-4111-8111-111111111111',
             manifest_path=tmp_path / "no-manifest.json",
             report_dir=tmp_path,
             provider="live",
@@ -527,6 +530,7 @@ def test_real_smoke_rejects_non_typed_adapter_reports(tmp_path: Path) -> None:
 
     with pytest.raises(LiveHarnessUnavailable, match="sanitized live report"):
         run_real_pdf_smoke(
+            organization_id='11111111-1111-4111-8111-111111111111',
             manifest_path=manifest_path,
             report_dir=tmp_path,
             provider="live",
@@ -538,6 +542,7 @@ def test_real_smoke_rejects_non_typed_adapter_reports(tmp_path: Path) -> None:
 
     with pytest.raises(LiveHarnessUnavailable, match="manifest cases"):
         run_real_pdf_smoke(
+            organization_id='11111111-1111-4111-8111-111111111111',
             manifest_path=manifest_path,
             report_dir=tmp_path,
             provider="live",
@@ -581,6 +586,7 @@ def test_real_smoke_rejects_oversized_input_before_hashing(monkeypatch, tmp_path
 
     with pytest.raises(LiveHarnessUnavailable, match="configured PDF size limit"):
         run_real_pdf_smoke(
+            organization_id='11111111-1111-4111-8111-111111111111',
             manifest_path=manifest_path,
             report_dir=tmp_path,
             provider="live",
@@ -619,6 +625,7 @@ def test_real_smoke_caps_manifest_case_count_before_adapter_calls(monkeypatch, t
 
     with pytest.raises(LiveHarnessUnavailable, match="configured case limit"):
         run_real_pdf_smoke(
+            organization_id='11111111-1111-4111-8111-111111111111',
             manifest_path=manifest_path,
             report_dir=tmp_path,
             provider="live",

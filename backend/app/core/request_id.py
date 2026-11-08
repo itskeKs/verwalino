@@ -9,6 +9,8 @@ from uuid import uuid4
 from fastapi import Request
 from fastapi.encoders import jsonable_encoder
 from fastapi.responses import JSONResponse
+from fastapi.exceptions import RequestValidationError
+from fastapi.exception_handlers import request_validation_exception_handler
 from starlette.exceptions import HTTPException
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
@@ -17,6 +19,12 @@ REPORTED_HTTP_STATUS_CODES = frozenset({500})
 REPORTED_ERROR_ATTRIBUTE = "_verwalino_request_error_logged"
 _VALID_ID = re.compile(r"[A-Za-z0-9._-]{8,128}")
 logger = logging.getLogger(__name__)
+
+
+async def validation_error(request: Request, error: RequestValidationError) -> JSONResponse:
+    if '/ai-settings' in request.url.path:
+        return JSONResponse(status_code=422, content={'detail': 'Bitte prüfen Sie die KI-Einstellungen und Ihre Eingaben.'})
+    return await request_validation_exception_handler(request, error)
 
 
 def is_valid_request_id(value: object) -> bool:

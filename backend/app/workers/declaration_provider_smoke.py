@@ -9,6 +9,8 @@ from __future__ import annotations
 import asyncio
 import inspect
 import sys
+import argparse
+import uuid
 from collections.abc import Callable
 from typing import Any
 
@@ -47,19 +49,22 @@ async def verify_openai_models(
                 await result
 
 
-def main() -> int:
-    api_key = settings.openai_api_key.get_secret_value().strip() if settings.openai_api_key else ""
-    if not api_key:
-        print("OpenAI provider connectivity smoke requires a configured API key", file=sys.stderr)
+async def _verify_organization(organization_id):
+    from app.services.ai_settings_service import worker_ai_settings
+    effective = await worker_ai_settings(organization_id)
+    await verify_openai_models(api_key=effective.api_key.get_secret_value(),
+        primary_model=effective.model, escalation_model=effective.model)
+
+
+def main(argv=None) -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--organization-id', type=uuid.UUID)
+    args = parser.parse_args(argv)
+    if args.organization_id is None:
+        print("OpenAI provider connectivity smoke requires --organization-id and configured organization AI settings", file=sys.stderr)
         return 2
     try:
-        asyncio.run(
-            verify_openai_models(
-                api_key=api_key,
-                primary_model=settings.declaration_primary_model,
-                escalation_model=settings.declaration_escalation_model,
-            )
-        )
+        asyncio.run(_verify_organization(args.organization_id))
     except Exception:
         # Never print a response body, model metadata, or a request URL here.
         print("OpenAI provider connectivity smoke failed", file=sys.stderr)

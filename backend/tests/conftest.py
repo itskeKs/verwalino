@@ -668,44 +668,47 @@ def _upgrade_test_database(alembic_cfg):
     upgraded_advance_mode = rehearse_initial_upgrade('0175')
     command.upgrade(alembic_cfg, '0176')
     protected_advance_mode = rehearse_initial_upgrade('0176')
+    command.upgrade(alembic_cfg, '0177')
+    upgraded_ai_settings = rehearse_initial_upgrade('0177')
     command.upgrade(alembic_cfg, "head")
-    return {'upgrade_0028_to_0177_tables': upgraded_0028_tables,
-            'upgrade_0122_to_0177_tables': upgraded_tables,
-            'upgrade_0139_to_0177_tables': upgraded_0139_tables,
-            'upgrade_0140_to_0177_tables': upgraded_parent_tables,
-            'upgrade_0141_to_0177_tables': upgraded_setup_tables,
-            'upgrade_0142_to_0177_tables': upgraded_throttle_tables,
-            'upgrade_0143_to_0177_tables': upgraded_lease_tables,
-            'upgrade_0144_to_0177_tables': upgraded_signup_tables,
-            'upgrade_0145_to_0177_tables': upgraded_reset_tables,
-            'upgrade_0146_to_0177_tables': upgraded_quota_tables,
-            'upgrade_0147_to_0177_tables': upgraded_lifecycle_tables,
-            'upgrade_0148_to_0177_tables': upgraded_retention_tables,
-            'upgrade_0149_to_0177_tables': upgraded_reserve_tables,
-            'upgrade_0150_to_0177_tables': upgraded_heating_tables,
-            'upgrade_0151_to_0177_tables': upgraded_draft_tables,
-            'upgrade_0152_to_0177_tables': upgraded_bank_tables,
-            'upgrade_0153_to_0177_tables': upgraded_restoration_tables,
-            'upgrade_0154_to_0177_tables': upgraded_always_guard_tables,
-            'upgrade_0155_to_0177_tables': upgraded_person_retention_tables,
-            'upgrade_0159_to_0177_tables': upgraded_deadline_tables,
-            'upgrade_0160_to_0177_tables': upgraded_reason_erasure_tables,
-            'upgrade_0161_to_0177_tables': upgraded_report_recipient_tables,
-            'upgrade_0162_to_0177_tables': upgraded_successor_dunning_tables,
-            'upgrade_0163_to_0177_tables': upgraded_household_tables,
-            'upgrade_0164_to_0177_tables': upgraded_person_day_bases,
-            'upgrade_0165_to_0177_tables': upgraded_property_state,
-            'upgrade_0166_to_0177_tables': upgraded_register_date,
-            'upgrade_0167_to_0177_tables': upgraded_levy_authority,
-            'upgrade_0168_to_0177_tables': upgraded_commercial_rules,
-            'upgrade_0169_to_0177_tables': upgraded_statement_notes,
-            'upgrade_0170_to_0177_tables': upgraded_bank_cost,
-            'upgrade_0171_to_0177_tables': upgraded_bank_corrections,
-            'upgrade_0172_to_0177_tables': upgraded_bank_evidence,
-            'upgrade_0173_to_0177_tables': upgraded_dunning_policy,
-            'upgrade_0174_to_0177_tables': upgraded_preferences,
-            'upgrade_0175_to_0177_tables': upgraded_advance_mode,
-            'upgrade_0176_to_0177_tables': protected_advance_mode}  # accepted source
+    return {'upgrade_0028_to_0178_tables': upgraded_0028_tables,
+            'upgrade_0122_to_0178_tables': upgraded_tables,
+            'upgrade_0139_to_0178_tables': upgraded_0139_tables,
+            'upgrade_0140_to_0178_tables': upgraded_parent_tables,
+            'upgrade_0141_to_0178_tables': upgraded_setup_tables,
+            'upgrade_0142_to_0178_tables': upgraded_throttle_tables,
+            'upgrade_0143_to_0178_tables': upgraded_lease_tables,
+            'upgrade_0144_to_0178_tables': upgraded_signup_tables,
+            'upgrade_0145_to_0178_tables': upgraded_reset_tables,
+            'upgrade_0146_to_0178_tables': upgraded_quota_tables,
+            'upgrade_0147_to_0178_tables': upgraded_lifecycle_tables,
+            'upgrade_0148_to_0178_tables': upgraded_retention_tables,
+            'upgrade_0149_to_0178_tables': upgraded_reserve_tables,
+            'upgrade_0150_to_0178_tables': upgraded_heating_tables,
+            'upgrade_0151_to_0178_tables': upgraded_draft_tables,
+            'upgrade_0152_to_0178_tables': upgraded_bank_tables,
+            'upgrade_0153_to_0178_tables': upgraded_restoration_tables,
+            'upgrade_0154_to_0178_tables': upgraded_always_guard_tables,
+            'upgrade_0155_to_0178_tables': upgraded_person_retention_tables,
+            'upgrade_0159_to_0178_tables': upgraded_deadline_tables,
+            'upgrade_0160_to_0178_tables': upgraded_reason_erasure_tables,
+            'upgrade_0161_to_0178_tables': upgraded_report_recipient_tables,
+            'upgrade_0162_to_0178_tables': upgraded_successor_dunning_tables,
+            'upgrade_0163_to_0178_tables': upgraded_household_tables,
+            'upgrade_0164_to_0178_tables': upgraded_person_day_bases,
+            'upgrade_0165_to_0178_tables': upgraded_property_state,
+            'upgrade_0166_to_0178_tables': upgraded_register_date,
+            'upgrade_0167_to_0178_tables': upgraded_levy_authority,
+            'upgrade_0168_to_0178_tables': upgraded_commercial_rules,
+            'upgrade_0169_to_0178_tables': upgraded_statement_notes,
+            'upgrade_0170_to_0178_tables': upgraded_bank_cost,
+            'upgrade_0171_to_0178_tables': upgraded_bank_corrections,
+            'upgrade_0172_to_0178_tables': upgraded_bank_evidence,
+            'upgrade_0173_to_0178_tables': upgraded_dunning_policy,
+            'upgrade_0174_to_0178_tables': upgraded_preferences,
+            'upgrade_0175_to_0178_tables': upgraded_advance_mode,
+            'upgrade_0176_to_0178_tables': protected_advance_mode,
+            'upgrade_0177_to_0178_tables': upgraded_ai_settings}  # accepted source
 
 
 @pytest.fixture(scope="session", autouse=True)
@@ -724,6 +727,14 @@ _test_app_rw_engine = None
 @pytest.fixture(autouse=True)
 def isolate_diagnostics_directory(tmp_path, monkeypatch):
     monkeypatch.setattr(settings, 'diagnostics_dir', str(tmp_path / 'diagnostics'))
+
+
+@pytest.fixture
+def configured_ai(seed_data):
+    from tests.ai_settings_support import configure_ai
+    for key in ('org_a_id', 'org_b_id'):
+        configure_ai(seed_data[key], model="gpt-5.6-luna", import_enabled=True, qa_enabled=True, monthly_limit_usd=None)
+    return configure_ai
 
 
 @pytest_asyncio.fixture(autouse=True)
@@ -749,6 +760,11 @@ async def inject_test_engine(run_migrations):
     async with _test_app_rw_engine.begin() as connection:
         await connection.execute(text("DELETE FROM public.auth_throttle"))
     yield
+    with closing(psycopg2.connect(MIGRATOR_SYNC_URL)) as connection:
+        with connection, connection.cursor() as cursor:
+            cursor.execute("SELECT to_regclass('public.organization_ai_settings')")
+            if cursor.fetchone()[0]:
+                cursor.execute('DELETE FROM public.organization_ai_settings')
     await review_engine.dispose()
     override_review_engine(None)
     await worker_engine.dispose()

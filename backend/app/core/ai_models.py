@@ -1,0 +1,37 @@
+"""Documented OpenAI prices; unknown models remain selectable and unpriced.
+
+Standard USD per million tokens, verified 2026-11-07:
+https://developers.openai.com/api/docs/pricing
+Evaluation promotion is explicit: defaults and synthetic fixtures are not evidence.
+"""
+from dataclasses import dataclass
+from decimal import Decimal
+
+
+@dataclass(frozen=True)
+class ModelPrice:
+    input: Decimal
+    output: Decimal
+    cached: Decimal
+    cache_write_multiplier: Decimal | None = None
+
+
+MODEL_PRICES = {
+    'gpt-5.6-luna': ModelPrice(Decimal('.20'), Decimal('1.20'), Decimal('.02'), Decimal('1.25')),
+    'gpt-5.4-mini': ModelPrice(Decimal('.75'), Decimal('4.50'), Decimal('.075')),
+}
+EVALUATED_MODELS: frozenset[str] = frozenset()
+DEFAULT_TEST_MODEL = 'gpt-5.6-luna'
+
+
+def model_price(model: str | None) -> ModelPrice | None:
+    return MODEL_PRICES.get(model)
+
+
+def token_cost(model: str | None, input_tokens: int, output_tokens: int) -> Decimal:
+    price = model_price(model)
+    if price is None:
+        return Decimal('0')
+    input_multiplier = Decimal('2') if model == 'gpt-5.6-luna' and input_tokens > 272_000 else Decimal('1')
+    output_multiplier = Decimal('1.5') if input_multiplier == 2 else Decimal('1')
+    return (input_tokens * price.input * input_multiplier + output_tokens * price.output * output_multiplier) / 1_000_000

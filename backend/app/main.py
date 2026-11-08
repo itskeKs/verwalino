@@ -23,7 +23,7 @@ from app.api import bank_accounts, bank_transactions
 from app.api import dunning, mail, letters
 from app.api import meetings
 from app.api import fristen, dsgvo
-from app.api import declaration_imports
+from app.api import declaration_imports, ai_settings
 from app.api import property_documents, attachments, reports, tasks
 from app.api import property_knowledge, property_data_domains, person_data_domains
 from app.api import property_source_admission_reviews,property_source_classifications
@@ -37,7 +37,7 @@ from app.core.document_limits import MAX_UPLOAD_BYTES
 from app.services import mail_service
 from app.core.deployment_policy import get_deployment_policy
 from app.core.logging import configure_logging
-from app.core.request_id import RequestIdMiddleware, http_error, unhandled_error
+from app.core.request_id import RequestIdMiddleware, http_error, unhandled_error, validation_error
 from app.core.error_tracking import configure_error_tracking
 from app.core.organization_lifecycle import OrganizationLifecycleMiddleware
 
@@ -63,6 +63,8 @@ app.add_middleware(signup.ConfirmationLinkPrivacyMiddleware)
 app.add_middleware(OrganizationLifecycleMiddleware)
 # Starlette prepends middleware: registering last makes request IDs run first.
 app.add_middleware(RequestIdMiddleware)
+from fastapi.exceptions import RequestValidationError
+app.add_exception_handler(RequestValidationError, validation_error)
 app.add_exception_handler(StarletteHTTPException, http_error)
 app.add_exception_handler(Exception, unhandled_error)
 
@@ -147,6 +149,7 @@ app.include_router(dsgvo.router)
 
 # Declaration imports must be registered before the production SPA fallback.
 app.include_router(declaration_imports.router)
+app.include_router(ai_settings.router)
 app.include_router(property_documents.router)
 app.include_router(attachments.router)
 app.include_router(tasks.router)

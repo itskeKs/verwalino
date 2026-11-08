@@ -2,6 +2,7 @@
 import uuid
 from decimal import Decimal
 import pytest
+from tests.ai_settings_support import configure_ai
 from sqlalchemy import text
 from sqlalchemy.exc import DBAPIError
 from app.core.config import settings
@@ -12,7 +13,7 @@ from app.main import app
 from tests.test_knowledge_source_enforcement import granted_graph,ledger
 from tests.test_property_source_enforcement import synthetic_enforcement
 
-pytestmark = pytest.mark.asyncio
+pytestmark = [pytest.mark.asyncio, pytest.mark.usefixtures("configured_ai")]
 
 
 async def review_budget(api):
@@ -29,14 +30,14 @@ async def review_budget(api):
 
 @pytest.mark.parametrize('old_proof',[False,True])
 async def test_strict_reservation_requires_actual_runtime_proof(approved_knowledge_graph,seed_data,client_a_admin,monkeypatch,old_proof):
-    monkeypatch.setattr(settings,'declaration_qa_enabled',True)
+    configure_ai(seed_data['org_a_id'], qa_enabled=True)
     graph = approved_knowledge_graph
     async with granted_graph(client_a_admin,seed_data,graph),synthetic_enforcement(seed_data):
         await review_budget(client_a_admin)
         if old_proof:
             from app.core.runtime_budget import attest_runtime_budget,runtime_budget_policy
             async with get_tenant_session(graph.organization_id) as prior:
-                await attest_runtime_budget(prior,graph.organization_id,seed_data['user_a_admin_id'],runtime_budget_policy())
+                await attest_runtime_budget(prior,graph.organization_id,seed_data['user_a_admin_id'],runtime_budget_policy(enabled=True))
         with pytest.raises(DBAPIError,match='Reviewed runtime budget required'):
             async with get_tenant_session(graph.organization_id) as db:
                 await db.execute(text("SELECT set_config('app.current_user_id',:actor,true)"),{'actor':str(seed_data['user_a_admin_id'])})
@@ -47,7 +48,7 @@ async def test_strict_reservation_requires_actual_runtime_proof(approved_knowled
 
 @pytest.mark.parametrize('change',['cap','window','expiry','disabled'])
 async def test_runtime_drift_stops_before_provider_and_new_review_recovers(approved_knowledge_graph,seed_data,client_a_admin,monkeypatch,change):
-    monkeypatch.setattr(settings,'declaration_qa_enabled',True)
+    configure_ai(seed_data['org_a_id'], qa_enabled=True)
     graph = approved_knowledge_graph
     provider = FakeKnowledgeProvider()
     app.dependency_overrides[get_knowledge_provider] = lambda:provider
@@ -57,7 +58,7 @@ async def test_runtime_drift_stops_before_provider_and_new_review_recovers(appro
             if change=='cap': monkeypatch.setattr(settings,'declaration_qa_max_cost_usd',settings.declaration_qa_max_cost_usd+Decimal('0.01'))
             elif change=='window': monkeypatch.setattr(settings,'declaration_qa_budget_window_minutes',settings.declaration_qa_budget_window_minutes+1)
             elif change=='expiry': monkeypatch.setattr(settings,'declaration_qa_reservation_seconds',settings.declaration_qa_reservation_seconds+1)
-            else: monkeypatch.setattr(settings,'declaration_qa_enabled',False)
+            else: configure_ai(seed_data['org_a_id'], qa_enabled=False)
             response = await client_a_admin.post(f'/api/properties/{graph.property_id}/knowledge/query',json={'question':'Heizkosten'})
             assert response.status_code==503,response.text
             assert provider.calls==[] and not await ledger(graph)
@@ -88,12 +89,12 @@ async def test_missing_registrar_prevents_provider_work(approved_knowledge_graph
 
 
 async def test_inflight_policy_change_still_accounts_admitted_work(approved_knowledge_graph,seed_data,client_a_admin,monkeypatch):
-    monkeypatch.setattr(settings,'declaration_qa_enabled',True)
+    configure_ai(seed_data['org_a_id'], qa_enabled=True)
     graph = approved_knowledge_graph
     class Provider(FakeKnowledgeProvider):
         async def answer(self,*args,**kwargs):
             result = await super().answer(*args,**kwargs)
-            monkeypatch.setattr(settings,'declaration_qa_enabled',False)
+            configure_ai(seed_data['org_a_id'], qa_enabled=False)
             return result
     provider = Provider()
     app.dependency_overrides[get_knowledge_provider] = lambda:provider
