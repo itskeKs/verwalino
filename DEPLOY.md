@@ -1430,15 +1430,18 @@ The installer validates its own file via `status` before checkout. Immediately a
 the deploy script checks that the app overlay exists and validates Compose quietly, before
 image pull, backup or pinning. The managed server start then takes
 the installer lock, pulls the pinned app, waits for the database,
-stops an existing inbox worker and the app, migrates and starts the app with the overlay,
-waiting for health before starting Caddy. It never briefly starts the app in another mode.
+stops an existing inbox worker, the app and the declaration worker, migrates, starts the
+app with the overlay and then the declaration worker, waiting for each to become healthy
+before starting Caddy. A worker that does not become healthy fails the release and
+releases the installer lock. It never briefly starts the app in another mode.
 If the hosted proxy wrapper is present, the app/proxy/site overlays form one chain for
 these operations, preserving Caddy's imports, site image and networks. A managed start
 does not issue portable first-run setup tokens; use this opt-in for the existing server,
 or hosted public signup on an empty database. Keep both private configs in the operator's
 separate secure config backup; the server backup's `config.env` contains only `.env.selfhost`.
 
-The overlay forwards the three private settings to `app` only. `migrate` and `inbox-worker`
+The overlay forwards the three private settings to `app` and only `HV_DEPLOYMENT_MODE` to
+`declaration-worker`, which validates provider destinations by it. `migrate` and `inbox-worker`
 do not read this deployment policy. The installer's `bootstrap` service also retains the
 default `selfhost` policy: `admin_cli` run through that service skips hosted quota locks,
 including during `quota-recount`. For a recount, use the configured migrator environment
@@ -2348,7 +2351,8 @@ bounds still apply. Changing settings affects the next request/job; an admitted
 in-flight call finishes and accounts against its original reservation.
 
 The portable `declaration-worker` starts and stops with the app, including update
-and restore maintenance windows. It joins internal `backend` for PostgreSQL and a
+and restore maintenance windows and the managed hosted release path of
+`scripts/deploy-server.sh`. It joins internal `backend` for PostgreSQL and a
 separate non-internal `egress` network for the configured provider; it publishes no
 ports. The web process also contacts the selected provider for model discovery and
 Q&A. Operator egress rules must permit the selected origin, including the explicit
