@@ -1,4 +1,5 @@
 """Real upload/review/publication with the existing fake-provider worker seam."""
+import json
 import re
 import uuid
 from pathlib import Path
@@ -80,6 +81,50 @@ def extract_declaration(world, browser_storage):
     assert state.json()['status']=='NEEDS_REVIEW', state.text
 
 
+async def _expect_approval_ready(page, import_id):
+    prepare = page.get_by_role('button', name='Übernahme vorbereiten', exact=True)
+    try:
+        await expect(prepare).to_be_enabled()
+    except AssertionError as error:
+        # This journey uses a fictional scan and the offline provider. Keep the
+        # failure note to approval state, never the complete preview or source.
+        state = {}
+        try:
+            response = await page.request.get(f'/api/declaration-imports/{import_id}/approval-preview', timeout=5_000)
+            state['preview_status'] = response.status
+            if response.status == 200:
+                preview = await response.json()
+                state.update(
+                    draft_revision=preview['draft_revision'],
+                    can_approve=preview['can_approve'],
+                    pending_count=len(preview['pending_candidate_ids']),
+                    blocker_codes=sorted({issue['code'] for issue in preview['issues'] if issue['severity'] == 'BLOCKER'}),
+                    issues=sorted([{'code': issue['code'], 'severity': issue['severity']} for issue in preview['issues']],
+                                  key=lambda issue: (issue['severity'], issue['code'])),
+                )
+        except Exception as diagnostic_error:
+            state['preview_error'] = type(diagnostic_error).__name__
+        try:
+            response = await page.request.get(f'/api/declaration-imports/{import_id}/candidates', timeout=5_000)
+            state['candidates_status'] = response.status
+            if response.status == 200:
+                candidates = await response.json()
+                state['accepted_critical_evidence_counts'] = sorted(
+                    len(candidate['evidence']) for candidate in candidates
+                    if candidate['review_status'] in {'ACCEPTED', 'CORRECTED'} and candidate['risk_class'] == 'CRITICAL'
+                )
+        except Exception as diagnostic_error:
+            state['candidates_error'] = type(diagnostic_error).__name__
+        try:
+            state['visible_pending_count'] = await page.locator('[aria-label="Prüfstatus: PENDING"]:visible').count()
+            state['review_errors'] = await page.locator('.declaration-review-page [role="alert"]:visible').all_text_contents()
+        except Exception as diagnostic_error:
+            state['visible_review_error'] = type(diagnostic_error).__name__
+        error.add_note('Declaration approval state: ' + json.dumps(state, ensure_ascii=False, sort_keys=True))
+        raise
+    return prepare
+
+
 @when("the manager reviews and confirms the declaration in the browser")
 def review_declaration(browser_world):
     b = browser_world
@@ -91,8 +136,7 @@ def review_declaration(browser_world):
             count = await pending.count()
             await pending.first.get_by_role('button',name='Akzeptieren',exact=True).click()
             await expect(pending).to_have_count(count-1)
-        prepare = b.page.get_by_role('button',name='Übernahme vorbereiten',exact=True)
-        await expect(prepare).to_be_enabled()
+        prepare = await _expect_approval_ready(b.page, b.world.data['declaration_import'])
         await prepare.click()
         await b.page.get_by_label('Für mich Lesen, Bearbeiten, Freigeben und Exportieren vorbereiten').check()
         await b.page.get_by_label('Begründung',exact=True).fill('Fiktive Teilungserklärung geprüft und für die Abnahme übernommen.')
