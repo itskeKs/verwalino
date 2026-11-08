@@ -1136,7 +1136,8 @@ in the PR. A local cross-platform build alone does not prove installation.
    export under `/srv/verwalino/staging`, not this checkout); the forced-command deploy key points
    at the committed `scripts/deploy-server.sh`. The mode check covers only snippets the new tag
    does not change: the script checks the tag out under its own `umask 027`, so a changed snippet
-   is written `0640` again before validation (#429).
+   is written `0640` again before validation; such a release fails the proxy validation until
+   #429 lands.
 3. Create and push the reviewed `vX.Y.Z` tag. The `Release image` workflow builds,
    publishes and signs both platforms. Only stable `vX.Y.Z` tags are accepted.
    The workflow refuses any tag whose commit is not on `main`.
