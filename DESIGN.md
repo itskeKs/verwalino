@@ -823,6 +823,7 @@ Synthetic long-owner statements from the test database, at 1280 px and 360 px wi
 | Finalized before / after | [before](docs/assets/design/weg-statements/finalized-before-1280.png) · [after](docs/assets/design/weg-statements/finalized-after-1280.png) | [before](docs/assets/design/weg-statements/finalized-before-360.png) · [after](docs/assets/design/weg-statements/finalized-after-360.png) |
 | Snapshot hash before / after | [before](docs/assets/design/weg-statements/hash-before-1280.png) · [after](docs/assets/design/weg-statements/hash-after-1280.png) | [before](docs/assets/design/weg-statements/hash-before-360.png) · [after](docs/assets/design/weg-statements/hash-after-360.png) |
 | Table scrolled to complete amounts | — | [computed](docs/assets/design/weg-statements/computed-amount-after-360.png) · [finalized](docs/assets/design/weg-statements/finalized-amount-after-360.png) |
+| Owner lines with the reserve Soll (#401, after) | [after](docs/assets/design/weg-statements/computed-lines-after-1280.png) | [after](docs/assets/design/weg-statements/computed-lines-after-360.png) |
 
 The economic-plan detail gives `Hausgeld-Vorschüsse je Eigentümer` and
 `Geplante Kosten (berechnet)` separate `overflow-x-auto` containers. Owner names
