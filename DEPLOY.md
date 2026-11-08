@@ -1128,7 +1128,14 @@ in the PR. A local cross-platform build alone does not prove installation.
 1. Choose `X.Y.Z`, bump the application versions in `backend/pyproject.toml`
    and `frontend/package.json` with their lockfiles, and review/merge the release
    changes after `make test` and `make lint` pass.
-2. Create and push the reviewed `vX.Y.Z` tag. The `Release image` workflow builds,
+2. Before `deploy-server.sh vX.Y.Z` runs (the hosted deploy workflow starts it after the
+   tag's `Release image` run succeeds): the [Deploy hosted server](.github/workflows/deploy.yaml)
+   workflow is enabled; the public Caddy snippets `infra/Caddyfile*` in the server checkout
+   `/srv/verwalino/app` are `0644`, because the checkout runs under `umask 027` and the isolated
+   validator must be able to read them (since #396 the script normalises only its staging export
+   under `/srv/verwalino/staging`, not this checkout); the forced-command deploy key points at
+   the committed `scripts/deploy-server.sh`.
+3. Create and push the reviewed `vX.Y.Z` tag. The `Release image` workflow builds,
    publishes and signs both platforms. Only stable `vX.Y.Z` tags are accepted.
    The workflow refuses any tag whose commit is not on `main`.
    For a manual rehearsal/retry after the workflow exists on the default branch,
@@ -1138,20 +1145,20 @@ in the PR. A local cross-platform build alone does not prove installation.
    the `vX.Y.Z` and `vX.Y` tags for the selected version.
    Release runs are serialised; a tag whose run was skipped while another release
    was pending must be re-dispatched.
-3. Check the workflow succeeded, make the GHCR package public for anonymous
+4. Check the workflow succeeded, make the GHCR package public for anonymous
    pulls if necessary, and inspect both platforms, provenance/SBOMs and the
    signature at the summary's digest. Verify anonymously using the commands above.
-4. Check the second job published a GitHub Release containing `install.sh`,
+5. Check the second job published a GitHub Release containing `install.sh`,
    `self-host.sh`, `docker-compose.yml`, `Caddyfile`, `prod-init.sh`, `env.example`,
    `IMAGE_DIGEST`, `SHA256SUMS` and `SHA256SUMS.sigstore.json`. Compare `IMAGE_DIGEST`
    and the release notes with the image job's index digest. Verify the checksum
    signature and all seven payload checksums as above; test anonymous asset
    downloads after the repository/release is made public by the maintainer.
-5. On a fresh VM, run the one-line command through browser setup, sign-in and
+6. On a fresh VM, run the one-line command through browser setup, sign-in and
    stop/start persistence. Repeat with a real domain for DNS/TLS acceptance.
    Record the tag, digest, host and result in the PR; fake-Docker contracts do
    not prove this. Complete the native arm64 installation check above.
-6. Copy the successful release tag and index digest into the examples in this
+7. Copy the successful release tag and index digest into the examples in this
    section.
 
 The **first tag with installer assets, fresh-VM run and arm64 installation
@@ -1613,6 +1620,8 @@ After a cancelled or broken CI deploy, check for and
 remove `/srv/verwalino/logs/.deploy.lock` once no deploy is running. A stale `/srv/verwalino/backups/.lock`
 (a run was killed) is removed by hand once no backup is running. Never
 run `docker compose down -v` or delete the volumes.
+A deploy workflow that was disabled by hand during a release is re-enabled in the same release,
+before that release is declared done.
 
 ## Migration compatibility: 0029–0180
 
