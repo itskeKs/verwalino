@@ -24,7 +24,7 @@ async def page_domains(property_id: uuid.UUID | None = None, query: PageQuery = 
 
 @router.post('',response_model=DomainOut,status_code=201)
 async def create_domain(body: DomainCreate,idempotency_key: uuid.UUID = Header(),
-                        auth: AuthContext = Depends(require_admin_dep),db: AsyncSession = Depends(get_db)):
+                        auth: AuthContext = Depends(require_admin_dep),db: AsyncSession = Depends(get_db, scope="function")):
     return await PropertyDataDomainService(db,auth).create(body,idempotency_key)
 
 
@@ -50,12 +50,12 @@ async def page_grants(domain_id: uuid.UUID,query: PageQuery = Depends(page_query
 
 @router.post('/{domain_id}/grants',response_model=DataGrantOut,status_code=201)
 async def grant_data(domain_id: uuid.UUID,body: DataGrantCreate,idempotency_key: uuid.UUID = Header(),
-                     auth: AuthContext = Depends(require_admin_dep),db: AsyncSession = Depends(get_db)):
+                     auth: AuthContext = Depends(require_admin_dep),db: AsyncSession = Depends(get_db, scope="function")):
     return await PropertyDataDomainService(db,auth).grant_data(domain_id,body,idempotency_key)
 
 
 @router.post('/{domain_id}/grants/{grant_id}/revoke',status_code=204)
 async def revoke_data(domain_id: uuid.UUID,grant_id: uuid.UUID,
-                      auth: AuthContext = Depends(require_admin_dep),db: AsyncSession = Depends(get_db)):
+                      auth: AuthContext = Depends(require_admin_dep),db: AsyncSession = Depends(get_db, scope="function")):
     await PropertyDataDomainService(db,auth).revoke_data(domain_id,grant_id)
     return Response(status_code=204)
