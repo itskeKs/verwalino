@@ -232,6 +232,21 @@ async def test_review_command_migration_refuses_busy_dependency(seed_data,table)
     finally: engine.dispose()
 
 
+async def test_review_correction_commits_before_response_start(committed_scope, app_rw_session):
+    from tests.test_scoped_account_statements import client
+    from tests.write_response_support import request_without_open_transaction
+
+    seed = committed_scope
+    params = await review_seed(seed)
+    async with synthetic_enforcement(seed), client({'org': params['org'], 'actor': params['actor']}, 'actor') as api:
+        response = await request_without_open_transaction(
+            api, app_rw_session, 'PATCH',
+            f"/api/declaration-imports/{params['job']}/candidates/{params['candidate']}",
+            {'draft_revision': 1, 'decision': 'CORRECTED', 'corrected_value': 'New verified name'},
+        )
+        assert response.status_code == 200, response.text
+
+
 async def test_strict_http_review_uses_atomic_command_and_refreshes_result(committed_scope):
     from tests.test_scoped_account_statements import client
     seed=committed_scope;params=await review_seed(seed)

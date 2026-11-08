@@ -12,8 +12,13 @@ from app.core.live_principal import (
 from app.main import app
 
 WRITE_GUARDS = (get_live_writer_db, get_live_publication_db, get_live_admin_db)
-ROUTERS = {'app.api.economic_plans', 'app.api.payments', 'app.api.weg_settlements'}
 MUTATIONS = {'POST', 'PUT', 'PATCH', 'DELETE'}
+EXEMPT: dict[str, str] = {
+    'POST /api/reports/datev/preview': 'Read-only preview; get_live_member_db keeps request scope (#262).',
+    'POST /api/reports/datev.csv': 'Read-only export; get_live_member_db keeps request scope (#262).',
+    'POST /api/payments/sepa/preview': 'Read-only preview; get_live_member_db keeps request scope (#262).',
+    'POST /api/payments/sepa.xml': 'Read-only export; get_live_member_db keeps request scope (#262).',
+}
 
 
 def database_dependencies(dependant):
@@ -23,23 +28,24 @@ def database_dependencies(dependant):
         yield from database_dependencies(dependency)
 
 
-def mutation_routes():
+def yielding(dependant, chain=()):
+    for child in dependant.dependencies:
+        path = (*chain, getattr(child.call, '__name__', repr(child.call)))
+        if inspect.isasyncgenfunction(child.call) or inspect.isgeneratorfunction(child.call):
+            yield path, child
+        yield from yielding(child, path)
+
+
+def late_transactions():
+    late = {}
     for context in iter_route_contexts(app.routes):
         route = context.original_route
-        if isinstance(route, APIRoute) and context.methods & MUTATIONS:
-            yield context, route
-
-
-def deferred_direct_writes():
-    """Inspection reused for the PR inventory; do not expand this issue's scope."""
-    return sorted(
-        f'{method} {context.path}'
-        for context, route in mutation_routes()
-        if route.endpoint.__module__ not in ROUTERS
-        and any(dependency.call is get_db and dependency.scope != 'function'
-                for dependency in route.dependant.dependencies)
-        for method in context.methods & MUTATIONS
-    )
+        if isinstance(route, APIRoute):
+            chains = ['->'.join(p) for p, d in yielding(route.dependant) if d.scope != 'function']
+            for method in context.methods & MUTATIONS:
+                if chains:
+                    late[f'{method} {context.path}'] = chains
+    return late
 
 
 @pytest.mark.parametrize('guard', WRITE_GUARDS)
@@ -53,29 +59,27 @@ def test_member_guard_keeps_request_scoped_transaction():
     assert inspect.signature(get_live_member_db).parameters['db'].default.scope is None
 
 
-def test_existing_write_guard_callers_do_not_split_cached_database_sessions():
-    def uses_guard(dependant):
-        return dependant.call in WRITE_GUARDS or any(uses_guard(child) for child in dependant.dependencies)
-
+def test_no_route_opens_two_tenant_sessions():
     checked = []
     for context in iter_route_contexts(app.routes):
         route = context.original_route
-        if isinstance(route, APIRoute) and uses_guard(route.dependant):
+        if isinstance(route, APIRoute):
             dependencies = list(database_dependencies(route.dependant))
-            assert dependencies and all(d.scope == 'function' and d.use_cache for d in dependencies), context.path
+            if not dependencies:
+                continue
+            assert len({d.scope for d in dependencies}) == 1, context.path
+            assert all(d.use_cache for d in dependencies), context.path
             checked.append(context.path)
     assert checked
 
 
-def test_every_target_mutation_finishes_its_transaction_before_response():
-    checked, failures = [], []
-    for context, route in mutation_routes():
-        if route.endpoint.__module__ not in ROUTERS:
-            continue
-        key = f'{sorted(context.methods & MUTATIONS)} {context.path}'
-        checked.append(key)
-        dependencies = list(database_dependencies(route.dependant))
-        if not dependencies or any(dependency.scope != 'function' for dependency in dependencies):
-            failures.append(key)
-    assert checked
-    assert not failures, '\n'.join(failures)
+def test_every_mutation_route_closes_its_transaction_before_the_response():
+    failures = {route: chains for route, chains in late_transactions().items() if route not in EXEMPT}
+    assert not failures, '\n'.join(f'{route}: {", ".join(chains)}' for route, chains in sorted(failures.items()))
+
+
+def test_exemptions_name_current_late_routes():
+    late = late_transactions()
+    for route, reason in EXEMPT.items():
+        assert route in late, f'Stale transaction-scope exemption: {route}'
+        assert reason.strip(), f'Transaction-scope exemption needs a reason: {route}'

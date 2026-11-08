@@ -146,6 +146,30 @@ async def _seed_m1_scenario(session, org_id: str):
 # 1. EXCLUDE rejects overlapping ownership for SAME (unit, owner_profile)
 # ============================================================================
 @pytest.mark.asyncio
+async def test_cost_entry_commits_before_response_start_and_opens_immediately(
+    client_a_admin, migrator_session, app_rw_session, seed_data,
+):
+    from tests.write_response_support import create_visible_draft, request_without_open_transaction
+
+    async with AsyncSession(migrator_session.bind) as setup:
+        own = await _seed_m1_scenario(setup, str(seed_data['org_a_id']))
+        await setup.commit()
+    await app_rw_session.execute(text("SELECT set_config('app.current_org_id', :org, true)"),
+                                 {'org': str(seed_data['org_a_id'])})
+    category = (await client_a_admin.get('/api/cost-categories')).json()[0]
+    payload = {
+        'property_id': own['prop_id'], 'cost_category_id': category['id'], 'cost_category_plan_version': 1,
+        'invoice_date': '2026-06-01', 'service_period_from': '2026-01-01', 'service_period_to': '2026-12-31',
+        'gross_amount': '238.00', 'tenant_apportionable': 'UMLAGEFAEHIG', 'source': 'MANUAL',
+    }
+    response = await request_without_open_transaction(
+        client_a_admin, app_rw_session, 'POST', '/api/cost-entries', payload,
+    )
+    assert response.status_code == 201, response.text
+    await create_visible_draft(client_a_admin, app_rw_session, '/api/cost-entries', payload, 'cost_entry')
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("route, table, field, key", [
     ("leases", "lease_agreement", "unit_id", "unit_1_id"),
     ("leases", "lease_agreement", "tenant_profile_id", "tp1_id"),

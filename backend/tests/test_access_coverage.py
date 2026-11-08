@@ -23,6 +23,18 @@ async def capture(api, key=None, predecessor=None):
     return response.json()
 
 
+async def test_snapshot_commits_before_response_start(migrator_session, scope_seed, app_rw_session):
+    from tests.write_response_support import request_without_open_transaction
+
+    ids = await fixture(migrator_session, scope_seed)
+    async with client(ids, 'actor') as admin:
+        response = await request_without_open_transaction(
+            admin, app_rw_session, 'POST', '/api/access-preparation/snapshots',
+            {'predecessor_id': None}, headers={'Idempotency-Key': str(uuid.uuid4())},
+        )
+        assert response.status_code == 201, response.text
+
+
 async def test_snapshot_is_private_materialized_and_idempotent(migrator_session, scope_seed):
     ids = await fixture(migrator_session, scope_seed)
     async with client(ids, 'actor') as admin:
