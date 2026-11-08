@@ -161,19 +161,19 @@ exception text. Status endpoints stay with their aggregated metadata.
 Luna places the static developer block before dynamic document data and
 uses an explicit cache breakpoint and a 30-minute cache. The
 stable key contains only model, pass, and prompt, schema and
-harness version/hash. Mini receives **no** explicit caching. The
-configuration for Luna cache writes is
-`declaration_primary_cache_write_multiplier` or
-`HV_DECLARATION_PRIMARY_CACHE_WRITE_MULTIPLIER` and is validated to `1.25`.
+harness version/hash. Mini receives **no** explicit caching. Its cache-write multiplier is the documented `1.25` constant in `core/ai_models.py`, not an environment setting.
 
 Costs are calculated conservatively from ordinary input, cached input,
 cache write and output tokens. Invalid partitions, negative
-counters, missing rates or cache writes for Mini fail closed to
+counters or unsupported cache writes for Mini fail closed to
 `PROVIDER_USAGE_INVALID`; a cheaper estimate does not justify a loss of
 quality.
 
-`HV_OPENAI_API_KEY` is an exclusively server-side deployment secret:
-never in the frontend, Git, project `.env`, browser or ticket. Only after the local
+An organization administrator enters the OpenAI key in **Einstellungen**. The key
+is encrypted at rest using the deployment session secret, never returned by the
+API, and never included in logs, product archives or tickets. The same selected
+model is used for extraction, escalation and Q&A. Each request/job reads the current
+organization settings; clients are closed after the request/job. Only after the local
 precheck are bounded, permitted page contents sent to the provider.
 `store=false` is set, **is not ZDR** and triggers no retention commitment.
 API data is not used for training by default; without approved extended controls,
@@ -204,15 +204,14 @@ therefore in the egress network, and the database remains reachable exclusively 
 
 The OpenAI client is hard-wired to `https://api.openai.com/v1`. The harness has
 no URL, browser or tool capability and transmits only the intended
-structured output requests. When imports are enabled, the worker checks the two
-configured model IDs via the non-billable Models
-API (short timeout, at most one SDK retry) before a promotion. For this, the deploy starts, after
-the API health check but before the consuming worker, a one-off
-`compose run --rm --no-deps` container with an explicit Python entrypoint. The
-normal worker entrypoint and its endless loop do not run in it. Neither
-PDF/prompt contents nor Responses calls are transmitted, and the key
-is read exclusively from its container environment. A failure preserves
-the previous runtime state and prevents the promotion.
+structured output requests. The existing non-billable smoke command now requires
+an organization context: `python -m app.workers.declaration_provider_smoke
+--organization-id UUID`. It reads that organization's enabled import configuration
+through the same effective-settings function and retrieves the selected model only.
+It never submits PDF/prompt contents or Responses calls. Missing, disabled or
+unconfigured organizations fail with a sanitized message. Live comparison evals
+likewise require `--organization-id UUID`; offline fake evals need no organization,
+credential or network. Comparison candidates remain evaluation-only inputs.
 
 The non-internal Docker network is not a domain firewall. Anyone who must restrict egress to OpenAI
 additionally needs a host/network allowlist. The
@@ -249,7 +248,7 @@ separate explicit authorization and compares exactly `luna_medium`,
 `luna_low`, `terra_primary` and `luna_with_mini_router`.
 
 **Phase A — Activation and values:** Before **any path method**, exactly
-`HV_DECLARATION_LIVE_EVAL=1`, a server-side API key,
+`HV_DECLARATION_LIVE_EVAL=1`, a valid `--organization-id UUID`,
 `--provider live --live --compare-models`, a non-empty value for
 `HV_DECLARATION_REAL_PDF_MANIFEST` and the three positive, caller-verified
 Terra rates are checked. If any of these values is missing or invalid,
@@ -261,14 +260,15 @@ must exactly match `HV_DECLARATION_REAL_PDF_MANIFEST`, comply with case limits a
 SHA-256 check per case. In this phase, the manifest and declared PDFs are read and hashed locally. A mismatching hash
 prevents capability, adapter, provider and transmission — it does not claim
 that the file was never opened. Only after a successful Phase B is the
-capability created and an adapter constructed. Manifest, PDFs and report
+organization's enabled persisted AI settings loaded through the worker role, then the
+capability created and an adapter constructed. No environment API key is read. Manifest, PDFs and report
 never belong in the repository.
 
 ```bash
 cd backend
 ./.venv/bin/python -m app.evals.declaration_knowledge \
   --fixtures tests/fixtures/declaration_eval_cases.json \
-  --provider live --live --compare-models \
+  --provider live --live --compare-models --organization-id UUID \
   --manifest /absolute/external/path/manifest.json \
   --report-dir /absolute/external/path/reports
 ```
@@ -503,3 +503,159 @@ as blockers. Do not remove source policies or rewrite historical notices to reso
 coverage gaps. Activation requires reviewed legacy coverage and the guarded
 transition; use the
 [activation runbook](accounting-scope-setup.md#owner-activation-runbook).
+
+
+## Organization settings (0178)
+
+See [deployment and upgrade instructions](../../DEPLOY.md#organization-ai-settings-and-upgrade-to-0178).
+The administrator may set a shared monthly import/Q&A limit in USD. Only known
+prices are enforced; unknown-price models remain selectable and the page explains
+that they are not limited. Known requests explicitly use the standard service tier
+and no implicit SDK retry. Monetary unknowns are recorded as unpriced zero estimates,
+not as a claim that OpenAI is free. Token/time limits remain bounded. The extraction
+harness version is `3`, with wire schema version `2`. The adapter converts only
+the two known, disjoint `kind` unions to `anyOf` after the SDK's strict-schema
+transformation. Parsing, reservations and schema fingerprints use that same
+wire model; inherited local validation remains unchanged. Offline SDK transport
+checks verify serialization, not live provider acceptance. Pass metadata uses `default`
+when reasoning is omitted for a model with no known effort contract.
+
+Prompt version `declaration-v3` supplies the exact fixed-core subject-prefix and
+field pairs to core extraction, reconciliation and recheck. The instructions
+and local validator read one immutable contract; existing subject-key forms,
+value-type checks, evidence requirements and wire schemas remain unchanged.
+Usage-type instructions require TEXT and the existing canonical values WOHNUNG,
+GEWERBE, STELLPLATZ or SONSTIGE, preserving original source wording in raw values
+and evidence. Approval validation remains exact; no aliases are coerced.
+Descriptive inventory is not duplicated as a normative rule or additional fact.
+A genuine source-supported clause may refer to core facts; unclear explicit clauses
+retain clarification flags. Source silence does not create a missing-rule issue.
+Genuinely out-of-core relevant facts use the existing `additional_facts` shape.
+The synthetic contract oracle verifies local decisions and serialized SDK
+instructions; it does not establish live extraction quality or acceptance.
+
+SDK parse failures emit `event=DECLARATION_SCHEMA_VALIDATION` in the declaration
+worker/container logs. Retrieve this event from those logs; support bundles
+deliberately omit its details. It contains only allowlisted exception/error codes,
+pass/stage enums and schema-defined location prefixes. The four fixed-core
+after-validator codes distinguish unsupported fields, MEA types, denominator
+types and area types. Retention is bounded to eight errors, twelve location
+segments, array indices from 0 through 9999 and 2048 UTF-8 bytes per event.
+Unknown path suffixes and codes are discarded or replaced by fixed fallbacks.
+Messages, inputs, contexts, bodies, source text and credentials are excluded.
+Durable pass metadata, validation decisions and usage/retry limits are unchanged.
+
+For Luna Q&A, explicit cache mode is sent without breakpoints, disabling implicit cache writes and their surcharge. No cache parameter is added for unverified models.
+
+## Recorded product-import regression checks
+
+`--provider recorded` performs only an actor/organization-scoped, read-only,
+repeatable-read collection from the product database. It never reads organization
+AI credentials or constructs a provider. The approved synthetic input digest is
+checked against its import-bound document and canonical tenant storage key, then
+verified against the stored bytes. Local bounded preflight checks evidence;
+no source or response content is retained in the report.
+
+Use a **new import/draft**, uploading the same approved Lindenallee scan; do not
+retry the retained failed import. An older failed import in the organization is
+irrelevant. Eligibility requires this new draft to have no extraction runs, no
+queue requests and zero provider attempts. Capture requires exactly one terminal
+extraction run and one `START` receipt matching the current queue request. The
+job's `attempt_count` counts provider requests: a healthy four-pass import normally
+has at least four, so it is deliberately **not** required to equal one.
+
+Start once through the product. Pause the blind checker when review becomes ready,
+**before the first accept, correction or rejection**. The coordinator captures the
+original pending proposals without showing gold or scores to the checker, then
+resumes that same import. Reviewed/applied or ambiguous graphs are refused;
+corrected values and the final created property are never model-scoring inputs.
+Keep the frozen report: it remains a reusable baseline after review.
+
+The portable runtime contains `backend/app`, not test fixtures. From the reviewed
+checkout root, send only the committed synthetic gold through stdin. Set
+`EVAL_APP_CONTAINER` to the full app container ID recorded as owned by the
+separately authorized disposable installation. Inspect only that ID and verify
+that it is running, its Compose project matches the ownership record, its service
+is `app`, and its immutable image ID matches the recorded reviewed build:
+
+```sh
+docker inspect --type container \
+  --format 'running={{.State.Running}} project={{index .Config.Labels "com.docker.compose.project"}} service={{index .Config.Labels "com.docker.compose.service"}} image={{.Image}}' \
+  "$EVAL_APP_CONTAINER"
+```
+
+After those checks, set `EVAL_ORG`, `EVAL_ACTOR`, `EVAL_IMPORT` and an owned
+`EVAL_REPORT` path for that installation and its current actor. `docker exec`
+uses the verified running container without requiring installer-derived Compose
+variables. These commands do not start extraction:
+
+```sh
+recorded_gold() {
+  python3 -c 'import json,pathlib; d=json.loads(pathlib.Path("backend/tests/fixtures/declaration_eval_cases.json").read_text()); print(json.dumps({"recorded_import_cases":d["recorded_import_cases"]}))'
+}
+recorded_check() {
+  docker exec -i "$EVAL_APP_CONTAINER" \
+    python -m app.evals.declaration_knowledge --provider recorded --fixtures /dev/stdin \
+    --organization-id "$EVAL_ORG" --actor-id "$EVAL_ACTOR" --import-id "$EVAL_IMPORT" \
+    --case-id lindenallee-12 "$@"
+}
+recorded_gold | recorded_check --check-eligibility
+# After the one manual start reaches untouched review readiness:
+recorded_gold | recorded_check > "$EVAL_REPORT"
+```
+
+Stdin creates no gold file in the container. Keep reports only in explicitly owned
+evidence locations; remove disposable copies after preserving the required result.
+To compare saved captures without database or provider access, run from `backend/`
+with absolute report paths:
+
+```sh
+uv run --locked --extra dev --extra ops --extra ocr python - "$BASELINE_REPORT" "$CANDIDATE_REPORT" <<'PY'
+import json, sys
+from app.evals.recorded_import import load_recorded_report, compare_recorded_reports
+comparison = compare_recorded_reports(load_recorded_report(sys.argv[1]), load_recorded_report(sys.argv[2]))
+print(json.dumps(comparison))
+raise SystemExit(1 if comparison['regressions'] else 0)
+PY
+```
+
+Alternatively, `--baseline-report` compares during capture when the validated
+baseline file is accessible to that CLI process. Only bounded collector-report
+shapes are accepted, never hand-authored raw actual/scoring JSON. Preserve reports
+exactly as collected; provenance relies on the trusted product database and the
+unedited artifact. Input and gold digests must match. Model, resolved-model,
+reasoning, prompt, schema and harness changes are explicit; a difference is not
+attributed solely to the model.
+
+Recorded report format `2` uses scorer `recorded-final-output-v2`, independently
+of the provider harness version. Comparisons refuse format-1 or differing scorer
+reports with `INCOMPATIBLE_RECORDED_SCORER`; preserve older artifacts without
+reinterpreting their scores. The independent input/gold data is unchanged.
+
+Reports localize case/stage/assertion outcomes. Success ledger entries establish
+execution and parsed-schema success only. Intermediate semantic outputs were not
+retained and remain `UNAVAILABLE`; all value assertions are `final_output` on the
+original merged proposals. The independently labeled scan checks units 1/2/G1,
+their apartment/apartment/parking usage kinds, shares 450/450/100 over 1000 and
+source-bound evidence. It contains no governance/allocation rule: hallucinated
+true-rule origins fail, while additional-fact notes sharing RULE storage are not
+counted as normative rules. Rule-effect recall is not tested. The `blockers`
+assertion includes BLOCKER issues and the existing rule/additional-fact
+clarification predicate, even when its issue severity is WARNING. Ordinary
+pending human review and unrelated warnings do not fail that assertion. Capture
+still refuses all reviewed/corrected proposals before using this predicate.
+Failed terminal runs cannot
+pass merely because earlier provider calls succeeded. Provider-reported totals
+are separate from conservative job accounting; unknown usage stays unknown and
+costs are estimates, not billing. Comparisons cover observed assertions only,
+never automatic promotion or a “geprüft” model badge. Existing four-way live
+evaluation gates and runners are unchanged.
+
+
+New-property approval projects repeated unit citations to one canonical fact
+source when document, page, printed page, section and quote are identical and
+only the optional field path differs. Every original candidate evidence row
+remains immutable. Distinct content or metadata still triggers the existing
+collision guard; independent document/page sources remain traceable with their
+original deterministic source indexes. This projection applies to new-property
+`UNIT_CREATE` proposals.

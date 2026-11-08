@@ -237,9 +237,8 @@ receipts, the separate deposit, Anlage V income and both CSV totals at desktop a
 
 **Goal:** Sabine takes over the management of a condominium association (WEG) and does not want to
 type the property in by hand.
-**She does:** looks in Verwalino for the way to upload a declaration of division and uploads a
-fictional scanned declaration of division. The file is added under `docs/acceptance/data/` with
-the first issue that touches this journey (#160); until then the journey cannot be run.
+**She does:** looks in Verwalino for the way to upload a declaration of division and uploads
+the [fictional scanned declaration](data/teilungserklaerung-lindenallee-12.pdf). It describes WEG Lindenallee 12, 01234 Musterstadt: apartments 1 and 2 each own 450/1,000; garage G1 owns 100/1,000. The independent expected sum is 450 + 450 + 100 = 1,000, equal to the printed denominator. An administrator first configures the organization OpenAI key/model and enables import in Einstellungen.
 **Expected:**
 - Either Verwalino creates a property from it with all units, per unit the number, the kind
   (apartment, garage, …) and the co-ownership share, and the shares add up to the denominator of
@@ -250,8 +249,8 @@ the first issue that touches this journey (#160); until then the journey cannot 
   important result.
 
 **Checked by:** agent
-**Also at 360 px:** no
-**Automated:** not yet
+**Also at 360 px:** result page and AI settings
+**Automated:** [real-browser twin](../../features/journeys/declaration_import.feature), using an offline deterministic extraction provider. Live model discovery and import require the separate authorized user check.
 
 ## Operating cost draft acceptance check
 

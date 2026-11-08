@@ -21,6 +21,8 @@ CANONICAL=('approved_fact_source','property_legal_reference','property_assignmen
 @pytest_asyncio.fixture
 async def committed_scope(scope_seed,migrator_session):
     await migrator_session.commit()
+    from tests.ai_settings_support import configure_ai
+    configure_ai(scope_seed['org_a_id'])
     return scope_seed
 
 

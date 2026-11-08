@@ -113,6 +113,8 @@ async def delete_state(ids):
 async def test_claim_uses_receipt_actor_not_privileged_process_actor(scope_seed,migrator_session):
     from tests.test_property_source_admission import setup
     await migrator_session.commit()
+    from tests.ai_settings_support import configure_ai
+    configure_ai(scope_seed['org_a_id'])
     ids={'org':scope_seed['org_a_id'],'actor':scope_seed['user_a_admin_id']}
     async with client(ids,'actor') as api:
         source=await setup(api,scope_seed)
@@ -177,6 +179,8 @@ async def test_paused_worker_durably_cancels_every_phase_without_source_visibili
 async def test_sql_queue_command_rejects_unadmitted_source_despite_target_grant(scope_seed,migrator_session):
     from tests.test_property_source_admission_review import legacy_source
     await migrator_session.commit()
+    from tests.ai_settings_support import configure_ai
+    configure_ai(scope_seed['org_a_id'])
     ids={'org':scope_seed['org_a_id'],'actor':scope_seed['user_a_admin_id']}
     async with client(ids,'actor') as api: source=await legacy_source(api,scope_seed)
     async with synthetic_enforcement(scope_seed),get_tenant_session(ids['org']) as db:

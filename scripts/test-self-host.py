@@ -148,7 +148,7 @@ if "stop" in sys.argv:
     for service in sys.argv[sys.argv.index("stop") + 1:] or ("app", "db", "caddy", "migrate", "bootstrap"):
         containers[service] = "exited||" + service + "-id"
 if "up" in sys.argv:
-    for service in ("app", "db", "caddy"):
+    for service in ("app", "db", "caddy", "declaration-worker"):
         if service in sys.argv: containers[service] = "running|healthy|" + service + "-id"
 if "run" in sys.argv and sys.argv[-1] == "migrate":
     for service in os.environ.get("FAKE_LINGERING_WRITERS", "").split():
@@ -852,6 +852,20 @@ elif name == "openssl":
                 "--entrypoint", "python", image, "-c", "from app.deployment import TARGET; print(TARGET)",
             ])
 
+    def test_failed_update_restores_an_ai_capable_worker(self):
+        self.update_setup()
+        self.schema_state.write_text('0178')
+        self.env.update(FAKE_IMAGE_TARGETS=json.dumps({self.old_image:'0178', self.new_image:'0179'}),
+                        FAKE_RESTORED_SCHEMA='0178', FAKE_DOCKER_FAIL='migrate', FAKE_DIRTY_SCHEMA='0179')
+        result = self.run_script('update', '--image', self.new_image, '--yes', input='')
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('rolled back to', result.stdout + result.stderr)
+        calls = self.calls()
+        worker_starts = [c for c in calls if 'up' in c['args'] and c['args'][-1] == 'declaration-worker']
+        self.assertEqual(len(worker_starts), 1)
+        self.assertEqual(worker_starts[0]['config_image'], self.old_image)
+        self.assertEqual(json.loads(self.containers.read_text())['declaration-worker'].split('|')[0], 'running')
+
     def test_update_migration_failure_restores_the_backup_and_previous_image(self):
         self.update_setup()
         self.env.update(FAKE_DOCKER_FAIL="migrate", FAKE_DIRTY_SCHEMA="0139")
@@ -925,7 +939,7 @@ os.execv({str(self.base / "bin/docker")!r}, ["docker", *sys.argv[1:]])
         self.env.update(FAKE_DOCKER_FAIL="migrate", FAKE_LINGERING_WRITERS="migrate bootstrap inbox-worker",
                         FAKE_INBOX_CONTAINER="inbox-id", FAKE_DIRTY_SCHEMA="0139")
         self.assert_update_rollback(self.run_script("update", "--image", self.new_image, "--yes"))
-        self.assertTrue(any(c["args"][-4:] == ["stop", "app", "migrate", "bootstrap"] for c in self.calls()))
+        self.assertTrue(any(c["args"][-5:] == ["stop", "app", "declaration-worker", "migrate", "bootstrap"] for c in self.calls()))
         self.assertEqual(sum(c["args"][-2:] == ["stop", "inbox-worker"] for c in self.calls()), 2)
 
     def test_update_health_failure_restores_the_backup_and_previous_image(self):
@@ -1321,7 +1335,7 @@ os.execv("/bin/mv", ["mv", *sys.argv[1:]])
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("app stopped", result.stderr)
         self.assertTrue(any("pg_dump" in c["args"] for c in self.calls()))
-        self.assertTrue(any(c["args"][-4:] == ["stop", "app", "migrate", "bootstrap"] for c in self.calls()))
+        self.assertTrue(any(c["args"][-5:] == ["stop", "app", "declaration-worker", "migrate", "bootstrap"] for c in self.calls()))
         self.assertEqual(self.config.read_bytes(), before)
         self.assertEqual(self.update_archives(), [])
 
@@ -2039,9 +2053,11 @@ os.execv("/bin/mv", ["mv", *sys.argv[1:]])
         migrate = next(i for i, a in enumerate(args) if "migrate" in a)
         app = next(i for i, a in enumerate(args) if "up" in a and a[-1] == "app")
         self.assertLess(build, migrate)
-        stopped_app = next(i for i, a in enumerate(args) if "stop" in a and a[-1] == "app")
+        stopped_app = next(i for i, a in enumerate(args) if a[-3:] == ["stop", "app", "declaration-worker"])
         self.assertLess(stopped_app, migrate)
         self.assertLess(migrate, app)
+        worker = next(i for i, a in enumerate(args) if "up" in a and a[-1] == "declaration-worker")
+        self.assertLess(app, worker)
         for call in calls:
             self.assertEqual(call["image"], "verwalino:local")
             self.assertEqual(call["secure"], "false")
@@ -2540,7 +2556,7 @@ class StackContractTests(unittest.TestCase):
 
     def test_project_network_and_volume_isolation(self):
         self.assertEqual(self.stack["name"], "verwalino")
-        self.assertEqual(set(self.stack["services"]), {"db", "app", "migrate", "bootstrap", "caddy", "inbox-worker"})
+        self.assertEqual(set(self.stack["services"]), {"db", "app", "migrate", "bootstrap", "caddy", "inbox-worker", "declaration-worker"})
         for config in self.stack["volumes"].values():
             self.assertFalse(config and (config.get("external") or config.get("name")))
         self.assertTrue(self.stack["networks"]["backend"]["internal"])
@@ -2550,6 +2566,18 @@ class StackContractTests(unittest.TestCase):
                          ["127.0.0.1:${VERWALINO_PORT:?missing port}:8000"])
         self.assertEqual(self.stack["services"]["caddy"]["profiles"], ["https"])
         self.assertEqual(self.stack["services"]["caddy"]["networks"], ["proxy"])
+
+    def test_declaration_worker_has_tenant_credentials_encryption_secret_and_private_egress(self):
+        worker = self.stack['services']['declaration-worker']
+        self.assertNotIn('profiles', worker)
+        self.assertNotIn('ports', worker)
+        self.assertEqual(worker['image'], self.stack['services']['app']['image'])
+        self.assertIn('app_worker:', worker['environment']['HV_DATABASE_URL_WORKER'])
+        self.assertEqual(worker['environment']['HV_SESSION_SECRET'], self.stack['services']['app']['environment']['HV_SESSION_SECRET'])
+        self.assertEqual(worker['networks'], {'backend':{'gw_priority':0}, 'egress':{'gw_priority':1}})
+        self.assertFalse(self.stack['networks']['egress']['internal'])
+        self.assertNotIn('HV_OPENAI_API_KEY', worker['environment'])
+        self.assertEqual(worker['cap_drop'], ['ALL'])
 
     def test_inbox_worker_is_opt_in_and_has_only_local_worker_authority(self):
         worker = self.stack["services"]["inbox-worker"]
@@ -2579,8 +2607,9 @@ class StackContractTests(unittest.TestCase):
         self.assertNotIn("HV_OPENAI_API_KEY", env)
         self.assertEqual({key: value for key, value in env.items() if key.startswith("HV_SMTP_")},
                          {key: "${" + key + ":-" + value + "}" for key, value in SMTP_DEFAULTS.items()})
-        for key in ("HV_DECLARATION_IMPORT_ENABLED", "HV_DECLARATION_QA_ENABLED", "HV_INVOICE_EXTRACTION_ENABLED"):
-            self.assertEqual(env[key], "false")
+        self.assertEqual(env['HV_INVOICE_EXTRACTION_ENABLED'], 'false')
+        for key in ('HV_DECLARATION_IMPORT_ENABLED', 'HV_DECLARATION_QA_ENABLED'):
+            self.assertNotIn(key, env)
         self.assertEqual(env["FORWARDED_ALLOW_IPS"], "${VERWALINO_PROXY_SUBNET:?use self-host.sh}")
         self.assertEqual(env["HV_RELEASE_ID"], "${HV_RELEASE_ID:-}")
         self.assertEqual(app["user"], "10001:10001")

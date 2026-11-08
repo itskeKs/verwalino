@@ -1,6 +1,6 @@
 # Feature status
 
-Current feature catalog of Verwalino by area. Status as of 2026-11-05, migration head `0150`.
+Current feature catalog of Verwalino by area. Status as of 2026-11-07, migration head `0178`.
 Status: ✅ implemented and reachable in the running app, 🟡 partial (reason given), ❌ not implemented.
 Short paths: `api/ services/ engine/ models/ workers/ core/` are under
 `backend/app/`, `pages/ components/ lib/` under `frontend/src/`; other paths are relative to the
@@ -9,8 +9,7 @@ history). Update this page in the same PR whenever a feature's status changes.
 
 The hosted instance uses the portable base through the [hosted deploy workflow](../DEPLOY.md#hosted-server).
 The optional [production app overlay](../DEPLOY.md#production-app-mode-and-mail-opt-in) enables the
-owner's mode and public-host configuration; mail also needs private SMTP settings. Declaration
-import/Q&A and automatic invoice OCR remain disabled in this stack.
+owner's mode and public-host configuration; mail also needs private SMTP settings. Declaration import and Q&A are enabled per organization in Einstellungen with its own OpenAI key; the portable declaration worker is included. Automatic invoice OCR remains disabled in this stack.
 
 The bilingual public website has a separate image and main-push publish/sign/deploy workflow (#24),
 with an optional closed container behind Caddy. Operator enablement and the first live rollout are
@@ -18,6 +17,13 @@ pending; registration stays closed and legal review remains with #26. See the
 [website hosting runbook](operations/website-hosting.md).
 
 ## Access and organization
+
+Organization administrators configure the OpenAI key (encrypted at rest), one
+provider-listed model, import/Q&A switches and an optional known-price monthly
+limit in Einstellungen. Other roles retain personal design settings and cannot
+read or change organization AI settings. There is no environment credential fallback.
+Real provider scan-to-review acceptance remains blocked by a provider request failure (#160).
+
 
 | Feature | Status | Location |
 | --- | --- | --- |
@@ -51,7 +57,8 @@ pending; registration stays closed and legal review remains with #26. See the
 | Photos | ❌ | – |
 | Units (name, type, area, heated area) | ✅ names over 50 characters are rejected when editing; the form keeps the entered name and shows the error at the field | `api/units.py`, `pages/PropertyDetailPage.tsx`, #214 |
 | Record MEA (co-ownership share) | ✅ scale confirmed by hand ("MEA-Skala bestätigen") or via declaration import; units need a confirmed scale (409 otherwise). Property details offer confirmation and the unit MEA field for WEG/MISCH/SEV, and for MIET only with an existing recorded unit MEA (including zero); unconfirmed status reads "Skala noch nicht bestätigt" | `api/properties.py` (`POST /{id}/mea-scale/confirm`), `api/units.py`, `pages/PropertyDetailPage.tsx`, T05 |
-| Declaration of division (Teilungserklärung) import (AI, review) | ✅ needs feature flag and OpenAI key | `api/declaration_imports.py`, `workers/declaration_import.py`, `pages/DeclarationImportPage.tsx` |
+| Organization AI settings | ✅ administrator-only encrypted OpenAI key, full provider model list, one model for import/escalation/Q&A, separate switches and optional known-price monthly limit; no environment fallback | `api/ai_settings.py`, `services/ai_settings_service.py`, `pages/SettingsPage.tsx`, #160 |
+| Declaration of division (Teilungserklärung) import (AI, review) | 🟡 organization configuration and deterministic browser twin exist; real provider scan-to-review remains blocked by a provider request failure (#160) | `api/declaration_imports.py`, `workers/declaration_import.py`, `pages/DeclarationImportPage.tsx` |
 | Property knowledge with sources | ✅ | `services/property_knowledge_service.py`, `pages/PropertyKnowledgePage.tsx` |
 | Meters, meter readings | ✅ | `api/meters.py`, `models/meter.py`, `components/MeterPanel.tsx`, T29, T30, [usage](operations/meters.md) |
 | Master data CSV import | ✅ template, preview, atomic creation of properties/units/contacts | `services/master_import_service.py`, `api/properties.py` (`/import/*`), `components/MasterImport.tsx`, T51, [usage](operations/tasks-and-documents.md) |

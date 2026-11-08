@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from dataclasses import FrozenInstanceError
 from decimal import Decimal
+import json
+import logging
 
 import pytest
 
@@ -18,6 +20,52 @@ from app.declarations.provider import (
     PROVIDER_SCHEMA_FAILURE,
     PROVIDER_TIMEOUT,
 )
+from app.declarations import observability
+from app.declarations.schemas import CoreExtractionOutput
+
+
+def _diagnostic(caplog, errors, *, schema=None, exception_class='ValidationError'):
+    with caplog.at_level(logging.WARNING, logger='app.declarations.observability'):
+        observability.log_schema_validation_diagnostic(
+            exception_class=exception_class, errors=errors,
+            schema=schema or CoreExtractionOutput.model_json_schema(), pass_id='extract_core', stage='provider',
+        )
+    record = caplog.records[-1]
+    assert record.exc_info is None and record.stack_info is None
+    assert len(record.getMessage().encode('utf-8')) <= 2048
+    assert 'private-' not in record.getMessage()
+    return json.loads(record.getMessage().removeprefix('event=DECLARATION_SCHEMA_VALIDATION data='))
+
+
+@pytest.mark.parametrize('location', [
+    ('private-dict-key',), ('facts', 0, 'private-extra'),
+    ('facts', 0, 'normalized_value', 'TEXT', 'confidence'),
+])
+def test_schema_diagnostics_drop_unknown_codes_and_schema_invalid_path_suffixes(caplog, location):
+    data = _diagnostic(caplog, [{'type': 'private-error-code', 'loc': location,
+                                'input': 'private-input', 'msg': 'private-message', 'ctx': {'error': 'private-context'}}],
+                       exception_class='private-exception-class')
+    assert data['exception_class'] == 'UNKNOWN_SCHEMA_EXCEPTION'
+    assert data['errors'][0]['code'] == 'unknown_validation_error'
+    assert data['errors'][0]['location_truncated'] is True
+    assert data['errors'][0]['location'] == list(location[:0 if len(location) == 1 else 2 if len(location) == 3 else 4])
+
+
+@pytest.mark.parametrize('index', [-1, 10_000, True, 'private-index'])
+def test_schema_diagnostics_only_keep_bounded_array_indices(caplog, index):
+    data = _diagnostic(caplog, [{'type': 'missing', 'loc': ('facts', index, 'field')}])
+    assert data['errors'] == [{'code': 'missing', 'location': ['facts'], 'location_truncated': True}]
+
+
+def test_schema_diagnostics_bound_error_count_depth_and_encoded_size(caplog):
+    schema = {'type': 'string'}
+    for _ in range(20):
+        schema = {'type': 'object', 'properties': {'known_schema_field': schema}}
+    data = _diagnostic(caplog, [{'type': 'string_type', 'loc': ('known_schema_field',) * 20}] * 100, schema=schema)
+    assert 0 < len(data['errors']) <= 8
+    assert data['error_count'] == 100
+    assert data['truncated'] is True
+    assert all(len(error['location']) == 12 and error['location_truncated'] for error in data['errors'])
 
 
 def _metadata_values(**overrides: object) -> dict[str, object]:

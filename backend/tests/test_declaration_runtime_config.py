@@ -31,7 +31,6 @@ DECLARATION_DESIGN_PATH = (
 )
 
 _DECLARATION_EXTRACTION_ENVIRONMENT = {
-    "HV_DECLARATION_IMPORT_ENABLED",
     "HV_DECLARATION_MAX_PDF_BYTES",
     "HV_DECLARATION_MAX_DOCUMENTS",
     "HV_DECLARATION_MAX_PAGES",
@@ -43,10 +42,6 @@ _DECLARATION_EXTRACTION_ENVIRONMENT = {
     "HV_DECLARATION_OCR_MAX_PAGES_PER_IMPORT",
     "HV_DECLARATION_OCR_MAX_PIXELS_PER_IMPORT",
     "HV_DECLARATION_PREFLIGHT_DEADLINE_SECONDS",
-    "HV_DECLARATION_PRIMARY_MODEL",
-    "HV_DECLARATION_ESCALATION_MODEL",
-    "HV_DECLARATION_PRIMARY_REASONING_EFFORT",
-    "HV_DECLARATION_ESCALATION_REASONING_EFFORT",
     "HV_DECLARATION_PROMPT_VERSION",
     "HV_DECLARATION_SCHEMA_VERSION",
     "HV_DECLARATION_HARNESS_VERSION",
@@ -60,28 +55,17 @@ _DECLARATION_EXTRACTION_ENVIRONMENT = {
     "HV_DECLARATION_MAX_OUTPUT_TOKENS",
     "HV_DECLARATION_PROVIDER_MAX_OUTPUT_TOKENS_PER_CALL",
     "HV_DECLARATION_MAX_CANDIDATES",
-    "HV_DECLARATION_PRIMARY_INPUT_USD_PER_MILLION",
-    "HV_DECLARATION_PRIMARY_OUTPUT_USD_PER_MILLION",
-    "HV_DECLARATION_PRIMARY_CACHED_INPUT_USD_PER_MILLION",
-    "HV_DECLARATION_PRIMARY_CACHE_WRITE_MULTIPLIER",
-    "HV_DECLARATION_ESCALATION_INPUT_USD_PER_MILLION",
-    "HV_DECLARATION_ESCALATION_OUTPUT_USD_PER_MILLION",
-    "HV_DECLARATION_ESCALATION_CACHED_INPUT_USD_PER_MILLION",
     "HV_DECLARATION_WORKER_ID",
     "HV_DECLARATION_WORKER_POLL_SECONDS",
     "HV_DECLARATION_LEASE_SECONDS",
     "HV_DECLARATION_MAX_ATTEMPTS",
 }
 _DECLARATION_AGENTIC_DEFAULTS = {
-    "HV_DECLARATION_PRIMARY_REASONING_EFFORT": "medium",
-    "HV_DECLARATION_ESCALATION_REASONING_EFFORT": "none",
-    "HV_DECLARATION_PRIMARY_CACHED_INPUT_USD_PER_MILLION": "0.02",
-    "HV_DECLARATION_PRIMARY_CACHE_WRITE_MULTIPLIER": "1.25",
-    "HV_DECLARATION_ESCALATION_CACHED_INPUT_USD_PER_MILLION": "0.075",
+    "HV_DECLARATION_PROMPT_VERSION":"declaration-v3",
+    "HV_DECLARATION_SCHEMA_VERSION":"2",
+    "HV_DECLARATION_HARNESS_VERSION":"3",
 }
 _DECLARATION_QA_ENVIRONMENT = {
-    "HV_DECLARATION_QA_ENABLED",
-    "HV_DECLARATION_QA_MODEL",
     "HV_DECLARATION_QA_TIMEOUT_SECONDS",
     "HV_DECLARATION_QA_MAX_HITS",
     "HV_DECLARATION_QA_MAX_INPUT_TOKENS",
@@ -90,12 +74,8 @@ _DECLARATION_QA_ENVIRONMENT = {
     "HV_DECLARATION_QA_BUDGET_WINDOW_MINUTES",
     "HV_DECLARATION_QA_RESERVATION_SECONDS",
     "HV_DECLARATION_QA_MAX_CONCURRENCY",
-    "HV_DECLARATION_QA_INPUT_USD_PER_MILLION",
-    "HV_DECLARATION_QA_OUTPUT_USD_PER_MILLION",
 }
 _DECLARATION_QA_DEFAULTS = {
-    "HV_DECLARATION_QA_ENABLED": "false",
-    "HV_DECLARATION_QA_MODEL": "gpt-5.6-luna",
     "HV_DECLARATION_QA_TIMEOUT_SECONDS": "30",
     "HV_DECLARATION_QA_MAX_HITS": "20",
     "HV_DECLARATION_QA_MAX_INPUT_TOKENS": "20000",
@@ -104,8 +84,6 @@ _DECLARATION_QA_DEFAULTS = {
     "HV_DECLARATION_QA_BUDGET_WINDOW_MINUTES": "60",
     "HV_DECLARATION_QA_RESERVATION_SECONDS": "120",
     "HV_DECLARATION_QA_MAX_CONCURRENCY": "4",
-    "HV_DECLARATION_QA_INPUT_USD_PER_MILLION": "0.20",
-    "HV_DECLARATION_QA_OUTPUT_USD_PER_MILLION": "1.20",
 }
 _IMAGE_SMOKE_TIMEOUT_SECONDS = 60
 _IMAGE_SMOKE_CLEANUP_TIMEOUT_SECONDS = 10
@@ -193,83 +171,19 @@ def test_documentation_states_fixed_manager_and_retention_boundary() -> None:
     assert "is not ZDR" in runbook
 
 
-def test_declaration_runtime_defaults_use_explicit_medium_and_none_effort() -> None:
+def test_runtime_key_models_prices_and_switches_are_not_environment_settings():
     from app.core.config import Settings
-
-    configured = Settings()
-
-    assert configured.declaration_primary_reasoning_effort == "medium"
-    assert configured.declaration_escalation_reasoning_effort == "none"
-
-
-def test_declaration_runtime_defaults_use_verified_luna_and_mini_cached_rates() -> None:
-    from decimal import Decimal
-
-    from app.core.config import Settings
-
-    configured = Settings()
-
-    assert configured.declaration_primary_cached_input_usd_per_million == Decimal("0.02")
-    assert configured.declaration_primary_cache_write_multiplier == Decimal("1.25")
-    assert configured.declaration_escalation_cached_input_usd_per_million == Decimal("0.075")
+    assert not any(name in Settings.model_fields for name in (
+        'openai_api_key', 'declaration_primary_model', 'declaration_escalation_model',
+        'declaration_qa_model', 'declaration_import_enabled', 'declaration_qa_enabled',
+        'declaration_primary_reasoning_effort', 'declaration_primary_input_usd_per_million'))
 
 
-def test_invalid_effort_or_cache_rate_is_rejected() -> None:
-    from decimal import Decimal
-
-    from pydantic import ValidationError
-
-    from app.core.config import Settings
-
-    with pytest.raises(ValidationError):
-        Settings(declaration_primary_reasoning_effort="unsupported")
-    with pytest.raises(ValidationError):
-        Settings(declaration_primary_cache_write_multiplier=Decimal("1.20"))
-    with pytest.raises(ValidationError):
-        Settings(declaration_escalation_cached_input_usd_per_million=Decimal("0"))
-
-
-@pytest.mark.parametrize("effort", ["none", "low", "medium", "high", "xhigh", "max"])
-def test_primary_reasoning_effort_accepts_exact_luna_allowlist(effort: str) -> None:
-    from app.core.config import Settings
-
-    assert Settings(declaration_primary_reasoning_effort=effort).declaration_primary_reasoning_effort == effort
-
-
-@pytest.mark.parametrize("effort", ["none", "low", "medium", "high", "xhigh"])
-def test_escalation_reasoning_effort_accepts_exact_mini_allowlist(effort: str) -> None:
-    from app.core.config import Settings
-
-    assert Settings(declaration_escalation_reasoning_effort=effort).declaration_escalation_reasoning_effort == effort
-
-
-@pytest.mark.parametrize("field", ["declaration_primary_reasoning_effort", "declaration_escalation_reasoning_effort"])
-def test_declaration_reasoning_effort_rejects_minimal(field: str) -> None:
-    from pydantic import ValidationError
-
-    from app.core.config import Settings
-
-    with pytest.raises(ValidationError):
-        Settings(**{field: "minimal"})
-
-
-@pytest.mark.parametrize(
-    "field,value",
-    [
-        ("declaration_primary_input_usd_per_million", Decimal("0")),
-        ("declaration_primary_output_usd_per_million", Decimal("-1")),
-        ("declaration_escalation_input_usd_per_million", Decimal("0")),
-        ("declaration_escalation_output_usd_per_million", Decimal("-1")),
-        ("declaration_primary_input_usd_per_million", Decimal("NaN")),
-    ],
-)
-def test_legacy_declaration_rates_must_be_positive_and_finite(field: str, value: Decimal) -> None:
-    from pydantic import ValidationError
-
-    from app.core.config import Settings
-
-    with pytest.raises(ValidationError):
-        Settings(**{field: value})
+def test_known_model_prices_are_documented_constants():
+    from app.core.ai_models import MODEL_PRICES
+    assert MODEL_PRICES['gpt-5.6-luna'].cached == Decimal('0.02')
+    assert MODEL_PRICES['gpt-5.6-luna'].cache_write_multiplier == Decimal('1.25')
+    assert MODEL_PRICES['gpt-5.4-mini'].cached == Decimal('0.075')
 
 
 def _compose() -> dict[str, object]:
@@ -319,7 +233,8 @@ def test_compose_declares_least_privilege_worker_topology() -> None:
 
     environment = _environment(worker)
     assert make_url(environment["HV_DATABASE_URL_WORKER"]).username == "app_worker"
-    assert environment["HV_OPENAI_API_KEY"] == "${HV_OPENAI_API_KEY:-}"
+    assert "HV_OPENAI_API_KEY" not in environment
+    assert environment["HV_SESSION_SECRET"].startswith("${SESSION_SECRET:?")
     assert environment["HV_DOCUMENT_STORAGE_ROOT"] == "/data/documents"
     assert environment["HV_DATA_REGION"] == "${HV_DATA_REGION:-EU}"
     assert _DECLARATION_EXTRACTION_ENVIRONMENT <= environment.keys()
@@ -328,7 +243,6 @@ def test_compose_declares_least_privilege_worker_topology() -> None:
         "HV_DATABASE_URL",
         "HV_DATABASE_URL_MIGRATOR",
         "HV_DATABASE_URL_SYNC",
-        "HV_SESSION_SECRET",
     }.isdisjoint(environment)
 
     assert app["healthcheck"] == {
@@ -345,7 +259,7 @@ def test_compose_declares_least_privilege_worker_topology() -> None:
     app_environment = _environment(app)
     assert "app_rw" in app_environment["HV_DATABASE_URL"]
     assert {"HV_DATABASE_URL_MIGRATOR", "HV_DATABASE_URL_SYNC"}.isdisjoint(app_environment)
-    assert app_environment["HV_OPENAI_API_KEY"] == "${HV_OPENAI_API_KEY:-}"
+    assert "HV_OPENAI_API_KEY" not in app_environment
     assert _DECLARATION_QA_ENVIRONMENT == _DECLARATION_QA_DEFAULTS.keys()
     assert _DECLARATION_QA_ENVIRONMENT <= app_environment.keys()
     assert all(
@@ -386,7 +300,7 @@ def test_runtime_example_and_entrypoint_keep_secrets_at_boundaries() -> None:
         for line in ENV_EXAMPLE_PATH.read_text(encoding="utf-8").splitlines()
         if line and not line.startswith("#") and "=" in line
     }
-    assert example_values["HV_OPENAI_API_KEY"] == ""
+    assert "HV_OPENAI_API_KEY" not in example_values
     assert _DECLARATION_EXTRACTION_ENVIRONMENT <= example_values.keys()
     assert all(
         example_values[name] == default

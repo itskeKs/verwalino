@@ -18,11 +18,13 @@ import os
 import re
 import tempfile
 import time
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, replace, field
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 from fractions import Fraction
 from pathlib import Path
 from typing import Any, Callable, Iterable, Mapping, Protocol, Sequence, runtime_checkable
+
+from app.evals.recorded_import import capture_recorded_import, compare_recorded_reports, load_recorded_report
 
 
 _METRIC_QUANTUM = Decimal("0.000001")
@@ -1628,6 +1630,8 @@ class _LiveEvaluationCapability:
     """Unforgeable-in-normal-use token issued only after all runner gates pass."""
 
     _seal: object
+    organization_id: str | None = None
+    _effective: Any = field(default=None, repr=False)
 
     def is_valid(self) -> bool:
         return self._seal is _LIVE_CAPABILITY_SEAL
@@ -1860,25 +1864,21 @@ class BoundedProductionDeclarationPipelineAdapter:
         )
         from app.declarations.validation import ValidationIssue, validate_reconciliation
 
+        effective = self._capability._effective
+        if effective is None:
+            raise LiveHarnessUnavailable('Organization AI settings are unavailable.')
         runtime_updates: dict[str, Any] = {
-                "declaration_primary_model": self._configuration.primary_model,
-                "declaration_primary_reasoning_effort": self._configuration.reasoning_effort,
                 "declaration_max_recheck_calls": (
                     settings.declaration_max_recheck_calls
                     if self._configuration.mini_router_enabled
                     else 0
                 ),
             }
-        if self._configuration.label == "terra_primary":
-            runtime_updates.update(
-                {
-                    "declaration_primary_input_usd_per_million": self._configuration.input_usd_per_million,
-                    "declaration_primary_output_usd_per_million": self._configuration.output_usd_per_million,
-                    "declaration_primary_cached_input_usd_per_million": self._configuration.cached_input_usd_per_million,
-                }
-            )
         runtime_settings = settings.model_copy(update=runtime_updates)
-        provider = OpenAiDeclarationProvider(configured_settings=runtime_settings)
+        provider = OpenAiDeclarationProvider(configured_settings=runtime_settings,
+            api_key=effective.api_key.get_secret_value(), primary_model=self._configuration.primary_model,
+            escalation_model='gpt-5.4-mini' if self._configuration.mini_router_enabled else self._configuration.primary_model,
+            reasoning_effort=self._configuration.reasoning_effort)
         if self._configuration.label == "terra_primary":
             # Comparison-only caller supplied rates are deliberately not copied
             # into application settings or production defaults.
@@ -2071,18 +2071,23 @@ def live_eval_missing_gates(
     provider: str | None = None,
     live: bool | None = None,
     compare_models: bool | None = None,
+    organization_id: str | None = None,
 ) -> tuple[str, ...]:
     values = os.environ if environ is None else environ
     required = (
         "HV_DECLARATION_REAL_PDF_MANIFEST",
         "HV_DECLARATION_LIVE_EVAL",
-        "HV_OPENAI_API_KEY",
     )
     missing = [
         key
         for key in required
         if not isinstance(values.get(key), str) or not values[key].strip()
     ]
+    import uuid
+    try:
+        uuid.UUID(organization_id or '')
+    except (ValueError, TypeError, AttributeError):
+        missing.append("ORGANIZATION_ID_REQUIRED")
     live_env = values.get("HV_DECLARATION_LIVE_EVAL")
     if live_env != "1":
         missing.append("HV_DECLARATION_LIVE_EVAL")
@@ -2271,13 +2276,14 @@ def run_real_pdf_smoke(
     provider: str | None = None,
     live: bool | None = None,
     compare_models: bool | None = None,
+    organization_id: str | None = None,
     adapter_factory: Callable[[ComparisonConfiguration], ProductionPipelineEvaluationAdapter] | None = None,
     environ: Mapping[str, str] | None = None,
 ) -> Path:
     """Run a gated, sequential, descriptive comparison and write metrics only."""
     values = os.environ if environ is None else environ
     if live_eval_missing_gates(
-        values, provider=provider, live=live, compare_models=compare_models
+        values, provider=provider, live=live, compare_models=compare_models, organization_id=organization_id
     ):
         raise LiveHarnessUnavailable("Live evaluation requires all explicit live gates.")
     configurations = _comparison_configurations(values)
@@ -2302,7 +2308,15 @@ def run_real_pdf_smoke(
         max_pdf_bytes=configured_settings.declaration_max_pdf_bytes,
         max_cases=configured_settings.declaration_max_documents,
     )
-    capability = _LiveEvaluationCapability(_LIVE_CAPABILITY_SEAL)
+    effective = None
+    if adapter_factory is None:
+        from app.services.ai_settings_service import worker_ai_settings
+        import uuid
+        try:
+            effective = asyncio.run(worker_ai_settings(uuid.UUID(organization_id)))
+        except Exception:
+            raise LiveHarnessUnavailable('Organization AI settings are unavailable.') from None
+    capability = _LiveEvaluationCapability(_LIVE_CAPABILITY_SEAL, organization_id, effective)
     reports: dict[str, LivePipelineReport] = {}
     expected_case_ids = tuple(entry.case_id for entry in entries)
     constructed_adapters: list[ProductionPipelineEvaluationAdapter] = []
@@ -2357,7 +2371,13 @@ def run_real_pdf_smoke(
 def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Run sanitized declaration-knowledge evaluations.")
     parser.add_argument("--fixtures", required=True)
-    parser.add_argument("--provider", choices=("fake", "live"), required=True)
+    parser.add_argument("--organization-id")
+    parser.add_argument("--provider", choices=("fake", "live", "recorded"), required=True)
+    parser.add_argument("--actor-id")
+    parser.add_argument("--import-id")
+    parser.add_argument("--case-id")
+    parser.add_argument("--baseline-report")
+    parser.add_argument("--check-eligibility", action="store_true")
     parser.add_argument("--live", action="store_true")
     parser.add_argument("--compare-models", action="store_true")
     parser.add_argument("--manifest")
@@ -2367,6 +2387,34 @@ def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
 
 def main(argv: Sequence[str] | None = None) -> int:
     args = _parse_args(argv)
+    if args.provider == 'recorded':
+        import uuid
+        try:
+            if args.live or args.compare_models or (args.check_eligibility and args.baseline_report):
+                raise ValueError('invalid recorded options')
+            with Path(args.fixtures).open('rb') as source:
+                data = source.read(256 * 1024 + 1)
+            if len(data) > 256 * 1024:
+                raise ValueError('fixture limit exceeded')
+            cases = json.loads(data)['recorded_import_cases']
+            gold, = [case for case in cases if case['id'] == args.case_id]
+            baseline = load_recorded_report(args.baseline_report) if args.baseline_report else None
+            capture = asyncio.run(capture_recorded_import(
+                organization_id=uuid.UUID(args.organization_id), actor_id=uuid.UUID(args.actor_id),
+                import_id=uuid.UUID(args.import_id), gold=gold, eligibility_only=args.check_eligibility))
+            output = {'capture': capture, 'comparison': compare_recorded_reports(baseline, capture)} if baseline else capture
+        except Exception as error:
+            # Neither SQL/parser exceptions nor fixture/report contents enter CLI output.
+            from app.evals.recorded_import import CAPTURE_REFUSAL_CODES, RecordedCaptureUnavailable
+            code = error.args[0] if isinstance(error, RecordedCaptureUnavailable) and len(error.args) == 1 and error.args[0] in CAPTURE_REFUSAL_CODES else 'RECORDED_CAPTURE_UNAVAILABLE'
+            print(json.dumps({'status': 'RECORDED_CAPTURE_UNAVAILABLE', 'code': code}, separators=(',', ':')))
+            return 2
+        print(json.dumps(output, ensure_ascii=True, sort_keys=True, separators=(',', ':')))
+        if args.check_eligibility:
+            return 0
+        required = {'terminal_outcome', 'candidate_shape', 'core_facts', 'unit_set', 'unit_kinds', 'mea_exact', 'rules_absent', 'evidence', 'blockers'}
+        failed = any(row['status'] == 'FAIL' or (row['stage'] == 'final_output' and row['assertion'] in required and row['status'] != 'PASS') for row in capture['assertions'])
+        return 1 if failed or (baseline and output['comparison']['regressions']) else 0
     if args.provider == "fake":
         try:
             report = evaluate_fixture_file(args.fixtures, adapter=SyntheticFakeEvaluationAdapter())
@@ -2387,7 +2435,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         print('{"status":"COMPARE_MODELS_FLAG_REQUIRED"}')
         return 2
     if live_eval_missing_gates(
-        provider=args.provider, live=args.live, compare_models=args.compare_models
+        provider=args.provider, live=args.live, compare_models=args.compare_models, organization_id=args.organization_id
     ):
         print('{"status":"LIVE_CONFIGURATION_REQUIRED"}')
         return 2
@@ -2401,6 +2449,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             provider=args.provider,
             live=args.live,
             compare_models=args.compare_models,
+            organization_id=args.organization_id,
         )
     except LiveHarnessUnavailable:
         print('{"status":"LIVE_HARNESS_UNAVAILABLE"}')

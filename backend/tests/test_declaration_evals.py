@@ -559,15 +559,14 @@ def test_live_gate_helper_requires_all_capability_values() -> None:
         "HV_DECLARATION_COMPARE_TERRA_OUTPUT_USD_PER_MILLION",
         "HV_DECLARATION_LIVE_EVAL",
         "HV_DECLARATION_REAL_PDF_MANIFEST",
-        "HV_OPENAI_API_KEY",
         "LIVE_FLAG_REQUIRED",
         "LIVE_PROVIDER_REQUIRED",
+        "ORGANIZATION_ID_REQUIRED",
     )
     assert live_eval_missing_gates(
         {
             "HV_DECLARATION_LIVE_EVAL": "1",
             "HV_DECLARATION_REAL_PDF_MANIFEST": "manifest.json",
-            "HV_OPENAI_API_KEY": "configured-by-caller",
             "HV_DECLARATION_COMPARE_TERRA_INPUT_USD_PER_MILLION": "1",
             "HV_DECLARATION_COMPARE_TERRA_OUTPUT_USD_PER_MILLION": "1",
             "HV_DECLARATION_COMPARE_TERRA_CACHED_INPUT_USD_PER_MILLION": "1",
@@ -575,16 +574,16 @@ def test_live_gate_helper_requires_all_capability_values() -> None:
         provider="live",
         live=True,
         compare_models=True,
+        organization_id="11111111-1111-4111-8111-111111111111",
     ) == ()
 
 
 def test_live_gate_helper_rejects_omitted_flags_and_whitespace_values() -> None:
     assert "LIVE_PROVIDER_REQUIRED" in live_eval_missing_gates({}, provider=None, live=None, compare_models=None)
-    assert "HV_OPENAI_API_KEY" in live_eval_missing_gates(
+    assert "ORGANIZATION_ID_REQUIRED" in live_eval_missing_gates(
         {
             "HV_DECLARATION_LIVE_EVAL": " ",
             "HV_DECLARATION_REAL_PDF_MANIFEST": "\t",
-            "HV_OPENAI_API_KEY": "\n",
             "HV_DECLARATION_COMPARE_TERRA_INPUT_USD_PER_MILLION": " ",
             "HV_DECLARATION_COMPARE_TERRA_OUTPUT_USD_PER_MILLION": " ",
             "HV_DECLARATION_COMPARE_TERRA_CACHED_INPUT_USD_PER_MILLION": " ",

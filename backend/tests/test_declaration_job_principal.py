@@ -9,6 +9,8 @@ pytestmark = pytest.mark.asyncio
 
 
 async def new_draft(ids):
+    from tests.ai_settings_support import configure_ai
+    configure_ai(ids['org'])
     async with client(ids, 'actor') as api:
         response = await api.post('/api/declaration-imports', json={'mode': 'NEW_PROPERTY'})
         assert response.status_code == 201, response.text

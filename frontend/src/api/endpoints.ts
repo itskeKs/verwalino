@@ -3,6 +3,14 @@
  */
 
 import { api, uploadFormData } from "./client";
+import type { AiModel, OrganizationAiSettings, OrganizationAiSettingsBody } from './types';
+
+function aiSettingsPath(organizationId: string) { return `/api/organizations/${encodeURIComponent(organizationId)}/ai-settings`; }
+export function getAiSettings(organizationId: string): Promise<OrganizationAiSettings> { return api.get(aiSettingsPath(organizationId)); }
+export function saveAiSettings(organizationId: string, body: OrganizationAiSettingsBody): Promise<OrganizationAiSettings> { return api.put(aiSettingsPath(organizationId), body); }
+export function listAiModels(organizationId: string, apiKey?: string): Promise<{ models: AiModel[] }> {
+  return api.post(`${aiSettingsPath(organizationId)}/models`, apiKey ? { api_key: apiKey } : {});
+}
 import type { DesignTheme, UserPreferences } from "./types";
 
 export function getPreferences(signal?: AbortSignal): Promise<UserPreferences> {

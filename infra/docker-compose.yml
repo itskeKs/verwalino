@@ -81,8 +81,6 @@ services:
       HV_SMTP_PASSWORD: ${HV_SMTP_PASSWORD:-}
       HV_SMTP_TIMEOUT_SECONDS: ${HV_SMTP_TIMEOUT_SECONDS:-15}
       HV_DOCUMENT_STORAGE_ROOT: /data/documents
-      HV_DECLARATION_IMPORT_ENABLED: "false"
-      HV_DECLARATION_QA_ENABLED: "false"
       HV_INVOICE_EXTRACTION_ENABLED: "false"
       WEB_CONCURRENCY: "2"
       FORWARDED_ALLOW_IPS: ${VERWALINO_PROXY_SUBNET:?use self-host.sh}
@@ -108,6 +106,45 @@ services:
     networks: [backend, proxy]
     logging: *logging
 
+  declaration-worker:
+    image: ${VERWALINO_IMAGE:?run self-host.sh init first}
+    restart: unless-stopped
+    init: true
+    stop_grace_period: 130s
+    depends_on:
+      db:
+        condition: service_healthy
+      app:
+        condition: service_healthy
+    environment:
+      HV_DATABASE_URL_WORKER: postgresql+asyncpg://app_worker:${APP_WORKER_PASSWORD:?missing secret}@db:5432/hausverwaltung
+      HV_SESSION_SECRET: ${SESSION_SECRET:?missing secret}
+      HV_DOCUMENT_STORAGE_ROOT: /data/documents
+    volumes:
+      - documents:/data/documents
+    entrypoint: ["/usr/local/bin/worker-entrypoint.sh"]
+    command: []
+    user: "10001:10001"
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=256m
+    cap_drop: ["ALL"]
+    security_opt: ["no-new-privileges:true"]
+    pids_limit: 256
+    mem_limit: 768m
+    cpus: "1.00"
+    healthcheck:
+      test: ["CMD", "python", "-m", "app.workers.declaration_import", "--healthcheck"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    networks:
+      backend:
+        gw_priority: 0
+      egress:
+        gw_priority: 1
+    logging: *logging
+
   inbox-worker:
     image: ${VERWALINO_IMAGE:?run self-host.sh init first}
     profiles: ["inbox"]
@@ -124,7 +161,6 @@ services:
       HV_CLAMAV_DATABASE_DIR: /var/lib/clamav
       HV_DATABASE_URL_WORKER: postgresql+asyncpg://app_worker:${APP_WORKER_PASSWORD:?missing secret}@db:5432/hausverwaltung
       HV_DOCUMENT_STORAGE_ROOT: /data/documents
-      HV_DECLARATION_IMPORT_ENABLED: "false"
       HV_INVOICE_EXTRACTION_ENABLED: "false"
     volumes:
       - documents:/data/documents:ro
@@ -174,6 +210,8 @@ services:
 networks:
   backend:
     internal: true
+  egress:
+    internal: false
   proxy:
     ipam:
       config:

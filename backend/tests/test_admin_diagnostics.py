@@ -93,8 +93,6 @@ async def test_hosted_admin_receives_only_tenant_metadata(client_a_admin, client
             'HV_ENABLE_API_DOCS': settings.enable_api_docs,
             'HV_FINANCIAL_COMPUTATION_ENABLED': settings.financial_computation_enabled,
             'HV_INVOICE_EXTRACTION_ENABLED': settings.invoice_extraction_enabled,
-            'HV_DECLARATION_IMPORT_ENABLED': settings.declaration_import_enabled,
-            'HV_DECLARATION_QA_ENABLED': settings.declaration_qa_enabled,
         },
     }
     content = ''.join(members.values())

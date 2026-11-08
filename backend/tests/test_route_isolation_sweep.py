@@ -239,6 +239,8 @@ async def sweep():
         await connection.execute(text(
             "INSERT INTO membership (organization_id, user_id, role) VALUES (:b, :admin, 'OWNER_ADMIN')"
         ), {"admin": admin, "b": b})
+    from tests.ai_settings_support import configure_ai
+    configure_ai(b)
     try:
         async with _api_test_client(cookies={settings.session_cookie_name: _make_session_cookie(admin, b)}) as client:
             yield Sweep(client, b, admin, engine)

@@ -23,7 +23,7 @@ ENTITY_ORDER = (
     "property_document", "mandate_document", "intake_original", "document_ref",
     "user", "membership", "audit_event",
 )
-SECRET_COLUMNS = frozenset({"password_hash", "token_hash", "token", "lease_token", "session_version"})
+SECRET_COLUMNS = frozenset({"password_hash", "token_hash", "token", "lease_token", "session_version", "api_key", "encrypted_api_key"})
 README = """# Verwalino organization export, version 2
 
 Canonical data is UTF-8 JSON Lines in entities/<entity>.jsonl. Each line is one

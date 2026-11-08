@@ -1200,12 +1200,23 @@ def _fact_sources(item: DeclarationImport, candidate: DeclarationCandidate, subj
     # evidence remains lossless in PropertyRuleSource rows.
     if subject_kind == "RULE":
         entries = entries[:1]
+    indexed_entries = list(enumerate(entries))
+    if subject_kind == "UNIT" and candidate.candidate_type == "UNIT_CREATE":
+        # Composite proposals retain each original field-path citation. The
+        # canonical fact-source projection has no field_path, so equivalent
+        # physical citations map to one source per approved field. Keep the
+        # original index for stable IDs and every candidate citation unchanged.
+        projected = {}
+        for index, entry in indexed_entries:
+            identity = (entry.document_id, entry.pdf_page, entry.printed_page, entry.section, entry.quote)
+            projected.setdefault(identity, (index, entry))
+        indexed_entries = list(projected.values())
     return [
         FactSourcePlan(
             deterministic_id(item.organization_id, item.id, "fact_source", f"{candidate.stable_key}:{field}:{fingerprint}:{entry.document_id}:{entry.pdf_page}:{index}"),
             subject_kind, subject_ref, field, value, entry,
         )
-        for index, entry in enumerate(entries)
+        for index, entry in indexed_entries
     ]
 
 

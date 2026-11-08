@@ -218,6 +218,8 @@ async def test_master_migration_refuses_busy_dependencies(scope_seed,table):
 
 @pytest.mark.parametrize('classification',[None,'QUARANTINED','ADMITTED'])
 async def test_master_fields_cannot_disclose_unproven_or_quarantined_sources(scope_seed,classification):
+    from tests.ai_settings_support import configure_ai
+    configure_ai(scope_seed['org_a_id'])
     from tests.test_property_source_classification import legacy_bound
     from tests.test_bound_source_access import classify
     ids=principals(scope_seed)

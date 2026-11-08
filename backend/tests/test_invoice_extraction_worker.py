@@ -370,7 +370,7 @@ def test_invoice_compose_service_is_offline_and_least_privilege():
     assert environment["HV_WORKER_KIND"] == "invoice_extraction"
     assert environment["HV_DATABASE_URL_WORKER"] == services["worker"]["environment"]["HV_DATABASE_URL_WORKER"]
     assert environment["HV_INVOICE_EXTRACTION_ENABLED"] == services["app"]["environment"]["HV_INVOICE_EXTRACTION_ENABLED"]
-    assert environment["HV_DECLARATION_IMPORT_ENABLED"] == "false"
+    assert "HV_DECLARATION_IMPORT_ENABLED" not in environment
     assert not {"HV_DATABASE_URL", "HV_DATABASE_URL_SYNC", "HV_DATABASE_URL_REVIEW", "HV_OPENAI_API_KEY", "HV_SESSION_SECRET"} & environment.keys()
     assert worker["networks"] == ["backend"]
     assert worker["volumes"] == ["documents:/data/documents:ro"]

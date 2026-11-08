@@ -19,6 +19,7 @@ from openai import (
 from pydantic import ValidationError
 
 from app.core.config import Settings, settings
+from app.core.ai_models import model_price
 from app.declarations.knowledge_prompts import KNOWLEDGE_QA_DEVELOPER_PROMPT, knowledge_qa_user_payload
 from app.declarations.knowledge_provider import (
     KnowledgeProviderRequest,
@@ -62,20 +63,18 @@ class OpenAIKnowledgeProvider:
         configured_settings: Settings | None = None,
     ) -> None:
         configured = configured_settings or settings
-        self._model = model or configured.declaration_qa_model
+        self._model = model or "gpt-5.6-luna"
         self._timeout_seconds = timeout_seconds if timeout_seconds is not None else configured.declaration_qa_timeout_seconds
         self._max_input_tokens = max_input_tokens if max_input_tokens is not None else configured.declaration_qa_max_input_tokens
         self._max_output_tokens = max_output_tokens if max_output_tokens is not None else configured.declaration_qa_max_output_tokens
         self._max_cost_usd = max_cost_usd if max_cost_usd is not None else configured.declaration_qa_max_cost_usd
-        self._input_rate = input_usd_per_million if input_usd_per_million is not None else configured.declaration_qa_input_usd_per_million
-        self._output_rate = output_usd_per_million if output_usd_per_million is not None else configured.declaration_qa_output_usd_per_million
+        self._input_rate = input_usd_per_million if input_usd_per_million is not None else (model_price(self._model).input if model_price(self._model) else Decimal("0"))
+        self._output_rate = output_usd_per_million if output_usd_per_million is not None else (model_price(self._model).output if model_price(self._model) else Decimal("0"))
         self._client = client
         self._token_encoder = token_encoder or _ByteTokenEncoder()
         self._validate_configuration()
 
     def _validate_configuration(self) -> None:
-        if self._model != "gpt-5.6-luna":
-            raise ProviderUnavailable("The configured knowledge model rate is not verified.")
         if (
             self._timeout_seconds <= 0
             or self._max_input_tokens <= 0
@@ -84,7 +83,7 @@ class OpenAIKnowledgeProvider:
         ):
             raise ProviderUnavailable("Knowledge provider configuration is invalid.")
         for rate in (self._input_rate, self._output_rate):
-            if not rate.is_finite() or rate <= 0:
+            if not rate.is_finite() or rate < 0:
                 raise ProviderUnavailable("The configured knowledge model rate is invalid.")
 
     async def answer(
@@ -104,9 +103,11 @@ class OpenAIKnowledgeProvider:
                 input=input_payload,
                 text_format=ProviderKnowledgeAnswer,
                 store=False,
+                service_tier="default",
                 tools=[],
                 timeout=self._timeout_seconds,
                 max_output_tokens=max_output_tokens,
+                **self._cache_request_options(),
             )
         except APITimeoutError:
             raise ProviderTimeout() from None
@@ -190,6 +191,8 @@ class OpenAIKnowledgeProvider:
                 "user": user_payload,
                 "response_schema": ProviderKnowledgeAnswer.model_json_schema(),
                 "tools": [],
+                "service_tier": "default",
+                **self._cache_request_options(),
             },
             ensure_ascii=False,
             sort_keys=True,
@@ -199,6 +202,11 @@ class OpenAIKnowledgeProvider:
         if not isinstance(tokens, list) or len(tokens) <= 0:
             raise ProviderUnavailable("Knowledge provider token accounting is unavailable.")
         return len(tokens)
+
+    def _cache_request_options(self):
+        # For Luna, explicit mode without breakpoints disables implicit cache
+        # creation and its 1.25x input write price. Other models get no new knob.
+        return {'prompt_cache_options': {'mode': 'explicit', 'ttl': '30m'}} if self._model == 'gpt-5.6-luna' else {}
 
     @staticmethod
     def _validate_allowlisted_citations(output: ProviderKnowledgeAnswer, request: KnowledgeProviderRequest) -> None:
@@ -221,3 +229,12 @@ class OpenAIKnowledgeProvider:
                     uuid.UUID(raw)
                 except (ValueError, IndexError, AttributeError):
                     raise ProviderInvalidCitation("Knowledge provider returned a malformed citation.") from None
+
+
+def create_knowledge_provider(effective):
+    """Build an uncached client against the fixed provider origin."""
+    from openai import AsyncOpenAI
+    if not effective.qa_enabled or not effective.api_key or not effective.model:
+        return None
+    return OpenAIKnowledgeProvider(model=effective.model,
+        client=AsyncOpenAI(api_key=effective.api_key.get_secret_value(), base_url='https://api.openai.com/v1', max_retries=0))

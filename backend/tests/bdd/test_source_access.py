@@ -14,7 +14,9 @@ scenarios(str(Path(__file__).resolve().parents[3] / "features" / "source_access.
 
 @pytest.fixture
 def world(bdd_loop, worker_tenant, client_unauth):
-    admin, _ = worker_tenant
+    admin, identity = worker_tenant
+    from tests.ai_settings_support import configure_ai
+    configure_ai(identity["org_a_id"])
     return World(bdd_loop, [admin], client_unauth, primary_organization_alias="Verwaltung Alpha")
 
 

@@ -32,6 +32,7 @@ class KnowledgeQueryReservation:
     reserved_input_tokens: int
     max_output_tokens: int
     reserved_cost_usd: Decimal
+    model: str = "gpt-5.6-luna"
 
 
 class PropertyKnowledgeQueryRepository:
@@ -77,7 +78,7 @@ class PropertyKnowledgeQueryRepository:
                               expires=reservation_expires_at)
                 command = "SELECT * FROM reserve_knowledge_query_compat(:org,:property,:provider,:model,:amount,:window,:cap,:expires)"
             else:
-                await attest_runtime_budget(self._session,self._organization_id,actor_user_id,runtime_budget_policy())
+                await attest_runtime_budget(self._session,self._organization_id,actor_user_id,runtime_budget_policy(enabled=True))
                 command = "SELECT * FROM reserve_knowledge_query(:org,:property,:provider,:model,:amount)"
             row = (await self._session.execute(text(command), params)).mappings().one_or_none()
         except DBAPIError as exc:
@@ -94,6 +95,7 @@ class PropertyKnowledgeQueryRepository:
             reserved_input_tokens=reserved_input_tokens,
             max_output_tokens=max_output_tokens,
             reserved_cost_usd=row["reserved_cost_usd"],
+            model=model,
         )
 
     async def finalize_query(

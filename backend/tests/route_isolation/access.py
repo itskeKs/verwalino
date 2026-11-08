@@ -143,6 +143,9 @@ BOUND_DOCUMENT = foreign("x.property_id, x.id AS document_id", "property_documen
 
 
 PROBES: dict[str, Probe] = {
+    'GET /api/organizations/{organization_id}/ai-settings': Probe(ids='SELECT id AS organization_id FROM organization WHERE id<>:b LIMIT 1'),
+    'PUT /api/organizations/{organization_id}/ai-settings': Probe(ids='SELECT id AS organization_id FROM organization WHERE id<>:b LIMIT 1', body={}),
+    'POST /api/organizations/{organization_id}/ai-settings/models': Probe(ids='SELECT id AS organization_id FROM organization WHERE id<>:b LIMIT 1', body={}),
     # app/api/access_preparation.py
     "GET /api/access-preparation": Probe(),
     "GET /api/access-preparation/runtime-budget": Probe(),

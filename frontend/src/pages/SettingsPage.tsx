@@ -4,6 +4,7 @@ import { useAuth } from "../auth/useAuth";
 import { useDesignTheme } from "../design/useDesignTheme";
 import type { DesignTheme } from "../api/types";
 import { Button } from "../components/ui/button";
+import { OrganizationAiSettingsSection } from './OrganizationAiSettingsSection';
 
 export function SettingsPage() {
   const { session } = useAuth();
@@ -11,6 +12,7 @@ export function SettingsPage() {
 }
 
 function PersonalDesign() {
+  const { session } = useAuth();
   const { theme, loaded, loading, saving, error, save, reload } = useDesignTheme();
   const [draft, setDraft] = useState<DesignTheme | null>(null);
   const [saved, setSaved] = useState(false);
@@ -39,5 +41,6 @@ function PersonalDesign() {
       </fieldset>
       <div className="theme-save-row"><Button onClick={() => void submit()} disabled={!loaded || !changed || saving}>{saving ? "Wird gespeichert …" : "Design speichern"}</Button><p role="status">{saved ? "Design für Ihr Benutzerkonto gespeichert." : changed ? "Noch nicht gespeichert." : loaded ? "Das gespeicherte Design ist aktiv." : ""}</p></div>
     </section>
+    {session?.role === 'OWNER_ADMIN' && <OrganizationAiSettingsSection key={session.organization_id} organizationId={session.organization_id} />}
   </div>;
 }

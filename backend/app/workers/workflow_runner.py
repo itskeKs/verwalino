@@ -79,12 +79,11 @@ def build_adapters(stages=INBOX_STAGES,*,session_factory=None,declaration_worker
     async def intake_extraction(org):return 'PROCESSED' if await intake_extract_once(factory,org) else 'IDLE'
     async def declaration(org):
         nonlocal declaration_worker
-        if not settings.declaration_import_enabled:return 'DECLARATION_IMPORT_DISABLED'
         if declaration_worker is None:
             from app.declarations.openai_provider import OpenAiDeclarationProvider
             from app.declarations.pipeline import DeclarationPipeline
             from app.workers.declaration_import import DeclarationImportWorker
-            declaration_worker=DeclarationImportWorker(DeclarationPipeline(OpenAiDeclarationProvider()))
+            declaration_worker=DeclarationImportWorker()
         return (await declaration_worker.run_once(organization_id=org)).code
     available={'intake_inspection':inspection,'invoice_extraction':invoice,'declaration_import':declaration,'outbox':outbox,'intake_extraction':intake_extraction}
     return {stage:available[stage] for stage in stages}

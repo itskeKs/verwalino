@@ -252,7 +252,13 @@ jobs:
         run: |
           uv sync --locked --extra dev --extra ops --extra ocr
           uv run --locked --extra dev playwright install --with-deps chromium
-          sudo apt-get install -y --no-install-recommends libpangoft2-1.0-0 fonts-dejavu-core
+          sudo apt-get install -y --no-install-recommends libpangoft2-1.0-0 fonts-dejavu-core poppler-utils qpdf tesseract-ocr tesseract-ocr-deu
+      - name: Verify PDF and German OCR prerequisites
+        run: |
+          for tool in pdfinfo pdftoppm pdftotext qpdf tesseract; do
+            command -v "$tool"
+          done
+          tesseract --list-langs | grep -Fx deu
       - name: Install frontend dependencies
         run: make frontend-deps
       - name: Start test database

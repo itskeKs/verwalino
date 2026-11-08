@@ -927,8 +927,8 @@ async def test_hosted_knowledge_is_off_by_default_without_a_provider_call(
     try:
         response = await client_a_admin.post(f"/api/properties/{approved_knowledge_graph.property_id}/knowledge/query",
                                             json={"question": "Heizkosten"})
-        assert response.status_code == 409, response.text
-        assert response.json()["detail"]["message"].startswith("Das monatliche KI-Budget")
+        assert response.status_code == 503, response.text
+        assert response.json()["detail"] == "QA_DISABLED"
         assert not provider.calls
     finally:
         app.dependency_overrides.pop(get_knowledge_provider, None)
@@ -969,14 +969,19 @@ async def test_monthly_budget_reuses_durable_reservations_across_short_windows_a
 
 
 @pytest.mark.asyncio
-async def test_openai_adapter_refuses_hosted_default_before_network(monkeypatch):
+async def test_openai_adapter_does_not_apply_the_hosted_offer_to_an_organization_key(monkeypatch):
     from app.declarations.openai_provider import OpenAiDeclarationProvider
-    from app.declarations.provider import ProviderFailure
+    from app.declarations.schemas import DocumentInventoryOutput
+    from tests.test_declaration_openai_provider import MockClient, MockResponse, FixedTokenEncoder, _usage
     monkeypatch.setattr(settings, "deployment_mode", "hosted")
-    provider = OpenAiDeclarationProvider(client=object())
-    with pytest.raises(ProviderFailure) as error:
-        await provider.inventory([], max_output_tokens=10)
-    assert error.value.code == "ORGANIZATION_AI_BUDGET_EXCEEDED"
+    from app.declarations.provider import DocumentInput, PageInput
+    document = DocumentInput(document_key='synthetic', pages=(PageInput(document_key='synthetic', pdf_page=1, text='Fiktive Teilungserklärung', quality=1),))
+    output=DocumentInventoryOutput(documents=[{'document_key':'synthetic','document_type':'DECLARATION','title':'Synthetic'}])
+    client = MockClient([MockResponse(output, _usage())])
+    provider = OpenAiDeclarationProvider(client=client, token_encoder=FixedTokenEncoder(10))
+    result = await provider.inventory([document], max_output_tokens=100)
+    assert len(client.responses.calls) == 1
+    assert result.metadata.configured_model == 'gpt-5.6-luna'
 
 
 @pytest.mark.asyncio
@@ -1009,7 +1014,8 @@ async def test_hosted_declaration_start_refuses_before_creating_a_queue_receipt(
         rent_world, monkeypatch, tmp_path):
     from app.core import storage
     monkeypatch.setattr(settings, "deployment_mode", "hosted")
-    monkeypatch.setattr(settings, "declaration_import_enabled", True)
+    from tests.ai_settings_support import configure_ai
+    configure_ai(rent_world["org"], monthly_limit_usd=Decimal("0"))
     monkeypatch.setattr(storage, "_store", storage.LocalFsDocumentStore(tmp_path))
     async with api_client(rent_world) as api:
         created = await api.post("/api/declaration-imports", json={"mode": "NEW_PROPERTY"})
@@ -1027,20 +1033,24 @@ async def test_hosted_declaration_start_refuses_before_creating_a_queue_receipt(
 
 
 @pytest.mark.asyncio
-async def test_concurrent_knowledge_calls_share_the_hosted_monthly_cap(
-        approved_knowledge_graph, client_a_admin, monkeypatch):
+async def test_concurrent_knowledge_calls_share_the_organization_monthly_cap(
+        approved_knowledge_graph, client_a_admin, monkeypatch, seed_data):
     import asyncio
     from app.api.property_knowledge import get_knowledge_provider
-    from app.core import quotas
     from app.declarations.fake_knowledge_provider import FakeKnowledgeProvider
     from app.main import app
     monkeypatch.setattr(settings, "deployment_mode", "hosted")
-    summary = await client_a_admin.get("/api/organizations/quota")
-    assert summary.status_code == 200, summary.text
-    # Registered source graphs and their charges can survive earlier test cases.
-    # Leave room for one new reservation above that real organization usage.
-    prior_usage = Decimal(summary.json()["usage"]["ai_budget_usd"])
-    monkeypatch.setattr(quotas, "FREE_PLAN", replace(quotas.FREE_PLAN, ai_budget_usd=prior_usage + Decimal("0.0013")))
+    from app.core.db import get_tenant_session
+    from app.repositories.organization_ai_settings_repo import OrganizationAiSettingsRepository
+    async with get_tenant_session(approved_knowledge_graph.organization_id) as db:
+        await db.execute(text("SELECT set_config('app.current_user_id',:actor,true)"), {'actor':str(seed_data['user_a_admin_id'])})
+        prior_usage = await OrganizationAiSettingsRepository(db,approved_knowledge_graph.organization_id).monthly_usage()
+    from decimal import ROUND_CEILING
+    from tests.ai_settings_support import configure_ai
+    configure_ai(approved_knowledge_graph.organization_id, monthly_limit_usd=prior_usage.quantize(Decimal('.01'), rounding=ROUND_CEILING) + Decimal('.02'))
+    # 17 * .20 / 1e6 + 16663 * 1.20 / 1e6 = .019999 USD.
+    # One reservation fits .02-.029999 remaining; two never fit.
+    monkeypatch.setattr(settings, 'declaration_qa_max_output_tokens', 16663)
     # This test isolates the monthly cap from the older short-window limit.
     monkeypatch.setattr(settings, "declaration_qa_max_cost_usd", prior_usage + Decimal("1"))
     class BlockingProvider(FakeKnowledgeProvider):
@@ -1063,7 +1073,7 @@ async def test_concurrent_knowledge_calls_share_the_hosted_monthly_cap(
             response = await first
             pytest.fail(f"Provider was not reached: {response.status_code} {response.text}")
         assert entered in done, "Provider reservation did not complete"
-        second = await client_a_admin.post(route, json={"question": "Heizkosten"})
+        second = await asyncio.wait_for(client_a_admin.post(route, json={"question": "Heizkosten"}), timeout=5)
         assert second.status_code == 409, second.text
         assert second.json()["detail"]["message"].startswith("Das monatliche KI-Budget")
         provider.release.set()

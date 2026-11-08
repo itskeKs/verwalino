@@ -39,7 +39,7 @@ _HEALTH = frozenset({'healthy', 'unhealthy', 'starting', ''})
 # Deliberate allowlist: deployment/security switches are operator metadata.
 _TENANT_SWITCHES = frozenset({
     'HV_ENABLE_API_DOCS', 'HV_FINANCIAL_COMPUTATION_ENABLED',
-    'HV_INVOICE_EXTRACTION_ENABLED', 'HV_DECLARATION_IMPORT_ENABLED', 'HV_DECLARATION_QA_ENABLED',
+    'HV_INVOICE_EXTRACTION_ENABLED',
 })
 
 

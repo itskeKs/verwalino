@@ -101,9 +101,7 @@ after an upgrade. Normal retention cleanup does not clear recent rows for rollba
 ## Hosted organization quotas
 
 `backend/app/core/quotas.py` defines `FREE_PLAN`: **2 GiB** retained document
-storage, **25 MiB** per upload, **20 properties**, **200 units**, and **USD 0 per
-calendar month (UTC)** for declaration extraction and knowledge Q&A. USD 0 disables
-model calls even when a provider key and the feature switches are configured.
+storage, **25 MiB** per upload, **20 properties**, **200 units**, with AI calls using the organization-owned provider key and optional monthly limit described below. The hosted offer does not supply a model key.
 `quota_enforcement` selects this plan only in hosted mode. Selfhost has no plan
 checks and takes no organization-wide quota advisory or filesystem upload lock;
 atomic writes, existing request/upload safety limits and declaration cost controls
@@ -121,9 +119,7 @@ To change the hosted offer, edit the documented `FREE_PLAN` constants, run the
 quota/budget tests, rebuild, and restart both web and declaration worker processes
 from the same release. No new environment tuning keys, paid plans, billing, or
 self-service plan changes are introduced. One plan applies to every hosted
-organization; per-organization overrides are a follow-up. Existing reviewed Q&A
-policies may further restrict calls; increasing the hosted monthly constant does
-not enable Q&A or relax those controls.
+organization for storage, uploads and unit/property counts. AI uses the optional organization limit instead of the legacy hosted AI allowance. Existing reviewed Q&A policies may further restrict calls; changing the organization settings does not relax source-security review controls.
 
 Usage is derived from database metadata: stored sizes from attachments, invoice
 versions, mandate/property documents, intake originals, letters, visual extracts
@@ -917,8 +913,7 @@ The source receives the released migrations and synthetic records; both owned
 databases are dropped on exit. The shared database is neither reset nor seeded.
 Ordinary test runs skip it with a reason; it also skips when Docker is missing.
 
-Declaration import/Q&A, SMTP and the ordinary invoice worker are disabled in
-the default portable stack. The optional [inbox worker](#inbox-worker) processes
+The portable stack starts the declaration worker with no configured AI credentials. Administrators enable declaration import and Q&A per organization in Einstellungen. SMTP and the ordinary invoice worker remain disabled by default. The optional [inbox worker](#inbox-worker) processes
 intake documents locally; it requires scanner signatures and, for scans, German
 OCR. The T10 worker is configured in the local production Compose file. The
 first tag publication and native arm64 image installation,
@@ -969,7 +964,7 @@ Before stopping app, update refuses any `hausverwaltung_previous` or
 `hausverwaltung_restore` database or `.restore-*` document directory left by an
 earlier restore. Verify the retained data and follow the restore recovery
 instructions before retrying.
-Next it stops app, migration/bootstrap jobs and any existing inbox worker, verifies
+Next it stops app, declaration worker, migration/bootstrap jobs and any existing inbox worker, verifies
 all writers are stopped, then runs
 `backup` into `<checkout>/backups/`, printing and retaining the archive.
 **Downtime starts before the backup**, covering both the database dump and document
@@ -1619,11 +1614,11 @@ remove `/srv/verwalino/logs/.deploy.lock` once no deploy is running. A stale `/s
 (a run was killed) is removed by hand once no backup is running. Never
 run `docker compose down -v` or delete the volumes.
 
-## Migration compatibility: 0029–0177
+## Migration compatibility: 0029–0178
 
 | Revisions | Effect on existing data and runtime compatibility |
 | --- | --- |
-| 0029–0122 | Adds financial, declaration, source custody and review data structures and guards. The 0028 runtime cannot interpret the new schema or enforce its later security rules. The 0028→0177 rehearsal preserves all old columns and rows with synthetic organization, user, document, draft/failed import and failed extraction-run data, but does not prove every live-data combination. |
+| 0029–0122 | Adds financial, declaration, source custody and review data structures and guards. The 0028 runtime cannot interpret the new schema or enforce its later security rules. The 0028→0178 rehearsal preserves all old columns and rows with synthetic organization, user, document, draft/failed import and failed extraction-run data, but does not prove every live-data combination. |
 | 0123 | Adds nullable replacement evidence and changes exception-completion functions/outcomes. Existing rows retain their old disposition; old clients cannot interpret new replacement outcomes. Downgrade refuses retained evidence. |
 | 0124–0125 | Adds bank transactions and a nullable payment link, then enforces tenant/account coherence and immutable booked links. A 0122 database has no pre-existing links; inconsistent intermediate data is not silently repaired. |
 | 0126–0127 | Adds append-only rent history and frozen special levies; replaces financial/source/report adapters. No old financial rows are rewritten. Older runtimes do not understand the new obligations/history. Their downgrades can drop populated new tables; they are not a safe recovery path. |
@@ -1666,14 +1661,15 @@ run `docker compose down -v` or delete the volumes.
 | 0174 (parent 0173) | Adds organization-owned dunning settings with forced RLS and a read-only statutory base-rate catalog. Keeps issued notices and their frozen amounts. Downgrade refuses saved settings, retained segmented interest, or notices with the organization-policy PDF format. This includes interest-free notices created with the defaults. |
 | 0175 (parent 0174) | Adds user-owned `design_theme` (`klar` or `warm`) with a server default of `klar` for existing and new users. Login/session responses, memberships and business data retain their existing shape. Downgrade locks the user table and refuses while any non-default selection exists. Default-only downgrade removes the column. |
 | 0176 (parent 0175) | Records the optional advance mode on original leases and dated rates. Existing rows keep their prior interpretation with a null mode. Downgrade refuses saved explicit modes. |
-| 0177 (head; parent 0176) | Freezes original advance mode when any booking or finalized statement exists, including when the writer cannot read the associated books. Indexes booked-payment audit lookups. Downgrade removes the guard and index and retains existing records. |
+| 0177 (parent 0176) | Freezes original advance mode when any booking or finalized statement exists, including when the writer cannot read the associated books. Indexes booked-payment audit lookups. Downgrade removes the guard and index and retains existing records. |
+| 0178 (head; parent 0177) | Adds encrypted organization AI settings under RLS and serialized tenant monthly accounting. Extends safe pass metadata with `default` for an omitted reasoning parameter. Downgrade refuses existing settings or passes using the new metadata value. |
 
 DDL uses the existing PostgreSQL/Alembic transaction; 0123 also takes financial
 and ACL locks with NOWAIT table locks. Contention or unexpected data/function
 definitions must abort, not trigger repair/deletion. A rollback-only synthetic
-0028→0177 rehearsal compares every old table column/row and retained RLS flags;
-the 0122→0177, 0139→0177 and accepted-source 0140→0177, 0141→0177 and
-0142→0177, 0143→0177, 0144→0177, 0145→0177, 0146→0177, 0147→0177, 0148→0177, 0149→0177, 0150→0177, 0151→0177, 0152→0177, 0153→0177, 0154→0177, 0155→0177, 0159→0177, 0160→0177, 0161→0177, 0162→0177, 0163→0177, 0164→0177, 0165→0177, 0166→0177, 0167→0177, 0168→0177, 0169→0177, 0170→0177, 0171→0177, 0172→0177, 0173→0177, 0174→0177, 0175→0177 and 0176→0177 (accepted sources) rehearsals also
+0028→0178 rehearsal compares every old table column/row and retained RLS flags;
+the 0122→0178, 0139→0178 and accepted-source 0140→0178, 0141→0178 and
+0142→0178, 0143→0178, 0144→0178, 0145→0178, 0146→0178, 0147→0178, 0148→0178, 0149→0178, 0150→0178, 0151→0178, 0152→0178, 0153→0178, 0154→0178, 0155→0178, 0159→0178, 0160→0178, 0161→0178, 0162→0178, 0163→0178, 0164→0178, 0165→0178, 0166→0178, 0167→0178, 0168→0178, 0169→0178, 0170→0178, 0171→0178, 0172→0178, 0173→0178, 0174→0178, 0175→0178 and 0176→0178 (accepted sources) rehearsals also
 compare existing ACLs, allowing only the explicit organization INSERT/reserve UPDATE revocations and the capability-checked
 0159 binding adapter and the 0168 column-level resolution-link grant;
 it does not prove live data validity or cross-version runtime compatibility.
@@ -1696,10 +1692,10 @@ When adding a migration, update these together in the same release:
 
 ## Deployment boundary and accepted head
 
-The reviewed code targets **0177**. `backend/app/deployment.py` retains `TARGET`,
+The reviewed code targets **0178**. `backend/app/deployment.py` retains `TARGET`,
 `SUPPORTED`, `release_head()` and the read-only schema/role/runtime checks used
-by the migration rehearsals. Those checks accept measured **0028 → 0177**,
-**0122 → 0177**, **0139 → 0177**, **0140 → 0177**, **0141 → 0177**, **0142 → 0177**, **0143 → 0177**, **0144 → 0177**, **0145 → 0177**, **0146 → 0177**, **0147 → 0177**, **0148 → 0177**, **0149 → 0177**, **0150 → 0177**, **0151 → 0177**, **0152 → 0177**, **0153 → 0177**, **0154 → 0177**, **0155 → 0177**, **0159 → 0177**, **0160 → 0177**, **0161 → 0177**, **0162 → 0177**, **0163 → 0177**, **0164 → 0177**, **0165 → 0177**, **0166 → 0177** (accepted sources), **0167 → 0177** (accepted source), **0168 → 0177** (accepted source), **0169 → 0177** (accepted source), **0170 → 0177** (accepted source), **0171 → 0177** (accepted source), **0172 → 0177** (accepted source), **0173 → 0177** (accepted source), **0174 → 0177** (accepted source), **0175 → 0177** (accepted source), **0176 → 0177** (accepted source), or **0177 → 0177**; unknown,
+by the migration rehearsals. Those checks accept measured **0028 → 0178**,
+**0122 → 0178**, **0139 → 0178**, **0140 → 0178**, **0141 → 0178**, **0142 → 0178**, **0143 → 0178**, **0144 → 0178**, **0145 → 0178**, **0146 → 0178**, **0147 → 0178**, **0148 → 0178**, **0149 → 0178**, **0150 → 0178**, **0151 → 0178**, **0152 → 0178**, **0153 → 0178**, **0154 → 0178**, **0155 → 0178**, **0159 → 0178**, **0160 → 0178**, **0161 → 0178**, **0162 → 0178**, **0163 → 0178**, **0164 → 0178**, **0165 → 0178**, **0166 → 0178** (accepted sources), **0167 → 0178** (accepted source), **0168 → 0178** (accepted source), **0169 → 0178** (accepted source), **0170 → 0178** (accepted source), **0171 → 0178** (accepted source), **0172 → 0178** (accepted source), **0173 → 0178** (accepted source), **0174 → 0178** (accepted source), **0175 → 0178** (accepted source), **0176 → 0178** (accepted source), or **0177 → 0178**; unknown,
 missing, multiple or intermediate revisions are rejected. These are code and
 rehearsal boundaries, not a measurement of a running installation.
 
@@ -2308,3 +2304,46 @@ The application does not choose an operator identity or invent an automatic purg
 policy. Hosted operators must identify themselves in their privacy information,
 protect retained records and backup copies, honor the published erasure/retention
 process, and schedule the command using their existing operations mechanism.
+
+
+## Organization AI settings and upgrade to 0178
+
+Hosted and self-hosted organizations bring their own OpenAI key. An `OWNER_ADMIN`
+opens **Einstellungen → KI für Ihre Organisation**, enters the key, loads OpenAI's
+model list, chooses one model and enables import and/or property questions. The
+same model handles extraction, escalation and Q&A. Every provider-listed model is
+selectable; a provider may reject a model that lacks required capabilities. A
+rejected key or unavailable list produces a German error. There is currently no
+verified model-promotion evidence in this release, so no model is marked „geprüft“;
+`core/ai_models.py:EVALUATED_MODELS` changes only with actual evaluation evidence.
+
+**Upgrade action:** the removed `HV_OPENAI_API_KEY`, primary/escalation/Q&A model,
+reasoning-effort and price environment keys are no longer read. Their values are
+not migrated from the process environment. After upgrading, each organization
+administrator must enter its own key and select its model in the page. AI remains
+off until configured; no restart or `.env` change is needed after saving.
+
+Keys are encrypted with a tenant-separated key derived from the existing
+`SESSION_SECRET` (`HV_SESSION_SECRET` in containers). Web and declaration-worker
+containers receive the same secret. Preserve it with the private deployment
+configuration and database backup. Changing it makes previously stored AI keys
+unreadable; administrators can replace or remove them on the page. Read responses
+contain only key presence. Product organization archives exclude AI runtime
+configuration and credentials; destination organizations configure their own key.
+Organization erasure deletes this mutable settings record.
+
+The optional monthly USD limit combines imports and Q&A for one organization and
+one UTC calendar month. Admission serializes reservations and counts known-price running imports
+at their conservative per-import cap; unfinished Q&A retains its reserved charge.
+Known model prices are documented constants in `core/ai_models.py`, with
+`service_tier=default`, no hidden SDK retries and the existing long-context guard.
+The page explicitly says that unknown-price models are **not** constrained by this
+monetary limit. Existing token, timeout, concurrency, source review and per-run
+bounds still apply. Changing settings affects the next request/job; an admitted
+in-flight call finishes and accounts against its original reservation.
+
+The portable `declaration-worker` starts and stops with the app, including update
+and restore maintenance windows. It joins internal `backend` for PostgreSQL and a
+separate non-internal `egress` network for the fixed OpenAI origin; it publishes no
+ports. The web process also calls OpenAI for model discovery and Q&A. Network
+allowlisting, if required by the operator, must permit that fixed HTTPS destination.

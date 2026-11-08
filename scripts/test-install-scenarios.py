@@ -1,5 +1,6 @@
 """Install matrix contracts: real installer/helper, stdlib shims, no Docker or DB."""
 
+import ast
 import hashlib
 import json
 import os
@@ -15,6 +16,10 @@ import unittest
 from installer_test_process import install_interrupt_handlers, managed_process, run, unittest_main
 
 ROOT = Path(__file__).resolve().parents[1]
+RELEASE_TARGET = next(ast.literal_eval(node.value) for node in ast.parse(
+    (ROOT / "backend/app/deployment.py").read_text()).body
+    if isinstance(node, ast.Assign) and any(isinstance(target, ast.Name) and target.id == "TARGET"
+                                            for target in node.targets))
 DIGEST = "sha256:" + "a" * 64
 NAMES = ["Fresh install reaches setup", "Second run is harmless",
          "Busy port is refused", "Restart keeps data"]
@@ -62,6 +67,8 @@ elif name == "docker":
             time.sleep(30)  # Fail-safe if the outer contract is itself killed.
     elif args[:2] == ["info", "-f"]:
         print("27.0.0" if "ServerVersion" in args[-1] else "/docker-data")
+    elif args and args[0] == "run" and args[-2:] == ["-c", "from app.deployment import TARGET; print(TARGET)"]:
+        print(os.environ["MATRIX_RELEASE_TARGET"])
     elif args[0] in ("ps", "volume"):
         if os.environ.get("MATRIX_EXISTING"):
             print("existing-installation")
@@ -153,7 +160,7 @@ class InstallScenarioTests(unittest.TestCase):
         self.env = {key: value for key, value in os.environ.items()
                     if key not in ("USER",) and not key.startswith(("COMPOSE_", "VERWALINO_", "MATRIX_"))}
         self.env.update(PATH=str(self.bin), MATRIX_TEST_STATE=str(self.base), TMPDIR=str(self.base),
-                        GITHUB_SHA="b" * 40)
+                        GITHUB_SHA="b" * 40, MATRIX_RELEASE_TARGET=RELEASE_TARGET)
         self.bundle = self.base / "bundle with spaces"
         self.report = self.base / "report with spaces"
 
@@ -197,6 +204,12 @@ class InstallScenarioTests(unittest.TestCase):
         self.assertGreater(state["cleanups"], 0)
         self.assertEqual(list(self.base.glob("verwalino-install-*")), [])
         for name, args in self.calls():
+            if name == "docker" and args[0] == "run":
+                self.assertEqual(args, [
+                    "run", "--rm", "--pull", "never", "--network", "none", "--read-only",
+                    "--user", "10001:10001", "--cap-drop", "ALL", "--security-opt", "no-new-privileges",
+                    "--entrypoint", "python", "ghcr.io/itskeks/verwalino@" + DIGEST,
+                    "-c", "from app.deployment import TARGET; print(TARGET)"])
             if name == "docker" and args[0] == "compose" and "-f" in args:
                 self.assertEqual(args[args.index("--project-name") + 1], "verwalino")
                 self.assertIn("verwalino-install-", args[args.index("-f") + 1])

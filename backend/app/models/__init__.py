@@ -1,5 +1,6 @@
 from app.models.base import Base
 from app.models.organization import Organization
+from app.models.organization_ai_settings import OrganizationAiSettings
 from app.models.user import User
 from app.models.membership import Membership
 from app.models.management_mandate import ManagementMandate

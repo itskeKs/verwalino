@@ -47,6 +47,123 @@ from app.declarations.schemas import (
 from app.workers.declaration_import import DeclarationImportWorker
 from tests.declaration_fixtures import make_text_pdf
 from tests.test_invoice_extraction_worker import worker_tenant  # noqa: F401
+from tests.ai_settings_support import configure_ai as configured_ai
+
+
+async def test_ai_settings_encrypt_key_and_hide_foreign_and_non_admin_access(
+    client_a_admin, client_a_clerk, client_b_admin, seed_data, migrator_session, caplog,
+):
+    path = f"/api/organizations/{seed_data['org_a_id']}/ai-settings"
+    body = {'provider': 'openai', 'api_key': 'synthetic-secret-never-returned',
+            'model': 'gpt-5.6-luna', 'import_enabled': True, 'qa_enabled': True,
+            'monthly_limit_usd': '0.50'}
+    response = await client_a_admin.put(path, json=body)
+    assert response.status_code == 200, response.text
+    assert response.json()['key_set'] is True
+    assert body['api_key'] not in response.text + caplog.text
+    encrypted = await migrator_session.scalar(text('SELECT encrypted_api_key FROM organization_ai_settings WHERE organization_id=:org'), {'org': seed_data['org_a_id']})
+    assert encrypted and body['api_key'] not in encrypted
+    for client in (client_a_clerk, client_b_admin):
+        for method, suffix, payload in [('GET', '', None), ('PUT', '', body), ('POST', '/models', {})]:
+            refused = await client.request(method, path + suffix, json=payload)
+            unknown = await client.request(method, f'/api/organizations/{uuid.uuid4()}/ai-settings' + suffix, json=payload)
+            assert refused.status_code == unknown.status_code == 404
+            assert refused.json() == unknown.json()
+    kept = await client_a_admin.put(path, json={k:v for k,v in body.items() if k != 'api_key'})
+    assert kept.json()['key_set'] is True
+    removed = await client_a_admin.put(path, json={**body, 'api_key': None, 'import_enabled': False, 'qa_enabled': False})
+    assert removed.json()['key_set'] is False
+
+
+@pytest.mark.parametrize('failure, expected', [('rejected', 'abgelehnt'), ('unreachable', 'nicht erreichbar')])
+async def test_ai_model_list_returns_german_safe_provider_errors(client_a_admin, seed_data, monkeypatch, caplog, failure, expected):
+    import openai
+    import httpx
+    class Client:
+        def __init__(self, **kwargs): self.models = self
+        async def list(self, **kwargs):
+            request = httpx.Request('GET', 'https://api.openai.com/v1/models')
+            if failure == 'rejected':
+                raise openai.AuthenticationError('synthetic-secret-in-provider-error', response=httpx.Response(401, request=request), body=None)
+            raise openai.APIConnectionError(message='synthetic-secret-in-provider-error', request=request)
+        async def close(self): pass
+    monkeypatch.setattr(openai, 'AsyncOpenAI', Client)
+    response = await client_a_admin.post(f"/api/organizations/{seed_data['org_a_id']}/ai-settings/models", json={'api_key': 'synthetic-secret-in-provider-error'})
+    assert response.status_code in (422, 503)
+    assert expected in response.json()['detail']
+    assert 'synthetic-secret-in-provider-error' not in response.text + caplog.text
+
+
+@pytest.mark.parametrize('body', [
+    {'api_key': {'secret': 'synthetic-validation-secret'}},
+    {'api_key': 'synthetic-validation-secret', 'model': 'invalid model'},
+    {'api_key': 'synthetic-validation-secret', 'monthly_limit_usd': '-1'},
+    {'api_key': 'synthetic-validation-secret', 'unexpected': 'synthetic-validation-secret'},
+])
+async def test_ai_settings_invalid_input_never_echoes_key(client_a_admin, seed_data, caplog, body):
+    response = await client_a_admin.put(f"/api/organizations/{seed_data['org_a_id']}/ai-settings", json=body)
+    assert response.status_code == 422
+    assert 'synthetic-validation-secret' not in response.text + caplog.text
+
+
+async def test_ai_settings_monthly_budget_applies_to_known_prices_only(client_a_admin, seed_data):
+    from app.core.db import get_tenant_session
+    from app.services.ai_settings_service import require_organization_ai_budget
+    from app.core.tenant import AuthContext
+    path = f"/api/organizations/{seed_data['org_a_id']}/ai-settings"
+    for model, denied in [('gpt-5.6-luna', True), ('future-model', False)]:
+        assert (await client_a_admin.put(path, json={'model':model, 'monthly_limit_usd':'0.00'})).status_code == 200
+        async with get_tenant_session(seed_data['org_a_id']) as db:
+            await db.execute(text("SELECT set_config('app.current_user_id',:actor,true)"), {'actor':str(seed_data['user_a_admin_id'])})
+            if denied:
+                with pytest.raises(HTTPException) as refusal:
+                    await require_organization_ai_budget(db, seed_data['org_a_id'], Decimal('.01'))
+                assert refusal.value.detail['code'] == 'ORGANIZATION_AI_BUDGET_EXCEEDED'
+            else:
+                await require_organization_ai_budget(db, seed_data['org_a_id'], Decimal('.01'))
+
+
+async def test_ai_model_list_marks_only_models_with_actual_evaluation_evidence(client_a_admin, seed_data, monkeypatch):
+    from app.services import ai_settings_service
+    from app.declarations import openai_models
+    async def models(key):
+        assert key == 'synthetic-model-key'
+        return ['gpt-5.6-luna', 'future-model']
+    monkeypatch.setattr(openai_models, 'list_models', models)
+    monkeypatch.setattr(ai_settings_service, 'EVALUATED_MODELS', frozenset({'gpt-5.6-luna'}))
+    response = await client_a_admin.post(f"/api/organizations/{seed_data['org_a_id']}/ai-settings/models", json={'api_key':'synthetic-model-key'})
+    assert response.status_code == 200
+    assert response.json()['models'] == [
+        {'id':'gpt-5.6-luna','evaluated':True,'price_known':True},
+        {'id':'future-model','evaluated':False,'price_known':False},
+    ]
+
+
+async def test_unpriced_running_import_does_not_reserve_the_next_known_models_monthly_allowance(
+    client_a_admin, seed_data, migrator_session,
+):
+    from app.services.ai_settings_service import require_organization_ai_budget
+    org = seed_data['org_a_id']
+    path = f'/api/organizations/{org}/ai-settings'
+    assert (await client_a_admin.put(path,json={'model':'future-model','import_enabled':True,'monthly_limit_usd':'1.00'})).status_code==200
+    created = await client_a_admin.post('/api/declaration-imports',json={'mode':'NEW_PROPERTY'})
+    assert created.status_code==201,created.text
+    await _set_organization(migrator_session,org)
+    await migrator_session.execute(text("SELECT set_config('app.current_user_id',:actor,true)"),{'actor':str(seed_data['user_a_admin_id'])})
+    run = DeclarationExtractionRun(organization_id=org,import_id=uuid.UUID(created.json()['id']),
+        status='RUNNING',provider='openai',model_name='future-model',prompt_version='test',schema_version='1',harness_version='2',
+        estimated_cost_usd=Decimal('0'))
+    migrator_session.add(run)
+    await migrator_session.flush()
+    assert (await client_a_admin.put(path,json={'model':'gpt-5.6-luna','import_enabled':True,'monthly_limit_usd':'1.00'})).status_code==200
+    # The next known-model import can reserve its full USD 1 ceiling while the
+    # unpriced job remains in flight. Stored actual costs still count.
+    await require_organization_ai_budget(migrator_session,org,Decimal('1'),model='gpt-5.6-luna')
+    run.estimated_cost_usd=Decimal('.01')
+    await migrator_session.flush()
+    with pytest.raises(HTTPException) as denied:
+        await require_organization_ai_budget(migrator_session,org,Decimal('1'),model='gpt-5.6-luna')
+    assert denied.value.detail['code']=='ORGANIZATION_AI_BUDGET_EXCEEDED'
 
 
 @pytest_asyncio.fixture
@@ -54,6 +171,7 @@ async def isolated_declaration_worker(worker_tenant, monkeypatch):
     """Keep API pipeline journeys out of queues populated by other test cases."""
     from app.core.db import get_tenant_session
     client, seed = worker_tenant
+    configured_ai(seed['org_a_id'])
     async def organization_ids(self):
         return (seed['org_a_id'],)
     # Enumeration/fairness is tested by the worker suite. This API journey uses
@@ -74,8 +192,8 @@ def isolated_document_store(tmp_path):
 
 
 @pytest.fixture(autouse=True)
-def enable_declaration_imports(monkeypatch):
-    monkeypatch.setattr(settings, "declaration_import_enabled", True)
+def enable_declaration_imports(configured_ai):
+    pass
 
 
 async def _set_organization(session: AsyncSession, organization_id: uuid.UUID) -> None:
@@ -1350,7 +1468,6 @@ async def test_multipart_reader_rejects_over_limit_and_empty_file(
 ) -> None:
     from app.core.config import settings
 
-    monkeypatch.setattr(settings, "declaration_import_enabled", True)
     monkeypatch.setattr(settings, "declaration_max_pdf_bytes", 4)
     created = await client_a_admin.post(
         "/api/declaration-imports", json={"mode": "NEW_PROPERTY"}
@@ -1397,18 +1514,17 @@ async def test_property_document_service_rejects_direct_oversized_bytes(
 
 @pytest.mark.asyncio
 async def test_declaration_import_disabled_blocks_create_upload_and_start(
-    client_a_admin, monkeypatch
+    client_a_admin, monkeypatch, seed_data, configured_ai
 ) -> None:
     from app.core.config import settings
 
-    monkeypatch.setattr(settings, "declaration_import_enabled", True)
     created = await client_a_admin.post(
         "/api/declaration-imports", json={"mode": "NEW_PROPERTY"}
     )
     assert created.status_code == 201
     import_id = created.json()["id"]
 
-    monkeypatch.setattr(settings, "declaration_import_enabled", False)
+    configured_ai(seed_data["org_a_id"], import_enabled=False)
     blocked_create = await client_a_admin.post(
         "/api/declaration-imports", json={"mode": "NEW_PROPERTY"}
     )
@@ -1451,7 +1567,7 @@ async def test_declaration_import_disabled_does_not_requeue_retryable_import(
                     {"import_id": import_id},
                 )
 
-        monkeypatch.setattr(settings, "declaration_import_enabled", False)
+        configured_ai(seed_data["org_a_id"], import_enabled=False)
         response = await client_a_admin.post(
             f"/api/declaration-imports/{import_id}/retry", headers={"Idempotency-Key": "11111111-1111-4111-8111-111111111111"}
         )
@@ -1489,7 +1605,6 @@ async def test_manual_retry_provider_outcomes_use_durable_queue_receipts(client_
 async def test_document_limit_uses_runtime_setting(client_a_admin, monkeypatch) -> None:
     from app.core.config import settings
 
-    monkeypatch.setattr(settings, "declaration_import_enabled", True)
     monkeypatch.setattr(settings, "declaration_max_documents", 1)
     created = await client_a_admin.post(
         "/api/declaration-imports", json={"mode": "NEW_PROPERTY"}
