@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from decimal import Decimal
 from datetime import date
+from types import MappingProxyType
 from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
@@ -80,6 +81,22 @@ class EvidencePayload(StrictModel):
     field_path: str | None = Field(default=None, max_length=160)
 
 
+FIXED_CORE_FIELDS = MappingProxyType({
+    "property": frozenset({
+        "name", "street", "zip_code", "city", "management_type", "mea_denominator",
+    }),
+    "unit": frozenset({
+        "number", "location", "usage_type", "area", "heated_area", "building_part", "mea",
+    }),
+    "legal_reference": frozenset({
+        "reference_type", "district", "cadastral_district", "field_number", "parcel", "sheet", "details",
+    }),
+    "assignment": frozenset({
+        "assignment_type", "designation", "location", "description", "unit_subject_key", "details",
+    }),
+})
+
+
 class FactPayload(StrictModel):
     subject_key: str = Field(min_length=1, max_length=180)
     field: str = Field(min_length=1, max_length=100)
@@ -92,43 +109,7 @@ class FactPayload(StrictModel):
     @model_validator(mode="after")
     def field_and_value_type_match(self) -> "FactPayload":
         prefix = self.subject_key.split(":", 1)[0]
-        allowed = {
-            "property": {
-                "name",
-                "street",
-                "zip_code",
-                "city",
-                "management_type",
-                "mea_denominator",
-            },
-            "unit": {
-                "number",
-                "location",
-                "usage_type",
-                "area",
-                "heated_area",
-                "building_part",
-                "mea",
-            },
-            "legal_reference": {
-                "reference_type",
-                "district",
-                "cadastral_district",
-                "field_number",
-                "parcel",
-                "sheet",
-                "details",
-            },
-            "assignment": {
-                "assignment_type",
-                "designation",
-                "location",
-                "description",
-                "unit_subject_key",
-                "details",
-            },
-        }
-        if prefix not in allowed or self.field not in allowed[prefix]:
+        if prefix not in FIXED_CORE_FIELDS or self.field not in FIXED_CORE_FIELDS[prefix]:
             raise PydanticCustomError('fact_core_field_unsupported', "Value error, unsupported fixed-core subject or field")
         if self.field == "mea" and not isinstance(self.normalized_value, MeaFraction):
             raise PydanticCustomError('fact_mea_type', "Value error, mea requires a MEA value")

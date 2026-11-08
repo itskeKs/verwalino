@@ -1,4 +1,6 @@
 from decimal import Decimal
+import json
+from pathlib import Path
 
 import pytest
 from pydantic import ValidationError
@@ -135,3 +137,31 @@ def test_fixed_core_guard_codes_preserve_rejections_and_valid_counterparts(subje
     assert error['msg'] == 'Value error, ' + message
     fact.update(field='street' if field == 'private-field' else field, normalized_value=valid_value)
     assert FactPayload.model_validate(fact).normalized_value.kind == valid_value['kind']
+
+
+def test_fixed_core_contract_oracle_preserves_every_pair_and_subject_form():
+    contract = json.loads((Path(__file__).parent / 'fixtures/declaration_eval_cases.json').read_text())['fixed_core_contract']
+    values = [
+        {'kind': 'TEXT', 'value': 'Synthetic'}, {'kind': 'INTEGER', 'value': 1},
+        {'kind': 'MEA', 'numerator': 1, 'denominator': 1000},
+        {'kind': 'DECIMAL', 'value': '12.5'}, {'kind': 'BOOLEAN', 'value': True},
+        {'kind': 'DATE', 'value': '2026-01-01'}, {'kind': 'FRACTION', 'numerator': 1, 'denominator': 2},
+        {'kind': 'PERCENTAGE', 'value': '50'},
+    ]
+    required_kinds = {'mea': 'MEA', 'mea_denominator': 'INTEGER', 'area': 'DECIMAL', 'heated_area': 'DECIMAL'}
+    fact = {'raw_value': 'Synthetic', 'confidence': .99,
+            'evidence': [{'document_key': 'synthetic', 'pdf_page': 1, 'quote': 'Synthetic'}]}
+    for prefix, fields in contract['fields_by_prefix'].items():
+        for field in fields:
+            for suffix in contract['subject_suffixes']:
+                for value in values:
+                    candidate = fact | {'subject_key': prefix + suffix, 'field': field, 'normalized_value': value}
+                    if field in required_kinds and value['kind'] != required_kinds[field]:
+                        with pytest.raises(ValidationError):
+                            FactPayload.model_validate(candidate)
+                    else:
+                        assert FactPayload.model_validate(candidate).subject_key == prefix + suffix
+    for subject, field in contract['invalid_pairs']:
+        with pytest.raises(ValidationError) as raised:
+            FactPayload.model_validate(fact | {'subject_key': subject, 'field': field, 'normalized_value': values[0]})
+        assert raised.value.errors()[0]['type'] == 'fact_core_field_unsupported'

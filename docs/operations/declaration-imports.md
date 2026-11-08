@@ -520,6 +520,14 @@ wire model; inherited local validation remains unchanged. Offline SDK transport
 checks verify serialization, not live provider acceptance. Pass metadata uses `default`
 when reasoning is omitted for a model with no known effort contract.
 
+Prompt version `declaration-v2` supplies the exact fixed-core subject-prefix and
+field pairs to core extraction, reconciliation and recheck. The instructions
+and local validator read one immutable contract; existing subject-key forms,
+value-type checks, evidence requirements and wire schemas remain unchanged.
+Genuinely out-of-core relevant facts use the existing `additional_facts` shape.
+The synthetic contract oracle verifies local decisions and serialized SDK
+instructions; it does not establish live extraction quality or acceptance.
+
 SDK parse failures emit `event=DECLARATION_SCHEMA_VALIDATION` in the declaration
 worker/container logs. Retrieve this event from those logs; support bundles
 deliberately omit its details. It contains only allowlisted exception/error codes,

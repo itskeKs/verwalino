@@ -1,5 +1,15 @@
 {
   "schema_version": "1",
+  "fixed_core_contract": {
+    "fields_by_prefix": {
+      "property": ["name", "street", "zip_code", "city", "management_type", "mea_denominator"],
+      "unit": ["number", "location", "usage_type", "area", "heated_area", "building_part", "mea"],
+      "legal_reference": ["reference_type", "district", "cadastral_district", "field_number", "parcel", "sheet", "details"],
+      "assignment": ["assignment_type", "designation", "location", "description", "unit_subject_key", "details"]
+    },
+    "subject_suffixes": ["", ":", ":synthetic", ":synthetic:child"],
+    "invalid_pairs": [["property:main", "number"], ["unit:1", "street"], ["legal_reference:main", "mea"], ["assignment:main", "management_type"], ["synthetic:main", "street"]]
+  },
   "cases": [
     {
       "id": "reference-a-commercial",

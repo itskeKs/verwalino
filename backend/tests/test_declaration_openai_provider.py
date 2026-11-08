@@ -13,6 +13,7 @@ import io
 import json
 import logging
 from json import JSONDecodeError
+from pathlib import Path
 from types import SimpleNamespace
 
 import httpx2
@@ -240,6 +241,14 @@ async def test_real_sdk_wire_schema_matches_reservations_and_fingerprints(
         result = await getattr(provider, method)(**arguments, max_output_tokens=10)
 
     assert len(requests) == 1
+    if method in {'extract_core', 'reconcile', 'recheck'}:
+        contract = json.loads((Path(__file__).parent / 'fixtures/declaration_eval_cases.json').read_text())['fixed_core_contract']
+        guidance = requests[0]['input'][0]['content'][0]['text']
+        for prefix, fields in contract['fields_by_prefix'].items():
+            assert f"{prefix}: {', '.join(sorted(fields))}" in guidance.splitlines()
+        for field, kind in [('mea', 'MEA'), ('mea_denominator', 'INTEGER'), ('area', 'DECIMAL'), ('heated_area', 'DECIMAL')]:
+            assert f'{field} requires normalized_value.kind={kind}' in guidance
+        assert 'additional_facts' in guidance
     wire_format = requests[0]['text']['format']
     assert wire_format['name'] == output_type.__name__
     assert wire_format['strict'] is True
@@ -250,9 +259,14 @@ async def test_real_sdk_wire_schema_matches_reservations_and_fingerprints(
             assert set(node['required']) == set(node['properties'])
     assert all(json.loads(value)['text']['format'] == wire_format for value in encoder.values)
     from app.declarations.observability import fingerprint_static_contract
-    assert result.metadata.schema_sha256 == fingerprint_static_contract(
+    fingerprints = fingerprint_static_contract(
         developer_prompt=prompt, schema=wire_format, harness=openai_provider._STATIC_HARNESS,
-    ).schema_sha256
+    )
+    assert result.metadata.schema_sha256 == fingerprints.schema_sha256
+    assert result.metadata.prompt_sha256 == fingerprint_static_contract(
+        developer_prompt=requests[0]['input'][0]['content'][0]['text'],
+        schema=wire_format, harness=openai_provider._STATIC_HARNESS,
+    ).prompt_sha256
     assert isinstance(result.output, output_type)
     assert result.output.model_dump() == output.model_dump()
     assert result.usage.input_tokens == 100
@@ -433,6 +447,35 @@ async def test_real_sdk_fixed_core_guard_diagnostic_is_actionable(fake_declarati
     data = json.loads(record.getMessage().removeprefix('event=DECLARATION_SCHEMA_VALIDATION data='))
     assert data['errors'] == [{'code': 'fact_mea_type', 'location': ['facts', 0], 'location_truncated': False}]
     assert raised.value.code == 'PROVIDER_SCHEMA_FAILURE' and len(calls) == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('subject,field', json.loads(
+    (Path(__file__).parent / 'fixtures/declaration_eval_cases.json').read_text()
+)['fixed_core_contract']['invalid_pairs'])
+async def test_real_sdk_rejects_unsupported_subject_field_pairs_unchanged(subject, field, fake_declaration_provider, text_document_input, caplog):
+    core = (await fake_declaration_provider.extract_core([], max_output_tokens=10)).output.model_dump(mode='json')
+    core['facts'][0].update(subject_key=subject, field=field)
+    calls = []
+
+    def respond(request):
+        calls.append(request)
+        return httpx2.Response(200, json=_sdk_response(core, 'gpt-5.6-luna'))
+
+    with caplog.at_level(logging.WARNING, logger='app.declarations.observability'):
+        async with AsyncOpenAI(api_key='synthetic-sdk-key', base_url='https://api.openai.com/v1', max_retries=0,
+                               http_client=httpx2.AsyncClient(transport=httpx2.MockTransport(respond))) as client:
+            with pytest.raises(ProviderFailure) as raised:
+                await OpenAiDeclarationProvider(client=client, token_encoder=FixedTokenEncoder(10)).extract_core([text_document_input], max_output_tokens=10)
+
+    record, = [record for record in caplog.records if record.name == 'app.declarations.observability']
+    data = json.loads(record.getMessage().removeprefix('event=DECLARATION_SCHEMA_VALIDATION data='))
+    assert data['errors'] == [{'code': 'fact_core_field_unsupported', 'location': ['facts', 0], 'location_truncated': False}]
+    assert raised.value.code == 'PROVIDER_SCHEMA_FAILURE'
+    assert raised.value.usage is None and raised.value.usage_complete is False
+    assert len(calls) == raised.value.attempt_count == 1
+    metadata = raised.value.metadata.as_safe_dict()
+    assert len(metadata) == 23 and metadata['failure_class'] == 'PROVIDER_SCHEMA_FAILURE'
 
 
 @pytest.mark.asyncio
