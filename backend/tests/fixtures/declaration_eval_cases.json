@@ -1,5 +1,22 @@
 {
   "schema_version": "1",
+  "recorded_import_cases": [{
+    "id": "lindenallee-12",
+    "input_digest": "f870ae1020eda87ca45173157cf9a53580aeb07e8bbfc0f156161f416a8e7810",
+    "unit_numbers": ["1", "2", "G1"],
+    "core_facts": [
+      {"subject_id": "property", "field_key": "property_identity", "value": "WEG Lindenallee 12"},
+      {"subject_id": "property", "field_key": "unit_count", "value": "3"},
+      {"subject_id": "property", "field_key": "mea_denominator", "value": "1000"},
+      {"subject_id": "unit:1", "field_key": "mea", "numerator": 450, "denominator": 1000},
+      {"subject_id": "unit:1", "field_key": "usage_type", "value": "WOHNUNG"},
+      {"subject_id": "unit:2", "field_key": "mea", "numerator": 450, "denominator": 1000},
+      {"subject_id": "unit:2", "field_key": "usage_type", "value": "WOHNUNG"},
+      {"subject_id": "unit:G1", "field_key": "mea", "numerator": 100, "denominator": 1000},
+      {"subject_id": "unit:G1", "field_key": "usage_type", "value": "STELLPLATZ"}
+    ],
+    "rules": []
+  }],
   "fixed_core_contract": {
     "fields_by_prefix": {
       "property": ["name", "street", "zip_code", "city", "management_type", "mea_denominator"],

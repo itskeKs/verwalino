@@ -24,6 +24,8 @@ from fractions import Fraction
 from pathlib import Path
 from typing import Any, Callable, Iterable, Mapping, Protocol, Sequence, runtime_checkable
 
+from app.evals.recorded_import import capture_recorded_import, compare_recorded_reports, load_recorded_report
+
 
 _METRIC_QUANTUM = Decimal("0.000001")
 _SAFE_CASE_ID = re.compile(r"^[a-z0-9][a-z0-9-]{0,63}$")
@@ -2370,7 +2372,12 @@ def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Run sanitized declaration-knowledge evaluations.")
     parser.add_argument("--fixtures", required=True)
     parser.add_argument("--organization-id")
-    parser.add_argument("--provider", choices=("fake", "live"), required=True)
+    parser.add_argument("--provider", choices=("fake", "live", "recorded"), required=True)
+    parser.add_argument("--actor-id")
+    parser.add_argument("--import-id")
+    parser.add_argument("--case-id")
+    parser.add_argument("--baseline-report")
+    parser.add_argument("--check-eligibility", action="store_true")
     parser.add_argument("--live", action="store_true")
     parser.add_argument("--compare-models", action="store_true")
     parser.add_argument("--manifest")
@@ -2380,6 +2387,34 @@ def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
 
 def main(argv: Sequence[str] | None = None) -> int:
     args = _parse_args(argv)
+    if args.provider == 'recorded':
+        import uuid
+        try:
+            if args.live or args.compare_models or (args.check_eligibility and args.baseline_report):
+                raise ValueError('invalid recorded options')
+            with Path(args.fixtures).open('rb') as source:
+                data = source.read(256 * 1024 + 1)
+            if len(data) > 256 * 1024:
+                raise ValueError('fixture limit exceeded')
+            cases = json.loads(data)['recorded_import_cases']
+            gold, = [case for case in cases if case['id'] == args.case_id]
+            baseline = load_recorded_report(args.baseline_report) if args.baseline_report else None
+            capture = asyncio.run(capture_recorded_import(
+                organization_id=uuid.UUID(args.organization_id), actor_id=uuid.UUID(args.actor_id),
+                import_id=uuid.UUID(args.import_id), gold=gold, eligibility_only=args.check_eligibility))
+            output = {'capture': capture, 'comparison': compare_recorded_reports(baseline, capture)} if baseline else capture
+        except Exception as error:
+            # Neither SQL/parser exceptions nor fixture/report contents enter CLI output.
+            from app.evals.recorded_import import CAPTURE_REFUSAL_CODES, RecordedCaptureUnavailable
+            code = error.args[0] if isinstance(error, RecordedCaptureUnavailable) and len(error.args) == 1 and error.args[0] in CAPTURE_REFUSAL_CODES else 'RECORDED_CAPTURE_UNAVAILABLE'
+            print(json.dumps({'status': 'RECORDED_CAPTURE_UNAVAILABLE', 'code': code}, separators=(',', ':')))
+            return 2
+        print(json.dumps(output, ensure_ascii=True, sort_keys=True, separators=(',', ':')))
+        if args.check_eligibility:
+            return 0
+        required = {'terminal_outcome', 'candidate_shape', 'core_facts', 'unit_set', 'unit_kinds', 'mea_exact', 'rules_absent', 'evidence', 'blockers'}
+        failed = any(row['status'] == 'FAIL' or (row['stage'] == 'final_output' and row['assertion'] in required and row['status'] != 'PASS') for row in capture['assertions'])
+        return 1 if failed or (baseline and output['comparison']['regressions']) else 0
     if args.provider == "fake":
         try:
             report = evaluate_fixture_file(args.fixtures, adapter=SyntheticFakeEvaluationAdapter())

@@ -540,3 +540,84 @@ Messages, inputs, contexts, bodies, source text and credentials are excluded.
 Durable pass metadata, validation decisions and usage/retry limits are unchanged.
 
 For Luna Q&A, explicit cache mode is sent without breakpoints, disabling implicit cache writes and their surcharge. No cache parameter is added for unverified models.
+
+## Recorded product-import regression checks
+
+`--provider recorded` performs only an actor/organization-scoped, read-only,
+repeatable-read collection from the product database. It never reads organization
+AI credentials or constructs a provider. The approved synthetic input digest is
+checked against its import-bound document and canonical tenant storage key, then
+verified against the stored bytes. Local bounded preflight checks evidence;
+no source or response content is retained in the report.
+
+Use a **new import/draft**, uploading the same approved Lindenallee scan; do not
+retry the retained failed import. An older failed import in the organization is
+irrelevant. Eligibility requires this new draft to have no extraction runs, no
+queue requests and zero provider attempts. Capture requires exactly one terminal
+extraction run and one `START` receipt matching the current queue request. The
+job's `attempt_count` counts provider requests: a healthy four-pass import normally
+has at least four, so it is deliberately **not** required to equal one.
+
+Start once through the product. Pause the blind checker when review becomes ready,
+**before the first accept, correction or rejection**. The coordinator captures the
+original pending proposals without showing gold or scores to the checker, then
+resumes that same import. Reviewed/applied or ambiguous graphs are refused;
+corrected values and the final created property are never model-scoring inputs.
+Keep the frozen report: it remains a reusable baseline after review.
+
+The portable runtime contains `backend/app`, not test fixtures. From the reviewed
+checkout root, send only the committed synthetic gold through stdin. Set
+`PORTABLE_ENV`, `EVAL_ORG`, `EVAL_ACTOR`, `EVAL_IMPORT` and an owned `EVAL_REPORT`
+path to the separately authorized disposable installation and its current actor.
+These commands do not start extraction:
+
+```sh
+recorded_gold() {
+  python3 -c 'import json,pathlib; d=json.loads(pathlib.Path("backend/tests/fixtures/declaration_eval_cases.json").read_text()); print(json.dumps({"recorded_import_cases":d["recorded_import_cases"]}))'
+}
+recorded_check() {
+  docker compose -f infra/docker-compose.yml --env-file "$PORTABLE_ENV" --project-name verwalino exec -T app \
+    python -m app.evals.declaration_knowledge --provider recorded --fixtures /dev/stdin \
+    --organization-id "$EVAL_ORG" --actor-id "$EVAL_ACTOR" --import-id "$EVAL_IMPORT" \
+    --case-id lindenallee-12 "$@"
+}
+recorded_gold | recorded_check --check-eligibility
+# After the one manual start reaches untouched review readiness:
+recorded_gold | recorded_check > "$EVAL_REPORT"
+```
+
+Stdin creates no gold file in the container. Keep reports only in explicitly owned
+evidence locations; remove disposable copies after preserving the required result.
+To compare saved captures without database or provider access, run from `backend/`
+with absolute report paths:
+
+```sh
+uv run --locked --extra dev --extra ops --extra ocr python - "$BASELINE_REPORT" "$CANDIDATE_REPORT" <<'PY'
+import json, sys
+from app.evals.recorded_import import load_recorded_report, compare_recorded_reports
+comparison = compare_recorded_reports(load_recorded_report(sys.argv[1]), load_recorded_report(sys.argv[2]))
+print(json.dumps(comparison))
+raise SystemExit(1 if comparison['regressions'] else 0)
+PY
+```
+
+Alternatively, `--baseline-report` compares during capture when the validated
+baseline file is accessible to that CLI process. Only bounded collector-report
+shapes are accepted, never hand-authored raw actual/scoring JSON. Preserve reports
+exactly as collected; provenance relies on the trusted product database and the
+unedited artifact. Input and gold digests must match. Model, resolved-model,
+reasoning, prompt, schema and harness changes are explicit; a difference is not
+attributed solely to the model.
+
+Reports localize case/stage/assertion outcomes. Success ledger entries establish
+execution and parsed-schema success only. Intermediate semantic outputs were not
+retained and remain `UNAVAILABLE`; all value assertions are `final_output` on the
+original merged proposals. The independently labeled scan checks units 1/2/G1,
+their apartment/apartment/parking usage kinds, shares 450/450/100 over 1000 and
+source-bound evidence. It contains no governance/allocation rule: hallucinated
+rules fail, while rule-effect recall is not tested. Failed terminal runs cannot
+pass merely because earlier provider calls succeeded. Provider-reported totals
+are separate from conservative job accounting; unknown usage stays unknown and
+costs are estimates, not billing. Comparisons cover observed assertions only,
+never automatic promotion or a “geprüft” model badge. Existing four-way live
+evaluation gates and runners are unchanged.
