@@ -37,7 +37,7 @@ export function OrganizationAiSettingsSection({ organizationId }: { organization
     setBusy(true); setError(null); setMessage('');
     const body: OrganizationAiSettingsBody = {
       provider:settings.provider, base_url:settings.base_url ?? null, model:settings.model, import_enabled:settings.import_enabled,
-      qa_enabled:settings.qa_enabled, monthly_limit_usd:limit.trim() || null,
+      qa_enabled:settings.qa_enabled, monthly_limit_usd:limit.trim() || null, request_timeout_seconds:settings.request_timeout_seconds ?? null,
       ...(removeKey ? { api_key:null } : key.trim() ? { api_key:key.trim() } : {}),
     };
     try {
@@ -59,7 +59,7 @@ export function OrganizationAiSettingsSection({ organizationId }: { organization
         <fieldset disabled={busy} className="space-y-5 min-w-0">
           <div><Label htmlFor="ai-provider">Anbieter</Label>
             <select id="ai-provider" className="w-full min-w-0 rounded-md border border-input bg-background p-2 text-sm" value={settings.provider} onChange={event => {
-              setSettings({...settings, provider:event.target.value as OrganizationAiSettings['provider'], base_url:null, model:null, key_set:false, price_known:false, import_enabled:false, qa_enabled:false});
+              setSettings({...settings, provider:event.target.value as OrganizationAiSettings['provider'], base_url:null, request_timeout_seconds:null, model:null, key_set:false, price_known:false, import_enabled:false, qa_enabled:false});
               setKey(''); setModels([]); setRemoveKey(false); setMessage('Bitte geben Sie für den neuen Anbieter einen eigenen Schlüssel ein und laden Sie dessen Modelle.');
             }}>
               <option value="openai">OpenAI</option><option value="openai_compatible">OpenAI-kompatible API</option><option value="anthropic">Anthropic</option>
@@ -68,11 +68,18 @@ export function OrganizationAiSettingsSection({ organizationId }: { organization
           {settings.provider === 'openai_compatible' && <div>
             <Label htmlFor="ai-base-url">API-Basis-URL</Label>
             <Input id="ai-base-url" type="url" value={settings.base_url ?? ''} maxLength={2048} placeholder="http://localhost:11434/v1" onChange={event => {
-              setSettings({...settings, base_url:event.target.value, key_set:false, model:null, price_known:false, import_enabled:false, qa_enabled:false}); setKey(''); setModels([]); setMessage('');
+              setSettings({...settings, base_url:event.target.value, request_timeout_seconds:null, key_set:false, model:null, price_known:false, import_enabled:false, qa_enabled:false}); setKey(''); setModels([]); setMessage('');
             }} aria-describedby="ai-endpoint-info" />
             <p id="ai-endpoint-info" className="text-sm text-muted-foreground mt-2">Verwenden Sie die API-Adresse einschließlich Pfad, z. B. /v1. Lokale Ziele sind nur im selbst gehosteten Betrieb verfügbar. Auch ein lokaler Dienst benötigt hier einen Schlüsselwert. Prüfen Sie Datenschutz und Speicherregeln des Anbieters.</p>
           </div>}
-          {settings.provider === 'anthropic' && <p className="text-sm text-muted-foreground">Verwenden Sie einen Anthropic-Schlüssel für einen einzelnen Workspace. Prüfen Sie die Datenaufbewahrung Ihres Vertrags; Verwalino aktiviert keine Zero Data Retention.</p>}
+          <div>
+            <Label htmlFor="ai-timeout">Zeitlimit pro Anfrage in Sekunden (optional)</Label>
+            <Input id="ai-timeout" type="number" min="1" max="3600" step="1" inputMode="numeric" value={settings.request_timeout_seconds ?? ''} placeholder={settings.provider === 'openai_compatible' ? '180' : undefined} onChange={event => {
+              setSettings({...settings, request_timeout_seconds:event.target.value === '' ? null : Number(event.target.value)}); setMessage('');
+            }} aria-describedby="ai-timeout-info" />
+            <p id="ai-timeout-info" className="text-sm text-muted-foreground mt-2">Leer lassen für den Anbieterstandard: kompatible APIs 180 Sekunden, OpenAI und Anthropic die bestehenden Funktionsstandards. Möglich sind 1 bis 3600 Sekunden. Das Zeitlimit gilt ab der nächsten Anfrage und wird bei einem Wechsel von Anbieter oder API-Adresse zurückgesetzt.</p>
+          </div>
+          {settings.provider === 'anthropic'  && <p className="text-sm text-muted-foreground">Verwenden Sie einen Anthropic-Schlüssel für einen einzelnen Workspace. Prüfen Sie die Datenaufbewahrung Ihres Vertrags; Verwalino aktiviert keine Zero Data Retention.</p>}
           <div>
             <Label htmlFor="ai-key">API-Schlüssel</Label>
             <Input id="ai-key" type="password" autoComplete="off" spellCheck={false} value={key} maxLength={4096} onChange={event => { setKey(event.target.value); setRemoveKey(false); setMessage(''); }} aria-describedby="ai-key-status" />

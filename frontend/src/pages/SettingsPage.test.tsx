@@ -65,3 +65,19 @@ it('switches provider and endpoint without carrying the old key or model to disc
   await screen.findByRole('option',{name:'local-very-long-model-name'});
   expect(discover).toHaveBeenCalledWith('/api/organizations/org-a/ai-settings/models', {provider:'openai_compatible',base_url:'http://localhost:11434/v1',api_key:'synthetic-local-placeholder'});
 });
+
+
+it('saves an endpoint timeout and resets it when the destination changes', async () => {
+  vi.spyOn(api,'get').mockResolvedValue({...initial,provider:'openai_compatible',base_url:'http://localhost:11434/v1',request_timeout_seconds:240});
+  const save = vi.spyOn(api,'put').mockImplementation(async (_url,body) => ({...initial,...body as object}));
+  render(<SettingsPage />);
+  const timeout = await screen.findByLabelText('Zeitlimit pro Anfrage in Sekunden (optional)');
+  expect(timeout).toHaveValue(240);
+  fireEvent.change(timeout,{target:{value:'300'}});
+  fireEvent.click(screen.getByRole('button',{name:'KI-Einstellungen speichern'}));
+  await screen.findByText('KI-Einstellungen gespeichert. Sie gelten ab dem nächsten Auftrag oder der nächsten Frage.');
+  expect(save).toHaveBeenCalledWith('/api/organizations/org-a/ai-settings',expect.objectContaining({request_timeout_seconds:300}));
+  fireEvent.change(screen.getByLabelText('API-Basis-URL'),{target:{value:'http://localhost:1234/v1'}});
+  expect(timeout).toHaveValue(null);
+  expect(timeout).toHaveAttribute('placeholder','180');
+});

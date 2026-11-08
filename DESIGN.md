@@ -2098,3 +2098,25 @@ notice at desktop and 360 px:
 | After | [view](docs/assets/design/ai-providers-after-1280.png) | [view](docs/assets/design/ai-providers-after-360.png) |
 | Import notice before | [view](docs/assets/design/ai-providers-import-before-1280.png) | [view](docs/assets/design/ai-providers-import-before-360.png) |
 | Import notice after | [view](docs/assets/design/ai-providers-import-after-1280.png) | [view](docs/assets/design/ai-providers-import-after-360.png) |
+
+
+The AI settings card also provides „Zeitlimit pro Anfrage in Sekunden (optional)“.
+An empty compatible value shows the 180-second default; explicit values persist for
+the selected endpoint. Changing provider or API address resets the field. The form
+uses the existing number input, help text and save confirmation.
+
+Import and review pages show „Verbrauch je Importlauf“ with model identity, input
+and output tokens, elapsed whole seconds, and provider-scoped estimated cost.
+Unpriced historical runs show „kein Preis bekannt“ rather than a zero-USD amount.
+The responsive definition list uses one column at 360 px and two on desktop.
+
+The timeout and budget captures use synthetic test data. Their incremental before
+state is `5c84fc7`; the earlier provider-selection captures use `46ffe9f0`.
+Settings captures show different scroll positions so the saved timeout is visible.
+
+| View | Desktop (1280 px) | 360 px |
+| --- | --- | --- |
+| Settings before timeout | [view](docs/assets/design/ai-providers-timeout-before-settings-1280.png) | [view](docs/assets/design/ai-providers-timeout-before-settings-360.png) |
+| Saved timeout after reload | [view](docs/assets/design/ai-providers-timeout-after-control-1280.png) | [view](docs/assets/design/ai-providers-timeout-after-control-360.png) |
+| Review before budget display | [view](docs/assets/design/ai-providers-budget-before-review-1280.png) | [view](docs/assets/design/ai-providers-budget-before-review-360.png) |
+| Review with unpriced run | [view](docs/assets/design/ai-providers-budget-after-review-1280.png) | [view](docs/assets/design/ai-providers-budget-after-review-360.png) |

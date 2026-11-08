@@ -321,3 +321,50 @@ def test_existing_fact_validator_accepts_bare_prefix_but_rejects_unknown_prefix(
     with pytest.raises(ValidationError) as caught:
         FactPayload.model_validate({**fact,"subject_key":"unrecognized-example:identifier"})
     assert caught.value.errors(include_input=False)[0]["type"]=="fact_core_field_unsupported"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("name,expected", [("openai", None), ("openai_compatible", 180), ("anthropic", None)])
+async def test_endpoint_timeout_defaults_and_explicit_override(name, expected):
+    from app.core.config import settings
+    from app.declarations.provider_runtime import create_knowledge_provider
+    base = dict(provider=name, api_key=SecretStr("synthetic-key"), model="gpt-5.6-luna" if name == "openai" else "local-model", qa_enabled=True,
+                base_url="http://localhost:11434/v1" if name == "openai_compatible" else None)
+    for override in (None, 240):
+        effective = EffectiveAiSettings(**base, request_timeout_seconds=override)
+        extraction = create_extraction_provider(effective)
+        knowledge = create_knowledge_provider(effective)
+        try:
+            assert extraction._timeout_seconds == (override or expected or settings.declaration_provider_timeout_seconds)
+            assert knowledge._timeout_seconds == (override or expected or settings.declaration_qa_timeout_seconds)
+            assert extraction._harness_version == ("7" if name == "openai_compatible" else settings.declaration_harness_version)
+        finally:
+            await extraction._client.close()
+            await knowledge._client.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("name,expected", [("openai", "3"), ("openai_compatible", "7")])
+async def test_persisted_run_header_uses_selected_provider_harness(monkeypatch, name, expected):
+    from contextlib import asynccontextmanager
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock, Mock
+    from uuid import uuid4
+    from app.core.config import Settings
+    from app.declarations.pipeline import DeclarationPipeline
+    import app.declarations.pipeline as module
+    import app.services.ai_settings_service as settings_service
+    effective = EffectiveAiSettings(provider=name,api_key=SecretStr("synthetic-key"),model="gpt-5.6-luna" if name=='openai' else 'local-model',base_url='http://localhost:11434/v1' if name=='openai_compatible' else None)
+    provider = create_extraction_provider(effective,configured_settings=Settings(declaration_harness_version='3'))
+    session = SimpleNamespace(add=Mock(),flush=AsyncMock())
+    @asynccontextmanager
+    async def tenant_session(org):
+        yield session
+    monkeypatch.setattr(module,'DeclarationImportRepository',lambda *args:SimpleNamespace(lock_current_lease=AsyncMock(return_value=SimpleNamespace(max_cost_usd=Decimal('1')))))
+    monkeypatch.setattr(settings_service,'require_organization_ai_budget',AsyncMock())
+    pipeline = DeclarationPipeline(provider,configured=Settings(declaration_harness_version='3'),tenant_session_factory=tenant_session)
+    try:
+        await pipeline._start_run(SimpleNamespace(organization_id=uuid4(),import_id=uuid4()))
+        assert session.add.call_args.args[0].harness_version == expected == provider._harness_version
+    finally:
+        await provider._client.close()

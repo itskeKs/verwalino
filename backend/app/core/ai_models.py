@@ -22,6 +22,11 @@ MODEL_PRICES = {
 }
 EVALUATED_MODELS: frozenset[str] = frozenset()
 DEFAULT_TEST_MODEL = 'gpt-5.6-luna'
+DEFAULT_COMPATIBLE_REQUEST_TIMEOUT_SECONDS = 180
+
+
+def endpoint_request_timeout(provider: str, override: int | None) -> int | None:
+    return override if override is not None else DEFAULT_COMPATIBLE_REQUEST_TIMEOUT_SECONDS if provider == 'openai_compatible' else None
 
 
 ANTHROPIC_MODEL_PRICES = {

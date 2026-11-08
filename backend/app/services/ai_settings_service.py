@@ -27,6 +27,7 @@ class EffectiveAiSettings:
     qa_enabled: bool = False
     monthly_limit_usd: Decimal | None = None
     base_url: str | None = None
+    request_timeout_seconds: int | None = None
 
 
 async def effective_ai_settings(db, organization_id) -> EffectiveAiSettings:
@@ -39,7 +40,7 @@ async def effective_ai_settings(db, organization_id) -> EffectiveAiSettings:
             key = SecretStr(_cipher(organization_id).decrypt(row.encrypted_api_key.encode()).decode())
         except (InvalidToken, ValueError):
             raise HTTPException(503, 'Der gespeicherte KI-Schlüssel kann nicht entschlüsselt werden. Bitte hinterlegen Sie ihn erneut in den Einstellungen.') from None
-    return EffectiveAiSettings(row.provider, key, row.model, row.import_enabled, row.qa_enabled, row.monthly_limit_usd, row.base_url)
+    return EffectiveAiSettings(row.provider, key, row.model, row.import_enabled, row.qa_enabled, row.monthly_limit_usd, row.base_url, row.request_timeout_seconds)
 
 
 async def worker_ai_settings(organization_id):
@@ -53,7 +54,7 @@ async def worker_ai_settings(organization_id):
 
 
 def public_settings(row) -> AiSettingsOut:
-    return AiSettingsOut(provider=row.provider if row else 'openai', base_url=row.base_url if row else None, key_set=bool(row and row.encrypted_api_key),
+    return AiSettingsOut(request_timeout_seconds=row.request_timeout_seconds if row else None, provider=row.provider if row else 'openai', base_url=row.base_url if row else None, key_set=bool(row and row.encrypted_api_key),
         model=row.model if row else None, import_enabled=bool(row and row.import_enabled),
         qa_enabled=bool(row and row.qa_enabled), monthly_limit_usd=row.monthly_limit_usd if row else None,
         price_known=bool(row and model_price(row.model, row.provider)))
@@ -114,7 +115,7 @@ async def discover_models(db, organization_id, body):
     if not key:
         raise HTTPException(422, 'Bitte geben Sie zuerst Ihren API-Schlüssel ein.')
     return AiModelsOut(models=[AiModelOut(id=model, evaluated=provider == 'openai' and model in EVALUATED_MODELS,
-        price_known=model_price(model, provider) is not None) for model in await list_models(key, provider=provider, base_url=base_url)])
+        price_known=model_price(model, provider) is not None) for model in await list_models(key, provider=provider, base_url=base_url, timeout_seconds=effective.request_timeout_seconds if (provider, base_url) == (effective.provider, effective.base_url) else None)])
 
 
 async def require_organization_ai_budget(db, organization_id, amount, *, model=None, provider=None):

@@ -1,3 +1,4 @@
+import { DeclarationRunBudget } from "../components/declarations/DeclarationRunBudget";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useLocation, useNavigate, useParams } from "react-router-dom";
 import {
@@ -357,6 +358,8 @@ export function DeclarationImportPage() {
       <p className="declaration-import-live" aria-live="polite">
         {creating ? "Importentwurf wird vorbereitet." : item ? `Importstatus: ${stageLabel(item)}.` : "Importentwurf wird vorbereitet."}
       </p>
+
+      <DeclarationRunBudget runs={item?.runs ?? []} />
 
       <ol className="declaration-import-steps" aria-label="Importschritte">
         <li>Ziel</li><li>Dokumente</li><li>Verarbeitung</li><li>Ergebnis</li>

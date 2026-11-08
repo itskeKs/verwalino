@@ -1,19 +1,20 @@
 """Bounded model discovery at the fixed OpenAI origin; no credential logging."""
 from fastapi import HTTPException
+from app.core.ai_models import endpoint_request_timeout
 
 
-async def list_models(api_key: str, *, provider='openai', base_url=None) -> list[str]:
+async def list_models(api_key: str, *, provider='openai', base_url=None, timeout_seconds=None) -> list[str]:
     if provider != 'openai':
         from app.declarations.provider_runtime import ProviderClient
         client = ProviderClient(provider=provider, api_key=api_key, base_url=base_url)
         try:
-            return await client.list_models()
+            return await client.list_models(timeout=endpoint_request_timeout(provider, timeout_seconds) or 15)
         except Exception:
             raise HTTPException(503, 'Die Modellliste konnte nicht geladen werden. Bitte prüfen Sie Anbieter, Basis-URL und Schlüssel.') from None
         finally:
             await client.close()
     import openai
-    client = openai.AsyncOpenAI(api_key=api_key, base_url='https://api.openai.com/v1', timeout=15, max_retries=0)
+    client = openai.AsyncOpenAI(api_key=api_key, base_url='https://api.openai.com/v1', timeout=timeout_seconds or 15, max_retries=0)
     try:
         result = await client.models.list()
         return sorted({model.id for model in result.data if isinstance(model.id, str) and model.id})

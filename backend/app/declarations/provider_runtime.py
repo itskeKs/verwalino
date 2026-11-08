@@ -19,7 +19,7 @@ from openai import APIConnectionError, APIStatusError, APITimeoutError, RateLimi
 from pydantic import ValidationError
 
 from app.core.config import settings
-from app.core.ai_models import model_price
+from app.core.ai_models import model_price, endpoint_request_timeout
 
 ORIGINS = {"openai": "https://api.openai.com/v1", "anthropic": "https://api.anthropic.com/v1"}
 MAX_RESPONSE_BYTES = 16 * 1024 * 1024
@@ -219,11 +219,11 @@ class ProviderClient:
             parsed = None
         return SimpleNamespace(_schema_diagnostic=diagnostic, output_parsed=parsed, usage=usage, status="completed" if complete or refused else "incomplete", refusal="refused" if refused else None, model=raw.get("model"), _request_id=raw.get("id"))
 
-    async def list_models(self):
+    async def list_models(self, *, timeout=15):
         found = set()
         after = None
         for _ in range(MAX_MODEL_PAGES):
-            raw = await self._request("GET", "/models", params={"after_id":after, "limit":100} if self.provider == "anthropic" and after else {"limit":100} if self.provider == "anthropic" else None)
+            raw = await self._request("GET", "/models", timeout=timeout, params={"after_id":after, "limit":100} if self.provider == "anthropic" and after else {"limit":100} if self.provider == "anthropic" else None)
             for item in raw.get("data", []):
                 value = item.get("id")
                 if isinstance(value, str) and MODEL_ID.fullmatch(value):
@@ -246,7 +246,7 @@ class _ByteEncoder:
 def create_extraction_provider(effective, *, configured_settings=None):
     from app.declarations.openai_provider import OpenAiDeclarationProvider
     if effective.provider == "openai":
-        return OpenAiDeclarationProvider(api_key=effective.api_key.get_secret_value(), primary_model=effective.model, escalation_model=effective.model, configured_settings=configured_settings)
+        return OpenAiDeclarationProvider(api_key=effective.api_key.get_secret_value(), primary_model=effective.model, escalation_model=effective.model, configured_settings=configured_settings, timeout_seconds=endpoint_request_timeout(effective.provider, effective.request_timeout_seconds))
     provider_type = AnthropicDeclarationProvider if effective.provider == "anthropic" else CompatibleDeclarationProvider
     return provider_type(effective, configured_settings=configured_settings)
 
@@ -259,7 +259,9 @@ class CompatibleDeclarationProvider(OpenAiDeclarationProvider):
     def __init__(self, effective, *, configured_settings=None):
         self._provider_name = effective.provider
         self._price_provider = effective.provider
-        super().__init__(client=ProviderClient(provider=effective.provider, api_key=effective.api_key.get_secret_value(), base_url=effective.base_url), primary_model=effective.model, escalation_model=effective.model, token_encoder=_ByteEncoder(), configured_settings=configured_settings)
+        super().__init__(client=ProviderClient(provider=effective.provider, api_key=effective.api_key.get_secret_value(), base_url=effective.base_url), primary_model=effective.model, escalation_model=effective.model, token_encoder=_ByteEncoder(), configured_settings=configured_settings, timeout_seconds=endpoint_request_timeout(effective.provider, effective.request_timeout_seconds))
+        if effective.provider == "openai_compatible":
+            self._harness_version = "7"
 
     def _configured_rates(self, configured):
         price = model_price(self._primary_model, self._price_provider)
@@ -313,7 +315,7 @@ class CompatibleKnowledgeProvider(OpenAIKnowledgeProvider):
     def __init__(self, effective):
         self._price_provider = effective.provider
         price = model_price(effective.model, effective.provider)
-        super().__init__(model=effective.model, client=ProviderClient(provider=effective.provider, api_key=effective.api_key.get_secret_value(), base_url=effective.base_url), input_usd_per_million=price.input if price else Decimal("0"), output_usd_per_million=price.output if price else Decimal("0"))
+        super().__init__(model=effective.model, client=ProviderClient(provider=effective.provider, api_key=effective.api_key.get_secret_value(), base_url=effective.base_url), input_usd_per_million=price.input if price else Decimal("0"), output_usd_per_million=price.output if price else Decimal("0"), timeout_seconds=endpoint_request_timeout(effective.provider, effective.request_timeout_seconds))
 
     def _cache_request_options(self):
         return {}

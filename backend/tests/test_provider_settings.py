@@ -35,3 +35,22 @@ async def test_custom_provider_key_is_encrypted_at_rest(client_a_admin, seed_dat
     assert response.status_code == 200
     encrypted = await migrator_session.scalar(text('SELECT encrypted_api_key FROM organization_ai_settings WHERE organization_id=:org'),{'org':seed_data['org_a_id']})
     assert encrypted and 'synthetic-local' not in encrypted
+
+
+@pytest.mark.asyncio
+async def test_timeout_is_persisted_validated_and_reset_for_new_destination(client_a_admin, seed_data, monkeypatch):
+    path = f"/api/organizations/{seed_data['org_a_id']}/ai-settings"
+    assert (await client_a_admin.get(path)).json()['request_timeout_seconds'] is None
+    body = {'provider':'openai_compatible','base_url':'http://localhost:11434/v1','request_timeout_seconds':240}
+    assert (await client_a_admin.put(path,json=body)).json()['request_timeout_seconds'] == 240
+    assert (await client_a_admin.get(path)).json()['request_timeout_seconds'] == 240
+    from app.declarations import openai_models
+    async def listed(key, **options):
+        assert options['timeout_seconds'] == 240
+        return ['synthetic-model']
+    monkeypatch.setattr(openai_models, 'list_models', listed)
+    assert (await client_a_admin.post(path+'/models',json={'api_key':'synthetic-local'})).status_code == 200
+    for invalid in (0, -1, 3601, 1.5, True):
+        assert (await client_a_admin.put(path,json={**body,'request_timeout_seconds':invalid})).status_code == 422
+    changed = await client_a_admin.put(path,json={'provider':'openai_compatible','base_url':'http://localhost:1234/v1'})
+    assert changed.json()['request_timeout_seconds'] is None

@@ -44,7 +44,7 @@ def read_ai(world):
     assert response.json() == {
         'provider': 'openai', 'base_url': None, 'key_set': True, 'model': 'future-model',
         'import_enabled': True, 'qa_enabled': True, 'monthly_limit_usd': '12.50',
-        'price_known': False,
+        'price_known': False, 'request_timeout_seconds': None,
     }
 
 
@@ -76,7 +76,8 @@ def alpha_unchanged(world):
 @given("a compatible provider lists a synthetic model")
 def compatible_model_list(world, monkeypatch):
     from app.declarations.provider_runtime import ProviderClient
-    async def listed(client):
+    async def listed(client, *, timeout=15):
+        assert timeout == 180
         assert client.provider == 'openai_compatible'
         assert client.base_url == 'https://compatible.example/v1'
         return ['synthetic-compatible-model']

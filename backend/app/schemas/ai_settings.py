@@ -12,6 +12,7 @@ class AiSettingsBody(BaseModel):
     model: str | None = Field(None, min_length=1, max_length=255, pattern=r'^[A-Za-z0-9._:/-]+$')
     import_enabled: bool = False
     qa_enabled: bool = False
+    request_timeout_seconds: int | None = Field(None, strict=True, ge=1, le=3600)
     monthly_limit_usd: Decimal | None = Field(None, ge=0, max_digits=14, decimal_places=2)
 
 
@@ -23,6 +24,7 @@ class AiModelsBody(BaseModel):
 
 
 class AiSettingsOut(BaseModel):
+    request_timeout_seconds: int | None = None
     base_url: str | None = None
     provider: Literal['openai', 'openai_compatible', 'anthropic'] = 'openai'
     key_set: bool

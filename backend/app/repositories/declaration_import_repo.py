@@ -37,6 +37,12 @@ class DeclarationPrincipalDenied(Exception):
 class DeclarationImportRepository(TenantRepository[DeclarationImport]):
     model = DeclarationImport
 
+    async def list_runs(self, import_id: uuid.UUID):
+        return (await self._session.scalars(select(DeclarationExtractionRun).where(
+            DeclarationExtractionRun.organization_id == self._org_id,
+            DeclarationExtractionRun.import_id == import_id,
+        ).order_by(DeclarationExtractionRun.started_at, DeclarationExtractionRun.id))).all()
+
     async def lock_acl(self):
         await self._session.execute(text("SELECT pg_advisory_xact_lock_shared(hashtextextended(:key,0))"),
             {"key": f"scope-acl:{self._org_id}"})

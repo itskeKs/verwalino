@@ -1614,11 +1614,11 @@ remove `/srv/verwalino/logs/.deploy.lock` once no deploy is running. A stale `/s
 (a run was killed) is removed by hand once no backup is running. Never
 run `docker compose down -v` or delete the volumes.
 
-## Migration compatibility: 0029–0179
+## Migration compatibility: 0029–0180
 
 | Revisions | Effect on existing data and runtime compatibility |
 | --- | --- |
-| 0029–0122 | Adds financial, declaration, source custody and review data structures and guards. The 0028 runtime cannot interpret the new schema or enforce its later security rules. The 0028→0179 rehearsal preserves all old columns and rows with synthetic organization, user, document, draft/failed import and failed extraction-run data, but does not prove every live-data combination. |
+| 0029–0122 | Adds financial, declaration, source custody and review data structures and guards. The 0028 runtime cannot interpret the new schema or enforce its later security rules. The 0028→0180 rehearsal preserves all old columns and rows with synthetic organization, user, document, draft/failed import and failed extraction-run data, but does not prove every live-data combination. |
 | 0123 | Adds nullable replacement evidence and changes exception-completion functions/outcomes. Existing rows retain their old disposition; old clients cannot interpret new replacement outcomes. Downgrade refuses retained evidence. |
 | 0124–0125 | Adds bank transactions and a nullable payment link, then enforces tenant/account coherence and immutable booked links. A 0122 database has no pre-existing links; inconsistent intermediate data is not silently repaired. |
 | 0126–0127 | Adds append-only rent history and frozen special levies; replaces financial/source/report adapters. No old financial rows are rewritten. Older runtimes do not understand the new obligations/history. Their downgrades can drop populated new tables; they are not a safe recovery path. |
@@ -1663,14 +1663,15 @@ run `docker compose down -v` or delete the volumes.
 | 0176 (parent 0175) | Records the optional advance mode on original leases and dated rates. Existing rows keep their prior interpretation with a null mode. Downgrade refuses saved explicit modes. |
 | 0177 (parent 0176) | Freezes original advance mode when any booking or finalized statement exists, including when the writer cannot read the associated books. Indexes booked-payment audit lookups. Downgrade removes the guard and index and retains existing records. |
 | 0178 (parent 0177) | Adds encrypted organization AI settings under RLS and serialized tenant monthly accounting. Extends safe pass metadata with `default` for an omitted reasoning parameter. Downgrade refuses existing settings or passes using the new metadata value. |
-| 0179 (head; parent 0178) | Adds compatible API destinations and provider selection without changing existing encrypted keys. Runtime reservations distinguish provider origins. Downgrade refuses configured non-OpenAI destinations. |
+| 0179 (parent 0178) | Adds compatible API destinations and provider selection without changing existing encrypted keys. Runtime reservations distinguish provider origins. Downgrade refuses configured non-OpenAI destinations. |
+| 0180 (head; parent 0179) | Adds a nullable administrator request timeout per configured provider endpoint (1–3600 seconds). Existing settings keep their function defaults; compatible endpoints default to 180 seconds. Downgrade refuses explicit configured timeouts. |
 
 DDL uses the existing PostgreSQL/Alembic transaction; 0123 also takes financial
 and ACL locks with NOWAIT table locks. Contention or unexpected data/function
 definitions must abort, not trigger repair/deletion. A rollback-only synthetic
-0028→0179 rehearsal compares every old table column/row and retained RLS flags;
-the 0122→0179, 0139→0179 and accepted-source 0140→0179, 0141→0179 and
-0142→0179, 0143→0179, 0144→0179, 0145→0179, 0146→0179, 0147→0179, 0148→0179, 0149→0179, 0150→0179, 0151→0179, 0152→0179, 0153→0179, 0154→0179, 0155→0179, 0159→0179, 0160→0179, 0161→0179, 0162→0179, 0163→0179, 0164→0179, 0165→0179, 0166→0179, 0167→0179, 0168→0179, 0169→0179, 0170→0179, 0171→0179, 0172→0179, 0173→0179, 0174→0179, 0175→0179 and 0176→0179 (accepted sources) rehearsals also
+0028→0180 rehearsal compares every old table column/row and retained RLS flags;
+the 0122→0180, 0139→0180 and accepted-source 0140→0180, 0141→0180 and
+0142→0180, 0143→0180, 0144→0180, 0145→0180, 0146→0180, 0147→0180, 0148→0180, 0149→0180, 0150→0180, 0151→0180, 0152→0180, 0153→0180, 0154→0180, 0155→0180, 0159→0180, 0160→0180, 0161→0180, 0162→0180, 0163→0180, 0164→0180, 0165→0180, 0166→0180, 0167→0180, 0168→0180, 0169→0180, 0170→0180, 0171→0180, 0172→0180, 0173→0180, 0174→0180, 0175→0180, 0176→0180, 0177→0180, 0178→0180 and 0179→0180 (accepted sources) rehearsals also
 compare existing ACLs, allowing only the explicit organization INSERT/reserve UPDATE revocations and the capability-checked
 0159 binding adapter and the 0168 column-level resolution-link grant;
 it does not prove live data validity or cross-version runtime compatibility.
@@ -1693,10 +1694,10 @@ When adding a migration, update these together in the same release:
 
 ## Deployment boundary and accepted head
 
-The reviewed code targets **0179**. `backend/app/deployment.py` retains `TARGET`,
+The reviewed code targets **0180**. `backend/app/deployment.py` retains `TARGET`,
 `SUPPORTED`, `release_head()` and the read-only schema/role/runtime checks used
-by the migration rehearsals. Those checks accept measured **0028 → 0179**,
-**0122 → 0179**, **0139 → 0179**, **0140 → 0179**, **0141 → 0179**, **0142 → 0179**, **0143 → 0179**, **0144 → 0179**, **0145 → 0179**, **0146 → 0179**, **0147 → 0179**, **0148 → 0179**, **0149 → 0179**, **0150 → 0179**, **0151 → 0179**, **0152 → 0179**, **0153 → 0179**, **0154 → 0179**, **0155 → 0179**, **0159 → 0179**, **0160 → 0179**, **0161 → 0179**, **0162 → 0179**, **0163 → 0179**, **0164 → 0179**, **0165 → 0179**, **0166 → 0179** (accepted sources), **0167 → 0179** (accepted source), **0168 → 0179** (accepted source), **0169 → 0179** (accepted source), **0170 → 0179** (accepted source), **0171 → 0179** (accepted source), **0172 → 0179** (accepted source), **0173 → 0179** (accepted source), **0174 → 0179** (accepted source), **0175 → 0179** (accepted source), **0176 → 0179** (accepted source), **0177 → 0179**, or **0178 → 0179**; unknown,
+by the migration rehearsals. Those checks accept measured **0028 → 0180**,
+**0122 → 0180**, **0139 → 0180**, **0140 → 0180**, **0141 → 0180**, **0142 → 0180**, **0143 → 0180**, **0144 → 0180**, **0145 → 0180**, **0146 → 0180**, **0147 → 0180**, **0148 → 0180**, **0149 → 0180**, **0150 → 0180**, **0151 → 0180**, **0152 → 0180**, **0153 → 0180**, **0154 → 0180**, **0155 → 0180**, **0159 → 0180**, **0160 → 0180**, **0161 → 0180**, **0162 → 0180**, **0163 → 0180**, **0164 → 0180**, **0165 → 0180**, **0166 → 0180** (accepted sources), **0167 → 0180** (accepted source), **0168 → 0180** (accepted source), **0169 → 0180** (accepted source), **0170 → 0180** (accepted source), **0171 → 0180** (accepted source), **0172 → 0180** (accepted source), **0173 → 0180** (accepted source), **0174 → 0180** (accepted source), **0175 → 0180** (accepted source), **0176 → 0180** (accepted source), **0177 → 0180**, **0178 → 0180**, or **0179 → 0180**; unknown,
 missing, multiple or intermediate revisions are rejected. These are code and
 rehearsal boundaries, not a measurement of a running installation.
 
@@ -2307,7 +2308,7 @@ protect retained records and backup copies, honor the published erasure/retentio
 process, and schedule the command using their existing operations mechanism.
 
 
-## Organization AI settings (0178)
+## Organization AI settings (0178–0180)
 
 Hosted and self-hosted organizations bring their own provider key. An `OWNER_ADMIN`
 opens **Einstellungen → KI für Ihre Organisation**, selects the provider and optional
@@ -2355,7 +2356,7 @@ local service in a self-hosted deployment. Hosted custom endpoints retain the
 public-HTTPS restriction described below.
 
 
-### Provider selection (0179)
+### Provider selection and request timeout (0179–0180)
 
 The organization AI card supports OpenAI, an OpenAI-compatible API with an explicit
 base URL (including `/v1` where required), and the implemented Anthropic Messages
@@ -2371,20 +2372,27 @@ a fresh key. Unknown model prices are shown as unknown and monetary limits are n
 enforced for them; token, attempt and timeout limits still apply. Provider retention
 is contractual; choosing an endpoint does not activate ZDR. See
 [ADR 0014](docs/adr/0014-provider-neutral-ai-runtime.md) for the decision, boundaries
-and current validation status. External-provider live validation is deferred under
-the owner's local-Qwen-first instruction.
+and evaluation boundaries. Model quality, visual-input support and remaining live
+acceptance are tracked separately in [#399](https://github.com/itskeKs/verwalino/issues/399).
 
-The local-Qwen acceptance worker uses the existing
-`HV_DECLARATION_PROVIDER_TIMEOUT_SECONDS=180` only in its own process. The shipped
-default remains 60 seconds; validation under 180 seconds does not validate default
-60-second timing. An operator using the same slower local service must arrange an
-appropriate bounded request deadline through the existing deployment setting;
-provider/model selection by the organization administrator does not change it.
-The normal 120-second worker lease renews every 40 seconds independently of an
-in-flight model call. Token limits and the one schema-repair limit are unchanged.
+Administrators can save an optional **Zeitlimit pro Anfrage** for the selected
+provider endpoint. The database stores whole seconds from 1 to 3600. An empty value
+uses 180 seconds for compatible APIs; OpenAI and Anthropic retain existing
+function-specific defaults (including the 60-second declaration default). Explicit
+values apply to extraction and property Q&A from the next request, without a
+container restart or operator environment change. Changing provider or API address
+resets the form to the new endpoint's default. This timeout bounds one request;
+existing per-run token/attempt caps and the independent worker heartbeat remain.
+The supported endpoint must still complete representative requests within the chosen
+timeout; model quality and timing acceptance are separate from configuration.
+
+Import and review screens show each stored run's input/output tokens and elapsed
+seconds. Cost estimates use that run's provider/model provenance. Unpriced runs
+show **kein Preis bekannt**, even when settings later change to a priced model;
+a numeric ledger placeholder is never displayed as free usage.
 
 Migration 0179 preserves existing encrypted settings and adds the optional compatible
 endpoint and provider constraint. Downgrade refuses configured non-OpenAI destinations
 rather than silently losing their configuration. Existing rows keep their OpenAI
-origin and credentials. This source is accepted for upgrades to 0179 alongside the
+origin and credentials. 0179 is an accepted source for upgrades to 0180 alongside the
 previous sources; production moves only through a reviewed release.

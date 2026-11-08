@@ -1169,7 +1169,7 @@ class DeclarationPipeline:
                 model_name=getattr(self._provider, "_primary_model", "gpt-5.6-luna"),
                 prompt_version=self._settings.declaration_prompt_version,
                 schema_version=self._settings.declaration_schema_version,
-                harness_version=self._settings.declaration_harness_version,
+                harness_version=getattr(self._provider, "_harness_version", self._settings.declaration_harness_version),
                 input_tokens=0,
                 output_tokens=0,
                 estimated_cost_usd=Decimal("0"),

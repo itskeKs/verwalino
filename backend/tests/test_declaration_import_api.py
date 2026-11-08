@@ -126,7 +126,7 @@ async def test_ai_settings_monthly_budget_applies_to_known_prices_only(client_a_
 async def test_ai_model_list_marks_only_models_with_actual_evaluation_evidence(client_a_admin, seed_data, monkeypatch):
     from app.services import ai_settings_service
     from app.declarations import openai_models
-    async def models(key):
+    async def models(key, **options):
         assert key == 'synthetic-model-key'
         return ['gpt-5.6-luna', 'future-model']
     monkeypatch.setattr(openai_models, 'list_models', models)

@@ -1,7 +1,7 @@
 """One encrypted AI configuration per organization."""
 import uuid
 from decimal import Decimal
-from sqlalchemy import String, Text, Boolean, Numeric, ForeignKey
+from sqlalchemy import String, Text, Boolean, Integer, Numeric, ForeignKey
 from sqlalchemy.orm import Mapped, mapped_column
 from app.models.base import Base
 
@@ -11,6 +11,7 @@ class OrganizationAiSettings(Base):
     organization_id: Mapped[uuid.UUID] = mapped_column(ForeignKey('organization.id'), primary_key=True)
     provider: Mapped[str] = mapped_column(String(32), default='openai')
     base_url: Mapped[str | None] = mapped_column(String(2048))
+    request_timeout_seconds: Mapped[int | None] = mapped_column(Integer)
     encrypted_api_key: Mapped[str | None] = mapped_column(Text)
     model: Mapped[str | None] = mapped_column(String(255))
     import_enabled: Mapped[bool] = mapped_column(Boolean, default=False)

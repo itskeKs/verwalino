@@ -1,8 +1,9 @@
 # ADR 0014: Provider-neutral AI transports
 
-- Status: accepted direction; implementation acceptance remains open
+- Status: accepted bounded transport/settings decision
 - Date: 2026-11-08
 - Issue: [#66](https://github.com/itskeKs/verwalino/issues/66)
+- Scope: [owner decision](https://github.com/itskeKs/verwalino/issues/66#issuecomment-6722415190); evaluation follow-up [#399](https://github.com/itskeKs/verwalino/issues/399)
 
 ## Context and inventory
 
@@ -54,20 +55,28 @@ mandatory. Refusals, incomplete responses and malformed schemas retain reported 
 and enter the existing bounded failure/repair paths. No response body or document text
 is written to diagnostic logs.
 
-The Chat Completions wire schema, UTF-8-byte reservation and provider identity have
-their own static fingerprints; declaration harness version 4 records the initial
-transport. After the local schema-capability probe failed, harness version 5
-additionally places the exact wire schema in compatible system instructions; Q&A prompt
-version 2 records its corresponding wrapper change. Original schema validation and gold
-expectations are unchanged. Compatible models receive neither OpenAI reasoning/cache
-extensions nor OpenAI pricing merely because their names match. Text and base64 image
-payloads count against the existing bounded input allowance. A provider must actually
-support structured output, image inputs when needed, and trustworthy token usage; being
-listed does not certify those capabilities. Local correctness still requires the
-unchanged domain/evidence checks.
+The compatible Chat Completions contract has separate static fingerprints and
+harness version 7. It includes the strict wire schema and generated structural
+examples in system instructions, with the same envelope used for conservative
+UTF-8-byte reservations and fingerprinting. Original prompts, Pydantic validators
+and gold expectations remain unchanged. The global OpenAI harness default remains
+version 3; run headers and pass metadata use the selected adapter's version.
+Property Q&A retains its separate versioned contract.
+
+Compatible models receive neither OpenAI reasoning/cache extensions nor OpenAI
+pricing merely because their names match. Text and base64 image payloads count
+against the existing bounded input allowance. A provider must actually support the
+required structured outputs, image inputs when needed, and trustworthy token
+usage; being listed does not certify those capabilities. Local correctness still
+requires the unchanged domain/evidence checks.
 
 The administrator selects provider, optional compatible API base URL, key and model in
-Einstellungen. Changing provider or endpoint clears the saved credential unless a fresh
+Einstellungen. A nullable administrator request timeout is persisted with that
+endpoint. Unset compatible endpoints use 180 seconds; unset OpenAI and Anthropic
+retain the existing function-specific defaults. An explicit whole-second value
+from 1 to 3600 applies to extraction and Q&A. The form resets it when the provider
+or endpoint changes. This requires no operator environment override or restart.
+Changing provider or endpoint clears the saved credential unless a fresh
 key is supplied; model discovery cannot forward the prior destination's key. Keys retain
 tenant-bound encryption and are never returned. The existing organization
 authorization/RLS boundary covers the same settings routes.
@@ -87,73 +96,22 @@ the documented supported `2023-06-01` API version and a workspace-scoped key; no
 workspace selector or ZDR claim is introduced. Further Anthropic-specific work and live
 validation are deferred by the owner's local-Qwen-first instruction.
 
-## Evidence and acceptance status
+## Evaluation boundary
 
-Offline wire/security tests and the settings browser path exercise deterministic
-contracts; they do not establish model quality. The actual local Qwen3.6-35B-A3B import
-was tested once through the ordinary application/worker before any review edits. It
-failed inventory schema validation after the normal two bounded attempts: both returned
-HTTP 200 from the selected local Chat Completions endpoint, with matching
-configured/returned model identity, 908 input tokens and 836 output tokens in total. No
-downstream stages or proposals were reached and nothing was applied. The unchanged
-recorded evaluator preserves this failure; no model is marked evaluated. The first run
-remains frozen under harness 4. A separate plain-word capability probe returned non-JSON
-despite a strict unrelated object schema, establishing that this endpoint does not
-enforce response_format. The harness-5 compatibility repair makes the exact static
-schema visible in system instructions, retains the original local validation and emits
-only the existing bounded allowlisted diagnostic paths/codes. The changed harness-5
-import was tested once with the existing provider timeout set to 180 seconds only in the
-test worker. Inventory passed in 4.734 seconds; core extraction failed validation after
-a 144.121-second request and its normal 123.663-second schema-only repair. Safe
-diagnostic paths/codes reported unsupported core fields and invalid normalized values.
-All three HTTP 200 requests went only to the configured local endpoint; configured and
-returned model IDs matched. The recorded evaluator retained the untouched failure: 5,500
-input and 10,170 output tokens, with no downstream stages or proposals. Nothing was
-applied and the dependent property-Q&A check was not invoked. The cluster remained
-unchanged and idle after the run. The original harness-4 capture is immutable and the
-same- scorer comparison records inventory improvement without claiming acceptance.
+Offline wire/security tests and synthetic browser checks establish transport,
+settings and display behavior. They do not certify model quality. Actual import
+observations, comparisons, untouched captures and remaining model acceptance live
+in [#399](https://github.com/itskeKs/verwalino/issues/399), including visual-input
+capability, default timing and property Q&A. No model is promoted from mocks or a
+provider listing, and no automatic fallback or response remapping is introduced.
 
-Source defaults remain 60 seconds; the observed 144-second core request exceeds that
-deadline, so default timing is not validated for this local service. The independent
-40-second heartbeat renewed the normal 120-second lease; token/repair limits were
-unchanged. Provider selection cannot change this operator deployment prerequisite. The
-180-second setting avoided a timeout but did not establish model correctness.
-
-The local price is unknown, not a claim of free billing. A small text probe produced
-valid JSON, which does not prove server-enforced schemas. The synthetic image probe was
-rejected (observed HTTP 404); actual visual consumption remains unverified. No cluster
-reconfiguration occurred.
-
-The working OpenAI format-2 baseline `lindenallee-12-luna-prereview-0ff1c6e6.json`
-compares successfully: the same scorer reports `OBSERVED_REGRESSION` with partial
-coverage and 16 regressed assertions for the failed local harness-5 run. The local
-harness-4-to-5 comparison shows inventory improvement between two failed runs; it does
-not establish equivalence to working OpenAI. The separate legacy
-`lindenallee-12-luna-prereview-da9b1f60.json` uses an incompatible scorer version and is
-correctly refused without conversion. External provider requests are prohibited by the
-owner's current instruction. Issue #66 remains open: non-OpenAI eval/user acceptance has
-not passed.
-
-The offline harness-6 delta adds a compact compatible-only reminder for schemas
-containing `FactPayload`: existing prefix/field pairs, tagged-object requirements and
-unrelated structural examples. It uses one instruction composer for requests,
-reservation estimates and fingerprints. Original prompts, validators and gold stay
-unchanged. The safe diagnostic allowlist now recognizes `dict_type`; private values and
-unknown paths remain masked. Red/green wire tests pass. QA instructions are unchanged by
-this delta.
-
-The one actual harness-6 import also failed core validation after its normal repair.
-Inventory passed in 4.567 seconds; core and repair returned HTTP 200 in 92.164 and
-91.740 seconds. Each validation event reports 12 errors; the eight retained entries are
-unsupported subject/field pairs at `facts[5]` through `facts[12]`, with the remaining
-entries truncated. No normalized-value error appears in that retained prefix; nothing
-can be concluded about the unseen entries or exact rejected subject/field values. Total
-reported usage is 5,946 input and 6,964 output tokens; USD zero remains an unknown-price
-placeholder. The same working OpenAI format-2 baseline again reports 16 regressed
-assertions with partial coverage. No candidate, apply, image recheck or property Q&A was
-reached. The cluster stayed unchanged and idle, and all three requests went only to the
-selected local endpoint. No model has passed non-OpenAI acceptance or been marked
-evaluated.
+The existing import read response exposes per-run input/output tokens, elapsed
+time and nullable estimated USD cost. Historical price classification uses that
+run's stored provider class and model, never the organization's current settings.
+A compatible endpoint remains unpriced even if its model reuses an OpenAI name.
+The UI says `kein Preis bekannt` and does not turn the ledger's zero placeholder
+into a measured/free price. This presentation does not change reservation,
+billing or evaluation accounting.
 
 ## Later
 
@@ -161,8 +119,8 @@ evaluated.
   tariffs and actual evaluation evidence; unknown models remain visibly unpriced.
 - Additional live Anthropic/provider matrices: resume after the owner's local-first
   milestone, without treating compatible-Qwen results as certification.
-- Broader context/vision model tuning: only when representative imports expose a
-  failure within the existing caps. No generic agent runtime is needed now.
+- Model/vision investigation and additional acceptance: tracked in #399; no further
+  model tuning or generations belong to this transport milestone.
 
 ## Sources
 
