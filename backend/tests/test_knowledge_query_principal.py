@@ -9,7 +9,7 @@ from app.main import app
 pytestmark = pytest.mark.asyncio
 
 
-async def test_query_reservation_records_actual_request_actor(approved_knowledge_graph, client_a_admin, seed_data, migrator_session):
+async def test_query_reservation_records_actual_request_actor(approved_knowledge_graph, client_a_admin, seed_data, migrator_session, configured_ai):
     provider = FakeKnowledgeProvider()
     app.dependency_overrides[get_knowledge_provider] = lambda: provider
     try:
@@ -55,7 +55,7 @@ async def test_stale_http_principal_denied_before_knowledge_or_provider(approved
         app.dependency_overrides.pop(get_knowledge_provider,None)
 
 
-async def test_read_only_member_retains_knowledge_query(approved_knowledge_graph, client_a_admin, seed_data, migrator_session):
+async def test_read_only_member_retains_knowledge_query(approved_knowledge_graph, client_a_admin, seed_data, migrator_session, configured_ai):
     actor = seed_data['user_a_admin_id']
     await mutate(text("UPDATE membership SET role='READ_ONLY' WHERE user_id=:actor"), {'actor':actor})
     app.dependency_overrides[get_knowledge_provider] = lambda: FakeKnowledgeProvider()
@@ -69,7 +69,7 @@ async def test_read_only_member_retains_knowledge_query(approved_knowledge_graph
 
 
 @pytest.mark.parametrize('phase', ['reservation', 'answer'])
-async def test_revocation_between_transactions_suppresses_answer_and_preserves_cost(approved_knowledge_graph, client_a_admin, seed_data, migrator_session, monkeypatch, phase):
+async def test_revocation_between_transactions_suppresses_answer_and_preserves_cost(approved_knowledge_graph, client_a_admin, seed_data, migrator_session, monkeypatch, phase, configured_ai):
     from app.services import property_knowledge_service as service
     original_actor = service._knowledge_actor
     checks = 0

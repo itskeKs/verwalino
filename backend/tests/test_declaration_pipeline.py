@@ -1666,7 +1666,7 @@ async def test_reservation_is_committed_before_provider_and_failure_without_usag
 @pytest.mark.parametrize('failure_point', ['load', 'transition', 'quota', 'checkpoint', 'publish'])
 async def test_database_lock_timeout_retries_pipeline_without_losing_usage(seed_data, monkeypatch, failure_point):
     from app.core.locking import LockTimeoutError
-    from app.services import quota_service
+    from app.services import ai_settings_service
 
     lease, document_key, store = await _seed_pipeline_import(seed_data, make_text_pdf('Teilungserklärung'))
     provider = _RecordingProvider(document_key)
@@ -1679,7 +1679,7 @@ async def test_database_lock_timeout_retries_pipeline_without_losing_usage(seed_
         raise LockTimeoutError('synthetic database contention')
 
     if failure_point == 'quota':
-        monkeypatch.setattr(quota_service, 'require_ai_budget', locked)
+        monkeypatch.setattr(ai_settings_service, 'require_organization_ai_budget', locked)
     else:
         monkeypatch.setattr(pipeline, f'_{failure_point}', locked)
     before = datetime.now(timezone.utc)

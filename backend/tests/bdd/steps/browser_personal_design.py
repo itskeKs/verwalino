@@ -21,9 +21,9 @@ async def save_warm(browser_world):
     page = browser_world.page
     await expect(page.get_by_role('radio', name='Warm', exact=False)).to_be_enabled()
     await page.get_by_role('radio', name='Warm', exact=False).check()
-    await expect(page.get_by_role('status')).to_have_text('Noch nicht gespeichert.')
+    await expect(page.locator('.theme-save-row').get_by_role('status')).to_have_text('Noch nicht gespeichert.')
     await page.get_by_role('button', name='Design speichern', exact=True).click()
-    await expect(page.get_by_role('status')).to_have_text('Design für Ihr Benutzerkonto gespeichert.')
+    await expect(page.locator('.theme-save-row').get_by_role('status')).to_have_text('Design für Ihr Benutzerkonto gespeichert.')
     await page.reload()
 
 
@@ -60,7 +60,7 @@ async def save_klar_on_phone(browser_world):
     await expect(page.get_by_role('radio', name='Klar', exact=False)).to_be_enabled()
     await page.get_by_role('radio', name='Klar', exact=False).check()
     await page.get_by_role('button', name='Design speichern', exact=True).click()
-    await expect(page.get_by_role('status')).to_have_text('Design für Ihr Benutzerkonto gespeichert.')
+    await expect(page.locator('.theme-save-row').get_by_role('status')).to_have_text('Design für Ihr Benutzerkonto gespeichert.')
 
 
 @then('Klar is selected and the mobile navigation is usable')
