@@ -392,6 +392,7 @@ class WegSettlementInput:
     paid_advances: tuple[OwnerAdvanceInput, ...] = ()
     economic_plan_id: uuid.UUID | None = None
     engine_version: str = "m4.1.0"
+    plan_reserve: tuple[OwnerAdvanceInput, ...] = ()
     reserve_paid_contributions: tuple[OwnerAdvanceInput, ...] | None = None
     reserve_ledger: dict | None = None
 
@@ -525,7 +526,7 @@ class OwnerResult:
     owner_cost_total: Decimal
     # PLAN_ADVANCE (Soll) of this owner from the Wirtschaftsplan.
     plan_advance: Decimal
-    # ABRECHNUNGSSPITZE = owner_cost_total - plan_advance (WEMoG, ADR-0007).
+    # ABRECHNUNGSSPITZE = owner_cost_total + plan_reserve_soll - plan_advance (ADR-0007).
     abrechnungsspitze: Decimal
     # (nachrichtlich) actually-paid advances of this owner -- separate from the
     # Spitze (m4 section 2.1). None if not supplied.
@@ -533,6 +534,8 @@ class OwnerResult:
     reserve_notice: str | None = None
     account_balance: Decimal | None = None
     payment_amount: Decimal | None = None
+    # Planned reserve is owner Soll, separate from actual costs and cash contributions.
+    plan_reserve_soll: Decimal = Decimal("0.00")
 
 
 @dataclass(frozen=True)
@@ -562,7 +565,7 @@ class WegResult:
     cost_total: Decimal
     reserve_contributions_total: Decimal
     plan_advances_total: Decimal
-    # Σ abrechnungsspitze over all owners (== cost_total - plan_advances_total).
+    # Σ owner Spitzen: cost_total + Σ plan_reserve_soll - plan_advances_total.
     abrechnungsspitze_total: Decimal
 
 

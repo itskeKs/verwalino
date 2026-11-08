@@ -23,7 +23,8 @@ Flow (m4 section 10.1):
          co-owned unit's share is split exactly among co-owners.
   4. per owner: sum the rounded position shares into three subtotals
      (umlagefaehig / nicht umlagefaehig / reserve), OWNER_COST_TOTAL = the first
-     two; ABRECHNUNGSSPITZE = OWNER_COST_TOTAL - PLAN_ADVANCE (WEMoG, ADR-0007).
+     two; ABRECHNUNGSSPITZE = OWNER_COST_TOTAL + planned reserve Soll - PLAN_ADVANCE
+     (WEMoG, ADR-0007).
   5. build the reserve development (opening + Σ contributions - withdrawals ==
      closing, checked fail-loud).
 
@@ -478,13 +479,14 @@ def compute_weg_jahresabrechnung(inp: WegSettlementInput) -> WegResult:
 
     # Plan-Soll per owner (the Abrechnungsspitze subtrahend, ADR-0007).
     plan_by_owner = {a.owner_profile_id: _money(a.plan_advance_total) for a in inp.plan_advances}
+    reserve_soll_by_owner = {a.owner_profile_id: _money(a.plan_advance_total) for a in inp.plan_reserve}
     paid_by_owner = {a.owner_profile_id: _money(a.plan_advance_total) for a in inp.paid_advances}
 
     # Payment-only owners still need their own account balance and credit;
     # this does not add any costs or plan Soll to their resolved Spitze.
     if inp.reserve_paid_contributions is not None:
         owner_reserve = {item.owner_profile_id: item.plan_advance_total for item in inp.reserve_paid_contributions}
-    billed_owner_ids = set(owner_cost_lines) | set(plan_by_owner)
+    billed_owner_ids = set(owner_cost_lines) | set(plan_by_owner) | set(reserve_soll_by_owner)
     all_owner_ids = billed_owner_ids | set(owner_reserve) | set(paid_by_owner)
 
     owners: list[OwnerResult] = []
@@ -496,7 +498,8 @@ def compute_weg_jahresabrechnung(inp: WegSettlementInput) -> WegResult:
         res = owner_reserve.get(owner_id, Decimal("0.00"))
         owner_cost_total = _money(uml + nicht)
         plan_advance = plan_by_owner.get(owner_id, Decimal("0.00"))
-        spitze = _money(owner_cost_total - plan_advance)
+        plan_reserve_soll = reserve_soll_by_owner.get(owner_id, Decimal("0.00"))
+        spitze = _money(owner_cost_total + plan_reserve_soll - plan_advance)
         paid = paid_by_owner.get(owner_id)
         account_balance = _money(plan_advance - paid) if paid is not None else None
         plan_advances_total += plan_advance
@@ -510,6 +513,7 @@ def compute_weg_jahresabrechnung(inp: WegSettlementInput) -> WegResult:
                 subtotal_reserve=_money(res),
                 owner_cost_total=owner_cost_total,
                 plan_advance=plan_advance,
+                plan_reserve_soll=plan_reserve_soll,
                 abrechnungsspitze=spitze,
                 paid_advances=paid_by_owner.get(owner_id),
                 account_balance=account_balance,

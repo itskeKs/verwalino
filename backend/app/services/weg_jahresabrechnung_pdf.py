@@ -136,6 +136,11 @@ def build_weg_jahresabrechnung_html(
                     f"<tr class='cost-total'><td colspan='5'>{_esc(ln.label)}</td>"
                     f"<td class='num'>{_eur(ln.amount)}</td></tr>"
                 )
+            elif ln.line_type == "RESERVE_SOLL":
+                rows.append(
+                    f"<tr class='plan'><td colspan='5'>zuzueglich {_esc(ln.label)}</td>"
+                    f"<td class='num'>{_eur(ln.amount)}</td></tr>"
+                )
             elif ln.line_type == "PLAN_ADVANCE":
                 rows.append(
                     f"<tr class='plan'><td colspan='5'>abzueglich {_esc(ln.label)}</td>"

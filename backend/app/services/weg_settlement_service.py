@@ -83,7 +83,7 @@ from app.repositories.settlement_repo import (
 
 from app.services.reserve_ledger_service import ReserveLedgerService
 
-ENGINE_VERSION = "m4.3.2"
+ENGINE_VERSION = "m4.4.0"
 
 DELETE_MESSAGES = {
     'SETTLEMENT_DELETE_SOURCE_ACCESS_REQUIRED': 'Zum Löschen dieses Entwurfs benötigen Sie Zugriff auf alle Finanzquellen des Objekts.',
@@ -568,6 +568,16 @@ class WegSettlementService:
             for oid, amt in per_owner.items()
         ]
 
+    def _plan_reserve_per_owner(self, ledger: dict) -> tuple[OwnerAdvanceInput, ...]:
+        """Sum each owner's PLANNED reserve rows: the frozen split the ledger shows and caps with (ADR-0007, #401)."""
+        per_owner: dict[uuid.UUID, Decimal] = {}
+        for row in ledger['entries']:
+            if row.get('kind') == 'PLANNED' and row.get('owner_profile_id'):
+                oid = uuid.UUID(row['owner_profile_id'])
+                per_owner[oid] = per_owner.get(oid, Decimal('0.00')) + Decimal(row['amount'])
+        return tuple(OwnerAdvanceInput(owner_profile_id=oid, plan_advance_total=amount)
+                     for oid, amount in sorted(per_owner.items(), key=lambda item: str(item[0])))
+
     async def reject_paid_amount(self, run_id: uuid.UUID, owner_id: uuid.UUID, *, missing: bool, capability=ScopeCapability.PREPARE) -> NoReturn:
         """Resolve an input error only within the authorized draft and owner roster."""
         run = await self._get_weg_draft_or_404(run_id)
@@ -601,7 +611,7 @@ class WegSettlementService:
         the engine. Plan owners and owners active within the period both belong
         to the roster, including a successor with no OWNER_ADVANCE plan line.
         These payments affect only account_balance/payment_amount; the Spitze
-        remains actual costs minus the unchanged plan Soll.
+        remains actual costs plus planned reserve Soll minus the unchanged plan advance.
         """
         from app.services.payment_service import PaymentService
 
@@ -728,6 +738,7 @@ class WegSettlementService:
             owner_periods=owner_inputs,
             cost_positions=tuple(p for p in position_inputs if not p.reserve_relevant),
             plan_advances=tuple(plan_advances),
+            plan_reserve=self._plan_reserve_per_owner(ledger),
             reserve=ReserveInput(
                 opening_balance=Decimal(ledger['opening_balance']),
                 withdrawals_total=Decimal(ledger['withdrawals_total']),
@@ -770,13 +781,18 @@ class WegSettlementService:
             self._session.add(self._line(run, owner.owner_profile_id, "OWNER_COST_TOTAL",
                                          "Summe anteilige Kosten (Ist)", owner.owner_cost_total,
                                          sort, note="umlagefaehig + nicht umlagefaehig (ohne Ruecklage)")); sort += 1
+            if owner.plan_reserve_soll != 0:
+                self._session.add(self._line(run, owner.owner_profile_id, "RESERVE_SOLL",
+                                             "Ruecklagenzufuehrung laut Wirtschaftsplan (Soll)",
+                                             owner.plan_reserve_soll, sort,
+                                             note="Soll-Position laut Wirtschaftsplan")); sort += 1
             self._session.add(self._line(run, owner.owner_profile_id, "PLAN_ADVANCE",
                                          "Soll-Vorschuesse (Wirtschaftsplan)", owner.plan_advance,
                                          sort, note="beschlossenes Soll")); sort += 1
             self._session.add(self._line(run, owner.owner_profile_id, "ABRECHNUNGSSPITZE",
                                          "Abrechnungsspitze (Nachschuss/Guthaben)" ,
                                          owner.abrechnungsspitze, sort,
-                                         note="Ist - Soll (WEMoG, beschlussrelevant)")); sort += 1
+                                         note="Kosten + Ruecklage-Soll - Vorschuss-Soll (WEMoG, beschlussrelevant)")); sort += 1
             if owner.subtotal_reserve != Decimal("0.00"):
                 self._session.add(self._line(run, owner.owner_profile_id, "RESERVE_CONTRIBUTION",
                                              "Zufuehrung Erhaltungsruecklage (Ihr Anteil)",

@@ -1838,6 +1838,8 @@ its backing Hausgeld was reversed, on both pages and at both viewport widths.
 
 ### WEG annual statement: Spitze and Hausgeld (#204)
 
+The owner table shows “Rücklagenzuführung laut Wirtschaftsplan (Soll)” as a separate
+summary row between the actual cost sum and plan advances when nonzero (#401).
 Each owner block starts with its actual cost share and a wrapping definition list:
 “Abrechnungsspitze (beschlossen, § 28 Abs. 2 WEG)”, “Hausgeld-Soll laut Wirtschaftsplan”,
 “Hausgeld gezahlt”, “Rückstand / Guthaben aus Hausgeld” and the bold “Zahlbetrag”.

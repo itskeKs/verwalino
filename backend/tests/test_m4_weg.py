@@ -862,7 +862,7 @@ class TestM4WirtschaftsplanE2E:
 # ===========================================================================
 class TestM4WegSettlementE2E:
     @pytest.mark.asyncio
-    async def test_full_weg_settlement(self, client_a_admin, m4_withdrawal_seed):
+    async def test_full_weg_settlement(self, client_a_admin, m4_withdrawal_seed, app_rw_session):
         plan_id = await _create_and_finalize_plan(client_a_admin, m4_withdrawal_seed)
         # Create the WEG run linked to the plan.
         resp = await client_a_admin.post("/api/weg-settlements", json={
@@ -895,12 +895,30 @@ class TestM4WegSettlementE2E:
         assert plan_adv[m4_withdrawal_seed["owner_a"]] == "7800.00"
         assert plan_adv[m4_withdrawal_seed["owner_b"]] == "5200.00"
 
-        # Abrechnungsspitze = Ist - Soll (NOT incl. reserve in the Ist):
-        #   A 4200 - 7800 = -3600.00 (Guthaben) ; B 2800 - 5200 = -2400.00.
+        # Planned reserve is owner Soll, not a cost: both Spitzen are zero.
         spitze = {ln["addressee_owner_profile_id"]: ln["amount"]
                   for ln in lines if ln["line_type"] == "ABRECHNUNGSSPITZE"}
-        assert spitze[m4_withdrawal_seed["owner_a"]] == "-3600.00"
-        assert spitze[m4_withdrawal_seed["owner_b"]] == "-2400.00"
+        assert spitze[m4_withdrawal_seed["owner_a"]] == "0.00"
+        assert spitze[m4_withdrawal_seed["owner_b"]] == "0.00"
+        reserve_soll = {ln["addressee_owner_profile_id"]: ln["amount"]
+                        for ln in lines if ln["line_type"] == "RESERVE_SOLL"}
+        assert reserve_soll == {m4_withdrawal_seed["owner_a"]: "3600.00",
+                                m4_withdrawal_seed["owner_b"]: "2400.00"}
+        # Each owner's Soll is the sum of that owner's PLANNED rows in the frozen reserve ledger.
+        await app_rw_session.execute(
+            text("SELECT set_config('app.current_org_id', :oid, true)"),
+            {"oid": str(m4_withdrawal_seed["org_a_id"])},
+        )
+        payload = (await app_rw_session.execute(
+            text("SELECT snapshot_payload FROM settlement_run WHERE id = :id"), {"id": run_id}
+        )).scalar_one()
+        planned = {}
+        for row in payload["reserve_ledger"]["entries"]:
+            if row["kind"] == "PLANNED":
+                planned[row["owner_profile_id"]] = planned.get(row["owner_profile_id"], Decimal("0.00")) + Decimal(row["amount"])
+        assert planned
+        assert reserve_soll == {owner: format(amount, ".2f") for owner, amount in planned.items()}
+        await app_rw_session.rollback()
 
         # A reserve cost position is not cash: no owner has paid a contribution.
         res_owner = {ln["addressee_owner_profile_id"]: ln["amount"]
@@ -1358,8 +1376,8 @@ async def test_weg_balance_reads_booked_payments_and_freezes_them(client_a_admin
     result = response.json()
     owner = next(o for o in result['owner_results'] if o['owner_profile_id'] == w['owner_a'])
     assert (owner['plan_soll'], owner['paid'], owner['account_balance'], owner['payment_amount']) == (
-        '7800.00', '7400.00', '400.00', '-3200.00')
-    assert owner['abrechnungsspitze'] == '-3600.00'
+        '7800.00', '7400.00', '400.00', '400.00')
+    assert owner['abrechnungsspitze'] == '0.00'
     assert (await api.get('/api/payments')).json() == before
     await app_rw_session.execute(text("SELECT set_config('app.current_org_id', :org, true)"), {'org': str(w['org_a_id'])})
     payload = (await app_rw_session.execute(text('SELECT snapshot_payload FROM settlement_run WHERE id=:id'), {'id': run})).scalar_one()
@@ -1377,16 +1395,24 @@ async def test_weg_balance_reads_booked_payments_and_freezes_them(client_a_admin
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize('engine_version,has_balance', [('m4.2.0', False), ('m4.3.0', True)])
+@pytest.mark.parametrize('engine_version,has_balance', [('m4.2.0', False), ('m4.3.0', True), ('m4.3.2', True)])
 async def test_legacy_weg_pdf_and_digest_are_not_upgraded_on_read(client_a_admin, m4_seed, app_rw_session, monkeypatch, engine_version, has_balance):
     from app.engine.canonical import canonical_json, sha256_hex
     from app.services import weg_settlement_service as service
     from tests.test_reserve_ledger import pdf_text
     original_builder = service.build_weg_snapshot_payload
+    original_compute = service.compute_weg_jahresabrechnung
+    def legacy_compute(inp):
+        from dataclasses import replace
+        if hasattr(inp, "plan_reserve"):
+            inp = replace(inp, plan_reserve=())
+        return original_compute(inp)
+    monkeypatch.setattr(service, "compute_weg_jahresabrechnung", legacy_compute)
     def legacy_builder(inp, result):
         payload = original_builder(inp, result)
-        if not has_balance:
-            for owner in payload['result']['owners']:
+        for owner in payload['result']['owners']:
+            owner.pop('plan_reserve_soll', None)
+            if not has_balance:
                 for key in ('plan_soll', 'paid', 'account_balance', 'payment_amount'):
                     owner.pop(key)
         return payload
@@ -1398,8 +1424,14 @@ async def test_legacy_weg_pdf_and_digest_are_not_upgraded_on_read(client_a_admin
     assert response.status_code == 201, response.text
     run = response.json()['id']
     frozen = (await finalize_weg_fixture(client_a_admin, run, m4_seed)).json()
+    assert not any(ln['line_type'] == 'RESERVE_SOLL' for ln in frozen['lines'])
+    assert sorted(ln['amount'] for ln in frozen['lines'] if ln['line_type'] == 'ABRECHNUNGSSPITZE') == ['-2400.00', '-3600.00']
     original_pdf = (await client_a_admin.get(f'/api/weg-settlements/{run}/pdf')).content
     monkeypatch.undo()
+    def refuse_recompute(*args, **kwargs):
+        raise AssertionError('A finalized run must never be recomputed')
+    monkeypatch.setattr(service, 'compute_weg_jahresabrechnung', refuse_recompute)
+    assert (await client_a_admin.post(f'/api/weg-settlements/{run}/compute', json=weg_values(m4_seed))).status_code == 409
     response = await client_a_admin.get(f'/api/weg-settlements/{run}/pdf')
     assert response.status_code == 200 and response.content.startswith(b'%PDF')
     assert response.content == original_pdf
@@ -1412,6 +1444,7 @@ async def test_legacy_weg_pdf_and_digest_are_not_upgraded_on_read(client_a_admin
     payload = (await app_rw_session.execute(text('SELECT snapshot_payload FROM settlement_run WHERE id=:id'), {'id': run})).scalar_one()
     assert sha256_hex(canonical_json(payload)) == frozen['snapshot_sha256']
     assert all(('payment_amount' in o) == has_balance for o in payload['result']['owners'])
+    assert all('plan_reserve_soll' not in o for o in payload['result']['owners'])
 
 
 @pytest.mark.asyncio
@@ -1867,3 +1900,29 @@ async def test_input_roster_keeps_original_plan_owner_after_history_correction(c
     await app_rw_session.execute(text("SELECT set_config('app.current_org_id',:org,true)"), {'org': str(org)})
     original = await EconomicPlanRepository(app_rw_session, org).get_by_id(uuid.UUID(plan))
     assert await CoverageDeclarationRepository(app_rw_session, org).owner_ids(original) == {w['owner_a'], w['owner_b']}
+
+
+def test_planned_reserve_sums_the_ledger_planned_rows_per_owner():
+    from app.engine.types import OwnerAdvanceInput
+    from app.services.weg_settlement_service import WegSettlementService
+
+    owner_a, owner_b = uuid.UUID(int=1), uuid.UUID(int=2)
+    unit_1, unit_2 = uuid.UUID(int=11), uuid.UUID(int=12)
+
+    def planned(unit, owner, month, amount):
+        return {'kind': 'PLANNED', 'date': f'2025-{month:02d}-01', 'unit_id': str(unit),
+                'owner_profile_id': str(owner), 'amount': amount}
+
+    entries = [
+        # Owner b is listed first: the result is ordered by owner id, not by row order.
+        *[planned(unit_2, owner_b, month, '200.00') for month in range(1, 13)],
+        planned(unit_1, owner_a, 1, '200.01'),
+        *[planned(unit_1, owner_a, month, '200.00') for month in range(2, 13)],
+        *[planned(unit_2, owner_a, month, '100.00') for month in range(1, 13)],
+        {'kind': 'CONTRIBUTION', 'date': '2025-03-01', 'owner_profile_id': str(owner_a), 'amount': '500.00'},
+        {'kind': 'PLANNED', 'date': '2025-04-01', 'unit_id': str(unit_1), 'amount': '999.00'},
+    ]
+    service = WegSettlementService.__new__(WegSettlementService)
+    assert service._plan_reserve_per_owner({'entries': entries}) == (
+        OwnerAdvanceInput(owner_a, Decimal('3600.01')), OwnerAdvanceInput(owner_b, Decimal('2400.00')))
+    assert service._plan_reserve_per_owner({'entries': []}) == ()

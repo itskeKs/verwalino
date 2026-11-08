@@ -325,3 +325,13 @@ it('prefills every input owner including the buyer absent from the frozen plan',
   await waitFor(() => expect(buyerInput).toHaveValue('2400.00'));
   expect(sellerInput).toHaveValue('2400.00');
 });
+
+
+it('renders the planned reserve as a separate owner Soll line', async () => {
+  install([{ ...draft(), lines: [{ ...frozenLine('reserve', seller, '3600.00'),
+    line_type: 'RESERVE_SOLL', label: 'Ruecklagenzufuehrung laut Wirtschaftsplan (Soll)' }] }]);
+  show();
+  const heading = await screen.findByRole('heading', { name: 'Anna Alt' });
+  const row = within(heading.parentElement!).getByText('Rücklagenzuführung laut Wirtschaftsplan (Soll)').closest('tr')!;
+  expect(within(row).getByText('3600.00 EUR')).toBeVisible();
+});

@@ -16,7 +16,7 @@ from decimal import Decimal
 import pytest
 from hypothesis import given, settings, strategies as st
 
-from app.engine.rounding import CENT
+from app.engine.rounding import CENT, distribute_amount
 from app.engine.periods import build_owner_cover, time_factor
 from app.engine.types import (
     OwnerAdvanceInput,
@@ -103,16 +103,17 @@ class TestI4A_SumEqualsTotal:
 
 
 # ===========================================================================
-# I4-C: Abrechnungsspitze == Ist - Soll (per owner AND Σ, no drift).
+# I4-C: Abrechnungsspitze == cost + planned reserve - plan advance (per owner AND Σ, no drift).
 # ===========================================================================
 class TestI4C_SpitzeIstMinusSoll:
     @settings(max_examples=200)
     @given(
         meas=st.lists(mea_values(), min_size=1, max_size=6),
         cost=money_amounts(min_eur=1),
+        reserve=money_amounts(),
         soll_seed=st.lists(money_amounts(min_eur=0, max_eur=50000), min_size=1, max_size=6),
     )
-    def test_spitze_equals_ist_minus_soll(self, meas, cost, soll_seed):
+    def test_spitze_equals_ist_minus_soll(self, meas, cost, reserve, soll_seed):
         n = len(meas)
         units = tuple(
             UnitInput(id=_U(10 + i), number=str(i), usage_type="WOHNUNG", mea=m)
@@ -137,14 +138,16 @@ class TestI4C_SpitzeIstMinusSoll:
             period_start=YEAR_START, period_end=YEAR_END,
             property=PropertyInput(id=_U(1), name="WEG", management_type="WEG"),
             units=units, owner_periods=owners, cost_positions=pos, plan_advances=plan,
+            plan_reserve=tuple(OwnerAdvanceInput(_U(100 + i), amount)
+                for i, amount in enumerate(distribute_amount(reserve, meas))),
         )
         r = compute_weg_jahresabrechnung(inp)
-        # Per owner: Spitze == owner_cost_total - plan_advance, exactly.
+        # Planned reserve is owner Soll, while costs stay separate.
         for o in r.owners:
-            assert o.abrechnungsspitze == o.owner_cost_total - o.plan_advance
-        # Σ Spitzen == Σ Ist - Σ Soll, no drift over owners.
+            assert o.abrechnungsspitze == o.owner_cost_total + o.plan_reserve_soll - o.plan_advance
+        # No drift over owners, including the planned reserve.
         sum_spitze = sum((o.abrechnungsspitze for o in r.owners), Decimal("0.00"))
-        assert sum_spitze == r.cost_total - r.plan_advances_total
+        assert sum_spitze == r.cost_total + sum((o.plan_reserve_soll for o in r.owners), Decimal("0.00")) - r.plan_advances_total
         assert r.abrechnungsspitze_total == sum_spitze
 
 

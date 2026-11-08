@@ -31,6 +31,7 @@ const LINE_LABELS: Record<string, string> = {
   OWNER_COST_TOTAL: "Summe Ist-Kosten (Ihr Anteil)",
   PLAN_ADVANCE: "Soll-Vorschüsse (Wirtschaftsplan)",
   ABRECHNUNGSSPITZE: "Abrechnungsspitze",
+  RESERVE_SOLL: "Rücklagenzuführung laut Wirtschaftsplan (Soll)",
   RESERVE_CONTRIBUTION: "Zuführung Erhaltungsrücklage",
 };
 
