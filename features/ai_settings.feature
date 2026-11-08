@@ -9,8 +9,8 @@ Feature: Organization AI settings
     And the organization's next AI settings read uses the chosen model
 
 
-  Scenario: An administrator selects a model from a local compatible provider
+  Scenario: An administrator selects a model from a compatible provider
     Given an administrator of "Verwaltung Alpha" is signed in
-    And a local compatible provider lists a synthetic model
+    And a compatible provider lists a synthetic model
     When the administrator selects that provider and enables imports
     Then the selected endpoint and model are saved without returning the key
