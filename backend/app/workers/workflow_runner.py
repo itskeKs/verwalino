@@ -80,8 +80,6 @@ def build_adapters(stages=INBOX_STAGES,*,session_factory=None,declaration_worker
     async def declaration(org):
         nonlocal declaration_worker
         if declaration_worker is None:
-            from app.declarations.openai_provider import OpenAiDeclarationProvider
-            from app.declarations.pipeline import DeclarationPipeline
             from app.workers.declaration_import import DeclarationImportWorker
             declaration_worker=DeclarationImportWorker()
         return (await declaration_worker.run_once(organization_id=org)).code

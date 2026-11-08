@@ -1894,7 +1894,8 @@ export interface UnitHouseholdRow {
   is_vacancy: boolean;
 }
 export interface OrganizationAiSettings {
-  provider: 'openai';
+  provider: 'openai' | 'openai_compatible' | 'anthropic';
+  base_url: string | null;
   key_set: boolean;
   model: string | null;
   import_enabled: boolean;

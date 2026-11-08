@@ -1257,7 +1257,7 @@ class SyntheticFakeEvaluationAdapter:
             allowed_rule_ids=[item.id for item in hits if item.kind == "RULE"],
             allowed_source_ids=[source.id for item in hits for source in item.sources],
             schema_version="knowledge-answer-v1",
-            prompt_version="knowledge-qa-v1",
+            prompt_version="knowledge-qa-v2",
         )
         knowledge_result = await FakeKnowledgeProvider(max_output_tokens=1_000).answer(
             knowledge_request,
@@ -1842,7 +1842,8 @@ class BoundedProductionDeclarationPipelineAdapter:
         # this runtime path.
         from app.core.config import settings
         from app.declarations.evidence import EvidenceTextIndex
-        from app.declarations.openai_provider import OpenAiDeclarationProvider, _Rates
+        from app.declarations.openai_provider import _Rates
+        from app.declarations.provider_runtime import create_extraction_provider
         from app.declarations.pipeline import (
             DeclarationPipeline,
             PipelineFailure,
@@ -1875,11 +1876,15 @@ class BoundedProductionDeclarationPipelineAdapter:
                 ),
             }
         runtime_settings = settings.model_copy(update=runtime_updates)
-        provider = OpenAiDeclarationProvider(configured_settings=runtime_settings,
-            api_key=effective.api_key.get_secret_value(), primary_model=self._configuration.primary_model,
-            escalation_model='gpt-5.4-mini' if self._configuration.mini_router_enabled else self._configuration.primary_model,
-            reasoning_effort=self._configuration.reasoning_effort)
-        if self._configuration.label == "terra_primary":
+        from dataclasses import replace
+        if effective.provider != 'openai' and self._configuration.mini_router_enabled:
+            raise LiveHarnessUnavailable('Cross-model comparison requires the OpenAI configuration.')
+        provider = create_extraction_provider(replace(effective, model=self._configuration.primary_model), configured_settings=runtime_settings)
+        if effective.provider == 'openai':
+            provider._primary_reasoning_effort = self._configuration.reasoning_effort
+            provider._escalation_model = 'gpt-5.4-mini' if self._configuration.mini_router_enabled else self._configuration.primary_model
+            provider._rates = provider._configured_rates(runtime_settings)
+        if effective.provider == "openai" and self._configuration.label == "terra_primary":
             # Comparison-only caller supplied rates are deliberately not copied
             # into application settings or production defaults.
             provider._rates[self._configuration.primary_model] = _Rates(
@@ -1944,6 +1949,8 @@ class BoundedProductionDeclarationPipelineAdapter:
                     max_output_tokens=settings.declaration_max_output_tokens,
                     max_cost_usd=settings.declaration_max_cost_usd,
                     configured=settings,
+                    model=provider._primary_model,
+                    price_provider=getattr(provider, "_price_provider", "openai"),
                 )
                 inventories = [
                     await pipeline._call("inventory", batch.as_documents(), ledger, DocumentInventoryOutput)

@@ -6,7 +6,7 @@ import { api } from '../api/client';
 const auth = vi.hoisted(() => ({ session: { user_id:'admin', organization_id:'org-a', role:'OWNER_ADMIN' } }));
 vi.mock('../auth/useAuth', () => ({ useAuth: () => auth }));
 vi.mock('../design/useDesignTheme', () => ({ useDesignTheme: () => ({ theme:'klar', loaded:true, loading:false, saving:false, error:null, save:vi.fn(), reload:vi.fn() }) }));
-const initial = { provider:'openai', key_set:false, model:null, import_enabled:false, qa_enabled:false, monthly_limit_usd:null, price_known:false };
+const initial = { provider:'openai', base_url:null, key_set:false, model:null, import_enabled:false, qa_enabled:false, monthly_limit_usd:null, price_known:false };
 beforeEach(() => {
   vi.restoreAllMocks(); auth.session.role = 'OWNER_ADMIN';
   vi.spyOn(api, 'get').mockResolvedValue(initial);
@@ -16,7 +16,7 @@ it('allows every listed model, explains unknown prices and clears a saved key', 
   vi.spyOn(api,'post').mockResolvedValue({models:[{id:'future-model-with-a-long-name-2026-11-07', evaluated:false, price_known:false},{id:'evaluated-model', evaluated:true, price_known:true}]});
   const save = vi.spyOn(api,'put').mockImplementation(async (_url, body) => ({...initial, ...body as object, key_set:true}));
   render(<SettingsPage />);
-  const key = await screen.findByLabelText('OpenAI-API-Schlüssel');
+  const key = await screen.findByLabelText('API-Schlüssel');
   fireEvent.change(key,{target:{value:'synthetic-entered-key'}});
   fireEvent.click(screen.getByRole('button',{name:'Modelle laden'}));
   await screen.findByRole('option',{name:'evaluated-model · geprüft'});
@@ -35,7 +35,7 @@ it('retains a typed key and chosen model after a failed save', async () => {
   vi.spyOn(api,'get').mockResolvedValue({...initial, key_set:true,model:'gpt-5.6-luna',price_known:true});
   vi.spyOn(api,'put').mockRejectedValue(new Error('Speichern fehlgeschlagen.'));
   render(<SettingsPage />);
-  const key = await screen.findByLabelText('OpenAI-API-Schlüssel');
+  const key = await screen.findByLabelText('API-Schlüssel');
   fireEvent.change(key,{target:{value:'synthetic-replacement'}});
   fireEvent.click(screen.getByRole('button',{name:'KI-Einstellungen speichern'}));
   await screen.findByRole('alert');
@@ -47,6 +47,21 @@ it('keeps personal settings for non-admins without fetching organization AI sett
   auth.session.role = 'READ_ONLY';
   render(<SettingsPage />);
   expect(screen.getByRole('heading',{name:'Persönliches Design'})).toBeVisible();
-  expect(screen.queryByLabelText('OpenAI-API-Schlüssel')).not.toBeInTheDocument();
+  expect(screen.queryByLabelText('API-Schlüssel')).not.toBeInTheDocument();
   await waitFor(() => expect(api.get).not.toHaveBeenCalled());
+});
+
+
+it('switches provider and endpoint without carrying the old key or model to discovery', async () => {
+  vi.spyOn(api,'get').mockResolvedValue({...initial, key_set:true, model:'gpt-5.6-luna'});
+  const discover = vi.spyOn(api,'post').mockResolvedValue({models:[{id:'local-very-long-model-name',evaluated:false,price_known:false}]});
+  render(<SettingsPage />);
+  fireEvent.change(await screen.findByLabelText('Anbieter'), {target:{value:'openai_compatible'}});
+  expect(screen.getByLabelText('Modell')).toHaveValue('');
+  expect(screen.getByRole('button',{name:'Modelle laden'})).toBeDisabled();
+  fireEvent.change(screen.getByLabelText('API-Basis-URL'), {target:{value:'http://localhost:11434/v1'}});
+  fireEvent.change(screen.getByLabelText('API-Schlüssel'), {target:{value:'synthetic-local-placeholder'}});
+  fireEvent.click(screen.getByRole('button',{name:'Modelle laden'}));
+  await screen.findByRole('option',{name:'local-very-long-model-name'});
+  expect(discover).toHaveBeenCalledWith('/api/organizations/org-a/ai-settings/models', {provider:'openai_compatible',base_url:'http://localhost:11434/v1',api_key:'synthetic-local-placeholder'});
 });

@@ -184,7 +184,7 @@ async def capture_recorded_import(*, organization_id, actor_id, import_id, gold,
                                        or c.reviewed_by is not None or c.corrected_value_json is not None for c in snapshot.candidates):
                 raise RecordedCaptureUnavailable('UNTOUCHED_MODEL_PROPOSALS_REQUIRED')
             passes = [_safe_pass(row.safe_metadata) for row in snapshot.passes]
-            consistent = run.provider == 'OpenAiDeclarationProvider' and bool(passes) and all(
+            consistent = run.provider in {'OpenAiDeclarationProvider', 'CompatibleDeclarationProvider', 'AnthropicDeclarationProvider'} and bool(passes) and all(
                 entry['configured_model'] == run.model_name and entry['prompt_version'] == run.prompt_version
                 and entry['schema_version'] == run.schema_version and entry['harness_version'] == run.harness_version for entry in passes)
             if run.status == 'SUCCEEDED':
@@ -240,7 +240,7 @@ def validate_recorded_report(report):
     if (source['run_status'], source['import_status']) not in {('SUCCEEDED', 'NEEDS_REVIEW'), ('FAILED', 'FAILED')} or type(source['provider_attempt_count']) is not int or not 0 <= source['provider_attempt_count'] <= 1_000_000:
         raise RecordedCaptureUnavailable('INVALID_RECORDED_REPORT')
     provenance = report['provenance']
-    if set(provenance) != {'provider', 'model', 'prompt_version', 'schema_version', 'harness_version', 'passes'} or provenance['provider'] != 'OpenAiDeclarationProvider' or not 1 <= len(provenance['passes']) <= 64:
+    if set(provenance) != {'provider', 'model', 'prompt_version', 'schema_version', 'harness_version', 'passes'} or provenance['provider'] not in {'OpenAiDeclarationProvider', 'CompatibleDeclarationProvider', 'AnthropicDeclarationProvider'} or not 1 <= len(provenance['passes']) <= 64:
         raise RecordedCaptureUnavailable('INVALID_RECORDED_REPORT')
     for entry in provenance['passes']:
         _safe_pass(entry)

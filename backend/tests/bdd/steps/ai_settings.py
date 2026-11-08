@@ -42,7 +42,7 @@ def read_ai(world):
     response = world.act('GET', world.data['ai_path'])
     assert response.status_code == 200, world.describe_response()
     assert response.json() == {
-        'provider': 'openai', 'key_set': True, 'model': 'future-model',
+        'provider': 'openai', 'base_url': None, 'key_set': True, 'model': 'future-model',
         'import_enabled': True, 'qa_enabled': True, 'monthly_limit_usd': '12.50',
         'price_known': False,
     }
@@ -71,3 +71,36 @@ def alpha_unchanged(world):
     response = world.look(world.administrator_of('Verwaltung Alpha'), world.data['ai_alpha_path'])
     assert response.json()['model'] == 'alpha-only-model'
     assert 'alpha-only-model' not in world.response.text
+
+
+@given("a local compatible provider lists a synthetic model")
+def compatible_model_list(world, monkeypatch):
+    from app.declarations.provider_runtime import ProviderClient
+    async def listed(client):
+        assert client.provider == 'openai_compatible'
+        assert client.base_url == 'http://localhost:11434/v1'
+        return ['synthetic-local-qwen']
+    monkeypatch.setattr(ProviderClient, 'list_models', listed)
+    me = world.act('GET', '/api/organizations/me')
+    world.data['ai_path'] = f"/api/organizations/{me.json()['id']}/ai-settings"
+
+
+@when("the administrator selects that provider and enables imports")
+def choose_compatible_ai(world):
+    body = {'provider':'openai_compatible','base_url':'http://localhost:11434/v1','api_key':'synthetic-local-placeholder'}
+    models = world.act('POST', world.data['ai_path'] + '/models', json=body)
+    assert models.status_code == 200, world.describe_response()
+    assert models.json()['models'] == [{'id':'synthetic-local-qwen','evaluated':False,'price_known':False}]
+    world.act('PUT',world.data['ai_path'],json={**body,'model':'synthetic-local-qwen','import_enabled':True})
+
+
+@then("the selected endpoint and model are saved without returning the key")
+def read_compatible_ai(world):
+    assert world.response.status_code == 200, world.describe_response()
+    response = world.act('GET',world.data['ai_path'])
+    assert response.json()['provider'] == 'openai_compatible'
+    assert response.json()['base_url'] == 'http://localhost:11434/v1'
+    assert response.json()['model'] == 'synthetic-local-qwen'
+    assert response.json()['import_enabled'] is True
+    assert response.json()['key_set'] is True
+    assert 'synthetic-local-placeholder' not in response.text

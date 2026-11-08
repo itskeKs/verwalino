@@ -428,7 +428,7 @@ export function DeclarationImportPage() {
 
       <section className="card declaration-import-section" aria-labelledby="declaration-processing-heading">
         <h2 id="declaration-processing-heading">3. Verarbeitung</h2>
-        <p>Für die Extraktion werden die benötigten Dokumentabschnitte über die OpenAI API verarbeitet. Die Originaldateien bleiben dem Importentwurf zugeordnet und werden nicht automatisch als Stammdaten übernommen.</p>
+        <p>Für die Extraktion werden die benötigten Dokumentabschnitte vom KI-Anbieter Ihrer Organisation verarbeitet. Die Originaldateien bleiben dem Importentwurf zugeordnet und werden nicht automatisch als Stammdaten übernommen.</p>
         {item && <>
           <progress value={item.progress_percent} max="100">{item.progress_percent}%</progress>
           <p className="empty-hint">{item.progress_percent}% – {stageLabel(item)}. Sie können diese Seite schließen; der serverseitige Importstatus bleibt erhalten.</p>

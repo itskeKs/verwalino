@@ -100,6 +100,7 @@ class _Ledger:
     max_cost_usd: Decimal
     configured: Settings
     model: str | None = None
+    price_provider: str = "openai"
     initial_input_tokens: int = 0
     initial_output_tokens: int = 0
     initial_cost_usd: Decimal = Decimal("0")
@@ -132,7 +133,7 @@ class _Ledger:
             raise PipelineFailure("IMPORT_TOKEN_BUDGET_EXCEEDED")
         if self.input_tokens + reserved_input > self.max_input_tokens:
             raise PipelineFailure("IMPORT_TOKEN_BUDGET_EXCEEDED")
-        price = model_price(self.model or ('gpt-5.4-mini' if escalation else 'gpt-5.6-luna'))
+        price = model_price(self.model or ('gpt-5.4-mini' if escalation else 'gpt-5.6-luna'), self.price_provider)
         in_rate = max(price.input, price.cached, price.input * (price.cache_write_multiplier or 1)) if price else Decimal('0')
         out_rate = price.output if price else Decimal('0')
         cost = (Decimal(reserved_input) * in_rate + Decimal(output) * out_rate) / Decimal(1_000_000)
@@ -277,6 +278,7 @@ class DeclarationPipeline:
                 max_cost_usd=Decimal(imported.max_cost_usd),
                 configured=self._settings,
                 model=getattr(self._provider, "_primary_model", None),
+                price_provider=getattr(self._provider, "_price_provider", "openai"),
             )
             ledger.initial_input_tokens = ledger.input_tokens
             ledger.initial_output_tokens = ledger.output_tokens
@@ -1156,7 +1158,7 @@ class DeclarationPipeline:
             from app.services.ai_settings_service import require_organization_ai_budget
             from fastapi import HTTPException
             try:
-                await require_organization_ai_budget(session, lease.organization_id, imported.max_cost_usd, model=getattr(self._provider, "_primary_model", None))
+                await require_organization_ai_budget(session, lease.organization_id, imported.max_cost_usd, model=getattr(self._provider, "_primary_model", None), provider=getattr(self._provider, "_price_provider", "openai"))
             except HTTPException as error:
                 raise PipelineFailure("ORGANIZATION_AI_BUDGET_EXCEEDED") from error
             run = DeclarationExtractionRun(

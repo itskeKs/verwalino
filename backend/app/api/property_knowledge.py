@@ -53,7 +53,7 @@ router = APIRouter(
 
 def get_knowledge_provider(effective):
     """Construct one organization-bound client per question; never cache keys."""
-    from app.declarations.openai_knowledge_provider import create_knowledge_provider
+    from app.declarations.provider_runtime import create_knowledge_provider
     return create_knowledge_provider(effective)
 
 

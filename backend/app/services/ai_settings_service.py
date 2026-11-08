@@ -26,6 +26,7 @@ class EffectiveAiSettings:
     import_enabled: bool = False
     qa_enabled: bool = False
     monthly_limit_usd: Decimal | None = None
+    base_url: str | None = None
 
 
 async def effective_ai_settings(db, organization_id) -> EffectiveAiSettings:
@@ -38,7 +39,7 @@ async def effective_ai_settings(db, organization_id) -> EffectiveAiSettings:
             key = SecretStr(_cipher(organization_id).decrypt(row.encrypted_api_key.encode()).decode())
         except (InvalidToken, ValueError):
             raise HTTPException(503, 'Der gespeicherte KI-Schlüssel kann nicht entschlüsselt werden. Bitte hinterlegen Sie ihn erneut in den Einstellungen.') from None
-    return EffectiveAiSettings(row.provider, key, row.model, row.import_enabled, row.qa_enabled, row.monthly_limit_usd)
+    return EffectiveAiSettings(row.provider, key, row.model, row.import_enabled, row.qa_enabled, row.monthly_limit_usd, row.base_url)
 
 
 async def worker_ai_settings(organization_id):
@@ -52,10 +53,10 @@ async def worker_ai_settings(organization_id):
 
 
 def public_settings(row) -> AiSettingsOut:
-    return AiSettingsOut(provider=row.provider if row else 'openai', key_set=bool(row and row.encrypted_api_key),
+    return AiSettingsOut(provider=row.provider if row else 'openai', base_url=row.base_url if row else None, key_set=bool(row and row.encrypted_api_key),
         model=row.model if row else None, import_enabled=bool(row and row.import_enabled),
         qa_enabled=bool(row and row.qa_enabled), monthly_limit_usd=row.monthly_limit_usd if row else None,
-        price_known=bool(row and model_price(row.model)))
+        price_known=bool(row and model_price(row.model, row.provider)))
 
 
 async def read_settings(db, organization_id):
@@ -73,7 +74,16 @@ async def write_settings(db, organization_id, body):
     repo = OrganizationAiSettingsRepository(db, organization_id)
     await repo.lock_budget()
     previous = await repo.get()
-    encrypted = previous.encrypted_api_key if previous else None
+    if body.provider == 'openai_compatible':
+        from app.declarations.provider_runtime import validate_base_url
+        try:
+            body.base_url = validate_base_url(body.base_url, hosted=settings.deployment_mode == 'hosted')
+        except ValueError:
+            raise HTTPException(422, 'Bitte geben Sie eine gültige API-Basis-URL ein. Im gehosteten Betrieb sind nur öffentliche HTTPS-Ziele erlaubt.') from None
+    elif body.base_url is not None:
+        raise HTTPException(422, 'Eine eigene Basis-URL ist nur für OpenAI-kompatible Anbieter vorgesehen.')
+    destination_changed = previous and (previous.provider, previous.base_url) != (body.provider, body.base_url)
+    encrypted = previous.encrypted_api_key if previous and not destination_changed else None
     if 'api_key' in body.model_fields_set:
         encrypted = _cipher(organization_id).encrypt(entered_key(body.api_key).encode()).decode() if body.api_key is not None else None
     if (body.import_enabled or body.qa_enabled) and (not encrypted or not body.model):
@@ -84,22 +94,34 @@ async def write_settings(db, organization_id, body):
 
 async def discover_models(db, organization_id, body):
     from app.declarations.openai_models import list_models
+    effective = await effective_ai_settings(db, organization_id)
+    provider = body.provider if body.provider is not None else effective.provider
+    base_url = body.base_url if 'base_url' in body.model_fields_set else effective.base_url
+    if provider == 'openai_compatible':
+        from app.declarations.provider_runtime import validate_base_url
+        try:
+            base_url = validate_base_url(base_url, hosted=settings.deployment_mode == 'hosted')
+        except ValueError:
+            raise HTTPException(422, 'Bitte geben Sie eine gültige API-Basis-URL ein.') from None
+    elif base_url is not None:
+        raise HTTPException(422, 'Eine eigene Basis-URL ist nur für OpenAI-kompatible Anbieter vorgesehen.')
     if body.api_key is not None:
         key = entered_key(body.api_key)
     else:
-        effective = await effective_ai_settings(db, organization_id)
+        if (provider, base_url) != (effective.provider, effective.base_url):
+            raise HTTPException(422, 'Bitte geben Sie für den neuen Anbieter einen eigenen API-Schlüssel ein.')
         key = effective.api_key.get_secret_value() if effective.api_key else ''
     if not key:
-        raise HTTPException(422, 'Bitte geben Sie zuerst Ihren OpenAI-API-Schlüssel ein.')
-    return AiModelsOut(models=[AiModelOut(id=model, evaluated=model in EVALUATED_MODELS,
-        price_known=model_price(model) is not None) for model in await list_models(key)])
+        raise HTTPException(422, 'Bitte geben Sie zuerst Ihren API-Schlüssel ein.')
+    return AiModelsOut(models=[AiModelOut(id=model, evaluated=provider == 'openai' and model in EVALUATED_MODELS,
+        price_known=model_price(model, provider) is not None) for model in await list_models(key, provider=provider, base_url=base_url)])
 
 
-async def require_organization_ai_budget(db, organization_id, amount, *, model=None):
+async def require_organization_ai_budget(db, organization_id, amount, *, model=None, provider=None):
     repo = OrganizationAiSettingsRepository(db, organization_id)
     await repo.lock_budget()
     row = await repo.get()
-    if row is None or row.monthly_limit_usd is None or not model_price(model or row.model):
+    if row is None or row.monthly_limit_usd is None or not model_price(model or row.model, provider or row.provider):
         return
     used = await repo.monthly_usage()
     if used + amount > row.monthly_limit_usd or used >= row.monthly_limit_usd:

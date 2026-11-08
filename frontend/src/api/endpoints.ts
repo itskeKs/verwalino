@@ -8,8 +8,8 @@ import type { AiModel, OrganizationAiSettings, OrganizationAiSettingsBody } from
 function aiSettingsPath(organizationId: string) { return `/api/organizations/${encodeURIComponent(organizationId)}/ai-settings`; }
 export function getAiSettings(organizationId: string): Promise<OrganizationAiSettings> { return api.get(aiSettingsPath(organizationId)); }
 export function saveAiSettings(organizationId: string, body: OrganizationAiSettingsBody): Promise<OrganizationAiSettings> { return api.put(aiSettingsPath(organizationId), body); }
-export function listAiModels(organizationId: string, apiKey?: string): Promise<{ models: AiModel[] }> {
-  return api.post(`${aiSettingsPath(organizationId)}/models`, apiKey ? { api_key: apiKey } : {});
+export function listAiModels(organizationId: string, apiKey?: string, provider?: OrganizationAiSettings['provider'], baseUrl?: string | null): Promise<{ models: AiModel[] }> {
+  return api.post(`${aiSettingsPath(organizationId)}/models`, { ...(apiKey ? { api_key:apiKey } : {}), ...(provider ? { provider, base_url:baseUrl ?? null } : {}) });
 }
 import type { DesignTheme, UserPreferences } from "./types";
 

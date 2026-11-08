@@ -6,7 +6,8 @@ from pydantic import BaseModel, ConfigDict, Field, SecretStr
 
 class AiSettingsBody(BaseModel):
     model_config = ConfigDict(extra='forbid', hide_input_in_errors=True)
-    provider: Literal['openai'] = 'openai'
+    provider: Literal['openai', 'openai_compatible', 'anthropic'] = 'openai'
+    base_url: str | None = Field(None, max_length=2048)
     api_key: SecretStr | None = None
     model: str | None = Field(None, min_length=1, max_length=255, pattern=r'^[A-Za-z0-9._:/-]+$')
     import_enabled: bool = False
@@ -15,12 +16,15 @@ class AiSettingsBody(BaseModel):
 
 
 class AiModelsBody(BaseModel):
+    provider: Literal['openai', 'openai_compatible', 'anthropic'] | None = None
+    base_url: str | None = Field(None, max_length=2048)
     model_config = ConfigDict(extra='forbid', hide_input_in_errors=True)
     api_key: SecretStr | None = None
 
 
 class AiSettingsOut(BaseModel):
-    provider: Literal['openai'] = 'openai'
+    base_url: str | None = None
+    provider: Literal['openai', 'openai_compatible', 'anthropic'] = 'openai'
     key_set: bool
     model: str | None
     import_enabled: bool

@@ -55,7 +55,7 @@ _SCHEMA_ERROR_CODES = frozenset({
     'int_type', 'int_parsing', 'int_from_float', 'bool_type', 'bool_parsing', 'float_type', 'float_parsing',
     'finite_number', 'greater_than', 'greater_than_equal', 'less_than', 'less_than_equal',
     'date_type', 'date_parsing', 'date_from_datetime_parsing', 'date_from_datetime_inexact',
-    'list_type', 'too_short', 'too_long',
+    'list_type', 'dict_type', 'too_short', 'too_long',
     'fact_core_field_unsupported', 'fact_mea_type', 'fact_denominator_type', 'fact_area_type',
 })
 _SCHEMA_DIAGNOSTIC_PREFIX = 'event=DECLARATION_SCHEMA_VALIDATION data='

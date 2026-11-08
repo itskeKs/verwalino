@@ -275,12 +275,12 @@ describe("Teilungserklärung upload wizard", () => {
     expect(screen.queryByText(new RegExp(`${code}|Request-ID|${requestId}`))).not.toBeInTheDocument();
   });
 
-  it("defaults to a new-property import and discloses OpenAI processing", async () => {
+  it("defaults to a new-property import and discloses configured provider processing", async () => {
     vi.spyOn(declarationApi, "createDeclarationImport").mockResolvedValue(pendingImport());
     renderImportRoute();
 
     expect(await screen.findByText("Neues Objekt aus einer Teilungserklärung anlegen")).toBeVisible();
-    expect(screen.getByText(/über die OpenAI API verarbeitet/i)).toBeVisible();
+    expect(screen.getByText(/vom KI-Anbieter Ihrer Organisation verarbeitet/i)).toBeVisible();
     expect(declarationApi.createDeclarationImport).toHaveBeenCalledWith({ mode: "NEW_PROPERTY" });
   });
 
