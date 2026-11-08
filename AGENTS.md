@@ -52,6 +52,10 @@ enforcement; every baseline and safety rule here stays in force.
   response fields, parameters, configuration keys, endpoints or options the issue does not name,
   and do not refactor neighbours in passing. One issue, one branch, one PR. `Closes #N` only when
   every acceptance box is done; otherwise `Refs #N` plus what remains.
+- At the merge the maintainer ticks the acceptance boxes of the issue that the PR body proves, and
+  reopens the issue when a box has no proof.
+- The maintainer merges with a merge commit, never squash, and writes the merge comment: reviewed
+  SHA, gates run on that SHA with results, user check outcome, follow-up issues.
 - Cut before coding: an issue that touches more than one domain mechanism (for example a ledger
   plus its evidence rules plus an import) is split into issues of one mechanism each, one PR per
   issue, before the first branch is created. The session that notices the size proposes the cut in
@@ -197,8 +201,8 @@ A session has exactly one task: one issue (it ends when its pull request is open
 pushed) or one PR under review (it ends when that is merged, sent back or parked).
 A subsequent task normally starts in a fresh session with an empty context; name the next task
 in the report and wait for the owner's explicit instruction before creating another session.
-Owner-authorized coordination and messages between a coordinator and its assigned workers
-remain allowed; decisions another session needs are recorded in the issue or PR.
+Sessions do not message each other. Everything another session needs is a comment on the issue or
+the PR.
 Only one maintainer session runs at a time; it holds `/tmp/verwalino-maintainer.lock`
 (a `mkdir`, with the PR number and start time in `info`) from its start to its cleanup.
 Check for a live holder before acquiring it; remove only your own inactive lock.
@@ -234,3 +238,5 @@ The review worktree is detached on `origin/<branch>`, because the issue worktree
 - Never change a committed migration; never empty `downgrade()` to make tests pass. A new
   revision becomes the release target everywhere (`backend/app/deployment.py`, `DEPLOY.md`,
   upgrade tests); production moves only by a release.
+- One PR carries at most one new Alembic revision. A downgrade refusal lives in that revision's
+  `downgrade()`, not in `migrations/env.py`.
