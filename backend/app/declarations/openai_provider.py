@@ -15,6 +15,7 @@ import time
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from decimal import Decimal
+from functools import lru_cache
 from json import JSONDecodeError
 from typing import Any, Callable, TypeVar
 
@@ -78,11 +79,73 @@ _VERIFIED_HIGH_IMAGE_INPUT_TOKENS = 3_001
 _PNG_DATA_URL = re.compile(r"^data:image/png;base64,([A-Za-z0-9+/]*={0,2})$")
 _PNG_SIGNATURE = b"\x89PNG\r\n\x1a\n"
 _STATIC_HARNESS = (
-    "declaration-responses-v1|structured-output|store=false|"
+    "declaration-responses-v3|structured-output-kind-anyof|store=false|"
     "no-previous-response-id|fixed-pass-manager"
 )
 _SAFE_RESPONSE_IDENTIFIER = re.compile(r"^[A-Za-z0-9._:-]{1,128}$")
 _OPENAI_API_BASE_URL = "https://api.openai.com/v1"
+
+# Only these disjoint tagged unions have an equivalent anyOf wire form.
+_WIRE_KIND_UNIONS = {
+    ('FactPayload', 'normalized_value'): frozenset({'TEXT', 'DECIMAL', 'INTEGER', 'BOOLEAN', 'DATE', 'MEA', 'FRACTION', 'PERCENTAGE'}),
+    ('AllocationPart', 'share'): frozenset({'FRACTION', 'PERCENTAGE', 'DECIMAL', 'TEXT'}),
+}
+
+
+def _convert_wire_kind_unions(schema: dict[str, Any]) -> dict[str, Any]:
+    definitions = schema.get('$defs', {})
+    for (definition, field), expected_kinds in _WIRE_KIND_UNIONS.items():
+        if definition not in definitions:
+            continue
+        union = definitions[definition]['properties'][field]
+        discriminator = union['discriminator']
+        if discriminator['propertyName'] != 'kind' or set(discriminator['mapping']) != expected_kinds:
+            raise ValueError('unsupported tagged union')
+        references = set()
+        for branch in union['oneOf']:
+            reference = branch['$ref']
+            if set(branch) != {'$ref'} or not reference.startswith('#/$defs/'):
+                raise ValueError('unsupported tagged branch')
+            value = definitions[reference.removeprefix('#/$defs/')]
+            kind = value['properties']['kind']['const']
+            if value['type'] != 'object' or 'kind' not in value['required'] or discriminator['mapping'].get(kind) != reference:
+                raise ValueError('tagged branch must require a distinct kind')
+            references.add(reference)
+        if len(union['oneOf']) != len(expected_kinds) or len(references) != len(expected_kinds) or references != set(discriminator['mapping'].values()):
+            raise ValueError('tagged branches must be disjoint')
+        union['anyOf'] = union.pop('oneOf')
+        del union['discriminator']
+
+    def reject_unknown_union(value):
+        if isinstance(value, dict):
+            if 'oneOf' in value or 'discriminator' in value:
+                raise ValueError('unsupported wire union')
+            for child in value.values():
+                reject_unknown_union(child)
+        elif isinstance(value, list):
+            for child in value:
+                reject_unknown_union(child)
+
+    reject_unknown_union(schema)
+    return schema
+
+
+@lru_cache(maxsize=5)
+def _sdk_output_type(output_type: type[T]) -> type[T]:
+    if output_type is DocumentInventoryOutput:
+        return output_type
+
+    class WireOutput(output_type):
+        @classmethod
+        def model_json_schema(cls, **kwargs):
+            from openai.lib._pydantic import to_strict_json_schema
+
+            # Strict transformation makes defaulted kind fields required before
+            # proving disjointness. Validation still uses the inherited model.
+            return _convert_wire_kind_unions(to_strict_json_schema(output_type))
+
+    WireOutput.__name__ = output_type.__name__
+    return WireOutput
 
 
 def _safe_response_identifier(value: object) -> str | None:
@@ -923,7 +986,7 @@ class OpenAiDeclarationProvider:
         try:
             from openai.lib._parsing._responses import type_to_text_format_param
 
-            transformed = type_to_text_format_param(output_type)
+            transformed = type_to_text_format_param(_sdk_output_type(output_type))
         except Exception as error:
             raise ProviderFailure(
                 "OPENAI_RESERVATION_ESTIMATE_INVALID",
@@ -1042,7 +1105,7 @@ class OpenAiDeclarationProvider:
             response = await self._client.responses.parse(
                 model=request_kwargs["model"],
                 input=request_kwargs["input"],
-                text_format=output_type,
+                text_format=_sdk_output_type(output_type),
                 store=request_kwargs["store"],
                 service_tier=request_kwargs["service_tier"],
                 timeout=self._timeout_seconds,

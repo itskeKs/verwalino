@@ -22,6 +22,7 @@ from openai import (
     APIConnectionError,
     APIResponseValidationError,
     APITimeoutError,
+    AsyncOpenAI,
     AuthenticationError,
     BadRequestError,
     InternalServerError,
@@ -174,6 +175,200 @@ class RecordingByteTokenEncoder:
     def encode(self, value: str) -> list[int]:
         self.values.append(value)
         return list(value.encode("utf-8"))
+
+
+def _sdk_response(output: object, model: str) -> dict:
+    return {
+        "id": "resp_synthetic", "object": "response", "created_at": 0,
+        "model": model, "status": "completed",
+        "output": [{"id": "msg_synthetic", "type": "message", "role": "assistant", "status": "completed",
+                    "content": [{"type": "output_text", "text": json.dumps(output), "annotations": []}]}],
+        "usage": {"input_tokens": 100, "output_tokens": 5, "total_tokens": 105,
+                  "input_tokens_details": {"cached_tokens": 0, "cache_write_tokens": 0},
+                  "output_tokens_details": {"reasoning_tokens": 0}},
+    }
+
+
+def _schema_nodes(value):
+    if isinstance(value, dict):
+        yield value
+        for child in value.values():
+            yield from _schema_nodes(child)
+    elif isinstance(value, list):
+        for child in value:
+            yield from _schema_nodes(child)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('method,output_type,prompt', [
+    ('inventory', DocumentInventoryOutput, INVENTORY_PROMPT),
+    ('extract_core', CoreExtractionOutput, CORE_EXTRACTION_PROMPT),
+    ('extract_rules', RuleExtractionOutput, RULE_EXTRACTION_PROMPT),
+    ('reconcile', ReconciliationOutput, RECONCILIATION_PROMPT),
+    ('recheck', TargetedRecheckOutput, RECHECK_PROMPT),
+], ids=['inventory', 'core', 'rules', 'reconcile', 'recheck'])
+async def test_real_sdk_wire_schema_matches_reservations_and_fingerprints(
+    method, output_type, prompt, fake_declaration_provider, text_document_input, low_quality_target_page,
+):
+    inventory = (await fake_declaration_provider.inventory([], max_output_tokens=10)).output
+    core = (await fake_declaration_provider.extract_core([], max_output_tokens=10)).output
+    rules = (await fake_declaration_provider.extract_rules([], max_output_tokens=10)).output
+    reconciliation = (await fake_declaration_provider.reconcile(inventory, core, rules, max_output_tokens=10)).output
+    output = {'inventory': inventory, 'extract_core': core, 'extract_rules': rules,
+              'reconcile': reconciliation, 'recheck': TargetedRecheckOutput(facts=core.facts, rules=rules.rules)}[method]
+    arguments = {
+        'inventory': {'documents': [text_document_input]},
+        'extract_core': {'documents': [text_document_input]},
+        'extract_rules': {'documents': [text_document_input]},
+        'reconcile': {'inventory': inventory, 'core': core, 'rules': rules},
+        'recheck': {'documents': [low_quality_target_page], 'issue_codes': ['LOW_PAGE_QUALITY'], 'subject_keys': ['rule:heating']},
+    }[method]
+    requests = []
+
+    def respond(request):
+        assert request.url == 'https://api.openai.com/v1/responses'
+        wire = json.loads(request.content)
+        requests.append(wire)
+        return httpx2.Response(200, json=_sdk_response(output.model_dump(mode='json'), wire['model']))
+
+    encoder = CapturingTokenEncoder()
+    async with AsyncOpenAI(api_key='synthetic-sdk-key', base_url='https://api.openai.com/v1', max_retries=0,
+                           http_client=httpx2.AsyncClient(transport=httpx2.MockTransport(respond))) as client:
+        provider = OpenAiDeclarationProvider(client=client, primary_model='gpt-5.6-luna', escalation_model='gpt-5.4-mini', token_encoder=encoder)
+        provider.estimate_reservation(method, **arguments, max_output_tokens=10)
+        result = await getattr(provider, method)(**arguments, max_output_tokens=10)
+
+    assert len(requests) == 1
+    wire_format = requests[0]['text']['format']
+    assert wire_format['name'] == output_type.__name__
+    assert wire_format['strict'] is True
+    assert all('oneOf' not in node and 'discriminator' not in node for node in _schema_nodes(wire_format['schema']))
+    for node in _schema_nodes(wire_format['schema']):
+        if node.get('type') == 'object':
+            assert node['additionalProperties'] is False
+            assert set(node['required']) == set(node['properties'])
+    assert all(json.loads(value)['text']['format'] == wire_format for value in encoder.values)
+    from app.declarations.observability import fingerprint_static_contract
+    assert result.metadata.schema_sha256 == fingerprint_static_contract(
+        developer_prompt=prompt, schema=wire_format, harness=openai_provider._STATIC_HARNESS,
+    ).schema_sha256
+    assert isinstance(result.output, output_type)
+    assert result.output.model_dump() == output.model_dump()
+    assert result.usage.input_tokens == 100
+    assert result.usage.output_tokens == 5
+    assert result.usage.attempt_count == 1
+
+
+@pytest.mark.parametrize('mutation', ['duplicate', 'non_disjoint', 'optional_kind', 'unknown_union'])
+def test_wire_conversion_rejects_unproven_or_unknown_unions(mutation):
+    schema = type_to_text_format_param(CoreExtractionOutput)['schema']
+    union = schema['$defs']['FactPayload']['properties']['normalized_value']
+    if mutation == 'duplicate':
+        union['oneOf'].append(union['oneOf'][0])
+    elif mutation == 'non_disjoint':
+        schema['$defs']['IntegerValue']['properties']['kind']['const'] = 'TEXT'
+    elif mutation == 'optional_kind':
+        schema['$defs']['MeaFraction']['required'].remove('kind')
+    else:
+        schema['properties']['future_union'] = {'oneOf': [{'type': 'string'}, {'type': 'number'}]}
+
+    with pytest.raises(ValueError):
+        openai_provider._convert_wire_kind_unions(schema)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('invalid', ['unknown_kind', 'wrong_branch_fields', 'extra_field', 'field_value_mismatch'])
+async def test_real_sdk_strict_validation_fails_closed_without_trustworthy_usage(invalid, fake_declaration_provider, text_document_input):
+    core = (await fake_declaration_provider.extract_core([], max_output_tokens=10)).output.model_dump(mode='json')
+    if invalid == 'unknown_kind':
+        core['facts'][0]['normalized_value']['kind'] = 'FUTURE_KIND'
+    elif invalid == 'wrong_branch_fields':
+        core['facts'][0]['normalized_value'] = {'kind': 'TEXT', 'numerator': 1, 'denominator': 2}
+    elif invalid == 'extra_field':
+        core['facts'][0]['normalized_value']['private-extra'] = 'private-source-content'
+    else:
+        core['facts'][0].update(subject_key='unit:1', field='mea')
+    requests = []
+
+    def respond(request):
+        requests.append(json.loads(request.content))
+        return httpx2.Response(200, json=_sdk_response(core, requests[-1]['model']))
+
+    async with AsyncOpenAI(api_key='synthetic-sdk-key', base_url='https://api.openai.com/v1', max_retries=0,
+                           http_client=httpx2.AsyncClient(transport=httpx2.MockTransport(respond))) as client:
+        provider = OpenAiDeclarationProvider(client=client, token_encoder=FixedTokenEncoder(10))
+        with pytest.raises(ProviderFailure) as raised:
+            await provider.extract_core([text_document_input], max_output_tokens=10)
+
+    assert raised.value.code == 'PROVIDER_SCHEMA_FAILURE'
+    assert 'private-' not in str(raised.value)
+    assert len(requests) == 1
+    assert len(raised.value.attempt_metadata) == 1
+    assert raised.value.usage is None
+    assert raised.value.usage_complete is False
+    assert raised.value.attempt_count == 1
+
+
+@pytest.mark.asyncio
+async def test_real_sdk_metered_repair_shares_wire_schema_and_output_ceiling(fake_declaration_provider, text_document_input):
+    core = (await fake_declaration_provider.extract_core([], max_output_tokens=10)).output
+    requests = []
+
+    def respond(request):
+        requests.append(json.loads(request.content))
+        response = _sdk_response(core.model_dump(mode='json'), requests[-1]['model'])
+        if len(requests) == 1:
+            response['output'] = []  # No parsed object, but metered first-leg usage.
+        return httpx2.Response(200, json=response)
+
+    encoder = CapturingTokenEncoder()
+    async with AsyncOpenAI(api_key='synthetic-sdk-key', base_url='https://api.openai.com/v1', max_retries=0,
+                           http_client=httpx2.AsyncClient(transport=httpx2.MockTransport(respond))) as client:
+        provider = OpenAiDeclarationProvider(client=client, token_encoder=encoder)
+        result = await provider.extract_core([text_document_input], max_output_tokens=10)
+
+    assert len(requests) == 2
+    assert requests[0]['max_output_tokens'] == 10
+    assert requests[1]['max_output_tokens'] == 5
+    assert requests[0]['text']['format'] == requests[1]['text']['format']
+    assert all(json.loads(value)['text']['format'] == requests[0]['text']['format'] for value in encoder.values)
+    assert 'Schema-only repair' in requests[1]['input'][0]['content'][0]['text']
+    assert result.output.model_dump() == core.model_dump()
+    assert result.usage.input_tokens == 200
+    assert result.usage.output_tokens == 10
+    assert result.usage.attempt_count == 2
+    assert len(result.attempt_metadata) == 2
+
+
+@pytest.mark.asyncio
+async def test_real_sdk_refusal_keeps_usage_and_never_retries(text_document_input):
+    requests = []
+
+    def respond(request):
+        requests.append(json.loads(request.content))
+        response = _sdk_response({}, requests[-1]['model'])
+        response['output'][0]['content'] = [{'type': 'refusal', 'refusal': 'private-refusal-text'}]
+        return httpx2.Response(200, json=response)
+
+    async with AsyncOpenAI(api_key='synthetic-sdk-key', base_url='https://api.openai.com/v1', max_retries=0,
+                           http_client=httpx2.AsyncClient(transport=httpx2.MockTransport(respond))) as client:
+        provider = OpenAiDeclarationProvider(client=client, token_encoder=FixedTokenEncoder(10))
+        with pytest.raises(ProviderFailure) as raised:
+            await provider.extract_core([text_document_input], max_output_tokens=10)
+
+    assert raised.value.code == 'PROVIDER_REFUSAL'
+    assert raised.value.usage.input_tokens == 100
+    assert raised.value.usage.output_tokens == 5
+    assert 'private-' not in str(raised.value)
+    assert len(requests) == 1
+
+
+def test_wire_conversion_preserves_original_local_discriminators_and_defaults():
+    original = CoreExtractionOutput.model_json_schema()
+    OpenAiDeclarationProvider._sdk_text_format(CoreExtractionOutput)
+    assert CoreExtractionOutput.model_json_schema() == original
+    assert 'oneOf' in original['$defs']['FactPayload']['properties']['normalized_value']
+    assert 'kind' not in original['$defs']['MeaFraction']['required']
 
 
 def _usage(
@@ -706,9 +901,9 @@ async def test_primary_calls_use_their_exact_schema_and_reconciliation_stays_dat
 
     assert [call["model"] for call in client.responses.calls] == ["gpt-5.6-luna"] * 3
     assert [call["text_format"] for call in client.responses.calls] == [
-        CoreExtractionOutput,
-        RuleExtractionOutput,
-        ReconciliationOutput,
+        openai_provider._sdk_output_type(CoreExtractionOutput),
+        openai_provider._sdk_output_type(RuleExtractionOutput),
+        openai_provider._sdk_output_type(ReconciliationOutput),
     ]
     reconciliation_call = client.responses.calls[2]
     assert reconciliation_call["input"][0]["role"] == "developer"
@@ -746,7 +941,7 @@ async def test_recheck_uses_only_sorted_capped_target_pages_and_images(
 
     call = client.responses.calls[0]
     assert call["model"] == "gpt-5.4-mini"
-    assert call["text_format"] is TargetedRecheckOutput
+    assert call["text_format"] is openai_provider._sdk_output_type(TargetedRecheckOutput)
     blocks = call["input"][1]["content"]
     assert "amendment-2" in str(blocks)
     assert any(block["type"] == "input_image" for block in blocks)
@@ -830,7 +1025,7 @@ def test_reservation_estimator_uses_the_sdk_structured_output_envelope_for_prima
     )
 
     envelopes = [json.loads(value) for value in encoder.values]
-    expected_format = type_to_text_format_param(TargetedRecheckOutput)
+    expected_format = type_to_text_format_param(openai_provider._sdk_output_type(TargetedRecheckOutput))
     assert len(envelopes) == 2  # primary plus bounded repair
     assert all(envelope["text"]["format"] == expected_format for envelope in envelopes)
     assert all(envelope["text"]["format"]["type"] == "json_schema" for envelope in envelopes)

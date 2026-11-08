@@ -513,7 +513,11 @@ prices are enforced; unknown-price models remain selectable and the page explain
 that they are not limited. Known requests explicitly use the standard service tier
 and no implicit SDK retry. Monetary unknowns are recorded as unpriced zero estimates,
 not as a claim that OpenAI is free. Token/time limits remain bounded. The extraction
-harness version is `2` for these request-shape changes. Pass metadata uses `default`
+harness version is `3`, with wire schema version `2`. The adapter converts only
+the two known, disjoint `kind` unions to `anyOf` after the SDK's strict-schema
+transformation. Parsing, reservations and schema fingerprints use that same
+wire model; inherited local validation remains unchanged. Offline SDK transport
+checks verify serialization, not live provider acceptance. Pass metadata uses `default`
 when reasoning is omitted for a model with no known effort contract.
 
 For Luna Q&A, explicit cache mode is sent without breakpoints, disabling implicit cache writes and their surcharge. No cache parameter is added for unverified models.
