@@ -567,16 +567,28 @@ Keep the frozen report: it remains a reusable baseline after review.
 
 The portable runtime contains `backend/app`, not test fixtures. From the reviewed
 checkout root, send only the committed synthetic gold through stdin. Set
-`PORTABLE_ENV`, `EVAL_ORG`, `EVAL_ACTOR`, `EVAL_IMPORT` and an owned `EVAL_REPORT`
-path to the separately authorized disposable installation and its current actor.
-These commands do not start extraction:
+`EVAL_APP_CONTAINER` to the full app container ID recorded as owned by the
+separately authorized disposable installation. Inspect only that ID and verify
+that it is running, its Compose project matches the ownership record, its service
+is `app`, and its immutable image ID matches the recorded reviewed build:
+
+```sh
+docker inspect --type container \
+  --format 'running={{.State.Running}} project={{index .Config.Labels "com.docker.compose.project"}} service={{index .Config.Labels "com.docker.compose.service"}} image={{.Image}}' \
+  "$EVAL_APP_CONTAINER"
+```
+
+After those checks, set `EVAL_ORG`, `EVAL_ACTOR`, `EVAL_IMPORT` and an owned
+`EVAL_REPORT` path for that installation and its current actor. `docker exec`
+uses the verified running container without requiring installer-derived Compose
+variables. These commands do not start extraction:
 
 ```sh
 recorded_gold() {
   python3 -c 'import json,pathlib; d=json.loads(pathlib.Path("backend/tests/fixtures/declaration_eval_cases.json").read_text()); print(json.dumps({"recorded_import_cases":d["recorded_import_cases"]}))'
 }
 recorded_check() {
-  docker compose -f infra/docker-compose.yml --env-file "$PORTABLE_ENV" --project-name verwalino exec -T app \
+  docker exec -i "$EVAL_APP_CONTAINER" \
     python -m app.evals.declaration_knowledge --provider recorded --fixtures /dev/stdin \
     --organization-id "$EVAL_ORG" --actor-id "$EVAL_ACTOR" --import-id "$EVAL_IMPORT" \
     --case-id lindenallee-12 "$@"
