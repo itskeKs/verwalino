@@ -137,6 +137,9 @@ async def test_pass_ledger_append_uses_safe_metadata_and_global_attempt_numbers(
     assert set(rows[0].safe_metadata) == set(_entry().as_safe_dict())
     assert "quote" not in rows[0].safe_metadata
     assert "tenant_id" not in rows[0].safe_metadata
+    persisted = await repository.list_run_passes(import_id)
+    assert [entry.id for entry in persisted] == [entry.id for entry in rows]
+    assert await DeclarationImportRepository(migrator_session, seed_data["org_b_id"]).list_run_passes(import_id) == []
 
 
 @pytest.mark.asyncio

@@ -1082,13 +1082,16 @@ async def test_provider_upgrade_monthly_usage_executes_origin_scoped_reservation
     assert created.status_code == 201
     await migrator_session.execute(text("SELECT set_config('app.current_org_id',:org,true),set_config('app.current_user_id',:actor,true)"),
         {'org':str(org),'actor':str(seed_data['user_a_admin_id'])})
+    # Other tests can retain finalized costs in this tenant. Verify the exact
+    # incremental reservation, without discarding their conservative accounting.
+    prior_usage = await migrator_session.scalar(text("SELECT organization_ai_monthly_usage(:org,ARRAY['gpt-5.6-luna']::text[])"),{'org':org})
     custom_run_id = uuid.uuid4()
     for provider,model in [('OpenAiDeclarationProvider','gpt-5.6-luna'),('AnthropicDeclarationProvider','claude-haiku-4-5'),('CompatibleDeclarationProvider','gpt-5.6-luna')]:
         migrator_session.add(DeclarationExtractionRun(id=custom_run_id if provider=='CompatibleDeclarationProvider' else uuid.uuid4(), organization_id=org,import_id=uuid.UUID(created.json()['id']),
             status='RUNNING',provider=provider,model_name=model,prompt_version='test',schema_version='1',harness_version='test',estimated_cost_usd=Decimal('0')))
     await migrator_session.flush()
     used = await migrator_session.scalar(text("SELECT organization_ai_monthly_usage(:org,ARRAY['gpt-5.6-luna']::text[])"),{'org':org})
-    assert used == Decimal(created.json()['max_cost_usd']) * 2
+    assert used - prior_usage == Decimal(created.json()['max_cost_usd']) * 2
     await migrator_session.commit()
     # A historical custom-origin run remains unpriced with current OpenAI settings.
     response = await client_a_admin.get('/api/declaration-imports/'+created.json()['id'])

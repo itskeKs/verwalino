@@ -14,6 +14,9 @@ class DeploymentMode(StrEnum):
     HOSTED = "hosted"
 
 
+QA_FINALIZATION_MARGIN_SECONDS = 10
+
+
 class Settings(BaseSettings):
     # One image, with mode-dependent decisions in core/deployment_policy.py.
     deployment_mode: DeploymentMode = DeploymentMode.SELFHOST
@@ -178,9 +181,8 @@ class Settings(BaseSettings):
     @model_validator(mode="after")
     def _validate_qa_reservation_lifetime(self) -> "Settings":
         """Leave ten seconds after a bounded call for final durable accounting."""
-        margin_seconds = 10
         if self.declaration_qa_reservation_seconds < (
-            self.declaration_qa_timeout_seconds + margin_seconds
+            self.declaration_qa_timeout_seconds + QA_FINALIZATION_MARGIN_SECONDS
         ):
             raise ValueError(
                 "declaration_qa_reservation_seconds must include a finalization margin"

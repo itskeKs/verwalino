@@ -75,7 +75,12 @@ Einstellungen. A nullable administrator request timeout is persisted with that
 endpoint. Unset compatible endpoints use 180 seconds; unset OpenAI and Anthropic
 retain the existing function-specific defaults. An explicit whole-second value
 from 1 to 3600 applies to extraction and Q&A. The form resets it when the provider
-or endpoint changes. This requires no operator environment override or restart.
+or endpoint changes. This requires no operator environment override or restart. For Q&A it is an upper
+bound: the actual persisted reservation expiry also bounds the whole async provider
+wait, with a ten-second finalization margin. Sampling the database clock before
+query completion includes setup/commit elapsed time. Strict attestation remains
+unchanged; the application never extends the reviewed policy to fit a longer
+endpoint timeout. Timeout finalization retains conservative accounting.
 Changing provider or endpoint clears the saved credential unless a fresh
 key is supplied; model discovery cannot forward the prior destination's key. Keys retain
 tenant-bound encryption and are never returned. The existing organization
@@ -105,8 +110,11 @@ in [#399](https://github.com/itskeKs/verwalino/issues/399), including visual-inp
 capability, default timing and property Q&A. No model is promoted from mocks or a
 provider listing, and no automatic fallback or response remapping is introduced.
 
-The existing import read response exposes per-run input/output tokens, elapsed
-time and nullable estimated USD cost. Historical price classification uses that
+The existing import read response separates durable pass-reported tokens from
+conservative ledger totals. Complete reports, partial reports, reservation-only
+counters and unknown usage have explicit display states; terminal success alone
+never establishes measured usage. Reported schema-failure usage remains visible.
+Elapsed time and nullable estimated USD cost are retained. Historical price classification uses that
 run's stored provider class and model, never the organization's current settings.
 A compatible endpoint remains unpriced even if its model reuses an OpenAI name.
 The UI says `kein Preis bekannt` and does not turn the ledger's zero placeholder

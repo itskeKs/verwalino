@@ -173,6 +173,9 @@ export type DeclarationImportStatus =
   | "CANCELLED";
 
 export interface DeclarationRunBudget {
+  usage_status: 'REPORTED' | 'PARTIAL' | 'RESERVED' | 'UNKNOWN';
+  reported_input_tokens: number | null;
+  reported_output_tokens: number | null;
   id: string;
   model: string;
   input_tokens: number;

@@ -2107,6 +2107,11 @@ uses the existing number input, help text and save confirmation.
 
 Import and review pages show „Verbrauch je Importlauf“ with model identity, input
 and output tokens, elapsed whole seconds, and provider-scoped estimated cost.
+Complete provider reports use the normal token labels. Partial reports use
+„Gemeldete …“ beside separate „Konservativ erfasste …“ totals. Reservation-only
+runs use „Reservierte Eingabetoken/Ausgabetoken“ and explain that actual usage is
+unknown; absent evidence and zero ledger counters show „Tokenverbrauch unbekannt“.
+Active/failed status never turns a reservation into observed usage.
 Unpriced historical runs show „kein Preis bekannt“ rather than a zero-USD amount.
 The responsive definition list uses one column at 360 px and two on desktop.
 
@@ -2120,3 +2125,13 @@ Settings captures show different scroll positions so the saved timeout is visibl
 | Saved timeout after reload | [view](docs/assets/design/ai-providers-timeout-after-control-1280.png) | [view](docs/assets/design/ai-providers-timeout-after-control-360.png) |
 | Review before budget display | [view](docs/assets/design/ai-providers-budget-before-review-1280.png) | [view](docs/assets/design/ai-providers-budget-before-review-360.png) |
 | Review with unpriced run | [view](docs/assets/design/ai-providers-budget-after-review-1280.png) | [view](docs/assets/design/ai-providers-budget-after-review-360.png) |
+
+
+The reservation-display correction uses the synthetic failed run with no provider
+usage below. Before captures show the ambiguous token labels; after captures show
+explicit reservations on both import and review screens at 1280 and 360 px.
+
+| Reservation-only run | Desktop | 360 px |
+| --- | --- | --- |
+| Before | [view](docs/assets/design/ai-budget-reserved-before-1280.png) | [view](docs/assets/design/ai-budget-reserved-before-360.png) |
+| Import after | [view](docs/assets/design/ai-budget-reserved-after-1280.png) | [view](docs/assets/design/ai-budget-reserved-after-360.png) |

@@ -2383,11 +2383,19 @@ values apply to extraction and property Q&A from the next request, without a
 container restart or operator environment change. Changing provider or API address
 resets the form to the new endpoint's default. This timeout bounds one request;
 existing per-run token/attempt caps and the independent worker heartbeat remain.
+For property questions, the endpoint timeout is an upper bound. The application
+also reads the actual stored budget-reservation expiry (including strict reviewed
+policy), reserves ten seconds for final accounting, and bounds the entire provider
+wait by the earlier deadline. Setup and transaction time consume that lifetime.
+A timed-out question retains its conservative cost before another question can
+reclaim expired hourly capacity. Extraction keeps its compatible 180-second default.
 The supported endpoint must still complete representative requests within the chosen
 timeout; model quality and timing acceptance are separate from configuration.
 
-Import and review screens show each stored run's input/output tokens and elapsed
-seconds. Cost estimates use that run's provider/model provenance. Unpriced runs
+Import and review screens distinguish provider-reported tokens from conservative
+accounted totals and reservation-only or unknown usage. Partial provider reports
+remain visible separately; failed or active runs never turn reservation ceilings
+into observed consumption. Elapsed seconds remain available for every run. Cost estimates use that run's provider/model provenance. Unpriced runs
 show **kein Preis bekannt**, even when settings later change to a priced model;
 a numeric ledger placeholder is never displayed as free usage.
 

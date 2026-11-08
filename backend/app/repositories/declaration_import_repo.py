@@ -37,6 +37,15 @@ class DeclarationPrincipalDenied(Exception):
 class DeclarationImportRepository(TenantRepository[DeclarationImport]):
     model = DeclarationImport
 
+    async def list_run_passes(self, import_id: uuid.UUID):
+        return (await self._session.scalars(select(DeclarationImportPass).join(
+            DeclarationExtractionRun,
+            (DeclarationExtractionRun.id == DeclarationImportPass.declaration_extraction_run_id)
+            & (DeclarationExtractionRun.organization_id == DeclarationImportPass.organization_id),
+        ).where(DeclarationImportPass.organization_id == self._org_id,
+            DeclarationExtractionRun.import_id == import_id)
+        .order_by(DeclarationImportPass.attempt_no))).all()
+
     async def list_runs(self, import_id: uuid.UUID):
         return (await self._session.scalars(select(DeclarationExtractionRun).where(
             DeclarationExtractionRun.organization_id == self._org_id,

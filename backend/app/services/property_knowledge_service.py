@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import re
 import threading
+import asyncio
 import time
 import unicodedata
 import uuid
@@ -820,10 +821,20 @@ async def query_property_knowledge(
         provider_error: Exception | None = None
         raw_usage: object = None
         try:
-            provider_result = await provider.answer(
-                prepared.request,
-                max_output_tokens=reservation.max_output_tokens,
-            )
+            # HTTP timeouts bound phases; this deadline bounds the whole wait.
+            # Reservation setup/commit time has already consumed this lifetime.
+            deadline = reservation.provider_deadline_monotonic
+            if deadline is None or deadline <= time.monotonic():
+                raise ProviderTimeout()
+            deadline = min(deadline, time.monotonic() + getattr(provider, "_timeout_seconds", settings.declaration_qa_timeout_seconds))
+            try:
+                async with asyncio.timeout_at(deadline):
+                    provider_result = await provider.answer(
+                        prepared.request,
+                        max_output_tokens=reservation.max_output_tokens,
+                    )
+            except TimeoutError:
+                raise ProviderTimeout() from None
             raw_usage = getattr(provider_result, "usage", None)
             if not isinstance(provider_result, KnowledgeProviderResult):
                 provider_error = ProviderInvalidOutput("Knowledge provider result is invalid.", usage=raw_usage)
