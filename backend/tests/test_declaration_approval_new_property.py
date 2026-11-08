@@ -804,7 +804,7 @@ def _candidate(
 
 
 @pytest_asyncio.fixture
-async def fully_reviewed_new_property_import(seed_data: dict) -> SimpleNamespace:
+async def fully_reviewed_new_property_import(seed_data: dict, request) -> SimpleNamespace:
     """A committed, complete NEW_PROPERTY graph with FK-safe teardown."""
     from app.core.config import settings
 
@@ -884,18 +884,26 @@ async def fully_reviewed_new_property_import(seed_data: dict) -> SimpleNamespace
             ]
             session.add_all(candidates)
             await session.flush()
+            unit_evidence = []
             for candidate in candidates:
                 source = amendment if candidate.candidate_type in {"RULE", "DOCUMENT_RELATION"} else main
-                session.add(DeclarationCandidateEvidence(
-                    organization_id=item.organization_id,
-                    candidate_id=candidate.id,
-                    document_id=source.id,
-                    pdf_page=1,
-                    printed_page="1",
-                    section_ref="§ 1",
-                    quote="Belegstelle der Teilungserklärung",
-                    field_path=candidate.field_key,
-                ))
+                paths = [candidate.field_key]
+                if getattr(request, "param", False) and candidate.candidate_type == "UNIT_CREATE":
+                    paths = [f"facts[{index}].normalized_value" for index in range(len(candidate.proposed_value_json))]
+                for field_path in paths:
+                    citation = DeclarationCandidateEvidence(
+                        organization_id=item.organization_id,
+                        candidate_id=candidate.id,
+                        document_id=source.id,
+                        pdf_page=1,
+                        printed_page="1",
+                        section_ref="§ 1",
+                        quote="Belegstelle der Teilungserklärung",
+                        field_path=field_path,
+                    )
+                    session.add(citation)
+                    if candidate.candidate_type == "UNIT_CREATE":
+                        unit_evidence.append(citation)
             # The heating rule carries two independently traceable sources.
             heating = next(candidate for candidate in candidates if candidate.stable_key == "rule:heating")
             session.add(DeclarationCandidateEvidence(
@@ -909,7 +917,9 @@ async def fully_reviewed_new_property_import(seed_data: dict) -> SimpleNamespace
                 field_path="effect.allocation_formula",
             ))
             await session.commit()
-            yield SimpleNamespace(item=item, main=main, amendment=amendment)
+            yield SimpleNamespace(item=item, main=main, amendment=amendment,
+                unit_evidence_snapshot={_citation_snapshot(citation) for citation in unit_evidence},
+                field_path_aliases=bool(getattr(request, "param", False)))
     finally:
         await engine.dispose()
         if item is not None and main is not None and amendment is not None:
@@ -947,6 +957,7 @@ async def fully_reviewed_new_property_import(seed_data: dict) -> SimpleNamespace
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize('fully_reviewed_new_property_import', [False, True], indirect=True, ids=['legacy', 'opaque-field-paths'])
 async def test_new_property_approval_is_atomic_and_traceable(
     client_a_clerk,
     fully_reviewed_new_property_import,
@@ -1005,6 +1016,14 @@ async def test_new_property_approval_is_atomic_and_traceable(
             assert len(sources) == 2
             assert relation is not None and relation.relation_type == "AMENDS"
             assert facts and all(source.source_import_id == item.id for source in facts)
+            unit_facts = [source for source in facts if source.subject_kind == "UNIT"]
+            assert len(unit_facts) == 8
+            assert len({(source.subject_id, source.field_key, source.property_document_id, source.pdf_page) for source in unit_facts}) == 8
+            preserved_evidence = (await session.scalars(select(DeclarationCandidateEvidence).join(
+                DeclarationCandidate, DeclarationCandidate.id == DeclarationCandidateEvidence.candidate_id).where(
+                    DeclarationCandidate.import_id == item.id, DeclarationCandidate.candidate_type == "UNIT_CREATE"))).all()
+            assert {_citation_snapshot(citation) for citation in preserved_evidence} == fully_reviewed_new_property_import.unit_evidence_snapshot
+            assert len(preserved_evidence) == (8 if fully_reviewed_new_property_import.field_path_aliases else 2)
             assert audit is not None
             assert {document.property_id for document in documents} == {property_id}
             assert audit.payload_diff == {"import_id": str(item.id), "property_id": str(property_id), "summary": result["summary"]}
@@ -1688,3 +1707,117 @@ async def test_new_property_plan_blocks_open_blocker_before_writes(
     with pytest.raises(ApprovalConflict) as exc:
         build_approval_plan(item, candidates, _evidence_by_candidate(evidence_rows), [issue], documents)
     assert exc.value.code == "OPEN_BLOCKER"
+
+
+def _same_page_field_path_graph():
+    """Nine accepted proposals; unit row quotes are repeated per source field."""
+    org, job, document_id = uuid.uuid4(), uuid.uuid4(), uuid.uuid4()
+    item = DeclarationImport(id=job, organization_id=org, mode='NEW_PROPERTY', status='NEEDS_REVIEW', draft_revision=11)
+    document = PropertyDocument(id=document_id, organization_id=org, page_count=1, archived_at=None, property_id=None)
+    candidates, evidence = [], {}
+
+    def add(kind, subject, field, value):
+        candidate = DeclarationCandidate(id=uuid.uuid4(), organization_id=org, import_id=job,
+            stable_key=f'{kind}:{subject}:{field or "create"}', candidate_type=kind, subject_key=subject,
+            field_key=field, operation='CREATE', proposed_value_json=value, confidence=1, review_status='ACCEPTED')
+        candidates.append(candidate)
+        fields = value if kind == 'UNIT_CREATE' else [field]
+        quote = f'Synthetic source row for {subject}'
+        evidence[candidate.id] = [DeclarationCandidateEvidence(id=uuid.uuid4(), organization_id=org, import_id=job,
+            candidate_id=candidate.id, document_id=document_id, pdf_page=1, quote=quote, field_path=f'facts[{index}].normalized_value') for index, _key in enumerate(fields)]
+
+    for field, value in {'name': 'Synthetic WEG', 'street': 'Synthetic Street 1', 'zip_code': '01234',
+                         'city': 'Synthetic City', 'management_type': 'WEG'}.items():
+        add('PROPERTY_FIELD', 'property:main', field, _text(value))
+    add('PROPERTY_FIELD', 'property:main', 'mea_denominator', {'kind': 'INTEGER', 'value': 1000})
+    for number, numerator, usage in [('1', 450, 'WOHNUNG'), ('2', 450, 'WOHNUNG'), ('G1', 100, 'STELLPLATZ')]:
+        add('UNIT_CREATE', f'unit:{number}', None, {'number': _text(number), 'location': _text('Synthetic location'),
+            'usage_type': _text(usage), 'mea': {'kind': 'MEA', 'numerator': numerator, 'denominator': 1000}})
+    return item, candidates, evidence, [document]
+
+
+def test_new_property_plan_accepts_same_quote_with_distinct_unit_field_paths_without_database(monkeypatch):
+    from app.declarations.approval import build_approval_plan
+
+    def forbidden_database(*args, **kwargs):
+        raise AssertionError('pure approval planner must not connect to a database')
+
+    monkeypatch.setattr(psycopg2, 'connect', forbidden_database)
+    monkeypatch.setattr(AsyncSession, 'execute', forbidden_database)
+    item, candidates, evidence, documents = _same_page_field_path_graph()
+    original_evidence = {key: tuple(_citation_snapshot(row) for row in rows) for key, rows in evidence.items()}
+    assert all(row.field_path not in candidate.proposed_value_json for candidate in candidates if candidate.candidate_type == 'UNIT_CREATE' for row in evidence[candidate.id])
+    assert len(candidates) == 9 and sum(map(len, evidence.values())) == 18
+    plan = build_approval_plan(item, candidates, evidence, [], documents)
+    unit_sources = [source for source in plan.fact_sources if source.subject_kind == 'UNIT']
+    assert len(unit_sources) == 12
+    assert len({(source.subject_ref, source.field_key, source.evidence.document_id, source.evidence.pdf_page) for source in unit_sources}) == 12
+    assert {key: tuple(_citation_snapshot(row) for row in rows) for key, rows in evidence.items()} == original_evidence
+    reordered = build_approval_plan(item, list(reversed(candidates)), {key: list(reversed(rows)) for key, rows in evidence.items()}, [], documents)
+    assert [source.id for source in reordered.fact_sources] == [source.id for source in plan.fact_sources]
+    assert all(source.evidence.quote == f'Synthetic source row for {source.subject_ref}' for source in unit_sources)
+
+
+def _citation_snapshot(citation):
+    return (citation.id, citation.candidate_id, citation.document_id, citation.pdf_page,
+            citation.printed_page, citation.section_ref, citation.quote, citation.field_path)
+
+
+@pytest.mark.parametrize('changed', ['quote', 'printed_page', 'section_ref'])
+def test_unit_projection_keeps_same_page_content_or_metadata_conflicts_blocked_without_database(changed):
+    from app.declarations.approval import ApprovalConflict, build_approval_plan
+    item, candidates, evidence, documents = _same_page_field_path_graph()
+    unit = next(candidate for candidate in candidates if candidate.candidate_type == 'UNIT_CREATE')
+    setattr(evidence[unit.id][-1], changed, 'Distinct synthetic citation metadata')
+    with pytest.raises(ApprovalConflict, match='APPROVED_FACT_SOURCE_COLLISION'):
+        build_approval_plan(item, candidates, evidence, [], documents)
+
+
+def test_unit_projection_preserves_generic_legacy_citations_without_database():
+    from app.declarations.approval import build_approval_plan
+    item, candidates, evidence, documents = _same_page_field_path_graph()
+    for candidate in candidates:
+        if candidate.candidate_type == 'UNIT_CREATE':
+            evidence[candidate.id] = evidence[candidate.id][:1]
+            evidence[candidate.id][0].field_path = None
+    plan = build_approval_plan(item, candidates, evidence, [], documents)
+    unit_sources = [source for source in plan.fact_sources if source.subject_kind == 'UNIT']
+    assert len(unit_sources) == 12 and all(source.evidence.field_path is None for source in unit_sources)
+
+
+@pytest.mark.parametrize('extra_source', ['page', 'document'])
+def test_unit_projection_retains_multiple_sources_and_original_indexes_without_database(extra_source):
+    from app.declarations.approval import build_approval_plan, deterministic_id, value_fingerprint
+    item, candidates, evidence, documents = _same_page_field_path_graph()
+    unit = next(candidate for candidate in candidates if candidate.candidate_type == 'UNIT_CREATE')
+    if extra_source == 'page':
+        documents[0].page_count = 2
+        document_id, page = documents[0].id, 2
+    else:
+        document_id, page = uuid.UUID(int=2**128 - 1), 1
+        documents.append(PropertyDocument(id=document_id, organization_id=item.organization_id,
+            page_count=1, archived_at=None, property_id=None))
+    evidence[unit.id].append(DeclarationCandidateEvidence(id=uuid.uuid4(), organization_id=item.organization_id,
+        import_id=item.id, candidate_id=unit.id, document_id=document_id, pdf_page=page,
+        quote=evidence[unit.id][0].quote, field_path='opaque.additional.source'))
+    plan = build_approval_plan(item, candidates, evidence, [], documents)
+    sources = [source for source in plan.fact_sources if source.subject_kind == 'UNIT']
+    assert len(sources) == 16
+    retained = [source for source in sources if source.evidence.document_id == document_id and source.evidence.pdf_page == page]
+    assert len(retained) == 4
+    for source in retained:
+        assert source.id == deterministic_id(item.organization_id, item.id, 'fact_source',
+            f'{unit.stable_key}:{source.field_key}:{value_fingerprint(source.approved_value_json)}:{document_id}:{page}:4')
+
+
+@pytest.mark.parametrize('candidate_type,subject_kind', [('PROPERTY_FIELD', 'PROPERTY'), ('LEGAL_REFERENCE', 'LEGAL_REFERENCE'), ('ASSIGNMENT', 'ASSIGNMENT'), ('UNIT_FIELD', 'UNIT')])
+def test_identical_projection_aliases_do_not_change_other_fact_source_consumers_without_database(candidate_type, subject_kind):
+    from app.declarations.approval import ApprovalConflict, EvidencePlan, _fact_sources, _validate_fact_source_collisions
+    item = SimpleNamespace(organization_id=uuid.uuid4(), id=uuid.uuid4())
+    candidate = SimpleNamespace(candidate_type=candidate_type, stable_key='synthetic-source')
+    document = uuid.uuid4()
+    citations = [EvidencePlan(document, 1, None, None, 'Synthetic citation', path) for path in ('opaque.a', 'opaque.b')]
+    sources = _fact_sources(item, candidate, subject_kind, 'synthetic', 'details', _text('Synthetic'), citations)
+    assert len(sources) == 2
+    with pytest.raises(ApprovalConflict, match='APPROVED_FACT_SOURCE_COLLISION'):
+        _validate_fact_source_collisions(sources)

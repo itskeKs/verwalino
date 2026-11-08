@@ -650,3 +650,12 @@ are separate from conservative job accounting; unknown usage stays unknown and
 costs are estimates, not billing. Comparisons cover observed assertions only,
 never automatic promotion or a “geprüft” model badge. Existing four-way live
 evaluation gates and runners are unchanged.
+
+
+New-property approval projects repeated unit citations to one canonical fact
+source when document, page, printed page, section and quote are identical and
+only the optional field path differs. Every original candidate evidence row
+remains immutable. Distinct content or metadata still triggers the existing
+collision guard; independent document/page sources remain traceable with their
+original deterministic source indexes. This projection applies to new-property
+`UNIT_CREATE` proposals.
