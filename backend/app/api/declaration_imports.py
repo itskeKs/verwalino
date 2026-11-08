@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import uuid
 from decimal import Decimal
+from datetime import datetime, timezone
 from typing import Literal
 
 from fastapi import APIRouter, Depends, File, Form, Header, Query, UploadFile
@@ -45,7 +46,20 @@ class DeclarationImportCreate(BaseModel):
     target_property_id: uuid.UUID | None = None
 
 
+class DeclarationRunOut(BaseModel):
+    usage_status: Literal["REPORTED", "PARTIAL", "RESERVED", "UNKNOWN"]
+    reported_input_tokens: int | None
+    reported_output_tokens: int | None
+    id: str
+    model: str
+    input_tokens: int
+    output_tokens: int
+    runtime_seconds: float
+    estimated_cost_usd: Decimal | None
+
+
 class DeclarationImportOut(BaseModel):
+    runs: list[DeclarationRunOut] = Field(default_factory=list)
     id: str
     mode: str
     target_property_id: str | None
@@ -179,7 +193,14 @@ async def get_import(
     auth: AuthContext = Depends(require_write_dep),
     db: AsyncSession = Depends(get_live_writer_db),
 ):
-    return _import_out(await DeclarationImportService(db, auth.organization_id, auth.user_id).get(import_id))
+    from app.repositories.declaration_import_repo import DeclarationImportRepository
+    item = await DeclarationImportService(db, auth.organization_id, auth.user_id).get(import_id)
+    repository = DeclarationImportRepository(db, auth.organization_id)
+    runs = await repository.list_runs(import_id)
+    passes = await repository.list_run_passes(import_id)
+    result = _import_out(item)
+    result.runs = [_run_out(run, [entry.safe_metadata for entry in passes if entry.declaration_extraction_run_id == run.id]) for run in runs]
+    return result
 
 
 @router.get("/{import_id}/documents/{document_id}/content")
@@ -268,6 +289,25 @@ async def cancel_import(
     db: AsyncSession = Depends(get_live_writer_db),
 ):
     return _import_out(await DeclarationImportService(db, auth.organization_id, auth.user_id).cancel(import_id))
+
+
+def _run_out(run, passes=()) -> DeclarationRunOut:
+    from app.core.ai_models import model_price
+    provider = {"OpenAiDeclarationProvider": "openai", "AnthropicDeclarationProvider": "anthropic"}.get(run.provider)
+    priced = provider is not None and model_price(run.model_name, provider) is not None
+    reported = [entry for entry in passes if entry["failure_class"] is None or entry["input_tokens"] > 0 or entry["output_tokens"] > 0]
+    input_tokens = sum(entry["input_tokens"] for entry in reported)
+    output_tokens = sum(entry["output_tokens"] for entry in reported)
+    complete = bool(reported) and len(reported) == len(passes) and (input_tokens, output_tokens) == (run.input_tokens, run.output_tokens)
+    usage_status = "REPORTED" if complete else "PARTIAL" if reported else "RESERVED" if run.input_tokens or run.output_tokens else "UNKNOWN"
+    end = run.completed_at or datetime.now(timezone.utc)
+    return DeclarationRunOut(id=str(run.id), model=run.model_name,
+        usage_status=usage_status,
+        reported_input_tokens=input_tokens if reported else None,
+        reported_output_tokens=output_tokens if reported else None,
+        input_tokens=run.input_tokens, output_tokens=run.output_tokens,
+        runtime_seconds=max(0, (end - run.started_at).total_seconds()),
+        estimated_cost_usd=run.estimated_cost_usd if priced else None)
 
 
 def _import_out(item: DeclarationImport) -> DeclarationImportOut:

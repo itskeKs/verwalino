@@ -9,7 +9,7 @@ history). Update this page in the same PR whenever a feature's status changes.
 
 The hosted instance uses the portable base through the [hosted deploy workflow](../DEPLOY.md#hosted-server).
 The optional [production app overlay](../DEPLOY.md#production-app-mode-and-mail-opt-in) enables the
-owner's mode and public-host configuration; mail also needs private SMTP settings. Declaration import and Q&A are enabled per organization in Einstellungen with its own OpenAI key; the portable declaration worker is included. Automatic invoice OCR remains disabled in this stack.
+owner's mode and public-host configuration; mail also needs private SMTP settings. Declaration import and Q&A are enabled per organization in Einstellungen with its own provider key; the portable declaration worker is included. Automatic invoice OCR remains disabled in this stack.
 
 The bilingual public website has a separate image and main-push publish/sign/deploy workflow (#24),
 with an optional closed container behind Caddy. Operator enablement and the first live rollout are
@@ -18,11 +18,11 @@ pending; registration stays closed and legal review remains with #26. See the
 
 ## Access and organization
 
-Organization administrators configure the OpenAI key (encrypted at rest), one
+Organization administrators configure the provider and key (encrypted at rest), one
 provider-listed model, import/Q&A switches and an optional known-price monthly
 limit in Einstellungen. Other roles retain personal design settings and cannot
 read or change organization AI settings. There is no environment credential fallback.
-Real provider scan-to-review acceptance remains blocked by a provider request failure (#160).
+The bounded provider transport/settings decision is described in [ADR 0014](adr/0014-provider-neutral-ai-runtime.md). Model correctness, vision capability and remaining live acceptance are tracked in [#399](https://github.com/itskeKs/verwalino/issues/399); provider listing alone does not certify them.
 
 
 | Feature | Status | Location |
@@ -57,8 +57,8 @@ Real provider scan-to-review acceptance remains blocked by a provider request fa
 | Photos | ❌ | – |
 | Units (name, type, area, heated area) | ✅ names over 50 characters are rejected when editing; the form keeps the entered name and shows the error at the field | `api/units.py`, `pages/PropertyDetailPage.tsx`, #214 |
 | Record MEA (co-ownership share) | ✅ scale confirmed by hand ("MEA-Skala bestätigen") or via declaration import; units need a confirmed scale (409 otherwise). Property details offer confirmation and the unit MEA field for WEG/MISCH/SEV, and for MIET only with an existing recorded unit MEA (including zero); unconfirmed status reads "Skala noch nicht bestätigt" | `api/properties.py` (`POST /{id}/mea-scale/confirm`), `api/units.py`, `pages/PropertyDetailPage.tsx`, T05 |
-| Organization AI settings | ✅ administrator-only encrypted OpenAI key, full provider model list, one model for import/escalation/Q&A, separate switches and optional known-price monthly limit; no environment fallback | `api/ai_settings.py`, `services/ai_settings_service.py`, `pages/SettingsPage.tsx`, #160 |
-| Declaration of division (Teilungserklärung) import (AI, review) | 🟡 organization configuration and deterministic browser twin exist; real provider scan-to-review remains blocked by a provider request failure (#160) | `api/declaration_imports.py`, `workers/declaration_import.py`, `pages/DeclarationImportPage.tsx` |
+| Organization AI settings | ✅ administrator-only provider selection (OpenAI, compatible API with base URL, Anthropic), encrypted key, full provider model list, one model for import/escalation/Q&A, separate switches, persisted endpoint request timeout and optional known-price monthly limit; no environment fallback | `api/ai_settings.py`, `services/ai_settings_service.py`, `pages/SettingsPage.tsx`, #160 |
+| Declaration of division (Teilungserklärung) import (AI, review) | 🟡 organization configuration, deterministic browser twin and working recorded OpenAI evidence exist; provider transports and truthful per-run tokens/runtime/unpriced display exist (#66); model-specific evaluation and acceptance continue in #399 | `api/declaration_imports.py`, `workers/declaration_import.py`, `pages/DeclarationImportPage.tsx` |
 | Property knowledge with sources | ✅ | `services/property_knowledge_service.py`, `pages/PropertyKnowledgePage.tsx` |
 | Meters, meter readings | ✅ | `api/meters.py`, `models/meter.py`, `components/MeterPanel.tsx`, T29, T30, [usage](operations/meters.md) |
 | Master data CSV import | ✅ template, preview, atomic creation of properties/units/contacts | `services/master_import_service.py`, `api/properties.py` (`/import/*`), `components/MasterImport.tsx`, T51, [usage](operations/tasks-and-documents.md) |

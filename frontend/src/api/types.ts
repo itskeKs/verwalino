@@ -172,7 +172,20 @@ export type DeclarationImportStatus =
   | "FAILED"
   | "CANCELLED";
 
+export interface DeclarationRunBudget {
+  usage_status: 'REPORTED' | 'PARTIAL' | 'RESERVED' | 'UNKNOWN';
+  reported_input_tokens: number | null;
+  reported_output_tokens: number | null;
+  id: string;
+  model: string;
+  input_tokens: number;
+  output_tokens: number;
+  runtime_seconds: number;
+  estimated_cost_usd: string | null;
+}
+
 export interface DeclarationImport {
+  runs?: DeclarationRunBudget[];
   queue_request_id?: string | null;
   command_receipt_id?: string | null;
   id: string;
@@ -1894,7 +1907,9 @@ export interface UnitHouseholdRow {
   is_vacancy: boolean;
 }
 export interface OrganizationAiSettings {
-  provider: 'openai';
+  request_timeout_seconds?: number | null;
+  provider: 'openai' | 'openai_compatible' | 'anthropic';
+  base_url: string | null;
   key_set: boolean;
   model: string | null;
   import_enabled: boolean;

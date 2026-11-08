@@ -1,3 +1,4 @@
+import { DeclarationRunBudget } from "../components/declarations/DeclarationRunBudget";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { ApiError } from "../api/client";
@@ -5,10 +6,11 @@ import {
   approveDeclarationImport,
   bulkReviewDeclarationCandidates,
   getDeclarationApprovalPreview,
+  getDeclarationImport,
   listDeclarationCandidates,
   listDeclarationDocuments,
 } from "../api/endpoints";
-import type { ApprovalPreview, DeclarationApprovalRequest, DeclarationCandidate, DeclarationDocument } from "../api/types";
+import type { DeclarationImport, ApprovalPreview, DeclarationApprovalRequest, DeclarationCandidate, DeclarationDocument } from "../api/types";
 import { useAuth } from "../auth/useAuth";
 import { ApprovalSummary } from "../components/declarations/ApprovalSummary";
 import { ReviewGroup } from "../components/declarations/ReviewGroup";
@@ -45,6 +47,8 @@ export function DeclarationReviewPage() {
 function DeclarationReviewImportPage({ importId }: { importId: string | undefined }) {
   const { session } = useAuth();
   const navigate = useNavigate();
+  const [importDetails, setImportDetails] = useState<DeclarationImport | null>(null);
+  const [budgetError, setBudgetError] = useState(false);
   const [candidates, setCandidates] = useState<DeclarationCandidate[]>([]);
   const [documents, setDocuments] = useState<DeclarationDocument[]>([]);
   const [preview, setPreview] = useState<ApprovalPreview | null>(null);
@@ -95,6 +99,13 @@ function DeclarationReviewImportPage({ importId }: { importId: string | undefine
   }, [importId]);
 
   useEffect(() => { void reload(); }, [reload]);
+  useEffect(() => {
+    if (!importId) return;
+    let current = true;
+    getDeclarationImport(importId).then(value => { if (current) setImportDetails(value); })
+      .catch(() => { if (current) setBudgetError(true); });
+    return () => { current = false; };
+  }, [importId]);
 
   useEffect(() => {
     if (!showConfirmation) return;
@@ -209,6 +220,8 @@ function DeclarationReviewImportPage({ importId }: { importId: string | undefine
         </div>
         {preview && <span className="badge badge--review">Entwurfsstand {preview.draft_revision}</span>}
       </div>
+      {budgetError && <p role="alert">Der Verbrauch konnte nicht geladen werden.</p>}
+      <DeclarationRunBudget runs={importDetails?.runs ?? []} />
       {error && <p className="error-text" role="alert">{error}</p>}
       {loading ? <p aria-live="polite">Review-Daten werden geladen.</p> : (
         <>

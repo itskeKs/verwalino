@@ -41,5 +41,5 @@ paths:
   declaration-worker network boundary (`DEPLOY.md`); respect `HV_DATA_REGION`. Observability
   records (`declarations/observability.py`) and logs carry identifiers, versions, hashes and
   usage, never document text.
-- A provider-neutral runtime (#66) and OCR as a separate service (#65) are open owner decisions:
-  keep the boundary clean so either becomes possible, and do not pre-empt them.
+- The provider-neutral runtime (#66) uses the existing typed interfaces and deterministic
+  manager; see ADR 0014. OCR as a separate service (#65) remains an open decision.

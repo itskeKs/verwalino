@@ -236,5 +236,5 @@ def create_knowledge_provider(effective):
     from openai import AsyncOpenAI
     if not effective.qa_enabled or not effective.api_key or not effective.model:
         return None
-    return OpenAIKnowledgeProvider(model=effective.model,
+    return OpenAIKnowledgeProvider(model=effective.model, timeout_seconds=effective.request_timeout_seconds,
         client=AsyncOpenAI(api_key=effective.api_key.get_secret_value(), base_url='https://api.openai.com/v1', max_retries=0))

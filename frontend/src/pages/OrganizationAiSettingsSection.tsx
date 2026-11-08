@@ -25,9 +25,9 @@ export function OrganizationAiSettingsSection({ organizationId }: { organization
   async function loadModels() {
     setBusy(true); setError(null); setMessage('');
     try {
-      const result = await listAiModels(organizationId, key.trim() || undefined);
+      const result = await listAiModels(organizationId, key.trim() || undefined, settings?.provider, settings?.base_url);
       setModels(result.models);
-      if (!result.models.length) setMessage('OpenAI hat für diesen Schlüssel keine Modelle zurückgegeben.');
+      if (!result.models.length) setMessage('Der Anbieter hat für diesen Schlüssel keine Modelle zurückgegeben.');
     } catch (error) { setError(error instanceof Error ? error.message : 'Die Modellliste konnte nicht geladen werden.'); }
     finally { setBusy(false); }
   }
@@ -36,8 +36,8 @@ export function OrganizationAiSettingsSection({ organizationId }: { organization
     if (!settings) return;
     setBusy(true); setError(null); setMessage('');
     const body: OrganizationAiSettingsBody = {
-      provider:'openai', model:settings.model, import_enabled:settings.import_enabled,
-      qa_enabled:settings.qa_enabled, monthly_limit_usd:limit.trim() || null,
+      provider:settings.provider, base_url:settings.base_url ?? null, model:settings.model, import_enabled:settings.import_enabled,
+      qa_enabled:settings.qa_enabled, monthly_limit_usd:limit.trim() || null, request_timeout_seconds:settings.request_timeout_seconds ?? null,
       ...(removeKey ? { api_key:null } : key.trim() ? { api_key:key.trim() } : {}),
     };
     try {
@@ -51,15 +51,37 @@ export function OrganizationAiSettingsSection({ organizationId }: { organization
   const known = selected?.price_known ?? settings?.price_known;
   return <section className="card mt-6 p-5 sm:p-6 min-w-0" aria-labelledby="ai-heading">
     <h2 id="ai-heading">KI für Ihre Organisation</h2>
-    <p className="text-sm text-muted-foreground mt-2">Ihre Organisation verwendet ihren eigenen OpenAI-API-Schlüssel. Das gewählte Modell gilt für alle Imports, Nachprüfungen und Fragen zum Objektwissen.</p>
-    <p className="text-sm text-muted-foreground mt-2">Bei aktivierten Funktionen werden die benötigten Dokumentinhalte an OpenAI übermittelt. Verwalino stellt keinen API-Schlüssel bereit.</p>
+    <p className="text-sm text-muted-foreground mt-2">Ihre Organisation verwendet ihren eigenen API-Schlüssel beim gewählten Anbieter. Das gewählte Modell gilt für alle Imports, Nachprüfungen und Fragen zum Objektwissen.</p>
+    <p className="text-sm text-muted-foreground mt-2">Bei aktivierten Funktionen werden die benötigten Dokumentinhalte an den gewählten Anbieter bzw. die konfigurierte Basis-URL übermittelt. Verwalino stellt keinen API-Schlüssel bereit.</p>
     {error && <p role="alert" className="error-text mt-4">{error}</p>}
     {!settings ? error ? <Button variant="outline" onClick={() => setReload(value => value + 1)}>Erneut laden</Button> : <p role="status" className="mt-4">KI-Einstellungen werden geladen …</p> :
       <form onSubmit={event => void submit(event)} className="mt-5">
         <fieldset disabled={busy} className="space-y-5 min-w-0">
-          <div><Label htmlFor="ai-provider">Anbieter</Label><Input id="ai-provider" value="OpenAI" readOnly /></div>
+          <div><Label htmlFor="ai-provider">Anbieter</Label>
+            <select id="ai-provider" className="w-full min-w-0 rounded-md border border-input bg-background p-2 text-sm" value={settings.provider} onChange={event => {
+              setSettings({...settings, provider:event.target.value as OrganizationAiSettings['provider'], base_url:null, request_timeout_seconds:null, model:null, key_set:false, price_known:false, import_enabled:false, qa_enabled:false});
+              setKey(''); setModels([]); setRemoveKey(false); setMessage('Bitte geben Sie für den neuen Anbieter einen eigenen Schlüssel ein und laden Sie dessen Modelle.');
+            }}>
+              <option value="openai">OpenAI</option><option value="openai_compatible">OpenAI-kompatible API</option><option value="anthropic">Anthropic</option>
+            </select>
+          </div>
+          {settings.provider === 'openai_compatible' && <div>
+            <Label htmlFor="ai-base-url">API-Basis-URL</Label>
+            <Input id="ai-base-url" type="url" value={settings.base_url ?? ''} maxLength={2048} placeholder="http://localhost:11434/v1" onChange={event => {
+              setSettings({...settings, base_url:event.target.value, request_timeout_seconds:null, key_set:false, model:null, price_known:false, import_enabled:false, qa_enabled:false}); setKey(''); setModels([]); setMessage('');
+            }} aria-describedby="ai-endpoint-info" />
+            <p id="ai-endpoint-info" className="text-sm text-muted-foreground mt-2">Verwenden Sie die API-Adresse einschließlich Pfad, z. B. /v1. Lokale Ziele sind nur im selbst gehosteten Betrieb verfügbar. Auch ein lokaler Dienst benötigt hier einen Schlüsselwert. Prüfen Sie Datenschutz und Speicherregeln des Anbieters.</p>
+          </div>}
           <div>
-            <Label htmlFor="ai-key">OpenAI-API-Schlüssel</Label>
+            <Label htmlFor="ai-timeout">Zeitlimit pro Anfrage in Sekunden (optional)</Label>
+            <Input id="ai-timeout" type="number" min="1" max="3600" step="1" inputMode="numeric" value={settings.request_timeout_seconds ?? ''} placeholder={settings.provider === 'openai_compatible' ? '180' : undefined} onChange={event => {
+              setSettings({...settings, request_timeout_seconds:event.target.value === '' ? null : Number(event.target.value)}); setMessage('');
+            }} aria-describedby="ai-timeout-info" />
+            <p id="ai-timeout-info" className="text-sm text-muted-foreground mt-2">Leer lassen für den Anbieterstandard: kompatible APIs 180 Sekunden, OpenAI und Anthropic die bestehenden Funktionsstandards. Möglich sind 1 bis 3600 Sekunden. Das Zeitlimit gilt ab der nächsten Anfrage und wird bei einem Wechsel von Anbieter oder API-Adresse zurückgesetzt.</p>
+          </div>
+          {settings.provider === 'anthropic'  && <p className="text-sm text-muted-foreground">Verwenden Sie einen Anthropic-Schlüssel für einen einzelnen Workspace. Prüfen Sie die Datenaufbewahrung Ihres Vertrags; Verwalino aktiviert keine Zero Data Retention.</p>}
+          <div>
+            <Label htmlFor="ai-key">API-Schlüssel</Label>
             <Input id="ai-key" type="password" autoComplete="off" spellCheck={false} value={key} maxLength={4096} onChange={event => { setKey(event.target.value); setRemoveKey(false); setMessage(''); }} aria-describedby="ai-key-status" />
             <p id="ai-key-status" className="text-sm text-muted-foreground mt-2">{removeKey ? 'Der gespeicherte Schlüssel wird beim Speichern entfernt.' : settings.key_set ? 'Ein Schlüssel ist gespeichert. Leer lassen, um ihn beizubehalten; zum Ersetzen einen neuen eingeben.' : 'Es ist noch kein Schlüssel gespeichert.'} Der gespeicherte Schlüssel wird niemals angezeigt.</p>
             {settings.key_set && <label className="flex gap-2 items-start mt-3 text-sm"><input type="checkbox" checked={removeKey} onChange={event => {
@@ -78,14 +100,14 @@ export function OrganizationAiSettingsSection({ organizationId }: { organization
               {settings.model && !models.some(item => item.id === settings.model) && <option value={settings.model}>{settings.model}</option>}
               {models.map(model => <option key={model.id} value={model.id}>{model.id}{model.evaluated ? ' · geprüft' : ''}</option>)}
             </select>
-            <p className="text-sm text-muted-foreground mt-2">Alle von OpenAI gelisteten Modelle sind auswählbar. „geprüft“ kennzeichnet bestandene Verwalino-Evaluationen. Andere Modelle können erforderliche Funktionen ablehnen.</p>
+            <p className="text-sm text-muted-foreground mt-2">Alle vom Anbieter gelisteten Modelle sind auswählbar. „geprüft“ kennzeichnet bestandene Verwalino-Evaluationen. Andere Modelle können erforderliche Funktionen ablehnen.</p>
           </div>
           <label className="flex gap-2 items-start"><input type="checkbox" checked={settings.import_enabled} disabled={removeKey} onChange={event => { setSettings({...settings, import_enabled:event.target.checked}); setMessage(''); }} />Teilungserklärungen importieren</label>
           <label className="flex gap-2 items-start"><input type="checkbox" checked={settings.qa_enabled} disabled={removeKey} onChange={event => { setSettings({...settings, qa_enabled:event.target.checked}); setMessage(''); }} />Fragen zum Objektwissen</label>
           <div>
             <Label htmlFor="ai-monthly-limit">Monatliches Limit in USD (optional)</Label>
             <Input id="ai-monthly-limit" type="number" min="0" step="0.01" inputMode="decimal" value={limit} onChange={event => { setLimit(event.target.value); setMessage(''); }} aria-describedby="ai-budget-info" />
-            <p id="ai-budget-info" className="text-sm text-muted-foreground mt-2">Leer lassen für kein monatliches Limit. Das Limit gilt pro Kalendermonat (UTC) für Imports und Fragen zusammen, einschließlich laufender Reservierungen. Die Abrechnung erfolgt durch OpenAI.</p>
+            <p id="ai-budget-info" className="text-sm text-muted-foreground mt-2">Leer lassen für kein monatliches Limit. Das Limit gilt pro Kalendermonat (UTC) für Imports und Fragen zusammen, einschließlich laufender Reservierungen. Die Abrechnung erfolgt durch den gewählten Anbieter.</p>
             {settings.model && !known && <p className="text-sm mt-2">Für dieses Modell ist kein Preis bekannt. Das monatliche Limit wird für dieses Modell nicht durchgesetzt.</p>}
           </div>
           <Button type="submit" disabled={busy}>{busy ? 'Wird gespeichert …' : 'KI-Einstellungen speichern'}</Button>

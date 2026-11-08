@@ -144,16 +144,16 @@ async def test_direct_bounded_adapter_cannot_construct_provider_or_read_pdf(monk
 @pytest.mark.asyncio
 async def test_bounded_adapter_preserves_actual_recheck_router_evidence(monkeypatch, tmp_path: Path) -> None:
     """A production-shaped fake flow must retain the product router decision."""
-    import app.declarations.openai_provider as openai_provider_module
+    import app.declarations.provider_runtime as provider_runtime_module
     import app.evals.declaration_knowledge as module
 
     entry = _synthetic_manifest_entry(tmp_path, case_id="case-live-01")
     provider = _synthetic_pipeline_provider(entry.case_id, invented_quote=True)
-    monkeypatch.setattr(
-        openai_provider_module,
-        "OpenAiDeclarationProvider",
-        lambda **_kwargs: provider,
-    )
+    def create_recording_provider(effective, **_kwargs):
+        provider._primary_model = effective.model
+        provider._configured_rates = lambda _configured: {}
+        return provider
+    monkeypatch.setattr(provider_runtime_module, "create_extraction_provider", create_recording_provider)
     adapter = BoundedProductionDeclarationPipelineAdapter(
         capability=module._LiveEvaluationCapability(module._LIVE_CAPABILITY_SEAL,
             _effective=__import__('app.services.ai_settings_service',fromlist=['EffectiveAiSettings']).EffectiveAiSettings(

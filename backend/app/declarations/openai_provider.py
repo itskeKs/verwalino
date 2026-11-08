@@ -204,6 +204,7 @@ class _AttemptSuccess:
 
 
 class OpenAiDeclarationProvider:
+    _price_provider = "openai"
     """Uses Structured Outputs while failing closed on metering uncertainty."""
 
     def __init__(
@@ -1348,6 +1349,13 @@ class OpenAiDeclarationProvider:
             )
             raise _SchemaFailure(usage, metadata) from None
         if parsed is None or not isinstance(parsed, output_type):
+            diagnostic = getattr(response, "_schema_diagnostic", None)
+            if isinstance(diagnostic, tuple) and len(diagnostic) == 2:
+                try:
+                    log_schema_validation_diagnostic(exception_class=diagnostic[0], errors=diagnostic[1],
+                        schema=output_type.model_json_schema(), pass_id=pass_id, stage=stage)
+                except Exception:
+                    pass
             metadata = self._metadata(
                 pass_id=pass_id,
                 attempt_no=attempt_no,
@@ -1499,7 +1507,8 @@ class OpenAiDeclarationProvider:
                 "Explicit cache writes are not supported for this model.",
             )
         if (
-            model == "gpt-5.6-luna"
+            self._price_provider == "openai"
+            and model == "gpt-5.6-luna"
             and input_tokens > _LUNA_SHORT_CONTEXT_MAX_INPUT_TOKENS
         ):
             usage = ProviderUsage(

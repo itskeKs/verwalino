@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import re
 import threading
+import asyncio
 import time
 import unicodedata
 import uuid
@@ -663,9 +664,9 @@ def _stored_cost(value: Decimal) -> Decimal:
     return value.quantize(_MICRO_USD, rounding=ROUND_UP)
 
 
-def _configured_cost(input_tokens: int, output_tokens: int, model: str = "gpt-5.6-luna") -> Decimal:
+def _configured_cost(input_tokens: int, output_tokens: int, model: str = "gpt-5.6-luna", provider: str = "openai") -> Decimal:
     from app.core.ai_models import token_cost
-    return token_cost(model, input_tokens, output_tokens)
+    return token_cost(model, input_tokens, output_tokens, provider)
 
 
 def _provider_identity(provider: KnowledgeAnswerProvider) -> tuple[str, str]:
@@ -676,6 +677,7 @@ def _provider_identity(provider: KnowledgeAnswerProvider) -> tuple[str, str]:
 def _usage_for_reservation(
     usage: object,
     reservation: KnowledgeQueryReservation,
+    price_provider: str = "openai",
 ) -> tuple[ProviderUsage | None, Decimal, str | None]:
     """Validate opaque SDK metering before accepting either cost or model prose."""
     input_tokens = getattr(usage, "input_tokens", None)
@@ -701,7 +703,7 @@ def _usage_for_reservation(
         else 0
     )
     sanitized = ProviderUsage(input_tokens, output_tokens, cost_usd, sanitized_attempt_count)
-    expected_cost = _configured_cost(input_tokens, output_tokens, reservation.model)
+    expected_cost = _configured_cost(input_tokens, output_tokens, reservation.model, price_provider)
     if (
         input_tokens > reservation.reserved_input_tokens
         or output_tokens > reservation.max_output_tokens
@@ -790,10 +792,10 @@ async def query_property_knowledge(
             window_start = _utc_window_start(now, settings.declaration_qa_budget_window_minutes)
             provider_name, model = _provider_identity(provider)
             reserved_cost = _stored_cost(_configured_cost(
-                estimate.input_tokens, settings.declaration_qa_max_output_tokens, model,
+                estimate.input_tokens, settings.declaration_qa_max_output_tokens, model, getattr(provider, "_price_provider", "openai"),
             ))
             from app.services.ai_settings_service import require_organization_ai_budget
-            await require_organization_ai_budget(session, organization_id, reserved_cost, model=model)
+            await require_organization_ai_budget(session, organization_id, reserved_cost, model=model, provider=getattr(provider, "_price_provider", "openai"))
             repository = PropertyKnowledgeQueryRepository(session, organization_id)
             provider_name, model = _provider_identity(provider)
             reservation = await repository.reserve_query(
@@ -819,10 +821,20 @@ async def query_property_knowledge(
         provider_error: Exception | None = None
         raw_usage: object = None
         try:
-            provider_result = await provider.answer(
-                prepared.request,
-                max_output_tokens=reservation.max_output_tokens,
-            )
+            # HTTP timeouts bound phases; this deadline bounds the whole wait.
+            # Reservation setup/commit time has already consumed this lifetime.
+            deadline = reservation.provider_deadline_monotonic
+            if deadline is None or deadline <= time.monotonic():
+                raise ProviderTimeout()
+            deadline = min(deadline, time.monotonic() + getattr(provider, "_timeout_seconds", settings.declaration_qa_timeout_seconds))
+            try:
+                async with asyncio.timeout_at(deadline):
+                    provider_result = await provider.answer(
+                        prepared.request,
+                        max_output_tokens=reservation.max_output_tokens,
+                    )
+            except TimeoutError:
+                raise ProviderTimeout() from None
             raw_usage = getattr(provider_result, "usage", None)
             if not isinstance(provider_result, KnowledgeProviderResult):
                 provider_error = ProviderInvalidOutput("Knowledge provider result is invalid.", usage=raw_usage)
@@ -834,7 +846,7 @@ async def query_property_knowledge(
             # Do not surface arbitrary adapter errors or retain their message.
             provider_error = ProviderUnavailable()
         latency_ms = max(0, int((time.monotonic() - started) * 1000))
-        usage, finalized_cost, mismatch = _usage_for_reservation(raw_usage, reservation)
+        usage, finalized_cost, mismatch = _usage_for_reservation(raw_usage, reservation, getattr(provider, "_price_provider", "openai"))
         if provider_error is not None and raw_usage is None:
             finalized_cost = reservation.reserved_cost_usd
         outcome = mismatch or (

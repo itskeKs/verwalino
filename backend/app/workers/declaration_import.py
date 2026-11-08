@@ -227,11 +227,10 @@ class DeclarationImportWorker:
         pipeline = self._pipeline
         owned_provider = None
         if pipeline is None:
-            from app.declarations.openai_provider import OpenAiDeclarationProvider
+            from app.declarations.provider_runtime import create_extraction_provider
             from app.declarations.pipeline import DeclarationPipeline
             effective = self._active_ai
-            owned_provider = OpenAiDeclarationProvider(api_key=effective.api_key.get_secret_value(),
-                primary_model=effective.model, escalation_model=effective.model)
+            owned_provider = create_extraction_provider(effective)
             pipeline = DeclarationPipeline(owned_provider, tenant_session_factory=self._tenant_session_factory)
         pipeline_task = asyncio.create_task(pipeline.run(lease))
         heartbeat_task = asyncio.create_task(self._heartbeat(lease))
@@ -370,9 +369,6 @@ async def run_healthcheck(
 
 async def _main() -> None:
     """Production-only construction; import and tests never perform I/O."""
-    from app.declarations.openai_provider import OpenAiDeclarationProvider
-    from app.declarations.pipeline import DeclarationPipeline
-
     await DeclarationImportWorker().run_forever()
 
 

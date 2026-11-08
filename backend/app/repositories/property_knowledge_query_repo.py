@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import uuid
+import time
 from dataclasses import dataclass
 from datetime import datetime
 from decimal import Decimal
@@ -33,6 +34,7 @@ class KnowledgeQueryReservation:
     max_output_tokens: int
     reserved_cost_usd: Decimal
     model: str = "gpt-5.6-luna"
+    provider_deadline_monotonic: float | None = None
 
 
 class PropertyKnowledgeQueryRepository:
@@ -89,6 +91,15 @@ class PropertyKnowledgeQueryRepository:
             raise
         if row is None:
             return None
+        # Strict policy owns its expiry. Sample that persisted deadline against
+        # the DB clock; start before I/O so query/commit time cannot extend it.
+        sampled_at = time.monotonic()
+        lifetime = (await self._session.execute(text("""SELECT reservation_expires_at,
+            clock_timestamp() AS database_now FROM property_knowledge_query_run
+            WHERE organization_id=:org AND id=:run"""),
+            {"org": self._organization_id, "run": row["run_id"]})).one()
+        from app.core.config import QA_FINALIZATION_MARGIN_SECONDS
+        remaining = (lifetime.reservation_expires_at - lifetime.database_now).total_seconds()
         return KnowledgeQueryReservation(
             run_id=row["run_id"],
             budget_window_start=row["budget_window_start"],
@@ -96,6 +107,7 @@ class PropertyKnowledgeQueryRepository:
             max_output_tokens=max_output_tokens,
             reserved_cost_usd=row["reserved_cost_usd"],
             model=model,
+            provider_deadline_monotonic=sampled_at + max(0, remaining - QA_FINALIZATION_MARGIN_SECONDS),
         )
 
     async def finalize_query(

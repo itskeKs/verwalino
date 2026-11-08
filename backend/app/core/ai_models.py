@@ -22,16 +22,28 @@ MODEL_PRICES = {
 }
 EVALUATED_MODELS: frozenset[str] = frozenset()
 DEFAULT_TEST_MODEL = 'gpt-5.6-luna'
+DEFAULT_COMPATIBLE_REQUEST_TIMEOUT_SECONDS = 180
 
 
-def model_price(model: str | None) -> ModelPrice | None:
-    return MODEL_PRICES.get(model)
+def endpoint_request_timeout(provider: str, override: int | None) -> int | None:
+    return override if override is not None else DEFAULT_COMPATIBLE_REQUEST_TIMEOUT_SECONDS if provider == 'openai_compatible' else None
 
 
-def token_cost(model: str | None, input_tokens: int, output_tokens: int) -> Decimal:
-    price = model_price(model)
+ANTHROPIC_MODEL_PRICES = {
+    # https://platform.claude.com/docs/en/about-claude/pricing (2026-11-08)
+    name: ModelPrice(Decimal('1'), Decimal('5'), Decimal('.1'), Decimal('1.25'))
+    for name in ('claude-haiku-4-5', 'claude-haiku-4-5-20251001')
+}
+
+
+def model_price(model: str | None, provider: str = 'openai') -> ModelPrice | None:
+    return (MODEL_PRICES if provider == 'openai' else ANTHROPIC_MODEL_PRICES if provider == 'anthropic' else {}).get(model)
+
+
+def token_cost(model: str | None, input_tokens: int, output_tokens: int, provider: str = 'openai') -> Decimal:
+    price = model_price(model, provider)
     if price is None:
         return Decimal('0')
-    input_multiplier = Decimal('2') if model == 'gpt-5.6-luna' and input_tokens > 272_000 else Decimal('1')
+    input_multiplier = Decimal('2') if provider == 'openai' and model == 'gpt-5.6-luna' and input_tokens > 272_000 else Decimal('1')
     output_multiplier = Decimal('1.5') if input_multiplier == 2 else Decimal('1')
     return (input_tokens * price.input * input_multiplier + output_tokens * price.output * output_multiplier) / 1_000_000

@@ -1,4 +1,4 @@
-"""Bounded, non-billable OpenAI reachability check for the declaration worker.
+"""Bounded, non-billable provider reachability check for the declaration worker.
 
 This only resolves the two configured model IDs through OpenAI's Models API.
 It never sends document data, prompts, Responses API requests, or tools.
@@ -52,8 +52,10 @@ async def verify_openai_models(
 async def _verify_organization(organization_id):
     from app.services.ai_settings_service import worker_ai_settings
     effective = await worker_ai_settings(organization_id)
-    await verify_openai_models(api_key=effective.api_key.get_secret_value(),
-        primary_model=effective.model, escalation_model=effective.model)
+    from app.declarations.openai_models import list_models
+    models = await list_models(effective.api_key.get_secret_value(), provider=effective.provider, base_url=effective.base_url)
+    if effective.model not in models:
+        raise ValueError('Configured model is not listed by the selected provider')
 
 
 def main(argv=None) -> int:
@@ -61,13 +63,13 @@ def main(argv=None) -> int:
     parser.add_argument('--organization-id', type=uuid.UUID)
     args = parser.parse_args(argv)
     if args.organization_id is None:
-        print("OpenAI provider connectivity smoke requires --organization-id and configured organization AI settings", file=sys.stderr)
+        print("Provider connectivity smoke requires --organization-id and configured organization AI settings", file=sys.stderr)
         return 2
     try:
         asyncio.run(_verify_organization(args.organization_id))
     except Exception:
         # Never print a response body, model metadata, or a request URL here.
-        print("OpenAI provider connectivity smoke failed", file=sys.stderr)
+        print("Provider connectivity smoke failed", file=sys.stderr)
         return 1
     return 0
 
