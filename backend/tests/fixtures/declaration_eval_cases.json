@@ -18,6 +18,7 @@
     "rules": []
   }],
   "fixed_core_contract": {
+    "usage_type_values": ["WOHNUNG", "GEWERBE", "STELLPLATZ", "SONSTIGE"],
     "fields_by_prefix": {
       "property": ["name", "street", "zip_code", "city", "management_type", "mea_denominator"],
       "unit": ["number", "location", "usage_type", "area", "heated_area", "building_part", "mea"],

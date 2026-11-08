@@ -19,15 +19,18 @@ from app.declarations.provider import PageInput
 from app.declarations.schemas import EvidencePayload, IntegerValue, MeaFraction, TextValue
 from app.repositories.declaration_evaluation_repo import DeclarationEvaluationRepository, RecordedCaptureUnavailable
 
+_FORMAT_VERSION = 2
+_SCORER_VERSION = 'recorded-final-output-v2'
+
 _STAGES = ('inventory', 'extract_core', 'extract_rules', 'reconcile', 'recheck')
 _STATUSES = {'PASS', 'FAIL', 'UNAVAILABLE', 'NOT_REACHED', 'NOT_APPLICABLE'}
 _ASSERTIONS = {'execution', 'schema', 'semantics', 'contracts_consistent', 'terminal_outcome', 'candidate_shape', 'core_facts', 'unit_set',
                'unit_kinds', 'mea_exact', 'rules_absent', 'rule_effects', 'evidence', 'blockers', 'usage_complete'}
 _DIGEST = re.compile(r'^[a-f0-9]{64}$')
-_REPORT_KEYS = {'format_version', 'capture_kind', 'case_id', 'input_digest', 'gold_digest', 'source', 'provenance', 'assertions', 'accounting'}
+_REPORT_KEYS = {'format_version', 'scorer_version', 'capture_kind', 'case_id', 'input_digest', 'gold_digest', 'source', 'provenance', 'assertions', 'accounting'}
 CAPTURE_REFUSAL_CODES = frozenset({'READ_ONLY_RUNTIME_REQUIRED', 'IMPORT_NOT_VISIBLE', 'CAPTURE_LIMIT_EXCEEDED',
     'SYNTHETIC_INPUT_MISMATCH', 'INVALID_RECORDED_GOLD', 'NEW_PROPERTY_IMPORT_REQUIRED', 'NEW_UNUSED_DRAFT_REQUIRED',
-    'EXACTLY_ONE_EXTRACTION_RUN_REQUIRED', 'EXACTLY_ONE_START_REQUIRED', 'TERMINAL_PRE_REVIEW_IMPORT_REQUIRED',
+    'EXACTLY_ONE_EXTRACTION_RUN_REQUIRED', 'EXACTLY_ONE_START_REQUIRED', 'INCOMPATIBLE_RECORDED_SCORER', 'TERMINAL_PRE_REVIEW_IMPORT_REQUIRED',
     'RUN_OUTCOME_MISMATCH', 'UNTOUCHED_MODEL_PROPOSALS_REQUIRED', 'INVALID_RECORDED_REPORT', 'INCOMPATIBLE_RECORDED_CASES'})
 
 
@@ -77,6 +80,9 @@ def _input_bytes(snapshot, gold):
 
 def _score_output(snapshot, gold, source):
     from app.evals.declaration_knowledge import CoreFact, evaluate_core_facts
+    from app.services.declaration_review_service import _rule_needs_clarification
+    # The caller has already rejected every reviewed/corrected proposal. Reuse
+    # the preview predicate only on original PENDING values, never human edits.
     expected = [dict(fact) for fact in gold['core_facts']]
     for fact in expected:
         if fact['subject_id'].startswith('unit:'):
@@ -109,9 +115,11 @@ def _score_output(snapshot, gold, source):
         _assertion('final_output', 'unit_kinds', 'PASS' if kind_metrics.normalized_f1 == 1 else 'FAIL'),
         _assertion('final_output', 'core_facts', 'PASS' if metrics.normalized_f1 == 1 else 'FAIL'),
         _assertion('final_output', 'mea_exact', 'PASS' if metrics.mea_exact_matches == metrics.mea_expected_count and metrics.mea_denominator_consistency == 1 else 'FAIL'),
-        _assertion('final_output', 'blockers', 'FAIL' if any(issue.severity == 'BLOCKER' for issue in snapshot.issues) else 'PASS'),
+        _assertion('final_output', 'blockers', 'FAIL' if any(issue.severity == 'BLOCKER' for issue in snapshot.issues)
+                   or any(_rule_needs_clarification(candidate) for candidate in snapshot.candidates) else 'PASS'),
     ]
-    rules = [candidate for candidate in snapshot.candidates if candidate.candidate_type == 'RULE']
+    rules = [candidate for candidate in snapshot.candidates
+             if candidate.candidate_type == 'RULE' and not candidate.stable_key.startswith('additional-rule:')]
     # The known scan independently contains no governance/allocation clause.
     # This tests hallucinated rules, never rule recall on an empty expectation.
     assertions.append(_assertion('final_output', 'rules_absent', 'PASS' if not rules and not gold['rules'] else 'FAIL'))
@@ -201,7 +209,7 @@ async def capture_recorded_import(*, organization_id, actor_id, import_id, gold,
             accounted = {'input_tokens': run.input_tokens, 'output_tokens': run.output_tokens, 'estimated_cost_usd': str(run.estimated_cost_usd)}
             reported = run.status == 'SUCCEEDED' and all(entry['failure_class'] is None for entry in passes) and provider_totals['input_tokens'] == run.input_tokens and provider_totals['output_tokens'] == run.output_tokens and abs(Decimal(provider_totals['estimated_cost_usd']) - run.estimated_cost_usd) <= Decimal('0.000001')
             assertions.append(_assertion('accounting', 'usage_complete', 'PASS' if reported else 'UNAVAILABLE'))
-            report = {'format_version': 1, 'capture_kind': 'recorded_product_import', 'case_id': gold['id'], 'input_digest': gold['input_digest'], 'gold_digest': gold_digest,
+            report = {'format_version': _FORMAT_VERSION, 'scorer_version': _SCORER_VERSION, 'capture_kind': 'recorded_product_import', 'case_id': gold['id'], 'input_digest': gold['input_digest'], 'gold_digest': gold_digest,
                       'source': {'organization_id': str(organization_id), 'import_id': str(import_id), 'run_id': str(run.id),
                                  'queue_request_id': str(item.queue_request_id), 'run_status': run.status, 'import_status': item.status,
                                  'provider_attempt_count': item.attempt_count, 'read_only': True, 'pre_review': True},
@@ -214,9 +222,13 @@ async def capture_recorded_import(*, organization_id, actor_id, import_id, gold,
 
 def validate_recorded_report(report):
     """Accept only frozen sanitized captures, never raw actual/scoring input."""
+    if isinstance(report, dict) and report.get('capture_kind') == 'recorded_product_import' and (
+        report.get('format_version') != _FORMAT_VERSION or report.get('scorer_version') != _SCORER_VERSION
+    ):
+        raise RecordedCaptureUnavailable('INCOMPATIBLE_RECORDED_SCORER')
     if not isinstance(report, dict) or set(report) != _REPORT_KEYS or len(_canonical(report).encode()) > 256 * 1024:
         raise RecordedCaptureUnavailable('INVALID_RECORDED_REPORT')
-    if report['format_version'] != 1 or report['capture_kind'] != 'recorded_product_import' or not re.fullmatch(r'[a-z0-9][a-z0-9-]{0,63}', report['case_id']):
+    if report['format_version'] != _FORMAT_VERSION or report['capture_kind'] != 'recorded_product_import' or not re.fullmatch(r'[a-z0-9][a-z0-9-]{0,63}', report['case_id']):
         raise RecordedCaptureUnavailable('INVALID_RECORDED_REPORT')
     if any(not _DIGEST.fullmatch(report[key]) for key in ('input_digest', 'gold_digest')):
         raise RecordedCaptureUnavailable('INVALID_RECORDED_REPORT')

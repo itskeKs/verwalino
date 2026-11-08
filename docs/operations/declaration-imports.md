@@ -520,10 +520,16 @@ wire model; inherited local validation remains unchanged. Offline SDK transport
 checks verify serialization, not live provider acceptance. Pass metadata uses `default`
 when reasoning is omitted for a model with no known effort contract.
 
-Prompt version `declaration-v2` supplies the exact fixed-core subject-prefix and
+Prompt version `declaration-v3` supplies the exact fixed-core subject-prefix and
 field pairs to core extraction, reconciliation and recheck. The instructions
 and local validator read one immutable contract; existing subject-key forms,
 value-type checks, evidence requirements and wire schemas remain unchanged.
+Usage-type instructions require TEXT and the existing canonical values WOHNUNG,
+GEWERBE, STELLPLATZ or SONSTIGE, preserving original source wording in raw values
+and evidence. Approval validation remains exact; no aliases are coerced.
+Descriptive inventory is not duplicated as a normative rule or additional fact.
+A genuine source-supported clause may refer to core facts; unclear explicit clauses
+retain clarification flags. Source silence does not create a missing-rule issue.
 Genuinely out-of-core relevant facts use the existing `additional_facts` shape.
 The synthetic contract oracle verifies local decisions and serialized SDK
 instructions; it does not establish live extraction quality or acceptance.
@@ -621,13 +627,24 @@ unedited artifact. Input and gold digests must match. Model, resolved-model,
 reasoning, prompt, schema and harness changes are explicit; a difference is not
 attributed solely to the model.
 
+Recorded report format `2` uses scorer `recorded-final-output-v2`, independently
+of the provider harness version. Comparisons refuse format-1 or differing scorer
+reports with `INCOMPATIBLE_RECORDED_SCORER`; preserve older artifacts without
+reinterpreting their scores. The independent input/gold data is unchanged.
+
 Reports localize case/stage/assertion outcomes. Success ledger entries establish
 execution and parsed-schema success only. Intermediate semantic outputs were not
 retained and remain `UNAVAILABLE`; all value assertions are `final_output` on the
 original merged proposals. The independently labeled scan checks units 1/2/G1,
 their apartment/apartment/parking usage kinds, shares 450/450/100 over 1000 and
 source-bound evidence. It contains no governance/allocation rule: hallucinated
-rules fail, while rule-effect recall is not tested. Failed terminal runs cannot
+true-rule origins fail, while additional-fact notes sharing RULE storage are not
+counted as normative rules. Rule-effect recall is not tested. The `blockers`
+assertion includes BLOCKER issues and the existing rule/additional-fact
+clarification predicate, even when its issue severity is WARNING. Ordinary
+pending human review and unrelated warnings do not fail that assertion. Capture
+still refuses all reviewed/corrected proposals before using this predicate.
+Failed terminal runs cannot
 pass merely because earlier provider calls succeeded. Provider-reported totals
 are separate from conservative job accounting; unknown usage stays unknown and
 costs are estimates, not billing. Comparisons cover observed assertions only,

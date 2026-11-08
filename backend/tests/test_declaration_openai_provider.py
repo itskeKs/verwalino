@@ -248,7 +248,18 @@ async def test_real_sdk_wire_schema_matches_reservations_and_fingerprints(
             assert f"{prefix}: {', '.join(sorted(fields))}" in guidance.splitlines()
         for field, kind in [('mea', 'MEA'), ('mea_denominator', 'INTEGER'), ('area', 'DECIMAL'), ('heated_area', 'DECIMAL')]:
             assert f'{field} requires normalized_value.kind={kind}' in guidance
+        assert 'usage_type requires normalized_value.kind=TEXT.' in guidance.splitlines()
+        assert f"usage_type allowed values: {', '.join(contract['usage_type_values'])}." in guidance.splitlines()
         assert 'additional_facts' in guidance
+    if method in {'extract_core', 'extract_rules', 'reconcile', 'recheck'}:
+        guidance = requests[0]['input'][0]['content'][0]['text']
+        for line in (
+            'Descriptive core inventory belongs in facts, not rules.',
+            'Use additional_facts only for relevant information outside the fixed core.',
+            'Retain genuinely unclear explicit clauses with their clarification flags.',
+            'Do not infer rules or missing-rule issues from source silence.',
+        ):
+            assert line in guidance.splitlines()
     wire_format = requests[0]['text']['format']
     assert wire_format['name'] == output_type.__name__
     assert wire_format['strict'] is True

@@ -165,3 +165,25 @@ def test_fixed_core_contract_oracle_preserves_every_pair_and_subject_form():
         with pytest.raises(ValidationError) as raised:
             FactPayload.model_validate(fact | {'subject_key': subject, 'field': field, 'normalized_value': values[0]})
         assert raised.value.errors()[0]['type'] == 'fact_core_field_unsupported'
+
+
+def test_usage_type_guidance_oracle_matches_unchanged_approval_contract():
+    from types import SimpleNamespace
+    from uuid import uuid4
+    from app.declarations.approval import ApprovalConflict, _build_unit
+    from app.declarations.schemas import TextValue
+
+    values = json.loads((Path(__file__).parent / 'fixtures/declaration_eval_cases.json').read_text())['fixed_core_contract']['usage_type_values']
+    item = SimpleNamespace(organization_id=uuid4(), id=uuid4())
+    candidate = SimpleNamespace(stable_key='unit-create:unit:synthetic', subject_key='unit:synthetic')
+    for value in [*values, 'synthetic-unsupported-kind', 'wohnung']:
+        fact = FactPayload(subject_key=candidate.subject_key, field='usage_type', raw_value='Synthetic source wording',
+            normalized_value=TextValue(kind='TEXT', value=value), confidence=1,
+            evidence=[EvidencePayload(document_key='synthetic', pdf_page=1, quote='Synthetic source wording')])
+        proposed = {'number': TextValue(kind='TEXT', value='1'), 'usage_type': fact.normalized_value,
+                    'mea': MeaFraction(numerator=450, denominator=1000)}
+        if value in values:
+            assert _build_unit(item, candidate, proposed, ()).usage_type == value
+        else:
+            with pytest.raises(ApprovalConflict, match='APPROVAL_SCHEMA_UNSUPPORTED'):
+                _build_unit(item, candidate, proposed, ())

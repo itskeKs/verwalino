@@ -17,11 +17,30 @@ from app.evals import declaration_knowledge as harness
 from app.core import storage
 from app.core.db import get_tenant_session
 from app.evals.recorded_import import RecordedCaptureUnavailable, compare_recorded_reports, load_recorded_report, validate_recorded_report
-from app.models.declaration_candidate import DeclarationCandidate, DeclarationCandidateEvidence
+from app.models.declaration_candidate import DeclarationCandidate, DeclarationCandidateEvidence, DeclarationCandidateIssue
 from app.models.declaration_import import DeclarationImport, DeclarationExtractionRun
 
 ROOT = Path(__file__).resolve().parents[2]
 FIXTURES = Path(__file__).parent / 'fixtures/declaration_eval_cases.json'
+
+
+@pytest.fixture
+def seed_data(seed_data):
+    """Keep real worker FIFO claims isolated from other modules' queued jobs."""
+    import psycopg2
+    from app.core.security import hash_password
+    from tests.conftest import MIGRATOR_SYNC_URL
+
+    org, actor = uuid.uuid4(), uuid.uuid4()
+    with psycopg2.connect(MIGRATOR_SYNC_URL) as connection:
+        with connection.cursor() as cursor:
+            cursor.execute('INSERT INTO organization (id,name) VALUES (%s,%s)', (str(org), 'Recorded evaluation synthetic tenant'))
+            cursor.execute('INSERT INTO "user" (id,organization_id,email,password_hash,display_name) VALUES (%s,%s,%s,%s,%s)',
+                (str(actor), str(org), f'{actor}@recorded.invalid', hash_password('synthetic-test-password'), 'Recorded evaluation actor'))
+            cursor.execute('INSERT INTO membership (id,organization_id,user_id,role) VALUES (%s,%s,%s,%s)',
+                (str(uuid.uuid4()), str(org), str(actor), 'OWNER_ADMIN'))
+    return seed_data | {'org_a_id': org, 'user_a_admin_id': actor,
+                        'recorded_parent_org_id': seed_data['org_a_id'], 'recorded_parent_actor_id': seed_data['user_a_admin_id']}
 
 
 @pytest.fixture
@@ -75,7 +94,7 @@ async def test_new_draft_same_known_pdf_is_eligible_without_provider_calls(clien
 
 
 @pytest_asyncio.fixture
-async def recorded_run(client_a_admin, configured_ai, seed_data, recorded_store, request):
+async def recorded_run(client_a_admin, configured_ai, seed_data, recorded_store, recorded_queue_competitor, request):
     """Real queue/worker/pipeline/SDK serialization, with HTTP entirely mocked."""
     import httpx2
     from openai import AsyncOpenAI
@@ -107,7 +126,8 @@ async def recorded_run(client_a_admin, configured_ai, seed_data, recorded_store,
                            http_client=httpx2.AsyncClient(transport=httpx2.MockTransport(respond))) as client:
         provider = OpenAiDeclarationProvider(client=client, token_encoder=FixedTokenEncoder(1000))
         worker = DeclarationImportWorker(DeclarationPipeline(provider, store=recorded_store))
-        await worker.run_once(organization_id=seed_data['org_a_id'])
+        result = await worker.run_once(organization_id=seed_data['org_a_id'])
+        assert result.import_id == job, 'worker claimed a different import in the shared test organization'
     state = await client_a_admin.get(f'/api/declaration-imports/{job}')
     if getattr(request, 'param', None) == 'schema_failure':
         assert state.json()['status'] == 'FAILED', state.text
@@ -326,3 +346,98 @@ async def test_sdk_schema_failure_preserves_stage_failure_and_unknown_usage(reco
     assert outcome(report, 'final_output', 'core_facts') == 'NOT_REACHED'
     assert report['accounting']['usage_status'] == 'UNKNOWN'
     assert 'synthetic_unsupported_core_field' not in json.dumps(report)
+
+
+@pytest.mark.parametrize('origin,needs_clarification,expected', [('rule', True, 'FAIL'), ('additional-rule', True, 'FAIL'), ('additional-rule', False, 'PASS')])
+async def test_recorded_readiness_uses_rule_flags_without_treating_all_warnings_as_blockers(recorded_run, seed_data, recorded_gold, migrator_session, origin, needs_clarification, expected):
+    candidate = DeclarationCandidate(organization_id=seed_data['org_a_id'], import_id=recorded_run,
+        stable_key=origin + ':synthetic', candidate_type='RULE', subject_key='synthetic', operation='CREATE',
+        proposed_value_json=_synthetic_note(needs_clarification=needs_clarification),
+        confidence=1, risk_class='CRITICAL', review_status='PENDING', candidate_version=1)
+    migrator_session.add(candidate)
+    await migrator_session.flush()
+    codes = ['PROVIDER_UNRESOLVED_ISSUE']
+    if needs_clarification:
+        codes.append('ADDITIONAL_FACT_NEEDS_CLARIFICATION' if origin == 'additional-rule' else 'RULE_NEEDS_CLARIFICATION')
+    for code in codes:
+        migrator_session.add(DeclarationCandidateIssue(organization_id=seed_data['org_a_id'], import_id=recorded_run,
+            candidate_id=candidate.id, code=code, severity='WARNING', message='Synthetic clarification required'))
+    await migrator_session.commit()
+    report = await capture(recorded_run, seed_data, recorded_gold)
+    assert outcome(report, 'final_output', 'blockers') == expected
+    assert candidate.review_status == 'PENDING' and candidate.corrected_value_json is None
+
+
+async def test_recorded_scorer_version_refuses_old_scores_in_either_comparison_direction(recorded_run, seed_data, recorded_gold, tmp_path):
+    report = await capture(recorded_run, seed_data, recorded_gold)
+    assert report['format_version'] == 2
+    assert report['scorer_version'] == 'recorded-final-output-v2'
+    previous = deepcopy(report)
+    previous['format_version'] = 1
+    previous.pop('scorer_version')
+    saved = tmp_path / 'old-score.json'
+    saved.write_text(json.dumps(previous))
+    for first, second in ((report, previous), (previous, report)):
+        with pytest.raises(RecordedCaptureUnavailable, match='INCOMPATIBLE_RECORDED_SCORER'):
+            compare_recorded_reports(first, second)
+    with pytest.raises(RecordedCaptureUnavailable, match='INCOMPATIBLE_RECORDED_SCORER'):
+        load_recorded_report(saved)
+    assert json.loads(saved.read_text()) == previous
+
+
+@pytest.mark.parametrize('origin,expected', [('rule', 'FAIL'), ('additional-rule', 'PASS')])
+async def test_rule_absence_scores_original_rule_origin_not_additional_note_storage(recorded_run, seed_data, recorded_gold, migrator_session, origin, expected):
+    evidence = await migrator_session.scalar(select(DeclarationCandidateEvidence).where(DeclarationCandidateEvidence.import_id == recorded_run).limit(1))
+    candidate = DeclarationCandidate(organization_id=seed_data['org_a_id'], import_id=recorded_run,
+        stable_key=origin + ':synthetic', candidate_type='RULE', subject_key='synthetic', operation='CREATE',
+        proposed_value_json=_synthetic_note(needs_clarification=False), confidence=1, risk_class='CRITICAL', review_status='PENDING', candidate_version=1)
+    migrator_session.add(candidate)
+    await migrator_session.flush()
+    migrator_session.add(DeclarationCandidateEvidence(organization_id=seed_data['org_a_id'], import_id=recorded_run,
+        candidate_id=candidate.id, document_id=evidence.document_id, pdf_page=evidence.pdf_page, quote=evidence.quote))
+    await migrator_session.commit()
+    report = await capture(recorded_run, seed_data, recorded_gold)
+    assert outcome(report, 'final_output', 'rules_absent') == expected
+    assert outcome(report, 'final_output', 'blockers') == 'PASS'
+    assert outcome(report, 'final_output', 'evidence') == 'PASS'
+
+
+def _synthetic_note(*, needs_clarification):
+    from app.declarations.schemas import RulePayload
+    return RulePayload(subject_key='synthetic', title='Synthetic note', topic='sonstige_relevante_information',
+        summary='Synthetic source-backed note', scope={}, effect={'administrative_note': 'Synthetic source-backed note'},
+        proposed_status='NEEDS_CLARIFICATION' if needs_clarification else 'EFFECTIVE',
+        clarification_needed=needs_clarification, confidence=1,
+        evidence=[{'document_key': 'synthetic', 'pdf_page': 1, 'quote': 'Synthetic note'}]).model_dump(
+            mode='json', exclude={'subject_key', 'evidence', 'confidence'})
+
+
+@pytest_asyncio.fixture
+async def recorded_queue_competitor(request, seed_data, configured_ai, recorded_store):
+    if not getattr(request, 'param', False):
+        yield None
+        return
+    from types import SimpleNamespace
+    from app.core.config import settings
+    from tests.conftest import _api_test_client, _make_session_cookie
+    org = seed_data.get('recorded_parent_org_id', seed_data['org_a_id'])
+    actor = seed_data.get('recorded_parent_actor_id', seed_data['user_a_admin_id'])
+    configured_ai(org, model='gpt-5.6-luna', import_enabled=True, qa_enabled=True, monthly_limit_usd=None)
+    async with _api_test_client(cookies={settings.session_cookie_name: _make_session_cookie(actor, org)}) as client:
+        job = await new_uploaded_draft(client)
+        started = await client.post(f'/api/declaration-imports/{job}/start', headers={'Idempotency-Key': str(uuid.uuid4())})
+        assert started.status_code == 200, started.text
+        try:
+            yield SimpleNamespace(id=job, client=client)
+        finally:
+            cancelled = await client.post(f'/api/declaration-imports/{job}/cancel')
+            assert cancelled.status_code == 200 and cancelled.json()['status'] == 'CANCELLED', cancelled.text
+
+
+@pytest.mark.parametrize('recorded_queue_competitor', [True], indirect=True)
+async def test_recorded_fixture_processes_its_target_without_claiming_an_earlier_shared_org_job(recorded_run, recorded_queue_competitor):
+    assert recorded_run != recorded_queue_competitor.id
+    untouched = await recorded_queue_competitor.client.get(f'/api/declaration-imports/{recorded_queue_competitor.id}')
+    assert untouched.status_code == 200
+    assert untouched.json()['status'] == 'QUEUED'
+    assert untouched.json()['attempt_count'] == 0
