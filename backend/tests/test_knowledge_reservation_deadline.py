@@ -15,27 +15,47 @@ import pytest
 @pytest.mark.parametrize('mode', ['PREPARATION', 'STRICT'])
 async def test_reservation_deadline_uses_actual_database_expiry_and_elapsed_setup(monkeypatch, mode):
     import app.repositories.property_knowledge_query_repo as module
-    now = datetime.now(timezone.utc)
-    expires = now + timedelta(seconds=120)
+    now = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    clock = SimpleNamespace(monotonic=1000.0, database_now=now)
+
+    def advance(seconds):
+        clock.monotonic += seconds
+        clock.database_now += timedelta(seconds=seconds)
+
+    # Patch only the repository's clock, never asyncio's global clock.
+    monkeypatch.setattr(module, 'time', SimpleNamespace(monotonic=lambda: clock.monotonic))
+
     class Result:
+        def __init__(self, lifetime=None): self.lifetime = lifetime
         def mappings(self): return self
         def one_or_none(self): return {'run_id':uuid4(),'budget_window_start':now,'reserved_cost_usd':Decimal('1')}
-        def one(self): return SimpleNamespace(reservation_expires_at=expires, database_now=now)
+        def one(self): return self.lifetime
+
     class Session:
-        scalar = AsyncMock(return_value=mode)
+        async def scalar(self, statement, params):
+            advance(.75)  # Policy/setup work before the reservation exists.
+            return mode
+
         async def execute(self, statement, params):
             if 'reservation_expires_at' in str(statement):
-                await asyncio.sleep(.02)
+                lifetime = SimpleNamespace(reservation_expires_at=self.expires, database_now=clock.database_now)
+                advance(3)  # Time returning the sampled expiry/clock result.
+                return Result(lifetime)
+            self.expires = clock.database_now + timedelta(seconds=120)
+            advance(2)  # Reservation SQL/result time consumes its lifetime.
             return Result()
+
     monkeypatch.setattr(module,'attest_runtime_budget',AsyncMock())
-    started=time.monotonic()
+    started=clock.monotonic
     reservation=await module.PropertyKnowledgeQueryRepository(Session(),uuid4()).reserve_query(
         property_id=uuid4(),actor_user_id=uuid4(),budget_window_start=now,now=now,
         reservation_expires_at=now+timedelta(seconds=4000),provider='synthetic',model='synthetic',
         reserved_input_tokens=17,max_output_tokens=1000,reserved_cost_usd=Decimal('1'),budget_cap_usd=Decimal('1'))
+    advance(4)  # Commit/setup after the repository returns, before provider I/O.
     # Strict SQL may ignore the caller's expiry; both paths must use the stored row.
-    assert started+109 <= reservation.provider_deadline_monotonic <= started+110.01
-    assert reservation.provider_deadline_monotonic-time.monotonic() < 110
+    # The reservation starts after policy setup, and retains the ten-second margin.
+    assert reservation.provider_deadline_monotonic == started + .75 + 120 - 10
+    assert reservation.provider_deadline_monotonic - clock.monotonic == 120 - 10 - 2 - 3 - 4
 
 
 @pytest.mark.asyncio
