@@ -142,9 +142,6 @@ async def _seed_m1_scenario(session, org_id: str):
     }
 
 
-# ============================================================================
-# 1. EXCLUDE rejects overlapping ownership for SAME (unit, owner_profile)
-# ============================================================================
 @pytest.mark.asyncio
 async def test_cost_entry_commits_before_response_start_and_opens_immediately(
     client_a_admin, migrator_session, app_rw_session, seed_data,
@@ -169,6 +166,9 @@ async def test_cost_entry_commits_before_response_start_and_opens_immediately(
     await create_visible_draft(client_a_admin, app_rw_session, '/api/cost-entries', payload, 'cost_entry')
 
 
+# ============================================================================
+# 1. EXCLUDE rejects overlapping ownership for SAME (unit, owner_profile)
+# ============================================================================
 @pytest.mark.asyncio
 @pytest.mark.parametrize("route, table, field, key", [
     ("leases", "lease_agreement", "unit_id", "unit_1_id"),

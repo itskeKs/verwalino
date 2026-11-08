@@ -41,7 +41,7 @@ def late_transactions():
     for context in iter_route_contexts(app.routes):
         route = context.original_route
         if isinstance(route, APIRoute):
-            chains = ['->'.join(p) for p, d in yielding(route.dependant) if d.scope != 'function']
+            chains = ['->'.join(p) for p, d in yielding(context.dependant) if d.scope != 'function']
             for method in context.methods & MUTATIONS:
                 if chains:
                     late[f'{method} {context.path}'] = chains
@@ -64,7 +64,7 @@ def test_no_route_opens_two_tenant_sessions():
     for context in iter_route_contexts(app.routes):
         route = context.original_route
         if isinstance(route, APIRoute):
-            dependencies = list(database_dependencies(route.dependant))
+            dependencies = list(database_dependencies(context.dependant))
             if not dependencies:
                 continue
             assert len({d.scope for d in dependencies}) == 1, context.path

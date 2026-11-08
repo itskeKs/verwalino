@@ -15,6 +15,7 @@ async def request_without_open_transaction(api, observer, method, path, payload,
         async def observe_send(message):
             if (message['type'] == 'http.response.start'
                     and 200 <= message['status'] < 300 and not observations):
+                await observer.execute(text('SELECT pg_stat_clear_snapshot()'))
                 observations.append(await observer.scalar(query))
             await send(message)
         await app(scope, receive, observe_send)
