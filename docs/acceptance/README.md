@@ -42,7 +42,7 @@ that touches its journey, not in advance.
 
 ## The user check in an issue
 
-An issue whose change a user notices carries a „User check“ section in the same form: what the
+An issue whose change a user notices carries a "User check" section in the same form: what the
 user does, what they then see with concrete values, and who checks. It is written before the
 change, and the PR is merged only once it has passed. A change to a core journey updates
 [journeys.md](journeys.md) in the same PR.
