@@ -1091,9 +1091,9 @@ handler, response validation or commit must roll back without sending success.
 `get_live_member_db` and direct read dependencies retain request scope, so reads and
 their streaming responses keep their existing session lifetime.
 
-Implemented coverage includes all mutations in the economic-plan, payment and WEG
-settlement routers and existing callers of the three shared write guards. Other
-direct write dependencies remain follow-up work, inventoried in the #260 PR.
+The sweep in `backend/tests/test_write_transaction_scope.py` enforces this rule over
+every mutation route's dependency graph. Its `EXEMPT` list records exceptions with reasons: currently
+the four read-only POSTs over `get_live_member_db` retain request scope.
 Single BK draft creation also follows this rule: the UI can open the saved draft
 as soon as `POST /api/settlements` returns 201. For BK finalization, an immediate
 PDF request sees the finalized snapshot; drafts remain blocked with HTTP 409.

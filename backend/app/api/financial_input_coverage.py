@@ -42,7 +42,7 @@ async def source_options(subject_kind:Literal['settlement','economic_plan'],subj
 
 
 @router.post("", status_code=201)
-async def attest(body: Attestation, auth: AuthContext = Depends(require_write_dep), db: AsyncSession = Depends(get_db)):
+async def attest(body: Attestation, auth: AuthContext = Depends(require_write_dep), db: AsyncSession = Depends(get_db, scope="function")):
     from app.services.financial_scope_service import FinancialScopeService
     await FinancialScopeService(db,auth.organization_id,auth.user_id).lock_inputs()
     repo = EconomicPlanRepository(db, auth.organization_id) if body.subject_kind == "economic_plan" else SettlementRunRepository(db, auth.organization_id)

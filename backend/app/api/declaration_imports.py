@@ -236,7 +236,7 @@ async def review_candidate(
     body: CandidateReviewRequest,
     idempotency_key: uuid.UUID | None = Header(default=None, alias="Idempotency-Key"),
     auth: AuthContext = Depends(require_write_dep),
-    db: AsyncSession = Depends(get_live_review_db),
+    db: AsyncSession = Depends(get_live_review_db, scope="function"),
 ):
     return await DeclarationReviewService(db, auth.organization_id, auth.user_id).review_one(import_id, candidate_id, body, idempotency_key)
 
@@ -247,7 +247,7 @@ async def bulk_review_candidates(
     body: BulkCandidateReviewRequest,
     idempotency_key: uuid.UUID | None = Header(default=None, alias="Idempotency-Key"),
     auth: AuthContext = Depends(require_write_dep),
-    db: AsyncSession = Depends(get_live_review_db),
+    db: AsyncSession = Depends(get_live_review_db, scope="function"),
 ):
     return await DeclarationReviewService(db, auth.organization_id, auth.user_id).review_bulk(import_id, body, idempotency_key)
 

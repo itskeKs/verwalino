@@ -401,7 +401,7 @@ async def list_settlements(
 async def create_settlement_batch(
     body: SettlementBatchCreate,
     auth: AuthContext = Depends(require_write_dep),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
 ):
     service = SettlementService(db, auth.organization_id, auth.user_id)
     created, skipped, errors = await service.create_batch(
@@ -511,7 +511,7 @@ async def set_advance_payments(
     run_id: uuid.UUID,
     body: AdvancePaymentsUpdate,
     auth: AuthContext = Depends(require_write_dep),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
 ):
     svc = SettlementService(db, auth.organization_id, auth.user_id)
     run = await svc.set_advance_payments(
@@ -526,7 +526,7 @@ async def set_advance_payments_derived(
     run_id: uuid.UUID,
     period_year: int,
     auth: AuthContext = Depends(require_write_dep),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
 ):
     """Fill advance_payments_total from booked NK payments (M6 §6.2, DERIVED).
 
@@ -543,7 +543,7 @@ async def compute_settlement(
     run_id: uuid.UUID,
     body: ComputeRequest | None = None,
     auth: AuthContext = Depends(require_write_dep),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
 ):
     await require_live_principal(db, auth, writer=True)
     svc = SettlementService(db, auth.organization_id, auth.user_id)
@@ -558,7 +558,7 @@ async def preview_settlement(
     run_id: uuid.UUID,
     body: ComputeRequest | None = None,
     auth: AuthContext = Depends(require_write_dep),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
 ):
     """Compute without persisting -- returns the would-be lines (read-only)."""
     await require_live_principal(db, auth, writer=True)
@@ -618,7 +618,7 @@ async def finalize_settlement(
 async def create_correction(
     run_id: uuid.UUID,
     auth: AuthContext = Depends(require_write_dep),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
 ):
     svc = SettlementService(db, auth.organization_id, auth.user_id)
     run = await svc.create_correction_run(run_id)
