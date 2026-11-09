@@ -181,7 +181,9 @@ If `frontend/node_modules` is missing, eslint is skipped with a message.
    [DESIGN.md](DESIGN.md) is the frontend design contract: new screens follow it, and changes to the
    look or copy update it in the same PR.
 6. `make lint` green before every push; `make test` (the whole suite) before the merge — CI runs it on
-   every PR.
+   every PR. A change is merged by the session that made it, or by a maintainer session for a PR
+   no session works on any more, after a fresh review and on green CI; the implementers a session
+   delegates to never push or merge.
 
 ## Pull requests
 

@@ -52,10 +52,10 @@ enforcement; every baseline and safety rule here stays in force.
   response fields, parameters, configuration keys, endpoints or options the issue does not name,
   and do not refactor neighbours in passing. One issue, one branch, one PR. `Closes #N` only when
   every acceptance box is done; otherwise `Refs #N` plus what remains.
-- At the merge the maintainer ticks the acceptance boxes of the issue that the PR body proves, and
-  reopens the issue when a box has no proof.
-- The maintainer merges with a merge commit, never squash, and writes the merge comment: reviewed
-  SHA, gates run on that SHA with results, user check outcome, follow-up issues.
+- At the merge the merging session ticks the acceptance boxes of the issue that the PR body
+  proves, and reopens the issue when a box has no proof.
+- The merge is a merge commit, never squash; the merging session writes the merge comment:
+  reviewed SHA, gates run on that SHA with results, user check outcome, follow-up issues.
 - Cut before coding: an issue that touches more than one domain mechanism (for example a ledger
   plus its evidence rules plus an import) is split into issues of one mechanism each, one PR per
   issue, before the first branch is created. The session that notices the size proposes the cut in
@@ -63,16 +63,19 @@ enforcement; every baseline and safety rule here stays in force.
 - Red first: the scenario and the unit tests fail without the change, then the smallest change
   turns them green, then refactor with the tests still green.
 - A finding outside the scope becomes a new issue (or a line in the PR description), not extra code.
-- Implementers push only their own PR branch, open the PR and stop; the maintainer review session
-  merges, nobody else. Never push to `main`. A risky PR (migrations, isolation or RLS, money,
-  GoBD, auth, backup and restore) gets a parallel,
+- A session pushes only its own PR branch and merges only the PR it works on: after a fresh
+  review by an agent that gets nothing from the session's context, on green CI, under the merge
+  lock (Context economy). Codex and subagents never push or merge. Never push to `main`. A risky
+  PR (migrations, isolation or RLS, money, GoBD, auth, backup and restore) gets a parallel,
   blind cross-review by independent reviewers before the merge (`.coddy/crossreview.json`);
   that is recommended, not a chain.
-- Three rounds, then freeze: after the third verifier or review round on a PR its scope is frozen.
-  The PR merges when CI is green and no finding remains in the four blocker categories (wrong
-  money amount, organization isolation, GoBD immutability, GDPR). Every other finding becomes a
-  follow-up issue with a user check, not another round. Blind acceptance runs at most twice per
-  PR; a repeated run checks only the changed steps
+- Three rounds, then freeze: a round is a fresh review of the open PR plus the push that fixes
+  its findings; the implementer's own verifier pass before the PR does not count. After the third
+  review the scope is frozen: only findings in the four blocker categories (wrong money amount,
+  organization isolation, GoBD immutability, GDPR), red CI, a failed user check and conflicts are
+  still fixed; every other finding becomes a follow-up issue with a user check, not another round.
+  At most five rounds: a finding that still needs a push after the fifth means no merge. Blind
+  acceptance runs at most twice per PR; a repeated run checks only the changed steps
   ([docs/acceptance/README.md](docs/acceptance/README.md#runs-and-rounds-per-pr)).
 - Progress is code, tests and a commit. Do not create state, contract, receipt, evidence, handoff,
   hash or audit files, do not build sequential repair or review chains that pass such files
@@ -90,6 +93,8 @@ Remove only your own worktrees and local branches once their PR is merged or clo
 Check the PR state, that a merge landed on `main` when applicable, that the tree is clean
 and that no process or other live user uses it before removal; never discard uncommitted work.
 For ordinary worktrees use `git worktree remove <dir> && git branch -D <branch>`.
+The session that merges removes the issue worktree of the merged PR, after the same checks
+(a maintainer session also its review worktree).
 Use supported archival for app-managed worktrees; never bypass its primary, pinned or
 shared-worktree protections. For an abandoned task without a PR, first preserve work that must
 be kept.
@@ -197,16 +202,26 @@ Codex hook) is subject matter, not attribution.
 One issue per session, cut to fit a 64k context. Read only the files the issue names; read large
 files with `rg -n` and line ranges.
 
-A session has exactly one task: one issue (it ends when its pull request is open or its rework is
-pushed) or one PR under review (it ends when that is merged, sent back or parked).
-A subsequent task normally starts in a fresh session with an empty context; name the next task
-in the report and wait for the owner's explicit instruction before creating another session.
-Sessions do not message each other. Everything another session needs is a comment on the issue or
-the PR.
-Only one maintainer session runs at a time; it holds `/tmp/verwalino-maintainer.lock`
-(a `mkdir`, with the PR number and start time in `info`) from its start to its cleanup.
-Check for a live holder before acquiring it; remove only your own inactive lock.
-The review worktree is detached on `origin/<branch>`, because the issue worktree holds the branch.
+A session has exactly one task: one issue, from claim to merge. The next issue gets a new session
+with an empty context, never the same chat and never a fork of it: every further task in the same
+chat pays for the whole previous history on every step. As soon as its pull request is open, a
+session starts its successor for the next issue with the filled-in brief (or names it in its
+report), then stays with its own PR until it is merged or a fixed exit applies. It never waits
+for the owner; a PR that needs the owner is left with a "Not merged" comment, and a maintainer
+session that the owner starts by hand finishes it, like any other PR that no session works on any
+more. Sessions do not message each other; what another session must know is a comment on the
+issue or PR; an issue a session gives up before its PR gets a comment starting with `Blocked:`,
+and no session takes it again before a later "Owner decision".
+Merges are serialized by a short lock, `/tmp/verwalino-merge.lock` (a `mkdir`, with the PR number
+and time in `info`): taken right before the branch is brought up to date with `main` and merged,
+released as soon as the merge is on `main`, never held longer than for that CI run, the local
+gate and the merge itself, and never longer than twice the duration of the whole suite (about
+30 minutes) plus 30 minutes. A lock older than that, or one naming a merged or closed PR and older
+than 30 minutes, is a crash remnant; it is removed atomically (`mv` to a private name, check
+`info`, then `rm -r`). An acceptance run on a shared environment holds
+`/tmp/verwalino-acceptance.lock` under the same rules. All sessions of a project run on one
+machine, because these locks and the worktree claims only work there. A maintainer session's
+review worktree is detached on `origin/<branch>`, because the issue worktree holds the branch.
 
 ## Databases and containers
 
