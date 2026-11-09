@@ -338,8 +338,8 @@ class DeclarationImportWorker:
                 lease_lost = await heartbeat_task
                 if lease_lost:
                     pipeline_task.cancel()
-                    with suppress(asyncio.CancelledError, Exception):
-                        await pipeline_task
+                    # Drain the cancelled pipeline while preserving worker shutdown.
+                    await asyncio.gather(pipeline_task, return_exceptions=True)
                     return WorkerResult(lease_lost if isinstance(lease_lost, str) else "LEASE_LOST", lease.import_id)
             raise RuntimeError("worker wait completed without a task result")
         finally:

@@ -106,7 +106,14 @@ not be merged into a single “four outcomes” schema:
 | `PROVIDER_USAGE_INVALID` (concretely `OPENAI_USAGE_INVALID` in the OpenAI adapter) | separate usage metering; cost/usage contract fails closed, no publication |
 
 The worker claims jobs per tenant with a lease, token and generation.
-Heartbeats extend only the current generation. On interruption or a retryable error,
+Heartbeats extend only the current generation. Preflight OCR and selected-page
+recheck rendering run off the event loop so the heartbeat can renew the lease
+during local processing. They share the existing preflight deadline and resource
+budgets. On cancellation or lease loss, the worker waits for the active local
+operation and its temporary-file cleanup before releasing its processing slot.
+The interrupted operation's result is discarded.
+
+On interruption or a retryable error,
 the job moves to `RETRY_WAIT`; late results cannot publish. `POST /api/declaration-imports/{id}/retry` is intended only
 for retryable errors; `cancel` locks out the current lease. Before a retry, check
 cost/token counters, error class and limits; do not repeat blindly.
