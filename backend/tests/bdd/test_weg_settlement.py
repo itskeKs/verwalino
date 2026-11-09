@@ -131,7 +131,8 @@ def long_owner_balance(world, seed_data):
 
 
 def create_balance_world(world, seed_data, *, cost_period_end='2026-12-31', owner_name='Anna Berg', second_owner='Berta Vollständig',
-                         scope_start='2026-01-01', monthly_due_day=1):
+                         scope_start='2026-01-01', monthly_due_day=1, actual_cost='10666.67',
+                         planned_cost='12000.00', planned_reserve='0.00'):
     world.actor = world.administrator_of('Verwaltung Alpha')
     world.actor_organization = 'Verwaltung Alpha'
     user = str(seed_data['user_a_admin_id'])
@@ -160,14 +161,14 @@ def create_balance_world(world, seed_data, *, cost_period_end='2026-12-31', owne
     cost = create(world, '/api/cost-entries', {**basis, 'cost_category_id': category['id'],
         'cost_category_plan_version': category['plan_version'], 'document_number': 'RE-GARTEN',
         'invoice_date': '2026-02-01', 'service_period_from': '2026-01-01',
-        'service_period_to': cost_period_end, 'gross_amount': '10666.67',
+        'service_period_to': cost_period_end, 'gross_amount': actual_cost,
         'owner_distribution_key': 'MEA',
         'tenant_apportionable': 'NICHT_UMLAGEFAEHIG', 'source': 'MANUAL'})
     assert world.act('POST', f"/api/cost-entries/{cost['id']}/confirm").status_code == 200
     plan = create(world, '/api/economic-plans', {**basis, 'plan_year': 2026,
         'period_start': '2026-01-01', 'period_end': '2026-12-31', 'monthly_due_day': monthly_due_day})
     values = {'planned_costs': [{'category_code': 'GARTENPFLEGE', 'label': 'Bewirtschaftung',
-        'planned_amount': '12000.00', 'cost_group': 'UMLAGEFAEHIG'}], 'reserve_contribution_total': '0.00'}
+        'planned_amount': planned_cost, 'cost_group': 'UMLAGEFAEHIG'}], 'reserve_contribution_total': planned_reserve}
     world.run(attest_fixture(world.actor, 'economic_plan', plan['id'], values))
     response = world.act('POST', f"/api/economic-plans/{plan['id']}/finalize", json=values)
     assert response.status_code == 200, response.text
@@ -651,3 +652,25 @@ def paid_hausgeld_browser(browser_world, world, dated_owners, tmp_path):
         await expect(alert).to_contain_text('Lena Roth')
         await expect(alert).to_contain_text('Hausgeld')
     b.run(check())
+
+
+@given('the WEG plan has 7000 euros of costs and 6000 euros of reserve for owners with 600 and 400 MEA',
+       target_fixture='weg_balance')
+def planned_reserve_balance(world, seed_data):
+    return create_balance_world(world, seed_data, actual_cost='7000.00',
+                                planned_cost='7000.00', planned_reserve='6000.00')
+
+
+@then('both owners have zero Spitze with reserve Soll of 3600 and 2400 euros and Hausgeld Soll of 7800 and 5200 euros')
+def planned_reserve_has_no_spitze(world, weg_balance):
+    w = weg_balance
+    for owner_id, reserve, advance in zip(w['owners'], ('3600.00', '2400.00'), ('7800.00', '5200.00')):
+        result = next(o for o in w['statement']['owner_results'] if o['owner_profile_id'] == owner_id)
+        assert result['abrechnungsspitze'] == '0.00'
+        assert result['plan_soll'] == advance
+        line = next(ln for ln in w['statement']['lines']
+                    if ln['line_type'] == 'RESERVE_SOLL' and ln['addressee_owner_profile_id'] == owner_id)
+        assert line['amount'] == reserve
+    response = world.act('GET', f"/api/weg-settlements/{w['run']}/pdf")
+    assert response.status_code == 200
+    assert 'zuzueglich Ruecklagenzufuehrung laut Wirtschaftsplan (Soll)' in pdf_text(response.content)

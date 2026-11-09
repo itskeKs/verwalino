@@ -136,6 +136,11 @@ def build_weg_jahresabrechnung_html(
                     f"<tr class='cost-total'><td colspan='5'>{_esc(ln.label)}</td>"
                     f"<td class='num'>{_eur(ln.amount)}</td></tr>"
                 )
+            elif ln.line_type == "RESERVE_SOLL":
+                rows.append(
+                    f"<tr class='plan'><td colspan='5'>zuzueglich {_esc(ln.label)}</td>"
+                    f"<td class='num'>{_eur(ln.amount)}</td></tr>"
+                )
             elif ln.line_type == "PLAN_ADVANCE":
                 rows.append(
                     f"<tr class='plan'><td colspan='5'>abzueglich {_esc(ln.label)}</td>"
@@ -155,6 +160,10 @@ def build_weg_jahresabrechnung_html(
                 )
         balance_section = ''
         if balance:
+            reserve_payment_source = (
+                'Gesondert gebuchte Rücklagenzahlungen zählen nur, soweit das Hausgeld-Soll nicht bereits '
+                'durch Hausgeldzahlungen gedeckt ist; ein Überschuss bleibt in der Rücklage. '
+                if (run.snapshot_payload or {}).get('engine_version') == 'm4.4.0' else '')
             balance_rows = ''.join(
                 f"<tr class='{('spitze' if key == 'abrechnungsspitze' else 'cost-total' if key == 'payment_amount' else '')}'>"
                 f"<td>{label}</td><td class='num'>{_eur(Decimal(balance[key]))}</td></tr>"
@@ -178,6 +187,7 @@ def build_weg_jahresabrechnung_html(
                 '<p>Quelle: Soll aus dem verknüpften Wirtschaftsplan; gezahlt aus gebuchten, nicht stornierten '
                 'Hausgeldzahlungen dieses Eigentümers und Objekts im Abrechnungszeitraum '
                 '(Periodenzuordnung, einschließlich Erstattungen). '
+                f'{reserve_payment_source}'
                 'Offene oder ungebuchte Zahlungen zählen nicht. '
                 'Bei Eigentümerwechsel bleiben Zahlungen beim zugeordneten Eigentümer.</p>'
                 f'<p>Eigentümerzuordnung im Abrechnungszeitraum:<br>{ownership}</p>'

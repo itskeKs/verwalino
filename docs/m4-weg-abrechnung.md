@@ -221,15 +221,16 @@ Before the 2020 WEG reform, the **entire annual settlement** was resolved. **Sin
 ```
 settlement balance (per owner)
    = proportional ACTUAL costs of the owner   (per distribution key/MEA, day-accurate)
+   + planned reserve Soll of the owner       (asset building, separate Soll position, #401)
    − resolved EXPECTED advances of the owner  (per economic plan of the same year)
 ```
 
 - **Settlement balance > 0 → additional payment (Nachschuss)** (the owner owes more than the plan provided for).
 - **Settlement balance < 0 → adjustment credit / reduction** (the plan Soll budgeted more for the owner than the actual costs came to).
 
-**Important domain distinction (the most common mistake):** The settlement balance is **`actual − expected advance`**, **not** `actual − actually-paid advances`. What the owner has **actually** paid (or not paid) is a **separate** quantity (payment arrears/credit on the Hausgeld account), which M4 shows **for information only** but does **not** mix with the resolution-relevant settlement balance. The subject of the resolution is the balance against the **Soll**; the payment status is an enforcement/dunning matter (M6/M7).
+**Important domain distinction (the most common mistake):** The settlement balance is **`actual costs + planned reserve Soll − expected advance`**, **not** `actual − actually-paid advances`. What the owner has **actually** paid (or not paid) is a **separate** quantity (payment arrears/credit on the Hausgeld account), which M4 shows **for information only** but does **not** mix with the resolution-relevant settlement balance. The subject of the resolution is the balance against the **Soll**; the payment status is an enforcement/dunning matter (M6/M7).
 
-> **[§18/domain F4-2]** This `actual − expected` definition of the resolution-relevant balance is the one customary under the prevailing opinion on the WEMoG; the exact presentation (what counts as "resolved", what as "for information") and the handling of an unresolved plan (F4-1) must be domain-accepted (specialist attorney for WEG law). ADR-0007 records the definition and the assumption; **no self-certification.**
+> **[§18/domain F4-2]** The amended `actual costs + planned reserve Soll − expected advance` formula follows the owner decision recorded in ADR-0007, amendment 2026-11-08 (#401). The exact presentation (what counts as "resolved", what as "for information") and the handling of an unresolved plan (F4-1) must be domain-accepted (specialist attorney for WEG law); **no self-certification.**
 
 ### 2.2 What the Annual Settlement Discloses per Owner
 
@@ -241,11 +242,18 @@ The settlement discloses, per owner, in a **structured** way (in `settlement_lin
 | **Applied key per item** | `settlement_line.distribution_key` (+ `_base_total`/`_share`) | Usually `MEA`; category-specific possible (§4). |
 | **Owner's MEA share per cost category** | `settlement_line.amount` (rounded, ADR-0005) | the amount attributed to the owner. |
 | **Sum of the owner's proportional actual costs** | `settlement_line(line_type='OWNER_COST_TOTAL')` (new, §3.2) + `settlement_run.owner_cost_total` (in the payload) | only **allocable + non-allocable** WEG costs; **excluding** reserve contribution (that is not a cost, §3). |
+| **Rücklagenzuführung laut Wirtschaftsplan (Soll)** | `settlement_line(line_type='RESERVE_SOLL')` + payload `plan_reserve_soll` | planned reserve share from the linked plan; asset building, separate from costs; shown when nonzero (#401). |
 | **Owner's expected advance payments** (per plan) | `settlement_line(line_type='PLAN_ADVANCE')` (new) | from `economic_plan` (§1.5), copied into the snapshot. |
-| **Settlement balance (additional payment/credit)** | `settlement_line(line_type='ABRECHNUNGSSPITZE')` (new) + payload `abrechnungsspitze` | = proportional actual costs − expected advance payments (§2.1). **The amount relevant for the resolution.** |
+| **Settlement balance (additional payment/credit)** | `settlement_line(line_type='ABRECHNUNGSSPITZE')` (new) + payload `abrechnungsspitze` | = proportional actual costs + planned reserve Soll − expected advance payments (§2.1, ADR-0007 amendment #401). **The amount relevant for the resolution.** |
 | **Owner's reserve contribution** | `settlement_line(line_type='RESERVE_CONTRIBUTION')` (new) | disclosed separately, **not a cost item** (§3). |
 | **Reserve development** (property-wide) | dedicated `RESERVE_*` lines (§3.3) | Opening/contribution/withdrawal/closing. |
 | **(For information) advance payments actually made / payment status** | `settlement_line(line_type='ADVANCE_PAYMENT')` optional + payload | **separate** from the balance (§2.1); derived from booked Hausgeld (§2.4); older snapshots retain their captured values. |
+
+The frozen economic plan contains per-owner/unit `OWNER_ADVANCE` and property-wide
+`PLANNED_COST` lines but no per-owner planned cost share, so #401 owner decision 2
+uses fallback (a): canonical reserve plan cells. Independently rounded costs,
+reserve Soll and Hausgeld Soll may leave an accepted ±0.01 Spitze per owner when
+costs match the plan, while the aggregate remains exact.
 
 ### 2.3 Separation of Allocable / Non-Allocable / Reserve (SDD §6.3, §7.3, §11)
 
@@ -260,8 +268,22 @@ The engine sums **three subtotals** per owner (`SUBTOTAL` lines): Σ allocable, 
 ### 2.4 Origin of Expected Advances, Booked Hausgeld and the Payment Amount
 
 - **Expected advance payments (resolution-relevant):** from the linked `economic_plan` (§1.5), per owner/unit, copied into the snapshot. This is the **authoritative** quantity for the settlement balance.
-- **Actual payments:** new annual settlements derive net booked, non-reversed
-  `HAUSGELD_VORSCHUSS` payments of the owner and property. An explicit period year/month takes
+- **Planned reserve Soll (#401):** an owner's `plan_reserve_soll` is the sum of that owner's
+  canonical `reserve_plan_cells` for the settlement's linked economic plan, read through
+  `ReserveLedgerRepository.plan_rows` (migration 0149: MEA per unit and owner at plan start,
+  Hamilton cents, stable unit and owner ties). An asset report's previously frozen cash
+  ledger remains unchanged, even when it predates this plan or uses an older plan.
+  It does not determine the settlement's reserve Soll. Σ equals the linked plan's
+  `reserve_contribution_total`; there is no second distribution. It stays outside
+  `owner_cost_total`: `abrechnungsspitze = owner_cost_total + plan_reserve_soll − plan_advance`.
+- **Actual payments:** let `H` be net booked `HAUSGELD_VORSCHUSS`, `R` net booked
+  `RUECKLAGENANTEIL`, and `Soll` the owner's summed `OWNER_ADVANCE` amounts over all
+  units. New annual settlements use `paid = H + min(max(R, 0), max(Soll − H, 0))`.
+  An owner without plan Soll receives no reserve credit, even with negative `H`.
+  Hausgeld overpayments keep their full credit; negative net reserve adds nothing.
+  Excess reserve stays in the uncapped reserve ledger and cannot offset higher actual
+  costs. Both net sums use the same owner, property and signed IN/OUT/Storno rules. Other Hausgeld derivations
+  keep their existing payment-type selection. An explicit period year/month takes
   precedence over the value date (December 2026 assigned to a January 2027 receipt
   still belongs to December). Assigned annual amounts are split into stable calendar-month
   shares; assigned monthly amounts are prorated by days at period boundaries using
@@ -272,7 +294,8 @@ The engine sums **three subtotals** per owner (`SUBTOTAL` lines): Σ allocable, 
   Payments stay with their assigned owner after an ownership change; there is no transfer
   of a predecessor's arrears. Manual coverage entries cannot create paid amounts.
   A successor with only booked payments is included even with no cost or plan lines:
-  costs, plan Soll and Spitze remain zero, while the payment remains their own credit.
+  costs, plan Soll and Spitze remain zero, while net Hausgeld remains their own credit;
+  separate reserve payments without plan Soll do not create a credit.
 - **Displayed account balance:** `account_balance = plan_soll − paid` (positive arrears,
   negative credit). `payment_amount = abrechnungsspitze + account_balance`. These are
   informational amounts, not a new fee, claim, resolution or dunning action.
@@ -283,11 +306,15 @@ The engine sums **three subtotals** per owner (`SUBTOTAL` lines): Σ allocable, 
   and state that only the Spitze is resolved and arrears arise from the plan.
 - Example (#204): costs 6,400.00, plan 7,200.00, paid 6,600.00 → resolved Spitze
   −800.00, arrears +600.00, resulting payment −200.00 (credit to the owner).
-- Engine `m4.3.2` stores `plan_soll`, `paid`, `account_balance` and `payment_amount`
-  in the existing hashed per-owner result. The API and PDF read those frozen values;
-  later bookings do not rewrite finalized results. No database migration or new ledger
-  position is required. Existing finalized snapshots without these fields retain their
-  original PDF path and digest; reads never backfill them.
+- Example (#401): planned costs 7,000.00 plus reserve 6,000.00, with 600/400 MEA,
+  produce Hausgeld Soll of 7,800.00/5,200.00. Actual costs of 7,000.00 produce owner
+  costs of 4,200.00/2,800.00 plus reserve Soll of 3,600.00/2,400.00: both Spitzen
+  are 0.00. The reserve is asset building, not cost consumption.
+- Engine `m4.4.0` stores `plan_reserve_soll` beside `plan_soll`, `paid`, `account_balance`
+  and `payment_amount` in the existing hashed per-owner result. Migration `0181`
+  allows the separate `RESERVE_SOLL` statement line. The API and PDF read frozen values;
+  later bookings do not rewrite finalized results. Existing finalized snapshots without
+  these fields retain their original PDF path and digest; reads never backfill them.
 
 ### 2.5 Lifecycle, Snapshot, Correction — Identical to M3
 
@@ -311,7 +338,7 @@ Migration `0012` extends the `line_type` CHECK additively (old values remain val
 | --- | --- |
 | `OWNER_COST_TOTAL` | Sum of the owner's proportional actual costs (allocable + non-allocable, **excluding** reserve) — the minuend of the balance. |
 | `PLAN_ADVANCE` | Owner's expected advance payment per economic plan — the subtrahend of the balance. |
-| `ABRECHNUNGSSPITZE` | `OWNER_COST_TOTAL − PLAN_ADVANCE` — the resolution-relevant additional payment/credit. |
+| `ABRECHNUNGSSPITZE` | `OWNER_COST_TOTAL + plan_reserve_soll − PLAN_ADVANCE` — the resolution-relevant additional payment/credit. |
 | `RESERVE_CONTRIBUTION` | Owner's contribution share to the maintenance reserve (separate). |
 | `RESERVE_OPENING` | Opening balance of the reserve (property-wide, holdings line). |
 | `RESERVE_WITHDRAWAL` | Withdrawal from the reserve during the year (property-wide). |
@@ -634,7 +661,7 @@ Each golden test checks **not only the final total** but the **individual line a
 
 - **I4-A "Σ owner shares == total costs":** per item `Σ over owners distribute_amount(...) == G − net reserve financing` exactly (ADR-0005, mirrored to owners; §4.5).
 - **I4-B "MEA sums coherent":** Σ of the MEA weights used == total MEA basis; for co-ownership, `Σ mea_share` of a unit consistent with the unit MEA (within tolerance, F4-7).
-- **I4-C "Settlement balance == actual − expected":** for random actual costs + plan Soll, per owner `settlement balance == owner_cost_total − plan_advance` exactly; **and** `Σ settlement balances == Σ actual costs − Σ expected advances` (no drift across owners).
+- **I4-C "Settlement balance == costs + planned reserve − expected advances":** for random actual costs, planned reserve and plan advances, per owner `settlement balance == owner_cost_total + plan_reserve_soll − plan_advance` exactly; **and** `Σ settlement balances == Σ actual costs + Σ planned reserve Soll − Σ expected advances` (no drift across owners).
 - **I4-D "Reserve development consistent":** `closing balance == opening balance + Σ contribution − Σ withdrawal` exactly; reserve contribution **never** appears in `OWNER_COST_TOTAL`. Evidenced reserve financing is also excluded from owner costs (§4.5), without removing the withdrawal from the ledger.
 - **I4-E "Owner time shares == 1":** for random `ownership_history` decompositions of a unit, the owner time factors sum exactly to 1 over the period (ADR-0004, mirrored).
 - **I4-F "Reserve/non-allocable never in tenant operating costs":** in no `BK_MIETER` run does a `RESERVE_*` or `NICHT_UMLAGEFAEHIG` item appear (mirror of M3 I-F, secures the sphere separation §7).

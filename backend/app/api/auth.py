@@ -72,7 +72,7 @@ async def preferences(
 async def update_preferences(
     body: UserPreferences,
     auth: AuthContext = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
 ):
     # Every user UPDATE acquires the exclusive ACL lock (migration 0138).
     # Acquire it before any user row lock, including for personal read-only users.

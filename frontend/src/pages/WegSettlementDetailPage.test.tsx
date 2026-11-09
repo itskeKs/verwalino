@@ -100,6 +100,22 @@ it("shows the frozen Hausgeld balance separately from the resolved Spitze", asyn
   expect(screen.getByText(/Nur die Abrechnungsspitze ist beschlossen/)).toBeVisible();
 });
 
+it.each(['m4.3.2', 'm4.4.0'])('explains the capped reserve payment source for %s', async engine_version => {
+  install([{ ...draft(), engine_version, lines: [frozenLine('seller', seller, '4200.00')],
+    owner_results: [{ owner_profile_id: seller, owner_cost_total: '4200.00', plan_soll: '7800.00',
+      paid: '7800.00', abrechnungsspitze: '0.00', account_balance: '0.00', payment_amount: '0.00',
+      ownership_periods: [] }] }]);
+  show();
+  const inputNote = engine_version === 'm4.4.0'
+    ? 'Für den Zahlbetrag zählen ausschließlich gebuchte, nicht stornierte Hausgeldzahlungen und gesondert gebuchte Rücklagenzahlungen, soweit das Hausgeld-Soll nicht bereits durch Hausgeldzahlungen gedeckt ist. Manuelle Angaben ersetzen keine Buchung.'
+    : 'Für den Zahlbetrag zählen ausschließlich gebuchte, nicht stornierte Hausgeldzahlungen. Manuelle Angaben ersetzen keine Buchung.';
+  expect(await screen.findByText(inputNote)).toBeVisible();
+  const source = screen.getByText(/Quelle: Soll aus dem verknüpften Wirtschaftsplan/);
+  const sentence = 'Gesondert gebuchte Rücklagenzahlungen zählen nur, soweit das Hausgeld-Soll nicht bereits durch Hausgeldzahlungen gedeckt ist; ein Überschuss bleibt in der Rücklage.';
+  if (engine_version === 'm4.4.0') expect(source).toHaveTextContent(sentence);
+  else expect(source).not.toHaveTextContent(sentence);
+});
+
 it('shows the current opening beside the corrected balance input and reason', async () => {
   install(); show();
   expect(await screen.findByText(/Aktueller Anfangsbestand: 0,00/)).toBeInTheDocument();
@@ -324,4 +340,14 @@ it('prefills every input owner including the buyer absent from the frozen plan',
   fireEvent.click(screen.getByRole('button', { name: 'Aus Zahlenstand übernehmen' }));
   await waitFor(() => expect(buyerInput).toHaveValue('2400.00'));
   expect(sellerInput).toHaveValue('2400.00');
+});
+
+
+it('renders the planned reserve as a separate owner Soll line', async () => {
+  install([{ ...draft(), lines: [{ ...frozenLine('reserve', seller, '3600.00'),
+    line_type: 'RESERVE_SOLL', label: 'Ruecklagenzufuehrung laut Wirtschaftsplan (Soll)' }] }]);
+  show();
+  const heading = await screen.findByRole('heading', { name: 'Anna Alt' });
+  const row = within(heading.parentElement!).getByText('Rücklagenzuführung laut Wirtschaftsplan (Soll)').closest('tr')!;
+  expect(within(row).getByText('3600.00 EUR')).toBeVisible();
 });

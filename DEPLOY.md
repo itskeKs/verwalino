@@ -1505,7 +1505,12 @@ Staging is Compose project `verwalino-staging`, using
 [`infra/docker-compose.staging.yml`](infra/docker-compose.staging.yml) alone, its own database/backend network
 and volumes `pgdata_staging`/`documents_staging`. Its app and hosted Caddy share the dedicated external
 `verwalino-staging_proxy` network; production's app remains on `verwalino_proxy`.
-It runs hosted mode and restricts every SMTP submission (including document mail and signup confirmations)
+The declaration worker uses the staging worker database credentials and shares
+the app's image digest, session secret and documents volume. It joins the private backend and its own
+project-scoped `egress` network for provider access, never the proxy network, and
+publishes no ports. Invoice extraction remains disabled
+(`HV_INVOICE_EXTRACTION_ENABLED: "false"`).
+Staging runs hosted mode and restricts every SMTP submission (including document mail and signup confirmations)
 to the single required `CANARY_EMAIL` via `HV_MAIL_ALLOWLIST`, checked at the shared submission boundary
 before any SMTP connection. Empty/malformed allow-lists block all submissions; refusals log no address.
 [`infra/Caddyfile.staging`](infra/Caddyfile.staging) routes `staging.verwalino.de` to `staging-app:8000`,
@@ -1529,8 +1534,17 @@ that revision's snippets before image pulls or service operations. The three pub
 exported with mode 0644 so the isolated validator can read them; private configuration stays mode 0600.
 The staging app and operations containers each mount one writable `/tmp` tmpfs, limited to 128 MiB
 with `noexec` and `nosuid`.
-It then resolves a registry digest without moving the
-production checkout, migrates and recreates only staging, checks readiness and prints the previous successful
+The forced command executes `/srv/verwalino/app/scripts/deploy-server.sh` from the production
+release checkout, so changes to `deploy_staging`, including the stop/start order and worker startup
+below, reach the server only with a production release; a staging deployment from main does not
+apply them. The staging deploy then resolves a registry digest without moving the
+production checkout and starts the staging database. When the exported Compose file defines a declaration
+worker, it stops the staging app and worker together before migration; otherwise it stops only the app
+through Compose and stops any running newer worker by its staging project and service labels before
+migration. It then migrates, recreates the app, waits for health and probes readiness inside the container.
+If defined, it starts the declaration worker and waits for health before recording the digest and SHA
+in `.env.staging`; an absent worker is not restarted. An unhealthy defined worker fails the deploy without changing that file and releases
+the deploy lock; no config lock is acquired. The log prints the previous successful
 SHA. To roll back staging, send `staging <previous-sha>` with the same key; an older image must be compatible
 with the migrated schema. There is no automatic schema downgrade or rollback.
 
@@ -1629,11 +1643,11 @@ run `docker compose down -v` or delete the volumes.
 A deploy workflow that was disabled by hand during a release is re-enabled in the same release,
 before that release is declared done.
 
-## Migration compatibility: 0029–0180
+## Migration compatibility: 0029–0181
 
 | Revisions | Effect on existing data and runtime compatibility |
 | --- | --- |
-| 0029–0122 | Adds financial, declaration, source custody and review data structures and guards. The 0028 runtime cannot interpret the new schema or enforce its later security rules. The 0028→0180 rehearsal preserves all old columns and rows with synthetic organization, user, document, draft/failed import and failed extraction-run data, but does not prove every live-data combination. |
+| 0029–0122 | Adds financial, declaration, source custody and review data structures and guards. The 0028 runtime cannot interpret the new schema or enforce its later security rules. The 0028→0181 rehearsal preserves all old columns and rows with synthetic organization, user, document, draft/failed import and failed extraction-run data, but does not prove every live-data combination. |
 | 0123 | Adds nullable replacement evidence and changes exception-completion functions/outcomes. Existing rows retain their old disposition; old clients cannot interpret new replacement outcomes. Downgrade refuses retained evidence. |
 | 0124–0125 | Adds bank transactions and a nullable payment link, then enforces tenant/account coherence and immutable booked links. A 0122 database has no pre-existing links; inconsistent intermediate data is not silently repaired. |
 | 0126–0127 | Adds append-only rent history and frozen special levies; replaces financial/source/report adapters. No old financial rows are rewritten. Older runtimes do not understand the new obligations/history. Their downgrades can drop populated new tables; they are not a safe recovery path. |
@@ -1679,14 +1693,15 @@ before that release is declared done.
 | 0177 (parent 0176) | Freezes original advance mode when any booking or finalized statement exists, including when the writer cannot read the associated books. Indexes booked-payment audit lookups. Downgrade removes the guard and index and retains existing records. |
 | 0178 (parent 0177) | Adds encrypted organization AI settings under RLS and serialized tenant monthly accounting. Extends safe pass metadata with `default` for an omitted reasoning parameter. Downgrade refuses existing settings or passes using the new metadata value. |
 | 0179 (parent 0178) | Adds compatible API destinations and provider selection without changing existing encrypted keys. Runtime reservations distinguish provider origins. Downgrade refuses configured non-OpenAI destinations. |
-| 0180 (head; parent 0179) | Adds a nullable administrator request timeout per configured provider endpoint (1–3600 seconds). Existing settings keep their function defaults; compatible endpoints default to 180 seconds. Downgrade refuses explicit configured timeouts. |
+| 0180 (parent 0179) | Adds a nullable administrator request timeout per configured provider endpoint (1–3600 seconds). Existing settings keep their function defaults; compatible endpoints default to 180 seconds. Downgrade refuses explicit configured timeouts. |
+| 0181 (head; parent 0180) | Allows `RESERVE_SOLL` owner statement lines for the planned reserve contribution. Existing finalized statements remain unchanged; downgrade explicitly refuses retained `RESERVE_SOLL` rows with "Retain planned reserve statement evidence; populated downgrade refused" before changing the CHECK; without those rows it restores the prior line types. |
 
 DDL uses the existing PostgreSQL/Alembic transaction; 0123 also takes financial
 and ACL locks with NOWAIT table locks. Contention or unexpected data/function
 definitions must abort, not trigger repair/deletion. A rollback-only synthetic
-0028→0180 rehearsal compares every old table column/row and retained RLS flags;
-the 0122→0180, 0139→0180 and accepted-source 0140→0180, 0141→0180 and
-0142→0180, 0143→0180, 0144→0180, 0145→0180, 0146→0180, 0147→0180, 0148→0180, 0149→0180, 0150→0180, 0151→0180, 0152→0180, 0153→0180, 0154→0180, 0155→0180, 0159→0180, 0160→0180, 0161→0180, 0162→0180, 0163→0180, 0164→0180, 0165→0180, 0166→0180, 0167→0180, 0168→0180, 0169→0180, 0170→0180, 0171→0180, 0172→0180, 0173→0180, 0174→0180, 0175→0180, 0176→0180, 0177→0180, 0178→0180 and 0179→0180 (accepted sources) rehearsals also
+0028→0181 rehearsal compares every old table column/row and retained RLS flags;
+the 0122→0181, 0139→0181 and accepted-source 0140→0181, 0141→0181 and
+0142→0181, 0143→0181, 0144→0181, 0145→0181, 0146→0181, 0147→0181, 0148→0181, 0149→0181, 0150→0181, 0151→0181, 0152→0181, 0153→0181, 0154→0181, 0155→0181, 0159→0181, 0160→0181, 0161→0181, 0162→0181, 0163→0181, 0164→0181, 0165→0181, 0166→0181, 0167→0181, 0168→0181, 0169→0181, 0170→0181, 0171→0181, 0172→0181, 0173→0181, 0174→0181, 0175→0181, 0176→0181, 0177→0181, 0178→0181, 0179→0181 and 0180→0181 (accepted sources) rehearsals also
 compare existing ACLs, allowing only the explicit organization INSERT/reserve UPDATE revocations and the capability-checked
 0159 binding adapter and the 0168 column-level resolution-link grant;
 it does not prove live data validity or cross-version runtime compatibility.
@@ -1709,10 +1724,10 @@ When adding a migration, update these together in the same release:
 
 ## Deployment boundary and accepted head
 
-The reviewed code targets **0180**. `backend/app/deployment.py` retains `TARGET`,
+The reviewed code targets **0181**. `backend/app/deployment.py` retains `TARGET`,
 `SUPPORTED`, `release_head()` and the read-only schema/role/runtime checks used
-by the migration rehearsals. Those checks accept measured **0028 → 0180**,
-**0122 → 0180**, **0139 → 0180**, **0140 → 0180**, **0141 → 0180**, **0142 → 0180**, **0143 → 0180**, **0144 → 0180**, **0145 → 0180**, **0146 → 0180**, **0147 → 0180**, **0148 → 0180**, **0149 → 0180**, **0150 → 0180**, **0151 → 0180**, **0152 → 0180**, **0153 → 0180**, **0154 → 0180**, **0155 → 0180**, **0159 → 0180**, **0160 → 0180**, **0161 → 0180**, **0162 → 0180**, **0163 → 0180**, **0164 → 0180**, **0165 → 0180**, **0166 → 0180** (accepted sources), **0167 → 0180** (accepted source), **0168 → 0180** (accepted source), **0169 → 0180** (accepted source), **0170 → 0180** (accepted source), **0171 → 0180** (accepted source), **0172 → 0180** (accepted source), **0173 → 0180** (accepted source), **0174 → 0180** (accepted source), **0175 → 0180** (accepted source), **0176 → 0180** (accepted source), **0177 → 0180**, **0178 → 0180**, or **0179 → 0180**; unknown,
+by the migration rehearsals. Those checks accept measured **0028 → 0181**,
+**0122 → 0181**, **0139 → 0181**, **0140 → 0181**, **0141 → 0181**, **0142 → 0181**, **0143 → 0181**, **0144 → 0181**, **0145 → 0181**, **0146 → 0181**, **0147 → 0181**, **0148 → 0181**, **0149 → 0181**, **0150 → 0181**, **0151 → 0181**, **0152 → 0181**, **0153 → 0181**, **0154 → 0181**, **0155 → 0181**, **0159 → 0181**, **0160 → 0181**, **0161 → 0181**, **0162 → 0181**, **0163 → 0181**, **0164 → 0181**, **0165 → 0181**, **0166 → 0181** (accepted sources), **0167 → 0181** (accepted source), **0168 → 0181** (accepted source), **0169 → 0181** (accepted source), **0170 → 0181** (accepted source), **0171 → 0181** (accepted source), **0172 → 0181** (accepted source), **0173 → 0181** (accepted source), **0174 → 0181** (accepted source), **0175 → 0181** (accepted source), **0176 → 0181** (accepted source), **0177 → 0181**, **0178 → 0181**, **0179 → 0181**, or **0180 → 0181**; unknown,
 missing, multiple or intermediate revisions are rejected. These are code and
 rehearsal boundaries, not a measurement of a running installation.
 
@@ -2418,5 +2433,5 @@ a numeric ledger placeholder is never displayed as free usage.
 Migration 0179 preserves existing encrypted settings and adds the optional compatible
 endpoint and provider constraint. Downgrade refuses configured non-OpenAI destinations
 rather than silently losing their configuration. Existing rows keep their OpenAI
-origin and credentials. 0179 is an accepted source for upgrades to 0180 alongside the
+origin and credentials. 0179 is an accepted source for upgrades to 0181 alongside the
 previous sources; production moves only through a reviewed release.

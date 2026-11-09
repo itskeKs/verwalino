@@ -115,7 +115,7 @@ async def get_mandate(
 async def create_mandate(
     body: MandateCreate,
     auth: AuthContext = Depends(require_admin_dep),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
 ):
     """Create a mandate -- OWNER_ADMIN only."""
     if body.mandate_type not in ("WEG", "MIET", "SEV"):
@@ -233,7 +233,7 @@ async def upload_mandate_document(
     accounting_scope_id: uuid.UUID | None = Form(None),
     scope_reason: str | None = Form(None),
     auth: AuthContext = Depends(require_write_dep),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
 ):
     """Upload a contract/admin document to a mandate (write role)."""
     file_bytes = await read_upload_limited(file, max_bytes=MAX_UPLOAD_BYTES)
@@ -292,7 +292,7 @@ async def delete_mandate_document(
     mandate_id: uuid.UUID,
     doc_id: uuid.UUID,
     auth: AuthContext = Depends(require_write_dep),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
 ):
     """Delete a mandate document record (write role)."""
     svc = MandateDocumentService(db, auth.organization_id, auth.user_id)
@@ -309,7 +309,7 @@ class ArchiveMandateDocument(BaseModel):
 
 @router.post("/{mandate_id}/documents/{doc_id}/archive", response_model=MandateDocumentOut)
 async def archive_mandate_document(mandate_id: uuid.UUID, doc_id: uuid.UUID, body: ArchiveMandateDocument,
-                                  auth: AuthContext = Depends(require_write_dep), db: AsyncSession = Depends(get_db)):
+                                  auth: AuthContext = Depends(require_write_dep), db: AsyncSession = Depends(get_db, scope="function")):
     try:
         return _doc_to_out(await MandateDocumentService(db, auth.organization_id, auth.user_id).archive(doc_id, mandate_id, body.reason))
     except DBAPIError as error:

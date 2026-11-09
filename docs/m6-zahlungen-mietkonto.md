@@ -125,8 +125,8 @@ The type is the **control key** for the settlement integration (§6) — hence s
 | `KALTMIETE` | Tenant | "Tenant: base rent" | Tenant ledger expected/actual (rent); **not** into the operating cost statement. |
 | `HK_VORAUSZAHLUNG` | Tenant | "Tenant: heating advance payment" | **Heating statement `heating_advance_payments_total` (DERIVED)** (§6.2). |
 | `NK_VORAUSZAHLUNG` | Tenant | "Tenant: operating cost advance payment" | **Operating cost statement `advance_payments_total` (DERIVED)** (§6.2). |
-| `HAUSGELD_VORSCHUSS` | Owner | "Owner: Hausgeld advance payment" | WEG expected/actual **informational**; **NOT** into the settlement balance (§6.3). |
-| `RUECKLAGENANTEIL` | Owner | "Owner: reserve share (Rücklagenanteil)" | Reserve actual (informational); **not** into the balance (§6.3/§6.4). |
+| `HAUSGELD_VORSCHUSS` | Owner | "Owner: Hausgeld advance payment" | Net Hausgeld `H` feeds the displayed account balance and payment amount (§6.3); never the resolution-relevant Spitze. |
+| `RUECKLAGENANTEIL` | Owner | "Owner: reserve share (Rücklagenanteil)" | Net reserve `R` covers only uncovered Hausgeld Soll in the displayed paid total (§6.3/§6.4); the reserve ledger remains uncapped, the Spitze unchanged. |
 | `SONDERZAHLUNG` | Owner | "Owner: special assessment/special payment" | Special expected/actual (informational); settlement-neutral unless recorded as a cost item. |
 | `NACHZAHLUNG` | Tenant or owner | "… / additional payment" | settles the `balance` of a **finalized** settlement (`settlement_run_id`); settlement-neutral for the *next* period. |
 | `KAUTION` *(optional)* | Tenant | "Tenant: security deposit" | Security deposit account holdings; **settlement-neutral** (§3.4). |
@@ -463,21 +463,41 @@ request that omits heating preserves the effective heating rate.
 - **Addressee-exact:** On a mid-year tenant change, each tenant has their **own** `lease_agreement_id`; the DERIVED sum per run pulls only the payments of **this** lease (consistent with M3 §3.5: one `settlement_run` per lease).
 - **Period-exact:** The recorded `period_year` and optional `period_month` assign an advance to the statement period; a cross-year statement can include both years. Lease-covered days determine partial-period credits. The bank `value_date` does not replace this assignment: a December advance paid in January still belongs to its recorded December period (M3 §3.4).
 
-### 6.3 WEG settlement (M4, payment status) ← `HAUSGELD_VORSCHUSS` (informational, NOT into the balance)
+### 6.3 WEG settlement (M4): booked payments, account balance and payment amount
 
-**Precise assignment — and the most important delimitation of M6:**
+The resolution-relevant `abrechnungsspitze = owner_cost_total + plan_reserve_soll − plan_advance`
+(ADR-0007 amendment #401) is independent of payments. A defaulting owner and a paying
+owner have the same Spitze when their costs and plan shares match.
 
-| Settlement quantity | M4 carrier | payments fed | flows into the settlement balance? |
-| --- | --- | --- | --- |
-| **Expected advance (Soll-Vorschuss)** of the owner | `OwnerAdvanceInput.plan_advance_total` (from `economic_plan`, §2.2) | **no payments** — comes from the **finalized plan** | **YES** — the subtrahend of the balance (ADR-0007). |
-| **Actual payment** (payment status) of the owner | `WegComputeExtras.paid_advances` (MANUAL today) → **DERIVED** | `payment` with `payment_type='HAUSGELD_VORSCHUSS'` **AND** `period_year` = settlement year **AND** `owner_profile_id` = owner **AND** `status='booked'` **AND** not reversed | **NO** — **informational only** (payment status/arrears). |
+New WEG statements derive payments from booked, non-reversed receipts and refunds
+for the same owner, property and settlement period. `H` is the signed net
+`HAUSGELD_VORSCHUSS`, `R` the signed net `RUECKLAGENANTEIL`, and `Soll` the owner's
+summed `OWNER_ADVANCE` amounts over all units in the linked plan. The paid total is:
 
-- **The settlement balance remains `actual costs − expected advance(plan)` (ADR-0007 E4-3a) — payments do NOT flow into the balance.** This is the WEMoG logic: the subject of the resolution (Beschluss) is the adjustment against the **expected amount**, not against what was actually paid. A defaulting owner has the same balance as a paying one (same expected amount, same actual costs); their **arrears** are a separate, informational quantity (a dunning matter, M7). M6 changes **nothing** about this — it only replaces the **MANUALLY** recorded `paid_advances` (today's informational payment status) with the **DERIVED** sum from payments.
-- **Consequence:** M6 does **not touch** the correctness-critical balance at all. It fills only the **informational** payment status disclosure (`settlement_line(line_type='ADVANCE_PAYMENT')` optional, M4 §2.2/§2.4). The separation established in M4 (balance relevant to the resolution ↔ payment status informational) is thereby **strengthened**, not diluted.
+`paid = H + min(max(R, 0), max(Soll − H, 0))`
 
-### 6.4 Reserve share ← `RUECKLAGENANTEIL` (informational, not into the balance)
+An owner without a plan Soll receives no reserve credit, including when `H` is negative.
+Hausgeld overpayments keep their full credit; a negative reserve net adds nothing.
+Assigned years/months use the existing calendar-month and boundary-day allocation;
+yearless payments use their value date. OUT refunds reduce the corresponding net;
+drafts, reversed originals and reversal rows do not count. Payment ownership is never
+transferred at an ownership change. Manual coverage entries cannot replace bookings.
 
-`RUECKLAGENANTEIL` payments feed the **actual state of the reserve contribution** per owner (informational). They do **not** flow into the settlement balance (the contribution is asset formation, not actual costs — M4 §3). The **expected** contribution share comes from the plan/the `ERHALTUNGSRUECKLAGE` cost items (M4 §3.3); the DERIVED payment sum is the **actual** comparison. Optional contribution to the asset report (§6.5).
+`account_balance = Soll − paid` and `payment_amount = abrechnungsspitze + account_balance`
+are displayed separately from the resolution amount. A split payment of 4,200.00 Hausgeld
+and 3,600.00 reserve covers a 7,800.00 Soll. With 7,800.00 Hausgeld plus 1,000.00 reserve,
+paid remains 7,800.00 and the extra reserve creates no payment credit. Higher actual
+costs still produce a Nachzahlung; excess reserve cannot offset them.
+
+### 6.4 Reserve share ← `RUECKLAGENANTEIL`
+
+The reserve ledger continues to count the full signed reserve cash amount without the
+Hausgeld cap. The cap in §6.3 applies only to the WEG statement's paid total, account
+balance and payment amount. Excess separate reserve payments stay in the reserve.
+Reserve cash is asset formation, not consumed cost, and never changes the Spitze.
+The planned reserve Soll comes from the linked plan's canonical reserve plan cells
+(M4 §2.2/§2.4), independently of actual payments. Rental/BK derivations and other
+Hausgeld derivations retain their existing payment-type selection.
 
 ### 6.5 Asset report (M4, §28 IV) ← optionally DERIVED account balance
 

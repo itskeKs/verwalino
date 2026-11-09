@@ -434,6 +434,7 @@ def build_weg_snapshot_payload(
                     "abrechnungsspitze": _m(o.abrechnungsspitze),
                     "paid_advances": _m(o.paid_advances),
                     "plan_soll": _m(o.plan_advance),
+                    "plan_reserve_soll": _m(o.plan_reserve_soll),
                     "paid": _m(o.paid_advances),
                     "account_balance": _m(o.account_balance),
                     "payment_amount": _m(o.payment_amount),

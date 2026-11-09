@@ -25,7 +25,7 @@ async def preparation_inventory(auth: AuthContext = Depends(require_admin_dep),
     return await db.scalar(text('SELECT access_preparation_inventory(:org)'), {'org': auth.organization_id})
 
 
-async def coverage_writer(auth: AuthContext = Depends(require_admin_dep), db: AsyncSession = Depends(get_db)):
+async def coverage_writer(auth: AuthContext = Depends(require_admin_dep), db: AsyncSession = Depends(get_db, scope="function")):
     # Never upgrade a shared ACL lock after another capture has done the same.
     await require_live_principal(db, auth, writer=True, exclusive=True, administrator=True)
     return db
