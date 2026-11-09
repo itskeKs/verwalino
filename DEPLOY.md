@@ -1535,10 +1535,9 @@ exported with mode 0644 so the isolated validator can read them; private configu
 The staging app and operations containers each mount one writable `/tmp` tmpfs, limited to 128 MiB
 with `noexec` and `nosuid`.
 The forced command executes `/srv/verwalino/app/scripts/deploy-server.sh` from the production
-release checkout, so the stop/start order and worker startup below arrive only with a production
-release containing this script. Before that release, staging deployments from main still execute
-the older script, which recreates only `staging-app`. The staging deploy
-then resolves a registry digest without moving the
+release checkout, so changes to `deploy_staging`, including the stop/start order and worker startup
+below, reach the server only with a production release; a staging deployment from main does not
+apply them. The staging deploy then resolves a registry digest without moving the
 production checkout and starts the staging database. When the exported Compose file defines a declaration
 worker, it stops the staging app and worker together before migration; otherwise it stops only the app
 through Compose and stops any running newer worker by its staging project and service labels before
