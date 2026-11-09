@@ -40,6 +40,9 @@ _PIPELINE_ENTRY_STATUSES = {"QUEUED", "RETRY_WAIT"}
 _REQUIRED_IMPORT_COLUMNS = {"lease_token", "lease_generation", "lease_expires_at", "queue_request_id",
                             "approval_request_digest", "publication_domain_id", "publication_grant_id"}
 _HEALTHCHECK_TESSERACT_TIMEOUT_SECONDS = 5
+# Run rows name the provider class `create_extraction_provider` would build, the
+# vocabulary the run history prices by; the class itself may be unimportable here.
+_PROVIDER_CLASS_NAMES = {"openai": "OpenAiDeclarationProvider", "anthropic": "AnthropicDeclarationProvider"}
 
 
 def _safe_error_details(error: Exception) -> tuple[str, str]:
@@ -228,7 +231,9 @@ class DeclarationImportWorker:
                 organization_id=lease.organization_id,
                 import_id=lease.import_id,
                 status="FAILED",
-                provider=getattr(effective, "provider", "unknown"),
+                provider=_PROVIDER_CLASS_NAMES.get(
+                    getattr(effective, "provider", None), "CompatibleDeclarationProvider"
+                ),
                 model_name=getattr(effective, "model", None) or "unknown",
                 prompt_version=self._settings.declaration_prompt_version,
                 schema_version=self._settings.declaration_schema_version,

@@ -542,7 +542,8 @@ async def test_unexpected_provider_construction_error_counts_a_safe_failed_attem
         assert run.error_code == "WORKER_UNEXPECTED_ERROR"
         assert run.completed_at == now
         assert run.input_tokens == run.output_tokens == run.estimated_cost_usd == 0
-        assert run.provider == worker._active_ai.provider
+        assert worker._active_ai.provider == "openai"
+        assert run.provider == "OpenAiDeclarationProvider"
         assert run.model_name == worker._active_ai.model
         assert run.prompt_version == settings.declaration_prompt_version
         assert run.schema_version == settings.declaration_schema_version
