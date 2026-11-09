@@ -153,7 +153,7 @@ if args[0] == "compose":
         else:
             sys.stdin.read()
             out("t\n")
-    if env.get("FAKE_FAIL_COMPOSE") and env["FAKE_FAIL_COMPOSE"] in args:
+    if env.get("FAKE_FAIL_COMPOSE") and all(token in args for token in env["FAKE_FAIL_COMPOSE"].split(",")):
         sys.exit(17)
     sys.exit(0)
 if args[0] == "pull":
@@ -585,6 +585,44 @@ class DeployTests(ServerCase):
                 self.assertLess(calls.index(migration), calls.index(starts[0]))
                 self.assertEqual(path.read_bytes(), before)
                 self.assertNotIn("HV_DEPLOYMENT_MODE", self.config.read_text())
+
+    def hosted_app_prefix(self):
+        return ["compose", "--project-name", "verwalino", "--env-file", str(self.config),
+                "-f", str(ROOT / "infra/docker-compose.yml"), "-f", str(ROOT / "infra/docker-compose.hosted-app.yml"),
+                "--profile", "ops", "--profile", "https"]
+
+    def test_app_opt_in_restarts_the_declaration_worker_around_the_migration(self):
+        self.hosted_app_config("hosted")
+        result = self.deploy()
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        calls = [c for c in self.calls("docker") if c["args"][0] == "compose"]
+        vectors = [c["args"] for c in calls]
+        prefix = self.hosted_app_prefix()
+        stop = prefix + ["stop", "app", "declaration-worker"]
+        migrate = prefix + ["run", "--rm", "--no-deps", "-T", "migrate"]
+        start_app = prefix + ["up", "-d", "--no-deps", "--wait", "--wait-timeout", "120", "app"]
+        start_worker = prefix + ["up", "-d", "--no-deps", "--wait", "--wait-timeout", "120", "declaration-worker"]
+        start_caddy = prefix + ["up", "-d", "--no-deps", "caddy"]
+        for vector in (stop, migrate, start_app, start_worker, start_caddy):
+            self.assertEqual(vectors.count(vector), 1, vector[-1])
+        self.assertEqual([vectors.index(v) for v in (stop, migrate, start_app, start_worker, start_caddy)],
+                         sorted(vectors.index(v) for v in (stop, migrate, start_app, start_worker, start_caddy)))
+        self.assertEqual([v for v in vectors if "up" in v and v[-1] == "declaration-worker"], [start_worker])
+        self.assertEqual(calls[vectors.index(start_worker)]["mode"], "hosted")
+
+    def test_unhealthy_declaration_worker_fails_the_release_and_releases_the_lock(self):
+        self.hosted_app_config("hosted")
+        result = self.deploy(FAKE_FAIL_COMPOSE="up,declaration-worker")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertFalse((self.config.parent / (self.config.name + ".lock")).exists())
+        calls = [c for c in self.calls("docker") if c["args"][0] == "compose"]
+        self.assertIn(self.hosted_app_prefix() + ["stop", "app", "declaration-worker"], [c["args"] for c in calls])
+        self.assertTrue(any("up" in c["args"] and c["args"][-1] == "app" for c in calls))
+        self.assertTrue(any("up" in c["args"] and c["args"][-1] == "declaration-worker" for c in calls))
+        self.assertFalse(any(c["args"][-1] == "caddy" for c in calls))
+        for call in (c for c in calls if "up" in c["args"]):
+            self.assertIn(str(ROOT / "infra/docker-compose.hosted-app.yml"), call["args"])
+        self.assertEqual(self.calls("curl"), [])
 
     def test_same_tag_redeploy_in_the_same_second_preserves_each_backup(self):
         self.hosted_app_config("hosted")
@@ -1430,16 +1468,20 @@ class SiteDeployTests(ServerCase):
 
 @unittest.skipIf(yaml is None, "PyYAML is not installed")
 class HostedAppLayoutTests(unittest.TestCase):
-    def test_overlay_only_forwards_the_three_private_app_settings(self):
+    def test_overlay_forwards_the_private_app_settings_and_only_the_mode_to_the_worker(self):
         overlay = yaml.safe_load((ROOT / "infra/docker-compose.hosted-app.yml").read_text())
-        self.assertEqual(overlay, {"services": {"app": {"environment": {
-            "HV_DEPLOYMENT_MODE": "${HV_DEPLOYMENT_MODE:-selfhost}",
-            "HV_PUBLIC_HOST": "${HV_PUBLIC_HOST:?set the public hostname in the private hosted app config}",
-            "HV_ALLOWED_HOSTS": "${HV_ALLOWED_HOSTS:?include the public hostname in the private hosted app config}",
-        }}}})
+        self.assertEqual(overlay, {"services": {
+            "app": {"environment": {
+                "HV_DEPLOYMENT_MODE": "${HV_DEPLOYMENT_MODE:-selfhost}",
+                "HV_PUBLIC_HOST": "${HV_PUBLIC_HOST:?set the public hostname in the private hosted app config}",
+                "HV_ALLOWED_HOSTS": "${HV_ALLOWED_HOSTS:?include the public hostname in the private hosted app config}",
+            }},
+            "declaration-worker": {"environment": {"HV_DEPLOYMENT_MODE": "${HV_DEPLOYMENT_MODE:-selfhost}"}},
+        }})
         base = yaml.safe_load((ROOT / "infra/docker-compose.yml").read_text())
         for key in ("HV_DEPLOYMENT_MODE", "HV_PUBLIC_HOST"):
             self.assertNotIn(key, base["services"]["app"]["environment"])
+        self.assertNotIn("HV_DEPLOYMENT_MODE", base["services"]["declaration-worker"]["environment"])
 
 
 @unittest.skipIf(yaml is None, "PyYAML is not installed")

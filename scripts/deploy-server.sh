@@ -19,7 +19,7 @@
 # pull ghcr.io/itskeks/verwalino:TAG and resolve its digest -> backup (server-backup.sh) -> pin
 # the digest in the installer config ->
 # "self-host.sh start", or managed start with base + hosted-app + optional hosted-proxy/site
-# overlays (pull, stop app, migrate, start, wait for healthy) -> poll
+# overlays (pull, stop app and declaration worker, migrate, start both, wait for healthy) -> poll
 # /api/health/ready for up to 120 s. The whole run is logged to
 # /srv/verwalino/logs/deploy-<timestamp>.log.
 #
@@ -334,9 +334,11 @@ main() {
             if [[ -n "$inbox_container" ]]; then
                 hosted_app_compose stop inbox-worker
             fi
-            hosted_app_compose stop app
+            # Do not run migrations alongside a running writer; the worker follows the app image.
+            hosted_app_compose stop app declaration-worker
             hosted_app_compose run --rm --no-deps -T migrate
             hosted_app_compose up -d --no-deps --wait --wait-timeout 120 app
+            hosted_app_compose up -d --no-deps --wait --wait-timeout 120 declaration-worker
             if [[ "$(config_value VERWALINO_MODE)" = https ]]; then
                 hosted_app_compose up -d --no-deps caddy
             fi

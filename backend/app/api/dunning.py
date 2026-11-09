@@ -323,7 +323,7 @@ async def create_dunning_for_owner(
 async def issue_dunning_notice(
     dunning_id: uuid.UUID,
     auth: AuthContext = Depends(require_write_dep),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
 ):
     svc = DunningService(db, auth.organization_id, auth.user_id)
     notice = await svc.issue(dunning_id)
@@ -337,7 +337,7 @@ async def issue_dunning_notice(
 async def delete_dunning_notice(
     dunning_id: uuid.UUID,
     auth: AuthContext = Depends(require_write_dep),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
 ):
     svc = DunningService(db, auth.organization_id, auth.user_id)
     await svc.delete_draft(dunning_id)

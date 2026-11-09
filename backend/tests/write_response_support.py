@@ -3,6 +3,32 @@ from httpx import ASGITransport, AsyncClient
 from sqlalchemy import text
 
 
+async def request_without_open_transaction(api, observer, method, path, payload, headers=None):
+    from app.main import app
+
+    query = text("SELECT count(*) FROM pg_locks l JOIN pg_stat_activity a USING (pid) "
+                 "WHERE l.locktype='transactionid' AND a.usename IN ('app_rw','app_review') "
+                 "AND l.pid <> pg_backend_pid()")
+    observations = []
+
+    async def observe_response(scope, receive, send):
+        async def observe_send(message):
+            if (message['type'] == 'http.response.start'
+                    and 200 <= message['status'] < 300 and not observations):
+                await observer.execute(text('SELECT pg_stat_clear_snapshot()'))
+                observations.append(await observer.scalar(query))
+            await send(message)
+        await app(scope, receive, observe_send)
+
+    async with AsyncClient(transport=ASGITransport(app=observe_response),
+                           base_url='http://test', cookies=api.cookies) as client:
+        response = await client.request(method, path, json=payload, headers=headers)
+    message = f'{method} {path}: observed transaction lock counts {observations} at http.response.start'
+    assert len(observations) == 1, f'{message}; response {response.status_code}: {response.text}'
+    assert observations[0] == 0, message
+    return response
+
+
 async def create_visible_draft(api, observer, path, payload, table):
     from app.main import app
 

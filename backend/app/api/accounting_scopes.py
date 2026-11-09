@@ -49,7 +49,7 @@ async def page_scopes(property_id: uuid.UUID | None = None, management_mandate_i
 
 @router.post('', response_model=ScopeOut, status_code=201)
 async def create_scope(body: ScopeCreate, idempotency_key: uuid.UUID = Header(),
-                       auth: AuthContext = Depends(require_admin_dep), db: AsyncSession = Depends(get_db)):
+                       auth: AuthContext = Depends(require_admin_dep), db: AsyncSession = Depends(get_db, scope="function")):
     try:
         async with db.begin_nested():
             return await AccountingScopeService(db, auth).create_scope(body, idempotency_key)
@@ -64,7 +64,7 @@ async def scope_control(auth: AuthContext = Depends(require_admin_dep), db: Asyn
 
 @router.post('/control', response_model=ScopeControlEvent, status_code=201)
 async def change_scope_control(body: ScopeControlCommand, idempotency_key: uuid.UUID = Header(),
-                               auth: AuthContext = Depends(require_admin_dep), db: AsyncSession = Depends(get_db)):
+                               auth: AuthContext = Depends(require_admin_dep), db: AsyncSession = Depends(get_db, scope="function")):
     return await ScopeControlService(db, auth).change(body, idempotency_key)
 
 
@@ -94,20 +94,20 @@ async def page_grants(scope_id: uuid.UUID, query: PageQuery = Depends(page_query
 
 @router.post('/{scope_id}/grants', response_model=GrantOut, status_code=201)
 async def grant_scope(scope_id: uuid.UUID, body: GrantCreate, idempotency_key: uuid.UUID = Header(),
-                      auth: AuthContext = Depends(require_admin_dep), db: AsyncSession = Depends(get_db)):
+                      auth: AuthContext = Depends(require_admin_dep), db: AsyncSession = Depends(get_db, scope="function")):
     return await AccountingScopeService(db, auth).create_grant(scope_id, body, idempotency_key)
 
 
 @router.post('/{scope_id}/grants/{grant_id}/revoke', status_code=204)
 async def revoke_scope(scope_id: uuid.UUID, grant_id: uuid.UUID,
-                       auth: AuthContext = Depends(require_admin_dep), db: AsyncSession = Depends(get_db)):
+                       auth: AuthContext = Depends(require_admin_dep), db: AsyncSession = Depends(get_db, scope="function")):
     await AccountingScopeService(db, auth).revoke_grant(scope_id, grant_id)
     return Response(status_code=204)
 
 
 @router.post('/{scope_id}/bindings', response_model=BindingOut, status_code=201)
 async def bind_resource(scope_id: uuid.UUID, body: BindingCreate,
-                        auth: AuthContext = Depends(require_admin_dep), db: AsyncSession = Depends(get_db)):
+                        auth: AuthContext = Depends(require_admin_dep), db: AsyncSession = Depends(get_db, scope="function")):
     binding = await AccountingScopeService(db, auth).bind_resource(scope_id, body)
     return BindingOut(id=binding.id, scope_id=binding.scope_id, resource_type=body.resource_type,
         resource_id=body.resource_id, reason=binding.reason)
@@ -121,5 +121,5 @@ async def legacy_payment_preview(scope_id: uuid.UUID, query: PageQuery = Depends
 
 @router.post('/{scope_id}/legacy-payments', response_model=ReconciliationResult, status_code=201)
 async def reconcile_payments(scope_id: uuid.UUID, body: ReconciliationCommand, idempotency_key: uuid.UUID = Header(),
-                             auth: AuthContext = Depends(require_admin_dep), db: AsyncSession = Depends(get_db)):
+                             auth: AuthContext = Depends(require_admin_dep), db: AsyncSession = Depends(get_db, scope="function")):
     return await ScopePaymentReconciliationService(db, auth).apply(scope_id, body, idempotency_key)

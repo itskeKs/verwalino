@@ -19,5 +19,7 @@ paths:
   `docs/adr/0001-organization-isolation-rls.md`; global reference tables are distinct.
 - Keep `downgrade()` non-empty and meaningful; never remove its work to pass a test.
   Reject a downgrade that would silently lose data.
+- One PR carries at most one new Alembic revision. A downgrade refusal lives in that
+  revision's `downgrade()`, not in `migrations/env.py`.
 - Extend `backend/tests/test_rls_coverage.py` for new tenant tables and use the
   existing migration tests. Observe the test DB and compose limits in AGENTS.md.

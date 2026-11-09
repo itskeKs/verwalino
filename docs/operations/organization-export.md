@@ -230,10 +230,11 @@ trigger; lifecycle UPDATE additionally uses the cancellation-only transition
 guard. The schema contract fails if a new organization table lacks the trigger.
 The guard is an immediate BEFORE trigger, not a deferred commit constraint.
 An SQL statement or flush rejected before the response starts returns 409.
-FastAPI commits the `get_db` dependency after sending the response: if writes
-remain unflushed until that commit and cooling-off has become visible, P0023
-rolls back the transaction and is logged, while the client already has its 2xx
-response. Only writes left unflushed until dependency teardown can encounter
+Every mutation route commits its `get_db` dependency before the response starts
+(function scope, enforced by `backend/tests/test_write_transaction_scope.py`): if
+writes remain unflushed until that commit and cooling-off has become visible,
+P0023 rolls back the transaction and the client receives the same 409 instead of
+a 2xx response. Only writes left unflushed until dependency teardown can encounter
 this commit-time case; an earlier successful statement is not checked again.
 This allows runtime operations that hold an exclusive ACL lock on one connection
 and attest through a second connection to complete. `/api/organizations/me` reads

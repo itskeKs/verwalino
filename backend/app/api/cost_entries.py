@@ -213,7 +213,7 @@ async def create_cost_entry(
     body: CostEntryCreate,
     idempotency_key: str | None = Header(None, max_length=128),
     auth: AuthContext = Depends(require_write_dep),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
 ):
     svc = CostEntryService(db, auth.organization_id, auth.user_id)
     entry = CostEntry(
@@ -248,7 +248,7 @@ async def update_cost_entry(
     entry_id: uuid.UUID,
     body: CostEntryUpdate,
     auth: AuthContext = Depends(require_write_dep),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
 ):
     svc = CostEntryService(db, auth.organization_id, auth.user_id)
     updates = {}
@@ -266,7 +266,7 @@ async def update_cost_entry(
 async def confirm_cost_entry(
     entry_id: uuid.UUID,
     auth: AuthContext = Depends(require_write_dep),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
 ):
     svc = CostEntryService(db, auth.organization_id, auth.user_id)
     entry = await svc.confirm(entry_id)
@@ -277,7 +277,7 @@ async def confirm_cost_entry(
 async def reject_cost_entry(
     entry_id: uuid.UUID,
     auth: AuthContext = Depends(require_write_dep),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
 ):
     svc = CostEntryService(db, auth.organization_id, auth.user_id)
     entry = await svc.reject(entry_id)
@@ -289,7 +289,7 @@ async def create_correction(
     entry_id: uuid.UUID,
     body: CostEntryCorrectionCreate,
     auth: AuthContext = Depends(require_write_dep),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
 ):
     svc = CostEntryService(db, auth.organization_id, auth.user_id)
     corrections = {}

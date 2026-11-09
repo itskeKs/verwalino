@@ -1128,7 +1128,17 @@ in the PR. A local cross-platform build alone does not prove installation.
 1. Choose `X.Y.Z`, bump the application versions in `backend/pyproject.toml`
    and `frontend/package.json` with their lockfiles, and review/merge the release
    changes after `make test` and `make lint` pass.
-2. Create and push the reviewed `vX.Y.Z` tag. The `Release image` workflow builds,
+2. Before `deploy-server.sh vX.Y.Z` runs (the hosted deploy workflow starts it after the
+   tag's `Release image` run succeeds): the [Deploy hosted server](.github/workflows/deploy.yaml)
+   workflow is enabled; the three public Caddy snippets `infra/Caddyfile`, `infra/Caddyfile.staging`
+   and `infra/Caddyfile.site` in the server checkout `/srv/verwalino/app` are `0644`, because the
+   isolated validator must be able to read them (since #396 the script normalises only its staging
+   export under `/srv/verwalino/staging`, not this checkout); the forced-command deploy key points
+   at the committed `scripts/deploy-server.sh`. The mode check covers only snippets the new tag
+   does not change: the script checks the tag out under its own `umask 027`, so a changed snippet
+   is written `0640` again before validation; such a release fails the proxy validation until
+   #429 lands.
+3. Create and push the reviewed `vX.Y.Z` tag. The `Release image` workflow builds,
    publishes and signs both platforms. Only stable `vX.Y.Z` tags are accepted.
    The workflow refuses any tag whose commit is not on `main`.
    For a manual rehearsal/retry after the workflow exists on the default branch,
@@ -1138,20 +1148,20 @@ in the PR. A local cross-platform build alone does not prove installation.
    the `vX.Y.Z` and `vX.Y` tags for the selected version.
    Release runs are serialised; a tag whose run was skipped while another release
    was pending must be re-dispatched.
-3. Check the workflow succeeded, make the GHCR package public for anonymous
+4. Check the workflow succeeded, make the GHCR package public for anonymous
    pulls if necessary, and inspect both platforms, provenance/SBOMs and the
    signature at the summary's digest. Verify anonymously using the commands above.
-4. Check the second job published a GitHub Release containing `install.sh`,
+5. Check the second job published a GitHub Release containing `install.sh`,
    `self-host.sh`, `docker-compose.yml`, `Caddyfile`, `prod-init.sh`, `env.example`,
    `IMAGE_DIGEST`, `SHA256SUMS` and `SHA256SUMS.sigstore.json`. Compare `IMAGE_DIGEST`
    and the release notes with the image job's index digest. Verify the checksum
    signature and all seven payload checksums as above; test anonymous asset
    downloads after the repository/release is made public by the maintainer.
-5. On a fresh VM, run the one-line command through browser setup, sign-in and
+6. On a fresh VM, run the one-line command through browser setup, sign-in and
    stop/start persistence. Repeat with a real domain for DNS/TLS acceptance.
    Record the tag, digest, host and result in the PR; fake-Docker contracts do
    not prove this. Complete the native arm64 installation check above.
-6. Copy the successful release tag and index digest into the examples in this
+7. Copy the successful release tag and index digest into the examples in this
    section.
 
 The **first tag with installer assets, fresh-VM run and arm64 installation
@@ -1430,15 +1440,18 @@ The installer validates its own file via `status` before checkout. Immediately a
 the deploy script checks that the app overlay exists and validates Compose quietly, before
 image pull, backup or pinning. The managed server start then takes
 the installer lock, pulls the pinned app, waits for the database,
-stops an existing inbox worker and the app, migrates and starts the app with the overlay,
-waiting for health before starting Caddy. It never briefly starts the app in another mode.
+stops an existing inbox worker, the app and the declaration worker, migrates, starts the
+app with the overlay and then the declaration worker, waiting for each to become healthy
+before starting Caddy. A worker that does not become healthy fails the release and
+releases the installer lock. It never briefly starts the app in another mode.
 If the hosted proxy wrapper is present, the app/proxy/site overlays form one chain for
 these operations, preserving Caddy's imports, site image and networks. A managed start
 does not issue portable first-run setup tokens; use this opt-in for the existing server,
 or hosted public signup on an empty database. Keep both private configs in the operator's
 separate secure config backup; the server backup's `config.env` contains only `.env.selfhost`.
 
-The overlay forwards the three private settings to `app` only. `migrate` and `inbox-worker`
+The overlay forwards the three private settings to `app` and only `HV_DEPLOYMENT_MODE` to
+`declaration-worker`, which validates provider destinations by it. `migrate` and `inbox-worker`
 do not read this deployment policy. The installer's `bootstrap` service also retains the
 default `selfhost` policy: `admin_cli` run through that service skips hosted quota locks,
 including during `quota-recount`. For a recount, use the configured migrator environment
@@ -1613,6 +1626,8 @@ After a cancelled or broken CI deploy, check for and
 remove `/srv/verwalino/logs/.deploy.lock` once no deploy is running. A stale `/srv/verwalino/backups/.lock`
 (a run was killed) is removed by hand once no backup is running. Never
 run `docker compose down -v` or delete the volumes.
+A deploy workflow that was disabled by hand during a release is re-enabled in the same release,
+before that release is declared done.
 
 ## Migration compatibility: 0029–0181
 
@@ -2349,7 +2364,8 @@ bounds still apply. Changing settings affects the next request/job; an admitted
 in-flight call finishes and accounts against its original reservation.
 
 The portable `declaration-worker` starts and stops with the app, including update
-and restore maintenance windows. It joins internal `backend` for PostgreSQL and a
+and restore maintenance windows and the managed hosted release path of
+`scripts/deploy-server.sh`. It joins internal `backend` for PostgreSQL and a
 separate non-internal `egress` network for the configured provider; it publishes no
 ports. The web process also contacts the selected provider for model discovery and
 Q&A. Operator egress rules must permit the selected origin, including the explicit

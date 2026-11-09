@@ -1,5 +1,5 @@
 ---
-description: Cut large issues before coding and freeze a PR's scope after three review rounds
+description: Issue cuts, the three-round freeze, the maintainer's merge and no session messaging
 ---
 
 # Issue size and review rounds
@@ -14,3 +14,9 @@ description: Cut large issues before coding and freeze a PR's scope after three 
   follow-up issue with a user check, not another round. Blind acceptance runs at most twice per
   PR; a repeated run checks only the changed steps
   ([docs/acceptance/README.md](../../docs/acceptance/README.md#runs-and-rounds-per-pr)).
+- At the merge the maintainer ticks the acceptance boxes of the issue that the PR body proves,
+  and reopens the issue when a box has no proof.
+- The maintainer merges with a merge commit, never squash, and writes the merge comment:
+  reviewed SHA, gates run on that SHA with results, user check outcome, follow-up issues.
+- Sessions do not message each other. Everything another session needs is a comment on the
+  issue or the PR.
