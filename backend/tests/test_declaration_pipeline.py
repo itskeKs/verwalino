@@ -3,6 +3,7 @@ import base64
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 import io
+from pathlib import Path
 from types import SimpleNamespace
 import uuid
 
@@ -30,7 +31,7 @@ from app.declarations.pipeline import (
     _values_semantically_equal,
 )
 from app.declarations.openai_provider import OpenAiDeclarationProvider
-from app.declarations.preflight import DocumentIntegrityError, PdfPreflight
+from app.declarations.preflight import DocumentIntegrityError, PdfPreflight, TesseractOcrEngine
 from app.declarations.observability import ProviderPassMetadata
 from app.declarations.provider import DocumentInput, PageInput, ProviderCallResult, ProviderFailure, ProviderReservationEstimate, ProviderUsage
 from app.declarations.schemas import (
@@ -70,7 +71,8 @@ from app.repositories.declaration_import_repo import DeclarationImportRepository
 from app.repositories.declaration_import_repo import WorkerLease
 from app.services.declaration_import_service import DeclarationImportService
 from app.declarations.validation import ValidationIssue
-from tests.declaration_fixtures import make_text_pdf
+from app.workers.declaration_import import DeclarationImportWorker
+from tests.declaration_fixtures import DeclarationProcessingGate, make_text_pdf
 
 
 _vision_png = io.BytesIO()
@@ -1481,6 +1483,132 @@ async def _seed_pipeline_import(
         str(document_id),
         _MemoryStore({key: pdf}),
     )
+
+
+@pytest.fixture(params=["preflight", "recheck"])
+def slow_declaration_stage(request, monkeypatch, tmp_path):
+    def prepare(document_key, store):
+        stage = request.param
+        gate = DeclarationProcessingGate()
+
+        def render_page(_data, *, output_folder, **_options):
+            image_path = Path(output_folder) / "page.png"
+            Image.new("RGB", (10, 10), "white").save(image_path)
+            gate.hold()
+            return [str(image_path)]
+
+        monkeypatch.setattr("pdf2image.convert_from_bytes", render_page)
+        monkeypatch.setattr("pytesseract.image_to_string", lambda *args, **kwargs: "Teilungserklärung Hauptstraße 1")
+        provider = _RecordingProvider(document_key)
+        if stage == "recheck":
+            provider.reconciliation_output.facts[0].evidence[0].quote = "nicht vorhandene Formulierung"
+        preflight = PdfPreflight(
+            text_min_chars=1000 if stage == "preflight" else 1,
+            ocr_engine=TesseractOcrEngine(temporary_root=tmp_path),
+        )
+        pipeline = DeclarationPipeline(provider, store=store, preflight=preflight)
+        return pipeline, provider, gate
+
+    return prepare
+
+
+async def test_slow_declaration_processing_renews_the_lease_and_publishes_once(
+    seed_data, slow_declaration_stage, tmp_path,
+) -> None:
+    lease, key, store = await _seed_pipeline_import(seed_data, make_text_pdf("Teilungserklärung Hauptstraße 1"))
+    pipeline, provider, gate = slow_declaration_stage(key, store)
+    worker = DeclarationImportWorker(pipeline, sleep=gate.release_after_renewal)
+
+    assert (await worker._run_claimed(lease)).code == "PROCESSED"
+    assert gate.released_in_time, "lease renewal did not complete during synchronous processing"
+    assert not list(tmp_path.iterdir())
+    async with get_tenant_session(lease.organization_id) as session:
+        item = await session.get(DeclarationImport, lease.import_id)
+        runs = (await session.scalars(select(DeclarationExtractionRun).where(
+            DeclarationExtractionRun.import_id == lease.import_id,
+        ))).all()
+    assert item.status == "NEEDS_REVIEW" and item.error_code is None
+    assert item.attempt_count == len(provider.calls)
+    assert [(run.status, run.error_code) for run in runs] == [("SUCCEEDED", None)]
+
+
+@pytest.mark.parametrize("stop", ["cancelled", "lease_lost", "lease_lost_then_cancelled"])
+async def test_interrupted_declaration_processing_drains_before_the_next_job(
+    seed_data, slow_declaration_stage, tmp_path, monkeypatch, stop,
+) -> None:
+    pdf = make_text_pdf("Teilungserklärung Hauptstraße 1\nEinheit 1 Wohnung im Erdgeschoss")
+    lease, key, store = await _seed_pipeline_import(seed_data, pdf)
+    next_lease, next_key, next_store = await _seed_pipeline_import(seed_data, pdf)
+    pipeline, provider, gate = slow_declaration_stage(key, store)
+    allow_heartbeat = asyncio.Event()
+    heartbeat_stopped = asyncio.Event()
+    pipeline_task = None
+    run_pipeline = pipeline.run
+
+    async def track_pipeline(current_lease):
+        nonlocal pipeline_task
+        pipeline_task = asyncio.current_task()
+        await run_pipeline(current_lease)
+
+    monkeypatch.setattr(pipeline, "run", track_pipeline)
+
+    async def heartbeat_tick(_seconds):
+        await allow_heartbeat.wait()
+
+    class ObservedWorker(DeclarationImportWorker):
+        async def _heartbeat(self, initial_lease):
+            result = await super()._heartbeat(initial_lease)
+            heartbeat_stopped.set()
+            return result
+
+    worker = ObservedWorker(pipeline, sleep=heartbeat_tick)
+    first_job = asyncio.create_task(worker._run_claimed(lease))
+
+    async def take_next_job():
+        if stop != "lease_lost":
+            with pytest.raises(asyncio.CancelledError):
+                await first_job
+        else:
+            assert (await first_job).code == "LEASE_LOST"
+        assert not list(tmp_path.iterdir()), "the worker returned with rendering files still in use"
+        next_pipeline = DeclarationPipeline(_RecordingProvider(next_key), store=next_store)
+        return await DeclarationImportWorker(next_pipeline)._run_claimed(next_lease)
+
+    next_job = asyncio.create_task(take_next_job())
+    try:
+        await gate.wait_until_started()
+        assert list(tmp_path.glob("hv-declaration-*/*")), "rendering finished before interruption"
+        if stop == "cancelled":
+            first_job.cancel()
+        else:
+            async with get_tenant_session(lease.organization_id) as session:
+                item = await session.get(DeclarationImport, lease.import_id)
+                item.lease_token = uuid.uuid4()
+            allow_heartbeat.set()
+            await asyncio.wait_for(heartbeat_stopped.wait(), timeout=3)
+        done, _ = await asyncio.wait({first_job, next_job}, timeout=0.1)
+        assert not done, "the worker released its slot before the processor finished"
+        if stop == "lease_lost_then_cancelled":
+            assert pipeline_task is not None and pipeline_task.cancelling()
+            first_job.cancel()
+            done, _ = await asyncio.wait({first_job, next_job}, timeout=0.1)
+            assert not done, "worker cancellation interrupted processor cleanup"
+    finally:
+        gate.release.set()
+        await asyncio.gather(first_job, next_job, return_exceptions=True)
+
+    assert gate.released_in_time
+    assert (await next_job).code == "PROCESSED"
+    assert "recheck" not in provider.calls
+    async with get_tenant_session(lease.organization_id) as session:
+        item = await session.get(DeclarationImport, lease.import_id)
+        next_item = await session.get(DeclarationImport, next_lease.import_id)
+        candidates = await session.scalar(select(func.count()).select_from(DeclarationCandidate).where(
+            DeclarationCandidate.import_id == lease.import_id,
+        ))
+    assert item.status in {"PREFLIGHT", "RECONCILING"}
+    assert candidates == 0
+    assert next_item.status == "NEEDS_REVIEW"
 
 
 @pytest.mark.asyncio

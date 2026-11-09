@@ -17,6 +17,7 @@ from contextlib import AbstractAsyncContextManager
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
+from functools import partial
 from typing import Any, Callable, Generic, Sequence, TypeVar
 
 from sqlalchemy import select
@@ -27,6 +28,7 @@ from app.core.locking import is_lock_timeout
 from app.core.db import get_worker_tenant_session
 from app.core.storage import DocumentStore, get_store
 from app.core.unit_numbers import normalize_unit_number
+from app.core.worker_process import run_bounded_processor
 from app.declarations.batching import PageBatch, PageBatcher
 from app.declarations.evidence import EvidenceTextIndex
 from app.declarations.policy import CandidateContext, classify_candidate
@@ -350,8 +352,8 @@ class DeclarationPipeline:
                 reconciliation, inventory, issues, page_inputs
             )
             if recheck:
-                rendered_recheck, render_issue = self._render_recheck_pages(
-                    recheck, source_pdf_bytes, preflight_budget
+                rendered_recheck, render_issue = await run_bounded_processor(
+                    self._render_recheck_pages, recheck, source_pdf_bytes, preflight_budget
                 )
                 if render_issue is not None:
                     # Never send a partial selected-page set to the provider.
@@ -457,11 +459,14 @@ class DeclarationPipeline:
                     data = self._store.get(document.storage_uri)
             except FileNotFoundError as exc:
                 raise DocumentIntegrityError("STORAGE_INTEGRITY_MISMATCH") from exc
-            result = self._preflight.run_bytes(
-                data,
-                expected_sha256=document.content_sha256,
-                expected_size=document.content_byte_size,
-                budget=budget,
+            result = await run_bounded_processor(
+                partial(
+                    self._preflight.run_bytes,
+                    data,
+                    expected_sha256=document.content_sha256,
+                    expected_size=document.content_byte_size,
+                    budget=budget,
+                )
             )
             source_pdf_bytes[key] = data
             counts[key] = result.page_count
