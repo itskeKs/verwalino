@@ -1304,7 +1304,7 @@ class StagingDeployTests(ServerCase):
         stop = prefix + ["stop", "staging-app"]
         worker_lookup = ["ps", "--quiet", "--filter", "label=com.docker.compose.project=verwalino-staging",
                          "--filter", "label=com.docker.compose.service=declaration-worker"]
-        worker_stop = ["stop", "newerworker"]
+        worker_stop = ["stop", "--time", "130", "newerworker"]
         migrate = prefix + ["run", "--rm", "--no-deps", "-T", "migrate"]
         self.assertEqual([args for args in compose if "stop" in args], [stop])
         self.assertEqual([args for args in calls if args[0] == "ps"], [worker_lookup])

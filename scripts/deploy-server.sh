@@ -256,7 +256,7 @@ main() {
         if [[ "$staging_worker" = true ]]; then
             staging_compose stop staging-app declaration-worker
         else
-            # Older revisions define no worker; stop any running newer worker before migration.
+            # Older revisions define no worker; stop a running newer one with its 130s grace before migration.
             staging_compose stop staging-app
             local running_workers worker_id
             local worker_ids=()
@@ -264,7 +264,7 @@ main() {
                 --filter label=com.docker.compose.service=declaration-worker)
             if [[ -n "$running_workers" ]]; then
                 while IFS= read -r worker_id; do worker_ids+=("$worker_id"); done <<< "$running_workers"
-                docker stop "${worker_ids[@]}"
+                docker stop --time 130 "${worker_ids[@]}"
             fi
         fi
         staging_compose run --rm --no-deps -T migrate
