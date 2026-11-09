@@ -1537,8 +1537,8 @@ with `noexec` and `nosuid`.
 The forced command executes `/srv/verwalino/app/scripts/deploy-server.sh` from the production
 release checkout, so the stop/start order and worker startup below arrive only with a production
 release containing this script. Before that release, staging deployments from main still execute
-the older script, which recreates only `staging-app`.
-It then resolves a registry digest without moving the
+the older script, which recreates only `staging-app`. The staging deploy
+then resolves a registry digest without moving the
 production checkout and starts the staging database. When the exported Compose file defines a declaration
 worker, it stops the staging app and worker together before migration; otherwise it stops only the app
 through Compose and stops any running newer worker by its staging project and service labels before

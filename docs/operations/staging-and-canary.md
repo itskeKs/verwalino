@@ -177,7 +177,7 @@ and both private env files untouched. The forced command executes
 `/srv/verwalino/app/scripts/deploy-server.sh` from the production release checkout, so the
 stop/start order and worker startup below arrive only with a production release containing this
 script. Before that release, staging deployments from main still execute the older script, which
-recreates only `staging-app`. It then pulls its **`:sha-<sha>`
+recreates only `staging-app`. The staging deploy then pulls its **`:sha-<sha>`
 image**, verifies a matching registry SHA-256 digest exists and uses that digest
 for Compose. It exports only staging runtime files without moving the production
 checkout or changing its config. It starts the staging database and, when the exported Compose
