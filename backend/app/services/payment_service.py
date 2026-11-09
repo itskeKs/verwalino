@@ -961,14 +961,15 @@ class PaymentService:
 
     async def derive_hausgeld_total_for_period(
         self, owner_profile_id: uuid.UUID, period_start: date, period_end: date,
-        *, property_id: uuid.UUID | None = None,
+        *, property_id: uuid.UUID | None = None, include_reserve: bool = False,
     ) -> Decimal:
-        """Prorate assigned Hausgeld; count yearless bookings on their value date."""
+        """Prorate assigned Hausgeld; optionally include separate WEG reserve payments."""
+        types = frozenset({'HAUSGELD_VORSCHUSS', 'RUECKLAGENANTEIL'} if include_reserve else {'HAUSGELD_VORSCHUSS'})
         rows = await self._repo.list_for_owner(owner_profile_id, property_id=property_id)
         assigned = [to_payment_input(p) for p in rows if p.period_year is not None]
         assigned_total = sum((sign * derive_advance_total_for_period(
             [p for p in assigned if p.direction == direction], AdvanceFilter(
-                types=frozenset({"HAUSGELD_VORSCHUSS"}), year=year,
+                types=types, year=year,
                 owner_profile_id=owner_profile_id,
             ), period_start, period_end)
             for direction, sign in (("IN", 1), ("OUT", -1))
@@ -976,4 +977,4 @@ class PaymentService:
         scoped = self._scope_payments_to_period(
             [p for p in rows if p.period_year is None], period_start, period_end)
         return assigned_total + account_statement([], [to_payment_input(p) for p in scoped
-                                                       if p.payment_type == 'HAUSGELD_VORSCHUSS']).ist_total
+                                                       if p.payment_type in types]).ist_total

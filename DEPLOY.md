@@ -1665,7 +1665,7 @@ run `docker compose down -v` or delete the volumes.
 | 0178 (parent 0177) | Adds encrypted organization AI settings under RLS and serialized tenant monthly accounting. Extends safe pass metadata with `default` for an omitted reasoning parameter. Downgrade refuses existing settings or passes using the new metadata value. |
 | 0179 (parent 0178) | Adds compatible API destinations and provider selection without changing existing encrypted keys. Runtime reservations distinguish provider origins. Downgrade refuses configured non-OpenAI destinations. |
 | 0180 (parent 0179) | Adds a nullable administrator request timeout per configured provider endpoint (1–3600 seconds). Existing settings keep their function defaults; compatible endpoints default to 180 seconds. Downgrade refuses explicit configured timeouts. |
-| 0181 (head; parent 0180) | Allows `RESERVE_SOLL` owner statement lines for the planned reserve contribution. Existing finalized statements remain unchanged; downgrade restores the prior line types and refuses retained `RESERVE_SOLL` rows. |
+| 0181 (head; parent 0180) | Allows `RESERVE_SOLL` owner statement lines for the planned reserve contribution. Existing finalized statements remain unchanged; downgrade explicitly refuses retained `RESERVE_SOLL` rows with "Retain planned reserve statement evidence; populated downgrade refused" before changing the CHECK; without those rows it restores the prior line types. |
 
 DDL uses the existing PostgreSQL/Alembic transaction; 0123 also takes financial
 and ACL locks with NOWAIT table locks. Contention or unexpected data/function

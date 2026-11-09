@@ -862,8 +862,11 @@ class TestM4WirtschaftsplanE2E:
 # ===========================================================================
 class TestM4WegSettlementE2E:
     @pytest.mark.asyncio
-    async def test_full_weg_settlement(self, client_a_admin, m4_withdrawal_seed, app_rw_session):
-        plan_id = await _create_and_finalize_plan(client_a_admin, m4_withdrawal_seed)
+    @pytest.mark.parametrize('reserve,anna_reserve,anna_advance', [
+        ('6000.00', '3600.00', '7800.00'), ('6000.01', '3600.01', '7800.01')])
+    async def test_full_weg_settlement(self, client_a_admin, m4_withdrawal_seed, app_rw_session,
+                                       reserve, anna_reserve, anna_advance):
+        plan_id = await _create_and_finalize_plan(client_a_admin, m4_withdrawal_seed, reserve)
         # Create the WEG run linked to the plan.
         resp = await client_a_admin.post("/api/weg-settlements", json={
             "property_id": m4_withdrawal_seed["property"], "economic_plan_id": plan_id,
@@ -892,7 +895,7 @@ class TestM4WegSettlementE2E:
         #   A 13000*600/1000 = 7800 ; B = 5200.
         plan_adv = {ln["addressee_owner_profile_id"]: ln["amount"]
                     for ln in lines if ln["line_type"] == "PLAN_ADVANCE"}
-        assert plan_adv[m4_withdrawal_seed["owner_a"]] == "7800.00"
+        assert plan_adv[m4_withdrawal_seed["owner_a"]] == anna_advance
         assert plan_adv[m4_withdrawal_seed["owner_b"]] == "5200.00"
 
         # Planned reserve is owner Soll, not a cost: both Spitzen are zero.
@@ -902,8 +905,9 @@ class TestM4WegSettlementE2E:
         assert spitze[m4_withdrawal_seed["owner_b"]] == "0.00"
         reserve_soll = {ln["addressee_owner_profile_id"]: ln["amount"]
                         for ln in lines if ln["line_type"] == "RESERVE_SOLL"}
-        assert reserve_soll == {m4_withdrawal_seed["owner_a"]: "3600.00",
+        assert reserve_soll == {m4_withdrawal_seed["owner_a"]: anna_reserve,
                                 m4_withdrawal_seed["owner_b"]: "2400.00"}
+        assert sum(map(Decimal, reserve_soll.values())) == Decimal(reserve)
         # Each owner's Soll is the sum of that owner's PLANNED rows in the frozen reserve ledger.
         await app_rw_session.execute(
             text("SELECT set_config('app.current_org_id', :oid, true)"),
@@ -1902,6 +1906,78 @@ async def test_input_roster_keeps_original_plan_owner_after_history_correction(c
     assert await CoverageDeclarationRepository(app_rw_session, org).owner_ids(original) == {w['owner_a'], w['owner_b']}
 
 
+@pytest.mark.asyncio
+async def test_separately_paid_reserve_settles_the_complete_plan(client_a_admin, m4_seed):
+    from tests.test_reserve_ledger import payment
+
+    api, w = client_a_admin, m4_seed
+    plan = await _create_and_finalize_plan(api, w)
+    for key, costs, reserve in [('owner_a', '4200.00', '3600.00'), ('owner_b', '2800.00', '2400.00')]:
+        owner_world = {**w, 'owner_a': w[key]}
+        await payment(api, owner_world, costs, kind='HAUSGELD_VORSCHUSS')
+        await payment(api, owner_world, reserve)
+    # A reversed reserve receipt contributes zero to the signed payment total.
+    reversed_id = await payment(api, w, '100.00')
+    reversed_receipt = await api.post(f'/api/payments/{reversed_id}/reverse', json={'note': 'Synthetic duplicate'})
+    assert reversed_receipt.status_code == 201, reversed_receipt.text
+    response = await api.post('/api/weg-settlements', json={
+        'property_id': w['property'], 'economic_plan_id': plan,
+        'period_start': '2025-01-01', 'period_end': '2025-12-31'})
+    assert response.status_code == 201, response.text
+    result = (await finalize_weg_fixture(api, response.json()['id'], w)).json()
+    assert len(result['owner_results']) == 2
+    for owner in result['owner_results']:
+        assert (owner['abrechnungsspitze'], owner['account_balance'], owner['payment_amount']) == (
+            '0.00', '0.00', '0.00')
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('prior_plan_reserve', [None, '6000.00'])
+async def test_settlement_reserve_soll_uses_linked_plan_after_frozen_report(
+    client_a_admin, m4_seed, prior_plan_reserve,
+):
+    api, w = client_a_admin, m4_seed
+    plan = await _create_and_finalize_plan(api, w) if prior_plan_reserve else None
+    report = await api.post('/api/weg-settlements/asset-reports', json={
+        'property_id': w['property'], 'period_start': '2025-01-01', 'period_end': '2025-12-31'})
+    assert report.status_code == 201, report.text
+    report_id = report.json()['id']
+    values = {'bank_balances': [
+        {'bank_account_id': w[key], 'label': key, 'account_type': kind, 'balance': '0.00'}
+        for key, kind in [('bank_giro', 'LAUFEND'), ('bank_ruecklage', 'RUECKLAGE')]],
+        'receivables': [], 'payables': []}
+    await attest_fixture(api, 'settlement', report_id, values)
+    frozen = await api.post(f'/api/weg-settlements/asset-reports/{report_id}/finalize', json=values)
+    assert frozen.status_code == 200, frozen.text
+    if plan:
+        correction = await api.post(f'/api/economic-plans/{plan}/correction')
+        assert correction.status_code == 201, correction.text
+        plan = correction.json()['id']
+        values = {'planned_costs': [
+            {'category_code': 'GARTENPFLEGE', 'label': 'Gartenpflege', 'planned_amount': '4000.00', 'cost_group': 'UMLAGEFAEHIG'},
+            {'category_code': 'WEG_VERWALTERKOSTEN', 'label': 'Verwalter', 'planned_amount': '3000.00', 'cost_group': 'NICHT_UMLAGEFAEHIG'}],
+            'reserve_contribution_total': '8000.00'}
+        await attest_fixture(api, 'economic_plan', plan, values)
+        finalized = await api.post(f'/api/economic-plans/{plan}/finalize', json=values)
+        assert finalized.status_code == 200, finalized.text
+        expected = {w['owner_a']: '4800.00', w['owner_b']: '3200.00'}
+    else:
+        plan = await _create_and_finalize_plan(api, w)
+        expected = {w['owner_a']: '3600.00', w['owner_b']: '2400.00'}
+    response = await api.post('/api/weg-settlements', json={
+        'property_id': w['property'], 'economic_plan_id': plan,
+        'period_start': '2025-01-01', 'period_end': '2025-12-31'})
+    assert response.status_code == 201, response.text
+    result = (await finalize_weg_fixture(api, response.json()['id'], w)).json()
+    assert {o['owner_profile_id']: o['abrechnungsspitze'] for o in result['owner_results']} == {
+        w['owner_a']: '0.00', w['owner_b']: '0.00'}
+    assert {ln['addressee_owner_profile_id']: ln['amount'] for ln in result['lines']
+            if ln['line_type'] == 'RESERVE_SOLL'} == expected
+    reloaded = await api.get(f'/api/weg-settlements/{report_id}')
+    assert reloaded.status_code == 200, reloaded.text
+    assert reloaded.json() == frozen.json()
+
+
 def test_planned_reserve_sums_the_ledger_planned_rows_per_owner():
     from app.engine.types import OwnerAdvanceInput
     from app.services.weg_settlement_service import WegSettlementService
@@ -1923,6 +1999,6 @@ def test_planned_reserve_sums_the_ledger_planned_rows_per_owner():
         {'kind': 'PLANNED', 'date': '2025-04-01', 'unit_id': str(unit_1), 'amount': '999.00'},
     ]
     service = WegSettlementService.__new__(WegSettlementService)
-    assert service._plan_reserve_per_owner({'entries': entries}) == (
+    assert service._plan_reserve_per_owner(entries) == (
         OwnerAdvanceInput(owner_a, Decimal('3600.01')), OwnerAdvanceInput(owner_b, Decimal('2400.00')))
-    assert service._plan_reserve_per_owner({'entries': []}) == ()
+    assert service._plan_reserve_per_owner([]) == ()

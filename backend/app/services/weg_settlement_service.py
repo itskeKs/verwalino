@@ -568,10 +568,10 @@ class WegSettlementService:
             for oid, amt in per_owner.items()
         ]
 
-    def _plan_reserve_per_owner(self, ledger: dict) -> tuple[OwnerAdvanceInput, ...]:
-        """Sum each owner's PLANNED reserve rows: the frozen split the ledger shows and caps with (ADR-0007, #401)."""
+    def _plan_reserve_per_owner(self, rows: list[dict]) -> tuple[OwnerAdvanceInput, ...]:
+        """Sum canonical reserve plan rows without another owner distribution (#401)."""
         per_owner: dict[uuid.UUID, Decimal] = {}
-        for row in ledger['entries']:
+        for row in rows:
             if row.get('kind') == 'PLANNED' and row.get('owner_profile_id'):
                 oid = uuid.UUID(row['owner_profile_id'])
                 per_owner[oid] = per_owner.get(oid, Decimal('0.00')) + Decimal(row['amount'])
@@ -629,7 +629,8 @@ class WegSettlementService:
         owner_ids = await CoverageDeclarationRepository(self._session, self._org_id).owner_ids(subject)
         result: list[ManualOwnerAdvance] = []
         for owner_id in sorted(owner_ids, key=str):
-            total = await pay_svc.derive_hausgeld_total_for_period(uuid.UUID(owner_id), start, end, property_id=plan.property_id)
+            total = await pay_svc.derive_hausgeld_total_for_period(
+                uuid.UUID(owner_id), start, end, property_id=plan.property_id, include_reserve=True)
             result.append(
                 ManualOwnerAdvance(owner_profile_id=uuid.UUID(owner_id), paid_total=total)
             )
@@ -705,6 +706,9 @@ class WegSettlementService:
                 )
             )
 
+        plan = await self._plans.get_by_id(run.economic_plan_id)
+        if plan is None:
+            raise HTTPException(404, "Economic plan not found")
         reserves = ReserveLedgerService(self._session, self._org_id, self._user_id)
         ledger = await reserves.read(run)
         if not ledger['frozen']:
@@ -738,7 +742,7 @@ class WegSettlementService:
             owner_periods=owner_inputs,
             cost_positions=tuple(p for p in position_inputs if not p.reserve_relevant),
             plan_advances=tuple(plan_advances),
-            plan_reserve=self._plan_reserve_per_owner(ledger),
+            plan_reserve=self._plan_reserve_per_owner(await reserves.repo.plan_rows(plan)),
             reserve=ReserveInput(
                 opening_balance=Decimal(ledger['opening_balance']),
                 withdrawals_total=Decimal(ledger['withdrawals_total']),

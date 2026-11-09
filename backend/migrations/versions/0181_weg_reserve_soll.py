@@ -16,6 +16,10 @@ def upgrade():
 
 
 def downgrade():
+    op.execute("""DO $$ BEGIN
+      IF EXISTS(SELECT 1 FROM settlement_line WHERE line_type='RESERVE_SOLL') THEN
+        RAISE EXCEPTION 'Retain planned reserve statement evidence; populated downgrade refused';
+      END IF; END $$;""")
     op.execute(f"""ALTER TABLE settlement_line DROP CONSTRAINT ck_settlement_line_ck_settlement_line_line_type;
       ALTER TABLE settlement_line ADD CONSTRAINT ck_settlement_line_ck_settlement_line_line_type
         CHECK(line_type IN ({LINE_TYPES}));""")

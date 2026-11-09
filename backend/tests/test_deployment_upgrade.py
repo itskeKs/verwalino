@@ -1122,3 +1122,28 @@ def test_planned_reserve_line_constraint_upgrades_and_downgrades(run_migrations)
     revision = ScriptDirectory('migrations').get_revision('0181')
     assert revision.down_revision == '0180'
     assert run_migrations['upgrade_0180_to_0181_tables'] > 50
+
+
+@pytest.mark.asyncio
+async def test_planned_reserve_downgrade_refuses_retained_lines(rent_world):
+    from tests.test_session_review_access import _chain_snapshot
+
+    _, _, url = require_disposable_database_settings(settings)
+    engine = create_engine(url)
+    try:
+        with engine.connect() as connection, connection.begin(), Operations.context(MigrationContext.configure(connection)):
+            values = {'org': rent_world['org'], 'property': rent_world['property'], 'lease': rent_world['lease']}
+            run = connection.scalar(text("""INSERT INTO settlement_run(organization_id,property_id,lease_agreement_id,
+                run_type,period_start,period_end,status,engine_version)
+                VALUES (:org,:property,:lease,'BK_MIETER','2026-01-01','2026-12-31','draft','test') RETURNING id"""), values)
+            connection.execute(text("""INSERT INTO settlement_line(organization_id,settlement_run_id,line_type,label,amount)
+                VALUES (:org,:run,'RESERVE_SOLL','Retained planned reserve',3600.01)"""), {**values, 'run': run})
+            connection.execute(text('SET CONSTRAINTS ALL IMMEDIATE'))
+            before = _chain_snapshot(connection)
+            with pytest.raises(DBAPIError, match='Retain planned reserve statement evidence; populated downgrade refused'):
+                with connection.begin_nested():
+                    ScriptDirectory('migrations').get_revision('0181').module.downgrade()
+            assert _chain_snapshot(connection) == before
+            connection.rollback()
+    finally:
+        engine.dispose()

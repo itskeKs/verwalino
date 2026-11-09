@@ -98,15 +98,19 @@ The reserve remains asset building, not consumed costs.
 
 The per-owner formula is now
 `abrechnungsspitze = owner_cost_total + plan_reserve_soll − plan_advance`.
-An owner's `plan_reserve_soll` is the sum of that owner's `PLANNED` rows in the frozen
-reserve ledger (`reserve_plan_cells`, migration 0149: MEA per unit and owner at plan
-start, Hamilton cents, stable unit and owner ties). These are the same cells the reserve
-ledger displays and uses for contribution caps; the shares sum exactly to the linked
-plan's reserve total, with no second distribution. The statement stores and displays a
+An owner's `plan_reserve_soll` is the sum of that owner's canonical `reserve_plan_cells`
+for the settlement's linked economic plan (`ReserveLedgerRepository.plan_rows`, migration
+0149: MEA per unit and owner at plan start, Hamilton cents, stable unit and owner ties).
+The shares sum exactly to that plan's reserve total, with no second distribution. A
+previously finalized asset report can freeze a cash ledger before this plan exists or
+with an older plan; that retained ledger remains unchanged and does not supply reserve Soll. The statement stores and displays a
 separate `RESERVE_SOLL` line when the share is nonzero.
 
 For costs of 7,000.00 and planned reserve of 6,000.00, owners with 600/400 MEA
 have costs of 4,200.00/2,800.00, reserve Soll of 3,600.00/2,400.00 and plan advances
 of 7,800.00/5,200.00. Both Spitzen are zero when actual costs equal planned costs.
-Booked payments remain separate. Finalized runs are never recalculated; historical
+Booked payments remain separate: annual settlement payment totals count both
+`HAUSGELD_VORSCHUSS` and separately booked `RUECKLAGENANTEIL`, using identical
+owner, property, period and signed IN/OUT/Storno rules. Other Hausgeld derivations
+retain their existing payment-type selection. Finalized runs are never recalculated; historical
 payloads, digests and PDF bytes remain unchanged.

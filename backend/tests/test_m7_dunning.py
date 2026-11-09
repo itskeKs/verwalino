@@ -1538,6 +1538,10 @@ async def test_0174_downgrade_refuses_default_policy_notice_without_interest(iso
                 with connection.begin_nested() as historical:
                     connection.execute(text("LOCK TABLE public.lease_agreement, public.lease_rent_change, "
                                             "public.audit_event IN ACCESS EXCLUSIVE MODE"))
+                    # Only this rollback-only historical schema projection omits the new line type.
+                    connection.execute(text('ALTER TABLE public.settlement_line DISABLE TRIGGER USER'))
+                    connection.execute(text("DELETE FROM public.settlement_line WHERE line_type='RESERVE_SOLL'"))
+                    connection.execute(text('ALTER TABLE public.settlement_line ENABLE TRIGGER USER'))
                     command.downgrade(cfg, "0176")
                     connection.execute(text("SET CONSTRAINTS ALL IMMEDIATE"))
                     project_legacy_advance_modes(connection)

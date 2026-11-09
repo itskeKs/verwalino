@@ -263,13 +263,17 @@ The engine sums **three subtotals** per owner (`SUBTOTAL` lines): Σ allocable, 
 
 - **Expected advance payments (resolution-relevant):** from the linked `economic_plan` (§1.5), per owner/unit, copied into the snapshot. This is the **authoritative** quantity for the settlement balance.
 - **Planned reserve Soll (#401):** an owner's `plan_reserve_soll` is the sum of that owner's
-  `PLANNED` rows in the frozen reserve ledger (`reserve_plan_cells`, migration 0149: MEA per
-  unit and owner at plan start, Hamilton cents, stable unit and owner ties) - the same cells
-  the reserve ledger displays and uses for contribution caps. Σ equals the plan's
+  canonical `reserve_plan_cells` for the settlement's linked economic plan, read through
+  `ReserveLedgerRepository.plan_rows` (migration 0149: MEA per unit and owner at plan start,
+  Hamilton cents, stable unit and owner ties). An asset report's previously frozen cash
+  ledger remains unchanged, even when it predates this plan or uses an older plan.
+  It does not determine the settlement's reserve Soll. Σ equals the linked plan's
   `reserve_contribution_total`; there is no second distribution. It stays outside
   `owner_cost_total`: `abrechnungsspitze = owner_cost_total + plan_reserve_soll − plan_advance`.
 - **Actual payments:** new annual settlements derive net booked, non-reversed
-  `HAUSGELD_VORSCHUSS` payments of the owner and property. An explicit period year/month takes
+  `HAUSGELD_VORSCHUSS` and separately booked `RUECKLAGENANTEIL` payments of the owner
+  and property, with identical signed IN/OUT/Storno rules. Other Hausgeld derivations
+  keep their existing payment-type selection. An explicit period year/month takes
   precedence over the value date (December 2026 assigned to a January 2027 receipt
   still belongs to December). Assigned annual amounts are split into stable calendar-month
   shares; assigned monthly amounts are prorated by days at period boundaries using
