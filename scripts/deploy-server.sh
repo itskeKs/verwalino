@@ -250,12 +250,14 @@ main() {
         step='staging database'
         staging_compose up -d --wait --wait-timeout 120 db
         step='staging migration'
-        staging_compose stop staging-app
+        staging_compose stop staging-app declaration-worker
         staging_compose run --rm --no-deps -T migrate
         step='recreate staging app'
         staging_compose up -d --no-deps --force-recreate --wait --wait-timeout 120 staging-app
         step='staging health check'
         staging_compose exec -T staging-app python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/health/ready', timeout=3)"
+        step='start staging declaration worker'
+        staging_compose up -d --no-deps --wait --wait-timeout 120 declaration-worker
         step='record successful staging image and sha'
         pin_image "$digest_ref"
         printf 'deploy staging %s OK: %s\n' "$staging_sha" "$digest_ref"
