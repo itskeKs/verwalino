@@ -1,6 +1,7 @@
 """Fenced declaration-import worker coverage."""
 
 import asyncio
+import logging
 import uuid
 from contextlib import asynccontextmanager, closing
 from datetime import datetime, timedelta, timezone
@@ -8,10 +9,11 @@ from decimal import Decimal
 
 import pytest
 import psycopg2
-from sqlalchemy import select
+from sqlalchemy import func, select
 
 from tests.conftest import MIGRATOR_SYNC_URL
 from tests.declaration_queue_fixture import queue_fixture
+from tests.test_property_source_enforcement import synthetic_enforcement
 from app.core.config import settings
 from app.core.db import get_worker_tenant_session as get_tenant_session
 from app.models.declaration_import import DeclarationExtractionRun, DeclarationImport
@@ -498,6 +500,131 @@ async def test_worker_retry_cap_uses_runs_not_provider_attempt_count(seed_data) 
 
 
 @pytest.mark.asyncio
+async def test_unexpected_provider_construction_error_counts_a_safe_failed_attempt(
+    seed_data, monkeypatch, caplog
+) -> None:
+    sentinel = "Synthetic document fragment: owner account DE123456789"
+
+    def fail_provider(_effective):
+        raise ModuleNotFoundError(sentinel)
+
+    monkeypatch.setattr("app.declarations.provider_runtime.create_extraction_provider", fail_provider)
+    org_id = seed_data["org_a_id"]
+    item = await _create_import(org_id, seed_data["user_a_admin_id"], status="QUEUED")
+    now = datetime.now(timezone.utc)
+    worker = DeclarationImportWorker(clock=lambda: now)
+    async with get_tenant_session(org_id) as session:
+        db_before = await session.scalar(select(func.clock_timestamp()))
+    with caplog.at_level(logging.WARNING, logger="app.workers.declaration_import"):
+        async with synthetic_enforcement(seed_data):
+            result = await worker.run_once(organization_id=org_id)
+
+    assert result.code == "WORKER_UNEXPECTED_ERROR"
+    assert result.import_id == item.id
+    async with get_tenant_session(org_id) as session:
+        db_after = await session.scalar(select(func.clock_timestamp()))
+        repo = DeclarationImportRepository(session, org_id)
+        row = await repo.get_by_id_for_update(item.id)
+        assert row is not None
+        assert row.status == "RETRY_WAIT"
+        assert row.current_stage == "retry_wait"
+        assert row.error_code == row.error_message == "WORKER_UNEXPECTED_ERROR"
+        # Enforced worker transitions use the database clock for retry deadlines.
+        assert db_before + timedelta(minutes=5) <= row.next_attempt_at <= db_after + timedelta(minutes=5)
+        assert row.lease_owner is row.lease_token is row.lease_expires_at is None
+        assert row.attempt_count == 0
+        assert await repo.count_extraction_runs(item.id) == 1
+        run = await session.scalar(
+            select(DeclarationExtractionRun).where(DeclarationExtractionRun.import_id == item.id)
+        )
+        assert run is not None
+        assert run.status == "FAILED"
+        assert run.error_code == "WORKER_UNEXPECTED_ERROR"
+        assert run.completed_at == now
+        assert run.input_tokens == run.output_tokens == run.estimated_cost_usd == 0
+        assert worker._active_ai.provider == "openai"
+        assert run.provider == "OpenAiDeclarationProvider"
+        assert run.model_name == worker._active_ai.model
+        assert run.prompt_version == settings.declaration_prompt_version
+        assert run.schema_version == settings.declaration_schema_version
+        assert run.harness_version == settings.declaration_harness_version
+    warnings = [record for record in caplog.records if record.name == "app.workers.declaration_import"]
+    assert len(warnings) == 1
+    record = warnings[0]
+    assert record.getMessage() == (
+        f"declaration worker result=WORKER_UNEXPECTED_ERROR import_id={item.id} "
+        f"error_type=ModuleNotFoundError location={__name__}:fail_provider"
+    )
+    for record in caplog.records:
+        assert sentinel not in record.getMessage()
+        assert sentinel not in str(record.args)
+        assert record.exc_info is record.exc_text is None
+
+
+@pytest.mark.asyncio
+async def test_repeated_unexpected_worker_errors_reach_the_existing_attempt_limit(
+    seed_data, monkeypatch
+) -> None:
+    def fail_provider(_effective):
+        raise ModuleNotFoundError("Synthetic document content")
+
+    monkeypatch.setattr("app.declarations.provider_runtime.create_extraction_provider", fail_provider)
+    org_id = seed_data["org_a_id"]
+    item = await _create_import(org_id, seed_data["user_a_admin_id"], status="QUEUED")
+    configured = settings.model_copy(update={"declaration_max_attempts": 3})
+    worker = DeclarationImportWorker(configured=configured)
+    for attempt in range(1, configured.declaration_max_attempts + 1):
+        result = await worker.run_once(organization_id=org_id)
+        assert result.code == "WORKER_UNEXPECTED_ERROR"
+        async with get_tenant_session(org_id) as session:
+            repo = DeclarationImportRepository(session, org_id)
+            assert await repo.count_extraction_runs(item.id) == attempt
+            row = await repo.get_by_id_for_update(item.id)
+            assert row is not None
+            row.next_attempt_at = datetime.now(timezone.utc) - timedelta(seconds=1)
+    result = await worker.run_once(organization_id=org_id)
+    assert result.code == "WORKER_ATTEMPT_LIMIT_REACHED"
+    assert result.import_id == item.id
+    async with get_tenant_session(org_id) as session:
+        repo = DeclarationImportRepository(session, org_id)
+        row = await repo.get_by_id_for_update(item.id)
+        assert row is not None
+        assert row.status == "FAILED"
+        assert row.error_code == row.error_message == "WORKER_ATTEMPT_LIMIT_REACHED"
+        assert row.next_attempt_at is None
+        assert row.lease_owner is row.lease_token is row.lease_expires_at is None
+        assert await repo.count_extraction_runs(item.id) == configured.declaration_max_attempts
+
+
+@pytest.mark.asyncio
+async def test_run_forever_logs_only_safe_error_type_and_location(monkeypatch, caplog) -> None:
+    sentinel = "Synthetic document fragment: owner account DE987654321"
+
+    async def fail_schema_ready():
+        raise RuntimeError(sentinel)
+
+    async def stop_sleep(_seconds):
+        raise asyncio.CancelledError()
+
+    worker = DeclarationImportWorker(sleep=stop_sleep)
+    monkeypatch.setattr(worker, "schema_ready", fail_schema_ready)
+    with caplog.at_level(logging.WARNING, logger="app.workers.declaration_import"):
+        with pytest.raises(asyncio.CancelledError):
+            await worker.run_forever()
+    warnings = [record for record in caplog.records if record.name == "app.workers.declaration_import"]
+    assert len(warnings) == 1
+    record = warnings[0]
+    assert record.getMessage() == (
+        "declaration worker result=UNEXPECTED "
+        f"error_type=RuntimeError location={__name__}:fail_schema_ready"
+    )
+    for record in caplog.records:
+        assert sentinel not in record.getMessage()
+        assert sentinel not in str(record.args)
+        assert record.exc_info is record.exc_text is None
+
+
+@pytest.mark.asyncio
 async def test_heartbeat_fence_loss_cancels_and_awaits_blocking_pipeline(seed_data) -> None:
     org_id = seed_data["org_a_id"]
     await _create_import(org_id, seed_data["user_a_admin_id"], status="QUEUED")
@@ -590,6 +717,119 @@ async def test_pipeline_exception_cleans_up_heartbeat_task(seed_data) -> None:
     result = await DeclarationImportWorker(FailingPipeline(), sleep=waiting_sleep).run_once()
     assert result.code == "PIPELINE_ERROR"
     assert heartbeat_cancelled.is_set()
+
+
+@pytest.mark.asyncio
+async def test_pipeline_error_logs_only_safe_error_type_and_location(seed_data, caplog) -> None:
+    org_id = seed_data["org_a_id"]
+    item = await _create_import(org_id, seed_data["user_a_admin_id"], status="QUEUED")
+    sentinel = "Synthetic document fragment: tenant account DE111222333"
+
+    class FailingPipeline:
+        async def run(self, _lease):
+            raise RuntimeError(sentinel)
+
+    async def waiting_sleep(_seconds: float) -> None:
+        await asyncio.Event().wait()
+
+    with caplog.at_level(logging.WARNING, logger="app.workers.declaration_import"):
+        result = await DeclarationImportWorker(FailingPipeline(), sleep=waiting_sleep).run_once()
+    assert result.code == "PIPELINE_ERROR"
+    warnings = [record for record in caplog.records if record.name == "app.workers.declaration_import"]
+    assert len(warnings) == 1
+    assert warnings[0].getMessage() == (
+        f"declaration worker result=PIPELINE_ERROR import_id={item.id} "
+        f"error_type=RuntimeError location={__name__}:run"
+    )
+    for record in caplog.records:
+        assert sentinel not in record.getMessage()
+        assert sentinel not in str(record.args)
+        assert record.exc_info is record.exc_text is None
+
+
+async def _make_retry_due(org_id, import_id) -> None:
+    async with get_tenant_session(org_id) as session:
+        row = await DeclarationImportRepository(session, org_id).get_by_id_for_update(import_id)
+        assert row is not None
+        row.next_attempt_at = datetime.now(timezone.utc) - timedelta(seconds=1)
+
+
+async def _enter_preflight(lease, *, start_run: bool) -> None:
+    async with get_tenant_session(lease.organization_id) as session:
+        repo = DeclarationImportRepository(session, lease.organization_id)
+        assert await repo.transition_with_lease(
+            lease, {"QUEUED", "RETRY_WAIT"}, "PREFLIGHT", {"current_stage": "preflight"}
+        )
+        if start_run:
+            session.add(DeclarationExtractionRun(
+                organization_id=lease.organization_id, import_id=lease.import_id, status="RUNNING",
+                provider="test", model_name="test", prompt_version="test",
+                schema_version="test", harness_version="test",
+            ))
+            await session.flush()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("entered_preflight", [False, True])
+async def test_pipeline_error_before_a_run_counts_attempts_up_to_the_limit(
+    seed_data, entered_preflight
+) -> None:
+    org_id = seed_data["org_a_id"]
+    item = await _create_import(org_id, seed_data["user_a_admin_id"], status="QUEUED")
+
+    class FailingPipeline:
+        async def run(self, lease):
+            if entered_preflight:
+                await _enter_preflight(lease, start_run=False)
+            raise RuntimeError("pipeline failure handling failed too")
+
+    async def waiting_sleep(_seconds: float) -> None:
+        await asyncio.Event().wait()
+
+    configured = settings.model_copy(update={"declaration_max_attempts": 2})
+    worker = DeclarationImportWorker(FailingPipeline(), configured=configured, sleep=waiting_sleep)
+    for attempt in range(1, configured.declaration_max_attempts + 1):
+        result = await worker.run_once(organization_id=org_id)
+        assert result.code == "PIPELINE_ERROR"
+        async with get_tenant_session(org_id) as session:
+            repo = DeclarationImportRepository(session, org_id)
+            assert await repo.count_extraction_runs(item.id) == attempt
+            row = await repo.get_by_id_for_update(item.id)
+            assert row is not None
+            assert row.status == "RETRY_WAIT"
+            assert row.lease_token is None
+        await _make_retry_due(org_id, item.id)
+    result = await worker.run_once(organization_id=org_id)
+    assert result.code == "WORKER_ATTEMPT_LIMIT_REACHED"
+    async with get_tenant_session(org_id) as session:
+        row = await DeclarationImportRepository(session, org_id).get_by_id_for_update(item.id)
+        assert row is not None
+        assert row.status == "FAILED"
+
+
+@pytest.mark.asyncio
+async def test_pipeline_error_after_its_run_started_is_not_counted_twice(seed_data) -> None:
+    org_id = seed_data["org_a_id"]
+    item = await _create_import(org_id, seed_data["user_a_admin_id"], status="QUEUED")
+
+    class FailingAfterRunPipeline:
+        async def run(self, lease):
+            await _enter_preflight(lease, start_run=True)
+            raise RuntimeError("pipeline failure handling failed too")
+
+    async def waiting_sleep(_seconds: float) -> None:
+        await asyncio.Event().wait()
+
+    result = await DeclarationImportWorker(FailingAfterRunPipeline(), sleep=waiting_sleep).run_once(
+        organization_id=org_id
+    )
+    assert result.code == "PIPELINE_ERROR"
+    async with get_tenant_session(org_id) as session:
+        repo = DeclarationImportRepository(session, org_id)
+        assert await repo.count_extraction_runs(item.id) == 1
+        row = await repo.get_by_id_for_update(item.id)
+        assert row is not None
+        assert row.status == "PREFLIGHT"
 
 
 @pytest.mark.asyncio
