@@ -111,6 +111,14 @@ the job moves to `RETRY_WAIT`; late results cannot publish. `POST /api/declarati
 for retryable errors; `cancel` locks out the current lease. Before a retry, check
 cost/token counters, error class and limits; do not repeat blindly.
 
+An unexpected worker error after claiming a job is logged with the import ID,
+exception class and raising module/function only, never exception message text.
+Under the current lease it records a failed extraction run with
+`WORKER_UNEXPECTED_ERROR`, clears the lease and moves the job to `RETRY_WAIT`
+for five minutes. Once the configured attempt limit is reached, the next worker
+iteration fails the job with `WORKER_ATTEMPT_LIMIT_REACHED`. Errors before a claim
+or while recording the failure also log only the exception class and location.
+
 ## Services, Recovery and Status
 
 For local development, the API and the import worker run separately:
