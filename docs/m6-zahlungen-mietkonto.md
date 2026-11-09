@@ -633,8 +633,12 @@ automatically treated as fully allocable. Balance = income total − cost total;
 amounts remain Decimal-exact, even with large sums and a low outer precision context.
 
 The date basis used deliberately differs from the expected-amount period/service
-period. Security deposits remain separately visible as pass-through funds and never
-increase income or balance. Tenant backpayments (`NACHZAHLUNG`) count as income and
+period. Security deposits and reserve payouts (`RUECKLAGENENTNAHME`) remain separately
+visible as pass-through funds and do not affect income or balance. A reserve payout
+finances a cost that is an expense by its invoice date, possibly in another year;
+counting its negative amount as income would deduct the cost twice. Its overview CSV
+section is `Durchlaufend`; Anlage V keeps it under `Nicht zugeordnet` but excludes it
+from reconciliation totals. Tenant backpayments (`NACHZAHLUNG`) count as income and
 map to Umlagen. `HAUSGELD_VORSCHUSS`, `RUECKLAGENANTEIL` and `SONDERZAHLUNG` count as
 income only for WEG properties, not MIET, SEV or MISCH. These rules live in the
 existing Anlage V category mapping and are shared by year totals and reconciliation.
@@ -776,6 +780,7 @@ compares this documentation exactly.
 | `HK_VORAUSZAHLUNG` | Einnahmen aus umgelegten Neben-/Betriebskosten (Umlagen) | [§/fachlich] Laufende Umlagen; Abrechnungserstattungen und Nachzahlungen gesondert prüfen. |
 | `NACHZAHLUNG` | Einnahmen aus umgelegten Neben-/Betriebskosten (Umlagen) | [§/fachlich] Nachzahlung des Mieters aus der Betriebskostenabrechnung als Umlage; Zufluss prüfen. |
 | `KAUTION` | Nicht zugeordnet | [§/fachlich] Durchlaufend: verwahrte Kaution, keine Einnahme; im Abgleich nicht mitgezählt. Eine spätere Verrechnung ist gesondert zu prüfen. |
+| `RUECKLAGENENTNAHME` | Nicht zugeordnet | [§/fachlich] Durchlaufend: Finanzierung aus der Rücklage, keine Einnahme; der Aufwand steht bereits in den Kosten. |
 | `HAUSGELD_VORSCHUSS` | Nicht zugeordnet | [§/fachlich] Einnahme nur bei WEG-Verwaltung; kein Vermietungsertrag. Sonst im Abgleich nicht mitgezählt. |
 | `RUECKLAGENANTEIL` | Nicht zugeordnet | [§/fachlich] Einnahme nur bei WEG-Verwaltung; Rücklagenzuführung ist kein Vermietungsertrag. Sonst im Abgleich nicht mitgezählt. |
 | `SONDERZAHLUNG` | Nicht zugeordnet | [§/fachlich] Einnahme nur bei WEG-Verwaltung; Eigentümer-Sonderzahlung, keine Miete. Sonst im Abgleich nicht mitgezählt. |
