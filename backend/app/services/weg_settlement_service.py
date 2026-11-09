@@ -36,6 +36,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.temporal import db_exclusive_to_engine_inclusive
 from app.engine.canonical import canonical_json, sha256_hex
 from app.engine.rounding import DistributionError
+from app.engine.reserve_ledger import planned_reserve_per_owner
 from app.engine.snapshot import (
     build_asset_report_payload,
     build_weg_snapshot_payload,
@@ -555,14 +556,7 @@ class WegSettlementService:
         owes the sum). [F4-1] the plan must be computed (have lines); else the
         Soll is unknown and we escalate.
         """
-        lines = await self._plan_lines.list_for_plan(economic_plan_id)
-        per_owner: dict[uuid.UUID, Decimal] = {}
-        for ln in lines:
-            if ln.line_type != "OWNER_ADVANCE" or ln.owner_profile_id is None:
-                continue
-            per_owner[ln.owner_profile_id] = (
-                per_owner.get(ln.owner_profile_id, Decimal("0.00")) + ln.planned_amount
-            )
+        per_owner = await self._plan_lines.advance_totals_per_owner(economic_plan_id)
         return [
             OwnerAdvanceInput(owner_profile_id=oid, plan_advance_total=amt)
             for oid, amt in per_owner.items()
@@ -570,13 +564,8 @@ class WegSettlementService:
 
     def _plan_reserve_per_owner(self, rows: list[dict]) -> tuple[OwnerAdvanceInput, ...]:
         """Sum canonical reserve plan rows without another owner distribution (#401)."""
-        per_owner: dict[uuid.UUID, Decimal] = {}
-        for row in rows:
-            if row.get('kind') == 'PLANNED' and row.get('owner_profile_id'):
-                oid = uuid.UUID(row['owner_profile_id'])
-                per_owner[oid] = per_owner.get(oid, Decimal('0.00')) + Decimal(row['amount'])
-        return tuple(OwnerAdvanceInput(owner_profile_id=oid, plan_advance_total=amount)
-                     for oid, amount in sorted(per_owner.items(), key=lambda item: str(item[0])))
+        return tuple(OwnerAdvanceInput(owner_profile_id=uuid.UUID(oid), plan_advance_total=amount)
+                     for oid, amount in sorted(planned_reserve_per_owner(rows).items()))
 
     async def reject_paid_amount(self, run_id: uuid.UUID, owner_id: uuid.UUID, *, missing: bool, capability=ScopeCapability.PREPARE) -> NoReturn:
         """Resolve an input error only within the authorized draft and owner roster."""

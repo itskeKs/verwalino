@@ -281,7 +281,7 @@ The engine sums **three subtotals** per owner (`SUBTOTAL` lines): Σ allocable, 
   units. New annual settlements use `paid = H + min(max(R, 0), max(Soll − H, 0))`.
   An owner without plan Soll receives no reserve credit, even with negative `H`.
   Hausgeld overpayments keep their full credit; negative net reserve adds nothing.
-  Excess reserve stays in the uncapped reserve ledger and cannot offset higher actual
+  Excess reserve stays in the reserve ledger and cannot offset higher actual
   costs. Both net sums use the same owner, property and signed IN/OUT/Storno rules. Other Hausgeld derivations
   keep their existing payment-type selection. An explicit period year/month takes
   precedence over the value date (December 2026 assigned to a January 2027 receipt
@@ -780,8 +780,26 @@ allocation and WEMoG settlement-balance calculation; it changes neither.
   bound at ties). At a ratio of `6000/13000`, `12 × 433.33 €` gives `2,400.00 €`
   versus `2,399.98 €` when summed before rounding; `100 × 0.01 €` gives `0.00 €`
   versus `0.46 €`. Fractions are not redistributed between receipts.
-  A separately booked reserve payment must represent additional cash, not a
-  second classification of the same combined receipt. Without a determinable
+  A separate reserve booking may cover the reserve part of the Hausgeld Soll.
+  For each owner in a draft, let `H` and `R` be signed net Hausgeld and separate
+  reserve cash by value date inside the run period, and `Soll` the sum of that
+  owner's `OWNER_ADVANCE` lines in the run's own finalized plan. The shared paid-side
+  formula is `R_c = min(max(R, 0), max(Soll − H, 0))`. Planned reserve is the sum
+  of that owner's `PLANNED` rows. If the owner has Soll and `R_c > 0`, the ledger
+  calculates `correction = max(0, R_c + Σ share(H) − planned reserve)`. Only a
+  positive correction is subtracted as one negative `CONTRIBUTION` row dated at
+  period end, with owner and reason; the payment rows remain intact.
+  `Σ share(H)` includes actual manual payment assignments.
+  Thus covered reserve fills the planned reserve first; only the remaining
+  planned share is filled by Hausgeld-derived reserve. Excess separate reserve
+  stays in full: H 4,200.00 + R 3,600.00 gives 3,600.00; H 7,800.00 + R 1,000.00
+  gives 4,600.00; R 3,600.00 alone gives 3,600.00; H 4,200.00 + R 1,000.00 gives
+  2,938.46 (Soll 7,800.00, planned reserve 3,600.00).
+  No run plan, missing owner Soll or `R_c = 0` means no correction, including
+  Hausgeld-only overpayments and negative net reserve. Frozen entries and late
+  cash against finalized periods remain unchanged. The ledger uses cash dates;
+  the paid side retains its assigned-period rules (§2.4).
+  Without a determinable
   ratio (no usable finalized plan, no dated unit assignment or no positive annual
   Hausgeld denominator) at booking,
   the payment is accepted with `reserve_plan_unresolved` in its booking audit.

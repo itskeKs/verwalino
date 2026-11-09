@@ -126,7 +126,7 @@ The type is the **control key** for the settlement integration (§6) — hence s
 | `HK_VORAUSZAHLUNG` | Tenant | "Tenant: heating advance payment" | **Heating statement `heating_advance_payments_total` (DERIVED)** (§6.2). |
 | `NK_VORAUSZAHLUNG` | Tenant | "Tenant: operating cost advance payment" | **Operating cost statement `advance_payments_total` (DERIVED)** (§6.2). |
 | `HAUSGELD_VORSCHUSS` | Owner | "Owner: Hausgeld advance payment" | Net Hausgeld `H` feeds the displayed account balance and payment amount (§6.3); never the resolution-relevant Spitze. |
-| `RUECKLAGENANTEIL` | Owner | "Owner: reserve share (Rücklagenanteil)" | Net reserve `R` covers only uncovered Hausgeld Soll in the displayed paid total (§6.3/§6.4); the reserve ledger remains uncapped, the Spitze unchanged. |
+| `RUECKLAGENANTEIL` | Owner | "Owner: reserve share (Rücklagenanteil)" | Net reserve `R` covers only uncovered Hausgeld Soll in the displayed paid total (§6.3); covered reserve fills planned reserve first in the draft ledger, excess reserve stays in full (§6.4), the Spitze unchanged. |
 | `SONDERZAHLUNG` | Owner | "Owner: special assessment/special payment" | Special expected/actual (informational); settlement-neutral unless recorded as a cost item. |
 | `NACHZAHLUNG` | Tenant or owner | "… / additional payment" | settles the `balance` of a **finalized** settlement (`settlement_run_id`); settlement-neutral for the *next* period. |
 | `KAUTION` *(optional)* | Tenant | "Tenant: security deposit" | Security deposit account holdings; **settlement-neutral** (§3.4). |
@@ -475,6 +475,11 @@ summed `OWNER_ADVANCE` amounts over all units in the linked plan. The paid total
 
 `paid = H + min(max(R, 0), max(Soll − H, 0))`
 
+The covered reserve `R_c = min(max(R, 0), max(Soll − H, 0))` uses one shared
+formula with the draft reserve ledger (§6.4). Only the formula is shared: this
+paid total retains assigned-period attribution; the ledger uses in-period cash
+value dates.
+
 An owner without a plan Soll receives no reserve credit, including when `H` is negative.
 Hausgeld overpayments keep their full credit; a negative reserve net adds nothing.
 Assigned years/months use the existing calendar-month and boundary-day allocation;
@@ -490,9 +495,21 @@ costs still produce a Nachzahlung; excess reserve cannot offset them.
 
 ### 6.4 Reserve share ← `RUECKLAGENANTEIL`
 
-The reserve ledger continues to count the full signed reserve cash amount without the
-Hausgeld cap. The cap in §6.3 applies only to the WEG statement's paid total, account
-balance and payment amount. Excess separate reserve payments stay in the reserve.
+The draft ledger retains the full signed reserve payment rows. Per owner and run
+period, covered reserve `R_c` fills planned reserve first. With an owner Soll in
+the run's own finalized plan and `R_c > 0`, it calculates
+`correction = max(0, R_c + Σ share(H) − planned reserve)`. Only a positive
+correction creates one negative `CONTRIBUTION` row, dated at period end with
+owner and reason. `H` and `R` are signed net in-period cash by value date;
+`Σ share(H)` sums the actual credited Hausgeld reserve rows, including manual
+payment assignments. Soll sums the owner's `OWNER_ADVANCE` plan lines over all
+units, and planned reserve sums the same canonical `PLANNED` rows used by the
+settlement. The original payment rows remain traceable.
+With Soll 7,800.00 and planned reserve 3,600.00, H 4,200.00 + R 3,600.00 gives
+3,600.00 reserve; H 7,800.00 + R 1,000.00 gives 4,600.00; R 3,600.00 alone gives
+3,600.00; H 4,200.00 + R 1,000.00 gives 2,938.46. Excess separate reserve stays
+in full. No run plan, missing owner Soll or `R_c = 0` means no correction.
+Frozen ledgers and late cash against finalized periods keep their stored amounts.
 Reserve cash is asset formation, not consumed cost, and never changes the Spitze.
 The planned reserve Soll comes from the linked plan's canonical reserve plan cells
 (M4 §2.2/§2.4), independently of actual payments. Rental/BK derivations and other

@@ -14,6 +14,12 @@ Feature: Maintenance reserve ledger
   restoration cannot exceed the original correction or its currently booked backing.
   finalization freezes them. A positive remainder stays within its new booked limit.
 
+  Scenario: Split Hausgeld and reserve receipts fund the planned reserve exactly once
+    Given Anna and Bernd have a 7000 euro cost plan and a 6000 euro reserve plan
+    When Anna pays 4200 euros Hausgeld and 3600 euros reserve and Bernd pays 5200 euros Hausgeld
+    Then Anna has 3600 euros reserve and Bernd has 2400 euros reserve with nothing payable
+    And the total reserve contribution and closing balance are both 6000 euros
+
   Scenario: Booked reserve contributions fund the annual reserve development
     Given a WEG with a finalized reserve plan and a booked reserve contribution
     When I review its reserve ledger and record the imported opening balance

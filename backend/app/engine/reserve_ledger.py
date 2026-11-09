@@ -6,6 +6,21 @@ from decimal import Decimal, ROUND_HALF_UP
 from app.engine.rounding import CENT, distribute_amount
 
 
+def covered_reserve(hausgeld: Decimal, reserve: Decimal, plan_soll: Decimal) -> Decimal:
+    """Separate net reserve covers only the Soll still unpaid by Hausgeld."""
+    return min(max(reserve, Decimal('0.00')), max(plan_soll - hausgeld, Decimal('0.00')))
+
+
+def planned_reserve_per_owner(rows: list[dict]) -> dict[str, Decimal]:
+    """Sum the canonical PLANNED rows without distributing owner shares again."""
+    totals = {}
+    for row in rows:
+        if row.get('kind') == 'PLANNED' and row.get('owner_profile_id'):
+            owner = row['owner_profile_id']
+            totals[owner] = totals.get(owner, Decimal('0.00')) + Decimal(row['amount'])
+    return totals
+
+
 def money(value: Decimal) -> Decimal:
     if not value.is_finite():
         raise ValueError('Reserve amounts must be finite')

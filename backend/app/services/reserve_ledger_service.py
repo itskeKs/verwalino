@@ -6,10 +6,11 @@ from fastapi import HTTPException
 from sqlalchemy.exc import DBAPIError
 
 from app.core.rbac import ScopeCapability
-from app.engine.reserve_ledger import money, reserve_totals
+from app.engine.reserve_ledger import covered_reserve, money, planned_reserve_per_owner, reserve_totals
 from app.models.audit_event import AuditEvent
 from app.models.reserve_ledger_entry import ReserveLedgerEntry
 from app.repositories.audit_repo import AuditRepository
+from app.repositories.economic_plan_repo import EconomicPlanLineRepository
 from app.repositories.reserve_ledger_repo import ReserveLedgerRepository
 from app.repositories.settlement_repo import SettlementLineRepository, SettlementRunRepository
 from app.services.financial_scope_service import FinancialScopeService
@@ -128,6 +129,7 @@ class ReserveLedgerService:
         cash_plans = await self.repo.cash_plans(run, start) if any(
             p.payment_type == 'HAUSGELD_VORSCHUSS' and p.value_date < run.period_start
             for p in payments) else []
+        hausgeld_cash, reserve_cash, hausgeld_contributions = {}, {}, {}
         for payment in payments:
             signed = payment.amount if payment.direction == 'IN' else -payment.amount
             owner = str(payment.owner_profile_id)
@@ -162,6 +164,13 @@ class ReserveLedgerService:
                                  'payment_id': str(payment.id), 'bank_account_id': str(payment.bank_account_id),
                                  'owner_profile_id': owner})
             late = payment.value_date < run.period_start
+            if not late:
+                if payment.payment_type == 'RUECKLAGENANTEIL':
+                    reserve_cash[owner] = reserve_cash.get(owner, ZERO) + signed
+                elif payment.payment_type == 'HAUSGELD_VORSCHUSS':
+                    hausgeld_cash[owner] = hausgeld_cash.get(owner, ZERO) + signed
+                    if actual is not None:
+                        hausgeld_contributions[owner] = hausgeld_contributions.get(owner, ZERO) + actual
             if actual is not None:
                 if late:
                     late_cash += actual
@@ -188,6 +197,22 @@ class ReserveLedgerService:
                              'reason': (link.reason if link else payment.note) if backed else 'Kostenbeleg und Beschluss noch nicht verknüpft'})
                 if not backed and not (payment.reversed_by_id in payment_ids or payment.reverses_id in payment_ids):
                     unlinked.append(str(payment.id))
+        if plan and reserve_cash:
+            soll = {str(owner): amount for owner, amount in (
+                await EconomicPlanLineRepository(self.session, self.org_id).advance_totals_per_owner(plan.id)).items()}
+            planned = planned_reserve_per_owner(rows)
+            for owner, reserve in sorted(reserve_cash.items()):
+                if owner not in soll:
+                    continue
+                covered = covered_reserve(hausgeld_cash.get(owner, ZERO), reserve, soll[owner])
+                if covered <= ZERO:
+                    continue
+                correction = max(ZERO, covered + hausgeld_contributions.get(owner, ZERO) - planned.get(owner, ZERO))
+                if correction > ZERO:
+                    contributions -= correction
+                    rows.append({'kind': 'CONTRIBUTION', 'date': str(run.period_end),
+                                 'amount': format(-correction, '.2f'), 'owner_profile_id': owner,
+                                 'reason': 'Rücklagenanteil bereits im Hausgeld-Soll enthalten'})
         reversed_amounts = {}
         for entry in entries:
             if entry.reverses_entry_id:
