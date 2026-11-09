@@ -49,6 +49,20 @@ async function choose() {
 async function load() { const user = await choose(); await user.click(screen.getByRole("button", { name: "Übersicht anzeigen" })); await screen.findByRole("table", { name: "Einnahmen" }); return user; }
 
 describe("Objekt-Jahresübersicht", () => {
+  it("names reserve payouts as pass-through and retains the server totals", async () => {
+    vi.mocked(endpoints.getPropertyYearReport).mockResolvedValue({ ...report,
+      income: [{ payment_type: "HAUSGELD_VORSCHUSS", amount: "24000.00" }, { payment_type: "RUECKLAGENENTNAHME", amount: "-8000.00" }],
+      expenses: [{ ...report.expenses[1], category_code: "INSTANDSETZUNG", amount: "8000.00" }],
+      income_total: "24000.00", expense_total: "8000.00", balance: "16000.00" });
+    render(<ReportsPage />); await load();
+    const overview = screen.getByRole("region", { name: "Jahresübersicht" });
+    const payout = within(overview).getByRole("row", { name: "Rücklagenentnahme (durchlaufend) -8.000,00 EUR" });
+    expect(payout).toBeVisible();
+    expect(within(overview).queryByText(/Unbekannter Zahlungstyp/)).toBeNull();
+    for (const amount of ["24.000,00 EUR", "8.000,00 EUR", "16.000,00 EUR"]) {
+      expect(within(overview).getAllByText(amount).length).toBeGreaterThan(0);
+    }
+  });
   it("uses the server income total while keeping the deposit separate and naming tenant backpayments", async () => {
     vi.mocked(endpoints.getPropertyYearReport).mockResolvedValue({ ...report,
       income: [...report.income, { payment_type: "KAUTION", amount: "2250.00" }, { payment_type: "NACHZAHLUNG", amount: "75.00" }],

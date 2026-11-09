@@ -1020,10 +1020,16 @@ do not assert tax completeness. A real CSV link uses the same displayed selectio
 and reports export errors inline. Loading and retry belong to the panel, leaving
 the overview visible; changing property, year or scope removes the old panel and
 suppresses late responses/downloads. The existing year-overview CSV stays separate.
-The income table labels deposits "Kaution (durchlaufend)" and tenant backpayments
-"Nachzahlung (Mieter)". The server's income total excludes trust deposits while
+The income table labels deposits "Kaution (durchlaufend)", reserve payouts
+"Rücklagenentnahme (durchlaufend)" and tenant backpayments "Nachzahlung (Mieter)".
+The server's income total excludes trust deposits and reserve payouts while
 retaining their original row amounts. The unassigned list retains these amounts;
 its reconciliation total excludes non-income rows, as the server note explains.
+
+| Reserve payout row (#406) | 1280 px | 360 px |
+| --- | --- | --- |
+| Before | [view](docs/assets/design/reserve-payout-report/before-1280.png) | [view](docs/assets/design/reserve-payout-report/before-360.png) |
+| After | [view](docs/assets/design/reserve-payout-report/after-1280.png) | [view](docs/assets/design/reserve-payout-report/after-360.png) |
 
 Every async region provides loading, empty, error and success copy using the patterns below.
 Failed requests preserve the user's input.
