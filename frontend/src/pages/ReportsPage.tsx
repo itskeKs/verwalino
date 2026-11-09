@@ -11,6 +11,7 @@ const PAYMENT_TYPE_LABELS: Record<string, string> = {
   KALTMIETE: "Kaltmiete",
   NK_VORAUSZAHLUNG: "Betriebskosten-Vorauszahlung", HK_VORAUSZAHLUNG: "Heizkosten-Vorauszahlung",
   KAUTION: "Kaution (durchlaufend)",
+  RUECKLAGENENTNAHME: "Rücklagenentnahme (durchlaufend)",
   NACHZAHLUNG: "Nachzahlung (Mieter)",
   HAUSGELD_VORSCHUSS: "Hausgeld-Vorschuss",
   RUECKLAGENANTEIL: "Ruecklagenanteil",

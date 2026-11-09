@@ -404,7 +404,7 @@ async def test_anlage_v_summary_keeps_unmapped_exclusions_and_reconciles_without
     ('HAUSGELD_VORSCHUSS', None, False, True),
     ('RUECKLAGENANTEIL', None, False, True),
     ('SONDERZAHLUNG', None, False, True),
-    ('RUECKLAGENENTNAHME', None, True, True),
+    ('RUECKLAGENENTNAHME', None, False, False),
 ])
 async def test_every_payment_type_and_management_type_share_the_income_rule(
     monkeypatch, management_type, kind, expected_line, rental_income, weg_income,
@@ -449,6 +449,55 @@ async def test_every_payment_type_and_management_type_share_the_income_rule(
         assert next(row.amount for row in summary.lines if row.key == expected_line) == amount
     else:
         assert [(row.code, row.amount) for row in summary.unmapped] == [(kind, amount)]
+
+
+async def test_booked_reserve_payout_finances_the_repair_without_reducing_year_income(client_a_admin, seed_data):
+    import csv
+    import io
+    from tests.test_reserve_ledger import reserve_world, payment as reserve_payment
+    from tests.financial_coverage_helpers import reserve_evidence
+
+    api = client_a_admin
+    w = await reserve_world(api, seed_data)
+    categories = await api.get('/api/cost-categories')
+    assert categories.status_code == 200, categories.text
+    category = next(row for row in categories.json() if row['code'] == 'INSTANDSETZUNG')
+    response = await api.post('/api/cost-entries', json={
+        'property_id': w['property'], 'cost_category_id': category['id'],
+        'cost_category_plan_version': category['plan_version'], 'invoice_date': '2026-06-01',
+        'service_period_from': '2026-01-01', 'service_period_to': '2026-12-31',
+        'gross_amount': '8000.00', 'tenant_apportionable': 'NICHT_UMLAGEFAEHIG', 'source': 'MANUAL',
+    })
+    assert response.status_code == 201, response.text
+    w['ce_garten'] = response.json()['id']
+    response = await api.post(f"/api/cost-entries/{w['ce_garten']}/confirm")
+    assert response.status_code == 200, response.text
+    await reserve_payment(api, w, '24000.00', kind='HAUSGELD_VORSCHUSS', when='2026-06-01')
+    evidence = await reserve_evidence(api, w)
+    await reserve_payment(api, w, '8000.00', kind='RUECKLAGENENTNAHME', direction='OUT',
+                          when='2026-06-01', evidence=evidence)
+    params = {'property_id': w['property'], 'year': 2026}
+    response = await api.get('/api/reports/property-year', params=params)
+    assert response.status_code == 200, response.text
+    overview = response.json()
+    assert (overview['income_total'], overview['expense_total'], overview['balance']) == (
+        '24000.00', '8000.00', '16000.00')
+    assert next(row['amount'] for row in overview['income']
+                if row['payment_type'] == 'RUECKLAGENENTNAHME') == '-8000.00'
+    response = await api.get('/api/reports/property-year.csv', params=params)
+    assert response.status_code == 200, response.text
+    rows = list(csv.reader(io.StringIO(response.content.decode('utf-8-sig')), delimiter=';'))
+    payout = next(row for row in rows if row[3] == 'RUECKLAGENENTNAHME')
+    assert (payout[2], payout[-1]) == ('Durchlaufend', '-8000,00')
+    response = await api.get(ANLAGE_V, params=params)
+    assert response.status_code == 200, response.text
+    summary = response.json()
+    payout = next(row for row in summary['unmapped'] if row['code'] == 'RUECKLAGENENTNAHME')
+    assert (payout['section'], payout['amount']) == ('Einnahmen', '-8000.00')
+    assert payout['note'].startswith('[§/fachlich] Durchlaufend:')
+    assert [(row['unmapped_total'], row['report_total'], row['difference'])
+            for row in summary['reconciliation']] == [
+                ('24000.00', '24000.00', '0.00'), ('0.00', '8000.00', '0.00')]
 
 
 async def test_anlage_v_summary_foreign_unknown_and_unauthenticated_requests_keep_report_guards(migrator_session, scope_seed, seed_data):

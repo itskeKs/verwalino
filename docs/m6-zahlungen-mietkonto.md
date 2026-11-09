@@ -612,8 +612,12 @@ automatically treated as fully allocable. Balance = income total − cost total;
 amounts remain Decimal-exact, even with large sums and a low outer precision context.
 
 The date basis used deliberately differs from the expected-amount period/service
-period. Security deposits remain separately visible as pass-through funds and never
-increase income or balance. Tenant backpayments (`NACHZAHLUNG`) count as income and
+period. Security deposits and reserve payouts (`RUECKLAGENENTNAHME`) remain separately
+visible as pass-through funds and do not affect income or balance. A reserve payout
+finances a cost already included in expenses; counting its negative amount as income
+would deduct the cost twice. Its overview CSV section is `Durchlaufend`; Anlage V
+keeps it under `Nicht zugeordnet` but excludes it from reconciliation totals.
+Tenant backpayments (`NACHZAHLUNG`) count as income and
 map to Umlagen. `HAUSGELD_VORSCHUSS`, `RUECKLAGENANTEIL` and `SONDERZAHLUNG` count as
 income only for WEG properties, not MIET, SEV or MISCH. These rules live in the
 existing Anlage V category mapping and are shared by year totals and reconciliation.
