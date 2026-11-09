@@ -642,16 +642,52 @@ class TestGolden5DerivedEqualsManual:
 # Golden 6: Hausgeld-Soll-Ist (the M4 Spitze invariance lives in the WEG engine
 #   test; here we check only the M6 part: owner Soll generation + Ist abgleich +
 #   the DERIVED HAUSGELD_VORSCHUSS sum). m6 section 7.1 #6 / section 2.2.
-#   Plan-Soll-Vorschuss 5500/Jahr (monthly_amount from finalized plan), Ist 5000.
+#   Plan-Soll-Vorschuss from finalized annual plan advances, Ist 5000.
 # ===========================================================================
 class TestGolden6HausgeldSollIst:
+    @pytest.mark.parametrize('with_history', [False, True])
+    @pytest.mark.parametrize('annual,amounts', [
+        ('1000.00', ['83.34'] * 4 + ['83.33'] * 8),
+        ('1000.03', ['83.34'] * 7 + ['83.33'] * 5),
+        ('1200.00', ['100.00'] * 12),
+    ])
+    def test_owner_installments_sum_to_the_annual_advance(self, annual, amounts, with_history):
+        from app.engine.types import OwnerPeriodInput
+
+        owner, unit = _U(31), _U(11)
+        history = [OwnerPeriodInput(unit, owner, YEAR_START, None)] if with_history else None
+        charges = owner_expected_charges([OwnerAdvanceChargeInput(owner, unit, Decimal(annual))],
+            owner, YEAR_START, YEAR_END, owner_periods=history)
+        assert [c.amount for c in charges] == [Decimal(amount) for amount in amounts]
+        assert sum(c.amount for c in charges) == Decimal(annual)
+
+    @pytest.mark.parametrize('with_history', [False, True])
+    @pytest.mark.parametrize('start,end', [
+        (date(2026, 7, 1), date(2027, 6, 30)),
+        (date(2026, 7, 15), date(2027, 7, 14)),
+    ])
+    def test_owner_installments_start_with_the_plan_month_and_stop_after_twelve(self, start, end, with_history):
+        from app.engine.types import OwnerPeriodInput
+
+        owner, unit = _U(31), _U(11)
+        history = [OwnerPeriodInput(unit, owner, date(2020, 1, 1), None)] if with_history else None
+        lines = [OwnerAdvanceChargeInput(owner, unit, Decimal('1000.00'))]
+        charges = owner_expected_charges(lines, owner, start, end, owner_periods=history, plan_start=start)
+        assert [(c.period_year, c.period_month) for c in charges] == [
+            (2026, m) for m in range(7, 13)] + [(2027, m) for m in range(1, 7)]
+        assert [c.amount for c in charges] == [Decimal('83.34')] * 4 + [Decimal('83.33')] * 8
+        assert sum(c.amount for c in charges) == Decimal('1000.00')
+        later = owner_expected_charges(lines, owner, date(2027, 1, 1), end,
+            owner_periods=history, plan_start=start)
+        assert [c.amount for c in later] == [Decimal('83.33')] * 6
+
     def test_owner_monthly_soll_sums_over_units(self):
         owner = _U(31)
-        # Plan: two units of this owner, monthly_amount 300 + 158.34 = 458.34/mo.
+        # Plan: two annual unit advances, 3600.00 + 1900.08 = 458.34/mo.
         # (e.g. annual 5500.08 split monthly -- here we use a clean per-unit sum.)
         lines = [
-            OwnerAdvanceChargeInput(owner, _U(11), Decimal("300.00")),
-            OwnerAdvanceChargeInput(owner, _U(12), Decimal("158.34")),
+            OwnerAdvanceChargeInput(owner, _U(11), Decimal("3600.00")),
+            OwnerAdvanceChargeInput(owner, _U(12), Decimal("1900.08")),
         ]
         charges = owner_expected_charges(lines, owner, YEAR_START, YEAR_END)
         assert len(charges) == 12
@@ -889,10 +925,43 @@ class TestGoldenRentChanges:
             mietkonto.RentChangeInput(**values)
 
 
+def test_transferred_owner_installments_keep_the_annual_total():
+    from app.engine.types import OwnerPeriodInput
+
+    lines = [OwnerAdvanceChargeInput(_U(1), _U(10), Decimal('1000.00'))]
+    history = [OwnerPeriodInput(_U(10), _U(1), YEAR_START, date(2025, 6, 30)),
+               OwnerPeriodInput(_U(10), _U(2), date(2025, 7, 1), None)]
+    seller = owner_expected_charges(lines, _U(1), YEAR_START, YEAR_END, owner_periods=history)
+    buyer = owner_expected_charges(lines, _U(2), YEAR_START, YEAR_END, owner_periods=history)
+    assert [c.amount for c in seller] == [Decimal('83.34')] * 4 + [Decimal('83.33')] * 2
+    assert [c.amount for c in buyer] == [Decimal('83.33')] * 6
+    assert sum(c.amount for c in seller + buyer) == Decimal('1000.00')
+    later = owner_expected_charges(lines, _U(2), date(2025, 9, 1), YEAR_END,
+        owner_periods=history, plan_start=YEAR_START)
+    assert [(c.period_month, c.amount) for c in later] == [(m, Decimal('83.33')) for m in range(9, 13)]
+
+
+def test_continuing_coowners_keep_their_own_varying_installments_after_successive_transfers():
+    from app.engine.types import OwnerPeriodInput
+
+    lines = [OwnerAdvanceChargeInput(_U(1), _U(10), Decimal('1000.00')),
+             OwnerAdvanceChargeInput(_U(3), _U(10), Decimal('500.00'))]
+    history = [OwnerPeriodInput(_U(10), _U(1), YEAR_START, date(2025, 6, 30), Decimal('2')),
+               OwnerPeriodInput(_U(10), _U(2), date(2025, 7, 1), None, Decimal('2')),
+               OwnerPeriodInput(_U(10), _U(3), YEAR_START, date(2025, 8, 31), Decimal('1')),
+               OwnerPeriodInput(_U(10), _U(4), date(2025, 9, 1), None, Decimal('1'))]
+    continuing = owner_expected_charges(lines, _U(3), YEAR_START, YEAR_END, owner_periods=history)
+    assert [c.amount for c in continuing] == [Decimal('41.67')] * 8
+    for oid, amount in [(2, '83.33'), (4, '41.66')]:
+        later = owner_expected_charges(lines, _U(oid), date(2025, 9, 1), YEAR_END,
+            owner_periods=history, plan_start=YEAR_START)
+        assert [(c.period_month, c.amount) for c in later] == [(m, Decimal(amount)) for m in range(9, 13)]
+
+
 def test_owner_charges_follow_the_inclusive_transfer_dates_without_moving_other_units():
     from app.engine.types import OwnerPeriodInput
-    lines = [OwnerAdvanceChargeInput(_U(1), _U(10), Decimal('400.00')),
-             OwnerAdvanceChargeInput(_U(3), _U(11), Decimal('200.00'))]
+    lines = [OwnerAdvanceChargeInput(_U(1), _U(10), Decimal('4800.00')),
+             OwnerAdvanceChargeInput(_U(3), _U(11), Decimal('2400.00'))]
     history = [OwnerPeriodInput(_U(10), _U(1), date(2020, 1, 1), date(2026, 6, 30)),
                OwnerPeriodInput(_U(10), _U(2), date(2026, 7, 1), None),
                OwnerPeriodInput(_U(11), _U(3), date(2020, 1, 1), None)]
@@ -906,8 +975,8 @@ def test_owner_charges_follow_the_inclusive_transfer_dates_without_moving_other_
 
 def test_owner_charges_keep_a_continuing_coowners_share():
     from app.engine.types import OwnerPeriodInput
-    lines = [OwnerAdvanceChargeInput(_U(1), _U(10), Decimal('300.00')),
-             OwnerAdvanceChargeInput(_U(3), _U(10), Decimal('100.00'))]
+    lines = [OwnerAdvanceChargeInput(_U(1), _U(10), Decimal('3600.00')),
+             OwnerAdvanceChargeInput(_U(3), _U(10), Decimal('1200.00'))]
     history = [OwnerPeriodInput(_U(10), _U(1), date(2020, 1, 1), date(2026, 6, 30), Decimal('75')),
                OwnerPeriodInput(_U(10), _U(2), date(2026, 7, 1), None, Decimal('75')),
                OwnerPeriodInput(_U(10), _U(3), date(2020, 1, 1), None, Decimal('25'))]
@@ -918,8 +987,8 @@ def test_owner_charges_keep_a_continuing_coowners_share():
 
 def test_dated_owner_charges_preserve_frozen_coowner_rounding_after_a_transfer():
     from app.engine.types import OwnerPeriodInput
-    lines = [OwnerAdvanceChargeInput(_U(1), _U(10), Decimal('750.01')),
-             OwnerAdvanceChargeInput(_U(3), _U(10), Decimal('250.01'))]
+    lines = [OwnerAdvanceChargeInput(_U(1), _U(10), Decimal('9000.12')),
+             OwnerAdvanceChargeInput(_U(3), _U(10), Decimal('3000.12'))]
     history = [OwnerPeriodInput(_U(10), _U(1), date(2020, 1, 1), date(2026, 6, 30), Decimal('75')),
                OwnerPeriodInput(_U(10), _U(2), date(2026, 7, 1), None, Decimal('75')),
                OwnerPeriodInput(_U(10), _U(3), date(2020, 1, 1), None, Decimal('25'))]
@@ -931,8 +1000,8 @@ def test_dated_owner_charges_preserve_frozen_coowner_rounding_after_a_transfer()
 
 def test_successive_full_coowner_transfers_keep_inherited_frozen_cents():
     from app.engine.types import OwnerPeriodInput
-    lines = [OwnerAdvanceChargeInput(_U(1), _U(10), Decimal('750.01')),
-             OwnerAdvanceChargeInput(_U(3), _U(10), Decimal('250.01'))]
+    lines = [OwnerAdvanceChargeInput(_U(1), _U(10), Decimal('9000.12')),
+             OwnerAdvanceChargeInput(_U(3), _U(10), Decimal('3000.12'))]
     history = [OwnerPeriodInput(_U(10), _U(1), date(2020, 1, 1), date(2026, 6, 30), Decimal('75')),
                OwnerPeriodInput(_U(10), _U(2), date(2026, 7, 1), None, Decimal('75')),
                OwnerPeriodInput(_U(10), _U(3), date(2020, 1, 1), date(2026, 8, 31), Decimal('25')),
@@ -945,7 +1014,7 @@ def test_successive_full_coowner_transfers_keep_inherited_frozen_cents():
 
 def test_a_later_ledger_window_replays_transfers_from_the_plan_start():
     from app.engine.types import OwnerPeriodInput
-    lines = [OwnerAdvanceChargeInput(_U(1), _U(10), Decimal('400.00'))]
+    lines = [OwnerAdvanceChargeInput(_U(1), _U(10), Decimal('4800.00'))]
     history = [OwnerPeriodInput(_U(10), _U(1), date(2020, 1, 1), date(2026, 6, 30)),
                OwnerPeriodInput(_U(10), _U(2), date(2026, 7, 1), None)]
     charges = owner_expected_charges(lines, _U(2), date(2026, 9, 1), date(2026, 12, 31),
@@ -953,7 +1022,7 @@ def test_a_later_ledger_window_replays_transfers_from_the_plan_start():
     assert [(c.period_month, c.amount) for c in charges] == [(m, Decimal('400.00')) for m in range(9, 13)]
 
 
-@pytest.mark.parametrize('owner,monthly,months', [(1, '0.01', 12), (2, '0.00', 0), (3, '0.00', 0)])
+@pytest.mark.parametrize('owner,monthly,months', [(1, '0.01', 1), (2, '0.00', 0), (3, '0.00', 0)])
 def test_a_zero_rate_coowner_passes_the_real_plan_rate_to_the_successor(owner, monthly, months):
     from app.engine.types import OwnerPeriodInput, PropertyInput, UnitInput, WirtschaftsplanInput
     from app.engine.wirtschaftsplan import compute_wirtschaftsplan
@@ -968,10 +1037,11 @@ def test_a_zero_rate_coowner_passes_the_real_plan_rate_to_the_successor(owner, m
         owner_periods=tuple(history), planned_costs=(), reserve_contribution_total=Decimal('0.01')))
     assert [(o.owner_profile_id, o.annual_advance, o.monthly_amount) for o in plan.owners] == [
         (_U(1), Decimal('0.01'), Decimal('0.01')), (_U(2), Decimal('0.00'), Decimal('0.00'))]
-    lines = [OwnerAdvanceChargeInput(o.owner_profile_id, o.unit_id, o.monthly_amount) for o in plan.owners]
+    lines = [OwnerAdvanceChargeInput(o.owner_profile_id, o.unit_id, o.annual_advance) for o in plan.owners]
     charges = owner_expected_charges(lines, _U(owner), YEAR_START, YEAR_END,
         owner_periods=history, plan_start=YEAR_START)
     assert len(charges) == months
+    assert [c.period_month for c in charges] == list(range(1, months + 1))
     assert all(c.amount == Decimal(monthly) for c in charges)
 
 
@@ -979,8 +1049,8 @@ def test_a_zero_rate_coowner_passes_the_real_plan_rate_to_the_successor(owner, m
 def test_a_continuing_coowner_can_buy_the_whole_departing_share(owner):
     from app.engine.types import OwnerPeriodInput
 
-    lines = [OwnerAdvanceChargeInput(_U(1), _U(10), Decimal('300.00')),
-             OwnerAdvanceChargeInput(_U(2), _U(10), Decimal('100.00'))]
+    lines = [OwnerAdvanceChargeInput(_U(1), _U(10), Decimal('3600.00')),
+             OwnerAdvanceChargeInput(_U(2), _U(10), Decimal('1200.00'))]
     history = [OwnerPeriodInput(_U(10), _U(1), YEAR_START, date(2025, 6, 30), Decimal('75')),
                OwnerPeriodInput(_U(10), _U(2), YEAR_START, date(2025, 6, 30), Decimal('25')),
                OwnerPeriodInput(_U(10), _U(1), date(2025, 7, 1), None, Decimal('100'))]
@@ -995,7 +1065,7 @@ def test_a_continuing_coowner_can_buy_the_whole_departing_share(owner):
 def test_a_departing_share_without_an_unambiguous_buyer_is_refused():
     from app.engine.types import OwnerPeriodInput
 
-    lines = [OwnerAdvanceChargeInput(_U(oid), _U(10), Decimal('100.00')) for oid in (1, 2, 3)]
+    lines = [OwnerAdvanceChargeInput(_U(oid), _U(10), Decimal('1200.00')) for oid in (1, 2, 3)]
     history = [OwnerPeriodInput(_U(10), _U(oid), YEAR_START,
         date(2025, 6, 30) if oid == 3 else None, Decimal('1')) for oid in (1, 2, 3)]
     with pytest.raises(ValueError, match='successors'):
@@ -1007,7 +1077,7 @@ def test_owner_due_split_keeps_full_balances_signed_credit_and_levy_dates():
     from app.engine.mietkonto import special_levy_expected_charges
 
     owner = _U(1)
-    charges = owner_expected_charges([OwnerAdvanceChargeInput(owner, _U(10), Decimal('1600.01'))],
+    charges = owner_expected_charges([OwnerAdvanceChargeInput(owner, _U(10), Decimal('19200.12'))],
         owner, date(2026, 7, 1), date(2026, 8, 31), monthly_due_day=3)
     assert [c.due_date for c in charges] == [date(2026, 7, 3), date(2026, 8, 3)]
     charges += special_levy_expected_charges([(date(2026, 7, 4), Decimal('500.00'))],

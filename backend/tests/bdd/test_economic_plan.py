@@ -19,6 +19,41 @@ def month_params(month):
     return {'period_start': f'{month}-01', 'period_end': f'{month}-{monthrange(year, number)[1]}'}
 
 
+@given('a finalized plan with annual Hausgeld of 1000 euros for one owner')
+def annual_plan(world, period_data_cleanup):
+    world.actor = world.administrator_of('Verwaltung Alpha')
+    data = world.run(period_property(world.actor, month=1))
+    plan = world.run(create(world.actor, '/api/economic-plans', {
+        'property_id': data['property']['id'], 'plan_year': 2026}))
+    inputs = {'planned_costs': [{'category_code': 'GARTENPFLEGE', 'label': 'Garten',
+        'planned_amount': '1000.00'}], 'reserve_contribution_total': '0.00'}
+    world.run(attest_fixture(world.actor, 'economic_plan', plan['id'], inputs))
+    answer = world.act('POST', f"/api/economic-plans/{plan['id']}/finalize", json=inputs)
+    assert answer.status_code == 200, world.describe_response()
+    world.data['hausgeld'] = {**data, 'plan': answer.json()}
+
+
+@when("the manager reads the owner's full-year ledger for 2026")
+def annual_owner_ledger(world):
+    data = world.data['hausgeld']
+    answer = world.act('GET', f"/api/payments/mietkonto/owner/{data['owner']['id']}", params={
+        'period_start': '2026-01-01', 'period_end': '2026-12-31',
+        'economic_plan_id': data['plan']['id']})
+    assert answer.status_code == 200, world.describe_response()
+
+
+@then('the total expected Hausgeld is 1000 euros')
+def annual_hausgeld_total(world):
+    assert world.response.json()['soll_total'] == '1000.00'
+
+
+@then('the first four monthly installments are 83.34 euros and the remaining eight are 83.33 euros')
+def annual_hausgeld_installments(world):
+    assert [(item['period_year'], item['period_month'], item['soll'])
+        for item in world.response.json()['open_items']] == [
+            (2026, month, '83.34' if month <= 4 else '83.33') for month in range(1, 13)]
+
+
 @given(parsers.parse('a finalized plan with monthly Hausgeld of 600 euros and due day {day}'))
 def resolved_plan(world, period_data_cleanup, day):
     world.actor = world.administrator_of('Verwaltung Alpha')
