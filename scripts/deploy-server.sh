@@ -247,15 +247,35 @@ main() {
         [[ -n "$digest_ref" ]] || die 'no registry digest for staging after the pull.'
         step='validate staging compose'
         staging_compose config -q
+        local staging_services staging_worker=false
+        staging_services=$(staging_compose config --services)
+        if grep -Fxq declaration-worker <<< "$staging_services"; then staging_worker=true; fi
         step='staging database'
         staging_compose up -d --wait --wait-timeout 120 db
         step='staging migration'
-        staging_compose stop staging-app
+        if [[ "$staging_worker" = true ]]; then
+            staging_compose stop staging-app declaration-worker
+        else
+            # Older revisions define no worker; stop a running newer one with its 130s grace before migration.
+            staging_compose stop staging-app
+            local running_workers worker_id
+            local worker_ids=()
+            running_workers=$(docker ps --quiet --filter label=com.docker.compose.project=verwalino-staging \
+                --filter label=com.docker.compose.service=declaration-worker)
+            if [[ -n "$running_workers" ]]; then
+                while IFS= read -r worker_id; do worker_ids+=("$worker_id"); done <<< "$running_workers"
+                docker stop --time 130 "${worker_ids[@]}"
+            fi
+        fi
         staging_compose run --rm --no-deps -T migrate
         step='recreate staging app'
         staging_compose up -d --no-deps --force-recreate --wait --wait-timeout 120 staging-app
         step='staging health check'
         staging_compose exec -T staging-app python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/health/ready', timeout=3)"
+        if [[ "$staging_worker" = true ]]; then
+            step='start staging declaration worker'
+            staging_compose up -d --no-deps --wait --wait-timeout 120 declaration-worker
+        fi
         step='record successful staging image and sha'
         pin_image "$digest_ref"
         printf 'deploy staging %s OK: %s\n' "$staging_sha" "$digest_ref"

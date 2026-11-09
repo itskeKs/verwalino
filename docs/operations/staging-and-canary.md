@@ -22,8 +22,12 @@ Use [the staging Compose file](../../infra/docker-compose.staging.yml) alone.
 There is no second Caddy and no published staging port. Database, migration and
 bootstrap containers join only its private backend network. The app uses hosted
 mode, secure host-only cookies, its dedicated proxy's trusted subnet, bounded
-resources and independent database credentials and session secret. AI/extraction
-features are disabled, and the staging Compose file has no worker service.
+resources and independent database credentials and session secret. Declaration
+imports run in the declaration worker, using
+the same image digest, staging documents and independent worker database credentials
+and session secret. The worker joins the private backend and its own project-scoped
+`egress` network for provider access, never the proxy network; it publishes no ports.
+Invoice extraction remains disabled (`HV_INVOICE_EXTRACTION_ENABLED: "false"`).
 Both databases are named `hausverwaltung` **inside separate
 containers**; this is not the legacy Compose project of that name.
 
@@ -169,14 +173,24 @@ pull or staging service operation. This checks main's `Caddyfile.staging`, but t
 live proxy mounts the snippets from the production release checkout. Staging
 routing changes therefore reach the live proxy only with a production release;
 a staging deployment does not apply them. Invalid configuration leaves production Caddy
-and both private env files untouched. It then pulls its **`:sha-<sha>`
+and both private env files untouched. The forced command executes
+`/srv/verwalino/app/scripts/deploy-server.sh` from the production release checkout, so the
+stop/start order and worker startup below arrive only with a production release containing this
+script. Before that release, staging deployments from main still execute the older script, which
+recreates only `staging-app`. The staging deploy then pulls its **`:sha-<sha>`
 image**, verifies a matching registry SHA-256 digest exists and uses that digest
 for Compose. It exports only staging runtime files without moving the production
-checkout or changing its config. It starts the staging database, stops its app,
-migrates, recreates the app, waits for health and probes readiness inside the
-container. Only after success does it atomically record the digest and SHA in
+checkout or changing its config. It starts the staging database and, when the exported Compose
+file defines a declaration worker, stops the app and worker together before migration.
+Otherwise, it stops only the app through Compose and stops any running newer worker by its
+staging project and service labels before migration; that worker is not restarted.
+It then migrates, recreates the app, waits for health and probes readiness inside the container.
+If defined, it starts the declaration worker and waits for its health. Only after the app and
+any defined worker are healthy does it atomically record the digest and SHA in
 `.env.staging`. Logs print the previous successful staging SHA/image and live in
 private `/srv/verwalino/logs/deploy-staging-<timestamp>.log` files.
+An unhealthy worker fails the deploy before recording either value and releases
+the deploy lock; no config lock is acquired.
 
 For a staging rollback, send the previous SHA with the same restricted key and
 the workflow's pinned-host-key options:

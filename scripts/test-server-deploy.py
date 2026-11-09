@@ -132,6 +132,8 @@ if tool == "git":
 if args[:2] == ["network", "inspect"]:
     sys.exit(17 if env.get("FAKE_MISSING_STAGING_NETWORK") else 0)
 if args[0] == "compose":
+    if args[-2:] == ["config", "--services"]:
+        out(env.get("FAKE_COMPOSE_SERVICES", "db\nmigrate\nbootstrap\nstaging-app\ndeclaration-worker\n"))
     if env.get("FAKE_FAIL_INBOX_LOOKUP") and args[-4:] == ["ps", "--all", "--quiet", "inbox-worker"]:
         sys.exit(17)
     if any(arg.endswith("/docker-compose.site.yml") for arg in args) and not env.get("VERWALINO_SITE_IMAGE"):
@@ -172,6 +174,10 @@ if args[0] == "image":
         out("other/repo@sha256:" + "c" * 64 + "\nghcr.io/itskeks/verwalino@sha256:" + "a" * 64 + "\n")
     sys.exit(0)
 if args[0] == "ps":
+    if args == ["ps", "--quiet", "--filter", "label=com.docker.compose.project=verwalino-staging",
+                "--filter", "label=com.docker.compose.service=declaration-worker"]:
+        out(env.get("FAKE_WORKER_IDS", ""))
+        sys.exit(0)
     if "label=com.docker.compose.service=caddy" in args and env.get("FAKE_SITE_ENABLED"):
         out("caddycontainer\n")
     elif "label=com.docker.compose.service=site" in args and env.get("FAKE_SITE_ENABLED"):
@@ -1272,9 +1278,52 @@ class StagingDeployTests(ServerCase):
         def at(verb):
             return next(i for i, args in enumerate(calls) if verb in args)
         self.assertLess(at("stop"), at("migrate"))
-        self.assertEqual(calls[at("stop")][-1], "staging-app")
+        prefix = calls[at("stop")][:calls[at("stop")].index("stop")]
+        stop = prefix + ["stop", "staging-app", "declaration-worker"]
+        start_worker = prefix + ["up", "-d", "--no-deps", "--wait", "--wait-timeout", "120", "declaration-worker"]
+        config_services = prefix + ["config", "--services"]
+        self.assertEqual(calls.count(config_services), 1)
+        self.assertEqual(calls.index(config_services), calls.index(prefix + ["config", "-q"]) + 1)
+        self.assertFalse(any(call["args"][0] in ("ps", "stop") for call in self.calls("docker")))
+        self.assertEqual(calls.count(stop), 1)
+        self.assertEqual([args for args in calls if "stop" in args], [stop])
+        self.assertEqual(calls.count(start_worker), 1)
+        self.assertEqual([args for args in calls if "up" in args and args[-1] == "declaration-worker"], [start_worker])
         self.assertLess(at("migrate"), next(i for i, args in enumerate(calls) if "--force-recreate" in args))
         self.assertLess(at("migrate"), at("exec"))
+        self.assertLess(next(i for i, args in enumerate(calls) if "--force-recreate" in args), calls.index(start_worker))
+        self.assertLess(at("exec"), calls.index(start_worker))
+
+    def test_staging_rollback_without_worker_stops_leftover_worker_before_migration(self):
+        result = self.deploy(FAKE_COMPOSE_SERVICES="db\nmigrate\nbootstrap\nstaging-app\n",
+                             FAKE_WORKER_IDS="newerworker\n")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        calls = [call["args"] for call in self.calls("docker")]
+        compose = [args for args in calls if args[0] == "compose"]
+        prefix = compose[0][:-2]
+        stop = prefix + ["stop", "staging-app"]
+        worker_lookup = ["ps", "--quiet", "--filter", "label=com.docker.compose.project=verwalino-staging",
+                         "--filter", "label=com.docker.compose.service=declaration-worker"]
+        worker_stop = ["stop", "--time", "130", "newerworker"]
+        migrate = prefix + ["run", "--rm", "--no-deps", "-T", "migrate"]
+        self.assertEqual([args for args in compose if "stop" in args], [stop])
+        self.assertEqual([args for args in calls if args[0] == "ps"], [worker_lookup])
+        self.assertEqual([args for args in calls if args[0] == "stop"], [worker_stop])
+        self.assertLess(calls.index(stop), calls.index(worker_lookup))
+        self.assertLess(calls.index(worker_lookup), calls.index(worker_stop))
+        self.assertLess(calls.index(worker_stop), calls.index(migrate))
+        self.assertFalse(any("declaration-worker" in args for args in compose))
+        self.assertIn(f"VERWALINO_IMAGE={NEW_DIGEST}", self.staging.read_text())
+        self.assertIn(f"HV_RELEASE_ID={self.SHA}", self.staging.read_text())
+
+    def test_unhealthy_staging_declaration_worker_fails_before_pinning_and_releases_both_locks(self):
+        before = self.staging.read_bytes()
+        result = self.deploy(FAKE_FAIL_COMPOSE="up,declaration-worker")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('FAILED at step "start staging declaration worker"', result.stdout)
+        self.assertEqual(self.staging.read_bytes(), before)
+        self.assertFalse(self.staging.with_name(self.staging.name + ".lock").exists())
+        self.assertFalse((self.srv / "logs/.deploy.lock").exists())
 
     def test_release_tag_is_resolved_to_its_main_sha_image(self):
         result = self.deploy("v1.2.3")
@@ -1540,6 +1589,46 @@ class WorkflowTests(unittest.TestCase):
 
 @unittest.skipIf(yaml is None, "PyYAML is not installed")
 class StagingLayoutTests(unittest.TestCase):
+    def test_staging_declaration_worker_has_hosted_environment_hardening_and_private_egress(self):
+        compose = yaml.safe_load((ROOT / "infra/docker-compose.staging.yml").read_text())
+        self.assertIn("declaration-worker", compose["services"])
+        worker = compose["services"]["declaration-worker"]
+        self.assertEqual(worker["image"], "${VERWALINO_IMAGE:?set the staging image digest}")
+        self.assertEqual(worker["environment"], {
+            "HV_DEPLOYMENT_MODE": "hosted",
+            "HV_DATABASE_URL_WORKER": "postgresql+asyncpg://app_worker:${APP_WORKER_PASSWORD:?missing staging secret}@db:5432/hausverwaltung",
+            "HV_SESSION_SECRET": "${SESSION_SECRET:?missing staging secret}",
+            "HV_DOCUMENT_STORAGE_ROOT": "/data/documents",
+        })
+        self.assertEqual(worker["volumes"], ["documents_staging:/data/documents"])
+        self.assertEqual(worker["depends_on"], {
+            "db": {"condition": "service_healthy"},
+            "staging-app": {"condition": "service_healthy"},
+        })
+        self.assertEqual(worker["entrypoint"], ["/usr/local/bin/worker-entrypoint.sh"])
+        self.assertEqual(worker["command"], [])
+        self.assertEqual(worker["restart"], "unless-stopped")
+        self.assertIs(worker["init"], True)
+        self.assertEqual(worker["stop_grace_period"], "130s")
+        self.assertEqual(worker["user"], "10001:10001")
+        self.assertIs(worker["read_only"], True)
+        self.assertEqual(worker["tmpfs"], ["/tmp:rw,noexec,nosuid,size=256m"])
+        self.assertEqual(worker["cap_drop"], ["ALL"])
+        self.assertEqual(worker["security_opt"], ["no-new-privileges:true"])
+        self.assertEqual(worker["pids_limit"], 256)
+        self.assertEqual(worker["mem_limit"], "768m")
+        self.assertEqual(worker["cpus"], "1.00")
+        self.assertEqual(worker["healthcheck"], {
+            "test": ["CMD", "python", "-m", "app.workers.declaration_import", "--healthcheck"],
+            "interval": "30s", "timeout": "10s", "retries": 3,
+        })
+        self.assertEqual(worker["logging"], {
+            "driver": "local", "options": {"max-size": "10m", "max-file": "3"},
+        })
+        self.assertNotIn("ports", worker)
+        self.assertEqual(worker["networks"], {"backend": {"gw_priority": 0}, "egress": {"gw_priority": 1}})
+        self.assertEqual(compose["networks"]["egress"], {"internal": False})
+
     def test_staging_tmpfs_options_remain_one_absolute_mount_for_operations_and_app(self):
         compose = yaml.safe_load((ROOT / "infra/docker-compose.staging.yml").read_text())
         services = {"operations": compose["x-operations"],
