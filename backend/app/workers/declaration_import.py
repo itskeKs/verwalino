@@ -219,9 +219,20 @@ class DeclarationImportWorker:
     async def _record_unexpected_failure(self, lease: WorkerLease) -> None:
         async with self._tenant_session_factory(lease.organization_id) as session:
             repo = DeclarationImportRepository(session, lease.organization_id)
-            if await repo.lock_current_lease(lease, _PIPELINE_ENTRY_STATUSES) is None:
+            item = await repo.lock_current_lease(lease, _PIPELINE_ENTRY_STATUSES | {"PREFLIGHT"})
+            if item is None:
                 return
-            if not await repo.transition_with_lease(
+            if item.status == "PREFLIGHT":
+                # A run the pipeline already started counts this attempt.
+                if await session.scalar(
+                    select(DeclarationExtractionRun.id)
+                    .where(DeclarationExtractionRun.organization_id == lease.organization_id)
+                    .where(DeclarationExtractionRun.import_id == lease.import_id)
+                    .where(DeclarationExtractionRun.status == "RUNNING")
+                    .limit(1)
+                ) is not None:
+                    return
+            elif not await repo.transition_with_lease(
                 lease, _PIPELINE_ENTRY_STATUSES, "PREFLIGHT", {"current_stage": "preflight"}
             ):
                 return
@@ -359,7 +370,10 @@ class DeclarationImportWorker:
                     if await self._fail_attempt_limit(lease):
                         return WorkerResult("WORKER_ATTEMPT_LIMIT_REACHED", lease.import_id)
                     return WorkerResult("LEASE_LOST", lease.import_id)
-                return await self._run_claimed(lease)
+                result = await self._run_claimed(lease)
+                if result.code == "PIPELINE_ERROR":
+                    await self._record_unexpected_failure(lease)
+                return result
             except asyncio.CancelledError:
                 raise
             except DeclarationPrincipalDenied:

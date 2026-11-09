@@ -747,6 +747,91 @@ async def test_pipeline_error_logs_only_safe_error_type_and_location(seed_data, 
         assert record.exc_info is record.exc_text is None
 
 
+async def _make_retry_due(org_id, import_id) -> None:
+    async with get_tenant_session(org_id) as session:
+        row = await DeclarationImportRepository(session, org_id).get_by_id_for_update(import_id)
+        assert row is not None
+        row.next_attempt_at = datetime.now(timezone.utc) - timedelta(seconds=1)
+
+
+async def _enter_preflight(lease, *, start_run: bool) -> None:
+    async with get_tenant_session(lease.organization_id) as session:
+        repo = DeclarationImportRepository(session, lease.organization_id)
+        assert await repo.transition_with_lease(
+            lease, {"QUEUED", "RETRY_WAIT"}, "PREFLIGHT", {"current_stage": "preflight"}
+        )
+        if start_run:
+            session.add(DeclarationExtractionRun(
+                organization_id=lease.organization_id, import_id=lease.import_id, status="RUNNING",
+                provider="test", model_name="test", prompt_version="test",
+                schema_version="test", harness_version="test",
+            ))
+            await session.flush()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("entered_preflight", [False, True])
+async def test_pipeline_error_before_a_run_counts_attempts_up_to_the_limit(
+    seed_data, entered_preflight
+) -> None:
+    org_id = seed_data["org_a_id"]
+    item = await _create_import(org_id, seed_data["user_a_admin_id"], status="QUEUED")
+
+    class FailingPipeline:
+        async def run(self, lease):
+            if entered_preflight:
+                await _enter_preflight(lease, start_run=False)
+            raise RuntimeError("pipeline failure handling failed too")
+
+    async def waiting_sleep(_seconds: float) -> None:
+        await asyncio.Event().wait()
+
+    configured = settings.model_copy(update={"declaration_max_attempts": 2})
+    worker = DeclarationImportWorker(FailingPipeline(), configured=configured, sleep=waiting_sleep)
+    for attempt in range(1, configured.declaration_max_attempts + 1):
+        result = await worker.run_once(organization_id=org_id)
+        assert result.code == "PIPELINE_ERROR"
+        async with get_tenant_session(org_id) as session:
+            repo = DeclarationImportRepository(session, org_id)
+            assert await repo.count_extraction_runs(item.id) == attempt
+            row = await repo.get_by_id_for_update(item.id)
+            assert row is not None
+            assert row.status == "RETRY_WAIT"
+            assert row.lease_token is None
+        await _make_retry_due(org_id, item.id)
+    result = await worker.run_once(organization_id=org_id)
+    assert result.code == "WORKER_ATTEMPT_LIMIT_REACHED"
+    async with get_tenant_session(org_id) as session:
+        row = await DeclarationImportRepository(session, org_id).get_by_id_for_update(item.id)
+        assert row is not None
+        assert row.status == "FAILED"
+
+
+@pytest.mark.asyncio
+async def test_pipeline_error_after_its_run_started_is_not_counted_twice(seed_data) -> None:
+    org_id = seed_data["org_a_id"]
+    item = await _create_import(org_id, seed_data["user_a_admin_id"], status="QUEUED")
+
+    class FailingAfterRunPipeline:
+        async def run(self, lease):
+            await _enter_preflight(lease, start_run=True)
+            raise RuntimeError("pipeline failure handling failed too")
+
+    async def waiting_sleep(_seconds: float) -> None:
+        await asyncio.Event().wait()
+
+    result = await DeclarationImportWorker(FailingAfterRunPipeline(), sleep=waiting_sleep).run_once(
+        organization_id=org_id
+    )
+    assert result.code == "PIPELINE_ERROR"
+    async with get_tenant_session(org_id) as session:
+        repo = DeclarationImportRepository(session, org_id)
+        assert await repo.count_extraction_runs(item.id) == 1
+        row = await repo.get_by_id_for_update(item.id)
+        assert row is not None
+        assert row.status == "PREFLIGHT"
+
+
 @pytest.mark.asyncio
 async def test_simultaneous_pipeline_and_heartbeat_completion_prefers_pipeline() -> None:
     barrier = asyncio.Event()
