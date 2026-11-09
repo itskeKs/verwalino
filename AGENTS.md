@@ -62,7 +62,10 @@ enforcement; every baseline and safety rule here stays in force.
   the issue and waits for the owner's word only if the cut changes the acceptance.
 - Red first: the scenario and the unit tests fail without the change, then the smallest change
   turns them green, then refactor with the tests still green.
-- A finding outside the scope becomes a new issue (or a line in the PR description), not extra code.
+- A finding outside the scope becomes a new issue, not extra code: the session that found it
+  creates the issue right away from `.github/ISSUE_TEMPLATE/task.md`, one issue per mechanism, with
+  a line "Follow-up from PR #M (issue #N)", after checking that no open issue covers it; the PR
+  description lists the number. A sentence in the PR without an issue is not enough.
 - A session pushes only its own PR branch and merges only the PR it works on: after a fresh
   review by an agent that gets nothing from the session's context, on green CI, under the merge
   lock (Context economy). Codex and subagents never push or merge. Never push to `main`. A risky
@@ -140,7 +143,7 @@ Report cleanup in one line in the status/report, never in a repository file.
 - UI work is never blind: a change under `frontend/src/` is opened in a real browser at desktop
   width and 360 px before the PR, with before/after screenshots in the PR body, taken on the test
   database with synthetic data, never on production ([frontend rule](.claude/rules/frontend-ui.md)).
-- Done means a user can do it. An issue whose change a user notices carries a „User check“
+- Done means a user can do it. An issue whose change a user notices carries a "User check"
   written before the change ([docs/acceptance/README.md](docs/acceptance/README.md)); the
   PR is merged only after it passed on the PR's state: by a blind acceptance run that sees only
   the running product (a portable install, the separately authorized portable acceptance of
