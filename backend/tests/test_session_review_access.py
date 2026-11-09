@@ -399,7 +399,7 @@ async def test_revision_chain_head_0131_head_preserves_full_state_and_issued_pdf
     config.set_main_option('script_location', str(Path(__file__).parents[1] / 'migrations'))
     scripts = ScriptDirectory.from_config(config)
     assert scripts.get_heads() == [TARGET]
-    expected_ancestry = [f'{number:04}' for number in range(131, 156)] + ['0159', '0160', '0161', '0162', '0163', '0164', '0165', '0166', '0167', '0168', '0169', '0170', '0171', '0172', '0173', '0174', '0175', '0176', '0177', '0178', '0179', '0180']
+    expected_ancestry = [f'{number:04}' for number in range(131, 156)] + ['0159', '0160', '0161', '0162', '0163', '0164', '0165', '0166', '0167', '0168', '0169', '0170', '0171', '0172', '0173', '0174', '0175', '0176', '0177', '0178', '0179', '0180', '0181']
     assert [r.revision for r in scripts.iterate_revisions(TARGET, '0131')] == expected_ancestry[:0:-1]
     engine = create_engine(MIGRATOR_SYNC_URL)
     try:
@@ -462,10 +462,19 @@ async def test_revision_chain_head_0131_head_preserves_full_state_and_issued_pdf
                 assert any(row['unit_id'] == str(w['unit']) for row in retained['data']['unit_household'])
                 connection.execute(text('LOCK TABLE public.lease_agreement, public.lease_rent_change, '
                                         'public.audit_event IN ACCESS EXCLUSIVE MODE'))
+                def project_planned_reserve():
+                    # Historical schemas cannot represent these lines. The final
+                    # rollback compares every original row, snapshot and guard.
+                    connection.execute(text('ALTER TABLE public.settlement_line DISABLE TRIGGER USER'))
+                    connection.execute(text("DELETE FROM public.settlement_line WHERE line_type='RESERVE_SOLL'"))
+                    connection.execute(text('ALTER TABLE public.settlement_line ENABLE TRIGGER USER'))
+
                 with pytest.raises(DBAPIError, match='Retain explicit tenant advance modes'):
                     with connection.begin_nested():
+                        project_planned_reserve()
                         migrate('0175', downgrade=True)
                 assert _chain_snapshot(connection) == retained
+                project_planned_reserve()
                 with connection.begin_nested():
                     migrate('0176', downgrade=True)
                     project_legacy_advance_modes(connection)
@@ -606,7 +615,7 @@ async def test_revision_chain_head_0131_head_preserves_full_state_and_issued_pdf
                               if row['status'] == 'finalized'
                               and (row['snapshot_payload'] or {}).get('engine_version') == 'm3.2.0']
                 assert uuid.UUID(statement_id) in split_runs
-                reserve_line_types = ('RESERVE_LATE_CASH', 'RESERVE_ADJUSTMENT')
+                reserve_line_types = ('RESERVE_LATE_CASH', 'RESERVE_ADJUSTMENT', 'RESERVE_SOLL')
                 assert any(row['line_type'] == 'RESERVE_ADJUSTMENT' for row in retained['data']['settlement_line'])
                 generation = connection.scalar(text('SELECT session_version FROM public."user" WHERE id=:id'), {'id': w['reader']})
                 # Exclude split-engine originals, heating inputs and reserve evidence

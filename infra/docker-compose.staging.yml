@@ -105,9 +105,49 @@ services:
         aliases: [staging-app]
     logging: *logging
 
+  declaration-worker:
+    image: ${VERWALINO_IMAGE:?set the staging image digest}
+    restart: unless-stopped
+    init: true
+    stop_grace_period: 130s
+    depends_on:
+      db:
+        condition: service_healthy
+      staging-app:
+        condition: service_healthy
+    environment:
+      HV_DEPLOYMENT_MODE: hosted
+      HV_DATABASE_URL_WORKER: postgresql+asyncpg://app_worker:${APP_WORKER_PASSWORD:?missing staging secret}@db:5432/hausverwaltung
+      HV_SESSION_SECRET: ${SESSION_SECRET:?missing staging secret}
+      HV_DOCUMENT_STORAGE_ROOT: /data/documents
+    volumes: [documents_staging:/data/documents]
+    entrypoint: ["/usr/local/bin/worker-entrypoint.sh"]
+    command: []
+    user: "10001:10001"
+    read_only: true
+    tmpfs: ["/tmp:rw,noexec,nosuid,size=256m"]
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    pids_limit: 256
+    mem_limit: 768m
+    cpus: "1.00"
+    healthcheck:
+      test: [CMD, python, -m, app.workers.declaration_import, --healthcheck]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    networks:
+      backend:
+        gw_priority: 0
+      egress:
+        gw_priority: 1
+    logging: *logging
+
 networks:
   backend:
     internal: true
+  egress:
+    internal: false
   proxy:
     external: true
     name: verwalino-staging_proxy

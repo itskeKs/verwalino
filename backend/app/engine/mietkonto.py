@@ -690,11 +690,13 @@ def account_statement(
 # ===========================================================================
 @dataclass(frozen=True)
 class AdvanceFilter:
-    """The disjoint filter that selects payments for ONE abrechnungs size.
+    """Select the payment types for one derived amount.
 
     types: the payment_type(s) that feed this size (e.g. {NK_VORAUSZAHLUNG} for
-    the BK advance, {HAUSGELD_VORSCHUSS} for the WEG paid_advances). Keeping
-    them disjoint per size is what makes double-counting impossible (I6-C).
+    the BK advance). WEG derives HAUSGELD_VORSCHUSS and RUECKLAGENANTEIL
+    separately with identical period and Storno rules. WEG paid is
+    H + min(max(R, 0), max(Soll - H, 0)); absent plan Soll credits no reserve
+    (#401). The reserve ledger remains uncapped; rental/BK selection is unchanged.
     """
 
     types: frozenset[str]

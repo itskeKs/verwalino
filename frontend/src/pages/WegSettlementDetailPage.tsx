@@ -31,6 +31,7 @@ const LINE_LABELS: Record<string, string> = {
   OWNER_COST_TOTAL: "Summe Ist-Kosten (Ihr Anteil)",
   PLAN_ADVANCE: "Soll-Vorschüsse (Wirtschaftsplan)",
   ABRECHNUNGSSPITZE: "Abrechnungsspitze",
+  RESERVE_SOLL: "Rücklagenzuführung laut Wirtschaftsplan (Soll)",
   RESERVE_CONTRIBUTION: "Zuführung Erhaltungsrücklage",
 };
 
@@ -191,7 +192,9 @@ export function WegSettlementDetailPage() {
         <fieldset disabled={busy || planBusy} className="card" style={{ marginBottom: "1rem" }}>
           <h2>Berechnung & begründete Rücklagenwerte</h2>
           <p>Zuführungen und Entnahmen werden aus Buchungen abgeleitet; Korrekturen erfolgen mit Bezug im Rücklagenbuch. Den Anfangsbestand können Sie im ersten Rücklagenjahr mit Begründung importieren.</p>
-          <p>Für den Zahlbetrag zählen ausschließlich gebuchte, nicht stornierte Hausgeldzahlungen. Manuelle Angaben ersetzen keine Buchung.</p>
+          <p>{run.engine_version === "m4.4.0"
+            ? "Für den Zahlbetrag zählen ausschließlich gebuchte, nicht stornierte Hausgeldzahlungen und gesondert gebuchte Rücklagenzahlungen, soweit das Hausgeld-Soll nicht bereits durch Hausgeldzahlungen gedeckt ist. Manuelle Angaben ersetzen keine Buchung."
+            : "Für den Zahlbetrag zählen ausschließlich gebuchte, nicht stornierte Hausgeldzahlungen. Manuelle Angaben ersetzen keine Buchung."}</p>
           {paidOwners.map((id) => <label key={id}>Tatsächlich gezahltes Hausgeld · {ownerName(id)}
             <input inputMode="decimal" placeholder="Unbekannt" value={paidValues[id] ?? ""} onChange={(e) => setPaidValues({ ...paidValues, [id]: e.target.value })} />
           </label>)}
@@ -252,7 +255,7 @@ export function WegSettlementDetailPage() {
                 </dl>
                 <p><strong>{Number(o.payment_amount) < 0 ? "Guthaben zugunsten des Eigentümers" : Number(o.payment_amount) > 0 ? "Zahlung an die Gemeinschaft" : "Ausgeglichen"}</strong></p>
                 <p>Nur die Abrechnungsspitze ist beschlossen; Rückstände werden aus dem Wirtschaftsplan geschuldet. Der Zahlbetrag verrechnet die Spitze mit Rückstand oder Guthaben aus Hausgeld und begründet keinen neuen Anspruch.</p>
-                <p>Quelle: Soll aus dem verknüpften Wirtschaftsplan; gezahlt aus gebuchten, nicht stornierten Hausgeldzahlungen dieses Eigentümers und Objekts im Abrechnungszeitraum (Periodenzuordnung, einschließlich Erstattungen). Offene oder ungebuchte Zahlungen zählen nicht. Bei Eigentümerwechsel bleiben Zahlungen beim zugeordneten Eigentümer.</p>
+                <p>Quelle: Soll aus dem verknüpften Wirtschaftsplan; gezahlt aus gebuchten, nicht stornierten Hausgeldzahlungen dieses Eigentümers und Objekts im Abrechnungszeitraum (Periodenzuordnung, einschließlich Erstattungen). {run.engine_version === "m4.4.0" && <>Gesondert gebuchte Rücklagenzahlungen zählen nur, soweit das Hausgeld-Soll nicht bereits durch Hausgeldzahlungen gedeckt ist; ein Überschuss bleibt in der Rücklage. </>}Offene oder ungebuchte Zahlungen zählen nicht. Bei Eigentümerwechsel bleiben Zahlungen beim zugeordneten Eigentümer.</p>
                 <p>Eigentümerzuordnung im Abrechnungszeitraum:</p>
                 {o.ownership_periods.map((p, i) => <p key={i}>Einheit {p.unit_number}: {germanDate(p.valid_from)} bis {germanDate(p.valid_to)}</p>)}
               </section>

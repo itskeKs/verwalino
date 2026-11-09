@@ -85,3 +85,9 @@ Feature: WEG settlement and the owner's Hausgeld balance
     Given Karl Weiß owns unit 2 until June and Lena Roth owns it from July
     And Anna, Karl and Lena have booked their twelve, six and six monthly Hausgeld payments
     Then the paid Hausgeld prefill and Lena's missing amount are visible on desktop and phone
+
+
+  Scenario: Costs as planned leave no Spitze when the plan has a reserve
+    Given the WEG plan has 7000 euros of costs and 6000 euros of reserve for owners with 600 and 400 MEA
+    When I finalize their WEG annual settlement
+    Then both owners have zero Spitze with reserve Soll of 3600 and 2400 euros and Hausgeld Soll of 7800 and 5200 euros

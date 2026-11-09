@@ -87,3 +87,42 @@ The page and PDF explain their sources and ownership periods. Only the Spitze is
 resolution amount; plan arrears remain owed under the plan. The display creates no new
 claim and changes neither ledger nor dunning. Versioned snapshots freeze the additional
 figures without rewriting older finalized statements or their digests.
+
+
+## Amendment 2026-11-08 (#401)
+
+The owner's decision makes the linked economic plan's planned reserve contribution
+an owner Soll position in the annual statement. Decision (1) and non-negotiable
+point 2 continue to apply to the cost side: `OWNER_COST_TOTAL` excludes reserves.
+The reserve remains asset building, not consumed costs.
+
+The per-owner formula is now
+`abrechnungsspitze = owner_cost_total + plan_reserve_soll − plan_advance`.
+An owner's `plan_reserve_soll` is the sum of that owner's canonical `reserve_plan_cells`
+for the settlement's linked economic plan (`ReserveLedgerRepository.plan_rows`, migration
+0149: MEA per unit and owner at plan start, Hamilton cents, stable unit and owner ties).
+The shares sum exactly to that plan's reserve total, with no second distribution. A
+previously finalized asset report can freeze a cash ledger before this plan exists or
+with an older plan; that retained ledger remains unchanged and does not supply reserve Soll. The statement stores and displays a
+separate `RESERVE_SOLL` line when the share is nonzero.
+
+For costs of 7,000.00 and planned reserve of 6,000.00, owners with 600/400 MEA
+have costs of 4,200.00/2,800.00, reserve Soll of 3,600.00/2,400.00 and plan advances
+of 7,800.00/5,200.00. Both Spitzen are zero when actual costs equal planned costs.
+Booked payments remain separate. Under owner decision 1(b), 2026-11-09, let `H`
+be net booked `HAUSGELD_VORSCHUSS`, `R` net booked `RUECKLAGENANTEIL`, and `Soll`
+the owner's summed `OWNER_ADVANCE` over all units. WEG paid is
+`H + min(max(R, 0), max(Soll − H, 0))`; without plan Soll, reserve adds nothing,
+even when `H` is negative. Both nets use identical owner, property, period and signed
+IN/OUT/Storno rules. Hausgeld overpayments retain their full credit; negative net
+reserve adds nothing. Excess separate reserve stays in the uncapped reserve ledger
+and cannot offset higher actual costs. Other Hausgeld and rental/BK derivations retain
+their existing selection. Payments change only account balance and payment amount,
+never the Spitze.
+
+The frozen plan has per-owner/unit `OWNER_ADVANCE` and property-wide `PLANNED_COST`
+lines but no per-owner planned cost share, so owner decision 2 uses fallback (a):
+canonical `reserve_plan_cells`. Independent rounding of costs, reserve Soll and
+Hausgeld Soll can leave an accepted ±0.01 Spitze per owner when costs match the
+plan, while the aggregate remains exact. Finalized runs are never recalculated;
+historical payloads, digests and PDF bytes remain unchanged.

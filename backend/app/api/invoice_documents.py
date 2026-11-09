@@ -87,7 +87,7 @@ async def upload_document(
     file: UploadFile = File(...),
     cost_entry_id: str | None = Form(None),
     auth: AuthContext = Depends(require_write_dep),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
 ):
     """Upload a document (PDF, XML, etc.). Creates invoice_document record."""
     file_bytes = await read_upload_limited(file, max_bytes=MAX_UPLOAD_BYTES)
@@ -162,7 +162,7 @@ async def create_document_version(
     file: UploadFile = File(...),
     cost_entry_id: str | None = Form(None),
     auth: AuthContext = Depends(require_write_dep),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
 ):
     """Create a new version of an existing document (correction)."""
     repo = InvoiceDocumentRepository(db, auth.organization_id)
@@ -185,7 +185,7 @@ async def create_document_version(
 
 @router.post("/{doc_id}/retry", response_model=InvoiceDocumentOut)
 async def retry_extraction(doc_id: uuid.UUID, auth: AuthContext = Depends(require_write_dep),
-                           db: AsyncSession = Depends(get_db)):
+                           db: AsyncSession = Depends(get_db, scope="function")):
     source = InvoiceDocumentService(db, auth.organization_id, auth.user_id)
     await source.prepare_storage_write()
     doc = await InvoiceDocumentRepository(db, auth.organization_id).get_by_id_for_update(doc_id)

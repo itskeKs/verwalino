@@ -823,6 +823,16 @@ Synthetic long-owner statements from the test database, at 1280 px and 360 px wi
 | Finalized before / after | [before](docs/assets/design/weg-statements/finalized-before-1280.png) · [after](docs/assets/design/weg-statements/finalized-after-1280.png) | [before](docs/assets/design/weg-statements/finalized-before-360.png) · [after](docs/assets/design/weg-statements/finalized-after-360.png) |
 | Snapshot hash before / after | [before](docs/assets/design/weg-statements/hash-before-1280.png) · [after](docs/assets/design/weg-statements/hash-after-1280.png) | [before](docs/assets/design/weg-statements/hash-before-360.png) · [after](docs/assets/design/weg-statements/hash-after-360.png) |
 | Table scrolled to complete amounts | — | [computed](docs/assets/design/weg-statements/computed-amount-after-360.png) · [finalized](docs/assets/design/weg-statements/finalized-amount-after-360.png) |
+| Planned reserve Soll (#401) before / after | [before](docs/assets/design/weg-statements/computed-reserve-before-1280.png) · [after](docs/assets/design/weg-statements/computed-reserve-after-1280.png) | [before](docs/assets/design/weg-statements/computed-reserve-before-360.png) · [after](docs/assets/design/weg-statements/computed-reserve-after-360.png) |
+| Paid source before / after | [before](docs/assets/design/weg-statements/paid-source-before-1280.png) · [after](docs/assets/design/weg-statements/paid-source-after-1280.png) | [before](docs/assets/design/weg-statements/paid-source-before-360.png) · [after](docs/assets/design/weg-statements/paid-source-after-360.png) |
+| Owner lines with the reserve Soll (#401, after) | [after](docs/assets/design/weg-statements/computed-lines-after-1280.png) | [after](docs/assets/design/weg-statements/computed-lines-after-360.png) |
+
+For engine `m4.4.0`, both the draft input note and owner balance source explain that
+separate booked reserve payments count only against Hausgeld Soll still uncovered by
+Hausgeld payments; excess remains in the reserve. Earlier run versions retain their
+source copy. The original computed screenshots above remain the baseline; #401 reserve
+Soll and paid-source changes have separate before/after captures.
+
 
 The economic-plan detail gives `Hausgeld-Vorschüsse je Eigentümer` and
 `Geplante Kosten (berechnet)` separate `overflow-x-auto` containers. Owner names
@@ -1844,6 +1854,8 @@ its backing Hausgeld was reversed, on both pages and at both viewport widths.
 
 ### WEG annual statement: Spitze and Hausgeld (#204)
 
+The owner table shows “Rücklagenzuführung laut Wirtschaftsplan (Soll)” as a separate
+summary row between the actual cost sum and plan advances when nonzero (#401).
 Each owner block starts with its actual cost share and a wrapping definition list:
 “Abrechnungsspitze (beschlossen, § 28 Abs. 2 WEG)”, “Hausgeld-Soll laut Wirtschaftsplan”,
 “Hausgeld gezahlt”, “Rückstand / Guthaben aus Hausgeld” and the bold “Zahlbetrag”.
