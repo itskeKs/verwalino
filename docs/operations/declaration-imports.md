@@ -116,8 +116,9 @@ exception class and raising module/function only, never exception message text.
 Under the current lease it records a failed extraction run with
 `WORKER_UNEXPECTED_ERROR`, clears the lease and moves the job to `RETRY_WAIT`
 for five minutes. Once the configured attempt limit is reached, the next worker
-iteration fails the job with `WORKER_ATTEMPT_LIMIT_REACHED`. Errors before a claim
-or while recording the failure also log only the exception class and location.
+iteration fails the job with `WORKER_ATTEMPT_LIMIT_REACHED`. Errors before a claim,
+while recording the failure, or escaping the pipeline's own failure handling
+(`PIPELINE_ERROR`) also log only the exception class and location.
 
 ## Services, Recovery and Status
 

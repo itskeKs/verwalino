@@ -720,6 +720,34 @@ async def test_pipeline_exception_cleans_up_heartbeat_task(seed_data) -> None:
 
 
 @pytest.mark.asyncio
+async def test_pipeline_error_logs_only_safe_error_type_and_location(seed_data, caplog) -> None:
+    org_id = seed_data["org_a_id"]
+    item = await _create_import(org_id, seed_data["user_a_admin_id"], status="QUEUED")
+    sentinel = "Synthetic document fragment: tenant account DE111222333"
+
+    class FailingPipeline:
+        async def run(self, _lease):
+            raise RuntimeError(sentinel)
+
+    async def waiting_sleep(_seconds: float) -> None:
+        await asyncio.Event().wait()
+
+    with caplog.at_level(logging.WARNING, logger="app.workers.declaration_import"):
+        result = await DeclarationImportWorker(FailingPipeline(), sleep=waiting_sleep).run_once()
+    assert result.code == "PIPELINE_ERROR"
+    warnings = [record for record in caplog.records if record.name == "app.workers.declaration_import"]
+    assert len(warnings) == 1
+    assert warnings[0].getMessage() == (
+        f"declaration worker result=PIPELINE_ERROR import_id={item.id} "
+        f"error_type=RuntimeError location={__name__}:run"
+    )
+    for record in caplog.records:
+        assert sentinel not in record.getMessage()
+        assert sentinel not in str(record.args)
+        assert record.exc_info is record.exc_text is None
+
+
+@pytest.mark.asyncio
 async def test_simultaneous_pipeline_and_heartbeat_completion_prefers_pipeline() -> None:
     barrier = asyncio.Event()
     lease = WorkerLease(

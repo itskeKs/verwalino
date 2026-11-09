@@ -313,12 +313,13 @@ class DeclarationImportWorker:
                     raise
                 except DeclarationPrincipalDenied:
                     return WorkerResult("JOB_PERMISSION_CHANGED", lease.import_id)
-                except Exception:
+                except Exception as error:
                     # Do not log arbitrary exception text: providers and parsers
                     # may attach untrusted document fragments to it.
+                    error_type, location = _safe_error_details(error)
                     logger.warning(
-                        "declaration worker result=PIPELINE_ERROR import_id=%s",
-                        lease.import_id,
+                        "declaration worker result=PIPELINE_ERROR import_id=%s error_type=%s location=%s",
+                        lease.import_id, error_type, location,
                     )
                     return WorkerResult("PIPELINE_ERROR", lease.import_id)
                 return WorkerResult("PROCESSED", lease.import_id)
