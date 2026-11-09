@@ -196,7 +196,7 @@ changed. CI (`.github/workflows/tests-on-pr.yaml`) must be green:
 | Job | What it proves |
 |---|---|
 | `backend-shards` | four disjoint pytest selections, plus hosted BDD selections, each against its own Postgres 16 and Mailpit |
-| `backend-checks` | ruff, installer/Caddy checks and the collection contract, alongside the shards without a database |
+| `backend-checks` | ruff, every `app` module importing from the runtime install (no dev extra, as in the image), installer/Caddy checks and the collection contract, alongside the shards without a database |
 | `backend` (`Backend (ruff, pytest)`) | required summary: fails unless every shard and `backend-checks` succeeded, including cancellation or skipped jobs |
 | `frontend` | eslint, TypeScript, vitest |
 | `browser` | locked Chromium, real UI journeys (`make test-browser`) |

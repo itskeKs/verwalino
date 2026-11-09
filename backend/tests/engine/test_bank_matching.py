@@ -101,7 +101,7 @@ def test_paid_components_are_not_proposed_again():
 
 
 def test_owner_hausgeld_uses_existing_owner_soll():
-    charges = owner_expected_charges([OwnerAdvanceChargeInput(OWNER, None, Decimal("300.00"))], OWNER, date(2026, 1, 1), date(2026, 1, 31))
+    charges = owner_expected_charges([OwnerAdvanceChargeInput(OWNER, None, Decimal("3600.00"))], OWNER, date(2026, 1, 1), date(2026, 1, 31))
     target = MatchTarget("Erika Eigentümer", IBAN, account_statement(charges, []).open_items, owner_profile_id=OWNER)
     match, = suggest_matches(row("300.00", "Hausgeld 01/2026", counterparty_name="Erika Eigentümer"), [target])
     assert match.confidence == "HIGH"

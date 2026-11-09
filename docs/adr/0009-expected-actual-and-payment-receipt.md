@@ -11,7 +11,7 @@ M6 models the flow of money (SDD §6.3, §6.7): manually captured payments, a si
 
 Two quantities face each other:
 
-- **Expected (Soll)** — what a person owes for a period: for the tenant, base rent + operating cost advance (NK-Vorauszahlung) per month (from `lease_agreement`); for the owner, the monthly Hausgeld (monthly owner contribution) advance (from the finalized `economic_plan`, `OWNER_ADVANCE.monthly_amount`). Monthly basis (ADR-0007 E4-3b for the plan; consistently continued for the rent expected charge).
+- **Expected (Soll)** — what a person owes for a period: for the tenant, base rent + operating cost advance (NK-Vorauszahlung) per month (from `lease_agreement`); for the owner, the monthly Hausgeld (monthly owner contribution) advance (from the finalized `economic_plan`, annual `OWNER_ADVANCE.planned_amount` split into twelve installments, see m6 §2.2). Monthly basis (ADR-0007 E4-3b for the plan; consistently continued for the rent expected charge).
 - **Actual (Ist)** — what the person actually paid: the captured `payment` rows.
 
 The **open item** (`open_item`) is the link: expected position, the assigned actual amount and the remaining balance. SDD §13 lists `OpenItem` as an entity; what is open is whether it is a **computed** or a **stored** object. SDD §18 also explicitly lists as open: "Level of detail of the tenant ledger (only expected/actual (Soll/Ist) vs. individual expected charges per month)".
@@ -34,7 +34,7 @@ The **open item** (`open_item`) is the link: expected position, the assigned act
 
 **(1) Expected position derived (option A).** *(Recommendation, [DECISION E6-1])*
 
-- The expected positions of a person/period are **computed** from master data, not materialized per month. A pure engine function generates, from `lease_agreement` (base rent + operating cost advance, day-accurately prorated for a mid-year start/end, monthly basis) or from the finalized `economic_plan` (`OWNER_ADVANCE.monthly_amount`), the due expected amounts per month (`expected_charge` list).
+- The expected positions of a person/period are **computed** from master data, not materialized per month. A pure engine function generates, from `lease_agreement` (base rent + operating cost advance, day-accurately prorated for a mid-year start/end, monthly basis) or from the finalized `economic_plan` (annual `OWNER_ADVANCE.planned_amount` split into twelve installments, see m6 §2.2), the due expected amounts per month (`expected_charge` list).
 - `open_item` is the **computed balance view** per (person, period, type): `open = expected − assigned actual`. It is **not** a row persisted per month.
 - **M7 anticipation deliberately avoided, but door left open:** Dunning levels/history (M7) need a per-item anchor. So that M6 does not unilaterally pre-empt this: M6 delivers the *computed* open items; whether M7 materializes from them a small **persisted dunning/status record per overdue item** (referencing the computed expected period) is **[§18/domain F6-1]** and a matter for M7. M6 does **not** decide dunning persistence.
 

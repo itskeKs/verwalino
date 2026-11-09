@@ -16,6 +16,13 @@ Feature: Anlage V summary
     And the deposit stays separate and the backpayment is included in levies
     And mapped and unassigned amounts match the property year overview
 
+  Scenario: A reserve payout finances a repair without reducing the year's income
+    Given a WEG with 24000 euros Hausgeld and an 8000 euro repair paid from the reserve in 2026
+    When the landlord opens the Anlage V summary for that year
+    Then the year overview shows 24000 euros income, 8000 euros expenses and 16000 euros balance
+    And the reserve payout stays separate as pass-through in the overview CSV and Anlage V
+    And mapped and unassigned amounts match the property year overview
+
   @browser
   Scenario: The landlord reads the mapping on wide and narrow screens and downloads it
     Given a rental property with booked rent, advances and confirmed water costs

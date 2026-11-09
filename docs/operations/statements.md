@@ -102,7 +102,9 @@ active confirmed gross costs by invoice date. Drafts, reversal chains,
 superseded costs, and merely imported bank transactions do not count.
 
 The date basis and a domain note are included in the response. Security deposit and other
-payment types remain separately visible. Deposits never increase income or balance;
+payment types remain separately visible. Deposits never increase income or balance.
+Reserve payouts (`RUECKLAGENENTNAHME`) are pass-through as well: the repair they
+finance is already a cost, so they never reduce income or balance, also for WEG.
 `NACHZAHLUNG` is tenant backpayment income. House-money advances, reserve shares and
 owner special payments count as income only for WEG, not MIET, SEV or MISCH.
 The same mapping rule controls headline, reconciliation and both CSV exports. `TEILWEISE_PRUEFEN` remains its own flag. This is a
@@ -114,8 +116,8 @@ form detail lines via `GET /api/reports/property-year/anlage-v`.
 the same property, year and optional accounting scope. This is a
 "Zuordnungshilfe, keine Steuerberatung"; "Zeilennummern je Formularjahr prüfen"
 (check line numbers for each form year). The mapping ignores the Umlagefähigkeit
-split and maps tenant `NACHZAHLUNG` to "Umlagen". Deposits remain visible under
-"Nicht zugeordnet" with their original amounts but contribute zero to the
+split and maps tenant `NACHZAHLUNG` to "Umlagen". Deposits and reserve payouts remain
+visible under "Nicht zugeordnet" with their original amounts but contribute zero to the
 reconciliation totals. The same applies to owner receipts outside WEG; WEG receipts
 count as unassigned income. Thus mapped plus counted unassigned amounts equals the
 overview income. The overview CSV marks non-income rows as "Durchlaufend".

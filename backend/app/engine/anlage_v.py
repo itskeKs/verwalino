@@ -81,6 +81,7 @@ DEFAULT_CATEGORY_MAPPING = build_category_mapping([
     CategoryMapping('HK_VORAUSZAHLUNG', 'levies', '[§/fachlich] Laufende Umlagen; Abrechnungserstattungen und Nachzahlungen gesondert prüfen.'),
     CategoryMapping('NACHZAHLUNG', 'levies', '[§/fachlich] Nachzahlung des Mieters aus der Betriebskostenabrechnung als Umlage; Zufluss prüfen.'),
     CategoryMapping('KAUTION', None, '[§/fachlich] Durchlaufend: verwahrte Kaution, keine Einnahme; im Abgleich nicht mitgezählt. Eine spätere Verrechnung ist gesondert zu prüfen.', frozenset()),
+    CategoryMapping('RUECKLAGENENTNAHME', None, '[§/fachlich] Durchlaufend: Finanzierung aus der Rücklage, keine Einnahme; der Aufwand steht bereits in den Kosten.', frozenset()),
     CategoryMapping('HAUSGELD_VORSCHUSS', None, '[§/fachlich] Einnahme nur bei WEG-Verwaltung; kein Vermietungsertrag. Sonst im Abgleich nicht mitgezählt.', frozenset({'WEG'})),
     CategoryMapping('RUECKLAGENANTEIL', None, '[§/fachlich] Einnahme nur bei WEG-Verwaltung; Rücklagenzuführung ist kein Vermietungsertrag. Sonst im Abgleich nicht mitgezählt.', frozenset({'WEG'})),
     CategoryMapping('SONDERZAHLUNG', None, '[§/fachlich] Einnahme nur bei WEG-Verwaltung; Eigentümer-Sonderzahlung, keine Miete. Sonst im Abgleich nicht mitgezählt.', frozenset({'WEG'})),

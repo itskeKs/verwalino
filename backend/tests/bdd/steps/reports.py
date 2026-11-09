@@ -135,6 +135,61 @@ def open_anlage_v(world):
     world.data['anlage_v'] = response.json()
 
 
+@given('a WEG with 24000 euros Hausgeld and an 8000 euro repair paid from the reserve in 2026')
+def reserve_paid_repair_year(world, seed_data):
+    from tests.bdd.test_maintenance_reserve_ledger import reserve_scenario
+    from tests.test_reserve_ledger import payment, reserve_evidence
+
+    w = reserve_scenario(world, seed_data)
+    response = world.act('GET', '/api/cost-categories')
+    assert response.status_code == 200, world.describe_response()
+    category = next(row for row in response.json() if row['code'] == 'INSTANDSETZUNG')
+    cost = create(world, '/api/cost-entries', {
+        'property_id': w['property'], 'accounting_scope_id': w['scope'],
+        'cost_category_id': category['id'], 'cost_category_plan_version': category['plan_version'],
+        'invoice_date': '2026-06-01', 'service_period_from': '2026-01-01',
+        'service_period_to': '2026-12-31', 'gross_amount': '8000.00',
+        'tenant_apportionable': 'NICHT_UMLAGEFAEHIG', 'source': 'MANUAL',
+    })
+    response = world.act('POST', f"/api/cost-entries/{cost['id']}/confirm")
+    assert response.status_code == 200, world.describe_response()
+    w['ce_garten'] = cost['id']
+    world.run(payment(world.actor, w, '24000.00', kind='HAUSGELD_VORSCHUSS', when='2026-06-01'))
+    evidence = world.run(reserve_evidence(world.actor, w))
+    world.run(payment(world.actor, w, '8000.00', kind='RUECKLAGENENTNAHME', direction='OUT',
+                      when='2026-06-01', evidence=evidence))
+    world.data['report_query'] = {'property_id': w['property'], 'year': 2026,
+                                 'accounting_scope_id': w['scope']}
+
+
+@then('the year overview shows 24000 euros income, 8000 euros expenses and 16000 euros balance')
+def reserve_paid_repair_totals(world):
+    response = world.act('GET', '/api/reports/property-year', params=world.data['report_query'])
+    assert response.status_code == 200, world.describe_response()
+    overview = response.json()
+    assert (overview['income_total'], overview['expense_total'], overview['balance']) == (
+        '24000.00', '8000.00', '16000.00')
+    assert next(row['amount'] for row in overview['income']
+                if row['payment_type'] == 'RUECKLAGENENTNAHME') == '-8000.00'
+
+
+@then('the reserve payout stays separate as pass-through in the overview CSV and Anlage V')
+def reserve_payout_pass_through(world):
+    response = world.act('GET', '/api/reports/property-year.csv', params=world.data['report_query'])
+    assert response.status_code == 200, world.describe_response()
+    rows = list(csv.reader(io.StringIO(response.content.decode('utf-8-sig')), delimiter=';'))
+    payout = next(row for row in rows if row[3] == 'RUECKLAGENENTNAHME')
+    assert (payout[2], payout[-1]) == ('Durchlaufend', '-8000,00')
+    summary = world.data['anlage_v']
+    payout = next(row for row in summary['unmapped'] if row['code'] == 'RUECKLAGENENTNAHME')
+    assert (payout['section'], payout['amount']) == ('Einnahmen', '-8000.00')
+    assert payout['note'].startswith('[§/fachlich] Durchlaufend:')
+    # Hausgeld remains unassigned income; the pass-through payout contributes zero.
+    assert [(row['unmapped_total'], row['report_total'], row['difference'])
+            for row in summary['reconciliation']] == [
+                ('24000.00', '24000.00', '0.00'), ('0.00', '8000.00', '0.00')]
+
+
 @given('a booked deposit of 2250 euros and a tenant backpayment of 75 euros')
 def deposit_and_backpayment(world):
     deposit_account = bank_account(world, deposit=True)
