@@ -1906,6 +1906,136 @@ async def test_input_roster_keeps_original_plan_owner_after_history_correction(c
     assert await CoverageDeclarationRepository(app_rw_session, org).owner_ids(original) == {w['owner_a'], w['owner_b']}
 
 
+@pytest.mark.parametrize('payload_version', [None, 'm4.2.0', 'm4.3.0', 'm4.3.2', 'm4.4.0'])
+def test_pdf_reserve_payment_source_uses_only_the_frozen_engine_version(payload_version):
+    from types import SimpleNamespace
+    from app.services.weg_jahresabrechnung_pdf import build_weg_jahresabrechnung_html
+
+    owner_id = uuid.UUID(int=1)
+    payload = {'run_type': 'WEG_JAHRESABRECHNUNG',
+        'period': {'start': '2025-01-01', 'end': '2025-12-31'},
+        'result': {'owners': [{'owner_profile_id': str(owner_id), 'owner_cost_total': '4200.00',
+            'abrechnungsspitze': '0.00', 'plan_soll': '7800.00', 'paid': '7800.00',
+            'account_balance': '0.00', 'payment_amount': '0.00'}]}}
+    if payload_version is not None:
+        payload['engine_version'] = payload_version
+    # Deliberately disagree: the frozen payload governs historical rendering.
+    run = SimpleNamespace(snapshot_payload=payload, snapshot_sha256=None,
+        engine_version='m4.3.2' if payload_version == 'm4.4.0' else 'm4.4.0',
+        period_start=date(2025, 1, 1), period_end=date(2025, 12, 31))
+    line = SimpleNamespace(addressee_owner_profile_id=owner_id, line_type='OWNER_COST_TOTAL',
+        label='Summe anteilige Kosten (Ist)', amount=Decimal('4200.00'), sort_order=1)
+    html = build_weg_jahresabrechnung_html(run, [line])
+    sentence = ('Gesondert gebuchte Rücklagenzahlungen zählen nur, soweit das Hausgeld-Soll nicht bereits '
+                'durch Hausgeldzahlungen gedeckt ist; ein Überschuss bleibt in der Rücklage.')
+    assert (sentence in html) == (payload_version == 'm4.4.0')
+    if payload_version != 'm4.4.0':
+        assert '(Periodenzuordnung, einschließlich Erstattungen). Offene oder ungebuchte Zahlungen' in html
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('hausgeld,reserve_in,reserve_out,reverse,paid,balance', [
+    ('7800.00', '1000.00', '0.00', False, '7800.00', '0.00'),
+    ('7000.00', '1500.00', '0.00', False, '7800.00', '0.00'),
+    ('4200.00', '3600.00', '600.00', False, '7200.00', '600.00'),
+    ('7800.00', '0.00', '500.00', False, '7800.00', '0.00'),
+    ('8000.00', '500.00', '0.00', False, '8000.00', '-200.00'),
+    ('4200.00', '3600.00', '0.00', True, '4200.00', '3600.00'),
+], ids=['full-hausgeld', 'partial-hausgeld', 'reserve-refund', 'negative-reserve', 'hausgeld-credit', 'reserve-storno'])
+async def test_separate_reserve_only_covers_unpaid_plan_soll(
+    client_a_admin, m4_seed, hausgeld, reserve_in, reserve_out, reverse, paid, balance,
+):
+    from tests.test_reserve_ledger import payment
+
+    api, w = client_a_admin, m4_seed
+    plan = await _create_and_finalize_plan(api, w)
+    await payment(api, w, hausgeld, kind='HAUSGELD_VORSCHUSS')
+    if Decimal(reserve_in):
+        identifier = await payment(api, w, reserve_in)
+        if reverse:
+            response = await api.post(f'/api/payments/{identifier}/reverse', json={'note': 'Synthetic duplicate'})
+            assert response.status_code == 201, response.text
+    if Decimal(reserve_out):
+        response = await api.post('/api/payments', json={
+            'bank_account_id': w['bank_giro'], 'owner_profile_id': w['owner_a'],
+            'direction': 'OUT', 'amount': reserve_out, 'value_date': '2025-02-01',
+            'payment_type': 'RUECKLAGENANTEIL', 'period_year': 2025, 'period_month': 2})
+        assert response.status_code == 201, response.text
+        booked = await api.post(f"/api/payments/{response.json()['id']}/book")
+        assert booked.status_code == 200, booked.text
+    response = await api.post('/api/weg-settlements', json={
+        'property_id': w['property'], 'economic_plan_id': plan,
+        'period_start': '2025-01-01', 'period_end': '2025-12-31'})
+    assert response.status_code == 201, response.text
+    result = (await finalize_weg_fixture(api, response.json()['id'], w)).json()
+    owner = next(o for o in result['owner_results'] if o['owner_profile_id'] == w['owner_a'])
+    assert (owner['paid'], owner['account_balance'], owner['payment_amount']) == (paid, balance, balance)
+
+
+@pytest.mark.asyncio
+async def test_separate_reserve_without_plan_soll_cannot_cover_negative_hausgeld(client_a_admin, m4_seed):
+    from tests.test_reserve_ledger import payment
+
+    api, w = client_a_admin, m4_seed
+    plan = await _create_and_finalize_plan(api, w)
+    old = (await api.get('/api/ownership', params={'unit_id': w['u1']})).json()[0]
+    response = await api.patch(f"/api/ownership/{old['id']}", json={'valid_to': '2025-06-30'})
+    assert response.status_code == 200, response.text
+    person = await api.post('/api/persons', json={'first_name': 'Clara', 'last_name': 'Successor'})
+    assert person.status_code == 201, person.text
+    successor = await api.post('/api/owner-profiles', json={'person_id': person.json()['id']})
+    assert successor.status_code == 201, successor.text
+    oid = successor.json()['id']
+    response = await api.post('/api/ownership', json={'unit_id': w['u1'], 'owner_profile_id': oid,
+        'valid_from': '2025-07-01'})
+    assert response.status_code == 201, response.text
+    await payment(api, {**w, 'owner_a': oid}, '100.00', kind='HAUSGELD_VORSCHUSS', direction='OUT', when='2025-08-01')
+    await payment(api, {**w, 'owner_a': oid}, '500.00', when='2025-08-01')
+    response = await api.post('/api/weg-settlements', json={
+        'property_id': w['property'], 'economic_plan_id': plan,
+        'period_start': '2025-01-01', 'period_end': '2025-12-31'})
+    assert response.status_code == 201, response.text
+    run = response.json()['id']
+    derived = await api.post(f'/api/weg-settlements/{run}/paid-advances-derived')
+    assert derived.status_code == 200, derived.text
+    values = {'paid_advances': derived.json()}
+    await attest_fixture(api, 'settlement', run, values)
+    result = await api.post(f'/api/weg-settlements/{run}/finalize', json=values)
+    assert result.status_code == 200, result.text
+    owner = next(o for o in result.json()['owner_results'] if o['owner_profile_id'] == oid)
+    assert (owner['account_balance'], owner['payment_amount']) == ('100.00', '2217.26')
+    assert next(o['paid_total'] for o in derived.json() if o['owner_profile_id'] == oid) == '-100.00'
+
+
+@pytest.mark.asyncio
+async def test_separate_reserve_cap_sums_the_owners_two_unit_advances(client_a_admin, m4_seed):
+    from tests.test_reserve_ledger import payment
+
+    api, w = client_a_admin, m4_seed
+    old = (await api.get('/api/ownership', params={'unit_id': w['u2']})).json()[0]
+    response = await api.patch(f"/api/ownership/{old['id']}", json={'valid_to': '2024-12-31'})
+    assert response.status_code == 200, response.text
+    response = await api.post('/api/ownership', json={'unit_id': w['u2'],
+        'owner_profile_id': w['owner_a'], 'valid_from': '2025-01-01'})
+    assert response.status_code == 201, response.text
+    plan = await _create_and_finalize_plan(api, w)
+    await payment(api, w, '7000.00', kind='HAUSGELD_VORSCHUSS')
+    await payment(api, w, '6500.00')
+    response = await api.post('/api/weg-settlements', json={
+        'property_id': w['property'], 'economic_plan_id': plan,
+        'period_start': '2025-01-01', 'period_end': '2025-12-31'})
+    assert response.status_code == 201, response.text
+    run = response.json()['id']
+    values = {'paid_advances': [{'owner_profile_id': w['owner_a'], 'paid_total': '13000.00'}]}
+    await attest_fixture(api, 'settlement', run, values)
+    response = await api.post(f'/api/weg-settlements/{run}/finalize', json=values)
+    assert response.status_code == 200, response.text
+    result = response.json()
+    owner = next(o for o in result['owner_results'] if o['owner_profile_id'] == w['owner_a'])
+    assert (owner['plan_soll'], owner['paid'], owner['account_balance'], owner['payment_amount']) == (
+        '13000.00', '13000.00', '0.00', '0.00')
+
+
 @pytest.mark.asyncio
 async def test_separately_paid_reserve_settles_the_complete_plan(client_a_admin, m4_seed):
     from tests.test_reserve_ledger import payment

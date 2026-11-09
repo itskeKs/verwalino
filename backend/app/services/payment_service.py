@@ -961,20 +961,31 @@ class PaymentService:
 
     async def derive_hausgeld_total_for_period(
         self, owner_profile_id: uuid.UUID, period_start: date, period_end: date,
-        *, property_id: uuid.UUID | None = None, include_reserve: bool = False,
+        *, property_id: uuid.UUID | None = None, plan_soll: Decimal | None = None,
     ) -> Decimal:
-        """Prorate assigned Hausgeld; optionally include separate WEG reserve payments."""
-        types = frozenset({'HAUSGELD_VORSCHUSS', 'RUECKLAGENANTEIL'} if include_reserve else {'HAUSGELD_VORSCHUSS'})
+        """Read net Hausgeld; separate WEG reserve covers only unpaid plan Soll.
+
+        An absent plan Soll never credits reserve, including against negative
+        Hausgeld. The reserve ledger itself remains uncapped (#401).
+        """
         rows = await self._repo.list_for_owner(owner_profile_id, property_id=property_id)
         assigned = [to_payment_input(p) for p in rows if p.period_year is not None]
-        assigned_total = sum((sign * derive_advance_total_for_period(
-            [p for p in assigned if p.direction == direction], AdvanceFilter(
-                types=types, year=year,
-                owner_profile_id=owner_profile_id,
-            ), period_start, period_end)
-            for direction, sign in (("IN", 1), ("OUT", -1))
-            for year in range(period_start.year, period_end.year + 1)), Decimal("0.00"))
         scoped = self._scope_payments_to_period(
             [p for p in rows if p.period_year is None], period_start, period_end)
-        return assigned_total + account_statement([], [to_payment_input(p) for p in scoped
-                                                       if p.payment_type in types]).ist_total
+        totals = {}
+        types = ('HAUSGELD_VORSCHUSS', 'RUECKLAGENANTEIL') if plan_soll is not None else ('HAUSGELD_VORSCHUSS',)
+        for payment_type in types:
+            assigned_total = sum((sign * derive_advance_total_for_period(
+                [p for p in assigned if p.direction == direction], AdvanceFilter(
+                    types=frozenset({payment_type}), year=year,
+                    owner_profile_id=owner_profile_id,
+                ), period_start, period_end)
+                for direction, sign in (("IN", 1), ("OUT", -1))
+                for year in range(period_start.year, period_end.year + 1)), Decimal("0.00"))
+            totals[payment_type] = assigned_total + account_statement(
+                [], [to_payment_input(p) for p in scoped if p.payment_type == payment_type]).ist_total
+        hausgeld = totals['HAUSGELD_VORSCHUSS']
+        if plan_soll is None:
+            return hausgeld
+        return hausgeld + min(max(totals['RUECKLAGENANTEIL'], Decimal('0.00')),
+                              max(plan_soll - hausgeld, Decimal('0.00')))

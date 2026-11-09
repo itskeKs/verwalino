@@ -109,8 +109,20 @@ separate `RESERVE_SOLL` line when the share is nonzero.
 For costs of 7,000.00 and planned reserve of 6,000.00, owners with 600/400 MEA
 have costs of 4,200.00/2,800.00, reserve Soll of 3,600.00/2,400.00 and plan advances
 of 7,800.00/5,200.00. Both Spitzen are zero when actual costs equal planned costs.
-Booked payments remain separate: annual settlement payment totals count both
-`HAUSGELD_VORSCHUSS` and separately booked `RUECKLAGENANTEIL`, using identical
-owner, property, period and signed IN/OUT/Storno rules. Other Hausgeld derivations
-retain their existing payment-type selection. Finalized runs are never recalculated; historical
-payloads, digests and PDF bytes remain unchanged.
+Booked payments remain separate. Under owner decision 1(b), 2026-11-09, let `H`
+be net booked `HAUSGELD_VORSCHUSS`, `R` net booked `RUECKLAGENANTEIL`, and `Soll`
+the owner's summed `OWNER_ADVANCE` over all units. WEG paid is
+`H + min(max(R, 0), max(Soll − H, 0))`; without plan Soll, reserve adds nothing,
+even when `H` is negative. Both nets use identical owner, property, period and signed
+IN/OUT/Storno rules. Hausgeld overpayments retain their full credit; negative net
+reserve adds nothing. Excess separate reserve stays in the uncapped reserve ledger
+and cannot offset higher actual costs. Other Hausgeld and rental/BK derivations retain
+their existing selection. Payments change only account balance and payment amount,
+never the Spitze.
+
+The frozen plan has per-owner/unit `OWNER_ADVANCE` and property-wide `PLANNED_COST`
+lines but no per-owner planned cost share, so owner decision 2 uses fallback (a):
+canonical `reserve_plan_cells`. Independent rounding of costs, reserve Soll and
+Hausgeld Soll can leave an accepted ±0.01 Spitze per owner when costs match the
+plan, while the aggregate remains exact. Finalized runs are never recalculated;
+historical payloads, digests and PDF bytes remain unchanged.

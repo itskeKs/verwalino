@@ -249,6 +249,12 @@ The settlement discloses, per owner, in a **structured** way (in `settlement_lin
 | **Reserve development** (property-wide) | dedicated `RESERVE_*` lines (§3.3) | Opening/contribution/withdrawal/closing. |
 | **(For information) advance payments actually made / payment status** | `settlement_line(line_type='ADVANCE_PAYMENT')` optional + payload | **separate** from the balance (§2.1); derived from booked Hausgeld (§2.4); older snapshots retain their captured values. |
 
+The frozen economic plan contains per-owner/unit `OWNER_ADVANCE` and property-wide
+`PLANNED_COST` lines but no per-owner planned cost share, so #401 owner decision 2
+uses fallback (a): canonical reserve plan cells. Independently rounded costs,
+reserve Soll and Hausgeld Soll may leave an accepted ±0.01 Spitze per owner when
+costs match the plan, while the aggregate remains exact.
+
 ### 2.3 Separation of Allocable / Non-Allocable / Reserve (SDD §6.3, §7.3, §11)
 
 Unlike the operating cost tenant settlement (which shows only allocable costs (umlagefähig)), the **owner settlement discloses all three groups**, but **separately** — `cost_category.cost_group` supplies the group directly (already seeded):
@@ -270,9 +276,13 @@ The engine sums **three subtotals** per owner (`SUBTOTAL` lines): Σ allocable, 
   It does not determine the settlement's reserve Soll. Σ equals the linked plan's
   `reserve_contribution_total`; there is no second distribution. It stays outside
   `owner_cost_total`: `abrechnungsspitze = owner_cost_total + plan_reserve_soll − plan_advance`.
-- **Actual payments:** new annual settlements derive net booked, non-reversed
-  `HAUSGELD_VORSCHUSS` and separately booked `RUECKLAGENANTEIL` payments of the owner
-  and property, with identical signed IN/OUT/Storno rules. Other Hausgeld derivations
+- **Actual payments:** let `H` be net booked `HAUSGELD_VORSCHUSS`, `R` net booked
+  `RUECKLAGENANTEIL`, and `Soll` the owner's summed `OWNER_ADVANCE` amounts over all
+  units. New annual settlements use `paid = H + min(max(R, 0), max(Soll − H, 0))`.
+  An owner without plan Soll receives no reserve credit, even with negative `H`.
+  Hausgeld overpayments keep their full credit; negative net reserve adds nothing.
+  Excess reserve stays in the uncapped reserve ledger and cannot offset higher actual
+  costs. Both net sums use the same owner, property and signed IN/OUT/Storno rules. Other Hausgeld derivations
   keep their existing payment-type selection. An explicit period year/month takes
   precedence over the value date (December 2026 assigned to a January 2027 receipt
   still belongs to December). Assigned annual amounts are split into stable calendar-month
@@ -284,7 +294,8 @@ The engine sums **three subtotals** per owner (`SUBTOTAL` lines): Σ allocable, 
   Payments stay with their assigned owner after an ownership change; there is no transfer
   of a predecessor's arrears. Manual coverage entries cannot create paid amounts.
   A successor with only booked payments is included even with no cost or plan lines:
-  costs, plan Soll and Spitze remain zero, while the payment remains their own credit.
+  costs, plan Soll and Spitze remain zero, while net Hausgeld remains their own credit;
+  separate reserve payments without plan Soll do not create a credit.
 - **Displayed account balance:** `account_balance = plan_soll − paid` (positive arrears,
   negative credit). `payment_amount = abrechnungsspitze + account_balance`. These are
   informational amounts, not a new fee, claim, resolution or dunning action.

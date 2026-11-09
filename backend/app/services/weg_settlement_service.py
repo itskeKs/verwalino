@@ -627,10 +627,13 @@ class WegSettlementService:
         subject = SimpleNamespace(property_id=plan.property_id, period_start=start, period_end=end,
                                   economic_plan_id=plan.id, run_type='WEG_JAHRESABRECHNUNG')
         owner_ids = await CoverageDeclarationRepository(self._session, self._org_id).owner_ids(subject)
+        plan_soll = {p.owner_profile_id: p.plan_advance_total
+                     for p in await self._plan_advances_per_owner(economic_plan_id)}
         result: list[ManualOwnerAdvance] = []
         for owner_id in sorted(owner_ids, key=str):
             total = await pay_svc.derive_hausgeld_total_for_period(
-                uuid.UUID(owner_id), start, end, property_id=plan.property_id, include_reserve=True)
+                uuid.UUID(owner_id), start, end, property_id=plan.property_id,
+                plan_soll=plan_soll.get(uuid.UUID(owner_id)))
             result.append(
                 ManualOwnerAdvance(owner_profile_id=uuid.UUID(owner_id), paid_total=total)
             )

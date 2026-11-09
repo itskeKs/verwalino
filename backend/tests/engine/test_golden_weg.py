@@ -107,6 +107,26 @@ def test_owner_with_only_planned_reserve_has_a_billed_result():
     assert owner.reserve_notice is None
 
 
+def test_equal_mea_keeps_canonical_reserve_cents_and_exact_aggregate_spitze():
+    # The frozen plan has no per-owner planned cost share: #401 decision 2(a).
+    inp = TestGolden2Abrechnungsspitze()._scenario()
+    advances = ('66.67', '66.67', '66.66')
+    reserves = ('33.34', '33.33', '33.33')
+    inp = replace(inp,
+        units=tuple(replace(inp.units[0], id=_U(11 + i), number=str(i + 1), mea=Decimal('1')) for i in range(3)),
+        owner_periods=tuple(replace(inp.owner_periods[0], unit_id=_U(11 + i), owner_profile_id=_U(21 + i)) for i in range(3)),
+        cost_positions=(replace(inp.cost_positions[0], gross_amount=Decimal('100.00')),),
+        plan_advances=tuple(OwnerAdvanceInput(_U(21 + i), Decimal(amount)) for i, amount in enumerate(advances)),
+        plan_reserve=tuple(OwnerAdvanceInput(_U(21 + i), Decimal(amount)) for i, amount in enumerate(reserves)))
+    result = compute_weg_jahresabrechnung(inp)
+    assert [o.owner_cost_total for o in result.owners] == list(map(Decimal, reserves))
+    assert [o.plan_advance for o in result.owners] == list(map(Decimal, advances))
+    assert [o.plan_reserve_soll for o in result.owners] == list(map(Decimal, reserves))
+    assert [o.abrechnungsspitze for o in result.owners] == list(map(Decimal, ('0.01', '-0.01', '0.00')))
+    assert all(abs(o.abrechnungsspitze) <= Decimal('0.01') for o in result.owners)
+    assert result.abrechnungsspitze_total == Decimal('0.00')
+
+
 def test_owner_change_never_transfers_payments_to_the_successor():
     inp = TestGolden2Abrechnungsspitze()._scenario()
     inp = replace(inp, units=(inp.units[0],), owner_periods=(
