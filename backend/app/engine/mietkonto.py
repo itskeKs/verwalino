@@ -158,14 +158,14 @@ class LeaseChargeInput:
 class OwnerAdvanceChargeInput:
     """Frozen copy of an OWNER_ADVANCE economic_plan_line (m6 section 2.2).
 
-    monthly_amount is the M4-computed monatsbasierte Hausgeld rate (ADR-0007
-    E4-3b). One line per (owner, unit); the owner Soll per month is the SUM
-    over the owner's units (exact, no re-rounding -- m6 section 2.2).
+    annual_amount is the frozen planned_amount, split into twelve cent-exact
+    installments (ADR-0007 E4-3b). One line per (owner, unit); the owner Soll
+    per month sums the installments over their units (m6 section 2.2).
     """
 
     owner_profile_id: uuid.UUID
     unit_id: uuid.UUID | None
-    monthly_amount: Decimal
+    annual_amount: Decimal
 
 
 @dataclass(frozen=True)
@@ -401,38 +401,47 @@ def owner_expected_charges(
 ) -> list[ExpectedCharge]:
     """Monthly owner Hausgeld Soll over the period (m6 section 2.2).
 
-    The frozen monthly volume stays with its unit. Dated ownership assigns it
+    Each annual advance yields twelve largest-remainder installments, indexed
+    from the plan's first calendar month. The volume stays with its unit.
+    Dated ownership assigns each month's installment
     to that month's owners, splitting a transfer month by inclusive owner-days
     and concurrent successors by positive mea_share. Continuing co-owners retain
     their frozen cents; only departed owners' rates pass to successors. Ambiguous
-    transfers fail instead of moving other shares. Largest-remainder rounding
-    preserves the unit total. Without history, retain the frozen owner amounts.
+    transfers fail instead of moving other shares. Each holder carries one rate
+    per installment, so one walk from the plan's beginning applies every
+    transfer to all twelve installments and month k uses installment k.
+    Largest-remainder rounding preserves the unit total.
+    Without history, retain each frozen owner's own installments.
 
     [F6-5] no finalized plan => caller passes no advance_lines => empty Soll
     (the Hausgeld-Konto then shows only Ist, no Soll abgleich); the engine does
     not invent a Soll.
     """
     charges: list[ExpectedCharge] = []
-    inherited_rates: dict[uuid.UUID, dict[uuid.UUID, Decimal]] = {}
-    for year, month in _months_in_period(plan_start or period_start, period_end):
-        m_first, m_last = _month_bounds(year, month)
-        days_in_month = day_count(m_first, m_last)
-        monthly_total = Decimal("0.00")
-        if owner_periods is None:
-            monthly_total = sum((ln.monthly_amount for ln in advance_lines
+    installments = [(ln, distribute_amount(ln.annual_amount, [Decimal(1)] * 12)) for ln in advance_lines]
+    months = _months_in_period(plan_start or period_start, period_end)[:12]
+    monthly_totals = [Decimal("0.00")] * len(months)
+    if owner_periods is None:
+        for k in range(len(months)):
+            monthly_totals[k] = sum((amounts[k] for ln, amounts in installments
                 if ln.owner_profile_id == owner_profile_id), Decimal("0.00"))
-        else:
-            # Only a unit's own frozen advance funds its dated successors.
-            unit_totals: dict[uuid.UUID, Decimal] = {}
-            for ln in advance_lines:
-                if ln.unit_id is None:
-                    raise ValueError("Hausgeld plan line has no unit")
-                unit_totals[ln.unit_id] = unit_totals.get(ln.unit_id, Decimal(0)) + ln.monthly_amount
-            for unit, total in sorted(unit_totals.items(), key=lambda pair: str(pair[0])):
-                if not total:
-                    continue
-                previous = inherited_rates.setdefault(unit,
-                    {ln.owner_profile_id: ln.monthly_amount for ln in advance_lines if ln.unit_id == unit})
+    else:
+        # Only a unit's own frozen advance funds its dated successors.
+        unit_lines: dict[uuid.UUID, list[tuple[uuid.UUID, list[Decimal]]]] = {}
+        for ln, amounts in installments:
+            if ln.unit_id is None:
+                raise ValueError("Hausgeld plan line has no unit")
+            unit_lines.setdefault(ln.unit_id, []).append((ln.owner_profile_id, amounts))
+        for unit, lines_here in sorted(unit_lines.items(), key=lambda pair: str(pair[0])):
+            unit_totals = [sum((amounts[k] for _, amounts in lines_here), Decimal(0)) for k in range(len(months))]
+            nonzero = [k for k, total in enumerate(unit_totals) if total]
+            if not nonzero:
+                continue
+            # Each holder carries one rate per installment index, so one walk
+            # from the plan start applies every transfer to all installments.
+            previous = {oid: list(amounts) for oid, amounts in lines_here}
+            for k, (year, month) in enumerate(months[:nonzero[-1] + 1]):
+                m_first, m_last = _month_bounds(year, month)
                 cover = build_owner_cover(unit, m_first, m_last, owner_periods)
                 boundaries = sorted({m_first, *(p.start for p in cover),
                     *(date.fromordinal(p.end.toordinal() + 1) for p in cover if p.end < m_last)})
@@ -443,9 +452,8 @@ def owner_expected_charges(
                     if len(owners) > 1 and any(o.mea_share is None or o.mea_share <= 0 for o in owners):
                         raise ValueError("Co-ownership requires positive shares for Hausgeld")
                     active = {o.owner_profile_id for o in owners}
-                    rates = {oid: amount for oid, amount in previous.items() if oid in active}
+                    rates = {oid: vector for oid, vector in previous.items() if oid in active}
                     departed = set(previous) - active
-                    transferred = sum((previous[oid] for oid in departed), Decimal(0))
                     successors = [o for o in owners if o.owner_profile_id not in previous]
                     # A sole remaining co-owner is an unambiguous full buyer.
                     if departed and not successors and len(owners) == 1:
@@ -455,17 +463,23 @@ def owner_expected_charges(
                     if len(departed) > 1 and len(successors) > 1:
                         raise ValueError("Several concurrent transfers do not identify individual successors")
                     if successors:
-                        parts = distribute_amount(transferred,
-                            [o.mea_share if len(successors) > 1 else Decimal(1) for o in successors])
-                        for op, amount in zip(successors, parts):
-                            rates[op.owner_profile_id] = rates.get(op.owner_profile_id, Decimal(0)) + amount
+                        shares = [o.mea_share if len(successors) > 1 else Decimal(1) for o in successors]
+                        received = {o.owner_profile_id: list(rates.get(o.owner_profile_id, [Decimal(0)] * 12))
+                            for o in successors}
+                        for c in range(12):
+                            transferred = sum((previous[oid][c] for oid in departed), Decimal(0))
+                            for op, amount in zip(successors, distribute_amount(transferred, shares)):
+                                received[op.owner_profile_id][c] += amount
+                        rates.update(received)
                     previous = rates
-                    inherited_rates[unit] = rates
-                    for oid, rate in rates.items():
-                        weights[oid] = weights.get(oid, Decimal(0)) + rate * (end - start.toordinal() + 1)
-                ids = sorted(weights, key=str)
-                amounts = distribute_amount(total, [weights[oid] for oid in ids])
-                monthly_total += dict(zip(ids, amounts)).get(owner_profile_id, Decimal(0))
+                    for oid, vector in rates.items():
+                        weights[oid] = weights.get(oid, Decimal(0)) + vector[k] * (end - start.toordinal() + 1)
+                if unit_totals[k]:
+                    ids = sorted(weights, key=str)
+                    amounts = distribute_amount(unit_totals[k], [weights[oid] for oid in ids])
+                    monthly_totals[k] += dict(zip(ids, amounts)).get(owner_profile_id, Decimal(0))
+    for (year, month), monthly_total in zip(months, monthly_totals):
+        days_in_month = day_count(*_month_bounds(year, month))
         if monthly_total and (year, month) >= (period_start.year, period_start.month):
             charges.append(ExpectedCharge(period_year=year, period_month=month,
                 payment_type=PT_HAUSGELD_VORSCHUSS, amount=monthly_total,

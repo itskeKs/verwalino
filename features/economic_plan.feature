@@ -2,6 +2,12 @@ Feature: Monthly Hausgeld follows the resolved calendar day
   A selected calendar day moves forward over weekends and public holidays.
   Without a different resolution, the first of the month is selected.
 
+  Scenario: The annual Hausgeld is charged exactly in twelve installments
+    Given a finalized plan with annual Hausgeld of 1000 euros for one owner
+    When the manager reads the owner's full-year ledger for 2026
+    Then the total expected Hausgeld is 1000 euros
+    And the first four monthly installments are 83.34 euros and the remaining eight are 83.33 euros
+
   Scenario Outline: The owner ledger distinguishes future Hausgeld from overdue debt
     Given a finalized plan with monthly Hausgeld of 600 euros and due day <day>
     When the manager reads the owner's <month> ledger on <before>
