@@ -6,3 +6,7 @@ services:
       HV_DEPLOYMENT_MODE: ${HV_DEPLOYMENT_MODE:-selfhost}
       HV_PUBLIC_HOST: ${HV_PUBLIC_HOST:?set the public hostname in the private hosted app config}
       HV_ALLOWED_HOSTS: ${HV_ALLOWED_HOSTS:?include the public hostname in the private hosted app config}
+  declaration-worker:
+    # The worker validates provider destinations by the deployment mode; it needs no host settings.
+    environment:
+      HV_DEPLOYMENT_MODE: ${HV_DEPLOYMENT_MODE:-selfhost}
