@@ -1534,11 +1534,17 @@ that revision's snippets before image pulls or service operations. The three pub
 exported with mode 0644 so the isolated validator can read them; private configuration stays mode 0600.
 The staging app and operations containers each mount one writable `/tmp` tmpfs, limited to 128 MiB
 with `noexec` and `nosuid`.
+The forced command executes `/srv/verwalino/app/scripts/deploy-server.sh` from the production
+release checkout, so the stop/start order and worker startup below arrive only with a production
+release containing this script. Before that release, staging deployments from main still execute
+the older script, which recreates only `staging-app`.
 It then resolves a registry digest without moving the
-production checkout, starts the staging database, stops the staging app and declaration worker together,
-migrates, recreates the app, waits for health and probes readiness inside the container.
-It then starts the declaration worker and waits for health before recording the digest and SHA
-in `.env.staging`. An unhealthy worker fails the deploy without changing that file and releases
+production checkout and starts the staging database. When the exported Compose file defines a declaration
+worker, it stops the staging app and worker together before migration; otherwise it stops only the app
+through Compose and stops any running newer worker by its staging project and service labels before
+migration. It then migrates, recreates the app, waits for health and probes readiness inside the container.
+If defined, it starts the declaration worker and waits for health before recording the digest and SHA
+in `.env.staging`; an absent worker is not restarted. An unhealthy defined worker fails the deploy without changing that file and releases
 the deploy lock; no config lock is acquired. The log prints the previous successful
 SHA. To roll back staging, send `staging <previous-sha>` with the same key; an older image must be compatible
 with the migrated schema. There is no automatic schema downgrade or rollback.

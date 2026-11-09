@@ -173,13 +173,20 @@ pull or staging service operation. This checks main's `Caddyfile.staging`, but t
 live proxy mounts the snippets from the production release checkout. Staging
 routing changes therefore reach the live proxy only with a production release;
 a staging deployment does not apply them. Invalid configuration leaves production Caddy
-and both private env files untouched. It then pulls its **`:sha-<sha>`
+and both private env files untouched. The forced command executes
+`/srv/verwalino/app/scripts/deploy-server.sh` from the production release checkout, so the
+stop/start order and worker startup below arrive only with a production release containing this
+script. Before that release, staging deployments from main still execute the older script, which
+recreates only `staging-app`. It then pulls its **`:sha-<sha>`
 image**, verifies a matching registry SHA-256 digest exists and uses that digest
 for Compose. It exports only staging runtime files without moving the production
-checkout or changing its config. It starts the staging database, stops the app and
-declaration worker together, migrates, recreates the app, waits for health and probes
-readiness inside the container. It then starts the declaration worker and waits for
-its health. Only after both are healthy does it atomically record the digest and SHA in
+checkout or changing its config. It starts the staging database and, when the exported Compose
+file defines a declaration worker, stops the app and worker together before migration.
+Otherwise, it stops only the app through Compose and stops any running newer worker by its
+staging project and service labels before migration; that worker is not restarted.
+It then migrates, recreates the app, waits for health and probes readiness inside the container.
+If defined, it starts the declaration worker and waits for its health. Only after the app and
+any defined worker are healthy does it atomically record the digest and SHA in
 `.env.staging`. Logs print the previous successful staging SHA/image and live in
 private `/srv/verwalino/logs/deploy-staging-<timestamp>.log` files.
 An unhealthy worker fails the deploy before recording either value and releases
