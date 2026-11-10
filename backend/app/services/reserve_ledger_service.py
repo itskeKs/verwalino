@@ -6,15 +6,19 @@ from fastapi import HTTPException
 from sqlalchemy.exc import DBAPIError
 
 from app.core.rbac import ScopeCapability
-from app.engine.reserve_ledger import money, reserve_totals
+from app.engine.reserve_ledger import money, planned_reserve_per_owner, reserve_contribution_correction, reserve_totals
 from app.models.audit_event import AuditEvent
 from app.models.reserve_ledger_entry import ReserveLedgerEntry
 from app.repositories.audit_repo import AuditRepository
+from app.repositories.economic_plan_repo import EconomicPlanLineRepository
 from app.repositories.reserve_ledger_repo import ReserveLedgerRepository
 from app.repositories.settlement_repo import SettlementLineRepository, SettlementRunRepository
 from app.services.financial_scope_service import FinancialScopeService
 
 ZERO = Decimal('0.00')
+SPLIT_RESERVE_CORRECTION_REASON = 'Rücklagenanteil bereits im Hausgeld-Soll enthalten'
+# Structured marker of split-payer correction rows; readers never match the display text.
+SPLIT_RESERVE_CORRECTION = 'SPLIT_RESERVE'
 OPENING_IMPORT_ONLY = {'code': 'RESERVE_OPENING_IMPORT_ONLY', 'message': 'Ein Import des Anfangsbestands ist nur im ersten Rücklagenjahr vor der Finalisierung zulässig und nur, wenn kein anderer, abweichender Rücklagenzeitraum besteht.'}
 OPENING_IMPORT_EXISTS = {'code': 'RESERVE_OPENING_IMPORT_EXISTS', 'message': 'Nach dem Import eines Anfangsbestands können Sie keinen früheren oder abweichenden, überlappenden Abrechnungszeitraum anlegen.'}
 DERIVED_TOTAL_READ_ONLY = {'code': 'RESERVE_DERIVED_TOTAL_READ_ONLY', 'message': 'Zuführungen und Entnahmen werden aus Buchungen abgeleitet; Korrekturen erfolgen mit Bezug im Rücklagenbuch.'}
@@ -119,6 +123,7 @@ class ReserveLedgerService:
         contributions, withdrawals, overrides, late_cash = ZERO, ZERO, ZERO, ZERO
         unlinked = []
         payments = await self.repo.payments(run, start)
+        payment_by_id = {str(p.id): p for p in payments}
         payments = [p for p in payments if p.value_date >= run.period_start or (
             str(p.id) not in consumed and any(r.period_start <= p.value_date <= r.period_end
                 and ('reserve_ledger' in (r.snapshot_payload or {}) or p.booked_at > r.finalized_at)
@@ -126,8 +131,9 @@ class ReserveLedgerService:
         payment_ids = {p.id for p in payments}
         owner_units = await self.repo.owner_units(payments)
         cash_plans = await self.repo.cash_plans(run, start) if any(
-            p.payment_type == 'HAUSGELD_VORSCHUSS' and p.value_date < run.period_start
+            p.payment_type in ('HAUSGELD_VORSCHUSS', 'RUECKLAGENANTEIL') and p.value_date < run.period_start
             for p in payments) else []
+        hausgeld_cash, reserve_cash, hausgeld_contributions = {}, {}, {}
         for payment in payments:
             signed = payment.amount if payment.direction == 'IN' else -payment.amount
             owner = str(payment.owner_profile_id)
@@ -162,6 +168,13 @@ class ReserveLedgerService:
                                  'payment_id': str(payment.id), 'bank_account_id': str(payment.bank_account_id),
                                  'owner_profile_id': owner})
             late = payment.value_date < run.period_start
+            if not late:
+                if payment.payment_type == 'RUECKLAGENANTEIL':
+                    reserve_cash[owner] = reserve_cash.get(owner, ZERO) + signed
+                elif payment.payment_type == 'HAUSGELD_VORSCHUSS':
+                    hausgeld_cash[owner] = hausgeld_cash.get(owner, ZERO) + signed
+                    if actual is not None:
+                        hausgeld_contributions[owner] = hausgeld_contributions.get(owner, ZERO) + actual
             if actual is not None:
                 if late:
                     late_cash += actual
@@ -188,6 +201,81 @@ class ReserveLedgerService:
                              'reason': (link.reason if link else payment.note) if backed else 'Kostenbeleg und Beschluss noch nicht verknüpft'})
                 if not backed and not (payment.reversed_by_id in payment_ids or payment.reverses_id in payment_ids):
                     unlinked.append(str(payment.id))
+        if plan and reserve_cash:
+            soll = {str(owner): amount for owner, amount in (
+                await EconomicPlanLineRepository(self.session, self.org_id).advance_totals_per_owner(plan.id)).items()}
+            planned = planned_reserve_per_owner(rows)
+            for owner, reserve in sorted(reserve_cash.items()):
+                if owner not in soll:
+                    continue
+                correction = reserve_contribution_correction(hausgeld_cash.get(owner, ZERO), reserve, soll[owner],
+                    hausgeld_contributions.get(owner, ZERO), planned.get(owner, ZERO))
+                if correction > ZERO:
+                    contributions -= correction
+                    rows.append({'kind': 'CONTRIBUTION', 'date': str(run.period_end),
+                                 'amount': format(-correction, '.2f'), 'owner_profile_id': owner,
+                                 'reason': SPLIT_RESERVE_CORRECTION_REASON, 'correction': SPLIT_RESERVE_CORRECTION})
+        late_shares = {row['payment_id']: Decimal(row['amount']) for row in rows
+                       if row['kind'] == 'LATE_CASH' and row.get('component') == 'CONTRIBUTION'}
+        correction_history = {}
+        for historical in history:
+            correction_history.setdefault((historical.period_start, historical.period_end), historical)
+        stored_corrections = [row for historical in correction_history.values()
+            for row in (historical.snapshot_payload or {}).get('reserve_ledger', {}).get('entries', [])
+            if not row.get('payment_id') and row.get('correction') == SPLIT_RESERVE_CORRECTION
+            and (row['kind'] == 'CONTRIBUTION' or row['kind'] == 'LATE_CASH' and row.get('component') == 'CONTRIBUTION')]
+        corrected_periods = set()
+        for historical in history:
+            source_id = (historical.snapshot_payload or {}).get('reserve_ledger', {}).get('economic_plan_id')
+            period = (historical.period_start, historical.period_end)
+            if not source_id or period in corrected_periods:
+                continue
+            late_payments = [p for p in payments if historical.period_start <= p.value_date <= historical.period_end
+                             and p.payment_type in ('HAUSGELD_VORSCHUSS', 'RUECKLAGENANTEIL')]
+            if not late_payments:
+                continue
+            # Annual statements and asset reports may freeze the same period.
+            corrected_periods.add(period)
+            historical_plan = next((p for p in cash_plans if str(p.id) == source_id), None)
+            if historical_plan is None:
+                raise HTTPException(404, {'code': 'RESERVE_NOT_FOUND', 'message': 'Rücklagenabrechnung nicht gefunden.'})
+            soll = {str(owner): amount for owner, amount in (
+                await EconomicPlanLineRepository(self.session, self.org_id).advance_totals_per_owner(historical_plan.id)).items()}
+            planned = planned_reserve_per_owner(await self.repo.plan_rows(historical_plan))
+            frozen_states = {str(p.owner_profile_id): {'hausgeld': ZERO, 'reserve': ZERO, 'hausgeld_share': ZERO}
+                             for p in late_payments if str(p.owner_profile_id) in soll}
+            for identifier, row in frozen_cash.items():
+                owner = row.get('owner_profile_id')
+                payment = payment_by_id.get(identifier)
+                if (owner not in frozen_states or payment is None
+                        or not str(historical.period_start) <= row['date'] <= str(historical.period_end)
+                        or payment.payment_type not in ('HAUSGELD_VORSCHUSS', 'RUECKLAGENANTEIL')):
+                    continue
+                signed = payment.amount if payment.direction == 'IN' else -payment.amount
+                state = frozen_states[owner]
+                state['hausgeld' if payment.payment_type == 'HAUSGELD_VORSCHUSS' else 'reserve'] += signed
+                if payment.payment_type == 'HAUSGELD_VORSCHUSS':
+                    state['hausgeld_share'] += Decimal(row['amount'])
+            new_states = {owner: state.copy() for owner, state in frozen_states.items()}
+            for payment in late_payments:
+                state = new_states.get(str(payment.owner_profile_id))
+                if state is None:
+                    continue
+                signed = payment.amount if payment.direction == 'IN' else -payment.amount
+                state['hausgeld' if payment.payment_type == 'HAUSGELD_VORSCHUSS' else 'reserve'] += signed
+                if payment.payment_type == 'HAUSGELD_VORSCHUSS':
+                    state['hausgeld_share'] += late_shares.get(str(payment.id), ZERO)
+            for owner in sorted(frozen_states):
+                stored = -sum((Decimal(row['amount']) for row in stored_corrections
+                    if row.get('owner_profile_id') == owner
+                    and str(historical.period_start) <= row['date'] <= str(historical.period_end)), ZERO)
+                delta = stored - reserve_contribution_correction(
+                    **new_states[owner], plan_soll=soll[owner], planned_reserve=planned.get(owner, ZERO))
+                if delta:
+                    late_cash += delta
+                    rows.append({'kind': 'LATE_CASH', 'component': 'CONTRIBUTION', 'date': str(historical.period_end),
+                                 'amount': format(delta, '.2f'), 'owner_profile_id': owner,
+                                 'reason': SPLIT_RESERVE_CORRECTION_REASON, 'correction': SPLIT_RESERVE_CORRECTION})
         reversed_amounts = {}
         for entry in entries:
             if entry.reverses_entry_id:
