@@ -92,7 +92,7 @@ function SourceSecurityControl({ decision }: { decision: ActivationDecision | nu
     {!pause && <>{decision ? <p className="break-all">Ausgewählter Prüfstand: {decision.snapshot_id}</p>
       : <p>Zum Aktivieren oder Wiederaufnehmen unten einen aktuellen Prüfstand prüfen, die Altbestandsentscheidung speichern und als Grundlage auswählen.</p>}
       {state?.mode === "PAUSED" && <p>Die Wiederaufnahme benötigt einen neuen Prüfstand nach der letzten Pause.</p>}</>}
-    <label className="block space-y-1">Begründung der Umstellung<textarea className="input w-full" maxLength={2000} value={reason} disabled={busy} onChange={event => setReason(event.target.value)} /></label>
+    <label className="block space-y-1">Begründung der Umstellung<textarea className="w-full" maxLength={2000} value={reason} disabled={busy} onChange={event => setReason(event.target.value)} /></label>
     <label className="flex items-start gap-2"><input type="checkbox" checked={ack} disabled={busy || loading || !allowed} onChange={event => setAck(event.target.checked)} /><span>{pause
       ? "Ich bestätige die Pause der Aktionen bei weiterhin eingeschränkten Leserechten."
       : "Ich bestätige die Umstellung anhand des ausgewählten Prüfstands und die dauerhafte Durchsetzung der geprüften Zugriffsregeln."}</span></label>

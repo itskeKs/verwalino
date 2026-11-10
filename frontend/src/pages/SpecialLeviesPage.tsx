@@ -177,7 +177,7 @@ export default function SpecialLeviesPage() {
       {canWrite && prepareScope === row.accounting_scope_id && prepareValid && <div>
         <label>Beschluss einmalig zuordnen<select className="w-full min-w-0" value={linkChoices[row.id] ?? ""} disabled={pending || !!resolutionError}
           onChange={event => setLinkChoices(items => ({ ...items, [row.id]: event.target.value }))}>{resolutionOptions()}</select></label>
-        <p className="form-hint">Der Beschlussbezug wird einmalig festgeschrieben. Betrag, Fälligkeit und Anteile bleiben unverändert.</p>
+        <p className="muted">Der Beschlussbezug wird einmalig festgeschrieben. Betrag, Fälligkeit und Anteile bleiben unverändert.</p>
         <button className="btn" disabled={pending || !linkChoices[row.id]} onClick={() => linkResolution(row)}>Beschluss zuordnen</button>
       </div>}
     </>;

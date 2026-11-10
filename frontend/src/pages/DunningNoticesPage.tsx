@@ -648,7 +648,7 @@ export function DunningNoticesPage() {
               value={recipientType === "tenant" ? tenantForm.accounting_scope_id : ownerForm.accounting_scope_id}
               onChange={accounting_scope_id => recipientType === "tenant"
                 ? setTenantForm({ ...tenantForm, accounting_scope_id }) : setOwnerForm({ ...ownerForm, accounting_scope_id })} />
-            <p className="form-hint">Für bereits zugeordnete Zahlungen einen Abrechnungskreis wählen. Fällige Sonderumlagen können im WEG-Abrechnungskreis auch ohne Wirtschaftsplan gemahnt werden.</p>
+            <p className="muted">Für bereits zugeordnete Zahlungen einen Abrechnungskreis wählen. Fällige Sonderumlagen können im WEG-Abrechnungskreis auch ohne Wirtschaftsplan gemahnt werden.</p>
             <div className="form-actions">
               <button
                 type="submit"

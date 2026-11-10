@@ -127,7 +127,7 @@ function MailDispatchPanel({ kind, documentId, canSend }: Props & { canSend: boo
     </div>}
     <h3>Versandhistorie</h3>
     {data && !data.attempts.length && <p>Noch keine Versandversuche.</p>}
-    {!!data?.attempts.length && <div className="table-responsive"><table className="data-table">
+    {!!data?.attempts.length && <div className="overflow-x-auto"><table className="data-table">
       <thead><tr><th>Person</th><th>E-Mail</th><th>Status</th><th>Vorbereitet am</th><th>Abgeschlossen am</th><th>Versand-PDF</th></tr></thead>
       <tbody>{[...data.attempts].sort((a, b) => b.created_at.localeCompare(a.created_at)).map(attempt => <tr key={attempt.id}>
         <td>{data.recipients.find(item => item.person_id === attempt.person_id)?.name ?? attempt.person_id}</td>
