@@ -2,7 +2,6 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import * as api from "../api/endpoints";
-import { centsFromDecimal, formatMoney } from "../lib/format";
 import { MemoryRouter } from "react-router-dom";
 import { MietkontoPage } from "./MietkontoPage";
 
@@ -82,10 +81,10 @@ it("keeps the full-year balance and labels only the selected cutoff's due part a
   expect(saldo).not.toHaveTextContent(/R[uü]e?ckstand/);
   expect(screen.getByText("davon fällig").closest("tr")).toHaveTextContent("100,00 € (Rückstand)");
   expect(screen.getAllByText("noch nicht fällig")[0].closest("tr")).toHaveTextContent("1.800,00 €");
-  for (const [period, status, amount] of [["2026/04", "fällig", "100.00"], ["2026/11", "noch nicht fällig", "750.00"], ["2026/12", "noch nicht fällig", "-50.00"], ["2026/10", "ausgeglichen", "0.00"]]) {
+  for (const [period, status, amount] of [["2026/04", "fällig", "100,00 €"], ["2026/11", "noch nicht fällig", "750,00 €"], ["2026/12", "noch nicht fällig", "-50,00 €"], ["2026/10", "ausgeglichen", "0,00 €"]]) {
     const row = screen.getByText(period).closest("tr")!;
     expect(within(row).getByText(status)).toBeVisible();
-    expect(row).toHaveTextContent(`${formatMoney(centsFromDecimal(amount))}`);
+    expect(row).toHaveTextContent(amount);
     expect(row).not.toHaveTextContent("Rückstand");
   }
   expect(api.leaseStatement).toHaveBeenCalledWith("lease-t12", "2026-01-01", "2026-12-31", undefined, "2026-11-01");
@@ -97,10 +96,10 @@ it("keeps the full-year balance and labels only the selected cutoff's due part a
 
 describe("Mietkonto saldo (Soll minus Ist)", () => {
   it.each([
-    { ist: "6600.00", balance: "600.00", label: null, color: "" },
-    { ist: "7800.00", balance: "-600.00", label: "Guthaben", color: "rgb(46, 125, 50)" },
-    { ist: "7200.00", balance: "0.00", label: null, color: "" },
-  ])("shows $balance correctly for 7200.00 Soll and $ist Ist", async ({ ist, balance, label, color }) => {
+    { ist: "6600.00", balance: "600.00", shown: "600,00 €", label: null, color: "" },
+    { ist: "7800.00", balance: "-600.00", shown: "-600,00 €", label: "Guthaben", color: "rgb(46, 125, 50)" },
+    { ist: "7200.00", balance: "0.00", shown: "0,00 €", label: null, color: "" },
+  ])("shows $balance correctly for 7200.00 Soll and $ist Ist", async ({ ist, balance, shown, label, color }) => {
     vi.mocked(api.leaseStatement).mockResolvedValue({
       soll_total: "7200.00", ist_total: ist, balance,
       dunning_notices: [], due_balance: balance, not_yet_due_balance: "0.00",
@@ -124,10 +123,10 @@ describe("Mietkonto saldo (Soll minus Ist)", () => {
     await user.click(screen.getByRole("button", { name: "Abrufen" }));
     const saldo = (await screen.findByText("Saldo", { exact: true })).closest("tr")!;
     const amount = within(saldo).getAllByRole("cell")[1];
-    expect(amount.textContent).toBe(`${formatMoney(centsFromDecimal(balance))}${label ? ` (${label})` : ""}`);
+    expect(amount.textContent).toBe(`${shown}${label ? ` (${label})` : ""}`);
     expect(amount.style.color).toBe(color);
     const due = screen.getByText("davon fällig").closest("tr")!;
-    expect(due).toHaveTextContent(`${formatMoney(centsFromDecimal(balance))}${Number(balance) > 0 ? " (Rückstand)" : Number(balance) < 0 ? " (Guthaben)" : ""}`);
+    expect(due).toHaveTextContent(`${shown}${Number(balance) > 0 ? " (Rückstand)" : Number(balance) < 0 ? " (Guthaben)" : ""}`);
     expect(api.leaseStatement).toHaveBeenCalledWith("lease-t12", "2025-01-01", "2025-12-31", undefined, expect.any(String));
   });
 });

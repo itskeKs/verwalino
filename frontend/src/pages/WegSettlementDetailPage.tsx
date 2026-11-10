@@ -21,12 +21,11 @@ import {
 } from "../api/endpoints";
 import type { WegRun, WegLine, WegComputeRequest, Property, OwnerProfile, Person } from "../api/types";
 import { ApiError } from "../api/client";
-import { centsFromDecimal, formatDate, formatMoney } from "../lib/format";
+import { centsFromDecimal, formatDate, formatDateTime, formatMoney } from "../lib/format";
 
 const STATUS_LABELS: Record<string, string> = { draft: "Entwurf", finalized: "Finalisiert" };
 const STATUS_CSS: Record<string, string> = { draft: "badge--draft", finalized: "badge--confirmed" };
 const eur = (value: string) => formatMoney(centsFromDecimal(value));
-const germanDate = (value: string) => value.split("-").reverse().join(".");
 
 const LINE_LABELS: Record<string, string> = {
   OWNER_COST_TOTAL: "Summe Ist-Kosten (Ihr Anteil)",
@@ -183,7 +182,7 @@ export function WegSettlementDetailPage() {
           {run.total_cost != null && <tr><td>Gesamtkosten (Ist, ohne Rücklage)</td><td style={{ fontFamily: "var(--mono)" }}>{formatMoney(centsFromDecimal(run.total_cost))}</td></tr>}
           {run.balance != null && <tr><td>Σ Abrechnungsspitze</td><td style={{ fontFamily: "var(--mono)", fontWeight: 700 }}>{formatMoney(centsFromDecimal(run.balance))}</td></tr>}
           <tr><td>Engine-Version</td><td><code>{run.engine_version}</code></td></tr>
-          {run.finalized_at && <tr><td>Finalisiert am</td><td>{run.finalized_at}</td></tr>}
+          {run.finalized_at && <tr><td>Finalisiert am</td><td>{formatDateTime(run.finalized_at)}</td></tr>}
         </tbody></table>
       </div>
 
@@ -207,7 +206,7 @@ export function WegSettlementDetailPage() {
           <p>Aktueller Anfangsbestand: {currentOpening === null ? 'Wird geladen…' : formatMoney(centsFromDecimal(currentOpening))}. Geben Sie bei einer Berichtigung den korrigierten Gesamtbestand und eine Begründung ein.</p>
           <div className="form-grid">
             <label>Rücklagen-Anfangsbestand
-              <input type="text" inputMode="decimal" placeholder="700,00" value={opening} onChange={(e) => setOpening(e.target.value)} />
+              <input type="text" inputMode="decimal" placeholder="0.00" value={opening} onChange={(e) => setOpening(e.target.value)} />
             </label>
             <label className="form-full-width">Begründung der Rücklagenwerte
               <textarea rows={3} value={reserveReason} maxLength={2000} onChange={e => setReserveReason(e.target.value)} />
@@ -258,7 +257,7 @@ export function WegSettlementDetailPage() {
                 <p>Nur die Abrechnungsspitze ist beschlossen; Rückstände werden aus dem Wirtschaftsplan geschuldet. Der Zahlbetrag verrechnet die Spitze mit Rückstand oder Guthaben aus Hausgeld und begründet keinen neuen Anspruch.</p>
                 <p>Quelle: Soll aus dem verknüpften Wirtschaftsplan; gezahlt aus gebuchten, nicht stornierten Hausgeldzahlungen dieses Eigentümers und Objekts im Abrechnungszeitraum (Periodenzuordnung, einschließlich Erstattungen). {run.engine_version === "m4.4.0" && <>Gesondert gebuchte Rücklagenzahlungen zählen nur, soweit das Hausgeld-Soll nicht bereits durch Hausgeldzahlungen gedeckt ist; ein Überschuss bleibt in der Rücklage. </>}Offene oder ungebuchte Zahlungen zählen nicht. Bei Eigentümerwechsel bleiben Zahlungen beim zugeordneten Eigentümer.</p>
                 <p>Eigentümerzuordnung im Abrechnungszeitraum:</p>
-                {o.ownership_periods.map((p, i) => <p key={i}>Einheit {p.unit_number}: {germanDate(p.valid_from)} bis {germanDate(p.valid_to)}</p>)}
+                {o.ownership_periods.map((p, i) => <p key={i}>Einheit {p.unit_number}: {formatDate(p.valid_from)} bis {formatDate(p.valid_to)}</p>)}
               </section>
             ))}
             <div className="overflow-x-auto">

@@ -19,6 +19,7 @@ import type {
   Property,
 } from "../api/types";
 import { ApiError } from "../api/client";
+import { formatDate } from "../lib/format";
 
 const STATUS_OPTIONS: { value: string; label: string }[] = [
   { value: "", label: "Alle Status" },
@@ -304,7 +305,7 @@ export function MeetingsPage() {
               <tbody>
                 {meetings.map((m) => (
                   <tr key={m.id}>
-                    <td>{m.meeting_date}</td>
+                    <td>{formatDate(m.meeting_date)}</td>
                     <td>{getPropertyName(m.property_id)}</td>
                     <td>
                       {MEETING_TYPE_LABELS[m.meeting_type] ?? m.meeting_type}

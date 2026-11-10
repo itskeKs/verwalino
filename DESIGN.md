@@ -566,8 +566,8 @@ both advance fields accept German amounts such as `1.080,00` and API decimals su
 or `abc`) stays in the field and prevents submission, with the linked German error
 “Bitte geben Sie die Betriebskosten-Vorauszahlung als gültigen EUR-Betrag ein.” or
 “Bitte geben Sie die Heizkosten-Vorauszahlung als gültigen EUR-Betrag ein.”
-The detail page retains its existing decimal-string `EUR` amounts; the advance
-proposal retains its existing German decimal-string `EUR` format. The advance proposal
+The detail page and the advance proposal render their amounts through `formatMoney`
+(see "Number, money, date and size formats"). The advance proposal
 uses its own payload, including the lease's advances valid on the acceptance date, and shows the previous amounts.
 
 Synthetic records at 1280 and 360 px show the €990 monthly charge and €20
@@ -733,9 +733,9 @@ use the existing horizontal scroll containers. Desktop keeps the complete tables
 New rent and operating-advance interest rows show their frozen `Zinsbeginn` as
 `TT.MM.JJJJ` beneath the principal, visible without horizontal scrolling at
 360 px. Legacy rows without that stored date show no inferred start date.
-Both `Ausgestellt am` locations show the persisted instant as `TT.MM.JJJJ, HH:MM`
-in `Europe/Berlin`, using the existing German `toLocaleString` options pattern
-with two-digit day, month, hour and minute. The API supplies ISO with a timezone.
+Both `Ausgestellt am` locations show the persisted instant as `TT.MM.JJJJ, HH:MM Uhr`
+in `Europe/Berlin` through `formatDateTime`, with two-digit day, month, hour and
+minute. The API supplies ISO with a timezone.
 Existing frozen values and issued PDFs retain their stored contents. New rent
 and operating-advance PDFs also name the stored interest start explicitly.
 
@@ -1133,9 +1133,14 @@ Synthetic finalized report from the test database (1280 and 360 px):
 | After | [View](docs/assets/design/asset-report-reserve/asset-report-1280.png) | [View](docs/assets/design/asset-report-reserve/asset-report-360.png) |
 
 `frontend/src/lib/format.ts` provides the shared display helpers below; every
-call site renders money, dates, datetimes and IBANs through them
-(`rg " EUR\"|toLocaleDateString" frontend/src` finds nothing outside the helper
-tests). Unit tests live in `frontend/src/lib/format.test.ts`.
+displayed money, date, datetime and IBAN value renders through them.
+`frontend/src/lib/format.test.ts` tests the helpers, and
+`frontend/src/lib/callSites.test.ts` fails when a hand-rolled date, a `toLocaleDateString`
+call, an amount followed by `EUR` or a raw date or timestamp field returns to a call site.
+Inputs show and accept what the user types: they are not display call sites, and
+the placeholder `700,00` appears only on money inputs that accept a decimal comma
+(the asset report, WEG settlement opening balance and settlement external and
+manual amount inputs still take API decimals and keep `0.00`, #504).
 
 | What | Contract | Implemented by |
 |---|---|---|
@@ -1217,8 +1222,8 @@ it clears the previous result until “Abrufen” loads the selected cutoff.
 The legacy summary table keeps “Soll gesamt”, “Ist gesamt” and “Saldo”; a positive
 Saldo has no arrears suffix or warning colour. Two rows follow:
 “davon fällig” (positive: “Rückstand”, destructive token; negative: “Guthaben”,
-emerald) and “noch nicht fällig” (neutral). Signed amounts retain the page's
-existing decimal-string `EUR` notation. The detail rows keep the same amounts
+emerald) and “noch nicht fällig” (neutral). Signed amounts render through `formatMoney`
+(`-600,00 €`). The detail rows keep the same amounts
 and show the backend due classification
 below the period: “fällig” or “noch nicht fällig” for nonzero signed amounts,
 “ausgeglichen” for zero. Positive open amounts remain neutral; credits

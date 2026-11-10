@@ -1,9 +1,9 @@
 import { useEffect, useRef, useState } from 'react';
 import { getUnitHousehold, replaceUnitHousehold } from '../api/endpoints';
 import type { UnitHouseholdRow } from '../api/types';
+import { formatDate } from "../lib/format";
 
 interface DraftRow { valid_from: string; persons: string; is_vacancy: boolean }
-const germanDate = (value: string) => value.split('-').reverse().join('.');
 
 export function HouseholdPanel({ unitId, canWrite }: { unitId: string; canWrite: boolean }) {
   const [rows, setRows] = useState<UnitHouseholdRow[]>([]);
@@ -78,7 +78,7 @@ export function HouseholdPanel({ unitId, canWrite }: { unitId: string; canWrite:
       </fieldset>
     </form> : <>
       {rows.length ? <ul className="mb-3 space-y-1">{rows.map(r => <li key={`${r.is_vacancy}:${r.valid_from}`}>
-        {r.is_vacancy ? 'Leerstand: ' : ''}{r.persons.toLocaleString('de-DE')} {r.persons === 1 ? 'Person' : 'Personen'} ab {germanDate(r.valid_from)}
+        {r.is_vacancy ? 'Leerstand: ' : ''}{r.persons.toLocaleString('de-DE')} {r.persons === 1 ? 'Person' : 'Personen'} ab {formatDate(r.valid_from)}
       </li>)}</ul> : !error && <p>Keine Haushaltsangaben gespeichert.</p>}
       {error ? <button type="button" className="btn" onClick={() => setRetry(value => value + 1)}>Haushalt erneut laden</button> : canWrite && <button type="button" className="btn" onClick={() => {
         setDraft(rows.map(r => ({ ...r, persons: String(r.persons) }))); setEditing(true); setStatus(null);

@@ -21,6 +21,7 @@ import {
 import type { DsgvoStatus, DsgvoExport, DsgvoBinding } from "../api/types";
 import { ApiError } from "../api/client";
 import { Badge } from "./ui/badge";
+import { formatDate, formatIban } from "../lib/format";
 
 const BINDING_LABELS: Record<string, string> = {
   COST_ENTRY_VENDOR: "Kostenbeleg (als Dienstleister)",
@@ -124,7 +125,7 @@ export function DsgvoPanel({ personId, canPrepare, canExport, onChanged }: Props
                 <tr>
                   <td>Aufbewahrung bis</td>
                   <td style={{ fontFamily: "var(--mono)" }}>
-                    {status.governing_retention_until}
+                    {formatDate(status.governing_retention_until)}
                     {status.purgeable_now ? " (abgelaufen — anonymisierbar)" : ""}
                   </td>
                 </tr>
@@ -133,7 +134,7 @@ export function DsgvoPanel({ personId, canPrepare, canExport, onChanged }: Props
                 <tr>
                   <td>Löschung beantragt am</td>
                   <td style={{ fontFamily: "var(--mono)" }}>
-                    {status.deletion_requested_at.slice(0, 10)}
+                    {formatDate(status.deletion_requested_at)}
                   </td>
                 </tr>
               )}
@@ -147,7 +148,7 @@ export function DsgvoPanel({ personId, canPrepare, canExport, onChanged }: Props
                 {status.bindings.map((b: DsgvoBinding, i) => (
                   <li key={i}>
                     {BINDING_LABELS[b.kind] ?? b.kind}
-                    {b.retention_until ? ` — Aufbewahrung bis ${b.retention_until}` : ""}
+                    {b.retention_until ? ` — Aufbewahrung bis ${formatDate(b.retention_until)}` : ""}
                   </li>
                 ))}
               </ul>
@@ -238,7 +239,7 @@ export function DsgvoPanel({ personId, canPrepare, canExport, onChanged }: Props
                   {exportData.retention_bindings.map((b, i) => (
                     <li key={i} className="text-foreground">
                       {BINDING_LABELS[b.kind] ?? b.kind}
-                      {b.retention_until ? ` — bis ${b.retention_until}` : ""}
+                      {b.retention_until ? ` — bis ${formatDate(b.retention_until)}` : ""}
                     </li>
                   ))}
                 </ul>
@@ -283,10 +284,10 @@ function personRows(p: Record<string, string | null>): [string, string][] {
   add("Straße", p.street);
   const ort = [p.zip_code, p.city].filter(Boolean).join(" ");
   add("Ort", ort || null);
-  add("IBAN", p.iban);
+  add("IBAN", p.iban && formatIban(p.iban));
   add("BIC", p.bic);
   add("Bank", p.bank_name);
-  if (p.created_at) add("Angelegt", p.created_at.slice(0, 10));
+  if (p.created_at) add("Angelegt", formatDate(p.created_at));
   return rows;
 }
 

@@ -383,7 +383,7 @@ export function PaymentDetailPage() {
           Korrekturen sind nur als Stornobuchung (Gegenbuchung) moeglich.
           {payment.retention_until && (
             <div style={{ marginTop: "0.25rem", fontSize: "0.82rem" }}>
-              Aufbewahrung bis: {payment.retention_until}
+              Aufbewahrung bis: {formatDate(payment.retention_until)}
             </div>
           )}
         </div>

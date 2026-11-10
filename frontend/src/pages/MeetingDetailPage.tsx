@@ -39,6 +39,7 @@ import type {
 } from "../api/types";
 import { ApiError } from "../api/client";
 import { MailDispatch } from "../components/MailDispatch";
+import { formatDate } from "../lib/format";
 
 const STATUS_LABELS: Record<string, string> = {
   PLANNED: "Geplant",
@@ -471,7 +472,7 @@ export function MeetingDetailPage() {
         }}
       >
         <h1 style={{ margin: 0 }}>
-          Versammlung {meeting.meeting_date}{" "}
+          Versammlung {formatDate(meeting.meeting_date)}{" "}
           <span
             className={`badge ${STATUS_CSS[meeting.status] ?? ""}`}
             style={{ fontSize: "0.8rem", verticalAlign: "middle" }}
@@ -528,7 +529,7 @@ export function MeetingDetailPage() {
             </tr>
             <tr>
               <td>Datum</td>
-              <td>{meeting.meeting_date}</td>
+              <td>{formatDate(meeting.meeting_date)}</td>
             </tr>
             <tr>
               <td>Typ</td>

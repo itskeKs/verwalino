@@ -69,7 +69,7 @@ it("shows frozen interest, rates, reference date and item days without recalcula
   expect(screen.getAllByText("8,63 €").length).toBeGreaterThan(0);
   expect(screen.getByText("708,63 €")).toBeVisible();
   expect(screen.getByText(/2.50 %/)).toBeVisible(); expect(screen.getByText(/7.50 %/)).toBeVisible();
-  expect(screen.getAllByText("2026-03-02").length).toBeGreaterThan(0);
+  expect(screen.getAllByText("02.03.2026").length).toBeGreaterThan(0);
   const row = screen.getByRole("row", { name: /Kaltmiete/ });
   expect(within(row).getByText("60")).toBeVisible(); expect(within(row).getByText("01.01.2026")).toBeVisible();
 });

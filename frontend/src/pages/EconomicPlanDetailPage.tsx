@@ -30,7 +30,7 @@ import type {
 } from "../api/types";
 import { AuthCtx } from "../auth/useAuth";
 import { ApiError } from "../api/client";
-import { centsFromDecimal, formatDate, formatMoney } from "../lib/format";
+import { centsFromDecimal, formatDate, formatDateTime, formatMoney } from "../lib/format";
 import { normalizePlanAmount } from "../api/previousPlan";
 
 const STATUS_LABELS: Record<string, string> = { draft: "Entwurf", finalized: "Finalisiert" };
@@ -285,7 +285,7 @@ export function EconomicPlanDetailPage() {
           <tr><td>Zeitraum</td><td>{formatDate(plan.period_start)} bis {formatDate(plan.period_end)}</td></tr>
           {!needsRecompute && <tr><td>Rücklagenzuführung</td><td style={{ fontFamily: "var(--mono)" }}>{formatMoney(centsFromDecimal(plan.reserve_contribution_total))}</td></tr>}
           <tr><td>Engine-Version</td><td><code>{plan.engine_version}</code></td></tr>
-          {plan.finalized_at && <tr><td>Finalisiert am</td><td>{plan.finalized_at}</td></tr>}
+          {plan.finalized_at && <tr><td>Finalisiert am</td><td>{formatDateTime(plan.finalized_at)}</td></tr>}
         </tbody></table>
       </div>
 

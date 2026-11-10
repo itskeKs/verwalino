@@ -3,7 +3,7 @@ import { ApiError } from "../api/client";
 import { createSepaMandate, downloadSepaXml, getSepaAccount, previewSepa, revokeSepaMandate, saveSepaCreditor, updateSepaMandate, type SepaAccount, type SepaCreditor, type SepaExportRequest, type SepaMandate, type SepaMandateCreate, type SepaPreview, type SepaSequence } from "../api/sepa";
 import type { BankAccount, Property } from "../api/types";
 import { AuthCtx } from "../auth/useAuth";
-import { centsFromDecimal, formatDate, formatIban, formatMoney } from "../lib/format";
+import { centsFromDecimal, formatDate, formatDateTime, formatIban, formatMoney } from "../lib/format";
 import { AccountingScopeSelector } from "./AccountingScopeSelector";
 
 function validDate(value: string): boolean {
@@ -172,7 +172,7 @@ function MandateHistory({ mandate, tenantName, canWrite, onSave, onRevoke }: { m
   const valid = confirmed && (sequence === "FRST" ? !lastUsed : validDate(lastUsed) && lastUsed >= mandate.signed_on);
   return <section aria-label={`Mandat ${mandate.reference}`} className="space-y-4">
     <p>{tenantName} · {mandate.reference} · unterschrieben {formatDate(mandate.signed_on)} · {mandate.debtor_country} · Original: {mandate.original_reference} · {mandate.sequence_type} · letzter Einzug: {mandate.last_used_on ? formatDate(mandate.last_used_on) : "nicht erfasst"}</p>
-    <p>{mandate.revoked_at ? `Widerrufen am ${mandate.revoked_at}` : mandate.source_current ? "Kontaktdaten entsprechen der registrierten Zustimmung; keine rechtliche Gültigkeitszusage." : "Kontaktdaten geändert: Mandat nicht mehr aktuell. Widerrufen und neues unterschriebenes Mandat registrieren."}</p>
+    <p>{mandate.revoked_at ? `Widerrufen am ${formatDateTime(mandate.revoked_at)}` : mandate.source_current ? "Kontaktdaten entsprechen der registrierten Zustimmung; keine rechtliche Gültigkeitszusage." : "Kontaktdaten geändert: Mandat nicht mehr aktuell. Widerrufen und neues unterschriebenes Mandat registrieren."}</p>
     {canWrite && !mandate.revoked_at && <>
       <form noValidate onSubmit={event => { event.preventDefault(); if (valid) onSave({ sequence_type: sequence, last_used_on: lastUsed || null }); }}>
         <div><label htmlFor={`sepa-sequence-${mandate.id}`}>Sequenz {mandate.reference}</label><select id={`sepa-sequence-${mandate.id}`} value={sequence} onChange={event => { setSequence(event.target.value as SepaSequence); setLastUsed(""); setConfirmed(false); }}><option value="FRST">FRST</option><option value="RCUR">RCUR</option></select></div>

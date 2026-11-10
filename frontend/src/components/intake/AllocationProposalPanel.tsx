@@ -90,13 +90,13 @@ export function AllocationProposalPanel({ logicalId, contextDecisionId, ready, p
       {!view.history.items.length && <p>Noch keine lesbare Kostenaufteilung.</p>}
       {view.history.items.map((proposal, index) => <details key={proposal.id} open={index === 0} className="min-w-0 space-y-2"><summary className="cursor-pointer">Aufteilungsvorschlag · Version {proposal.revision_number} · {formatDateTime(proposal.created_at)}</summary>
         <p>Brutto: {formatMoney(centsFromDecimal(proposal.gross_amount))} · Umsatzsteuer: {proposal.vat_amount != null ? formatMoney(centsFromDecimal(proposal.vat_amount)) : 'unbekannt'} · Keine Kostenfreigabe</p>
-        <ol className="space-y-2">{proposal.lines.map(line => <li key={line.id} className="break-words">{line.position}. {line.category_label} · {line.description} · {formatMoney(centsFromDecimal(line.gross_amount))} · USt: {line.vat_amount ?? 'unbekannt'}</li>)}</ol>
+        <ol className="space-y-2">{proposal.lines.map(line => <li key={line.id} className="break-words">{line.position}. {line.category_label} · {line.description} · {formatMoney(centsFromDecimal(line.gross_amount))} · USt: {line.vat_amount != null ? formatMoney(centsFromDecimal(line.vat_amount)) : 'unbekannt'}</li>)}</ol>
         <p className="break-words">{proposal.reason}</p>{proposal.context_decision_id !== contextDecisionId && <p>Frühere Kontextgrundlage; nicht automatisch übernommen.</p>}</details>)}
       {view.history.next_before_revision && <p>Hier werden die letzten 20 lesbaren Aufteilungen angezeigt.</p>}
       {!canPropose && <p>Für einen neuen Vorschlag wird eine aktuelle, berechtigte Kontextprüfung benötigt.</p>}
       {draft && authorized && (canPropose || submitted) && <>
         {stale && !submitted && <div className="space-y-2"><p>Prüfen Sie die neue Grundlage. Beim Übernehmen werden Ihre Zeilen durch einen neuen Entwurf ersetzt.</p><button className="btn" disabled={blocked || !canPropose} onClick={() => { if (view.preview) { setDraft(fresh(view.preview, view.history)); setConflict(false); setError(null); } }}>Neue Aufteilungsgrundlage übernehmen</button></div>}
-        <p className="break-words">{draft.preview.scope_label} · Geprüfter Beleg: {formatMoney(centsFromDecimal(draft.preview.gross_amount))} · Umsatzsteuer: {draft.preview.vat_amount ?? 'unbekannt'}</p>
+        <p className="break-words">{draft.preview.scope_label} · Geprüfter Beleg: {formatMoney(centsFromDecimal(draft.preview.gross_amount))} · Umsatzsteuer: {draft.preview.vat_amount != null ? formatMoney(centsFromDecimal(draft.preview.vat_amount)) : 'unbekannt'}</p>
         <p aria-live="polite">Zeilensumme: {sum === null ? 'unvollständig' : formatMoney(sum)} · Soll: {formatMoney(centsFromDecimal(draft.preview.gross_amount))}</p>
         <p aria-live="polite">Umsatzsteuersumme: {draft.preview.vat_amount === null ? 'unbekannt; alle Zeilen bleiben unbekannt' : `${vatSum === null ? 'unvollständig' : formatMoney(vatSum)} · Soll: ${formatMoney(centsFromDecimal(draft.preview.vat_amount))}`}</p>
         <fieldset disabled={blocked || submitted || !canPropose} className="space-y-4 min-w-0">

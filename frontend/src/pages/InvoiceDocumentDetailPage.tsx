@@ -30,6 +30,7 @@ import { ApiError } from "../api/client";
 import { AccountingScopeSelector } from "../components/AccountingScopeSelector";
 import { InvoiceProcessingStatus } from "../components/InvoiceProcessingStatus";
 import { Badge } from "../components/ui/badge";
+import { formatDate, formatDateTime } from "../lib/format";
 
 /** Human-readable short label for source_format values from the e-invoice parser. */
 const FORMAT_LABELS: Record<string, string> = {
@@ -346,13 +347,13 @@ export function InvoiceDocumentDetailPage() {
             {doc.released_at && (
               <tr>
                 <td>Freigegeben am</td>
-                <td>{doc.released_at}</td>
+                <td>{formatDateTime(doc.released_at)}</td>
               </tr>
             )}
             {doc.retention_until && (
               <tr>
                 <td>Aufbewahrung bis</td>
-                <td>{doc.retention_until}</td>
+                <td>{formatDate(doc.retention_until)}</td>
               </tr>
             )}
           </tbody>

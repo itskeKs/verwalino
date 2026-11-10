@@ -376,7 +376,7 @@ export function CostEntryDetailPage() {
                   <tr>
                     <td>Umlagef. Betrag</td>
                     <td style={{ fontFamily: "var(--mono)" }}>
-                      {entry.apportionable_tenant_amount}
+                      {formatMoney(centsFromDecimal(entry.apportionable_tenant_amount))}
                     </td>
                   </tr>
                 )}

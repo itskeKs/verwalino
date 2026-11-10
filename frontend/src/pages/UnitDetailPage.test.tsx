@@ -3,7 +3,6 @@ import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testi
 import userEvent from "@testing-library/user-event";
 import { Link, MemoryRouter, Route, Routes } from "react-router-dom";
 import { UnitDetailPage } from "./UnitDetailPage";
-import { formatDate, centsFromDecimal, formatMoney } from "../lib/format";
 import * as endpoints from "../api/endpoints";
 import { AuthCtx } from "../auth/useAuth";
 import type { LeaseRecord, OwnershipRecord } from "../api/types";
@@ -687,9 +686,9 @@ it.each(["OWNER_ADMIN", "CLERK"])("T43 posts fixed EUR staffel without start-ren
   const table = screen.getByRole("table", { name: /^Miethistorie:/ });
   expect(within(table).getByText("700,00 €")).toBeVisible();
   expect(within(table).getByText("725,00 €")).toBeVisible();
-  for (const row of staffelRows) {
-    const rendered = within(table).getByText(formatDate(row.valid_from)).closest("tr")!;
-    expect(within(rendered).getByText(formatMoney(centsFromDecimal(row.base_rent)))).toBeVisible();
+  for (const [validFrom, baseRent] of [["31.01.2027", "750,00 €"], ["31.01.2028", "775,00 €"], ["31.01.2029", "800,00 €"]]) {
+    const rendered = within(table).getByText(validFrom).closest("tr")!;
+    expect(within(rendered).getByText(baseRent)).toBeVisible();
     expect(within(rendered).getByText("175,00 €")).toBeVisible();
     expect(within(rendered).queryByRole("button")).toBeNull();
   }

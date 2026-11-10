@@ -18,7 +18,7 @@ function Review({ review, title }: { review: InvoiceReview; title: string }) {
   return <article className="min-w-0 space-y-2 rounded-md border border-input p-3"><h3>{title} · Prüfstand {review.revision_number}</h3>
     <p className="break-words">{review.seller_name} · {review.document_number}</p><p>{review.document_kind === 'credit_note' ? 'Gutschrift' : 'Rechnung'} · {formatMoney(centsFromDecimal(review.gross_amount))}</p>
     <p>Rechnungsdatum: {formatDate(review.invoice_date)}<br />Leistung: {formatDate(review.service_period_from)} bis {formatDate(review.service_period_to)}</p>
-    <p>Umsatzsteuer: {review.vat_amount ?? 'unbekannt'} · Satz: {review.vat_rate ?? 'unbekannt'}</p>
+    <p>Umsatzsteuer: {review.vat_amount != null ? formatMoney(centsFromDecimal(review.vat_amount)) : 'unbekannt'} · Satz: {review.vat_rate ?? 'unbekannt'}</p>
     <a className="link" target="_blank" rel="noreferrer" href={`/posteingang/belege/${review.document_ref_id}?logical_document_id=${encodeURIComponent(review.logical_document_id)}&extraction_revision_id=${encodeURIComponent(review.extraction_revision_id)}`}>{title} im neuen Tab öffnen</a>
   </article>;
 }

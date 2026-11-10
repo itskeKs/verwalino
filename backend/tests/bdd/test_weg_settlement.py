@@ -81,7 +81,7 @@ def saved_details_browser(browser_world, world, weg_balance):
             await save_and_read('/api/payments')
             await expect(b.page.get_by_role('button', name='Buchen', exact=True)).to_be_visible()
             await expect(b.page.get_by_role('heading', name='Zahlung Entwurf')).to_be_visible()
-            await expect(b.page.get_by_role('row', name='Betrag 600.00 EUR', exact=True)).to_be_visible()
+            await expect(b.page.get_by_role('row', name='Betrag 600,00 €', exact=True)).to_be_visible()
 
         await b.visit('/wirtschaftsplaene')
         await b.page.get_by_role('button', name='+ Neuer Wirtschaftsplan', exact=True).click()
@@ -528,7 +528,7 @@ def long_statement_browser(browser_world, world, weg_balance):
             heading = b.page.get_by_role('heading', name=name, exact=True)
             await expect(heading).to_be_visible()
             card = heading.locator('..')
-            await expect(card.get_by_role('cell', name='6400.00 EUR', exact=True).first).to_be_visible()
+            await expect(card.get_by_role('cell', name='6.400,00 €', exact=True).first).to_be_visible()
             await expect(card.get_by_role('region', name=f'Hausgeld-Abgleich · {name}')).to_contain_text('7.200,00')
             if w['statement']['snapshot_sha256']:
                 digest = b.page.locator('code').filter(has_text=w['statement']['snapshot_sha256'])
@@ -553,7 +553,7 @@ def long_statement_browser(browser_world, world, weg_balance):
             for table in await card.locator('table').all():
                 if not await table.locator('..').evaluate("el => ['auto', 'scroll'].includes(getComputedStyle(el).overflowX)"):
                     failures.append(f'{width}: statement has no horizontal scroll container')
-                amount = table.get_by_role('cell', name='6400.00 EUR', exact=True).first
+                amount = table.get_by_role('cell', name='6.400,00 €', exact=True).first
                 if await amount.evaluate('''el => new Set(Array.from(el.firstChild.textContent, (_, i) => {
                     const range = document.createRange();
                     range.setStart(el.firstChild, i); range.setEnd(el.firstChild, i + 1);

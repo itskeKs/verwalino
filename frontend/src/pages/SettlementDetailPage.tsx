@@ -22,7 +22,7 @@ import { parseGermanAmount } from "../lib/germanAmount";
  */
 
 import { useEffect, useState, useCallback, useRef } from "react";
-import { centsFromDecimal, formatDate, formatMoney } from "../lib/format";
+import { centsFromDecimal, formatDate, formatDateTime, formatMoney } from "../lib/format";
 import { useParams, Link, useNavigate } from "react-router-dom";
 import {
   getSettlement,
@@ -796,7 +796,7 @@ export function SettlementDetailPage() {
                   <input
                     type="text"
                     inputMode="decimal"
-                    placeholder="700,00"
+                    placeholder="0.00"
                     value={ext.tenant_amount}
                     onChange={(e) => {
                       setExternalAmounts(previous => previous.map(row => row === ext ? { ...row, tenant_amount: e.target.value } : row));
@@ -820,7 +820,7 @@ export function SettlementDetailPage() {
                   <input
                     type="text"
                     inputMode="decimal"
-                    placeholder="700,00"
+                    placeholder="0.00"
                     value={man.amount}
                     onChange={(e) => {
                       const next = [...manualAmounts];
@@ -881,7 +881,7 @@ export function SettlementDetailPage() {
                       {consumptionSuggestions.filter(source => source.unit_id === m.unit_id).map(source =>
                         <small key={source.unit_id} style={{ display: "block" }}>
                           {source.start_reading && source.end_reading
-                            ? `Zählerbasis: ${source.start_reading.value} (${source.start_reading.reading_date}) → ${source.end_reading.value} (${source.end_reading.reading_date}), jeweils ±31 Tage. ${manualConsumptionIds.has(m.unit_id) ? "Handwert wird verwendet." : "Wird bei Berechnung frisch geprüft."}`
+                            ? `Zählerbasis: ${source.start_reading.value} (${formatDate(source.start_reading.reading_date)}) → ${source.end_reading.value} (${formatDate(source.end_reading.reading_date)}), jeweils ±31 Tage. ${manualConsumptionIds.has(m.unit_id) ? "Handwert wird verwendet." : "Wird bei Berechnung frisch geprüft."}`
                             : source.reason}
                           {source.start_reading && source.end_reading && source.reason && ` ${source.reason}`}
                         </small>)}
@@ -1156,7 +1156,7 @@ export function SettlementDetailPage() {
             {run.finalized_at && (
               <tr>
                 <td>Finalisiert am</td>
-                <td>{run.finalized_at}</td>
+                <td>{formatDateTime(run.finalized_at)}</td>
               </tr>
             )}
           </tbody>

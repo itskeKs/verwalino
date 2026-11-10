@@ -259,8 +259,8 @@ export function ResolutionRegisterPage() {
                     >
                       {entry.sequence_number}
                     </td>
-                    <td>{entry.resolution_date.split("-").reverse().join(".")}</td>
-                    <td>{entry.entry_date.split("-").reverse().join(".")}</td>
+                    <td>{formatDate(entry.resolution_date)}</td>
+                    <td>{formatDate(entry.entry_date)}</td>
                     <td>{entry.location || "-"}</td>
                     <td style={{ whiteSpace: "pre-wrap" }}>
                       {entry.wording}

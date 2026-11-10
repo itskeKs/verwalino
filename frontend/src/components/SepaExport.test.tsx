@@ -4,7 +4,6 @@ import { AuthCtx } from "../auth/useAuth";
 import type { BankAccount, Property } from "../api/types";
 import { ApiError } from "../api/client";
 import * as sepa from "../api/sepa";
-import { centsFromDecimal, formatMoney } from "../lib/format";
 import { SepaExport } from "./SepaExport";
 
 vi.mock("./AccountingScopeSelector", () => ({ AccountingScopeSelector: ({ propertyId, capability, onChange }: { propertyId: string; capability: string; onChange: (id: string | null) => void }) => <select aria-label={`Abrechnungskreis ${propertyId} ${capability}`} onChange={e => onChange(e.target.value || null)}><option value="">Ganzes Objekt</option><option value="scope">Kreis</option></select> }));
@@ -44,7 +43,7 @@ it("loads nothing automatically and starts all new fields blank", async () => {
   expect(screen.getByRole("button", { name: "SEPA-Vorschau erstellen" })).toBeDisabled();
 });
 it("uses October, exact amounts and reviewed digest; download never mutates mandate history", async () => {
-  show(); await ready(); expect(screen.getByRole("table")).toHaveTextContent(formatMoney(centsFromDecimal(preview.total)));
+  show(); await ready(); expect(screen.getByRole("table")).toHaveTextContent("12.345.678.901.234.567.890,91 €");
   expect(sepa.previewSepa).toHaveBeenCalledWith({ bank_account_id: "b1", accounting_scope_id: null, year: 2026, month: 10, collection_date: "2026-10-20", message_id: "OCT-2026", pre_notification_on: "2026-10-06", notice_period_days: 14, shorter_period_agreed: false, pre_notification_confirmed: true, bank_profile_confirmed: true });
   fireEvent.click(screen.getByRole("button", { name: "SEPA-XML herunterladen" })); await waitFor(() => expect(click).toHaveBeenCalledTimes(1));
   expect(click.mock.instances[0].download).toBe("SEPA_2026_10.xml");

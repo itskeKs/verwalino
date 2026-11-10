@@ -114,11 +114,11 @@ async def contained_costs(browser_world, tmp_path):
         "Datum", "Kategorie", "Objekt", "Brutto", "Status", "Quelle", "",
     ])
     april = table.get_by_role("row").filter(has=page.get_by_role("cell", name="Aprilhaus", exact=True))
-    gardening = april.filter(has=page.get_by_role("cell", name="2026-12-31", exact=True))
+    gardening = april.filter(has=page.get_by_role("cell", name="31.12.2026", exact=True))
     await expect(gardening.get_by_role("cell")).to_have_text([
-        "2026-12-31", "GARTENPFLEGE Gartenpflege", "Aprilhaus", "1250.00", "Bestaetigt", "Manuell", "Details",
+        "31.12.2026", "GARTENPFLEGE Gartenpflege", "Aprilhaus", "1.250,00 €", "Bestaetigt", "Manuell", "Details",
     ])
-    for amount in ("1250.00", "2345.67", "9876.54"):
+    for amount in ("1.250,00 €", "2.345,67 €", "9.876,54 €"):
         await expect(table.get_by_role("cell", name=amount, exact=True)).to_have_count(2)
     state = await table.evaluate("table => getComputedStyle(table.parentElement).overflowX === 'auto' ? 'after' : 'before'")
     directory = ROOT / "docs/assets/design" if os.environ.get("VERWALINO_CAPTURE_DESIGN") == "1" else tmp_path
@@ -172,4 +172,4 @@ async def cost_keyboard_details(browser_world):
     await assert_page_bounds(page)
     await page.keyboard.press("Enter")
     await expect(page).to_have_url(f"{b.session.base_url}/kosten/{b.world.data['costs'][0]['id']}")
-    await expect(page.get_by_role("cell", name="1250.00", exact=True)).to_be_visible()
+    await expect(page.get_by_role("cell", name="1.250,00 €", exact=True)).to_be_visible()

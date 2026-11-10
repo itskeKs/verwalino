@@ -20,7 +20,7 @@ import {
 } from "../api/endpoints";
 import type { WegRun, AssetItemIn, AssetReportComputeRequest, Property, BankAccount } from "../api/types";
 import { ApiError } from "../api/client";
-import { centsFromDecimal, formatDate, formatMoney } from "../lib/format";
+import { centsFromDecimal, formatDate, formatDateTime, formatMoney } from "../lib/format";
 
 const STATUS_LABELS: Record<string, string> = { draft: "Entwurf", finalized: "Finalisiert" };
 const STATUS_CSS: Record<string, string> = { draft: "badge--draft", finalized: "badge--confirmed" };
@@ -117,7 +117,7 @@ export function AssetReportDetailPage() {
           <div key={idx} style={{ display: "flex", gap: "0.5rem", marginBottom: "0.4rem", flexWrap: "wrap" }}>
             <input type="text" placeholder="Bezeichnung" value={it.label}
               onChange={(e) => { const n = [...items]; n[idx] = { ...it, label: e.target.value }; set(n); }} />
-            <input type="text" inputMode="decimal" placeholder="700,00" value={it.amount} style={{ maxWidth: "140px" }}
+            <input type="text" inputMode="decimal" placeholder="0.00" value={it.amount} style={{ maxWidth: "140px" }}
               onChange={(e) => { const n = [...items]; n[idx] = { ...it, amount: e.target.value }; set(n); }} />
             <button className="btn btn--small" onClick={() => set(items.filter((_, i) => i !== idx))}>×</button>
           </div>
@@ -165,7 +165,7 @@ export function AssetReportDetailPage() {
           <tr><td>Objekt</td><td><Link to={`/objekte/${run.property_id}`} className="link">{propName(run.property_id)}</Link></td></tr>
           <tr><td>Stichtag</td><td>{formatDate(run.period_end)}</td></tr>
           <tr><td>Engine-Version</td><td><code>{run.engine_version}</code></td></tr>
-          {run.finalized_at && <tr><td>Finalisiert am</td><td>{run.finalized_at}</td></tr>}
+          {run.finalized_at && <tr><td>Finalisiert am</td><td>{formatDateTime(run.finalized_at)}</td></tr>}
         </tbody></table>
       </div>
 
@@ -181,7 +181,7 @@ export function AssetReportDetailPage() {
           <p>Aktueller Anfangsbestand: {currentOpening === null ? 'Wird geladen…' : formatMoney(centsFromDecimal(currentOpening))}. Geben Sie bei einer Berichtigung den korrigierten Gesamtbestand und eine Begründung ein.</p>
           <div className="form-grid">
             <label>Rücklage Anfangsbestand
-              <input type="text" inputMode="decimal" placeholder="700,00" value={opening} onChange={(e) => setOpening(e.target.value)} />
+              <input type="text" inputMode="decimal" placeholder="0.00" value={opening} onChange={(e) => setOpening(e.target.value)} />
             </label>
             <label className="form-full-width">Begründung der Rücklagenwerte
               <textarea rows={3} value={reserveReason} maxLength={2000} onChange={e => setReserveReason(e.target.value)} />

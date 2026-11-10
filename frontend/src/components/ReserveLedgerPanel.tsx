@@ -4,9 +4,8 @@ import { useEffect, useId, useState } from 'react';
 import { addReserveOverride, deleteReserveContribution, reduceReserveContribution, getReserveLedger, listCostEntries, listPayments, listRegisterEntries } from '../api/endpoints';
 import type { CostEntry, Payment, RegisterEntry, ReserveComponent, ReserveLedger, ReserveOverride } from '../api/types';
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from './ui/dialog';
-import { centsFromDecimal, formatMoney } from '../lib/format';
+import { centsFromDecimal, formatDate, formatMoney } from '../lib/format';
 
-const day = (value: string) => value.split('-').reverse().join('.');
 const reasonPrivacyHint = 'Bitte keine personenbezogenen Daten eintragen.';
 const labels: Record<string, string> = { PLANNED: 'Geplant (Soll)', CONTRIBUTION: 'Gebuchte Zuführung', WITHDRAWAL: 'Finanzierte Entnahme',
   OVERRIDE: 'Begründete Korrektur', OPENING: 'Anfangsbestand', ADJUSTMENT: 'Sonstige Korrektur', FUNDING: 'Finanzierte Entnahme verknüpfen',
@@ -140,13 +139,13 @@ export function ReserveLedgerPanel({ runId, propertyId, status, onChanged, onOpe
       <div>
         <table className="data-table reserve-ledger-table"><thead><tr><th>Datum</th><th>Art / Beleg</th><th>Betrag</th></tr></thead>
           <tbody>{ledger.entries.map((entry, index) => <tr key={`${entry.id ?? entry.kind}-${entry.date}-${index}`}>
-            <td style={{ whiteSpace: 'nowrap' }}>{day(entry.date)}</td>
+            <td style={{ whiteSpace: 'nowrap' }}>{formatDate(entry.date)}</td>
             <td style={{ overflowWrap: 'anywhere' }}>{labels[entry.kind] ?? entry.kind}{entry.component && ` · ${(entry.kind === 'OVERRIDE' ? componentLabels : labels)[entry.component] ?? entry.component}`}
               {entry.reverses_entry_id && <div>{cents(entry.amount) > 0n ? 'Wiederherstellung einer Zuführungskorrektur' : 'Verringerung einer Zuführungskorrektur'}</div>}
               {entry.current_amount !== undefined && <div>Verbleibende Korrektur: {formatMoney(centsFromDecimal(entry.current_amount))}</div>}
               {entry.reason && <div style={{ overflowWrap: 'anywhere' }}>{entry.reason}</div>}
               {entry.owner_name && <div>Eigentümer: {entry.owner_name}</div>}
-              {entry.payment_id && <div><a className="link" href={`/zahlungen/${entry.payment_id}`}>Zahlung: {entry.payment_note || `${day(entry.date)} · ${formatMoney(centsFromDecimal(entry.amount))}`}</a></div>}
+              {entry.payment_id && <div><a className="link" href={`/zahlungen/${entry.payment_id}`}>Zahlung: {entry.payment_note || `${formatDate(entry.date)} · ${formatMoney(centsFromDecimal(entry.amount))}`}</a></div>}
               {entry.unit_id && <div>Einheit: {entry.unit_number ?? 'Nicht verfügbar'}</div>}
               {entry.cost_entry_id && <div><a className="link" href={`/kosten/${entry.cost_entry_id}`}>Kostenbeleg: {entry.cost_document_number || 'Beleg öffnen'}</a></div>}
               {!locked && entry.id && entry.current_amount !== undefined &&
@@ -205,11 +204,11 @@ export function ReserveLedgerPanel({ runId, propertyId, status, onChanged, onOpe
           <label>Zahlung ohne Planbezug<select required value={payment} onChange={e => setPayment(e.target.value)}>
             <option value="">Bitte wählen</option>
             {ledger.entries.filter(entry => entry.kind === 'UNASSIGNED').map(entry =>
-              <option key={entry.payment_id} value={entry.payment_id}>{day(entry.date)} · {formatMoney(centsFromDecimal(entry.amount))} · {entry.owner_name || entry.payment_note || 'Ohne Eigentümerzuordnung'}</option>)}
+              <option key={entry.payment_id} value={entry.payment_id}>{formatDate(entry.date)} · {formatMoney(centsFromDecimal(entry.amount))} · {entry.owner_name || entry.payment_note || 'Ohne Eigentümerzuordnung'}</option>)}
           </select></label>}
         {component === 'FUNDING' ? sources ? <>
-          <label>Gebuchte Auszahlung *<select aria-label="Gebuchte Auszahlung *" required value={payment} onChange={e => setPayment(e.target.value)}><option value="">Bitte wählen</option>{sources.payments.map(p => <option key={p.id} value={p.id}>{day(p.value_date)} · {formatMoney(centsFromDecimal(p.amount))}{p.note ? ` · ${p.note}` : ''}</option>)}</select></label>
-          <label>Bestätigter Kostenbeleg *<select aria-label="Bestätigter Kostenbeleg *" required value={cost} onChange={e => setCost(e.target.value)}><option value="">Bitte wählen</option>{reserveCostOptions(sources.costs, cost).map(c => <option key={c.id} value={c.id}>{c.document_number || day(c.invoice_date)} · {formatMoney(centsFromDecimal(c.gross_amount))}</option>)}</select></label>
+          <label>Gebuchte Auszahlung *<select aria-label="Gebuchte Auszahlung *" required value={payment} onChange={e => setPayment(e.target.value)}><option value="">Bitte wählen</option>{sources.payments.map(p => <option key={p.id} value={p.id}>{formatDate(p.value_date)} · {formatMoney(centsFromDecimal(p.amount))}{p.note ? ` · ${p.note}` : ''}</option>)}</select></label>
+          <label>Bestätigter Kostenbeleg *<select aria-label="Bestätigter Kostenbeleg *" required value={cost} onChange={e => setCost(e.target.value)}><option value="">Bitte wählen</option>{reserveCostOptions(sources.costs, cost).map(c => <option key={c.id} value={c.id}>{c.document_number || formatDate(c.invoice_date)} · {formatMoney(centsFromDecimal(c.gross_amount))}</option>)}</select></label>
           <label>Beschluss-Sammlung *<select aria-label="Beschluss-Sammlung *" required value={register} onChange={e => setRegister(e.target.value)}><option value="">Bitte wählen</option>{reserveResolutionOptions(sources.register, register).map(r => <option key={r.id} value={r.id}>Nr. {r.sequence_number} · {r.wording.slice(0, 120)}</option>)}</select></label>
         </> : <p>Finanzierungsbelege werden geladen…</p> : <label>{component === 'OPENING' ? 'Korrigierter Anfangsbestand (gesamt) *' : 'Betrag *'}<input required inputMode="decimal" value={amount} onChange={e => setAmount(e.target.value)} /></label>}
         {(component === 'WITHDRAWAL' || component === 'ADJUSTMENT') &&

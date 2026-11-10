@@ -367,7 +367,7 @@ export function DunningNoticeDetailPage() {
             <p>Basiszinssatz: {notice.interest_snapshot.base_interest_rate} %</p>
             <p>Jahreszinssatz: {notice.interest_snapshot.annual_rate} % (Basiszinssatz + 5 Prozentpunkte)</p>
           </>}
-        <p>Stichtag: <span>{notice.interest_snapshot.reference_date}</span></p>
+        <p>Stichtag: <span>{formatDate(notice.interest_snapshot.reference_date)}</span></p>
         <p className="form-hint">Gespeicherte Werte dieser Mahnung; keine Neuberechnung mit heutigen Zinssätzen.</p>
         <div style={{ overflowX: "auto" }}><table className="data-table">
           <thead><tr><th>Hauptforderung</th><th>Zinsen</th><th>Typ</th><th>Periode</th><th>Fälligkeit</th><th>Tage</th></tr></thead>
@@ -375,7 +375,7 @@ export function DunningNoticeDetailPage() {
             <td className="whitespace-nowrap">
               <span>{formatMoney(centsFromDecimal(item.principal))}</span>
               {item.interest_start && ["KALTMIETE", "NK_VORAUSZAHLUNG"].includes(item.payment_type) &&
-                <div className="text-xs font-normal">Zinsbeginn:<br />{item.interest_start.split("-").reverse().join(".")}</div>}
+                <div className="text-xs font-normal">Zinsbeginn:<br />{formatDate(item.interest_start)}</div>}
             </td><td className="whitespace-nowrap">{formatMoney(centsFromDecimal(item.interest))}</td>
             <td>{PAYMENT_TYPE_LABELS[item.payment_type] ?? item.payment_type}</td>
             <td>{item.period_year === null ? "-" : `${item.period_year}${item.period_month === null ? "" : `/${String(item.period_month).padStart(2, "0")}`}`}</td>
@@ -388,7 +388,7 @@ export function DunningNoticeDetailPage() {
             <thead><tr><th>Zinszeitraum</th><th>Zinsen</th><th>Hauptforderung</th><th>Jahreszinssatz</th><th>Basiszinssatz</th><th>Tage</th><th>Typ</th></tr></thead>
             <tbody>{notice.interest_snapshot.items.flatMap((item, index) => item.segments?.map(segment =>
               <tr key={`${index}-${segment.start}`}>
-                <td>{segment.start.split("-").reverse().join(".")} bis {segment.end.split("-").reverse().join(".")}</td>
+                <td>{formatDate(segment.start)} bis {formatDate(segment.end)}</td>
                 <td className="whitespace-nowrap">{formatMoney(centsFromDecimal(segment.interest))}</td>
                 <td className="whitespace-nowrap">{formatMoney(centsFromDecimal(segment.principal))}</td>
                 <td>{segment.annual_rate.replace(".", ",")} %</td>

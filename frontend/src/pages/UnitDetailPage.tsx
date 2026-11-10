@@ -998,7 +998,7 @@ function LeaseRentHistory({ lease, tenantLabel }: { lease: LeaseRecord; tenantLa
           <label>VPI neu<Input inputMode="decimal" value={indexInput.new_index} disabled={saving} onChange={event => changeIndexInput("new_index", event.target.value)} /></label>
           <label>Zugang der Erklärung<Input type="date" value={indexInput.declaration_received_on} disabled={saving} onChange={event => changeIndexInput("declaration_received_on", event.target.value)} /></label>
           {indexPreview && <div role="status" aria-label="Indexmietvorschau">
-            <p>Bisherige Kaltmiete: {formatMoney(centsFromDecimal(indexPreview.previous_base_rent))} (seit {indexPreview.previous_valid_from})</p>
+            <p>Bisherige Kaltmiete: {formatMoney(centsFromDecimal(indexPreview.previous_base_rent))} (seit {formatDate(indexPreview.previous_valid_from)})</p>
             <p>Neue Kaltmiete: {formatMoney(centsFromDecimal(indexPreview.base_rent))}</p>
             <p>Vorauszahlungen unverändert: Betriebskosten {formatMoney(centsFromDecimal(indexPreview.advance_payment))}{rateAt(indexPreview.valid_from).advance_mode === "COMBINED"
               ? " inkl. Heizkosten" : ` / Heizkosten ${formatMoney(centsFromDecimal(indexPreview.heating_advance_payment))}`}</p>

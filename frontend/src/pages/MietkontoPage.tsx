@@ -387,7 +387,7 @@ export function MietkontoPage() {
                           {Number(item.open_amount) === 0 ? "ausgeglichen" : item.is_due ? "fällig" : "noch nicht fällig"}
                         </span>}
                         {"due_date" in item && item.due_date && <span className="block text-xs text-muted-foreground">
-                          Fällig am {item.due_date.split("-").reverse().join(".")}
+                          Fällig am {formatDate(item.due_date)}
                         </span>}
                       </td>
                       <td>
@@ -425,7 +425,7 @@ export function MietkontoPage() {
                 <thead><tr><th>Mahnung</th><th>Mahngebühr</th><th>Verzugszinsen</th></tr></thead>
                 <tbody>{result.dunning_notices.map(notice => (
                   <tr key={notice.id}>
-                    <td><Link to={`/mahnungen/${notice.id}`}>{notice.issue_date.split("-").reverse().join(".")}<br />Stufe {notice.level}</Link></td>
+                    <td><Link to={`/mahnungen/${notice.id}`}>{formatDate(notice.issue_date)}<br />Stufe {notice.level}</Link></td>
                     <td className="whitespace-nowrap">{formatMoney(centsFromDecimal(notice.fee_amount))}</td>
                     <td className="whitespace-nowrap">{formatMoney(centsFromDecimal(notice.interest_amount))}</td>
                   </tr>

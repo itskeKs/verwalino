@@ -20,7 +20,6 @@ function validDate(value: string): boolean {
 interface ResolutionChoice {
   id: string; label: string; date: string; top: number | null; href: string; adopted: boolean;
 }
-const dateLabel = (value: string) => value.split("-").reverse().join(".");
 const errorText = (error: unknown) => error instanceof Error ? error.message : "Anfrage fehlgeschlagen. Bitte erneut versuchen.";
 const missingResolutionMessage = "Eine Sonderumlage braucht einen Beschluss.";
 
@@ -96,7 +95,7 @@ export default function SpecialLeviesPage() {
           const date = entry?.resolution_date ?? meeting.meeting_date;
           const top = items.find(item => item.id === resolution.agenda_item_id)?.item_number ?? null;
           return { id: resolution.id, date, top, adopted: resolution.result === "ANGENOMMEN",
-            label: `${dateLabel(date)} · ${top === null ? "ohne TOP" : `TOP ${top}`} · ${resolution.wording}`,
+            label: `${formatDate(date)} · ${top === null ? "ohne TOP" : `TOP ${top}`} · ${resolution.wording}`,
             href: entry ? `/beschluss-sammlung?property_id=${encodeURIComponent(propertyId)}#beschluss-${entry.id}` : `/versammlungen/${meeting.id}` };
         });
       }));
@@ -173,7 +172,7 @@ export default function SpecialLeviesPage() {
   }
   function resolutionLink(row: SpecialLevy) {
     const reference = resolutions.find(item => item.id === row.resolution_id);
-    if (row.resolution_id) return <p>Beschluss: {reference ? <Link to={reference.href}>{dateLabel(reference.date)} · {reference.top === null ? "ohne TOP" : `TOP ${reference.top}`}</Link> : resolutionsLoading ? "Lade Beschluss…" : "Beschluss nicht verfügbar."}</p>;
+    if (row.resolution_id) return <p>Beschluss: {reference ? <Link to={reference.href}>{formatDate(reference.date)} · {reference.top === null ? "ohne TOP" : `TOP ${reference.top}`}</Link> : resolutionsLoading ? "Lade Beschluss…" : "Beschluss nicht verfügbar."}</p>;
     return <><p>ohne Beschlussbezug</p>
       {canWrite && prepareScope === row.accounting_scope_id && prepareValid && <div>
         <label>Beschluss einmalig zuordnen<select className="w-full min-w-0" value={linkChoices[row.id] ?? ""} disabled={pending || !!resolutionError}
