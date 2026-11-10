@@ -16,6 +16,7 @@ from app.repositories.settlement_repo import SettlementLineRepository, Settlemen
 from app.services.financial_scope_service import FinancialScopeService
 
 ZERO = Decimal('0.00')
+SPLIT_RESERVE_CORRECTION_REASON = 'Rücklagenanteil bereits im Hausgeld-Soll enthalten'
 OPENING_IMPORT_ONLY = {'code': 'RESERVE_OPENING_IMPORT_ONLY', 'message': 'Ein Import des Anfangsbestands ist nur im ersten Rücklagenjahr vor der Finalisierung zulässig und nur, wenn kein anderer, abweichender Rücklagenzeitraum besteht.'}
 OPENING_IMPORT_EXISTS = {'code': 'RESERVE_OPENING_IMPORT_EXISTS', 'message': 'Nach dem Import eines Anfangsbestands können Sie keinen früheren oder abweichenden, überlappenden Abrechnungszeitraum anlegen.'}
 DERIVED_TOTAL_READ_ONLY = {'code': 'RESERVE_DERIVED_TOTAL_READ_ONLY', 'message': 'Zuführungen und Entnahmen werden aus Buchungen abgeleitet; Korrekturen erfolgen mit Bezug im Rücklagenbuch.'}
@@ -211,9 +212,16 @@ class ReserveLedgerService:
                     contributions -= correction
                     rows.append({'kind': 'CONTRIBUTION', 'date': str(run.period_end),
                                  'amount': format(-correction, '.2f'), 'owner_profile_id': owner,
-                                 'reason': 'Rücklagenanteil bereits im Hausgeld-Soll enthalten'})
+                                 'reason': SPLIT_RESERVE_CORRECTION_REASON})
         late_shares = {row['payment_id']: Decimal(row['amount']) for row in rows
                        if row['kind'] == 'LATE_CASH' and row.get('component') == 'CONTRIBUTION'}
+        correction_history = {}
+        for historical in history:
+            correction_history.setdefault((historical.period_start, historical.period_end), historical)
+        stored_corrections = [row for historical in correction_history.values()
+            for row in (historical.snapshot_payload or {}).get('reserve_ledger', {}).get('entries', [])
+            if not row.get('payment_id') and row.get('reason') == SPLIT_RESERVE_CORRECTION_REASON
+            and (row['kind'] == 'CONTRIBUTION' or row['kind'] == 'LATE_CASH' and row.get('component') == 'CONTRIBUTION')]
         corrected_periods = set()
         for historical in history:
             source_id = (historical.snapshot_payload or {}).get('reserve_ledger', {}).get('economic_plan_id')
@@ -255,14 +263,17 @@ class ReserveLedgerService:
                 state['hausgeld' if payment.payment_type == 'HAUSGELD_VORSCHUSS' else 'reserve'] += signed
                 if payment.payment_type == 'HAUSGELD_VORSCHUSS':
                     state['hausgeld_share'] += late_shares.get(str(payment.id), ZERO)
-            for owner, frozen_state in sorted(frozen_states.items()):
-                delta = reserve_contribution_correction(**frozen_state, plan_soll=soll[owner], planned_reserve=planned.get(owner, ZERO)) - reserve_contribution_correction(
+            for owner in sorted(frozen_states):
+                stored = -sum((Decimal(row['amount']) for row in stored_corrections
+                    if row.get('owner_profile_id') == owner
+                    and str(historical.period_start) <= row['date'] <= str(historical.period_end)), ZERO)
+                delta = stored - reserve_contribution_correction(
                     **new_states[owner], plan_soll=soll[owner], planned_reserve=planned.get(owner, ZERO))
                 if delta:
                     late_cash += delta
                     rows.append({'kind': 'LATE_CASH', 'component': 'CONTRIBUTION', 'date': str(historical.period_end),
                                  'amount': format(delta, '.2f'), 'owner_profile_id': owner,
-                                 'reason': 'Rücklagenanteil bereits im Hausgeld-Soll enthalten'})
+                                 'reason': SPLIT_RESERVE_CORRECTION_REASON})
         reversed_amounts = {}
         for entry in entries:
             if entry.reverses_entry_id:

@@ -497,8 +497,9 @@ costs still produce a Nachzahlung; excess reserve cannot offset them.
 ### 6.4 Reserve share ← `RUECKLAGENANTEIL`
 
 The draft ledger retains the full signed reserve payment rows. Per owner and run
-period, covered reserve `R_c` fills planned reserve first. With an owner Soll in
-the run's own finalized plan and `R_c > 0`, it calculates
+period, covered reserve `R_c` fills planned reserve first. Soll and planned reserve
+come from the run's `economic_plan_id`, or, without it, the single current finalized
+plan with exactly the same period. With an owner Soll in that plan and `R_c > 0`, it calculates
 `correction = max(0, R_c + Σ share(H) − planned reserve)`. Only a positive
 correction creates one negative `CONTRIBUTION` row, dated at period end with
 owner and reason. `H` and `R` are signed net in-period cash by value date;
@@ -510,16 +511,18 @@ With Soll 7,800.00 and planned reserve 3,600.00, H 4,200.00 + R 3,600.00 gives
 3,600.00 reserve; H 7,800.00 + R 1,000.00 gives 4,600.00; R 3,600.00 alone gives
 3,600.00; H 4,200.00 + R 1,000.00 gives 2,938.46; R 6,000.00 alone gives
 3,600.00 because its covered part is capped at planned reserve. Excess means
-`R − R_c` and stays in full. No run plan, missing owner Soll or `R_c = 0` means
+`R − R_c` and stays in full. No such plan, missing owner Soll or `R_c = 0` means
 no correction. Cash uses value dates, while §6.3 uses assigned periods: arrears
 assigned to an earlier year but paid in this period count as current Hausgeld cash.
 Frozen ledgers keep their stored amounts, including historical overcounts.
 For late cash against a frozen period with a plan, book
-`correction(F) − correction(N)` as a separate `LATE_CASH` contribution at that
-period's end. `F` includes frozen payment rows for that period from all finalized
-ledgers, including later late rows; `N` adds current late cash and its actual
-credited Hausgeld share. Both use the frozen period's plan Soll and planned
-reserve; stored historical correction rows are never recomputed or replaced.
+`stored correction − correction(N)` as a separate `LATE_CASH` contribution at that
+period's end. The stored correction is the negative sum of that period's correction
+rows, including earlier late correction rows in later snapshots; only the first
+history snapshot per distinct run period counts. `N` combines frozen payment rows
+with current late cash and its actual credited Hausgeld share, using the frozen
+period's plan Soll and planned reserve. Late cash thus corrects legacy totals that
+lack a correction row; issued snapshots remain unchanged.
 Reserve cash is asset formation, not consumed cost, and never changes the Spitze.
 The planned reserve Soll comes from the linked plan's canonical reserve plan cells
 (M4 §2.2/§2.4), independently of actual payments. Rental/BK derivations and other
