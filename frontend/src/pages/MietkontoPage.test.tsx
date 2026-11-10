@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import * as api from "../api/endpoints";
+import { centsFromDecimal, formatMoney } from "../lib/format";
 import { MemoryRouter } from "react-router-dom";
 import { MietkontoPage } from "./MietkontoPage";
 
@@ -77,14 +78,14 @@ it("keeps the full-year balance and labels only the selected cutoff's due part a
   fireEvent.change(screen.getByLabelText("Fällig am *"), { target: { value: "2026-11-01" } });
   await user.click(screen.getByRole("button", { name: "Abrufen" }));
   const saldo = (await screen.findByText("Saldo", { exact: true })).closest("tr")!;
-  expect(saldo).toHaveTextContent("1900.00 EUR");
+  expect(saldo).toHaveTextContent("1.900,00 €");
   expect(saldo).not.toHaveTextContent(/R[uü]e?ckstand/);
-  expect(screen.getByText("davon fällig").closest("tr")).toHaveTextContent("100.00 EUR (Rückstand)");
-  expect(screen.getAllByText("noch nicht fällig")[0].closest("tr")).toHaveTextContent("1800.00 EUR");
+  expect(screen.getByText("davon fällig").closest("tr")).toHaveTextContent("100,00 € (Rückstand)");
+  expect(screen.getAllByText("noch nicht fällig")[0].closest("tr")).toHaveTextContent("1.800,00 €");
   for (const [period, status, amount] of [["2026/04", "fällig", "100.00"], ["2026/11", "noch nicht fällig", "750.00"], ["2026/12", "noch nicht fällig", "-50.00"], ["2026/10", "ausgeglichen", "0.00"]]) {
     const row = screen.getByText(period).closest("tr")!;
     expect(within(row).getByText(status)).toBeVisible();
-    expect(row).toHaveTextContent(`${amount} EUR`);
+    expect(row).toHaveTextContent(`${formatMoney(centsFromDecimal(amount))}`);
     expect(row).not.toHaveTextContent("Rückstand");
   }
   expect(api.leaseStatement).toHaveBeenCalledWith("lease-t12", "2026-01-01", "2026-12-31", undefined, "2026-11-01");
@@ -123,10 +124,10 @@ describe("Mietkonto saldo (Soll minus Ist)", () => {
     await user.click(screen.getByRole("button", { name: "Abrufen" }));
     const saldo = (await screen.findByText("Saldo", { exact: true })).closest("tr")!;
     const amount = within(saldo).getAllByRole("cell")[1];
-    expect(amount.textContent).toBe(`${balance} EUR${label ? ` (${label})` : ""}`);
+    expect(amount.textContent).toBe(`${formatMoney(centsFromDecimal(balance))}${label ? ` (${label})` : ""}`);
     expect(amount.style.color).toBe(color);
     const due = screen.getByText("davon fällig").closest("tr")!;
-    expect(due).toHaveTextContent(`${balance} EUR${Number(balance) > 0 ? " (Rückstand)" : Number(balance) < 0 ? " (Guthaben)" : ""}`);
+    expect(due).toHaveTextContent(`${formatMoney(centsFromDecimal(balance))}${Number(balance) > 0 ? " (Rückstand)" : Number(balance) < 0 ? " (Guthaben)" : ""}`);
     expect(api.leaseStatement).toHaveBeenCalledWith("lease-t12", "2025-01-01", "2025-12-31", undefined, expect.any(String));
   });
 });
@@ -153,5 +154,5 @@ it("loads frozen levy dues for an owner without an economic plan using an explic
   await user.selectOptions(screen.getByRole("combobox", { name: "Abrechnungskreis read" }), "weg-scope");
   await user.click(screen.getByRole("button", { name: "Abrufen" }));
   await waitFor(() => expect(api.ownerStatement).toHaveBeenCalledWith("owner-levy", expect.any(String), expect.any(String), undefined, "weg-scope", expect.any(String)));
-  expect(await screen.findByText("3000.00 EUR (Rückstand)")).toBeVisible();
+  expect(await screen.findByText("3.000,00 € (Rückstand)")).toBeVisible();
 });

@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useId, useRef, useState } from "react";
+import { formatDateTime } from "../lib/format";
 import { ApiError } from "../api/client";
 import { getMailDispatch, sendMailDispatch } from "../api/mail";
 import type { MailAttempt, MailDispatchHistory, MailKind } from "../api/mail";
@@ -130,7 +131,7 @@ function MailDispatchPanel({ kind, documentId, canSend }: Props & { canSend: boo
       <thead><tr><th>Person</th><th>E-Mail</th><th>Status</th><th>Vorbereitet am</th><th>Abgeschlossen am</th><th>Versand-PDF</th></tr></thead>
       <tbody>{[...data.attempts].sort((a, b) => b.created_at.localeCompare(a.created_at)).map(attempt => <tr key={attempt.id}>
         <td>{data.recipients.find(item => item.person_id === attempt.person_id)?.name ?? attempt.person_id}</td>
-        <td>{attempt.email}</td><td>{labels[attempt.status]}</td><td>{attempt.created_at}</td><td>{attempt.completed_at ?? "–"}</td>
+        <td>{attempt.email}</td><td>{labels[attempt.status]}</td><td>{formatDateTime(attempt.created_at)}</td><td>{attempt.completed_at ? formatDateTime(attempt.completed_at) : "–"}</td>
         <td><a className="link" href={`/api/mail/${kind}/${encodeURIComponent(documentId)}/${encodeURIComponent(attempt.id)}/pdf`} target="_blank" rel="noopener">Versand-PDF öffnen</a></td>
       </tr>)}</tbody>
     </table></div>}

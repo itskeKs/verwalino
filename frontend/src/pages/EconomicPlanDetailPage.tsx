@@ -30,6 +30,7 @@ import type {
 } from "../api/types";
 import { AuthCtx } from "../auth/useAuth";
 import { ApiError } from "../api/client";
+import { centsFromDecimal, formatDate, formatMoney } from "../lib/format";
 import { normalizePlanAmount } from "../api/previousPlan";
 
 const STATUS_LABELS: Record<string, string> = { draft: "Entwurf", finalized: "Finalisiert" };
@@ -281,8 +282,8 @@ export function EconomicPlanDetailPage() {
         <h2>Übersicht</h2>
         <table className="info-table"><tbody>
           <tr><td>Objekt</td><td><Link to={`/objekte/${plan.property_id}`} className="link">{propName(plan.property_id)}</Link></td></tr>
-          <tr><td>Zeitraum</td><td>{plan.period_start} bis {plan.period_end}</td></tr>
-          {!needsRecompute && <tr><td>Rücklagenzuführung</td><td style={{ fontFamily: "var(--mono)" }}>{plan.reserve_contribution_total} EUR</td></tr>}
+          <tr><td>Zeitraum</td><td>{formatDate(plan.period_start)} bis {formatDate(plan.period_end)}</td></tr>
+          {!needsRecompute && <tr><td>Rücklagenzuführung</td><td style={{ fontFamily: "var(--mono)" }}>{formatMoney(centsFromDecimal(plan.reserve_contribution_total))}</td></tr>}
           <tr><td>Engine-Version</td><td><code>{plan.engine_version}</code></td></tr>
           {plan.finalized_at && <tr><td>Finalisiert am</td><td>{plan.finalized_at}</td></tr>}
         </tbody></table>
@@ -309,7 +310,7 @@ export function EconomicPlanDetailPage() {
                     </td>
                     <td>{r.distribution_key}</td>
                     <td>
-                      <input aria-label={`${r.label || "Position"} – Jahresbetrag`} type="text" inputMode="decimal" placeholder="0.00" value={r.planned_amount}
+                      <input aria-label={`${r.label || "Position"} – Jahresbetrag`} type="text" inputMode="decimal" placeholder="700,00" value={r.planned_amount}
                         onChange={(e) => setRowAmount(idx, e.target.value)} />
                     </td>
                     <td><button className="btn btn--small" onClick={() => removeRow(idx)}>×</button></td>
@@ -325,7 +326,7 @@ export function EconomicPlanDetailPage() {
             <div>
               <label>
                 Rücklagenzuführung (Jahr)
-                <input type="text" inputMode="decimal" placeholder="0.00" value={reserve}
+                <input type="text" inputMode="decimal" placeholder="700,00" value={reserve}
                   aria-invalid={reserveError}
                   aria-describedby={reserveError ? "economic-plan-reserve-error" : undefined}
                   onChange={(e) => { setReserve(e.target.value); setReserveError(false); }} />
@@ -373,8 +374,8 @@ export function EconomicPlanDetailPage() {
                     <td style={{ fontFamily: "var(--mono)" }}>
                       {l.distribution_base_share != null && l.distribution_base_total != null ? `${l.distribution_base_share} / ${l.distribution_base_total}` : "-"}
                     </td>
-                    <td className="whitespace-nowrap" style={{ fontFamily: "var(--mono)", textAlign: "right" }}>{l.planned_amount} EUR</td>
-                    <td className="whitespace-nowrap" style={{ fontFamily: "var(--mono)", textAlign: "right", fontWeight: 600 }}>{l.monthly_amount ? `${l.monthly_amount} EUR` : "-"}</td>
+                    <td className="whitespace-nowrap" style={{ fontFamily: "var(--mono)", textAlign: "right" }}>{formatMoney(centsFromDecimal(l.planned_amount))}</td>
+                    <td className="whitespace-nowrap" style={{ fontFamily: "var(--mono)", textAlign: "right", fontWeight: 600 }}>{l.monthly_amount ? formatMoney(centsFromDecimal(l.monthly_amount)) : "-"}</td>
                   </tr>
                 ))}
               </tbody>
@@ -394,7 +395,7 @@ export function EconomicPlanDetailPage() {
                   <tr key={l.id}>
                     <td className="whitespace-normal">{l.label}{l.note ? <div style={{ fontSize: "0.78rem", color: "var(--text-muted)", fontStyle: "italic" }}>{l.note}</div> : null}</td>
                     <td>{l.distribution_key ?? "-"}</td>
-                    <td className="whitespace-nowrap" style={{ fontFamily: "var(--mono)", textAlign: "right" }}>{l.planned_amount} EUR</td>
+                    <td className="whitespace-nowrap" style={{ fontFamily: "var(--mono)", textAlign: "right" }}>{formatMoney(centsFromDecimal(l.planned_amount))}</td>
                   </tr>
                 ))}
               </tbody>

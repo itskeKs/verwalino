@@ -1,6 +1,8 @@
+import { formatDateTime } from "../../lib/format";
 import { useEffect, useRef, useState } from 'react';
 import { AllocationAdoptionPanel } from './AllocationAdoptionPanel';
 import { ApiError } from '../../api/client';
+import { centsFromDecimal, formatMoney } from '../../lib/format';
 import { exactCents } from '../../api/allocationProposals';
 import { allocationTreatmentsApi, distributionKeys, type TreatmentCommand, type TreatmentHistory, type TreatmentLine, type TreatmentPreview } from '../../api/allocationTreatments';
 
@@ -112,7 +114,7 @@ export function AllocationTreatmentPanel({ logicalId, allocationId, ready, paren
     {busy && <p role="status">Lade Behandlungsprüfungen…</p>}{error && <p role="alert" className="error-text">{error}</p>}
     {view && <>
       {!view.history.items.length && <p>Noch keine lesbare Behandlungsprüfung.</p>}
-      {view.history.items.map((review, i) => <details className="min-w-0 space-y-2" key={review.id} open={i === 0}><summary className="cursor-pointer">Behandlungsprüfung · Version {review.revision_number} · {new Date(review.created_at).toLocaleString('de-DE')}</summary>
+      {view.history.items.map((review, i) => <details className="min-w-0 space-y-2" key={review.id} open={i === 0}><summary className="cursor-pointer">Behandlungsprüfung · Version {review.revision_number} · {formatDateTime(review.created_at)}</summary>
         {review.allocation_proposal_id !== allocationId && <p>Frühere Kostenaufteilung; keine automatische Übernahme.</p>}
         <ol className="space-y-3">{review.lines.map(line => <li key={line.id} className="break-words"><p>{review.snapshot.lines.find(basis => basis.allocation_line_id === line.allocation_line_id)?.category.label} · {expenses[line.expense_intent]} · {taxes[line.tax_intent]}</p>
           <p>Mieter: {tenants[line.tenant_treatment]} · {line.tenant_amount ?? 'Betrag ungeklärt'} {line.tenant_amount !== null && 'EUR'} · Schlüssel: {line.tenant_distribution_key ?? 'keiner'}; Eigentümer: {line.owner_distribution_key === 'not_applicable' ? 'nicht anwendbar' : line.owner_distribution_key === 'unresolved' ? 'ungeklärt' : line.owner_distribution_key}</p>
@@ -125,11 +127,11 @@ export function AllocationTreatmentPanel({ logicalId, allocationId, ready, paren
         <p>Eigentümer- und Mieterverteilung sind getrennte Sichtweisen. Der Eigentümerbetrag bleibt der volle Zeilenbetrag; er wird nicht um den Mieteranteil vermindert.</p>
         <fieldset disabled={blocked || submitted || !canReview} className="space-y-4 min-w-0">
           {draft.lines.map((line, index) => { const basis = draft.preview.snapshot.lines[index]; return <div key={line.allocation_line_id} className="min-w-0 space-y-3 rounded-md border border-input p-3"><h3>Behandlung · Zeile {index + 1}</h3>
-            <p className="break-words">{basis.category.code} · {basis.category.label} · {basis.gross_amount} EUR · USt: {basis.vat_amount ?? 'unbekannt'}</p>
+            <p className="break-words">{basis.category.code} · {basis.category.label} · {formatMoney(centsFromDecimal(basis.gross_amount))} · USt: {basis.vat_amount ?? 'unbekannt'}</p>
             <details className="break-words"><summary>Kostenart zur Prüfung</summary><p>Version {basis.category.plan_version} · {basis.category.is_active ? 'aktiv' : 'inaktiv'} · {basis.category.cost_group} · Rücklagenbezug: {basis.category.reserve_relevant ? 'ja' : 'nein'}</p>
               <p>Hinterlegte Vorgaben, nicht vorausgewählt: Mieter {basis.category.tenant_apportionability_default}; Eigentümerabrechnung {basis.category.owner_billing_relevant_default ? 'relevant' : 'nicht relevant'}; Schlüssel Eigentümer {basis.category.owner_distribution_key_default ?? 'keiner'}, Mieter {basis.category.tenant_distribution_key_default ?? 'keiner'}.</p></details>
             {select(index, 'expense_intent', 'Aufwandsart', expenses)}{select(index, 'tax_intent', 'Steuerbehandlung', taxes)}{select(index, 'tenant_treatment', 'Mieteranteil', tenants)}
-            {line.tenant_treatment && line.tenant_treatment !== 'unresolved' && <div><label htmlFor={`treatment-amount-${line.allocation_line_id}`}>Exakter Mieterbetrag · Zeile {index + 1}</label><input id={`treatment-amount-${line.allocation_line_id}`} className={inputClass} maxLength={16} value={line.tenant_amount} onChange={event => edit(index, 'tenant_amount', event.target.value)} /><p>{line.tenant_treatment === 'none' ? 'Kein Mieteranteil: ausdrücklich 0,00 eingeben.' : line.tenant_treatment === 'full' ? `Vollständiger Anteil: exakt ${basis.gross_amount} EUR eingeben.` : 'Teilbetrag mit gleichem Vorzeichen, kleiner als der volle Betrag.'}</p></div>}
+            {line.tenant_treatment && line.tenant_treatment !== 'unresolved' && <div><label htmlFor={`treatment-amount-${line.allocation_line_id}`}>Exakter Mieterbetrag · Zeile {index + 1}</label><input id={`treatment-amount-${line.allocation_line_id}`} className={inputClass} maxLength={16} value={line.tenant_amount} onChange={event => edit(index, 'tenant_amount', event.target.value)} /><p>{line.tenant_treatment === 'none' ? 'Kein Mieteranteil: ausdrücklich 0,00 eingeben.' : line.tenant_treatment === 'full' ? `Vollständiger Anteil: exakt ${formatMoney(centsFromDecimal(basis.gross_amount))} eingeben.` : 'Teilbetrag mit gleichem Vorzeichen, kleiner als der volle Betrag.'}</p></div>}
             {['full', 'partial'].includes(line.tenant_treatment) && select(index, 'tenant_distribution_key', 'Mieterverteilung', Object.fromEntries(distributionKeys.map(key => [key, key])))}
             {select(index, 'owner_distribution_key', 'Eigentümerverteilung', draft.preview.snapshot.scope_type === 'WEG' ? { ...Object.fromEntries(distributionKeys.map(key => [key, key])), unresolved: 'Noch ungeklärt' } : { not_applicable: 'Für diesen Miet-Abrechnungskreis nicht anwendbar' })}
             <label className="block" htmlFor={`treatment-basis-${line.allocation_line_id}`}>Belegbezug der Behandlung · Zeile {index + 1}</label><textarea id={`treatment-basis-${line.allocation_line_id}`} className={inputClass} maxLength={2000} value={line.documentary_basis} onChange={event => edit(index, 'documentary_basis', event.target.value)} />

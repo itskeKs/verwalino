@@ -26,6 +26,7 @@ import type {
 } from "../api/types";
 import type { CostEntryListQuery } from "../api/endpoints";
 import { ApiError } from "../api/client";
+import { centsFromDecimal, formatDate, formatMoney } from "../lib/format";
 import { rentAmount } from "../lib/rentAmount";
 import { AccountingScopeSelector } from "../components/AccountingScopeSelector";
 import { SourceBadge } from "../components/SourceBadge";
@@ -83,18 +84,6 @@ function makeEmptyForm(): CostEntryCreate {
     source: "MANUAL",
     status: "needs_review",
   };
-}
-
-// API amounts are decimal strings; never round list aggregates through Number.
-function amountCents(value: string): bigint {
-  const [whole, fraction = ""] = value.split(".");
-  return BigInt(`${whole}${fraction.padEnd(2, "0")}`);
-}
-
-function formatCents(value: bigint): string {
-  const absolute = value < 0n ? -value : value;
-  const whole = (absolute / 100n).toString().replace(/\B(?=(\d{3})+(?!\d))/g, ".");
-  return `${value < 0n ? "-" : ""}${whole},${(absolute % 100n).toString().padStart(2, "0")} EUR`;
 }
 
 export function CostEntriesPage() {
@@ -358,7 +347,7 @@ export function CostEntriesPage() {
       {downloadError && <p role="alert" className="error-text">{downloadError} Bitte CSV herunterladen erneut versuchen.</p>}
       {error && <p className="error-text">{error} <button type="button" onClick={reload}>Liste erneut laden</button></p>}
       {currentDataset && <div>
-        <p>Listensumme Brutto: <output aria-label="Listensumme Brutto">{formatCents(entries.reduce((total, entry) => total + amountCents(entry.gross_amount), 0n))}</output></p>
+        <p>Listensumme Brutto: <output aria-label="Listensumme Brutto">{formatMoney(entries.reduce((total, entry) => total + centsFromDecimal(entry.gross_amount), 0n))}</output></p>
         <p>Bruttosumme aller angezeigten Zeilen, einschließlich Entwürfen, verworfenen und ersetzten Kosten sowie negativen Korrekturen je Filter.</p>
       </div>}
 
@@ -457,7 +446,7 @@ export function CostEntriesPage() {
                 type="text"
                 required
                 inputMode="decimal"
-                placeholder="0.00"
+                placeholder="700,00"
                 aria-invalid={amountError?.field === "gross_amount"}
                 aria-describedby={amountError?.field === "gross_amount" ? "cost-amount-error" : undefined}
                 value={form.gross_amount}
@@ -471,7 +460,7 @@ export function CostEntriesPage() {
               <input
                 type="text"
                 inputMode="decimal"
-                placeholder="0.00"
+                placeholder="700,00"
                 aria-invalid={amountError?.field === "vat_amount"}
                 aria-describedby={amountError?.field === "vat_amount" ? "cost-amount-error" : undefined}
                 value={form.vat_amount ?? ""}
@@ -570,7 +559,7 @@ export function CostEntriesPage() {
               <input
                 type="text"
                 inputMode="decimal"
-                placeholder="0.00"
+                placeholder="700,00"
                 aria-invalid={amountError?.field === "apportionable_tenant_amount"}
                 aria-describedby={amountError?.field === "apportionable_tenant_amount" ? "cost-amount-error" : undefined}
                 value={form.apportionable_tenant_amount ?? ""}
@@ -624,11 +613,11 @@ export function CostEntriesPage() {
             <tbody>
               {entries.map((entry) => (
                 <tr key={entry.id}>
-                  <td>{entry.invoice_date}</td>
+                  <td>{formatDate(entry.invoice_date)}</td>
                   <td>{getCategoryLabel(entry.cost_category_id)}</td>
                   <td>{getPropertyName(entry.property_id)}</td>
                   <td style={{ textAlign: "right", fontFamily: "var(--mono)" }}>
-                    {entry.gross_amount}
+                    {formatMoney(centsFromDecimal(entry.gross_amount))}
                   </td>
                   <td>
                     <span

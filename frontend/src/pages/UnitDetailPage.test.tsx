@@ -3,6 +3,7 @@ import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testi
 import userEvent from "@testing-library/user-event";
 import { Link, MemoryRouter, Route, Routes } from "react-router-dom";
 import { UnitDetailPage } from "./UnitDetailPage";
+import { formatDate, centsFromDecimal, formatMoney } from "../lib/format";
 import * as endpoints from "../api/endpoints";
 import { AuthCtx } from "../auth/useAuth";
 import type { LeaseRecord, OwnershipRecord } from "../api/types";
@@ -342,10 +343,10 @@ it("ends an existing lease without resending unchanged monetary fields", async (
 
 it("loads dated history with a clear original-contract source", async () => {
   history = [march]; show();
-  expect(await screen.findByText("2026-03-15")).toBeVisible();
+  expect(await screen.findByText("15.03.2026")).toBeVisible();
   expect(screen.getByText("Originalvertrag")).toBeVisible();
   expect(screen.getByText("Mietänderung")).toBeVisible();
-  expect(screen.getByText("725.00")).toBeVisible();
+  expect(screen.getByText("725,00 €")).toBeVisible();
   expect(fetchMock).toHaveBeenCalledWith("/api/leases/lease/rent-changes", expect.anything());
 });
 
@@ -360,8 +361,8 @@ it("posts April 750/150 exactly, keeps original lease money and persists on relo
   expect(JSON.parse(posts()[0][1].body)).toEqual({ valid_from: "2026-04-01", base_rent: "750.00", advance_payment: "150.00", heating_advance_payment: "0.00" });
   expect(original.base_rent).toBe("700.00"); expect(original.advance_payment).toBe("150.00");
   expect(endpoints.patchLease).not.toHaveBeenCalled(); expect(endpoints.createLease).not.toHaveBeenCalled();
-  expect(await screen.findByText("2026-04-01")).toBeVisible();
-  view.unmount(); show(); expect(await screen.findByText("2026-04-01")).toBeVisible();
+  expect(await screen.findByText("01.04.2026")).toBeVisible();
+  view.unmount(); show(); expect(await screen.findByText("01.04.2026")).toBeVisible();
 });
 
 it("prefills the full rate at the chosen date, preserving NK on a subsequent change", async () => {
@@ -388,7 +389,7 @@ it.each([409, 422, 403, 404, "network"] as const)("preserves inputs and retries 
 });
 
 it("loads history read-only without exposing the change action", async () => {
-  history = [march]; show("READ_ONLY"); expect(await screen.findByText("2026-03-15")).toBeVisible();
+  history = [march]; show("READ_ONLY"); expect(await screen.findByText("15.03.2026")).toBeVisible();
   expect(screen.queryByRole("button", { name: /^Miete ändern ab/ })).not.toBeInTheDocument();
 });
 
@@ -550,9 +551,9 @@ it("T26 ends June 30, preserves source data, persists and requires an explicit b
   ownershipDate("2026-06-30"); endOwnership();
   await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
   expect(ownershipPatches()).toHaveLength(1); expect(JSON.parse(ownershipPatches()[0][1].body)).toEqual({ valid_to: "2026-06-30" });
-  expect(posts()).toHaveLength(0); expect(screen.getByRole("status")).toHaveTextContent(/2026-06-30/);
+  expect(posts()).toHaveLength(0); expect(screen.getByRole("status")).toHaveTextContent(/30\.06\.2026/);
   const row = screen.getByRole("row", { name: /Anna Alt/ });
-  expect(row).toHaveTextContent("2026-01-01"); expect(row).toHaveTextContent("2026-06-30"); expect(row).toHaveTextContent("125.0000");
+  expect(row).toHaveTextContent("01.01.2026"); expect(row).toHaveTextContent("30.06.2026"); expect(row).toHaveTextContent("125.0000");
   expect(within(row).queryByRole("button")).not.toBeInTheDocument();
   expect(screen.getByRole("combobox", { name: "Eigentuemer *" })).toHaveValue("");
   expect(screen.getByLabelText("Gueltig ab *", { exact: true })).toHaveValue("2026-07-01");
@@ -564,8 +565,8 @@ it("T26 ends June 30, preserves source data, persists and requires an explicit b
   await waitFor(() => expect(posts()).toHaveLength(1)); expect(posts()[0][0]).toBe("/api/ownership");
   expect(JSON.parse(posts()[0][1].body)).toEqual({ unit_id: "unit", owner_profile_id: "buyer", valid_from: "2026-07-01", mea_share: "125.0000" });
   await screen.findByRole("row", { name: /Berta Neu/ }); view.unmount(); show();
-  expect(await screen.findByRole("row", { name: /Anna Alt/ })).toHaveTextContent("2026-06-30");
-  expect(screen.getByRole("row", { name: /Berta Neu/ })).toHaveTextContent("2026-07-01");
+  expect(await screen.findByRole("row", { name: /Anna Alt/ })).toHaveTextContent("30.06.2026");
+  expect(screen.getByRole("row", { name: /Berta Neu/ })).toHaveTextContent("01.07.2026");
   expect(endpoints.patchLease).not.toHaveBeenCalled(); expect(endpoints.createLease).not.toHaveBeenCalled();
 });
 
@@ -612,7 +613,7 @@ it("T26 synchronously blocks duplicate submits, inputs, cancel, Escape and close
   fireEvent.keyDown(dialog, { key: "Escape" }); fireEvent.click(within(dialog).getByRole("button", { name: "Schließen" }));
   expect(screen.getByRole("dialog", { name: "Eigentum beenden" })).toBeVisible(); expect(posts()).toHaveLength(0);
   finish(new Response(JSON.stringify({ ...originalOwner, valid_to: "2026-06-30" }), { status: 200 }));
-  await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument()); expect(screen.getByRole("row", { name: /Anna Alt/ })).toHaveTextContent("2026-06-30");
+  await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument()); expect(screen.getByRole("row", { name: /Anna Alt/ })).toHaveTextContent("30.06.2026");
 });
 it("T26 cancels without PATCH and starts another row with clean date/error", async () => {
   ownershipSetup([originalOwner, { ...originalOwner, id: "ownership-second", owner_profile_id: "buyer" }]); show(); await openOwnershipEnd(); endOwnership();
@@ -684,16 +685,16 @@ it.each(["OWNER_ADMIN", "CLERK"])("T43 posts fixed EUR staffel without start-ren
     staffel_start_date: "2027-01-31", staffel_increase_amount: "25.00", staffel_interval_months: 12, staffel_steps: 3,
   });
   const table = screen.getByRole("table", { name: /^Miethistorie:/ });
-  expect(within(table).getByText("700.00")).toBeVisible();
-  expect(within(table).getByText("725.00")).toBeVisible();
+  expect(within(table).getByText("700,00 €")).toBeVisible();
+  expect(within(table).getByText("725,00 €")).toBeVisible();
   for (const row of staffelRows) {
-    const rendered = within(table).getByText(row.valid_from).closest("tr")!;
-    expect(within(rendered).getByText(row.base_rent)).toBeVisible();
-    expect(within(rendered).getByText("175.00")).toBeVisible();
+    const rendered = within(table).getByText(formatDate(row.valid_from)).closest("tr")!;
+    expect(within(rendered).getByText(formatMoney(centsFromDecimal(row.base_rent)))).toBeVisible();
+    expect(within(rendered).getByText("175,00 €")).toBeVisible();
     expect(within(rendered).queryByRole("button")).toBeNull();
   }
   expect(endpoints.patchLease).not.toHaveBeenCalled(); expect(endpoints.createLease).not.toHaveBeenCalled();
-  view.unmount(); show(role); expect(await screen.findByText("2029-01-31")).toBeVisible();
+  view.unmount(); show(role); expect(await screen.findByText("31.01.2029")).toBeVisible();
 });
 
 it.each([["5", "0.05"], ["2,75", "0.0275"], ["0.00000000000000000001", "0.0000000000000000000001"]])("T43 sends percentage %s as an exact decimal fraction", async (input, fraction) => {
@@ -827,15 +828,15 @@ it.each(["OWNER_ADMIN", "CLERK"])("T44 previews nonmutating and explicitly adopt
   expect(posts()).toHaveLength(1); expect(posts()[0][0]).toBe("/api/leases/lease/rent-changes/index/preview");
   expect(JSON.parse(posts()[0][1].body)).toEqual(indexInput); expect(history).toEqual([]);
   expect(within(dialog).getByText(/600.00/)).toBeVisible(); expect(within(dialog).getByText(/627.27/)).toBeVisible();
-  expect(within(dialog).getByText(/2027-01-01/)).toBeVisible(); fireEvent.click(adopt);
+  expect(within(dialog).getByText(/01\.01\.2027/)).toBeVisible(); fireEvent.click(adopt);
   await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
   expect(posts()).toHaveLength(2); expect(posts()[1][0]).toBe("/api/leases/lease/rent-changes/index");
   expect(JSON.parse(posts()[1][1].body)).toEqual({ ...indexInput, expected_base_rent: "627.27", expected_advance_payment: "150.00", expected_previous_valid_from: "2026-01-01" });
   const table = screen.getByRole("table", { name: /^Miethistorie:/ });
-  expect(within(table).getByText("600.00")).toBeVisible(); expect(within(table).getByText("627.27")).toBeVisible();
-  expect(within(table).getAllByText("150.00")).toHaveLength(2); expect(lease.base_rent).toBe("600.00");
+  expect(within(table).getByText("600,00 €")).toBeVisible(); expect(within(table).getByText("627,27 €")).toBeVisible();
+  expect(within(table).getAllByText("150,00 €")).toHaveLength(2); expect(lease.base_rent).toBe("600.00");
   expect(endpoints.patchLease).not.toHaveBeenCalled(); expect(endpoints.createLease).not.toHaveBeenCalled();
-  view.unmount(); show(role); expect(await screen.findByText("2027-01-01")).toBeVisible();
+  view.unmount(); show(role); expect(await screen.findByText("01.01.2027")).toBeVisible();
 });
 
 it.each(["VPI alt", "VPI neu", "Zugang der Erklärung"])("T44 invalidates preview when %s changes", async label => {
@@ -913,7 +914,7 @@ it("T44 disables index action on history load errors until retry", async () => {
 
 it("T57 hides lease creation and edit/end for READ_ONLY while keeping dated history readable", async () => {
   history = [march]; show("READ_ONLY");
-  expect(await screen.findByText("2026-03-15")).toBeVisible();
+  expect(await screen.findByText("15.03.2026")).toBeVisible();
   expect(screen.getByText("Originalvertrag")).toBeVisible();
   expect(screen.queryByRole("button", { name: /^\+ Mietvertrag$/ })).not.toBeInTheDocument();
   expect(screen.queryByRole("button", { name: "Bearbeiten / beenden" })).not.toBeInTheDocument();

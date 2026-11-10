@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { ApiError } from '../../api/client';
+import { centsFromDecimal, formatDateTime, formatMoney } from '../../lib/format';
 import { allocationReplacementsApi, type CorrectionCommand, type ReplacementCandidate } from '../../api/allocationAdoptions';
 import { AllocationCorrectionPreview } from './AllocationCorrectionPreview';
 import { Confirmation } from './AllocationCorrectionPanel';
@@ -71,7 +72,7 @@ export function AllocationReplacementPanel({ reviewId, enabled, parentBusy, gene
     {unknown && <button className="btn" disabled={busy || sending || parentBusy} onClick={() => void send()}>Dieselbe Belegersetzung erneut senden</button>}
     {!unknown && !sending && loaded && items.length === 0 && <p>Keine zugänglichen bestätigten Belege mit diesem Lieferanten und dieser Rechnungsnummer gefunden.</p>}
     {!!items.length && !unknown && <label className="block">Bisheriger Beleg<select className="block w-full min-w-0" value={selected?.id ?? ''} disabled={busy || sending || parentBusy} onChange={event => { setSelected(items.find(item => item.id === event.target.value) ?? null); setError(null); }}>
-      <option value="">Beleg auswählen</option>{items.map(item => <option key={item.id} value={item.id}>{item.seller_name} · {item.document_number} · {item.gross_amount} EUR · {new Date(item.confirmed_at).toLocaleString('de-DE')}</option>)}
+      <option value="">Beleg auswählen</option>{items.map(item => <option key={item.id} value={item.id}>{item.seller_name} · {item.document_number} · {formatMoney(centsFromDecimal(item.gross_amount))} · {formatDateTime(item.confirmed_at)}</option>)}
     </select></label>}
     {after && !unknown && <button className="btn" disabled={busy || sending || parentBusy} onClick={() => void load(true)}>Weitere bisherige Belege laden</button>}
     {selected && !unknown && <><a className="block underline" href={`/belege/${selected.source_document_id}`} target="_blank" rel="noreferrer">Bisheriges aufbewahrtes Original öffnen</a>

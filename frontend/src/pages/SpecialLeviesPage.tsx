@@ -3,6 +3,7 @@ import { Link, useLocation, useSearchParams } from "react-router-dom";
 import { createSpecialLevy, listSpecialLevies, listProperties, listUnits, listOwnerProfiles, listPersons, listMeetings, listAgendaItems, listResolutions, listRegisterEntries, linkSpecialLevyResolution } from "../api/endpoints";
 import type { SpecialLevy, Property, Unit, OwnerProfile, Person } from "../api/types";
 import { useAuth } from "../auth/useAuth";
+import { centsFromDecimal, formatDate, formatMoney } from "../lib/format";
 import { AccountingScopeSelector } from "../components/AccountingScopeSelector";
 
 function moneyInput(value: string): string | null {
@@ -224,10 +225,10 @@ export default function SpecialLeviesPage() {
     {readScope && !readValid && <p role="alert">Bitte einen verfügbaren Abrechnungskreis wählen.</p>}
     {readScope && readValid && !loading && !listError && rows.length === 0 && <p>Keine Sonderumlagen vorhanden.</p>}
     {readScope && readValid && !listError && rows.map(row => <section className="card mb-4" key={row.id} id={`sonderumlage-${row.id}`}>
-      <h2>Sonderumlage · {row.amount} EUR</h2><p>Fällig am {row.due_date}</p>
+      <h2>Sonderumlage · {formatMoney(centsFromDecimal(row.amount))}</h2><p>Fällig am {formatDate(row.due_date)}</p>
       {resolutionLink(row)}
       <div className="overflow-x-auto"><table className="data-table"><thead><tr><th>Eigentümer</th><th>Einheit</th><th>MEA</th><th>Anteil</th></tr></thead>
-        <tbody>{row.allocations.map((item, index) => <tr key={`${item.owner_profile_id}-${item.unit_id}-${index}`}><td>{ownerLabel(item.owner_profile_id)}</td><td>{unitLabel(item.unit_id)}</td><td>{item.mea}</td><td>{item.amount} EUR</td></tr>)}</tbody>
+        <tbody>{row.allocations.map((item, index) => <tr key={`${item.owner_profile_id}-${item.unit_id}-${index}`}><td>{ownerLabel(item.owner_profile_id)}</td><td>{unitLabel(item.unit_id)}</td><td>{item.mea}</td><td>{formatMoney(centsFromDecimal(item.amount))}</td></tr>)}</tbody>
       </table></div>
     </section>)}
   </div>;

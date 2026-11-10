@@ -1,3 +1,4 @@
+import { formatDateTime } from "../../lib/format";
 import { useEffect, useRef, useState } from 'react';
 import { ApiError } from '../../api/client';
 import { correctionFollowupsApi, type CorrectionImpact, type FollowupCommand, type FollowupStatus } from '../../api/allocationAdoptions';
@@ -84,7 +85,7 @@ function Followup({ item, pending, setPending, parentBusy, generation }: {
         <label className="flex items-start gap-2"><input type="checkbox" checked={confirmed} onChange={event => setConfirmed(event.target.checked)} />Aktuelle Berechnung, manuelle Eingaben und erforderlichen Abschluss geprüft.</label>
         <button className="btn" disabled={disabled || !reason.trim() || !confirmed || status.source_review_required && !sourceReviewed} onClick={() => void send()}>Folgearbeit verbindlich abschließen</button>
       </fieldset>}
-      {status.history.length > 0 && <details><summary>Bisherige Abschlussnachweise ({status.history.length})</summary><ol className="space-y-2">{status.history.map(receipt => <li key={receipt.id} className="break-words">{new Date(receipt.completed_at).toLocaleString('de-DE')} · {receipt.reason}</li>)}</ol></details>}
+      {status.history.length > 0 && <details><summary>Bisherige Abschlussnachweise ({status.history.length})</summary><ol className="space-y-2">{status.history.map(receipt => <li key={receipt.id} className="break-words">{formatDateTime(receipt.completed_at)} · {receipt.reason}</li>)}</ol></details>}
     </>}
   </li>;
 }

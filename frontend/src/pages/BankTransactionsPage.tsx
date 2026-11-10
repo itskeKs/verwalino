@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { parseGermanAmount } from "../lib/germanAmount";
+import { centsFromDecimal, formatDate, formatIban, formatMoney } from "../lib/format";
 import { ApiError } from "../api/client";
 import { Link, useParams, useSearchParams } from "react-router-dom";
 import {
@@ -24,15 +25,12 @@ const STATUS_LABELS: Record<BankTransactionStatus, string> = {
 
 // Decimal strings are formatted without converting monetary values to floating point.
 function money(amount: string): string {
-  const match = /^(-?)(\d+)(?:\.(\d+))?$/.exec(amount);
-  if (!match) return amount;
-  const [, sign, integer, fraction = ""] = match;
-  return `${sign}${integer.replace(/\B(?=(\d{3})+(?!\d))/g, ".")},${fraction.padEnd(2, "0")} €`;
+  return formatMoney(centsFromDecimal(amount));
 }
 
 function date(value: string | null): string {
   if (!value) return "–";
-  return value.replace(/^(\d{4})-(\d{2})-(\d{2})$/, "$3.$2.$1");
+  return formatDate(value);
 }
 
 function errorMessage(error: unknown): string {
@@ -218,7 +216,7 @@ function AccountTransactions({ id }: { id: string }) {
     <div className="paged-list" style={{ overflowAnchor: "none" }}>
       <Link to="/bankkonten">← Bankkonten</Link>
       <h1>Umsätze{account ? ` – ${account.label}` : ""}</h1>
-      {account?.iban && <p>{account.iban}</p>}
+      {account?.iban && <p>{formatIban(account.iban)}</p>}
       {accountError && <p role="alert" className="error-text">{accountError}</p>}
       {canWrite && !showImport && <button className="btn btn--primary" onClick={() => {
         const params = new URLSearchParams(searchParams);
@@ -241,7 +239,7 @@ function AccountTransactions({ id }: { id: string }) {
           <div className="paged-table"><table className="data-table">
             <thead><tr><th>Buchung</th><th>Wertstellung</th><th>Gegenpartei</th><th>IBAN</th><th>Verwendungszweck</th><th>Betrag</th><th>Importstatus</th></tr></thead>
             <tbody>{preview.transactions.map((item, index) => <tr key={`${item.import_hash}:${index}`}>
-              <td>{date(item.booking_date)}</td><td>{date(item.value_date)}</td><td>{item.counterparty_name ?? "–"}</td><td>{item.counterparty_iban ?? "–"}</td><td>{item.purpose ?? "–"}</td><td>{money(item.amount)}</td><td>{item.is_duplicate ? "Dublette" : "Neu"}</td>
+              <td>{date(item.booking_date)}</td><td>{date(item.value_date)}</td><td>{item.counterparty_name ?? "–"}</td><td>{item.counterparty_iban ? formatIban(item.counterparty_iban) : "–"}</td><td>{item.purpose ?? "–"}</td><td>{money(item.amount)}</td><td>{item.is_duplicate ? "Dublette" : "Neu"}</td>
             </tr>)}</tbody>
           </table></div>
           <button type="button" className="btn btn--primary" disabled={busy} onClick={() => void runImport(false)}>Übernehmen</button>
@@ -270,7 +268,7 @@ function AccountTransactions({ id }: { id: string }) {
         <table className="data-table">
           <thead><tr><th>Buchung</th><th>Wertstellung</th><th>Gegenpartei</th><th>IBAN</th><th>Verwendungszweck</th><th>Betrag</th><th>Status</th><th>Vorschläge / Aktionen</th></tr></thead>
           <tbody>{items.map(item => <tr key={item.id}>
-            <td>{date(item.booking_date)}</td><td>{date(item.value_date)}</td><td>{item.counterparty_name ?? "–"}</td><td>{item.counterparty_iban ?? "–"}</td><td>{item.purpose ?? "–"}</td><td>{money(item.amount)}</td><td>{STATUS_LABELS[item.status]}</td>
+            <td>{date(item.booking_date)}</td><td>{date(item.value_date)}</td><td>{item.counterparty_name ?? "–"}</td><td>{item.counterparty_iban ? formatIban(item.counterparty_iban) : "–"}</td><td>{item.purpose ?? "–"}</td><td>{money(item.amount)}</td><td>{STATUS_LABELS[item.status]}</td>
             <td>{(item.suggestions ?? []).map((candidate, index) => <SuggestionDetails key={index} suggestion={candidate} />)}
               {canWrite && item.status === "NEU" && <div className="form-actions">
                 {(item.suggestions ?? []).length > 0 && <button className="btn" disabled={mutating} onClick={() => acceptSuggestion(item)}>Vorschlag übernehmen</button>}

@@ -1,3 +1,4 @@
+import { formatDateTime } from "../lib/format";
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import { Link, useParams } from "react-router-dom";
 import { ApiError } from "../api/client";
@@ -13,7 +14,7 @@ const endpoint = sourceClassificationApi.base;
 function ReviewReceipt({ receipt }: { receipt: Receipt }) {
   return <section className="card" aria-label="Prüfnachweis">
     <h2>Altquelle eingestuft</h2>
-    <p>{receipt.decision === "ADMITTED" ? "Für die spätere Aktivierung freigegeben" : "Für die spätere Aktivierung gesperrt"} · {new Date(receipt.created_at).toLocaleString("de-DE")}</p>
+    <p>{receipt.decision === "ADMITTED" ? "Für die spätere Aktivierung freigegeben" : "Für die spätere Aktivierung gesperrt"} · {formatDateTime(receipt.created_at)}</p>
     <p className="whitespace-pre-wrap break-words">{receipt.reason}</p>
     <p><Link to={`/objekte/${receipt.property_id}`}>Zielobjekt anzeigen</Link> · <Link to={`/altquellen/${receipt.id}`}>Prüfnachweis öffnen</Link></p>
     <details><summary>Original identifizieren</summary><p className="break-all">SHA-256: {receipt.content_sha256}</p><p className="break-all">Dokument: {receipt.document_id}</p></details>

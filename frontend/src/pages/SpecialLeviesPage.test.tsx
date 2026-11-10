@@ -55,8 +55,8 @@ it("creates an exact decimal payload and displays only frozen server shares with
   show(); await choose(); fill(); fireEvent.click(screen.getByRole("button", { name: "Sonderumlage anlegen" }));
   await screen.findByText("Ada Besitzer 1");
   expect(api.post).toHaveBeenCalledWith("/api/special-levies", { property_id: "p1", accounting_scope_id: "scope-p1", amount: "10000.00", due_date: "2026-06-15", resolution_id: "resolution" });
-  expect(screen.getAllByText("3000.00 EUR")).toHaveLength(2);
-  expect(screen.getByText("4000.00 EUR")).toBeVisible();
+  expect(screen.getAllByText("3.000,00 €")).toHaveLength(2);
+  expect(screen.getByText("4.000,00 €")).toBeVisible();
   expect(screen.getByText("Wohnung 3")).toBeVisible();
 });
 it.each(["READ_ONLY", "UNKNOWN"])("%s cannot save but can list in READ scope", async role => {
@@ -177,5 +177,5 @@ it("labels an unlinked levy and replaces the one-time form with the confirmed re
   expect(api.put).toHaveBeenCalledWith("/api/special-levies/levy/resolution", { resolution_id: "resolution" });
   expect(screen.queryByText("ohne Beschlussbezug")).toBeNull();
   expect(screen.queryByRole("button", { name: "Beschluss zuordnen" })).toBeNull();
-  expect(screen.getAllByText("3000.00 EUR")).toHaveLength(2);
+  expect(screen.getAllByText("3.000,00 €")).toHaveLength(2);
 });

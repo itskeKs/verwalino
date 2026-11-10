@@ -21,10 +21,11 @@ import {
 } from "../api/endpoints";
 import type { WegRun, WegLine, WegComputeRequest, Property, OwnerProfile, Person } from "../api/types";
 import { ApiError } from "../api/client";
+import { centsFromDecimal, formatDate, formatMoney } from "../lib/format";
 
 const STATUS_LABELS: Record<string, string> = { draft: "Entwurf", finalized: "Finalisiert" };
 const STATUS_CSS: Record<string, string> = { draft: "badge--draft", finalized: "badge--confirmed" };
-const eur = (value: string) => new Intl.NumberFormat("de-DE", { style: "currency", currency: "EUR" }).format(Number(value));
+const eur = (value: string) => formatMoney(centsFromDecimal(value));
 const germanDate = (value: string) => value.split("-").reverse().join(".");
 
 const LINE_LABELS: Record<string, string> = {
@@ -178,9 +179,9 @@ export function WegSettlementDetailPage() {
         <h2>Übersicht</h2>
         <table className="info-table"><tbody>
           <tr><td>Objekt</td><td><Link to={`/objekte/${run.property_id}`} className="link">{propName(run.property_id)}</Link></td></tr>
-          <tr><td>Zeitraum</td><td>{run.period_start} bis {run.period_end}</td></tr>
-          {run.total_cost != null && <tr><td>Gesamtkosten (Ist, ohne Rücklage)</td><td style={{ fontFamily: "var(--mono)" }}>{run.total_cost} EUR</td></tr>}
-          {run.balance != null && <tr><td>Σ Abrechnungsspitze</td><td style={{ fontFamily: "var(--mono)", fontWeight: 700 }}>{run.balance} EUR</td></tr>}
+          <tr><td>Zeitraum</td><td>{formatDate(run.period_start)} bis {formatDate(run.period_end)}</td></tr>
+          {run.total_cost != null && <tr><td>Gesamtkosten (Ist, ohne Rücklage)</td><td style={{ fontFamily: "var(--mono)" }}>{formatMoney(centsFromDecimal(run.total_cost))}</td></tr>}
+          {run.balance != null && <tr><td>Σ Abrechnungsspitze</td><td style={{ fontFamily: "var(--mono)", fontWeight: 700 }}>{formatMoney(centsFromDecimal(run.balance))}</td></tr>}
           <tr><td>Engine-Version</td><td><code>{run.engine_version}</code></td></tr>
           {run.finalized_at && <tr><td>Finalisiert am</td><td>{run.finalized_at}</td></tr>}
         </tbody></table>
@@ -203,10 +204,10 @@ export function WegSettlementDetailPage() {
               Aus Zahlenstand übernehmen
             </button>
           </div>
-          <p>Aktueller Anfangsbestand: {currentOpening === null ? 'Wird geladen…' : new Intl.NumberFormat('de-DE', { style: 'currency', currency: 'EUR' }).format(Number(currentOpening))}. Geben Sie bei einer Berichtigung den korrigierten Gesamtbestand und eine Begründung ein.</p>
+          <p>Aktueller Anfangsbestand: {currentOpening === null ? 'Wird geladen…' : formatMoney(centsFromDecimal(currentOpening))}. Geben Sie bei einer Berichtigung den korrigierten Gesamtbestand und eine Begründung ein.</p>
           <div className="form-grid">
             <label>Rücklagen-Anfangsbestand
-              <input type="text" inputMode="decimal" placeholder="0.00" value={opening} onChange={(e) => setOpening(e.target.value)} />
+              <input type="text" inputMode="decimal" placeholder="700,00" value={opening} onChange={(e) => setOpening(e.target.value)} />
             </label>
             <label className="form-full-width">Begründung der Rücklagenwerte
               <textarea rows={3} value={reserveReason} maxLength={2000} onChange={e => setReserveReason(e.target.value)} />
@@ -274,9 +275,9 @@ export function WegSettlementDetailPage() {
                           {l.note ? <div style={{ fontSize: "0.78rem", color: "var(--text-muted)", fontStyle: "italic" }}>{l.note}</div> : null}
                         </td>
                         <td>{l.distribution_key ?? ""}</td>
-                        <td className="whitespace-nowrap" style={{ fontFamily: "var(--mono)", textAlign: "right" }}>{l.total_amount != null ? `${l.total_amount} EUR` : ""}</td>
+                        <td className="whitespace-nowrap" style={{ fontFamily: "var(--mono)", textAlign: "right" }}>{l.total_amount != null ? formatMoney(centsFromDecimal(l.total_amount)) : ""}</td>
                         <td className="whitespace-nowrap" style={{ fontFamily: "var(--mono)", textAlign: "right", color: isSpitze ? spitzeColor(l.amount) : undefined }}>
-                          {l.amount} EUR
+                          {formatMoney(centsFromDecimal(l.amount))}
                         </td>
                       </tr>
                     );

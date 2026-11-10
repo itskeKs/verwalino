@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { api } from "../api/client";
+import { formatDateTime } from "../lib/format";
 import { useAuth } from "../auth/useAuth";
 import { Button } from "./ui/button";
 import { lifecycleChanged, type OrganizationLifecycle } from "../api/organizationLifecycle";
@@ -19,7 +20,7 @@ export function OrganizationDeletionBanner() {
   }
   if (organization?.deletion?.status !== "cooling_off") return null;
   return <aside role="status" className="mb-5 space-y-3 rounded-lg border border-border bg-secondary p-4">
-    <p>Die Löschung Ihrer Organisation ist vorgemerkt. Ihre Organisation ist schreibgeschützt. Die Löschung wird frühestens ab {new Date(organization.deletion.execute_after!).toLocaleString("de-DE", { day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit" })} durchgeführt. Bis zur Durchführung können Sie die Löschung widerrufen.</p>
+    <p>Die Löschung Ihrer Organisation ist vorgemerkt. Ihre Organisation ist schreibgeschützt. Die Löschung wird frühestens ab {formatDateTime(organization.deletion.execute_after!)} durchgeführt. Bis zur Durchführung können Sie die Löschung widerrufen.</p>
     {session?.role === "OWNER_ADMIN" && <Button type="button" variant="outline" disabled={busy} onClick={() => void cancel()}>Löschung widerrufen</Button>}
     {error && <p role="alert" className="text-sm text-destructive">{error}</p>}
   </aside>;

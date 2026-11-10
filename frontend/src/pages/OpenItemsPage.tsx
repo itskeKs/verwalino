@@ -25,6 +25,7 @@ import type {
 } from "../api/types";
 import { AccountingScopeSelector } from "../components/AccountingScopeSelector";
 import { ApiError } from "../api/client";
+import { centsFromDecimal, formatMoney } from "../lib/format";
 import { AuthCtx } from "../auth/useAuth";
 import { DunningBatch } from "../components/DunningBatch";
 
@@ -232,7 +233,7 @@ export function OpenItemsPage() {
                 color: r.totalOpen > 0 ? "#b71c1c" : r.totalOpen < 0 ? "#2e7d32" : undefined,
               }}
             >
-              {r.totalOpen.toFixed(2)} EUR offen
+              {formatMoney(centsFromDecimal(r.totalOpen.toFixed(2)))} offen
             </span>
           </div>
 
@@ -266,7 +267,7 @@ export function OpenItemsPage() {
                           fontFamily: "var(--mono)",
                         }}
                       >
-                        {item.soll} EUR
+                        {formatMoney(centsFromDecimal(item.soll))}
                       </td>
                       <td
                         style={{
@@ -274,7 +275,7 @@ export function OpenItemsPage() {
                           fontFamily: "var(--mono)",
                         }}
                       >
-                        {item.ist} EUR
+                        {formatMoney(centsFromDecimal(item.ist))}
                       </td>
                       <td
                         style={{
@@ -284,7 +285,7 @@ export function OpenItemsPage() {
                           color: openVal > 0 ? "#b71c1c" : openVal < 0 ? "#2e7d32" : undefined,
                         }}
                       >
-                        {item.open_amount} EUR
+                        {formatMoney(centsFromDecimal(item.open_amount))}
                       </td>
                     </tr>
                   );

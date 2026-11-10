@@ -1,3 +1,4 @@
+import { formatDateTime } from "../lib/format";
 import { formatUploadLimit, useUploadLimit } from '../lib/uploads';
 import { useEffect, useRef, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
@@ -109,7 +110,7 @@ export function InboxPage() {
       {error && <p role="alert" className="error-text">{error}</p>}
       {!busy && !error && !rows.length && <p>Noch keine zugänglichen Eingänge vorhanden.</p>}
       {rows.map(row => <article className="card flex flex-wrap items-center justify-between gap-3" key={row.id}>
-        <div><h3>{row.item_count} Datei(en)</h3><p>{new Date(row.created_at).toLocaleString('de-DE')}</p></div>
+        <div><h3>{row.item_count} Datei(en)</h3><p>{formatDateTime(row.created_at)}</p></div>
         <Link className="btn" to={`/posteingang/${row.id}`}>Stapel öffnen</Link>
       </article>)}
       {busy && <p role="status">Lade Eingänge…</p>}

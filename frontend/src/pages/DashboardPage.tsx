@@ -4,6 +4,7 @@
  */
 
 import { useEffect, useRef, useState } from "react";
+import { formatDate } from "../lib/format";
 import { Link } from "react-router-dom";
 import {
   AlertTriangle,
@@ -143,12 +144,12 @@ function DashboardContent() {
   const openItemsCount = openItemsMatch ? Number(openItemsMatch[0]) : null;
   const openItemsAvailable = financeAvailable && openItemsCount !== null;
 
-  const dateLabel = new Date().toLocaleDateString("de-DE", {
+  const dateLabel = new Intl.DateTimeFormat("de-DE", {
     weekday: "long",
     day: "numeric",
     month: "long",
     year: "numeric",
-  });
+  }).format(new Date());
 
   return (
     <div className="space-y-6 dashboard-page">
@@ -302,11 +303,6 @@ function DashboardContent() {
       )}
     </div>
   );
-}
-
-function formatDate(iso: string): string {
-  const [y, m, d] = iso.split("-");
-  return `${d}.${m}.${y}`;
 }
 
 function calendarIso(date: Date): string {

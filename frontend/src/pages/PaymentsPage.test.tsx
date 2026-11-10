@@ -158,7 +158,7 @@ describe("T40 filtered list CSV", () => {
     expect(screen.queryByText("Lade...")).not.toBeInTheDocument();
     expect(screen.getByRole("table")).toBe(table);
     expect(table.innerHTML).toBe(tableBefore);
-    expect(screen.getByRole("status", { name: outputName })).toHaveTextContent("650,00 EUR");
+    expect(screen.getByRole("status", { name: outputName })).toHaveTextContent("650,00 €");
     expect(screen.getByTestId("current-url").textContent).toBe(query);
     expect(csv()).toBeEnabled();
     expect(fetchMock.mock.calls.filter(([url]) => url.split("?")[0] === route)).toHaveLength(1);
@@ -173,7 +173,7 @@ describe("T40 filtered list CSV", () => {
     for (const label of ["Statusfilter", "Bankkontofilter", "Zahlungstypfilter"]) expect(screen.getByRole("combobox", { name: label })).toBeInTheDocument();
     expect(csv()).toBeDisabled();
     await loaded();
-    expect(screen.getByRole("status", { name: outputName })).toHaveTextContent("650,00 EUR");
+    expect(screen.getByRole("status", { name: outputName })).toHaveTextContent("650,00 €");
     expect(screen.getByText(/angezeigten.*Zeilen/)).toBeInTheDocument();
     expect(exportCalls()).toHaveLength(0);
     expect(csv()).toBeEnabled();
@@ -197,24 +197,24 @@ describe("T40 filtered list CSV", () => {
   it("uses exact large signed cents beyond the individual amount limit", async () => {
     rows = [row("one", "999999999999.99"), row("two", "999999999999.99"), row("out", "0.01")];
     open(); await loaded();
-    expect(screen.getByRole("status", { name: outputName })).toHaveTextContent("1.999.999.999.999,97 EUR");
+    expect(screen.getByRole("status", { name: outputName })).toHaveTextContent("1.999.999.999.999,97 €");
   });
 
   it("aggregates cents above Number.MAX_SAFE_INTEGER without losing a cent", async () => {
     rows = [...Array.from({ length: 100 }, (_, index) => row(`large-${index}`, "999999999999.99")), row("out", "0.01")];
     open(); await loaded();
-    expect(screen.getByRole("status", { name: outputName })).toHaveTextContent("99.999.999.999.998,99 EUR");
+    expect(screen.getByRole("status", { name: outputName })).toHaveTextContent("99.999.999.999.998,99 €");
   });
 
   it("keeps negative corrections exact", async () => {
     rows = [row("one", "-0.03"), row("two", "0.01")]; open(); await loaded();
-    expect(screen.getByRole("status", { name: outputName })).toHaveTextContent("-0,02 EUR");
+    expect(screen.getByRole("status", { name: outputName })).toHaveTextContent("-0,02 €");
   });
 
   it("allows successful empty datasets to download their CSV header", async () => {
     rows = []; open(); await loaded(); fireEvent.click(csv());
     await waitFor(() => expect(click).toHaveBeenCalledTimes(1));
-    expect(screen.getByRole("status", { name: outputName })).toHaveTextContent("0,00 EUR");
+    expect(screen.getByRole("status", { name: outputName })).toHaveTextContent("0,00 €");
   });
 
   it.each([403, 404, 409, 422, "network"] as const)("keeps the list readable after export rejection %s and allows retry, including read-only callers", async status => {
@@ -229,7 +229,7 @@ describe("T40 filtered list CSV", () => {
     });
     fireEvent.click(csv());
     await screen.findByRole("alert");
-    expect(screen.getByRole("status", { name: outputName })).toHaveTextContent("650,00 EUR");
+    expect(screen.getByRole("status", { name: outputName })).toHaveTextContent("650,00 €");
     expect(click).not.toHaveBeenCalled(); expect(createUrl).not.toHaveBeenCalled();
     expect(csv()).toBeEnabled();
     fetchMock.mockImplementation(defaultFetch);
@@ -262,7 +262,7 @@ describe("T40 filtered list CSV", () => {
     await loaded();
     await act(async () => { if (outcome === "resolve") old.resolve(response([row("old", "999.00")])); else old.reject(new Error("Veralteter Fehler")); });
     expect(screen.queryByText(/Veralteter Fehler/)).not.toBeInTheDocument();
-    expect(screen.getByRole("status", { name: outputName })).toHaveTextContent("650,00 EUR");
+    expect(screen.getByRole("status", { name: outputName })).toHaveTextContent("650,00 €");
     fireEvent.click(csv()); await waitFor(() => expect(click).toHaveBeenCalledTimes(1));
     expect(exportCalls()[0][0]).toContain("status=booked");
   });
@@ -328,7 +328,7 @@ describe("T40 filtered list CSV", () => {
     expect(click).not.toHaveBeenCalled(); expect(csv()).toBeDisabled();
     await act(async () => pendingList.resolve(response([row("new", "12.34")])));
     await loaded(); expect(csv()).toBeEnabled();
-    expect(screen.getByRole("status", { name: outputName })).toHaveTextContent("12,34 EUR");
+    expect(screen.getByRole("status", { name: outputName })).toHaveTextContent("12,34 €");
   });
 
   it.each(["resolve", "reject"])("does not allow a stale lookup %s to overwrite current rows or error", async outcome => {
@@ -344,7 +344,7 @@ describe("T40 filtered list CSV", () => {
     await loaded();
     await act(async () => { if (outcome === "resolve") oldLookup.resolve(response([{ id: "old", name: "Veraltetes Haus" }])); else oldLookup.reject(new Error("Alter Lookupfehler")); });
     expect(screen.queryByText(/Veraltetes Haus|Alter Lookupfehler/)).not.toBeInTheDocument();
-    expect(screen.getByRole("status", { name: outputName })).toHaveTextContent("650,00 EUR");
+    expect(screen.getByRole("status", { name: outputName })).toHaveTextContent("650,00 €");
     expect(csv()).toBeEnabled();
   });
 

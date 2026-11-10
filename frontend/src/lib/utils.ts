@@ -6,12 +6,6 @@ export function cn(...inputs: ClassValue[]): string {
   return twMerge(clsx(inputs));
 }
 
-const euro = new Intl.NumberFormat("de-DE", { style: "currency", currency: "EUR" });
-
-export function formatEuro(amount: string): string {
-  return euro.format(Number(amount));
-}
-
 export function canonicalValue(input: string): string | null {
   const trimmed = input.trim();
   const normalized = /^\d{1,3}(?:\.\d{3})+,\d{1,4}$/.test(trimmed)

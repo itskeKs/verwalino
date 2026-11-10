@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState, type FormEvent } from "react";
+import { formatDate } from "../lib/format";
 import { useLocation, useSearchParams } from "react-router-dom";
 import { createTask, deleteTask, listLeases, listProperties, listTaskAssignees, listTasks, listUnits, updateTask } from "../api/endpoints";
 import type { LeaseRecord, Property, Task, TaskInput, TaskPage, Unit, User } from "../api/types";
@@ -126,7 +127,7 @@ function TasksContent() {
   }
   const field = (name: keyof Form, value: string) => setForm(f => ({ ...f, [name]: value }));
   const editTask = editing && editing !== "new" ? editing : null;
-  const contextText = [contextProperty?.name || choices?.properties.find(p => p.id === initialProperty)?.name, contextUnit ? `Einheit ${contextUnit.number}` : null, contextLease ? `Mietvertrag ab ${contextLease.valid_from}` : null].filter(Boolean).join(" · ");
+  const contextText = [contextProperty?.name || choices?.properties.find(p => p.id === initialProperty)?.name, contextUnit ? `Einheit ${contextUnit.number}` : null, contextLease ? `Mietvertrag ab ${formatDate(contextLease.valid_from)}` : null].filter(Boolean).join(" · ");
 
   return <div className="space-y-4">
     <div className="flex items-center justify-between"><h1>Aufgaben</h1>{canWrite && <button className="btn btn-primary" disabled={pending || !contextValid} onClick={() => openEditor()}>Aufgabe anlegen</button>}</div>
@@ -144,7 +145,7 @@ function TasksContent() {
     {mutationError && !editing && !deleting && <p role="alert">{mutationError}</p>}
     {page && <><ul className="space-y-3">{page.items.map(task => <li key={task.id} className="card">
       <h2>{task.title}</h2><p className="whitespace-pre-wrap">{task.note}</p>
-      <p>{task.completed ? "Erledigt" : "Offen"} · {task.due_date ? `Fällig am ${task.due_date}` : "Ohne Fälligkeit"} · {task.assigned_user_name || "Zuständig zugeordnet"}</p>
+      <p>{task.completed ? "Erledigt" : "Offen"} · {task.due_date ? `Fällig am ${formatDate(task.due_date)}` : "Ohne Fälligkeit"} · {task.assigned_user_name || "Zuständig zugeordnet"}</p>
       <p>{[task.property_name, task.unit_number ? `Einheit ${task.unit_number}` : null, task.lease_label].filter(Boolean).join(" · ") || "Ohne Objektbindung"}</p>
       {canWrite && <div className="flex gap-2"><button disabled={pending || !choices} onClick={() => openEditor(task)}>Bearbeiten</button><button disabled={pending} onClick={() => void mutate(() => updateTask(task.id, { completed: !task.completed }))}>{task.completed ? "Wiederöffnen" : "Erledigen"}</button><button disabled={pending} onClick={() => { setMutationError(null); setDeleting(task); }}>Löschen</button></div>}
     </li>)}</ul>{!page.items.length && !loading && <p>Keine Aufgaben gefunden.</p>}</>}

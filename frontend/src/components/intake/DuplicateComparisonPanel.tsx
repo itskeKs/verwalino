@@ -1,3 +1,4 @@
+import { centsFromDecimal, formatDate, formatDateTime, formatMoney } from "../../lib/format";
 import { useEffect, useRef, useState } from 'react';
 import { ApiError } from '../../api/client';
 import type { InvoiceReview } from '../../api/invoiceReviews';
@@ -15,8 +16,8 @@ const inputClass = 'w-full rounded-md border border-input bg-background px-3 py-
 const denied = (failure: unknown) => failure instanceof ApiError && [401, 403, 404].includes(failure.status);
 function Review({ review, title }: { review: InvoiceReview; title: string }) {
   return <article className="min-w-0 space-y-2 rounded-md border border-input p-3"><h3>{title} · Prüfstand {review.revision_number}</h3>
-    <p className="break-words">{review.seller_name} · {review.document_number}</p><p>{review.document_kind === 'credit_note' ? 'Gutschrift' : 'Rechnung'} · {review.gross_amount} {review.currency}</p>
-    <p>Rechnungsdatum: {review.invoice_date}<br />Leistung: {review.service_period_from} bis {review.service_period_to}</p>
+    <p className="break-words">{review.seller_name} · {review.document_number}</p><p>{review.document_kind === 'credit_note' ? 'Gutschrift' : 'Rechnung'} · {formatMoney(centsFromDecimal(review.gross_amount))}</p>
+    <p>Rechnungsdatum: {formatDate(review.invoice_date)}<br />Leistung: {formatDate(review.service_period_from)} bis {formatDate(review.service_period_to)}</p>
     <p>Umsatzsteuer: {review.vat_amount ?? 'unbekannt'} · Satz: {review.vat_rate ?? 'unbekannt'}</p>
     <a className="link" target="_blank" rel="noreferrer" href={`/posteingang/belege/${review.document_ref_id}?logical_document_id=${encodeURIComponent(review.logical_document_id)}&extraction_revision_id=${encodeURIComponent(review.extraction_revision_id)}`}>{title} im neuen Tab öffnen</a>
   </article>;
@@ -89,7 +90,7 @@ export function DuplicateComparisonPanel({ reviewId, ready, parentBusy, parentGe
     {page && <>
       {!page.items.length && <p>Keine lesbaren Kandidaten in dieser Suche.</p>}
       <ul className="space-y-3">{page.items.map(item => <li key={item.review_id} className="min-w-0 space-y-2 rounded-md border border-input p-3">
-        <p className="break-words">{item.seller_name} · {item.document_number} · {item.gross_amount} {item.currency}</p>
+        <p className="break-words">{item.seller_name} · {item.document_number} · {formatMoney(centsFromDecimal(item.gross_amount))}</p>
         <p>{item.evidence.match_reasons.includes('same_bytes_and_range') ? 'Identische Originaldatei und derselbe Seitenbereich.' : 'Übereinstimmende geprüfte Rechnungsmerkmale; möglicher Treffer.'}</p>
         {item.evidence.kind_conflict && <p>Rechnung und Gutschrift widersprechen sich bei identischem Original. Zuerst die Feldprüfung korrigieren.</p>}
         {item.latest_comparison && <p>Letzter Paarvergleich: {verdictLabel(item.latest_comparison, item.logical_document_id)} · Version {item.latest_comparison.revision_number} · {item.latest_comparison.subject_review_id === reviewId && item.latest_comparison.reference_review_id === item.review_id || item.latest_comparison.reference_review_id === reviewId && item.latest_comparison.subject_review_id === item.review_id ? 'gleiche Prüfstände' : 'frühere Prüfstände; erneut prüfen'}</p>}
@@ -101,7 +102,7 @@ export function DuplicateComparisonPanel({ reviewId, ready, parentBusy, parentGe
     {draft && authorized && pair && <div className="space-y-4 min-w-0">
       <div className="grid min-w-0 gap-3 lg:grid-cols-2"><Review review={pair.subject} title="Ausgangsbeleg" /><Review review={pair.reference} title="Vergleichsbeleg" /></div>
       {draft.candidate.evidence.field_disagreements.length > 0 && <p>Abweichende Felder: {draft.candidate.evidence.field_disagreements.map(key => labels[key] ?? key).join(', ')}. Abweichungen werden durch diesen Vergleich nicht korrigiert.</p>}
-      {pair.history.items.map(item => <details key={item.id}><summary>Paarvergleich · Version {item.revision_number} · {verdictLabel(item, pair.reference.logical_document_id)}</summary><p className="break-words">{item.reason}</p><p>{new Date(item.created_at).toLocaleString('de-DE')} · Historischer Prüfvermerk, keine Kostenfreigabe</p></details>)}
+      {pair.history.items.map(item => <details key={item.id}><summary>Paarvergleich · Version {item.revision_number} · {verdictLabel(item, pair.reference.logical_document_id)}</summary><p className="break-words">{item.reason}</p><p>{formatDateTime(item.created_at)} · Historischer Prüfvermerk, keine Kostenfreigabe</p></details>)}
       {pair.history.next_before_revision && <p>Die letzten 20 lesbaren Paarvergleiche werden angezeigt.</p>}
       {stale && !submitted && <p>Die Vergleichsgrundlage wurde geändert. Schließen Sie diesen Entwurf und wählen Sie die aktuellen Prüfstände neu aus.</p>}
       {!canCompare && !submitted && <p>Dieser Vergleich kann derzeit nur gelesen werden.</p>}

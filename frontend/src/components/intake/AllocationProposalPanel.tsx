@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
 import { AllocationTreatmentPanel } from './AllocationTreatmentPanel';
 import { ApiError } from '../../api/client';
-import { allocationProposalsApi, displayCents, exactCents, type AllocationCategory, type AllocationCommand, type AllocationHistory, type AllocationPreview } from '../../api/allocationProposals';
+import { allocationProposalsApi, exactCents, type AllocationCategory, type AllocationCommand, type AllocationHistory, type AllocationPreview } from '../../api/allocationProposals';
+import { centsFromDecimal, formatDateTime, formatMoney } from '../../lib/format';
 
 type Line = { key: string; category: string; description: string; gross: string; vat: string };
 type Draft = { preview: AllocationPreview; expected: string | null; lines: Line[]; reason: string; acknowledged: boolean };
@@ -87,17 +88,17 @@ export function AllocationProposalPanel({ logicalId, contextDecisionId, ready, p
     {busy && <p role="status">Lade Kostenaufteilungen…</p>}{error && <p role="alert" className="error-text">{error}</p>}
     {view && <>
       {!view.history.items.length && <p>Noch keine lesbare Kostenaufteilung.</p>}
-      {view.history.items.map((proposal, index) => <details key={proposal.id} open={index === 0} className="min-w-0 space-y-2"><summary className="cursor-pointer">Aufteilungsvorschlag · Version {proposal.revision_number} · {new Date(proposal.created_at).toLocaleString('de-DE')}</summary>
-        <p>Brutto: {proposal.gross_amount} EUR · Umsatzsteuer: {proposal.vat_amount ?? 'unbekannt'} · Keine Kostenfreigabe</p>
-        <ol className="space-y-2">{proposal.lines.map(line => <li key={line.id} className="break-words">{line.position}. {line.category_label} · {line.description} · {line.gross_amount} EUR · USt: {line.vat_amount ?? 'unbekannt'}</li>)}</ol>
+      {view.history.items.map((proposal, index) => <details key={proposal.id} open={index === 0} className="min-w-0 space-y-2"><summary className="cursor-pointer">Aufteilungsvorschlag · Version {proposal.revision_number} · {formatDateTime(proposal.created_at)}</summary>
+        <p>Brutto: {formatMoney(centsFromDecimal(proposal.gross_amount))} · Umsatzsteuer: {proposal.vat_amount != null ? formatMoney(centsFromDecimal(proposal.vat_amount)) : 'unbekannt'} · Keine Kostenfreigabe</p>
+        <ol className="space-y-2">{proposal.lines.map(line => <li key={line.id} className="break-words">{line.position}. {line.category_label} · {line.description} · {formatMoney(centsFromDecimal(line.gross_amount))} · USt: {line.vat_amount ?? 'unbekannt'}</li>)}</ol>
         <p className="break-words">{proposal.reason}</p>{proposal.context_decision_id !== contextDecisionId && <p>Frühere Kontextgrundlage; nicht automatisch übernommen.</p>}</details>)}
       {view.history.next_before_revision && <p>Hier werden die letzten 20 lesbaren Aufteilungen angezeigt.</p>}
       {!canPropose && <p>Für einen neuen Vorschlag wird eine aktuelle, berechtigte Kontextprüfung benötigt.</p>}
       {draft && authorized && (canPropose || submitted) && <>
         {stale && !submitted && <div className="space-y-2"><p>Prüfen Sie die neue Grundlage. Beim Übernehmen werden Ihre Zeilen durch einen neuen Entwurf ersetzt.</p><button className="btn" disabled={blocked || !canPropose} onClick={() => { if (view.preview) { setDraft(fresh(view.preview, view.history)); setConflict(false); setError(null); } }}>Neue Aufteilungsgrundlage übernehmen</button></div>}
-        <p className="break-words">{draft.preview.scope_label} · Geprüfter Beleg: {draft.preview.gross_amount} EUR · Umsatzsteuer: {draft.preview.vat_amount ?? 'unbekannt'}</p>
-        <p aria-live="polite">Zeilensumme: {sum === null ? 'unvollständig' : displayCents(sum) + ' EUR'} · Soll: {draft.preview.gross_amount} EUR</p>
-        <p aria-live="polite">Umsatzsteuersumme: {draft.preview.vat_amount === null ? 'unbekannt; alle Zeilen bleiben unbekannt' : `${vatSum === null ? 'unvollständig' : displayCents(vatSum) + ' EUR'} · Soll: ${draft.preview.vat_amount} EUR`}</p>
+        <p className="break-words">{draft.preview.scope_label} · Geprüfter Beleg: {formatMoney(centsFromDecimal(draft.preview.gross_amount))} · Umsatzsteuer: {draft.preview.vat_amount ?? 'unbekannt'}</p>
+        <p aria-live="polite">Zeilensumme: {sum === null ? 'unvollständig' : formatMoney(sum)} · Soll: {formatMoney(centsFromDecimal(draft.preview.gross_amount))}</p>
+        <p aria-live="polite">Umsatzsteuersumme: {draft.preview.vat_amount === null ? 'unbekannt; alle Zeilen bleiben unbekannt' : `${vatSum === null ? 'unvollständig' : formatMoney(vatSum)} · Soll: ${formatMoney(centsFromDecimal(draft.preview.vat_amount))}`}</p>
         <fieldset disabled={blocked || submitted || !canPropose} className="space-y-4 min-w-0">
           {draft.lines.map((line, index) => <div key={line.key} className="space-y-2 min-w-0 rounded-md border border-input p-3"><h3>Zeile {index + 1}</h3>
             <label className="block" htmlFor={`allocation-category-${line.key}`}>Kostenart · Zeile {index + 1}</label><select id={`allocation-category-${line.key}`} className={inputClass} value={line.category} onChange={event => edit(index, 'category', event.target.value)}><option value="">Bitte wählen</option>{view.categories.map(category => <option key={category.id} value={category.id}>{category.code} · {category.label}</option>)}</select>

@@ -1,3 +1,4 @@
+import { formatDateTime } from "../lib/format";
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Link, useParams, useSearchParams } from 'react-router-dom';
 import { AssignmentPanel } from '../components/intake/AssignmentPanel';
@@ -82,7 +83,7 @@ function Proposals({ document, onDenied, parentBusy, parentGeneration, focusExtr
         <button className="btn" disabled={!reason.trim()} onClick={() => void retry()}>{submitted ? 'Denselben Auftrag wiederholen' : 'Texterkennung erneut anfordern'}</button>
       </fieldset>}
       {view.revisions.map((revision, index) => <details key={revision.id} className="card min-w-0 space-y-3" open={revision.id === focusExtraction || (!focusExtraction && index === 0)}>
-        <summary className="cursor-pointer">{revision.id === focusExtraction ? 'Grundlage des Klärungsfalls · ' : ''}{index === 0 ? 'Neuester Versuch' : 'Früherer Versuch'} · {statuses[revision.status] ?? revision.status} · {new Date(revision.created_at).toLocaleString('de-DE')}</summary>
+        <summary className="cursor-pointer">{revision.id === focusExtraction ? 'Grundlage des Klärungsfalls · ' : ''}{index === 0 ? 'Neuester Versuch' : 'Früherer Versuch'} · {statuses[revision.status] ?? revision.status} · {formatDateTime(revision.created_at)}</summary>
         {!revision.fields.length && <p>Dieser Versuch enthält keine Feldvorschläge. Frühere Ergebnisse bleiben in der Historie erhalten.</p>}
         <div className="grid min-w-0 gap-4 lg:grid-cols-2">{revision.fields.map(field => <article key={field.field_name} className="min-w-0 rounded-md border border-input p-3 space-y-2">
           <h3>{fieldLabels[field.field_name] ?? field.field_name}</h3><p className="break-words font-semibold">{field.value}</p>

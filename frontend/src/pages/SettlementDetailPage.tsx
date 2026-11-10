@@ -22,7 +22,7 @@ import { parseGermanAmount } from "../lib/germanAmount";
  */
 
 import { useEffect, useState, useCallback, useRef } from "react";
-import { formatEuro } from "../lib/utils";
+import { centsFromDecimal, formatDate, formatMoney } from "../lib/format";
 import { useParams, Link, useNavigate } from "react-router-dom";
 import {
   getSettlement,
@@ -98,10 +98,7 @@ const DISTRIBUTION_KEY_LABELS: Record<string, string> = {
 
 function formatProposalMoney(value: string): string {
   // Group the decimal text directly: converting to Number can lose cents.
-  const match = /^(-?)(\d+)(?:\.(\d{1,2}))?$/.exec(value);
-  if (!match) return "Nicht verfügbar";
-  const integer = match[2].replace(/^0+(?=\d)/, "").replace(/\B(?=(\d{3})+(?!\d))/g, ".");
-  return `${match[1]}${integer},${(match[3] ?? "").padEnd(2, "0")} EUR`;
+  return /^-?\d+(?:\.\d{1,2})?$/.test(value) ? formatMoney(centsFromDecimal(value)) : "Nicht verfügbar";
 }
 
 function isProposalDate(value: string): boolean {
@@ -193,12 +190,12 @@ function AdvanceProposalSection({ runId, periodEnd }: { runId: string; periodEnd
         <p>Betriebskosten-Vorauszahlung{combinedProposal ? " inkl. Heizkosten" : ""}: <strong>{formatProposalMoney(proposal.monthly_amount)}</strong> monatlich (bisher {formatProposalMoney(proposal.current_monthly_amount)})</p>
         {!singleAdvanceBlock && <p>Heizkosten-Vorauszahlung: <strong>{formatProposalMoney(proposal.heating_monthly_amount)}</strong> monatlich (bisher {formatProposalMoney(proposal.current_heating_monthly_amount)})</p>}
         <p>Grundlage Betriebskosten{combinedProposal ? " inkl. Heizkosten" : ""}: {formatProposalMoney(proposal.tenant_cost)} Mieteranteil / {proposal.months.replace(".", ",")} Monate
-          {" "}({proposal.period_start} bis {proposal.period_end}).</p>
+          {" "}({formatDate(proposal.period_start)} bis {formatDate(proposal.period_end)}).</p>
         {!singleAdvanceBlock && <p>Grundlage Heizkosten: {formatProposalMoney(proposal.heating_tenant_cost)} Mieteranteil / {proposal.months.replace(".", ",")} Monate.</p>}
         <p>{combinedProposal ? "Die gemeinsame Vorauszahlung wird geändert." : singleAdvanceBlock ? "Nur die Betriebskosten-Vorauszahlung wird geändert." : "Beide Vorauszahlungen werden geändert."} Die Kaltmiete bleibt die am gewählten Tag gültige Rate.
           Der ursprüngliche Mietvertrag und die finalisierte Abrechnung bleiben unverändert.</p>
         {applyError && <p role="alert">{applyError}</p>}
-        {result && <p role="status">Miethistorie ergänzt: ab {result.valid_from}, Kaltmiete {formatProposalMoney(result.base_rent)},
+        {result && <p role="status">Miethistorie ergänzt: ab {formatDate(result.valid_from)}, Kaltmiete {formatProposalMoney(result.base_rent)},
           {" "}Betriebskosten-Vorauszahlung{result.advance_mode === "COMBINED" ? " inkl. Heizkosten" : ""} {formatProposalMoney(result.advance_payment)}
           {result.advance_mode !== "COMBINED" && `, Heizkosten-Vorauszahlung ${formatProposalMoney(result.heating_advance_payment)}`} monatlich.</p>}
       </>}
@@ -440,7 +437,7 @@ export function SettlementDetailPage() {
     if (!run?.lease_agreement_id) return "-";
     const lease = leases.find((l) => l.id === run.lease_agreement_id);
     if (!lease) return run.lease_agreement_id.slice(0, 8);
-    return `ab ${lease.valid_from}${lease.valid_to ? ` bis ${lease.valid_to}` : " (laufend)"}`;
+    return `ab ${formatDate(lease.valid_from)}${lease.valid_to ? ` bis ${formatDate(lease.valid_to)}` : " (laufend)"}`;
   }
 
   function getCategoryLabel(code: string | null): string {
@@ -682,7 +679,7 @@ export function SettlementDetailPage() {
                       )}
                     </td>
                     <td style={{ fontFamily: "var(--mono)", textAlign: "right" }}>
-                      {ln.total_amount != null ? `${ln.total_amount} EUR` : "-"}
+                      {ln.total_amount != null ? formatMoney(centsFromDecimal(ln.total_amount)) : "-"}
                     </td>
                     <td>
                       {ln.note?.startsWith("HeizkostenV intern:")
@@ -711,7 +708,7 @@ export function SettlementDetailPage() {
                         fontWeight: 600,
                       }}
                     >
-                      {ln.amount} EUR
+                      {formatMoney(centsFromDecimal(ln.amount))}
                     </td>
                   </tr>
                 ))}
@@ -741,7 +738,7 @@ export function SettlementDetailPage() {
                         textAlign: "right",
                       }}
                     >
-                      {ln.amount} EUR
+                      {formatMoney(centsFromDecimal(ln.amount))}
                     </td>}
                   </tr>
                 ))}
@@ -799,7 +796,7 @@ export function SettlementDetailPage() {
                   <input
                     type="text"
                     inputMode="decimal"
-                    placeholder="0.00"
+                    placeholder="700,00"
                     value={ext.tenant_amount}
                     onChange={(e) => {
                       setExternalAmounts(previous => previous.map(row => row === ext ? { ...row, tenant_amount: e.target.value } : row));
@@ -823,7 +820,7 @@ export function SettlementDetailPage() {
                   <input
                     type="text"
                     inputMode="decimal"
-                    placeholder="0.00"
+                    placeholder="700,00"
                     value={man.amount}
                     onChange={(e) => {
                       const next = [...manualAmounts];
@@ -1069,7 +1066,7 @@ export function SettlementDetailPage() {
             <tr>
               <td>Zeitraum</td>
               <td>
-                {run.period_start} bis {run.period_end}
+                {formatDate(run.period_start)} bis {formatDate(run.period_end)}
               </td>
             </tr>
             <tr>
@@ -1080,7 +1077,7 @@ export function SettlementDetailPage() {
               <td>{advanceSummaryLabel}</td>
               <td>
                 <span style={{ fontFamily: "var(--mono)" }}>
-                  {run.advance_payments_total ?? "-"} EUR
+                  {run.advance_payments_total != null ? formatMoney(centsFromDecimal(run.advance_payments_total)) : "-"}
                 </span>
                 <span
                   style={{
@@ -1114,14 +1111,14 @@ export function SettlementDetailPage() {
               </td>
             </tr>
             {!singleAdvanceBlock && <tr><td>Heizkosten-Vorauszahlungen</td><td>
-              <span style={{ fontFamily: "var(--mono)" }}>{run.heating_advance_payments_total ?? "-"} EUR</span>
+              <span style={{ fontFamily: "var(--mono)" }}>{run.heating_advance_payments_total != null ? formatMoney(centsFromDecimal(run.heating_advance_payments_total)) : "-"}</span>
               <span style={{ marginLeft: "0.5rem" }}>({run.heating_advance_payments_source})</span>
             </td></tr>}
             {run.total_cost != null && (
               <tr>
                 <td>Gesamtkosten</td>
                 <td style={{ fontFamily: "var(--mono)" }}>
-                  {run.total_cost} EUR
+                  {formatMoney(centsFromDecimal(run.total_cost))}
                 </td>
               </tr>
             )}
@@ -1146,7 +1143,7 @@ export function SettlementDetailPage() {
                           : undefined,
                   }}
                 >
-                  {run.balance} EUR
+                  {formatMoney(centsFromDecimal(run.balance))}
                 </td>
               </tr>
             )}
@@ -1180,7 +1177,7 @@ export function SettlementDetailPage() {
               <input
                 type="text"
                 inputMode="decimal"
-                placeholder="0.00"
+                placeholder="700,00"
                 value={advanceValue}
                 aria-invalid={advanceErrors.operating}
                 aria-describedby={advanceErrors.operating ? "operating-advance-error" : undefined}
@@ -1309,7 +1306,7 @@ export function SettlementDetailPage() {
               <tr>
                 <td>Gesamtkosten</td>
                 <td style={{ fontFamily: "var(--mono)" }}>
-                  {previewRun.total_cost} EUR
+                  {previewRun.total_cost != null ? formatMoney(centsFromDecimal(previewRun.total_cost)) : "-"}
                 </td>
               </tr>
               <tr>
@@ -1322,7 +1319,7 @@ export function SettlementDetailPage() {
                       : "Saldo"}
                 </td>
                 <td style={{ fontFamily: "var(--mono)", fontWeight: 700 }}>
-                  {previewRun.balance} EUR
+                  {previewRun.balance != null ? formatMoney(centsFromDecimal(previewRun.balance)) : "-"}
                 </td>
               </tr>
             </tbody>
@@ -1345,7 +1342,7 @@ export function SettlementDetailPage() {
         <ul className="space-y-3">{run.vacancy_attribution.map((share, index) => <li key={index}>
           <strong>Einheit {share.unit_number} · {share.cost_label}</strong>
           <div>{share.person_days.toLocaleString('de-DE')} Personentage · {share.days.toLocaleString('de-DE')} Tage</div>
-          <div className="font-semibold tabular-nums">{formatEuro(share.amount)} (Eigentümer)</div>
+          <div className="font-semibold tabular-nums">{formatMoney(centsFromDecimal(share.amount))} (Eigentümer)</div>
         </li>)}</ul>
       </section>}
 

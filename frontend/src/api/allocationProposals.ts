@@ -28,7 +28,3 @@ export function exactCents(input: string): bigint | null {
   const [whole, fraction = ''] = value.replace(/^-/, '').split('.');
   return (value.startsWith('-') ? -1n : 1n) * (BigInt(whole) * 100n + BigInt(fraction.padEnd(2, '0')));
 }
-export function displayCents(value: bigint): string {
-  const absolute = value < 0n ? -value : value;
-  return `${value < 0n ? '-' : ''}${absolute / 100n},${String(absolute % 100n).padStart(2, '0')}`;
-}

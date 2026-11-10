@@ -3,6 +3,7 @@ import { ApiError } from "../api/client";
 import { createSepaMandate, downloadSepaXml, getSepaAccount, previewSepa, revokeSepaMandate, saveSepaCreditor, updateSepaMandate, type SepaAccount, type SepaCreditor, type SepaExportRequest, type SepaMandate, type SepaMandateCreate, type SepaPreview, type SepaSequence } from "../api/sepa";
 import type { BankAccount, Property } from "../api/types";
 import { AuthCtx } from "../auth/useAuth";
+import { centsFromDecimal, formatDate, formatIban, formatMoney } from "../lib/format";
 import { AccountingScopeSelector } from "./AccountingScopeSelector";
 
 function validDate(value: string): boolean {
@@ -101,7 +102,7 @@ function SepaWorkspace({ bankId, propertyId, scopeId, scopeValid, canWrite }: { 
     {!scopeValid && <p role="alert">Bitte einen verfügbaren Export-Abrechnungskreis wählen.</p>}
     {error && <p role="alert" className="error-text">{error}</p>}
     {account && <>
-      <p>Bankkonto: {account.bank.label} · IBAN {account.bank.iban || "fehlt – bestehendes Bankkonto separat bearbeiten"} · BIC {account.bank.bic || "nicht hinterlegt"}. Die Bank-IBAN wird hier nicht bearbeitet.</p>
+      <p>Bankkonto: {account.bank.label} · IBAN {account.bank.iban ? formatIban(account.bank.iban) : "fehlt – bestehendes Bankkonto separat bearbeiten"} · BIC {account.bank.bic || "nicht hinterlegt"}. Die Bank-IBAN wird hier nicht bearbeitet.</p>
       <fieldset disabled={!!busy} className="space-y-4" key={revision} onChange={invalidate}>
         {canWrite ? <CreditorForm creditor={account.creditor} onSave={value => mutate(() => saveSepaCreditor(bankId, value))} /> : <p>Gläubiger: {account.creditor ? `${account.creditor.name} · ${account.creditor.creditor_id} · ${account.creditor.country} · ${account.creditor.town} · Bankvereinbarung ${account.creditor.bank_authorized ? "bestätigt" : "nicht bestätigt"}` : "Noch nicht konfiguriert"}. Nur Schreibberechtigte dürfen Gläubiger und Mandate konfigurieren.</p>}
         <h3>Registrierte Mandate</h3>
@@ -115,8 +116,8 @@ function SepaWorkspace({ bankId, propertyId, scopeId, scopeValid, canWrite }: { 
       </fieldset>
     </>}
     {result && <section aria-label="Geprüfte SEPA-Datei">
-      <h3>SEPA-Vorschau</h3><p>Gesamt: {result.preview.total} EUR</p>
-      <div className="overflow-x-auto"><table aria-label="SEPA-Vorschau"><thead><tr><th>Mieter</th><th>Mandatsreferenz</th><th>Sequenz</th><th>Betrag (EUR)</th><th>Mietverträge</th></tr></thead><tbody>{result.preview.rows.map(row => <tr key={`${row.tenant_profile_id}:${row.mandate_id}`}><td>{row.name}</td><td>{row.reference}</td><td>{row.sequence_type}</td><td>{row.amount}</td><td>{row.lease_ids.join(", ")}</td></tr>)}</tbody></table></div>
+      <h3>SEPA-Vorschau</h3><p>Gesamt: {formatMoney(centsFromDecimal(result.preview.total))}</p>
+      <div className="overflow-x-auto"><table aria-label="SEPA-Vorschau"><thead><tr><th>Mieter</th><th>Mandatsreferenz</th><th>Sequenz</th><th>Betrag (EUR)</th><th>Mietverträge</th></tr></thead><tbody>{result.preview.rows.map(row => <tr key={`${row.tenant_profile_id}:${row.mandate_id}`}><td>{row.name}</td><td>{row.reference}</td><td>{row.sequence_type}</td><td>{formatMoney(centsFromDecimal(row.amount))}</td><td>{row.lease_ids.join(", ")}</td></tr>)}</tbody></table></div>
       <button type="button" disabled={!!busy || !account} onClick={() => void download()}>{busy === "download" ? "SEPA-XML wird geladen…" : "SEPA-XML herunterladen"}</button>
       <p>Nachrichten- und daraus abgeleitete End-to-End-IDs müssen eindeutig sein. Erneuter Download oder Upload mit wiederverwendeten IDs kann doppelte Einzüge verursachen. Datei und Bankfreigabe außerhalb der App prüfen; keine automatische Übertragung.</p>
     </section>}
@@ -150,7 +151,7 @@ function MandateForm({ tenants, onSave }: { tenants: SepaAccount["tenants"]; onS
     <h3>Vorhandenes unterschriebenes Mandat registrieren</h3>
     <p>Eine bestehende Personen-IBAN ist erforderlich. Fehlende oder geänderte IBAN zuerst im Kontakt separat bearbeiten. Name und aktuelle IBAN werden serverseitig per Hash an die Zustimmung gebunden, nicht als zweite Rohdatenkopie gespeichert.</p>
     <div><label htmlFor="sepa-tenant">Mieter für neues Mandat *</label><select id="sepa-tenant" value={tenantId} onChange={event => { setTenantId(event.target.value); setIban(""); setConfirmed(false); }}><option value="">Bitte ausdrücklich wählen</option>{tenants.map(item => <option key={item.tenant_profile_id} value={item.tenant_profile_id}>{item.name}</option>)}</select></div>
-    {tenant && <p>Aktueller Kontakt: {tenant.name} · {tenant.iban || "Keine Personen-IBAN hinterlegt"} · {tenant.city || "Ort fehlt"}</p>}
+    {tenant && <p>Aktueller Kontakt: {tenant.name} · {tenant.iban ? formatIban(tenant.iban) : "Keine Personen-IBAN hinterlegt"} · {tenant.city || "Ort fehlt"}</p>}
     <div><label htmlFor="sepa-reference">Mandatsreferenz *</label><input id="sepa-reference" maxLength={35} value={reference} onChange={event => { setReference(event.target.value); setConfirmed(false); }} /></div>
     <div><label htmlFor="sepa-signed">Unterschrieben am *</label><input id="sepa-signed" type="date" value={signedOn} onChange={event => { setSignedOn(event.target.value); setConfirmed(false); }} /></div>
     <div><label htmlFor="sepa-new-sequence">Sequenz neues Mandat *</label><select id="sepa-new-sequence" value={sequence} onChange={event => { setSequence(event.target.value as "" | SepaSequence); setLastUsed(""); setConfirmed(false); }}><option value="">Bitte ausdrücklich wählen</option><option value="FRST">FRST – erster Einzug</option><option value="RCUR">RCUR – wiederkehrender Einzug</option></select></div>
@@ -170,7 +171,7 @@ function MandateHistory({ mandate, tenantName, canWrite, onSave, onRevoke }: { m
   const [confirmed, setConfirmed] = useState(false); const [revokeConfirmed, setRevokeConfirmed] = useState(false);
   const valid = confirmed && (sequence === "FRST" ? !lastUsed : validDate(lastUsed) && lastUsed >= mandate.signed_on);
   return <section aria-label={`Mandat ${mandate.reference}`} className="space-y-4">
-    <p>{tenantName} · {mandate.reference} · unterschrieben {mandate.signed_on} · {mandate.debtor_country} · Original: {mandate.original_reference} · {mandate.sequence_type} · letzter Einzug: {mandate.last_used_on ?? "nicht erfasst"}</p>
+    <p>{tenantName} · {mandate.reference} · unterschrieben {formatDate(mandate.signed_on)} · {mandate.debtor_country} · Original: {mandate.original_reference} · {mandate.sequence_type} · letzter Einzug: {mandate.last_used_on ? formatDate(mandate.last_used_on) : "nicht erfasst"}</p>
     <p>{mandate.revoked_at ? `Widerrufen am ${mandate.revoked_at}` : mandate.source_current ? "Kontaktdaten entsprechen der registrierten Zustimmung; keine rechtliche Gültigkeitszusage." : "Kontaktdaten geändert: Mandat nicht mehr aktuell. Widerrufen und neues unterschriebenes Mandat registrieren."}</p>
     {canWrite && !mandate.revoked_at && <>
       <form noValidate onSubmit={event => { event.preventDefault(); if (valid) onSave({ sequence_type: sequence, last_used_on: lastUsed || null }); }}>

@@ -1,3 +1,4 @@
+import { formatDateTime } from "../lib/format";
 import { useRef, useState } from "react";
 import { Link, useLocation } from "react-router-dom";
 import { api } from "../api/client";
@@ -37,9 +38,9 @@ function ObservationCard({ row }: { row: Observation }) {
   }
   return <section className="card min-w-0 space-y-3">
     <h2 className="break-all">Original {row.document_id}</h2>
-    <p>Metadaten beobachtet am {new Date(row.observed_at).toLocaleString("de-DE")}</p>
+    <p>Metadaten beobachtet am {formatDateTime(row.observed_at)}</p>
     <details><summary>Prüfkennung anzeigen</summary><code className="block break-all">{row.snapshot_digest}</code></details>
-    {receipt ? <p role="status">Quarantäne geprüft · {reasons[receipt.reason]} · {new Date(receipt.reviewed_at).toLocaleString("de-DE")}</p>
+    {receipt ? <p role="status">Quarantäne geprüft · {reasons[receipt.reason]} · {formatDateTime(receipt.reviewed_at)}</p>
       : <form onSubmit={event => void review(event)}>
         <fieldset disabled={busy} className="space-y-3 border-0 p-0">
           <label className="block">Grund für die weitere Quarantäne

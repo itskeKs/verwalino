@@ -36,6 +36,7 @@ import type {
 } from "../api/types";
 import { ReserveEvidenceFields } from "../components/ReserveEvidenceFields";
 import { ApiError } from "../api/client";
+import { centsFromDecimal, formatDate, formatDateTime, formatMoney } from "../lib/format";
 
 const STATUS_LABELS: Record<string, string> = {
   draft: "Entwurf",
@@ -183,7 +184,7 @@ export function PaymentDetailPage() {
     const name = person
       ? [person.first_name, person.last_name].filter(Boolean).join(" ")
       : "";
-    return `${name} ab ${lease.valid_from}${lease.valid_to ? ` bis ${lease.valid_to}` : " (laufend)"}`;
+    return `${name} ab ${formatDate(lease.valid_from)}${lease.valid_to ? ` bis ${formatDate(lease.valid_to)}` : " (laufend)"}`;
   }
 
   const isDraft = payment?.status === "draft";
@@ -453,12 +454,12 @@ export function PaymentDetailPage() {
             <tr>
               <td>Betrag</td>
               <td style={{ fontFamily: "var(--mono)", fontWeight: 700, fontSize: "1.05rem" }}>
-                {payment.amount} EUR
+                {formatMoney(centsFromDecimal(payment.amount))}
               </td>
             </tr>
             <tr>
               <td>Wertstellung</td>
-              <td>{payment.value_date}</td>
+              <td>{formatDate(payment.value_date)}</td>
             </tr>
             <tr>
               <td>Bankkonto</td>
@@ -502,7 +503,7 @@ export function PaymentDetailPage() {
             {payment.booked_at && (
               <tr>
                 <td>Gebucht am</td>
-                <td>{payment.booked_at}</td>
+                <td>{payment.booked_at ? formatDateTime(payment.booked_at) : "–"}</td>
               </tr>
             )}
             {payment.note && (

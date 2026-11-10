@@ -7,6 +7,7 @@
  */
 
 import { useEffect, useState, useCallback } from "react";
+import { centsFromDecimal, formatDate, formatDateTime, formatMoney } from "../lib/format";
 import { useParams, Link, useNavigate } from "react-router-dom";
 import {
   getCostEntry,
@@ -325,25 +326,25 @@ export function CostEntryDetailPage() {
                 </tr>
                 <tr>
                   <td>Rechnungsdatum</td>
-                  <td>{entry.invoice_date}</td>
+                  <td>{formatDate(entry.invoice_date)}</td>
                 </tr>
                 <tr>
                   <td>Leistungszeitraum</td>
                   <td>
-                    {entry.service_period_from} bis {entry.service_period_to}
+                    {formatDate(entry.service_period_from)} bis {formatDate(entry.service_period_to)}
                   </td>
                 </tr>
                 <tr>
                   <td>Bruttobetrag</td>
                   <td style={{ fontFamily: "var(--mono)" }}>
-                    {entry.gross_amount}
+                    {formatMoney(centsFromDecimal(entry.gross_amount))}
                   </td>
                 </tr>
                 {entry.vat_amount && (
                   <tr>
                     <td>USt-Betrag</td>
                     <td style={{ fontFamily: "var(--mono)" }}>
-                      {entry.vat_amount}
+                      {formatMoney(centsFromDecimal(entry.vat_amount))}
                     </td>
                   </tr>
                 )}
@@ -386,7 +387,7 @@ export function CostEntryDetailPage() {
                 {entry.confirmed_at && (
                   <tr>
                     <td>Bestaetigt am</td>
-                    <td>{entry.confirmed_at}</td>
+                    <td>{entry.confirmed_at ? formatDateTime(entry.confirmed_at) : "–"}</td>
                   </tr>
                 )}
               </tbody>

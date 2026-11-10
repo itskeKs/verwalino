@@ -1,3 +1,4 @@
+import { formatDateTime } from "../lib/format";
 import { useEffect, useRef, useState } from "react";
 import { api } from "../api/client";
 
@@ -44,7 +45,7 @@ export function ScopeControl() {
     {loading && <p role="status">Status wird geladen…</p>}
     {state && <>
       <p role="status"><strong>{state.mode === "paused" ? "Bereichsbezogene Finanzaktionen pausiert" : "Bereichsbezogene Finanzaktionen nach bestehenden Rechten aktiv"}</strong></p>
-      {state.event && <p>Letzte Änderung: {new Date(state.event.created_at).toLocaleString("de-DE")} · {state.event.reason}</p>}
+      {state.event && <p>Letzte Änderung: {formatDateTime(state.event.created_at)} · {state.event.reason}</p>}
       <p>Eine Wiederaufnahme verwendet die aktuell gültigen Rechte. Widerrufene Freigaben werden nicht wiederhergestellt.</p>
       <form onSubmit={submit}>
         <fieldset disabled={busy || loading} style={{ border: 0, padding: 0, minWidth: 0 }}>

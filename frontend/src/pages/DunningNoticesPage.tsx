@@ -34,6 +34,7 @@ import type {
   EconomicPlan,
 } from "../api/types";
 import { parseGermanAmount } from "../lib/germanAmount";
+import { centsFromDecimal, formatDate, formatMoney } from "../lib/format";
 import { DunningSettingsForm } from "../components/DunningSettingsForm";
 import { AccountingScopeSelector } from "../components/AccountingScopeSelector";
 import { ApiError } from "../api/client";
@@ -451,8 +452,8 @@ export function DunningNoticesPage() {
                         : "";
                       return (
                         <option key={l.id} value={l.id}>
-                          {tenantName} ab {l.valid_from}
-                          {l.valid_to ? ` bis ${l.valid_to}` : " (laufend)"}
+                          {tenantName} ab {formatDate(l.valid_from)}
+                          {l.valid_to ? ` bis ${formatDate(l.valid_to)}` : " (laufend)"}
                         </option>
                       );
                     })}
@@ -592,7 +593,7 @@ export function DunningNoticesPage() {
                     <option value="">Ohne Wirtschaftsplan (Sonderumlagen)</option>
                     {economicPlans.filter(ep => !ownerPropertyId || ep.property_id === ownerPropertyId).map((ep) => (
                       <option key={ep.id} value={ep.id}>
-                        {ep.plan_year} ({ep.period_start} - {ep.period_end})
+                        {ep.plan_year} ({formatDate(ep.period_start)} - {formatDate(ep.period_end)})
                       </option>
                     ))}
                   </select>
@@ -695,7 +696,7 @@ export function DunningNoticesPage() {
               <tbody>
                 {notices.map((n) => (
                   <tr key={n.id}>
-                    <td>{n.issue_date}</td>
+                    <td>{formatDate(n.issue_date)}</td>
                     <td>{getRecipientName(n)}</td>
                     <td style={{ fontSize: "0.85rem" }}>{getRecipientType(n)}</td>
                     <td>
@@ -710,7 +711,7 @@ export function DunningNoticesPage() {
                         fontFamily: "var(--mono)",
                       }}
                     >
-                      {n.principal_amount} EUR
+                      {formatMoney(centsFromDecimal(n.principal_amount))}
                     </td>
                     <td
                       style={{
@@ -718,7 +719,7 @@ export function DunningNoticesPage() {
                         fontFamily: "var(--mono)",
                       }}
                     >
-                      {n.fee_amount} EUR
+                      {formatMoney(centsFromDecimal(n.fee_amount))}
                     </td>
                     <td
                       style={{
@@ -727,7 +728,7 @@ export function DunningNoticesPage() {
                         fontWeight: 600,
                       }}
                     >
-                      {n.total_amount} EUR
+                      {formatMoney(centsFromDecimal(n.total_amount))}
                     </td>
                     <td>
                       <span className={`badge ${STATUS_CSS[n.status] ?? ""}`}>

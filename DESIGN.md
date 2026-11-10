@@ -1132,21 +1132,20 @@ Synthetic finalized report from the test database (1280 and 360 px):
 | Before | [View](docs/assets/design/asset-report-reserve/before-1280.png) | [View](docs/assets/design/asset-report-reserve/before-360.png) |
 | After | [View](docs/assets/design/asset-report-reserve/asset-report-1280.png) | [View](docs/assets/design/asset-report-reserve/asset-report-360.png) |
 
-`frontend/src/lib/utils.ts` provides `formatEuro()` for the reserve ledger and
-asset-report holdings table. Other readers still use file-local functions or
-inline expressions, with the variants below. The inconsistencies are tracked in #48.
+`frontend/src/lib/format.ts` provides the shared display helpers below; every
+call site renders money, dates, datetimes and IBANs through them
+(`rg " EUR\"|toLocaleDateString" frontend/src` finds nothing outside the helper
+tests). Unit tests live in `frontend/src/lib/format.test.ts`.
 
 | What | Contract | Implemented by |
 |---|---|---|
-| Money | `1.234,56 €`: `.` thousands, `,` decimals, always two, sign first (`-1.234,56 €`), no float arithmetic | Shared `formatEuro()` in `lib/utils.ts` for `ReserveLedgerPanel` and `AssetReportDetailPage`; file-local `euros()` in `components/DashboardKpis.tsx`, `money()` in `pages/BankTransactionsPage.tsx` |
-| Money, deviating | same grouping but suffix ` EUR`; `OpenItemsPage.tsx` uses ungrouped `toFixed(2)` plus ` EUR` (`1234.56 EUR`) | `money()` in `pages/ReportsPage.tsx`, `formatCents()` in `pages/PaymentsPage.tsx` and `pages/CostEntriesPage.tsx`, `formatProposalMoney()` in `pages/SettlementDetailPage.tsx`; ` EUR` appears 93 times in 30 files, `€` in 2. `displayCents()` in `api/allocationProposals.ts` prints `1234,56` without grouping or suffix. |
-| Date | `TT.MM.JJJJ`, e.g. `05.03.2026`, from the ISO API value | `formatDate()` in `pages/DashboardPage.tsx`, `FristenmonitorPage.tsx`, `MandatePage.tsx`; `date()` in `BankTransactionsPage.tsx`; `dateLabel()` in `DashboardKpis.tsx` |
-| Date, deviating | `toLocaleDateString("de-DE")` or `Intl.DateTimeFormat("de-DE")` prints `5.3.2026` (no zero padding) | `MandateDetailPage.tsx`, `AttachmentsPanel.tsx`; `components/knowledge/PropertyDocuments.tsx` uses `Intl.DateTimeFormat` |
-| Date and time | `new Date(x).toLocaleString("de-DE")` gives `5.3.2026, 15:03:09` (no zero padding, with seconds) | 45 `toLocaleString` calls, all `de-DE`; used for receipts and history |
+| Money | `1.234,56 €`: `.` thousands, `,` decimals, always two, sign first (`-1.234,56 €`), no float arithmetic | Shared `formatMoney(cents)` in `lib/format.ts`, fed by `centsFromDecimal()` for API decimal strings; used by every money call site |
+| Date | `TT.MM.JJJJ`, e.g. `05.03.2026`, from the ISO API value | Shared `formatDate(iso)` in `lib/format.ts` |
+| Date and time | `TT.MM.JJJJ, HH:MM Uhr`, e.g. `31.10.2026, 14:05 Uhr`, local time, no seconds | Shared `formatDateTime(iso)` in `lib/format.ts` |
 | Long date | weekday and month in words ("Freitag, 30. Oktober 2026") | `dateLabel` in `DashboardPage.tsx` |
 | Plain numbers | `Intl.NumberFormat("de-DE")` / `toLocaleString("de-DE")` (`1.234.567`) | `PropertyDetailPage.tsx`, `AttachmentsPanel.tsx`, `IntakeBatchPage.tsx` |
 | File size | `1.5 KB` / `1.0 MB` with a dot (`toFixed(1)`); mandates use whole KB (`12 KB`, `toFixed(0)`). Attachments show `1.234 Bytes` (`Intl.NumberFormat("de-DE")`); intake shows `1,5 KiB` (`toLocaleString("de-DE")`) | `formatBytes()` in `InvoiceDocumentsPage.tsx`, `formatSize()` in `MandateDetailPage.tsx`, `AttachmentsPanel.tsx`, `IntakeBatchPage.tsx` |
-| IBAN | shown as stored; SEPA confirmation input removes whitespace and upper-cases it | `normalizedIban` in `components/SepaExport.tsx`; `BankAccountsPage.tsx` prints `iban` raw. There is no IBAN display grouping in the frontend. |
+| IBAN | grouped in blocks of four (`DE75 5121 0800 1245 1261 99`); SEPA confirmation input removes whitespace and upper-cases it, so pasting grouped or ungrouped is accepted | Shared `formatIban(iban)` in `lib/format.ts` for displays; `normalizedIban` in `components/SepaExport.tsx` for the confirmation input |
 | Empty value | `—` (kit, newer pages), `-` (older tables), `–` (`BankTransactionsPage.tsx`) | `MandatePage.tsx`, `InvoiceDocumentsPage.tsx`, `BankTransactionsPage.tsx`, respectively |
 | Money input | accept `1234,56` and `1234.56`, send `1234.56` | `moneyInput`, `exactCents`, `normalizePlanAmount` (see above) |
 

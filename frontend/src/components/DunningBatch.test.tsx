@@ -31,8 +31,8 @@ async function submitThree() {
   fireEvent.click(screen.getByRole("button", { name: "Auswahl bestätigen" }));
   const dialog = screen.getByRole("dialog", { name: "Mahnentwürfe anlegen" });
   expect(dialog).toHaveTextContent("3 Mahnentwürfe");
-  expect(dialog).toHaveTextContent("0.30 EUR");
-  expect(dialog).toHaveTextContent("0.36 EUR");
+  expect(dialog).toHaveTextContent("0,30 €");
+  expect(dialog).toHaveTextContent("0,36 €");
   fireEvent.click(within(dialog).getByRole("button", { name: "Mahnentwürfe anlegen" }));
 }
 it("loads nothing while closed, requires explicit input and creates only the selected three drafts", async () => {

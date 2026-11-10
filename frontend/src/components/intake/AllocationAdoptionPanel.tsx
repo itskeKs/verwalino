@@ -1,5 +1,7 @@
+import { formatDateTime } from "../../lib/format";
 import { useEffect, useRef, useState } from 'react';
 import { ApiError } from '../../api/client';
+import { centsFromDecimal, formatMoney } from '../../lib/format';
 import { allocationAdoptionsApi, type AdoptionCommand, type AdoptionPreview, type AllocationSet, type CorrectionResult } from '../../api/allocationAdoptions';
 import { AllocationReplacementPanel } from './AllocationReplacementPanel';
 import { VisualAllocationAdoptionPanel } from './VisualAllocationAdoptionPanel';
@@ -77,13 +79,13 @@ export function AllocationAdoptionPanel({ logicalId, reviewId, ready, parentBusy
       <label><input type="radio" name={`financial-source-${logicalId}`} checked={sourceVariant === 'visual'} onChange={() => setSourceVariant('visual')} /> Freigegebener Auszug</label>
     </fieldset>}
     {busy && <p role="status">Prüfe Kostenübernahme…</p>}{error && <p role="alert" className="error-text">{error}</p>}
-    {view?.result && <div className="space-y-3" role="status"><h3>Kostenübernahme bestätigt</h3><p>{new Date(view.result.confirmed_at).toLocaleString('de-DE')} · {view.result.cost_count} bestätigte Teilkosten</p>
-      <ol className="space-y-2">{view.result.costs.map(cost => <li key={cost.cost_entry_id}><a className="underline" href={`/kosten/${cost.cost_entry_id}`}>Teilkosten {cost.position}: {cost.gross_amount} EUR</a><span> · Mieteranteil {cost.tenant_amount ?? 'nicht angegeben'} EUR</span></li>)}</ol>
+    {view?.result && <div className="space-y-3" role="status"><h3>Kostenübernahme bestätigt</h3><p>{formatDateTime(view.result.confirmed_at)} · {view.result.cost_count} bestätigte Teilkosten</p>
+      <ol className="space-y-2">{view.result.costs.map(cost => <li key={cost.cost_entry_id}><a className="underline" href={`/kosten/${cost.cost_entry_id}`}>Teilkosten {cost.position}: {formatMoney(centsFromDecimal(cost.gross_amount))}</a><span> · Mieteranteil {cost.tenant_amount != null ? formatMoney(centsFromDecimal(cost.tenant_amount)) : 'nicht angegeben'}</span></li>)}</ol>
       <a className="block underline" href={`/belege/${view.result.source_document_id}`}>{view.result.source_variant === 'visual' ? 'Dauerhaft aufbewahrten Auszug zu allen Teilkosten öffnen' : 'Freigegebenes Original zu allen Teilkosten öffnen'}</a><p className="break-words">{view.result.reason}</p></div>}
     {sourceVariant === 'original' && view && !view.result && !eligible && <p>Übernahme derzeit nicht möglich. Aktuelle Berechtigungen, vollständige Behandlung und offene Belegkonflikte müssen geklärt sein.</p>}
     {sourceVariant === 'original' && draft && authorized && (eligible || submitted) && <>
       {stale && !submitted && <div><p>Die bisherige Bestätigung gilt nicht für die geänderte Grundlage.</p><button className="btn" disabled={blocked || !eligible} onClick={() => { if (reviewId && view?.preview) { setDraft(fresh(reviewId, view.preview)); setConflict(false); setError(null); } }}>Aktuelle Übernahmegrundlage prüfen</button></div>}
-      <p className="break-words">Abrechnungskreis: {draft.preview.scope_label ?? 'aus der geprüften Zuordnung'} · {draft.preview.cost_count} Teilkosten · Gesamtbetrag {draft.preview.gross_amount} EUR</p>
+      <p className="break-words">Abrechnungskreis: {draft.preview.scope_label ?? 'aus der geprüften Zuordnung'} · {draft.preview.cost_count} Teilkosten · Gesamtbetrag {draft.preview.gross_amount != null ? formatMoney(centsFromDecimal(draft.preview.gross_amount)) : 'unbekannt'}</p>
       <p>Das vollständige Original wird für die zum Beleg berechtigten Personen dieses Abrechnungskreises zugänglich. Prüfen Sie auch alle weiteren Seiten und enthaltenen Angaben.</p>
       <fieldset className="min-w-0 space-y-3" disabled={blocked || submitted || stale || !eligible}>
         <label className="block" htmlFor="adoption-reason">Begründung der Kostenübernahme</label><textarea id="adoption-reason" className="w-full min-w-0 rounded-md border border-input bg-background px-3 py-2" maxLength={2000} value={draft.reason} onChange={event => setDraft({ ...draft, reason: event.target.value, costs: false, disclosure: false })} />

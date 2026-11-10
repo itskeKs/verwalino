@@ -6,6 +6,7 @@
  */
 
 import { useEffect, useState, useCallback, useRef } from "react";
+import { formatDate } from "../lib/format";
 import { useParams, Link } from "react-router-dom";
 import { ArrowLeft, Upload, Download, Trash2, FileText } from "lucide-react";
 import {
@@ -60,11 +61,6 @@ function formatSize(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(0)} KB`;
   return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
-}
-
-function formatDate(iso: string | null): string {
-  if (!iso) return "—";
-  return new Date(iso).toLocaleDateString("de-DE");
 }
 
 interface DocumentScope { id: string; label: string; scope_type: string; valid_from: string; valid_to: string | null }
@@ -222,7 +218,7 @@ function MandateDetail({ mandateId }: { mandateId: string }) {
               <fieldset className="form-grid" disabled={uploading} style={{ border: 0, padding: 0, minWidth: 0 }}>
                 <SearchChoice<DocumentScope> endpoint={`/api/accounting-scopes/page?management_mandate_id=${mandateId}&capability=prepare`}
                   value={scope} onChange={setScope} required label="Bereich für neuen Upload *"
-                  display={item => `${item.label} · ${item.scope_type} · ${item.valid_from} – ${item.valid_to || "offen"}`} />
+                  display={item => `${item.label} · ${item.scope_type} · ${formatDate(item.valid_from)} – ${item.valid_to ? formatDate(item.valid_to) : "offen"}`} />
                 {scope && <label>Begründung der Bereichszuordnung<input required maxLength={2000} value={scopeReason} onChange={e => setScopeReason(e.target.value)} /></label>}
                 {scope && <p className="form-full-width">Prüfen Sie, dass der gesamte Dateiinhalt für diesen Bereich bestimmt ist. Die Zuordnung und das Original werden unveränderlich gespeichert.</p>}
                 <label>
@@ -305,7 +301,7 @@ function MandateDetail({ mandateId }: { mandateId: string }) {
                         )}
                       </td>
                       <td className="tabular-nums">{formatSize(d.content_byte_size)}<br />{d.accounting_scope_id ? "Bereichsgebunden" : "Ohne Bereich"}{d.archived_at && <span><br />Archiviert · {d.archive_reason}</span>}</td>
-                      <td className="tabular-nums">{formatDate(d.uploaded_at)}</td>
+                      <td className="tabular-nums">{d.uploaded_at ? formatDate(d.uploaded_at) : "—"}</td>
                       <td>
                         <div className="flex items-center justify-end gap-2">
                           <a

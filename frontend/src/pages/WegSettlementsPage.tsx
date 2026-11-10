@@ -7,6 +7,7 @@ import { Link, useNavigate } from "react-router-dom";
 import { listWegRuns, listProperties, listEconomicPlans, createWegRun } from "../api/endpoints";
 import type { WegRun, WegRunCreate, Property, EconomicPlan } from "../api/types";
 import { ApiError } from "../api/client";
+import { centsFromDecimal, formatDate, formatMoney } from "../lib/format";
 
 const STATUS_LABELS: Record<string, string> = { draft: "Entwurf", finalized: "Finalisiert" };
 const STATUS_CSS: Record<string, string> = { draft: "badge--draft", finalized: "badge--confirmed" };
@@ -123,9 +124,9 @@ export function WegSettlementsPage() {
             <tbody>
               {runs.map((r) => (
                 <tr key={r.id}>
-                  <td>{r.period_start} bis {r.period_end}</td>
+                  <td>{formatDate(r.period_start)} bis {formatDate(r.period_end)}</td>
                   <td>{propName(r.property_id)}</td>
-                  <td style={{ fontFamily: "var(--mono)", textAlign: "right" }}>{r.balance != null ? `${r.balance} EUR` : "-"}</td>
+                  <td style={{ fontFamily: "var(--mono)", textAlign: "right" }}>{r.balance != null ? formatMoney(centsFromDecimal(r.balance)) : "-"}</td>
                   <td><span className={`badge ${STATUS_CSS[r.status] ?? ""}`}>{STATUS_LABELS[r.status] ?? r.status}</span></td>
                   <td><Link to={`/weg-abrechnungen/${r.id}`} className="btn btn--small">Details</Link></td>
                 </tr>

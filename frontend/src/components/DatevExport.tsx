@@ -3,6 +3,7 @@ import { downloadDatevCsv, getDatevSources, previewDatev, type DatevConfig, type
 import type { Property } from "../api/types";
 import { ApiError } from "../api/client";
 import { AccountingScopeSelector } from "./AccountingScopeSelector";
+import { centsFromDecimal, formatMoney } from "../lib/format";
 
 function message(error: unknown): string {
   return error instanceof Error ? error.message : "DATEV-Export fehlgeschlagen. Bitte erneut versuchen.";
@@ -140,7 +141,7 @@ export function DatevExport({ properties }: { properties: Property[] }) {
       <div><label htmlFor="datev-length">Sachkontenlänge *</label><input id="datev-length" type="number" min="4" max="8" step="1" required value={accountLength} onChange={event => { invalidate(); setAccountLength(event.target.value); setReviewed(false); }} /></div>
       <p>Alle Konten ausdrücklich mit der gewählten Sachkontenlänge (4–8 Stellen) konfigurieren. Es gibt keine vorbelegten Konten; beim Wechsel des Kontenrahmens werden Zuordnungen und Bestätigung gelöscht.</p>
       {sources && <fieldset className="space-y-4"><legend>Kontenzuordnungen für die geladenen Quellen</legend>
-        <p>Zahlungen: {sources.payment_total} EUR · Kosten: {sources.cost_total} EUR</p>
+        <p>Zahlungen: {formatMoney(centsFromDecimal(sources.payment_total))} · Kosten: {formatMoney(centsFromDecimal(sources.cost_total))}</p>
         {sources.banks.map(bank => <div key={bank.id}><label htmlFor={`datev-bank-${bank.id}`}>Bankkonto {bank.label} *</label><input id={`datev-bank-${bank.id}`} required inputMode="numeric" value={banks[bank.id] ?? ""} onChange={event => {
           invalidate(); setReviewed(false); setBanks({ ...banks, [bank.id]: event.target.value });
         }} /></div>)}
@@ -160,9 +161,9 @@ export function DatevExport({ properties }: { properties: Property[] }) {
     {error && <p role="alert" className="error-text">{error}</p>}
     {result && <section aria-label="Geprüfter DATEV-Buchungsstapel">
       <h3>DATEV-Vorschau · {result.config.chart}</h3>
-      <p>Zahlungen: {result.preview.payment_total} EUR · Kosten: {result.preview.cost_total} EUR</p>
+      <p>Zahlungen: {formatMoney(centsFromDecimal(result.preview.payment_total))} · Kosten: {formatMoney(centsFromDecimal(result.preview.cost_total))}</p>
       <div className="overflow-x-auto"><table aria-label="DATEV-Vorschau"><thead><tr><th>Quelle</th><th>Datum</th><th>Betrag (EUR)</th><th>Soll/Haben</th><th>Konto</th><th>Gegenkonto</th><th>Buchungstext</th></tr></thead><tbody>
-        {result.preview.rows.map((row, index) => <tr key={`${row.source_type}-${row.source_id}-${index}`}><td>{row.source_type}</td><td>{row.day}</td><td>{row.amount}</td><td>{row.side}</td><td>{row.account}</td><td>{row.counter_account}</td><td>{row.text}</td></tr>)}
+        {result.preview.rows.map((row, index) => <tr key={`${row.source_type}-${row.source_id}-${index}`}><td>{row.source_type}</td><td>{row.day}</td><td>{formatMoney(centsFromDecimal(row.amount))}</td><td>{row.side}</td><td>{row.account}</td><td>{row.counter_account}</td><td>{row.text}</td></tr>)}
       </tbody></table></div>
       {result.preview.rows.length === 0 && <p>Keine Buchungen im Zeitraum.</p>}
       <button type="button" disabled={!!busy || !validConfig} onClick={() => void download()}>{busy === "download" ? "DATEV-Datei wird geladen…" : "DATEV-Datei herunterladen"}</button>

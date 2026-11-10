@@ -134,7 +134,7 @@ async function openInvoiceCostForPayload(categoryDefault = "UMLAGEFAEHIG") {
 
 async function fillInvoiceCostForm() {
   fireEvent.change(screen.getByRole("combobox", { name: "Objekt *" }), { target: { value: "property-weg" } });
-  await screen.findByRole("option", { name: "WEG Bereich · WEG · 2026-01-01 – offen" });
+  await screen.findByRole("option", { name: "WEG Bereich · WEG · 01.01.2026 – offen" });
   fireEvent.change(screen.getByRole("combobox", { name: "Abrechnungskreis" }), { target: { value: "scope-weg" } });
   fireEvent.change(screen.getByRole("combobox", { name: "Kategorie *" }), { target: { value: "cat-water" } });
   fireEvent.change(screen.getByLabelText("Rechnungsdatum *", { exact: true }), { target: { value: "2026-07-01" } });
