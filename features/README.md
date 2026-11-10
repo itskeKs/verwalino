@@ -424,8 +424,16 @@ deposits, interest/PDF, selected drafts and scoped dunning. Parsing/deduplicatio
 DTO fields, permission matrices, concurrency and calculation edge cases stay in API
 or component tests (including `bank_statement_import.feature`). Browser scenarios
 retain visible review, confirmation, persistence, navigation and cancellation.
-Other scripts in `scripts/acceptance/` remain for later batches; this batch adds no
-new product journeys.
+Batch 2a replaces the ten `b1_*` scripts: property list paging and bounded filters
+(`property_listing.feature`), scope creation, team grants and the scoped pause
+(`scope_team_rights.feature`), scoped creation forms (`scope_creation_forms.feature`),
+scoped statements, open items and the deadline monitor (`scoped_statements.feature`),
+the legacy-payment review (`legacy_payment_review.feature`), mandate sources
+(`mandate_sources.feature`), shared building-data domains (`property_data_domains.feature`)
+and the declaration import start/principal journey (`declaration_import_start.feature`).
+Their SQL fixtures are gone; the data is created through the API World instead.
+Other scripts in `scripts/acceptance/` remain for batches 2b to 5; these batches add
+no new product journeys.
 
 ## Journey twins
 

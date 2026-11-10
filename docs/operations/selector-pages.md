@@ -51,14 +51,13 @@ no additional paging issue. Synthetic browser checks passed for 50→55 unique
 rows, user list, empty contact search, selected property retention and 390 px
 mobile layout; see `docs/acceptance/evidence/b1-selectors-browser.json`.
 
-Reproduce with the disposable pytest seed, then run
-`scripts/acceptance/b1_selectors_fixture.py` using the required disposable database
-settings. This fixture refuses other database targets. Run the API on localhost
-18000 and Vite from the frontend directory on localhost 13000 with its API proxy
-pointing to 18000. Run `scripts/acceptance/b1_selectors_browser.cjs` with
-`HV_PLAYWRIGHT_PACKAGE` and `HV_CHROMIUM_EXECUTABLE` pointing to existing installed
-runtimes. Screenshots stay in `/tmp/hv-b1-acceptance` by default. No installation,
-deployment or external account is required.
+Reproduce with the disposable pytest seed and
+`make test-browser PYTEST_ARGS="-q -k property_listing"`: the journey in
+`features/property_listing.feature` creates the 55 equal-name properties through
+the API World and drives the real UI for the paging, the bounded bank-account filter
+with its retained selection and the empty contact search; the user list is covered by
+`features/user_creation.feature`. No installation, deployment or external account is
+required.
 
 ## Deleting unused erroneous entries
 
