@@ -972,7 +972,8 @@ class PaymentService:
         Only with owner Soll and Rc > 0, it computes correction =
         max(0, Rc + sum(credited Hausgeld reserve) - planned owner reserve);
         a positive correction adds one negative contribution row at period end.
-        Excess reserve stays in full; frozen ledgers and late cash stay unchanged.
+        Excess R-Rc stays in full. Frozen ledgers keep their stored amounts;
+        late cash books the change in the frozen period's correction separately.
         """
         rows = await self._repo.list_for_owner(owner_profile_id, property_id=property_id)
         assigned = [to_payment_input(p) for p in rows if p.period_year is not None]

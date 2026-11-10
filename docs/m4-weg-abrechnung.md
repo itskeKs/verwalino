@@ -791,14 +791,22 @@ allocation and WEMoG settlement-balance calculation; it changes neither.
   period end, with owner and reason; the payment rows remain intact.
   `Σ share(H)` includes actual manual payment assignments.
   Thus covered reserve fills the planned reserve first; only the remaining
-  planned share is filled by Hausgeld-derived reserve. Excess separate reserve
-  stays in full: H 4,200.00 + R 3,600.00 gives 3,600.00; H 7,800.00 + R 1,000.00
+  planned share is filled by Hausgeld-derived reserve. Excess means `R − R_c`
+  and stays in full: H 4,200.00 + R 3,600.00 gives 3,600.00; H 7,800.00 + R 1,000.00
   gives 4,600.00; R 3,600.00 alone gives 3,600.00; H 4,200.00 + R 1,000.00 gives
-  2,938.46 (Soll 7,800.00, planned reserve 3,600.00).
+  2,938.46; R 6,000.00 alone gives 3,600.00 because its covered part is capped
+  at planned reserve (Soll 7,800.00, planned reserve 3,600.00).
   No run plan, missing owner Soll or `R_c = 0` means no correction, including
-  Hausgeld-only overpayments and negative net reserve. Frozen entries and late
-  cash against finalized periods remain unchanged. The ledger uses cash dates;
-  the paid side retains its assigned-period rules (§2.4).
+  Hausgeld-only overpayments and negative net reserve. Frozen ledgers retain
+  their stored amounts, including historical overcounts. Late cash against a
+  frozen period with a plan adds `correction(F) − correction(N)` as a separate
+  `LATE_CASH` contribution at that period's end: `F` uses all frozen payment
+  rows for that period, including late rows in later finalized ledgers; `N`
+  adds current late cash and its actual credited Hausgeld share. Both use the
+  frozen period's plan Soll and planned reserve, not stored correction rows.
+  The ledger uses cash value dates; the paid side retains assigned-period rules
+  (§2.4). Arrears assigned to an earlier year but paid in this period count as
+  this period's Hausgeld cash.
   Without a determinable
   ratio (no usable finalized plan, no dated unit assignment or no positive annual
   Hausgeld denominator) at booking,

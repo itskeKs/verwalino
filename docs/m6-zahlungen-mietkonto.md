@@ -508,9 +508,18 @@ units, and planned reserve sums the same canonical `PLANNED` rows used by the
 settlement. The original payment rows remain traceable.
 With Soll 7,800.00 and planned reserve 3,600.00, H 4,200.00 + R 3,600.00 gives
 3,600.00 reserve; H 7,800.00 + R 1,000.00 gives 4,600.00; R 3,600.00 alone gives
-3,600.00; H 4,200.00 + R 1,000.00 gives 2,938.46. Excess separate reserve stays
-in full. No run plan, missing owner Soll or `R_c = 0` means no correction.
-Frozen ledgers and late cash against finalized periods keep their stored amounts.
+3,600.00; H 4,200.00 + R 1,000.00 gives 2,938.46; R 6,000.00 alone gives
+3,600.00 because its covered part is capped at planned reserve. Excess means
+`R − R_c` and stays in full. No run plan, missing owner Soll or `R_c = 0` means
+no correction. Cash uses value dates, while §6.3 uses assigned periods: arrears
+assigned to an earlier year but paid in this period count as current Hausgeld cash.
+Frozen ledgers keep their stored amounts, including historical overcounts.
+For late cash against a frozen period with a plan, book
+`correction(F) − correction(N)` as a separate `LATE_CASH` contribution at that
+period's end. `F` includes frozen payment rows for that period from all finalized
+ledgers, including later late rows; `N` adds current late cash and its actual
+credited Hausgeld share. Both use the frozen period's plan Soll and planned
+reserve; stored historical correction rows are never recomputed or replaced.
 Reserve cash is asset formation, not consumed cost, and never changes the Spitze.
 The planned reserve Soll comes from the linked plan's canonical reserve plan cells
 (M4 §2.2/§2.4), independently of actual payments. Rental/BK derivations and other
