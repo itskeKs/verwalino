@@ -522,7 +522,7 @@ function SplitDialog({ transaction, account, busy, error, onClose, onSubmit }: {
               const targetKind = OWNER_TYPES.has(payment_type) ? "owner" : TENANT_TYPES.has(payment_type) ? "lease" : item.targetKind;
               update(item.key, { payment_type, targetKind, target: targetKind === item.targetKind ? item.target : "" });
             }}>{Object.entries(PAYMENT_TYPES).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
-            <label className="min-w-0">Betrag (EUR)<input inputMode="decimal" value={item.amount} onChange={event => update(item.key, { amount: event.target.value })} /></label>
+            <label className="min-w-0">Betrag (EUR)<input inputMode="decimal" placeholder="700,00" value={item.amount} onChange={event => update(item.key, { amount: event.target.value })} /></label>
             <label className="min-w-0">Periode Jahr<input type="number" min="1" max="9999" value={item.period_year} onChange={event => update(item.key, { period_year: event.target.value })} /></label>
             <label className="min-w-0">Periode Monat<input type="number" min="1" max="12" value={item.period_month} onChange={event => update(item.key, { period_month: event.target.value })} /></label>
             {item.payment_type === "NACHZAHLUNG" && <label className="min-w-0">Zielart<select aria-label="Zielart" value={item.targetKind} onChange={event => update(item.key, { targetKind: event.target.value as SplitRow["targetKind"], target: "" })}><option value="lease">Mietvertrag</option><option value="owner">Eigentümer</option></select></label>}
@@ -530,7 +530,7 @@ function SplitDialog({ transaction, account, busy, error, onClose, onSubmit }: {
               cost={item.reserve_cost_entry_id || ''} register={item.reserve_register_entry_id || ''} required={false}
               onChange={(cost, register) => update(item.key, { reserve_cost_entry_id: cost || null, reserve_register_entry_id: register || null })} /> : item.targetKind === "lease" ? <label className="form-full-width min-w-0">Mietvertrag<select aria-label="Mietvertrag" value={item.target} onChange={event => update(item.key, { target: event.target.value })}>
               <option value="">Mietvertrag wählen</option>
-              {targets?.leases.map(lease => <option key={lease.id} value={lease.id}>{name(targets.tenants.find(tenant => tenant.id === lease.tenant_profile_id)?.person_id)} · Einheit {targets.units.find(unit => unit.id === lease.unit_id)?.number} · ab {lease.valid_from}{lease.valid_to ? ` bis ${lease.valid_to}` : " (laufend)"}</option>)}
+              {targets?.leases.map(lease => <option key={lease.id} value={lease.id}>{name(targets.tenants.find(tenant => tenant.id === lease.tenant_profile_id)?.person_id)} · Einheit {targets.units.find(unit => unit.id === lease.unit_id)?.number} · ab {formatDate(lease.valid_from)}{lease.valid_to ? ` bis ${formatDate(lease.valid_to)}` : " (laufend)"}</option>)}
             </select></label> : <label className="form-full-width min-w-0">Eigentümer<select aria-label="Eigentümer" value={item.target} onChange={event => update(item.key, { target: event.target.value })}>
               <option value="">Eigentümer wählen</option>
               {targets?.owners.map(owner => <option key={owner.id} value={owner.id}>{name(owner.person_id)} · Einheit {targets.ownership.filter(record => record.owner_profile_id === owner.id).map(record => targets.units.find(unit => unit.id === record.unit_id)?.number).join(", ")}</option>)}

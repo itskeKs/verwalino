@@ -344,7 +344,7 @@ async def sparkasse_anna_suggestion(browser_world):
     await expect(targets).to_have_count(2)
     for index in range(2):
         await expect(targets.nth(index).locator("option:checked")).to_have_text(
-            "Anna Beispiel · Einheit Wohnung 1 · ab 2026-01-01 (laufend)"
+            "Anna Beispiel · Einheit Wohnung 1 · ab 01.01.2026 (laufend)"
         )
     await button(dialog, "Abbrechen").click()
 

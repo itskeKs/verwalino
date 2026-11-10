@@ -1137,10 +1137,7 @@ displayed money, date, datetime and IBAN value renders through them.
 `frontend/src/lib/format.test.ts` tests the helpers, and
 `frontend/src/lib/callSites.test.ts` fails when a hand-rolled date, a `toLocaleDateString`
 call, an amount followed by `EUR` or a raw date or timestamp field returns to a call site.
-Inputs show and accept what the user types: they are not display call sites, and
-the placeholder `700,00` appears only on money inputs that accept a decimal comma
-(the asset report, WEG settlement opening balance and settlement external and
-manual amount inputs still take API decimals and keep `0.00`, #504).
+Inputs show and accept what the user types: they are not display call sites.
 
 | What | Contract | Implemented by |
 |---|---|---|

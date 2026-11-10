@@ -3,7 +3,7 @@ import { downloadDatevCsv, getDatevSources, previewDatev, type DatevConfig, type
 import type { Property } from "../api/types";
 import { ApiError } from "../api/client";
 import { AccountingScopeSelector } from "./AccountingScopeSelector";
-import { centsFromDecimal, formatMoney } from "../lib/format";
+import { centsFromDecimal, formatDate, formatMoney } from "../lib/format";
 
 function message(error: unknown): string {
   return error instanceof Error ? error.message : "DATEV-Export fehlgeschlagen. Bitte erneut versuchen.";
@@ -163,7 +163,7 @@ export function DatevExport({ properties }: { properties: Property[] }) {
       <h3>DATEV-Vorschau · {result.config.chart}</h3>
       <p>Zahlungen: {formatMoney(centsFromDecimal(result.preview.payment_total))} · Kosten: {formatMoney(centsFromDecimal(result.preview.cost_total))}</p>
       <div className="overflow-x-auto"><table aria-label="DATEV-Vorschau"><thead><tr><th>Quelle</th><th>Datum</th><th>Betrag (EUR)</th><th>Soll/Haben</th><th>Konto</th><th>Gegenkonto</th><th>Buchungstext</th></tr></thead><tbody>
-        {result.preview.rows.map((row, index) => <tr key={`${row.source_type}-${row.source_id}-${index}`}><td>{row.source_type}</td><td>{row.day}</td><td>{formatMoney(centsFromDecimal(row.amount))}</td><td>{row.side}</td><td>{row.account}</td><td>{row.counter_account}</td><td>{row.text}</td></tr>)}
+        {result.preview.rows.map((row, index) => <tr key={`${row.source_type}-${row.source_id}-${index}`}><td>{row.source_type}</td><td>{formatDate(row.day)}</td><td>{formatMoney(centsFromDecimal(row.amount))}</td><td>{row.side}</td><td>{row.account}</td><td>{row.counter_account}</td><td>{row.text}</td></tr>)}
       </tbody></table></div>
       {result.preview.rows.length === 0 && <p>Keine Buchungen im Zeitraum.</p>}
       <button type="button" disabled={!!busy || !validConfig} onClick={() => void download()}>{busy === "download" ? "DATEV-Datei wird geladen…" : "DATEV-Datei herunterladen"}</button>

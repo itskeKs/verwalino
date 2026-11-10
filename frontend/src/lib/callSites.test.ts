@@ -9,7 +9,7 @@ const sources = import.meta.glob<string>(["../**/*.{ts,tsx}", "!../**/*.test.{ts
   eager: true,
 });
 
-const dateFields = "finalized_at|released_at|revoked_at|retention_until|governing_retention_until|meeting_date|reference_date|reading_date|previous_valid_from|key_date";
+const dateFields = "finalized_at|released_at|revoked_at|retention_until|governing_retention_until|meeting_date|reference_date|reading_date|previous_valid_from|key_date|valid_from|valid_to|value_date|booking_date|invoice_date|due_date|issue_date|day";
 const bypasses: [string, RegExp][] = [
   ["a hand-rolled TT.MM.JJJJ date", /\.split\(["']-["']\)\.reverse\(\)\.join\(["']\.["']\)/],
   ["toLocaleDateString", /toLocaleDateString/],
@@ -18,9 +18,12 @@ const bypasses: [string, RegExp][] = [
   ["a raw date or timestamp field", new RegExp(`(?<![=\\w])\\$?\\{\\s*[\\w.?]+\\.(?:${dateFields})\\s*\\}`)],
 ];
 
+// Keys and accessible names carry machine values, not displayed text.
+const displayed = (text: string) => text.replace(/(?:key|aria-label)=\{`[^`]*`\}/g, "").replace(/key=\{[^{}]*\}/g, "");
+
 it.each(bypasses)("renders no call site with %s", (_, pattern) => {
   const offenders = Object.entries(sources)
-    .filter(([, text]) => pattern.test(text))
+    .filter(([, text]) => pattern.test(displayed(text)))
     .map(([path]) => path);
   expect(offenders).toEqual([]);
 });
