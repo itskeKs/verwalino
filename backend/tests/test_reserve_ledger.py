@@ -596,10 +596,11 @@ async def test_reserve_history_helper_refuses_missing_properties(client_a_admin,
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize('storno', [False, True])
-async def test_late_hausgeld_uses_frozen_plan_and_storno_amount_after_source_changes(storno):
+async def test_late_hausgeld_uses_frozen_plan_and_storno_amount_after_source_changes(monkeypatch, storno):
     from types import SimpleNamespace as S
     from unittest.mock import AsyncMock
     from datetime import date
+    from app.repositories.economic_plan_repo import EconomicPlanLineRepository
     from app.services.reserve_ledger_service import ReserveLedgerService
     start, end = date(2025, 1, 1), date(2025, 12, 31)
     payload = {'inputs': {'units': [{'id': 'a', 'number': '1', 'mea': '2'}, {'id': 'b', 'number': '2', 'mea': '1'}],
@@ -611,20 +612,30 @@ async def test_late_hausgeld_uses_frozen_plan_and_storno_amount_after_source_cha
     replacement = S(id='replacement-plan', snapshot_payload=payload, reserve_contribution_total=Decimal('150'), period_start=start, period_end=end)
     frozen = S(id='closed', status='finalized', period_start=start, period_end=end, management_mandate_id=None,
         snapshot_payload={'reserve_ledger': {'closing_balance': '50.00', 'economic_plan_id': original.id,
-            'entries': [{'kind': 'CONTRIBUTION', 'payment_id': 'original-cash', 'amount': '50.00'}]}})
+            'entries': [{'kind': 'CONTRIBUTION', 'payment_id': 'original-cash', 'amount': '50.00',
+                         'owner_profile_id': 'payer', 'date': '2025-05-05'}]}})
     run = S(id='next', status='draft', period_start=date(2026, 1, 1), period_end=date(2026, 12, 31),
         management_mandate_id=None, economic_plan_id=None)
     cash = S(id='late-cash', payment_type='HAUSGELD_VORSCHUSS', amount=Decimal('100'), direction='OUT' if storno else 'IN',
         value_date=date(2025, 8, 5), owner_profile_id='payer', bank_account_id='bank',
         reverses_id='original-cash' if storno else None, reversed_by_id=None)
+    original_cash = S(id='original-cash', payment_type='HAUSGELD_VORSCHUSS', amount=Decimal('100'), direction='IN',
+        value_date=date(2025, 5, 5), owner_profile_id='payer', bank_account_id='bank',
+        reverses_id=None, reversed_by_id=cash.id if storno else None)
     service = ReserveLedgerService(None, 'org', 'actor')
     service.repo = S(finalized=AsyncMock(return_value=[(frozen, None)]), current_scope=AsyncMock(return_value=None),
-        plans=AsyncMock(return_value=[]), entries=AsyncMock(return_value=[]), payments=AsyncMock(return_value=[cash]),
+        plans=AsyncMock(return_value=[]), entries=AsyncMock(return_value=[]), payments=AsyncMock(return_value=[original_cash, cash]),
         owner_units=AsyncMock(return_value={cash.id: {'a', 'b'} if storno else {'a'}}),
-        cash_plans=AsyncMock(return_value=[replacement, original]), hausgeld_share=AsyncMock(return_value=Decimal('50')))
+        cash_plans=AsyncMock(return_value=[replacement, original]), hausgeld_share=AsyncMock(return_value=Decimal('50')),
+        plan_rows=AsyncMock(return_value=[{'kind': 'PLANNED', 'date': '2025-01-01',
+            'owner_profile_id': 'payer', 'amount': '50.00'}]))
+    lines = AsyncMock(return_value=[S(line_type='OWNER_ADVANCE', owner_profile_id='payer', planned_amount=Decimal('100'))])
+    monkeypatch.setattr(EconomicPlanLineRepository, 'list_for_plan', lines)
     ledger = await service.read(run)
     assert ledger['late_cash_total'] == ('-50.00' if storno else '50.00')
     assert ledger['closing_balance'] == ('0.00' if storno else '100.00')
+    lines.assert_awaited_once_with(original.id)
+    service.repo.plan_rows.assert_awaited_once_with(original)
 
 
 @pytest.mark.asyncio
@@ -671,6 +682,409 @@ async def finalize(api, w):
     response = await api.post(f"/api/weg-settlements/{w['run']}/finalize", json=paid(w))
     assert response.status_code == 200, response.text
     return response.json()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('hausgeld,reserve,refund,reverse,expected', [
+    ('4200.00', '3600.00', '0.00', False, '3600.00'),
+    ('7800.00', '1000.00', '0.00', False, '4600.00'),
+    ('0.00', '3600.00', '0.00', False, '3600.00'),
+    ('4200.00', '1000.00', '0.00', False, '2938.46'),
+    ('4200.00', '3600.00', '0.00', True, '1938.46'),
+    ('9000.00', '3600.00', '0.00', True, '4153.85'),
+    ('4200.00', '100.00', '200.00', False, '1838.46'),
+    ('-100.00', '8000.00', '0.00', False, '3700.00'),
+], ids=['split-payer', 'excess', 'reserve-only', 'partial-split', 'reserve-storno', 'hausgeld-only-overpayment', 'negative-net-reserve', 'negative-net-hausgeld'])
+async def test_split_reserve_cash_counts_each_euro_once(
+        client_a_admin, seed_data, hausgeld, reserve, refund, reverse, expected):
+    api = client_a_admin
+    w = await reserve_world(api, seed_data)
+    if Decimal(hausgeld):
+        await payment(api, w, str(abs(Decimal(hausgeld))), kind='HAUSGELD_VORSCHUSS',
+                      direction='OUT' if Decimal(hausgeld) < 0 else 'IN')
+    receipt = await payment(api, w, reserve)
+    if reverse:
+        response = await api.post(f'/api/payments/{receipt}/reverse', json={'note': 'Synthetic duplicate'})
+        assert response.status_code == 201, response.text
+    if Decimal(refund):
+        response = await api.post('/api/payments', json={
+            'bank_account_id': w['bank_giro'], 'owner_profile_id': w['owner_a'],
+            'direction': 'OUT', 'amount': refund, 'value_date': '2025-02-01',
+            'payment_type': 'RUECKLAGENANTEIL', 'period_year': 2025, 'period_month': 2})
+        assert response.status_code == 201, response.text
+        assert (await api.post(f"/api/payments/{response.json()['id']}/book")).status_code == 200
+    ledger = (await api.get(f"/api/weg-settlements/{w['run']}/reserve-ledger")).json()
+    assert ledger['contributions_total'] == expected
+    assert ledger['closing_balance'] == expected
+    correction = [row for row in ledger['entries'] if row['kind'] == 'CONTRIBUTION'
+                  and not row.get('payment_id')]
+    assert len(correction) == (1 if expected in ('3600.00', '3700.00') and Decimal(hausgeld) else 0)
+    if correction:
+        assert correction[0]['owner_profile_id'] == w['owner_a']
+        assert correction[0]['date'] == '2025-12-31'
+        assert correction[0]['reason']
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('topology,hausgeld,reserve,expected', [
+    ('two-units', '7000.00', '6500.00', '6500.00'),
+    ('coowners', '2100.00', '1800.00', '1800.00'),
+])
+async def test_split_reserve_uses_the_owners_plan_totals_across_units_and_coowners(
+        client_a_admin, seed_data, topology, hausgeld, reserve, expected):
+    api = client_a_admin
+    w = _seed_weg(seed_data)
+    unit = w['u2'] if topology == 'two-units' else w['u1']
+    old = (await api.get('/api/ownership', params={'unit_id': unit})).json()[0]
+    response = await api.patch(f"/api/ownership/{old['id']}", json={'valid_to': '2024-12-31'})
+    assert response.status_code == 200, response.text
+    owners = [(w['owner_a'], '1')] if topology == 'two-units' else [
+        (w['owner_a'], '0.5'), (w['owner_b'], '0.5')]
+    for owner, share in owners:
+        response = await api.post('/api/ownership', json={'unit_id': unit,
+            'owner_profile_id': owner, 'valid_from': '2025-01-01', 'mea_share': share})
+        assert response.status_code == 201, response.text
+    plan = await _create_and_finalize_plan(api, w)
+    response = await api.post('/api/weg-settlements', json={'property_id': w['property'],
+        'economic_plan_id': plan, 'period_start': '2025-01-01', 'period_end': '2025-12-31'})
+    assert response.status_code == 201, response.text
+    await payment(api, w, hausgeld, kind='HAUSGELD_VORSCHUSS')
+    await payment(api, w, reserve)
+    ledger = (await api.get(f"/api/weg-settlements/{response.json()['id']}/reserve-ledger")).json()
+    assert ledger['contributions_total'] == expected
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('hausgeld,reserve,expected,late,closing', [
+    ('4200.00', '3600.00', '3600.00', '2300.00', '5900.00'),
+    ('7800.00', '1000.00', '4600.00', '1600.00', '6200.00'),
+], ids=['split-payer', 'excess'])
+async def test_split_reserve_frozen_entries_hash_and_pdf_ignore_late_cash(
+        client_a_admin, seed_data, migrator_session, hausgeld, reserve, expected, late, closing):
+    api = client_a_admin
+    w = await reserve_world(api, seed_data)
+    await payment(api, w, hausgeld, kind='HAUSGELD_VORSCHUSS')
+    await payment(api, w, reserve)
+    statement = await finalize(api, w)
+    path = f"/api/weg-settlements/{w['run']}"
+    frozen = (await api.get(path + '/reserve-ledger')).json()
+    assert frozen['contributions_total'] == expected
+    payload = await migrator_session.scalar(text('SELECT snapshot_payload FROM settlement_run WHERE id=CAST(:id AS uuid)'), {'id': w['run']})
+    assert payload['reserve_ledger']['entries'] == [
+        {key: value for key, value in row.items() if key not in (
+            'owner_name', 'payment_note', 'cost_document_number', 'register_sequence_number')}
+        for row in frozen['entries']]
+    before_pdf = (await api.get(path + '/pdf')).content
+    await payment(api, w, '1000.00', when='2025-12-31')
+    await payment(api, w, '1300.00', kind='HAUSGELD_VORSCHUSS', when='2025-12-31')
+    assert (await api.get(path + '/reserve-ledger')).json() == frozen
+    assert (await api.get(path)).json() == statement
+    assert (await api.get(path + '/pdf')).content == before_pdf
+    assert await migrator_session.scalar(text('SELECT snapshot_payload FROM settlement_run WHERE id=CAST(:id AS uuid)'), {'id': w['run']}) == payload
+    response = await api.post('/api/weg-settlements/asset-reports', json={'property_id': w['property'],
+        'period_start': '2026-01-01', 'period_end': '2026-12-31'})
+    assert response.status_code == 201, response.text
+    ledger_response = await api.get(f"/api/weg-settlements/{response.json()['id']}/reserve-ledger")
+    assert ledger_response.status_code == 200, ledger_response.text
+    ledger = ledger_response.json()
+    assert ledger['late_cash_total'] == late
+    assert ledger['contributions_total'] == '0.00'
+    assert ledger['closing_balance'] == closing
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('successor', [False, True], ids=['ownership-change', 'owner-without-soll'])
+async def test_split_reserve_uses_cash_date_ownership_and_never_invents_successor_soll(
+        client_a_admin, seed_data, successor):
+    api = client_a_admin
+    w = await reserve_world(api, seed_data)
+    old = (await api.get('/api/ownership', params={'unit_id': w['u1']})).json()[0]
+    response = await api.patch(f"/api/ownership/{old['id']}", json={'valid_to': '2025-06-30'})
+    assert response.status_code == 200, response.text
+    if successor:
+        person = (await api.post('/api/persons', json={'first_name': 'Clara', 'last_name': 'Successor'})).json()
+        new_owner = (await api.post('/api/owner-profiles', json={'person_id': person['id']})).json()['id']
+    else:
+        new_owner = w['owner_b']
+    response = await api.post('/api/ownership', json={'unit_id': w['u1'],
+        'owner_profile_id': new_owner, 'valid_from': '2025-07-01'})
+    assert response.status_code == 201, response.text
+    cash = []
+    for owner, when, h, r in ([(new_owner, '2025-08-01', '4200.00', '3600.00')] if successor else [
+        (w['owner_a'], '2025-02-01', '4200.00', '3600.00'),
+        (new_owner, '2025-08-01', '2800.00', '2400.00')]):
+        local = {**w, 'owner_a': owner}
+        cash.append(await payment(api, local, h, kind='HAUSGELD_VORSCHUSS', when=when))
+        await payment(api, local, r, when=when)
+    ledger = (await api.get(f"/api/weg-settlements/{w['run']}/reserve-ledger")).json()
+    assert ledger['contributions_total'] == ('5538.46' if successor else '6000.00')
+    if not successor:
+        # Raw payment rows retain the different unit sets at each value date.
+        raw = {row['payment_id']: row['amount'] for row in ledger['entries'] if row.get('payment_id') in cash}
+        assert raw == {cash[0]: '1938.46', cash[1]: '1292.31'}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('selected,manual,expected', [
+    (True, False, '3600.00'), (False, False, '5538.46'), (True, True, '3600.00'),
+], ids=['run-own-plan', 'no-run-plan', 'manual-hausgeld-assignment'])
+async def test_split_reserve_correction_uses_only_run_plan_and_actual_credited_hausgeld(
+        monkeypatch, selected, manual, expected):
+    from types import SimpleNamespace as S
+    from unittest.mock import AsyncMock
+    from uuid import UUID
+    from app.services.reserve_ledger_service import ReserveLedgerService
+    from app.repositories.economic_plan_repo import EconomicPlanLineRepository
+    owner = UUID(int=1)
+    run = S(id='run', status='draft', period_start=date(2025, 1, 1), period_end=date(2025, 12, 31),
+            economic_plan_id='plan' if selected else None, management_mandate_id=None)
+    plan = S(id='plan', reserve_contribution_total=Decimal('3600'), snapshot_sha256='plan-hash')
+    payments = [S(id=kind, payment_type=kind, amount=Decimal(amount), direction='IN',
+        value_date=date(2025, 2, 1), owner_profile_id=owner, bank_account_id='bank',
+        reverses_id=None, reversed_by_id=None) for kind, amount in [
+            ('HAUSGELD_VORSCHUSS', '4200'), ('RUECKLAGENANTEIL', '3600')]]
+    service = ReserveLedgerService(None, 'org', 'actor')
+    assignment = S(id='assignment', payment_id=payments[0].id, component='CONTRIBUTION',
+        amount=Decimal('1000'), reason='Reviewed assignment', reverses_entry_id=None) if manual else None
+    service.repo = S(finalized=AsyncMock(return_value=[]), current_scope=AsyncMock(return_value=None),
+        plans=AsyncMock(return_value=[plan] if selected else []),
+        plan_rows=AsyncMock(return_value=[{'kind': 'PLANNED', 'owner_profile_id': str(owner),
+            'amount': '3600.00', 'date': '2025-01-01'}]),
+        entries=AsyncMock(return_value=[assignment] if manual else []), payments=AsyncMock(return_value=payments),
+        owner_units=AsyncMock(return_value={}), cash_plan=AsyncMock(return_value=plan),
+        hausgeld_share=AsyncMock(return_value=Decimal('1938.46')))
+    lines = AsyncMock(return_value=[S(line_type='OWNER_ADVANCE', owner_profile_id=owner, planned_amount=Decimal('7800'))])
+    monkeypatch.setattr(EconomicPlanLineRepository, 'list_for_plan', lines)
+    ledger = await service.read(run)
+    assert ledger['contributions_total'] == expected
+    if selected:
+        lines.assert_awaited_once_with('plan')
+    else:
+        lines.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_split_reserve_already_frozen_overcount_is_returned_without_recomputation():
+    from copy import deepcopy
+    from types import SimpleNamespace as S
+    from app.services.reserve_ledger_service import ReserveLedgerService
+    ledger = {'contributions_total': '5538.46', 'closing_balance': '5538.46',
+        'entries': [{'kind': 'CONTRIBUTION', 'payment_id': 'original-receipt', 'amount': '5538.46'}]}
+    run = S(status='finalized', snapshot_payload={'reserve_ledger': deepcopy(ledger)}, snapshot_sha256='retained-hash')
+    service = ReserveLedgerService(None, 'org', 'actor')
+    service.repo = None  # Any attempt to read current inputs must fail.
+    assert await service.read(run) == {**ledger, 'frozen': True}
+    assert run.snapshot_payload == {'reserve_ledger': ledger}
+    assert run.snapshot_sha256 == 'retained-hash'
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('late_kind,expected,correction', [
+    ('reserve-storno', '-1661.54', '1938.46'),
+    ('hausgeld-storno', '0.00', '1938.46'),
+    ('hausgeld-receipt', '0.00', '-1938.46'),
+])
+async def test_split_reserve_late_cash_recomputes_the_frozen_period_correction(
+        client_a_admin, seed_data, migrator_session, late_kind, expected, correction):
+    api = client_a_admin
+    w = await reserve_world(api, seed_data)
+    if late_kind != 'hausgeld-receipt':
+        hausgeld = await payment(api, w, '4200.00', kind='HAUSGELD_VORSCHUSS')
+    reserve = await payment(api, w, '3600.00')
+    statement = await finalize(api, w)
+    path = f"/api/weg-settlements/{w['run']}"
+    frozen = (await api.get(path + '/reserve-ledger')).json()
+    assert frozen['closing_balance'] == '3600.00'
+    query = text('SELECT snapshot_payload FROM settlement_run WHERE id=CAST(:id AS uuid)')
+    payload = await migrator_session.scalar(query, {'id': w['run']})
+    if late_kind == 'hausgeld-receipt':
+        late_payment = await payment(api, w, '4200.00', kind='HAUSGELD_VORSCHUSS')
+    else:
+        original = reserve if late_kind == 'reserve-storno' else hausgeld
+        response = await api.post(f'/api/payments/{original}/reverse', json={'note': 'Late correction'})
+        assert response.status_code == 201, response.text
+        late_payment = response.json()['id']
+    response = await api.post('/api/weg-settlements/asset-reports', json={
+        'property_id': w['property'], 'period_start': '2026-01-01', 'period_end': '2026-12-31'})
+    assert response.status_code == 201, response.text
+    ledger_response = await api.get(f"/api/weg-settlements/{response.json()['id']}/reserve-ledger")
+    assert ledger_response.status_code == 200, ledger_response.text
+    ledger = ledger_response.json()
+    assert (await api.get(path + '/reserve-ledger')).json() == frozen
+    assert (await api.get(path)).json() == statement
+    assert await migrator_session.scalar(query, {'id': w['run']}) == payload
+    assert ledger['late_cash_total'] == expected
+    assert Decimal(ledger['closing_balance']) == Decimal('3600.00') + Decimal(expected)
+    assert ledger['contributions_total'] == '0.00'
+    assert any(row.get('payment_id') == late_payment for row in ledger['entries'])
+    adjustments = [row for row in ledger['entries'] if row['kind'] == 'LATE_CASH'
+                   and not row.get('payment_id')]
+    assert len(adjustments) == 1
+    assert adjustments[0] == {
+        'kind': 'LATE_CASH', 'component': 'CONTRIBUTION', 'date': '2025-12-31',
+        'amount': correction, 'owner_profile_id': w['owner_a'],
+        'reason': 'Rücklagenanteil bereits im Hausgeld-Soll enthalten', 'correction': 'SPLIT_RESERVE',
+        'owner_name': 'Anton Eigentuemer', 'payment_note': None,
+        'cost_document_number': None, 'register_sequence_number': None,
+    }
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('late_kind,hausgeld,reserve,opening,expected,closing,share,correction', [
+    ('reserve-storno', '4200', '3600', '5538.46', '-3600.00', '1938.46', '-3600.00', '0.00'),
+    ('hausgeld-storno', '4200', '3600', '5538.46', '-1938.46', '3600.00', '-1938.46', '0.00'),
+    ('reserve-storno', '0', '6000', '6000.00', '-6000.00', '0.00', '-6000.00', '0.00'),
+    ('hausgeld-receipt', '4200', '3600', '5538.46', '-1838.46', '3700.00', '46.15', '-1884.61'),
+], ids=['reserve-storno', 'hausgeld-storno', 'reserve-only-storno', 'hausgeld-receipt'])
+async def test_split_reserve_late_cash_corrects_a_legacy_frozen_overcount(
+        monkeypatch, late_kind, hausgeld, reserve, opening, expected, closing, share, correction):
+    from copy import deepcopy
+    from types import SimpleNamespace as S
+    from unittest.mock import AsyncMock
+    from uuid import UUID
+    from app.services.reserve_ledger_service import ReserveLedgerService
+    from app.repositories.economic_plan_repo import EconomicPlanLineRepository
+    owner = UUID(int=1)
+    plan = S(id='historical-plan', period_start=date(2025, 1, 1), period_end=date(2025, 12, 31))
+    payments = [S(id=identifier, payment_type=kind, amount=Decimal(amount), direction='IN',
+        value_date=date(2025, 2, 1), owner_profile_id=owner, bank_account_id='bank',
+        reverses_id=None, reversed_by_id=None) for identifier, kind, amount in [
+            ('hausgeld', 'HAUSGELD_VORSCHUSS', hausgeld), ('reserve', 'RUECKLAGENANTEIL', reserve)]
+        if Decimal(amount)]
+    reversed_id = 'reserve' if late_kind == 'reserve-storno' else 'hausgeld'
+    late = S(id='late-payment', payment_type='RUECKLAGENANTEIL' if reversed_id == 'reserve' else 'HAUSGELD_VORSCHUSS',
+        amount=Decimal('100' if late_kind == 'hausgeld-receipt' else reserve if reversed_id == 'reserve' else hausgeld),
+        direction='IN' if late_kind == 'hausgeld-receipt' else 'OUT', value_date=date(2025, 2, 1),
+        owner_profile_id=owner, bank_account_id='bank',
+        reverses_id=None if late_kind == 'hausgeld-receipt' else reversed_id, reversed_by_id=None)
+    payments.append(late)
+    frozen = {'economic_plan_id': plan.id, 'contributions_total': opening, 'closing_balance': opening,
+        'entries': [{'kind': 'CONTRIBUTION', 'date': '2025-02-01', 'payment_id': identifier,
+                     'owner_profile_id': str(owner), 'amount': amount}
+                    for identifier, amount in [('hausgeld', '1938.46'), ('reserve', format(Decimal(reserve), '.2f'))]
+                    if identifier != 'hausgeld' or Decimal(hausgeld)]}
+    historical = S(id='history', status='finalized', period_start=plan.period_start, period_end=plan.period_end,
+        snapshot_payload={'reserve_ledger': deepcopy(frozen)}, snapshot_sha256='retained-hash')
+    run = S(id='current', status='draft', period_start=date(2026, 1, 1), period_end=date(2026, 12, 31),
+        economic_plan_id=None, management_mandate_id=None)
+    service = ReserveLedgerService(None, 'org', 'actor')
+    service.repo = S(finalized=AsyncMock(return_value=[(historical, None)]),
+        current_scope=AsyncMock(return_value=None), plans=AsyncMock(return_value=[]),
+        entries=AsyncMock(return_value=[]), payments=AsyncMock(return_value=payments),
+        owner_units=AsyncMock(return_value={}), cash_plans=AsyncMock(return_value=[plan]),
+        hausgeld_share=AsyncMock(return_value=Decimal('46.15')),
+        plan_rows=AsyncMock(return_value=[{'kind': 'PLANNED', 'owner_profile_id': str(owner),
+            'amount': '3600.00', 'date': '2025-01-01'}]))
+    monkeypatch.setattr(EconomicPlanLineRepository, 'advance_totals_per_owner',
+        AsyncMock(return_value={owner: Decimal('7800')}))
+    ledger = await service.read(run)
+    assert historical.snapshot_payload == {'reserve_ledger': frozen}
+    assert historical.snapshot_sha256 == 'retained-hash'
+    assert (await service.read(historical))['closing_balance'] == opening
+    assert (ledger['late_cash_total'], ledger['closing_balance']) == (expected, closing)
+    assert ledger['opening_balance'] == opening
+    assert next(row['amount'] for row in ledger['entries'] if row.get('payment_id') == late.id) == share
+    assert [row['amount'] for row in ledger['entries'] if row['kind'] == 'LATE_CASH'
+            and not row.get('payment_id')] == ([correction] if Decimal(correction) else [])
+
+
+@pytest.mark.asyncio
+async def test_split_reserve_late_cash_counts_the_same_periods_annual_and_asset_correction_once(monkeypatch):
+    from copy import deepcopy
+    from types import SimpleNamespace as S
+    from unittest.mock import AsyncMock
+    from uuid import UUID
+    from app.services.reserve_ledger_service import ReserveLedgerService
+    from app.repositories.economic_plan_repo import EconomicPlanLineRepository
+    owner = UUID(int=1)
+    plan = S(id='historical-plan', period_start=date(2025, 1, 1), period_end=date(2025, 12, 31))
+    payments = [S(id=identifier, payment_type=kind, amount=Decimal(amount), direction=direction,
+        value_date=date(2025, 2, 1), owner_profile_id=owner, bank_account_id='bank',
+        reverses_id='reserve' if identifier == 'storno' else None, reversed_by_id=None)
+        for identifier, kind, amount, direction in [
+            ('hausgeld', 'HAUSGELD_VORSCHUSS', '4200', 'IN'),
+            ('reserve', 'RUECKLAGENANTEIL', '3600', 'IN'),
+            ('storno', 'RUECKLAGENANTEIL', '3600', 'OUT')]]
+    frozen = {'economic_plan_id': plan.id, 'contributions_total': '3600.00', 'closing_balance': '3600.00',
+        'entries': [{'kind': 'CONTRIBUTION', 'date': '2025-02-01', 'payment_id': identifier,
+                     'owner_profile_id': str(owner), 'amount': amount}
+                    for identifier, amount in [('hausgeld', '1938.46'), ('reserve', '3600.00')]] + [
+                        {'kind': 'CONTRIBUTION', 'date': '2025-12-31', 'amount': '-1938.46',
+                         'owner_profile_id': str(owner), 'correction': 'SPLIT_RESERVE',
+                         # Recognized by the structured marker, never by its display text.
+                         'reason': 'Früherer Wortlaut der Korrektur'}]}
+    history = [S(id=kind, status='finalized', run_type=kind,
+        period_start=plan.period_start, period_end=plan.period_end,
+        snapshot_payload={'reserve_ledger': deepcopy(frozen)}, snapshot_sha256=kind + '-hash')
+        for kind in ('WEG_JAHRESABRECHNUNG', 'VERMOEGENSBERICHT')]
+    run = S(id='current', status='draft', period_start=date(2026, 1, 1), period_end=date(2026, 12, 31),
+        economic_plan_id=None, management_mandate_id=None)
+    service = ReserveLedgerService(None, 'org', 'actor')
+    service.repo = S(finalized=AsyncMock(return_value=[(historical, None) for historical in history]),
+        current_scope=AsyncMock(return_value=None), plans=AsyncMock(return_value=[]),
+        entries=AsyncMock(return_value=[]), payments=AsyncMock(return_value=payments),
+        owner_units=AsyncMock(return_value={}), cash_plans=AsyncMock(return_value=[plan]),
+        plan_rows=AsyncMock(return_value=[{'kind': 'PLANNED', 'owner_profile_id': str(owner),
+            'amount': '3600.00', 'date': '2025-01-01'}]))
+    monkeypatch.setattr(EconomicPlanLineRepository, 'advance_totals_per_owner',
+        AsyncMock(return_value={owner: Decimal('7800')}))
+    ledger = await service.read(run)
+    for historical in history:
+        assert historical.snapshot_payload == {'reserve_ledger': frozen}
+        assert historical.snapshot_sha256 == historical.run_type + '-hash'
+        assert await service.read(historical) == {**frozen, 'frozen': True}
+    assert (ledger['late_cash_total'], ledger['closing_balance']) == ('-1661.54', '1938.46')
+    assert [row['amount'] for row in ledger['entries'] if row['kind'] == 'LATE_CASH'
+            and not row.get('payment_id')] == ['1938.46']
+
+
+@pytest.mark.asyncio
+async def test_split_reserve_late_cash_in_successive_years_includes_earlier_frozen_late_rows(
+        client_a_admin, seed_data, migrator_session):
+    api = client_a_admin
+    w = await reserve_world(api, seed_data)
+    reserve = await payment(api, w, '3600.00')
+    await finalize(api, w)
+    hausgeld = await payment(api, w, '4200.00', kind='HAUSGELD_VORSCHUSS')
+    response = await api.post('/api/weg-settlements/asset-reports', json={
+        'property_id': w['property'], 'period_start': '2026-01-01', 'period_end': '2026-12-31'})
+    assert response.status_code == 201, response.text
+    report = response.json()['id']
+    values = {'bank_balances': [{'bank_account_id': w[key], 'label': key, 'account_type': kind, 'balance': '0.00'}
+              for key, kind in [('bank_giro', 'LAUFEND'), ('bank_ruecklage', 'RUECKLAGE')]],
+              'receivables': [], 'payables': []}
+    await attest_fixture(api, 'settlement', report, values)
+    response = await api.post(f'/api/weg-settlements/asset-reports/{report}/finalize', json=values)
+    assert response.status_code == 200, response.text
+    path = f'/api/weg-settlements/{report}/reserve-ledger'
+    frozen = (await api.get(path)).json()
+    assert any(row.get('payment_id') == hausgeld for row in frozen['entries'])
+    query = text('SELECT snapshot_payload FROM settlement_run WHERE id=CAST(:id AS uuid)')
+    payload = await migrator_session.scalar(query, {'id': report})
+    response = await api.post(f'/api/payments/{reserve}/reverse', json={'note': 'Late reserve correction'})
+    assert response.status_code == 201, response.text
+    response = await api.post('/api/weg-settlements/asset-reports', json={
+        'property_id': w['property'], 'period_start': '2027-01-01', 'period_end': '2027-12-31'})
+    assert response.status_code == 201, response.text
+    next_report = response.json()['id']
+    ledger_response = await api.get(f'/api/weg-settlements/{next_report}/reserve-ledger')
+    assert ledger_response.status_code == 200, ledger_response.text
+    ledger = ledger_response.json()
+    assert (await api.get(path)).json() == frozen
+    assert await migrator_session.scalar(query, {'id': report}) == payload
+    assert (frozen['late_cash_total'], ledger['late_cash_total']) == ('0.00', '-1661.54')
+    assert ledger['opening_balance'] == frozen['closing_balance'] == '3600.00'
+    assert ledger['closing_balance'] == '1938.46'
+    assert not any(row.get('payment_id') == hausgeld for row in ledger['entries'])
+    assert next(row['amount'] for row in ledger['entries'] if row['kind'] == 'LATE_CASH'
+                and not row.get('payment_id')) == '1938.46'
+    await attest_fixture(api, 'settlement', next_report, values)
+    response = await api.post(f'/api/weg-settlements/asset-reports/{next_report}/finalize', json=values)
+    assert response.status_code == 200, response.text
+    issued = (await api.get(f'/api/weg-settlements/{next_report}/reserve-ledger')).json()
+    assert issued == {**ledger, 'frozen': True, 'contribution_headroom': []}
+    assert (await api.get(path)).json() == frozen
+    assert await migrator_session.scalar(query, {'id': report}) == payload
 
 
 @pytest.mark.asyncio
@@ -787,10 +1201,12 @@ async def test_finalized_year_freezes_cash_and_carries_closing_into_next_period(
     await payment(api, w, '6000.00')
     result = await finalize(api, w)
     frozen = (await api.get(path)).json()
-    assert frozen['closing_balance'] == '26000.00'
+    # H=0, R=6000, Soll=7800, planned=3600: Rc=6000, correction=2400.
+    assert frozen['closing_balance'] == '23600.00'
     assert frozen['frozen'] is True
     # Preserve the issued opening; expose late cash separately in the next period.
-    late = await payment(api, w, '999.00', when='2025-12-31')
+    # Late R 2000: Rc 7800 (capped at Soll), correction 4200, delta -1800, late cash 200.
+    late = await payment(api, w, '2000.00', when='2025-12-31')
     assert (await api.get(path)).json() == frozen
     assert (await api.get(f"/api/weg-settlements/{w['run']}")).json()['snapshot_sha256'] == result['snapshot_sha256']
     response = await api.post('/api/economic-plans', json={'property_id': w['property'], 'plan_year': 2026,
@@ -805,17 +1221,24 @@ async def test_finalized_year_freezes_cash_and_carries_closing_into_next_period(
     assert response.status_code == 201, response.text
     next_run = response.json()['id']
     ledger = (await api.get(f'/api/weg-settlements/{next_run}/reserve-ledger')).json()
-    assert ledger['opening_balance'] == '26000.00'
+    assert ledger['opening_balance'] == '23600.00'
     assert ledger['opening_source_run_id'] == w['run']
-    assert ledger['late_cash_total'] == '999.00'
-    assert ledger['closing_balance'] == '26999.00'
+    assert ledger['late_cash_total'] == '200.00'
+    assert ledger['closing_balance'] == '23800.00'
     assert next(row for row in ledger['entries'] if row.get('payment_id') == late) == {
         'kind': 'LATE_CASH', 'component': 'CONTRIBUTION', 'date': '2025-12-31',
-        'amount': '999.00', 'payment_id': late, 'bank_account_id': w['bank_giro'],
+        'amount': '2000.00', 'payment_id': late, 'bank_account_id': w['bank_giro'],
         'owner_profile_id': w['owner_a'],
         'owner_name': 'Anton Eigentuemer', 'payment_note': None,
         'cost_document_number': None, 'register_sequence_number': None,
     }
+    assert [row for row in ledger['entries'] if row['kind'] == 'LATE_CASH' and not row.get('payment_id')] == [{
+        'kind': 'LATE_CASH', 'component': 'CONTRIBUTION', 'date': '2025-12-31',
+        'amount': '-1800.00', 'owner_profile_id': w['owner_a'],
+        'reason': 'Rücklagenanteil bereits im Hausgeld-Soll enthalten', 'correction': 'SPLIT_RESERVE',
+        'owner_name': 'Anton Eigentuemer', 'payment_note': None,
+        'cost_document_number': None, 'register_sequence_number': None,
+    }]
     next_world = {**w, 'run': next_run}
     next_result = await finalize(api, next_world)
     lines = next_result['lines']
@@ -823,7 +1246,7 @@ async def test_finalized_year_freezes_cash_and_carries_closing_into_next_period(
         row['sort_order'] for row in lines if row['label'] == 'Nachträgliche Buchungen zum abgeschlossenen Jahr')
     closing_note = next(row['note'] for row in lines if row['line_type'] == 'RESERVE_CLOSING')
     assert 'nachträgliche Buchungen' in closing_note
-    assert (await api.get(f'/api/weg-settlements/{next_run}/reserve-ledger')).json()['closing_balance'] == '26999.00'
+    assert (await api.get(f'/api/weg-settlements/{next_run}/reserve-ledger')).json()['closing_balance'] == '23800.00'
     # A report for the issued year consumes the exact same frozen ledger.
     response = await api.post('/api/weg-settlements/asset-reports', json={
         'property_id': w['property'], 'period_start': '2025-01-01', 'period_end': '2025-12-31'})
@@ -835,9 +1258,9 @@ async def test_finalized_year_freezes_cash_and_carries_closing_into_next_period(
     await attest_fixture(api, 'settlement', report, report_values)
     response = await api.post(f'/api/weg-settlements/asset-reports/{report}/finalize', json=report_values)
     assert response.status_code == 200, response.text
-    assert next(row['amount'] for row in response.json()['lines'] if row['line_type'] == 'RESERVE_CLOSING') == '26000.00'
+    assert next(row['amount'] for row in response.json()['lines'] if row['line_type'] == 'RESERVE_CLOSING') == '23600.00'
     stored = await migrator_session.scalar(text('SELECT snapshot_payload FROM settlement_run WHERE id=CAST(:id AS uuid)'), {'id': report})
-    assert stored['reserve_ledger']['closing_balance'] == '26000.00'
+    assert stored['reserve_ledger']['closing_balance'] == '23600.00'
     response = await api.post('/api/weg-settlements/asset-reports', json={
         'property_id': w['property'], 'period_start': '2026-01-01', 'period_end': '2026-12-31'})
     assert response.status_code == 201, response.text
@@ -849,11 +1272,11 @@ async def test_finalized_year_freezes_cash_and_carries_closing_into_next_period(
     assert document.status_code == 200, document.text
     content = pdf_text(document.content)
     assert 'Nachträgliche Buchungen zum abgeschlossenen Jahr' in content
-    assert '999,00 EUR' in content
-    assert '26.000,00 EUR' in content and '26.999,00 EUR' in content
+    assert '200,00 EUR' in content
+    assert '23.600,00 EUR' in content and '23.800,00 EUR' in content
     assert 'nachträgliche Buchungen' in content
     amounts = {line['line_type']: Decimal(line['amount']) for line in response.json()['lines']}
-    assert amounts['RESERVE_OPENING'] + amounts['RESERVE_CONTRIBUTION'] - amounts['RESERVE_WITHDRAWAL'] + amounts['RESERVE_LATE_CASH'] == amounts['RESERVE_CLOSING'] == Decimal('26999.00')
+    assert amounts['RESERVE_OPENING'] + amounts['RESERVE_CONTRIBUTION'] - amounts['RESERVE_WITHDRAWAL'] + amounts['RESERVE_LATE_CASH'] == amounts['RESERVE_CLOSING'] == Decimal('23800.00')
 
 
 async def ownership_plan(api, w, year, reserve='365.00'):

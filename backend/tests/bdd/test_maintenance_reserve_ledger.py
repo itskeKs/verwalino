@@ -11,6 +11,48 @@ from tests.financial_coverage_helpers import attest_fixture
 scenarios(str(Path(__file__).resolve().parents[3] / 'features/maintenance_reserve_ledger.feature'))
 
 
+@given('Anna and Bernd have a 7000 euro cost plan and a 6000 euro reserve plan', target_fixture='split_reserve')
+def split_reserve(world, seed_data):
+    w = reserve_correction_property(world, seed_data)
+    w['plan'] = reserve_correction_plan(world, w)
+    report = create(world, '/api/weg-settlements', {'property_id': w['property'],
+        'accounting_scope_id': w['scope'], 'economic_plan_id': w['plan'],
+        'period_start': '2025-01-01', 'period_end': '2025-12-31'})
+    w['run'] = report['id']
+    return w
+
+
+@when('Anna pays 4200 euros Hausgeld and 3600 euros reserve and Bernd pays 5200 euros Hausgeld')
+def split_reserve_receipts(world, split_reserve):
+    from tests.test_reserve_ledger import payment, paid
+    w = split_reserve
+    world.run(payment(world.actor, w, '4200.00', kind='HAUSGELD_VORSCHUSS'))
+    world.run(payment(world.actor, w, '3600.00'))
+    world.run(payment(world.actor, {**w, 'owner_a': w['owner_b']}, '5200.00', kind='HAUSGELD_VORSCHUSS'))
+    values = paid(w)
+    world.run(attest_fixture(world.actor, 'settlement', w['run'], values))
+    response = world.act('POST', f"/api/weg-settlements/{w['run']}/compute", json=values)
+    assert response.status_code == 200, response.text
+    w['result'] = response.json()
+
+
+@then('Anna has 3600 euros reserve and Bernd has 2400 euros reserve with nothing payable')
+def split_reserve_owner_amounts(split_reserve):
+    w = split_reserve
+    for key, amount in [('owner_a', '3600.00'), ('owner_b', '2400.00')]:
+        line = next(row for row in w['result']['lines'] if row['line_type'] == 'RESERVE_CONTRIBUTION'
+                    and row['addressee_owner_profile_id'] == w[key])
+        assert line['amount'] == amount
+        owner = next(row for row in w['result']['owner_results'] if row['owner_profile_id'] == w[key])
+        assert owner['payment_amount'] == '0.00'
+
+
+@then('the total reserve contribution and closing balance are both 6000 euros')
+def split_reserve_total(world, split_reserve):
+    ledger = world.act('GET', f"/api/weg-settlements/{split_reserve['run']}/reserve-ledger").json()
+    assert ledger['contributions_total'] == ledger['closing_balance'] == '6000.00'
+
+
 def privacy_export(world):
     import asyncio
     import json

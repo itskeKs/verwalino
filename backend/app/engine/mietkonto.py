@@ -710,7 +710,8 @@ class AdvanceFilter:
     the BK advance). WEG derives HAUSGELD_VORSCHUSS and RUECKLAGENANTEIL
     separately with identical period and Storno rules. WEG paid is
     H + min(max(R, 0), max(Soll - H, 0)); absent plan Soll credits no reserve
-    (#401). The reserve ledger remains uncapped; rental/BK selection is unchanged.
+    (#401). The draft reserve ledger counts the same covered reserve once and
+    keeps any excess in full (#447); rental/BK selection is unchanged.
     """
 
     types: frozenset[str]
