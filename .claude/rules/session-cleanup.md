@@ -13,6 +13,8 @@ Remove only your own worktrees and local branches once their PR is merged or clo
 Check the PR state, that a merge landed on `main` when applicable, that the tree is clean
 and that no process or other live user uses it before removal; never discard uncommitted work.
 For ordinary worktrees use `git worktree remove <dir> && git branch -D <branch>`.
+The session that merges removes the issue worktree of the merged PR, after the same checks
+(a maintainer session also its review worktree).
 Use supported archival for app-managed worktrees; never bypass its primary, pinned or
 shared-worktree protections. For an abandoned task without a PR, first preserve work that must
 be kept.

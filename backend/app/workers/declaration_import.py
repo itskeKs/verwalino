@@ -16,7 +16,8 @@ from app.core.request_id import correlation_context
 from collections.abc import Awaitable, Callable
 from contextlib import AbstractAsyncContextManager, suppress
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
+from decimal import Decimal
 from pathlib import Path
 from typing import Any
 
@@ -25,6 +26,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import Settings, settings
 from app.core.db import get_worker_tenant_session, get_worker_unscoped_session
+from app.models.declaration_import import DeclarationExtractionRun
 from app.models.organization import Organization
 from app.repositories.declaration_import_repo import (
     DeclarationImportRepository,
@@ -38,6 +40,21 @@ _PIPELINE_ENTRY_STATUSES = {"QUEUED", "RETRY_WAIT"}
 _REQUIRED_IMPORT_COLUMNS = {"lease_token", "lease_generation", "lease_expires_at", "queue_request_id",
                             "approval_request_digest", "publication_domain_id", "publication_grant_id"}
 _HEALTHCHECK_TESSERACT_TIMEOUT_SECONDS = 5
+# Run rows name the provider class `create_extraction_provider` would build, the
+# vocabulary the run history prices by; the class itself may be unimportable here.
+_PROVIDER_CLASS_NAMES = {"openai": "OpenAiDeclarationProvider", "anthropic": "AnthropicDeclarationProvider"}
+
+
+def _safe_error_details(error: Exception) -> tuple[str, str]:
+    """Identify the raising code without exposing exception or document text."""
+    traceback = error.__traceback__
+    while traceback is not None and traceback.tb_next is not None:
+        traceback = traceback.tb_next
+    location = "unknown:unknown"
+    if traceback is not None:
+        frame = traceback.tb_frame
+        location = f"{frame.f_globals.get('__name__', 'unknown')}:{frame.f_code.co_name}"
+    return type(error).__name__, location
 
 
 @dataclass(frozen=True, slots=True)
@@ -199,6 +216,63 @@ class DeclarationImportWorker:
                 },
             )
 
+    async def _record_unexpected_failure(self, lease: WorkerLease) -> None:
+        async with self._tenant_session_factory(lease.organization_id) as session:
+            repo = DeclarationImportRepository(session, lease.organization_id)
+            item = await repo.lock_current_lease(lease, _PIPELINE_ENTRY_STATUSES | {"PREFLIGHT"})
+            if item is None:
+                return
+            if item.status == "PREFLIGHT":
+                # A run the pipeline already started counts this attempt.
+                if await session.scalar(
+                    select(DeclarationExtractionRun.id)
+                    .where(DeclarationExtractionRun.organization_id == lease.organization_id)
+                    .where(DeclarationExtractionRun.import_id == lease.import_id)
+                    .where(DeclarationExtractionRun.status == "RUNNING")
+                    .limit(1)
+                ) is not None:
+                    return
+            elif not await repo.transition_with_lease(
+                lease, _PIPELINE_ENTRY_STATUSES, "PREFLIGHT", {"current_stage": "preflight"}
+            ):
+                return
+            now = self._clock()
+            effective = getattr(self, "_active_ai", None)
+            session.add(DeclarationExtractionRun(
+                organization_id=lease.organization_id,
+                import_id=lease.import_id,
+                status="FAILED",
+                provider=_PROVIDER_CLASS_NAMES.get(
+                    getattr(effective, "provider", None), "CompatibleDeclarationProvider"
+                ),
+                model_name=getattr(effective, "model", None) or "unknown",
+                prompt_version=self._settings.declaration_prompt_version,
+                schema_version=self._settings.declaration_schema_version,
+                harness_version=self._settings.declaration_harness_version,
+                input_tokens=0,
+                output_tokens=0,
+                estimated_cost_usd=Decimal("0"),
+                error_code="WORKER_UNEXPECTED_ERROR",
+                completed_at=now,
+            ))
+            # The effect guard requires the live lease and PREFLIGHT stage at INSERT.
+            await session.flush()
+            if not await repo.transition_with_lease(
+                lease,
+                {"PREFLIGHT"},
+                "RETRY_WAIT",
+                {
+                    "current_stage": "retry_wait",
+                    "error_code": "WORKER_UNEXPECTED_ERROR",
+                    "error_message": "WORKER_UNEXPECTED_ERROR",
+                    "next_attempt_at": now + timedelta(minutes=5),
+                    "lease_owner": None,
+                    "lease_token": None,
+                    "lease_expires_at": None,
+                },
+            ):
+                raise RuntimeError("Lease lost while recording worker failure")
+
     async def _heartbeat(self, initial_lease: WorkerLease) -> bool | str:
         """Distinguish committed permission cancellation from ordinary lease loss."""
         lease = initial_lease
@@ -250,12 +324,13 @@ class DeclarationImportWorker:
                     raise
                 except DeclarationPrincipalDenied:
                     return WorkerResult("JOB_PERMISSION_CHANGED", lease.import_id)
-                except Exception:
+                except Exception as error:
                     # Do not log arbitrary exception text: providers and parsers
                     # may attach untrusted document fragments to it.
+                    error_type, location = _safe_error_details(error)
                     logger.warning(
-                        "declaration worker result=PIPELINE_ERROR import_id=%s",
-                        lease.import_id,
+                        "declaration worker result=PIPELINE_ERROR import_id=%s error_type=%s location=%s",
+                        lease.import_id, error_type, location,
                     )
                     return WorkerResult("PIPELINE_ERROR", lease.import_id)
                 return WorkerResult("PROCESSED", lease.import_id)
@@ -263,8 +338,8 @@ class DeclarationImportWorker:
                 lease_lost = await heartbeat_task
                 if lease_lost:
                     pipeline_task.cancel()
-                    with suppress(asyncio.CancelledError, Exception):
-                        await pipeline_task
+                    # Drain the cancelled pipeline while preserving worker shutdown.
+                    await asyncio.gather(pipeline_task, return_exceptions=True)
                     return WorkerResult(lease_lost if isinstance(lease_lost, str) else "LEASE_LOST", lease.import_id)
             raise RuntimeError("worker wait completed without a task result")
         finally:
@@ -295,11 +370,24 @@ class DeclarationImportWorker:
                     if await self._fail_attempt_limit(lease):
                         return WorkerResult("WORKER_ATTEMPT_LIMIT_REACHED", lease.import_id)
                     return WorkerResult("LEASE_LOST", lease.import_id)
-                return await self._run_claimed(lease)
+                result = await self._run_claimed(lease)
+                if result.code == "PIPELINE_ERROR":
+                    await self._record_unexpected_failure(lease)
+                return result
+            except asyncio.CancelledError:
+                raise
             except DeclarationPrincipalDenied:
                 async with self._tenant_session_factory(lease.organization_id) as session:
                     await DeclarationImportRepository(session, lease.organization_id).cancel_unauthorized(lease)
                 return WorkerResult("JOB_PERMISSION_CHANGED", lease.import_id)
+            except Exception as error:
+                error_type, location = _safe_error_details(error)
+                logger.warning(
+                    "declaration worker result=WORKER_UNEXPECTED_ERROR import_id=%s error_type=%s location=%s",
+                    lease.import_id, error_type, location,
+                )
+                await self._record_unexpected_failure(lease)
+                return WorkerResult("WORKER_UNEXPECTED_ERROR", lease.import_id)
 
     async def run_forever(self) -> None:
         delay = float(self._settings.declaration_worker_poll_seconds)
@@ -308,8 +396,12 @@ class DeclarationImportWorker:
                 result = await self.run_once()
             except asyncio.CancelledError:
                 raise
-            except Exception:
-                logger.warning("declaration worker result=UNEXPECTED")
+            except Exception as error:
+                error_type, location = _safe_error_details(error)
+                logger.warning(
+                    "declaration worker result=UNEXPECTED error_type=%s location=%s",
+                    error_type, location,
+                )
                 await self._sleep(min(max(delay, 0.01), 30.0))
                 continue
             with correlation_context(result.import_id or "-"):

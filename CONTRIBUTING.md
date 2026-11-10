@@ -181,7 +181,9 @@ If `frontend/node_modules` is missing, eslint is skipped with a message.
    [DESIGN.md](DESIGN.md) is the frontend design contract: new screens follow it, and changes to the
    look or copy update it in the same PR.
 6. `make lint` green before every push; `make test` (the whole suite) before the merge — CI runs it on
-   every PR.
+   every PR. A change is merged by the session that made it, or by a maintainer session for a PR
+   no session works on any more, after a fresh review and on green CI; the implementers a session
+   delegates to never push or merge.
 
 ## Pull requests
 
@@ -196,7 +198,7 @@ changed. CI (`.github/workflows/tests-on-pr.yaml`) must be green:
 | Job | What it proves |
 |---|---|
 | `backend-shards` | four disjoint pytest selections, plus hosted BDD selections, each against its own Postgres 16 and Mailpit |
-| `backend-checks` | ruff, installer/Caddy checks and the collection contract, alongside the shards without a database |
+| `backend-checks` | ruff, every `app` module importing from the runtime install (no dev extra, as in the image), installer/Caddy checks and the collection contract, alongside the shards without a database |
 | `backend` (`Backend (ruff, pytest)`) | required summary: fails unless every shard and `backend-checks` succeeded, including cancellation or skipped jobs |
 | `frontend` | eslint, TypeScript, vitest |
 | `browser` | locked Chromium, real UI journeys (`make test-browser`) |

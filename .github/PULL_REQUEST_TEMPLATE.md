@@ -38,4 +38,4 @@ and 360 px wide, taken from a local instance with seed data — never from a pro
 
 ## Notes for the reviewer
 
-<!-- Risks, follow-ups, what to look at first. Delete if empty. -->
+<!-- Only facts the diff does not show: stack and merge order, migration number, where the evidence is. No risks, no rationale, no "look here first": the reviewer reads the diff without them. Delete if empty. -->

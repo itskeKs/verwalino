@@ -679,11 +679,11 @@ class PaymentService:
         advance_lines = [
             OwnerAdvanceChargeInput(
                 owner_profile_id=ln.owner_profile_id, unit_id=ln.unit_id,
-                monthly_amount=ln.monthly_amount,
+                annual_amount=ln.planned_amount,
             )
             for ln in lines
             if ln.line_type == "OWNER_ADVANCE"
-            and ln.owner_profile_id is not None and ln.monthly_amount is not None
+            and ln.owner_profile_id is not None
         ]
         history = [OwnerPeriodInput(o.unit_id, o.owner_profile_id, o.valid_from,
             db_exclusive_to_engine_inclusive(o.valid_to), o.mea_share)

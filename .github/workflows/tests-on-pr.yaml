@@ -139,6 +139,17 @@ jobs:
       - name: Lint (ruff)
         run: make lint-backend
 
+      # The image installs without the dev extra; every app module, including
+      # the ones the workers import lazily, must import from that install.
+      # Walk files, not pkgutil: app/schemas has no __init__.py.
+      - name: Import every app module from the runtime install
+        working-directory: backend
+        env:
+          UV_PROJECT_ENVIRONMENT: ${{ runner.temp }}/runtime-venv
+        run: |
+          uv sync --locked --no-dev --extra ops --extra ocr
+          uv run --locked --no-dev --extra ops --extra ocr python -c 'import importlib, pathlib; ps = [p.with_suffix("").parts for p in sorted(pathlib.Path("app").rglob("*.py"))]; [importlib.import_module(".".join(q[:-1] if q[-1] == "__init__" else q)) for q in ps]'
+
       - name: Verify every backend test belongs to exactly one shard
         run: |
           python3 -B scripts/test-backend-shards.py
