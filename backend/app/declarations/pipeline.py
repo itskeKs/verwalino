@@ -47,7 +47,7 @@ from app.declarations.provider import (
     ProviderReservationEstimate,
     ProviderUsage,
 )
-from app.declarations.observability import PassLedgerEntry, ProviderPassMetadata
+from app.declarations.observability import PassLedgerEntry, ProviderPassMetadata, log_pipeline_value_error
 from app.declarations.schemas import (
     AdditionalFactPayload,
     CoreExtractionOutput,
@@ -268,6 +268,7 @@ class DeclarationPipeline:
         self._active_lease = lease
         self._active_run_id: uuid.UUID | None = None
         ledger: _Ledger | None = None
+        stage = "load"
         try:
             imported, documents = await self._load(lease)
             ledger = _Ledger(
@@ -286,6 +287,7 @@ class DeclarationPipeline:
             ledger.initial_output_tokens = ledger.output_tokens
             ledger.initial_cost_usd = ledger.cost_usd
             ledger.initial_attempts = ledger.attempts
+            stage = "preflight"
             await self._transition(
                 lease,
                 {"QUEUED", "PREFLIGHT", "RETRY_WAIT"},
@@ -310,6 +312,7 @@ class DeclarationPipeline:
                 preflight_budget,
             ) = await self._preflight_documents(lease, documents)
             evidence_index = EvidenceTextIndex.from_pages(page_inputs)
+            stage = "extract"
             await self._transition(lease, {"PREFLIGHT"}, "EXTRACTING", {"current_stage": "extracting"})
             batches = self._page_batches(page_inputs)
             if not batches:
@@ -330,9 +333,11 @@ class DeclarationPipeline:
             _validate_inventory_documents(inventory, document_ids)
             core = _merge_core(cores)
             rules = _merge_rules(rulesets)
+            stage = "reconcile"
             await self._transition(lease, {"EXTRACTING"}, "RECONCILING", {"current_stage": "reconciling"})
             reconciliation = await self._reconcile_bounded(inventory, core, rules, ledger)
 
+            stage = "validate"
             declared_denominator = _declared_denominator(reconciliation)
             issues = [
                 *preflight_issues,
@@ -348,6 +353,7 @@ class DeclarationPipeline:
             ]
             if any(issue.code == "UNKNOWN_EVIDENCE_DOCUMENT" for issue in issues):
                 raise PipelineFailure("UNKNOWN_EVIDENCE_DOCUMENT")
+            stage = "recheck"
             recheck, recheck_route_reasons = self._selected_recheck(
                 reconciliation, inventory, issues, page_inputs
             )
@@ -403,11 +409,13 @@ class DeclarationPipeline:
                                 )
                             )
 
+            stage = "convert"
             drafts, draft_issues = await self._convert(
                 imported, inventory, reconciliation, issues, document_ids, lease
             )
             if len(drafts) > self._settings.declaration_max_candidates:
                 raise PipelineFailure("CANDIDATE_LIMIT_EXCEEDED")
+            stage = "publish"
             await self._publish(lease, page_counts, drafts, draft_issues, ledger)
         except DeclarationPrincipalDenied:
             raise
@@ -420,7 +428,8 @@ class DeclarationPipeline:
             await self._fail(lease, exc.code, retryable=exc.retryable, ledger=ledger)
         except PipelineFailure as exc:
             await self._fail(lease, exc.code, retryable=exc.retryable, ledger=ledger)
-        except ValueError:
+        except ValueError as exc:
+            log_pipeline_value_error(stage=stage, traceback=exc.__traceback__)
             await self._fail(lease, "DRAFT_PUBLICATION_FAILED", retryable=False, ledger=ledger)
         except Exception as exc:
             # Database contention interrupts this worker just like a lost process;

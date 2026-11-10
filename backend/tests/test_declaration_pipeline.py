@@ -3,8 +3,10 @@ import base64
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 import io
+import json
 from pathlib import Path
 from types import SimpleNamespace
+from unittest.mock import AsyncMock
 import uuid
 
 import pytest
@@ -57,6 +59,7 @@ from app.models.declaration_import import (
     DeclarationExtractionRun,
     DeclarationImport,
     DeclarationImportDocument,
+    DeclarationImportPass,
 )
 from app.models.property import Property
 from app.models.property_document import PropertyDocument
@@ -1709,6 +1712,97 @@ async def test_pipeline_publishes_real_tenant_graph_without_canonical_writes(see
     assert hidden is None
     assert hidden_document is None
     assert (hidden_documents, hidden_runs, hidden_candidates, hidden_evidence, hidden_issues) == (0, 0, 0, 0, 0)
+
+
+async def test_value_error_diagnostic_ignores_foreign_code_and_exception_contents(caplog) -> None:
+    private_text = "synthetic private document text"
+    private_path = "synthetic/private/input.pdf"
+    foreign_code = compile("raise ValueError(private_text)", private_path, "exec")
+
+    async def reject_load(lease):
+        exec(
+            foreign_code,
+            {"__name__": pipeline_module.__name__, "__file__": private_path, "private_text": private_text},
+        )
+
+    pipeline = SimpleNamespace(_load=reject_load, _fail=AsyncMock())
+    lease = object()
+    await DeclarationPipeline._run_unlocked(pipeline, lease)
+
+    pipeline._fail.assert_awaited_once_with(lease, "DRAFT_PUBLICATION_FAILED", retryable=False, ledger=None)
+    prefix = "event=DECLARATION_PIPELINE_VALUE_ERROR data="
+    records = [record for record in caplog.records if record.getMessage().startswith(prefix)]
+    assert len(records) == 1
+    assert records[0].exc_info is records[0].stack_info is None
+    diagnostic = json.loads(records[0].getMessage().removeprefix(prefix))
+    assert diagnostic["stage"] == "load"
+    assert diagnostic["location"]["module"] == pipeline_module.__name__
+    assert private_text not in caplog.text and private_path not in caplog.text
+
+
+@pytest.mark.parametrize("stage", ["convert", "publish"])
+async def test_value_error_reports_safe_code_location_and_preserves_failure_accounting(
+    seed_data, monkeypatch, caplog, stage
+) -> None:
+    pdf = make_text_pdf("Teilungserklärung\nHauptstraße 1\nEinheit 1", "Fortsetzung")
+    lease, document_key, store = await _seed_pipeline_import(seed_data, pdf)
+    provider = _RecordingProvider(document_key)
+    private_text = "synthetic private document text"
+    if stage == "convert":
+        # A frame from outside the allowlist must not contribute its filename,
+        # source text, exception message, or locals to the log.
+        def reject_conversion(*args):
+            raise ValueError(private_text)
+
+        monkeypatch.setattr(pipeline_module, "_candidate_drafts", reject_conversion)
+        expected_module = "app.declarations.pipeline"
+    else:
+        convert = DeclarationPipeline._convert
+
+        async def duplicate_candidate(self, *args):
+            drafts, issues = await convert(self, *args)
+            return (*drafts, drafts[0]), issues
+
+        monkeypatch.setattr(DeclarationPipeline, "_convert", duplicate_candidate)
+        expected_module = "app.repositories.declaration_candidate_repo"
+
+    await DeclarationPipeline(provider, store=store).run(lease)
+
+    async with get_tenant_session(lease.organization_id) as session:
+        item = await session.get(DeclarationImport, lease.import_id)
+        run = await session.scalar(
+            select(DeclarationExtractionRun).where(DeclarationExtractionRun.import_id == lease.import_id)
+        )
+        document = await session.get(PropertyDocument, uuid.UUID(document_key))
+        candidates = await DeclarationCandidateRepository(session, lease.organization_id).list_by_import(lease.import_id)
+        issues = await session.scalar(
+            select(func.count())
+            .select_from(DeclarationCandidateIssue)
+            .where(DeclarationCandidateIssue.import_id == lease.import_id)
+        )
+        pass_count = await session.scalar(
+            select(func.count())
+            .select_from(DeclarationImportPass)
+            .where(DeclarationImportPass.declaration_extraction_run_id == run.id)
+        )
+    assert item.status == run.status == "FAILED"
+    assert item.error_code == run.error_code == "DRAFT_PUBLICATION_FAILED"
+    assert item.input_tokens == run.input_tokens == 52
+    assert item.output_tokens == run.output_tokens == 28
+    assert item.estimated_cost_usd == run.estimated_cost_usd == Decimal("0.000004")
+    assert item.attempt_count == pass_count == 4
+    assert document.page_count == 1
+    assert not candidates and issues == 0
+
+    prefix = "event=DECLARATION_PIPELINE_VALUE_ERROR data="
+    records = [record for record in caplog.records if record.getMessage().startswith(prefix)]
+    assert len(records) == 1
+    assert records[0].exc_info is records[0].stack_info is None
+    diagnostic = json.loads(records[0].getMessage().removeprefix(prefix))
+    location = diagnostic["location"]
+    assert diagnostic == {"stage": stage, "location": {"module": expected_module, "line": location["line"]}}
+    assert type(location["line"]) is int and location["line"] > 0
+    assert private_text not in caplog.text
 
 
 @pytest.mark.asyncio

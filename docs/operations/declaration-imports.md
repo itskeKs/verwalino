@@ -562,6 +562,12 @@ Unknown path suffixes and codes are discarded or replaced by fixed fallbacks.
 Messages, inputs, contexts, bodies, source text and credentials are excluded.
 Durable pass metadata, validation decisions and usage/retry limits are unchanged.
 
+An unhandled pipeline `ValueError` records `DRAFT_PUBLICATION_FAILED`. In the
+declaration worker logs, find `event=DECLARATION_PIPELINE_VALUE_ERROR` for the
+stage and the innermost trusted application module and line. Use the deployed
+revision to look up the line. The event contains only those fields and uses
+`null` when no trusted code location is available.
+
 For Luna Q&A, explicit cache mode is sent without breakpoints, disabling implicit cache writes and their surcharge. No cache parameter is added for unverified models.
 
 ## Recorded product-import regression checks

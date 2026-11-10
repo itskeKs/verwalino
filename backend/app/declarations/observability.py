@@ -1,4 +1,4 @@
-"""Strict, content-free metadata for declaration provider pass observability."""
+"""Strict, content-free declaration diagnostics and provider pass metadata."""
 
 from __future__ import annotations
 
@@ -8,6 +8,8 @@ from hashlib import sha256
 import json
 import logging
 import re
+import sys
+from types import TracebackType
 from typing import Any, ClassVar, Mapping
 
 
@@ -59,6 +61,49 @@ _SCHEMA_ERROR_CODES = frozenset({
     'fact_core_field_unsupported', 'fact_mea_type', 'fact_denominator_type', 'fact_area_type',
 })
 _SCHEMA_DIAGNOSTIC_PREFIX = 'event=DECLARATION_SCHEMA_VALIDATION data='
+
+_PIPELINE_DIAGNOSTIC_STAGES = frozenset(
+    {"load", "preflight", "extract", "reconcile", "validate", "recheck", "convert", "publish"}
+)
+_PIPELINE_DIAGNOSTIC_MODULES = frozenset(
+    {
+        "app.declarations.evidence",
+        "app.declarations.observability",
+        "app.declarations.pipeline",
+        "app.declarations.preflight",
+        "app.declarations.routing",
+        "app.declarations.schemas",
+        "app.declarations.validation",
+        "app.repositories.declaration_candidate_repo",
+        "app.repositories.declaration_import_repo",
+    }
+)
+
+
+def log_pipeline_value_error(*, stage: str, traceback: TracebackType | None) -> None:
+    """Report the innermost trusted call site without formatting the traceback."""
+    location = None
+    while traceback is not None:
+        frame = traceback.tb_frame
+        namespace = frame.f_globals
+        name = namespace.get("__name__")
+        if name in _PIPELINE_DIAGNOSTIC_MODULES:
+            module = sys.modules.get(name)
+            if (
+                module is not None
+                and namespace is vars(module)
+                and frame.f_code.co_filename == namespace.get("__file__")
+            ):
+                location = {"module": name, "line": traceback.tb_lineno}
+        traceback = traceback.tb_next
+    payload = {
+        "stage": stage if stage in _PIPELINE_DIAGNOSTIC_STAGES else "unknown",
+        "location": location,
+    }
+    logging.getLogger(__name__).warning(
+        "event=DECLARATION_PIPELINE_VALUE_ERROR data=%s",
+        json.dumps(payload, separators=(",", ":")),
+    )
 
 
 def _schema_options(node, root, depth=0):
