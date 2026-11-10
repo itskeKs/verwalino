@@ -1,10 +1,11 @@
+import { formatDateTime } from "../../lib/format";
 import { useEffect, useRef, useState } from 'react';
 import { ApiError } from '../../api/client';
 import { allocationCorrectionsApi, visualAllocationApi, type VisualCorrectionCommand, type CorrectionCommand, type CorrectionPreview, type CorrectionResult } from '../../api/allocationAdoptions';
 import { AllocationCorrectionPreview } from './AllocationCorrectionPreview';
 import { CorrectionFollowups } from './CorrectionFollowups';
 import { exactCents } from '../../api/allocationProposals';
-import { formatEuro } from '../../lib/utils';
+import { centsFromDecimal, formatMoney } from '../../lib/format';
 
 type FinancialCorrection = CorrectionCommand | VisualCorrectionCommand;
 
@@ -32,13 +33,13 @@ export function Confirmation({ preview, reviewId, disabled, submit, replacement 
         <h4>Bankumsätze übernehmen</h4>
         <p>Wählen Sie für jede bereits zugeordnete Position den passenden neuen Teil. Der Bankumsatz bleibt mit der bisherigen Position verknüpft.</p>
         {covered.map(cost => <label key={cost.id} className="block">
-          Nachfolger für Teil {cost.position} ({formatEuro(cost.amount)} zugeordnet)
+          Nachfolger für Teil {cost.position} ({formatMoney(centsFromDecimal(cost.amount))} zugeordnet)
           <select className="block w-full min-w-0 rounded-md border border-input bg-background px-3 py-2"
             value={successors[cost.id] ?? ''} onChange={event => setSuccessors(previous => ({ ...previous, [cost.id]: event.target.value }))}>
             <option value="">Neuen Teil wählen</option>
             {proposed.map(line => <option key={line.id} value={line.id}
               disabled={(exactCents(line.amount) ?? 0n) < (exactCents(cost.amount) ?? 0n)}>
-              Teil {line.position} · {formatEuro(line.amount)}
+              Teil {line.position} · {formatMoney(centsFromDecimal(line.amount))}
             </option>)}
           </select>
         </label>)}
@@ -87,7 +88,7 @@ export function AllocationCorrectionPanel({ allocationId, reviewId, parentBusy, 
   }
   return <div className="min-w-0 space-y-4">
     {!parentBusy && receipt && <section className="space-y-3" aria-label="Bestätigte Korrektur">
-      <h3>Aufteilung korrigiert</h3><p>{new Date(receipt.receipt.confirmed_at).toLocaleString('de-DE')} · {receipt.allocation.cost_count} neue Teilkosten</p>
+      <h3>Aufteilung korrigiert</h3><p>{formatDateTime(receipt.receipt.confirmed_at)} · {receipt.allocation.cost_count} neue Teilkosten</p>
       <p className="break-words">{receipt.receipt.reason}</p>
       <a className="block underline" href={`/belege/${receipt.allocation.source_document_id}`}>Freigegebene Belegversion der Korrektur öffnen</a>
       {receipt.receipt.impacts.length ? <p>Prüfen Sie den aktuellen Bearbeitungsstand der betroffenen Finanzvorgänge.</p> : <p>Für diese Korrektur wurden keine betroffenen Finanzvorgänge festgestellt.</p>}

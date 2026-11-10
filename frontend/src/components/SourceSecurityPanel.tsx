@@ -1,3 +1,4 @@
+import { formatDateTime } from "../lib/format";
 import { useEffect, useRef, useState } from "react";
 import { api, ApiError } from "../api/client";
 
@@ -96,7 +97,7 @@ function SourceSecurityControl({ decision }: { decision: ActivationDecision | nu
       ? "Ich bestätige die Pause der Aktionen bei weiterhin eingeschränkten Leserechten."
       : "Ich bestätige die Umstellung anhand des ausgewählten Prüfstands und die dauerhafte Durchsetzung der geprüften Zugriffsregeln."}</span></label>
     <button className="btn" type="button" disabled={busy || loading || !allowed || !ack || !reason.trim()} onClick={() => void submit()}>{action}</button>
-    {receipt && <p role="status">Entscheidung gespeichert: {names[receipt.target_mode]} · {new Date(receipt.changed_at).toLocaleString("de-DE")} · {receipt.reason}. Der aktuelle Modus wird gesondert angezeigt.</p>}
+    {receipt && <p role="status">Entscheidung gespeichert: {names[receipt.target_mode]} · {formatDateTime(receipt.changed_at)} · {receipt.reason}. Der aktuelle Modus wird gesondert angezeigt.</p>}
     {error && <p role="alert" className="error-text">{error}</p>}
   </section>;
 }

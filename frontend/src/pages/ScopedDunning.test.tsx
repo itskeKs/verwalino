@@ -94,7 +94,7 @@ it("hides the loaded snapshot after a denied issue and presents the scoped cance
   await screen.findByRole("button", { name: "Entwurf verwerfen" });
   fireEvent.click(screen.getByRole("button", { name: /ausgeben/i }));
   await screen.findByRole("alert");
-  expect(screen.queryByText("7100.00 EUR")).toBeNull();
+  expect(screen.queryByText("7.100,00 €")).toBeNull();
   expect(screen.queryByRole("button", { name: "Entwurf verwerfen" })).toBeNull();
 });
 

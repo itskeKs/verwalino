@@ -33,6 +33,7 @@ import type {
 } from "../api/types";
 import type { PaymentListQuery } from "../api/endpoints";
 import { ApiError } from "../api/client";
+import { centsFromDecimal, formatDate, formatMoney } from "../lib/format";
 import { ReserveEvidenceFields } from "../components/ReserveEvidenceFields";
 import { SepaExport } from "../components/SepaExport";
 
@@ -98,18 +99,6 @@ function makeEmptyForm(): PaymentCreate {
     period_month: null,
     note: null,
   };
-}
-
-// API amounts are decimal strings; never round list aggregates through Number.
-function amountCents(value: string): bigint {
-  const [whole, fraction = ""] = value.split(".");
-  return BigInt(`${whole}${fraction.padEnd(2, "0")}`);
-}
-
-function formatCents(value: bigint): string {
-  const absolute = value < 0n ? -value : value;
-  const whole = (absolute / 100n).toString().replace(/\B(?=(\d{3})+(?!\d))/g, ".");
-  return `${value < 0n ? "-" : ""}${whole},${(absolute % 100n).toString().padStart(2, "0")} EUR`;
 }
 
 export function PaymentsPage() {
@@ -375,7 +364,7 @@ export function PaymentsPage() {
       {downloadError && <p role="alert" className="error-text">{downloadError} Bitte CSV herunterladen erneut versuchen.</p>}
       {error && <p role="alert" className="error-text">{error} <button type="button" onClick={reload}>Liste erneut laden</button></p>}
       {currentDataset && <div>
-        <p>Listensaldo: <output aria-label="Listensaldo">{formatCents(payments.reduce((total, payment) => total + (payment.direction === "OUT" ? -amountCents(payment.amount) : amountCents(payment.amount)), 0n))}</output></p>
+        <p>Listensaldo: <output aria-label="Listensaldo">{formatMoney(payments.reduce((total, payment) => total + (payment.direction === "OUT" ? -centsFromDecimal(payment.amount) : centsFromDecimal(payment.amount)), 0n))}</output></p>
         <p>Eingänge minus Ausgänge aller angezeigten Zeilen, einschließlich Entwürfen, verworfenen Zahlungen und Stornos je Filter. Kein tatsächlicher Kontostand.</p>
       </div>}
 
@@ -447,7 +436,7 @@ export function PaymentsPage() {
                 type="text"
                 required
                 inputMode="decimal"
-                placeholder="0.00"
+                placeholder="700,00"
                 value={form.amount}
                 onChange={(e) =>
                   setForm({ ...form, amount: e.target.value })
@@ -546,8 +535,8 @@ export function PaymentsPage() {
                       : "";
                     return (
                       <option key={l.id} value={l.id}>
-                        {tenantName} ab {l.valid_from}
-                        {l.valid_to ? ` bis ${l.valid_to}` : " (laufend)"}
+                        {tenantName} ab {formatDate(l.valid_from)}
+                        {l.valid_to ? ` bis ${formatDate(l.valid_to)}` : " (laufend)"}
                       </option>
                     );
                   })}
@@ -650,7 +639,7 @@ export function PaymentsPage() {
                       textDecoration: p.reversed_by_id ? "line-through" : undefined,
                     }}
                   >
-                    <td>{p.value_date}</td>
+                    <td>{formatDate(p.value_date)}</td>
                     <td>
                       {PAYMENT_TYPE_LABELS[p.payment_type] ?? p.payment_type}
                       {p.reverses_id && (
@@ -680,7 +669,7 @@ export function PaymentsPage() {
                         fontWeight: 600,
                       }}
                     >
-                      {p.amount} EUR
+                      {formatMoney(centsFromDecimal(p.amount))}
                     </td>
                     <td>
                       {p.period_year

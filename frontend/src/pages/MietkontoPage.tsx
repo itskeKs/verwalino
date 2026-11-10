@@ -7,7 +7,7 @@
 
 import { useEffect, useState, useCallback } from "react";
 import { Link } from "react-router-dom";
-import { formatEuro } from "../lib/utils";
+import { centsFromDecimal, formatDate, formatMoney } from "../lib/format";
 import {
   listLeases,
   listTenantProfiles,
@@ -125,7 +125,7 @@ export function MietkontoPage() {
     const unitLabel = unit ? `${unit.number}` : "";
     const prop = unit ? properties.find((p) => p.id === unit.property_id) : null;
     const propName = prop ? `${prop.name} / ` : "";
-    return `${propName}${unitLabel} - ${name} (ab ${lease.valid_from}${lease.valid_to ? ` bis ${lease.valid_to}` : ""})`;
+    return `${propName}${unitLabel} - ${name} (ab ${formatDate(lease.valid_from)}${lease.valid_to ? ` bis ${formatDate(lease.valid_to)}` : ""})`;
   }
 
   function getOwnerLabel(op: OwnerProfile): string {
@@ -317,13 +317,13 @@ export function MietkontoPage() {
               <tr>
                 <td>Soll gesamt</td>
                 <td style={{ fontFamily: "var(--mono)" }}>
-                  {result.soll_total} EUR
+                  {formatMoney(centsFromDecimal(result.soll_total))}
                 </td>
               </tr>
               <tr>
                 <td>Ist gesamt</td>
                 <td style={{ fontFamily: "var(--mono)" }}>
-                  {result.ist_total} EUR
+                  {formatMoney(centsFromDecimal(result.ist_total))}
                 </td>
               </tr>
               <tr>
@@ -338,7 +338,7 @@ export function MietkontoPage() {
                     color: parseFloat(result.balance) > 0 ? undefined : balanceColor(result.balance),
                   }}
                 >
-                  {result.balance} EUR
+                  {formatMoney(centsFromDecimal(result.balance))}
                   {parseFloat(result.balance) < 0 && " (Guthaben)"}
                 </td>
               </tr>
@@ -347,14 +347,14 @@ export function MietkontoPage() {
                   <td>davon fällig</td>
                   <td className={parseFloat(result.due_balance) > 0 ? "text-destructive" : parseFloat(result.due_balance) < 0 ? "text-emerald-700" : undefined}
                     style={{ fontFamily: "var(--mono)" }}>
-                    {result.due_balance} EUR
+                    {formatMoney(centsFromDecimal(result.due_balance))}
                     {parseFloat(result.due_balance) > 0 && " (Rückstand)"}
                     {parseFloat(result.due_balance) < 0 && " (Guthaben)"}
                   </td>
                 </tr>
                 <tr>
                   <td>noch nicht fällig</td>
-                  <td style={{ fontFamily: "var(--mono)" }}>{result.not_yet_due_balance} EUR</td>
+                  <td style={{ fontFamily: "var(--mono)" }}>{formatMoney(centsFromDecimal(result.not_yet_due_balance))}</td>
                 </tr>
               </>}
             </tbody>
@@ -387,7 +387,7 @@ export function MietkontoPage() {
                           {Number(item.open_amount) === 0 ? "ausgeglichen" : item.is_due ? "fällig" : "noch nicht fällig"}
                         </span>}
                         {"due_date" in item && item.due_date && <span className="block text-xs text-muted-foreground">
-                          Fällig am {item.due_date.split("-").reverse().join(".")}
+                          Fällig am {formatDate(item.due_date)}
                         </span>}
                       </td>
                       <td>
@@ -396,10 +396,10 @@ export function MietkontoPage() {
                           : PAYMENT_TYPE_LABELS[item.payment_type] ?? item.payment_type}
                       </td>
                       <td style={{ textAlign: "right", fontFamily: "var(--mono)" }}>
-                        {item.soll} EUR
+                        {formatMoney(centsFromDecimal(item.soll))}
                       </td>
                       <td style={{ textAlign: "right", fontFamily: "var(--mono)" }}>
-                        {item.ist} EUR
+                        {formatMoney(centsFromDecimal(item.ist))}
                       </td>
                       <td
                         style={{
@@ -409,7 +409,7 @@ export function MietkontoPage() {
                           color: parseFloat(item.open_amount) > 0 ? undefined : openAmountColor(item.open_amount),
                         }}
                       >
-                        {item.open_amount} EUR
+                        {formatMoney(centsFromDecimal(item.open_amount))}
                       </td>
                     </tr>
                   ))}
@@ -425,9 +425,9 @@ export function MietkontoPage() {
                 <thead><tr><th>Mahnung</th><th>Mahngebühr</th><th>Verzugszinsen</th></tr></thead>
                 <tbody>{result.dunning_notices.map(notice => (
                   <tr key={notice.id}>
-                    <td><Link to={`/mahnungen/${notice.id}`}>{notice.issue_date.split("-").reverse().join(".")}<br />Stufe {notice.level}</Link></td>
-                    <td className="whitespace-nowrap">{formatEuro(notice.fee_amount)}</td>
-                    <td className="whitespace-nowrap">{formatEuro(notice.interest_amount)}</td>
+                    <td><Link to={`/mahnungen/${notice.id}`}>{formatDate(notice.issue_date)}<br />Stufe {notice.level}</Link></td>
+                    <td className="whitespace-nowrap">{formatMoney(centsFromDecimal(notice.fee_amount))}</td>
+                    <td className="whitespace-nowrap">{formatMoney(centsFromDecimal(notice.interest_amount))}</td>
                   </tr>
                 ))}</tbody>
               </table></div>

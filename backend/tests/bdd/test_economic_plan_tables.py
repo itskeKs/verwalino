@@ -132,7 +132,7 @@ def contained_tables(browser_world, world, table_plan):
             rows = [await table.locator("tbody tr").all_text_contents() for table in tables]
             assert len(rows[0]) == 8 and len(rows[1]) == 2
             assert any("Friedrich-Wilhelm Muster-Beispielhausen-05" in row for row in rows[0])
-            assert all("12345.67 EUR" in row for row in rows[1])
+            assert all("12.345,67 €" in row for row in rows[1])
             assert len(await tables[0].get_by_role("columnheader").all()) == 4
             assert len(await tables[1].get_by_role("columnheader").all()) == 3
             if expected_rows is None:
@@ -201,7 +201,7 @@ def identified_advances(browser_world, world, table_plan):
         b.page.on("console", lambda message: console_errors.append(message.text) if message.type == "error" else None)
         table = b.page.get_by_role("heading", name="Hausgeld-Vorschüsse je Eigentümer", exact=True).locator("..").locator("table")
         failures = []
-        expected = [("01 – Vorderhaus", "300.00 EUR", "25.00 EUR"), ("02 – Hinterhaus", "900.00 EUR", "75.00 EUR")]
+        expected = [("01 – Vorderhaus", "300,00 €", "25,00 €"), ("02 – Hinterhaus", "900,00 €", "75,00 €")]
         for width in (1280, 360):
             await b.page.set_viewport_size({"width": width, "height": 900})
             if width == 360:

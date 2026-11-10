@@ -46,13 +46,13 @@ def open_account(browser_world, width, tmp_path):
 def november_account(browser_world, tmp_path):
     async def run():
         page = browser_world.page
-        await browser_world.row('Saldo', '1900.00 EUR')
-        await browser_world.row('davon fällig', '100.00 EUR (Rückstand)')
-        await browser_world.row('noch nicht fällig', '1800.00 EUR')
-        await rent_row(page, '2026/04', 'Kaltmiete', '100.00 EUR', 'fällig')
+        await browser_world.row('Saldo', '1.900,00 €')
+        await browser_world.row('davon fällig', '100,00 € (Rückstand)')
+        await browser_world.row('noch nicht fällig', '1.800,00 €')
+        await rent_row(page, '2026/04', 'Kaltmiete', '100,00 €', 'fällig')
         for month in ['11', '12']:
-            await rent_row(page, f'2026/{month}', 'Kaltmiete', '750.00 EUR', 'noch nicht fällig')
-            await rent_row(page, f'2026/{month}', 'Betriebskosten-Vorauszahlung', '150.00 EUR', 'noch nicht fällig')
+            await rent_row(page, f'2026/{month}', 'Kaltmiete', '750,00 €', 'noch nicht fällig')
+            await rent_row(page, f'2026/{month}', 'Betriebskosten-Vorauszahlung', '150,00 €', 'noch nicht fällig')
         saldo = page.get_by_role('row').filter(has=page.get_by_role('cell', name='Saldo', exact=True))
         await expect(saldo).not_to_contain_text('Rückstand')
         await expect(field(page, 'Zeitraum bis *')).to_have_value('2026-12-31')
@@ -80,12 +80,12 @@ def change_cutoff(browser_world):
 @then('the account keeps 1900 euros balance with 1000 euros due and 900 euros not yet due')
 def on_due_date(browser_world):
     async def run():
-        await browser_world.row('Saldo', '1900.00 EUR')
-        await browser_world.row('davon fällig', '1000.00 EUR (Rückstand)')
-        await browser_world.row('noch nicht fällig', '900.00 EUR')
+        await browser_world.row('Saldo', '1.900,00 €')
+        await browser_world.row('davon fällig', '1.000,00 € (Rückstand)')
+        await browser_world.row('noch nicht fällig', '900,00 €')
         page = browser_world.page
-        await rent_row(page, '2026/04', 'Kaltmiete', '100.00 EUR', 'fällig')
-        for kind, amount in [('Kaltmiete', '750.00 EUR'), ('Betriebskosten-Vorauszahlung', '150.00 EUR')]:
+        await rent_row(page, '2026/04', 'Kaltmiete', '100,00 €', 'fällig')
+        for kind, amount in [('Kaltmiete', '750,00 €'), ('Betriebskosten-Vorauszahlung', '150,00 €')]:
             await rent_row(page, '2026/11', kind, amount, 'fällig')
             await rent_row(page, '2026/12', kind, amount, 'noch nicht fällig')
     browser_world.run(run())

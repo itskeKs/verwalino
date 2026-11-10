@@ -1,3 +1,4 @@
+import { formatDateTime } from "../lib/format";
 import { useEffect, useRef, useState } from 'react';
 import { ApiError } from '../api/client';
 import { visualDisclosureApi, type VisualDisclosure } from '../api/visualDisclosures';
@@ -50,7 +51,7 @@ export function VisualDisclosureList({ endpoint, refreshGeneration = 0, enabled 
     {error && <p role="alert" className="error-text">{error}</p>}
     {loading ? <p role="status">Lade Freigaben…</p> : items.length === 0 ? <p>Keine Freigaben auf dieser Ergebnisseite.</p> : <ul className="space-y-3">{items.map(item => <li key={item.receipt.id} className="rounded-md border p-3 space-y-2 break-words">
       <p>{item.destination ? `${item.destination.label} · ${item.destination.scope_type}` : 'Zielbereich derzeit nicht lesbar'} · {item.receipt.output_page_count} Seite(n)</p>
-      <p>{new Date(item.receipt.created_at).toLocaleString('de-DE')} · {item.current.available ? 'Freigegeben' : 'Widerrufen'}</p>
+      <p>{formatDateTime(item.receipt.created_at)} · {item.current.available ? 'Freigegeben' : 'Widerrufen'}</p>
       {item.current.can_download && <a className="btn" href={visualDisclosureApi.content(item.receipt.id)} target="_blank" rel="noreferrer">Freigegebenen Auszug öffnen</a>}
       {item.current.available && !item.current.can_download && <p>Zum Öffnen ist die Exportberechtigung im Zielbereich erforderlich.</p>}
       {item.current.can_withdraw && <button className="btn" disabled={!!pending || sending || mutationDisabled} onClick={() => { setSelected(item); setReason(''); setAck(false); setReceipt(null); }}>Freigabe widerrufen</button>}

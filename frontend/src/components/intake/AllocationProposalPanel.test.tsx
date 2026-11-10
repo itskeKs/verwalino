@@ -1,6 +1,7 @@
 import { afterEach, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
-import { exactCents, displayCents, type AllocationPreview } from '../../api/allocationProposals';
+import { exactCents, type AllocationPreview } from '../../api/allocationProposals';
+import { formatMoney } from '../../lib/format';
 import { AllocationProposalPanel } from './AllocationProposalPanel';
 
 vi.mock('./AllocationTreatmentPanel', () => ({ AllocationTreatmentPanel: () => null }));
@@ -24,7 +25,7 @@ afterEach(() => { cleanup(); vi.unstubAllGlobals(); vi.restoreAllMocks(); props.
 it('conserves cents across decimal boundaries without binary float rounding', () => {
   expect(exactCents('0.10')! + exactCents('0,20')!).toBe(exactCents('0.30'));
   expect(exactCents('-999999999999.99')).toBe(-99999999999999n);
-  expect(displayCents(-11901n)).toBe('-119,01');
+  expect(formatMoney(-11901n)).toBe('-119,01 €');
   for (const value of ['1.001', 'NaN', '1e2', '1.000,00', '1000000000000.00', '']) expect(exactCents(value)).toBeNull();
 });
 

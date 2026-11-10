@@ -18,7 +18,7 @@ it('shows plain reserve labels and German amounts for every position in a finali
   ].map((line, index) => ({ ...line, id: String(index) }));
   vi.stubGlobal('fetch', vi.fn(async (url: string) => json(
     url === '/api/properties' || url.includes('/bank-accounts') ? []
-    : url.endsWith('/reserve-ledger') ? { entries: [], frozen: true }
+    : url.endsWith('/reserve-ledger') ? { opening_balance: '0.00', contributions_total: '0.00', withdrawals_total: '0.00', overrides_total: '0.00', closing_balance: '0.00', planned_contributions_total: '0.00', entries: [], frozen: true, booking_basis: 'CASH' }
     : { id: 'run-1', status: 'finalized', property_id: 'property-1', lines })));
   render(<MemoryRouter initialEntries={['/report/run-1']}><Routes><Route path="/report/:runId" element={<AssetReportDetailPage />} /></Routes></MemoryRouter>);
   const table = (await screen.findByRole('heading', { name: 'Vermögensaufstellung' })).parentElement!;
@@ -49,7 +49,7 @@ it.each([
 ])('preserves cents when displaying the API amount %s', async (amount, expected) => {
   vi.stubGlobal('fetch', vi.fn(async (url: string) => json(
     url === '/api/properties' || url.includes('/bank-accounts') ? []
-    : url.endsWith('/reserve-ledger') ? { entries: [], frozen: true }
+    : url.endsWith('/reserve-ledger') ? { opening_balance: '0.00', contributions_total: '0.00', withdrawals_total: '0.00', overrides_total: '0.00', closing_balance: '0.00', planned_contributions_total: '0.00', entries: [], frozen: true, booking_basis: 'CASH' }
     : { id: 'run-1', status: 'finalized', property_id: 'property-1', lines: [{ id: 'line-1', line_type: 'BANK_BALANCE', label: 'Bankkonto', amount }] })));
   render(<MemoryRouter initialEntries={['/report/run-1']}><Routes><Route path="/report/:runId" element={<AssetReportDetailPage />} /></Routes></MemoryRouter>);
   const table = (await screen.findByRole('heading', { name: 'Vermögensaufstellung' })).parentElement!;
@@ -60,7 +60,7 @@ it('keeps delete and ledger identities distinct without React console errors', a
   const errors = vi.spyOn(console, 'error');
   vi.stubGlobal('fetch', vi.fn(async (url: string) => json(
     url === '/api/properties' || url.includes('/bank-accounts') ? []
-    : url.endsWith('/reserve-ledger') ? { entries: [], frozen: false }
+    : url.endsWith('/reserve-ledger') ? { opening_balance: '0.00', contributions_total: '0.00', withdrawals_total: '0.00', overrides_total: '0.00', closing_balance: '0.00', planned_contributions_total: '0.00', entries: [], frozen: false, booking_basis: 'CASH' }
     : { id: 'run-keys', status: 'draft', property_id: 'property-1', lines: [], delete_restriction: null })));
   render(<MemoryRouter initialEntries={['/report/run-keys']}><Routes><Route path="/report/:runId" element={<AssetReportDetailPage />} /></Routes></MemoryRouter>);
   await screen.findByRole('button', { name: 'Entwurf löschen' });
@@ -75,7 +75,7 @@ it('refreshes deletion eligibility after saving a reserve opening declaration', 
     }
     if (url === '/api/properties' || url.includes('/bank-accounts')) return json([]);
     if (url.endsWith('/reserve-ledger')) return json({ entries: [], frozen: false,
-      opening_balance: protectedOpening ? '12500.00' : '0.00' });
+      opening_balance: protectedOpening ? '12500.00' : '0.00', contributions_total: '0.00', withdrawals_total: '0.00', overrides_total: '0.00', closing_balance: '0.00', planned_contributions_total: '0.00', booking_basis: 'CASH' });
     return json({ id: 'run-1', run_type: 'VERMOEGENSBERICHT', status: 'draft', property_id: 'property-1', lines: [],
       delete_restriction: protectedOpening ? { code: 'SETTLEMENT_DELETE_HAS_LEDGER', message: 'Entwürfe mit Rücklagenbuch-Einträgen können nicht gelöscht werden.' } : null });
   });
@@ -96,7 +96,7 @@ it('confirms an empty draft deletion and returns to the report list', async () =
   const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
     if (init?.method === 'DELETE') return new Response(null, { status: 204 });
     if (url === '/api/properties' || url.includes('/bank-accounts')) return json([]);
-    if (url.endsWith('/reserve-ledger')) return json({ entries: [], frozen: false });
+    if (url.endsWith('/reserve-ledger')) return json({ opening_balance: '0.00', contributions_total: '0.00', withdrawals_total: '0.00', overrides_total: '0.00', closing_balance: '0.00', planned_contributions_total: '0.00', entries: [], frozen: false, booking_basis: 'CASH' });
     return json({ id: 'run-1', run_type: 'VERMOEGENSBERICHT', status: 'draft', property_id: 'property-1', lines: [], delete_restriction: null });
   });
   vi.stubGlobal('fetch', fetchMock);
@@ -115,7 +115,7 @@ it('confirms an empty draft deletion and returns to the report list', async () =
 it('shows the German deletion refusal and hides the action for a booked draft', async () => {
   vi.stubGlobal('fetch', vi.fn(async (url: string) => json(
     url === '/api/properties' || url.includes('/bank-accounts') ? []
-    : url.endsWith('/reserve-ledger') ? { entries: [], frozen: false }
+    : url.endsWith('/reserve-ledger') ? { opening_balance: '0.00', contributions_total: '0.00', withdrawals_total: '0.00', overrides_total: '0.00', closing_balance: '0.00', planned_contributions_total: '0.00', entries: [], frozen: false, booking_basis: 'CASH' }
     : { id: 'run-1', run_type: 'VERMOEGENSBERICHT', status: 'draft', property_id: 'property-1', lines: [], delete_restriction: {
       code: 'SETTLEMENT_DELETE_HAS_BOOKINGS', message: 'Entwürfe mit Buchungen können nicht gelöscht werden.' } })));
   render(<MemoryRouter initialEntries={['/report/run-1']}><Routes><Route path="/report/:runId" element={<AssetReportDetailPage />} /></Routes></MemoryRouter>);
@@ -197,7 +197,7 @@ it('refetches the computation table after a reserve correction', async () => {
 it('shows the frozen report addressee and the reporting date', async () => {
   vi.stubGlobal('fetch', vi.fn(async (url: string) => json(
     url === '/api/properties' || url.includes('/bank-accounts') ? []
-    : url.endsWith('/reserve-ledger') ? { entries: [], frozen: true }
+    : url.endsWith('/reserve-ledger') ? { opening_balance: '0.00', contributions_total: '0.00', withdrawals_total: '0.00', overrides_total: '0.00', closing_balance: '0.00', planned_contributions_total: '0.00', entries: [], frozen: true, booking_basis: 'CASH' }
     : { id: 'run-1', status: 'finalized', property_id: 'property-1', lines: [], addressees: [
       { unit_id: 'unit-2', unit_number: '2', owner_profile_id: 'lena', owner_name: 'Lena Roth', key_date: '2026-12-31' }] })));
   render(<MemoryRouter initialEntries={['/report/run-1']}><Routes><Route path="/report/:runId" element={<AssetReportDetailPage />} /></Routes></MemoryRouter>);

@@ -17,7 +17,7 @@ it.each([
 ] as const)("integrates %s only in eligible document status %s", async (kind, status, visible) => {
   const fetch = vi.fn(async (url: string) => {
     if (url === `/api/mail/${kind}/doc1`) return json({ recipients: [], attempts: [] });
-    if (url === "/api/dunning/doc1") return json({ id: "doc1", status, level: 1, included_items: [] });
+    if (url === "/api/dunning/doc1") return json({ id: "doc1", status, level: 1, included_items: [], principal_amount: "0.00", fee_amount: "0.00", total_amount: "0.00" });
     if (url.endsWith("/advance-proposal")) return new Response(JSON.stringify({ detail: "Kein Vorschlag für diese Test-Fixture" }), { status: 422 });
     if (url === "/api/settlements/doc1") return json({ id: "doc1", status, property_id: "property", run_type: "BK_MIETER", lines: [], extra_inputs: null });
     if (url === "/api/meetings/doc1") return json({ id: "doc1", status, meeting_date: "2026-11-15", meeting_type: "ORDENTLICH" });

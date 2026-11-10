@@ -45,14 +45,14 @@ it("uses separate read/prepare WEG scope groups and explicit preview", async () 
   fireEvent.click(screen.getByRole("button", { name: "Vorjahres-Ist prüfen" }));
   await screen.findByDisplayValue("7000.00");
   expect(post.mock.calls[0][1]).toEqual({ property_id: "p", plan_year: 2027, source_accounting_scope_id: "prior", accounting_scope_id: "future" });
-  expect(screen.getByText(/2026-01-01/)).toBeInTheDocument(); expect(screen.getByText("MEA")).toBeInTheDocument();
-  expect(screen.getByText(/Kosten und Rücklage: 13000.00 EUR/)).toBeInTheDocument();
+  expect(screen.getByText(/01\.01\.2026/)).toBeInTheDocument(); expect(screen.getByText("MEA")).toBeInTheDocument();
+  expect(screen.getByText(/Kosten und Rücklage: 13\.000,00 €/)).toBeInTheDocument();
 });
 it("edits only amounts and reserve, confirms once and navigates to the returned ID", async () => {
   render(app()); await preview();
   fireEvent.change(screen.getByLabelText("Heizung – Jahresbetrag"), { target: { value: "7100,10" } });
   fireEvent.change(screen.getByLabelText("Rücklagenzuführung – Vorschlag"), { target: { value: "6200.20" } });
-  expect(screen.getByText(/13300.30 EUR/)).toBeInTheDocument(); create();
+  expect(screen.getByText(/13\.300,30 €/)).toBeInTheDocument(); create();
   await screen.findByText("Neuer Detailplan");
   expect(post.mock.calls[1][1]).toEqual({ property_id: "p", plan_year: 2027, expected_source_digest: "digest", planned_costs: [{ ...proposal.planned_costs[0], planned_amount: "7100.10" }], reserve_contribution_total: "6200.20" });
   expect(post).toHaveBeenCalledTimes(2);

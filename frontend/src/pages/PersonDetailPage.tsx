@@ -17,6 +17,7 @@ import {
   updateVendor,
 } from "../api/endpoints";
 import type { Person, OwnerProfile, TenantProfile, Vendor } from "../api/types";
+import { formatIban } from "../lib/format";
 import { ApiError } from "../api/client";
 import { useAuth } from "../auth/useAuth";
 import { AttachmentsPanel } from "../components/AttachmentsPanel";
@@ -184,7 +185,7 @@ function PersonDetailPageContent({ personId }: { personId?: string }) {
           <h2>Bankdaten</h2>
           <table className="info-table">
             <tbody>
-              <tr><td>IBAN</td><td>{person.iban ?? "-"}</td></tr>
+              <tr><td>IBAN</td><td>{person.iban ? formatIban(person.iban) : "-"}</td></tr>
               <tr><td>BIC</td><td>{person.bic ?? "-"}</td></tr>
               <tr><td>Bankname</td><td>{person.bank_name ?? "-"}</td></tr>
             </tbody>

@@ -8,6 +8,7 @@
 import { useEffect, useState, useCallback, useRef } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import { useAuth } from "../auth/useAuth";
+import { formatIban } from "../lib/format";
 import {
   listBankAccounts,
   createBankAccount,
@@ -296,7 +297,7 @@ function BankAccounts() {
                     </span>
                   </td>
                   <td style={{ fontFamily: "var(--mono)", fontSize: "0.85rem" }}>
-                    {a.iban ?? "-"}
+                    {a.iban ? formatIban(a.iban) : "-"}
                   </td>
                   <td>{a.bank_name ?? "-"}</td>
                   <td>

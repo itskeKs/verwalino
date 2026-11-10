@@ -36,7 +36,7 @@ def compute_draft(browser_world, plan_property, width):
         await expect(reserve).to_have_value("0.00")
         await page.get_by_role("button", name="Anlegen", exact=True).click()
         await expect(page.get_by_role("heading", name="Wirtschaftsplan 2026 Entwurf")).to_be_visible()
-        await expect(page.get_by_role("row", name="Rücklagenzuführung 0.00 EUR", exact=True)).to_be_visible()
+        await expect(page.get_by_role("row", name="Rücklagenzuführung 0,00 €", exact=True)).to_be_visible()
         await expect(reserve).to_have_value("0.00")
         await page.get_by_role("button", name="+ Position", exact=True).click()
         await b.select("Kategorie 1", "GARTENPFLEGE")
@@ -53,8 +53,8 @@ def verify_advance(browser_world):
 
     async def run():
         page = b.page
-        await expect(page.get_by_role("cell", name="600.00 EUR", exact=True)).to_be_visible()
-        await expect(page.get_by_role("row", name="Rücklagenzuführung 0.00 EUR", exact=True)).to_be_visible()
+        await expect(page.get_by_role("cell", name="600,00 €", exact=True)).to_be_visible()
+        await expect(page.get_by_role("row", name="Rücklagenzuführung 0,00 €", exact=True)).to_be_visible()
         await expect(page.get_by_label("Rücklagenzuführung (Jahr)", exact=True)).to_have_value("0.00")
 
     b.run(run())
@@ -82,7 +82,7 @@ def reopen_plan(browser_world):
 
 
 async def expect_reopened_inputs(page: Page):
-    await expect(page.get_by_role("cell", name="600.00 EUR", exact=True)).to_be_visible()
+    await expect(page.get_by_role("cell", name="600,00 €", exact=True)).to_be_visible()
     await expect(page.get_by_role("textbox", name=re.compile(" – Jahresbetrag$"))).to_have_value(re.compile(r"^7200(?:\.00)?$"))
     await expect(page.get_by_label("Rücklagenzuführung (Jahr)", exact=True)).to_have_value("0.00")
 
@@ -110,7 +110,7 @@ def verify_saved_plan(browser_world):
         page = browser_world.page
         await page.reload()
         await expect(page.get_by_role("heading", name="Wirtschaftsplan 2026 Finalisiert")).to_be_visible()
-        advance = page.get_by_role("row").filter(has=page.get_by_role("cell", name="600.00 EUR", exact=True))
-        await expect(advance.get_by_role("cell", name="7200.00 EUR", exact=True)).to_be_visible()
+        advance = page.get_by_role("row").filter(has=page.get_by_role("cell", name="600,00 €", exact=True))
+        await expect(advance.get_by_role("cell", name="7.200,00 €", exact=True)).to_be_visible()
 
     browser_world.run(run())

@@ -52,7 +52,7 @@ def create_dated_owner_drafts(browser_world, dated_owners):
             assert [row['period_month'] for row in notice['included_items']] == months
             for width in (1280, 360):
                 await b.page.set_viewport_size({'width': width, 'height': 900})
-                await b.row('Hauptforderung (Rueckstand)', '2400.00 EUR')
+                await b.row('Hauptforderung (Rueckstand)', '2.400,00 €')
                 table = b.page.locator('.card').filter(has=b.page.get_by_role('heading', name='Rueckstandsaufstellung', exact=True)).get_by_role('table')
                 await expect(table.locator('tbody tr')).to_have_count(6)
                 for month in months:
@@ -139,7 +139,7 @@ def retry_owner_notice(browser_world, july_plan):
 @then('exactly one owner draft opens with 600 EUR principal for the charge due on 3 July')
 def july_owner_draft_is_correct(browser_world, world, july_plan):
     notice = july_plan['draft']
-    browser_world.run(browser_world.row('Hauptforderung (Rueckstand)', '600.00 EUR'))
+    browser_world.run(browser_world.row('Hauptforderung (Rueckstand)', '600,00 €'))
     rows = world.act('GET', '/api/dunning', params={'owner_profile_id': july_plan['owners'][0]})
     assert rows.status_code == 200 and [row['id'] for row in rows.json()] == [notice['id']], rows.text
     draft = world.act('GET', f"/api/dunning/{notice['id']}")
@@ -172,7 +172,7 @@ def tenant_draft_without_duplicate(browser_world, world):
     notice = world.data['immediate_tenant_draft']
     assert notice['principal_amount'] == '700.00'
     assert notice['tenant_profile_id'] == world.data['tenants'][0]['id']
-    browser_world.run(browser_world.row('Hauptforderung (Rueckstand)', '700.00 EUR'))
+    browser_world.run(browser_world.row('Hauptforderung (Rueckstand)', '700,00 €'))
     rows = world.act('GET', '/api/dunning', params={'tenant_profile_id': notice['tenant_profile_id']})
     assert rows.status_code == 200 and [row['id'] for row in rows.json()] == [notice['id']], rows.text
 
@@ -240,7 +240,7 @@ async def retry_with_scope(browser_world):
 
 @then('exactly one tenant draft exists and opens with 750 EUR principal')
 def scoped_tenant_principal(browser_world, world):
-    browser_world.run(browser_world.row('Hauptforderung (Rueckstand)', '750.00 EUR'))
+    browser_world.run(browser_world.row('Hauptforderung (Rueckstand)', '750,00 €'))
     notice = world.data['scoped_tenant_draft']
     assert notice['principal_amount'] == '750.00'
     rows = world.act('GET', '/api/dunning', params={'tenant_profile_id': world.data['tenants'][0]['id']})
@@ -269,7 +269,7 @@ async def submit_fee(browser, kind, fee, tmp_path):
         await button(page, "Mahnung erstellen").click()
     response = await pending.value
     if response.status == 201:
-        await browser.row("Mahngebühr", "0.00 EUR")
+        await browser.row("Mahngebühr", "0,00 €")
         await page.get_by_role("cell", name="Mahngebühr", exact=True).scroll_into_view_if_needed()
     else:
         await expect(page.get_by_role("alert")).to_be_visible()

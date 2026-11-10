@@ -25,6 +25,7 @@ import type {
 } from "../api/types";
 import { AccountingScopeSelector } from "../components/AccountingScopeSelector";
 import { ApiError } from "../api/client";
+import { centsFromDecimal, formatMoney } from "../lib/format";
 import { AuthCtx } from "../auth/useAuth";
 import { DunningBatch } from "../components/DunningBatch";
 
@@ -40,7 +41,7 @@ const PAYMENT_TYPE_LABELS: Record<string, string> = {
 interface LeaseOpenItems {
   lease: LeaseRecord;
   items: OpenItem[];
-  totalOpen: number;
+  totalOpen: bigint;
 }
 
 export function OpenItemsPage() {
@@ -126,10 +127,10 @@ export function OpenItemsPage() {
       const allResults = response.map(row => {
         const lease = leases.find(candidate => candidate.id === row.lease_agreement_id);
         if (!lease) throw new Error("Mietvertragsdaten haben sich geändert. Bitte Seite neu laden.");
-        return { lease, items: row.items, totalOpen: row.items.reduce((sum, item) => sum + parseFloat(item.open_amount), 0) };
+        return { lease, items: row.items, totalOpen: row.items.reduce((sum, item) => sum + centsFromDecimal(item.open_amount), 0n) };
       });
       // Sort by total open amount (largest debt first)
-      allResults.sort((a, b) => b.totalOpen - a.totalOpen);
+      allResults.sort((a, b) => (b.totalOpen > a.totalOpen ? 1 : b.totalOpen < a.totalOpen ? -1 : 0));
       setResults(allResults);
     } catch (err) {
       if (err instanceof ApiError) {
@@ -229,10 +230,10 @@ export function OpenItemsPage() {
                 fontFamily: "var(--mono)",
                 fontWeight: 700,
                 fontSize: "1.05rem",
-                color: r.totalOpen > 0 ? "#b71c1c" : r.totalOpen < 0 ? "#2e7d32" : undefined,
+                color: r.totalOpen > 0n ? "#b71c1c" : r.totalOpen < 0n ? "#2e7d32" : undefined,
               }}
             >
-              {r.totalOpen.toFixed(2)} EUR offen
+              {formatMoney(r.totalOpen)} offen
             </span>
           </div>
 
@@ -266,7 +267,7 @@ export function OpenItemsPage() {
                           fontFamily: "var(--mono)",
                         }}
                       >
-                        {item.soll} EUR
+                        {formatMoney(centsFromDecimal(item.soll))}
                       </td>
                       <td
                         style={{
@@ -274,7 +275,7 @@ export function OpenItemsPage() {
                           fontFamily: "var(--mono)",
                         }}
                       >
-                        {item.ist} EUR
+                        {formatMoney(centsFromDecimal(item.ist))}
                       </td>
                       <td
                         style={{
@@ -284,7 +285,7 @@ export function OpenItemsPage() {
                           color: openVal > 0 ? "#b71c1c" : openVal < 0 ? "#2e7d32" : undefined,
                         }}
                       >
-                        {item.open_amount} EUR
+                        {formatMoney(centsFromDecimal(item.open_amount))}
                       </td>
                     </tr>
                   );
@@ -297,7 +298,7 @@ export function OpenItemsPage() {
             <Link to={`/mietkonto`} className="btn btn--small">
               Zum Mietkonto
             </Link>
-            {r.totalOpen > 0 && (
+            {r.totalOpen > 0n && (
               <Link
                 to={`/mahnungen?create=tenant&tenant_profile_id=${encodeURIComponent(r.lease.tenant_profile_id)}&lease_agreement_id=${encodeURIComponent(r.lease.id)}&period_start=${encodeURIComponent(periodStart)}&period_end=${encodeURIComponent(periodEnd)}${scopeId ? `&accounting_scope_id=${encodeURIComponent(scopeId)}` : ""}`}
                 className="btn btn--small"

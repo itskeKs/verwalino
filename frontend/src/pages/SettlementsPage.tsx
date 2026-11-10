@@ -30,6 +30,7 @@ import type {
   Person,
 } from "../api/types";
 import { ApiError } from "../api/client";
+import { centsFromDecimal, formatDate, formatMoney } from "../lib/format";
 import { useAuth } from "../auth/useAuth";
 import { AccountingScopeSelector } from "../components/AccountingScopeSelector";
 import { parseGermanAmount } from "../lib/germanAmount";
@@ -168,7 +169,7 @@ export function SettlementsPage() {
     if (!lease) return id.slice(0, 8);
     const unitLabel = getUnitLabel(lease.unit_id);
     const tenantName = getTenantName(lease.tenant_profile_id);
-    const period = `ab ${lease.valid_from}${lease.valid_to ? ` bis ${lease.valid_to}` : " (laufend)"}`;
+    const period = `ab ${formatDate(lease.valid_from)}${lease.valid_to ? ` bis ${formatDate(lease.valid_to)}` : " (laufend)"}`;
     return `${unitLabel} — ${tenantName} (${period})`;
   }
 
@@ -435,7 +436,7 @@ export function SettlementsPage() {
               <input
                 type="text"
                 inputMode="decimal"
-                placeholder="0.00"
+                placeholder="700,00"
                 value={form.advance_payments_total ?? ""}
                 aria-invalid={advanceErrors.operating}
                 aria-describedby={advanceErrors.operating ? "operating-advance-error" : undefined}
@@ -502,7 +503,7 @@ export function SettlementsPage() {
               {runs.map((run) => (
                 <tr key={run.id}>
                   <td>
-                    {run.period_start} bis {run.period_end}
+                    {formatDate(run.period_start)} bis {formatDate(run.period_end)}
                   </td>
                   <td>{getPropertyName(run.property_id)}</td>
                   <td>
@@ -512,7 +513,7 @@ export function SettlementsPage() {
                   </td>
                   <td>{run.run_type}</td>
                   <td style={{ textAlign: "right", fontFamily: "var(--mono)" }}>
-                    {run.balance != null ? `${run.balance} EUR` : "-"}
+                    {run.balance != null ? formatMoney(centsFromDecimal(run.balance)) : "-"}
                   </td>
                   <td>
                     <span

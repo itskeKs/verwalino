@@ -8,7 +8,7 @@ from playwright.async_api import TimeoutError as PlaywrightTimeoutError, expect
 from pytest_bdd import given, parsers, scenarios, then, when
 
 from tests.bank_browser_trace import PATH as BANK_LIST_PATH
-from tests.bdd.steps.browser_common import button, field
+from tests.bdd.steps.browser_common import button, field, german_date
 from tests.bdd.steps.browser_setup import create
 from tests.bdd.report import artifact_directory, attach_artifact
 
@@ -130,7 +130,7 @@ def save_named_pages(browser_world, width, request):
         end = f'{year}-12-30'
         await field(page, 'Vertragsende').fill(end)
         await save(button(page, 'Speichern'), f'/api/units/{unit}', 'Mietvertrag gespeichert.', page.get_by_role('heading', name='Mietvertraege', exact=True))
-        await expect(page.get_by_role('cell', name=end, exact=True)).to_be_visible()
+        await expect(page.get_by_role('cell', name=german_date(end), exact=True)).to_be_visible()
         await capture('unit')
 
         await b.visit('/bankkonten')

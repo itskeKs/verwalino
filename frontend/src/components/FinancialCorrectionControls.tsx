@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { formatDate } from '../lib/format';
 import { Link } from 'react-router-dom';
 import { ApiError } from '../api/client';
 import { createSettlementCorrection, getWegRun } from '../api/endpoints';
@@ -85,7 +86,7 @@ export function PlanSuccessorSelector({ runId, onApplied, disabled = false, onBl
     <button className="btn" disabled={disabled || busy || !!pending} onClick={() => void load()}>Nachfolger des Wirtschaftsplans prüfen</button>
     {preview && !preview.successor_id && <p role="status">Der verknüpfte Wirtschaftsplan ist aktuell.</p>}
     {preview?.successor_id && <>
-      <p>Festgeschriebener Nachfolger für {preview.plan_year} · {preview.period_start} bis {preview.period_end}</p>
+      <p>Festgeschriebener Nachfolger für {preview.plan_year} · {formatDate(preview.period_start)} bis {formatDate(preview.period_end)}</p>
       <a className="link" href={`/wirtschaftsplaene/${preview.successor_id}`} target="_blank" rel="noreferrer">Nachfolger prüfen</a>
       <fieldset disabled={disabled || busy || !!pending} className="min-w-0 space-y-3">
         <legend>Nachfolger übernehmen</legend>

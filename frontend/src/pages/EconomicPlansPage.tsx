@@ -8,6 +8,7 @@ import { Link, useNavigate } from "react-router-dom";
 import { listEconomicPlans, listProperties, createEconomicPlan } from "../api/endpoints";
 import type { EconomicPlan, EconomicPlanCreate, Property } from "../api/types";
 import { ApiError } from "../api/client";
+import { centsFromDecimal, formatDate, formatMoney } from "../lib/format";
 import { PreviousPlan } from "../components/PreviousPlan";
 import { AccountingScopeSelector } from "../components/AccountingScopeSelector";
 
@@ -119,7 +120,7 @@ export function EconomicPlansPage() {
             </label>
             <label>
               Rücklagenzuführung (Jahr)
-              <input type="text" inputMode="decimal" placeholder="0.00" value={form.reserve_contribution_total ?? ""}
+              <input type="text" inputMode="decimal" placeholder="700,00" value={form.reserve_contribution_total ?? ""}
                 onChange={(e) => setForm({ ...form, reserve_contribution_total: e.target.value || "0.00" })} />
             </label>
             <label>
@@ -151,8 +152,8 @@ export function EconomicPlansPage() {
                 <tr key={p.id}>
                   <td>{p.plan_year}</td>
                   <td>{propName(p.property_id)}</td>
-                  <td>{p.period_start} bis {p.period_end}</td>
-                  <td style={{ fontFamily: "var(--mono)", textAlign: "right" }}>{p.reserve_contribution_total} EUR</td>
+                  <td>{formatDate(p.period_start)} bis {formatDate(p.period_end)}</td>
+                  <td style={{ fontFamily: "var(--mono)", textAlign: "right" }}>{formatMoney(centsFromDecimal(p.reserve_contribution_total))}</td>
                   <td><span className={`badge ${STATUS_CSS[p.status] ?? ""}`}>{STATUS_LABELS[p.status] ?? p.status}</span></td>
                   <td><Link to={`/wirtschaftsplaene/${p.id}`} className="btn btn--small">Details</Link></td>
                 </tr>

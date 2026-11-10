@@ -1,3 +1,4 @@
+import { formatDateTime } from "../lib/format";
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { api } from "../api/client";
@@ -66,7 +67,7 @@ function Inventory() {
     {pending && <p role="status">Bestand wird geprüft…</p>}
     {error && <p className="error-text" role="alert">{error}</p>}
     {data && <>
-      <p>Stand: {new Date(data.generated_at).toLocaleString("de-DE")} · Modus beim Bestandsabruf: {sourceSecurityLabels[data.mode]}</p>
+      <p>Stand: {formatDateTime(data.generated_at)} · Modus beim Bestandsabruf: {sourceSecurityLabels[data.mode]}</p>
       <p>Die Kategorien können sich überschneiden. Finanzzahlen enthalten auch Entwürfe und aufbewahrte Einträge.</p>
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
         {groups.map(group => <section className="card min-w-0 space-y-3" key={group.title}>

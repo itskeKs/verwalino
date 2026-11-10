@@ -24,7 +24,7 @@ import type {
   OwnerProfile,
   Person,
 } from "../api/types";
-import { formatEuro } from "../lib/utils";
+import { centsFromDecimal, formatDate, formatDateTime, formatMoney } from "../lib/format";
 import { ApiError } from "../api/client";
 import { MailDispatch } from "../components/MailDispatch";
 
@@ -202,10 +202,7 @@ export function DunningNoticeDetailPage() {
   if (!notice) return <p className="error-text">Mahnung nicht gefunden.</p>;
 
   const includedItems = notice.included_items ?? [];
-  const issuedAt = notice.issued_at ? new Date(notice.issued_at).toLocaleString("de-DE", {
-    timeZone: "Europe/Berlin", day: "2-digit", month: "2-digit", year: "numeric",
-    hour: "2-digit", minute: "2-digit",
-  }) : null;
+  const issuedAt = notice.issued_at ? formatDateTime(notice.issued_at) : null;
 
   return (
     <div>
@@ -286,11 +283,11 @@ export function DunningNoticeDetailPage() {
             </tr>
             <tr>
               <td>Ausstellungsdatum</td>
-              <td>{notice.issue_date}</td>
+              <td>{formatDate(notice.issue_date)}</td>
             </tr>
             <tr>
               <td>Zahlungsfrist</td>
-              <td>{notice.due_date}</td>
+              <td>{formatDate(notice.due_date)}</td>
             </tr>
             <tr>
               <td>Status</td>
@@ -330,18 +327,18 @@ export function DunningNoticeDetailPage() {
                   fontSize: "1.05rem",
                 }}
               >
-                {notice.principal_amount} EUR
+                {formatMoney(centsFromDecimal(notice.principal_amount))}
               </td>
             </tr>
             <tr>
               <td>Mahngebühr</td>
               <td style={{ fontFamily: "var(--mono)" }}>
-                {notice.fee_amount} EUR
+                {formatMoney(centsFromDecimal(notice.fee_amount))}
               </td>
             </tr>
             {(notice.interest_snapshot || notice.interest_amount !== undefined) && <tr>
               <td>Verzugszinsen</td>
-              <td style={{ fontFamily: "var(--mono)" }}>{notice.interest_amount} EUR</td>
+              <td style={{ fontFamily: "var(--mono)" }}>{formatMoney(centsFromDecimal(notice.interest_amount))}</td>
             </tr>}
             <tr>
               <td>
@@ -355,7 +352,7 @@ export function DunningNoticeDetailPage() {
                   color: "#b71c1c",
                 }}
               >
-                {notice.total_amount} EUR
+                {formatMoney(centsFromDecimal(notice.total_amount))}
               </td>
             </tr>
           </tbody>
@@ -370,19 +367,19 @@ export function DunningNoticeDetailPage() {
             <p>Basiszinssatz: {notice.interest_snapshot.base_interest_rate} %</p>
             <p>Jahreszinssatz: {notice.interest_snapshot.annual_rate} % (Basiszinssatz + 5 Prozentpunkte)</p>
           </>}
-        <p>Stichtag: <span>{notice.interest_snapshot.reference_date}</span></p>
+        <p>Stichtag: <span>{formatDate(notice.interest_snapshot.reference_date)}</span></p>
         <p className="form-hint">Gespeicherte Werte dieser Mahnung; keine Neuberechnung mit heutigen Zinssätzen.</p>
         <div style={{ overflowX: "auto" }}><table className="data-table">
           <thead><tr><th>Hauptforderung</th><th>Zinsen</th><th>Typ</th><th>Periode</th><th>Fälligkeit</th><th>Tage</th></tr></thead>
           <tbody>{notice.interest_snapshot.items.map((item, index) => <tr key={index}>
             <td className="whitespace-nowrap">
-              <span>{item.principal} EUR</span>
+              <span>{formatMoney(centsFromDecimal(item.principal))}</span>
               {item.interest_start && ["KALTMIETE", "NK_VORAUSZAHLUNG"].includes(item.payment_type) &&
-                <div className="text-xs font-normal">Zinsbeginn:<br />{item.interest_start.split("-").reverse().join(".")}</div>}
-            </td><td className="whitespace-nowrap">{item.interest} EUR</td>
+                <div className="text-xs font-normal">Zinsbeginn:<br />{formatDate(item.interest_start)}</div>}
+            </td><td className="whitespace-nowrap">{formatMoney(centsFromDecimal(item.interest))}</td>
             <td>{PAYMENT_TYPE_LABELS[item.payment_type] ?? item.payment_type}</td>
             <td>{item.period_year === null ? "-" : `${item.period_year}${item.period_month === null ? "" : `/${String(item.period_month).padStart(2, "0")}`}`}</td>
-            <td>{item.due_date}</td><td>{item.days}</td>
+            <td>{formatDate(item.due_date)}</td><td>{item.days}</td>
           </tr>)}</tbody>
         </table></div>
         {notice.interest_snapshot.premium && <div className="mt-4">
@@ -391,9 +388,9 @@ export function DunningNoticeDetailPage() {
             <thead><tr><th>Zinszeitraum</th><th>Zinsen</th><th>Hauptforderung</th><th>Jahreszinssatz</th><th>Basiszinssatz</th><th>Tage</th><th>Typ</th></tr></thead>
             <tbody>{notice.interest_snapshot.items.flatMap((item, index) => item.segments?.map(segment =>
               <tr key={`${index}-${segment.start}`}>
-                <td>{segment.start.split("-").reverse().join(".")} bis {segment.end.split("-").reverse().join(".")}</td>
-                <td className="whitespace-nowrap">{formatEuro(segment.interest)}</td>
-                <td className="whitespace-nowrap">{formatEuro(segment.principal)}</td>
+                <td>{formatDate(segment.start)} bis {formatDate(segment.end)}</td>
+                <td className="whitespace-nowrap">{formatMoney(centsFromDecimal(segment.interest))}</td>
+                <td className="whitespace-nowrap">{formatMoney(centsFromDecimal(segment.principal))}</td>
                 <td>{segment.annual_rate.replace(".", ",")} %</td>
                 <td>{segment.base_interest_rate.replace(".", ",")} %</td>
                 <td>{segment.days}</td>
@@ -432,7 +429,7 @@ export function DunningNoticeDetailPage() {
                           color: !hasOpenAmount ? undefined : item.open_amount.startsWith("-") ? "#2e7d32" : "#b71c1c",
                         }}
                       >
-                        {item.open_amount} EUR
+                        {formatMoney(centsFromDecimal(item.open_amount))}
                       </td>
                       <td
                         className="whitespace-nowrap"
@@ -441,7 +438,7 @@ export function DunningNoticeDetailPage() {
                           fontFamily: "var(--mono)",
                         }}
                       >
-                        {item.soll} EUR
+                        {formatMoney(centsFromDecimal(item.soll))}
                       </td>
                       <td
                         className="whitespace-nowrap"
@@ -450,7 +447,7 @@ export function DunningNoticeDetailPage() {
                           fontFamily: "var(--mono)",
                         }}
                       >
-                        {item.ist} EUR
+                        {formatMoney(centsFromDecimal(item.ist))}
                       </td>
                       <td>
                         {item.period_year

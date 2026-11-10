@@ -56,10 +56,10 @@ describe("Objekt-Jahresübersicht", () => {
       income_total: "24000.00", expense_total: "8000.00", balance: "16000.00" });
     render(<ReportsPage />); await load();
     const overview = screen.getByRole("region", { name: "Jahresübersicht" });
-    const payout = within(overview).getByRole("row", { name: "Rücklagenentnahme (durchlaufend) -8.000,00 EUR" });
+    const payout = within(overview).getByRole("row", { name: "Rücklagenentnahme (durchlaufend) -8.000,00 €" });
     expect(payout).toBeVisible();
     expect(within(overview).queryByText(/Unbekannter Zahlungstyp/)).toBeNull();
-    for (const amount of ["24.000,00 EUR", "8.000,00 EUR", "16.000,00 EUR"]) {
+    for (const amount of ["24.000,00 €", "8.000,00 €", "16.000,00 €"]) {
       expect(within(overview).getAllByText(amount).length).toBeGreaterThan(0);
     }
   });
@@ -74,8 +74,8 @@ describe("Objekt-Jahresübersicht", () => {
     const overview = screen.getByRole("region", { name: "Jahresübersicht" });
     expect(within(overview).getByText("Kaution (durchlaufend)")).toBeVisible();
     expect(within(overview).getByText("Nachzahlung (Mieter)")).toBeVisible();
-    expect(within(overview).getByText("2.250,00 EUR")).toBeVisible();
-    expect(within(overview).getByText("875,00 EUR")).toBeVisible();
+    expect(within(overview).getAllByText("2.250,00 €").length).toBeGreaterThan(0);
+    expect(within(overview).getAllByText("875,00 €").length).toBeGreaterThan(0);
     const panel = await screen.findByRole("region", { name: "Anlage V" });
     expect(within(panel).getByText("2.250,00 €")).toBeVisible();
     expect(within(panel).getByRole("table", { name: "Abgleich mit der Jahresübersicht" })).toHaveTextContent("875,00 €0,00 €875,00 €0,00 €");
@@ -159,14 +159,14 @@ describe("Objekt-Jahresübersicht", () => {
     await user.click(screen.getByRole("button", { name: "Übersicht anzeigen" }));
     const income = await screen.findByRole("table", { name: "Einnahmen" });
     expect(within(income).getByText("Kaltmiete")).toBeVisible();
-    for (const amount of ["700,00 EUR", "150,00 EUR", "-50,00 EUR"]) expect(within(income).getByText(amount)).toBeVisible();
+    for (const amount of ["700,00 €", "150,00 €", "-50,00 €"]) expect(within(income).getByText(amount)).toBeVisible();
     const expenses = screen.getByRole("table", { name: "Ausgaben" });
     expect(within(expenses).getByText("Wasser")).toBeVisible();
-    expect(within(expenses).getByText("100,00 EUR")).toBeVisible();
-    expect(within(expenses).getByText("25,00 EUR")).toBeVisible();
+    expect(within(expenses).getByText("100,00 €")).toBeVisible();
+    expect(within(expenses).getByText("25,00 €")).toBeVisible();
     expect(within(expenses).getByText("Teilweise umlagefaehig")).toBeVisible();
     expect(screen.queryByText("secret-category-id")).toBeNull();
-    for (const amount of ["800,00 EUR", "125,00 EUR", "675,00 EUR"]) expect(screen.getByText(amount)).toBeVisible();
+    for (const amount of ["800,00 €", "125,00 €", "675,00 €"]) expect(screen.getByText(amount)).toBeVisible();
     expect(screen.getByText(/Wertstellungsdatum/)).toBeVisible();
     expect(screen.getByText(/Rechnungsdatum/)).toBeVisible();
     expect(screen.getByText(report.footnote)).toBeVisible();
@@ -185,9 +185,9 @@ describe("Objekt-Jahresübersicht", () => {
   it("preserves large amounts, signed cents and server totals without client arithmetic", async () => {
     vi.mocked(endpoints.getPropertyYearReport).mockResolvedValue({ ...report, income: [{ payment_type: "KAUTION", amount: "123456789012345678901234.91" }], expenses: [], income_total: "123456789012345678901234.91", expense_total: "0.01", balance: "-0.09" });
     render(<ReportsPage />); await load();
-    expect(screen.getAllByText("123.456.789.012.345.678.901.234,91 EUR")).toHaveLength(2);
-    expect(screen.getByText("-0,09 EUR")).toBeVisible();
-    expect(screen.getByText("0,01 EUR")).toBeVisible();
+    expect(screen.getAllByText("123.456.789.012.345.678.901.234,91 €")).toHaveLength(2);
+    expect(screen.getByText("-0,09 €")).toBeVisible();
+    expect(screen.getByText("0,01 €")).toBeVisible();
   });
   it.each(["", "0", "10000", "2026.5", "-1"])("rejects invalid year %s without a request", async year => {
     render(<ReportsPage />); const user = await choose();
@@ -271,9 +271,9 @@ describe("Objekt-Jahresübersicht", () => {
     const old = deferred<PropertyYearReport>(); vi.mocked(endpoints.getPropertyYearReport).mockReturnValueOnce(old.promise).mockResolvedValueOnce({ ...report, year: 2027, balance: "123.45" });
     render(<ReportsPage />); const user = await choose(); await user.click(screen.getByRole("button", { name: "Übersicht anzeigen" }));
     fireEvent.change(screen.getByLabelText("Jahr *"), { target: { value: "2027" } });
-    await user.click(screen.getByRole("button", { name: "Übersicht anzeigen" })); await screen.findByText("123,45 EUR");
+    await user.click(screen.getByRole("button", { name: "Übersicht anzeigen" })); await screen.findByText("123,45 €");
     await act(async () => { if (outcome === "resolve") old.resolve(report); else old.reject(new Error("Veralteter Fehler")); });
-    expect(screen.getByText("123,45 EUR")).toBeVisible(); expect(screen.queryByRole("alert")).toBeNull();
+    expect(screen.getByText("123,45 €")).toBeVisible(); expect(screen.queryByRole("alert")).toBeNull();
   });
   it("preserves an explicit READ circle through failed report retry and uses it for CSV", async () => {
     vi.mocked(endpoints.getPropertyYearReport).mockRejectedValueOnce(new ApiError(403, "Kreiszugriff verweigert"));

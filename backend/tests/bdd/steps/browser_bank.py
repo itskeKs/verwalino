@@ -327,7 +327,7 @@ async def sparkasse_anna_receipt(browser_world):
     row = anna_april_receipt(browser_world)
     await expect(row).to_have_count(1)
     await expect(row.get_by_role("cell").nth(0)).to_have_text("07.04.2026")
-    for value in ("Anna Beispiel", "DE89370400440532013000", "800,00 €"):
+    for value in ("Anna Beispiel", "DE89 3704 0044 0532 0130 00", "800,00 €"):
         await expect(row.get_by_role("cell", name=value, exact=True)).to_be_visible()
 
 
@@ -344,7 +344,7 @@ async def sparkasse_anna_suggestion(browser_world):
     await expect(targets).to_have_count(2)
     for index in range(2):
         await expect(targets.nth(index).locator("option:checked")).to_have_text(
-            "Anna Beispiel · Einheit Wohnung 1 · ab 2026-01-01 (laufend)"
+            "Anna Beispiel · Einheit Wohnung 1 · ab 01.01.2026 (laufend)"
         )
     await button(dialog, "Abbrechen").click()
 
@@ -381,7 +381,7 @@ async def february_partial(browser_world):
     await ledger(browser_world, start="2026-02-01", end="2026-02-28")
     await ledger_row(browser_world, "2026/02", "Kaltmiete", ["700.00", "500.00", "200.00"])
     await ledger_row(browser_world, "2026/02", "Betriebskosten-Vorauszahlung", ["150.00", "100.00", "50.00"])
-    await browser_world.row("Saldo", "250.00 EUR")
+    await browser_world.row("Saldo", "250,00 €")
 
 
 @given("a 2250 EUR receipt imported into a deposit account for an existing tenancy")

@@ -4,9 +4,8 @@ import { useEffect, useId, useState } from 'react';
 import { addReserveOverride, deleteReserveContribution, reduceReserveContribution, getReserveLedger, listCostEntries, listPayments, listRegisterEntries } from '../api/endpoints';
 import type { CostEntry, Payment, RegisterEntry, ReserveComponent, ReserveLedger, ReserveOverride } from '../api/types';
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from './ui/dialog';
-import { formatEuro as euro } from '../lib/utils';
+import { centsFromDecimal, formatDate, formatMoney } from '../lib/format';
 
-const day = (value: string) => value.split('-').reverse().join('.');
 const reasonPrivacyHint = 'Bitte keine personenbezogenen Daten eintragen.';
 const labels: Record<string, string> = { PLANNED: 'Geplant (Soll)', CONTRIBUTION: 'Gebuchte Zuführung', WITHDRAWAL: 'Finanzierte Entnahme',
   OVERRIDE: 'Begründete Korrektur', OPENING: 'Anfangsbestand', ADJUSTMENT: 'Sonstige Korrektur', FUNDING: 'Finanzierte Entnahme verknüpfen',
@@ -135,18 +134,18 @@ export function ReserveLedgerPanel({ runId, propertyId, status, onChanged, onOpe
           ['Sonstige Korrekturen', ledger.overrides_total],
           ...(ledger.late_cash_total && ledger.late_cash_total !== '0.00' ? [[labels.LATE_CASH, ledger.late_cash_total]] : []),
           ['Endbestand', ledger.closing_balance]] as const).map(([label, value]) =>
-          <div key={label}><dt>{label}</dt><dd style={{ margin: 0, fontFamily: 'var(--mono)' }}>{value === null ? 'Historisch nicht erfasst' : euro(value)}</dd></div>)}
+          <div key={label}><dt>{label}</dt><dd style={{ margin: 0, fontFamily: 'var(--mono)' }}>{value === null ? 'Historisch nicht erfasst' : formatMoney(centsFromDecimal(value))}</dd></div>)}
       </dl>
       <div>
         <table className="data-table reserve-ledger-table"><thead><tr><th>Datum</th><th>Art / Beleg</th><th>Betrag</th></tr></thead>
           <tbody>{ledger.entries.map((entry, index) => <tr key={`${entry.id ?? entry.kind}-${entry.date}-${index}`}>
-            <td style={{ whiteSpace: 'nowrap' }}>{day(entry.date)}</td>
+            <td style={{ whiteSpace: 'nowrap' }}>{formatDate(entry.date)}</td>
             <td style={{ overflowWrap: 'anywhere' }}>{labels[entry.kind] ?? entry.kind}{entry.component && ` · ${(entry.kind === 'OVERRIDE' ? componentLabels : labels)[entry.component] ?? entry.component}`}
               {entry.reverses_entry_id && <div>{cents(entry.amount) > 0n ? 'Wiederherstellung einer Zuführungskorrektur' : 'Verringerung einer Zuführungskorrektur'}</div>}
-              {entry.current_amount !== undefined && <div>Verbleibende Korrektur: {euro(entry.current_amount)}</div>}
+              {entry.current_amount !== undefined && <div>Verbleibende Korrektur: {formatMoney(centsFromDecimal(entry.current_amount))}</div>}
               {entry.reason && <div style={{ overflowWrap: 'anywhere' }}>{entry.reason}</div>}
               {entry.owner_name && <div>Eigentümer: {entry.owner_name}</div>}
-              {entry.payment_id && <div><a className="link" href={`/zahlungen/${entry.payment_id}`}>Zahlung: {entry.payment_note || `${day(entry.date)} · ${euro(entry.amount)}`}</a></div>}
+              {entry.payment_id && <div><a className="link" href={`/zahlungen/${entry.payment_id}`}>Zahlung: {entry.payment_note || `${formatDate(entry.date)} · ${formatMoney(centsFromDecimal(entry.amount))}`}</a></div>}
               {entry.unit_id && <div>Einheit: {entry.unit_number ?? 'Nicht verfügbar'}</div>}
               {entry.cost_entry_id && <div><a className="link" href={`/kosten/${entry.cost_entry_id}`}>Kostenbeleg: {entry.cost_document_number || 'Beleg öffnen'}</a></div>}
               {!locked && entry.id && entry.current_amount !== undefined &&
@@ -154,7 +153,7 @@ export function ReserveLedgerPanel({ runId, propertyId, status, onChanged, onOpe
                   setReduction(entry); setReducedTo(entry.current_amount!.replace('.', ',')); setReductionReason(''); setReductionError('');
                 }}>Korrektur ändern / löschen</button>}
               {entry.register_entry_id && <div><a className="link" href={`/beschluss-sammlung?property_id=${propertyId}#beschluss-${entry.register_entry_id}`}>Beschluss{entry.register_sequence_number ? ` Nr. ${entry.register_sequence_number}` : ' öffnen'}</a></div>}
-            </td><td style={{ whiteSpace: 'nowrap', fontFamily: 'var(--mono)' }}>{euro(entry.amount)}</td>
+            </td><td style={{ whiteSpace: 'nowrap', fontFamily: 'var(--mono)' }}>{formatMoney(centsFromDecimal(entry.amount))}</td>
           </tr>)}</tbody></table>
       </div>
       {ledger.entries.length === 0 && <p>Keine Einzelbewegungen in diesem Rücklagenstand.</p>}
@@ -170,7 +169,7 @@ export function ReserveLedgerPanel({ runId, propertyId, status, onChanged, onOpe
         <DialogDescription>Jede Änderung wird mit Ihrer Begründung als neue Gegenbuchung festgehalten. Sie können die Korrektur bis zum ursprünglichen Betrag und nur im Rahmen des gebuchten Hausgelds wiederherstellen. Beim Löschen wird der verbleibende Korrekturbetrag vollständig aufgehoben.</DialogDescription>
         <form noValidate onSubmit={event => { event.preventDefault(); void reduce(false); }}>
           <fieldset disabled={saving || disabled} className="form-grid" style={{ gridTemplateColumns: 'minmax(0, 1fr)' }}>
-            <p>Einheit: {reduction?.unit_number}. Verbleibende Korrektur: {euro(reduction?.current_amount ?? '0.00')}.</p>
+            <p>Einheit: {reduction?.unit_number}. Verbleibende Korrektur: {formatMoney(centsFromDecimal(reduction?.current_amount ?? '0.00'))}.</p>
             <label>Verbleibender Korrekturbetrag *<input required inputMode="decimal" value={reducedTo} onChange={event => setReducedTo(event.target.value)} /></label>
             <div>
               <label>Begründung *<textarea required maxLength={2000} aria-describedby={reductionReasonHintId} value={reductionReason} onChange={event => setReductionReason(event.target.value)} /></label>
@@ -198,24 +197,24 @@ export function ReserveLedgerPanel({ runId, propertyId, status, onChanged, onOpe
           <option value="">Bitte wählen</option>
           {ledger?.contribution_headroom?.map(item => <option key={item.unit_id} value={item.unit_id}>{item.unit_number}</option>)}
         </select></label>
-          {unit && <p>Noch zuordenbar: {euro(ledger?.contribution_headroom?.find(item => item.unit_id === unit)?.remaining ?? '0.00')}</p>}
+          {unit && <p>Noch zuordenbar: {formatMoney(centsFromDecimal(ledger?.contribution_headroom?.find(item => item.unit_id === unit)?.remaining ?? '0.00'))}</p>}
           <p>Die Zuführungskorrektur ist auf den Rücklagenanteil des gebuchten Hausgelds dieser Einheit begrenzt. Bitte begründen Sie die Zuordnung.</p>
         </>}
         {component === 'PAYMENT_ASSIGNMENT' && ledger?.entries.some(entry => entry.kind === 'UNASSIGNED') &&
           <label>Zahlung ohne Planbezug<select required value={payment} onChange={e => setPayment(e.target.value)}>
             <option value="">Bitte wählen</option>
             {ledger.entries.filter(entry => entry.kind === 'UNASSIGNED').map(entry =>
-              <option key={entry.payment_id} value={entry.payment_id}>{day(entry.date)} · {euro(entry.amount)} · {entry.owner_name || entry.payment_note || 'Ohne Eigentümerzuordnung'}</option>)}
+              <option key={entry.payment_id} value={entry.payment_id}>{formatDate(entry.date)} · {formatMoney(centsFromDecimal(entry.amount))} · {entry.owner_name || entry.payment_note || 'Ohne Eigentümerzuordnung'}</option>)}
           </select></label>}
         {component === 'FUNDING' ? sources ? <>
-          <label>Gebuchte Auszahlung *<select aria-label="Gebuchte Auszahlung *" required value={payment} onChange={e => setPayment(e.target.value)}><option value="">Bitte wählen</option>{sources.payments.map(p => <option key={p.id} value={p.id}>{day(p.value_date)} · {euro(p.amount)}{p.note ? ` · ${p.note}` : ''}</option>)}</select></label>
-          <label>Bestätigter Kostenbeleg *<select aria-label="Bestätigter Kostenbeleg *" required value={cost} onChange={e => setCost(e.target.value)}><option value="">Bitte wählen</option>{reserveCostOptions(sources.costs, cost).map(c => <option key={c.id} value={c.id}>{c.document_number || day(c.invoice_date)} · {euro(c.gross_amount)}</option>)}</select></label>
+          <label>Gebuchte Auszahlung *<select aria-label="Gebuchte Auszahlung *" required value={payment} onChange={e => setPayment(e.target.value)}><option value="">Bitte wählen</option>{sources.payments.map(p => <option key={p.id} value={p.id}>{formatDate(p.value_date)} · {formatMoney(centsFromDecimal(p.amount))}{p.note ? ` · ${p.note}` : ''}</option>)}</select></label>
+          <label>Bestätigter Kostenbeleg *<select aria-label="Bestätigter Kostenbeleg *" required value={cost} onChange={e => setCost(e.target.value)}><option value="">Bitte wählen</option>{reserveCostOptions(sources.costs, cost).map(c => <option key={c.id} value={c.id}>{c.document_number || formatDate(c.invoice_date)} · {formatMoney(centsFromDecimal(c.gross_amount))}</option>)}</select></label>
           <label>Beschluss-Sammlung *<select aria-label="Beschluss-Sammlung *" required value={register} onChange={e => setRegister(e.target.value)}><option value="">Bitte wählen</option>{reserveResolutionOptions(sources.register, register).map(r => <option key={r.id} value={r.id}>Nr. {r.sequence_number} · {r.wording.slice(0, 120)}</option>)}</select></label>
         </> : <p>Finanzierungsbelege werden geladen…</p> : <label>{component === 'OPENING' ? 'Korrigierter Anfangsbestand (gesamt) *' : 'Betrag *'}<input required inputMode="decimal" value={amount} onChange={e => setAmount(e.target.value)} /></label>}
         {(component === 'WITHDRAWAL' || component === 'ADJUSTMENT') &&
           <ReserveEvidenceFields propertyId={propertyId} cost={cost} register={register} onChange={(cost, register) => { setCost(cost); setRegister(register); }} />}
-        {component === 'OPENING' && <><p>Anfangsbestand korrigieren: Dies ist nur im ersten Rücklagenjahr vor der Finalisierung zulässig. Aktueller Anfangsbestand: {ledger && euro(ledger.opening_balance)}.</p>
-          <p aria-live="polite">Differenz: {openingDifference === null ? 'Bitte geben Sie einen gültigen Gesamtbestand ein.' : `${cents(openingDifference) > 0n ? '+' : ''}${euro(openingDifference)}`}</p></>}
+        {component === 'OPENING' && <><p>Anfangsbestand korrigieren: Dies ist nur im ersten Rücklagenjahr vor der Finalisierung zulässig. Aktueller Anfangsbestand: {ledger && formatMoney(centsFromDecimal(ledger.opening_balance))}.</p>
+          <p aria-live="polite">Differenz: {openingDifference === null ? 'Bitte geben Sie einen gültigen Gesamtbestand ein.' : `${cents(openingDifference) > 0n ? '+' : ''}${formatMoney(centsFromDecimal(openingDifference))}`}</p></>}
         <div>
           <label>Begründung *<textarea required maxLength={2000} aria-describedby={reasonHintId} value={reason} onChange={e => setReason(e.target.value)} /></label>
           <p id={reasonHintId} className="text-sm text-muted-foreground">{reasonPrivacyHint}</p>

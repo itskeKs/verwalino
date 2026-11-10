@@ -74,11 +74,11 @@ async def _browser_notice(browser_world, period_start, period_end, cutoff):
 
 
 async def interest_amounts(browser):
-    await browser.row("Verzugszinsen", "3.64 EUR")
-    await browser.row("Mahngebühr", "3.00 EUR")
-    await browser.row("Gesamtsumme", "106.64 EUR")
+    await browser.row("Verzugszinsen", "3,64 €")
+    await browser.row("Mahngebühr", "3,00 €")
+    await browser.row("Gesamtsumme", "106,64 €")
     await expect(browser.page.get_by_role("heading", name="Eingefrorene Zinsberechnung", exact=True)).to_be_visible()
-    await expect(browser.page.get_by_text("Stichtag:", exact=False).filter(has_text="2026-10-31")).to_be_visible()
+    await expect(browser.page.get_by_text("Stichtag:", exact=False).filter(has_text="31.10.2026")).to_be_visible()
 
 
 @then("the reloaded notice shows 3.64 EUR interest and 106.64 EUR in total")
@@ -116,8 +116,8 @@ async def readable_issued_amounts(browser_world):
         if width == 360:
             await expect(page.locator("aside")).to_have_count(0)
         for title, amounts in (
-            ("Eingefrorene Zinsberechnung", ["1234.56 EUR", "11.66 EUR"]),
-            ("Rueckstandsaufstellung", ["1234.56 EUR"]),
+            ("Eingefrorene Zinsberechnung", ["1.234,56 €", "11,66 €"]),
+            ("Rueckstandsaufstellung", ["1.234,56 €"]),
         ):
             card = page.locator(".card").filter(has=page.get_by_role("heading", name=title, exact=True))
             table = card.get_by_role("table").first
@@ -140,7 +140,7 @@ async def readable_issued_amounts(browser_world):
 @browser_step
 async def readable_issue_time(browser_world):
     row = browser_world.page.get_by_role("row").filter(has=browser_world.page.get_by_role("cell", name="Ausgestellt am", exact=True))
-    await expect(row.get_by_role("cell").nth(1)).to_have_text(re.compile(r"^\d{2}\.\d{2}\.\d{4}, \d{2}:\d{2}$"))
+    await expect(row.get_by_role("cell").nth(1)).to_have_text(re.compile(r"^\d{2}\.\d{2}\.\d{4}, \d{2}:\d{2} Uhr$"))
     value = await row.get_by_role("cell").nth(1).inner_text()
     await expect(browser_world.page.get_by_text(f"Ausgestellt am: {value}", exact=True)).to_be_visible()
 
@@ -198,7 +198,7 @@ async def shortcut(browser_world):
     await field(page, "Zeitraum bis *").fill("2026-12-31")
     await browser_world.scope()
     await button(page, "Offene Posten laden").click()
-    await expect(page.get_by_text("10100.00 EUR offen", exact=True)).to_be_visible()
+    await expect(page.get_by_text("10.100,00 € offen", exact=True)).to_be_visible()
     await page.get_by_role("link", name="Mahnung erstellen", exact=True).click()
     await expect(page.get_by_role("heading", name="Neue Mahnung anlegen", exact=True)).to_be_visible()
 
@@ -233,7 +233,7 @@ async def create_scoped_notice(browser_world):
 @then("the notice shows only the first scope's outstanding rent")
 @browser_step
 async def scoped_amount(browser_world):
-    await browser_world.row("Hauptforderung (Rueckstand)", "10100.00 EUR")
+    await browser_world.row("Hauptforderung (Rueckstand)", "10.100,00 €")
 
 
 @when('the manager confirms "Entwurf verwerfen"')
@@ -289,8 +289,8 @@ async def preview_candidates(browser_world):
     for index, person in enumerate(browser_world.world.data["people"]):
         row = batch.get_by_role("row").filter(has_text=person.name)
         await expect(row.get_by_role("checkbox")).not_to_be_checked()
-        await expect(row.get_by_role("cell").nth(2)).to_have_text("850.00 EUR")
-        await expect(row).to_contain_text("6.23 EUR")
+        await expect(row.get_by_role("cell").nth(2)).to_have_text("850,00 €")
+        await expect(row).to_contain_text("6,23 €")
     await expect(button(batch, "Auswahl bestätigen")).to_be_disabled()
 
 
@@ -315,7 +315,7 @@ async def confirm_batch(browser):
     await button(batch, "Alle geeigneten Rückstände auswählen").click()
     await button(batch, "Auswahl bestätigen").click()
     dialog = browser.page.get_by_role("dialog", name="Mahnentwürfe anlegen", exact=True)
-    await expect(dialog).to_contain_text("3 Mahnentwürfe: Hauptforderung 2550.00 EUR; Gesamtsumme 2568.69 EUR.")
+    await expect(dialog).to_contain_text("3 Mahnentwürfe: Hauptforderung 2.550,00 €; Gesamtsumme 2.568,69 €.")
     return dialog
 
 
@@ -369,8 +369,8 @@ async def batch_history(browser_world):
         await expect(row.get_by_text("Entwurf", exact=True)).to_be_visible()
         await row.get_by_role("link", name="Details", exact=True).click()
         await browser_world.row("Status", "Entwurf")
-        await browser_world.row("Hauptforderung (Rueckstand)", "850.00 EUR")
-        await browser_world.row("Verzugszinsen", "6.23 EUR")
+        await browser_world.row("Hauptforderung (Rueckstand)", "850,00 €")
+        await browser_world.row("Verzugszinsen", "6,23 €")
 
 
 @given(parsers.parse("April rent of 700 EUR with {paid:d} EUR paid on 7 April 2026"))
@@ -554,7 +554,7 @@ async def informational_ledger(browser_world):
     notice_row = page.get_by_role("row").filter(has_text="Stufe 2")
     await expect(notice_row).to_contain_text("3,64")
     await expect(notice_row).to_contain_text("3,00")
-    await browser_world.row("Saldo", "100.00 EUR")
+    await browser_world.row("Saldo", "100,00 €")
 
 
 @when("the manager opens that lease account without an accounting scope")

@@ -52,7 +52,7 @@ it("shows persisted 1800 deposit paid in two installments, without using lease d
   show();
   const row = (await screen.findByText("Ada Mieter")).closest("tr")!;
   expect(within(row).getAllByRole("cell").map(cell => cell.textContent)).toEqual([
-    "Ada MieterMietvertrag ab 2025-01-01 (laufend)", "Sonnenhof", "Wohnung 1", "1800.00 EUR", "1800.00 EUR", "0.00 EUR", "1800.00 EUR",
+    "Ada MieterMietvertrag ab 01.01.2025 (laufend)", "Sonnenhof", "Wohnung 1", "1.800,00 €", "1.800,00 €", "0,00 €", "1.800,00 €",
   ]);
   expect(screen.getAllByRole("columnheader").map(cell => cell.textContent)).toEqual(["Mieter", "Objekt", "Einheit", "Soll", "Gezahlt", "Zurück", "Bestand"]);
   expect(screen.queryByText(/9999/)).toBeNull();
@@ -62,14 +62,14 @@ it("refreshes after a 300 refund without recomputing paid or expected", async ()
   show(); await screen.findByText("Ada Mieter");
   rows = [{ ...account, refunded_amount: "300.00", held_amount: "1500.00" }];
   fireEvent.click(screen.getByRole("button", { name: "Aktualisieren" }));
-  expect(await screen.findByText("1500.00 EUR")).toBeVisible();
-  expect(screen.getByText("300.00 EUR")).toBeVisible();
-  expect(screen.getAllByText("1800.00 EUR")).toHaveLength(2);
+  expect(await screen.findByText("1.500,00 €")).toBeVisible();
+  expect(screen.getByText("300,00 €")).toBeVisible();
+  expect(screen.getAllByText("1.800,00 €")).toHaveLength(2);
 });
 it("preserves money strings beyond float precision without arithmetic", async () => {
   rows = [{ ...account, expected_amount: "9007199254740993.01", held_amount: "0.03" }]; show();
-  expect(await screen.findByText("9007199254740993.01 EUR")).toBeVisible();
-  expect(screen.getByText("0.03 EUR")).toBeVisible();
+  expect(await screen.findByText("9.007.199.254.740.993,01 €")).toBeVisible();
+  expect(screen.getByText("0,03 €")).toBeVisible();
 });
 it.each(["OWNER_ADMIN", "CLERK"])("links %s to the existing payment page only", async role => {
   auth.role = role; show(); await screen.findByText("Ada Mieter");
@@ -119,8 +119,8 @@ it("selects read scopes of any type and discards obsolete responses", async () =
 });
 it("distinguishes multiple contracts for the same tenant and unit by lease period", async () => {
   rows = [account, { ...account, lease_agreement_id: "lease-2" }]; show();
-  expect(await screen.findByText("Mietvertrag ab 2025-01-01 (laufend)")).toBeVisible();
-  expect(screen.getByText("Mietvertrag ab 2026-01-01 (laufend)")).toBeVisible();
+  expect(await screen.findByText("Mietvertrag ab 01.01.2025 (laufend)")).toBeVisible();
+  expect(screen.getByText("Mietvertrag ab 01.01.2026 (laufend)")).toBeVisible();
   expect(screen.getAllByText("Ada Mieter")).toHaveLength(2);
 });
 it("clears previous amounts when refresh fails instead of reporting stale balances", async () => {
@@ -129,7 +129,7 @@ it("clears previous amounts when refresh fails instead of reporting stale balanc
   fireEvent.click(screen.getByRole("button", { name: "Aktualisieren" }));
   expect(screen.queryByRole("table")).toBeNull();
   expect(await screen.findByRole("alert")).toHaveTextContent("Kautionskontobindung unvollständig");
-  expect(screen.queryByText("1800.00 EUR")).toBeNull();
+  expect(screen.queryByText("1.800,00 €")).toBeNull();
   expect(screen.queryByText("Keine Kautionen vorhanden.")).toBeNull();
 });
 it("does not replace a lease lookup error with a misleading report", async () => {

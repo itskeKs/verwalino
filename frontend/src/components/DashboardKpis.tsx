@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { ApiError } from "../api/client";
+import { centsFromDecimal, formatDate, formatMoney } from "../lib/format";
 import { getDashboardKpis, type DashboardKpiResult } from "../api/dashboardKpis";
 import { AccountingScopeSelector } from "./AccountingScopeSelector";
 import { Card, CardContent, CardHeader, CardTitle } from "./ui/card";
@@ -8,18 +9,6 @@ interface Props {
   properties: { id: string; name: string }[] | null;
   requiresScope: boolean | null;
   sessionKey: string;
-}
-
-const decimal = /^(-?)(\d+)\.(\d{2})$/;
-
-// Keep cents exact even when the integer part exceeds JavaScript's safe integer range.
-function euros(value: string): string {
-  const [, sign, integer, cents] = decimal.exec(value)!;
-  return `${sign}${integer.replace(/\B(?=(\d{3})+(?!\d))/g, ".")},${cents} €`;
-}
-
-function dateLabel(iso: string): string {
-  return iso.split("-").reverse().join(".");
 }
 
 export function DashboardKpis(props: Props) {
@@ -71,7 +60,7 @@ function KpiSelection({ properties, requiresScope }: Props) {
       }, abort.signal);
       if (request !== generation.current || abort.signal.aborted) return;
       if (data.payment_basis !== "assigned_rent_period" ||
-        ![data.expected_rent, data.received_rent, data.arrears, data.unassigned_rent_amount].every(value => typeof value === "string" && decimal.test(value))) {
+        ![data.expected_rent, data.received_rent, data.arrears, data.unassigned_rent_amount].every(value => typeof value === "string" && /^(-?)(\d+)\.(\d{2})$/.test(value))) {
         throw new Error("Mietkennzahlen haben eine ungültige Zahlungsbasis oder ungültige Geldbeträge.");
       }
       setResult(data);
@@ -116,18 +105,18 @@ function KpiSelection({ properties, requiresScope }: Props) {
       {loading && <p role="status">Mietkennzahlen werden geladen…</p>}
       {error && <p role="alert">Mietkennzahlen nicht verfügbar: {error}</p>}
       {ready && result && <>
-        <p>{result.property_name} · Mietzeitraum {dateLabel(result.period_start)} – {dateLabel(result.period_end)}</p>
+        <p>{result.property_name} · Mietzeitraum {formatDate(result.period_start)} – {formatDate(result.period_end)}</p>
         <div className="grid gap-4 sm:grid-cols-3">
           {[["Soll-Miete", result.expected_rent], ["Ist-Miete", result.received_rent], ["Mietrückstände", result.arrears]].map(([label, amount]) =>
-            <div role="group" aria-label={label} key={label} className="rounded-lg border border-border p-4"><h3>{label}</h3><p className="text-2xl font-semibold tabular-nums">{euros(amount)}</p></div>)}
+            <div role="group" aria-label={label} key={label} className="rounded-lg border border-border p-4"><h3>{label}</h3><p className="text-2xl font-semibold tabular-nums">{formatMoney(centsFromDecimal(amount))}</p></div>)}
         </div>
         <p>Kaltmiete + Nebenkosten nach dem zugeordneten Mietmonat; nicht nach Wertstellung oder Buchungsdatum.</p>
         <p>Mietrückstände: positive Netto-Salden je Mietkonto seit Mietbeginn bis zum ausgewählten Monatsende, einschließlich beendeter Mietverhältnisse; keine Verrechnung von Guthaben zwischen Mietkonten.</p>
         <p>Anzahl positive Mietkonten: {result.arrears_count}</p>
-        <p>Einheiten: {result.unit_count} · Belegt: {result.occupied_units} · Leer: {result.vacant_units} · Belegungsstichtag: {dateLabel(result.occupancy_date)}</p>
+        <p>Einheiten: {result.unit_count} · Belegt: {result.occupied_units} · Leer: {result.vacant_units} · Belegungsstichtag: {formatDate(result.occupancy_date)}</p>
         <p>Leerstand: aktueller Einheitenbestand, geprüft zum ausgewählten Monatsende.</p>
         <p>{result.footnote}</p>
-        {result.unassigned_rent_count > 0 && <p role="alert">{result.unassigned_rent_count} Mietzahlungen über {euros(result.unassigned_rent_amount)} sind keinem Mietmonat zugeordnet und nicht in der Ist-Miete enthalten. Bitte die Zuordnung prüfen.</p>}
+        {result.unassigned_rent_count > 0 && <p role="alert">{result.unassigned_rent_count} Mietzahlungen über {formatMoney(centsFromDecimal(result.unassigned_rent_amount))} sind keinem Mietmonat zugeordnet und nicht in der Ist-Miete enthalten. Bitte die Zuordnung prüfen.</p>}
       </>}
     </CardContent>
   </Card>;

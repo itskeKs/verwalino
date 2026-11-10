@@ -3,6 +3,7 @@ import { Link, useLocation, useSearchParams } from "react-router-dom";
 import { createSpecialLevy, listSpecialLevies, listProperties, listUnits, listOwnerProfiles, listPersons, listMeetings, listAgendaItems, listResolutions, listRegisterEntries, linkSpecialLevyResolution } from "../api/endpoints";
 import type { SpecialLevy, Property, Unit, OwnerProfile, Person } from "../api/types";
 import { useAuth } from "../auth/useAuth";
+import { centsFromDecimal, formatDate, formatMoney } from "../lib/format";
 import { AccountingScopeSelector } from "../components/AccountingScopeSelector";
 
 function moneyInput(value: string): string | null {
@@ -19,7 +20,6 @@ function validDate(value: string): boolean {
 interface ResolutionChoice {
   id: string; label: string; date: string; top: number | null; href: string; adopted: boolean;
 }
-const dateLabel = (value: string) => value.split("-").reverse().join(".");
 const errorText = (error: unknown) => error instanceof Error ? error.message : "Anfrage fehlgeschlagen. Bitte erneut versuchen.";
 const missingResolutionMessage = "Eine Sonderumlage braucht einen Beschluss.";
 
@@ -95,7 +95,7 @@ export default function SpecialLeviesPage() {
           const date = entry?.resolution_date ?? meeting.meeting_date;
           const top = items.find(item => item.id === resolution.agenda_item_id)?.item_number ?? null;
           return { id: resolution.id, date, top, adopted: resolution.result === "ANGENOMMEN",
-            label: `${dateLabel(date)} · ${top === null ? "ohne TOP" : `TOP ${top}`} · ${resolution.wording}`,
+            label: `${formatDate(date)} · ${top === null ? "ohne TOP" : `TOP ${top}`} · ${resolution.wording}`,
             href: entry ? `/beschluss-sammlung?property_id=${encodeURIComponent(propertyId)}#beschluss-${entry.id}` : `/versammlungen/${meeting.id}` };
         });
       }));
@@ -172,7 +172,7 @@ export default function SpecialLeviesPage() {
   }
   function resolutionLink(row: SpecialLevy) {
     const reference = resolutions.find(item => item.id === row.resolution_id);
-    if (row.resolution_id) return <p>Beschluss: {reference ? <Link to={reference.href}>{dateLabel(reference.date)} · {reference.top === null ? "ohne TOP" : `TOP ${reference.top}`}</Link> : resolutionsLoading ? "Lade Beschluss…" : "Beschluss nicht verfügbar."}</p>;
+    if (row.resolution_id) return <p>Beschluss: {reference ? <Link to={reference.href}>{formatDate(reference.date)} · {reference.top === null ? "ohne TOP" : `TOP ${reference.top}`}</Link> : resolutionsLoading ? "Lade Beschluss…" : "Beschluss nicht verfügbar."}</p>;
     return <><p>ohne Beschlussbezug</p>
       {canWrite && prepareScope === row.accounting_scope_id && prepareValid && <div>
         <label>Beschluss einmalig zuordnen<select className="w-full min-w-0" value={linkChoices[row.id] ?? ""} disabled={pending || !!resolutionError}
@@ -224,10 +224,10 @@ export default function SpecialLeviesPage() {
     {readScope && !readValid && <p role="alert">Bitte einen verfügbaren Abrechnungskreis wählen.</p>}
     {readScope && readValid && !loading && !listError && rows.length === 0 && <p>Keine Sonderumlagen vorhanden.</p>}
     {readScope && readValid && !listError && rows.map(row => <section className="card mb-4" key={row.id} id={`sonderumlage-${row.id}`}>
-      <h2>Sonderumlage · {row.amount} EUR</h2><p>Fällig am {row.due_date}</p>
+      <h2>Sonderumlage · {formatMoney(centsFromDecimal(row.amount))}</h2><p>Fällig am {formatDate(row.due_date)}</p>
       {resolutionLink(row)}
       <div className="overflow-x-auto"><table className="data-table"><thead><tr><th>Eigentümer</th><th>Einheit</th><th>MEA</th><th>Anteil</th></tr></thead>
-        <tbody>{row.allocations.map((item, index) => <tr key={`${item.owner_profile_id}-${item.unit_id}-${index}`}><td>{ownerLabel(item.owner_profile_id)}</td><td>{unitLabel(item.unit_id)}</td><td>{item.mea}</td><td>{item.amount} EUR</td></tr>)}</tbody>
+        <tbody>{row.allocations.map((item, index) => <tr key={`${item.owner_profile_id}-${item.unit_id}-${index}`}><td>{ownerLabel(item.owner_profile_id)}</td><td>{unitLabel(item.unit_id)}</td><td>{item.mea}</td><td>{formatMoney(centsFromDecimal(item.amount))}</td></tr>)}</tbody>
       </table></div>
     </section>)}
   </div>;

@@ -1,3 +1,4 @@
+import { formatDateTime } from "../../lib/format";
 import { useEffect, useId, useRef, useState } from 'react';
 import { ApiError } from '../../api/client';
 import type { LogicalDocument } from '../../api/intake';
@@ -87,7 +88,7 @@ export function VisualExtractPanel({ documents, partitionId, memberIds, canRead,
         <button className="btn" disabled={blocked || loading} onClick={() => { setCursor(null); setError(null); setGeneration(value => value + 1); }}>Auszüge neu laden</button></div>
       {loading ? <p role="status">Lade Auszüge…</p> : items.length === 0 || accessDenied ? <p>Keine Auszüge auf dieser Ergebnisseite.</p> : <ul className="space-y-2">{items.map(item => <li key={item.id} className="break-words">
         <a className="underline" href={visualExtractApi.content(item.id)} target="_blank" rel="noreferrer">Seiten {item.page_start}–{item.page_end} öffnen</a>
-        {' · '}{new Date(item.created_at).toLocaleString('de-DE')} · {item.reason}
+        {' · '}{formatDateTime(item.created_at)} · {item.reason}
         {item.partition_revision_id !== partitionId && ' · frühere Aufteilung'}
         <button className="btn ml-2" disabled={blocked || !!pending} onClick={() => setDisclosure(item)}>Freigabe dieses Auszugs prüfen</button>
       </li>)}</ul>}

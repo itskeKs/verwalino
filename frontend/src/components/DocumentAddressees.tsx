@@ -1,5 +1,5 @@
 import type { DocumentAddressee } from "../api/types";
-const germanDate = (value: string) => value.split("-").reverse().join(".");
+import { formatDate } from "../lib/format";
 
 export function DocumentAddressees({ addressees }: { addressees?: DocumentAddressee[] }) {
   if (!addressees?.length) return null;
@@ -7,7 +7,7 @@ export function DocumentAddressees({ addressees }: { addressees?: DocumentAddres
     <h2>Dokumentempfänger</h2>
     {addressees.map(a => <p key={`${a.unit_id}-${a.owner_profile_id}`}>
       <strong>Einheit {a.unit_number}: {a.owner_name}</strong><br />
-      Eigentümer am {germanDate(a.key_date)}
+      Eigentümer am {formatDate(a.key_date)}
     </p>)}
   </section>;
 }

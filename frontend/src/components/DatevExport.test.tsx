@@ -64,7 +64,8 @@ describe("DATEV export", () => {
     expect(screen.getByRole("button", { name: "DATEV-Vorschau erstellen" })).toBeDisabled();
     await user.click(screen.getByRole("checkbox"));
     await user.click(screen.getByRole("button", { name: "DATEV-Vorschau erstellen" }));
-    expect(await screen.findByRole("table", { name: "DATEV-Vorschau" })).toHaveTextContent("12345678901234567890.91");
+    expect(await screen.findByRole("table", { name: "DATEV-Vorschau" })).toHaveTextContent("12.345.678.901.234.567.890,91 €");
+    expect(screen.getByRole("cell", { name: "02.01.2026" })).toBeVisible();
     expect(datev.previewDatev).toHaveBeenCalledWith({ property_id: "p1", accounting_scope_id: null, period_start: "2026-01-01", period_end: "2026-12-31", fiscal_year_start: "2026-01-01", chart: "SKR04", advisor_number: "00123", client_number: "00456", account_length: 4, bank_accounts: { b1: "1234" }, payment_accounts: { KALTMIETE: "5678" }, category_accounts: { c1: { account: "2345", counter_account: "6789" } }, gross_accounts_reviewed: true });
   });
   it("clears mappings and review when changing either chart without inserting real accounts", async () => {

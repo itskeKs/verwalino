@@ -566,8 +566,8 @@ both advance fields accept German amounts such as `1.080,00` and API decimals su
 or `abc`) stays in the field and prevents submission, with the linked German error
 “Bitte geben Sie die Betriebskosten-Vorauszahlung als gültigen EUR-Betrag ein.” or
 “Bitte geben Sie die Heizkosten-Vorauszahlung als gültigen EUR-Betrag ein.”
-The detail page retains its existing decimal-string `EUR` amounts; the advance
-proposal retains its existing German decimal-string `EUR` format. The advance proposal
+The detail page and the advance proposal render their amounts through `formatMoney`
+(see "Number, money, date and size formats"). The advance proposal
 uses its own payload, including the lease's advances valid on the acceptance date, and shows the previous amounts.
 
 Synthetic records at 1280 and 360 px show the €990 monthly charge and €20
@@ -733,9 +733,9 @@ use the existing horizontal scroll containers. Desktop keeps the complete tables
 New rent and operating-advance interest rows show their frozen `Zinsbeginn` as
 `TT.MM.JJJJ` beneath the principal, visible without horizontal scrolling at
 360 px. Legacy rows without that stored date show no inferred start date.
-Both `Ausgestellt am` locations show the persisted instant as `TT.MM.JJJJ, HH:MM`
-in `Europe/Berlin`, using the existing German `toLocaleString` options pattern
-with two-digit day, month, hour and minute. The API supplies ISO with a timezone.
+Both `Ausgestellt am` locations show the persisted instant as `TT.MM.JJJJ, HH:MM Uhr`
+in `Europe/Berlin` through `formatDateTime`, with two-digit day, month, hour and
+minute. The API supplies ISO with a timezone.
 Existing frozen values and issued PDFs retain their stored contents. New rent
 and operating-advance PDFs also name the stored interest start explicitly.
 
@@ -1132,21 +1132,22 @@ Synthetic finalized report from the test database (1280 and 360 px):
 | Before | [View](docs/assets/design/asset-report-reserve/before-1280.png) | [View](docs/assets/design/asset-report-reserve/before-360.png) |
 | After | [View](docs/assets/design/asset-report-reserve/asset-report-1280.png) | [View](docs/assets/design/asset-report-reserve/asset-report-360.png) |
 
-`frontend/src/lib/utils.ts` provides `formatEuro()` for the reserve ledger and
-asset-report holdings table. Other readers still use file-local functions or
-inline expressions, with the variants below. The inconsistencies are tracked in #48.
+`frontend/src/lib/format.ts` provides the shared display helpers below; every
+displayed money, date, datetime and IBAN value renders through them.
+`frontend/src/lib/format.test.ts` tests the helpers, and
+`frontend/src/lib/callSites.test.ts` fails when a hand-rolled date, a `toLocaleDateString`
+call, an amount followed by `EUR` or a raw date or timestamp field returns to a call site.
+Inputs show and accept what the user types: they are not display call sites.
 
 | What | Contract | Implemented by |
 |---|---|---|
-| Money | `1.234,56 €`: `.` thousands, `,` decimals, always two, sign first (`-1.234,56 €`), no float arithmetic | Shared `formatEuro()` in `lib/utils.ts` for `ReserveLedgerPanel` and `AssetReportDetailPage`; file-local `euros()` in `components/DashboardKpis.tsx`, `money()` in `pages/BankTransactionsPage.tsx` |
-| Money, deviating | same grouping but suffix ` EUR`; `OpenItemsPage.tsx` uses ungrouped `toFixed(2)` plus ` EUR` (`1234.56 EUR`) | `money()` in `pages/ReportsPage.tsx`, `formatCents()` in `pages/PaymentsPage.tsx` and `pages/CostEntriesPage.tsx`, `formatProposalMoney()` in `pages/SettlementDetailPage.tsx`; ` EUR` appears 93 times in 30 files, `€` in 2. `displayCents()` in `api/allocationProposals.ts` prints `1234,56` without grouping or suffix. |
-| Date | `TT.MM.JJJJ`, e.g. `05.03.2026`, from the ISO API value | `formatDate()` in `pages/DashboardPage.tsx`, `FristenmonitorPage.tsx`, `MandatePage.tsx`; `date()` in `BankTransactionsPage.tsx`; `dateLabel()` in `DashboardKpis.tsx` |
-| Date, deviating | `toLocaleDateString("de-DE")` or `Intl.DateTimeFormat("de-DE")` prints `5.3.2026` (no zero padding) | `MandateDetailPage.tsx`, `AttachmentsPanel.tsx`; `components/knowledge/PropertyDocuments.tsx` uses `Intl.DateTimeFormat` |
-| Date and time | `new Date(x).toLocaleString("de-DE")` gives `5.3.2026, 15:03:09` (no zero padding, with seconds) | 45 `toLocaleString` calls, all `de-DE`; used for receipts and history |
+| Money | `1.234,56 €`: `.` thousands, `,` decimals, always two, sign first (`-1.234,56 €`), no float arithmetic | Shared `formatMoney(cents)` in `lib/format.ts`, fed by `centsFromDecimal()` for API decimal strings; used by every money call site |
+| Date | `TT.MM.JJJJ`, e.g. `05.03.2026`, from the ISO API value | Shared `formatDate(iso)` in `lib/format.ts` |
+| Date and time | `TT.MM.JJJJ, HH:MM Uhr`, e.g. `31.10.2026, 14:05 Uhr`, Europe/Berlin calendar, no seconds | Shared `formatDateTime(iso)` in `lib/format.ts`; `formatDate(iso)` maps timestamps to the Europe/Berlin calendar date |
 | Long date | weekday and month in words ("Freitag, 30. Oktober 2026") | `dateLabel` in `DashboardPage.tsx` |
 | Plain numbers | `Intl.NumberFormat("de-DE")` / `toLocaleString("de-DE")` (`1.234.567`) | `PropertyDetailPage.tsx`, `AttachmentsPanel.tsx`, `IntakeBatchPage.tsx` |
 | File size | `1.5 KB` / `1.0 MB` with a dot (`toFixed(1)`); mandates use whole KB (`12 KB`, `toFixed(0)`). Attachments show `1.234 Bytes` (`Intl.NumberFormat("de-DE")`); intake shows `1,5 KiB` (`toLocaleString("de-DE")`) | `formatBytes()` in `InvoiceDocumentsPage.tsx`, `formatSize()` in `MandateDetailPage.tsx`, `AttachmentsPanel.tsx`, `IntakeBatchPage.tsx` |
-| IBAN | shown as stored; SEPA confirmation input removes whitespace and upper-cases it | `normalizedIban` in `components/SepaExport.tsx`; `BankAccountsPage.tsx` prints `iban` raw. There is no IBAN display grouping in the frontend. |
+| IBAN | grouped in blocks of four (`DE75 5121 0800 1245 1261 99`); SEPA confirmation input removes whitespace and upper-cases it, so pasting grouped or ungrouped is accepted | Shared `formatIban(iban)` in `lib/format.ts` for displays; `normalizedIban` in `components/SepaExport.tsx` for the confirmation input |
 | Empty value | `—` (kit, newer pages), `-` (older tables), `–` (`BankTransactionsPage.tsx`) | `MandatePage.tsx`, `InvoiceDocumentsPage.tsx`, `BankTransactionsPage.tsx`, respectively |
 | Money input | accept `1234,56` and `1234.56`, send `1234.56` | `moneyInput`, `exactCents`, `normalizePlanAmount` (see above) |
 
@@ -1218,8 +1219,8 @@ it clears the previous result until “Abrufen” loads the selected cutoff.
 The legacy summary table keeps “Soll gesamt”, “Ist gesamt” and “Saldo”; a positive
 Saldo has no arrears suffix or warning colour. Two rows follow:
 “davon fällig” (positive: “Rückstand”, destructive token; negative: “Guthaben”,
-emerald) and “noch nicht fällig” (neutral). Signed amounts retain the page's
-existing decimal-string `EUR` notation. The detail rows keep the same amounts
+emerald) and “noch nicht fällig” (neutral). Signed amounts render through `formatMoney`
+(`-600,00 €`). The detail rows keep the same amounts
 and show the backend due classification
 below the period: “fällig” or “noch nicht fällig” for nonzero signed amounts,
 “ausgeglichen” for zero. Positive open amounts remain neutral; credits

@@ -123,6 +123,7 @@ it("keeps an old inactive assignee while clearing the due date and all parents",
   show(); await screen.findByText(task.title); await waitFor(() => expect(screen.getByRole("button", { name: "Bearbeiten" })).toBeEnabled());
   fireEvent.click(screen.getByRole("button", { name: "Bearbeiten" }));
   expect(screen.getByRole("option", { name: "Eva (bisherige Zuordnung)" })).toBeVisible();
+  expect(screen.getByRole("option", { name: "Mietvertrag ab 01.01.2025 (offen)" })).toBeInTheDocument();
   fireEvent.change(screen.getByLabelText("Fällig am"), { target: { value: "" } });
   fireEvent.change(screen.getByLabelText("Objekt"), { target: { value: "" } });
   fireEvent.click(screen.getByRole("button", { name: "Speichern" }));

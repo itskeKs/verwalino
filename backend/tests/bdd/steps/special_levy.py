@@ -175,7 +175,7 @@ async def browser_register_reference(browser_world):
     await expect(link).to_be_in_viewport()
     await capture(browser, 'register')
     await link.click()
-    await expect(browser.page.get_by_role('cell', name='720.00 EUR', exact=True)).to_be_visible()
+    await expect(browser.page.get_by_role('cell', name='720,00 €', exact=True)).to_be_visible()
 
 
 @when('Verwaltung Beta tries to create, read and link that special levy')

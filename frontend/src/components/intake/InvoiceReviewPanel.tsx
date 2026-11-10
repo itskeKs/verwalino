@@ -1,3 +1,4 @@
+import { centsFromDecimal, formatDate, formatDateTime, formatMoney } from "../../lib/format";
 import { useEffect, useRef, useState } from 'react';
 import { ContextDecisionPanel } from './ContextDecisionPanel';
 import { DuplicateComparisonPanel } from './DuplicateComparisonPanel';
@@ -88,10 +89,10 @@ export function InvoiceReviewPanel({ logicalId, proposal, extraction, ready, par
     {history && <>
       {!history.items.length && <p>Noch keine lesbare Feldprüfung.</p>}
       {history.items.map((review, index) => <details key={review.id} open={index === 0} className="min-w-0 space-y-2">
-        <summary className="cursor-pointer">Menschlicher Prüfstand · Version {review.revision_number} · {new Date(review.created_at).toLocaleString('de-DE')}</summary>
+        <summary className="cursor-pointer">Menschlicher Prüfstand · Version {review.revision_number} · {formatDateTime(review.created_at)}</summary>
         <p className="break-words">{review.seller_name} · {review.document_number} · {review.document_kind === 'credit_note' ? 'Gutschrift' : 'Rechnung'}</p>
-        <p>Brutto: {review.gross_amount} {review.currency} · Umsatzsteuer: {review.vat_amount ?? 'unbekannt'} · Satz: {review.vat_rate === null ? 'unbekannt' : review.vat_rate + ' %'}</p>
-        <p>Rechnungsdatum: {review.invoice_date} · Leistungszeitraum: {review.service_period_from} bis {review.service_period_to}</p>
+        <p>Brutto: {formatMoney(centsFromDecimal(review.gross_amount))} · Umsatzsteuer: {review.vat_amount != null ? formatMoney(centsFromDecimal(review.vat_amount)) : 'unbekannt'} · Satz: {review.vat_rate === null ? 'unbekannt' : review.vat_rate + ' %'}</p>
+        <p>Rechnungsdatum: {formatDate(review.invoice_date)} · Leistungszeitraum: {formatDate(review.service_period_from)} bis {formatDate(review.service_period_to)}</p>
         <p className="break-words">{review.reason}</p>
         {review.assignment_state === 'blocked' && <p>Der zugrunde liegende Zuordnungsvorschlag bleibt gesperrt.</p>}
         {review.assignment_proposal_id !== proposal?.id && <p>Prüfstand einer früheren Zuordnung; nicht automatisch übernommen.</p>}

@@ -1,3 +1,4 @@
+import { formatDateTime } from "../lib/format";
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { ApiError } from '../api/client';
@@ -107,7 +108,7 @@ function BatchDetail({ batchId }: { batchId: string }) {
         {(Object.keys(labels) as IntakeStatus[]).map(status => <div className="card min-w-0" key={status}><p className="text-2xl font-semibold">{batch.counts[status]}</p><p>{labels[status]}</p></div>)}
       </section>
       <p>Nach der Dateiprüfung werden die Belege vorbereitet und ausgelesen. „Zur Sichtung“ zeigt ungeprüfte Vorschläge und bestätigt keine Kosten, Zuordnung oder Abrechnung.</p>
-      <p>{batch.item_count} Datei(en) · Eingang vom {new Date(batch.created_at).toLocaleString('de-DE')}</p>
+      <p>{batch.item_count} Datei(en) · Eingang vom {formatDateTime(batch.created_at)}</p>
       <div className="space-y-3">{batch.items.map(item => <article className="card min-w-0 space-y-3" key={item.id}>
         <div className="flex flex-wrap items-start justify-between gap-2"><h2 className="min-w-0 break-all">{item.filename}</h2><span className="badge">{labels[item.status]}</span></div>
         <p className="text-sm">{(item.content_byte_size / 1024).toLocaleString('de-DE', { maximumFractionDigits: 1 })} KiB · {item.mime_type}</p>
