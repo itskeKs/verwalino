@@ -923,7 +923,7 @@ async def test_split_reserve_late_cash_recomputes_the_frozen_period_correction(
     assert adjustments[0] == {
         'kind': 'LATE_CASH', 'component': 'CONTRIBUTION', 'date': '2025-12-31',
         'amount': correction, 'owner_profile_id': w['owner_a'],
-        'reason': 'Rücklagenanteil bereits im Hausgeld-Soll enthalten',
+        'reason': 'Rücklagenanteil bereits im Hausgeld-Soll enthalten', 'correction': 'SPLIT_RESERVE',
         'owner_name': 'Anton Eigentuemer', 'payment_note': None,
         'cost_document_number': None, 'register_sequence_number': None,
     }
@@ -1010,7 +1010,9 @@ async def test_split_reserve_late_cash_counts_the_same_periods_annual_and_asset_
                      'owner_profile_id': str(owner), 'amount': amount}
                     for identifier, amount in [('hausgeld', '1938.46'), ('reserve', '3600.00')]] + [
                         {'kind': 'CONTRIBUTION', 'date': '2025-12-31', 'amount': '-1938.46',
-                         'owner_profile_id': str(owner), 'reason': 'Rücklagenanteil bereits im Hausgeld-Soll enthalten'}]}
+                         'owner_profile_id': str(owner), 'correction': 'SPLIT_RESERVE',
+                         # Recognized by the structured marker, never by its display text.
+                         'reason': 'Früherer Wortlaut der Korrektur'}]}
     history = [S(id=kind, status='finalized', run_type=kind,
         period_start=plan.period_start, period_end=plan.period_end,
         snapshot_payload={'reserve_ledger': deepcopy(frozen)}, snapshot_sha256=kind + '-hash')
@@ -1233,7 +1235,7 @@ async def test_finalized_year_freezes_cash_and_carries_closing_into_next_period(
     assert [row for row in ledger['entries'] if row['kind'] == 'LATE_CASH' and not row.get('payment_id')] == [{
         'kind': 'LATE_CASH', 'component': 'CONTRIBUTION', 'date': '2025-12-31',
         'amount': '-1800.00', 'owner_profile_id': w['owner_a'],
-        'reason': 'Rücklagenanteil bereits im Hausgeld-Soll enthalten',
+        'reason': 'Rücklagenanteil bereits im Hausgeld-Soll enthalten', 'correction': 'SPLIT_RESERVE',
         'owner_name': 'Anton Eigentuemer', 'payment_note': None,
         'cost_document_number': None, 'register_sequence_number': None,
     }]

@@ -17,6 +17,8 @@ from app.services.financial_scope_service import FinancialScopeService
 
 ZERO = Decimal('0.00')
 SPLIT_RESERVE_CORRECTION_REASON = 'Rücklagenanteil bereits im Hausgeld-Soll enthalten'
+# Structured marker of split-payer correction rows; readers never match the display text.
+SPLIT_RESERVE_CORRECTION = 'SPLIT_RESERVE'
 OPENING_IMPORT_ONLY = {'code': 'RESERVE_OPENING_IMPORT_ONLY', 'message': 'Ein Import des Anfangsbestands ist nur im ersten Rücklagenjahr vor der Finalisierung zulässig und nur, wenn kein anderer, abweichender Rücklagenzeitraum besteht.'}
 OPENING_IMPORT_EXISTS = {'code': 'RESERVE_OPENING_IMPORT_EXISTS', 'message': 'Nach dem Import eines Anfangsbestands können Sie keinen früheren oder abweichenden, überlappenden Abrechnungszeitraum anlegen.'}
 DERIVED_TOTAL_READ_ONLY = {'code': 'RESERVE_DERIVED_TOTAL_READ_ONLY', 'message': 'Zuführungen und Entnahmen werden aus Buchungen abgeleitet; Korrekturen erfolgen mit Bezug im Rücklagenbuch.'}
@@ -212,7 +214,7 @@ class ReserveLedgerService:
                     contributions -= correction
                     rows.append({'kind': 'CONTRIBUTION', 'date': str(run.period_end),
                                  'amount': format(-correction, '.2f'), 'owner_profile_id': owner,
-                                 'reason': SPLIT_RESERVE_CORRECTION_REASON})
+                                 'reason': SPLIT_RESERVE_CORRECTION_REASON, 'correction': SPLIT_RESERVE_CORRECTION})
         late_shares = {row['payment_id']: Decimal(row['amount']) for row in rows
                        if row['kind'] == 'LATE_CASH' and row.get('component') == 'CONTRIBUTION'}
         correction_history = {}
@@ -220,7 +222,7 @@ class ReserveLedgerService:
             correction_history.setdefault((historical.period_start, historical.period_end), historical)
         stored_corrections = [row for historical in correction_history.values()
             for row in (historical.snapshot_payload or {}).get('reserve_ledger', {}).get('entries', [])
-            if not row.get('payment_id') and row.get('reason') == SPLIT_RESERVE_CORRECTION_REASON
+            if not row.get('payment_id') and row.get('correction') == SPLIT_RESERVE_CORRECTION
             and (row['kind'] == 'CONTRIBUTION' or row['kind'] == 'LATE_CASH' and row.get('component') == 'CONTRIBUTION')]
         corrected_periods = set()
         for historical in history:
@@ -273,7 +275,7 @@ class ReserveLedgerService:
                     late_cash += delta
                     rows.append({'kind': 'LATE_CASH', 'component': 'CONTRIBUTION', 'date': str(historical.period_end),
                                  'amount': format(delta, '.2f'), 'owner_profile_id': owner,
-                                 'reason': SPLIT_RESERVE_CORRECTION_REASON})
+                                 'reason': SPLIT_RESERVE_CORRECTION_REASON, 'correction': SPLIT_RESERVE_CORRECTION})
         reversed_amounts = {}
         for entry in entries:
             if entry.reverses_entry_id:

@@ -968,12 +968,14 @@ class PaymentService:
 
         An absent plan Soll never credits reserve, including against negative
         Hausgeld. The draft ledger shares Rc = min(max(R, 0), max(Soll-H, 0)),
-        using in-period value-date cash and its own finalized plan's owner Soll.
+        using in-period value-date cash and the owner Soll of the run's plan (its
+        economic_plan_id, else the single current finalized plan of exactly that
+        period; none means no correction).
         Only with owner Soll and Rc > 0, it computes correction =
         max(0, Rc + sum(credited Hausgeld reserve) - planned owner reserve);
         a positive correction adds one negative contribution row at period end.
         Excess R-Rc stays in full. Frozen ledgers keep their stored amounts;
-        late cash books the change in the frozen period's correction separately.
+        late cash books the difference to the correction stored for that period.
         """
         rows = await self._repo.list_for_owner(owner_profile_id, property_id=property_id)
         assigned = [to_payment_input(p) for p in rows if p.period_year is not None]
