@@ -1,7 +1,7 @@
 import { AppRoutes } from "../App";
 import { MemoryRouter } from "react-router-dom";
 import { AuthCtx } from "../auth/useAuth";
-import { render, screen } from "@testing-library/react";
+import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import { AuthProvider } from "../auth/AuthContext";
@@ -48,7 +48,7 @@ describe("LoginPage", () => {
     resolveLogin?.(jsonResponse({ detail: "Invalid credentials" }, 401));
 
     expect(await screen.findByRole("alert")).toHaveTextContent("Invalid credentials");
-    expect(screen.getByRole("alert")).toHaveFocus();
+    await waitFor(() => expect(screen.getByRole("alert")).toHaveFocus());
     expect(screen.getByLabelText("E-Mail")).toHaveValue("alpha@example.test");
     expect(screen.getByLabelText("Passwort")).toHaveAttribute("autocomplete", "current-password");
     expect(screen.getByRole("button", { name: "Anmelden" })).toBeEnabled();
