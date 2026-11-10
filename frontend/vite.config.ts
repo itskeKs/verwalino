@@ -23,6 +23,9 @@ export default defineConfig({
     environment: "jsdom",
     setupFiles: ["./src/test/setup.ts"],
     restoreMocks: true,
+    // Vitest replaces stylesheets with empty text; `?raw` imports keep the real CSS
+    // (src/lib/styleHygiene.test.ts reads the stylesheets as text).
+    css: { include: [/\.css\?raw$/] },
   },
   build: {
     // The reviewed SPA bundle is currently ~517 kB; retain a tight 550 kB budget.

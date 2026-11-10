@@ -130,7 +130,7 @@ function TasksContent() {
   const contextText = [contextProperty?.name || choices?.properties.find(p => p.id === initialProperty)?.name, contextUnit ? `Einheit ${contextUnit.number}` : null, contextLease ? `Mietvertrag ab ${formatDate(contextLease.valid_from)}` : null].filter(Boolean).join(" · ");
 
   return <div className="space-y-4">
-    <div className="flex items-center justify-between"><h1>Aufgaben</h1>{canWrite && <button className="btn btn-primary" disabled={pending || !contextValid} onClick={() => openEditor()}>Aufgabe anlegen</button>}</div>
+    <div className="flex items-center justify-between"><h1>Aufgaben</h1>{canWrite && <button className="btn btn--primary" disabled={pending || !contextValid} onClick={() => openEditor()}>Aufgabe anlegen</button>}</div>
     {hasContext && contextValid && <p>Fester Kontext: {contextText}. Bitte vor dem Speichern prüfen.</p>}
     {choices && !contextValid && <p role="alert" className="error-text">Kontext nicht verfügbar oder nicht zusammengehörig. Bitte den Aufgabenlink erneut aus Objekt oder Einheit öffnen.</p>}
     {choiceError && <div role="alert">Auswahl konnte nicht geladen werden: {choiceError} <button disabled={pending} onClick={() => setChoiceRevision(n => n + 1)}>Auswahl erneut laden</button></div>}
@@ -163,7 +163,7 @@ function TasksContent() {
           <label className="block">Einheit<select aria-label="Einheit" disabled={!!(fixedUnit || fixedLease)} value={form.unit} onChange={e => setForm(f => ({ ...f, unit: e.target.value, lease: "" }))}><option value="">Keine Einheit</option>{choices?.units.filter(u => u.property_id === form.property).map(u => <option key={u.id} value={u.id}>Einheit {u.number}{u.location ? ` · ${u.location}` : ""}</option>)}</select></label>
           <label className="block">Mietvertrag<select aria-label="Mietvertrag" disabled={!!fixedLease} value={form.lease} onChange={e => field("lease", e.target.value)}><option value="">Kein Mietvertrag</option>{choices?.leases.filter(l => l.unit_id === form.unit).map(l => <option key={l.id} value={l.id}>Mietvertrag ab {formatDate(l.valid_from)}{l.valid_to ? ` bis ${formatDate(l.valid_to)}` : " (offen)"}</option>)}</select></label>
           {mutationError && <p role="alert">{mutationError}</p>}
-          <div className="flex gap-3"><button className="btn btn-primary" type="submit">Speichern</button><button type="button" onClick={() => { if (!lock.current) setEditing(null); }}>Abbrechen</button></div>
+          <div className="flex gap-3"><button className="btn btn--primary" type="submit">Speichern</button><button type="button" onClick={() => { if (!lock.current) setEditing(null); }}>Abbrechen</button></div>
         </fieldset></form>
       </DialogContent>
     </Dialog>

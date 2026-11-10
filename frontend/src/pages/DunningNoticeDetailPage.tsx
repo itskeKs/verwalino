@@ -368,7 +368,7 @@ export function DunningNoticeDetailPage() {
             <p>Jahreszinssatz: {notice.interest_snapshot.annual_rate} % (Basiszinssatz + 5 Prozentpunkte)</p>
           </>}
         <p>Stichtag: <span>{formatDate(notice.interest_snapshot.reference_date)}</span></p>
-        <p className="form-hint">Gespeicherte Werte dieser Mahnung; keine Neuberechnung mit heutigen Zinssätzen.</p>
+        <p className="muted">Gespeicherte Werte dieser Mahnung; keine Neuberechnung mit heutigen Zinssätzen.</p>
         <div style={{ overflowX: "auto" }}><table className="data-table">
           <thead><tr><th>Hauptforderung</th><th>Zinsen</th><th>Typ</th><th>Periode</th><th>Fälligkeit</th><th>Tage</th></tr></thead>
           <tbody>{notice.interest_snapshot.items.map((item, index) => <tr key={index}>

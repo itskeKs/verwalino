@@ -550,7 +550,6 @@ export function PaymentDetailPage() {
                     max={12}
                     value={editPeriodMonth ?? ""}
                     onChange={(e) => setEditPeriodMonth(e.target.value ? parseInt(e.target.value, 10) : null)}
-                    className="input"
                     style={{ marginLeft: "4px", width: "60px" }}
                   />
                 </label>
@@ -560,7 +559,6 @@ export function PaymentDetailPage() {
                     type="number"
                     value={editPeriodYear ?? ""}
                     onChange={(e) => setEditPeriodYear(e.target.value ? parseInt(e.target.value, 10) : null)}
-                    className="input"
                     style={{ marginLeft: "4px", width: "80px" }}
                   />
                 </label>
@@ -570,7 +568,6 @@ export function PaymentDetailPage() {
                     type="text"
                     value={editNote ?? ""}
                     onChange={(e) => setEditNote(e.target.value || null)}
-                    className="input"
                     style={{ marginLeft: "4px", width: "200px" }}
                   />
                 </label>

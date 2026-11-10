@@ -93,6 +93,7 @@ form-grid spacing and responsive behaviour apply.
 
 - One fact has one visual place: show a status, result or action on the surface that owns it.
   An equivalent hidden accessible label may repeat it.
+- `frontend/src/lib/styleHygiene.test.ts` keeps classes, stylesheets and tokens consistent (see "Global classes").
 - Enforce the contract's behaviour and copy with interaction tests in the area's
   `frontend/src/**/*.test.tsx`; browser features in `features/` verify geometry that jsdom cannot check.
 - When the look changes, update this contract and the screenshots in `docs/assets/design/`
@@ -116,12 +117,10 @@ Tokens are HSL channels on `:root` in `index.css`, exposed to Tailwind in `tailw
 | `destructive` | 0 72% 50% | `#db2424` | error text, destructive button |
 | `border` (`--ui-border`), `input` | 215 30% 89% / 215 30% 84% | `#dce3ec` / `#cbd5e3` | borders and input outlines |
 | `ring` | 221 72% 46% | `#2156ca` | keyboard focus ring |
-| `sidebar` / `sidebar-foreground` | 216 38% 95% / 216 24% 33% | `#eef2f8` / `#46546a` | Klar navigation rail |
-| `sidebar-accent` / foreground | 0 0% 100% / 221 72% 46% | `#ffffff` / `#2156ca` | Klar active nav item; brand tile uses primary |
 
 Semantic colours that are **not** tokens: `ui/badge.tsx` and `ui/stat-card.tsx` use the Tailwind palette
 (blue = primary/type, emerald = success, amber = warning/attention, red = destructive, slate = info/neutral).
-`success` and `warning` exist as tokens but no component uses them. Legacy `.badge--*` classes use fixed
+There is no `success` token; `warning` is a CSS variable read only by `.knowledge-status--needs_clarification`, and `--sidebar-foreground` and `--sidebar-accent` only override `--ring` and `--accent` in the Warm mobile topbar (navigation colours are the `--nav-*` variables); none of the three has a Tailwind colour. Legacy `.badge--*` classes use fixed
 hex pairs. `--border` (hex) and `--ui-border` (HSL) are different variables: the kit uses `--ui-border`.
 Legacy variables `--color-primary`, `--bg-content`, `--text`, `--text-muted` remain as
 aliases to the active semantic tokens for old inline styles. Use token colours rather than hard-coded hex values: pick a role from the table;
@@ -168,9 +167,8 @@ outcomes with `role="status"`.
 
 Focus: kit controls show `ring-2 ring-ring ring-offset-2`; `.btn` shows a 3 px `ring/30` shadow; form-grid
 fields a 3 px `ring/18` shadow with a primary border. Disabled controls use `opacity-50` and
-`not-allowed`/`pointer-events-none`. Transitions are colour/shadow only and short (about 0.15 s). Note: `ui/dialog.tsx`
-carries `animate-in`/`fade-in` classes, but the `tailwindcss-animate` plugin is not installed
-(`plugins: []`), so dialogs do not animate.
+`not-allowed`/`pointer-events-none`. Transitions are colour/shadow only and short (about 0.15 s). Dialogs do not
+animate: the `tailwindcss-animate` plugin is not installed (`plugins: []`), so `animate-in` and `fade-in` classes would do nothing.
 
 ## Layout
 
@@ -275,8 +273,8 @@ mobile drawer; focus moves from disappearing navigation to the visible toggle, o
 toggle/drawer to the active desktop link. A focused closed toggle also transfers focus when it
 disappears: the shell remembers navigation focus and restores it after the new layout mounts.
 The drawer retains its 200 ms slide; while closing it is
-inert until unmounted. `AppShell.css`, `Sidebar.css` and `Topbar.css` exist but are imported nowhere;
-the shell uses the layout classes and drawer keyframes in `index.css`.
+inert until unmounted. The shell uses the layout classes and drawer keyframes in `index.css`; it has no
+stylesheet of its own.
 
 First-run setup opens when `GET /api/setup` reports `required: true`; the backend
 owns the deployment decision. Required setup takes precedence over login and
@@ -886,7 +884,7 @@ classes or inline `style={{}}` for new domain screens; the existing inline style
 
 | File | Exports | Variants | Use when |
 |---|---|---|---|
-| `button.tsx` | `Button` (forwardRef) | variant `primary` (default), `secondary`, `outline`, `ghost`, `destructive`; size `sm` (h-8), `md` (h-9, default), `lg` (h-11), `icon` (h-9 w-9) | `primary`: the main action of a view or form (with the deviation below). `outline`: cancel and secondary actions. `ghost`: topbar and toolbars. `destructive`: confirm of an irreversible action. `secondary`, `lg`, `icon` and `destructive` have no call site yet. Legacy twin: `.btn`, `.btn--primary`, `.btn--danger`, `.btn--small`, `.btn--wrap` (wrapping label). |
+| `button.tsx` | `Button` (forwardRef) | variant `primary` (default), `outline`, `ghost`, `destructive`; size `sm` (h-8), `md` (h-9, default), `lg` (h-11) | `primary`: the main action of a view or form (with the deviation below). `outline`: cancel and secondary actions. `ghost`: topbar and toolbars. `destructive`: confirm of an irreversible action (`OrganizationDeletion.tsx`). `lg`: submit buttons of the public authentication pages (full width) and the organization data and deletion actions. A variant or size is added together with its first call site. Legacy twin: `.btn`, `.btn--primary`, `.btn--danger`, `.btn--small`, `.btn--wrap` (wrapping label). |
 | `badge.tsx` | `Badge`, `BadgeTone` | tone `default`, `primary`, `success`, `warning`, `destructive`, `info`, `outline` | A short status or type label. `primary` = category/type (WEG), `success` = done/confirmed, `warning` = needs attention/due, `destructive` = overdue/rejected, `info` = neutral note, `default` = neutral, `outline` = unmapped raw value. Legacy twin: `.badge` + modifier. |
 | `card.tsx` | `Card`, `CardHeader`, `CardTitle`, `CardDescription`, `CardContent`, `CardFooter` | none; compose | Every panel. A table card uses `CardContent className="p-0"` with edge cells `pl-5`/`pr-5`. Legacy twin: `.card` with an `h2`. |
 | `dialog.tsx` | `Dialog`, `DialogContent`, `DialogHeader`, `DialogTitle`, `DialogDescription`, `DialogFooter` (+ `DialogPortal`, `DialogOverlay`) | none | Short focused tasks and confirmations on Radix: focus trap, Esc, built-in close "Schließen". Max width 32 rem, full width on phones. |
@@ -907,16 +905,17 @@ The create form's "Abbrechen" in `MandatePage.tsx` explicitly uses `outline`.
 |---|---|
 | `.card` | panel surface, `h2` heading |
 | `.btn`, `.btn--primary`, `.btn--danger`, `.btn--small`, `.btn--wrap` | button, main action, destructive, compact (table rows), wrapping label |
-| `.badge` + `--weg`/`--primary` (blue), `--miet`/`--confirmed`/`--finalized`/`--booked`/`--success` (green), `--sev`/`--review` (amber), `--misch`/`--superseded` (violet), `--draft` (grey), `--rejected`/`--storno`/`--danger` (red) | status pill |
+| `.badge` + `--weg`/`--primary` (blue), `--miet`/`--confirmed`/`--finalized`/`--booked`/`--success` (green), `--sev`/`--review`/`--warning` (amber), `--misch`/`--superseded` (violet), `--draft` (grey), `--rejected`/`--storno`/`--danger` (red) | status pill |
 | `.data-table`, `.info-table` | list table; key-value table (label column 180 px, muted) |
 | `.form-grid`, `.form-full-width`, `.form-actions` | form layout |
-| `.error-text`, `.empty-hint` | error line (destructive), empty-state line (muted) |
+| `.error-text`, `.empty-hint`, `.muted` | error line (destructive), empty-state line (muted), muted text colour for a hint under a control or heading |
 | `.link`, `.link-button` | text link; button that looks like a link |
 | `.paged-list`, `.paged-list .paged-table` | list page wrapper; horizontally scrollable table wrapper only inside `.paged-list` |
 
-Referenced in components but defined nowhere, so they do nothing: `muted` (5 files: `MasterImport.tsx`,
-`DepositsPage.tsx`, `MietkontoPage.tsx`, `PropertiesPage.tsx`, `SpecialLeviesPage.tsx`), `btn-primary` (3,
-typo of `btn--primary`), `badge--warning`, `form-hint`, `table-responsive`.
+Legacy modifiers use two hyphens (`btn--primary`, `badge--warning`); `btn-primary` is a typo. A class in a
+`className` literal must be defined in `index.css`, `PublicAuthLayout.css` or by Tailwind: a class nobody
+defines does nothing. `frontend/src/lib/styleHygiene.test.ts` fails on such a class, on a stylesheet nothing
+imports and on a design token nothing reads.
 
 ### Recurring composites
 

@@ -121,7 +121,7 @@ export function ReserveLedgerPanel({ runId, propertyId, status, onChanged, onOpe
   return <section className="card" style={{ marginBottom: '1rem' }} aria-label="Rücklagenbuch">
     <h2>Erhaltungsrücklage · Rücklagenbuch</h2>
     <p>Ist-Bewegungen nach Wertstellung. Geplante Zuführungen erhöhen den verfügbaren Bestand erst mit der Zahlung.</p>
-    {error && <p role="alert">{error} <button className="btn btn--secondary" onClick={() => setVersion(v => v + 1)}>Erneut laden</button></p>}
+    {error && <p role="alert">{error} <button className="btn" onClick={() => setVersion(v => v + 1)}>Erneut laden</button></p>}
     {!ledger && !error && <p>Rücklagenbuch wird geladen…</p>}
     {ledger && <>
       {status === 'finalized' && <p>Finalisierter Rücklagenstand · unveränderbarer Snapshot{ledger.booking_basis === 'LEGACY_SNAPSHOT' ? ' (historische manuelle Erfassung)' : ''}.</p>}
@@ -149,7 +149,7 @@ export function ReserveLedgerPanel({ runId, propertyId, status, onChanged, onOpe
               {entry.unit_id && <div>Einheit: {entry.unit_number ?? 'Nicht verfügbar'}</div>}
               {entry.cost_entry_id && <div><a className="link" href={`/kosten/${entry.cost_entry_id}`}>Kostenbeleg: {entry.cost_document_number || 'Beleg öffnen'}</a></div>}
               {!locked && entry.id && entry.current_amount !== undefined &&
-                <button className="btn btn--secondary" disabled={disabled} onClick={() => {
+                <button className="btn" disabled={disabled} onClick={() => {
                   setReduction(entry); setReducedTo(entry.current_amount!.replace('.', ',')); setReductionReason(''); setReductionError('');
                 }}>Korrektur ändern / löschen</button>}
               {entry.register_entry_id && <div><a className="link" href={`/beschluss-sammlung?property_id=${propertyId}#beschluss-${entry.register_entry_id}`}>Beschluss{entry.register_sequence_number ? ` Nr. ${entry.register_sequence_number}` : ' öffnen'}</a></div>}
@@ -157,7 +157,7 @@ export function ReserveLedgerPanel({ runId, propertyId, status, onChanged, onOpe
           </tr>)}</tbody></table>
       </div>
       {ledger.entries.length === 0 && <p>Keine Einzelbewegungen in diesem Rücklagenstand.</p>}
-      <button className="btn btn--secondary" disabled={disabled || locked} aria-describedby={locked ? lockReasonId : undefined} onClick={() => {
+      <button className="btn" disabled={disabled || locked} aria-describedby={locked ? lockReasonId : undefined} onClick={() => {
         if (component === 'OPENING') setAmount(ledger.opening_balance.replace('.', ','));
         setOpen(true);
       }}>Korrektur erfassen</button>
@@ -180,7 +180,7 @@ export function ReserveLedgerPanel({ runId, propertyId, status, onChanged, onOpe
           <div className="form-actions">
             <button className="btn btn--primary" disabled={saving || disabled} type="submit">Korrektur speichern</button>
             <button className="btn btn--danger" disabled={saving || disabled} type="button" onClick={() => void reduce(true)}>Korrektur löschen</button>
-            <button className="btn btn--secondary" disabled={saving} type="button" onClick={() => setReduction(null)}>Abbrechen</button>
+            <button className="btn" disabled={saving} type="button" onClick={() => setReduction(null)}>Abbrechen</button>
           </div>
         </form>
       </DialogContent>
@@ -222,7 +222,7 @@ export function ReserveLedgerPanel({ runId, propertyId, status, onChanged, onOpe
         {formError && <p role="alert" className="error-text">{formError}</p>}
       </fieldset>
         <div className="form-actions"><button className="btn btn--primary" disabled={saving || disabled || (component === 'FUNDING' && !sources)} type="submit">{saving ? 'Speichern…' : 'Speichern'}</button>
-          <button className="btn btn--secondary" disabled={saving} type="button" onClick={() => setOpen(false)}>Abbrechen</button></div>
+          <button className="btn" disabled={saving} type="button" onClick={() => setOpen(false)}>Abbrechen</button></div>
       </form>
     </DialogContent></Dialog>
   </section>;

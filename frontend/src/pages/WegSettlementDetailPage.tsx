@@ -134,7 +134,7 @@ export function WegSettlementDetailPage() {
   if (loading) return <p>Lade...</p>;
   if (!run) return <div>
     <p role="alert" className="error-text">{error ?? "WEG-Abrechnung nicht gefunden."}</p>
-    <button className="btn btn--secondary" onClick={() => setGeneration(value => value + 1)}>Erneut laden</button>
+    <button className="btn" onClick={() => setGeneration(value => value + 1)}>Erneut laden</button>
   </div>;
 
   // Group lines by owner.
@@ -199,7 +199,7 @@ export function WegSettlementDetailPage() {
             <input inputMode="decimal" placeholder="Unbekannt" value={paidValues[id] ?? ""} onChange={(e) => setPaidValues({ ...paidValues, [id]: e.target.value })} />
           </label>)}
           <div style={{ marginBottom: "1rem" }}>
-            <button className="btn btn--secondary" onClick={handleTakePaidAdvances} disabled={busy}>
+            <button className="btn" onClick={handleTakePaidAdvances} disabled={busy}>
               Aus Zahlenstand übernehmen
             </button>
           </div>
