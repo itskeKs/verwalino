@@ -1,8 +1,14 @@
 """Persist personal appearance through the real settings and navigation."""
+import os
+from pathlib import Path
+
 from playwright.async_api import expect
 from pytest_bdd import given, then, when
 
 from tests.bdd.steps.browser_common import browser_step
+from tests.bdd.steps.records import create_property
+
+ROOT = Path(__file__).resolve().parents[4]
 
 
 @given('the personal design settings are open')
@@ -82,6 +88,64 @@ async def mobile_navigation(browser_world):
     await dialog.get_by_role('link', name='Bankkonten', exact=True).click()
     await expect(dialog).not_to_be_visible()
     await expect(page.get_by_role('heading', name='Bankkonten', exact=True)).to_be_visible()
+
+
+@given('a synthetic property for the design table')
+def design_table_property(world):
+    create_property(world, 'Verwaltung Alpha', 'Musterhaus an der Musterstraße 12')
+
+
+@when('the main screens are captured in both designs at 1280 and 360 pixels')
+@browser_step
+async def capture_design_table(browser_world, world, tmp_path):
+    """Refresh the DESIGN.md theme table; with VERWALINO_CAPTURE_DESIGN unset the
+    captures land in the temporary directory, so the scenario also runs as a test."""
+    page = browser_world.page
+    # The API World loop cannot run inside the browser loop; the authenticated
+    # context shares the session cookie, so it speaks to the app directly.
+    api = browser_world.context.request
+    before = await api.get('/api/auth/preferences')
+    assert before.ok, f'GET /api/auth/preferences answered {before.status}'
+    original = await before.json()
+    directory = ROOT / 'docs/assets/design' if os.environ.get('VERWALINO_CAPTURE_DESIGN') == '1' else tmp_path
+    overflows = world.data['design_table_overflows'] = []
+    screens = (
+        ('dashboard', '/', page.get_by_role('region', name='Ihr Bestand', exact=True)),
+        ('properties', '/objekte', page.get_by_role('heading', name='Objekte', exact=True)),
+        ('settings', '/einstellungen', page.get_by_role('radio', name='Klar', exact=False)),
+    )
+    try:
+        for theme in ('klar', 'warm'):
+            answer = await api.patch('/api/auth/preferences', data={'design_theme': theme})
+            assert answer.ok, f'PATCH /api/auth/preferences answered {answer.status}'
+            for width in (1280, 360):
+                await page.set_viewport_size({'width': width, 'height': 900})
+                for name, path, ready in screens:
+                    await browser_world.visit(path)
+                    await expect(ready).to_be_visible()
+                    await expect(page.locator('.app-layout')).to_have_attribute('data-design-theme', theme)
+                    if name == 'dashboard':
+                        await expect(page.get_by_text('Aufgaben werden geladen…', exact=True)).to_be_hidden()
+                        await expect(page.locator('.dashboard-portfolio-count')).not_to_contain_text('…')
+                    if name == 'properties':
+                        await expect(page.get_by_role('link', name='Musterhaus an der Musterstraße 12', exact=True)).to_be_visible()
+                        await page.get_by_role('button', name='+ Neues Objekt', exact=True).click()
+                        await expect(page.get_by_role('heading', name='Neues Objekt anlegen', exact=True)).to_be_visible()
+                        await page.screenshot(path=str(directory / f'themes-{theme}-form-{width}.png'), full_page=True)
+                        if await page.evaluate('document.documentElement.scrollWidth > innerWidth'):
+                            overflows.append(f'{theme}/form/{width}')
+                        await page.get_by_role('button', name='Abbrechen', exact=True).click()
+                    await page.screenshot(path=str(directory / f'themes-{theme}-{name}-{width}.png'), full_page=True)
+                    if await page.evaluate('document.documentElement.scrollWidth > innerWidth'):
+                        overflows.append(f'{theme}/{name}/{width}')
+    finally:
+        await api.patch('/api/auth/preferences', data=original)
+
+
+@then('every captured screen fits its viewport')
+def design_table_fits(world):
+    overflows = world.data.get('design_table_overflows')
+    assert overflows == [], f'Horizontal overflow: {overflows}'
 
 
 async def password_targets(page):

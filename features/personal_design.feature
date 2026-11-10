@@ -17,3 +17,9 @@ Feature: Personal design
     Then Warm is selected and the object navigation works
     When the user opens the settings on a narrow screen and saves Klar
     Then Klar is selected and the mobile navigation is usable
+
+  @browser
+  Scenario: The design table screenshots come from synthetic records
+    Given a synthetic property for the design table
+    When the main screens are captured in both designs at 1280 and 360 pixels
+    Then every captured screen fits its viewport
