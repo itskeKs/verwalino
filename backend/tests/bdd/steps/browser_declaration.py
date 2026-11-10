@@ -42,7 +42,7 @@ def upload_declaration(browser_world):
     b.run(run())
 
 
-def fictional_provider(document_id):
+def fictional_provider(document_id, *, property_subject='property:main'):
     from app.declarations.schemas import CoreExtractionOutput, DocumentInventoryOutput, FactPayload, TextValue, IntegerValue, MeaFraction, EvidencePayload, ReconciliationOutput, RuleExtractionOutput, TargetedRecheckOutput
     from app.declarations.fake_provider import FakeDeclarationProvider
     facts = []
@@ -54,8 +54,8 @@ def fictional_provider(document_id):
             evidence=[EvidencePayload(document_key=document_id,pdf_page=1,quote=unit_quotes.get(subject,quote))]))
     for field,value,quote in [('name','WEG Lindenallee 12','WEG Lindenallee 12'), ('street','Lindenallee 12','Lindenallee 12'),
                               ('zip_code','01234','01234'), ('city','Musterstadt','Musterstadt'), ('management_type','WEG','WEG Lindenallee 12')]:
-        fact('property:main',field,TextValue(kind='TEXT',value=value),quote)
-    fact('property:main','mea_denominator',IntegerValue(kind='INTEGER',value=1000),'1.000')
+        fact(property_subject,field,TextValue(kind='TEXT',value=value),quote)
+    fact(property_subject,'mea_denominator',IntegerValue(kind='INTEGER',value=1000),'1.000')
     for number,share,kind,location in [('1',450,'WOHNUNG','Erdgeschoss'),('2',450,'WOHNUNG','Obergeschoss'),('G1',100,'STELLPLATZ','Garage / Hof')]:
         subject = f'unit:{number}'
         fact(subject,'number',TextValue(kind='TEXT',value=number),number)
@@ -80,7 +80,7 @@ def extract_declaration(world, browser_storage, monkeypatch):
     import_id = world.data['declaration_import']
     documents = world.act('GET', f'/api/declaration-imports/{import_id}/documents')
     assert documents.status_code == 200, world.describe_response()
-    provider = fictional_provider(documents.json()[0]['id'])
+    provider = fictional_provider(documents.json()[0]['id'], property_subject='property')
     organization_id = uuid.UUID(world.data['declaration_org'])
 
     async def run():

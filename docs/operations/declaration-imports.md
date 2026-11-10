@@ -530,17 +530,21 @@ prices are enforced; unknown-price models remain selectable and the page explain
 that they are not limited. Known requests explicitly use the standard service tier
 and no implicit SDK retry. Monetary unknowns are recorded as unpriced zero estimates,
 not as a claim that OpenAI is free. Token/time limits remain bounded. The extraction
-harness version is `3`, with wire schema version `2`. The adapter converts only
-the two known, disjoint `kind` unions to `anyOf` after the SDK's strict-schema
-transformation. Parsing, reservations and schema fingerprints use that same
-wire model; inherited local validation remains unchanged. Offline SDK transport
-checks verify serialization, not live provider acceptance. Pass metadata uses `default`
-when reasoning is omitted for a model with no known effort contract.
+harness version is `7`, with wire schema version `2`. The compatible Chat
+Completions adapter records its separate harness version `9`. The native OpenAI
+adapter converts only the two known, disjoint `kind` unions to `anyOf` after the
+SDK's strict-schema transformation. Parsing, reservations and schema fingerprints
+use that same wire model. Offline SDK checks verify serialization. Live provider
+acceptance is a separate check. Pass metadata uses `default` when reasoning is
+omitted for a model with no known effort contract.
 
 Prompt version `declaration-v3` supplies the exact fixed-core subject-prefix and
 field pairs to core extraction, reconciliation and recheck. The instructions
-and local validator read one immutable contract; existing subject-key forms,
-value-type checks, evidence requirements and wire schemas remain unchanged.
+and local validator read one immutable contract. Draft conversion, validation,
+and review recognize both bare keys such as `property` and qualified keys such
+as `property:main`. They preserve the exact subject keys for grouping and
+references. The same field, value-type and evidence requirements apply to both
+forms.
 Usage-type instructions require TEXT and the existing canonical values WOHNUNG,
 GEWERBE, STELLPLATZ or SONSTIGE, preserving original source wording in raw values
 and evidence. Approval validation remains exact; no aliases are coerced.

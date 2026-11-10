@@ -167,6 +167,28 @@ def test_fixed_core_contract_oracle_preserves_every_pair_and_subject_form():
         assert raised.value.errors()[0]['type'] == 'fact_core_field_unsupported'
 
 
+@pytest.mark.parametrize(
+    "subject_key, candidate_type, field_key",
+    [("property", "PROPERTY_FIELD", "street"), ("unit", "UNIT_FIELD", "location")],
+)
+def test_field_correction_accepts_bare_core_subjects(subject_key, candidate_type, field_key):
+    from unittest.mock import AsyncMock
+    from uuid import uuid4
+
+    from app.models.declaration_candidate import DeclarationCandidate
+    from app.services.declaration_review_service import DeclarationReviewService
+
+    candidate = DeclarationCandidate(
+        subject_key=subject_key,
+        candidate_type=candidate_type,
+        field_key=field_key,
+        proposed_value_json={"kind": "TEXT", "value": "Original"},
+    )
+    service = DeclarationReviewService(AsyncMock(), uuid4(), uuid4())
+
+    assert service._canonical_correction(candidate, "Corrected") == {"kind": "TEXT", "value": "Corrected"}
+
+
 def test_usage_type_guidance_oracle_matches_unchanged_approval_contract():
     from types import SimpleNamespace
     from uuid import uuid4
