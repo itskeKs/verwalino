@@ -840,12 +840,12 @@ export function SettlementDetailPage() {
               {run?.status === "draft" ? "Verbrauch" : "Verbrauch / Personenzahl"}
             </h3>
             {needsConsumption(genericEntries) && (
-              <p id="settlement-consumption-period-hint" className="hint">
+              <p id="settlement-consumption-period-hint" className="muted">
                 Verbrauch der Einheit im gesamten Objekt-Abrechnungsjahr eingeben, auch bei gekürztem Mietzeitraum.
               </p>
             )}
             {run?.status !== "draft" && needsPersonCount(genericEntries) && (
-              <p id="settlement-person-period-hint" className="hint">
+              <p id="settlement-person-period-hint" className="muted">
                 Personenzahlen je Einheit für das gesamte Objekt-Abrechnungsjahr in allen zugehörigen Abrechnungen gleich eingeben.
               </p>
             )}
@@ -1338,7 +1338,7 @@ export function SettlementDetailPage() {
 
       {!!run.vacancy_attribution?.length && <section className="card" aria-label="Leerstand – Eigentümeranteile">
         <h2>Leerstand – Eigentümeranteile</h2>
-        <p className="hint">Aus der gespeicherten Berechnung. Diese Anteile verbleiben beim Eigentümer.</p>
+        <p className="muted">Aus der gespeicherten Berechnung. Diese Anteile verbleiben beim Eigentümer.</p>
         <ul className="space-y-3">{run.vacancy_attribution.map((share, index) => <li key={index}>
           <strong>Einheit {share.unit_number} · {share.cost_label}</strong>
           <div>{share.person_days.toLocaleString('de-DE')} Personentage · {share.days.toLocaleString('de-DE')} Tage</div>

@@ -77,7 +77,7 @@ export function DunningSettingsForm({ editable }: { editable: boolean }) {
               Verzugszinsen automatisch berechnen
             </label>
           </fieldset>
-          <p className="form-hint">Die Einstellungen gelten für neue Einzelmahnungen und Mahnläufe. Die Voreinstellung für Stufe 1 beträgt {"0,00\u00a0€"}.</p>
+          <p className="muted">Die Einstellungen gelten für neue Einzelmahnungen und Mahnläufe. Die Voreinstellung für Stufe 1 beträgt {"0,00\u00a0€"}.</p>
           {editable && <button className="btn btn--primary mt-2" disabled={saving}>Mahneinstellungen speichern</button>}
         </form>
       )}

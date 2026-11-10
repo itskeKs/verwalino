@@ -152,7 +152,7 @@ function DashboardContent() {
   }).format(new Date());
 
   return (
-    <div className="space-y-6 dashboard-page">
+    <div className="space-y-6">
       {/* Header */}
       <div>
         <p className="text-sm text-muted-foreground">{dateLabel}</p>

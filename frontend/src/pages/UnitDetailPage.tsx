@@ -326,7 +326,7 @@ function UnitDetailPageContent({ propertyId, unitId }: { propertyId?: string; un
       </p>
       <h1>Einheit {unit.number}</h1>
       {canWriteOwnership && <MasterDataDelete entityId={unit.id} title="Einheit löschen" entityName={`Einheit ${unit.number}`} remove={deleteUnit} onDeleted={() => navigate(`/objekte/${encodeURIComponent(property.id)}`, { replace: true })} />}
-      {(session?.role === "OWNER_ADMIN" || session?.role === "CLERK") && <Link className="btn btn-primary" to={`/aufgaben?${new URLSearchParams({ property_id: property.id, unit_id: unit.id, create: "1" })}`}>Aufgabe anlegen</Link>}
+      {(session?.role === "OWNER_ADMIN" || session?.role === "CLERK") && <Link className="btn btn--primary" to={`/aufgaben?${new URLSearchParams({ property_id: property.id, unit_id: unit.id, create: "1" })}`}>Aufgabe anlegen</Link>}
 
       {error && <p className="error-text">{error}</p>}
 

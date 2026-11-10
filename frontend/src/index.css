@@ -7,11 +7,7 @@
 :root {
   /* Legacy tokens (still referenced by existing pages / inline styles) */
   --color-primary: #2456c8;
-  --color-primary-dark: #1c4099;
   --bg-content: #f5f6f8;
-  --bg-sidebar: #ffffff;
-  --bg-hover: #f0f1f4;
-  --bg-active: #e8edf4;
   --text: #1f2733;
   --text-muted: #6b7280;
   --border: #e3e6ea;
@@ -32,18 +28,14 @@
   --accent-foreground: 222 24% 22%;
   --destructive: 0 72% 50%;
   --destructive-foreground: 0 0% 100%;
-  --success: 142 55% 35%;
-  --success-foreground: 0 0% 100%;
   --warning: 36 92% 48%;
   --warning-foreground: 36 100% 14%;
   --ui-border: 214 20% 89%;
   --ui-input: 214 20% 89%;
   --ring: 221 72% 46%;
   --radius: 0.65rem;
-  --sidebar: 222 32% 13%;
   --sidebar-foreground: 214 22% 88%;
   --sidebar-accent: 221 64% 54%;
-  --sidebar-accent-foreground: 0 0% 100%;
 
   --sans: "Inter Variable", Inter, system-ui, "Segoe UI", Roboto, sans-serif;
   --mono: ui-monospace, "SF Mono", Consolas, monospace;
@@ -66,10 +58,8 @@
   --ui-border: 215 30% 89%;
   --ui-input: 215 30% 84%;
   --muted-foreground: 216 15% 42%;
-  --sidebar: 216 38% 95%;
   --sidebar-foreground: 216 24% 33%;
   --sidebar-accent: 0 0% 100%;
-  --sidebar-accent-foreground: 221 72% 46%;
   --radius: 0.8rem;
   --portfolio-surface: 221 60% 97%;
   --nav-surface: #eef2f8;
@@ -78,11 +68,7 @@
   --nav-active: #fff;
   --nav-active-ink: #2156ca;
   --color-primary: hsl(var(--primary));
-  --color-primary-dark: hsl(var(--primary) / .9);
   --bg-content: hsl(var(--background));
-  --bg-sidebar: hsl(var(--sidebar));
-  --bg-hover: hsl(var(--accent));
-  --bg-active: hsl(var(--accent));
   --text: hsl(var(--foreground));
   --text-muted: hsl(var(--muted-foreground));
   --border: hsl(var(--ui-border));
@@ -96,10 +82,8 @@
   --ui-border: 66 12% 85%;
   --ui-input: 66 12% 76%;
   --muted-foreground: 150 9% 37%;
-  --sidebar: 181 56% 16%;
   --sidebar-foreground: 150 21% 86%;
   --sidebar-accent: 177 32% 27%;
-  --sidebar-accent-foreground: 0 0% 100%;
   --radius: 1rem;
   --portfolio-surface: 91 20% 91%;
   --nav-surface: #123f40;
@@ -136,7 +120,7 @@
 .app-page > * { min-width: 0; }
 .app-page h1 { font-size: 1.9rem; line-height: 1.25; letter-spacing: -.04em; overflow-wrap: anywhere; }
 .app-page .card, .app-page [class*="bg-card"] { box-shadow: none; }
-.app-main button:not([class]), .btn-primary { display: inline-flex; justify-content: center; align-items: center; padding: .5rem .8rem; border: 1px solid hsl(var(--ui-border)); border-radius: calc(var(--radius) - 4px); background: hsl(var(--card)); font-size: .82rem; font-weight: 500; }
+.app-main button:not([class]) { display: inline-flex; justify-content: center; align-items: center; padding: .5rem .8rem; border: 1px solid hsl(var(--ui-border)); border-radius: calc(var(--radius) - 4px); background: hsl(var(--card)); font-size: .82rem; font-weight: 500; }
 .app-main button:not([class]):hover { background: hsl(var(--accent)); }
 .app-main button:not([class]):disabled { opacity: .5; cursor: not-allowed; }
 .app-sidebar { flex-shrink: 0; width: 220px; display: flex; flex-direction: column; background: var(--nav-surface); color: var(--nav-ink); border-right: 1px solid hsl(var(--ui-border)); }
@@ -385,6 +369,10 @@ code {
   padding: 0.5rem 0;
 }
 
+.muted {
+  color: hsl(var(--muted-foreground));
+}
+
 /* --- Info table (key-value) --- */
 
 .info-table {
@@ -475,7 +463,8 @@ code {
 }
 
 .badge--sev,
-.badge--review {
+.badge--review,
+.badge--warning {
   background: #fef3c7;
   color: #92660b;
 }

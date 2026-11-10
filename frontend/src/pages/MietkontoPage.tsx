@@ -420,7 +420,7 @@ export function MietkontoPage() {
           {"dunning_notices" in result && result.dunning_notices.length > 0 && (
             <section className="mt-4">
               <h3>Ausgestellte Mahnungen</h3>
-              <p className="form-hint">Gebühren und Verzugszinsen dienen hier der Information. Soll, Ist und Saldo bleiben davon unberührt.</p>
+              <p className="muted">Gebühren und Verzugszinsen dienen hier der Information. Soll, Ist und Saldo bleiben davon unberührt.</p>
               <div className="overflow-x-auto"><table className="data-table [&_th]:!px-1.5 [&_td]:!px-1.5">
                 <thead><tr><th>Mahnung</th><th>Mahngebühr</th><th>Verzugszinsen</th></tr></thead>
                 <tbody>{result.dunning_notices.map(notice => (
@@ -434,7 +434,7 @@ export function MietkontoPage() {
             </section>
           )}
           {"dunning_notices" in result && scopeId === null && (
-            <p className="form-hint mt-4">
+            <p className="muted mt-4">
               Ältere Mahnungen ohne Vertragszuordnung finden Sie unter <Link to="/mahnungen" className="underline">Mahnungen</Link>.
             </p>
           )}

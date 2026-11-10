@@ -230,7 +230,7 @@ function PropertyDetailPageContent({ propertyId }: { propertyId?: string }) {
       </p>
       <h1>{property.name}</h1>
       {isWrite && <MasterDataDelete entityId={property.id} title="Objekt löschen" entityName={property.name} remove={deleteProperty} onDeleted={() => navigate("/objekte", { replace: true })} />}
-      {isWrite && <Link className="btn btn-primary" to={`/aufgaben?${new URLSearchParams({ property_id: property.id, create: "1" })}`}>Aufgabe anlegen</Link>}
+      {isWrite && <Link className="btn btn--primary" to={`/aufgaben?${new URLSearchParams({ property_id: property.id, create: "1" })}`}>Aufgabe anlegen</Link>}
 
       {error && <p className="error-text">{error}</p>}
       {success && <p role="status" className="sticky top-0 z-10 bg-background py-2">{success}</p>}
@@ -279,7 +279,7 @@ function PropertyDetailPageContent({ propertyId }: { propertyId?: string }) {
         </div>
       )}
 
-      <section className="card property-knowledge-link" aria-labelledby="property-knowledge-heading" style={{ marginBottom: "1.5rem" }}>
+      <section className="card" aria-labelledby="property-knowledge-heading" style={{ marginBottom: "1.5rem" }}>
         <h2 id="property-knowledge-heading">Dokumente &amp; Wissen</h2>
         <p>{knowledge?.documents.length ?? 0} Dokumente · {Object.values(knowledge?.rules_by_topic ?? {}).flat().length} Regeln</p>
         <Link className="btn" to={`/objekte/${propertyId}/wissen`}>Dokumente &amp; Wissen öffnen</Link>

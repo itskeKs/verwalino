@@ -72,7 +72,7 @@ export function RuntimeBudgetPanel() {
       {state.review && <p>Letzter Prüfvermerk vom {formatDateTime(state.review.reviewed_at)} · {state.review.reason}</p>}
       {!state.matches_reviewed_policy && <>
         <label className="block space-y-1">Begründung der Budgetprüfung
-          <textarea className="input w-full" value={reason} maxLength={2000} disabled={busy || loading} onChange={event => setReason(event.target.value)} />
+          <textarea className="w-full" value={reason} maxLength={2000} disabled={busy || loading} onChange={event => setReason(event.target.value)} />
         </label>
         <label className="flex items-start gap-2"><input type="checkbox" checked={acknowledged} disabled={busy || loading || !verified} onChange={event => setAcknowledged(event.target.checked)} />
           <span>Ich habe die angezeigte Budgetregel einschließlich Zeitraum und Reservierungsdauer geprüft.</span>
