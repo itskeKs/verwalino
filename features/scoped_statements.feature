@@ -24,6 +24,8 @@ Feature: Scoped statements and deadlines
     When the grant for the first scope is revoked and the open items are reloaded
     Then the open items are reported as not accessible
     And neither stale amounts nor an empty success are shown
+    When the manager opens the dashboard after the revocation
+    Then the dashboard reports the deadline overview as unavailable without an all-clear
 
   Scenario: The deadline monitor shows only the selected scope's deadlines
     Given a mixed-use property with confirmed costs in a rental and a WEG scope exists

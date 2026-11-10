@@ -49,7 +49,7 @@ responses; affected frontend modules passed 32 tests. Lint/build passed (the
 existing approximately 569 kB bundle warning remains). Independent review found
 no additional paging issue. Synthetic browser checks passed for 50→55 unique
 rows, user list, empty contact search, selected property retention and 390 px
-mobile layout; see `docs/acceptance/evidence/b1-selectors-browser.json`.
+mobile layout.
 
 Reproduce with the disposable pytest seed and
 `make test-browser PYTEST_ARGS="-q -k property_listing"`: the journey in

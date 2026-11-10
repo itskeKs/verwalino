@@ -11,6 +11,8 @@ from tests.bdd.steps.browser_setup import create
 
 TENANT_DEBT = "24 ueberfaellige(r) Posten (Mahnwesen pruefen)."
 ALL_CLEAR = re.compile("Keine überfälligen|Keine Fristen ermittelt|Alle fälligen")
+DASHBOARD_UNAVAILABLE = "Fristenübersicht nicht verfügbar. Der Handlungsbedarf kann derzeit nicht ermittelt werden."
+DASHBOARD_ALL_CLEAR = re.compile("alles im grünen Bereich|Alles erledigt|keine offenen Posten")
 RETENTION_UNKNOWN = "Aufbewahrungsübersicht nicht verfügbar; die Belegzuordnung ist noch unvollständig."
 
 
@@ -163,6 +165,22 @@ def no_false_empty(browser_world):
         page = browser_world.page
         await expect(page.get_by_text(f"{euro('7100.00')} offen", exact=True)).to_have_count(0)
         await expect(page.get_by_text("Keine offenen Posten", exact=False)).to_have_count(0)
+    browser_world.run(run())
+
+
+@when("the manager opens the dashboard after the revocation")
+def dashboard_after_revocation(browser_world):
+    async def run():
+        await browser_world.visit("/")
+    browser_world.run(run())
+
+
+@then("the dashboard reports the deadline overview as unavailable without an all-clear")
+def dashboard_unavailable(browser_world):
+    async def run():
+        page = browser_world.page
+        await expect(page.get_by_text(DASHBOARD_UNAVAILABLE, exact=True)).to_be_visible()
+        await expect(page.get_by_text(DASHBOARD_ALL_CLEAR)).to_have_count(0)
     browser_world.run(run())
 
 
