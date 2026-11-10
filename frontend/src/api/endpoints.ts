@@ -1138,7 +1138,7 @@ export function dunningPdfUrl(id: string): string {
   return `/api/dunning/${id}/pdf`;
 }
 
-// --- M8: Meetings (Eigentuemerversammlungen) ---
+// --- M8: Meetings (Eigentümerversammlungen) ---
 
 export function listMeetings(propertyId?: string): Promise<Meeting[]> {
   const qs = propertyId ? `?property_id=${encodeURIComponent(propertyId)}` : "";
@@ -1189,7 +1189,7 @@ export function deleteAgendaItem(itemId: string): Promise<void> {
   return api.delete<void>(`/api/meetings/agenda/${itemId}`);
 }
 
-// --- M8: Resolutions (Beschluesse) ---
+// --- M8: Resolutions (Beschlüsse) ---
 
 export function listResolutions(meetingId: string): Promise<Resolution[]> {
   return api.get<Resolution[]>(`/api/meetings/${meetingId}/resolutions`);

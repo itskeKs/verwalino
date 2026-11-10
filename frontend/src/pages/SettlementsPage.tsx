@@ -379,7 +379,7 @@ export function SettlementsPage() {
                   setForm({ ...form, accounting_scope_id: null, property_id: e.target.value, lease_agreement_id: "", period_start: "", period_end: "" })
                 }
               >
-                <option value="">-- Objekt waehlen --</option>
+                <option value="">-- Objekt wählen --</option>
                 {properties.map((p) => (
                   <option key={p.id} value={p.id}>
                     {p.name}
@@ -397,7 +397,7 @@ export function SettlementsPage() {
                   setForm({ ...form, lease_agreement_id: e.target.value, period_start: "", period_end: "" })
                 }
               >
-                <option value="">-- Mietvertrag waehlen --</option>
+                <option value="">-- Mietvertrag wählen --</option>
                 {(form.property_id ? leases : []).map((l) => (
                   <option key={l.id} value={l.id}>
                     {getLeaseLabel(l.id)}

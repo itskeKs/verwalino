@@ -7,16 +7,13 @@ import { APPORTIONABILITY_LABELS, fromDbApportionability } from "../lib/costVoca
 import { centsFromDecimal, formatDate, formatMoney } from "../lib/format";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "../components/ui/card";
 import { Button } from "../components/ui/button";
+import { PAYMENT_TYPE_LABELS } from "../lib/paymentTypes";
 
-const PAYMENT_TYPE_LABELS: Record<string, string> = {
-  KALTMIETE: "Kaltmiete",
-  NK_VORAUSZAHLUNG: "Betriebskosten-Vorauszahlung", HK_VORAUSZAHLUNG: "Heizkosten-Vorauszahlung",
+const REPORT_PAYMENT_TYPE_LABELS: Record<string, string> = {
+  ...PAYMENT_TYPE_LABELS,
   KAUTION: "Kaution (durchlaufend)",
   RUECKLAGENENTNAHME: "Rücklagenentnahme (durchlaufend)",
   NACHZAHLUNG: "Nachzahlung (Mieter)",
-  HAUSGELD_VORSCHUSS: "Hausgeld-Vorschuss",
-  RUECKLAGENANTEIL: "Ruecklagenanteil",
-  SONDERZAHLUNG: "Sonder-/Nachzahlung",
 };
 
 function message(error: unknown): string {
@@ -235,7 +232,7 @@ export function ReportsPage() {
       <p>Ausgaben nach Rechnungsdatum, bestätigte Bruttokosten.</p>
       <div className="overflow-x-auto">
         <table aria-label="Einnahmen"><thead><tr><th scope="col">Zahlungstyp</th><th scope="col">Betrag (EUR)</th></tr></thead><tbody>
-          {report.income.map(row => <tr key={row.payment_type}><td>{PAYMENT_TYPE_LABELS[row.payment_type] ?? `Unbekannter Zahlungstyp (${row.payment_type})`}</td><td>{formatMoney(centsFromDecimal(row.amount))}</td></tr>)}
+          {report.income.map(row => <tr key={row.payment_type}><td>{REPORT_PAYMENT_TYPE_LABELS[row.payment_type] ?? `Unbekannter Zahlungstyp (${row.payment_type})`}</td><td>{formatMoney(centsFromDecimal(row.amount))}</td></tr>)}
         </tbody></table>
       </div>
       {report.income.length === 0 && <p>Keine Einnahmen im Zeitraum.</p>}
@@ -246,7 +243,7 @@ export function ReportsPage() {
       </div>
       {report.expenses.length === 0 && <p>Keine Ausgaben im Zeitraum.</p>}
       <dl><dt>Einnahmen</dt><dd>{formatMoney(centsFromDecimal(report.income_total))}</dd><dt>Ausgaben</dt><dd>{formatMoney(centsFromDecimal(report.expense_total))}</dd><dt>Saldo</dt><dd>{formatMoney(centsFromDecimal(report.balance))}</dd></dl>
-      <p>Teilweise umlagefaehige Kosten erfordern eine Prüfung; es erfolgt keine automatische Aufteilung.</p>
+      <p>Teilweise umlagefähige Kosten erfordern eine Prüfung; es erfolgt keine automatische Aufteilung.</p>
       <p>{report.footnote}</p>
       <button type="button" disabled={downloading} onClick={() => void downloadCsv()}>{downloading ? "CSV wird geladen…" : "CSV herunterladen"}</button>
       {downloadError && <p role="alert" className="error-text">{downloadError}</p>}
