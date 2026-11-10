@@ -1,6 +1,4 @@
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
-/// <reference types="node" />
-process.env.TZ = "Europe/Berlin";
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { api } from "../api/client";

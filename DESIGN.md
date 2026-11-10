@@ -1141,7 +1141,7 @@ tests). Unit tests live in `frontend/src/lib/format.test.ts`.
 |---|---|---|
 | Money | `1.234,56 €`: `.` thousands, `,` decimals, always two, sign first (`-1.234,56 €`), no float arithmetic | Shared `formatMoney(cents)` in `lib/format.ts`, fed by `centsFromDecimal()` for API decimal strings; used by every money call site |
 | Date | `TT.MM.JJJJ`, e.g. `05.03.2026`, from the ISO API value | Shared `formatDate(iso)` in `lib/format.ts` |
-| Date and time | `TT.MM.JJJJ, HH:MM Uhr`, e.g. `31.10.2026, 14:05 Uhr`, local time, no seconds | Shared `formatDateTime(iso)` in `lib/format.ts` |
+| Date and time | `TT.MM.JJJJ, HH:MM Uhr`, e.g. `31.10.2026, 14:05 Uhr`, Europe/Berlin calendar, no seconds | Shared `formatDateTime(iso)` in `lib/format.ts`; `formatDate(iso)` maps timestamps to the Europe/Berlin calendar date |
 | Long date | weekday and month in words ("Freitag, 30. Oktober 2026") | `dateLabel` in `DashboardPage.tsx` |
 | Plain numbers | `Intl.NumberFormat("de-DE")` / `toLocaleString("de-DE")` (`1.234.567`) | `PropertyDetailPage.tsx`, `AttachmentsPanel.tsx`, `IntakeBatchPage.tsx` |
 | File size | `1.5 KB` / `1.0 MB` with a dot (`toFixed(1)`); mandates use whole KB (`12 KB`, `toFixed(0)`). Attachments show `1.234 Bytes` (`Intl.NumberFormat("de-DE")`); intake shows `1,5 KiB` (`toLocaleString("de-DE")`) | `formatBytes()` in `InvoiceDocumentsPage.tsx`, `formatSize()` in `MandateDetailPage.tsx`, `AttachmentsPanel.tsx`, `IntakeBatchPage.tsx` |
