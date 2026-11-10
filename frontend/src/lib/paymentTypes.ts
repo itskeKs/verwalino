@@ -1,5 +1,6 @@
 // One label per payment type for the payment, rent account, open items, dunning and report pages,
-// so the spelling is decided once. The bank assignment list keeps its own subset, typed by the API.
+// so the spelling is decided once. The bank assignment list keeps its own map, typed by the API's payment
+// type, which also has NACHZAHLUNG; change a spelling there too.
 export const PAYMENT_TYPE_LABELS: Record<string, string> = {
   KALTMIETE: "Kaltmiete",
   NK_VORAUSZAHLUNG: "Betriebskosten-Vorauszahlung",

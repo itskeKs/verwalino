@@ -1080,7 +1080,8 @@ the affected file.
   replaces them.
 - Payment types: `PAYMENT_TYPE_LABELS` in `lib/paymentTypes.ts` names each type once ("Rücklagenanteil",
   "Rücklagenentnahme"); the payment, rent account, open items, dunning and report pages read it; the
-  bank assignment list keeps its own subset typed by the API.
+  bank assignment list keeps its own map typed by the API's payment type, which also has `NACHZAHLUNG`;
+  change a spelling there too.
 
 Spelling change on the pages outside the property, unit, person and cost screens (synthetic data, test database):
 
