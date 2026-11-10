@@ -314,6 +314,10 @@ against the local browser stack and in PR CI's browser job.
 The populated cost-table browser regression also requires a locally seeded,
 isolated organization and is skipped on external targets; local PR browser CI
 checks it at 360 and 1280 px without depending on earlier scenarios' records.
+The `scope_team_rights`, `mandate_sources`, `property_data_domains` and
+`declaration_import_start` browser features sign in as the seed clerk (the last one also
+claims from the in-process worker queue), which an external installation does not have;
+they are skipped on external targets and run in PR CI's browser job.
 Each skipped scenario records its reason in the report. Local runs continue to
 exercise both organizations, all isolation scenarios, first-run setup, the inbox
 review chain, deletion, export/import and password reset; PR CI retains this

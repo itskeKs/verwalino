@@ -26,6 +26,8 @@ Feature: Scoped statements and deadlines
     And neither stale amounts nor an empty success are shown
     When the manager opens the dashboard after the revocation
     Then the dashboard reports the deadline overview as unavailable without an all-clear
+    When the manager opens the deadline monitor after the revocation
+    Then the monitor reports the overview as unavailable without an all-clear
 
   Scenario: The deadline monitor shows only the selected scope's deadlines
     Given a mixed-use property with confirmed costs in a rental and a WEG scope exists

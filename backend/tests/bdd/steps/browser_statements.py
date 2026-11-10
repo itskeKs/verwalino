@@ -184,6 +184,22 @@ def dashboard_unavailable(browser_world):
     browser_world.run(run())
 
 
+@when("the manager opens the deadline monitor after the revocation")
+def monitor_after_revocation(browser_world):
+    async def run():
+        await browser_world.visit("/fristen")
+    browser_world.run(run())
+
+
+@then("the monitor reports the overview as unavailable without an all-clear")
+def monitor_unavailable(browser_world):
+    async def run():
+        page = browser_world.page
+        await expect(page.get_by_role("alert")).to_be_visible()
+        await expect(page.get_by_text(ALL_CLEAR)).to_have_count(0)
+    browser_world.run(run())
+
+
 @given("a mixed-use property with confirmed costs in a rental and a WEG scope exists")
 def scoped_deadlines(world, seed_data):
     user_id = str(seed_data["user_a_admin_id"])

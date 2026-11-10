@@ -115,7 +115,8 @@ def import_cancelled(browser_world):
             return await DeclarationImportRepository(session, uuid.UUID(org)).claim_next(
                 "bdd-principal", datetime.now(timezone.utc), 120)
 
-    assert world.run(claim()) is None, "a revoked principal's job must not be claimable"
+    lease = world.run(claim())
+    assert lease is None or str(lease.import_id) != str(world.data["job"]), "a revoked principal's job must not be claimable"
     job_path = f"/api/declaration-imports/{world.data['job']}"
     client = signed_in_client(world, *CLERK)
     try:

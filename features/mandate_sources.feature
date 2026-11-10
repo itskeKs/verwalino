@@ -13,6 +13,7 @@ Feature: Mandate sources
     When the clerk uploads a contract into the scope with a reason
     Then the clerk sees the contract without a delete action
     And the administration cannot see the contract in the mandate's documents
+    And the clerk cannot download the original without the export grant
     When the clerk's grant gains "Exportieren"
     Then the clerk can download the original bytes
     When the clerk archives the contract with a reason

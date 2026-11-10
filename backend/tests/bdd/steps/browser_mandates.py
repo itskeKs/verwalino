@@ -102,6 +102,19 @@ def grant_export(world, seed_data):
     }, keyed=True)
 
 
+@then("the clerk cannot download the original without the export grant")
+def clerk_download_refused(browser_world):
+    async def run():
+        context, page = await sign_in_context(browser_world, *CLERK)
+        try:
+            answer = await context.request.get(
+                f"/api/mandates/{browser_world.world.data['mandate']['id']}/documents/{browser_world.world.data['document']['id']}/download")
+            assert answer.status == 404, await answer.text()
+        finally:
+            await context.close()
+    browser_world.run(run())
+
+
 @then("the clerk can download the original bytes")
 def clerk_downloads(browser_world):
     async def run():
