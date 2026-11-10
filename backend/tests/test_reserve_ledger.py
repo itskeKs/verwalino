@@ -1141,7 +1141,8 @@ async def test_finalized_year_freezes_cash_and_carries_closing_into_next_period(
     assert frozen['closing_balance'] == '23600.00'
     assert frozen['frozen'] is True
     # Preserve the issued opening; expose late cash separately in the next period.
-    late = await payment(api, w, '999.00', when='2025-12-31')
+    # Late R 2000: Rc 7800 (capped at Soll), correction 4200, delta -1800, late cash 200.
+    late = await payment(api, w, '2000.00', when='2025-12-31')
     assert (await api.get(path)).json() == frozen
     assert (await api.get(f"/api/weg-settlements/{w['run']}")).json()['snapshot_sha256'] == result['snapshot_sha256']
     response = await api.post('/api/economic-plans', json={'property_id': w['property'], 'plan_year': 2026,
@@ -1158,18 +1159,18 @@ async def test_finalized_year_freezes_cash_and_carries_closing_into_next_period(
     ledger = (await api.get(f'/api/weg-settlements/{next_run}/reserve-ledger')).json()
     assert ledger['opening_balance'] == '23600.00'
     assert ledger['opening_source_run_id'] == w['run']
-    assert ledger['late_cash_total'] == '0.00'
-    assert ledger['closing_balance'] == '23600.00'
+    assert ledger['late_cash_total'] == '200.00'
+    assert ledger['closing_balance'] == '23800.00'
     assert next(row for row in ledger['entries'] if row.get('payment_id') == late) == {
         'kind': 'LATE_CASH', 'component': 'CONTRIBUTION', 'date': '2025-12-31',
-        'amount': '999.00', 'payment_id': late, 'bank_account_id': w['bank_giro'],
+        'amount': '2000.00', 'payment_id': late, 'bank_account_id': w['bank_giro'],
         'owner_profile_id': w['owner_a'],
         'owner_name': 'Anton Eigentuemer', 'payment_note': None,
         'cost_document_number': None, 'register_sequence_number': None,
     }
     assert [row for row in ledger['entries'] if row['kind'] == 'LATE_CASH' and not row.get('payment_id')] == [{
         'kind': 'LATE_CASH', 'component': 'CONTRIBUTION', 'date': '2025-12-31',
-        'amount': '-999.00', 'owner_profile_id': w['owner_a'],
+        'amount': '-1800.00', 'owner_profile_id': w['owner_a'],
         'reason': 'Rücklagenanteil bereits im Hausgeld-Soll enthalten',
         'owner_name': 'Anton Eigentuemer', 'payment_note': None,
         'cost_document_number': None, 'register_sequence_number': None,
@@ -1178,11 +1179,10 @@ async def test_finalized_year_freezes_cash_and_carries_closing_into_next_period(
     next_result = await finalize(api, next_world)
     lines = next_result['lines']
     assert next(row['sort_order'] for row in lines if row['line_type'] == 'RESERVE_OPENING') < next(
-        row['sort_order'] for row in lines if row['line_type'] == 'RESERVE_CLOSING')
-    assert not any(row['line_type'] == 'RESERVE_LATE_CASH' for row in lines)
+        row['sort_order'] for row in lines if row['label'] == 'Nachträgliche Buchungen zum abgeschlossenen Jahr')
     closing_note = next(row['note'] for row in lines if row['line_type'] == 'RESERVE_CLOSING')
     assert 'nachträgliche Buchungen' in closing_note
-    assert (await api.get(f'/api/weg-settlements/{next_run}/reserve-ledger')).json()['closing_balance'] == '23600.00'
+    assert (await api.get(f'/api/weg-settlements/{next_run}/reserve-ledger')).json()['closing_balance'] == '23800.00'
     # A report for the issued year consumes the exact same frozen ledger.
     response = await api.post('/api/weg-settlements/asset-reports', json={
         'property_id': w['property'], 'period_start': '2025-01-01', 'period_end': '2025-12-31'})
@@ -1207,13 +1207,12 @@ async def test_finalized_year_freezes_cash_and_carries_closing_into_next_period(
     document = await api.get(f'/api/weg-settlements/asset-reports/{report}/pdf')
     assert document.status_code == 200, document.text
     content = pdf_text(document.content)
-    assert 'Nachträgliche Buchungen zum abgeschlossenen Jahr' not in content
-    assert '999,00 EUR' not in content
-    assert '23.600,00 EUR' in content
+    assert 'Nachträgliche Buchungen zum abgeschlossenen Jahr' in content
+    assert '200,00 EUR' in content
+    assert '23.600,00 EUR' in content and '23.800,00 EUR' in content
     assert 'nachträgliche Buchungen' in content
     amounts = {line['line_type']: Decimal(line['amount']) for line in response.json()['lines']}
-    assert 'RESERVE_LATE_CASH' not in amounts
-    assert amounts['RESERVE_OPENING'] + amounts['RESERVE_CONTRIBUTION'] - amounts['RESERVE_WITHDRAWAL'] == amounts['RESERVE_CLOSING'] == Decimal('23600.00')
+    assert amounts['RESERVE_OPENING'] + amounts['RESERVE_CONTRIBUTION'] - amounts['RESERVE_WITHDRAWAL'] + amounts['RESERVE_LATE_CASH'] == amounts['RESERVE_CLOSING'] == Decimal('23800.00')
 
 
 async def ownership_plan(api, w, year, reserve='365.00'):
