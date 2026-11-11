@@ -66,7 +66,6 @@ class WorkflowRunner:
 
 def build_adapters(stages=INBOX_STAGES,*,session_factory=None,declaration_worker=None):
     """Construction performs no database or provider request."""
-    from app.core.config import settings
     from app.core.db import get_worker_session_factory
     from app.workers.workflow import process_once as inspect_once
     from app.workers.invoice_extraction import process_once as invoice_once

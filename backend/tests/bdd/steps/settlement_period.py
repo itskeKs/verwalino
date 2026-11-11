@@ -3,7 +3,7 @@ from urllib.parse import urlsplit
 
 from pytest_bdd import given, when, then, parsers
 from tests.settlement_period_support import period_property, booked, statement, create
-from tests.settlement_period_support import period_data_cleanup  # noqa: F401
+from tests.settlement_period_support import period_data_cleanup as period_data_cleanup
 from tests.financial_coverage_helpers import attest_fixture
 from tests.bdd.steps.browser_common import browser_step, submit
 

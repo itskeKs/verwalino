@@ -15,10 +15,9 @@ from sqlalchemy.ext.asyncio import async_sessionmaker
 
 from app.evals import declaration_knowledge as harness
 from app.core import storage
-from app.core.db import get_tenant_session
 from app.evals.recorded_import import RecordedCaptureUnavailable, compare_recorded_reports, load_recorded_report, validate_recorded_report
 from app.models.declaration_candidate import DeclarationCandidate, DeclarationCandidateEvidence, DeclarationCandidateIssue
-from app.models.declaration_import import DeclarationImport, DeclarationExtractionRun
+from app.models.declaration_import import DeclarationExtractionRun
 
 ROOT = Path(__file__).resolve().parents[2]
 FIXTURES = Path(__file__).parent / 'fixtures/declaration_eval_cases.json'

@@ -4,9 +4,9 @@ import pytest
 from sqlalchemy import text
 from app.core import tenant
 from app.core.storage import get_store
-from tests.test_financial_scope_boundary import scope_seed, worker_tenant  # noqa: F401
+from tests.test_financial_scope_boundary import scope_seed as scope_seed, worker_tenant as worker_tenant
 from tests.test_scoped_account_statements import client, mutate
-from tests.test_declaration_import_api import isolated_document_store, enable_declaration_imports  # noqa: F401
+from tests.test_declaration_import_api import isolated_document_store as isolated_document_store, enable_declaration_imports as enable_declaration_imports
 
 pytestmark = pytest.mark.asyncio
 

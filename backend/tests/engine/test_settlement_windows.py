@@ -19,6 +19,8 @@ from app.engine.types import (
     UnitInput,
 )
 
+pytestmark = pytest.mark.no_db
+
 
 def uid(n):
     return uuid.UUID(int=n)

@@ -14,7 +14,7 @@ import asyncio
 
 import pytest
 from tests.test_master_import import apply, body, inventory, preview
-from tests.test_rent_changes import rent_db, rent_world, api_client  # noqa: F401
+from tests.test_rent_changes import rent_db as rent_db, rent_world as rent_world, api_client
 
 
 # ---------------------------------------------------------------------------

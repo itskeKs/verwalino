@@ -80,6 +80,7 @@ from app.models.property_knowledge_query_run import PropertyKnowledgeQueryRun
 __all__ = [
     "Base",
     "Organization",
+    "OrganizationAiSettings",
     "User",
     "Membership",
     "ManagementMandate",
@@ -87,6 +88,7 @@ __all__ = [
     # M1
     "Property",
     "Unit",
+    "UnitHousehold",
     "Person",
     "MasterImportBatch",
     "OwnerProfile",
@@ -96,6 +98,7 @@ __all__ = [
     "LeaseAgreement",
     "LeaseRentChange",
     "BankAccount",
+    "BankTransaction",
     "Meter",
     "MeterReading",
     # M2
@@ -106,6 +109,7 @@ __all__ = [
     # M3
     "SettlementRun",
     "SettlementLine",
+    "CommercialPreallocation",
     # M4
     "EconomicPlan",
     "EconomicPlanLine",
@@ -142,6 +146,31 @@ __all__ = [
     "PropertyRuleSource",
     "ApprovedFactSource",
     "PropertyKnowledgeQueryRun",
+    "OperationReceipt",
+    "InvoiceProcessingAttempt",
+    "CoverageDeclaration",
+    "AccountingScope",
+    "AccountingScopeUnit",
+    "AccountingScopeBinding",
+    "ScopeMigrationException",
+    "ScopeGrant",
+    "DunningScopeContext",
+    "ScopePaymentReconciliation",
+    "ScopePaymentReconciliationItem",
+    "PropertyDataDomain",
+    "PropertyDataGrant",
+    "PersonDataDomain",
+    "PersonDataGrant",
+    "PropertySourceAdmission",
+    "PropertySourceAdmissionReview",
+    "PropertySourceClassification",
+    "PropertyCreationReceipt",
+    "IntakeOriginal",
+    "SpecialLevy",
+    "SpecialLevyAllocation",
+    "ReserveLedgerEntry",
+    "BaseInterestRate",
+    "DunningSettings",
 ]
 
 from app.models.operation_receipt import OperationReceipt

@@ -5,9 +5,9 @@ import pytest
 from pytest_bdd import scenarios
 
 from tests.bdd.world import World, target_url
-from tests.test_invoice_extraction_worker import worker_tenant  # noqa: F401
+from tests.test_invoice_extraction_worker import worker_tenant as worker_tenant
 
-from tests.test_declaration_import_api import enable_declaration_imports, isolated_document_store  # noqa: F401
+from tests.test_declaration_import_api import enable_declaration_imports as enable_declaration_imports, isolated_document_store as isolated_document_store
 
 scenarios(str(Path(__file__).resolve().parents[3] / "features" / "source_access.feature"))
 

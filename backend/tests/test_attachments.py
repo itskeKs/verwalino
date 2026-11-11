@@ -27,7 +27,7 @@ from hashlib import sha256
 from app.core.pdf import render_pdf
 from app.core.storage import LocalFsDocumentStore, make_storage_key
 from app.services import attachment_service
-from tests.test_error_tracking import offline_tracker  # noqa: F401
+from tests.test_error_tracking import offline_tracker as offline_tracker
 from tests.test_meters_api import meter_world as _meter_world
 
 attachment_world = _meter_world

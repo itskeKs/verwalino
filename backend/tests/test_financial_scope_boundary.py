@@ -165,7 +165,7 @@ async def test_source_download_checks_current_grant_and_revocation(migrator_sess
         set_store(None)
 
 
-from tests.test_invoice_extraction_worker import worker_tenant  # dedicated queue fixture
+from tests.test_invoice_extraction_worker import worker_tenant as worker_tenant  # dedicated queue fixture
 
 
 @pytest.mark.parametrize('phase', ['before_claim', 'before_finish'])

@@ -45,6 +45,8 @@ from app.engine.fristen import (
     evaluate_wirtschaftsplan_obligations,
 )
 
+pytestmark = pytest.mark.no_db
+
 
 @pytest.mark.parametrize("day", range(1, 29))
 def test_owner_due_day_selects_a_calendar_day_before_shifting(day):

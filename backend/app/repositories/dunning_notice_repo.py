@@ -9,7 +9,6 @@ import uuid
 from typing import Sequence
 
 from sqlalchemy import and_, func, select
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.dunning_notice import LEASE_SOURCE_KEY, DunningNotice
 from app.models.dunning_scope_context import DunningScopeContext

@@ -19,7 +19,6 @@ from types import SimpleNamespace
 import httpx2
 import pytest
 from PIL import Image
-from pydantic import SecretStr
 from openai import (
     APIConnectionError,
     APIResponseValidationError,
@@ -119,8 +118,6 @@ class MockClient:
 
 
 async def test_arbitrary_listed_model_uses_provider_defaults_and_persistable_unpriced_metadata(text_document_input, migrator_session, seed_data):
-    from sqlalchemy import text
-    from app.core.db import get_tenant_session
     output = DocumentInventoryOutput(documents=[{'document_key':'declaration-main','document_type':'DECLARATION','title':'Synthetic'}])
     client = MockClient([MockResponse(output, _usage(output_tokens=5), model='future-model')])
     provider = OpenAiDeclarationProvider(client=client, primary_model='future-model', escalation_model='future-model', token_encoder=FixedTokenEncoder(10))

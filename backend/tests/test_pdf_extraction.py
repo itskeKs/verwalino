@@ -18,7 +18,6 @@ from __future__ import annotations
 import io
 import os
 import uuid
-from datetime import date
 from decimal import Decimal
 
 import pytest

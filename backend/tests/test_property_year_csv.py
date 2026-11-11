@@ -11,7 +11,7 @@ from sqlalchemy import text
 
 from app.core.tenant import AuthContext, get_current_user
 from app.main import app
-from tests.test_financial_scope_boundary import worker_tenant, scope_seed  # noqa: F401
+from tests.test_financial_scope_boundary import worker_tenant as worker_tenant, scope_seed as scope_seed
 from tests.test_property_year_report import ANLAGE_V, fixture, payment, cost, ready, query, client, report, snapshot
 from tests.test_scoped_account_statements import mutate
 from tests.test_scoped_dunning import grant

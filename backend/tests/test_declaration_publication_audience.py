@@ -3,9 +3,9 @@ import uuid
 import pytest
 from sqlalchemy import text
 from app.core.db import get_tenant_session
-from tests.test_declaration_approval_new_property import fully_reviewed_new_property_import  # noqa: F401
+from tests.test_declaration_approval_new_property import fully_reviewed_new_property_import as fully_reviewed_new_property_import
 from tests.test_property_source_access import access
-from tests.test_declaration_import_api import enable_declaration_imports  # noqa: F401
+from tests.test_declaration_import_api import enable_declaration_imports as enable_declaration_imports
 
 pytestmark=pytest.mark.asyncio
 

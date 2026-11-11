@@ -7,7 +7,6 @@ from datetime import datetime
 from typing import Sequence
 
 from sqlalchemy import func, select, text
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.declaration_import import (
     DeclarationExtractionRun,

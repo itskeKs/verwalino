@@ -14,7 +14,7 @@ from sqlalchemy import func, select
 
 from tests.conftest import MIGRATOR_SYNC_URL
 from tests.declaration_queue_fixture import queue_fixture
-from tests.test_error_tracking import offline_tracker  # noqa: F401
+from tests.test_error_tracking import offline_tracker as offline_tracker
 from tests.test_property_source_enforcement import synthetic_enforcement
 from app.core.config import settings
 from app.core.db import get_worker_tenant_session as get_tenant_session

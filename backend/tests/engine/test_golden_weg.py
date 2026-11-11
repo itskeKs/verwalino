@@ -32,6 +32,8 @@ from app.engine.types import (
 )
 from app.engine.weg import WegValidationError, compute_weg_jahresabrechnung
 
+pytestmark = pytest.mark.no_db
+
 YEAR_START = date(2025, 1, 1)
 YEAR_END = date(2025, 12, 31)
 

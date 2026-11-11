@@ -6,7 +6,7 @@ from pytest_bdd import given, when, then, parsers
 
 from tests.financial_coverage_helpers import attest_fixture
 from tests.settlement_period_support import create, period_property, statement
-from tests.settlement_period_support import period_data_cleanup  # noqa: F401
+from tests.settlement_period_support import period_data_cleanup as period_data_cleanup
 
 
 @given("a unit with a tenant change on 1 July 2026 and annual heating and hot-water readings")

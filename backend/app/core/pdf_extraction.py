@@ -19,11 +19,10 @@ from __future__ import annotations
 
 import logging
 import re
-from dataclasses import dataclass, field
 from datetime import date
 from decimal import Decimal, InvalidOperation
 
-from app.core.extraction import DocumentExtractor, ExtractionResult
+from app.core.extraction import ExtractionResult
 
 logger = logging.getLogger(__name__)
 

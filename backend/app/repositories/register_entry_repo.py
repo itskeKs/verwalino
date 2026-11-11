@@ -9,7 +9,6 @@ import uuid
 from typing import Sequence
 
 from sqlalchemy import func, select
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.resolution_register_entry import ResolutionRegisterEntry
 from app.models.resolution import Resolution

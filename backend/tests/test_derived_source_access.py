@@ -6,12 +6,12 @@ import pytest_asyncio
 from sqlalchemy import text
 from sqlalchemy.exc import DBAPIError
 from app.core.db import get_tenant_session
-from tests.test_financial_scope_boundary import scope_seed, worker_tenant  # noqa: F401
+from tests.test_financial_scope_boundary import scope_seed as scope_seed, worker_tenant as worker_tenant
 from tests.test_scoped_account_statements import client
 from tests.test_property_source_context import graph
 from tests.test_property_source_enforcement import synthetic_enforcement, change_mode
 from tests.test_knowledge_source_enforcement import granted_graph
-from tests.test_declaration_import_api import isolated_document_store, enable_declaration_imports  # noqa: F401
+from tests.test_declaration_import_api import isolated_document_store as isolated_document_store, enable_declaration_imports as enable_declaration_imports
 
 pytestmark=pytest.mark.asyncio
 CANONICAL=('approved_fact_source','property_legal_reference','property_assignment','property_rule',
@@ -219,7 +219,6 @@ async def test_derived_migration_refuses_busy_tables(committed_scope,table):
 async def test_strict_existing_amendment_updates_facts_and_replay_requires_approve(
     seed_data,client_a_admin,fully_reviewed_new_property_import
 ):
-    from datetime import datetime,timezone
     from app.models.declaration_candidate import DeclarationCandidate,DeclarationCandidateEvidence
     from tests.test_declaration_publication_audience import command
     item=fully_reviewed_new_property_import.item

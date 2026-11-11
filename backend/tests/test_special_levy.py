@@ -15,8 +15,8 @@ from app.core.config import settings
 from app.core.security import create_session_token
 from app.engine.mietkonto import special_levy_expected_charges
 from app.main import app
-from tests.test_financial_scope_boundary import actor, scope_seed  # noqa: F401
-from tests.test_invoice_extraction_worker import worker_tenant  # noqa: F401
+from tests.test_financial_scope_boundary import actor, scope_seed as scope_seed
+from tests.test_invoice_extraction_worker import worker_tenant as worker_tenant
 from tests.test_scope_grants import scope_fixture, bind
 
 pytestmark = pytest.mark.asyncio

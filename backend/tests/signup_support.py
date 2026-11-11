@@ -9,7 +9,7 @@ import pytest_asyncio
 from sqlalchemy import text
 
 from app.core.config import settings
-from tests.setup_support import fresh_setup  # noqa: F401
+from tests.setup_support import fresh_setup as fresh_setup
 from tests.test_mail_service import FakeSMTP
 
 BODY = {"organization_name": "Hausverwaltung mit langem Namen GmbH", "admin_name": "Erika Mustermann",

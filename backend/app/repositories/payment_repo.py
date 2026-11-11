@@ -15,7 +15,6 @@ from typing import Sequence
 
 from sqlalchemy import case, func, select, text
 from fastapi import HTTPException
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.payment import Payment
 from app.models.accounting_scope import AccountingScopeBinding

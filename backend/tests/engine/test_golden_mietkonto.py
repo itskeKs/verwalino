@@ -38,6 +38,8 @@ from app.engine.mietkonto import (
     tenant_expected_charges,
 )
 
+pytestmark = pytest.mark.no_db
+
 YEAR_START = date(2025, 1, 1)
 YEAR_END = date(2025, 12, 31)
 

@@ -8,8 +8,8 @@ import uuid
 import pytest
 from sqlalchemy import text
 
-from tests.test_rent_changes import rent_db, rent_world, api_client  # noqa: F401
-from tests.test_organization_export import export_store, unpack  # noqa: F401
+from tests.test_rent_changes import rent_db as rent_db, rent_world as rent_world, api_client
+from tests.test_organization_export import export_store as export_store, unpack
 
 
 def repack(files):
@@ -557,7 +557,7 @@ async def test_register_archive_upgrade_preserves_both_dates_and_refuses_invalid
     await rent_db.rollback()
 
 
-from tests.test_special_levy import levy_db, scope_seed, worker_tenant, client as levy_client  # noqa: E402,F401
+from tests.test_special_levy import levy_db as levy_db, scope_seed as scope_seed, worker_tenant, client as levy_client  # noqa: E402,F401
 from tests.test_m4_weg import legacy_levy  # noqa: E402
 
 

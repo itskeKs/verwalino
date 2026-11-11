@@ -6,7 +6,7 @@ import pytest
 import pytest_asyncio
 from reportlab.pdfgen import canvas
 from app.core.invoice_ocr import extract_invoice, run_isolated_extraction
-from tests.test_error_tracking import offline_tracker  # noqa: F401
+from tests.test_error_tracking import offline_tracker as offline_tracker
 
 
 @pytest_asyncio.fixture

@@ -3,7 +3,7 @@ import logging
 
 import pytest
 from sqlalchemy import text
-from tests.setup_support import BODY, fresh_setup  # noqa: F401
+from tests.setup_support import BODY, fresh_setup as fresh_setup
 
 
 @pytest.fixture(autouse=True)

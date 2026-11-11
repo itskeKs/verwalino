@@ -46,8 +46,8 @@ from app.core.db import get_tenant_session
 from app.core.tenant import AuthContext, get_current_user
 from app.main import app
 from tests.conftest import MIGRATOR_SYNC_URL
-from tests.test_meters_api import meter_world as task_world
-from tests.test_financial_scope_boundary import scope_seed, worker_tenant  # noqa: F401
+from tests.test_meters_api import meter_world as task_world  # noqa: F401
+from tests.test_financial_scope_boundary import scope_seed as scope_seed, worker_tenant as worker_tenant
 from tests.test_property_master_access import existing, principals
 from tests.test_property_source_access import grant
 from tests.test_property_source_enforcement import synthetic_enforcement, change_mode
@@ -120,7 +120,7 @@ async def test_filter_validation(client_a_admin, query):
     assert (await client_a_admin.get('/api/tasks', params=query)).status_code == 422
 
 
-async def test_dates_filters_pagination_and_combination(client_a_admin, task_world, seed_data):
+async def test_dates_filters_pagination_and_combination(client_a_admin, task_world, seed_data):  # noqa: F811
     today = date.today()
     dates = [today - timedelta(days=1), today, today + timedelta(days=1),
              today + timedelta(days=2), None]
@@ -166,7 +166,7 @@ async def lease_for(api, unit_id):
     return lease.json()['id']
 
 
-async def test_canonical_parents_labels_filters_and_relink(client_a_admin, task_world):
+async def test_canonical_parents_labels_filters_and_relink(client_a_admin, task_world):  # noqa: F811
     w = task_world
     lease = await lease_for(client_a_admin, w['unit'])
     row = await create(client_a_admin, lease_agreement_id=lease)
@@ -330,7 +330,7 @@ async def test_failure_after_flush_rolls_back(client_a_admin, monkeypatch):
 
 
 async def test_sql_force_rls_both_orgs_role_and_parent_coherence(
-        client_a_admin, client_b_admin, task_world, seed_data, app_rw_session, migrator_session):
+        client_a_admin, client_b_admin, task_world, seed_data, app_rw_session, migrator_session):  # noqa: F811
     own = await create(client_a_admin, unit_id=task_world['unit'])
     other = await create(client_b_admin)
     db = app_rw_session
@@ -372,7 +372,7 @@ async def test_sql_force_rls_both_orgs_role_and_parent_coherence(
     assert {r[0] for r in (await migrator_session.execute(text("SELECT cmd FROM pg_policies WHERE tablename='task'"))).all()} == {'SELECT', 'INSERT', 'UPDATE', 'DELETE'}
 
 
-async def test_foreign_parent_hidden_before_own_child_mismatch(client_a_admin, task_world):
+async def test_foreign_parent_hidden_before_own_child_mismatch(client_a_admin, task_world):  # noqa: F811
     lease = await lease_for(client_a_admin, task_world['unit'])
     body = {'title': 'Denied', 'property_id': task_world['foreign_property'],
             'unit_id': task_world['other_unit'], 'lease_agreement_id': lease}
@@ -428,7 +428,7 @@ async def test_lease_source_read_prepare_and_pause(scope_seed, migrator_session)
 
 
 async def test_sql_parent_foreign_keys_and_lease_coherence_bypass_role(
-        client_a_admin, task_world, seed_data, migrator_session):
+        client_a_admin, task_world, seed_data, migrator_session):  # noqa: F811
     lease = await lease_for(client_a_admin, task_world['unit'])
     row = await create(client_a_admin, lease_agreement_id=lease)
     for changes in [
