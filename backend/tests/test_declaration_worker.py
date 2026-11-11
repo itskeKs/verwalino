@@ -1,6 +1,7 @@
 """Fenced declaration-import worker coverage."""
 
 import asyncio
+import json
 import logging
 import uuid
 from contextlib import asynccontextmanager, closing
@@ -13,6 +14,7 @@ from sqlalchemy import func, select
 
 from tests.conftest import MIGRATOR_SYNC_URL
 from tests.declaration_queue_fixture import queue_fixture
+from tests.test_error_tracking import offline_tracker  # noqa: F401
 from tests.test_property_source_enforcement import synthetic_enforcement
 from app.core.config import settings
 from app.core.db import get_worker_tenant_session as get_tenant_session
@@ -717,6 +719,27 @@ async def test_pipeline_exception_cleans_up_heartbeat_task(seed_data) -> None:
     result = await DeclarationImportWorker(FailingPipeline(), sleep=waiting_sleep).run_once()
     assert result.code == "PIPELINE_ERROR"
     assert heartbeat_cancelled.is_set()
+
+
+@pytest.mark.asyncio
+async def test_failing_declaration_import_is_one_tracker_event_with_the_import_id(seed_data, offline_tracker) -> None:
+    events, tracker = offline_tracker
+    item = await _create_import(seed_data["org_a_id"], seed_data["user_a_admin_id"], status="QUEUED")
+    sentinel = "Synthetic document fragment: tenant account DE111222333"
+
+    class FailingPipeline:
+        async def run(self, _lease):
+            raise RuntimeError(sentinel)
+
+    async def waiting_sleep(_seconds: float) -> None:
+        await asyncio.Event().wait()
+
+    result = await DeclarationImportWorker(FailingPipeline(), sleep=waiting_sleep).run_once()
+    tracker.flush()
+    assert result.code == "PIPELINE_ERROR"
+    assert len(events) == 1
+    assert events[0]["tags"] == {"worker": "declaration_import", "job_id": str(item.id), "request_id": str(item.id)}
+    assert sentinel not in json.dumps(events[0])
 
 
 @pytest.mark.asyncio
