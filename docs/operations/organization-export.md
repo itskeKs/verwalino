@@ -154,20 +154,24 @@ for the newly mapped payload before insertion; source originals remain exact byt
 Imported source identities are recorded in the immutable import audit receipt
 and re-exported as `source_id`; imported historical receipts do not override the
 new local receipt. The latest local completion receipt takes precedence. Request identifiers are regenerated consistently. The target organization keeps its ID; its descriptive row is restored from the
-archive. Its existing administrator account is kept. A sign-in address belongs
-to exactly one organization (issue #134): an archived address still used by a
-live account — usually of the still-existing source organization — is not
-occupied by the import. Imported users are inactive placeholders with an
-unusable password and a deterministic non-sign-in address
-(`<id>-<destination organization id>@imported.archive.invalid`); an administrator must create or reset
-accounts locally before login. An existing destination account with a matching
-normalized address is still reused and deactivated instead of duplicated.
-Round-trip count comparisons account for the kept destination administrator and
-exclude the new local import audit receipt. The importing administrator also
-assumes each restored accounting scope's capabilities through a visible
-`scope_grant` row (reason `Archivwiederherstellung`): the archived grants
-belong to inactive placeholder accounts and cannot keep the restored scoped
-records readable or operable. Contact creation records the importing administrator as the new
+archive. Its existing administrator account is kept. Users match normalized
+email addresses within the destination only. Other users are inactive with an
+unusable password; an administrator must reset their password and activate them
+before login. A sign-in address belongs to exactly one organization, so an
+archived user whose address a live account still holds (usually the
+still-existing source organization) does not occupy it: that placeholder gets the
+deterministic non-sign-in address
+`<id>-<destination organization id>@imported.archive.invalid` and the address
+stays with its live owner. An address nobody holds is restored unchanged. Rows
+whose insert policy binds an actor column to the session user
+(`accounting_scope.created_by`, `accounting_scope_binding.reviewed_by`,
+`scope_grant.granted_by`) keep their archived actor and are accepted only when
+that actor is the importing administrator's own account; otherwise the import is
+refused with the integrity refusal. `attachment.uploaded_by` keeps the archived
+uploader (the insert is replayed as that actor). A different bootstrap mailbox
+remains an additional local account; round-trip count comparisons use a matching
+bootstrap mailbox (a different one adds one local user and membership row) and
+exclude the new local import audit receipt. Contact creation records the importing administrator as the new
 custodian, without claiming the historical author performed a local operation.
 
 Rows are inserted in dependency order in one transaction under ordinary runtime

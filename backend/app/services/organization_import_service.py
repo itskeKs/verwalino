@@ -395,12 +395,6 @@ async def import_organization(db, auth, source):
                     inserted.add((name, row['id']))
                     continue
                 pending.append((name, row))
-        # Identity rows must precede financial resources (created_by edges)
-        # and bindings must follow them: the native financial creation
-        # trigger refuses a resource once its property has a classified
-        # binding, so replay every financial resource before any binding.
-        pending.sort(key=lambda item: (item[0] not in {'user', 'membership'},
-                                       item[0] == 'accounting_scope_binding'))
         # Replay staged classification through native guards. A one-sided
         # binding was added after an unclassified match, so replay that order.
         # Fully classified matches still require both bindings before insertion.
@@ -441,13 +435,6 @@ async def import_organization(db, auth, source):
                 'id': flat[row['id']]}
         await db.execute(text("SELECT set_config('app.organization_import_registrations',:registrations,true)"),
                          {'registrations': json.dumps(registrations)})
-        # The archived scope grants belong to inactive placeholder accounts
-        # after import (issue #134), so they cannot satisfy the native
-        # capability checks during replay or afterwards. As each scope is
-        # restored, the importing administrator assumes its capabilities; the
-        # grant remains as a visible evidence row (grants are append-only),
-        # so the restored organization stays readable and operable.
-        restore_reason = 'Archivwiederherstellung'
         try:
             while pending:
                 progress = False
@@ -492,29 +479,10 @@ async def import_organization(db, auth, source):
                         row['snapshot_sha256'] = canonical_sha256(row['snapshot_payload'])
                     if name == 'user':
                         row.update(password_hash='!', is_active=False)
-                        if await db.scalar(text('SELECT public.signin_email_taken(:email)'), {'email': row['email']}):
-                            # The archived address belongs to a live account, usually
-                            # of the still-existing source organization: one sign-in
-                            # address belongs to one organization (issue #134).
-                            # Imported users are inactive placeholders without
-                            # credentials, so they keep a deterministic non-sign-in
-                            # address scoped to the destination organization; the
-                            # same archive imported elsewhere never collides.
+                        if await db.scalar(text('SELECT public.signup_email_registered(:email)'), {'email': row['email']}):
                             row['email'] = f"{row['id']}-{auth.organization_id}@imported.archive.invalid"
                     if name == 'person':
                         row['created_by'] = str(auth.user_id)
-                    # Insert policies bind these actor columns to the session
-                    # principal. The archived actors are inactive placeholder
-                    # accounts after import (issue #134: one live sign-in
-                    # address belongs to one organization), so the importing
-                    # administrator restores them on their behalf.
-                    for actor_column in {
-                        'accounting_scope': ('created_by',),
-                        'accounting_scope_binding': ('reviewed_by',),
-                        'scope_grant': ('granted_by',),
-                    }.get(name, ()):
-                        if row.get(actor_column):
-                            row[actor_column] = str(auth.user_id)
                     member = documents.get((name, original.get('id')))
                     if row.get('storage_uri') and row.get('content_sha256'):
                         if member is None or members[member][1] != row['content_sha256']:
@@ -551,35 +519,28 @@ async def import_organization(db, auth, source):
                         await db.execute(text("SELECT set_config('app.current_scope_id',:scope,true)"),
                             {'scope': row['accounting_scope_id']})
                     if name == 'attachment' and row.get('uploaded_by'):
-                        # The insert policy binds the uploader to the session
-                        # actor; replay the archived uploader (a placeholder
-                        # account) so the original custody stays intact.
+                        # attachment_insert binds uploaded_by to the session actor
+                        # (migration 0130). An archived uploader is an inactive
+                        # placeholder after import (one sign-in address belongs to
+                        # one organization), so replay the insert as that actor to
+                        # keep the archived custody. A refused insert aborts the
+                        # whole import transaction, so the actor needs no restore
+                        # on failure.
                         previous_actor = await db.scalar(text("SELECT current_setting('app.current_user_id',true)"))
                         await db.execute(text("SELECT set_config('app.current_user_id',:actor,true)"),
                             {'actor': row['uploaded_by']})
-                    try:
-                        await db.execute(text(f'INSERT INTO public."{name}" ({columns}) SELECT {projection} '
-                            f'FROM json_populate_record(NULL::public."{name}",CAST(:row AS json)) v'),
-                            {'row': json_bytes(row).decode()})
-                    finally:
-                        if name == 'attachment' and row.get('uploaded_by'):
-                            await db.execute(text("SELECT set_config('app.current_user_id',:actor,true)"),
-                                {'actor': previous_actor or ''})
+                    await db.execute(text(f'INSERT INTO public."{name}" ({columns}) SELECT {projection} '
+                        f'FROM json_populate_record(NULL::public."{name}",CAST(:row AS json)) v'),
+                        {'row': json_bytes(row).decode()})
+                    if name == 'attachment' and row.get('uploaded_by'):
+                        await db.execute(text("SELECT set_config('app.current_user_id',:actor,true)"),
+                            {'actor': previous_actor or ''})
                     if name == 'special_levy':
                         await db.execute(text("SELECT set_config('app.current_scope_id',:scope,true)"),
                             {'scope': previous_scope or ''})
                     inserted.add((name, original.get('id')))
                     pending.remove((name, original))
                     progress = True
-                    if name == 'accounting_scope':
-                        await db.execute(text(
-                            "INSERT INTO scope_grant(organization_id,scope_id,user_id,capabilities,granted_by,reason) "
-                            "SELECT :org,:scope,:admin,ARRAY['read','prepare','confirm','approve','send','export']::varchar[],"
-                            ":admin,:reason WHERE NOT EXISTS(SELECT 1 FROM scope_grant "
-                            "WHERE organization_id=:org AND scope_id=:scope "
-                            "AND user_id=:admin AND revoked_at IS NULL)"),
-                            {'org': auth.organization_id, 'scope': row['id'], 'admin': str(auth.user_id),
-                             'reason': restore_reason})
                 if not progress:
                     refuse('Das Archiv enthält zyklische oder nicht auflösbare Abhängigkeiten.')
             counts = {name: len(rows) for name, rows in entities.items()}
@@ -594,5 +555,5 @@ async def import_organization(db, auth, source):
         except DBAPIError as exc:
             # Structured driver codes only; no SQL, target identities or values.
             code = getattr(exc.orig, 'sqlstate', None)
-            logger.warning('organization import rejected by database sqlstate=%s detail=%s', code, exc)
+            logger.warning('organization import rejected by database sqlstate=%s', code)
             refuse('Die Daten können unter den aktuellen Integritäts- und Freigaberegeln nicht importiert werden.', code='IMPORT_INTEGRITY_REFUSAL', entity=name, source_ids=[original.get('id', original.get('request_key'))], count=1)

@@ -2,7 +2,7 @@
 
 Tenant-behaftet: carries organization_id, RLS active.
 Constraint: UNIQUE(organization_id, email); additionally a globally unique
-canonical sign-in address (uq_user_signin_email, migration 0182): one address
+canonical sign-in address (uq_user_signin_email, migration 0183): one address
 belongs to exactly one organization, so login, reset and signup resolve one
 account per address.
 """

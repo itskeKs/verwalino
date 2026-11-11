@@ -26,6 +26,17 @@ def repack(files):
     return output.getvalue()
 
 
+def archive_with_user_email(files, user_id, email):
+    """The archive with one user's sign-in address replaced."""
+    rows = []
+    for line in files['entities/user.jsonl'].splitlines():
+        row = json.loads(line)
+        if row['id'] == str(user_id):
+            row['email'] = email
+        rows.append(json.dumps(row).encode() + b'\n')
+    return {**files, 'entities/user.jsonl': b''.join(rows)}
+
+
 @pytest.fixture
 async def import_target(rent_db, rent_world):
     target = {'org': uuid.uuid4(), 'admin': uuid.uuid4(), 'email': f"target-{uuid.uuid4().hex}@rent-change.invalid"}
@@ -188,9 +199,7 @@ async def test_released_scoped_reserve_draft_and_later_cost_link_survive_archive
             'property_id': ids['property'][original_binding['property_id']],
             'scope_id': ids['accounting_scope'][original_binding['scope_id']],
             'payment_id': restored_payment['payment'], 'payment_bank_account_id': ids['bank_account'][bank],
-            # Insert policies bind reviewed_by to the restoring session actor;
-            # the archived reviewer is an inactive placeholder (issue #134).
-            'reviewed_by': str(import_target['admin'])}
+            'reviewed_by': ids['user'][original_binding['reviewed_by']]}
         await rent_db.rollback()
         page = await api.get('/api/bank-transactions', params={'bank_account_id': ids['bank_account'][bank], 'status': 'ALL'})
         line = next(row for row in page.json()['items'] if row['id'] == debit_id)
@@ -441,6 +450,25 @@ async def test_invalid_organization_metadata_is_a_refusal_and_preserves_target(r
     await rent_db.rollback()
 
 
+async def test_relinked_nonadmin_account_is_inactive_and_requires_a_reset(rent_world, import_target, rent_db, export_store):
+    # A destination account that already holds the archived address is reused
+    # (the address is free of the source organization, for example after its
+    # deletion), deactivated and left without a usable password.
+    email = f"relinked-{uuid.uuid4().hex}@rent-change.invalid"
+    existing_id = uuid.uuid4()
+    await rent_db.execute(text('''INSERT INTO "user"(id,organization_id,email,password_hash,display_name)
+      VALUES (:id,:org,:email,'previous-password','Existing clerk')'''), {**import_target, 'id': existing_id, 'email': email})
+    await rent_db.execute(text("INSERT INTO membership(organization_id,user_id,role) VALUES (:org,:id,'CLERK')"), {**import_target, 'id': existing_id})
+    await rent_db.commit()
+    files = archive_with_user_email(unpack(await exported(rent_world)), rent_world['clerk'], email)
+    async with api_client(import_target) as api:
+        answer = await api.post('/api/organizations/import', files={'file': ('org.tar.gz', repack(files))})
+        assert answer.status_code == 200, answer.text
+        assert answer.json()['id_map']['user'][str(rent_world['clerk'])] == str(existing_id)
+    assert (await rent_db.execute(text('SELECT is_active,password_hash FROM "user" WHERE id=:id'), {'id': existing_id})).one() == (False, '!')
+    await rent_db.rollback()
+
+
 async def test_imported_account_with_globally_taken_address_is_inactive_placeholder(rent_world, import_target, rent_db, export_store):
     # One sign-in address belongs to one organization (issue #134): the source
     # clerk's address is still owned by the live source organization, so the
@@ -455,6 +483,22 @@ async def test_imported_account_with_globally_taken_address_is_inactive_placehol
                                  {'id': uuid.UUID(placeholder_id)})).one()
     assert row == (f"{placeholder_id}-{import_target['org']}@imported.archive.invalid", False, '!')
     assert row[0] != email
+    await rent_db.rollback()
+
+
+async def test_imported_account_keeps_an_address_nobody_holds(rent_world, import_target, rent_db, export_store):
+    # Only a globally taken address becomes a synthetic placeholder (issue
+    # #134): an address nobody holds is restored unchanged so the placeholder
+    # stays identifiable with the archived account.
+    fresh_email = f"free-{uuid.uuid4().hex}@example.invalid"
+    files = archive_with_user_email(unpack(await exported(rent_world)), rent_world['clerk'], fresh_email)
+    async with api_client(import_target) as api:
+        answer = await api.post('/api/organizations/import', files={'file': ('org.tar.gz', repack(files))})
+        assert answer.status_code == 200, answer.text
+        placeholder_id = answer.json()['id_map']['user'][str(rent_world['clerk'])]
+    row = (await rent_db.execute(text('SELECT email,is_active,password_hash FROM "user" WHERE id=:id'),
+                                 {'id': uuid.UUID(placeholder_id)})).one()
+    assert row == (fresh_email, False, '!')
     await rent_db.rollback()
 
 

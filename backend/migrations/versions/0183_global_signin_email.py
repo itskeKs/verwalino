@@ -54,28 +54,14 @@ def upgrade() -> None:
     # uniqueness; keep exactly one enforcement instead of two.
     op.execute("DROP INDEX IF EXISTS public.uq_user_org_canonical_email")
     # Runtime import check: an archive placeholder may not occupy a sign-in
-    # address that belongs to a user of any organization.
-    op.execute(
-        """
-        CREATE FUNCTION public.signin_email_taken(email text) RETURNS boolean
-        LANGUAGE sql STABLE SECURITY DEFINER
-        SET search_path = pg_catalog, pg_temp
-        SET row_security = off
-        AS $$
-            SELECT EXISTS(
-                SELECT 1 FROM public."user" AS u
-                WHERE pg_catalog.lower(pg_catalog.btrim(u.email)) =
-                      pg_catalog.lower(pg_catalog.btrim(email))
-            )
-        $$
-        """
-    )
-    op.execute("REVOKE ALL ON FUNCTION public.signin_email_taken(text) FROM PUBLIC")
-    op.execute("GRANT EXECUTE ON FUNCTION public.signin_email_taken(text) TO app_rw")
+    # address that belongs to a user of any organization. The lookup is the
+    # one signup already uses (0144); only the application role needs to
+    # execute it.
+    op.execute("GRANT EXECUTE ON FUNCTION public.signup_email_registered(text) TO app_rw")
 
 
 def downgrade() -> None:
-    op.execute("DROP FUNCTION public.signin_email_taken(text)")
+    op.execute("REVOKE EXECUTE ON FUNCTION public.signup_email_registered(text) FROM app_rw")
     op.execute("DROP INDEX IF EXISTS public.uq_user_signin_email")
     # Restore the 0027 per-organization canonical index verbatim.
     op.execute(

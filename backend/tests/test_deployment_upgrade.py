@@ -559,6 +559,11 @@ def rehearse_initial_upgrade(starting_schema='0122'):
                         # restores the exact 0027 per-organization index.
                         global_index = text("SELECT to_regclass('public.uq_user_signin_email')")
                         org_index = text("SELECT to_regclass('public.uq_user_org_canonical_email')")
+                        # The import reuses signup's lookup (0144); 0183 only lets the
+                        # application role execute it and the downgrade takes that back.
+                        lookup_grant = text("SELECT has_function_privilege('app_rw',"
+                                            "'public.signup_email_registered(text)','EXECUTE')")
+                        assert connection.scalar(lookup_grant) is True
                         assert connection.scalar(global_index) is not None
                         assert connection.scalar(org_index) is None
                         with connection.begin_nested() as signin_rehearsal:
@@ -581,13 +586,11 @@ def rehearse_initial_upgrade(starting_schema='0122'):
                             revision.module.downgrade()
                             assert connection.scalar(global_index) is None
                             assert connection.scalar(org_index) is not None
-                            assert connection.scalar(text(
-                                "SELECT to_regprocedure('public.signin_email_taken(text)')")) is None
+                            assert connection.scalar(lookup_grant) is False
                             revision.module.upgrade()
                             assert connection.scalar(global_index) is not None
                             assert connection.scalar(org_index) is None
-                            assert connection.scalar(text(
-                                "SELECT to_regprocedure('public.signin_email_taken(text)')")) is not None
+                            assert connection.scalar(lookup_grant) is True
                             index_rehearsal.rollback()
                     if (starting_schema, revision.revision) == ('0181', '0182'):
                         # Rehearse before API tests retain active runs; the guard is a pure addition.
