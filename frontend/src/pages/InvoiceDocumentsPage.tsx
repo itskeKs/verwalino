@@ -130,7 +130,7 @@ export function InvoiceDocumentsPage() {
               <tr>
                 <th>Dateiname</th>
                 <th>Version</th>
-                <th>Groesse</th>
+                <th>Größe</th>
                 <th>Typ</th>
                 <th>Status</th>
                 <th>SHA-256</th>

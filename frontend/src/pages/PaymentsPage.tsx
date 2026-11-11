@@ -36,6 +36,7 @@ import { ApiError } from "../api/client";
 import { centsFromDecimal, formatDate, formatMoney } from "../lib/format";
 import { ReserveEvidenceFields } from "../components/ReserveEvidenceFields";
 import { SepaExport } from "../components/SepaExport";
+import { PAYMENT_TYPE_LABELS } from "../lib/paymentTypes";
 
 const STATUS_OPTIONS: { value: string; label: string }[] = [
   { value: "", label: "Alle Status" },
@@ -56,26 +57,7 @@ const STATUS_CSS: Record<string, string> = {
   cancelled: "badge--superseded",
 };
 
-const PAYMENT_TYPE_OPTIONS: { value: string; label: string }[] = [
-  { value: "KALTMIETE", label: "Kaltmiete" },
-  { value: "NK_VORAUSZAHLUNG", label: "Betriebskosten-Vorauszahlung" },
-  { value: "HK_VORAUSZAHLUNG", label: "Heizkosten-Vorauszahlung" },
-  { value: "KAUTION", label: "Kaution" },
-  { value: "HAUSGELD_VORSCHUSS", label: "Hausgeld-Vorschuss" },
-  { value: "RUECKLAGENANTEIL", label: "Ruecklagenanteil" },
-  { value: "RUECKLAGENENTNAHME", label: "Rücklagenentnahme" },
-  { value: "SONDERZAHLUNG", label: "Sonder-/Nachzahlung" },
-];
-
-const PAYMENT_TYPE_LABELS: Record<string, string> = {
-  KALTMIETE: "Kaltmiete",
-  NK_VORAUSZAHLUNG: "Betriebskosten-Vorauszahlung", HK_VORAUSZAHLUNG: "Heizkosten-Vorauszahlung",
-  KAUTION: "Kaution",
-  HAUSGELD_VORSCHUSS: "Hausgeld-Vorschuss",
-  RUECKLAGENANTEIL: "Ruecklagenanteil",
-  RUECKLAGENENTNAHME: "Rücklagenentnahme",
-  SONDERZAHLUNG: "Sonder-/Nachzahlung",
-};
+const PAYMENT_TYPE_OPTIONS = Object.entries(PAYMENT_TYPE_LABELS).map(([value, label]) => ({ value, label }));
 
 const DIRECTION_LABELS: Record<string, string> = {
   IN: "Eingang",
@@ -382,7 +364,7 @@ export function PaymentsPage() {
                   setForm({ ...form, bank_account_id: e.target.value, reserve_cost_entry_id: null, reserve_register_entry_id: null })
                 }
               >
-                <option value="">-- Konto waehlen --</option>
+                <option value="">-- Konto wählen --</option>
                 {bankAccounts.map((a) => (
                   <option key={a.id} value={a.id}>
                     {getAccountLabel(a.id)}
@@ -468,7 +450,7 @@ export function PaymentsPage() {
                     })
                   }
                 >
-                  <option value="">-- Mieter waehlen --</option>
+                  <option value="">-- Mieter wählen --</option>
                   {tenantProfiles.map((tp) => {
                     const person = persons.find((p) => p.id === tp.person_id);
                     const name = person
@@ -484,9 +466,9 @@ export function PaymentsPage() {
               </label>
             ) : (
               <label>
-                Eigentuemer
+                Eigentümer
                 <select
-                  aria-label="Eigentuemer"
+                  aria-label="Eigentümer"
                   value={form.owner_profile_id ?? ""}
                   onChange={(e) =>
                     setForm({
@@ -496,7 +478,7 @@ export function PaymentsPage() {
                     })
                   }
                 >
-                  <option value="">-- Eigentuemer waehlen --</option>
+                  <option value="">-- Eigentümer wählen --</option>
                   {ownerProfiles.map((op) => {
                     const person = persons.find((p) => p.id === op.person_id);
                     const name = person
