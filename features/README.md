@@ -82,6 +82,10 @@ database records use the ordinary services; signup mail uses local Mailpit.
 The organization-isolation feature reuses one set of property, person and bank
 account records per organization: its scenarios only read them or attempt refused
 foreign mutations. The session fixture enforces shared property headroom.
+In a local hosted run the `world` fixture also clears the domain records scenarios created
+(properties and everything below them) once before the first scenario of each feature;
+organizations, users, memberships and mandates stay. Features therefore do not add up to
+the free-plan cap of 20 properties.
 At the end of a local hosted run, a guard requires at least two free property
 slots in each shared organization. It reports both final counts and peak counts
 with the scenario name, sampling before fixture cleanup can empty the tables.
