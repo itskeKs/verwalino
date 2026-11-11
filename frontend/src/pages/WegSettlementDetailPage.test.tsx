@@ -80,7 +80,7 @@ it.each(['draft', 'finalized'] as const)('contains every %s owner statement in i
     const table = within(heading.parentElement!).getByRole('table');
     expect(table.parentElement).toHaveClass('overflow-x-auto');
   }
-  expect(within(owner.parentElement!).getByRole('cell', { name: '7200.00 EUR' })).toBeVisible();
+  expect(within(owner.parentElement!).getByRole('cell', { name: '7.200,00 €' })).toBeVisible();
   if (status === 'finalized') expect(screen.getByText(hash)).toBeVisible();
 });
 
@@ -239,7 +239,7 @@ it("renders finalized frozen lines without requesting current input owners or th
   expect(await screen.findByRole("heading", { name: "Anna Alt" })).toBeVisible();
   expect(screen.getByRole("heading", { name: "Berta Neu" })).toBeVisible();
   expect(screen.getByText("Festgeschriebener Anteil seller")).toBeVisible();
-  expect(screen.getByText("181.00 EUR")).toBeVisible(); expect(screen.getByText("184.00 EUR")).toBeVisible();
+  expect(screen.getByText("181,00 €")).toBeVisible(); expect(screen.getByText("184,00 €")).toBeVisible();
   expect(screen.getByText("b".repeat(64))).toBeVisible();
   expect(screen.queryByRole("textbox", { name: paymentLabel("Anna Alt") })).not.toBeInTheDocument();
   expect(fetchMock.mock.calls.some(([url]) => url.endsWith("/input-owners") || url.startsWith("/api/economic-plans/"))).toBe(false);
@@ -349,5 +349,5 @@ it('renders the planned reserve as a separate owner Soll line', async () => {
   show();
   const heading = await screen.findByRole('heading', { name: 'Anna Alt' });
   const row = within(heading.parentElement!).getByText('Rücklagenzuführung laut Wirtschaftsplan (Soll)').closest('tr')!;
-  expect(within(row).getByText('3600.00 EUR')).toBeVisible();
+  expect(within(row).getByText('3.600,00 €')).toBeVisible();
 });

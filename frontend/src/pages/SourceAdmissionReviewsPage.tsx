@@ -1,3 +1,4 @@
+import { formatDateTime } from "../lib/format";
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import { Link, useLocation, useParams } from "react-router-dom";
 import { ApiError } from "../api/client";
@@ -12,7 +13,7 @@ const endpoint = sourceAdmissionReviewApi.base;
 function ReviewReceipt({ receipt }: { receipt: Receipt }) {
   return <section className="card" aria-label="Freigabenachweis">
     <h2>Quellenfreigabe dokumentiert</h2>
-    <p>Freigegeben am {new Date(receipt.created_at).toLocaleString("de-DE")} · Revision {receipt.draft_revision}</p>
+    <p>Freigegeben am {formatDateTime(receipt.created_at)} · Revision {receipt.draft_revision}</p>
     <p className="whitespace-pre-wrap break-words">{receipt.reason}</p>
     <p><Link to={`/objekte/${receipt.property_id}`}>Zielobjekt anzeigen</Link> · <Link to={`/berechtigungen/pruefungen/quellen/${receipt.id}`}>Freigabenachweis öffnen</Link></p>
     <details><summary>Original identifizieren</summary><p className="break-all">SHA-256: {receipt.content_sha256}</p><p className="break-all">Dokument: {receipt.document_id}</p></details>

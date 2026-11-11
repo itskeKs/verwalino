@@ -1,6 +1,7 @@
 import { useRef, useState } from "react";
 import { api } from "../api/client";
 import { usePagedList } from "../hooks/usePagedList";
+import { centsFromDecimal, formatDate, formatMoney } from "../lib/format";
 import { MoreResults } from "./ListSearch";
 
 interface Candidate {
@@ -50,7 +51,7 @@ function PaymentReview({ scopeId }: { scopeId: string }) {
           return <tr key={item.id}><td><input type="checkbox" aria-label={`Zahlung ${item.bank_label} ${item.value_date} auswählen`}
             checked={checked} disabled={item.proof_status !== "proven" || !item.source_digest || (!checked && selected.length >= 200)}
             onChange={e => { setResult(null); setSelected(e.target.checked ? [...selected, item] : selected.filter(row => row.id !== item.id)); }} /></td>
-            <td>{item.bank_label}<br />{item.value_date}</td><td>{item.direction === "OUT" ? "−" : "+"}{item.amount} EUR</td>
+            <td>{item.bank_label}<br />{formatDate(item.value_date)}</td><td>{item.direction === "OUT" ? "−" : "+"}{formatMoney(centsFromDecimal(item.amount))}</td>
             <td>{item.proof_status === "proven" ? "Durch Konto belegt" : blockers[item.blocker ?? ""] ?? "Einzelprüfung erforderlich"}</td></tr>;
         })}
       </tbody></table></div>

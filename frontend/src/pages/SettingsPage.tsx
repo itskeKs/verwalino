@@ -22,7 +22,7 @@ function PersonalDesign() {
     setSaved(false);
     if (await save(selected)) { setSaved(true); setDraft(null); }
   }
-  return <div className="settings-page">
+  return <div>
     <header className="page-heading"><div><p className="section-label">Ihr Benutzerkonto</p><h1>Einstellungen</h1><p className="text-muted-foreground">Ihr Design. Für Ihre tägliche Arbeit.</p></div></header>
     <section className="card personal-design" aria-labelledby="design-heading">
       <h2 id="design-heading">Persönliches Design</h2>

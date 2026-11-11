@@ -1,6 +1,8 @@
+import { formatDateTime } from "../../lib/format";
 import { useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { api, ApiError } from '../../api/client';
+import { centsFromDecimal, formatMoney } from '../../lib/format';
 import { exceptionApi, type CompletionCommand, type CompletionPreview, type CompletionReceipt, type ExceptionCase } from '../../api/exceptions';
 
 type Draft = { preview: CompletionPreview; reason: string; acknowledged: boolean };
@@ -16,11 +18,11 @@ function Evidence({ evidence }: { evidence: Pick<CompletionPreview, 'members' | 
   return <div className="min-w-0 space-y-4">
     <h3>Alle zusammenhängenden Belege</h3>
     <ol className="space-y-3">{evidence.members.map((member, index) => <li className="min-w-0 space-y-1" key={member.logical_document_id}>
-      <p className="break-words">Beleg {index + 1}{member.document_number ? ` · ${member.document_number}` : ''}{member.gross_amount ? ` · ${member.gross_amount} EUR` : ''}</p>
+      <p className="break-words">Beleg {index + 1}{member.document_number ? ` · ${member.document_number}` : ''}{member.gross_amount ? ` · ${formatMoney(centsFromDecimal(member.gross_amount))}` : ''}</p>
       <p>{member.allocation_set_id ? member.disposition === 'replaced_document' ? 'Bisheriger Beleg und alle Teilkosten wurden durch eine bestätigte Belegrevision ersetzt.' : member.disposition === 'adopted_document' ? `${member.cost_count} bestätigte Teilkosten` : 'Kopie desselben Belegs; durch die bestehende Kostenübernahme abgedeckt' : 'Bestätigte Kostenübernahme fehlt'}</p>
       <Link className="block underline" to={`/posteingang/belege/${member.document_ref_id}?logical_document_id=${encodeURIComponent(member.logical_document_id)}`}>Beleg {index + 1} prüfen</Link>
       {member.source_document_id && <Link className="block underline" to={`/belege/${member.source_document_id}`}>Freigegebenes Original für Beleg {index + 1}</Link>}
-      {member.replacement && <p><Link className="underline" to={`/belege/${member.replacement.source_document_id}`}>Bestätigten Ersatz für Beleg {index + 1} öffnen</Link> · {member.replacement.cost_count} neue Teilkosten{member.replacement.gross_amount ? ` · ${member.replacement.gross_amount} EUR` : ''}</p>}
+      {member.replacement && <p><Link className="underline" to={`/belege/${member.replacement.source_document_id}`}>Bestätigten Ersatz für Beleg {index + 1} öffnen</Link> · {member.replacement.cost_count} neue Teilkosten{member.replacement.gross_amount ? ` · ${formatMoney(centsFromDecimal(member.replacement.gross_amount))}` : ''}</p>}
       {member.primary_cost_id && <Link className="block underline" to={`/kosten/${member.primary_cost_id}`}>Kostenübernahme für Beleg {index + 1}</Link>}
     </li>)}</ol>
     {evidence.comparisons.length > 0 && <><h3>Erforderliche Belegvergleiche</h3><ul className="space-y-2">{evidence.comparisons.map(pair => <li key={pair.left_logical_id + pair.right_logical_id}>
@@ -94,7 +96,7 @@ export function ExceptionCompletionPanel({ caseId, item, parentBusy, parentGener
     <p>Prüfen Sie alle zusammenhängenden Belege, Vergleiche und erhaltenen Fallhinweise. Der Abschluss dokumentiert die bereits bestätigten Ergebnisse.</p>
     {busy && <p role="status">Prüfe Abschlussgrundlage…</p>}{error && <p role="alert" className="error-text">{error}</p>}
     {item && currentCase && !parentBusy && preview && <>
-      {receipt && <details className="space-y-3"><summary>Gespeicherter Abschluss vom {new Date(receipt.created_at).toLocaleString('de-DE')}</summary>
+      {receipt && <details className="space-y-3"><summary>Gespeicherter Abschluss vom {formatDateTime(receipt.created_at)}</summary>
         <p>{receipt.id !== currentCase.completion_id ? 'Historischer Abschlussbeleg; maßgeblich ist der aktuelle Fallstand.' : currentCase.completion_changed ? 'Die Grundlage hat sich geändert. Der Fall ist wieder offen.' : 'Der gespeicherte Abschluss gilt für den aktuellen Stand.'}</p><p className="break-words">{receipt.reason}</p><Evidence evidence={receipt} /></details>}
       {currentCase.completion_changed && <p role="status">Neue oder geänderte Belege erfordern eine erneute Prüfung. Der bisherige Abschluss bleibt erhalten.</p>}
       {!eligible && currentCase.workflow_state !== 'completed' && <p>Abschluss derzeit nicht möglich. Vollständige aktuelle Belege, Vergleiche, bestätigte Kostenübernahmen und Berechtigungen sind erforderlich.</p>}

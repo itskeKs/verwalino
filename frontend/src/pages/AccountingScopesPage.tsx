@@ -1,3 +1,4 @@
+import { formatDate, formatDateTime } from "../lib/format";
 import { ScopeControl } from "../components/ScopeControl";
 import { ScopePaymentReconciliation } from "../components/ScopePaymentReconciliation";
 import { useEffect, useRef, useState } from "react";
@@ -91,7 +92,7 @@ function ScopeList() {
     <ListSearch label="Bereiche suchen" onSearch={page.setQuery} />
     {page.error && <p role="alert" className="error-text">{page.error}</p>}
     <div className="card paged-table"><table className="data-table"><thead><tr><th>Bereich</th><th>Art</th><th>Gültigkeit</th></tr></thead><tbody>
-      {page.items.map(item => <tr key={item.id}><td><Link to={`/berechtigungen/teamrechte/${item.id}`}>{item.label}</Link></td><td>{item.scope_type}</td><td>{item.valid_from} – {item.valid_to || "offen"}</td></tr>)}
+      {page.items.map(item => <tr key={item.id}><td><Link to={`/berechtigungen/teamrechte/${item.id}`}>{item.label}</Link></td><td>{item.scope_type}</td><td>{formatDate(item.valid_from)} – {item.valid_to ? formatDate(item.valid_to) : "offen"}</td></tr>)}
     </tbody></table></div>
     <MoreResults available={!!page.nextCursor} loading={page.loading} onMore={() => void page.loadMore()} />
   </>;
@@ -128,7 +129,7 @@ function ScopeGrants({ scopeId }: { scopeId: string }) {
   }
   return <>
     <Link to="/berechtigungen/teamrechte">Alle Teamrechte</Link>
-    {scope && <><h2>{scope.label} ({scope.scope_type})</h2><p>Gültig {scope.valid_from} bis {scope.valid_to || "offen"} · <Link to={`/objekte/${scope.property_id}`}>Objekt anzeigen</Link></p></>}
+    {scope && <><h2>{scope.label} ({scope.scope_type})</h2><p>Gültig {formatDate(scope.valid_from)} bis {scope.valid_to ? formatDate(scope.valid_to) : "offen"} · <Link to={`/objekte/${scope.property_id}`}>Objekt anzeigen</Link></p></>}
     {scopeError && <p role="alert" className="error-text">{scopeError}</p>}
     <form className="card" onSubmit={submit}><h2>Teamfreigabe erteilen</h2>
       <fieldset className="form-grid" disabled={busy || !scope} style={{ border: 0, minWidth: 0 }}>
@@ -141,7 +142,7 @@ function ScopeGrants({ scopeId }: { scopeId: string }) {
     </form>
     {(error || page.error) && <p role="alert" className="error-text">{error || page.error}</p>}
     <div className="card paged-table"><table className="data-table"><thead><tr><th>Teammitglied</th><th>Rechte</th><th>Begründung</th><th>Status</th><th>Aktion</th></tr></thead><tbody>
-      {page.items.map(grant => <tr key={grant.id}><td>{grant.user_display_name}</td><td>{grant.capabilities.map(value => caps[value as keyof typeof caps]).join(", ")}</td><td>{grant.reason}</td><td>{grant.revoked_at ? "Widerrufen" : grant.expires_at ? `Erteilt bis ${new Date(grant.expires_at).toLocaleString("de-DE")}` : "Erteilt ohne Ablauf"}</td><td>{!grant.revoked_at && <button className="btn" disabled={busy} onClick={() => void revoke(grant)}>Widerrufen</button>}</td></tr>)}
+      {page.items.map(grant => <tr key={grant.id}><td>{grant.user_display_name}</td><td>{grant.capabilities.map(value => caps[value as keyof typeof caps]).join(", ")}</td><td>{grant.reason}</td><td>{grant.revoked_at ? "Widerrufen" : grant.expires_at ? `Erteilt bis ${formatDateTime(grant.expires_at)}` : "Erteilt ohne Ablauf"}</td><td>{!grant.revoked_at && <button className="btn" disabled={busy} onClick={() => void revoke(grant)}>Widerrufen</button>}</td></tr>)}
     </tbody></table></div>
     <MoreResults available={!!page.nextCursor} loading={page.loading} onMore={() => void page.loadMore()} />
     {scope && <ScopePaymentReconciliation scopeId={scopeId} />}

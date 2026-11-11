@@ -1,3 +1,4 @@
+import { formatDateTime } from "../lib/format";
 import { useEffect, useRef, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { ApiError } from '../api/client';
@@ -94,7 +95,7 @@ function ExceptionDetail({ id }: { id: string }) {
       <section className="card min-w-0 space-y-3" aria-label="Fallgrundlage">
         <h2>{exceptionCauses[view.item.cause] ?? 'Klärung erforderlich'}</h2>
         <p className="break-words">{view.item.scope_label} · {view.item.scope_type}</p>
-        <p>{view.item.workflow_state === 'snoozed' ? `Zurückgestellt bis ${new Date(view.item.snoozed_until!).toLocaleString('de-DE')}` : view.item.workflow_state === 'completed' ? 'Abgeschlossen · Fachlich geklärt' : 'Offen · Fachlich ungeklärt'} · Version {view.item.revision_number}</p>
+        <p>{view.item.workflow_state === 'snoozed' ? `Zurückgestellt bis ${formatDateTime(view.item.snoozed_until!)}` : view.item.workflow_state === 'completed' ? 'Abgeschlossen · Fachlich geklärt' : 'Offen · Fachlich ungeklärt'} · Version {view.item.revision_number}</p>
         <p>{ownClaim ? 'Von Ihnen beansprucht' : view.item.claimant_id ? 'Bearbeitung beansprucht' : 'Noch nicht beansprucht'}</p>
         {view.item.dependency_count > 0 && <p>{view.item.dependency_count} verknüpfte Zuordnungsvorschläge. Frühere Vorschläge bleiben als Belege erhalten.</p>}
         {!!view.item.duplicate_dependency_count && <p>{view.item.duplicate_dependency_count} Dublettenhinweise auf konkrete Prüfstände. Frühere Hinweise bleiben erhalten; ein Belegvergleich schließt den Fall nicht ab.</p>}
@@ -126,10 +127,10 @@ function ExceptionDetail({ id }: { id: string }) {
         <p>Die Einträge zeigen den Stand zum jeweiligen Zeitpunkt.</p>
         <ol className="space-y-3">{view.events.items.map(event => <li key={event.id} className="min-w-0 border-b border-input pb-3 space-y-1">
           <h3>{exceptionActions[event.action]} · Version {event.revision_number}</h3>
-          <p>{new Date(event.created_at).toLocaleString('de-DE')} · {event.actor_id === null ? event.action.startsWith('duplicate_') ? 'Automatisch verknüpft; Zeitpunkt der Erfassung' : 'Automatisch aus Vorschlag' : event.actor_id === session?.user_id ? 'Von Ihnen' : 'Manuelle Bearbeitung'}</p>
+          <p>{formatDateTime(event.created_at)} · {event.actor_id === null ? event.action.startsWith('duplicate_') ? 'Automatisch verknüpft; Zeitpunkt der Erfassung' : 'Automatisch aus Vorschlag' : event.actor_id === session?.user_id ? 'Von Ihnen' : 'Manuelle Bearbeitung'}</p>
           {event.actor_id !== null && <p className="break-words">{event.reason}</p>}
           {event.action === 'completion_recorded' && event.completion_id && <button className="btn" disabled={blocked} onClick={() => setSelectedCompletion(event.completion_id!)}>Diesen Abschlussbeleg anzeigen</button>}
-          {event.snoozed_until && <p>Damals zurückgestellt bis {new Date(event.snoozed_until).toLocaleString('de-DE')}</p>}
+          {event.snoozed_until && <p>Damals zurückgestellt bis {formatDateTime(event.snoozed_until)}</p>}
         </li>)}</ol>
         {view.events.next_before_revision && <button className="btn" disabled={blocked} onClick={() => void older('events')}>Ältere Ereignisse</button>}
       </section>
@@ -151,7 +152,7 @@ function ExceptionDetail({ id }: { id: string }) {
         {view.duplicates.next_before_revision && <button className="btn" disabled={blocked} onClick={() => void older('duplicates')}>Ältere Dublettenhinweise</button>}
       </section>}
       {view.item.dependency_count > 0 && <section className="card min-w-0 space-y-3" aria-label="Verknüpfte Vorschläge"><h2>Verknüpfte Vorschläge</h2>
-        <ul className="space-y-3">{view.dependencies.items.map(dependency => <li key={dependency.id} className="space-y-1"><h3>Zuordnungsvorschlag {dependency.proposal_revision_number}</h3><p className="break-words">{dependency.proposal_reason}</p><p>Erfasst mit Fallversion {dependency.revision_number} · {new Date(dependency.created_at).toLocaleString('de-DE')}</p></li>)}</ul>
+        <ul className="space-y-3">{view.dependencies.items.map(dependency => <li key={dependency.id} className="space-y-1"><h3>Zuordnungsvorschlag {dependency.proposal_revision_number}</h3><p className="break-words">{dependency.proposal_reason}</p><p>Erfasst mit Fallversion {dependency.revision_number} · {formatDateTime(dependency.created_at)}</p></li>)}</ul>
         {view.dependencies.next_before_revision && <button className="btn" disabled={blocked} onClick={() => void older('dependencies')}>Ältere Verknüpfungen</button>}
       </section>}
     </>}

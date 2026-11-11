@@ -1,3 +1,4 @@
+import { formatDateTime } from "../lib/format";
 import { useEffect, useRef, useState } from "react";
 import { api, ApiError } from "../api/client";
 
@@ -82,7 +83,7 @@ export function AccessGrantProposalPanel({snapshotId,digest,items,complete,revie
   function summary(c:Change) {
     return <><p className="break-all">{labels[c.domain_kind]} · Bereich {c.audience_id} · Team {c.user_id}</p>
       <p>{c.capabilities.length ? `${c.expected_grant_id ? "Ersetzen" : "Neu erteilen"}: ${c.capabilities.map(cap=>labels[cap]).join(", ")}` : "Bestehende Freigabe widerrufen"}</p>
-      <p>{c.expires_at ? `Gültig bis ${new Date(c.expires_at).toLocaleString("de-DE")}` : "Ohne Ablaufdatum"}</p>
+      <p>{c.expires_at ? `Gültig bis ${formatDateTime(c.expires_at)}` : "Ohne Ablaufdatum"}</p>
       {c.expected_grant_id && <p className="break-all text-sm">Bisherige Freigabe: {c.expected_grant_id}</p>}</>;
   }
   return <section className="space-y-3" aria-label="Freigabevorschlag">
@@ -92,7 +93,7 @@ export function AccessGrantProposalPanel({snapshotId,digest,items,complete,revie
     {!loaded && !error && <p role="status">Vorschlag wird geladen…</p>}
     {proposal ? <>
       <ul className="space-y-2">{proposal.changes.map((c,i)=><li className="card space-y-1" key={i}>{summary(c)}</li>)}</ul>
-      {proposal.acceptance ? <p role="status">Annahme gespeichert · {new Date(proposal.acceptance.accepted_at).toLocaleString("de-DE")}. Dieser Beleg dokumentiert die damalige Änderung. Spätere Widerrufe bleiben wirksam. Für die weitere Prüfung einen neuen Prüfstand erfassen.</p> : <>
+      {proposal.acceptance ? <p role="status">Annahme gespeichert · {formatDateTime(proposal.acceptance.accepted_at)}. Dieser Beleg dokumentiert die damalige Änderung. Spätere Widerrufe bleiben wirksam. Für die weitere Prüfung einen neuen Prüfstand erfassen.</p> : <>
         <label className="flex items-start gap-2"><input type="checkbox" checked={ack} disabled={busy} onChange={e=>setAck(e.target.checked)} /><span>Ich möchte genau diese Teamfreigaben jetzt erteilen, ersetzen oder widerrufen.</span></label>
         <button className="btn" disabled={busy || !loaded || !ack} onClick={()=>void accept()}>Freigabevorschlag verbindlich annehmen</button>
       </>}

@@ -41,6 +41,7 @@ import type {
   LeaseRentChange,
 } from "../api/types";
 import { ApiError } from "../api/client";
+import { centsFromDecimal, formatDate, formatMoney } from "../lib/format";
 import { rentAmount } from "../lib/rentAmount";
 import { useAuth } from "../auth/useAuth";
 import { AttachmentsPanel } from "../components/AttachmentsPanel";
@@ -100,7 +101,7 @@ function advanceAmountLabel(mode: AdvanceMode | null | undefined) {
 }
 
 function advanceCell(rate: LeaseRecord | LeaseRentChange) {
-  return rate.advance_mode === "COMBINED" ? `${rate.advance_payment} inkl. Heizkosten` : rate.advance_payment;
+  return rate.advance_mode === "COMBINED" ? `${formatMoney(centsFromDecimal(rate.advance_payment))} inkl. Heizkosten` : formatMoney(centsFromDecimal(rate.advance_payment));
 }
 
 export function UnitDetailPage() {
@@ -325,7 +326,7 @@ function UnitDetailPageContent({ propertyId, unitId }: { propertyId?: string; un
       </p>
       <h1>Einheit {unit.number}</h1>
       {canWriteOwnership && <MasterDataDelete entityId={unit.id} title="Einheit löschen" entityName={`Einheit ${unit.number}`} remove={deleteUnit} onDeleted={() => navigate(`/objekte/${encodeURIComponent(property.id)}`, { replace: true })} />}
-      {(session?.role === "OWNER_ADMIN" || session?.role === "CLERK") && <Link className="btn btn-primary" to={`/aufgaben?${new URLSearchParams({ property_id: property.id, unit_id: unit.id, create: "1" })}`}>Aufgabe anlegen</Link>}
+      {(session?.role === "OWNER_ADMIN" || session?.role === "CLERK") && <Link className="btn btn--primary" to={`/aufgaben?${new URLSearchParams({ property_id: property.id, unit_id: unit.id, create: "1" })}`}>Aufgabe anlegen</Link>}
 
       {error && <p className="error-text">{error}</p>}
 
@@ -444,8 +445,8 @@ function UnitDetailPageContent({ propertyId, unitId }: { propertyId?: string; un
               {ownerships.map((o) => (
                 <tr key={o.id}>
                   <td>{ownerProfileLabel(o.owner_profile_id)}</td>
-                  <td>{o.valid_from}</td>
-                  <td>{o.valid_to ?? "offen"}</td>
+                  <td>{formatDate(o.valid_from)}</td>
+                  <td>{o.valid_to ? formatDate(o.valid_to) : "offen"}</td>
                   <td>{o.mea_share ?? "-"}</td>
                   {canWriteOwnership && <td>{o.valid_to === null && o.unit_id === unitId && <OwnershipEndAction
                     ownership={o}
@@ -454,7 +455,7 @@ function UnitDetailPageContent({ propertyId, unitId }: { propertyId?: string; un
                     onEnded={(ended, nextDay) => {
                       setOwnerships(previous => previous.map(row => row.id === ended.id ? ended : row));
                       setLeaseStatus(null);
-                      setOwnerStatus(`Eigentum bis einschließlich ${ended.valid_to} beendet. Neuen Eigentümer ab ${nextDay} bewusst auswählen und speichern.`);
+                      setOwnerStatus(`Eigentum bis einschließlich ${ended.valid_to ? formatDate(ended.valid_to) : "-"} beendet. Neuen Eigentümer ab ${nextDay} bewusst auswählen und speichern.`);
                       setOwnerFormError(null);
                       setOwnerSuggestion({ valid_from: nextDay, mea_share: o.mea_share ?? "" });
                       setOwnerForm({ owner_profile_id: "", valid_from: nextDay, valid_to: "", mea_share: o.mea_share ?? "" });
@@ -614,11 +615,11 @@ function UnitDetailPageContent({ propertyId, unitId }: { propertyId?: string; un
                 <Fragment key={la.id}>
                   <tr>
                     <td>{tenantProfileLabel(la.tenant_profile_id)}</td>
-                    <td>{la.valid_from}</td>
-                    <td>{la.valid_to ?? "offen"}</td>
-                    <td>{la.base_rent}</td>
-                    <td>{advanceCell(la)}</td><td>{la.advance_mode === "COMBINED" ? "—" : la.heating_advance_payment}</td>
-                    <td>{la.deposit ?? "-"}</td>
+                    <td>{formatDate(la.valid_from)}</td>
+                    <td>{la.valid_to ? formatDate(la.valid_to) : "offen"}</td>
+                    <td>{formatMoney(centsFromDecimal(la.base_rent))}</td>
+                    <td>{advanceCell(la)}</td><td>{la.advance_mode === "COMBINED" ? "—" : formatMoney(centsFromDecimal(la.heating_advance_payment))}</td>
+                    <td>{la.deposit != null ? formatMoney(centsFromDecimal(la.deposit)) : "-"}</td>
                     <td>{canWriteOwnership && <button className="btn" onClick={() => {
                       setEditingLease(la);
                       setLeaseFormError(null);
@@ -629,7 +630,7 @@ function UnitDetailPageContent({ propertyId, unitId }: { propertyId?: string; un
                       });
                       setShowLeaseForm(true);
                     }}>Bearbeiten / beenden</button>}
-                      {canWriteOwnership && <MasterDataDelete entityId={la.id} title="Mietvertrag löschen" entityName={`Mietvertrag ${la.id} · Einheit ${unit.number} · ${tenantProfileLabel(la.tenant_profile_id)} · ${la.valid_from} bis ${la.valid_to ?? "offen"}`} remove={deleteLease} onDeleted={reload} />}
+                      {canWriteOwnership && <MasterDataDelete entityId={la.id} title="Mietvertrag löschen" entityName={`Mietvertrag ${la.id} · Einheit ${unit.number} · ${tenantProfileLabel(la.tenant_profile_id)} · ${formatDate(la.valid_from)} bis ${la.valid_to ? formatDate(la.valid_to) : "offen"}`} remove={deleteLease} onDeleted={reload} />}
                     </td>
                   </tr>
                   <tr><td colSpan={8}>
@@ -717,7 +718,7 @@ function OwnershipEndAction({ ownership, ownerLabel, disabled, onEnded }: {
       <DialogContent>
         <DialogTitle>Eigentum beenden</DialogTitle>
         <DialogDescription>
-          {ownerLabel} · Eigentum ab {ownership.valid_from} · MEA-Anteil {ownership.mea_share ?? "-"}.
+          {ownerLabel} · Eigentum ab {formatDate(ownership.valid_from)} · MEA-Anteil {ownership.mea_share ?? "-"}.
           Der letzte Eigentumstag gilt einschließlich. Eigentümer, Beginn und MEA bleiben unverändert.
           Anschließend neuen Eigentümer ab Folgetag auswählen und separat speichern.
         </DialogDescription>
@@ -953,15 +954,15 @@ function LeaseRentHistory({ lease, tenantLabel }: { lease: LeaseRecord; tenantLa
   }
 
   const source = rateAt(validFrom);
-  const contractLabel = `${tenantLabel} · ${lease.valid_from} bis ${lease.valid_to ?? "offen"}`;
+  const contractLabel = `${tenantLabel} · ${formatDate(lease.valid_from)} bis ${lease.valid_to ? formatDate(lease.valid_to) : "offen"}`;
   return <section aria-label={`Mietänderungen: ${contractLabel}`}>
     <h3>Mietänderungen · {contractLabel}</h3>
     <p>Historische volle Monatsraten (Kaltmiete / Betriebskosten / Heizkosten). Die Beträge im Mietvertrag oben sind die Originalbeträge.</p>
     <table className="data-table" aria-label={`Miethistorie: ${contractLabel}`}>
       <thead><tr><th>Gültig ab</th><th>Kaltmiete (EUR)</th><th>Betriebskosten-Vorauszahlung (EUR)</th><th>Heizkosten-Vorauszahlung (EUR)</th><th>Quelle</th></tr></thead>
       <tbody>
-        <tr><td>{lease.valid_from}</td><td>{lease.base_rent}</td><td>{advanceCell(lease)}</td><td>{lease.advance_mode === "COMBINED" ? "—" : lease.heating_advance_payment}</td><td>Originalvertrag</td></tr>
-        {rows.map(row => <tr key={row.id}><td>{row.valid_from}</td><td>{row.base_rent}</td><td>{advanceCell(row)}</td><td>{row.advance_mode === "COMBINED" ? "—" : row.heating_advance_payment}</td><td>Mietänderung</td></tr>)}
+        <tr><td>{formatDate(lease.valid_from)}</td><td>{formatMoney(centsFromDecimal(lease.base_rent))}</td><td>{advanceCell(lease)}</td><td>{lease.advance_mode === "COMBINED" ? "—" : formatMoney(centsFromDecimal(lease.heating_advance_payment))}</td><td>Originalvertrag</td></tr>
+        {rows.map(row => <tr key={row.id}><td>{formatDate(row.valid_from)}</td><td>{formatMoney(centsFromDecimal(row.base_rent))}</td><td>{advanceCell(row)}</td><td>{row.advance_mode === "COMBINED" ? "—" : formatMoney(centsFromDecimal(row.heating_advance_payment))}</td><td>Mietänderung</td></tr>)}
       </tbody>
     </table>
     {loading && <p role="status">Lade Mietänderungen…</p>}
@@ -997,11 +998,11 @@ function LeaseRentHistory({ lease, tenantLabel }: { lease: LeaseRecord; tenantLa
           <label>VPI neu<Input inputMode="decimal" value={indexInput.new_index} disabled={saving} onChange={event => changeIndexInput("new_index", event.target.value)} /></label>
           <label>Zugang der Erklärung<Input type="date" value={indexInput.declaration_received_on} disabled={saving} onChange={event => changeIndexInput("declaration_received_on", event.target.value)} /></label>
           {indexPreview && <div role="status" aria-label="Indexmietvorschau">
-            <p>Bisherige Kaltmiete: {indexPreview.previous_base_rent} EUR (seit {indexPreview.previous_valid_from})</p>
-            <p>Neue Kaltmiete: {indexPreview.base_rent} EUR</p>
-            <p>Vorauszahlungen unverändert: Betriebskosten {indexPreview.advance_payment} EUR{rateAt(indexPreview.valid_from).advance_mode === "COMBINED"
-              ? " inkl. Heizkosten" : ` / Heizkosten ${indexPreview.heating_advance_payment} EUR`}</p>
-            <p>Gültig ab: {indexPreview.valid_from}</p>
+            <p>Bisherige Kaltmiete: {formatMoney(centsFromDecimal(indexPreview.previous_base_rent))} (seit {formatDate(indexPreview.previous_valid_from)})</p>
+            <p>Neue Kaltmiete: {formatMoney(centsFromDecimal(indexPreview.base_rent))}</p>
+            <p>Vorauszahlungen unverändert: Betriebskosten {formatMoney(centsFromDecimal(indexPreview.advance_payment))}{rateAt(indexPreview.valid_from).advance_mode === "COMBINED"
+              ? " inkl. Heizkosten" : ` / Heizkosten ${formatMoney(centsFromDecimal(indexPreview.heating_advance_payment))}`}</p>
+            <p>Gültig ab: {formatDate(indexPreview.valid_from)}</p>
           </div>}
           {formError && <p role="alert" className="error-text">{formError}</p>}
           <div className="form-actions">
@@ -1020,7 +1021,7 @@ function LeaseRentHistory({ lease, tenantLabel }: { lease: LeaseRecord; tenantLa
         </DialogDescription>
         <form onSubmit={submit} noValidate>
           <label>Gültig ab<Input type="date" value={validFrom} min={lease.valid_from} max={lease.valid_to ?? undefined} disabled={saving} onChange={event => selectDate(event.target.value)} /></label>
-          <p>Vorbelegung: {source === lease ? "Originalvertrag" : `Mietänderung ab ${source.valid_from}`} · KALT {source.base_rent} EUR / Betriebskosten {source.advance_payment} EUR{source.advance_mode === "COMBINED" ? " inkl. Heizkosten" : ` / Heizkosten ${source.heating_advance_payment} EUR`}. Bei Datumswechsel werden die gültigen Beträge neu vorbelegt.</p>
+          <p>Vorbelegung: {source === lease ? "Originalvertrag" : `Mietänderung ab ${formatDate(source.valid_from)}`} · KALT {formatMoney(centsFromDecimal(source.base_rent))} / Betriebskosten {formatMoney(centsFromDecimal(source.advance_payment))}{source.advance_mode === "COMBINED" ? " inkl. Heizkosten" : ` / Heizkosten ${formatMoney(centsFromDecimal(source.heating_advance_payment))}`}. Bei Datumswechsel werden die gültigen Beträge neu vorbelegt.</p>
           <label>Kaltmiete (EUR)<Input inputMode="decimal" value={baseRent} disabled={saving} onChange={event => setBaseRent(event.target.value)} /></label>
           <AdvanceModePicker mode={advanceMode} allowLegacy={!source.advance_mode} disabled={saving} onChange={setAdvanceMode} />
           <label>{advanceAmountLabel(advanceMode)}<Input inputMode="decimal" value={advance} disabled={saving} onChange={event => setAdvance(event.target.value)} /></label>

@@ -363,8 +363,8 @@ async def journey_five_headline(browser_world):
             await page.screenshot(path=str(directory / f'reports-income-{width}.png'), full_page=True, animations='disabled')
     for width in (1280, 360):
         await _resize_annual_overview(page, width)
-        await expect(overview.locator('dl')).to_contain_text('14.660,00 EUR')
-        await expect(overview.get_by_role('table', name='Einnahmen', exact=True)).to_contain_text('2.250,00 EUR')
+        await expect(overview.locator('dl')).to_contain_text('14.660,00 €')
+        await expect(overview.get_by_role('table', name='Einnahmen', exact=True)).to_contain_text('2.250,00 €')
         panel = page.get_by_role('region', name='Anlage V', exact=True)
         await expect(panel.get_by_role('table', name='Anlage V Einnahmen')).to_contain_text('12.200,00 €')
         await expect(panel.get_by_role('table', name='Anlage V Einnahmen')).to_contain_text('2.460,00 €')
@@ -407,12 +407,12 @@ async def journey_five_expense_table(browser_world):
     insurance = table.get_by_role('row').filter(has=page.get_by_role('cell', name='GEBAEUDEVERSICHERUNG', exact=True))
     await expect(table.locator('tbody tr')).to_have_count(2)
     await expect(electricity.get_by_role('cell')).to_have_text([
-        'Allgemeinstrom / Beleuchtung', 'ALLGEMEINSTROM', 'Voll umlagefaehig', '600,00 EUR',
+        'Allgemeinstrom / Beleuchtung', 'ALLGEMEINSTROM', 'Voll umlagefaehig', '600,00 €',
     ])
     await expect(insurance.get_by_role('cell')).to_have_text([
-        'Gebaeudeversicherung', 'GEBAEUDEVERSICHERUNG', 'Voll umlagefaehig', '312,00 EUR',
+        'Gebaeudeversicherung', 'GEBAEUDEVERSICHERUNG', 'Voll umlagefaehig', '312,00 €',
     ])
-    await expect(overview.locator('dd')).to_have_text(['14.660,00 EUR', '912,00 EUR', '13.748,00 EUR'])
+    await expect(overview.locator('dd')).to_have_text(['14.660,00 €', '912,00 €', '13.748,00 €'])
 
     main = page.locator('main')
     heading = page.get_by_role('heading', name='Objekt-Jahresübersicht', exact=True)
@@ -430,6 +430,8 @@ async def journey_five_expense_table(browser_world):
         scroll_range = await container.evaluate('el => el.scrollWidth - el.clientWidth')
         assert (scroll_range > 0) == (width == 360), (width, scroll_range)
         if width == 360:
+            # Centre the table first: a wheel event near the viewport's bottom edge does not scroll it.
+            await container.evaluate("el => el.scrollIntoView({block: 'center'})")
             await container.hover()
             await page.mouse.wheel(scroll_range, 0)
             await expect(headers.last).to_be_in_viewport(ratio=0.99)

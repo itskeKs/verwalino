@@ -66,12 +66,12 @@ it("creates the tenant notice without a manual rate", async () => {
 it("shows frozen interest, rates, reference date and item days without recalculation", async () => {
   render(<MemoryRouter initialEntries={["/mahnungen/notice"]}><Routes><Route path="/mahnungen/:dunningId" element={<DunningNoticeDetailPage />} /></Routes></MemoryRouter>);
   expect(await screen.findByText("Verzugszinsen")).toBeVisible();
-  expect(screen.getAllByText("8.63 EUR").length).toBeGreaterThan(0);
-  expect(screen.getByText("708.63 EUR")).toBeVisible();
+  expect(screen.getAllByText("8,63 €").length).toBeGreaterThan(0);
+  expect(screen.getByText("708,63 €")).toBeVisible();
   expect(screen.getByText(/2.50 %/)).toBeVisible(); expect(screen.getByText(/7.50 %/)).toBeVisible();
-  expect(screen.getAllByText("2026-03-02").length).toBeGreaterThan(0);
+  expect(screen.getAllByText("02.03.2026").length).toBeGreaterThan(0);
   const row = screen.getByRole("row", { name: /Kaltmiete/ });
-  expect(within(row).getByText("60")).toBeVisible(); expect(within(row).getByText("2026-01-01")).toBeVisible();
+  expect(within(row).getByText("60")).toBeVisible(); expect(within(row).getByText("01.01.2026")).toBeVisible();
 });
 
 it("puts complete principal, interest and open amounts before descriptive columns", async () => {
@@ -85,8 +85,8 @@ it("puts complete principal, interest and open amounts before descriptive column
   const tables = screen.getAllByRole("table").filter(table => within(table).queryAllByRole("columnheader").length);
   expect(within(tables[0]).getAllByRole("columnheader").map(cell => cell.textContent)).toEqual(["Hauptforderung", "Zinsen", "Typ", "Periode", "Fälligkeit", "Tage"]);
   expect(within(tables[1]).getAllByRole("columnheader").map(cell => cell.textContent)).toEqual(["Offen", "Soll", "Ist", "Periode", "Typ"]);
-  expect(within(tables[0]).getAllByRole("cell").slice(0, 2).map(cell => cell.textContent)).toEqual(["1234.56 EUR", "15.22 EUR"]);
-  expect(within(tables[1]).getAllByRole("cell").slice(0, 3).map(cell => cell.textContent)).toEqual(["1234.56 EUR", "1234.56 EUR", "0.00 EUR"]);
+  expect(within(tables[0]).getAllByRole("cell").slice(0, 2).map(cell => cell.textContent)).toEqual(["1.234,56 €", "15,22 €"]);
+  expect(within(tables[1]).getAllByRole("cell").slice(0, 3).map(cell => cell.textContent)).toEqual(["1.234,56 €", "1.234,56 €", "0,00 €"]);
   for (const table of tables) expect(within(table).getAllByRole("row")).toHaveLength(13);
 });
 
@@ -103,8 +103,8 @@ it.each(["KALTMIETE", "NK_VORAUSZAHLUNG"])("shows the stored interest start only
 });
 
 it.each([
-  ["2026-11-01T12:26:04.611054+00:00", "01.11.2026, 13:26"],
-  ["2026-07-01T12:26:04+00:00", "01.07.2026, 14:26"],
+  ["2026-11-01T12:26:04.611054+00:00", "01.11.2026, 13:26 Uhr"],
+  ["2026-07-01T12:26:04+00:00", "01.07.2026, 14:26 Uhr"],
 ])("formats the issued instant %s consistently in German time", async (issued_at, expected) => {
   vi.mocked(api.get).mockImplementation(async url => url === "/api/dunning/notice" ? { ...notice, issued_at } : []);
   render(<MemoryRouter initialEntries={["/mahnungen/notice"]}><Routes><Route path="/mahnungen/:dunningId" element={<DunningNoticeDetailPage />} /></Routes></MemoryRouter>);
@@ -121,8 +121,8 @@ function deferred<T>() {
 }
 it("posts owner scope without a plan or manual interest rate", async () => {
   show(); await ready();
-  fireEvent.change(screen.getByLabelText("Empfaengertyp *"), { target: { value: "owner" } });
-  fireEvent.change(screen.getByLabelText("Eigentuemer *"), { target: { value: "owner" } });
+  fireEvent.change(screen.getByLabelText("Empfängertyp *"), { target: { value: "owner" } });
+  fireEvent.change(screen.getByLabelText("Eigentümer *"), { target: { value: "owner" } });
   fireEvent.change(screen.getByLabelText("WEG-Objekt *"), { target: { value: "property" } });
   fireEvent.click(screen.getByRole("button", { name: "Kreis wählen" }));
   const button = screen.getByRole("button", { name: "Mahnung erstellen" });
@@ -136,7 +136,7 @@ it("posts owner scope without a plan or manual interest rate", async () => {
 it("preserves input on POST error and synchronously locks duplicate submissions", async () => {
   const post = deferred<unknown>(); vi.mocked(api.post).mockReturnValue(post.promise);
   show(); await ready();
-  const input = screen.getByLabelText("Mahngebuehr (Override)"); fireEvent.change(input, { target: { value: "4" } });
+  const input = screen.getByLabelText("Mahngebühr (Override)"); fireEvent.change(input, { target: { value: "4" } });
   act(() => { fireEvent.submit(input.closest("form")!); fireEvent.submit(input.closest("form")!); });
   expect(api.post).toHaveBeenCalledTimes(1); expect(input).toBeDisabled();
   await act(async () => post.reject(new Error("POST offline")));
@@ -150,7 +150,7 @@ it.each(["READ_ONLY", "UNKNOWN"])("%s cannot create even with a creation URL", a
 it("keeps legacy zero-interest letters and the issued-only PDF action unchanged", async () => {
   vi.mocked(api.get).mockImplementation(async url => url === "/api/dunning/notice" ? { ...notice, interest_amount: "0.00", interest_snapshot: null, total_amount: "700.00" } : []);
   render(<MemoryRouter initialEntries={["/mahnungen/notice"]}><Routes><Route path="/mahnungen/:dunningId" element={<DunningNoticeDetailPage />} /></Routes></MemoryRouter>);
-  await screen.findByText("Verzugszinsen"); expect(screen.getAllByText("0.00 EUR")).toHaveLength(2);
+  await screen.findByText("Verzugszinsen"); expect(screen.getAllByText("0,00 €")).toHaveLength(2);
   expect(screen.queryByText("Eingefrorene Zinsberechnung")).toBeNull();
   expect(screen.getByRole("button", { name: "PDF herunterladen" })).toBeVisible();
 });
@@ -169,7 +169,7 @@ it("ignores stale settings from another organization", async () => {
 it("does not fetch current settings or offer PDF for a frozen draft", async () => {
   vi.mocked(api.get).mockImplementation(async url => url === "/api/dunning/notice" ? { ...notice, status: "draft", interest_amount: "8.6300", total_amount: "708.6300" } : []);
   render(<MemoryRouter initialEntries={["/mahnungen/notice"]}><Routes><Route path="/mahnungen/:dunningId" element={<DunningNoticeDetailPage />} /></Routes></MemoryRouter>);
-  await screen.findByText("8.6300 EUR"); expect(screen.getByText("708.6300 EUR")).toBeVisible();
+  await screen.findAllByText("8,63 €"); expect(screen.getByText("708,63 €")).toBeVisible();
   expect(screen.queryByRole("button", { name: "PDF herunterladen" })).toBeNull();
   expect(api.get).not.toHaveBeenCalledWith("/api/dunning/settings");
 });

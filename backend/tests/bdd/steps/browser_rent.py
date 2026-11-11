@@ -2,7 +2,7 @@
 from pytest_bdd import given, then, when
 from playwright.async_api import expect
 
-from tests.bdd.steps.browser_common import browser_step, button, field, ledger, ledger_row
+from tests.bdd.steps.browser_common import browser_step, button, euro, field, ledger, ledger_row
 from tests.bdd.steps.browser_setup import bank_account, rental
 
 
@@ -31,18 +31,18 @@ async def history(browser_world):
     page = browser_world.page
     await page.reload()
     table = page.get_by_role("table", name="Miethistorie:", exact=False)
-    row = table.get_by_role("row").filter(has=page.get_by_role("cell", name="2026-04-01", exact=True))
-    await expect(row.get_by_role("cell")).to_have_text(["2026-04-01", "750.00", "150.00", "0.00", "Mietänderung"])
+    row = table.get_by_role("row").filter(has=page.get_by_role("cell", name="01.04.2026", exact=True))
+    await expect(row.get_by_role("cell")).to_have_text(["01.04.2026", "750,00 €", "150,00 €", "0,00 €", "Mietänderung"])
     original = page.get_by_role("row").filter(has=page.get_by_role("cell", name=browser_world.world.data["people"][0].name, exact=True))
-    await expect(original.get_by_role("cell", name="700.00", exact=True)).to_be_visible()
-    await expect(original.get_by_role("cell", name="150.00", exact=True)).to_be_visible()
+    await expect(original.get_by_role("cell", name="700,00 €", exact=True)).to_be_visible()
+    await expect(original.get_by_role("cell", name="150,00 €", exact=True)).to_be_visible()
 
 
 @then("the annual rent account shows the old rent until March and the new rent from April")
 @browser_step
 async def changed_ledger(browser_world):
     await ledger(browser_world)
-    await browser_world.row("Soll gesamt", "10650.00 EUR")
+    await browser_world.row("Soll gesamt", "10.650,00 €")
     # Representative boundary months plus the full 24-row year.
     for period, amount in (("2026/01", "700.00"), ("2026/03", "700.00"), ("2026/04", "750.00"), ("2026/12", "750.00")):
         await ledger_row(browser_world, period, "Kaltmiete", [amount, "0.00", amount])
@@ -73,8 +73,8 @@ async def assert_deposit(browser, paid, refunded, held):
     page = browser.page
     row = page.get_by_role("row").filter(has=page.get_by_role("cell", name="Wohnung 1", exact=True))
     await expect(row.get_by_role("cell")).to_have_text([
-        f"{browser.world.data['people'][0].name}Mietvertrag ab 2026-01-01 (laufend)", browser.world.data["property"]["name"], "Wohnung 1",
-        "1800.00 EUR", f"{paid}.00 EUR", f"{refunded}.00 EUR", f"{held}.00 EUR",
+        f"{browser.world.data['people'][0].name}Mietvertrag ab 01.01.2026 (laufend)", browser.world.data["property"]["name"], "Wohnung 1",
+        euro(1800), euro(paid), euro(refunded), euro(held),
     ])
 
 
@@ -126,7 +126,7 @@ async def deposit_payment(browser, direction, amount, day):
     await button(page, "Buchen").click()
     await browser.row("Status", "Gebucht")
     await browser.row("Richtung", "Eingang" if direction == "IN" else "Ausgang")
-    await browser.row("Betrag", f"{amount} EUR")
+    await browser.row("Betrag", euro(amount))
 
 
 @when("the manager books a deposit receipt of 900 EUR on 2 January 2026")
@@ -161,8 +161,8 @@ async def retained_deposit(browser_world):
 @browser_step
 async def no_rent_payments(browser_world):
     await ledger(browser_world)
-    await browser_world.row("Soll gesamt", "10200.00 EUR")
-    await browser_world.row("Ist gesamt", "0.00 EUR")
+    await browser_world.row("Soll gesamt", "10.200,00 €")
+    await browser_world.row("Ist gesamt", "0,00 €")
 
 
 @when("the manager records 750 EUR rent and a 240 EUR combined advance from 1 April 2026")
@@ -188,16 +188,16 @@ async def combined_history(browser_world):
     page = browser_world.page
     await page.reload()
     table = page.get_by_role("table", name="Miethistorie:", exact=False)
-    row = table.get_by_role("row").filter(has=page.get_by_role("cell", name="2026-04-01", exact=True))
+    row = table.get_by_role("row").filter(has=page.get_by_role("cell", name="01.04.2026", exact=True))
     await expect(row.get_by_role("cell")).to_have_text([
-        "2026-04-01", "750.00", "240.00 inkl. Heizkosten", "—", "Mietänderung"])
+        "01.04.2026", "750,00 €", "240,00 € inkl. Heizkosten", "—", "Mietänderung"])
 
 
 @then("the April rent account shows one advance including heating and 990 EUR in total")
 @browser_step
 async def combined_ledger(browser_world):
     await ledger(browser_world, start="2026-04-01", end="2026-04-30")
-    await browser_world.row("Soll gesamt", "990.00 EUR")
+    await browser_world.row("Soll gesamt", "990,00 €")
     await ledger_row(browser_world, "2026/04", "Kaltmiete", ["750.00", "0.00", "750.00"])
     await ledger_row(browser_world, "2026/04", "Betriebskosten-Vorauszahlung inkl. Heizkosten",
         ["240.00", "0.00", "240.00"])

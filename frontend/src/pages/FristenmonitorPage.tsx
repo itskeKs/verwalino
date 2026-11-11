@@ -7,6 +7,7 @@
  */
 
 import { useEffect, useState } from "react";
+import { formatDate } from "../lib/format";
 import { CheckCircle2 } from "lucide-react";
 import { listFristen } from "../api/endpoints";
 import type { DeadlineItem, DeadlineStatus } from "../api/types";
@@ -39,11 +40,6 @@ function todayIso(): string {
 /** Make backend detail text reader-friendly: "section 556" -> "§556". */
 function prettyDetail(detail: string): string {
   return detail.replaceAll("section ", "§");
-}
-
-function formatDate(iso: string): string {
-  const [y, m, d] = iso.split("-");
-  return `${d}.${m}.${y}`;
 }
 
 export function FristenmonitorPage() {

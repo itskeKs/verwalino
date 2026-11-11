@@ -3,6 +3,7 @@ import { Link } from "react-router-dom";
 import { listDeposits, listLeases } from "../api/endpoints";
 import type { DepositAccount, LeaseRecord } from "../api/types";
 import { useAuth } from "../auth/useAuth";
+import { centsFromDecimal, formatDate, formatMoney } from "../lib/format";
 import { AccountingScopeSelector } from "../components/AccountingScopeSelector";
 
 export function DepositsPage() {
@@ -48,7 +49,7 @@ export function DepositsPage() {
   function leaseLabel(id: string): string {
     const lease = result?.leases.find(item => item.id === id);
     return lease
-      ? `Mietvertrag ab ${lease.valid_from}${lease.valid_to ? ` bis ${lease.valid_to}` : " (laufend)"}`
+      ? `Mietvertrag ab ${formatDate(lease.valid_from)}${lease.valid_to ? ` bis ${formatDate(lease.valid_to)}` : " (laufend)"}`
       : "Vertragszeitraum nicht verfügbar";
   }
 
@@ -84,7 +85,7 @@ export function DepositsPage() {
                   <td>{account.tenant_name}<div className="muted text-xs">{leaseLabel(account.lease_agreement_id)}</div></td>
                   <td>{account.property_name}</td><td>{account.unit_label}</td>
                   {[account.expected_amount, account.paid_amount, account.refunded_amount, account.held_amount].map((amount, index) => (
-                    <td key={index} style={{ textAlign: "right", fontFamily: "var(--mono)" }}>{amount} EUR</td>
+                    <td key={index} style={{ textAlign: "right", fontFamily: "var(--mono)" }}>{formatMoney(centsFromDecimal(amount))}</td>
                   ))}
                 </tr>
               ))}</tbody>

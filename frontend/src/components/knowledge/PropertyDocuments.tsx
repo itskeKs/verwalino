@@ -1,3 +1,4 @@
+import { formatDate } from "../../lib/format";
 import type { DocumentRelation, PropertyKnowledgeDocument } from "../../api/types";
 
 const DOC_TYPE_LABELS: Record<string, string> = {
@@ -24,7 +25,7 @@ export function PropertyDocuments({ documents, relations }: PropertyDocumentsPro
             return <li key={document.id} className="knowledge-document">
               <strong>{document.title}</strong>
               <span>{DOC_TYPE_LABELS[document.doc_type] ?? document.doc_type}</span>
-              {document.document_date && <span>vom {new Intl.DateTimeFormat("de-DE").format(new Date(document.document_date))}</span>}
+              {document.document_date && <span>vom {formatDate(document.document_date)}</span>}
               {document.deed_reference && <span>{document.deed_reference}</span>}
               <span>{document.page_count} Seiten</span>
               {documentRelations.map((relation) => {

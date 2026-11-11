@@ -57,7 +57,7 @@ it("creates three drafts, reloads human labels, preserves unknown money and perm
   expect(await within(region).findByRole("status")).toHaveTextContent("3 Entwürfe angelegt · 0 bereits vorhanden");
   await screen.findByRole("table");
   expect(screen.getByText(/Wohnung 1 — Ada Mieter/)).toBeVisible();
-  expect(screen.queryByText("0.00 EUR")).toBeNull();
+  expect(screen.queryByText("0,00 €")).toBeNull();
   expect(api.get).toHaveBeenCalledTimes(14);
   expect(api.post).toHaveBeenCalledWith("/api/settlements/batch", { property_id: "property-1", period_start: "2025-07-01", period_end: "2026-06-30", accounting_scope_id: null });
   vi.mocked(api.post).mockResolvedValueOnce({ created: [], skipped: created.map(run => ({ lease_agreement_id: run.lease_agreement_id, settlement_run_id: run.id })) });
@@ -276,7 +276,7 @@ it("offers and prefills the selected lease's clipped span and reclips on a lease
   fireEvent.change(screen.getByRole("combobox", { name: "Mietvertrag *" }), { target: { value: "lease-1" } });
   await waitFor(() => expect(screen.getByLabelText("Abrechnungszeitraum von *")).toHaveValue("2025-06-15"));
   expect(screen.getByLabelText("Abrechnungszeitraum bis *")).toHaveValue("2025-09-30");
-  expect(screen.getByRole("option", { name: /15.06.2025.*30.09.2025/ })).toBeVisible();
+  expect(within(screen.getByRole("combobox", { name: "Mietvertrag *" })).getByRole("option", { name: /15\.06\.2025.*30\.09\.2025/ })).toBeVisible();
   expect(screen.queryByRole("option", { name: /^2024\/2025/ })).toBeNull();
   fireEvent.change(screen.getByRole("combobox", { name: "Mietvertrag *" }), { target: { value: "lease-2" } });
   await waitFor(() => expect(screen.getByLabelText("Abrechnungszeitraum von *")).toHaveValue("2025-10-01"));

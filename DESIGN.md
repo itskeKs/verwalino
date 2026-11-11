@@ -51,7 +51,8 @@ active palette. Product-specific shell, personal-preview, dashboard and property
 layout classes live in `index.css`; existing domain components remain in place.
 
 The following captures use only synthetic records on the disposable test database.
-The before dashboard shows the previous navigation and financial-first order.
+They regenerate with `make screenshots` (the design-table scenario of the personal-design
+browser feature). The before dashboard shows the previous navigation and financial-first order.
 
 | Screen | Klar desktop / phone | Warm desktop / phone |
 | --- | --- | --- |
@@ -93,6 +94,7 @@ form-grid spacing and responsive behaviour apply.
 
 - One fact has one visual place: show a status, result or action on the surface that owns it.
   An equivalent hidden accessible label may repeat it.
+- `frontend/src/lib/styleHygiene.test.ts` keeps classes, stylesheets and tokens consistent (see "Global classes").
 - Enforce the contract's behaviour and copy with interaction tests in the area's
   `frontend/src/**/*.test.tsx`; browser features in `features/` verify geometry that jsdom cannot check.
 - When the look changes, update this contract and the screenshots in `docs/assets/design/`
@@ -116,12 +118,10 @@ Tokens are HSL channels on `:root` in `index.css`, exposed to Tailwind in `tailw
 | `destructive` | 0 72% 50% | `#db2424` | error text, destructive button |
 | `border` (`--ui-border`), `input` | 215 30% 89% / 215 30% 84% | `#dce3ec` / `#cbd5e3` | borders and input outlines |
 | `ring` | 221 72% 46% | `#2156ca` | keyboard focus ring |
-| `sidebar` / `sidebar-foreground` | 216 38% 95% / 216 24% 33% | `#eef2f8` / `#46546a` | Klar navigation rail |
-| `sidebar-accent` / foreground | 0 0% 100% / 221 72% 46% | `#ffffff` / `#2156ca` | Klar active nav item; brand tile uses primary |
 
 Semantic colours that are **not** tokens: `ui/badge.tsx` and `ui/stat-card.tsx` use the Tailwind palette
 (blue = primary/type, emerald = success, amber = warning/attention, red = destructive, slate = info/neutral).
-`success` and `warning` exist as tokens but no component uses them. Legacy `.badge--*` classes use fixed
+There is no `success` token; `warning` is a CSS variable read only by `.knowledge-status--needs_clarification`, and `--sidebar-foreground` and `--sidebar-accent` only override `--ring` and `--accent` in the Warm mobile topbar (navigation colours are the `--nav-*` variables); none of the three has a Tailwind colour. Legacy `.badge--*` classes use fixed
 hex pairs. `--border` (hex) and `--ui-border` (HSL) are different variables: the kit uses `--ui-border`.
 Legacy variables `--color-primary`, `--bg-content`, `--text`, `--text-muted` remain as
 aliases to the active semantic tokens for old inline styles. Use token colours rather than hard-coded hex values: pick a role from the table;
@@ -168,9 +168,8 @@ outcomes with `role="status"`.
 
 Focus: kit controls show `ring-2 ring-ring ring-offset-2`; `.btn` shows a 3 px `ring/30` shadow; form-grid
 fields a 3 px `ring/18` shadow with a primary border. Disabled controls use `opacity-50` and
-`not-allowed`/`pointer-events-none`. Transitions are colour/shadow only and short (about 0.15 s). Note: `ui/dialog.tsx`
-carries `animate-in`/`fade-in` classes, but the `tailwindcss-animate` plugin is not installed
-(`plugins: []`), so dialogs do not animate.
+`not-allowed`/`pointer-events-none`. Transitions are colour/shadow only and short (about 0.15 s). Dialogs do not
+animate: the `tailwindcss-animate` plugin is not installed (`plugins: []`), so `animate-in` and `fade-in` classes would do nothing.
 
 ## Layout
 
@@ -275,8 +274,8 @@ mobile drawer; focus moves from disappearing navigation to the visible toggle, o
 toggle/drawer to the active desktop link. A focused closed toggle also transfers focus when it
 disappears: the shell remembers navigation focus and restores it after the new layout mounts.
 The drawer retains its 200 ms slide; while closing it is
-inert until unmounted. `AppShell.css`, `Sidebar.css` and `Topbar.css` exist but are imported nowhere;
-the shell uses the layout classes and drawer keyframes in `index.css`.
+inert until unmounted. The shell uses the layout classes and drawer keyframes in `index.css`; it has no
+stylesheet of its own.
 
 First-run setup opens when `GET /api/setup` reports `required: true`; the backend
 owns the deployment decision. Required setup takes precedence over login and
@@ -566,8 +565,8 @@ both advance fields accept German amounts such as `1.080,00` and API decimals su
 or `abc`) stays in the field and prevents submission, with the linked German error
 “Bitte geben Sie die Betriebskosten-Vorauszahlung als gültigen EUR-Betrag ein.” or
 “Bitte geben Sie die Heizkosten-Vorauszahlung als gültigen EUR-Betrag ein.”
-The detail page retains its existing decimal-string `EUR` amounts; the advance
-proposal retains its existing German decimal-string `EUR` format. The advance proposal
+The detail page and the advance proposal render their amounts through `formatMoney`
+(see "Number, money, date and size formats"). The advance proposal
 uses its own payload, including the lease's advances valid on the acceptance date, and shows the previous amounts.
 
 Synthetic records at 1280 and 360 px show the €990 monthly charge and €20
@@ -733,9 +732,9 @@ use the existing horizontal scroll containers. Desktop keeps the complete tables
 New rent and operating-advance interest rows show their frozen `Zinsbeginn` as
 `TT.MM.JJJJ` beneath the principal, visible without horizontal scrolling at
 360 px. Legacy rows without that stored date show no inferred start date.
-Both `Ausgestellt am` locations show the persisted instant as `TT.MM.JJJJ, HH:MM`
-in `Europe/Berlin`, using the existing German `toLocaleString` options pattern
-with two-digit day, month, hour and minute. The API supplies ISO with a timezone.
+Both `Ausgestellt am` locations show the persisted instant as `TT.MM.JJJJ, HH:MM Uhr`
+in `Europe/Berlin` through `formatDateTime`, with two-digit day, month, hour and
+minute. The API supplies ISO with a timezone.
 Existing frozen values and issued PDFs retain their stored contents. New rent
 and operating-advance PDFs also name the stored interest start explicitly.
 
@@ -886,7 +885,7 @@ classes or inline `style={{}}` for new domain screens; the existing inline style
 
 | File | Exports | Variants | Use when |
 |---|---|---|---|
-| `button.tsx` | `Button` (forwardRef) | variant `primary` (default), `secondary`, `outline`, `ghost`, `destructive`; size `sm` (h-8), `md` (h-9, default), `lg` (h-11), `icon` (h-9 w-9) | `primary`: the main action of a view or form (with the deviation below). `outline`: cancel and secondary actions. `ghost`: topbar and toolbars. `destructive`: confirm of an irreversible action. `secondary`, `lg`, `icon` and `destructive` have no call site yet. Legacy twin: `.btn`, `.btn--primary`, `.btn--danger`, `.btn--small`, `.btn--wrap` (wrapping label). |
+| `button.tsx` | `Button` (forwardRef) | variant `primary` (default), `outline`, `ghost`, `destructive`; size `sm` (h-8), `md` (h-9, default), `lg` (h-11) | `primary`: the main action of a view or form (with the deviation below). `outline`: cancel and secondary actions. `ghost`: topbar and toolbars. `destructive`: confirm of an irreversible action (`OrganizationDeletion.tsx`). `lg`: submit buttons of the public authentication pages (full width) and the organization data and deletion actions. A variant or size is added together with its first call site. Legacy twin: `.btn`, `.btn--primary`, `.btn--danger`, `.btn--small`, `.btn--wrap` (wrapping label). |
 | `badge.tsx` | `Badge`, `BadgeTone` | tone `default`, `primary`, `success`, `warning`, `destructive`, `info`, `outline` | A short status or type label. `primary` = category/type (WEG), `success` = done/confirmed, `warning` = needs attention/due, `destructive` = overdue/rejected, `info` = neutral note, `default` = neutral, `outline` = unmapped raw value. Legacy twin: `.badge` + modifier. |
 | `card.tsx` | `Card`, `CardHeader`, `CardTitle`, `CardDescription`, `CardContent`, `CardFooter` | none; compose | Every panel. A table card uses `CardContent className="p-0"` with edge cells `pl-5`/`pr-5`. Legacy twin: `.card` with an `h2`. |
 | `dialog.tsx` | `Dialog`, `DialogContent`, `DialogHeader`, `DialogTitle`, `DialogDescription`, `DialogFooter` (+ `DialogPortal`, `DialogOverlay`) | none | Short focused tasks and confirmations on Radix: focus trap, Esc, built-in close "Schließen". Max width 32 rem, full width on phones. |
@@ -907,16 +906,17 @@ The create form's "Abbrechen" in `MandatePage.tsx` explicitly uses `outline`.
 |---|---|
 | `.card` | panel surface, `h2` heading |
 | `.btn`, `.btn--primary`, `.btn--danger`, `.btn--small`, `.btn--wrap` | button, main action, destructive, compact (table rows), wrapping label |
-| `.badge` + `--weg`/`--primary` (blue), `--miet`/`--confirmed`/`--finalized`/`--booked`/`--success` (green), `--sev`/`--review` (amber), `--misch`/`--superseded` (violet), `--draft` (grey), `--rejected`/`--storno`/`--danger` (red) | status pill |
+| `.badge` + `--weg`/`--primary` (blue), `--miet`/`--confirmed`/`--finalized`/`--booked`/`--success` (green), `--sev`/`--review`/`--warning` (amber), `--misch`/`--superseded` (violet), `--draft` (grey), `--rejected`/`--storno`/`--danger` (red) | status pill |
 | `.data-table`, `.info-table` | list table; key-value table (label column 180 px, muted) |
 | `.form-grid`, `.form-full-width`, `.form-actions` | form layout |
-| `.error-text`, `.empty-hint` | error line (destructive), empty-state line (muted) |
+| `.error-text`, `.empty-hint`, `.muted` | error line (destructive), empty-state line (muted), muted text colour for a hint under a control or heading |
 | `.link`, `.link-button` | text link; button that looks like a link |
 | `.paged-list`, `.paged-list .paged-table` | list page wrapper; horizontally scrollable table wrapper only inside `.paged-list` |
 
-Referenced in components but defined nowhere, so they do nothing: `muted` (5 files: `MasterImport.tsx`,
-`DepositsPage.tsx`, `MietkontoPage.tsx`, `PropertiesPage.tsx`, `SpecialLeviesPage.tsx`), `btn-primary` (3,
-typo of `btn--primary`), `badge--warning`, `form-hint`, `table-responsive`.
+Legacy modifiers use two hyphens (`btn--primary`, `badge--warning`); `btn-primary` is a typo. A class in a
+`className` literal must be defined in `index.css`, `PublicAuthLayout.css` or by Tailwind: a class nobody
+defines does nothing. `frontend/src/lib/styleHygiene.test.ts` fails on such a class, on a stylesheet nothing
+imports and on a design token nothing reads.
 
 ### Recurring composites
 
@@ -1073,8 +1073,27 @@ the affected file.
   "z.B." both occur; ellipsis `…` and `...` both occur. Technical labels may stay English-derived codes
   (MEA, GoBD, SEPA, DATEV).
 - Page titles: each page renders its own `h1`; `document.title` is the static "Hausverwaltung".
-- Deviation: about 60 strings are written without umlauts ("Strasse", "waehlen", "Ruecklage",
-  "Mietvertraege", "FLAECHE").
+- Spelling: visible copy keeps umlauts and ß ("wählen", "Rücklage", "Eigentümer", "Durchführung");
+  enum values such as `UMLAGEFAEHIG`, URL paths and template placeholders stay ASCII.
+  `frontend/src/lib/copyHygiene.test.ts` fails on the transliterated spellings that occurred (a fixed
+  word list; extend it when a new one appears). Deviation: the property, unit, person and cost screens
+  still contain some ("Strasse", "Flaeche", "Eigentuemer"); the test exempts those files until #495
+  replaces them.
+- Payment types: `PAYMENT_TYPE_LABELS` in `lib/paymentTypes.ts` names each type once ("Rücklagenanteil",
+  "Rücklagenentnahme"); the payment, rent account, open items, dunning and report pages read it; the
+  bank assignment list keeps its own map typed by the API's payment type, which also has `NACHZAHLUNG`;
+  change a spelling there too.
+
+Spelling change on the pages outside the property, unit, person and cost screens (synthetic data, test database):
+
+| Screen | 1280 px | 360 px |
+|---|---|---|
+| New payment, owner type | [before](docs/assets/design/ascii-copy/before-payments-1280.png) · [after](docs/assets/design/ascii-copy/after-payments-1280.png) | [before](docs/assets/design/ascii-copy/before-payments-360.png) · [after](docs/assets/design/ascii-copy/after-payments-360.png) |
+| New dunning notice, owner recipient | [before](docs/assets/design/ascii-copy/before-dunning-1280.png) · [after](docs/assets/design/ascii-copy/after-dunning-1280.png) | [before](docs/assets/design/ascii-copy/before-dunning-360.png) · [after](docs/assets/design/ascii-copy/after-dunning-360.png) |
+| Meeting detail | [before](docs/assets/design/ascii-copy/before-meeting-1280.png) · [after](docs/assets/design/ascii-copy/after-meeting-1280.png) | [before](docs/assets/design/ascii-copy/before-meeting-360.png) · [after](docs/assets/design/ascii-copy/after-meeting-360.png) |
+| Resolution register, no property | [before](docs/assets/design/ascii-copy/before-resolutions-1280.png) · [after](docs/assets/design/ascii-copy/after-resolutions-1280.png) | [before](docs/assets/design/ascii-copy/before-resolutions-360.png) · [after](docs/assets/design/ascii-copy/after-resolutions-360.png) |
+| New bank account, reserve type | [before](docs/assets/design/ascii-copy/before-bankaccounts-1280.png) · [after](docs/assets/design/ascii-copy/after-bankaccounts-1280.png) | [before](docs/assets/design/ascii-copy/before-bankaccounts-360.png) · [after](docs/assets/design/ascii-copy/after-bankaccounts-360.png) |
+| Rent account, owner view | [before](docs/assets/design/ascii-copy/before-mietkonto-1280.png) · [after](docs/assets/design/ascii-copy/after-mietkonto-1280.png) | [before](docs/assets/design/ascii-copy/before-mietkonto-360.png) · [after](docs/assets/design/ascii-copy/after-mietkonto-360.png) |
 
 ### Lease and manual cost amount validation
 
@@ -1132,21 +1151,22 @@ Synthetic finalized report from the test database (1280 and 360 px):
 | Before | [View](docs/assets/design/asset-report-reserve/before-1280.png) | [View](docs/assets/design/asset-report-reserve/before-360.png) |
 | After | [View](docs/assets/design/asset-report-reserve/asset-report-1280.png) | [View](docs/assets/design/asset-report-reserve/asset-report-360.png) |
 
-`frontend/src/lib/utils.ts` provides `formatEuro()` for the reserve ledger and
-asset-report holdings table. Other readers still use file-local functions or
-inline expressions, with the variants below. The inconsistencies are tracked in #48.
+`frontend/src/lib/format.ts` provides the shared display helpers below; every
+displayed money, date, datetime and IBAN value renders through them.
+`frontend/src/lib/format.test.ts` tests the helpers, and
+`frontend/src/lib/callSites.test.ts` fails when a hand-rolled date, a `toLocaleDateString`
+call, an amount followed by `EUR` or a raw date or timestamp field returns to a call site.
+Inputs show and accept what the user types: they are not display call sites.
 
 | What | Contract | Implemented by |
 |---|---|---|
-| Money | `1.234,56 €`: `.` thousands, `,` decimals, always two, sign first (`-1.234,56 €`), no float arithmetic | Shared `formatEuro()` in `lib/utils.ts` for `ReserveLedgerPanel` and `AssetReportDetailPage`; file-local `euros()` in `components/DashboardKpis.tsx`, `money()` in `pages/BankTransactionsPage.tsx` |
-| Money, deviating | same grouping but suffix ` EUR`; `OpenItemsPage.tsx` uses ungrouped `toFixed(2)` plus ` EUR` (`1234.56 EUR`) | `money()` in `pages/ReportsPage.tsx`, `formatCents()` in `pages/PaymentsPage.tsx` and `pages/CostEntriesPage.tsx`, `formatProposalMoney()` in `pages/SettlementDetailPage.tsx`; ` EUR` appears 93 times in 30 files, `€` in 2. `displayCents()` in `api/allocationProposals.ts` prints `1234,56` without grouping or suffix. |
-| Date | `TT.MM.JJJJ`, e.g. `05.03.2026`, from the ISO API value | `formatDate()` in `pages/DashboardPage.tsx`, `FristenmonitorPage.tsx`, `MandatePage.tsx`; `date()` in `BankTransactionsPage.tsx`; `dateLabel()` in `DashboardKpis.tsx` |
-| Date, deviating | `toLocaleDateString("de-DE")` or `Intl.DateTimeFormat("de-DE")` prints `5.3.2026` (no zero padding) | `MandateDetailPage.tsx`, `AttachmentsPanel.tsx`; `components/knowledge/PropertyDocuments.tsx` uses `Intl.DateTimeFormat` |
-| Date and time | `new Date(x).toLocaleString("de-DE")` gives `5.3.2026, 15:03:09` (no zero padding, with seconds) | 45 `toLocaleString` calls, all `de-DE`; used for receipts and history |
+| Money | `1.234,56 €`: `.` thousands, `,` decimals, always two, sign first (`-1.234,56 €`), no float arithmetic | Shared `formatMoney(cents)` in `lib/format.ts`, fed by `centsFromDecimal()` for API decimal strings; used by every money call site |
+| Date | `TT.MM.JJJJ`, e.g. `05.03.2026`, from the ISO API value | Shared `formatDate(iso)` in `lib/format.ts` |
+| Date and time | `TT.MM.JJJJ, HH:MM Uhr`, e.g. `31.10.2026, 14:05 Uhr`, Europe/Berlin calendar, no seconds | Shared `formatDateTime(iso)` in `lib/format.ts`; `formatDate(iso)` maps timestamps to the Europe/Berlin calendar date |
 | Long date | weekday and month in words ("Freitag, 30. Oktober 2026") | `dateLabel` in `DashboardPage.tsx` |
 | Plain numbers | `Intl.NumberFormat("de-DE")` / `toLocaleString("de-DE")` (`1.234.567`) | `PropertyDetailPage.tsx`, `AttachmentsPanel.tsx`, `IntakeBatchPage.tsx` |
 | File size | `1.5 KB` / `1.0 MB` with a dot (`toFixed(1)`); mandates use whole KB (`12 KB`, `toFixed(0)`). Attachments show `1.234 Bytes` (`Intl.NumberFormat("de-DE")`); intake shows `1,5 KiB` (`toLocaleString("de-DE")`) | `formatBytes()` in `InvoiceDocumentsPage.tsx`, `formatSize()` in `MandateDetailPage.tsx`, `AttachmentsPanel.tsx`, `IntakeBatchPage.tsx` |
-| IBAN | shown as stored; SEPA confirmation input removes whitespace and upper-cases it | `normalizedIban` in `components/SepaExport.tsx`; `BankAccountsPage.tsx` prints `iban` raw. There is no IBAN display grouping in the frontend. |
+| IBAN | grouped in blocks of four (`DE75 5121 0800 1245 1261 99`); SEPA confirmation input removes whitespace and upper-cases it, so pasting grouped or ungrouped is accepted | Shared `formatIban(iban)` in `lib/format.ts` for displays; `normalizedIban` in `components/SepaExport.tsx` for the confirmation input |
 | Empty value | `—` (kit, newer pages), `-` (older tables), `–` (`BankTransactionsPage.tsx`) | `MandatePage.tsx`, `InvoiceDocumentsPage.tsx`, `BankTransactionsPage.tsx`, respectively |
 | Money input | accept `1234,56` and `1234.56`, send `1234.56` | `moneyInput`, `exactCents`, `normalizePlanAmount` (see above) |
 
@@ -1218,8 +1238,8 @@ it clears the previous result until “Abrufen” loads the selected cutoff.
 The legacy summary table keeps “Soll gesamt”, “Ist gesamt” and “Saldo”; a positive
 Saldo has no arrears suffix or warning colour. Two rows follow:
 “davon fällig” (positive: “Rückstand”, destructive token; negative: “Guthaben”,
-emerald) and “noch nicht fällig” (neutral). Signed amounts retain the page's
-existing decimal-string `EUR` notation. The detail rows keep the same amounts
+emerald) and “noch nicht fällig” (neutral). Signed amounts render through `formatMoney`
+(`-600,00 €`). The detail rows keep the same amounts
 and show the backend due classification
 below the period: “fällig” or “noch nicht fällig” for nonzero signed amounts,
 “ausgeglichen” for zero. Positive open amounts remain neutral; credits

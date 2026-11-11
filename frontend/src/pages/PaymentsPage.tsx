@@ -33,8 +33,10 @@ import type {
 } from "../api/types";
 import type { PaymentListQuery } from "../api/endpoints";
 import { ApiError } from "../api/client";
+import { centsFromDecimal, formatDate, formatMoney } from "../lib/format";
 import { ReserveEvidenceFields } from "../components/ReserveEvidenceFields";
 import { SepaExport } from "../components/SepaExport";
+import { PAYMENT_TYPE_LABELS } from "../lib/paymentTypes";
 
 const STATUS_OPTIONS: { value: string; label: string }[] = [
   { value: "", label: "Alle Status" },
@@ -55,26 +57,7 @@ const STATUS_CSS: Record<string, string> = {
   cancelled: "badge--superseded",
 };
 
-const PAYMENT_TYPE_OPTIONS: { value: string; label: string }[] = [
-  { value: "KALTMIETE", label: "Kaltmiete" },
-  { value: "NK_VORAUSZAHLUNG", label: "Betriebskosten-Vorauszahlung" },
-  { value: "HK_VORAUSZAHLUNG", label: "Heizkosten-Vorauszahlung" },
-  { value: "KAUTION", label: "Kaution" },
-  { value: "HAUSGELD_VORSCHUSS", label: "Hausgeld-Vorschuss" },
-  { value: "RUECKLAGENANTEIL", label: "Ruecklagenanteil" },
-  { value: "RUECKLAGENENTNAHME", label: "Rücklagenentnahme" },
-  { value: "SONDERZAHLUNG", label: "Sonder-/Nachzahlung" },
-];
-
-const PAYMENT_TYPE_LABELS: Record<string, string> = {
-  KALTMIETE: "Kaltmiete",
-  NK_VORAUSZAHLUNG: "Betriebskosten-Vorauszahlung", HK_VORAUSZAHLUNG: "Heizkosten-Vorauszahlung",
-  KAUTION: "Kaution",
-  HAUSGELD_VORSCHUSS: "Hausgeld-Vorschuss",
-  RUECKLAGENANTEIL: "Ruecklagenanteil",
-  RUECKLAGENENTNAHME: "Rücklagenentnahme",
-  SONDERZAHLUNG: "Sonder-/Nachzahlung",
-};
+const PAYMENT_TYPE_OPTIONS = Object.entries(PAYMENT_TYPE_LABELS).map(([value, label]) => ({ value, label }));
 
 const DIRECTION_LABELS: Record<string, string> = {
   IN: "Eingang",
@@ -98,18 +81,6 @@ function makeEmptyForm(): PaymentCreate {
     period_month: null,
     note: null,
   };
-}
-
-// API amounts are decimal strings; never round list aggregates through Number.
-function amountCents(value: string): bigint {
-  const [whole, fraction = ""] = value.split(".");
-  return BigInt(`${whole}${fraction.padEnd(2, "0")}`);
-}
-
-function formatCents(value: bigint): string {
-  const absolute = value < 0n ? -value : value;
-  const whole = (absolute / 100n).toString().replace(/\B(?=(\d{3})+(?!\d))/g, ".");
-  return `${value < 0n ? "-" : ""}${whole},${(absolute % 100n).toString().padStart(2, "0")} EUR`;
 }
 
 export function PaymentsPage() {
@@ -375,7 +346,7 @@ export function PaymentsPage() {
       {downloadError && <p role="alert" className="error-text">{downloadError} Bitte CSV herunterladen erneut versuchen.</p>}
       {error && <p role="alert" className="error-text">{error} <button type="button" onClick={reload}>Liste erneut laden</button></p>}
       {currentDataset && <div>
-        <p>Listensaldo: <output aria-label="Listensaldo">{formatCents(payments.reduce((total, payment) => total + (payment.direction === "OUT" ? -amountCents(payment.amount) : amountCents(payment.amount)), 0n))}</output></p>
+        <p>Listensaldo: <output aria-label="Listensaldo">{formatMoney(payments.reduce((total, payment) => total + (payment.direction === "OUT" ? -centsFromDecimal(payment.amount) : centsFromDecimal(payment.amount)), 0n))}</output></p>
         <p>Eingänge minus Ausgänge aller angezeigten Zeilen, einschließlich Entwürfen, verworfenen Zahlungen und Stornos je Filter. Kein tatsächlicher Kontostand.</p>
       </div>}
 
@@ -393,7 +364,7 @@ export function PaymentsPage() {
                   setForm({ ...form, bank_account_id: e.target.value, reserve_cost_entry_id: null, reserve_register_entry_id: null })
                 }
               >
-                <option value="">-- Konto waehlen --</option>
+                <option value="">-- Konto wählen --</option>
                 {bankAccounts.map((a) => (
                   <option key={a.id} value={a.id}>
                     {getAccountLabel(a.id)}
@@ -447,7 +418,7 @@ export function PaymentsPage() {
                 type="text"
                 required
                 inputMode="decimal"
-                placeholder="0.00"
+                placeholder="700,00"
                 value={form.amount}
                 onChange={(e) =>
                   setForm({ ...form, amount: e.target.value })
@@ -479,7 +450,7 @@ export function PaymentsPage() {
                     })
                   }
                 >
-                  <option value="">-- Mieter waehlen --</option>
+                  <option value="">-- Mieter wählen --</option>
                   {tenantProfiles.map((tp) => {
                     const person = persons.find((p) => p.id === tp.person_id);
                     const name = person
@@ -495,9 +466,9 @@ export function PaymentsPage() {
               </label>
             ) : (
               <label>
-                Eigentuemer
+                Eigentümer
                 <select
-                  aria-label="Eigentuemer"
+                  aria-label="Eigentümer"
                   value={form.owner_profile_id ?? ""}
                   onChange={(e) =>
                     setForm({
@@ -507,7 +478,7 @@ export function PaymentsPage() {
                     })
                   }
                 >
-                  <option value="">-- Eigentuemer waehlen --</option>
+                  <option value="">-- Eigentümer wählen --</option>
                   {ownerProfiles.map((op) => {
                     const person = persons.find((p) => p.id === op.person_id);
                     const name = person
@@ -546,8 +517,8 @@ export function PaymentsPage() {
                       : "";
                     return (
                       <option key={l.id} value={l.id}>
-                        {tenantName} ab {l.valid_from}
-                        {l.valid_to ? ` bis ${l.valid_to}` : " (laufend)"}
+                        {tenantName} ab {formatDate(l.valid_from)}
+                        {l.valid_to ? ` bis ${formatDate(l.valid_to)}` : " (laufend)"}
                       </option>
                     );
                   })}
@@ -650,7 +621,7 @@ export function PaymentsPage() {
                       textDecoration: p.reversed_by_id ? "line-through" : undefined,
                     }}
                   >
-                    <td>{p.value_date}</td>
+                    <td>{formatDate(p.value_date)}</td>
                     <td>
                       {PAYMENT_TYPE_LABELS[p.payment_type] ?? p.payment_type}
                       {p.reverses_id && (
@@ -680,7 +651,7 @@ export function PaymentsPage() {
                         fontWeight: 600,
                       }}
                     >
-                      {p.amount} EUR
+                      {formatMoney(centsFromDecimal(p.amount))}
                     </td>
                     <td>
                       {p.period_year

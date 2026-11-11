@@ -30,6 +30,7 @@ import { ApiError } from "../api/client";
 import { AccountingScopeSelector } from "../components/AccountingScopeSelector";
 import { InvoiceProcessingStatus } from "../components/InvoiceProcessingStatus";
 import { Badge } from "../components/ui/badge";
+import { formatDate, formatDateTime } from "../lib/format";
 
 /** Human-readable short label for source_format values from the e-invoice parser. */
 const FORMAT_LABELS: Record<string, string> = {
@@ -280,7 +281,7 @@ export function InvoiceDocumentDetailPage() {
             borderColor: "#ffcc02",
           }}
         >
-          <strong>GoBD:</strong> Dieser Beleg ist freigegeben und unveraenderbar.
+          <strong>GoBD:</strong> Dieser Beleg ist freigegeben und unveränderbar.
           Korrekturen erzeugen eine neue Version mit Bezug zum Original.
         </div>
       )}
@@ -299,7 +300,7 @@ export function InvoiceDocumentDetailPage() {
               <td>{doc.mime_type}</td>
             </tr>
             <tr>
-              <td>Groesse</td>
+              <td>Größe</td>
               <td>{formatBytes(doc.content_byte_size)}</td>
             </tr>
             <tr>
@@ -325,7 +326,7 @@ export function InvoiceDocumentDetailPage() {
                 <td>Ersetzt</td>
                 <td>
                   <Link to={`/belege/${doc.supersedes_id}`} className="link">
-                    Vorgaengerversion
+                    Vorgängerversion
                   </Link>
                 </td>
               </tr>
@@ -338,7 +339,7 @@ export function InvoiceDocumentDetailPage() {
                     to={`/kosten/${doc.cost_entry_id}`}
                     className="link"
                   >
-                    Verknuepfte Kostenposition
+                    Verknüpfte Kostenposition
                   </Link>
                 </td>
               </tr>
@@ -346,13 +347,13 @@ export function InvoiceDocumentDetailPage() {
             {doc.released_at && (
               <tr>
                 <td>Freigegeben am</td>
-                <td>{doc.released_at}</td>
+                <td>{formatDateTime(doc.released_at)}</td>
               </tr>
             )}
             {doc.retention_until && (
               <tr>
                 <td>Aufbewahrung bis</td>
-                <td>{doc.retention_until}</td>
+                <td>{formatDate(doc.retention_until)}</td>
               </tr>
             )}
           </tbody>
@@ -382,7 +383,7 @@ export function InvoiceDocumentDetailPage() {
           onClick={handleVerify}
           disabled={actionLoading}
         >
-          Integritaet pruefen
+          Integrität prüfen
         </button>
         {!doc.cost_entry_id && doc.status === "active" && !doc.released_at && (
           <button
@@ -406,7 +407,7 @@ export function InvoiceDocumentDetailPage() {
           }}
         >
           <strong>
-            Integritaetspruefung:{" "}
+            Integritätsprüfung:{" "}
             {verifyResult.integrity_ok ? "OK" : "FEHLGESCHLAGEN"}
           </strong>
           <br />
@@ -531,8 +532,8 @@ export function InvoiceDocumentDetailPage() {
               marginBottom: "0.75rem",
             }}
           >
-            Die erkannten Felder wurden vorbelegt. Bitte pruefen und
-            ergaenzen Sie die Daten, bevor Sie den Entwurf speichern.
+            Die erkannten Felder wurden vorbelegt. Bitte prüfen und
+            ergänzen Sie die Daten, bevor Sie den Entwurf speichern.
           </p>
           <form onSubmit={handleCostSubmit} className="form-grid">
             <label>
@@ -545,7 +546,7 @@ export function InvoiceDocumentDetailPage() {
                   setCostForm({ ...costForm, accounting_scope_id: null, property_id: e.target.value })
                 }
               >
-                <option value="">-- Objekt waehlen --</option>
+                <option value="">-- Objekt wählen --</option>
                 {properties.map((p) => (
                   <option key={p.id} value={p.id}>
                     {p.name}
@@ -574,7 +575,7 @@ export function InvoiceDocumentDetailPage() {
                   });
                 }}
               >
-                <option value="">-- Kategorie waehlen --</option>
+                <option value="">-- Kategorie wählen --</option>
                 {categories.map((c) => (
                   <option key={c.id} value={c.id}>
                     {c.code} {c.label}
@@ -675,9 +676,9 @@ export function InvoiceDocumentDetailPage() {
               />
             </label>
             <label>
-              Umlagefaehigkeit *
+              Umlagefähigkeit *
               <select
-                aria-label="Umlagefaehigkeit *"
+                aria-label="Umlagefähigkeit *"
                 required
                 value={costForm.tenant_apportionable}
                 onChange={(e) =>
@@ -687,9 +688,9 @@ export function InvoiceDocumentDetailPage() {
                   })
                 }
               >
-                <option value="UMLAGEFAEHIG">Voll umlagefaehig</option>
-                <option value="TEILWEISE_PRUEFEN">Teilweise umlagefaehig</option>
-                <option value="NICHT_UMLAGEFAEHIG">Nicht umlagefaehig</option>
+                <option value="UMLAGEFAEHIG">Voll umlagefähig</option>
+                <option value="TEILWEISE_PRUEFEN">Teilweise umlagefähig</option>
+                <option value="NICHT_UMLAGEFAEHIG">Nicht umlagefähig</option>
               </select>
             </label>
             <AccountingScopeSelector key={costForm.property_id} propertyId={costForm.property_id} value={costForm.accounting_scope_id} onChange={id => setCostForm({ ...costForm, accounting_scope_id: id })} />

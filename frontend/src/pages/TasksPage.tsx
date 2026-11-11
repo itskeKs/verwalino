@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState, type FormEvent } from "react";
+import { formatDate } from "../lib/format";
 import { useLocation, useSearchParams } from "react-router-dom";
 import { createTask, deleteTask, listLeases, listProperties, listTaskAssignees, listTasks, listUnits, updateTask } from "../api/endpoints";
 import type { LeaseRecord, Property, Task, TaskInput, TaskPage, Unit, User } from "../api/types";
@@ -126,10 +127,10 @@ function TasksContent() {
   }
   const field = (name: keyof Form, value: string) => setForm(f => ({ ...f, [name]: value }));
   const editTask = editing && editing !== "new" ? editing : null;
-  const contextText = [contextProperty?.name || choices?.properties.find(p => p.id === initialProperty)?.name, contextUnit ? `Einheit ${contextUnit.number}` : null, contextLease ? `Mietvertrag ab ${contextLease.valid_from}` : null].filter(Boolean).join(" · ");
+  const contextText = [contextProperty?.name || choices?.properties.find(p => p.id === initialProperty)?.name, contextUnit ? `Einheit ${contextUnit.number}` : null, contextLease ? `Mietvertrag ab ${formatDate(contextLease.valid_from)}` : null].filter(Boolean).join(" · ");
 
   return <div className="space-y-4">
-    <div className="flex items-center justify-between"><h1>Aufgaben</h1>{canWrite && <button className="btn btn-primary" disabled={pending || !contextValid} onClick={() => openEditor()}>Aufgabe anlegen</button>}</div>
+    <div className="flex items-center justify-between"><h1>Aufgaben</h1>{canWrite && <button className="btn btn--primary" disabled={pending || !contextValid} onClick={() => openEditor()}>Aufgabe anlegen</button>}</div>
     {hasContext && contextValid && <p>Fester Kontext: {contextText}. Bitte vor dem Speichern prüfen.</p>}
     {choices && !contextValid && <p role="alert" className="error-text">Kontext nicht verfügbar oder nicht zusammengehörig. Bitte den Aufgabenlink erneut aus Objekt oder Einheit öffnen.</p>}
     {choiceError && <div role="alert">Auswahl konnte nicht geladen werden: {choiceError} <button disabled={pending} onClick={() => setChoiceRevision(n => n + 1)}>Auswahl erneut laden</button></div>}
@@ -144,7 +145,7 @@ function TasksContent() {
     {mutationError && !editing && !deleting && <p role="alert">{mutationError}</p>}
     {page && <><ul className="space-y-3">{page.items.map(task => <li key={task.id} className="card">
       <h2>{task.title}</h2><p className="whitespace-pre-wrap">{task.note}</p>
-      <p>{task.completed ? "Erledigt" : "Offen"} · {task.due_date ? `Fällig am ${task.due_date}` : "Ohne Fälligkeit"} · {task.assigned_user_name || "Zuständig zugeordnet"}</p>
+      <p>{task.completed ? "Erledigt" : "Offen"} · {task.due_date ? `Fällig am ${formatDate(task.due_date)}` : "Ohne Fälligkeit"} · {task.assigned_user_name || "Zuständig zugeordnet"}</p>
       <p>{[task.property_name, task.unit_number ? `Einheit ${task.unit_number}` : null, task.lease_label].filter(Boolean).join(" · ") || "Ohne Objektbindung"}</p>
       {canWrite && <div className="flex gap-2"><button disabled={pending || !choices} onClick={() => openEditor(task)}>Bearbeiten</button><button disabled={pending} onClick={() => void mutate(() => updateTask(task.id, { completed: !task.completed }))}>{task.completed ? "Wiederöffnen" : "Erledigen"}</button><button disabled={pending} onClick={() => { setMutationError(null); setDeleting(task); }}>Löschen</button></div>}
     </li>)}</ul>{!page.items.length && !loading && <p>Keine Aufgaben gefunden.</p>}</>}
@@ -160,9 +161,9 @@ function TasksContent() {
           <label className="block">Zuständig<select aria-label="Zuständig" required value={form.assigned} onChange={e => field("assigned", e.target.value)}><option value="">Bitte wählen</option>{choices?.users.map(u => <option key={u.id} value={u.id}>{u.display_name || u.email}</option>)}{editTask && !choices?.users.some(u => u.id === editTask.assigned_user_id) && <option value={editTask.assigned_user_id}>{editTask.assigned_user_name || "Bisher zuständig"} (bisherige Zuordnung)</option>}</select></label>
           <label className="block">Objekt<select aria-label="Objekt" disabled={hasContext} value={form.property} onChange={e => setForm(f => ({ ...f, property: e.target.value, unit: "", lease: "" }))}><option value="">Ohne Objektbindung</option>{choices?.properties.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}</select></label>
           <label className="block">Einheit<select aria-label="Einheit" disabled={!!(fixedUnit || fixedLease)} value={form.unit} onChange={e => setForm(f => ({ ...f, unit: e.target.value, lease: "" }))}><option value="">Keine Einheit</option>{choices?.units.filter(u => u.property_id === form.property).map(u => <option key={u.id} value={u.id}>Einheit {u.number}{u.location ? ` · ${u.location}` : ""}</option>)}</select></label>
-          <label className="block">Mietvertrag<select aria-label="Mietvertrag" disabled={!!fixedLease} value={form.lease} onChange={e => field("lease", e.target.value)}><option value="">Kein Mietvertrag</option>{choices?.leases.filter(l => l.unit_id === form.unit).map(l => <option key={l.id} value={l.id}>Mietvertrag ab {l.valid_from}{l.valid_to ? ` bis ${l.valid_to}` : " (offen)"}</option>)}</select></label>
+          <label className="block">Mietvertrag<select aria-label="Mietvertrag" disabled={!!fixedLease} value={form.lease} onChange={e => field("lease", e.target.value)}><option value="">Kein Mietvertrag</option>{choices?.leases.filter(l => l.unit_id === form.unit).map(l => <option key={l.id} value={l.id}>Mietvertrag ab {formatDate(l.valid_from)}{l.valid_to ? ` bis ${formatDate(l.valid_to)}` : " (offen)"}</option>)}</select></label>
           {mutationError && <p role="alert">{mutationError}</p>}
-          <div className="flex gap-3"><button className="btn btn-primary" type="submit">Speichern</button><button type="button" onClick={() => { if (!lock.current) setEditing(null); }}>Abbrechen</button></div>
+          <div className="flex gap-3"><button className="btn btn--primary" type="submit">Speichern</button><button type="button" onClick={() => { if (!lock.current) setEditing(null); }}>Abbrechen</button></div>
         </fieldset></form>
       </DialogContent>
     </Dialog>

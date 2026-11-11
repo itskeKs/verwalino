@@ -36,10 +36,10 @@ it("passes the selected read scope and clears stale results and scope when chang
   await screen.findByRole("option", { name: /Lesebereich/ });
   fireEvent.change(screen.getByRole("combobox", { name: "Abrechnungskreis" }), { target: { value: "scope" } });
   fireEvent.click(screen.getByRole("button", { name: "Abrufen" }));
-  await screen.findByText("100.00 EUR");
+  await screen.findByText("100,00 €");
   expect(endpoints.leaseStatement).toHaveBeenCalledWith("lease", expect.any(String), expect.any(String), "scope", expect.any(String));
   fireEvent.change(screen.getByLabelText("Mietvertrag *"), { target: { value: "other" } });
-  expect(screen.queryByText("100.00 EUR")).toBeNull();
+  expect(screen.queryByText("100,00 €")).toBeNull();
   expect(screen.getByRole("combobox", { name: "Abrechnungskreis" })).toHaveValue("");
 });
 
@@ -48,8 +48,8 @@ it("passes owner scope and plan and freezes query controls until the response ar
   vi.mocked(endpoints.ownerStatement).mockReturnValue(new Promise(resolve => { finish = resolve; }));
   render(<MemoryRouter><MietkontoPage /></MemoryRouter>);
   fireEvent.change(await screen.findByLabelText("Ansicht"), { target: { value: "owner" } });
-  fireEvent.change(screen.getByLabelText("Eigentuemer *"), { target: { value: "owner" } });
-  fireEvent.change(screen.getByLabelText("Wirtschaftsplan (fuer Soll)"), { target: { value: "plan" } });
+  fireEvent.change(screen.getByLabelText("Eigentümer *"), { target: { value: "owner" } });
+  fireEvent.change(screen.getByLabelText("Wirtschaftsplan (für Soll)"), { target: { value: "plan" } });
   await screen.findByRole("option", { name: /Lesebereich/ });
   fireEvent.change(screen.getByRole("combobox", { name: "Abrechnungskreis" }), { target: { value: "scope" } });
   fireEvent.click(screen.getByRole("button", { name: "Abrufen" }));
@@ -57,9 +57,9 @@ it("passes owner scope and plan and freezes query controls until the response ar
   expect(screen.getByLabelText("Zeitraum von *")).toBeDisabled();
   expect(endpoints.ownerStatement).toHaveBeenCalledWith("owner", expect.any(String), expect.any(String), "plan", "scope", expect.any(String));
   await act(async () => finish(statement));
-  await screen.findByText("100.00 EUR");
+  await screen.findByText("100,00 €");
   fireEvent.change(screen.getByLabelText("Zeitraum von *"), { target: { value: "2025-01-01" } });
-  expect(screen.queryByText("100.00 EUR")).toBeNull();
+  expect(screen.queryByText("100,00 €")).toBeNull();
 });
 
 it("never turns a blocked open-items query into an empty success and can retry the same scope", async () => {

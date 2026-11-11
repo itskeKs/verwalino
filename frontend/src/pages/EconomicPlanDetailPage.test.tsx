@@ -56,12 +56,12 @@ it.each(["7200.000", "7200.", " 7200.00 "])("computes a new zero-reserve draft w
     }] },
   });
   show();
-  expect(await screen.findByRole("cell", { name: "0.00 EUR" })).toBeVisible();
+  expect(await screen.findByRole("cell", { name: "0,00 €" })).toBeVisible();
   expect(screen.getByLabelText("Rücklagenzuführung (Jahr)")).toHaveValue("0.00");
   fireEvent.click(screen.getByRole("button", { name: "+ Position" }));
   fireEvent.change(screen.getByLabelText("Position – Jahresbetrag"), { target: { value: enteredAmount } });
   fireEvent.click(screen.getByRole("button", { name: "Berechnen" }));
-  expect(await screen.findByRole("cell", { name: "600.00 EUR" })).toBeVisible();
+  expect(await screen.findByRole("cell", { name: "600,00 €" })).toBeVisible();
   expect(screen.getByRole("button", { name: "Finalisieren" })).toBeEnabled();
   expect(post).toHaveBeenCalledWith("/api/economic-plans/new/compute", expect.objectContaining({
     reserve_contribution_total: "0.00",
@@ -143,7 +143,7 @@ it.each(["draft", "finalized"])("associates each unit with its own stored advanc
   if (status === "finalized") {
     expect(screen.getByRole("region", { name: "Dokumentempfänger" })).toHaveTextContent("Einheit 01: Historischer Empfänger");
   }
-  for (const [label, annual, monthly] of [["01 – Vorderhaus", "300.00 EUR", "25.00 EUR"], ["02 – Hinterhaus", "900.00 EUR", "75.00 EUR"]]) {
+  for (const [label, annual, monthly] of [["01 – Vorderhaus", "300,00 €", "25,00 €"], ["02 – Hinterhaus", "900,00 €", "75,00 €"]]) {
     const labelCell = await screen.findByText(`Einheit ${label}`, { exact: true });
     const row = within(labelCell.closest("tr")!);
     expect(row.getByText("Friedrich-Wilhelm Muster-Beispielhausen")).toBeInTheDocument();
@@ -158,12 +158,12 @@ it.each([
 ])("keeps stored amounts visible with an explicit unit-label fallback for %s", async (_reason, units) => {
   advanceMocks("finalized", units as object[] | Error); show();
   const fallback = await screen.findByText("Einheit (Bezeichnung nicht verfügbar; ID: unit-01)", { exact: true });
-  expect(within(fallback.closest("tr")!).getByText("300.00 EUR", { exact: true })).toBeInTheDocument();
+  expect(within(fallback.closest("tr")!).getByText("300,00 €", { exact: true })).toBeInTheDocument();
 });
 it("distinguishes an absent unit reference from an unavailable current label", async () => {
   mocks({ ...draft, lines: [{ ...advanceLines[0], unit_id: null }] }); show();
   const fallback = await screen.findByText("Einheit nicht zugeordnet", { exact: true });
-  expect(within(fallback.closest("tr")!).getByText("900.00 EUR", { exact: true })).toBeInTheDocument();
+  expect(within(fallback.closest("tr")!).getByText("900,00 €", { exact: true })).toBeInTheDocument();
 });
 
 it("shows the frozen plan addressee and the plan-start date", async () => {
@@ -199,7 +199,7 @@ it("requires updated results before finalizing edits to a calculated draft", asy
     draft_inputs: { ...computed.draft_inputs, planned_costs: [{ ...savedCosts[0], planned_amount: "8400" }] },
   });
   show();
-  expect(await screen.findByRole("cell", { name: "600.00 EUR" })).toBeVisible();
+  expect(await screen.findByRole("cell", { name: "600,00 €" })).toBeVisible();
   const finalize = screen.getByRole("button", { name: "Finalisieren" });
   const amount = screen.getByRole("textbox", { name: "Historische Heizung – Jahresbetrag" });
   fireEvent.change(amount, { target: { value: "7200.00" } });
@@ -209,10 +209,10 @@ it("requires updated results before finalizing edits to a calculated draft", asy
   expect(finalize).toBeDisabled();
 
   fireEvent.change(amount, { target: { value: "8400.00" } });
-  expect(screen.queryByRole("cell", { name: "600.00 EUR" })).not.toBeInTheDocument();
+  expect(screen.queryByRole("cell", { name: "600,00 €" })).not.toBeInTheDocument();
   expect(finalize).toBeDisabled();
   fireEvent.click(screen.getByRole("button", { name: "Berechnen" }));
-  expect(await screen.findByRole("cell", { name: "700.00 EUR" })).toBeVisible();
+  expect(await screen.findByRole("cell", { name: "700,00 €" })).toBeVisible();
   expect(finalize).toBeEnabled();
 });
 
@@ -234,10 +234,10 @@ it("keeps an edit made during computation dirty when the result arrives", async 
 
   const finalize = screen.getByRole("button", { name: "Finalisieren" });
   expect(amount).toHaveValue("8400.00");
-  expect(screen.queryByRole("cell", { name: "600.00 EUR" })).not.toBeInTheDocument();
+  expect(screen.queryByRole("cell", { name: "600,00 €" })).not.toBeInTheDocument();
   expect(finalize).toBeDisabled();
 
   fireEvent.change(amount, { target: { value: "7200." } });
-  expect(screen.getByRole("cell", { name: "600.00 EUR" })).toBeVisible();
+  expect(screen.getByRole("cell", { name: "600,00 €" })).toBeVisible();
   expect(finalize).toBeEnabled();
 });

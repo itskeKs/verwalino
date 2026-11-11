@@ -30,7 +30,7 @@ function change(label: string, value: string) { fireEvent.change(screen.getByLab
 async function activate() {
   fireEvent.click(await screen.findByLabelText("Intern nach HeizkostenV abrechnen: Heizung"));
   change("Verbrauchsanteil (0,50–0,70)", "0,65"); change("Zählertyp", "HEIZUNG");
-  await screen.findByLabelText("Heizverbrauch 1 2025-01-01–2025-06-30");
+  await screen.findByLabelText("Heizverbrauch 1 01.01.2025–30.06.2025");
   await waitFor(() => expect(screen.getByRole("button", { name: "Berechnen" })).toBeEnabled());
 }
 beforeEach(() => {
@@ -53,8 +53,8 @@ it("loads only after activation, preserves tenant/vacancy slices and sends only 
   await activate();
   expect(api.getHeatingConsumption).toHaveBeenLastCalledWith("run-1", "heat", "HEIZUNG", "AREA");
   expect(screen.getByText("Leerstand")).toBeVisible();
-  change("Heizverbrauch 1 2025-01-01–2025-06-30", "0");
-  change("Grundmenge 1 2025-07-01–2025-12-31", "9007199254740993,01");
+  change("Heizverbrauch 1 01.01.2025–30.06.2025", "0");
+  change("Grundmenge 1 01.07.2025–31.12.2025", "9007199254740993,01");
   expect(screen.queryByLabelText("HEIZUNG_ZENTRAL Heizung")).toBeNull();
   change("Verbrauch (1)", "7,25");
   fireEvent.click(screen.getByRole("button", { name: "Berechnen" }));
@@ -80,8 +80,8 @@ it("blocks all actions while candidates load or fail, then retries", async () =>
 it("restores saved config and overrides on reload, and explicitly clears internal intent when disabled", async () => {
   vi.mocked(api.getSettlement).mockResolvedValue({ ...run, extra_inputs: { external_amounts: [], manual_amounts: [], unit_metrics: [],
     heating_inputs: [{ ...config, slices: [{ unit_id: "unit-1", period_from: rows[0].period_from, period_to: rows[0].period_to, consumption: "0" }] }] } } as never);
-  const view = show(); expect(await screen.findByLabelText("Heizverbrauch 1 2025-01-01–2025-06-30")).toHaveValue("0");
-  view.unmount(); show(); expect(await screen.findByLabelText("Heizverbrauch 1 2025-01-01–2025-06-30")).toHaveValue("0");
+  const view = show(); expect(await screen.findByLabelText("Heizverbrauch 1 01.01.2025–30.06.2025")).toHaveValue("0");
+  view.unmount(); show(); expect(await screen.findByLabelText("Heizverbrauch 1 01.01.2025–30.06.2025")).toHaveValue("0");
   fireEvent.click(screen.getByLabelText("Intern nach HeizkostenV abrechnen: Heizung"));
   fireEvent.click(screen.getByRole("button", { name: "Berechnen" }));
   await waitFor(() => expect(api.computeSettlement).toHaveBeenCalledWith("run-1", expect.objectContaining({ heating_inputs: [] })));
@@ -90,7 +90,7 @@ it("requires manual VOLUME bases for every slice and warns of 15% deduction with
   show(); await activate(); change("Grundkostenschlüssel", "VOLUME");
   await waitFor(() => expect(api.getHeatingConsumption).toHaveBeenLastCalledWith("run-1", "heat", "HEIZUNG", "VOLUME"));
   expect(screen.getByRole("button", { name: "Berechnen" })).toBeDisabled();
-  change("Grundmenge 1 2025-01-01–2025-06-30", "100,5"); change("Grundmenge 1 2025-07-01–2025-12-31", "101");
+  change("Grundmenge 1 01.01.2025–30.06.2025", "100,5"); change("Grundmenge 1 01.07.2025–31.12.2025", "101");
   fireEvent.click(screen.getByLabelText("Verbrauch erfasst"));
   expect(screen.getByText(/15 %.*Kürzung/)).toBeVisible(); expect(screen.queryByLabelText(/^Heizverbrauch/)).toBeNull();
   fireEvent.click(screen.getByRole("button", { name: "Vorschau" }));
@@ -103,9 +103,9 @@ it("ignores obsolete candidate responses after changing the meter selector", asy
   change("Zählertyp", "OLD");
   await waitFor(() => expect(api.getHeatingConsumption).toHaveBeenLastCalledWith("run-1", "heat", "OLD", "AREA"));
   change("Zählertyp", "NEW");
-  await waitFor(() => expect(screen.getByLabelText("Heizverbrauch 1 2025-01-01–2025-06-30")).toHaveValue("42"));
+  await waitFor(() => expect(screen.getByLabelText("Heizverbrauch 1 01.01.2025–30.06.2025")).toHaveValue("42"));
   await act(async () => resolveOld(rows.map(row => ({ ...row, consumption: "999" }))));
-  expect(screen.getByLabelText("Heizverbrauch 1 2025-01-01–2025-06-30")).toHaveValue("42");
+  expect(screen.getByLabelText("Heizverbrauch 1 01.01.2025–30.06.2025")).toHaveValue("42");
   fireEvent.click(screen.getByRole("button", { name: "Berechnen" }));
   await waitFor(() => expect(api.computeSettlement).toHaveBeenCalledWith("run-1", expect.objectContaining({ heating_inputs: [expect.objectContaining({ meter_type: "NEW", slices: [] })] })));
 });
@@ -124,11 +124,11 @@ it("validates the fraction and special70 explicitly and sends current intent to 
   await waitFor(() => expect(api.finalizeSettlement).toHaveBeenCalledWith("run-1", expect.objectContaining({ heating_inputs: [{ ...config, consumption_fraction: "0.70", mandatory_seventy_percent: true }] })));
 });
 it("keeps heating overrides and intent after failed compute and offers retry", async () => {
-  show(); await activate(); change("Heizverbrauch 1 2025-01-01–2025-06-30", "0");
+  show(); await activate(); change("Heizverbrauch 1 01.01.2025–30.06.2025", "0");
   vi.mocked(api.computeSettlement).mockRejectedValueOnce(new Error("Heizprüfung fehlgeschlagen"));
   fireEvent.click(screen.getByRole("button", { name: "Berechnen" }));
   expect(await screen.findByRole("alert")).toHaveTextContent("Heizprüfung fehlgeschlagen");
-  expect(screen.getByLabelText("Heizverbrauch 1 2025-01-01–2025-06-30")).toHaveValue("0");
+  expect(screen.getByLabelText("Heizverbrauch 1 01.01.2025–30.06.2025")).toHaveValue("0");
   fireEvent.click(screen.getByRole("button", { name: "Berechnen" }));
   await waitFor(() => expect(api.computeSettlement).toHaveBeenCalledTimes(2));
   expect(vi.mocked(api.computeSettlement).mock.calls[0][1]).toEqual(vi.mocked(api.computeSettlement).mock.calls[1][1]);

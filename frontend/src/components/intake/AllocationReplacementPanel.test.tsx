@@ -22,7 +22,7 @@ it('compares old and new totals and requires explicit source selection and every
   vi.stubGlobal('fetch', vi.fn(async (url: string) => json(url.includes('replacement-candidates') ? { items: [candidate], next_after: null } : preview)));
   render(<AllocationReplacementPanel {...props} />); await select();
   expect(screen.getByRole('link', { name: 'Bisheriges aufbewahrtes Original öffnen' })).toHaveAttribute('href', '/belege/old-source');
-  expect(screen.getByText('149.00 EUR · 1 Teilkosten')).toBeInTheDocument();
+  expect(screen.getByText('149,00 € · 1 Teilkosten')).toBeInTheDocument();
   const button = screen.getByRole('button', { name: 'Beleg und alle Teilkosten verbindlich ersetzen' }); expect(button).toBeDisabled();
   fireEvent.change(screen.getByLabelText('Begründung der Belegersetzung'), { target: { value: 'Reviewed source change' } });
   for (const box of screen.getAllByRole('checkbox')) fireEvent.click(box);

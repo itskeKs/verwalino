@@ -263,7 +263,7 @@ it("lays out split rows as full-width form grids with shared actions at the bott
   assignmentSetup();
   fireEvent.click(await screen.findByRole("button", { name: "Aufteilen" }));
   const dialog = await screen.findByRole("dialog", { name: "Umsatz aufteilen" });
-  await within(dialog).findAllByRole("option", { name: /Anna Muster.*2025-01-01/ });
+  await within(dialog).findAllByRole("option", { name: /Anna Muster.*01\.01\.2025/ });
   const form = dialog.querySelector("form")!;
   expect(form).toHaveClass("form-grid", "min-w-0");
   expect(form.querySelector("fieldset")).toHaveClass("contents", "min-w-0");
@@ -288,13 +288,14 @@ it("shows a structured rent counterparty refusal in the split form and allows re
   const fetchMock = assignmentSetup(warm, "OWNER_ADMIN", mutation);
   fireEvent.click(await screen.findByRole("button", { name: "Aufteilen" }));
   const dialog = await screen.findByRole("dialog", { name: "Umsatz aufteilen" });
-  await within(dialog).findAllByRole("option", { name: /Anna Muster.*2025-01-01/ });
+  await within(dialog).findAllByRole("option", { name: /Anna Muster.*01\.01\.2025/ });
   expect(within(dialog).queryByLabelText("Eigentümer")).not.toBeInTheDocument();
 
   const submit = within(dialog).getByRole("button", { name: "Zuordnung buchen" });
   fireEvent.click(submit);
   expect(await within(dialog).findByRole("alert")).toHaveTextContent(message);
   expect(within(dialog).getAllByLabelText("Betrag (EUR)")[0]).toHaveValue("700.00");
+  expect(within(dialog).getAllByLabelText("Betrag (EUR)")[0]).toHaveAttribute("placeholder", "700,00");
   expect(within(dialog).getAllByLabelText("Mietvertrag")[0]).toHaveValue("lease");
   expect(submit).toBeEnabled();
 
@@ -307,7 +308,7 @@ it("locks split fields and actions during a double submission and retains inputs
   let finish!: (response: Response) => void;
   const fetchMock = assignmentSetup(warm, "OWNER_ADMIN", () => new Promise(resolve => { finish = resolve; }));
   fireEvent.click(await screen.findByRole("button", { name: "Aufteilen" }));
-  await screen.findAllByRole("option", { name: /Anna Muster.*2025-01-01/ });
+  await screen.findAllByRole("option", { name: /Anna Muster.*01\.01\.2025/ });
   const note = screen.getAllByLabelText("Notiz")[0];
   fireEvent.change(note, { target: { value: "April geprüft" } });
   const submit = screen.getByRole("button", { name: "Zuordnung buchen" });
@@ -373,7 +374,7 @@ it("ermöglicht manuelle Miet- und Eigentümerziele ohne Vorschlag nur im Bankob
   const fetchMock = assignmentSetup({ ...warm, suggestions: [] });
   fireEvent.click(await screen.findByRole("button", { name: "Aufteilen" }));
   const lease = await screen.findByLabelText("Mietvertrag");
-  await screen.findAllByRole("option", { name: /Anna Muster.*2025-01-01/ });
+  await screen.findAllByRole("option", { name: /Anna Muster.*01\.01\.2025/ });
   expect(screen.queryByRole("option", { name: /Fremd/ })).not.toBeInTheDocument();
   fireEvent.change(lease, { target: { value: "lease" } });
   fireEvent.change(screen.getByLabelText("Betrag (EUR)"), { target: { value: "700,00" } });
@@ -437,7 +438,7 @@ it("sperrt doppelte Buchung synchron während eines laufenden Requests", async (
 it.each([409, 422])("zeigt Buchungsfehler %s im Dialog ohne Eingabeverlust oder Erfolg", async status => {
   assignmentSetup(warm, "OWNER_ADMIN", async () => json({ detail: status === 409 ? "Bereits verarbeitet" : "Ungültige Zuordnung" }, status));
   fireEvent.click(await screen.findByRole("button", { name: "Aufteilen" }));
-  await screen.findAllByRole("option", { name: /Anna Muster.*2025-01-01/ });
+  await screen.findAllByRole("option", { name: /Anna Muster.*01\.01\.2025/ });
   fireEvent.click(screen.getByRole("button", { name: "Zuordnung buchen" }));
   expect(await screen.findByRole("alert")).toHaveTextContent(status === 409 ? "Bereits verarbeitet" : "Ungültige Zuordnung");
   expect(screen.getAllByLabelText("Betrag (EUR)")[0]).toHaveValue("700.00");
@@ -467,7 +468,7 @@ it("verlangt bei mehreren passenden Vorschlägen explizite Auswahl im Dialog", a
 it.each(["-850.00", "0", "850.001", "1e3", "1000000000000.00", "NaN"])("verhindert ungültigen Splitbetrag %s vor dem POST", async amount => {
   const fetchMock = assignmentSetup();
   fireEvent.click(await screen.findByRole("button", { name: "Aufteilen" }));
-  await screen.findAllByRole("option", { name: /Anna Muster.*2025-01-01/ });
+  await screen.findAllByRole("option", { name: /Anna Muster.*01\.01\.2025/ });
   fireEvent.change(screen.getAllByLabelText("Betrag (EUR)")[0], { target: { value: amount } });
   fireEvent.click(screen.getByRole("button", { name: "Zuordnung buchen" }));
   expect(await screen.findByRole("alert")).toHaveTextContent(/Betrag.*positiven Betrag/);
@@ -477,7 +478,7 @@ it.each(["-850.00", "0", "850.001", "1e3", "1000000000000.00", "NaN"])("verhinde
 it("retains an invalid deposit amount and then books the grouped amount to the selected lease", async () => {
   const fetchMock = assignmentSetup({ ...warm, amount: "2250.00", suggestions: [] });
   fireEvent.click(await screen.findByRole("button", { name: "Aufteilen" }));
-  await screen.findByRole("option", { name: /Anna Muster.*2025-01-01/ });
+  await screen.findByRole("option", { name: /Anna Muster.*01\.01\.2025/ });
   fireEvent.change(screen.getByLabelText("Zahlungsart"), { target: { value: "KAUTION" } });
   fireEvent.change(screen.getByLabelText("Mietvertrag"), { target: { value: "lease" } });
   const amount = screen.getByLabelText("Betrag (EUR)");
@@ -501,7 +502,7 @@ it("retains an invalid deposit amount and then books the grouped amount to the s
 it("entfernt Splitzeilen ohne versteckte Restbuchung und prüft Perioden", async () => {
   const fetchMock = assignmentSetup();
   fireEvent.click(await screen.findByRole("button", { name: "Aufteilen" }));
-  await screen.findAllByRole("option", { name: /Anna Muster.*2025-01-01/ });
+  await screen.findAllByRole("option", { name: /Anna Muster.*01\.01\.2025/ });
   fireEvent.click(screen.getAllByRole("button", { name: "Zeile entfernen" })[1]);
   expect(screen.getAllByLabelText("Betrag (EUR)")).toHaveLength(1);
   fireEvent.change(screen.getByLabelText("Betrag (EUR)"), { target: { value: "850,00" } });
@@ -528,7 +529,7 @@ it("meldet Zielladefehler und erlaubt Wiederholung ohne rohe UUID-Eingabe", asyn
   expect(await screen.findByRole("alert")).toHaveTextContent("Ziele nicht verfügbar");
   expect(screen.getByRole("button", { name: "Zuordnung buchen" })).toBeDisabled();
   fireEvent.click(screen.getByRole("button", { name: "Ziele erneut laden" }));
-  await screen.findAllByRole("option", { name: /Anna Muster.*2025-01-01/ });
+  await screen.findAllByRole("option", { name: /Anna Muster.*01\.01\.2025/ });
   expect(screen.getByRole("button", { name: "Zuordnung buchen" })).toBeEnabled();
   expect(posts(fetchMock)).toHaveLength(0);
 });
@@ -583,7 +584,7 @@ it("lädt bei Alle explizit status=ALL und zeigt NEU, Zugeordnet und Ignoriert o
 it.each(["Mietvertrag", "Zahlungsart"])("beschriftet beide Split-Comboboxen exakt mit %s ohne Optionstexte", async label => {
   assignmentSetup();
   fireEvent.click(await screen.findByRole("button", { name: "Aufteilen" }));
-  await screen.findAllByRole("option", { name: /Anna Muster.*2025-01-01/ });
+  await screen.findAllByRole("option", { name: /Anna Muster.*01\.01\.2025/ });
   const selects = screen.getAllByRole("combobox", { name: new RegExp(`^${label}$`) });
   expect(selects).toHaveLength(2);
   for (const select of selects) {
@@ -604,7 +605,7 @@ it("beschriftet die Eigentümer-Combobox exakt ohne Optionstexte", async () => {
 it("beschriftet die Zielart-Combobox exakt ohne Mietvertrags- und Eigentümeroptionen im Namen", async () => {
   assignmentSetup({ ...warm, suggestions: [{ ...suggestion, lines: [{ ...cold, payment_type: "NACHZAHLUNG", amount: "850.00" }] }] });
   fireEvent.click(await screen.findByRole("button", { name: "Aufteilen" }));
-  await screen.findByRole("option", { name: /Anna Muster.*2025-01-01/ });
+  await screen.findByRole("option", { name: /Anna Muster.*01\.01\.2025/ });
   const select = screen.getByRole("combobox", { name: /^Zielart$/ });
   expect(select).toHaveAccessibleName("Zielart");
   expect(select).toHaveAttribute("aria-label", "Zielart");
@@ -684,7 +685,7 @@ async function openRetainedTransactionEditor(status: number, pendingSave = false
   await waitFor(() => expect(refresh).toBeTypeOf('function'));
   fireEvent.click(within(screen.getByText('Privater Umsatz B').closest('tr')!).getByRole('button', { name: 'Aufteilen' }));
   const dialog = await screen.findByRole('dialog', { name: 'Umsatz aufteilen' });
-  await within(dialog).findAllByRole('option', { name: /Anna Muster.*2025-01-01/ });
+  await within(dialog).findAllByRole('option', { name: /Anna Muster.*01\.01\.2025/ });
   fireEvent.change(within(dialog).getAllByLabelText('Notiz')[0], { target: { value: 'Private Zuordnungsnotiz' } });
   if (pendingSave) {
     fireEvent.click(within(dialog).getByRole('button', { name: 'Zuordnung buchen' }));

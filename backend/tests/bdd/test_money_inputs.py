@@ -147,9 +147,9 @@ def cost_persisted(browser_world):
     async def check():
         await b.page.reload()
         await b.select("Objektfilter", b.world.data["property"]["id"])
-        await expect(b.page.get_by_label("Listensumme Brutto", exact=True)).to_have_text("60,00 EUR")
+        await expect(b.page.get_by_label("Listensumme Brutto", exact=True)).to_have_text("60,00 €")
         row = b.page.get_by_role("row").filter(has=b.page.get_by_role("cell", name=b.world.data["property"]["name"], exact=True))
-        await expect(row.get_by_role("cell", name="60.00", exact=True)).to_be_visible()
+        await expect(row.get_by_role("cell", name="60,00 €", exact=True)).to_be_visible()
         await b.page.get_by_role("heading", name="Kostenpositionen", exact=True).scroll_into_view_if_needed()
         await capture(b.page, "cost", b.page.viewport_size["width"])
     b.run(check())

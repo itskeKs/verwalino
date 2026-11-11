@@ -36,6 +36,8 @@ import type {
 } from "../api/types";
 import { ReserveEvidenceFields } from "../components/ReserveEvidenceFields";
 import { ApiError } from "../api/client";
+import { centsFromDecimal, formatDate, formatDateTime, formatMoney } from "../lib/format";
+import { PAYMENT_TYPE_LABELS } from "../lib/paymentTypes";
 
 const STATUS_LABELS: Record<string, string> = {
   draft: "Entwurf",
@@ -47,16 +49,6 @@ const STATUS_CSS: Record<string, string> = {
   draft: "badge--draft",
   booked: "badge--confirmed",
   cancelled: "badge--superseded",
-};
-
-const PAYMENT_TYPE_LABELS: Record<string, string> = {
-  KALTMIETE: "Kaltmiete",
-  NK_VORAUSZAHLUNG: "Betriebskosten-Vorauszahlung", HK_VORAUSZAHLUNG: "Heizkosten-Vorauszahlung",
-  KAUTION: "Kaution",
-  HAUSGELD_VORSCHUSS: "Hausgeld-Vorschuss",
-  RUECKLAGENANTEIL: "Ruecklagenanteil",
-  RUECKLAGENENTNAHME: "Rücklagenentnahme",
-  SONDERZAHLUNG: "Sonder-/Nachzahlung",
 };
 
 const DIRECTION_LABELS: Record<string, string> = {
@@ -169,7 +161,7 @@ export function PaymentDetailPage() {
     }
     if (payment.owner_profile_id) {
       const op = ownerProfiles.find((o) => o.id === payment.owner_profile_id);
-      return op ? `Eigentuemer: ${getPersonName(op.person_id)}` : "-";
+      return op ? `Eigentümer: ${getPersonName(op.person_id)}` : "-";
     }
     return "-";
   }
@@ -183,7 +175,7 @@ export function PaymentDetailPage() {
     const name = person
       ? [person.first_name, person.last_name].filter(Boolean).join(" ")
       : "";
-    return `${name} ab ${lease.valid_from}${lease.valid_to ? ` bis ${lease.valid_to}` : " (laufend)"}`;
+    return `${name} ab ${formatDate(lease.valid_from)}${lease.valid_to ? ` bis ${formatDate(lease.valid_to)}` : " (laufend)"}`;
   }
 
   const isDraft = payment?.status === "draft";
@@ -198,8 +190,8 @@ export function PaymentDetailPage() {
   async function handleBook() {
     if (!paymentId) return;
     const confirmed = window.confirm(
-      "Zahlung buchen? Nach der Buchung ist die Zahlung unveraenderbar (GoBD). " +
-        "Korrekturen sind nur als Stornobuchung moeglich.",
+      "Zahlung buchen? Nach der Buchung ist die Zahlung unveränderbar (GoBD). " +
+        "Korrekturen sind nur als Stornobuchung möglich.",
     );
     if (!confirmed) return;
     setActionLoading(true);
@@ -378,11 +370,11 @@ export function PaymentDetailPage() {
             borderColor: "#ffcc02",
           }}
         >
-          <strong>GoBD:</strong> Diese Zahlung ist gebucht und unveraenderbar.
-          Korrekturen sind nur als Stornobuchung (Gegenbuchung) moeglich.
+          <strong>GoBD:</strong> Diese Zahlung ist gebucht und unveränderbar.
+          Korrekturen sind nur als Stornobuchung (Gegenbuchung) möglich.
           {payment.retention_until && (
             <div style={{ marginTop: "0.25rem", fontSize: "0.82rem" }}>
-              Aufbewahrung bis: {payment.retention_until}
+              Aufbewahrung bis: {formatDate(payment.retention_until)}
             </div>
           )}
         </div>
@@ -453,12 +445,12 @@ export function PaymentDetailPage() {
             <tr>
               <td>Betrag</td>
               <td style={{ fontFamily: "var(--mono)", fontWeight: 700, fontSize: "1.05rem" }}>
-                {payment.amount} EUR
+                {formatMoney(centsFromDecimal(payment.amount))}
               </td>
             </tr>
             <tr>
               <td>Wertstellung</td>
-              <td>{payment.value_date}</td>
+              <td>{formatDate(payment.value_date)}</td>
             </tr>
             <tr>
               <td>Bankkonto</td>
@@ -502,7 +494,7 @@ export function PaymentDetailPage() {
             {payment.booked_at && (
               <tr>
                 <td>Gebucht am</td>
-                <td>{payment.booked_at}</td>
+                <td>{payment.booked_at ? formatDateTime(payment.booked_at) : "–"}</td>
               </tr>
             )}
             {payment.note && (
@@ -549,7 +541,6 @@ export function PaymentDetailPage() {
                     max={12}
                     value={editPeriodMonth ?? ""}
                     onChange={(e) => setEditPeriodMonth(e.target.value ? parseInt(e.target.value, 10) : null)}
-                    className="input"
                     style={{ marginLeft: "4px", width: "60px" }}
                   />
                 </label>
@@ -559,7 +550,6 @@ export function PaymentDetailPage() {
                     type="number"
                     value={editPeriodYear ?? ""}
                     onChange={(e) => setEditPeriodYear(e.target.value ? parseInt(e.target.value, 10) : null)}
-                    className="input"
                     style={{ marginLeft: "4px", width: "80px" }}
                   />
                 </label>
@@ -569,7 +559,6 @@ export function PaymentDetailPage() {
                     type="text"
                     value={editNote ?? ""}
                     onChange={(e) => setEditNote(e.target.value || null)}
-                    className="input"
                     style={{ marginLeft: "4px", width: "200px" }}
                   />
                 </label>

@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { ApiError } from '../../api/client';
+import { centsFromDecimal, formatDateTime, formatMoney } from '../../lib/format';
 import { allocationAdoptionsApi, visualAllocationApi, type VisualAdoptionCommand, type VisualAdoptionPreview } from '../../api/allocationAdoptions';
 import { visualExtractApi, type VisualExtract } from '../../api/visualExtracts';
 import { visualDisclosureApi, type VisualDisclosure } from '../../api/visualDisclosures';
@@ -99,17 +100,17 @@ export function VisualAllocationAdoptionPanel({ logicalId, reviewId, enabled, pa
     {!unknown && authorized && <>
       <label className="block">Geprüfter Auszug<select className="block w-full min-w-0" value={artifact} disabled={blocked} onChange={event => {
         const id = event.target.value; setArtifact(id); setDisclosure(''); setDisclosures([]); setDisclosureCursor(null); setPreview(null); if (id) void load('disclosures', id);
-      }}><option value="">Auszug auswählen</option>{artifacts.map(item => <option key={item.id} value={item.id}>Seiten {item.page_start}–{item.page_end} · {new Date(item.created_at).toLocaleString('de-DE')} · {item.content_sha256.slice(0, 12)}</option>)}</select></label>
+      }}><option value="">Auszug auswählen</option>{artifacts.map(item => <option key={item.id} value={item.id}>Seiten {item.page_start}–{item.page_end} · {formatDateTime(item.created_at)} · {item.content_sha256.slice(0, 12)}</option>)}</select></label>
       {artifactCursor && <button className="btn" disabled={blocked} onClick={() => void load('artifacts', artifact, artifactCursor)}>Weitere Auszüge laden</button>}
       {artifact && <>
-        <label className="block">Freigabe im Abrechnungskreis<select className="block w-full min-w-0" value={disclosure} disabled={blocked} onChange={event => { setDisclosure(event.target.value); setPreview(null); setCosts(false); setRetained(false); }}><option value="">Freigabe auswählen</option>{available.map(item => <option key={item.receipt.id} value={item.receipt.id}>{item.destination?.label ?? 'Freigegebener Abrechnungskreis'} · {new Date(item.receipt.created_at).toLocaleString('de-DE')}</option>)}</select></label>
+        <label className="block">Freigabe im Abrechnungskreis<select className="block w-full min-w-0" value={disclosure} disabled={blocked} onChange={event => { setDisclosure(event.target.value); setPreview(null); setCosts(false); setRetained(false); }}><option value="">Freigabe auswählen</option>{available.map(item => <option key={item.receipt.id} value={item.receipt.id}>{item.destination?.label ?? 'Freigegebener Abrechnungskreis'} · {formatDateTime(item.receipt.created_at)}</option>)}</select></label>
         {disclosureCursor && <button className="btn" disabled={blocked} onClick={() => void load('disclosures', artifact, disclosureCursor)}>Weitere Freigaben laden</button>}
         {!busy && !available.length && <p>Keine nutzbare Freigabe geladen. Prüfen Sie die Freigaben dieses Auszugs.</p>}
       </>}
       {disclosure && <><a className="block underline" href={visualDisclosureApi.content(disclosure)} target="_blank" rel="noopener noreferrer">Genau diesen freigegebenen Auszug öffnen</a><button className="btn" disabled={blocked} onClick={() => void load('preview')}>Übernahme mit Auszug prüfen</button></>}
       {preview && !preview.can_adopt && <p role="status">Übernahme derzeit nicht möglich. Aktuelle Freigabe, vollständige Kostenprüfung und Belegkonflikte prüfen.</p>}
       {preview?.can_adopt && <>
-        <p>Abrechnungskreis: {preview.scope_label} · {preview.cost_count} Teilkosten · {preview.gross_amount} EUR · {preview.output_page_count} Belegseiten</p>
+        <p>Abrechnungskreis: {preview.scope_label} · {preview.cost_count} Teilkosten · {preview.gross_amount != null ? formatMoney(centsFromDecimal(preview.gross_amount)) : 'unbekannt'} · {preview.output_page_count} Belegseiten</p>
         <fieldset className="space-y-3" disabled={blocked}>
           <label className="block">Begründung der Übernahme mit Auszug<textarea className="block w-full min-w-0" maxLength={2000} value={reason} onChange={event => { setReason(event.target.value); setCosts(false); setRetained(false); }} /></label>
           <label className="flex items-start gap-2"><input type="checkbox" checked={costs} onChange={event => setCosts(event.target.checked)} />Alle Teilkosten, Beträge und Verteilungen geprüft; verbindlich bestätigen.</label>

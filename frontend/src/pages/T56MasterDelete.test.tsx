@@ -72,7 +72,7 @@ it.each([403, 404, 409])("keeps unit and canonical detail after %s, with no retr
   leases = [lease]; show(); await open(); confirm();
   expect(await screen.findByRole("alert")).toHaveTextContent(reason);
   expect(screen.getByText("Einheit 42", { selector: "h1" })).toBeInTheDocument();
-  expect(screen.getByText("2025-12-31")).toBeInTheDocument(); expect(fetchMock).toHaveBeenCalledTimes(1);
+  expect(screen.getByText("31.12.2025")).toBeInTheDocument(); expect(fetchMock).toHaveBeenCalledTimes(1);
 });
 it("deletes an empty unit then navigates to its property and remains deleted on reload", async () => {
   let exists = true;
@@ -97,7 +97,7 @@ it.each([['/objekte/property', 'Objekt löschen', 'Objektübersicht', '/api/prop
 });
 it("deletes the explicitly identified ended lease and reloads history", async () => {
   leases = [lease]; fetchMock.mockImplementation(async () => { leases = []; return new Response(null, { status: 204 }); });
-  show(); const dialog = await open("Mietvertrag löschen"); expect(dialog).toHaveTextContent("lease"); expect(dialog).toHaveTextContent("2025-01-01");
+  show(); const dialog = await open("Mietvertrag löschen"); expect(dialog).toHaveTextContent("lease"); expect(dialog).toHaveTextContent("01.01.2025");
   confirm(); expect(await screen.findByText("Keine Mietvertraege vorhanden.")).toBeVisible(); expect(fetchMock.mock.calls[0][0]).toBe("/api/leases/lease");
 });
 it.each(['/objekte/property', '/objekte/property/einheiten/unit', '/personen/person'])("hides new deletion controls for READ_ONLY at %s", async path => {
@@ -141,7 +141,7 @@ it("targets only the selected historical lease and preserves the other contract"
   fetchMock.mockImplementation(async () => { leases = leases.filter(row => row.id !== "lease-other"); return new Response(null, { status: 204 }); });
   show(); const buttons = await screen.findAllByRole("button", { name: "Mietvertrag löschen" }); fireEvent.click(buttons[1]);
   expect(await screen.findByRole("dialog")).toHaveTextContent("lease-other"); confirm();
-  expect(await screen.findByText("2025-12-31")).toBeVisible(); expect(screen.queryByText("2024-12-31")).not.toBeInTheDocument();
+  expect(await screen.findByText("31.12.2025")).toBeVisible(); expect(screen.queryByText("31.12.2024")).not.toBeInTheDocument();
   expect(fetchMock.mock.calls[0][0]).toBe("/api/leases/lease-other");
 });
 it("invalidates pending deletion when the same user receives a fresh session", async () => {

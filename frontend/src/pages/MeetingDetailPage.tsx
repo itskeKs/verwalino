@@ -3,10 +3,10 @@
  * - Overview (date, type, location, status)
  * - Invitation/protocol text editing
  * - Agenda items (TOPs): create, list, edit, delete
- * - Resolutions (Beschluesse): create per TOP, vote tallies, result
+ * - Resolutions (Beschlüsse): create per TOP, vote tallies, result
  * - "Als gehalten markieren" action (after which only protocol is editable)
  * - Niederschrift-PDF download
- * - "In Beschluss-Sammlung uebernehmen" per resolution
+ * - "In Beschluss-Sammlung übernehmen" per resolution
  *
  * M8 Versammlung: full meeting lifecycle with 409 handling for held meetings.
  */
@@ -39,10 +39,11 @@ import type {
 } from "../api/types";
 import { ApiError } from "../api/client";
 import { MailDispatch } from "../components/MailDispatch";
+import { formatDate } from "../lib/format";
 
 const STATUS_LABELS: Record<string, string> = {
   PLANNED: "Geplant",
-  HELD: "Durchgefuehrt",
+  HELD: "Durchgeführt",
 };
 
 const STATUS_CSS: Record<string, string> = {
@@ -52,7 +53,7 @@ const STATUS_CSS: Record<string, string> = {
 
 const MEETING_TYPE_LABELS: Record<string, string> = {
   ORDENTLICH: "Ordentlich",
-  AUSSERORDENTLICH: "Ausserordentlich",
+  AUSSERORDENTLICH: "Außerordentlich",
 };
 
 const RESULT_LABELS: Record<string, string> = {
@@ -176,7 +177,7 @@ export function MeetingDetailPage() {
     } catch (err) {
       if (err instanceof ApiError && err.status === 409) {
         setActionError(
-          "Fehler: Aenderung nicht moeglich. Nur das Protokoll kann nach Durchfuehrung bearbeitet werden.",
+          "Fehler: Änderung nicht möglich. Nur das Protokoll kann nach Durchführung bearbeitet werden.",
         );
       } else if (err instanceof ApiError) {
         setActionError(err.message);
@@ -201,7 +202,7 @@ export function MeetingDetailPage() {
     } catch (err) {
       if (err instanceof ApiError && err.status === 409) {
         setActionError(
-          "Fehler: Nach Durchfuehrung der Versammlung kann der Einladungstext nicht mehr geaendert werden.",
+          "Fehler: Nach Durchführung der Versammlung kann der Einladungstext nicht mehr geändert werden.",
         );
       } else if (err instanceof ApiError) {
         setActionError(err.message);
@@ -216,8 +217,8 @@ export function MeetingDetailPage() {
   async function handleMarkHeld() {
     if (!meetingId) return;
     const confirmed = window.confirm(
-      "Versammlung als durchgefuehrt markieren? Danach koennen nur noch das Protokoll bearbeitet werden. " +
-        "TOPs und Beschluesse koennen nicht mehr geaendert werden.",
+      "Versammlung als durchgeführt markieren? Danach können nur noch das Protokoll bearbeitet werden. " +
+        "TOPs und Beschlüsse können nicht mehr geändert werden.",
     );
     if (!confirmed) return;
     setActionLoading(true);
@@ -227,7 +228,7 @@ export function MeetingDetailPage() {
       setMeeting(updated);
     } catch (err) {
       if (err instanceof ApiError && err.status === 409) {
-        setActionError("Fehler: Die Versammlung wurde bereits als durchgefuehrt markiert.");
+        setActionError("Fehler: Die Versammlung wurde bereits als durchgeführt markiert.");
       } else if (err instanceof ApiError) {
         setActionError(err.message);
       } else {
@@ -241,7 +242,7 @@ export function MeetingDetailPage() {
   async function handleDelete() {
     if (!meetingId) return;
     const confirmed = window.confirm(
-      "Versammlung loeschen? Nur geplante Versammlungen koennen geloescht werden.",
+      "Versammlung löschen? Nur geplante Versammlungen können gelöscht werden.",
     );
     if (!confirmed) return;
     setActionLoading(true);
@@ -252,7 +253,7 @@ export function MeetingDetailPage() {
     } catch (err) {
       if (err instanceof ApiError && err.status === 409) {
         setActionError(
-          "Fehler: Durchgefuehrte Versammlungen koennen nicht geloescht werden.",
+          "Fehler: Durchgeführte Versammlungen können nicht gelöscht werden.",
         );
       } else if (err instanceof ApiError) {
         setActionError(err.message);
@@ -289,7 +290,7 @@ export function MeetingDetailPage() {
     } catch (err) {
       if (err instanceof ApiError && err.status === 409) {
         setActionError(
-          "Fehler: TOPs koennen nach Durchfuehrung der Versammlung nicht mehr hinzugefuegt werden.",
+          "Fehler: TOPs können nach Durchführung der Versammlung nicht mehr hinzugefügt werden.",
         );
       } else if (err instanceof ApiError) {
         setActionError(err.message);
@@ -321,7 +322,7 @@ export function MeetingDetailPage() {
     } catch (err) {
       if (err instanceof ApiError && err.status === 409) {
         setActionError(
-          "Fehler: TOPs koennen nach Durchfuehrung der Versammlung nicht mehr bearbeitet werden.",
+          "Fehler: TOPs können nach Durchführung der Versammlung nicht mehr bearbeitet werden.",
         );
       } else if (err instanceof ApiError) {
         setActionError(err.message);
@@ -334,7 +335,7 @@ export function MeetingDetailPage() {
   }
 
   async function handleDeleteTop(itemId: string) {
-    const confirmed = window.confirm("TOP loeschen?");
+    const confirmed = window.confirm("TOP löschen?");
     if (!confirmed) return;
     setActionError(null);
     try {
@@ -343,7 +344,7 @@ export function MeetingDetailPage() {
     } catch (err) {
       if (err instanceof ApiError && err.status === 409) {
         setActionError(
-          "Fehler: TOPs koennen nach Durchfuehrung der Versammlung nicht mehr geloescht werden.",
+          "Fehler: TOPs können nach Durchführung der Versammlung nicht mehr gelöscht werden.",
         );
       } else if (err instanceof ApiError) {
         setActionError(err.message);
@@ -377,7 +378,7 @@ export function MeetingDetailPage() {
     } catch (err) {
       if (err instanceof ApiError && err.status === 409) {
         setActionError(
-          "Fehler: Beschluesse koennen nach Durchfuehrung nicht mehr hinzugefuegt werden.",
+          "Fehler: Beschlüsse können nach Durchführung nicht mehr hinzugefügt werden.",
         );
       } else if (err instanceof ApiError) {
         setActionError(err.message);
@@ -390,7 +391,7 @@ export function MeetingDetailPage() {
   }
 
   async function handleDeleteResolution(resId: string) {
-    const confirmed = window.confirm("Beschluss loeschen?");
+    const confirmed = window.confirm("Beschluss löschen?");
     if (!confirmed) return;
     setActionError(null);
     try {
@@ -399,7 +400,7 @@ export function MeetingDetailPage() {
     } catch (err) {
       if (err instanceof ApiError && err.status === 409) {
         setActionError(
-          "Fehler: Beschluesse koennen nach Durchfuehrung nicht mehr geloescht werden.",
+          "Fehler: Beschlüsse können nach Durchführung nicht mehr gelöscht werden.",
         );
       } else if (err instanceof ApiError) {
         setActionError(err.message);
@@ -418,7 +419,7 @@ export function MeetingDetailPage() {
     } catch (err) {
       if (err instanceof ApiError && err.status === 409) {
         setActionError(
-          "Fehler: Dieser Beschluss wurde bereits in die Beschluss-Sammlung uebernommen.",
+          "Fehler: Dieser Beschluss wurde bereits in die Beschluss-Sammlung übernommen.",
         );
       } else if (err instanceof ApiError) {
         setActionError(err.message);
@@ -471,7 +472,7 @@ export function MeetingDetailPage() {
         }}
       >
         <h1 style={{ margin: 0 }}>
-          Versammlung {meeting.meeting_date}{" "}
+          Versammlung {formatDate(meeting.meeting_date)}{" "}
           <span
             className={`badge ${STATUS_CSS[meeting.status] ?? ""}`}
             style={{ fontSize: "0.8rem", verticalAlign: "middle" }}
@@ -511,15 +512,15 @@ export function MeetingDetailPage() {
             borderColor: "#a5d6a7",
           }}
         >
-          Diese Versammlung ist als durchgefuehrt markiert.
-          TOPs und Beschluesse sind nicht mehr aenderbar.
+          Diese Versammlung ist als durchgeführt markiert.
+          TOPs und Beschlüsse sind nicht mehr änderbar.
           Nur das Protokoll kann noch bearbeitet werden.
         </div>
       )}
 
       {/* Overview card */}
       <div className="card" style={{ marginBottom: "1.5rem" }}>
-        <h2>Uebersicht</h2>
+        <h2>Übersicht</h2>
         <table className="info-table">
           <tbody>
             <tr>
@@ -528,7 +529,7 @@ export function MeetingDetailPage() {
             </tr>
             <tr>
               <td>Datum</td>
-              <td>{meeting.meeting_date}</td>
+              <td>{formatDate(meeting.meeting_date)}</td>
             </tr>
             <tr>
               <td>Typ</td>
@@ -679,7 +680,7 @@ export function MeetingDetailPage() {
               className="btn btn--small"
               onClick={() => setShowTopForm(true)}
             >
-              + TOP hinzufuegen
+              + TOP hinzufügen
             </button>
           )}
         </div>
@@ -861,7 +862,7 @@ export function MeetingDetailPage() {
                                     }
                                   >
                                     {registeredResolutions.has(res.id)
-                                      ? "Uebernommen"
+                                      ? "Übernommen"
                                       : "In Beschluss-Sammlung"}
                                   </button>
                                 )}
@@ -873,7 +874,7 @@ export function MeetingDetailPage() {
                                       handleDeleteResolution(res.id)
                                     }
                                   >
-                                    Loeschen
+                                    Löschen
                                   </button>
                                 )}
                               </div>
@@ -908,7 +909,7 @@ export function MeetingDetailPage() {
                             style={{ color: "#b71c1c" }}
                             onClick={() => handleDeleteTop(item.id)}
                           >
-                            Loeschen
+                            Löschen
                           </button>
                         </>
                       )}
@@ -924,7 +925,7 @@ export function MeetingDetailPage() {
       {/* Resolutions without TOP */}
       {resolutionsWithoutTop().length > 0 && (
         <div className="card" style={{ marginBottom: "1.5rem" }}>
-          <h2>Beschluesse ohne TOP-Zuordnung</h2>
+          <h2>Beschlüsse ohne TOP-Zuordnung</h2>
           {resolutionsWithoutTop().map((res) => (
             <div
               key={res.id}
@@ -964,7 +965,7 @@ export function MeetingDetailPage() {
                     onClick={() => handleRegisterTransfer(res.id)}
                   >
                     {registeredResolutions.has(res.id)
-                      ? "Uebernommen"
+                      ? "Übernommen"
                       : "In Beschluss-Sammlung"}
                   </button>
                 )}
@@ -974,7 +975,7 @@ export function MeetingDetailPage() {
                     style={{ color: "#b71c1c" }}
                     onClick={() => handleDeleteResolution(res.id)}
                   >
-                    Loeschen
+                    Löschen
                   </button>
                 )}
               </div>
@@ -1197,7 +1198,7 @@ export function MeetingDetailPage() {
             >
               {actionLoading
                 ? "Markieren..."
-                : "Als durchgefuehrt markieren"}
+                : "Als durchgeführt markieren"}
             </button>
             <button
               className="btn btn--small"
@@ -1211,7 +1212,7 @@ export function MeetingDetailPage() {
               disabled={actionLoading}
               style={{ color: "#b71c1c" }}
             >
-              Versammlung loeschen
+              Versammlung löschen
             </button>
           </>
         )}

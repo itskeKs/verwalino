@@ -80,7 +80,7 @@ export function CandidateDecision({ importId, candidate, draftRevision, onSaved,
   return (
     <fieldset className="candidate-decision" disabled={pending}>
       <legend>Entscheidung</legend>
-      <p className="declaration-risk-text"><strong>Risiko:</strong> {riskText(candidate)}</p>
+      <p><strong>Risiko:</strong> {riskText(candidate)}</p>
       {candidate.requires_individual_review && <p>Dieser Vorschlag kann nicht gesammelt freigegeben werden.</p>}
       <label htmlFor={`candidate-correction-${candidate.id}`}>Korrigierter JSON-Wert</label>
       <textarea

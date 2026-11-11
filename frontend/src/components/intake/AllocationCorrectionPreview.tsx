@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { ApiError } from '../../api/client';
+import { centsFromDecimal, formatDate, formatMoney } from '../../lib/format';
 import { correctionPreviewApi, visualAllocationApi, allocationReplacementsApi, type CorrectionImpact, type CorrectionPreview } from '../../api/allocationAdoptions';
 import { correctionDestination } from './correctionLinks';
 
@@ -36,9 +37,9 @@ export function AllocationCorrectionPreview({ allocationId, reviewId, parentBusy
     {!parentBusy && preview && <>
       {!preview.can_review ? <p role="status">Vollständige Korrekturvorschau derzeit nicht möglich. Eine neue aktuelle Prüfung im selben Abrechnungskreis und zugängliche, auswertbare Folgebelege sind erforderlich.</p> : <>
         <div className="grid min-w-0 gap-4 md:grid-cols-2">{([['Bisher bestätigt', preview.old], ['Neu geprüft', preview.proposed]] as const).map(([title, amounts]) => amounts && <div className="min-w-0 space-y-2" key={title}>
-          <h4>{title}</h4><p>{amounts.gross_amount} EUR · {amounts.costs.length} Teilkosten</p>
-          <p>Leistungszeitraum: {amounts.service_period_from} bis {amounts.service_period_to}</p>
-          <ol className="space-y-1">{amounts.costs.map(cost => <li key={cost.position}>Teil {cost.position}: {cost.gross_amount} EUR · Mieteranteil {cost.tenant_amount ?? 'nicht angegeben'} EUR</li>)}</ol>
+          <h4>{title}</h4><p>{formatMoney(centsFromDecimal(amounts.gross_amount))} · {amounts.costs.length} Teilkosten</p>
+          <p>Leistungszeitraum: {formatDate(amounts.service_period_from)} bis {formatDate(amounts.service_period_to)}</p>
+          <ol className="space-y-1">{amounts.costs.map(cost => <li key={cost.position}>Teil {cost.position}: {formatMoney(centsFromDecimal(cost.gross_amount))} · Mieteranteil {cost.tenant_amount != null ? formatMoney(centsFromDecimal(cost.tenant_amount)) : 'nicht angegeben'}</li>)}</ol>
         </div>)}</div>
         <h4>Betroffene Finanzvorgänge</h4>
         {preview.impacts.length === 0 ? <p>Für diese Prüfgrundlage wurden keine betroffenen Finanzvorgänge gefunden.</p> : <CorrectionImpactList items={preview.impacts} />}
@@ -51,7 +52,7 @@ export function AllocationCorrectionPreview({ allocationId, reviewId, parentBusy
 
 export function CorrectionImpactList({ items }: { items: CorrectionImpact[] }) {
   return <ul className="space-y-4">{items.map(item => <li className="space-y-1" key={`${item.kind}:${item.id}`}>
-          <a className="underline" href={correctionDestination(item)}>{titles[item.run_type] ?? 'Finanzvorgang'} · {item.period_start} bis {item.period_end}</a>
+          <a className="underline" href={correctionDestination(item)}>{titles[item.run_type] ?? 'Finanzvorgang'} · {formatDate(item.period_start)} bis {formatDate(item.period_end)}</a>
           <p>{item.status === 'draft' ? 'Entwurf' : 'Festgeschrieben'}{item.superseded_by_id ? ' · Nachfolger vorhanden; dessen Abschluss muss geprüft werden.' : ''}</p>
           {item.effects.exact_cost_consumption && <p>Bisherige Teilkosten sind in der gespeicherten Berechnung enthalten.</p>}
           {item.effects.potential_calculation_change && <p>Der bisherige oder neue Leistungszeitraum kann diese Berechnung beeinflussen.</p>}

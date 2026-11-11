@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { formatDate } from "../lib/format";
 import { api } from "../api/client";
 import { SearchChoice } from "./SearchChoice";
 
@@ -44,6 +45,6 @@ export function AccountingScopeSelector({ propertyId, value, onChange, kind, cap
       scope_type: "", valid_from: "", valid_to: null,
     }) : null}
     onChange={item => { setError(null); setSelected(item); onChange(item?.id ?? null); }}
-    display={item => !item.valid_from ? item.label : `${item.label} · ${item.scope_type} · ${item.valid_from} – ${item.valid_to || "offen"}`}
+    display={item => !item.valid_from ? item.label : `${item.label} · ${item.scope_type} · ${formatDate(item.valid_from)} – ${item.valid_to ? formatDate(item.valid_to) : "offen"}`}
   />{error && <p role="alert" className="error-text">{error}</p>}</div>;
 }

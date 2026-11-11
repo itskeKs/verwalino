@@ -1,3 +1,4 @@
+import { formatDateTime } from "../lib/format";
 import { useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { api, ApiError } from "../api/client";
@@ -56,7 +57,7 @@ function SnapshotDetail({ snapshot, onReviewed, onDecisionSelected }: { snapshot
     } finally { inFlight.current = false; setBusy(false); }
   }
   return <section className="space-y-4" aria-label="Gespeicherter Prüfstand">
-    <h3>Stand vom {new Date(snapshot.generated_at).toLocaleString("de-DE")}</h3>
+    <h3>Stand vom {formatDateTime(snapshot.generated_at)}</h3>
     <p>{snapshot.item_count} Einträge · {snapshot.finding_count} Einträge mit Prüfhilfen oder offenen Punkten</p>
     <p>Dieser gespeicherte Stand ändert sich nicht. Freigaben gelten nur entsprechend ihrer aktuellen Gültigkeit. Ein Prüfvermerk löst keine offenen Punkte und aktiviert keine Zugriffsregeln.</p>
     <details><summary>Prüfkennung</summary><code className="block break-all">{snapshot.manifest_digest}</code></details>
@@ -82,7 +83,7 @@ function SnapshotDetail({ snapshot, onReviewed, onDecisionSelected }: { snapshot
       </article>;
     })}</div>
     <MoreResults available={!!page.nextCursor} loading={page.loading} onMore={() => void page.loadMore()} />
-    {reviewed ? <p role="status">Prüfvermerk gespeichert · {new Date(reviewed.reviewed_at).toLocaleString("de-DE")} · Offene Punkte bleiben bestehen.</p>
+    {reviewed ? <p role="status">Prüfvermerk gespeichert · {formatDateTime(reviewed.reviewed_at)} · Offene Punkte bleiben bestehen.</p>
       : <div className="space-y-3">
         <label className="flex items-start gap-2"><input type="checkbox" checked={acknowledged} disabled={busy} onChange={event=>setAcknowledged(event.target.checked)} />
           <span>Ich habe diesen Stand einschließlich Teamfreigaben und offener Punkte geprüft. Dies erteilt keine neuen Berechtigungen.</span></label>
@@ -124,7 +125,7 @@ export function AccessCoveragePanel({ onDecisionSelected }: { onDecisionSelected
     {history.error && <p role="alert" className="error-text">Gespeicherte Prüfstände nicht verfügbar. Bitte erneut laden.</p>}
     {history.items.length>0 && <label className="block">Gespeicherten Stand auswählen
       <select className="block w-full rounded-md border p-2" disabled={busy} value={selected ?? ""} onChange={event=>{setSelected(event.target.value || null);setError(null);}}>
-        <option value="">Bitte auswählen</option>{history.items.map(row=><option key={row.id} value={row.id}>{new Date(row.generated_at).toLocaleString("de-DE")} · {row.item_count} Einträge{row.review ? " · geprüft" : ""}</option>)}
+        <option value="">Bitte auswählen</option>{history.items.map(row=><option key={row.id} value={row.id}>{formatDateTime(row.generated_at)} · {row.item_count} Einträge{row.review ? " · geprüft" : ""}</option>)}
       </select></label>}
     <MoreResults available={!!history.nextCursor} loading={history.loading} onMore={()=>void history.loadMore()} />
     {active && <SnapshotDetail key={active.id} snapshot={active} onDecisionSelected={onDecisionSelected} onReviewed={history.reload} />}

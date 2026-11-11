@@ -1,3 +1,4 @@
+import { formatDateTime } from "../lib/format";
 import { useEffect, useRef, useState } from "react";
 import { api, ApiError } from "../api/client";
 import { usePagedList } from "../hooks/usePagedList";
@@ -81,8 +82,8 @@ export function AccessDispositionPanel({ snapshotId, onDecisionSelected }: { sna
       {item.findings.length > 0 && <ul className="list-disc pl-5">{item.findings.map(code => <li key={code}>{coverageFindings[code] ?? "Dieser Eintrag benötigt eine gesonderte Prüfung."}</li>)}</ul>}
     </article>)}</div>
     <MoreResults available={!!page.nextCursor} loading={page.loading} onMore={() => void page.loadMore()} />
-    {saved ? <p role="status">Entscheidung gespeichert · {new Date(saved.accepted_at).toLocaleString("de-DE")} · {saved.reason}. Diese Entscheidung erteilt keine Freigaben.</p> : <>
-      <label className="block space-y-1">Begründung der Altbestandsentscheidung<textarea className="input w-full" value={reason} maxLength={2000} disabled={busy} onChange={event => setReason(event.target.value)} /></label>
+    {saved ? <p role="status">Entscheidung gespeichert · {formatDateTime(saved.accepted_at)} · {saved.reason}. Diese Entscheidung erteilt keine Freigaben.</p> : <>
+      <label className="block space-y-1">Begründung der Altbestandsentscheidung<textarea className="w-full" value={reason} maxLength={2000} disabled={busy} onChange={event => setReason(event.target.value)} /></label>
       <label className="flex items-start gap-2"><input type="checkbox" checked={team} disabled={busy || loading || !verified} onChange={event => setTeam(event.target.checked)} /><span>Ich habe die Teamzuordnungen und ausdrücklich erteilten Freigaben geprüft.</span></label>
       <label className="flex items-start gap-2"><input type="checkbox" checked={retention} disabled={busy || loading || !verified} onChange={event => setRetention(event.target.checked)} /><span>Ich bestätige, dass die aufgeführten Altbestände nach der Umstellung gesperrt aufbewahrt werden und hierfür keine Freigaben erteilt werden.</span></label>
       {!allLoaded && <p>Vor der Entscheidung alle Einträge laden und prüfen.</p>}

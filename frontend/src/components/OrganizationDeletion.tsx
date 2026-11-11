@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { api } from "../api/client";
+import { formatDate } from "../lib/format";
 import { Button } from "./ui/button";
 import { Input } from "./ui/input";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "./ui/dialog";
@@ -60,7 +61,7 @@ export function OrganizationDeletion({ changed, download, exporting }: { changed
           </div>
           <h3 className="font-semibold">Aufbewahrungspflichtige Unterlagen</h3>
           <ul className="space-y-1 text-sm break-words">
-            {Object.entries(preview.retention.retained).map(([entity, row]) => <li key={entity}>{labels[entity] ?? "Weitere historische Nachweise"}: {row.count.toLocaleString("de-DE")} bis {new Date(`${row.until}T12:00:00`).toLocaleDateString("de-DE", { day: "2-digit", month: "2-digit", year: "numeric" })}</li>)}
+            {Object.entries(preview.retention.retained).map(([entity, row]) => <li key={entity}>{labels[entity] ?? "Weitere historische Nachweise"}: {row.count.toLocaleString("de-DE")} bis {formatDate(row.until)}</li>)}
           </ul>
           <p className="text-sm">{preview.retention.erased.person.toLocaleString("de-DE")} Personen werden ohne laufende Aufbewahrungspflicht anonymisiert. Stammdaten mit laufender Frist bleiben unter Verarbeitungseinschränkung erhalten. Nutzerkontakte und Anmeldedaten werden gelöscht.</p>
           <ul className="list-disc pl-5 text-sm">{preview.retention.erased_fields.map(field => <li key={field}>{field}</li>)}</ul>

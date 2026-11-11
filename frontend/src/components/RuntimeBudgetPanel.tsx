@@ -1,3 +1,4 @@
+import { formatDateTime } from "../lib/format";
 import { useEffect, useRef, useState } from "react";
 import { api, ApiError } from "../api/client";
 
@@ -68,10 +69,10 @@ export function RuntimeBudgetPanel() {
         <dt>Reservierungsdauer</dt><dd>{state.policy.reservation_seconds} Sekunden</dd>
       </dl>
       {verified && <p>{state.matches_reviewed_policy ? "Die aktuelle Budgetregel ist geprüft." : "Die aktuelle Budgetregel benötigt eine ausdrückliche Prüfung."}</p>}
-      {state.review && <p>Letzter Prüfvermerk vom {new Date(state.review.reviewed_at).toLocaleString("de-DE")} · {state.review.reason}</p>}
+      {state.review && <p>Letzter Prüfvermerk vom {formatDateTime(state.review.reviewed_at)} · {state.review.reason}</p>}
       {!state.matches_reviewed_policy && <>
         <label className="block space-y-1">Begründung der Budgetprüfung
-          <textarea className="input w-full" value={reason} maxLength={2000} disabled={busy || loading} onChange={event => setReason(event.target.value)} />
+          <textarea className="w-full" value={reason} maxLength={2000} disabled={busy || loading} onChange={event => setReason(event.target.value)} />
         </label>
         <label className="flex items-start gap-2"><input type="checkbox" checked={acknowledged} disabled={busy || loading || !verified} onChange={event => setAcknowledged(event.target.checked)} />
           <span>Ich habe die angezeigte Budgetregel einschließlich Zeitraum und Reservierungsdauer geprüft.</span>
@@ -79,7 +80,7 @@ export function RuntimeBudgetPanel() {
         <button type="button" className="btn" disabled={busy || loading || !verified || !acknowledged || !reason.trim()} onClick={() => void review()}>Budgetregel bestätigen</button>
       </>}
     </>}
-    {receipt && <p role="status" className="break-words">Prüfvermerk gespeichert · {new Date(receipt.reviewed_at).toLocaleString("de-DE")} · {receipt.reason}</p>}
+    {receipt && <p role="status" className="break-words">Prüfvermerk gespeichert · {formatDateTime(receipt.reviewed_at)} · {receipt.reason}</p>}
     {error && <p role="alert" className="error-text">{error}</p>}
   </section>;
 }

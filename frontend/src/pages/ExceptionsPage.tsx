@@ -1,3 +1,4 @@
+import { formatDateTime } from "../lib/format";
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { exceptionApi, exceptionCauses, type ExceptionCase, type ExceptionWorkflow } from '../api/exceptions';
@@ -30,7 +31,7 @@ export function ExceptionsPage() {
       {page.items.map(item => <article key={item.id} className="card min-w-0 space-y-2">
         <h2><Link to={`/klaerungsfaelle/${item.id}`}>{exceptionCauses[item.cause] ?? 'Klärung erforderlich'}</Link></h2>
         <p className="break-words">{item.scope_label} · {item.scope_type}</p>
-        <p>{item.workflow_state === 'snoozed' ? `Zurückgestellt bis ${new Date(item.snoozed_until!).toLocaleString('de-DE')}` : item.workflow_state === 'completed' ? 'Abgeschlossen · Fachlich geklärt' : 'Offen · Fachlich ungeklärt'}</p>
+        <p>{item.workflow_state === 'snoozed' ? `Zurückgestellt bis ${formatDateTime(item.snoozed_until!)}` : item.workflow_state === 'completed' ? 'Abgeschlossen · Fachlich geklärt' : 'Offen · Fachlich ungeklärt'}</p>
         <p>{item.claimant_id ? 'Bearbeitung beansprucht' : 'Noch nicht beansprucht'} · {item.dependency_count} verknüpfte Vorschläge</p>
       </article>)}
       <div className="flex flex-wrap gap-3">{cursor && <button className="btn" onClick={() => setCursor(undefined)}>Zur ersten Seite</button>}

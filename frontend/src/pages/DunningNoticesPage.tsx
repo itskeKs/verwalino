@@ -4,7 +4,7 @@
  *
  * M7 Mahnwesen: dunning notice CRUD + issue lifecycle.
  * Status badges: Entwurf (draft) / Ausgestellt (issued).
- * Supports dunning for tenants (Mieter) and owners (Eigentuemer).
+ * Supports dunning for tenants (Mieter) and owners (Eigentümer).
  */
 
 import { useEffect, useState, useCallback, useRef } from "react";
@@ -34,6 +34,7 @@ import type {
   EconomicPlan,
 } from "../api/types";
 import { parseGermanAmount } from "../lib/germanAmount";
+import { centsFromDecimal, formatDate, formatMoney } from "../lib/format";
 import { DunningSettingsForm } from "../components/DunningSettingsForm";
 import { AccountingScopeSelector } from "../components/AccountingScopeSelector";
 import { ApiError } from "../api/client";
@@ -249,7 +250,7 @@ export function DunningNoticesPage() {
 
   function getRecipientType(notice: DunningNotice): string {
     if (notice.tenant_profile_id) return "Mieter";
-    if (notice.owner_profile_id) return "Eigentuemer";
+    if (notice.owner_profile_id) return "Eigentümer";
     return "-";
   }
 
@@ -384,7 +385,7 @@ export function DunningNoticesPage() {
         <div className="card" style={{ marginBottom: "1rem" }}>
           <h2>Neue Mahnung anlegen</h2>
           <p style={{ fontSize: "0.85rem", color: "var(--text-muted)", marginBottom: "1rem" }}>
-            Waehlen Sie den Empfaenger und den Zeitraum. Die ueberfaelligen Posten
+            Wählen Sie den Empfänger und den Zeitraum. Die überfälligen Posten
             werden automatisch ermittelt. Gibt es keine offenen Posten, wird eine
             entsprechende Meldung angezeigt.
           </p>
@@ -392,10 +393,10 @@ export function DunningNoticesPage() {
             <fieldset disabled={saving} className="form-grid" style={{ border: 0, padding: 0, margin: 0, minWidth: 0 }}>
             {/* Recipient type toggle */}
             <label>
-              Empfaengertyp *
+              Empfängertyp *
               <select
                 required
-                aria-label="Empfaengertyp *"
+                aria-label="Empfängertyp *"
                 value={recipientType}
                 onChange={(e) => {
                   setRecipientType(e.target.value as RecipientType);
@@ -405,7 +406,7 @@ export function DunningNoticesPage() {
                 }}
               >
                 <option value="tenant">Mieter</option>
-                <option value="owner">Eigentuemer</option>
+                <option value="owner">Eigentümer</option>
               </select>
             </label>
 
@@ -425,7 +426,7 @@ export function DunningNoticesPage() {
                       })
                     }
                   >
-                    <option value="">-- Mieter waehlen --</option>
+                    <option value="">-- Mieter wählen --</option>
                     {tenantProfiles.map((tp) => (
                       <option key={tp.id} value={tp.id}>
                         {getPersonName(tp.person_id)}
@@ -442,7 +443,7 @@ export function DunningNoticesPage() {
                       setTenantForm({ ...tenantForm, lease_agreement_id: e.target.value, accounting_scope_id: null })
                     }
                   >
-                    <option value="">-- Mietvertrag waehlen --</option>
+                    <option value="">-- Mietvertrag wählen --</option>
                     {filteredLeases.map((l) => {
                       const tp = tenantProfiles.find((t) => t.id === l.tenant_profile_id);
                       const person = tp ? persons.find((p) => p.id === tp.person_id) : null;
@@ -451,8 +452,8 @@ export function DunningNoticesPage() {
                         : "";
                       return (
                         <option key={l.id} value={l.id}>
-                          {tenantName} ab {l.valid_from}
-                          {l.valid_to ? ` bis ${l.valid_to}` : " (laufend)"}
+                          {tenantName} ab {formatDate(l.valid_from)}
+                          {l.valid_to ? ` bis ${formatDate(l.valid_to)}` : " (laufend)"}
                         </option>
                       );
                     })}
@@ -508,7 +509,7 @@ export function DunningNoticesPage() {
                   />
                 </label>
                 <label>
-                  Mahngebuehr (Override)
+                  Mahngebühr (Override)
                   <input
                     type="text"
                     inputMode="decimal"
@@ -526,16 +527,16 @@ export function DunningNoticesPage() {
             ) : (
               <>
                 <label>
-                  Eigentuemer *
+                  Eigentümer *
                   <select
                     required
-                    aria-label="Eigentuemer *"
+                    aria-label="Eigentümer *"
                     value={ownerForm.owner_profile_id}
                     onChange={(e) =>
                       setOwnerForm({ ...ownerForm, owner_profile_id: e.target.value, economic_plan_id: null, accounting_scope_id: null })
                     }
                   >
-                    <option value="">-- Eigentuemer waehlen --</option>
+                    <option value="">-- Eigentümer wählen --</option>
                     {ownerProfiles.map((op) => (
                       <option key={op.id} value={op.id}>
                         {getPersonName(op.person_id)}
@@ -592,7 +593,7 @@ export function DunningNoticesPage() {
                     <option value="">Ohne Wirtschaftsplan (Sonderumlagen)</option>
                     {economicPlans.filter(ep => !ownerPropertyId || ep.property_id === ownerPropertyId).map((ep) => (
                       <option key={ep.id} value={ep.id}>
-                        {ep.plan_year} ({ep.period_start} - {ep.period_end})
+                        {ep.plan_year} ({formatDate(ep.period_start)} - {formatDate(ep.period_end)})
                       </option>
                     ))}
                   </select>
@@ -625,7 +626,7 @@ export function DunningNoticesPage() {
                   />
                 </label>
                 <label>
-                  Mahngebuehr (Override)
+                  Mahngebühr (Override)
                   <input
                     type="text"
                     inputMode="decimal"
@@ -647,7 +648,7 @@ export function DunningNoticesPage() {
               value={recipientType === "tenant" ? tenantForm.accounting_scope_id : ownerForm.accounting_scope_id}
               onChange={accounting_scope_id => recipientType === "tenant"
                 ? setTenantForm({ ...tenantForm, accounting_scope_id }) : setOwnerForm({ ...ownerForm, accounting_scope_id })} />
-            <p className="form-hint">Für bereits zugeordnete Zahlungen einen Abrechnungskreis wählen. Fällige Sonderumlagen können im WEG-Abrechnungskreis auch ohne Wirtschaftsplan gemahnt werden.</p>
+            <p className="muted">Für bereits zugeordnete Zahlungen einen Abrechnungskreis wählen. Fällige Sonderumlagen können im WEG-Abrechnungskreis auch ohne Wirtschaftsplan gemahnt werden.</p>
             <div className="form-actions">
               <button
                 type="submit"
@@ -682,11 +683,11 @@ export function DunningNoticesPage() {
               <thead>
                 <tr>
                   <th>Datum</th>
-                  <th>Empfaenger</th>
+                  <th>Empfänger</th>
                   <th>Typ</th>
                   <th>Stufe</th>
                   <th style={{ textAlign: "right" }}>Hauptforderung</th>
-                  <th style={{ textAlign: "right" }}>Gebuehr</th>
+                  <th style={{ textAlign: "right" }}>Gebühr</th>
                   <th style={{ textAlign: "right" }}>Gesamt</th>
                   <th>Status</th>
                   <th></th>
@@ -695,7 +696,7 @@ export function DunningNoticesPage() {
               <tbody>
                 {notices.map((n) => (
                   <tr key={n.id}>
-                    <td>{n.issue_date}</td>
+                    <td>{formatDate(n.issue_date)}</td>
                     <td>{getRecipientName(n)}</td>
                     <td style={{ fontSize: "0.85rem" }}>{getRecipientType(n)}</td>
                     <td>
@@ -710,7 +711,7 @@ export function DunningNoticesPage() {
                         fontFamily: "var(--mono)",
                       }}
                     >
-                      {n.principal_amount} EUR
+                      {formatMoney(centsFromDecimal(n.principal_amount))}
                     </td>
                     <td
                       style={{
@@ -718,7 +719,7 @@ export function DunningNoticesPage() {
                         fontFamily: "var(--mono)",
                       }}
                     >
-                      {n.fee_amount} EUR
+                      {formatMoney(centsFromDecimal(n.fee_amount))}
                     </td>
                     <td
                       style={{
@@ -727,7 +728,7 @@ export function DunningNoticesPage() {
                         fontWeight: 600,
                       }}
                     >
-                      {n.total_amount} EUR
+                      {formatMoney(centsFromDecimal(n.total_amount))}
                     </td>
                     <td>
                       <span className={`badge ${STATUS_CSS[n.status] ?? ""}`}>

@@ -20,7 +20,7 @@ import {
 } from "../api/endpoints";
 import type { WegRun, AssetItemIn, AssetReportComputeRequest, Property, BankAccount } from "../api/types";
 import { ApiError } from "../api/client";
-import { formatEuro } from "../lib/utils";
+import { centsFromDecimal, formatDate, formatDateTime, formatMoney } from "../lib/format";
 
 const STATUS_LABELS: Record<string, string> = { draft: "Entwurf", finalized: "Finalisiert" };
 const STATUS_CSS: Record<string, string> = { draft: "badge--draft", finalized: "badge--confirmed" };
@@ -163,9 +163,9 @@ export function AssetReportDetailPage() {
         <h2>Übersicht</h2>
         <table className="info-table"><tbody>
           <tr><td>Objekt</td><td><Link to={`/objekte/${run.property_id}`} className="link">{propName(run.property_id)}</Link></td></tr>
-          <tr><td>Stichtag</td><td>{run.period_end}</td></tr>
+          <tr><td>Stichtag</td><td>{formatDate(run.period_end)}</td></tr>
           <tr><td>Engine-Version</td><td><code>{run.engine_version}</code></td></tr>
-          {run.finalized_at && <tr><td>Finalisiert am</td><td>{run.finalized_at}</td></tr>}
+          {run.finalized_at && <tr><td>Finalisiert am</td><td>{formatDateTime(run.finalized_at)}</td></tr>}
         </tbody></table>
       </div>
 
@@ -178,7 +178,7 @@ export function AssetReportDetailPage() {
             Zuführungen und Entnahmen werden aus Buchungen abgeleitet; Korrekturen erfolgen mit Bezug im Rücklagenbuch. Der Anfangsbestand kann im ersten Rücklagenjahr mit Begründung importiert werden. Bitte prüfen Sie alle Kontostände zum Stichtag.
             Forderungen/Verbindlichkeiten sind manuelle Verwalter-Angaben (kein Buchungssaldo).
           </p>
-          <p>Aktueller Anfangsbestand: {currentOpening === null ? 'Wird geladen…' : new Intl.NumberFormat('de-DE', { style: 'currency', currency: 'EUR' }).format(Number(currentOpening))}. Geben Sie bei einer Berichtigung den korrigierten Gesamtbestand und eine Begründung ein.</p>
+          <p>Aktueller Anfangsbestand: {currentOpening === null ? 'Wird geladen…' : formatMoney(centsFromDecimal(currentOpening))}. Geben Sie bei einer Berichtigung den korrigierten Gesamtbestand und eine Begründung ein.</p>
           <div className="form-grid">
             <label>Rücklage Anfangsbestand
               <input type="text" inputMode="decimal" placeholder="0.00" value={opening} onChange={(e) => setOpening(e.target.value)} />
@@ -232,7 +232,7 @@ export function AssetReportDetailPage() {
                           ? <span style={{ color: "var(--text-muted)" }}> — {l.label}</span> : null}
                         {note ? <div style={{ fontSize: "0.78rem", color: "var(--text-muted)", fontStyle: "italic" }}>{note}</div> : null}
                       </td>
-                      <td style={{ fontFamily: "var(--mono)", textAlign: "right" }}>{formatEuro(l.amount)}</td>
+                      <td style={{ fontFamily: "var(--mono)", textAlign: "right" }}>{formatMoney(centsFromDecimal(l.amount))}</td>
                     </tr>
                   </Fragment>
                 );

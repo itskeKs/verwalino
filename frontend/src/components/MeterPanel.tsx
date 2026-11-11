@@ -4,6 +4,7 @@ import { createMeter, createMeterReading, listMeterReadings, listMeters, updateM
 import type { Meter, MeterReading } from "../api/types";
 import { canonicalValue } from "../lib/utils";
 import { ApiError } from "../api/client";
+import { formatDate } from "../lib/format";
 
 interface MeterPanelProps { propertyId: string; unitId?: string; canWrite: boolean }
 type FormKind = "create" | "edit" | "reading" | null;
@@ -29,7 +30,7 @@ function consumption(rows: MeterReading[]): string | null {
     return "Ablesungen prüfen: Rückgang oder mehrdeutige Ablesetage; keine automatische Verbrauchsdifferenz.";
   }
   const delta = b - a;
-  return `Verbrauch: ${delta / 10000n},${String(delta % 10000n).padStart(4, "0")} (${start.reading_date} bis ${end.reading_date})`;
+  return `Verbrauch: ${delta / 10000n},${String(delta % 10000n).padStart(4, "0")} (${formatDate(start.reading_date)} bis ${formatDate(end.reading_date)})`;
 }
 function validDate(value: string): boolean {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
@@ -164,7 +165,7 @@ function MeterPanelContent({ propertyId, unitId, canWrite }: MeterPanelProps) {
       {!historyLoading && !historyError && <>
         {readings.length === 0 ? <p>Keine Ablesungen vorhanden.</p> : <table className="data-table" aria-label="Ablesungen">
           <thead><tr><th>Ablesedatum</th><th>Zählerstand</th><th>Zeitraum</th></tr></thead>
-          <tbody>{readings.map(row => <tr key={row.id}><td>{row.reading_date}</td><td>{display(row.value)}</td><td>{row.period ?? "–"}</td></tr>)}</tbody>
+          <tbody>{readings.map(row => <tr key={row.id}><td>{formatDate(row.reading_date)}</td><td>{display(row.value)}</td><td>{row.period ?? "–"}</td></tr>)}</tbody>
         </table>}
         {difference && <p role="status" aria-label="Verbrauch">{difference}</p>}
         {canWrite && <button type="button" className="btn" disabled={saving} onClick={() => open("reading")}>Stand erfassen</button>}

@@ -22,7 +22,7 @@ import { parseGermanAmount } from "../lib/germanAmount";
  */
 
 import { useEffect, useState, useCallback, useRef } from "react";
-import { formatEuro } from "../lib/utils";
+import { centsFromDecimal, formatDate, formatDateTime, formatMoney } from "../lib/format";
 import { useParams, Link, useNavigate } from "react-router-dom";
 import {
   getSettlement,
@@ -87,8 +87,8 @@ const STATUS_CSS: Record<string, string> = {
 
 const DISTRIBUTION_KEY_LABELS: Record<string, string> = {
   MEA: "MEA",
-  AREA: "Flaeche",
-  HEATED_AREA: "Beheizte Flaeche",
+  AREA: "Fläche",
+  HEATED_AREA: "Beheizte Fläche",
   UNIT_COUNT: "Einheiten",
   PERSON_COUNT: "Personen",
   CONSUMPTION: "Verbrauch",
@@ -98,10 +98,7 @@ const DISTRIBUTION_KEY_LABELS: Record<string, string> = {
 
 function formatProposalMoney(value: string): string {
   // Group the decimal text directly: converting to Number can lose cents.
-  const match = /^(-?)(\d+)(?:\.(\d{1,2}))?$/.exec(value);
-  if (!match) return "Nicht verfügbar";
-  const integer = match[2].replace(/^0+(?=\d)/, "").replace(/\B(?=(\d{3})+(?!\d))/g, ".");
-  return `${match[1]}${integer},${(match[3] ?? "").padEnd(2, "0")} EUR`;
+  return /^-?\d+(?:\.\d{1,2})?$/.test(value) ? formatMoney(centsFromDecimal(value)) : "Nicht verfügbar";
 }
 
 function isProposalDate(value: string): boolean {
@@ -193,12 +190,12 @@ function AdvanceProposalSection({ runId, periodEnd }: { runId: string; periodEnd
         <p>Betriebskosten-Vorauszahlung{combinedProposal ? " inkl. Heizkosten" : ""}: <strong>{formatProposalMoney(proposal.monthly_amount)}</strong> monatlich (bisher {formatProposalMoney(proposal.current_monthly_amount)})</p>
         {!singleAdvanceBlock && <p>Heizkosten-Vorauszahlung: <strong>{formatProposalMoney(proposal.heating_monthly_amount)}</strong> monatlich (bisher {formatProposalMoney(proposal.current_heating_monthly_amount)})</p>}
         <p>Grundlage Betriebskosten{combinedProposal ? " inkl. Heizkosten" : ""}: {formatProposalMoney(proposal.tenant_cost)} Mieteranteil / {proposal.months.replace(".", ",")} Monate
-          {" "}({proposal.period_start} bis {proposal.period_end}).</p>
+          {" "}({formatDate(proposal.period_start)} bis {formatDate(proposal.period_end)}).</p>
         {!singleAdvanceBlock && <p>Grundlage Heizkosten: {formatProposalMoney(proposal.heating_tenant_cost)} Mieteranteil / {proposal.months.replace(".", ",")} Monate.</p>}
         <p>{combinedProposal ? "Die gemeinsame Vorauszahlung wird geändert." : singleAdvanceBlock ? "Nur die Betriebskosten-Vorauszahlung wird geändert." : "Beide Vorauszahlungen werden geändert."} Die Kaltmiete bleibt die am gewählten Tag gültige Rate.
           Der ursprüngliche Mietvertrag und die finalisierte Abrechnung bleiben unverändert.</p>
         {applyError && <p role="alert">{applyError}</p>}
-        {result && <p role="status">Miethistorie ergänzt: ab {result.valid_from}, Kaltmiete {formatProposalMoney(result.base_rent)},
+        {result && <p role="status">Miethistorie ergänzt: ab {formatDate(result.valid_from)}, Kaltmiete {formatProposalMoney(result.base_rent)},
           {" "}Betriebskosten-Vorauszahlung{result.advance_mode === "COMBINED" ? " inkl. Heizkosten" : ""} {formatProposalMoney(result.advance_payment)}
           {result.advance_mode !== "COMBINED" && `, Heizkosten-Vorauszahlung ${formatProposalMoney(result.heating_advance_payment)}`} monatlich.</p>}
       </>}
@@ -440,7 +437,7 @@ export function SettlementDetailPage() {
     if (!run?.lease_agreement_id) return "-";
     const lease = leases.find((l) => l.id === run.lease_agreement_id);
     if (!lease) return run.lease_agreement_id.slice(0, 8);
-    return `ab ${lease.valid_from}${lease.valid_to ? ` bis ${lease.valid_to}` : " (laufend)"}`;
+    return `ab ${formatDate(lease.valid_from)}${lease.valid_to ? ` bis ${formatDate(lease.valid_to)}` : " (laufend)"}`;
   }
 
   function getCategoryLabel(code: string | null): string {
@@ -574,7 +571,7 @@ export function SettlementDetailPage() {
     if (!runId || consumptionBlocked || heatingBlocked) return;
     const confirmed = window.confirm(
       "Abrechnung finalisieren? Nach der Finalisierung ist die Abrechnung " +
-        "unveraenderbar (GoBD). Aenderungen sind nur als Korrekturabrechnung moeglich.",
+        "unveränderbar (GoBD). Änderungen sind nur als Korrekturabrechnung möglich.",
     );
     if (!confirmed) return;
     setActionLoading(true);
@@ -601,7 +598,7 @@ export function SettlementDetailPage() {
     if (!runId) return;
     const confirmed = window.confirm(
       "Korrekturabrechnung erstellen? Die bestehende Abrechnung bleibt " +
-        "unveraendert erhalten (Storno/Neu). Ein neuer Entwurf wird angelegt.",
+        "unverändert erhalten (Storno/Neu). Ein neuer Entwurf wird angelegt.",
     );
     if (!confirmed) return;
     setActionLoading(true);
@@ -647,7 +644,7 @@ export function SettlementDetailPage() {
                 <tr>
                   <th>Kostenart</th>
                   <th>Gesamtkosten</th>
-                  <th>Umlageschluessel</th>
+                  <th>Umlageschlüssel</th>
                   <th>Anteilsbasis</th>
                   <th>Zeitanteil</th>
                   <th style={{ textAlign: "right" }}>Mieteranteil</th>
@@ -682,7 +679,7 @@ export function SettlementDetailPage() {
                       )}
                     </td>
                     <td style={{ fontFamily: "var(--mono)", textAlign: "right" }}>
-                      {ln.total_amount != null ? `${ln.total_amount} EUR` : "-"}
+                      {ln.total_amount != null ? formatMoney(centsFromDecimal(ln.total_amount)) : "-"}
                     </td>
                     <td>
                       {ln.note?.startsWith("HeizkostenV intern:")
@@ -711,7 +708,7 @@ export function SettlementDetailPage() {
                         fontWeight: 600,
                       }}
                     >
-                      {ln.amount} EUR
+                      {formatMoney(centsFromDecimal(ln.amount))}
                     </td>
                   </tr>
                 ))}
@@ -741,7 +738,7 @@ export function SettlementDetailPage() {
                         textAlign: "right",
                       }}
                     >
-                      {ln.amount} EUR
+                      {formatMoney(centsFromDecimal(ln.amount))}
                     </td>}
                   </tr>
                 ))}
@@ -782,8 +779,8 @@ export function SettlementDetailPage() {
             marginBottom: "0.75rem",
           }}
         >
-          Einige Kostenpositionen erfordern zusaetzliche Angaben fuer die
-          Berechnung. Fehlende Werte fuehren zu einer Fehlermeldung beim
+          Einige Kostenpositionen erfordern zusätzliche Angaben für die
+          Berechnung. Fehlende Werte führen zu einer Fehlermeldung beim
           Berechnen.
         </p>
 
@@ -814,7 +811,7 @@ export function SettlementDetailPage() {
         {hasManuals && (
           <>
             <h3 style={{ fontSize: "0.95rem", margin: "0.75rem 0 0.5rem" }}>
-              Manuelle Betraege (je Einheit)
+              Manuelle Beträge (je Einheit)
             </h3>
             <div className="form-grid">
               {manualAmounts.map((man, idx) => (
@@ -843,12 +840,12 @@ export function SettlementDetailPage() {
               {run?.status === "draft" ? "Verbrauch" : "Verbrauch / Personenzahl"}
             </h3>
             {needsConsumption(genericEntries) && (
-              <p id="settlement-consumption-period-hint" className="hint">
+              <p id="settlement-consumption-period-hint" className="muted">
                 Verbrauch der Einheit im gesamten Objekt-Abrechnungsjahr eingeben, auch bei gekürztem Mietzeitraum.
               </p>
             )}
             {run?.status !== "draft" && needsPersonCount(genericEntries) && (
-              <p id="settlement-person-period-hint" className="hint">
+              <p id="settlement-person-period-hint" className="muted">
                 Personenzahlen je Einheit für das gesamte Objekt-Abrechnungsjahr in allen zugehörigen Abrechnungen gleich eingeben.
               </p>
             )}
@@ -884,7 +881,7 @@ export function SettlementDetailPage() {
                       {consumptionSuggestions.filter(source => source.unit_id === m.unit_id).map(source =>
                         <small key={source.unit_id} style={{ display: "block" }}>
                           {source.start_reading && source.end_reading
-                            ? `Zählerbasis: ${source.start_reading.value} (${source.start_reading.reading_date}) → ${source.end_reading.value} (${source.end_reading.reading_date}), jeweils ±31 Tage. ${manualConsumptionIds.has(m.unit_id) ? "Handwert wird verwendet." : "Wird bei Berechnung frisch geprüft."}`
+                            ? `Zählerbasis: ${source.start_reading.value} (${formatDate(source.start_reading.reading_date)}) → ${source.end_reading.value} (${formatDate(source.end_reading.reading_date)}), jeweils ±31 Tage. ${manualConsumptionIds.has(m.unit_id) ? "Handwert wird verwendet." : "Wird bei Berechnung frisch geprüft."}`
                             : source.reason}
                           {source.start_reading && source.end_reading && source.reason && ` ${source.reason}`}
                         </small>)}
@@ -1002,8 +999,8 @@ export function SettlementDetailPage() {
           }}
         >
           <strong>GoBD:</strong> Diese Abrechnung ist finalisiert und
-          unveraenderbar. Aenderungen sind nur als Korrekturabrechnung
-          (Storno/Neu) moeglich.
+          unveränderbar. Änderungen sind nur als Korrekturabrechnung
+          (Storno/Neu) möglich.
           {run.snapshot_sha256 && (
             <div style={{ marginTop: "0.5rem", fontSize: "0.82rem" }}>
               Snapshot SHA-256:{" "}
@@ -1038,7 +1035,7 @@ export function SettlementDetailPage() {
 
       {/* Overview card */}
       <div className="card" style={{ marginBottom: "1.5rem" }}>
-        <h2>Uebersicht</h2>
+        <h2>Übersicht</h2>
         <table className="info-table">
           <tbody>
             <tr>
@@ -1069,7 +1066,7 @@ export function SettlementDetailPage() {
             <tr>
               <td>Zeitraum</td>
               <td>
-                {run.period_start} bis {run.period_end}
+                {formatDate(run.period_start)} bis {formatDate(run.period_end)}
               </td>
             </tr>
             <tr>
@@ -1080,7 +1077,7 @@ export function SettlementDetailPage() {
               <td>{advanceSummaryLabel}</td>
               <td>
                 <span style={{ fontFamily: "var(--mono)" }}>
-                  {run.advance_payments_total ?? "-"} EUR
+                  {run.advance_payments_total != null ? formatMoney(centsFromDecimal(run.advance_payments_total)) : "-"}
                 </span>
                 <span
                   style={{
@@ -1098,7 +1095,7 @@ export function SettlementDetailPage() {
                       style={{ marginLeft: "0.5rem" }}
                       onClick={() => { setAdvanceErrors({ operating: false, heating: false }); setEditingAdvance(true); }}
                     >
-                      Aendern
+                      Ändern
                     </button>
                     <button
                       className="btn btn--small"
@@ -1114,14 +1111,14 @@ export function SettlementDetailPage() {
               </td>
             </tr>
             {!singleAdvanceBlock && <tr><td>Heizkosten-Vorauszahlungen</td><td>
-              <span style={{ fontFamily: "var(--mono)" }}>{run.heating_advance_payments_total ?? "-"} EUR</span>
+              <span style={{ fontFamily: "var(--mono)" }}>{run.heating_advance_payments_total != null ? formatMoney(centsFromDecimal(run.heating_advance_payments_total)) : "-"}</span>
               <span style={{ marginLeft: "0.5rem" }}>({run.heating_advance_payments_source})</span>
             </td></tr>}
             {run.total_cost != null && (
               <tr>
                 <td>Gesamtkosten</td>
                 <td style={{ fontFamily: "var(--mono)" }}>
-                  {run.total_cost} EUR
+                  {formatMoney(centsFromDecimal(run.total_cost))}
                 </td>
               </tr>
             )}
@@ -1146,7 +1143,7 @@ export function SettlementDetailPage() {
                           : undefined,
                   }}
                 >
-                  {run.balance} EUR
+                  {formatMoney(centsFromDecimal(run.balance))}
                 </td>
               </tr>
             )}
@@ -1159,7 +1156,7 @@ export function SettlementDetailPage() {
             {run.finalized_at && (
               <tr>
                 <td>Finalisiert am</td>
-                <td>{run.finalized_at}</td>
+                <td>{formatDateTime(run.finalized_at)}</td>
               </tr>
             )}
           </tbody>
@@ -1180,7 +1177,7 @@ export function SettlementDetailPage() {
               <input
                 type="text"
                 inputMode="decimal"
-                placeholder="0.00"
+                placeholder="700,00"
                 value={advanceValue}
                 aria-invalid={advanceErrors.operating}
                 aria-describedby={advanceErrors.operating ? "operating-advance-error" : undefined}
@@ -1309,7 +1306,7 @@ export function SettlementDetailPage() {
               <tr>
                 <td>Gesamtkosten</td>
                 <td style={{ fontFamily: "var(--mono)" }}>
-                  {previewRun.total_cost} EUR
+                  {previewRun.total_cost != null ? formatMoney(centsFromDecimal(previewRun.total_cost)) : "-"}
                 </td>
               </tr>
               <tr>
@@ -1322,7 +1319,7 @@ export function SettlementDetailPage() {
                       : "Saldo"}
                 </td>
                 <td style={{ fontFamily: "var(--mono)", fontWeight: 700 }}>
-                  {previewRun.balance} EUR
+                  {previewRun.balance != null ? formatMoney(centsFromDecimal(previewRun.balance)) : "-"}
                 </td>
               </tr>
             </tbody>
@@ -1333,7 +1330,7 @@ export function SettlementDetailPage() {
               className="btn"
               onClick={() => setShowPreview(false)}
             >
-              Vorschau schliessen
+              Vorschau schließen
             </button>
           </div>
         </div>
@@ -1341,11 +1338,11 @@ export function SettlementDetailPage() {
 
       {!!run.vacancy_attribution?.length && <section className="card" aria-label="Leerstand – Eigentümeranteile">
         <h2>Leerstand – Eigentümeranteile</h2>
-        <p className="hint">Aus der gespeicherten Berechnung. Diese Anteile verbleiben beim Eigentümer.</p>
+        <p className="muted">Aus der gespeicherten Berechnung. Diese Anteile verbleiben beim Eigentümer.</p>
         <ul className="space-y-3">{run.vacancy_attribution.map((share, index) => <li key={index}>
           <strong>Einheit {share.unit_number} · {share.cost_label}</strong>
           <div>{share.person_days.toLocaleString('de-DE')} Personentage · {share.days.toLocaleString('de-DE')} Tage</div>
-          <div className="font-semibold tabular-nums">{formatEuro(share.amount)} (Eigentümer)</div>
+          <div className="font-semibold tabular-nums">{formatMoney(centsFromDecimal(share.amount))} (Eigentümer)</div>
         </li>)}</ul>
       </section>}
 

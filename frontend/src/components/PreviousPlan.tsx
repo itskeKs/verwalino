@@ -4,6 +4,7 @@ import { api, ApiError } from "../api/client";
 import { createPreviousPlan, normalizePlanAmount, previewPreviousPlan, sumPlanAmounts } from "../api/previousPlan";
 import type { PreviousPlanInput, PreviousPlanPreview } from "../api/previousPlan";
 import { AuthCtx } from "../auth/useAuth";
+import { centsFromDecimal, formatDate, formatMoney } from "../lib/format";
 import { AccountingScopeSelector } from "./AccountingScopeSelector";
 
 interface PropertyChoice { id: string; name: string; management_type: string }
@@ -156,7 +157,7 @@ export function PreviousPlan({ properties }: { properties: PropertyChoice[] }) {
       </fieldset>
       {busy && <p role="status">{creating ? "Plan wird angelegt…" : "Vorjahres-Ist wird geprüft…"}</p>}
       {current && <section aria-label="Vorjahresvorschlag">
-        <h3>Ist-Kosten {current.data.source_year}</h3><p>{current.data.period_start} bis {current.data.period_end}</p>
+        <h3>Ist-Kosten {current.data.source_year}</h3><p>{formatDate(current.data.period_start)} bis {formatDate(current.data.period_end)}</p>
         <p>{current.data.footnote}</p>
         <fieldset disabled={busy || uncertain} style={{ border: 0, padding: 0 }}>
           <table className="data-table"><thead><tr><th>Kategorie</th><th>Verteilerschlüssel</th><th>Jahresbetrag (EUR)</th></tr></thead><tbody>{current.data.planned_costs.map((row, i) => <tr key={row.category_id}>
@@ -165,12 +166,12 @@ export function PreviousPlan({ properties }: { properties: PropertyChoice[] }) {
           </tr>)}</tbody></table>
           <label>Rücklagenzuführung – Vorschlag<input inputMode="decimal" value={reserve} onChange={e => { setConfirming(false); setReserve(e.target.value); }} /></label>
           {!moneyValid && <p role="alert">Beträge vollständig als nichtnegative Dezimalbeträge mit höchstens zwei Nachkommastellen angeben.</p>}
-          {moneyValid && <><p>Kosten ohne Rücklage: {costTotal} EUR</p><p>Kosten und Rücklage: {total} EUR</p></>}
+          {moneyValid && costTotal !== null && total !== null && <><p>Kosten ohne Rücklage: {formatMoney(centsFromDecimal(costTotal))}</p><p>Kosten und Rücklage: {formatMoney(centsFromDecimal(total))}</p></>}
           <button type="button" className="btn btn--primary" disabled={!inputValid || !moneyValid || busy || uncertain} onClick={() => setConfirming(true)}>Plan aus Vorjahr anlegen</button>
         </fieldset>
       </section>}
-      {confirming && current && <div role="dialog" aria-modal="true" aria-label="Plan aus Vorjahr anlegen" className="card">
-        <h3>Plan aus Vorjahr anlegen</h3><p>Entwurf für {planYear} mit {total} EUR einschließlich Rücklage anlegen? Es erfolgt keine Berechnung oder Bestätigung.</p>
+      {confirming && current && total !== null && <div role="dialog" aria-modal="true" aria-label="Plan aus Vorjahr anlegen" className="card">
+        <h3>Plan aus Vorjahr anlegen</h3><p>Entwurf für {planYear} mit {formatMoney(centsFromDecimal(total))} einschließlich Rücklage anlegen? Es erfolgt keine Berechnung oder Bestätigung.</p>
         <button className="btn btn--primary" disabled={busy} onClick={() => void create()}>Plan aus Vorjahr anlegen</button>
         <button className="btn" onClick={() => setConfirming(false)}>Abbrechen</button>
       </div>}

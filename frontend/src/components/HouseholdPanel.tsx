@@ -1,9 +1,9 @@
 import { useEffect, useRef, useState } from 'react';
 import { getUnitHousehold, replaceUnitHousehold } from '../api/endpoints';
 import type { UnitHouseholdRow } from '../api/types';
+import { formatDate } from "../lib/format";
 
 interface DraftRow { valid_from: string; persons: string; is_vacancy: boolean }
-const germanDate = (value: string) => value.split('-').reverse().join('.');
 
 export function HouseholdPanel({ unitId, canWrite }: { unitId: string; canWrite: boolean }) {
   const [rows, setRows] = useState<UnitHouseholdRow[]>([]);
@@ -51,8 +51,8 @@ export function HouseholdPanel({ unitId, canWrite }: { unitId: string; canWrite:
 
   return <section className="card" aria-label="Personen im Haushalt">
     <h2>Personen im Haushalt</h2>
-    <p className="hint">Belegung und Leerstand werden getrennt erfasst. Die Personenzahl gilt ab dem eingetragenen Datum bis zur nächsten Änderung derselben Art. Fehlende Angaben verhindern die Verteilung nach Personen.</p>
-    <p className="hint">Für Leerstand wird 1 Person vorgeschlagen. Erst Speichern übernimmt den Wert; der Leerstandsanteil verbleibt beim Eigentümer.</p>
+    <p className="muted">Belegung und Leerstand werden getrennt erfasst. Die Personenzahl gilt ab dem eingetragenen Datum bis zur nächsten Änderung derselben Art. Fehlende Angaben verhindern die Verteilung nach Personen.</p>
+    <p className="muted">Für Leerstand wird 1 Person vorgeschlagen. Erst Speichern übernimmt den Wert; der Leerstandsanteil verbleibt beim Eigentümer.</p>
     {error && <p className="error-text" role="alert">{error}</p>}
     {status && <p role="status">{status}</p>}
     {loading ? <p>Haushalt wird geladen …</p> : editing ? <form onSubmit={save}>
@@ -72,13 +72,13 @@ export function HouseholdPanel({ unitId, canWrite }: { unitId: string; canWrite:
         <div className="flex flex-wrap gap-2">
           <button type="button" className="btn" onClick={() => setDraft(previous => [...previous, { valid_from: '', persons: '', is_vacancy: false }])}>Belegung hinzufügen</button>
           <button type="button" className="btn" onClick={() => setDraft(previous => [...previous, { valid_from: '', persons: '1', is_vacancy: true }])}>Leerstand hinzufügen</button>
-          <button type="submit" className="btn btn-primary">{saving ? 'Haushalt wird gespeichert …' : 'Haushalt speichern'}</button>
+          <button type="submit" className="btn btn--primary">{saving ? 'Haushalt wird gespeichert …' : 'Haushalt speichern'}</button>
           <button type="button" className="btn" onClick={() => { setEditing(false); setError(null); }}>Abbrechen</button>
         </div>
       </fieldset>
     </form> : <>
       {rows.length ? <ul className="mb-3 space-y-1">{rows.map(r => <li key={`${r.is_vacancy}:${r.valid_from}`}>
-        {r.is_vacancy ? 'Leerstand: ' : ''}{r.persons.toLocaleString('de-DE')} {r.persons === 1 ? 'Person' : 'Personen'} ab {germanDate(r.valid_from)}
+        {r.is_vacancy ? 'Leerstand: ' : ''}{r.persons.toLocaleString('de-DE')} {r.persons === 1 ? 'Person' : 'Personen'} ab {formatDate(r.valid_from)}
       </li>)}</ul> : !error && <p>Keine Haushaltsangaben gespeichert.</p>}
       {error ? <button type="button" className="btn" onClick={() => setRetry(value => value + 1)}>Haushalt erneut laden</button> : canWrite && <button type="button" className="btn" onClick={() => {
         setDraft(rows.map(r => ({ ...r, persons: String(r.persons) }))); setEditing(true); setStatus(null);

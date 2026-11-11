@@ -1,3 +1,4 @@
+import { formatDate, formatDateTime } from "../lib/format";
 import { useEffect, useRef, useState } from "react";
 import { listProperties } from "../api/endpoints";
 import {
@@ -178,7 +179,7 @@ export function LettersPage() {
         {history.error && <div role="alert"><p className="error-text">{history.error}</p><button className="btn" disabled={!!busy} onClick={() => { setHistory({ propertyId, documents: [], loading: true, error: null }); setHistoryReload(value => value + 1); }}>Historie erneut laden</button></div>}
         {!history.loading && !history.error && history.documents.length === 0 && <p>Noch keine Briefe für dieses Objekt.</p>}
         {history.documents.length > 0 && <div style={{ overflowX: "auto" }}><table className="data-table"><thead><tr><th>Empfänger</th><th>Betreff</th><th>Stichtag</th><th>Erstellt</th><th>Dokument</th></tr></thead><tbody>
-          {history.documents.map(item => <tr key={item.id}><td>{item.recipient_name}</td><td>{item.subject}</td><td>{item.as_of}</td><td>{new Date(item.created_at).toLocaleString("de-DE")}</td><td><a href={item.pdf_url} target="_blank" rel="noopener noreferrer" aria-label={`PDF für ${item.recipient_name}`}>PDF öffnen</a></td></tr>)}
+          {history.documents.map(item => <tr key={item.id}><td>{item.recipient_name}</td><td>{item.subject}</td><td>{formatDate(item.as_of)}</td><td>{formatDateTime(item.created_at)}</td><td><a href={item.pdf_url} target="_blank" rel="noopener noreferrer" aria-label={`PDF für ${item.recipient_name}`}>PDF öffnen</a></td></tr>)}
         </tbody></table></div>}
       </>}
     </section>

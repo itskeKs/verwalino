@@ -1,3 +1,4 @@
+import { formatDate } from "../lib/format";
 import { formatUploadLimit, useUploadLimit } from "../lib/uploads";
 import { useCallback, useEffect, useId, useRef, useState } from "react";
 import { archiveAttachment, attachmentDownloadUrl, listAttachments, listProperties, uploadAttachment } from "../api/endpoints";
@@ -198,7 +199,7 @@ function AttachmentContext({ propertyId, unitId, personId, canWrite }: Props) {
       {items.map((item) => <li key={item.id}>
         <strong>{item.title || item.original_filename}</strong>
         {item.title && <span> · {item.original_filename}</span>}
-        <span> · {new Intl.NumberFormat("de-DE").format(item.content_byte_size)} Bytes · {new Date(item.created_at).toLocaleDateString("de-DE")}</span>
+        <span> · {new Intl.NumberFormat("de-DE").format(item.content_byte_size)} Bytes · {formatDate(item.created_at)}</span>
         {item.archived_at && <span> · Archiviert: {item.archive_reason}</span>}
         <div className="form-actions">
           <button type="button" className="btn" onClick={() => window.open(attachmentDownloadUrl(item.id, INLINE_TYPES.has(item.mime_type)), "_blank", "noopener,noreferrer")}>Öffnen</button>

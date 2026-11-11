@@ -216,7 +216,7 @@ async def saved_statement_opens(browser_world):
     assert detail["status"] == "draft"
     await expect(browser_world.page).to_have_url(f"{browser_world.session.base_url}/abrechnungen/{run_id}")
     await browser_world.row("Mieter", "Periodentest")
-    await browser_world.row("Zeitraum", "2025-01-01 bis 2025-09-30")
+    await browser_world.row("Zeitraum", "01.01.2025 bis 30.09.2025")
 
 
 @when("the manager repeats A's January through September statement")

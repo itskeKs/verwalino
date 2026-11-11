@@ -1,3 +1,4 @@
+import { formatDateTime } from "../lib/format";
 import { useEffect, useState } from "react";
 import { Link, NavLink, Outlet } from "react-router-dom";
 import { api } from "../api/client";
@@ -78,7 +79,7 @@ function Overview() {
     <Card><CardHeader><h2>Offene Punkte im Bestand</h2><p className="text-sm text-muted-foreground">Kategorien können sich überschneiden. Diese Zahlen bestätigen keine Freigabe oder vollständige Prüfung.</p></CardHeader><CardContent>
       {inventoryError && <p role="alert" className="error-text">Die Bestandszahlen sind nicht verfügbar. Bitte erneut laden.</p>}
       {inventory && <>
-        <p className="mb-4 text-sm text-muted-foreground">Stand: {new Date(inventory.generated_at).toLocaleString("de-DE")}</p>
+        <p className="mb-4 text-sm text-muted-foreground">Stand: {formatDateTime(inventory.generated_at)}</p>
         <dl className="grid gap-x-8 gap-y-3 lg:grid-cols-2">{metrics.map(([key, label]) => <div key={key} className="flex min-w-0 items-start justify-between gap-4"><dt>{label}</dt><dd className="shrink-0 font-semibold tabular-nums">{inventory.counts[key].toLocaleString("de-DE")}</dd></div>)}</dl>
       </>}
     </CardContent></Card>

@@ -8,6 +8,7 @@
 import { useEffect, useState, useCallback, useRef } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import { useAuth } from "../auth/useAuth";
+import { formatIban } from "../lib/format";
 import {
   listBankAccounts,
   createBankAccount,
@@ -21,7 +22,7 @@ import { AccountingScopeSelector } from "../components/AccountingScopeSelector";
 
 const ACCOUNT_TYPE_LABELS: Record<string, string> = {
   LAUFEND: "Laufendes Konto",
-  RUECKLAGE: "Ruecklage",
+  RUECKLAGE: "Rücklage",
   KAUTION: "Kaution",
 };
 
@@ -33,7 +34,7 @@ const ACCOUNT_TYPE_CSS: Record<string, string> = {
 
 const ACCOUNT_TYPE_OPTIONS: { value: BankAccountType; label: string }[] = [
   { value: "LAUFEND", label: "Laufendes Konto" },
-  { value: "RUECKLAGE", label: "Ruecklage" },
+  { value: "RUECKLAGE", label: "Rücklage" },
   { value: "KAUTION", label: "Kaution" },
 ];
 
@@ -296,7 +297,7 @@ function BankAccounts() {
                     </span>
                   </td>
                   <td style={{ fontFamily: "var(--mono)", fontSize: "0.85rem" }}>
-                    {a.iban ?? "-"}
+                    {a.iban ? formatIban(a.iban) : "-"}
                   </td>
                   <td>{a.bank_name ?? "-"}</td>
                   <td>

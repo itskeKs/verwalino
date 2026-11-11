@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { listSettlementPeriods } from "../api/endpoints";
 import type { LeaseRecord, SettlementPeriod } from "../api/types";
+import { formatDate } from "../lib/format";
 
 /** Dates come from the backend's property-period function; free dates remain possible. */
 export function SettlementPeriodSelect({ propertyId, year, start, end, lease, onSelect }: {
@@ -44,7 +45,7 @@ export function SettlementPeriodSelect({ propertyId, year, start, end, lease, on
       }}>
         <option value="">Freier Zeitraum</option>
         {periods.map(p => <option key={p.year} value={p.period_start}>{p.label}{leaseStart
-          ? ` · ${p.period_start.split("-").reverse().join(".")} – ${p.period_end.split("-").reverse().join(".")}` : ""}</option>)}
+          ? ` · ${formatDate(p.period_start)} – ${formatDate(p.period_end)}` : ""}</option>)}
       </select>
     </label>
     {error && <p role="alert" className="error-text">{error}</p>}

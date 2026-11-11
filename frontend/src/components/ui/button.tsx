@@ -1,12 +1,11 @@
 import { type ButtonHTMLAttributes, forwardRef } from "react";
 import { cn } from "../../lib/utils";
 
-type Variant = "primary" | "secondary" | "outline" | "ghost" | "destructive";
-type Size = "sm" | "md" | "lg" | "icon";
+type Variant = "primary" | "outline" | "ghost" | "destructive";
+type Size = "sm" | "md" | "lg";
 
 const VARIANTS: Record<Variant, string> = {
   primary: "bg-primary text-primary-foreground hover:bg-primary/90 shadow-sm",
-  secondary: "bg-secondary text-secondary-foreground hover:bg-secondary/70",
   outline:
     "border border-border bg-card text-foreground hover:bg-accent hover:text-accent-foreground",
   ghost: "text-foreground hover:bg-accent hover:text-accent-foreground",
@@ -18,7 +17,6 @@ const SIZES: Record<Size, string> = {
   sm: "h-8 px-3 text-xs",
   md: "h-9 px-4 text-sm",
   lg: "h-11 px-6 text-sm",
-  icon: "h-9 w-9",
 };
 
 export interface ButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {

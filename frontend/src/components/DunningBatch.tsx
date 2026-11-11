@@ -6,6 +6,7 @@ import type { DunningBatchCreate, DunningBatchInput, DunningBatchPreview } from 
 import type { DunningNotice } from "../api/types";
 import { useAuth } from "../auth/useAuth";
 import { AccountingScopeSelector } from "./AccountingScopeSelector";
+import { centsFromDecimal, formatDate, formatMoney } from "../lib/format";
 
 interface Props {
   periodStart: string;
@@ -171,7 +172,7 @@ export function DunningBatch({ periodStart, periodEnd, properties }: Props) {
       <button type="button" disabled={!inputValid || busy || !!pending} onClick={() => void loadPreview()}>Mahnlauf prüfen</button>
       {error && <p role="alert" className="error-text">{error}</p>}
       {pending && <div>
-        <p>Gespeicherter Auftrag: {pending.body.lease_agreement_ids.length} Mahnentwürfe; Zeitraum {pending.body.period_start} bis {pending.body.period_end}, Stichtag {pending.body.reference_date}. Eingaben bleiben bis zur Klärung gesperrt.</p>
+        <p>Gespeicherter Auftrag: {pending.body.lease_agreement_ids.length} Mahnentwürfe; Zeitraum {formatDate(pending.body.period_start)} bis {formatDate(pending.body.period_end)}, Stichtag {formatDate(pending.body.reference_date)}. Eingaben bleiben bis zur Klärung gesperrt.</p>
         <button type="button" disabled={busy || pending.session !== sessionKey} onClick={() => void createDrafts(true)}>Identischen Auftrag erneut versuchen</button>
         {pending.session !== sessionKey && <p role="alert">Der ungewisse Auftrag gehört zu einer anderen Sitzung. Bitte zuerst mit der ursprünglichen Sitzung klären.</p>}
       </div>}
@@ -182,12 +183,12 @@ export function DunningBatch({ periodStart, periodEnd, properties }: Props) {
         <table className="data-table"><thead><tr><th>Auswahl / Mieter</th><th>Objekt / Einheit</th><th>Hauptforderung</th><th>Gebühr</th><th>Zinsen</th><th>Gesamt</th><th>Stufe</th></tr></thead><tbody>
           {currentPreview.data.candidates.map(row => <tr key={row.lease_agreement_id}>
             <td><label><input type="checkbox" checked={selected.includes(row.lease_agreement_id)} onChange={e => { setConfirming(false); setSelected(e.target.checked ? [...selected, row.lease_agreement_id] : selected.filter(id => id !== row.lease_agreement_id)); }} />{row.person_name} · Mietvertrag {row.lease_agreement_id}</label></td>
-            <td>{row.property_name} / {row.unit_number}</td><td>{row.principal_amount} EUR</td><td>{row.fee_amount} EUR</td><td>{row.interest_amount} EUR</td><td>{row.total_amount} EUR</td><td>{row.level}</td>
+            <td>{row.property_name} / {row.unit_number}</td><td>{formatMoney(centsFromDecimal(row.principal_amount))}</td><td>{formatMoney(centsFromDecimal(row.fee_amount))}</td><td>{formatMoney(centsFromDecimal(row.interest_amount))}</td><td>{formatMoney(centsFromDecimal(row.total_amount))}</td><td>{row.level}</td>
           </tr>)}
         </tbody></table>
         <button type="button" disabled={!chosen.length || busy} onClick={() => setConfirming(true)}>Auswahl bestätigen</button>
         {confirming && chosen.length > 0 && <div role="dialog" aria-modal="true" aria-label="Mahnentwürfe anlegen">
-          <h3>Mahnentwürfe anlegen</h3><p>{chosen.length} Mahnentwürfe: Hauptforderung {principal} EUR; Gesamtsumme {total} EUR.</p>
+          <h3>Mahnentwürfe anlegen</h3><p>{chosen.length} Mahnentwürfe: Hauptforderung {formatMoney(centsFromDecimal(principal))}; Gesamtsumme {formatMoney(centsFromDecimal(total))}.</p>
           <p>Nur Entwürfe, keine Ausstellung und kein Versand.</p>
           <button type="button" disabled={busy} onClick={() => void createDrafts()}>Mahnentwürfe anlegen</button>
           <button type="button" onClick={() => setConfirming(false)}>Abbrechen</button>

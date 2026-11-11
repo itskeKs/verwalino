@@ -4,25 +4,18 @@ import type { AnlageVSummary, Property, PropertyYearReport, PropertyYearReportQu
 import { AccountingScopeSelector } from "../components/AccountingScopeSelector";
 import { DatevExport } from "../components/DatevExport";
 import { APPORTIONABILITY_LABELS, fromDbApportionability } from "../lib/costVocabulary";
+import { centsFromDecimal, formatDate, formatMoney } from "../lib/format";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "../components/ui/card";
 import { Button } from "../components/ui/button";
+import { PAYMENT_TYPE_LABELS } from "../lib/paymentTypes";
 
-const PAYMENT_TYPE_LABELS: Record<string, string> = {
-  KALTMIETE: "Kaltmiete",
-  NK_VORAUSZAHLUNG: "Betriebskosten-Vorauszahlung", HK_VORAUSZAHLUNG: "Heizkosten-Vorauszahlung",
+const REPORT_PAYMENT_TYPE_LABELS: Record<string, string> = {
+  ...PAYMENT_TYPE_LABELS,
   KAUTION: "Kaution (durchlaufend)",
   RUECKLAGENENTNAHME: "Rücklagenentnahme (durchlaufend)",
   NACHZAHLUNG: "Nachzahlung (Mieter)",
-  HAUSGELD_VORSCHUSS: "Hausgeld-Vorschuss",
-  RUECKLAGENANTEIL: "Ruecklagenanteil",
-  SONDERZAHLUNG: "Sonder-/Nachzahlung",
 };
 
-// Aggregates may exceed both Numeric(14,2) and JavaScript's exact number range.
-function money(value: string): string {
-  const [integer, cents] = value.split(".");
-  return `${integer.replace(/\B(?=(\d{3})+(?!\d))/g, ".")},${cents} EUR`;
-}
 function message(error: unknown): string {
   return error instanceof Error ? error.message : "Die Übersicht konnte nicht geladen werden. Bitte erneut versuchen.";
 }
@@ -69,7 +62,6 @@ function AnlageVPanel({ query }: { query: PropertyYearReportQuery }) {
       if (state.mounted) setDownloading(false);
     }
   }
-  const euros = (value: string) => money(value).replace(/ EUR$/, " €");
   return <section aria-label="Anlage V" className="mt-6 min-w-0">
     <Card>
       <CardHeader>
@@ -88,7 +80,7 @@ function AnlageVPanel({ query }: { query: PropertyYearReportQuery }) {
               <thead><tr><th scope="col">Zuordnung</th><th scope="col">Betrag</th></tr></thead>
               <tbody>{summary.lines.filter(row => row.section === section).map(row => <tr key={row.key}>
                 <th scope="row" className="text-left font-normal"><span className="text-sm font-normal normal-case tracking-normal text-foreground">{row.label}</span><p className="text-sm text-muted-foreground font-normal normal-case tracking-normal whitespace-normal">{row.note}</p></th>
-                <td className="tabular-nums whitespace-nowrap">{euros(row.amount)}</td>
+                <td className="tabular-nums whitespace-nowrap">{formatMoney(centsFromDecimal(row.amount))}</td>
               </tr>)}</tbody>
             </table></div>
           </div>)}
@@ -96,7 +88,7 @@ function AnlageVPanel({ query }: { query: PropertyYearReportQuery }) {
             <h4 className="mb-2 font-semibold">Nicht zugeordnet</h4>
             {summary.unmapped.length === 0 ? <p>Keine nicht zugeordneten Beträge vorhanden.</p> : <ul className="space-y-3">
               {summary.unmapped.map((row, index) => <li key={`${row.section}-${row.code}-${index}`} className="break-words">
-                <span>{row.label}</span> <span className="text-sm">({row.code}, {row.section})</span> · <span className="tabular-nums whitespace-nowrap">{euros(row.amount)}</span>
+                <span>{row.label}</span> <span className="text-sm">({row.code}, {row.section})</span> · <span className="tabular-nums whitespace-nowrap">{formatMoney(centsFromDecimal(row.amount))}</span>
                 <p className="text-sm text-muted-foreground">{row.note}</p>
               </li>)}
             </ul>}
@@ -105,7 +97,7 @@ function AnlageVPanel({ query }: { query: PropertyYearReportQuery }) {
             <caption className="text-left font-semibold">Abgleich mit der Jahresübersicht</caption>
             <thead><tr><th scope="col">Bereich</th><th scope="col">Zugeordnet</th><th scope="col">Nicht zugeordnet</th><th scope="col">Jahresübersicht</th><th scope="col">Differenz</th></tr></thead>
             <tbody>{summary.reconciliation.map(row => <tr key={row.section}><th scope="row">{row.section}</th>
-              {[row.mapped_total, row.unmapped_total, row.report_total, row.difference].map((value, index) => <td key={index} className="tabular-nums whitespace-nowrap">{euros(value)}</td>)}
+              {[row.mapped_total, row.unmapped_total, row.report_total, row.difference].map((value, index) => <td key={index} className="tabular-nums whitespace-nowrap">{formatMoney(centsFromDecimal(value))}</td>)}
             </tr>)}</tbody>
           </table></div>
           <a href={anlageVCsvUrl(query)} className="link" aria-disabled={downloading} onClick={event => { event.preventDefault(); void download(); }}>Anlage V als CSV herunterladen</a>
@@ -235,23 +227,23 @@ export function ReportsPage() {
     {error && <p role="alert" className="error-text">{error}</p>}
     {report && <section aria-label="Jahresübersicht">
       <h2>{report.property_name} · {report.year}</h2>
-      <p>Zeitraum: {report.period_start} – {report.period_end}</p>
+      <p>Zeitraum: {formatDate(report.period_start)} – {formatDate(report.period_end)}</p>
       <p>Einnahmen nach Wertstellungsdatum.</p>
       <p>Ausgaben nach Rechnungsdatum, bestätigte Bruttokosten.</p>
       <div className="overflow-x-auto">
         <table aria-label="Einnahmen"><thead><tr><th scope="col">Zahlungstyp</th><th scope="col">Betrag (EUR)</th></tr></thead><tbody>
-          {report.income.map(row => <tr key={row.payment_type}><td>{PAYMENT_TYPE_LABELS[row.payment_type] ?? `Unbekannter Zahlungstyp (${row.payment_type})`}</td><td>{money(row.amount)}</td></tr>)}
+          {report.income.map(row => <tr key={row.payment_type}><td>{REPORT_PAYMENT_TYPE_LABELS[row.payment_type] ?? `Unbekannter Zahlungstyp (${row.payment_type})`}</td><td>{formatMoney(centsFromDecimal(row.amount))}</td></tr>)}
         </tbody></table>
       </div>
       {report.income.length === 0 && <p>Keine Einnahmen im Zeitraum.</p>}
       <div className="overflow-x-auto">
         <table aria-label="Ausgaben"><thead><tr><th scope="col">Kategorie</th><th scope="col">Code</th><th scope="col">Umlagefähigkeit</th><th scope="col">Betrag (EUR)</th></tr></thead><tbody>
-          {report.expenses.map((row, index) => <tr key={`${row.category_id}-${row.tenant_apportionability}-${index}`}><td>{row.category_name}</td><td>{row.category_code}</td><td>{APPORTIONABILITY_LABELS[fromDbApportionability(row.tenant_apportionability)] ?? "Umlagefähigkeit unbekannt"}</td><td>{money(row.amount)}</td></tr>)}
+          {report.expenses.map((row, index) => <tr key={`${row.category_id}-${row.tenant_apportionability}-${index}`}><td>{row.category_name}</td><td>{row.category_code}</td><td>{APPORTIONABILITY_LABELS[fromDbApportionability(row.tenant_apportionability)] ?? "Umlagefähigkeit unbekannt"}</td><td>{formatMoney(centsFromDecimal(row.amount))}</td></tr>)}
         </tbody></table>
       </div>
       {report.expenses.length === 0 && <p>Keine Ausgaben im Zeitraum.</p>}
-      <dl><dt>Einnahmen</dt><dd>{money(report.income_total)}</dd><dt>Ausgaben</dt><dd>{money(report.expense_total)}</dd><dt>Saldo</dt><dd>{money(report.balance)}</dd></dl>
-      <p>Teilweise umlagefaehige Kosten erfordern eine Prüfung; es erfolgt keine automatische Aufteilung.</p>
+      <dl><dt>Einnahmen</dt><dd>{formatMoney(centsFromDecimal(report.income_total))}</dd><dt>Ausgaben</dt><dd>{formatMoney(centsFromDecimal(report.expense_total))}</dd><dt>Saldo</dt><dd>{formatMoney(centsFromDecimal(report.balance))}</dd></dl>
+      <p>Teilweise umlagefähige Kosten erfordern eine Prüfung; es erfolgt keine automatische Aufteilung.</p>
       <p>{report.footnote}</p>
       <button type="button" disabled={downloading} onClick={() => void downloadCsv()}>{downloading ? "CSV wird geladen…" : "CSV herunterladen"}</button>
       {downloadError && <p role="alert" className="error-text">{downloadError}</p>}

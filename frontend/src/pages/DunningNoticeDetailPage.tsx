@@ -3,7 +3,7 @@
  * download PDF (issued only). GoBD-compliant: issued notices are immutable.
  *
  * M7 Mahnwesen: dunning notice lifecycle with GoBD immutability.
- * Shows included items (Rueckstandsaufstellung), amounts breakdown,
+ * Shows included items (Rückstandsaufstellung), amounts breakdown,
  * and status-dependent actions.
  */
 
@@ -24,9 +24,10 @@ import type {
   OwnerProfile,
   Person,
 } from "../api/types";
-import { formatEuro } from "../lib/utils";
+import { centsFromDecimal, formatDate, formatDateTime, formatMoney } from "../lib/format";
 import { ApiError } from "../api/client";
 import { MailDispatch } from "../components/MailDispatch";
+import { PAYMENT_TYPE_LABELS } from "../lib/paymentTypes";
 
 const STATUS_LABELS: Record<string, string> = {
   draft: "Entwurf",
@@ -43,15 +44,6 @@ const LEVEL_LABELS: Record<number, string> = {
   1: "Zahlungserinnerung",
   2: "Mahnung",
   3: "Letzte Mahnung",
-};
-
-const PAYMENT_TYPE_LABELS: Record<string, string> = {
-  KALTMIETE: "Kaltmiete",
-  NK_VORAUSZAHLUNG: "Betriebskosten-Vorauszahlung", HK_VORAUSZAHLUNG: "Heizkosten-Vorauszahlung",
-  KAUTION: "Kaution",
-  HAUSGELD_VORSCHUSS: "Hausgeld-Vorschuss",
-  RUECKLAGENANTEIL: "Ruecklagenanteil",
-  SONDERZAHLUNG: "Sonder-/Nachzahlung",
 };
 
 export function DunningNoticeDetailPage() {
@@ -118,7 +110,7 @@ export function DunningNoticeDetailPage() {
     }
     if (notice.owner_profile_id) {
       const op = ownerProfiles.find((o) => o.id === notice.owner_profile_id);
-      return op ? `Eigentuemer: ${getPersonName(op.person_id)}` : "-";
+      return op ? `Eigentümer: ${getPersonName(op.person_id)}` : "-";
     }
     return "-";
   }
@@ -131,7 +123,7 @@ export function DunningNoticeDetailPage() {
   async function handleIssue() {
     if (!dunningId) return;
     const confirmed = window.confirm(
-      "Mahnung ausgeben? Nach der Ausgabe ist die Mahnung unveraenderbar (GoBD). " +
+      "Mahnung ausgeben? Nach der Ausgabe ist die Mahnung unveränderbar (GoBD). " +
         "Der Entwurf wird endgültig als Mahnung gespeichert. Die Ausstellung weist keine Zustellung nach.",
     );
     if (!confirmed) return;
@@ -146,7 +138,7 @@ export function DunningNoticeDetailPage() {
         if (err.status === 409) {
           setActionError(
             "Fehler: Die Mahnung kann in diesem Status nicht ausgegeben werden. " +
-              "Moeglicherweise wurde sie bereits ausgegeben.",
+              "Möglicherweise wurde sie bereits ausgegeben.",
           );
         } else {
           setActionError(err.message);
@@ -177,7 +169,7 @@ export function DunningNoticeDetailPage() {
         if ([401, 403, 404].includes(err.status)) { setNotice(null); setError(err.message); }
         if (err.status === 409) {
           setActionError(
-            "Fehler: Ausgestellte Mahnungen koennen nicht geloescht werden (GoBD).",
+            "Fehler: Ausgestellte Mahnungen können nicht gelöscht werden (GoBD).",
           );
         } else {
           setActionError(err.message);
@@ -202,10 +194,7 @@ export function DunningNoticeDetailPage() {
   if (!notice) return <p className="error-text">Mahnung nicht gefunden.</p>;
 
   const includedItems = notice.included_items ?? [];
-  const issuedAt = notice.issued_at ? new Date(notice.issued_at).toLocaleString("de-DE", {
-    timeZone: "Europe/Berlin", day: "2-digit", month: "2-digit", year: "numeric",
-    hour: "2-digit", minute: "2-digit",
-  }) : null;
+  const issuedAt = notice.issued_at ? formatDateTime(notice.issued_at) : null;
 
   return (
     <div>
@@ -259,7 +248,7 @@ export function DunningNoticeDetailPage() {
             borderColor: "#ffcc02",
           }}
         >
-          <strong>GoBD:</strong> Diese Mahnung ist ausgestellt und unveraenderbar.
+          <strong>GoBD:</strong> Diese Mahnung ist ausgestellt und unveränderbar.
           Die gespeicherten Inhalte dürfen nicht nachträglich geändert werden. Die Ausstellung allein ist kein Zustellnachweis.
           {notice.issued_at && (
             <div style={{ marginTop: "0.25rem", fontSize: "0.82rem" }}>
@@ -271,11 +260,11 @@ export function DunningNoticeDetailPage() {
 
       {/* Detail card */}
       <div className="card" style={{ marginBottom: "1.5rem" }}>
-        <h2>Uebersicht</h2>
+        <h2>Übersicht</h2>
         <table className="info-table">
           <tbody>
             <tr>
-              <td>Empfaenger</td>
+              <td>Empfänger</td>
               <td>{getRecipientLabel()}</td>
             </tr>
             <tr>
@@ -286,11 +275,11 @@ export function DunningNoticeDetailPage() {
             </tr>
             <tr>
               <td>Ausstellungsdatum</td>
-              <td>{notice.issue_date}</td>
+              <td>{formatDate(notice.issue_date)}</td>
             </tr>
             <tr>
               <td>Zahlungsfrist</td>
-              <td>{notice.due_date}</td>
+              <td>{formatDate(notice.due_date)}</td>
             </tr>
             <tr>
               <td>Status</td>
@@ -318,11 +307,11 @@ export function DunningNoticeDetailPage() {
 
       {/* Amounts summary */}
       <div className="card" style={{ marginBottom: "1.5rem" }}>
-        <h2>Betraege</h2>
+        <h2>Beträge</h2>
         <table className="info-table">
           <tbody>
             <tr>
-              <td>Hauptforderung (Rueckstand)</td>
+              <td>Hauptforderung (Rückstand)</td>
               <td
                 style={{
                   fontFamily: "var(--mono)",
@@ -330,18 +319,18 @@ export function DunningNoticeDetailPage() {
                   fontSize: "1.05rem",
                 }}
               >
-                {notice.principal_amount} EUR
+                {formatMoney(centsFromDecimal(notice.principal_amount))}
               </td>
             </tr>
             <tr>
               <td>Mahngebühr</td>
               <td style={{ fontFamily: "var(--mono)" }}>
-                {notice.fee_amount} EUR
+                {formatMoney(centsFromDecimal(notice.fee_amount))}
               </td>
             </tr>
             {(notice.interest_snapshot || notice.interest_amount !== undefined) && <tr>
               <td>Verzugszinsen</td>
-              <td style={{ fontFamily: "var(--mono)" }}>{notice.interest_amount} EUR</td>
+              <td style={{ fontFamily: "var(--mono)" }}>{formatMoney(centsFromDecimal(notice.interest_amount))}</td>
             </tr>}
             <tr>
               <td>
@@ -355,7 +344,7 @@ export function DunningNoticeDetailPage() {
                   color: "#b71c1c",
                 }}
               >
-                {notice.total_amount} EUR
+                {formatMoney(centsFromDecimal(notice.total_amount))}
               </td>
             </tr>
           </tbody>
@@ -370,19 +359,19 @@ export function DunningNoticeDetailPage() {
             <p>Basiszinssatz: {notice.interest_snapshot.base_interest_rate} %</p>
             <p>Jahreszinssatz: {notice.interest_snapshot.annual_rate} % (Basiszinssatz + 5 Prozentpunkte)</p>
           </>}
-        <p>Stichtag: <span>{notice.interest_snapshot.reference_date}</span></p>
-        <p className="form-hint">Gespeicherte Werte dieser Mahnung; keine Neuberechnung mit heutigen Zinssätzen.</p>
+        <p>Stichtag: <span>{formatDate(notice.interest_snapshot.reference_date)}</span></p>
+        <p className="muted">Gespeicherte Werte dieser Mahnung; keine Neuberechnung mit heutigen Zinssätzen.</p>
         <div style={{ overflowX: "auto" }}><table className="data-table">
           <thead><tr><th>Hauptforderung</th><th>Zinsen</th><th>Typ</th><th>Periode</th><th>Fälligkeit</th><th>Tage</th></tr></thead>
           <tbody>{notice.interest_snapshot.items.map((item, index) => <tr key={index}>
             <td className="whitespace-nowrap">
-              <span>{item.principal} EUR</span>
+              <span>{formatMoney(centsFromDecimal(item.principal))}</span>
               {item.interest_start && ["KALTMIETE", "NK_VORAUSZAHLUNG"].includes(item.payment_type) &&
-                <div className="text-xs font-normal">Zinsbeginn:<br />{item.interest_start.split("-").reverse().join(".")}</div>}
-            </td><td className="whitespace-nowrap">{item.interest} EUR</td>
+                <div className="text-xs font-normal">Zinsbeginn:<br />{formatDate(item.interest_start)}</div>}
+            </td><td className="whitespace-nowrap">{formatMoney(centsFromDecimal(item.interest))}</td>
             <td>{PAYMENT_TYPE_LABELS[item.payment_type] ?? item.payment_type}</td>
             <td>{item.period_year === null ? "-" : `${item.period_year}${item.period_month === null ? "" : `/${String(item.period_month).padStart(2, "0")}`}`}</td>
-            <td>{item.due_date}</td><td>{item.days}</td>
+            <td>{formatDate(item.due_date)}</td><td>{item.days}</td>
           </tr>)}</tbody>
         </table></div>
         {notice.interest_snapshot.premium && <div className="mt-4">
@@ -391,9 +380,9 @@ export function DunningNoticeDetailPage() {
             <thead><tr><th>Zinszeitraum</th><th>Zinsen</th><th>Hauptforderung</th><th>Jahreszinssatz</th><th>Basiszinssatz</th><th>Tage</th><th>Typ</th></tr></thead>
             <tbody>{notice.interest_snapshot.items.flatMap((item, index) => item.segments?.map(segment =>
               <tr key={`${index}-${segment.start}`}>
-                <td>{segment.start.split("-").reverse().join(".")} bis {segment.end.split("-").reverse().join(".")}</td>
-                <td className="whitespace-nowrap">{formatEuro(segment.interest)}</td>
-                <td className="whitespace-nowrap">{formatEuro(segment.principal)}</td>
+                <td>{formatDate(segment.start)} bis {formatDate(segment.end)}</td>
+                <td className="whitespace-nowrap">{formatMoney(centsFromDecimal(segment.interest))}</td>
+                <td className="whitespace-nowrap">{formatMoney(centsFromDecimal(segment.principal))}</td>
                 <td>{segment.annual_rate.replace(".", ",")} %</td>
                 <td>{segment.base_interest_rate.replace(".", ",")} %</td>
                 <td>{segment.days}</td>
@@ -403,10 +392,10 @@ export function DunningNoticeDetailPage() {
         </div>}
       </section>}
 
-      {/* Included items (Rueckstandsaufstellung) */}
+      {/* Included items (Rückstandsaufstellung) */}
       {includedItems.length > 0 && (
         <div className="card" style={{ marginBottom: "1.5rem" }}>
-          <h2>Rueckstandsaufstellung</h2>
+          <h2>Rückstandsaufstellung</h2>
           <div style={{ overflowX: "auto" }}>
             <table className="data-table">
               <thead>
@@ -432,7 +421,7 @@ export function DunningNoticeDetailPage() {
                           color: !hasOpenAmount ? undefined : item.open_amount.startsWith("-") ? "#2e7d32" : "#b71c1c",
                         }}
                       >
-                        {item.open_amount} EUR
+                        {formatMoney(centsFromDecimal(item.open_amount))}
                       </td>
                       <td
                         className="whitespace-nowrap"
@@ -441,7 +430,7 @@ export function DunningNoticeDetailPage() {
                           fontFamily: "var(--mono)",
                         }}
                       >
-                        {item.soll} EUR
+                        {formatMoney(centsFromDecimal(item.soll))}
                       </td>
                       <td
                         className="whitespace-nowrap"
@@ -450,7 +439,7 @@ export function DunningNoticeDetailPage() {
                           fontFamily: "var(--mono)",
                         }}
                       >
-                        {item.ist} EUR
+                        {formatMoney(centsFromDecimal(item.ist))}
                       </td>
                       <td>
                         {item.period_year
@@ -495,7 +484,7 @@ export function DunningNoticeDetailPage() {
               disabled={actionLoading}
               style={{ color: "#b71c1c" }}
             >
-              {notice.accounting_scope_id ? "Entwurf verwerfen" : "Entwurf loeschen"}
+              {notice.accounting_scope_id ? "Entwurf verwerfen" : "Entwurf löschen"}
             </button>
           </>
         )}

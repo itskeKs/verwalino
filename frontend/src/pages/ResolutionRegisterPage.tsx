@@ -17,7 +17,7 @@ import {
   listProperties,
 } from "../api/endpoints";
 import type { RegisterEntry, Property } from "../api/types";
-import { formatEuro } from "../lib/utils";
+import { centsFromDecimal, formatDate, formatMoney } from "../lib/format";
 import { ApiError } from "../api/client";
 
 export function ResolutionRegisterPage() {
@@ -127,7 +127,7 @@ export function ResolutionRegisterPage() {
     } catch (err) {
       if (err instanceof ApiError && err.status === 409) {
         setAnnotationError(
-          "Fehler: Dieser Eintrag kann nicht mehr geaendert werden.",
+          "Fehler: Dieser Eintrag kann nicht mehr geändert werden.",
         );
       } else if (err instanceof ApiError) {
         setAnnotationError(err.message);
@@ -178,7 +178,7 @@ export function ResolutionRegisterPage() {
           onChange={(e) => setFilter("property_id", e.target.value)}
           style={{ padding: "0.4rem 0.5rem", fontSize: "0.85rem" }}
         >
-          <option value="">-- WEG-Objekt waehlen --</option>
+          <option value="">-- WEG-Objekt wählen --</option>
           {wegProperties.map((p) => (
             <option key={p.id} value={p.id}>
               {p.name}
@@ -198,8 +198,8 @@ export function ResolutionRegisterPage() {
         }}
       >
         <strong>Hinweis (§ 24 VII WEG):</strong> Die Beschluss-Sammlung ist
-        unveraenderbar. Eintraege koennen nicht geloescht oder inhaltlich
-        geaendert werden. Nur ein Anfechtungs- oder Aufhebungsvermerk kann
+        unveränderbar. Einträge können nicht gelöscht oder inhaltlich
+        geändert werden. Nur ein Anfechtungs- oder Aufhebungsvermerk kann
         nachgetragen werden.
       </div>
 
@@ -219,14 +219,14 @@ export function ResolutionRegisterPage() {
 
       {!propertyFilter ? (
         <p className="empty-hint">
-          Bitte waehlen Sie ein WEG-Objekt, um dessen Beschluss-Sammlung
+          Bitte wählen Sie ein WEG-Objekt, um dessen Beschluss-Sammlung
           anzuzeigen.
         </p>
       ) : loading ? (
         <p>Lade...</p>
       ) : entries.length === 0 ? (
         <p className="empty-hint">
-          Keine Eintraege in der Beschluss-Sammlung fuer{" "}
+          Keine Einträge in der Beschluss-Sammlung für{" "}
           {getPropertyName(propertyFilter)}.
         </p>
       ) : (
@@ -259,12 +259,12 @@ export function ResolutionRegisterPage() {
                     >
                       {entry.sequence_number}
                     </td>
-                    <td>{entry.resolution_date.split("-").reverse().join(".")}</td>
-                    <td>{entry.entry_date.split("-").reverse().join(".")}</td>
+                    <td>{formatDate(entry.resolution_date)}</td>
+                    <td>{formatDate(entry.entry_date)}</td>
                     <td>{entry.location || "-"}</td>
                     <td style={{ whiteSpace: "pre-wrap" }}>
                       {entry.wording}
-                      {(entry.special_levies ?? []).map(levy => <p key={levy.id}><Link to={`/sonderumlagen?property_id=${encodeURIComponent(entry.property_id)}&accounting_scope_id=${encodeURIComponent(levy.accounting_scope_id)}#sonderumlage-${levy.id}`}>Sonderumlage {formatEuro(levy.amount)}, fällig {levy.due_date.split("-").reverse().join(".")}</Link></p>)}
+                      {(entry.special_levies ?? []).map(levy => <p key={levy.id}><Link to={`/sonderumlagen?property_id=${encodeURIComponent(entry.property_id)}&accounting_scope_id=${encodeURIComponent(levy.accounting_scope_id)}#sonderumlage-${levy.id}`}>Sonderumlage {formatMoney(centsFromDecimal(levy.amount))}, fällig {formatDate(levy.due_date)}</Link></p>)}
                     </td>
                     <td>
                       {editingEntryId === entry.id ? (
@@ -343,7 +343,7 @@ export function ResolutionRegisterPage() {
                           >
                             {entry.challenge_annotation
                               ? "Vermerk bearbeiten"
-                              : "Vermerk hinzufuegen"}
+                              : "Vermerk hinzufügen"}
                           </button>
                         </div>
                       )}

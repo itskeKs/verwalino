@@ -2,6 +2,7 @@
  * Vermoegensbericht (§28 IV WEG) list + create (M4).
  */
 import { useEffect, useState, useCallback } from "react";
+import { formatDate } from "../lib/format";
 import { Link, useNavigate } from "react-router-dom";
 import { listWegRuns, listProperties, createAssetReport } from "../api/endpoints";
 import type { WegRun, AssetReportCreate, Property } from "../api/types";
@@ -73,7 +74,7 @@ export function AssetReportsPage() {
             <label>
               WEG-Objekt *
               <select required value={form.property_id} onChange={(e) => setForm({ ...form, accounting_scope_id: null, property_id: e.target.value })}>
-                <option value="">-- Objekt waehlen --</option>
+                <option value="">-- Objekt wählen --</option>
                 {wegProps.map((p) => <option key={p.id} value={p.id}>{p.name} ({p.management_type})</option>)}
               </select>
             </label>
@@ -103,7 +104,7 @@ export function AssetReportsPage() {
             <tbody>
               {runs.map((r) => (
                 <tr key={r.id}>
-                  <td>{r.period_end}</td>
+                  <td>{formatDate(r.period_end)}</td>
                   <td>{propName(r.property_id)}</td>
                   <td><span className={`badge ${STATUS_CSS[r.status] ?? ""}`}>{STATUS_LABELS[r.status] ?? r.status}</span></td>
                   <td><Link to={`/vermoegensberichte/${r.id}`} className="btn btn--small">Details</Link></td>

@@ -6,6 +6,7 @@
  */
 
 import { useEffect, useState, useCallback } from "react";
+import { formatDate } from "../lib/format";
 import { Link } from "react-router-dom";
 import { Plus } from "lucide-react";
 import { listMandates, createMandate } from "../api/endpoints";
@@ -30,11 +31,6 @@ const TYPE_TONES: Record<Mandate["mandate_type"], BadgeTone> = {
 
 function todayIso(): string {
   return new Date().toISOString().slice(0, 10);
-}
-
-function formatDate(iso: string): string {
-  const [y, m, d] = iso.split("-");
-  return `${d}.${m}.${y}`;
 }
 
 function emptyForm(): MandateCreate {

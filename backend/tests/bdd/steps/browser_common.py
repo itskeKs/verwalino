@@ -1,8 +1,22 @@
 """Browser step adapter and shared UI operations; assertions use visible content."""
+from datetime import date
+from decimal import Decimal
 from functools import wraps
 from urllib.parse import urlsplit
 
 from playwright.async_api import expect
+
+
+def euro(amount):
+    """Money as the UI shows it (DESIGN.md formats): 1.234,56 €, sign first."""
+    value = Decimal(str(amount)).quantize(Decimal("0.01"))
+    grouped = f"{abs(value):,.2f}".replace(",", " ").replace(".", ",").replace(" ", ".")
+    return f"{'-' if value < 0 else ''}{grouped} €"
+
+
+def german_date(iso):
+    """A plain ISO date as the UI shows it (DESIGN.md formats): TT.MM.JJJJ."""
+    return date.fromisoformat(iso).strftime("%d.%m.%Y")
 
 
 def browser_step(function):
@@ -47,5 +61,5 @@ async def ledger_row(browser, period, kind, expected):
     cells = row.get_by_role("cell")
     await expect(cells).to_have_count(5)
     await expect(cells.nth(0).get_by_text(period, exact=True)).to_be_visible()
-    for index, value in enumerate([kind, *[f"{value} EUR" for value in expected]], start=1):
+    for index, value in enumerate([kind, *[euro(value) for value in expected]], start=1):
         await expect(cells.nth(index)).to_have_text(value)

@@ -1,3 +1,4 @@
+import { formatDate, formatDateTime } from "../../lib/format";
 import { useEffect, useRef, useState } from 'react';
 import { AllocationProposalPanel } from './AllocationProposalPanel';
 import { ApiError } from '../../api/client';
@@ -8,7 +9,7 @@ const inputClass = 'w-full rounded-md border border-input bg-background px-3 py-
 function Snapshot({ value }: { value: ContextSnapshot }) {
   return <div className="min-w-0 space-y-1 break-words"><p>{value.property.name} · {value.property.street} · {value.property.zip_code} {value.property.city}</p>
     <p>{value.scope.label} · {value.scope.scope_type} · {value.scope.whole_property ? 'Gesamtes Objekt' : 'Teil des Objekts'}</p>
-    <p>Gültig von {value.scope.valid_from} bis {value.scope.valid_to ?? 'unbefristet'}</p></div>;
+    <p>Gültig von {formatDate(value.scope.valid_from)} bis {value.scope.valid_to ? formatDate(value.scope.valid_to) : 'unbefristet'}</p></div>;
 }
 function fresh(preview: ContextPreview, history: ContextHistory): Draft {
   return { preview, review: preview.invoice_review_id!, expected: history.items[0]?.id ?? null, quotation: '', locator: '', note: '', acknowledged: false };
@@ -88,7 +89,7 @@ export function ContextDecisionPanel({ logicalId, proposalId, reviewId, ready, p
     {view && <>
       {!view.history.items.length && <p>Noch keine lesbare Kontextprüfung.</p>}
       {view.history.items.map((decision, index) => <details key={decision.id} open={index === 0} className="min-w-0 space-y-2">
-        <summary className="cursor-pointer">Manueller Kontextvergleich · Version {decision.revision_number} · {new Date(decision.created_at).toLocaleString('de-DE')}</summary>
+        <summary className="cursor-pointer">Manueller Kontextvergleich · Version {decision.revision_number} · {formatDateTime(decision.created_at)}</summary>
         <Snapshot value={decision.snapshot} /><p className="break-words">Angegebene Fundstelle: {decision.page_number === null ? decision.xml_path : `Seite ${decision.page_number}`}</p>
         <blockquote className="break-words">{decision.quotation}</blockquote><p className="break-words">{decision.comparison_note}</p>
         <p>Gespeicherte menschliche Angabe; keine automatische Identitätsprüfung und keine Kostenfreigabe.</p>

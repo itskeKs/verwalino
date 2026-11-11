@@ -1,5 +1,6 @@
 import type { HeatingBaseKey, HeatingConfig, HeatingConsumptionCandidate } from "../api/types";
 import { fractionValid, seventy, sliceKey, useHeatingCandidates } from "../lib/heatingInputs";
+import { formatDate } from "../lib/format";
 
 export interface HeatingCostOption { id: string; label: string; kind: HeatingConfig["kind"] }
 
@@ -62,7 +63,7 @@ export function HeatingInputs({ options, configs, onChange, candidates, disabled
             <div style={{ overflowX: "auto" }}><table className="data-table"><thead><tr><th>Einheit / Zeitraum</th><th>Grundmenge</th>{config.consumption_recorded && <th>Verbrauch</th>}<th>Quelle / Hinweis</th></tr></thead>
               <tbody>{source.rows.map(row => {
                 const override = config.slices.find(slice => sliceKey(slice) === sliceKey(row));
-                const label = `${row.unit_label} ${row.period_from}–${row.period_to}`;
+                const label = `${row.unit_label} ${formatDate(row.period_from)}–${formatDate(row.period_to)}`;
                 return <tr key={sliceKey(row)}><td>{label}</td><td>
                   <input aria-label={`Grundmenge ${label}`} type="text" inputMode="decimal" value={override?.base_quantity ?? (config.base_key === "VOLUME" ? "" : row.base_quantity ?? "")}
                     onChange={event => editSlice(config, row, "base_quantity", event.target.value)} />
