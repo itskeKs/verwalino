@@ -40,3 +40,10 @@ it("explains mismatching passwords before submitting", async () => {
   expect(await screen.findByRole("alert")).toHaveTextContent("stimmen nicht überein");
   expect(fetch).not.toHaveBeenCalled();
 });
+it("keeps the stored token when the accept request is throttled", async () => {
+  vi.stubGlobal("fetch", vi.fn().mockImplementation(async () => new Response(JSON.stringify({ detail: "Zu viele Versuche. Bitte versuchen Sie es später erneut." }), { status: 429 })));
+  open(); fill();
+  await userEvent.click(screen.getByRole("button", { name: "Passwort festlegen" }));
+  expect(await screen.findByRole("alert")).toHaveTextContent("Zu viele Versuche");
+  expect(sessionStorage.getItem(tokenKey)).toBe("private-token");
+});

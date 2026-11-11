@@ -6,8 +6,9 @@ import hashlib
 import logging
 import secrets
 import smtplib
+import uuid
 from collections.abc import Callable
-from datetime import datetime
+from datetime import datetime, timezone
 from email.message import EmailMessage
 from email.utils import formatdate
 
@@ -49,6 +50,7 @@ logger = logging.getLogger(__name__)
 # One documented validity for the single-use link (owner decision on #135).
 INVITATION_VALID_HOURS = 72
 PENDING = "accepted_at IS NULL AND revoked_at IS NULL"
+OPEN = PENDING + " AND expires_at > now()"
 
 
 class AcceptRoute(APIRoute):
@@ -185,7 +187,9 @@ async def recipient_admission(
         request_id=throttle.request_id,
     )
     if not attempt.allowed:
-        raise HTTPException(429, "Too many invitations. Try again later.")
+        raise HTTPException(
+            429, "Zu viele Einladungen. Bitte versuchen Sie es später erneut."
+        )
     recipient_hash = rate_limit.key_hash("user_invitation_recipient", "email", email)
     await db.execute(
         text("SELECT pg_advisory_xact_lock(hashtextextended(:key,0))"),
@@ -200,7 +204,9 @@ async def recipient_admission(
     )
     if not recipient_attempt.allowed:
         raise HTTPException(
-            429, "Too many invitations for this address. Try again later."
+            429,
+            "Zu viele Einladungen für diese Adresse. "
+            "Bitte versuchen Sie es später erneut.",
         )
     return recipient_attempt, recipient_hash
 
@@ -239,7 +245,7 @@ async def list_invitations(
         await db.execute(
             text(
                 f"SELECT id,email,role,created_at,expires_at,last_sent_at FROM user_invitation "
-                f"WHERE {PENDING} ORDER BY created_at, id"
+                f"WHERE {OPEN} ORDER BY created_at, id"
             )
         )
     ).all()
@@ -255,9 +261,11 @@ async def create_invitation(
     throttle: ThrottleRequest = Depends(throttled("user_invitation")),
 ):
     if body.role not in {role.value for role in Role}:
-        raise HTTPException(status_code=422, detail=f"Invalid role: {body.role}")
+        raise HTTPException(status_code=422, detail=f"Ungültige Rolle: {body.role}")
     if not mail_service.password_reset_available(settings):
-        raise HTTPException(409, "Invitations require a configured mail server")
+        raise HTTPException(
+            409, "Einladungen sind ohne konfigurierten E-Mail-Versand nicht verfügbar."
+        )
     recipient_attempt, recipient_hash = await recipient_admission(
         db, body.email, throttle
     )
@@ -269,17 +277,54 @@ async def create_invitation(
         {"org": str(auth.organization_id), "email": body.email},
     )
     if taken is not None:
-        raise HTTPException(409, "Email already in use")
-    pending = await db.scalar(
-        text(
-            f"SELECT id FROM user_invitation WHERE organization_id=:org "
-            f"AND lower(btrim(email))=lower(btrim(:email)) AND {PENDING}"
-        ),
-        {"org": str(auth.organization_id), "email": body.email},
-    )
-    if pending is not None:
-        raise HTTPException(409, "Invitation already pending")
+        raise HTTPException(409, "Diese E-Mail-Adresse wird bereits verwendet.")
+    existing = (
+        await db.execute(
+            text(
+                f"SELECT id, expires_at FROM user_invitation WHERE organization_id=:org "
+                f"AND lower(btrim(email))=lower(btrim(:email)) AND {PENDING}"
+            ),
+            {"org": str(auth.organization_id), "email": body.email},
+        )
+    ).one_or_none()
+    if existing is not None and existing.expires_at > datetime.now(timezone.utc):
+        raise HTTPException(
+            409, "Für diese Adresse besteht bereits eine offene Einladung."
+        )
     token = secrets.token_hex(32)
+    if existing is not None:
+        # The pending invitation expired: re-inviting rotates it like a resend.
+        row = (
+            await db.execute(
+                text(
+                    "UPDATE user_invitation SET token_hash=sha256(convert_to(:token,'UTF8')), "
+                    "role=:role, invited_by=:actor, "
+                    "expires_at=now() + (:hours || ' hours')::interval, last_sent_at=now() "
+                    f"WHERE id=:id AND {PENDING} "
+                    "RETURNING id,email,role,created_at,expires_at,last_sent_at"
+                ),
+                {
+                    "id": str(existing.id),
+                    "token": token,
+                    "role": body.role,
+                    "actor": str(auth.user_id),
+                    "hours": str(INVITATION_VALID_HOURS),
+                },
+            )
+        ).one()
+        await record_send(db, recipient_attempt, recipient_hash)
+        await audit_invitation(
+            db,
+            auth,
+            str(row.id),
+            "RESEND",
+            {"after": {"email": row.email, "role": row.role}},
+        )
+        message = await build_invitation_mail(
+            db, auth, token=token, recipient=row.email
+        )
+        background.add_task(submit_invitation_mail, message)
+        return invitation_out(row)
     row = (
         await db.execute(
             text(
@@ -312,7 +357,7 @@ async def create_invitation(
 
 @router.delete("/invitations/{invitation_id}", status_code=204, response_class=Response)
 async def revoke_invitation(
-    invitation_id: str,
+    invitation_id: uuid.UUID,
     auth: AuthContext = Depends(require_admin_dep),
     db: AsyncSession = Depends(user_admin_db),
 ):
@@ -323,16 +368,16 @@ async def revoke_invitation(
         {"id": invitation_id},
     )
     if revoked is None:
-        raise HTTPException(status_code=404, detail="Invitation not found")
+        raise HTTPException(status_code=404, detail="Einladung nicht gefunden.")
     await audit_invitation(
-        db, auth, str(revoked), "REVOKE", {"before": {"id": invitation_id}}
+        db, auth, str(revoked), "REVOKE", {"before": {"id": str(invitation_id)}}
     )
     return Response(status_code=204)
 
 
 @router.post("/invitations/{invitation_id}/resend", response_model=InvitationOut)
 async def resend_invitation(
-    invitation_id: str,
+    invitation_id: uuid.UUID,
     background: BackgroundTasks,
     auth: AuthContext = Depends(require_admin_dep),
     db: AsyncSession = Depends(user_admin_db),
@@ -343,9 +388,11 @@ async def resend_invitation(
         {"id": invitation_id},
     )
     if locked is None:
-        raise HTTPException(status_code=404, detail="Invitation not found")
+        raise HTTPException(status_code=404, detail="Einladung nicht gefunden.")
     if not mail_service.password_reset_available(settings):
-        raise HTTPException(409, "Invitations require a configured mail server")
+        raise HTTPException(
+            409, "Einladungen sind ohne konfigurierten E-Mail-Versand nicht verfügbar."
+        )
     email = await db.scalar(
         text("SELECT email FROM user_invitation WHERE id=:id"), {"id": invitation_id}
     )
@@ -405,7 +452,8 @@ async def accept_invitation(
                 request_id=throttle.request_id,
             )
         async with session.begin():
-            if ip_attempt.allowed and attempt.allowed:
+            throttled = not (ip_attempt.allowed and attempt.allowed)
+            if not throttled:
                 try:
                     async with session.begin_nested():
                         accepted = (
@@ -422,8 +470,9 @@ async def accept_invitation(
                             .one_or_none()
                         )
                 except DBAPIError as error:
+                    # P0001 is the uniform refusal; P0023 is the erasure guard.
                     error.hide_parameters = True
-                    if getattr(error.orig, "sqlstate", None) != "P0001":
+                    if getattr(error.orig, "sqlstate", None) not in {"P0001", "P0023"}:
                         raise
             if accepted is None:
                 await attempt.record_failure()
@@ -433,6 +482,10 @@ async def accept_invitation(
     if rate_limit.cleanup_due():
         await rate_limit.cleanup_stale(get_deployment_policy().rate_limit_rules)
     if accepted is None:
+        if throttled:
+            raise HTTPException(
+                429, "Zu viele Versuche. Bitte versuchen Sie es später erneut."
+            )
         raise HTTPException(
             403,
             "Diese Einladung ist nicht mehr gültig. "

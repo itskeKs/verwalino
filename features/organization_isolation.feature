@@ -134,6 +134,16 @@ Feature: Organization isolation
     And the old session is no longer valid
     And the other organization's administrator remains signed in
 
+  Scenario: An invitation stays inside its own organization
+    Given an administrator of "Verwaltung Alpha" is signed in
+    And a test mailbox for invitations
+    When the administrator invites "kollegin@example.test" as "CLERK"
+    Then the test mailbox receives an invitation with a single-use link valid for 72 hours
+    When the administrator of "Verwaltung Beta" lists the pending invitations
+    Then they see no invitation for the invited address
+    When they try to revoke and resend the invitation
+    Then the invitation is not found either way
+
   Scenario: An organization archive cannot be downloaded by another organization
     Given a separate organization has rental records and an original for export
     When its administrator downloads the organization archive

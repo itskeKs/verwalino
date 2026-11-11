@@ -101,6 +101,44 @@ def refused_invitation(world):
     assert "Einladung" in world.response.json()["detail"]
 
 
+@when(
+    parsers.parse('the administrator of "{organization}" lists the pending invitations')
+)
+def list_pending_invitations(world, organization):
+    answer = world.send(
+        world.administrator_of(organization), "GET", "/api/users/invitations"
+    )
+    assert answer.status_code == 200, world.describe_response()
+
+
+@then("they see no invitation for the invited address")
+def no_invitation_for_the_address(world):
+    assert world.data["email"] not in [item["email"] for item in world.response.json()]
+
+
+@when("they try to revoke and resend the invitation")
+def foreign_revoke_and_resend(world):
+    # Alpha's own list names the invitation; Beta must not be able to act on it.
+    ours = world.send(world.actor, "GET", "/api/users/invitations")
+    invitation = next(
+        item for item in ours.json() if item["email"] == world.data["email"]
+    )
+    beta = world.administrator_of("Verwaltung Beta")
+    world.data["foreign_attempts"] = [
+        world.send(
+            beta, "DELETE", f"/api/users/invitations/{invitation['id']}"
+        ).status_code,
+        world.send(
+            beta, "POST", f"/api/users/invitations/{invitation['id']}/resend"
+        ).status_code,
+    ]
+
+
+@then("the invitation is not found either way")
+def invitation_not_found_either_way(world):
+    assert world.data["foreign_attempts"] == [404, 404]
+
+
 @then("the invitee can sign in with the invited role")
 def invitee_signs_in(world):
     answer = world.send(

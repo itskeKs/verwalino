@@ -26,6 +26,26 @@ def patch_retention_catalog(reverse=False):
     op.execute(definition.replace(before, after))
 
 
+def patch_import_admission(reverse=False):
+    """Invitation rows are pending identity, not data: like
+    password_reset_request they must not make an organization non-empty
+    for archive import. The 0147-owned body is replaced here, not edited."""
+    definition = op.get_bind().scalar(
+        text(
+            "SELECT pg_get_functiondef("
+            "'public.organization_import_admission(uuid,jsonb)'::regprocedure)"
+        )
+    )
+    before = "'organization_deletion','password_reset_request'"
+    after = "'organization_deletion','password_reset_request','user_invitation'"
+    if reverse:
+        before, after = after, before
+        if before not in definition and after in definition:
+            return
+    assert definition.count(before) == 1
+    op.execute(definition.replace(before, after))
+
+
 def upgrade():
     op.execute("""
     CREATE TABLE public.user_invitation (
@@ -63,7 +83,8 @@ def upgrade():
     RETURNS TABLE(organization_id uuid, email text, role text)
     LANGUAGE plpgsql SECURITY DEFINER
     SET search_path=pg_catalog,pg_temp SET row_security=off AS $$
-    DECLARE pending public.user_invitation%ROWTYPE; supplied bytea; expected bytea;
+    DECLARE pending public.user_invitation%ROWTYPE; inviter public."user"%ROWTYPE;
+      supplied bytea; expected bytea;
       difference integer := 0; byte_index integer; created uuid;
     BEGIN
       IF COALESCE(current_setting('app.current_org_id',true),'')<>'' THEN
@@ -76,7 +97,7 @@ def upgrade():
       SELECT * INTO pending FROM public.user_invitation WHERE token_hash=supplied;
       IF pending.id IS NOT NULL THEN
         PERFORM pg_advisory_xact_lock(hashtextextended('scope-acl:'||pending.organization_id::text,0));
-        PERFORM 1 FROM public."user" u WHERE u.id=pending.invited_by
+        SELECT * INTO inviter FROM public."user" u WHERE u.id=pending.invited_by
           AND u.organization_id=pending.organization_id FOR UPDATE;
       END IF;
       SELECT * INTO pending FROM public.user_invitation WHERE token_hash=supplied FOR UPDATE;
@@ -85,7 +106,10 @@ def upgrade():
         difference := difference | (get_byte(supplied,byte_index) # get_byte(expected,byte_index));
       END LOOP;
       IF difference<>0 OR pending.id IS NULL OR pending.accepted_at IS NOT NULL
-        OR pending.revoked_at IS NOT NULL OR pending.expires_at<=clock_timestamp() THEN
+        OR pending.revoked_at IS NOT NULL OR pending.expires_at<=clock_timestamp()
+        OR inviter.id IS NULL OR NOT inviter.is_active
+        OR NOT EXISTS(SELECT 1 FROM public.membership m WHERE m.organization_id=pending.organization_id
+          AND m.user_id=pending.invited_by AND m.role='OWNER_ADMIN') THEN
         RAISE EXCEPTION 'Invitation acceptance refused';
       END IF;
       IF EXISTS(SELECT 1 FROM public."user" u WHERE u.organization_id=pending.organization_id
@@ -106,6 +130,7 @@ def upgrade():
     GRANT EXECUTE ON FUNCTION public.accept_user_invitation(text,text) TO app_rw;
     """)
     patch_retention_catalog()
+    patch_import_admission()
 
 
 def downgrade():
@@ -120,3 +145,4 @@ def downgrade():
     DROP TABLE public.user_invitation;
     """)
     patch_retention_catalog(reverse=True)
+    patch_import_admission(reverse=True)

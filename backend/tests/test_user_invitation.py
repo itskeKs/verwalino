@@ -167,7 +167,7 @@ async def test_create_refuses_existing_addresses_and_pending_duplicates(
         "/api/users/invitations", json={"email": "ADMIN@alpha.de", "role": "CLERK"}
     )
     assert taken.status_code == 409
-    assert taken.json() == {"detail": "Email already in use"}
+    assert taken.json() == {"detail": "Diese E-Mail-Adresse wird bereits verwendet."}
     doubled = unique("doppelt@example.test")
     await invite(client_a_admin, doubled)
     duplicate = await client_a_admin.post(
@@ -175,7 +175,9 @@ async def test_create_refuses_existing_addresses_and_pending_duplicates(
         json={"email": doubled, "role": "CLERK"},
     )
     assert duplicate.status_code == 409
-    assert duplicate.json() == {"detail": "Invitation already pending"}
+    assert duplicate.json() == {
+        "detail": "Für diese Adresse besteht bereits eine offene Einladung."
+    }
 
 
 @pytest.mark.asyncio
@@ -327,6 +329,217 @@ async def test_malformed_bodies_are_refused_without_echoing_secrets(
     answer = await client_unauth.post(path, json=body)
     assert answer.status_code in (401, 403, 404, 409, 422)
     assert INVITED_PASSWORD not in answer.text
+
+
+@pytest.mark.asyncio
+async def test_import_admission_ignores_invitation_rows(
+    app_rw_session,
+):
+    import json
+
+    import psycopg2
+
+    from tests.conftest import MIGRATOR_SYNC_URL
+
+    org, user = uuid.uuid4(), uuid.uuid4()
+    with (
+        psycopg2.connect(MIGRATOR_SYNC_URL) as connection,
+        connection.cursor() as cursor,
+    ):
+        cursor.execute(
+            "INSERT INTO organization(id,name) VALUES (%s,'Import admission invitation')",
+            (str(org),),
+        )
+        cursor.execute(
+            'INSERT INTO "user"(id,organization_id,email,password_hash) '
+            "VALUES (%s,%s,'import-admin@example.test','synthetic-not-a-login')",
+            (str(user), str(org)),
+        )
+        cursor.execute(
+            "INSERT INTO membership(organization_id,user_id,role) "
+            "VALUES (%s,%s,'OWNER_ADMIN')",
+            (str(org), str(user)),
+        )
+        cursor.execute(
+            "INSERT INTO user_invitation(organization_id,email,role,invited_by,token_hash,expires_at) "
+            "VALUES (%s,'import-warte@example.test','CLERK',%s,sha256('import'::bytea),now()+interval '72 hours')",
+            (str(org), str(user)),
+        )
+    await app_rw_session.execute(
+        text("SELECT set_config('app.current_org_id', :org, false)"),
+        {"org": str(org)},
+    )
+    await app_rw_session.execute(
+        text("SELECT set_config('app.current_user_id', :actor, false)"),
+        {"actor": str(user)},
+    )
+    result = await app_rw_session.scalar(
+        text("SELECT public.organization_import_admission(:org, '{}'::jsonb)::text"),
+        {"org": str(org)},
+    )
+    assert json.loads(result)["empty"] is True
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("mode", ["deactivated", "demoted"])
+async def test_acceptance_refuses_when_the_inviter_lost_their_rights(
+    client_a_admin, client_unauth, signup_mail, mode
+):
+    b_email = unique("zweitadmin@example.test")
+    created = await client_a_admin.post(
+        "/api/users",
+        json={
+            "email": b_email,
+            "password": "StartPasswort123!",
+            "role": "OWNER_ADMIN",
+        },
+    )
+    assert created.status_code == 201, created.text
+    b_id = created.json()["id"]
+    login = await client_unauth.post(
+        "/api/auth/login", json={"email": b_email, "password": "StartPasswort123!"}
+    )
+    assert login.status_code == 200, login.text
+    invitation = await invite(
+        client_unauth, unique("aussen@example.test"), "OWNER_ADMIN"
+    )
+    token = invitation_token(signup_mail)
+    patch = {"is_active": False} if mode == "deactivated" else {"role": "CLERK"}
+    changed = await client_a_admin.patch(f"/api/users/{b_id}", json=patch)
+    assert changed.status_code == 200, changed.text
+    answer = await client_unauth.post(
+        "/api/auth/invitation/accept",
+        json={"token": token, "password": INVITED_PASSWORD},
+    )
+    assert (answer.status_code, answer.json()) == (403, REFUSED)
+
+
+@pytest.mark.asyncio
+async def test_concurrent_accepts_consume_once(
+    client_a_admin, client_unauth, signup_mail
+):
+    import asyncio
+
+    await invite(client_a_admin, unique("gleichzeitig@example.test"))
+    token = invitation_token(signup_mail)
+    replies = await asyncio.gather(
+        *(
+            client_unauth.post(
+                "/api/auth/invitation/accept",
+                json={"token": token, "password": INVITED_PASSWORD},
+            )
+            for _ in range(2)
+        )
+    )
+    assert sorted(reply.status_code for reply in replies) == [204, 403]
+
+
+@pytest.mark.asyncio
+async def test_accept_rate_limit_throttles_without_consuming_the_token(
+    client_a_admin, client_unauth, signup_mail
+):
+    from app.core.db import get_session_factory
+    from app.core.deployment_policy import get_deployment_policy
+
+    await invite(client_a_admin, unique("drossel@example.test"))
+    token = invitation_token(signup_mail)
+    rules = get_deployment_policy().rate_limit_rules
+    statuses = [
+        (
+            await client_unauth.post(
+                "/api/auth/invitation/accept",
+                json={"token": "wrong-token", "password": INVITED_PASSWORD},
+            )
+        ).status_code
+        for _ in range(rules.ip_failures + 2)
+    ]
+    assert 429 in statuses
+    async with get_session_factory()() as session, session.begin():
+        await session.execute(text("DELETE FROM auth_throttle"))
+    accepted = await client_unauth.post(
+        "/api/auth/invitation/accept",
+        json={"token": token, "password": INVITED_PASSWORD},
+    )
+    assert accepted.status_code == 204, accepted.text
+
+
+@pytest.mark.asyncio
+async def test_expires_at_is_seventy_two_hours_after_creation(
+    client_a_admin, signup_mail
+):
+    from datetime import timedelta
+
+    from tests.password_reset_support import reset_store
+
+    invitation = await invite(client_a_admin, unique("laufzeit@example.test"))
+    async with reset_store() as session:
+        delta = await session.scalar(
+            text("SELECT expires_at-created_at FROM user_invitation WHERE id=:id"),
+            {"id": invitation["id"]},
+        )
+    assert delta <= timedelta(hours=72)
+    assert delta > timedelta(hours=71, minutes=59)
+
+
+@pytest.mark.asyncio
+async def test_acceptance_during_erasure_refuses_in_german(
+    client_a_admin, client_unauth, signup_mail, seed_data
+):
+    from tests.password_reset_support import reset_store
+
+    await invite(client_a_admin, unique("erasure@example.test"))
+    token = invitation_token(signup_mail)
+    org = str(seed_data["org_a_id"])
+    async with reset_store() as session:
+        await session.execute(
+            text(
+                "INSERT INTO organization_deletion(organization_id,status,execute_after) "
+                "VALUES (:org,'cooling_off',now()+interval '7 days')"
+            ),
+            {"org": org},
+        )
+    try:
+        answer = await client_unauth.post(
+            "/api/auth/invitation/accept",
+            json={"token": token, "password": INVITED_PASSWORD},
+        )
+        assert (answer.status_code, answer.json()) == (403, REFUSED)
+    finally:
+        async with reset_store() as session:
+            await session.execute(
+                text("DELETE FROM organization_deletion WHERE organization_id=:org"),
+                {"org": org},
+            )
+
+
+@pytest.mark.asyncio
+async def test_malformed_invitation_id_is_a_validation_error(client_a_admin):
+    answer = await client_a_admin.delete("/api/users/invitations/not-a-uuid")
+    assert answer.status_code == 422
+    answer = await client_a_admin.post("/api/users/invitations/not-a-uuid/resend")
+    assert answer.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_expired_invitation_leaves_the_open_list_and_can_be_reinvited(
+    client_a_admin, signup_mail
+):
+    from tests.password_reset_support import reset_store
+
+    email = unique("erneut@example.test")
+    invitation = await invite(client_a_admin, email)
+    async with reset_store() as session:
+        await session.execute(
+            text(
+                "UPDATE user_invitation SET expires_at=now()-interval '1 minute' WHERE id=:id"
+            ),
+            {"id": invitation["id"]},
+        )
+    listing = await client_a_admin.get("/api/users/invitations")
+    assert listing.status_code == 200
+    assert email not in [item["email"] for item in listing.json()]
+    replacement = await invite(client_a_admin, email)
+    assert replacement["email"] == email
 
 
 def test_invitation_migration_roundtrip_is_exact_and_refuses_retained_state(
