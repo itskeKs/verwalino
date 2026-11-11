@@ -14,9 +14,8 @@ import uuid
 from collections.abc import Callable
 from typing import Any
 
-from openai import AsyncOpenAI
-
 from app.core.config import settings
+from app.declarations.openai_models import create_client
 
 
 _OPENAI_API_BASE_URL = "https://api.openai.com/v1"
@@ -29,7 +28,7 @@ async def verify_openai_models(
     api_key: str,
     primary_model: str,
     escalation_model: str,
-    client_factory: Callable[..., Any] = AsyncOpenAI,
+    client_factory: Callable[..., Any] = create_client,
 ) -> None:
     """Verify only the configured Models endpoints via the fixed API origin."""
     client = client_factory(

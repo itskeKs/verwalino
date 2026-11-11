@@ -170,12 +170,14 @@ async def test_history_migration_preserves_records_and_private_graph(seed_data,m
     from alembic.migration import MigrationContext
     from alembic.operations import Operations
     from tests.conftest import MIGRATOR_SYNC_URL
+    from tests.migration_rehearsal import lock_for_rehearsal
     migration=importlib.import_module('migrations.versions.0067_history_source_access')
     rent_migration=importlib.import_module('migrations.versions.0126_lease_rent_change')
     engine=create_engine(MIGRATOR_SYNC_URL)
     try:
         async with synthetic_enforcement(seed_data):
             with engine.begin() as db,Operations.context(MigrationContext.configure(db)):
+                lock_for_rehearsal(db)
                 heads_before=MigrationContext.configure(db).get_current_heads()
                 assert heads_before
                 fixture=db.begin_nested()
