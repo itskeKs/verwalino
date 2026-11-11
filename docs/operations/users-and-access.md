@@ -66,6 +66,17 @@ flow is repeatable with
 
 T57 introduced this workflow.
 
+When mail delivery is configured, the „Benutzer“ page additionally offers
+„Benutzer einladen“. Enter an e-mail address and a role and send the invitation;
+the colleague receives an e-mail with a link that is valid for 72 hours and can be
+used once. The link opens a public page where the colleague sets a password and is
+then signed in-capable with the invited role; no admin-chosen password travels by
+chat or phone. „Offene Einladungen“ lists pending invitations with validity and
+offers „Erneut senden“ (issues a new link and invalidates the old one) and
+„Widerrufen“. Issuing, resending and revoking are audit-logged. Without a
+configured mail server no invitation card appears and user creation works only
+with an admin-chosen password.
+
 Admins create users in the „Neuen Benutzer anlegen“ card. Its persistent labels
 are „E-Mail“, „Name“, „Startpasswort“ and „Rolle“; email and a 12–128-character
 initial password are required. Fields stack on phones and remain inside the card.

@@ -75,9 +75,10 @@ async def core_seeded(isolated_batch_seed, rent_world, attachment_store, attachm
     # Invitation probes need one pending invitation of another organization;
     # mail is not configured in the sweep, so the row is seeded directly.
     async with sweep.engine.begin() as connection:
-        await connection.execute(text('''INSERT INTO user_invitation(organization_id,email,role,invited_by,token_hash)
+        await connection.execute(text('''INSERT INTO user_invitation(organization_id,email,role,invited_by,token_hash,expires_at)
             SELECT u.organization_id,:email,'CLERK',u.id,
-                   decode(replace(gen_random_uuid()::text,'-','')||replace(gen_random_uuid()::text,'-',''),'hex')
+                   decode(replace(gen_random_uuid()::text,'-','')||replace(gen_random_uuid()::text,'-',''),'hex'),
+                   now() + interval '72 hours'
             FROM "user" u WHERE u.organization_id IS DISTINCT FROM :b ORDER BY u.id LIMIT 1'''),
             {'email': f'sweep-foreign-{uuid.uuid4().hex}@example.invalid', 'b': sweep.b})
 

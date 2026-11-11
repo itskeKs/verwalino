@@ -171,3 +171,10 @@ def submit_password_mail(config: Settings, message: EmailMessage) -> None:
     sender = validate_configuration(config)
     recipient = validate_address(str(message['To']))
     _submit(config, message, sender, recipient)
+
+
+def submit_notification_mail(config: Settings, message: EmailMessage) -> None:
+    """Submit any rendered transactional message after the HTTP response."""
+    sender = validate_configuration(config)
+    recipient = validate_address(str(message['To']))
+    _submit(config, message, sender, recipient)

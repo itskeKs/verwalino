@@ -1643,11 +1643,11 @@ run `docker compose down -v` or delete the volumes.
 A deploy workflow that was disabled by hand during a release is re-enabled in the same release,
 before that release is declared done.
 
-## Migration compatibility: 0029–0181
+## Migration compatibility: 0029–0182
 
 | Revisions | Effect on existing data and runtime compatibility |
 | --- | --- |
-| 0029–0122 | Adds financial, declaration, source custody and review data structures and guards. The 0028 runtime cannot interpret the new schema or enforce its later security rules. The 0028→0181 rehearsal preserves all old columns and rows with synthetic organization, user, document, draft/failed import and failed extraction-run data, but does not prove every live-data combination. |
+| 0029–0122 | Adds financial, declaration, source custody and review data structures and guards. The 0028 runtime cannot interpret the new schema or enforce its later security rules. The 0028→0182 rehearsal preserves all old columns and rows with synthetic organization, user, document, draft/failed import and failed extraction-run data, but does not prove every live-data combination. |
 | 0123 | Adds nullable replacement evidence and changes exception-completion functions/outcomes. Existing rows retain their old disposition; old clients cannot interpret new replacement outcomes. Downgrade refuses retained evidence. |
 | 0124–0125 | Adds bank transactions and a nullable payment link, then enforces tenant/account coherence and immutable booked links. A 0122 database has no pre-existing links; inconsistent intermediate data is not silently repaired. |
 | 0126–0127 | Adds append-only rent history and frozen special levies; replaces financial/source/report adapters. No old financial rows are rewritten. Older runtimes do not understand the new obligations/history. Their downgrades can drop populated new tables; they are not a safe recovery path. |
@@ -1694,14 +1694,15 @@ before that release is declared done.
 | 0178 (parent 0177) | Adds encrypted organization AI settings under RLS and serialized tenant monthly accounting. Extends safe pass metadata with `default` for an omitted reasoning parameter. Downgrade refuses existing settings or passes using the new metadata value. |
 | 0179 (parent 0178) | Adds compatible API destinations and provider selection without changing existing encrypted keys. Runtime reservations distinguish provider origins. Downgrade refuses configured non-OpenAI destinations. |
 | 0180 (parent 0179) | Adds a nullable administrator request timeout per configured provider endpoint (1–3600 seconds). Existing settings keep their function defaults; compatible endpoints default to 180 seconds. Downgrade refuses explicit configured timeouts. |
-| 0181 (head; parent 0180) | Allows `RESERVE_SOLL` owner statement lines for the planned reserve contribution. Existing finalized statements remain unchanged; downgrade explicitly refuses retained `RESERVE_SOLL` rows with "Retain planned reserve statement evidence; populated downgrade refused" before changing the CHECK; without those rows it restores the prior line types. |
+| 0181 (parent 0180) | Allows `RESERVE_SOLL` owner statement lines for the planned reserve contribution. Existing finalized statements remain unchanged; downgrade explicitly refuses retained `RESERVE_SOLL` rows with "Retain planned reserve statement evidence; populated downgrade refused" before changing the CHECK; without those rows it restores the prior line types. |
+| 0182 (head; parent 0181) | Adds the tenant-scoped `user_invitation` table (RLS, hashed single-use tokens, audit) and the `accept_user_invitation` definer that creates user and membership at acceptance; the retention catalog classifies invitations for erasure. Downgrade refuses retained invitation rows with "Cannot discard retained invitation state" and restores the previous catalog body. |
 
 DDL uses the existing PostgreSQL/Alembic transaction; 0123 also takes financial
 and ACL locks with NOWAIT table locks. Contention or unexpected data/function
 definitions must abort, not trigger repair/deletion. A rollback-only synthetic
-0028→0181 rehearsal compares every old table column/row and retained RLS flags;
-the 0122→0181, 0139→0181 and accepted-source 0140→0181, 0141→0181 and
-0142→0181, 0143→0181, 0144→0181, 0145→0181, 0146→0181, 0147→0181, 0148→0181, 0149→0181, 0150→0181, 0151→0181, 0152→0181, 0153→0181, 0154→0181, 0155→0181, 0159→0181, 0160→0181, 0161→0181, 0162→0181, 0163→0181, 0164→0181, 0165→0181, 0166→0181, 0167→0181, 0168→0181, 0169→0181, 0170→0181, 0171→0181, 0172→0181, 0173→0181, 0174→0181, 0175→0181, 0176→0181, 0177→0181, 0178→0181, 0179→0181 and 0180→0181 (accepted sources) rehearsals also
+0028→0182 rehearsal compares every old table column/row and retained RLS flags;
+the 0122→0182, 0139→0182 and accepted-source 0140→0182, 0141→0182 and
+0142→0182, 0143→0182, 0144→0182, 0145→0182, 0146→0182, 0147→0182, 0148→0182, 0149→0182, 0150→0182, 0151→0182, 0152→0182, 0153→0182, 0154→0182, 0155→0182, 0159→0182, 0160→0182, 0161→0182, 0162→0182, 0163→0182, 0164→0182, 0165→0182, 0166→0182, 0167→0182, 0168→0182, 0169→0182, 0170→0182, 0171→0182, 0172→0182, 0173→0182, 0174→0182, 0175→0182, 0176→0182, 0177→0182, 0178→0182, 0179→0182 and 0180→0182 and 0181→0182 (accepted sources) rehearsals also
 compare existing ACLs, allowing only the explicit organization INSERT/reserve UPDATE revocations and the capability-checked
 0159 binding adapter and the 0168 column-level resolution-link grant;
 it does not prove live data validity or cross-version runtime compatibility.
@@ -1724,10 +1725,10 @@ When adding a migration, update these together in the same release:
 
 ## Deployment boundary and accepted head
 
-The reviewed code targets **0181**. `backend/app/deployment.py` retains `TARGET`,
+The reviewed code targets **0182**. `backend/app/deployment.py` retains `TARGET`,
 `SUPPORTED`, `release_head()` and the read-only schema/role/runtime checks used
-by the migration rehearsals. Those checks accept measured **0028 → 0181**,
-**0122 → 0181**, **0139 → 0181**, **0140 → 0181**, **0141 → 0181**, **0142 → 0181**, **0143 → 0181**, **0144 → 0181**, **0145 → 0181**, **0146 → 0181**, **0147 → 0181**, **0148 → 0181**, **0149 → 0181**, **0150 → 0181**, **0151 → 0181**, **0152 → 0181**, **0153 → 0181**, **0154 → 0181**, **0155 → 0181**, **0159 → 0181**, **0160 → 0181**, **0161 → 0181**, **0162 → 0181**, **0163 → 0181**, **0164 → 0181**, **0165 → 0181**, **0166 → 0181** (accepted sources), **0167 → 0181** (accepted source), **0168 → 0181** (accepted source), **0169 → 0181** (accepted source), **0170 → 0181** (accepted source), **0171 → 0181** (accepted source), **0172 → 0181** (accepted source), **0173 → 0181** (accepted source), **0174 → 0181** (accepted source), **0175 → 0181** (accepted source), **0176 → 0181** (accepted source), **0177 → 0181**, **0178 → 0181**, **0179 → 0181**, or **0180 → 0181**; unknown,
+by the migration rehearsals. Those checks accept measured **0028 → 0182**,
+**0122 → 0182**, **0139 → 0182**, **0140 → 0182**, **0141 → 0182**, **0142 → 0182**, **0143 → 0182**, **0144 → 0182**, **0145 → 0182**, **0146 → 0182**, **0147 → 0182**, **0148 → 0182**, **0149 → 0182**, **0150 → 0182**, **0151 → 0182**, **0152 → 0182**, **0153 → 0182**, **0154 → 0182**, **0155 → 0182**, **0159 → 0182**, **0160 → 0182**, **0161 → 0182**, **0162 → 0182**, **0163 → 0182**, **0164 → 0182**, **0165 → 0182**, **0166 → 0182** (accepted sources), **0167 → 0182** (accepted source), **0168 → 0182** (accepted source), **0169 → 0182** (accepted source), **0170 → 0182** (accepted source), **0171 → 0182** (accepted source), **0172 → 0182** (accepted source), **0173 → 0182** (accepted source), **0174 → 0182** (accepted source), **0175 → 0182** (accepted source), **0176 → 0182** (accepted source), **0177 → 0182**, **0178 → 0182**, **0179 → 0182**, **0180 → 0182** or **0181 → 0182**; unknown,
 missing, multiple or intermediate revisions are rejected. These are code and
 rehearsal boundaries, not a measurement of a running installation.
 
@@ -2452,5 +2453,5 @@ a numeric ledger placeholder is never displayed as free usage.
 Migration 0179 preserves existing encrypted settings and adds the optional compatible
 endpoint and provider constraint. Downgrade refuses configured non-OpenAI destinations
 rather than silently losing their configuration. Existing rows keep their OpenAI
-origin and credentials. 0179 is an accepted source for upgrades to 0181 alongside the
+origin and credentials. 0180 is an accepted source for upgrades to 0182 alongside the
 previous sources; production moves only through a reviewed release.

@@ -62,7 +62,7 @@ class ConfirmationLinkPrivacyMiddleware:
         self.app = app
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
-        if scope["type"] == "http" and scope["path"] in {"/signup/confirm", "/passwort-zuruecksetzen"}:
+        if scope["type"] == "http" and scope["path"] in {"/signup/confirm", "/passwort-zuruecksetzen", "/einladung"}:
             # Mutate the original scope used by Uvicorn's access logger too.
             # No server handler consumes this query; the SPA reads window.location.
             scope["query_string"] = b""
