@@ -95,6 +95,25 @@ def design_table_property(world):
     create_property(world, 'Verwaltung Alpha', 'Musterhaus an der Musterstraße 12')
 
 
+async def capture_screen(page, path, width, whole=False):
+    """Save one screenshot and say whether the main area overflows horizontally.
+
+    The app shell scrolls inside <main> at the viewport height, so a full-page shot is only
+    the viewport and the page itself never grows wider; a whole screen enlarges the
+    viewport to its content before the shot, and the width is read from <main>."""
+    main = page.locator('main')
+    await page.wait_for_load_state('networkidle')
+    if whole:
+        hidden = await main.evaluate('e => e.scrollHeight - e.clientHeight')
+        await page.set_viewport_size({'width': width, 'height': 900 + hidden})
+        await page.evaluate('() => new Promise(done => requestAnimationFrame(() => requestAnimationFrame(done)))')
+    await page.screenshot(path=str(path))
+    geometry = await main.evaluate('e => ({width: e.clientWidth, content: e.scrollWidth})')
+    if whole:
+        await page.set_viewport_size({'width': width, 'height': 900})
+    return geometry['content'] > geometry['width'] + 1
+
+
 @when('the main screens are captured in both designs at 1280 and 360 pixels')
 @browser_step
 async def capture_design_table(browser_world, world, tmp_path):
@@ -110,9 +129,9 @@ async def capture_design_table(browser_world, world, tmp_path):
     directory = ROOT / 'docs/assets/design' if os.environ.get('VERWALINO_CAPTURE_DESIGN') == '1' else tmp_path
     overflows = world.data['design_table_overflows'] = []
     screens = (
-        ('dashboard', '/', page.get_by_role('region', name='Ihr Bestand', exact=True)),
-        ('properties', '/objekte', page.get_by_role('heading', name='Objekte', exact=True)),
-        ('settings', '/einstellungen', page.get_by_role('radio', name='Klar', exact=False)),
+        ('dashboard', '/', page.get_by_role('region', name='Ihr Bestand', exact=True), False),
+        ('properties', '/objekte', page.get_by_role('heading', name='Objekte', exact=True), False),
+        ('settings', '/einstellungen', page.get_by_role('radio', name='Klar', exact=False), True),
     )
     try:
         for theme in ('klar', 'warm'):
@@ -120,7 +139,7 @@ async def capture_design_table(browser_world, world, tmp_path):
             assert answer.ok, f'PATCH /api/auth/preferences answered {answer.status}'
             for width in (1280, 360):
                 await page.set_viewport_size({'width': width, 'height': 900})
-                for name, path, ready in screens:
+                for name, path, ready, whole in screens:
                     await browser_world.visit(path)
                     await expect(ready).to_be_visible()
                     await expect(page.locator('.app-layout')).to_have_attribute('data-design-theme', theme)
@@ -131,12 +150,10 @@ async def capture_design_table(browser_world, world, tmp_path):
                         await expect(page.get_by_role('link', name='Musterhaus an der Musterstraße 12', exact=True)).to_be_visible()
                         await page.get_by_role('button', name='+ Neues Objekt', exact=True).click()
                         await expect(page.get_by_role('heading', name='Neues Objekt anlegen', exact=True)).to_be_visible()
-                        await page.screenshot(path=str(directory / f'themes-{theme}-form-{width}.png'), full_page=True)
-                        if await page.evaluate('document.documentElement.scrollWidth > innerWidth'):
+                        if await capture_screen(page, directory / f'themes-{theme}-form-{width}.png', width):
                             overflows.append(f'{theme}/form/{width}')
                         await page.get_by_role('button', name='Abbrechen', exact=True).click()
-                    await page.screenshot(path=str(directory / f'themes-{theme}-{name}-{width}.png'), full_page=True)
-                    if await page.evaluate('document.documentElement.scrollWidth > innerWidth'):
+                    if await capture_screen(page, directory / f'themes-{theme}-{name}-{width}.png', width, whole):
                         overflows.append(f'{theme}/{name}/{width}')
     finally:
         await api.patch('/api/auth/preferences', data=original)
