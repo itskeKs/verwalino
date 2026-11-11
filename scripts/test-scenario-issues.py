@@ -381,13 +381,47 @@ class ScenarioIssueTests(unittest.TestCase):
 
 
 class NightlyWorkflowTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.workflow = (ROOT / ".github/workflows/nightly-scenarios.yaml").read_text()
+        cls.job = cls.workflow.split("\n  scenarios:\n", 1)[1]
+        cls.steps = {block.split("\n", 1)[0]: block for block in cls.job.split("\n      - name: ")[1:]}
+
     def test_issue_writer_checkout_does_not_persist_credentials(self):
-        workflow = (ROOT / ".github/workflows/nightly-scenarios.yaml").read_text()
-        job = workflow.split("\n  scenarios:\n", 1)[1]
-        self.assertIn("\n      issues: write\n", job)
-        checkout = job.split("      - name: Checkout repository\n", 1)[1].split("\n      - name:", 1)[0]
+        self.assertIn("\n      issues: write\n", self.job)
+        checkout = self.steps["Checkout repository"]
         self.assertIn("uses: actions/checkout@v6", checkout)
         self.assertIn("\n        with:\n          persist-credentials: false", checkout)
+
+    def test_both_deployment_modes_run_under_the_one_mode_name(self):
+        self.assertIn("\n        mode: [selfhost, hosted]\n", self.job)
+        self.assertEqual(self.workflow.count("HV_DEPLOYMENT_MODE:"), 1)
+        self.assertIn("\n      HV_DEPLOYMENT_MODE: ${{ matrix.mode }}\n", self.job)
+
+    def test_installer_stack_is_started_collected_and_stopped_only_in_selfhost_mode(self):
+        # The portable installer is selfhost-only (DEPLOY.md); a hosted leg must never reach it.
+        for name in ("Prepare disposable credentials", "Initialize and start self-host installation",
+                     "Wait for application readiness"):
+            self.assertTrue(self.steps[name].split("\n        run:", 1)[0].endswith("if: ${{ matrix.mode == 'selfhost' }}"), name)
+        for name in ("Stop self-host installation", "Collect bounded scenario logs"):
+            self.assertTrue(self.steps[name].split("\n        run:", 1)[0].endswith("if: ${{ always() && matrix.mode == 'selfhost' }}"), name)
+        selfhost_run = self.steps["Run all API and browser features against the installation"]
+        self.assertIn("matrix.mode == 'selfhost'", selfhost_run.split("\n        run:", 1)[0])
+        self.assertIn("pytest tests/bdd --run-browser", selfhost_run)
+
+    def test_hosted_leg_runs_the_local_stack_through_the_hosted_make_target(self):
+        database = self.steps["Start test database"]
+        self.assertIn("matrix.mode == 'hosted'", database.split("\n        run:", 1)[0])
+        self.assertIn("docker compose -f infra/docker-compose.declaration-test.yml up -d --wait postgres", database)
+        run = self.steps["Run the API features in hosted mode on the local stack"]
+        self.assertIn("matrix.mode == 'hosted'", run.split("\n        run:", 1)[0])
+        self.assertIn('make test-bdd-hosted PYTEST_ARGS="-q --scenario-report ../report"', run)
+        self.assertNotIn("self-host.sh", run)
+        self.assertIn("      mailpit:\n        image: axllent/mailpit:", self.job)
+
+    def test_report_artifact_and_issue_filing_name_the_matrix_mode(self):
+        self.assertIn("name: scenarios-${{ matrix.mode }}-${{ env.SCENARIO_DATE }}", self.steps["Retain scenario history"])
+        self.assertIn('--mode "${{ matrix.mode }}"', self.steps["File scenario failure issues"])
 
 
 class GitHubTransportTests(unittest.TestCase):
