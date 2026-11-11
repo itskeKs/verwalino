@@ -111,7 +111,7 @@ Invalid mail settings also block stop/status until corrected.
 Request IDs are always enabled; optional error tracking stays off.
 HV_SUPPORT_URL selects the manual report link (export it; not a private config key).
 HV_DIAGNOSTICS_DIR is an API process setting for the per-host error buffer; see DEPLOY.md.
-HV_ERROR_TRACKING_* keys are not installer settings; see DEPLOY.md.
+HV_ERROR_TRACKING_DSN and HV_ERROR_TRACKING_ENVIRONMENT opt in the app and the workers (export them; not private config keys); see DEPLOY.md.
 Export HV_RELEASE_ID to label tracker releases (otherwise app version 0.1.0).
 Optional inbox-worker (profile inbox, ClamAV signatures): see DEPLOY.md.
 Start, stop and update also stop an existing inbox-worker; restart it after app readiness.

@@ -11,6 +11,7 @@ Provides:
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import os
 import sys
@@ -18,6 +19,7 @@ import uuid
 from contextlib import closing
 from datetime import date
 from functools import cache, wraps
+from pathlib import Path
 import signal
 import threading
 import weakref
@@ -440,6 +442,38 @@ async def fixture_has_registered_documents(session: AsyncSession, document_ids: 
     ))
 
 
+def schema_origin_note(scripts, revisions):
+    """Name the migration scripts that built a schema at `revisions`.
+
+    Revision ids are sequential, so two parallel branches can both own a `0142`
+    with different bodies: the id alone cannot tell their schemas apart, the
+    bytes of every script from base up to the revision can.
+    """
+    paths = {}
+    for revision in revisions:
+        for script in scripts.walk_revisions("base", revision):
+            paths[script.revision] = script.path
+    digest = hashlib.sha256()
+    for revision, path in sorted(paths.items()):
+        digest.update(revision.encode() + b"\0" + Path(path).read_bytes() + b"\0")
+    return f"verwalino test schema built by migration scripts sha256:{digest.hexdigest()}"
+
+
+def record_schema_origin(alembic_cfg):
+    """Note the scripts of this checkout on the table migration 0001 creates.
+
+    Dropping that table erases the note with it, so a checkout that predates this
+    note, or any other downgrade to base, leaves a schema that is not trusted.
+    """
+    from alembic.script import ScriptDirectory
+
+    scripts = ScriptDirectory.from_config(alembic_cfg)
+    with closing(psycopg2.connect(MIGRATOR_SYNC_URL)) as connection, connection, connection.cursor() as cursor:
+        cursor.execute("SELECT version_num FROM public.alembic_version")
+        note = schema_origin_note(scripts, [row[0] for row in cursor.fetchall()])
+        cursor.execute("COMMENT ON TABLE public.organization IS %s", (note,))
+
+
 def migrate_test_database(request):
     # Migration CLI logging must not disable the already imported HTTP app's
     # loggers or replace its scrubber/formatter inside this shared test process;
@@ -480,13 +514,22 @@ def _migrate_test_database(request):
         except CommandError:
             known_revision = None
         if known_revision is None:
-            reset_foreign_test_database(MIGRATOR_SYNC_URL)
-            notice = f"test database held foreign migration head {revision}; reset to empty before upgrading"
-            if request is not None:
-                capture_manager = request.config.pluginmanager.getplugin("capturemanager")
-                with capture_manager.global_and_fixture_disabled():
-                    request.config.get_terminal_writer().line(notice)
-            return _upgrade_test_database(alembic_cfg)
+            return _reset_and_upgrade_test_database(
+                request, alembic_cfg,
+                f"test database held foreign migration head {revision}; reset to empty before upgrading",
+            )
+
+    if revisions:
+        # A known id is not enough: a parallel branch may own the same number.
+        with closing(psycopg2.connect(MIGRATOR_SYNC_URL)) as connection, connection.cursor() as cursor:
+            cursor.execute("SELECT obj_description(to_regclass('public.organization'), 'pg_class')")
+            recorded = cursor.fetchone()[0]
+        if recorded != schema_origin_note(scripts, revisions):
+            return _reset_and_upgrade_test_database(
+                request, alembic_cfg,
+                f"test database held revision {', '.join(revisions)} built by other or unrecorded "
+                "migration scripts; reset to empty before upgrading",
+            )
 
     # This harness is already restricted to the disposable test database above.
     # Production downgrade intentionally refuses to remove a populated dunning
@@ -595,6 +638,15 @@ def _migrate_test_database(request):
     return _upgrade_test_database(alembic_cfg)
 
 
+def _reset_and_upgrade_test_database(request, alembic_cfg, notice):
+    reset_foreign_test_database(MIGRATOR_SYNC_URL)
+    if request is not None:
+        capture_manager = request.config.pluginmanager.getplugin("capturemanager")
+        with capture_manager.global_and_fixture_disabled():
+            request.config.get_terminal_writer().line(notice)
+    return _upgrade_test_database(alembic_cfg)
+
+
 def _upgrade_test_database(alembic_cfg):
     # Rehearse the supported upgrade before any retained test originals exist.
     # The rehearsal uses one rollback-only transaction; never clear later rows
@@ -685,6 +737,7 @@ def _upgrade_test_database(alembic_cfg):
     command.upgrade(alembic_cfg, '0180')
     upgraded_request_timeout = rehearse_initial_upgrade('0180')
     command.upgrade(alembic_cfg, "head")
+    record_schema_origin(alembic_cfg)
     return {'upgrade_0028_to_0181_tables': upgraded_0028_tables,
             'upgrade_0122_to_0181_tables': upgraded_tables,
             'upgrade_0139_to_0181_tables': upgraded_0139_tables,

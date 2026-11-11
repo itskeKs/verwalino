@@ -2596,6 +2596,15 @@ class StackContractTests(unittest.TestCase):
         self.assertEqual(worker["cap_drop"], ["ALL"])
         self.assertIn("--healthcheck", worker["healthcheck"]["test"])
 
+    def test_optional_error_tracking_keys_reach_the_api_and_every_worker(self):
+        for name in ("app", "declaration-worker", "inbox-worker"):
+            env = self.stack["services"][name]["environment"]
+            self.assertEqual(env["HV_ERROR_TRACKING_DSN"], "${HV_ERROR_TRACKING_DSN:-}", name)
+            self.assertEqual(env["HV_ERROR_TRACKING_ENVIRONMENT"], "${HV_ERROR_TRACKING_ENVIRONMENT:-selfhost}", name)
+        for name in ("db", "migrate", "bootstrap", "caddy"):
+            env = self.stack["services"][name].get("environment", {})
+            self.assertEqual([key for key in env if key.startswith("HV_ERROR_TRACKING_")], [], name)
+
     def test_app_has_only_runtime_authority_and_optional_mail_credentials(self):
         app = self.stack["services"]["app"]
         env = app["environment"]
