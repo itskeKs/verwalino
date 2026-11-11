@@ -6,7 +6,7 @@ import pytest
 from sqlalchemy import text
 from sqlalchemy.exc import DBAPIError
 
-from tests.test_financial_scope_boundary import actor, scope_seed, worker_tenant  # noqa: F401
+from tests.test_financial_scope_boundary import actor, scope_seed as scope_seed, worker_tenant as worker_tenant  # noqa: F401
 from tests.test_scope_grants import scope_fixture
 from tests.test_scoped_account_statements import client
 
