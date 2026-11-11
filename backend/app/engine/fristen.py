@@ -33,7 +33,7 @@ from __future__ import annotations
 
 import uuid
 from calendar import monthrange
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import date, timedelta
 from typing import Literal
 

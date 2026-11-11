@@ -1,14 +1,13 @@
 """Worker outputs require a private transaction receipt for the live lease."""
 import uuid
-from datetime import datetime,timezone
 import pytest
 from sqlalchemy import text
 from sqlalchemy.exc import DBAPIError
 from app.core.db import get_tenant_session,get_worker_tenant_session
 from app.repositories.declaration_import_repo import DeclarationImportRepository
-from tests.test_derived_source_access import committed_scope,actor_session  # noqa: F401
-from tests.test_financial_scope_boundary import scope_seed,worker_tenant  # noqa: F401
-from tests.test_declaration_import_api import isolated_document_store,enable_declaration_imports  # noqa: F401
+from tests.test_derived_source_access import committed_scope as committed_scope,actor_session
+from tests.test_financial_scope_boundary import scope_seed as scope_seed,worker_tenant as worker_tenant
+from tests.test_declaration_import_api import isolated_document_store as isolated_document_store,enable_declaration_imports as enable_declaration_imports
 from tests.test_declaration_pipeline import _seed_pipeline_import,make_text_pdf
 from tests.test_property_source_enforcement import synthetic_enforcement
 from tests.test_scoped_account_statements import mutate
@@ -144,21 +143,19 @@ async def test_worker_effect_migration_roundtrip_and_strict_refusal(committed_sc
     from alembic.migration import MigrationContext
     from alembic.operations import Operations
     from tests.conftest import MIGRATOR_SYNC_URL
+    from tests.migration_rehearsal import lock_for_rehearsal
     migration=importlib.import_module('migrations.versions.0071_declaration_worker_effects')
     engine=create_engine(MIGRATOR_SYNC_URL)
-    dependencies='LOCK TABLE '+','.join(migration.TABLES)+',declaration_worker_context IN ACCESS EXCLUSIVE MODE'
     try:
         async with synthetic_enforcement(committed_scope):
             with engine.begin() as db,Operations.context(MigrationContext.configure(db)):
                 # This case tests the data guard; incidental table contention
                 # is tested separately by the busy-dependency cases below.
-                db.execute(text("SET LOCAL lock_timeout='5s'"))
-                db.execute(text(dependencies))
+                lock_for_rehearsal(db, *migration.TABLES, 'declaration_worker_context')
                 with pytest.raises(DBAPIError,match='Retain strict worker effect fencing'):
                     with db.begin_nested(): migration.downgrade()
         with engine.begin() as db,Operations.context(MigrationContext.configure(db)):
-            db.execute(text("SET LOCAL lock_timeout='5s'"))
-            db.execute(text(dependencies))
+            lock_for_rehearsal(db, *migration.TABLES, 'declaration_worker_context')
             point=db.begin_nested()
             try:
                 migration.downgrade();migration.upgrade()

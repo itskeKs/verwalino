@@ -1,7 +1,7 @@
 """Globally unique sign-in address; one address belongs to one organization.
 
-Revision ID: 0182
-Revises: 0181
+Revision ID: 0183
+Revises: 0182
 Create Date: 2026-11-11
 """
 
@@ -10,8 +10,8 @@ from typing import Sequence, Union
 from alembic import op
 
 
-revision: str = "0182"
-down_revision: Union[str, None] = "0181"
+revision: str = "0183"
+down_revision: Union[str, None] = "0182"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 

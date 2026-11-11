@@ -3,8 +3,8 @@ import uuid
 import pytest
 from sqlalchemy import text
 from app.repositories.property_knowledge_repo import PropertyKnowledgeRepository
-from tests.test_declaration_approval_new_property import fully_reviewed_new_property_import  # noqa: F401
-from tests.test_declaration_approval_existing_property import reviewed_existing_property_import  # noqa: F401
+from tests.test_declaration_approval_new_property import fully_reviewed_new_property_import as fully_reviewed_new_property_import
+from tests.test_declaration_approval_existing_property import reviewed_existing_property_import as reviewed_existing_property_import
 
 
 async def assert_publication_order(client, fixture, seed, monkeypatch, method, observer):

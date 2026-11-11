@@ -1,6 +1,5 @@
 """Synthetic organization configuration for tests that exercise AI readers."""
 from contextlib import closing
-import json
 import psycopg2
 from app.services.ai_settings_service import _cipher
 from tests.conftest import MIGRATOR_SYNC_URL

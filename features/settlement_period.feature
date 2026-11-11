@@ -31,6 +31,15 @@ Feature: Settlement period
     When the manager repeats A's January through September statement
     Then the identical statement can be finalized again
 
+  Scenario: Another accounting scope cannot hold an overlapping statement for the same tenancy
+    Given an administrator of "Verwaltung Alpha" is signed in
+    And a tenancy whose statements are kept in two accounting scopes
+    And the first scope holds the January through June 2026 statement
+    When the manager tries to create the April through December 2026 statement in the second scope
+    Then the statement is refused because the tenancy already has an overlapping statement
+    When the manager creates the January through June 2026 statement in the second scope
+    Then the second scope holds its own January through June 2026 statement
+
   Scenario: Calendar-year costs are shared between successive tenants by occupancy
     Given an administrator of "Verwaltung Alpha" is signed in
     And a calendar-year property where tenant A leaves on 30 September and tenant B moves in on 1 October

@@ -3,14 +3,12 @@
 from __future__ import annotations
 
 import uuid
-import inspect
 from contextlib import asynccontextmanager
 from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.config import settings
 from app.core.live_principal import get_live_member_db
 from app.core.tenant import AuthContext, get_current_user
 from app.declarations.knowledge_schemas import (

@@ -13,7 +13,7 @@ import pytest
 from pydantic import ValidationError
 
 from app.core.config import settings
-from app.mail import ENVIRONMENT, RenderedMail, render_mail
+from app.mail import ENVIRONMENT, render_mail
 from app.mail.contexts import (
     CONTEXT_TYPES, MailLink, OperatorNotice, PasswordReset, SignupWelcome,
 )

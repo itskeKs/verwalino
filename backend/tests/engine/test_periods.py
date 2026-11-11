@@ -18,6 +18,8 @@ from app.engine.periods import (
 )
 from app.engine.types import LeasePeriodInput, OwnerPeriodInput, PeriodOverlapError
 
+pytestmark = pytest.mark.no_db
+
 
 class TestDayCount:
     def test_inclusive_single_day(self):

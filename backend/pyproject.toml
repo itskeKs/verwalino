@@ -66,6 +66,8 @@ markers = [
     "browser: browser journeys (opt in with --run-browser)",
     "selfhost: scenario requires the self-hosted deployment policy",
     "hosted: scenario requires the hosted deployment policy",
+    "no_db: runs without the test database (fast subset: pytest -m no_db)",
+    "slow: long-running test (deselect with -m 'not slow')",
 ]
 
 [tool.ruff]
@@ -79,9 +81,11 @@ target-version = "py312"
 [tool.ruff.lint]
 select = [
     "E9",   # syntax errors / unreadable files
+    "F401", # unused imports (fixture re-imports use the `x as x` re-export form)
     "F5",   # str.format / %-format mistakes
     "F6",   # invalid comparisons, dict keys, assert on tuples
     "F7",   # misplaced break/continue/return/yield/await
+    "F811", # redefined-while-unused (a redefined test name would hide a test)
     "F82",  # undefined names (F821/F822/F823)
     "PLE",  # pylint errors (e.g. invalid __all__, bad format strings)
     "B006", # mutable default arguments
@@ -94,8 +98,7 @@ select = [
 ]
 # Candidates to enable later, one at a time, each with its own cleanup commit
 # (counts on the code base at introduction, ruff 0.17):
-#   F401 unused import (168), F841 unused variable (14), F811 redefined-while-unused
-#   (1150, mostly pytest fixture re-imports in tests/), I001 import order (1013),
+#   F841 unused variable (14), I001 import order (1013),
 #   B904 raise-without-from (19), B905 zip-strict (15), B007/B017/B023 (9/8/5),
 #   E402 import not at top (44), E741 ambiguous name (20), E701/E702 (721/993),
 #   UP pyupgrade (295), PLW1510 subprocess check= (3).

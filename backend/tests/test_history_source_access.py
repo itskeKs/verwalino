@@ -4,8 +4,8 @@ import pytest
 from sqlalchemy import text
 from sqlalchemy.exc import DBAPIError
 from app.core.db import get_tenant_session
-from tests.test_m3_settlement import m3_seed  # noqa: F401
-from tests.test_m4_weg import m4_seed  # noqa: F401
+from tests.test_m3_settlement import m3_seed as m3_seed
+from tests.test_m4_weg import m4_seed as m4_seed
 from tests.test_derived_source_access import actor_session
 from tests.test_property_source_access import grant
 from tests.test_property_source_enforcement import synthetic_enforcement,change_mode
@@ -170,12 +170,14 @@ async def test_history_migration_preserves_records_and_private_graph(seed_data,m
     from alembic.migration import MigrationContext
     from alembic.operations import Operations
     from tests.conftest import MIGRATOR_SYNC_URL
+    from tests.migration_rehearsal import lock_for_rehearsal
     migration=importlib.import_module('migrations.versions.0067_history_source_access')
     rent_migration=importlib.import_module('migrations.versions.0126_lease_rent_change')
     engine=create_engine(MIGRATOR_SYNC_URL)
     try:
         async with synthetic_enforcement(seed_data):
             with engine.begin() as db,Operations.context(MigrationContext.configure(db)):
+                lock_for_rehearsal(db)
                 heads_before=MigrationContext.configure(db).get_current_heads()
                 assert heads_before
                 fixture=db.begin_nested()

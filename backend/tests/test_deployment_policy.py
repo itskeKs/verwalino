@@ -139,4 +139,4 @@ async def test_selfhost_smtp_and_public_host_enable_mail_and_public_metadata(cli
     assert response.json()['mail_available'] is True
 
 
-from tests.signup_support import signup_mail  # noqa: E402,F401
+from tests.signup_support import signup_mail as signup_mail  # noqa: E402,F401

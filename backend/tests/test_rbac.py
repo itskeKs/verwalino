@@ -165,7 +165,7 @@ async def test_created_clerk_can_login(client_a_admin, client_unauth):
 
 
 # T57 uses isolated organizations and real login cookies, not mocked principals.
-from tests.test_rent_changes import rent_db, rent_world, api_client  # noqa: E402,F401
+from tests.test_rent_changes import rent_db as rent_db, rent_world as rent_world, api_client  # noqa: E402,F401
 
 
 async def t57_user(api, role='CLERK'):

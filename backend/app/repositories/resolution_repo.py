@@ -8,7 +8,6 @@ from __future__ import annotations
 import uuid
 from typing import Sequence
 
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.resolution import Resolution
 from app.repositories.base import TenantRepository

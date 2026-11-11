@@ -51,7 +51,6 @@ from app.engine.types import (
     COST_GROUP_NICHT_UMLAGEFAEHIG,
     COST_GROUP_UMLAGEFAEHIG,
     DIRECT_KEYS,
-    OwnerAdvanceInput,
     OwnerCostStep,
     OwnerResult,
     PeriodOverlapError,

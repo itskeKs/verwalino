@@ -13,7 +13,7 @@ from tests.conftest import _make_session_cookie
 from tests.test_allocation_adoptions import confirm_grant
 from tests.test_allocation_correction_preview import prepared
 from tests.test_allocation_corrections import split_debit
-from tests.test_financial_scope_boundary import scope_seed, worker_tenant  # noqa: F401
+from tests.test_financial_scope_boundary import scope_seed as scope_seed, worker_tenant as worker_tenant
 from tests.test_invoice_source_custody import fixture
 from tests.test_scoped_account_statements import client
 

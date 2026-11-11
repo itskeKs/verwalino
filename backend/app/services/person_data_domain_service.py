@@ -1,6 +1,5 @@
 """Administrative preparation; no implicit source or financial entitlement."""
 from datetime import datetime, timezone
-import uuid
 from fastapi import HTTPException
 from sqlalchemy import select, text
 from app.models.person_data_domain import PersonDataDomain, PersonDataGrant

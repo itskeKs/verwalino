@@ -10,7 +10,7 @@ Pure-function tests -- no DB, no server.
 from __future__ import annotations
 
 import uuid
-from datetime import date, timedelta
+from datetime import date
 from decimal import Decimal
 
 import pytest
@@ -19,14 +19,13 @@ from hypothesis import given, settings, strategies as st
 from app.engine.canonical import canonical_json, canonical_sha256
 from app.engine.distribution import distribute_position
 from app.engine.periods import (
-    KIND_TENANT,
     KIND_VACANCY,
     build_unit_cover,
     day_count,
     overlap_days,
     time_factor,
 )
-from app.engine.rounding import CENT, DistributionError, distribute_amount
+from app.engine.rounding import CENT, distribute_amount
 from app.engine.settlement import compute_bk_settlement
 from app.engine.snapshot import build_snapshot_payload
 from app.engine.types import (
@@ -37,6 +36,8 @@ from app.engine.types import (
     SettlementInput,
     UnitInput,
 )
+
+pytestmark = [pytest.mark.no_db, pytest.mark.slow]
 
 
 # ---------------------------------------------------------------------------

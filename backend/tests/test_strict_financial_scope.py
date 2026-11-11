@@ -3,7 +3,7 @@ import uuid
 import pytest
 from sqlalchemy import text
 from sqlalchemy.exc import DBAPIError
-from tests.test_financial_scope_boundary import scope_seed, worker_tenant  # noqa: F401
+from tests.test_financial_scope_boundary import scope_seed as scope_seed, worker_tenant as worker_tenant
 from tests.test_scope_grants import scope_fixture
 from tests.test_scoped_account_statements import client, mutate
 from tests.test_scope_payment_reconciliation import read_value
@@ -214,6 +214,38 @@ async def test_financial_property_existence_requires_current_organization_and_li
         assert await read_value(own, ids, actor_key='clerk') is False
 
 
+async def test_settlement_start_month_lookup_is_a_restricted_security_definer(app_rw_session):
+    signature = {'signature': 'public.financial_property_settlement_start_month(uuid,uuid)'}
+    security = (await app_rw_session.execute(text("""SELECT prosecdef,proconfig,prorettype::regtype::text
+        FROM pg_proc WHERE oid=CAST(:signature AS regprocedure)"""), signature)).one()
+    assert security.prosecdef is True
+    assert security.proconfig == ['search_path=pg_catalog, pg_temp', 'row_security=off']
+    assert security.prorettype == 'integer'
+    grantees = (await app_rw_session.execute(text("""SELECT pg_get_userbyid(acl.grantee),
+        acl.privilege_type,acl.is_grantable FROM pg_proc p
+        CROSS JOIN LATERAL aclexplode(COALESCE(p.proacl,acldefault('f',p.proowner))) acl
+        WHERE p.oid=CAST(:signature AS regprocedure) AND acl.grantee<>p.proowner"""), signature)).all()
+    assert grantees == [('app_rw', 'EXECUTE', False)]
+
+
+async def test_settlement_start_month_requires_current_organization_and_live_actor(migrator_session, scope_seed, seed_data):
+    ids = await scope_fixture(migrator_session, scope_seed)
+    ids.update(foreign_org=seed_data['org_b_id'], foreign_property=uuid.uuid4())
+    await migrator_session.execute(text('UPDATE property SET fiscal_year_start_month=4 WHERE id=:property'), ids)
+    await migrator_session.execute(text("INSERT INTO property(id,organization_id,name,management_type,fiscal_year_start_month) VALUES (:foreign_property,:foreign_org,'Foreign start month','WEG',7)"), ids)
+    await migrator_session.commit()
+    own = 'SELECT financial_property_settlement_start_month(:org,:property)'
+    async with synthetic_enforcement(scope_seed):
+        # The clerk cannot read the property itself, only the month the creation paths need.
+        assert await read_value('SELECT count(*) FROM property WHERE id=:property', ids, actor_key='clerk') == 0
+        assert await read_value(own, ids, actor_key='clerk') == 4
+        assert await read_value('SELECT financial_property_settlement_start_month(:org,:foreign_property)', ids, actor_key='clerk') is None
+        assert await read_value('SELECT financial_property_settlement_start_month(:foreign_org,:foreign_property)', ids, actor_key='clerk') is None
+        assert await read_value('SELECT financial_property_settlement_start_month(:org,gen_random_uuid())', ids, actor_key='clerk') is None
+        await mutate(text('UPDATE "user" SET is_active=false WHERE organization_id=:org AND id=:clerk'), ids)
+        assert await read_value(own, ids, actor_key='clerk') is None
+
+
 async def money_fixture(session, seed):
     ids = await scope_fixture(session, seed)
     ids.update({key: uuid.uuid4() for key in ['cost','plan','line','run','document','payment','attempt','person','owner']})
@@ -290,16 +322,19 @@ async def test_financial_scope_migration_preserves_rows_and_function_identity(mi
     from alembic.migration import MigrationContext
     from alembic.operations import Operations
     from tests.conftest import MIGRATOR_SYNC_URL
+    from tests.migration_rehearsal import lock_for_rehearsal
     ids = await money_fixture(migrator_session, scope_seed)
     migration = importlib.import_module('migrations.versions.0081_strict_financial_scope')
     engine = create_engine(MIGRATOR_SYNC_URL)
     try:
         async with synthetic_enforcement(scope_seed):
             with engine.begin() as db, Operations.context(MigrationContext.configure(db)):
+                lock_for_rehearsal(db)
                 with pytest.raises(DBAPIError, match='Retain strict financial scope access'):
                     with db.begin_nested():
                         migration.downgrade()
         with engine.begin() as db, Operations.context(MigrationContext.configure(db)):
+            lock_for_rehearsal(db)
             point = db.begin_nested()
             try:
                 def hashes():

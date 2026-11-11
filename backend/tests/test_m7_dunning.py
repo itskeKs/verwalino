@@ -299,7 +299,7 @@ async def test_batch_readonly_cannot_prepare(client_a_readonly, m7_seed):
 
 
 # Fresh organizations isolate concurrency and history from session-shared M7 data.
-from tests.test_rent_changes import rent_db, rent_world, api_client, post_change  # noqa: E402,F401
+from tests.test_rent_changes import rent_db as rent_db, rent_world as rent_world, api_client, post_change  # noqa: E402,F401
 
 
 def fresh_batch_request(**changes):
@@ -411,7 +411,7 @@ async def test_batch_foreign_selection_cannot_create_partial_result(rent_world):
         assert (await api.get("/api/dunning")).json() == []
 
 
-from tests.test_financial_scope_boundary import worker_tenant, scope_seed  # noqa: E402,F401
+from tests.test_financial_scope_boundary import worker_tenant, scope_seed as scope_seed  # noqa: E402,F401
 
 
 @pytest.mark.asyncio
@@ -1556,7 +1556,7 @@ async def test_0174_downgrade_refuses_default_policy_notice_without_interest(iso
                         with connection.begin_nested():
                             command.downgrade(cfg, "0173")
                     historical.rollback()
-            assert connection.scalar(text("SELECT version_num FROM alembic_version")) == "0181"
+            assert connection.scalar(text("SELECT version_num FROM alembic_version")) == "0182"
             assert connection.scalar(text("SELECT to_regclass('public.dunning_settings')")) is not None
             assert connection.scalar(text("SELECT count(*) FROM dunning_notice WHERE id=:id"), params) == 1
     finally:

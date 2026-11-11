@@ -3,9 +3,9 @@ import pytest
 from sqlalchemy import text
 from sqlalchemy.exc import DBAPIError
 from app.core.db import get_tenant_session
-from tests.test_derived_source_access import committed_scope,actor_session  # noqa: F401
-from tests.test_financial_scope_boundary import scope_seed,worker_tenant  # noqa: F401
-from tests.test_declaration_import_api import isolated_document_store,enable_declaration_imports  # noqa: F401
+from tests.test_derived_source_access import committed_scope as committed_scope,actor_session
+from tests.test_financial_scope_boundary import scope_seed as scope_seed,worker_tenant as worker_tenant
+from tests.test_declaration_import_api import isolated_document_store as isolated_document_store,enable_declaration_imports as enable_declaration_imports
 from tests.test_declaration_review_commands import review_seed,COMMAND,command_params
 from tests.test_property_source_enforcement import synthetic_enforcement
 from tests.test_scoped_account_statements import mutate
@@ -199,21 +199,19 @@ async def test_review_runtime_migration_roundtrip_preserves_decisions(committed_
     from alembic.migration import MigrationContext
     from alembic.operations import Operations
     from tests.conftest import MIGRATOR_SYNC_URL
+    from tests.migration_rehearsal import lock_for_rehearsal
     seed=committed_scope;params=await review_seed(seed)
     migration=importlib.import_module('migrations.versions.0073_declaration_review_runtime');engine=create_engine(MIGRATOR_SYNC_URL)
-    dependencies='LOCK TABLE '+','.join(migration.TABLES)+',declaration_review_context IN ACCESS EXCLUSIVE MODE'
     try:
         async with synthetic_enforcement(seed):
             with engine.begin() as db,Operations.context(MigrationContext.configure(db)):
                 # Exercise the semantic guard after incidental table contention;
                 # busy-dependency refusal is covered separately below.
-                db.execute(text("SET LOCAL lock_timeout='5s'"))
-                db.execute(text(dependencies))
+                lock_for_rehearsal(db, *migration.TABLES, 'declaration_review_context')
                 with pytest.raises(DBAPIError,match='Retain isolated review validation'):
                     with db.begin_nested(): migration.downgrade()
         with engine.begin() as db,Operations.context(MigrationContext.configure(db)):
-            db.execute(text("SET LOCAL lock_timeout='5s'"))
-            db.execute(text(dependencies))
+            lock_for_rehearsal(db, *migration.TABLES, 'declaration_review_context')
             point=db.begin_nested()
             try:
                 before=db.scalar(text("SELECT md5(COALESCE(string_agg(to_jsonb(c)::text,',' ORDER BY id),'')) FROM declaration_candidate c"))

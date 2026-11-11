@@ -382,12 +382,20 @@ def pytest_collection_modifyitems(items):
     items.sort(key=lambda item: item.path.name != "test_testdb_reset.py")
 
 
+# False when every selected test is marked `no_db` (pytest -m no_db): the run then
+# needs neither the migrations nor a reachable test database.
+_session_needs_database = True
+
+
+def pytest_collection_finish(session):
+    global _session_needs_database
+    _session_needs_database = any(not item.get_closest_marker('no_db') for item in session.items)
+
+
 # ---------------------------------------------------------------------------
 # Run Alembic migrations before tests
 # ---------------------------------------------------------------------------
-def clear_disposable_source_context(cursor):
-    """Only for destructive migration rehearsals in the guarded disposable DB."""
-    from psycopg2 import sql
+def require_disposable_rehearsal_cursor(cursor):
     from sqlalchemy.engine import make_url
 
     _, _, sync_url = require_disposable_database_settings(settings)
@@ -400,6 +408,13 @@ def clear_disposable_source_context(cursor):
     cursor.execute("SELECT pg_get_userbyid(datdba) FROM pg_database WHERE datname=current_database()")
     if cursor.fetchone() != ('app_migrator',):
         raise RuntimeError("Migration rehearsal requires the owned disposable database")
+
+
+def clear_disposable_source_context(cursor):
+    """Only for destructive migration rehearsals in the guarded disposable DB."""
+    from psycopg2 import sql
+
+    require_disposable_rehearsal_cursor(cursor)
     # Reset only synthetic session invalidations in this owned disposable DB.
     # The production downgrade still refuses any positive generation.
     cursor.execute("SELECT EXISTS(SELECT 1 FROM information_schema.columns WHERE table_schema='public' AND table_name='user' AND column_name='session_version')")
@@ -732,55 +747,61 @@ def _upgrade_test_database(alembic_cfg):
     command.upgrade(alembic_cfg, '0180')
     upgraded_request_timeout = rehearse_initial_upgrade('0180')
     command.upgrade(alembic_cfg, '0181')
-    upgraded_reserve_soll = rehearse_initial_upgrade('0181')
+    upgraded_weg_reserve_soll = rehearse_initial_upgrade('0181')
+    command.upgrade(alembic_cfg, '0182')
+    upgraded_overlap_guard = rehearse_initial_upgrade('0182')
     command.upgrade(alembic_cfg, "head")
     record_schema_origin(alembic_cfg)
-    return {'upgrade_0028_to_0182_tables': upgraded_0028_tables,
-            'upgrade_0122_to_0182_tables': upgraded_tables,
-            'upgrade_0139_to_0182_tables': upgraded_0139_tables,
-            'upgrade_0140_to_0182_tables': upgraded_parent_tables,
-            'upgrade_0141_to_0182_tables': upgraded_setup_tables,
-            'upgrade_0142_to_0182_tables': upgraded_throttle_tables,
-            'upgrade_0143_to_0182_tables': upgraded_lease_tables,
-            'upgrade_0144_to_0182_tables': upgraded_signup_tables,
-            'upgrade_0145_to_0182_tables': upgraded_reset_tables,
-            'upgrade_0146_to_0182_tables': upgraded_quota_tables,
-            'upgrade_0147_to_0182_tables': upgraded_lifecycle_tables,
-            'upgrade_0148_to_0182_tables': upgraded_retention_tables,
-            'upgrade_0149_to_0182_tables': upgraded_reserve_tables,
-            'upgrade_0150_to_0182_tables': upgraded_heating_tables,
-            'upgrade_0151_to_0182_tables': upgraded_draft_tables,
-            'upgrade_0152_to_0182_tables': upgraded_bank_tables,
-            'upgrade_0153_to_0182_tables': upgraded_restoration_tables,
-            'upgrade_0154_to_0182_tables': upgraded_always_guard_tables,
-            'upgrade_0155_to_0182_tables': upgraded_person_retention_tables,
-            'upgrade_0159_to_0182_tables': upgraded_deadline_tables,
-            'upgrade_0160_to_0182_tables': upgraded_reason_erasure_tables,
-            'upgrade_0161_to_0182_tables': upgraded_report_recipient_tables,
-            'upgrade_0162_to_0182_tables': upgraded_successor_dunning_tables,
-            'upgrade_0163_to_0182_tables': upgraded_household_tables,
-            'upgrade_0164_to_0182_tables': upgraded_person_day_bases,
-            'upgrade_0165_to_0182_tables': upgraded_property_state,
-            'upgrade_0166_to_0182_tables': upgraded_register_date,
-            'upgrade_0167_to_0182_tables': upgraded_levy_authority,
-            'upgrade_0168_to_0182_tables': upgraded_commercial_rules,
-            'upgrade_0169_to_0182_tables': upgraded_statement_notes,
-            'upgrade_0170_to_0182_tables': upgraded_bank_cost,
-            'upgrade_0171_to_0182_tables': upgraded_bank_corrections,
-            'upgrade_0172_to_0182_tables': upgraded_bank_evidence,
-            'upgrade_0173_to_0182_tables': upgraded_dunning_policy,
-            'upgrade_0174_to_0182_tables': upgraded_preferences,
-            'upgrade_0175_to_0182_tables': upgraded_advance_mode,
-            'upgrade_0176_to_0182_tables': protected_advance_mode,
-            'upgrade_0177_to_0182_tables': upgraded_ai_settings,
-            'upgrade_0178_to_0182_tables': upgraded_provider_settings,
-            'upgrade_0179_to_0182_tables': upgraded_provider_endpoints,
-            'upgrade_0180_to_0182_tables': upgraded_request_timeout,
-            'upgrade_0181_to_0182_tables': upgraded_reserve_soll}  # accepted source
+    return {'upgrade_0028_to_0183_tables': upgraded_0028_tables,
+            'upgrade_0122_to_0183_tables': upgraded_tables,
+            'upgrade_0139_to_0183_tables': upgraded_0139_tables,
+            'upgrade_0140_to_0183_tables': upgraded_parent_tables,
+            'upgrade_0141_to_0183_tables': upgraded_setup_tables,
+            'upgrade_0142_to_0183_tables': upgraded_throttle_tables,
+            'upgrade_0143_to_0183_tables': upgraded_lease_tables,
+            'upgrade_0144_to_0183_tables': upgraded_signup_tables,
+            'upgrade_0145_to_0183_tables': upgraded_reset_tables,
+            'upgrade_0146_to_0183_tables': upgraded_quota_tables,
+            'upgrade_0147_to_0183_tables': upgraded_lifecycle_tables,
+            'upgrade_0148_to_0183_tables': upgraded_retention_tables,
+            'upgrade_0149_to_0183_tables': upgraded_reserve_tables,
+            'upgrade_0150_to_0183_tables': upgraded_heating_tables,
+            'upgrade_0151_to_0183_tables': upgraded_draft_tables,
+            'upgrade_0152_to_0183_tables': upgraded_bank_tables,
+            'upgrade_0153_to_0183_tables': upgraded_restoration_tables,
+            'upgrade_0154_to_0183_tables': upgraded_always_guard_tables,
+            'upgrade_0155_to_0183_tables': upgraded_person_retention_tables,
+            'upgrade_0159_to_0183_tables': upgraded_deadline_tables,
+            'upgrade_0160_to_0183_tables': upgraded_reason_erasure_tables,
+            'upgrade_0161_to_0183_tables': upgraded_report_recipient_tables,
+            'upgrade_0162_to_0183_tables': upgraded_successor_dunning_tables,
+            'upgrade_0163_to_0183_tables': upgraded_household_tables,
+            'upgrade_0164_to_0183_tables': upgraded_person_day_bases,
+            'upgrade_0165_to_0183_tables': upgraded_property_state,
+            'upgrade_0166_to_0183_tables': upgraded_register_date,
+            'upgrade_0167_to_0183_tables': upgraded_levy_authority,
+            'upgrade_0168_to_0183_tables': upgraded_commercial_rules,
+            'upgrade_0169_to_0183_tables': upgraded_statement_notes,
+            'upgrade_0170_to_0183_tables': upgraded_bank_cost,
+            'upgrade_0171_to_0183_tables': upgraded_bank_corrections,
+            'upgrade_0172_to_0183_tables': upgraded_bank_evidence,
+            'upgrade_0173_to_0183_tables': upgraded_dunning_policy,
+            'upgrade_0174_to_0183_tables': upgraded_preferences,
+            'upgrade_0175_to_0183_tables': upgraded_advance_mode,
+            'upgrade_0176_to_0183_tables': protected_advance_mode,
+            'upgrade_0177_to_0183_tables': upgraded_ai_settings,
+            'upgrade_0178_to_0183_tables': upgraded_provider_settings,
+            'upgrade_0179_to_0183_tables': upgraded_provider_endpoints,
+            'upgrade_0180_to_0183_tables': upgraded_request_timeout,
+            'upgrade_0181_to_0183_tables': upgraded_weg_reserve_soll,
+            'upgrade_0182_to_0183_tables': upgraded_overlap_guard}  # accepted source
 
 
 @pytest.fixture(scope="session", autouse=True)
 def run_migrations(request=None):
+    if not _session_needs_database:
+        yield
+        return
     # Keep the fileConfig patch active for later migration rehearsals during the session.
     with patch("logging.config.fileConfig"):
         yield migrate_test_database(request)
@@ -806,13 +827,17 @@ def configured_ai(seed_data):
 
 
 @pytest_asyncio.fixture(autouse=True)
-async def inject_test_engine(run_migrations):
+async def inject_test_engine(request, run_migrations):
     """Replace the app's DB engine with a fresh one per test function.
 
     This avoids asyncpg event-loop mismatch: each test function gets
     its own event loop (pytest-asyncio default), so the engine must be
-    recreated to use the current loop.
+    recreated to use the current loop. Tests marked `no_db` never touch
+    the database, so no engine is injected for them.
     """
+    if request.node.get_closest_marker('no_db'):
+        yield
+        return
     global _test_app_rw_engine
     _test_app_rw_engine = create_async_engine(
         APP_RW_URL, pool_pre_ping=True, pool_size=10, max_overflow=5

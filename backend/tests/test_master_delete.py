@@ -7,7 +7,7 @@ import uuid
 import pytest
 from sqlalchemy import text
 
-from tests.test_rent_changes import api_client, post_change, rent_db, rent_world  # noqa: F401
+from tests.test_rent_changes import api_client, post_change, rent_db as rent_db, rent_world as rent_world
 
 
 async def unused(api, kind):

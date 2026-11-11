@@ -10,7 +10,6 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
-import math
 import uuid
 from collections import defaultdict
 from contextlib import AbstractAsyncContextManager
@@ -18,7 +17,7 @@ from dataclasses import dataclass, field, replace
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from functools import partial
-from typing import Any, Callable, Generic, Sequence, TypeVar
+from typing import Any, Callable, Sequence, TypeVar
 
 from sqlalchemy import select
 
@@ -63,7 +62,7 @@ from app.declarations.validation import (
     validate_evidence_items,
     validate_reconciliation,
 )
-from app.models.declaration_import import DeclarationExtractionRun, DeclarationImport
+from app.models.declaration_import import DeclarationExtractionRun
 from app.models.property import Property
 from app.models.property_document import PropertyDocument
 from app.models.unit import Unit

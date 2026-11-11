@@ -32,11 +32,23 @@ jobs:
       group: scenario-issues-${{ github.repository }}
       cancel-in-progress: false
     timeout-minutes: 45
+    # The legs share the issue-filing concurrency group above, so they run one after the other.
     strategy:
       fail-fast: false
       matrix:
-        mode: [selfhost]
-        # Running both deployment modes needs a hosted server; tracked in #103.
+        # selfhost runs against the installer's stack. The portable installer is selfhost-only
+        # (DEPLOY.md), so hosted runs the same features on the local stack in hosted mode.
+        mode: [selfhost, hosted]
+    # Both legs start Mailpit; only the hosted leg's mail scenarios (signup, quotas, recovery) read it.
+    services:
+      mailpit:
+        image: axllent/mailpit:v1.32.0@sha256:0790692be935ea4420d085694f7985b1f692ca6a8771ab0e0bd8ba75ac180498
+        ports:
+          - 1025:1025
+          - 8025:8025
+        options: >-
+          --health-cmd="/mailpit readyz"
+          --health-interval=2s --health-timeout=2s --health-retries=15
     env:
       UV_LOCKED: "1"
       HV_DEPLOYMENT_MODE: ${{ matrix.mode }}
@@ -51,11 +63,15 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Prepare report and disposable credentials
+      - name: Prepare report
         run: |
           mkdir -p report
-          : > "$RUNNER_TEMP/scenario-selfhost.log"
           printf 'SCENARIO_DATE=%s\n' "$(date -u +%F)" >> "$GITHUB_ENV"
+
+      - name: Prepare disposable credentials
+        if: ${{ matrix.mode == 'selfhost' }}
+        run: |
+          : > "$RUNNER_TEMP/scenario-selfhost.log"
           password=$(openssl rand -hex 24)
           printf '::add-mask::%s\n' "$password"
           printf 'VERWALINO_TARGET_ADMIN_PASSWORD=%s\n' "$password" >> "$GITHUB_ENV"
@@ -66,6 +82,7 @@ jobs:
           done
 
       - name: Initialize and start self-host installation
+        if: ${{ matrix.mode == 'selfhost' }}
         run: |
           # start builds the checkout image and owns project verwalino.
           bash scripts/self-host.sh init --port 18080 2>&1 | tee -a "$RUNNER_TEMP/scenario-selfhost.log"
@@ -90,6 +107,7 @@ jobs:
           done
 
       - name: Wait for application readiness
+        if: ${{ matrix.mode == 'selfhost' }}
         run: curl --fail --silent --show-error --retry 30 --retry-delay 2 --retry-connrefused http://127.0.0.1:18080/api/health/ready
 
       - name: Set up uv
@@ -108,20 +126,41 @@ jobs:
           sudo apt-get install -y --no-install-recommends libpangoft2-1.0-0 fonts-dejavu-core poppler-utils
           pdftotext -v
 
-      - name: Run all API and browser features
+      # Hosted leg: the PR workflow's backend environment (in-process app, Postgres and Mailpit).
+      - name: Install local-stack system libraries
+        if: ${{ matrix.mode == 'hosted' }}
+        run: >-
+          sudo apt-get update && sudo apt-get install -y --no-install-recommends
+          libpango-1.0-0 libpangocairo-1.0-0 libpangoft2-1.0-0 libcairo2
+          libgdk-pixbuf-2.0-0 libffi8 fonts-dejavu-core shared-mime-info
+          poppler-utils qpdf tesseract-ocr tesseract-ocr-deu
+
+      - name: Start test database
+        if: ${{ matrix.mode == 'hosted' }}
+        run: docker compose -f infra/docker-compose.declaration-test.yml up -d --wait postgres
+
+      - name: Run all API and browser features against the installation
+        if: ${{ matrix.mode == 'selfhost' }}
         working-directory: backend
         run: |
           uv run --locked --extra dev --extra ops --extra ocr pytest tests/bdd --run-browser -q --scenario-report ../report
 
+      # The target owns the database lock, runs hosted policy and unsets the external target URL
+      # and admin login set above. Browser features stay in the selfhost leg: the browser
+      # stack's app does not start in hosted mode yet (#537).
+      - name: Run the API features in hosted mode on the local stack
+        if: ${{ matrix.mode == 'hosted' }}
+        run: make test-bdd-hosted PYTEST_ARGS="-q --scenario-report ../report"
+
       - name: Stop self-host installation
-        if: always()
+        if: ${{ always() && matrix.mode == 'selfhost' }}
         run: |
           if [[ -f .env.selfhost ]]; then
             bash scripts/self-host.sh stop 2>&1 | tee -a "$RUNNER_TEMP/scenario-selfhost.log"
           fi
 
       - name: Collect bounded scenario logs
-        if: always()
+        if: ${{ always() && matrix.mode == 'selfhost' }}
         run: |
           mkdir -p report/logs
           cp "$RUNNER_TEMP/scenario-selfhost.log" report/logs/selfhost.log

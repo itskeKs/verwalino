@@ -1,6 +1,6 @@
 # Verwalino public website
 
-A static, bilingual Astro 5 website, deployed independently of the property-management app.
+A static, bilingual Astro 7 website, deployed independently of the property-management app.
 German lives at `/`, English at `/en/`. No client framework, analytics, cookies, external fonts
 or runtime third-party requests are used. The only browser scripts control the theme and mobile
 menu. The theme preference is stored locally when storage is available; language is determined

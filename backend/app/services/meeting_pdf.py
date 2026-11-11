@@ -18,7 +18,7 @@ decisions. A functional standard layout is provided here.
 from __future__ import annotations
 
 import html
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 
 from app.core.pdf import render_pdf

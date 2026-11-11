@@ -9,7 +9,7 @@ from datetime import datetime
 from decimal import Decimal
 from typing import Iterable
 
-from sqlalchemy import String, and_, case, cast, exists, func, literal, null, or_, select, union_all, update, text
+from sqlalchemy import String, and_, cast, exists, func, literal, null, or_, select, union_all, update, text
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.exc import DBAPIError
 from fastapi import HTTPException

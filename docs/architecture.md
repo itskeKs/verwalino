@@ -531,6 +531,10 @@ in credentials or URL queries still follow the normal secret/query redaction.
 Text filtering remains bounded to the first 8192 characters per string.
 No person directory is loaded: names are matched heuristically,
 so this is not a guarantee for arbitrary names or unrecognized free text.
+Each worker entry point (`workers/error_tracking.py`) initializes the same tracker and
+reports a job at most once, on its first failure, tagged with the worker name and the
+durable job ID and carrying the exception type and stack without message or breadcrumbs;
+failures before a job is claimed stay in the logs.
 Transport tests stay offline. Configuration, hosted GlitchTip and log lookup are
 documented in [DEPLOY.md](../DEPLOY.md#request-ids-and-optional-error-tracking).
 
@@ -1358,7 +1362,7 @@ An automated test that **prevents accidentally unprotected tables** (level-3 gat
 
 Every client-supplied parent ID, including a parent changed by PATCH or PUT, is resolved through the session's organization-scoped repository or session before writing or checking overlaps/conflicts. Foreign and unknown parents return an identical 404 response, so neither existence nor an overlap is disclosed. Composite foreign keys `(organization_id, parent_id) → parent(organization_id, id)` enforce parent ownership as defence in depth, because PostgreSQL foreign-key checks bypass RLS. The parent-constraint migration rejects existing invalid references before replacing the affected constraints; it never repairs data silently.
 
-Financial creation checks PAUSED mode first, then organization ownership of property and mandate, then the exact accounting scope. Its property repository uses `financial_property_exists`, a boolean-only definer constrained to the current organization and a live member, so an accounting PREPARE grant does not also require property master read access. Property data visibility remains governed by its existing policies. Asset-report bank balances and payment transaction links use their organization-scoped repositories before financial validation or writes.
+Financial creation checks PAUSED mode first, then organization ownership of property and mandate, then the exact accounting scope. Its property repository uses `financial_property_exists`, a boolean-only definer constrained to the current organization and a live member, so an accounting PREPARE grant does not also require property master read access. `financial_property_settlement_start_month` is its integer-only sibling for the property's settlement start month under the same organization and live-member binding (no caller yet; it serves the scope-only creation paths of #68). Property data visibility remains governed by its existing policies. Asset-report bank balances and payment transaction links use their organization-scoped repositories before financial validation or writes.
 
 Setup (fixtures): test DB; **two organizations** `org_a`, `org_b`; one user with a role each; one `management_mandate` each; one sample row each in at least one tenant table. Two API clients, each logged in as a user of the respective org (real login flow, real tenant context).
 

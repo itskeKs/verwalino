@@ -13,6 +13,8 @@ from app.engine.mietkonto import (
     owner_expected_charges, tenant_expected_charges,
 )
 
+pytestmark = pytest.mark.no_db
+
 LEASE = uuid.UUID(int=1)
 TENANT = uuid.UUID(int=2)
 OWNER = uuid.UUID(int=3)

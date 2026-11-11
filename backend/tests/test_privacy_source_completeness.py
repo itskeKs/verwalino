@@ -6,7 +6,7 @@ from sqlalchemy import text
 from app.core.db import get_tenant_session
 from app.services.dsgvo_service import DsgvoService
 from tests.test_m3_settlement import m3_seed as shared_m3_seed, _extras_for_exit
-from tests.test_m4_weg import m4_seed, _create_and_finalize_plan  # noqa: F401
+from tests.test_m4_weg import m4_seed as m4_seed, _create_and_finalize_plan
 from tests.test_financial_input_policy import draft,attest
 from tests.test_financial_source_disclosure import bind_output,clear_disclosure_grants
 from tests.test_property_source_enforcement import synthetic_enforcement,change_mode

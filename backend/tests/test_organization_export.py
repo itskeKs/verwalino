@@ -16,7 +16,7 @@ from app.core.storage import LocalFsDocumentStore, get_store, set_store
 from sqlalchemy import event, text
 from sqlalchemy.orm import Session
 from tests.conftest import MIGRATOR_SYNC_URL, clear_disposable_source_context
-from tests.test_rent_changes import rent_db, rent_world, api_client  # noqa: F401
+from tests.test_rent_changes import rent_db as rent_db, rent_world as rent_world, api_client
 
 
 @pytest_asyncio.fixture

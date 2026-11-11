@@ -8,7 +8,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import create_async_engine
 
 from tests.conftest import MIGRATOR_URL
-from tests.test_rent_changes import rent_db, rent_world, api_client  # noqa: F401
+from tests.test_rent_changes import rent_db as rent_db, rent_world as rent_world, api_client
 from tests.test_rbac import t57_user, t57_guest
 
 pytestmark = pytest.mark.asyncio
@@ -399,7 +399,7 @@ async def test_revision_chain_head_0131_head_preserves_full_state_and_issued_pdf
     config.set_main_option('script_location', str(Path(__file__).parents[1] / 'migrations'))
     scripts = ScriptDirectory.from_config(config)
     assert scripts.get_heads() == [TARGET]
-    expected_ancestry = [f'{number:04}' for number in range(131, 156)] + ['0159', '0160', '0161', '0162', '0163', '0164', '0165', '0166', '0167', '0168', '0169', '0170', '0171', '0172', '0173', '0174', '0175', '0176', '0177', '0178', '0179', '0180', '0181', '0182']
+    expected_ancestry = [f'{number:04}' for number in range(131, 156)] + ['0159', '0160', '0161', '0162', '0163', '0164', '0165', '0166', '0167', '0168', '0169', '0170', '0171', '0172', '0173', '0174', '0175', '0176', '0177', '0178', '0179', '0180', '0181', '0182', '0183']
     assert [r.revision for r in scripts.iterate_revisions(TARGET, '0131')] == expected_ancestry[:0:-1]
     engine = create_engine(MIGRATOR_SYNC_URL)
     try:
