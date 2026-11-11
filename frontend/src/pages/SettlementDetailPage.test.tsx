@@ -736,7 +736,7 @@ describe("T31 meter consumption prefill", () => {
     const save = vi.spyOn(api, 'setAdvancePayments').mockResolvedValue({ ...consumptionDraft,
       advance_payments_total: '1080.00', heating_advance_payments_total: '1080.00' });
     showProposal();
-    fireEvent.click(await screen.findByRole('button', { name: 'Aendern' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Ändern' }));
     for (const field of ['Betriebskosten', 'Heizkosten']) {
       fireEvent.change(screen.getByLabelText(`${field}-Vorauszahlung (EUR)`), { target: { value: '1.080,00' } });
     }
@@ -752,7 +752,7 @@ describe("T31 meter consumption prefill", () => {
   ])('rejects invalid %s advance %s locally with a German field error', async (field, value) => {
     const save = vi.spyOn(api, 'setAdvancePayments').mockResolvedValue(consumptionDraft);
     showProposal();
-    fireEvent.click(await screen.findByRole('button', { name: 'Aendern' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Ändern' }));
     const input = screen.getByLabelText(`${field}-Vorauszahlung (EUR)`);
     fireEvent.change(input, { target: { value } });
     fireEvent.click(screen.getByRole('button', { name: 'Speichern' }));
@@ -801,7 +801,7 @@ describe("T31 meter consumption prefill", () => {
     const save = vi.spyOn(api, 'setAdvancePayments').mockResolvedValue({ ...run,
       heating_advance_payments_total: '1000.00', heating_advance_payments_source: 'MANUAL' });
     showProposal();
-    fireEvent.click(await screen.findByRole('button', { name: 'Aendern' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Ändern' }));
     fireEvent.change(screen.getByLabelText('Heizkosten-Vorauszahlung (EUR)'), { target: { value: '1000,00' } });
     fireEvent.click(screen.getByRole('button', { name: 'Speichern' }));
     await waitFor(() => expect(save).toHaveBeenCalledExactlyOnceWith('run-1', { heating_advance_payments_total: '1000.00' }));
@@ -814,7 +814,7 @@ describe("T31 meter consumption prefill", () => {
     vi.mocked(api.getSettlement).mockResolvedValueOnce(run);
     const save = vi.spyOn(api, 'setAdvancePayments').mockResolvedValue({ ...run, heating_advance_payments_total: '90.00' });
     showProposal();
-    fireEvent.click(await screen.findByRole('button', { name: 'Aendern' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Ändern' }));
     fireEvent.change(screen.getByLabelText('Heizkosten-Vorauszahlung (EUR)'), { target: { value: '90.00' } });
     fireEvent.click(screen.getByRole('button', { name: 'Speichern' }));
     await waitFor(() => expect(save).toHaveBeenCalledExactlyOnceWith('run-1', { heating_advance_payments_total: '90.00' }));
@@ -843,7 +843,7 @@ describe("T31 meter consumption prefill", () => {
     vi.mocked(api.getConsumptionSuggestions).mockReset().mockResolvedValue(structuredClone(consumptionRows));
     vi.mocked(api.computeSettlement).mockResolvedValue(structuredClone(consumptionDraft));
   });
-  it.each([["VERBRAUCH", "Verbrauch"], ["WOHNFLAECHE", "Flaeche"], ["BEHEIZTE_FLAECHE", "Beheizte Flaeche"], ["EINHEIT", "Einheiten"], ["PERSONENZAHL", "Personen"], ["EXTERNE_ABRECHNUNG", "Extern"], ["MANUELLER_BETRAG", "Manuell"]])("renders canonical key %s as %s", async (key, label) => {
+  it.each([["VERBRAUCH", "Verbrauch"], ["WOHNFLAECHE", "Fläche"], ["BEHEIZTE_FLAECHE", "Beheizte Fläche"], ["EINHEIT", "Einheiten"], ["PERSONENZAHL", "Personen"], ["EXTERNE_ABRECHNUNG", "Extern"], ["MANUELLER_BETRAG", "Manuell"]])("renders canonical key %s as %s", async (key, label) => {
     vi.mocked(api.getSettlement).mockResolvedValue({ ...consumptionDraft, total_cost: "30.00", balance: "30.00", lines: [{
       id: "line", cost_entry_id: "water", line_type: "COST", cost_category_code: "KALTWASSER", label: "Kaltwasser",
       distribution_key: key, total_amount: "100.00", distribution_base_total: "100.000000", distribution_base_share: "30.000000",

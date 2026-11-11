@@ -48,8 +48,8 @@ it("passes owner scope and plan and freezes query controls until the response ar
   vi.mocked(endpoints.ownerStatement).mockReturnValue(new Promise(resolve => { finish = resolve; }));
   render(<MemoryRouter><MietkontoPage /></MemoryRouter>);
   fireEvent.change(await screen.findByLabelText("Ansicht"), { target: { value: "owner" } });
-  fireEvent.change(screen.getByLabelText("Eigentuemer *"), { target: { value: "owner" } });
-  fireEvent.change(screen.getByLabelText("Wirtschaftsplan (fuer Soll)"), { target: { value: "plan" } });
+  fireEvent.change(screen.getByLabelText("Eigentümer *"), { target: { value: "owner" } });
+  fireEvent.change(screen.getByLabelText("Wirtschaftsplan (für Soll)"), { target: { value: "plan" } });
   await screen.findByRole("option", { name: /Lesebereich/ });
   fireEvent.change(screen.getByRole("combobox", { name: "Abrechnungskreis" }), { target: { value: "scope" } });
   fireEvent.click(screen.getByRole("button", { name: "Abrufen" }));
