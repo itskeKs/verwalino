@@ -188,7 +188,9 @@ async def test_released_scoped_reserve_draft_and_later_cost_link_survive_archive
             'property_id': ids['property'][original_binding['property_id']],
             'scope_id': ids['accounting_scope'][original_binding['scope_id']],
             'payment_id': restored_payment['payment'], 'payment_bank_account_id': ids['bank_account'][bank],
-            'reviewed_by': ids['user'][original_binding['reviewed_by']]}
+            # Insert policies bind reviewed_by to the restoring session actor;
+            # the archived reviewer is an inactive placeholder (issue #134).
+            'reviewed_by': str(import_target['admin'])}
         await rent_db.rollback()
         page = await api.get('/api/bank-transactions', params={'bank_account_id': ids['bank_account'][bank], 'status': 'ALL'})
         line = next(row for row in page.json()['items'] if row['id'] == debit_id)

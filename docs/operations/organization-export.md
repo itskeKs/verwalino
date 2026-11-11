@@ -163,7 +163,11 @@ unusable password and a deterministic non-sign-in address
 accounts locally before login. An existing destination account with a matching
 normalized address is still reused and deactivated instead of duplicated.
 Round-trip count comparisons account for the kept destination administrator and
-exclude the new local import audit receipt. Contact creation records the importing administrator as the new
+exclude the new local import audit receipt. The importing administrator also
+assumes each restored accounting scope's capabilities through a visible
+`scope_grant` row (reason `Archivwiederherstellung`): the archived grants
+belong to inactive placeholder accounts and cannot keep the restored scoped
+records readable or operable. Contact creation records the importing administrator as the new
 custodian, without claiming the historical author performed a local operation.
 
 Rows are inserted in dependency order in one transaction under ordinary runtime

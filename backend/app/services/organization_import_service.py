@@ -437,9 +437,10 @@ async def import_organization(db, auth, source):
                          {'registrations': json.dumps(registrations)})
         # The archived scope grants belong to inactive placeholder accounts
         # after import (issue #134), so they cannot satisfy the native
-        # capability checks during replay. As each scope is restored, the
-        # importing administrator holds its capabilities for the duration of
-        # the import; the temporary grants are revoked before the commit.
+        # capability checks during replay or afterwards. As each scope is
+        # restored, the importing administrator assumes its capabilities; the
+        # grant remains as a visible evidence row (grants are append-only),
+        # so the restored organization stays readable and operable.
         restore_reason = 'Archivwiederherstellung'
         try:
             while pending:
@@ -574,13 +575,6 @@ async def import_organization(db, auth, source):
                              'reason': restore_reason})
                 if not progress:
                     refuse('Das Archiv enthält zyklische oder nicht auflösbare Abhängigkeiten.')
-            if entities.get('accounting_scope'):
-                # Grants are append-only: revoke instead of delete. The
-                # revoked restoration grants remain as evidence rows.
-                await db.execute(text('UPDATE scope_grant SET revoked_at=clock_timestamp(),revoked_by=:admin '
-                    "WHERE organization_id=:org AND user_id=:admin AND granted_by=:admin "
-                    "AND reason=:reason AND revoked_at IS NULL"),
-                    {'org': auth.organization_id, 'admin': str(auth.user_id), 'reason': restore_reason})
             counts = {name: len(rows) for name, rows in entities.items()}
             source_ids = {name: {id_map[name][r['id']]: r.get('source_id', r['id']) for r in rows if r.get('id')}
                           for name, rows in entities.items() if name in id_map}
