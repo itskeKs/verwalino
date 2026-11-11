@@ -201,6 +201,7 @@ async def test_context_coverage_constraints_and_guarded_downgrade(migrator_sessi
     from alembic.migration import MigrationContext
     from alembic.operations import Operations
     from tests.conftest import MIGRATOR_SYNC_URL
+    from tests.migration_rehearsal import lock_for_rehearsal
     from tests.test_access_coverage import capture
     ids=await fixture(migrator_session,scope_seed)
     async with client(ids) as api,client(ids,'actor') as admin:
@@ -212,6 +213,7 @@ async def test_context_coverage_constraints_and_guarded_downgrade(migrator_sessi
     migration=importlib.import_module('migrations.versions.0104_context_decisions');engine=create_engine(MIGRATOR_SYNC_URL)
     try:
         with engine.begin() as db,Operations.context(MigrationContext.configure(db)):
+            lock_for_rehearsal(db)
             with pytest.raises(DBAPIError,match='Retain context comparison'),db.begin_nested():migration.downgrade()
             for field,value in [('invoice_review_id',other_review['id']),('assignment_proposal_id',other['id']),('property_id',str(uuid.uuid4()))]:
                 with pytest.raises(DBAPIError,match='foreign key'),db.begin_nested():
