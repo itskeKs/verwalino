@@ -156,10 +156,13 @@ shared inbox before each mail scenario, polls briefly, and fails if Mailpit is u
 CI provides the same digest-pinned Mailpit image in each backend shard. The browser scenarios
 do not send mail and need no Mailpit container. Mail-service unit tests keep FakeSMTP.
 
-If the shared database holds a migration revision unknown to the checkout, the session fixture
-logs that revision, drops and recreates `public` with its runtime schema grants, preserves the
-cluster roles, and runs the existing upgrade rehearsals. Known revisions still downgrade to
-base first. The reset requires `VERWALINO_TEST_DB=1` (exported by `scripts/test-env.sh`) and the
+If the shared database holds a migration revision unknown to the checkout, or a known one that
+this checkout's migration scripts did not build (a parallel branch may own the same number; the
+session fixture records the scripts' digest as a comment on `public.organization` after every
+upgrade, and a missing or different digest counts), the session fixture logs that revision, drops
+and recreates `public` with its runtime schema grants, preserves the cluster roles, and runs the
+existing upgrade rehearsals. A revision built by this checkout's scripts still downgrades to base
+first. The reset requires `VERWALINO_TEST_DB=1` (exported by `scripts/test-env.sh`) and the
 validated `app_migrator` connection to `hausverwaltung` on `127.0.0.1` or `localhost`, port
 `55432`; it refuses every other target before connecting. As a manual alternative, hold the
 same lock, recreate only the disposable container with

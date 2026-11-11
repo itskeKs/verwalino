@@ -361,3 +361,188 @@ def test_compressed_application_session_tokens_are_scrubbed(monkeypatch):
     token = security.create_session_token(uuid.UUID(int=1), uuid.UUID(int=2))
     assert token.startswith(".")
     assert token not in scrub_text("Invalid credential " + token)
+
+
+JOB_ID = "6c1f0a52-3d0e-4a65-9d1b-0f4f6f8e2a10"
+
+
+def test_failed_job_is_one_event_with_worker_and_job_id_and_no_exception_text(offline_tracker):
+    from app.workers.error_tracking import tracked_job
+
+    events, client = offline_tracker
+    with pytest.raises(RuntimeError):
+        with tracked_job("invoice_extraction", JOB_ID):
+            raise RuntimeError(PRIVATE_MESSAGE)
+    client.flush()
+    assert len(events) == 1
+    event = events[0]
+    assert event["tags"] == {"worker": "invoice_extraction", "job_id": JOB_ID, "request_id": JOB_ID}
+    assert [value["type"] for value in event["exception"]["values"]] == ["RuntimeError"]
+    serialized = json.dumps(event)
+    for private in ("Max Mustermann", "DE89 3704 0044 0532 0130 00", "max@example.org", "super-secret-token", "json-private", "json-token"):
+        assert private not in serialized
+
+
+def test_job_failure_absorbed_by_the_worker_is_reported_once_even_when_it_also_escapes(offline_tracker):
+    from app.workers.error_tracking import report_job_failure, tracked_job
+
+    events, client = offline_tracker
+    error = RuntimeError("absorbed")
+    with pytest.raises(RuntimeError):
+        with tracked_job("outbox", JOB_ID):
+            report_job_failure(error)
+            raise error
+    client.flush()
+    assert [event["tags"]["job_id"] for event in events] == [JOB_ID]
+
+
+def test_only_the_first_failure_of_a_job_is_reported(offline_tracker):
+    from app.workers.error_tracking import report_job_failure, tracked_job
+
+    events, client = offline_tracker
+    with pytest.raises(OSError):
+        with tracked_job("declaration_import", JOB_ID):
+            report_job_failure(RuntimeError("cause"))
+            raise OSError("consequence while recording the failure")
+    client.flush()
+    assert [[value["type"] for value in event["exception"]["values"]] for event in events] == [["RuntimeError"]]
+
+
+def test_recorded_processor_failure_is_one_event_with_its_code_and_other_codes_are_not_reported(offline_tracker):
+    from app.workers.error_tracking import report_recorded_failure, tracked_job
+
+    events, client = offline_tracker
+    with tracked_job("intake_inspection", JOB_ID):
+        report_recorded_failure("invalid_pdf")
+        report_recorded_failure(None)
+        report_recorded_failure("inspector_failed")
+        report_recorded_failure("inspector_failed")
+    client.flush()
+    assert len(events) == 1
+    assert events[0]["tags"] == {"worker": "intake_inspection", "job_id": JOB_ID, "request_id": JOB_ID, "error_code": "inspector_failed"}
+    assert [value["type"] for value in events[0]["exception"]["values"]] == ["JobFailed"]
+
+
+def test_job_event_carries_no_breadcrumbs_and_a_failure_outside_a_job_is_not_sent(offline_tracker):
+    import logging
+    from app.workers.error_tracking import report_job_failure, tracked_job
+
+    events, client = offline_tracker
+    report_job_failure(RuntimeError("outside any job"))
+    logging.getLogger("worker.library").warning(PRIVATE_MESSAGE)
+    with pytest.raises(RuntimeError):
+        with tracked_job("outbox", JOB_ID):
+            logging.getLogger("worker.library").warning(PRIVATE_MESSAGE)
+            raise RuntimeError(PRIVATE_MESSAGE)
+    client.flush()
+    assert len(events) == 1
+    assert "breadcrumbs" not in events[0]
+    assert "Mustermann" not in json.dumps(events[0])
+
+
+async def test_cancelled_job_is_not_a_failure_and_leaves_no_job_tags(offline_tracker):
+    import asyncio
+    import sentry_sdk
+    from app.workers.error_tracking import tracked_job
+
+    events, client = offline_tracker
+    with pytest.raises(asyncio.CancelledError):
+        with tracked_job("declaration_import", JOB_ID):
+            raise asyncio.CancelledError
+    sentry_sdk.capture_message("after the job")
+    client.flush()
+    assert [event["tags"].get("job_id") for event in events] == [None]
+
+
+def test_worker_tracking_uses_the_shared_settings_and_release(monkeypatch):
+    from app.core.config import Settings
+    from app.diagnostics import APP_VERSION
+    from app.workers import error_tracking
+
+    configured = []
+    monkeypatch.setattr(error_tracking, "settings", Settings(_env_file=None, error_tracking_dsn=""))
+    monkeypatch.setattr(error_tracking, "configure_error_tracking", lambda settings, *, release: configured.append((settings, release)))
+    monkeypatch.delenv("HV_RELEASE_ID", raising=False)
+    error_tracking.configure_worker_error_tracking()
+    monkeypatch.setenv("HV_RELEASE_ID", "release-2026-11-11")
+    error_tracking.configure_worker_error_tracking()
+    assert [release for _, release in configured] == [APP_VERSION, "release-2026-11-11"]
+    assert all(settings is error_tracking.settings for settings, _ in configured)
+
+
+@pytest.fixture
+def tracking_calls(monkeypatch):
+    import importlib
+
+    calls = []
+    for name in ("declaration_import", "invoice_extraction", "workflow_runner", "workflow"):
+        module = importlib.import_module("app.workers." + name)
+        monkeypatch.setattr(module, "configure_worker_error_tracking", lambda name=name: calls.append(name))
+    return calls
+
+
+def test_declaration_worker_opts_in_to_tracking_but_its_healthcheck_does_not(tracking_calls, monkeypatch):
+    from app.workers import declaration_import
+
+    async def idle():
+        return None
+
+    async def healthy():
+        return True
+
+    monkeypatch.setattr(declaration_import, "_main", idle)
+    monkeypatch.setattr(declaration_import, "run_healthcheck", healthy)
+    assert declaration_import.main(["--healthcheck"]) == 0
+    assert tracking_calls == []
+    assert declaration_import.main([]) == 0
+    assert tracking_calls == ["declaration_import"]
+
+
+async def test_invoice_worker_opts_in_to_tracking_but_its_healthcheck_does_not(tracking_calls, monkeypatch):
+    from app.workers import invoice_extraction
+
+    async def ready():
+        return None
+
+    async def nobody():
+        return []
+
+    monkeypatch.setattr(invoice_extraction, "check_readiness", ready)
+    monkeypatch.setattr(invoice_extraction, "organization_ids", nobody)
+    monkeypatch.setattr("sys.argv", ["invoice-worker", "--healthcheck"])
+    assert await invoice_extraction.main() == 0
+    assert tracking_calls == []
+    monkeypatch.setattr("sys.argv", ["invoice-worker", "--once"])
+    assert await invoice_extraction.main() == 0
+    assert tracking_calls == ["invoice_extraction"]
+
+
+async def test_inbox_runner_opts_in_to_tracking_but_its_healthcheck_does_not(tracking_calls, monkeypatch):
+    import uuid
+    from app.workers import workflow_runner
+
+    async def ready(stages):
+        return None
+
+    async def idle(organization):
+        return "IDLE"
+
+    monkeypatch.setattr(workflow_runner, "check_readiness", ready)
+    monkeypatch.setattr(workflow_runner, "build_adapters", lambda stages: {"outbox": idle})
+    assert await workflow_runner.main(["--healthcheck"]) == 0
+    assert tracking_calls == []
+    assert await workflow_runner.main(["--once", "--stage", "outbox", "--organization", str(uuid.uuid4())]) == 0
+    assert tracking_calls == ["workflow_runner"]
+
+
+async def test_inspection_worker_opts_in_to_tracking(tracking_calls, monkeypatch):
+    import uuid
+    from app.workers import workflow
+
+    async def idle(factory, organization):
+        return False
+
+    monkeypatch.setattr(workflow, "process_once", idle)
+    monkeypatch.setattr("sys.argv", ["workflow", "--organization", str(uuid.uuid4()), "--once"])
+    await workflow.main()
+    assert tracking_calls == ["workflow"]

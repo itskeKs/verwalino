@@ -3,6 +3,12 @@ from fastapi import HTTPException
 from app.core.ai_models import endpoint_request_timeout
 
 
+def create_client(*, api_key: str, base_url: str, timeout: float, max_retries: int):
+    """Construct the SDK client here so the import stays inside declarations/."""
+    import openai
+    return openai.AsyncOpenAI(api_key=api_key, base_url=base_url, timeout=timeout, max_retries=max_retries)
+
+
 async def list_models(api_key: str, *, provider='openai', base_url=None, timeout_seconds=None) -> list[str]:
     if provider != 'openai':
         from app.declarations.provider_runtime import ProviderClient

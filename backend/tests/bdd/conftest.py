@@ -258,6 +258,14 @@ from tests.bdd.steps.person_retention import *  # noqa: E402,F401,F403
 from tests.bdd.steps.source_access import *  # noqa: E402,F401,F403
 from tests.bdd.steps.property_selectors import *  # noqa: E402,F401,F403
 from tests.bdd.steps.persons_key import *  # noqa: E402,F401,F403
+from tests.bdd.steps.browser_listing import *  # noqa: E402,F401,F403
+from tests.bdd.steps.browser_scopes import *  # noqa: E402,F401,F403
+from tests.bdd.steps.browser_scope_forms import *  # noqa: E402,F401,F403
+from tests.bdd.steps.browser_statements import *  # noqa: E402,F401,F403
+from tests.bdd.steps.browser_reconciliation import *  # noqa: E402,F401,F403
+from tests.bdd.steps.browser_mandates import *  # noqa: E402,F401,F403
+from tests.bdd.steps.browser_data_domains import *  # noqa: E402,F401,F403
+from tests.bdd.steps.browser_declaration_principal import *  # noqa: E402,F401,F403
 
 from tests.bdd.steps.meetings import *  # noqa: E402,F401,F403
 from tests.bdd.steps.special_levy import *  # noqa: E402,F401,F403
