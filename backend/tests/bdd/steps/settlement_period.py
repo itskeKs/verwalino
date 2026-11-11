@@ -6,6 +6,7 @@ from tests.settlement_period_support import period_property, booked, statement, 
 from tests.settlement_period_support import period_data_cleanup  # noqa: F401
 from tests.financial_coverage_helpers import attest_fixture
 from tests.bdd.steps.browser_common import browser_step, submit
+from tests.bdd.steps.browser_setup import create_scope, rental
 
 
 @given("a mixed property with a tenancy and an April settlement start")
@@ -619,3 +620,48 @@ async def manual_input_hints(browser_world, request):
             await page.go_back()
             await page.get_by_role("button", name="Strukturierte Eingaben anzeigen", exact=True).click()
     assert not browser_world.errors
+
+
+def scoped_statement(world, scope, start, end):
+    return world.act("POST", "/api/settlements", json={
+        "property_id": world.data["property"]["id"], "lease_agreement_id": world.data["leases"][0]["id"],
+        "accounting_scope_id": scope["id"], "period_start": start, "period_end": end})
+
+
+@given("a tenancy whose statements are kept in two accounting scopes")
+def two_scope_tenancy(world, seed_data, period_data_cleanup):
+    rental(world, seed_data)
+    world.data["scopes"] = [world.data["scope"], create_scope(world, world.data["user_id"], "Zweiter Mietkreis")]
+
+
+@given("the first scope holds the January through June 2026 statement")
+def first_scope_statement(world):
+    answer = scoped_statement(world, world.data["scopes"][0], "2026-01-01", "2026-06-30")
+    assert answer.status_code == 201, world.describe_response()
+
+
+@when("the manager tries to create the April through December 2026 statement in the second scope")
+def overlapping_other_scope(world):
+    world.data["before"] = len(world.act("GET", "/api/settlements", params={"property_id": world.data["property"]["id"]}).json())
+    world.response = scoped_statement(world, world.data["scopes"][1], "2026-04-01", "2026-12-31")
+
+
+@then("the statement is refused because the tenancy already has an overlapping statement")
+def refused_by_other_scope(world):
+    assert world.response.status_code == 409, world.describe_response()
+    assert world.response.json()["detail"] == {
+        "code": "settlement_period_conflict",
+        "message": "Für diesen Mietvertrag existiert bereits eine Abrechnung mit überschneidendem Zeitraum."}
+    count = len(world.act("GET", "/api/settlements", params={"property_id": world.data["property"]["id"]}).json())
+    assert count == world.data["before"]
+
+
+@when("the manager creates the January through June 2026 statement in the second scope")
+def identical_other_scope(world):
+    world.response = scoped_statement(world, world.data["scopes"][1], "2026-01-01", "2026-06-30")
+
+
+@then("the second scope holds its own January through June 2026 statement")
+def second_scope_statement(world):
+    assert world.response.status_code == 201, world.describe_response()
+    assert (world.response.json()["period_start"], world.response.json()["period_end"]) == ("2026-01-01", "2026-06-30")

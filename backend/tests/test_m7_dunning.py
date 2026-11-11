@@ -1556,7 +1556,7 @@ async def test_0174_downgrade_refuses_default_policy_notice_without_interest(iso
                         with connection.begin_nested():
                             command.downgrade(cfg, "0173")
                     historical.rollback()
-            assert connection.scalar(text("SELECT version_num FROM alembic_version")) == "0181"
+            assert connection.scalar(text("SELECT version_num FROM alembic_version")) == "0182"
             assert connection.scalar(text("SELECT to_regclass('public.dunning_settings')")) is not None
             assert connection.scalar(text("SELECT count(*) FROM dunning_notice WHERE id=:id"), params) == 1
     finally:

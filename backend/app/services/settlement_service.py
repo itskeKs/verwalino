@@ -119,6 +119,10 @@ class SettlementPeriodConflict(HTTPException):
         })
 
 
+# The database also refuses overlaps with runs this user cannot see (other accounting scopes).
+HIDDEN_PERIOD_OVERLAP = "Für diesen Mietvertrag existiert bereits eine Abrechnung mit überschneidendem Zeitraum."
+
+
 @dataclass
 class ExternalAmountEntry:
     """A per-(cost_entry, unit, occupancy period) external tenant amount."""
@@ -442,7 +446,7 @@ class SettlementService:
             run.heating_advance_payments_total = Decimal("0.00")
         if await self._runs.has_conflicting_period(run):
             raise SettlementPeriodConflict()
-        run = await self._runs.create(run)
+        run = await self._insert_run(run)
 
         await self._audit.create(
             AuditEvent(
@@ -458,6 +462,18 @@ class SettlementService:
             )
         )
         return run
+
+    async def _insert_run(self, run: SettlementRun) -> SettlementRun:
+        """Insert under a savepoint so a refused overlap leaves the transaction usable (batches continue)."""
+        try:
+            async with self._session.begin_nested():
+                return await self._runs.create(run)
+        except DBAPIError as error:
+            cause = getattr(error.orig, "__cause__", None)
+            if (getattr(error.orig, "sqlstate", None), getattr(cause, "constraint_name", None)) == (
+                    "23P01", "settlement_run_active_period"):
+                raise SettlementPeriodConflict(HIDDEN_PERIOD_OVERLAP) from None
+            raise
 
     async def create_batch(
         self,
@@ -776,7 +792,7 @@ class SettlementService:
             engine_version=original.engine_version,
         )
         await scope.prepare_new(new_run)
-        new_run = await self._runs.create(new_run)
+        new_run = await self._insert_run(new_run)
 
         # The single allowed mutation on the finalized original.
         original.superseded_by_id = new_run.id
