@@ -59,6 +59,23 @@ async def exported(w):
         return answer.content
 
 
+async def source_organization_deleted(rent_db, source_org, source_admin, target):
+    """The supported restore: the archive was taken, then the source organization was deleted.
+
+    Deletion rewrites every account address of the deleted organization to
+    `<id>@deleted.invalid` (organization_deletion_service.py), which frees the
+    archived administrator's address. The importing administrator's account
+    carries it, so the address match maps the archived administrator to the
+    session user, whose actor columns the insert policies accept.
+    """
+    email = await rent_db.scalar(text('SELECT email FROM "user" WHERE id=:id'), {'id': source_admin})
+    await rent_db.execute(text("""UPDATE "user" SET email=id::text||'@deleted.invalid'
+        WHERE organization_id=:org"""), {'org': source_org})
+    await rent_db.execute(text('UPDATE "user" SET email=:email WHERE id=:admin'),
+                          {'email': email, 'admin': target['admin']})
+    await rent_db.commit()
+
+
 @pytest.mark.parametrize('scoped', [False, True])
 @pytest.mark.parametrize('corrected_source', [False, True])
 async def test_cost_bank_links_and_corrected_coverage_survive_archive_round_trip(rent_world, import_target, rent_db, export_store, scoped, corrected_source):
@@ -86,6 +103,7 @@ async def test_cost_bank_links_and_corrected_coverage_survive_archive_round_trip
             assert (await api.post(f'/api/cost-entries/{successor}/confirm')).status_code == 200
         archive = await api.post('/api/organizations/export')
         assert archive.status_code == 200, archive.text
+    await source_organization_deleted(rent_db, rent_world['org'], rent_world['admin'], import_target)
     async with api_client(import_target) as api:
         response = await api.post('/api/organizations/import', files={'file': ('costs.tar.gz', archive.content)})
         assert response.status_code == 200, response.text
@@ -132,6 +150,7 @@ async def test_partially_classified_bank_cost_archive_restores_the_existing_link
             'resource_type': bound, 'resource_id': classified, 'reason': 'Classify archived evidence'})
         assert response.status_code == 201, response.text
     archive = await exported(rent_world)
+    await source_organization_deleted(rent_db, rent_world['org'], rent_world['admin'], import_target)
     async with api_client(import_target) as api:
         restored = await api.post('/api/organizations/import', files={'file': ('partial.tar.gz', archive)})
         assert restored.status_code == 200, restored.text
@@ -182,6 +201,7 @@ async def test_released_scoped_reserve_draft_and_later_cost_link_survive_archive
     original_cancellation = await rent_db.scalar(payment_sql, {'payment': payment_id})
     assert original_binding is not None and original_cancellation is not None
     await rent_db.rollback()
+    await source_organization_deleted(rent_db, rent_world['org'], rent_world['admin'], import_target)
     async with api_client(import_target) as api:
         restored = await api.post('/api/organizations/import', files={'file': ('cancelled-draft.tar.gz', archive)})
         assert restored.status_code == 200, restored.text
@@ -301,6 +321,7 @@ async def test_import_restores_originals_and_cleans_files_after_late_failure(ren
                                   files={'file': ('original.pdf', b'%PDF-1.4\nportable original\n%%EOF', 'application/pdf')})
         assert response.status_code == 201, response.text
     archive = await exported(rent_world)
+    await source_organization_deleted(rent_db, rent_world['org'], rent_world['admin'], import_target)
     from app.core.storage import make_storage_key
     content = b'%PDF-1.4\nportable original\n%%EOF'
     key = make_storage_key(str(import_target['org']), hashlib.sha256(content).hexdigest())
@@ -469,6 +490,33 @@ async def test_relinked_nonadmin_account_is_inactive_and_requires_a_reset(rent_w
     await rent_db.rollback()
 
 
+async def test_import_refuses_a_scope_created_by_an_account_whose_address_the_source_still_holds(
+    rent_world, import_target, rent_db, export_store,
+):
+    # One sign-in address belongs to one organization (issue #134). While the
+    # source organization still holds its administrator's address, the archived
+    # administrator cannot be the importing administrator, so the accounting
+    # scope they created cannot be restored: the whole import is refused and
+    # the destination stays as it was.
+    async with api_client(rent_world) as api:
+        scope = await classify_scope(api, rent_world, rent_world['property'], 'MIET')
+    archive = await exported(rent_world)
+    async with api_client(import_target) as api:
+        answer = await api.post('/api/organizations/import', files={'file': ('org.tar.gz', archive)})
+    assert answer.status_code == 422, answer.text
+    assert answer.json()['detail'] == {
+        'message': 'Die Daten können unter den aktuellen Integritäts- und Freigaberegeln nicht importiert werden.',
+        'code': 'IMPORT_INTEGRITY_REFUSAL', 'entity': 'accounting_scope', 'source_ids': [scope], 'count': 1}
+    for table in ('property', 'accounting_scope', 'scope_grant', 'audit_event'):
+        assert await rent_db.scalar(text(f'SELECT count(*) FROM {table} WHERE organization_id=:org'), import_target) == 0, table
+    # Only the destination's own administrator account remains.
+    assert await rent_db.scalar(text('SELECT count(*) FROM "user" WHERE organization_id=:org'), import_target) == 1
+    assert await rent_db.scalar(text('SELECT count(*) FROM membership WHERE organization_id=:org'), import_target) == 1
+    assert await rent_db.scalar(text('SELECT name FROM organization WHERE id=:org'), import_target) == 'Empty target'
+    assert not list((export_store._root / str(import_target['org'])).rglob('*.bin'))
+    await rent_db.rollback()
+
+
 async def test_imported_account_with_globally_taken_address_is_inactive_placeholder(rent_world, import_target, rent_db, export_store):
     # One sign-in address belongs to one organization (issue #134): the source
     # clerk's address is still owned by the live source organization, so the
@@ -631,9 +679,6 @@ async def test_import_retains_historical_unlinked_levy_and_frozen_allocations(
     ):
         await levy_db.execute(text(statement), ids)
     ids.update(units=[ids['unit']], owners=[ids['owner']], histories=[ids['history']], legacy_meas=[1000])
-    # The target administrator keeps their own mailbox identity; the archived
-    # actor's address still belongs to the live source organization and the
-    # imported placeholder receives a synthetic address (issue #134).
     await levy_db.commit()
     levy = await legacy_levy(levy_db, ids)
     await levy_db.execute(text("INSERT INTO scope_grant(organization_id,scope_id,user_id,capabilities,granted_by,reason) VALUES (:org,:scope,:actor,ARRAY['read','prepare','export'],:actor,'Archive historical levy')"), ids)
@@ -645,6 +690,7 @@ async def test_import_retains_historical_unlinked_levy_and_frozen_allocations(
     manifest = json.loads(files['manifest.json'])
     manifest['schema_head'] = '0167'
     files['manifest.json'] = json.dumps(manifest).encode()
+    await source_organization_deleted(rent_db, ids['org'], ids['actor'], import_target)
     async with api_client(import_target) as api:
         answer = await api.post('/api/organizations/import', files={'file': ('historical.tar.gz', repack(files))})
         assert answer.status_code == 200, answer.text

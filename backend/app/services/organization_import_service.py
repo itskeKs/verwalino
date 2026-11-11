@@ -518,23 +518,9 @@ async def import_organization(db, auth, source):
                         previous_scope = await db.scalar(text("SELECT current_setting('app.current_scope_id',true)"))
                         await db.execute(text("SELECT set_config('app.current_scope_id',:scope,true)"),
                             {'scope': row['accounting_scope_id']})
-                    if name == 'attachment' and row.get('uploaded_by'):
-                        # attachment_insert binds uploaded_by to the session actor
-                        # (migration 0130). An archived uploader is an inactive
-                        # placeholder after import (one sign-in address belongs to
-                        # one organization), so replay the insert as that actor to
-                        # keep the archived custody. A refused insert aborts the
-                        # whole import transaction, so the actor needs no restore
-                        # on failure.
-                        previous_actor = await db.scalar(text("SELECT current_setting('app.current_user_id',true)"))
-                        await db.execute(text("SELECT set_config('app.current_user_id',:actor,true)"),
-                            {'actor': row['uploaded_by']})
                     await db.execute(text(f'INSERT INTO public."{name}" ({columns}) SELECT {projection} '
                         f'FROM json_populate_record(NULL::public."{name}",CAST(:row AS json)) v'),
                         {'row': json_bytes(row).decode()})
-                    if name == 'attachment' and row.get('uploaded_by'):
-                        await db.execute(text("SELECT set_config('app.current_user_id',:actor,true)"),
-                            {'actor': previous_actor or ''})
                     if name == 'special_levy':
                         await db.execute(text("SELECT set_config('app.current_scope_id',:scope,true)"),
                             {'scope': previous_scope or ''})

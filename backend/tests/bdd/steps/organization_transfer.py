@@ -78,9 +78,12 @@ async def empty_import_organization(rent_db, rent_world):
 
 
 @when('the archive is imported into an empty organization')
-def import_archive(world, empty_import_organization):
-    from tests.test_organization_import import repack
+def import_archive(world, empty_import_organization, rent_db, rent_world):
+    from tests.test_organization_import import repack, source_organization_deleted
     async def restore():
+        # The supported restore (issue #134): the source organization no longer
+        # holds its administrator's address, which the importing administrator carries.
+        await source_organization_deleted(rent_db, rent_world['org'], rent_world['admin'], empty_import_organization)
         async with api_client(empty_import_organization) as target:
             return await target.post('/api/organizations/import', files={'file': ('organization.tar.gz', repack(world.data['export_files']))})
     answer = world.run(restore())
@@ -107,11 +110,7 @@ def import_equals_source(world):
     reverse = {v: k for values in mapping.values() for k, v in values.items()}
     for name, count in json.loads(source['manifest.json'])['row_counts'].items():
         actual_count = json.loads(target['manifest.json'])['row_counts'][name]
-        # The kept destination administrator adds one local user and one local
-        # membership row; the new local import receipt adds one audit row.
-        # Archived users are placeholder accounts with synthetic sign-in
-        # addresses (issue #134).
-        assert actual_count == count + (1 if name in {'audit_event', 'user', 'membership'} else 0), name
+        assert actual_count == count + (1 if name == 'audit_event' else 0), name
         if name in {'user', 'membership', 'audit_event'}:
             continue
         original = [json.loads(line) for line in source[f'entities/{name}.jsonl'].splitlines()]
