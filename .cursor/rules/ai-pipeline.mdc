@@ -18,8 +18,7 @@ alwaysApply: false
 - Every model call goes through a provider protocol: `DeclarationExtractionProvider` in
   `backend/app/declarations/provider.py` for imports, `KnowledgeAnswerProvider` in
   `declarations/knowledge_provider.py` for property questions. Do not import the OpenAI SDK
-  elsewhere; `api/property_knowledge.py` and `workers/declaration_provider_smoke.py` are
-  existing debt (#80).
+  elsewhere.
 - Reservation, usage and cost accounting live in `declarations/pipeline.py` (`add_usage`,
   `settle_reservation`, `charge_reservation`) with the per-run cap `declaration_max_cost_usd`;
   `core/runtime_budget.py` holds the QA policy checks. The pipeline fails closed when a cap or
