@@ -15,6 +15,7 @@ from tests.test_scoped_account_statements import client,mutate
 from tests.test_scope_payment_reconciliation import read_value
 from tests.test_invoice_extraction_worker import pdf_bytes
 from tests.test_intake_batches import receive,work_sql
+from tests.test_error_tracking import offline_tracker  # noqa: F401
 
 pytestmark=pytest.mark.asyncio
 
@@ -403,3 +404,22 @@ async def test_worker_retries_completed_extraction_without_running_processor_aga
     assert len(finishes)==2 and finishes[0]==finishes[1]
     assert sessions[0] is not sessions[1]
     assert await read_value('SELECT count(*) FROM extraction_revision WHERE organization_id=:org',ids)==1
+
+
+async def test_failing_extraction_job_is_one_tracker_event_with_the_job_id(migrator_session,scope_seed,store,offline_tracker):
+    import json
+    from app.core.request_id import request_id
+    events,tracker=offline_tracker
+    ids=await fixture(migrator_session,scope_seed)
+    async with client(ids) as api:
+        await source(api,ids)
+        jobs=[]
+        def crashing(*args):
+            jobs.append(request_id.get())
+            raise RuntimeError('PRIVATE EXTRACTOR FAILURE Max Mustermann')
+        assert await process_once(get_worker_session_factory(),ids['org'],processor=crashing)
+    tracker.flush()
+    assert len(jobs)==1 and str(uuid.UUID(jobs[0]))==jobs[0]
+    assert len(events)==1
+    assert events[0]['tags']=={'worker':'intake_extraction','job_id':jobs[0],'request_id':jobs[0]}
+    assert 'Mustermann' not in json.dumps(events[0])

@@ -10,7 +10,7 @@ import subprocess
 import tempfile
 import uuid
 
-from app.core.request_id import correlation_context
+from app.workers.error_tracking import configure_worker_error_tracking, report_job_failure, tracked_job
 
 from sqlalchemy import select
 
@@ -33,14 +33,15 @@ async def process_once(factory, org_id, *, processor=run_isolated_extraction):
         claim = await InvoiceProcessingService(session, org_id).claim()
     if claim is None:
         return False
-    with correlation_context(claim["attempt_id"]):
+    with tracked_job("invoice_extraction", claim["attempt_id"]):
         try:
             data = get_store().get(claim["storage_uri"])
             if compute_sha256(data) != claim["sha256"]:
                 result = outcome("failed", "source_integrity_failed")
             else:
                 result = await run_bounded_processor(processor, data, claim["mime_type"])
-        except Exception:
+        except Exception as error:
+            report_job_failure(error)
             result = outcome("failed", "processor_failed")
         async def finish():
             async with factory() as session, session.begin():
@@ -94,6 +95,7 @@ async def main():
         return 1
     if args.healthcheck:
         return 0
+    configure_worker_error_tracking()
     # Refresh scheduling IDs each round so new organizations need no restart.
     while True:
         failed = False

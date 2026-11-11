@@ -3,7 +3,7 @@ import hashlib
 import json
 import uuid
 
-from app.core.request_id import correlation_context
+from app.workers.error_tracking import report_job_failure, tracked_job
 from app.core.locking import retry_worker_completion
 from sqlalchemy import text
 from app.core.db import set_tenant_context
@@ -17,7 +17,7 @@ async def process_once(session_factory,org_id,*,processor=run_isolated_extractio
         await set_tenant_context(db,org_id)
         claim=await db.scalar(text('SELECT claim_intake_extraction(:org)'),{'org':org_id})
     if claim is None:return False
-    with correlation_context(claim['job_id']):
+    with tracked_job('intake_extraction',claim['job_id']):
         params={'org':org_id,'job':uuid.UUID(claim['job_id']),'fence':uuid.UUID(claim['fence'])}
         def failure(code):
             answer=outcome(b'',claim['mime_type'],claim['page_start'],claim['page_end'],claim['verified_page_count'],'failed',code)
@@ -44,7 +44,8 @@ async def process_once(session_factory,org_id,*,processor=run_isolated_extractio
             try:
                 answer=await run_bounded_processor(processor,*args)
                 if not valid_result(answer,*args):answer=failure('processor_failed')
-            except Exception:answer=failure('processor_failed')
+            except Exception as error:
+                report_job_failure(error);answer=failure('processor_failed')
         async def finish():
             async with session_factory() as db,db.begin():
                 await set_tenant_context(db,org_id)
