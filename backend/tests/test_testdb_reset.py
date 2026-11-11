@@ -2,6 +2,8 @@
 
 from contextlib import closing
 import os
+from pathlib import Path
+import shutil
 from unittest.mock import MagicMock, patch
 
 import psycopg2
@@ -14,6 +16,26 @@ from app.core import declaration_test_database as testdb
 from app.core.config import settings
 from tests.conftest import MIGRATOR_SYNC_URL, migrate_test_database
 from tests import conftest as harness
+
+MIGRATIONS = Path(__file__).resolve().parents[1] / "migrations"
+
+
+def checkout_scripts(tmp_path):
+    """Scripts of a checkout that holds the same migrations in another directory."""
+    shutil.copytree(MIGRATIONS / "versions", tmp_path / "versions",
+                    ignore=shutil.ignore_patterns("__pycache__"))
+    return ScriptDirectory(str(tmp_path))
+
+
+def other_checkout_scripts(tmp_path, revision="0142"):
+    """Scripts of a parallel branch that also numbered a migration `revision`.
+
+    The id, and therefore the alembic graph, is the same; only the body differs.
+    """
+    scripts = checkout_scripts(tmp_path)
+    script = Path(scripts.get_revision(revision).path)
+    script.write_text(script.read_text() + "\n# the other branch's body for the same revision id\n")
+    return ScriptDirectory(str(tmp_path))
 
 
 @pytest.fixture(scope="session")
@@ -233,3 +255,113 @@ def test_known_revision_still_downgrades_to_base(migration_config, monkeypatch, 
     assert calls == ["base"]
     assert database_revisions() == (ScriptDirectory.from_config(migration_config).get_current_head(),)
     reset_notice.assert_not_called()
+
+
+def test_origin_note_tells_same_numbered_scripts_of_two_checkouts_apart(tmp_path):
+    ours = ScriptDirectory(str(MIGRATIONS))
+    head = ours.get_current_head()
+    other = other_checkout_scripts(tmp_path / "other")
+    assert other.get_current_head() == head
+    unchanged = checkout_scripts(tmp_path / "unchanged")
+
+    note = harness.schema_origin_note(ours, [head])
+    assert note != harness.schema_origin_note(other, [head])
+    assert note != harness.schema_origin_note(other, ["0142"])
+    # The same bytes in another directory are the same origin; a schema that stops
+    # before the differing script was built by identical scripts in both checkouts.
+    assert note == harness.schema_origin_note(unchanged, [head])
+    assert harness.schema_origin_note(ours, ["0141"]) == harness.schema_origin_note(other, ["0141"])
+
+
+@pytest.mark.parametrize("recorded", ["unrecorded", "other_checkout"])
+def test_known_revision_of_other_scripts_is_reset_before_any_downgrade(
+    guarded_environment, monkeypatch, request, tmp_path, recorded,
+):
+    scripts = ScriptDirectory(str(MIGRATIONS))
+    head = scripts.get_current_head()
+    note = None if recorded == "unrecorded" else harness.schema_origin_note(
+        other_checkout_scripts(tmp_path), [head])
+    monkeypatch.setattr(harness, "MIGRATOR_SYNC_URL", guarded_environment)
+    connection = MagicMock()
+    connection.__enter__.return_value = connection
+    cursor = connection.cursor.return_value.__enter__.return_value
+    answers = []
+
+    def only_origin_queries(statement, *args):
+        answers.clear()
+        if statement == "SELECT to_regclass('public.alembic_version')":
+            answers.append(("alembic_version",))
+        elif statement == "SELECT version_num FROM public.alembic_version":
+            answers.append((head,))
+        elif "obj_description" in statement and "public.organization" in statement:
+            answers.append((note,))
+        else:
+            pytest.fail(f"SQL before the schema origin was verified: {statement}")
+
+    cursor.execute.side_effect = only_origin_queries
+    cursor.fetchone.side_effect = lambda: answers[0]
+    cursor.fetchall.side_effect = lambda: list(answers)
+    monkeypatch.setattr(psycopg2, "connect", lambda url: connection)
+
+    def no_downgrade(config, revision):
+        pytest.fail("downgrade attempted against a schema built by other scripts")
+
+    monkeypatch.setattr(command, "downgrade", no_downgrade)
+
+    class ResetRequested(Exception):
+        pass
+
+    def stop_after_reset(url):
+        assert url == guarded_environment
+        raise ResetRequested
+
+    monkeypatch.setattr(harness, "reset_foreign_test_database", stop_after_reset, raising=False)
+    with pytest.raises(ResetRequested):
+        migrate_test_database(request)
+
+
+@pytest.mark.skipif(
+    os.environ.get("HV_DECLARATION_TEST_DATABASE_PROFILE", "local") != "local",
+    reason="same-number collision integration requires the local test DB on port 55432",
+)
+def test_known_revision_of_other_scripts_is_reset_and_upgraded_to_checkout_head(
+    migration_config, monkeypatch, request, tmp_path,
+):
+    """Run only while holding /tmp/verwalino-testdb.lock, like every DB test."""
+    scripts = ScriptDirectory.from_config(migration_config)
+    head = scripts.get_current_head()
+    assert database_revisions() == (head,)
+    note = harness.schema_origin_note(other_checkout_scripts(tmp_path), [head])
+    with closing(psycopg2.connect(MIGRATOR_SYNC_URL)) as connection, connection, connection.cursor() as cursor:
+        cursor.execute("CREATE TABLE public.foreign_branch_sentinel (id integer)")
+        cursor.execute("COMMENT ON TABLE public.organization IS %s", (note,))
+
+    downgrade = command.downgrade
+    downgrade_calls = []
+
+    def track_downgrade(config, revision):
+        downgrade_calls.append(revision)
+        return downgrade(config, revision)
+
+    monkeypatch.setattr(command, "downgrade", track_downgrade)
+    terminal_writer = request.config.get_terminal_writer()
+    reset_notice = MagicMock(wraps=terminal_writer.line)
+    monkeypatch.setattr(terminal_writer, "line", reset_notice)
+    try:
+        migrate_test_database(request)
+        assert database_revisions() == (head,)
+        assert downgrade_calls == []
+        reset_notice.assert_called_once_with(
+            f"test database held revision {head} built by other or unrecorded migration scripts; "
+            "reset to empty before upgrading"
+        )
+        with closing(psycopg2.connect(MIGRATOR_SYNC_URL)) as connection, connection.cursor() as cursor:
+            cursor.execute("SELECT to_regclass('public.foreign_branch_sentinel')")
+            assert cursor.fetchone() == (None,)
+            cursor.execute("SELECT obj_description('public.organization'::regclass, 'pg_class')")
+            assert cursor.fetchone() == (harness.schema_origin_note(scripts, [head]),)
+    finally:
+        with closing(psycopg2.connect(MIGRATOR_SYNC_URL)) as connection, connection, connection.cursor() as cursor:
+            cursor.execute("DROP TABLE IF EXISTS public.foreign_branch_sentinel")
+        command.upgrade(migration_config, "head")
+        assert database_revisions() == (head,)
