@@ -739,11 +739,14 @@ class PaymentService:
     ) -> set[tuple[uuid.UUID, int, int]]:
         """(owner, year, month) of the plan period that a booked Hausgeld payment already covers.
 
-        Read exactly as the owner statement reads its Ist: the owner's payments of the plan's
-        property (`list_for_owner`), kept by `_scope_payments_to_period` over the plan period, and
-        only booked, not reversed, non-Storno rows (the engine's own Ist filter). Of those the
-        Hausgeld payments received (IN) are assigned to the month they name; one without a
-        year and month, or with a month but no year, is assigned to the month of its value date.
+        The payments are the ones the owner statement counts as Ist: the owner's payments of the
+        plan's property (`list_for_owner`), kept by `_scope_payments_to_period` over the plan
+        period, and only booked, not reversed, non-Storno rows (the engine's own Ist filter). The
+        month assignment is this action's own rule, the statement never files a payment without a
+        month under a month: a Hausgeld payment received (IN) covers the month it names; one
+        without year and month, or without one of them, covers the month of its value date. A
+        payment that names the plan year but no month and whose value date lies outside that year
+        therefore covers no month of the plan although the statement counts it (issue #566).
         """
         covered: set[tuple[uuid.UUID, int, int]] = set()
         for owner_profile_id in owner_profile_ids:

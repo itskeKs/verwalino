@@ -331,12 +331,16 @@ chosen rows (`HAUSGELD_VORSCHUSS`, direction IN, `period_year` and `period_month
   206.45 of 400.00). A unit without an owner in a plan month is a data error the statement already
   refuses (`hausgeld_ownership_invalid`); the offer refuses it the same way and books nothing.
 - **Booked months** are marked `booked` and not offered again. The set is read by
-  `PaymentService.booked_hausgeld_months` the way the owner statement reads its Ist: the owner's
-  payments of the plan's property (`list_for_owner`), kept by `_scope_payments_to_period` over the
-  plan period, and only booked, not reversed, non-Storno rows (the engine's Ist filter). Of those the
-  Hausgeld payments received (direction IN) belong to the month they name (`period_year` and
-  `period_month`); a payment without a month, or with a month but no year, belongs to the month of its
-  value date. The statement keeps a payment out of the plan period when its month, its year or, without
+  `PaymentService.booked_hausgeld_months` from the payments the owner statement counts as Ist: the
+  owner's payments of the plan's property (`list_for_owner`), kept by `_scope_payments_to_period` over
+  the plan period, and only booked, not reversed, non-Storno rows (the engine's Ist filter). The month
+  assignment is this action's own rule, because the statement never files a payment without a month
+  under a month: a Hausgeld payment received (direction IN) covers the month it names (`period_year`
+  and `period_month`); a payment without a month, or with a month but no year, covers the month of its
+  value date. A payment that names the plan year but no month and whose value date lies outside that
+  year (December 2026 Hausgeld entered with year 2026, no month, value date 05.01.2027) is counted by
+  the statement in 2026 but marks no month here, so the month stays offered; tick only what was not
+  paid yet (#566). The statement keeps a payment out of the plan period when its month, its year or, without
   a year, its value date lies outside it: 600.00 with value date 05.01.2026 and no month marks January
   2026, the same payment dated 05.01.2027 marks nothing. A draft does not count; a Storno frees the month
   again. `POST` takes the organization-wide financial input lock before it reads that state, so two
