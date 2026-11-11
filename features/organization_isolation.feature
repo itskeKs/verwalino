@@ -13,6 +13,11 @@ Feature: Organization isolation
     When Verwaltung Alpha changes its personal design
     Then Verwaltung Beta keeps its personal design
 
+  Scenario: Reusing another organization's sign-in address is refused exactly like an own-organization duplicate
+    When the administrator of "Verwaltung Beta" tries to create one user with an own-organization address and one with Alpha's administrator address
+    Then both attempts are refused with the same generic receipt
+    And Alpha's administrator can still sign in
+
   Scenario: Another organization cannot read or replace household history
     Given a unit with saved household history belongs to Verwaltung Alpha
     When Verwaltung Beta tries to read or replace that unit's households
@@ -141,7 +146,7 @@ Feature: Organization isolation
     And the archive contains no credentials or data of the other organization
 
   Scenario: Import and deletion cancellation affect only the destination organization
-    Given a separate organization has rental records and an original for export
+    Given a separate organization has rental records for export
     When its administrator downloads the organization archive
     And the archive is imported into an empty organization
     And the destination administrator confirms and revokes deletion

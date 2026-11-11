@@ -1051,7 +1051,7 @@ This section refines the SDD entities (§11/§13) with (a) tenant scoping, (b) t
 ```
 
 **Constraints (M0 core):**
-- `user`: `UNIQUE (organization_id, email)` — email unique per organization (not globally, since under A-2 one user = one org; different orgs could use the same property manager email domain). RLS active.
+- `user`: `UNIQUE (organization_id, email)` and a globally unique canonical sign-in address (`uq_user_signin_email` on `lower(btrim(email))`, migration 0183): one sign-in address belongs to exactly one organization, so login, password reset and signup resolve exactly one account per address. RLS active.
 - `membership`: `UNIQUE (organization_id, user_id)` under A-2 (one role per user per org); FK to `user` and `organization`. RLS active.
 - `management_mandate`: `CHECK (end_date IS NULL OR end_date >= start_date)`; `mandate_type` as an enum. RLS active.
 - `audit_event`: INSERT grant only for the app role; RLS active; `occurred_at` set by the server.

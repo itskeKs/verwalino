@@ -254,6 +254,10 @@ def test_signup_migration_roundtrip_is_exact_and_refuses_retained_state(run_migr
             # Reuse the whole-schema/data/ACL snapshot used by release-chain
             # rehearsals: exact means more than reproducing the column names.
             connection.execute(text('DELETE FROM signup_request'))
+            # 0183 grants app_rw EXECUTE on this revision's address lookup, and
+            # the downgrade drops the function with that grant; compare only
+            # the state 0144 itself owns.
+            connection.execute(text('REVOKE EXECUTE ON FUNCTION public.signup_email_registered(text) FROM app_rw'))
             before = _chain_snapshot(connection)
             with Operations.context(MigrationContext.configure(connection)):
                 migration.downgrade()
