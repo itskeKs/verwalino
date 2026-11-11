@@ -383,9 +383,7 @@ def pytest_collection_modifyitems(items):
 # ---------------------------------------------------------------------------
 # Run Alembic migrations before tests
 # ---------------------------------------------------------------------------
-def clear_disposable_source_context(cursor):
-    """Only for destructive migration rehearsals in the guarded disposable DB."""
-    from psycopg2 import sql
+def require_disposable_rehearsal_cursor(cursor):
     from sqlalchemy.engine import make_url
 
     _, _, sync_url = require_disposable_database_settings(settings)
@@ -398,6 +396,13 @@ def clear_disposable_source_context(cursor):
     cursor.execute("SELECT pg_get_userbyid(datdba) FROM pg_database WHERE datname=current_database()")
     if cursor.fetchone() != ('app_migrator',):
         raise RuntimeError("Migration rehearsal requires the owned disposable database")
+
+
+def clear_disposable_source_context(cursor):
+    """Only for destructive migration rehearsals in the guarded disposable DB."""
+    from psycopg2 import sql
+
+    require_disposable_rehearsal_cursor(cursor)
     # Reset only synthetic session invalidations in this owned disposable DB.
     # The production downgrade still refuses any positive generation.
     cursor.execute("SELECT EXISTS(SELECT 1 FROM information_schema.columns WHERE table_schema='public' AND table_name='user' AND column_name='session_version')")

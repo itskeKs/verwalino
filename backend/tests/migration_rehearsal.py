@@ -11,7 +11,25 @@ from alembic.script import ScriptDirectory
 from app.models.base import Base
 from sqlalchemy import text
 
-from tests.conftest import clear_disposable_source_context
+from tests.conftest import clear_disposable_source_context, require_disposable_rehearsal_cursor
+
+
+def lock_for_rehearsal(db, *tables):
+    """Wait for transient table holders before a migration's NOWAIT probes."""
+    with db.connection.cursor() as cursor:
+        require_disposable_rehearsal_cursor(cursor)
+    db.execute(text("SET LOCAL lock_timeout='5s'"))
+    if not tables:
+        tables = tuple(db.scalars(text("""SELECT c.relname
+            FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace
+            WHERE n.nspname='public' AND c.relkind IN ('r','p')
+            AND NOT EXISTS(SELECT 1 FROM pg_depend d WHERE d.classid='pg_class'::regclass
+              AND d.objid=c.oid AND d.deptype='e') ORDER BY c.relname""")).all())
+    if tables:
+        quote = db.dialect.identifier_preparer.quote
+        normalized = (table.strip('"') for table in tables)
+        relations = ','.join(f'public.{quote(table)}' for table in normalized)
+        db.execute(text(f'LOCK TABLE {relations} IN ACCESS EXCLUSIVE MODE'))
 
 
 def rewind_bank_allocation_functions(connection):
