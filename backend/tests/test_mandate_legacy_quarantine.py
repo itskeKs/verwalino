@@ -1,6 +1,6 @@
 """Legacy mandate quarantine observes current metadata without claiming custody."""
 import pytest
-from tests.test_financial_scope_boundary import worker_tenant, scope_seed  # noqa: F401
+from tests.test_financial_scope_boundary import worker_tenant as worker_tenant, scope_seed as scope_seed
 from tests.test_scoped_mandate_documents import document_fixture, upload
 from tests.test_scoped_account_statements import client
 

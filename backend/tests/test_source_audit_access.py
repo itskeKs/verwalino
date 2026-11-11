@@ -5,13 +5,13 @@ from sqlalchemy import text
 from app.core.db import get_tenant_session
 from app.models.audit_event import AuditEvent
 from app.repositories.audit_repo import AuditRepository
-from tests.test_derived_source_access import committed_scope,actor_session,CANONICAL  # noqa: F401
-from tests.test_financial_scope_boundary import scope_seed,worker_tenant  # noqa: F401
+from tests.test_derived_source_access import committed_scope as committed_scope,actor_session,CANONICAL
+from tests.test_financial_scope_boundary import scope_seed as scope_seed,worker_tenant as worker_tenant
 from tests.test_property_source_context import graph
 from tests.test_property_source_enforcement import synthetic_enforcement,change_mode
 from tests.test_knowledge_source_enforcement import granted_graph
-from tests.test_m3_settlement import m3_seed  # noqa: F401
-from tests.test_declaration_import_api import isolated_document_store,enable_declaration_imports  # noqa: F401
+from tests.test_m3_settlement import m3_seed as m3_seed
+from tests.test_declaration_import_api import isolated_document_store as isolated_document_store,enable_declaration_imports as enable_declaration_imports
 
 pytestmark=pytest.mark.asyncio
 

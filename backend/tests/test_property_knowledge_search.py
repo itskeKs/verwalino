@@ -305,9 +305,7 @@ async def test_knowledge_search_fails_closed_for_stale_decimal_and_archived_evid
     from datetime import datetime, timezone
 
     from sqlalchemy import update
-    from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
-    from app.core.config import settings
     from app.core.db import get_tenant_session
     from app.models.property_document import PropertyDocument
     from app.models.unit import Unit

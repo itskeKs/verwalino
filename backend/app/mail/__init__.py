@@ -1,7 +1,7 @@
 """Render developer-owned mail templates without sending or accessing a database."""
 
 from dataclasses import dataclass
-from datetime import date, datetime
+from datetime import date
 from decimal import Decimal, ROUND_HALF_UP
 from email.message import EmailMessage
 from textwrap import fill

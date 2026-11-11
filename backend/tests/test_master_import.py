@@ -6,8 +6,8 @@ import uuid
 
 import pytest
 
-from tests.test_rent_changes import rent_db, rent_world, api_client  # noqa: F401
-from tests.test_financial_scope_boundary import scope_seed, worker_tenant  # noqa: F401
+from tests.test_rent_changes import rent_db as rent_db, rent_world as rent_world, api_client
+from tests.test_financial_scope_boundary import scope_seed as scope_seed, worker_tenant as worker_tenant
 
 ROOT = '/api/properties/import'
 FIELDS = ('kind', 'key', 'property_key', 'name', 'street', 'zip_code', 'city',

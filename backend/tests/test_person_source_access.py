@@ -6,8 +6,8 @@ from sqlalchemy.exc import DBAPIError
 from app.core.db import get_tenant_session
 from tests.test_derived_source_access import actor_session
 from tests.test_property_source_enforcement import synthetic_enforcement, change_mode
-from tests.test_m3_settlement import m3_seed  # noqa: F401
-from tests.test_m7_dunning import m7_seed  # noqa: F401
+from tests.test_m3_settlement import m3_seed as m3_seed
+from tests.test_m7_dunning import m7_seed as m7_seed
 
 pytestmark=pytest.mark.asyncio
 

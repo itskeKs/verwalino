@@ -4,7 +4,7 @@ import uuid
 from datetime import date
 from typing import Sequence
 
-from sqlalchemy import Select, and_, func, or_, select
+from sqlalchemy import Select, and_, func, or_
 
 from app.models.meter import Meter, MeterReading
 from app.models.property import Property

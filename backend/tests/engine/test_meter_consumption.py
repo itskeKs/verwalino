@@ -8,6 +8,8 @@ import pytest
 
 from app.engine.meter_consumption import MeterReadingInput, MeterConsumptionError, derive_consumption
 
+pytestmark = pytest.mark.no_db
+
 START, END = date(2026, 1, 1), date(2026, 12, 31)
 
 

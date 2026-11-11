@@ -4,7 +4,7 @@ from uuid import uuid4
 
 from pytest_bdd import given
 
-from tests.bdd.steps.records import create_bank_account, create_person
+from tests.bdd.steps.records import create_bank_account as create_bank_account, create_person
 
 
 def create(world, path, payload, *, keyed=False):

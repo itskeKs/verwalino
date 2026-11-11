@@ -5,7 +5,7 @@ from pathlib import Path
 from playwright.async_api import Page, expect
 from pytest_bdd import given, parsers, scenarios, then, when
 
-from tests.settlement_period_support import period_data_cleanup  # noqa: F401
+from tests.settlement_period_support import period_data_cleanup as period_data_cleanup
 from tests.settlement_period_support import period_property
 
 scenarios(str(Path(__file__).resolve().parents[3] / "features/journeys/economic_plan_reserve.feature"))

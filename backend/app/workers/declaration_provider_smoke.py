@@ -16,7 +16,6 @@ from typing import Any
 
 from openai import AsyncOpenAI
 
-from app.core.config import settings
 
 
 _OPENAI_API_BASE_URL = "https://api.openai.com/v1"

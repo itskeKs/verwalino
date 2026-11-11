@@ -7,7 +7,7 @@ from playwright.async_api import expect
 from pytest_bdd import given, when, then, parsers, scenarios
 
 from tests.settlement_period_support import create, period_property
-from tests.settlement_period_support import period_data_cleanup  # noqa: F401
+from tests.settlement_period_support import period_data_cleanup as period_data_cleanup
 from tests.financial_coverage_helpers import attest_fixture
 from tests.test_reserve_ledger import pdf_text
 

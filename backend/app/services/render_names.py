@@ -40,7 +40,6 @@ from __future__ import annotations
 
 import uuid
 from dataclasses import fields
-from datetime import date
 
 from sqlalchemy.ext.asyncio import AsyncSession
 

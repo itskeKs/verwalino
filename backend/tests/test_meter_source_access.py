@@ -2,7 +2,7 @@
 import pytest
 
 from tests.test_property_master_access import (
-    scope_seed, worker_tenant, committed_actor,  # noqa: F401
+    scope_seed as scope_seed, worker_tenant as worker_tenant, committed_actor as committed_actor,
     existing, principals,
 )
 from tests.test_scoped_account_statements import client

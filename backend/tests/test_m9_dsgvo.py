@@ -22,8 +22,8 @@ from decimal import Decimal
 import pytest
 from sqlalchemy import text
 
-from tests.test_rent_changes import rent_db, rent_world, api_client  # noqa: F401
-from tests.test_organization_export import export_store  # noqa: F401
+from tests.test_rent_changes import rent_db as rent_db, rent_world as rent_world, api_client
+from tests.test_organization_export import export_store as export_store
 from tests.person_retention_support import repayment_recipient, manual_cost_recipient
 
 

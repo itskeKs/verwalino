@@ -16,7 +16,6 @@ from decimal import Decimal
 import pytest
 
 from app.engine.dunning import (
-    DEFAULT_FEES,
     MAX_LEVEL,
     MissingBaseInterestRate,
     OverdueItem,
@@ -26,6 +25,8 @@ from app.engine.dunning import (
     next_dunning_level,
 )
 from app.engine.mietkonto import OpenItem
+
+pytestmark = pytest.mark.no_db
 
 
 # ---------------------------------------------------------------------------

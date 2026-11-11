@@ -42,3 +42,6 @@ paths:
 - Iterate selectively (`cd backend && uv run pytest tests/test_x.py -k name`
   or `cd frontend && npm test -- <file>`); the whole backend suite takes about 30 minutes.
   Run `make lint` before a push and `make test` before a merge; `make test-agent-rules` needs no DB.
+- `pytest -m no_db` runs the tests marked `no_db` (all of `backend/tests/engine`) without migrations or a
+  database connection; mark a test `no_db` only when it never requests a database fixture.
+  `slow` marks the long hypothesis modules (`-m "not slow"`).

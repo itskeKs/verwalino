@@ -6,6 +6,8 @@ import pytest
 
 from app.engine.reserve_ledger import money, reserve_totals, planned_reserve_entries
 
+pytestmark = pytest.mark.no_db
+
 
 def test_commercial_rounding_and_signed_override_preserve_the_balance():
     assert money(D("1000.005")) == D("1000.01")

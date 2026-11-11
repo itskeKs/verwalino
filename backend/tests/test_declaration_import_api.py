@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import asyncio
-from datetime import date, datetime, timezone
+from datetime import date
 from decimal import Decimal
 from io import BytesIO
 import os
@@ -46,7 +46,7 @@ from app.declarations.schemas import (
 )
 from app.workers.declaration_import import DeclarationImportWorker
 from tests.declaration_fixtures import make_text_pdf
-from tests.test_invoice_extraction_worker import worker_tenant  # noqa: F401
+from tests.test_invoice_extraction_worker import worker_tenant as worker_tenant
 from tests.ai_settings_support import configure_ai as configured_ai
 
 
@@ -109,7 +109,6 @@ async def test_ai_settings_invalid_input_never_echoes_key(client_a_admin, seed_d
 async def test_ai_settings_monthly_budget_applies_to_known_prices_only(client_a_admin, seed_data):
     from app.core.db import get_tenant_session
     from app.services.ai_settings_service import require_organization_ai_budget
-    from app.core.tenant import AuthContext
     path = f"/api/organizations/{seed_data['org_a_id']}/ai-settings"
     for model, denied in [('gpt-5.6-luna', True), ('future-model', False)]:
         assert (await client_a_admin.put(path, json={'model':model, 'monthly_limit_usd':'0.00'})).status_code == 200
@@ -1516,7 +1515,6 @@ async def test_property_document_service_rejects_direct_oversized_bytes(
 async def test_declaration_import_disabled_blocks_create_upload_and_start(
     client_a_admin, monkeypatch, seed_data, configured_ai
 ) -> None:
-    from app.core.config import settings
 
     created = await client_a_admin.post(
         "/api/declaration-imports", json={"mode": "NEW_PROPERTY"}

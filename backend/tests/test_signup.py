@@ -7,8 +7,8 @@ from sqlalchemy import text
 from sqlalchemy.exc import DBAPIError
 
 from app.core.config import settings
-from tests.setup_support import fresh_setup  # noqa: F401
-from tests.signup_support import BODY, MESSAGE, REFUSED, confirmation_token, signup, signup_mail  # noqa: F401
+from tests.setup_support import fresh_setup as fresh_setup
+from tests.signup_support import BODY, MESSAGE, REFUSED, confirmation_token, signup as signup, signup_mail as signup_mail
 
 
 def public_acceptance(response):

@@ -9,7 +9,7 @@ import pytest
 import pytest_asyncio
 from sqlalchemy import text
 
-from tests.test_rent_changes import rent_db, rent_world, api_client, statement  # noqa: F401
+from tests.test_rent_changes import rent_db as rent_db, rent_world as rent_world, api_client, statement
 
 pytestmark = pytest.mark.asyncio
 URL = "/api/payments/deposits"

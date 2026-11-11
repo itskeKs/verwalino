@@ -94,6 +94,10 @@ AGENTS.md retains the safety baseline and tests/CI check parity.
 - While iterating, run one file: `cd backend && uv run pytest tests/test_x.py -k name`,
   `cd frontend && npm test -- src/pages/X.test.tsx`; `make test-backend PYTEST_ARGS="…"` does the
   same with the test environment loaded.
+- `cd backend && uv run pytest -m no_db` runs the pure-function tests (`tests/engine`) without the
+  database: no migrations and no engine, so `infra-postgres-1` need not run; the test environment
+  still has to be loaded (`. scripts/test-env.sh`) because the conftest validates the URLs.
+  `-m "not slow"` leaves out the three hypothesis modules.
 - The backend suite truncates tables in the shared test database: never run two suites at once.
   For direct pytest runs or a dev stack, acquire the lock in that same shell with
   `until mkdir /tmp/verwalino-testdb.lock 2>/dev/null; do sleep 10; done` and

@@ -5,6 +5,8 @@ from uuid import UUID
 
 import pytest
 
+pytestmark = pytest.mark.no_db
+
 A, B, C = UUID(int=1), UUID(int=2), UUID(int=3)
 D = Decimal
 

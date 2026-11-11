@@ -8,6 +8,8 @@ import pytest
 
 from app.engine.bank_import import BankImportError, parse_camt053, parse_csv
 
+pytestmark = pytest.mark.no_db
+
 VERSIONS = ["02", "08"]
 
 

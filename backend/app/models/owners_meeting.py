@@ -18,9 +18,9 @@ Provisorisch NICHT automatisch erzwungen.
 from __future__ import annotations
 
 import uuid
-from datetime import date, datetime
+from datetime import date
 
-from sqlalchemy import CheckConstraint, Date, DateTime, ForeignKey, String, Text
+from sqlalchemy import CheckConstraint, Date, ForeignKey, String, Text
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column
 

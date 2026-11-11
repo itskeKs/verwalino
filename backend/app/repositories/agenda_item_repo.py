@@ -9,7 +9,6 @@ import uuid
 from typing import Sequence
 
 from sqlalchemy import func, select
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.agenda_item import AgendaItem
 from app.repositories.base import TenantRepository

@@ -4,7 +4,7 @@ Prüft: "Vertrag zum 31.12. beenden, Nachmieter ab 01.01. anlegen".
 """
 
 import pytest
-from tests.test_lease_update import lease_seed
+from tests.test_lease_update import lease_seed as lease_seed
 
 
 @pytest.mark.asyncio

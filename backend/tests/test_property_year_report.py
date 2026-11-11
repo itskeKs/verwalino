@@ -12,7 +12,7 @@ from tests.conftest import MIGRATOR_URL
 from app.core.config import settings
 from app.core.security import create_session_token
 from app.main import app
-from tests.test_financial_scope_boundary import worker_tenant, scope_seed  # noqa: F401
+from tests.test_financial_scope_boundary import worker_tenant as worker_tenant, scope_seed as scope_seed
 from tests.test_scope_grants import scope_fixture, bind
 from tests.test_scoped_account_statements import mutate
 from tests.test_scoped_dunning import grant

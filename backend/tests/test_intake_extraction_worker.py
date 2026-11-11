@@ -9,8 +9,8 @@ from app.workers.workflow import process_once as inspect_once
 from app.workers.outbox import process_once as deliver_once
 from app.workers.intake_extraction import process_once
 from tests.migration_rehearsal import rewind_bank_allocation_functions
-from tests.test_financial_scope_boundary import worker_tenant,scope_seed  # noqa: F401
-from tests.test_invoice_source_custody import store,fixture
+from tests.test_financial_scope_boundary import worker_tenant as worker_tenant,scope_seed as scope_seed
+from tests.test_invoice_source_custody import store as store,fixture
 from tests.test_scoped_account_statements import client,mutate
 from tests.test_scope_payment_reconciliation import read_value
 from tests.test_invoice_extraction_worker import pdf_bytes

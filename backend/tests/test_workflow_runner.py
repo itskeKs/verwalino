@@ -2,8 +2,8 @@
 import asyncio
 import uuid
 import pytest
-from tests.test_invoice_extraction_worker import worker_tenant,pdf_bytes  # noqa: F401
-from tests.test_invoice_source_custody import store  # noqa: F401
+from tests.test_invoice_extraction_worker import worker_tenant as worker_tenant,pdf_bytes
+from tests.test_invoice_source_custody import store as store
 
 pytestmark=pytest.mark.asyncio
 
@@ -115,7 +115,6 @@ async def test_invoice_completion_exhaustion_reports_failure_then_recovers_its_d
 
 
 async def test_declaration_adapter_claims_only_the_dispatched_tenant(worker_tenant,seed_data,monkeypatch):
-    from app.core.config import settings
     from app.workers.declaration_import import DeclarationImportWorker
     from app.workers.workflow_runner import WorkflowRunner,build_adapters
     from tests.test_declaration_worker import _create_import
@@ -149,7 +148,6 @@ async def test_declaration_adapter_claims_only_the_dispatched_tenant(worker_tena
 
 
 async def test_disabled_declaration_and_discovery_failure_are_safe(monkeypatch,caplog):
-    from app.core.config import settings
     from app.workers.workflow_runner import WorkflowRunner,build_adapters
     class ForbiddenWorker:
         async def run_once(self,**kwargs):

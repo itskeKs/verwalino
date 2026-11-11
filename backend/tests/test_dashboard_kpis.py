@@ -6,9 +6,9 @@ import pytest
 import pytest_asyncio
 
 from tests.test_deposits import pay
-from tests.test_financial_scope_boundary import scope_seed, worker_tenant  # noqa: F401
+from tests.test_financial_scope_boundary import scope_seed as scope_seed, worker_tenant as worker_tenant
 
-from tests.test_rent_changes import rent_db, rent_world, api_client, post_change  # noqa: F401
+from tests.test_rent_changes import rent_db as rent_db, rent_world as rent_world, api_client, post_change
 
 ROOT = '/api/reports/dashboard-kpis'
 

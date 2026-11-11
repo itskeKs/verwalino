@@ -4,6 +4,8 @@ from decimal import Decimal
 
 import pytest
 
+pytestmark = pytest.mark.no_db
+
 
 def calculate(**overrides):
     from app.engine.index_rent import calculate_index_rent

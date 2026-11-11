@@ -5,7 +5,6 @@ import html
 import json
 import re
 import uuid
-from datetime import date
 
 from fastapi import HTTPException
 from sqlalchemy import text

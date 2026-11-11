@@ -110,7 +110,7 @@ async def test_inflight_policy_change_still_accounts_admitted_work(approved_know
     finally: app.dependency_overrides.pop(get_knowledge_provider,None)
 
 
-from tests.test_financial_scope_boundary import worker_tenant,scope_seed  # noqa: F401
+from tests.test_financial_scope_boundary import worker_tenant as worker_tenant,scope_seed as scope_seed
 
 
 async def test_reservation_migration_preserves_identity_and_refuses_strict_rollback(migrator_session,scope_seed):
