@@ -190,6 +190,42 @@ def user_opens_periods(world, organization):
     world.act("GET", f"/api/properties/{record.id}/settlement-periods", params={"year": 2025})
 
 
+@when(parsers.parse('the administrator of "{organization}" tries to create one user with an own-organization address and one with Alpha\'s administrator address'))
+def reuse_signin_addresses(world, organization):
+    def owner_address(administrator):
+        staff = world.send(administrator, "GET", "/api/users")
+        assert staff.status_code == 200, world.describe_response()
+        return next(user["email"] for user in staff.json() if user["role"] == "OWNER_ADMIN")
+
+    beta = world.administrator_of(organization)
+    world.data["alpha_signin_address"] = owner_address(world.administrator_of("Verwaltung Alpha"))
+    world.data["reused_receipts"] = []
+    for address in (owner_address(beta), world.data["alpha_signin_address"]):
+        answer = world.send(beta, "POST", "/api/users", json={
+            "email": address, "password": "reused-address-password",
+            "display_name": "Reused address", "role": "CLERK",
+        })
+        world.data["reused_receipts"].append((answer.status_code, answer.json()))
+
+
+@then("both attempts are refused with the same generic receipt")
+def reused_addresses_refused_generically(world):
+    own, foreign = world.data["reused_receipts"]
+    assert own[0] == 409, own
+    assert foreign == own, (
+        "The cross-organization attempt must be indistinguishable from an "
+        f"own-organization duplicate: {foreign} != {own}"
+    )
+
+
+@then("Alpha's administrator can still sign in")
+def alpha_administrator_still_signs_in(world):
+    answer = world.send(world.anonymous, "POST", "/api/auth/login", json={
+        "email": world.data["alpha_signin_address"], "password": "testpass1234",
+    })
+    assert answer.status_code == 200, world.describe_response()
+
+
 @when("the administrator signs in again")
 def administrator_signs_in_again(world):
     session = world.act("GET", "/api/auth/session")

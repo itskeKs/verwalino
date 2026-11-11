@@ -408,14 +408,13 @@ async def test_unscoped_app_rw_select_remains_empty(app_rw_session):
 
 
 @pytest.mark.asyncio
-async def test_normalized_email_uniqueness_is_per_org_and_login_fails_closed_across_orgs(
+async def test_normalized_email_uniqueness_is_global_and_login_resolves_one_account(
     migrator_session,
 ):
     email = f"duplicate-{uuid.uuid4().hex}@example.test"
     first_org_id = uuid.uuid4()
     second_org_id = uuid.uuid4()
     first_user = uuid.uuid4()
-    second_user = uuid.uuid4()
     # Keep every setup write in a savepoint: partial setup or assertion failures
     # roll back cleanly, while the success path explicitly deletes in FK order.
     async with migrator_session.begin_nested():
@@ -445,53 +444,40 @@ async def test_normalized_email_uniqueness_is_per_org_and_login_fails_closed_acr
             {"id": uuid.uuid4(), "org_id": first_org_id, "user_id": first_user},
         )
 
-        with pytest.raises(IntegrityError):
-            async with migrator_session.begin_nested():
-                await migrator_session.execute(
-                    text(
-                        'INSERT INTO public."user" (id, organization_id, email, password_hash, display_name) '
-                        "VALUES (:id, :org_id, :email, :password_hash, :display_name)"
-                    ),
-                    {
-                        "id": uuid.uuid4(),
-                        "org_id": first_org_id,
-                        "email": f" {email.upper()} ",
-                        "password_hash": "hash",
-                        "display_name": "Duplicate",
-                    },
-                )
+        # One sign-in address belongs to one organization (issue #134): the
+        # same canonical address is refused in the own organization and in any
+        # other organization, so a second organization can never block the
+        # first account's login or password reset.
+        for org_id in (first_org_id, second_org_id):
+            with pytest.raises(IntegrityError):
+                async with migrator_session.begin_nested():
+                    await migrator_session.execute(
+                        text(
+                            'INSERT INTO public."user" (id, organization_id, email, password_hash, display_name) '
+                            "VALUES (:id, :org_id, :email, :password_hash, :display_name)"
+                        ),
+                        {
+                            "id": uuid.uuid4(),
+                            "org_id": org_id,
+                            "email": f" {email.upper()} ",
+                            "password_hash": "hash",
+                            "display_name": "Duplicate",
+                        },
+                    )
+
+        row = (
+            await migrator_session.execute(
+                text("SELECT * FROM public.app_auth_lookup(:email)"), {"email": email}
+            )
+        ).mappings().one()
+        assert row["user_id"] == first_user
 
         await migrator_session.execute(
-            text(
-                'INSERT INTO public."user" (id, organization_id, email, password_hash, display_name) '
-                "VALUES (:id, :org_id, :email, :password_hash, :display_name)"
-            ),
-            {
-                "id": second_user,
-                "org_id": second_org_id,
-                "email": f" {email.upper()} ",
-                "password_hash": "hash",
-                "display_name": "Duplicate",
-            },
+            text("DELETE FROM public.membership WHERE user_id = :user_id"), {"user_id": first_user}
         )
         await migrator_session.execute(
-            text(
-                "INSERT INTO public.membership (id, organization_id, user_id, role) "
-                "VALUES (:id, :org_id, :user_id, 'CLERK')"
-            ),
-            {"id": uuid.uuid4(), "org_id": second_org_id, "user_id": second_user},
+            text('DELETE FROM public."user" WHERE id = :user_id'), {"user_id": first_user}
         )
-        result = await migrator_session.execute(
-            text("SELECT * FROM public.app_auth_lookup(:email)"), {"email": email}
-        )
-        assert result.all() == []
-        for user_id in (first_user, second_user):
-            await migrator_session.execute(
-                text("DELETE FROM public.membership WHERE user_id = :user_id"), {"user_id": user_id}
-            )
-            await migrator_session.execute(
-                text('DELETE FROM public."user" WHERE id = :user_id'), {"user_id": user_id}
-            )
         for org_id in (first_org_id, second_org_id):
             await migrator_session.execute(
                 text("DELETE FROM public.organization WHERE id = :organization_id"),

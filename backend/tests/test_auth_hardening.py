@@ -670,7 +670,7 @@ async def test_user_create_rejects_normalized_legacy_email_without_a_server_erro
                 },
             )
         assert response.status_code == 409
-        assert response.json() == {"detail": "Email already in use"}
+        assert response.json() == {"detail": "Diese E-Mail-Adresse kann nicht verwendet werden."}
     finally:
         try:
             with connection.cursor() as cursor:
@@ -682,6 +682,37 @@ async def test_user_create_rejects_normalized_legacy_email_without_a_server_erro
             raise
         finally:
             connection.close()
+
+
+@pytest.mark.asyncio
+async def test_user_create_rejects_another_organizations_email_with_the_generic_receipt(seed_data):
+    # A sign-in address belongs to exactly one organization (issue #134): the
+    # admin of organization B reusing organization A's address is refused with
+    # the same generic receipt as an own-organization duplicate, so login and
+    # password reset of the legitimate account keep working.
+    from app.main import app
+
+    token = create_session_token(seed_data["user_b_admin_id"], seed_data["org_b_id"])
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app, raise_app_exceptions=False),
+        base_url="http://test",
+        cookies={settings.session_cookie_name: token},
+    ) as client:
+        response = await client.post(
+            "/api/users",
+            json={
+                "email": "admin@alpha.de",
+                "password": "this-password-is-valid",
+                "role": "CLERK",
+            },
+        )
+        assert response.status_code == 409
+        assert response.json() == {"detail": "Diese E-Mail-Adresse kann nicht verwendet werden."}
+
+        login = await client.post(
+            "/api/auth/login", json={"email": "admin@alpha.de", "password": "testpass1234"}
+        )
+        assert login.status_code == 200
 
 
 @pytest.mark.asyncio
