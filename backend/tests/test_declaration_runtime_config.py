@@ -294,6 +294,25 @@ def test_compose_takes_the_public_host_from_the_env_file_and_labels_releases() -
     assert "HV_PUBLIC_HOST=" in ENV_EXAMPLE_PATH.read_text(encoding="utf-8").splitlines()
 
 
+def test_compose_forwards_the_optional_error_tracking_keys_to_the_api_and_every_worker() -> None:
+    services = _compose()["services"]
+    assert isinstance(services, dict)
+    for name in ("app", "worker", "invoice-worker", "inbox-worker"):
+        environment = _environment(services[name])
+        assert environment["HV_ERROR_TRACKING_DSN"] == "${HV_ERROR_TRACKING_DSN:-}", name
+        assert environment["HV_ERROR_TRACKING_ENVIRONMENT"] == "${HV_ERROR_TRACKING_ENVIRONMENT:-selfhost}", name
+    for name in ("db", "migrate", "bootstrap"):
+        assert not [key for key in services[name].get("environment", {}) if key.startswith("HV_ERROR_TRACKING_")]
+
+
+def test_error_tracking_keys_are_listed_once_in_the_example_and_the_deploy_guide() -> None:
+    example = ENV_EXAMPLE_PATH.read_text(encoding="utf-8").splitlines()
+    guide = (ROOT / "DEPLOY.md").read_text(encoding="utf-8").splitlines()
+    for key in ("HV_ERROR_TRACKING_DSN", "HV_ERROR_TRACKING_ENVIRONMENT"):
+        assert [line for line in example if line.startswith(key + "=")] == [key + "=" + ("" if key.endswith("DSN") else "selfhost")]
+        assert len([line for line in guide if line.startswith(f"| `{key}` |")]) == 1
+
+
 def test_runtime_example_and_entrypoint_keep_secrets_at_boundaries() -> None:
     example_values = {
         line.partition("=")[0]: line.partition("=")[2]

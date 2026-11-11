@@ -15,6 +15,7 @@ from tests.test_scoped_account_statements import client,mutate
 from tests.test_scope_payment_reconciliation import read_value
 from tests.test_invoice_extraction_worker import pdf_bytes
 from tests.test_intake_batches import receive,work_sql
+from tests.test_error_tracking import offline_tracker  # noqa: F401
 
 pytestmark=pytest.mark.asyncio
 
@@ -403,3 +404,31 @@ async def test_worker_retries_completed_extraction_without_running_processor_aga
     assert len(finishes)==2 and finishes[0]==finishes[1]
     assert sessions[0] is not sessions[1]
     assert await read_value('SELECT count(*) FROM extraction_revision WHERE organization_id=:org',ids)==1
+
+
+@pytest.mark.parametrize('failure',['child_crash','raises'])
+async def test_failing_extraction_job_is_one_tracker_event_with_the_job_id(failure,migrator_session,scope_seed,store,monkeypatch,offline_tracker):
+    import json,shutil
+    from app.core.request_id import request_id
+    events,tracker=offline_tracker
+    ids=await fixture(migrator_session,scope_seed)
+    async with client(ids) as api:
+        await source(api,ids)
+        jobs=[];options={}
+        if failure=='child_crash':
+            # The production path: the isolated extractor child exits non-zero and the job is recorded as processor_failed.
+            monkeypatch.setattr('sys.executable',shutil.which('false'))
+        else:
+            def crashing(*args):
+                jobs.append(request_id.get())
+                raise RuntimeError('PRIVATE EXTRACTOR FAILURE Max Mustermann')
+            options['processor']=crashing
+        assert await process_once(get_worker_session_factory(),ids['org'],**options)
+    tracker.flush()
+    assert len(events)==1
+    tags=events[0]['tags']
+    assert tags['worker']=='intake_extraction' and tags['error_code']=='processor_failed'
+    assert str(uuid.UUID(tags['job_id']))==tags['job_id']==tags['request_id'] and set(tags)=={'worker','job_id','request_id','error_code'}
+    if failure=='raises':assert jobs==[tags['job_id']]
+    assert [value['type'] for value in events[0]['exception']['values']]==(['JobFailed'] if failure=='child_crash' else ['RuntimeError'])
+    assert 'Mustermann' not in json.dumps(events[0])
