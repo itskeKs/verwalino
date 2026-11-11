@@ -32,15 +32,7 @@ import type {
 } from "../api/types";
 import { AccountingScopeSelector } from "../components/AccountingScopeSelector";
 import { ApiError } from "../api/client";
-
-const PAYMENT_TYPE_LABELS: Record<string, string> = {
-  KALTMIETE: "Kaltmiete",
-  NK_VORAUSZAHLUNG: "Betriebskosten-Vorauszahlung", HK_VORAUSZAHLUNG: "Heizkosten-Vorauszahlung",
-  KAUTION: "Kaution",
-  HAUSGELD_VORSCHUSS: "Hausgeld-Vorschuss",
-  RUECKLAGENANTEIL: "Ruecklagenanteil",
-  SONDERZAHLUNG: "Sonder-/Nachzahlung",
-};
+import { PAYMENT_TYPE_LABELS } from "../lib/paymentTypes";
 
 type ViewMode = "lease" | "owner";
 
@@ -169,7 +161,7 @@ export function MietkontoPage() {
 
   function balanceColor(balance: string): string | undefined {
     const val = parseFloat(balance);
-    if (val > 0) return "#b71c1c"; // Soll - Ist > 0: Rueckstand
+    if (val > 0) return "#b71c1c"; // Soll - Ist > 0: Rückstand
     if (val < 0) return "#2e7d32"; // Guthaben
     return undefined;
   }
@@ -205,7 +197,7 @@ export function MietkontoPage() {
               }}
             >
               <option value="lease">Mietvertrag (Mieter)</option>
-              <option value="owner">Eigentuemer (Hausgeld)</option>
+              <option value="owner">Eigentümer (Hausgeld)</option>
             </select>
           </label>
 
@@ -218,7 +210,7 @@ export function MietkontoPage() {
                 value={selectedLeaseId}
                 onChange={(e) => { setSelectedLeaseId(e.target.value); setScopeId(null); }}
               >
-                <option value="">-- Mietvertrag waehlen --</option>
+                <option value="">-- Mietvertrag wählen --</option>
                 {leases.map((l) => (
                   <option key={l.id} value={l.id}>
                     {getLeaseLabel(l)}
@@ -229,14 +221,14 @@ export function MietkontoPage() {
           ) : (
             <>
               <label>
-                Eigentuemer *
+                Eigentümer *
                 <select
                   required
-                  aria-label="Eigentuemer *"
+                  aria-label="Eigentümer *"
                   value={selectedOwnerId}
                   onChange={(e) => { setSelectedOwnerId(e.target.value); setScopeId(null); }}
                 >
-                  <option value="">-- Eigentuemer waehlen --</option>
+                  <option value="">-- Eigentümer wählen --</option>
                   {ownerProfiles.map((op) => (
                     <option key={op.id} value={op.id}>
                       {getOwnerLabel(op)}
@@ -245,7 +237,7 @@ export function MietkontoPage() {
                 </select>
               </label>
               <label>
-                Wirtschaftsplan (fuer Soll)
+                Wirtschaftsplan (für Soll)
                 <select
                   value={selectedPlanId}
                   onChange={(e) => { setSelectedPlanId(e.target.value); setScopeId(null); }}

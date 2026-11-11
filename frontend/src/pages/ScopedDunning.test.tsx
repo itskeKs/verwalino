@@ -45,13 +45,13 @@ it("preserves and displays the open-items scope, retains it after an error, and 
   await waitFor(() => expect(selector).toHaveValue("scope"));
   await waitFor(() => expect(screen.getByRole("button", { name: "Mahnung erstellen" })).toBeEnabled());
   for (const invalid of ["abc", "2.500"]) {
-    fireEvent.change(screen.getByLabelText("Mahngebuehr (Override)"), { target: { value: invalid } });
+    fireEvent.change(screen.getByLabelText("Mahngebühr (Override)"), { target: { value: invalid } });
     fireEvent.click(screen.getByRole("button", { name: "Mahnung erstellen" }));
     expect(await screen.findByRole("alert")).toHaveTextContent("Mahngebühr: Bitte einen Betrag wie 0,00 eingeben.");
-    expect(screen.getByLabelText("Mahngebuehr (Override)")).toHaveValue(invalid);
+    expect(screen.getByLabelText("Mahngebühr (Override)")).toHaveValue(invalid);
     expect(endpoints.createDunningForTenant).not.toHaveBeenCalled();
   }
-  fireEvent.change(screen.getByLabelText("Mahngebuehr (Override)"), { target: { value: "0,00" } });
+  fireEvent.change(screen.getByLabelText("Mahngebühr (Override)"), { target: { value: "0,00" } });
   fireEvent.click(screen.getByRole("button", { name: "Mahnung erstellen" }));
   expect(await screen.findByRole("alert")).toHaveTextContent("Review history");
   expect(endpoints.createDunningForTenant).toHaveBeenCalledWith(expect.objectContaining({ accounting_scope_id: "scope", lease_agreement_id: "lease", period_start: "2025-01-01", override_fee: "0.00" }));
@@ -65,12 +65,12 @@ it("passes the owner plan and WEG scope and announces a refused submission", asy
   render(<MemoryRouter><DunningNoticesPage /></MemoryRouter>);
   await screen.findByText("Keine Mahnungen vorhanden.");
   fireEvent.click(screen.getByRole("button", { name: "+ Neue Mahnung" }));
-  fireEvent.change(screen.getByLabelText("Empfaengertyp *"), { target: { value: "owner" } });
-  fireEvent.change(screen.getByLabelText("Eigentuemer *"), { target: { value: "owner" } });
+  fireEvent.change(screen.getByLabelText("Empfängertyp *"), { target: { value: "owner" } });
+  fireEvent.change(screen.getByLabelText("Eigentümer *"), { target: { value: "owner" } });
   fireEvent.change(screen.getByLabelText("Wirtschaftsplan"), { target: { value: "plan" } });
   await screen.findByRole("option", { name: /Mietkreis · WEG/ });
   fireEvent.change(screen.getByRole("combobox", { name: "Abrechnungskreis" }), { target: { value: "scope" } });
-  fireEvent.change(screen.getByLabelText("Mahngebuehr (Override)"), { target: { value: "0,00" } });
+  fireEvent.change(screen.getByLabelText("Mahngebühr (Override)"), { target: { value: "0,00" } });
   fireEvent.click(screen.getByRole("button", { name: "Mahnung erstellen" }));
   expect(await screen.findByRole("alert")).toHaveTextContent("Plan not finalized");
   expect(screen.getByRole("combobox", { name: "Abrechnungskreis" })).toHaveValue("scope");
@@ -134,8 +134,8 @@ it("creates owner dunning for frozen special levies without an economic plan", a
   render(<MemoryRouter><DunningNoticesPage /></MemoryRouter>);
   await screen.findByText("Keine Mahnungen vorhanden.");
   fireEvent.click(screen.getByRole("button", { name: "+ Neue Mahnung" }));
-  fireEvent.change(screen.getByRole("combobox", { name: "Empfaengertyp *" }), { target: { value: "owner" } });
-  fireEvent.change(screen.getByRole("combobox", { name: "Eigentuemer *" }), { target: { value: "owner" } });
+  fireEvent.change(screen.getByRole("combobox", { name: "Empfängertyp *" }), { target: { value: "owner" } });
+  fireEvent.change(screen.getByRole("combobox", { name: "Eigentümer *" }), { target: { value: "owner" } });
   fireEvent.change(screen.getByRole("combobox", { name: "WEG-Objekt *" }), { target: { value: "property" } });
   await screen.findByRole("option", { name: /Mietkreis · WEG/ });
   fireEvent.change(screen.getByRole("combobox", { name: "Abrechnungskreis" }), { target: { value: "scope" } });

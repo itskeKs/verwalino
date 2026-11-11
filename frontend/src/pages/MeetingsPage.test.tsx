@@ -61,10 +61,10 @@ it.each(["ANGENOMMEN", "ABGELEHNT"])("creates a TOP resolution with API result %
   fireEvent.click(screen.getByRole("button", { name: "Beschluss erfassen" }));
   await waitFor(() => expect(create).toHaveBeenCalledWith(expect.objectContaining({ result, agenda_item_id: "top-1", votes_yes: 2 })));
   await screen.findByText(result === "ANGENOMMEN" ? "Angenommen" : "Abgelehnt", { selector: "span" });
-  fireEvent.click(screen.getByRole("button", { name: "Als durchgefuehrt markieren" }));
+  fireEvent.click(screen.getByRole("button", { name: "Als durchgeführt markieren" }));
   fireEvent.click(await screen.findByRole("button", { name: "In Beschluss-Sammlung" }));
   await waitFor(() => expect(transfer).toHaveBeenCalledOnce());
-  expect(screen.queryByRole("button", { name: "+ TOP hinzufuegen" })).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "+ TOP hinzufügen" })).not.toBeInTheDocument();
   expect(screen.queryByRole("button", { name: "+ Beschluss" })).not.toBeInTheDocument();
-  expect(screen.getByRole("button", { name: "Uebernommen" })).toBeDisabled();
+  expect(screen.getByRole("button", { name: "Übernommen" })).toBeDisabled();
 });

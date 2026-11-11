@@ -75,7 +75,7 @@ def saved_details_browser(browser_world, world, weg_balance):
             await b.page.get_by_role('button', name='+ Neue Zahlung', exact=True).click()
             await b.select('Bankkonto *', w['bank'])
             await b.select('Zahlungstyp *', 'HAUSGELD_VORSCHUSS')
-            await b.select('Eigentuemer', w['owners'][0])
+            await b.select('Eigentümer', w['owners'][0])
             await b.page.get_by_label('Betrag *', exact=True).fill('600.00')
             await b.page.get_by_label('Wertstellungsdatum *', exact=True).fill('2026-01-05')
             await save_and_read('/api/payments')

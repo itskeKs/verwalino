@@ -383,7 +383,9 @@ async def test_custody_migration_retains_evidence_and_empty_roundtrip(migrator_s
                     migration.downgrade()
             point = db.begin_nested()
             try:
-                db.execute(text('TRUNCATE invoice_document,invoice_upload_admission CASCADE'))
+                # Guard 0082 also refuses retained ENFORCED/PAUSED source security, which
+                # earlier suites leave behind in other organizations; empty it in this savepoint too.
+                db.execute(text('TRUNCATE invoice_document,invoice_upload_admission,property_source_security CASCADE'))
                 oid = db.scalar(text("SELECT 'financial_scope_access(uuid,text,uuid,text)'::regprocedure::oid"))
                 # Restore the original predicate bodies before testing this older revision.
                 importlib.import_module('migrations.versions.0086_combined_authority_projection').downgrade()
