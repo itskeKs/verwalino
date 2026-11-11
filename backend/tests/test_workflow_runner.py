@@ -283,21 +283,28 @@ async def test_queue_lock_wait_is_cancellable_before_any_processor_starts(worker
     assert (await runner.run_once()).code=='PROCESSED'
 
 
-async def test_failing_inspection_job_is_one_tracker_event_with_the_job_id(worker_tenant,store,monkeypatch,offline_tracker):
+@pytest.mark.parametrize('failure',['child_crash','raises'])
+async def test_failing_inspection_job_is_one_tracker_event_with_the_job_id(failure,worker_tenant,store,monkeypatch,offline_tracker):
+    import shutil
     from app.workers import workflow
     from app.workers.workflow_runner import WorkflowRunner,build_adapters
     from tests.test_intake_batches import receive
     events,tracker=offline_tracker
     api,ids=worker_tenant;org=ids['org_a_id']
     _,receipt=await receive(api,pdf_bytes())
-    real_process=workflow.process_once
-    def inspector(data,mime):raise RuntimeError('PRIVATE SCANNER FAILURE Max Mustermann')
-    async def inspection(factory,org):return await real_process(factory,org,inspector=inspector)
-    monkeypatch.setattr(workflow,'process_once',inspection)
+    if failure=='child_crash':
+        # The production path: the isolated scanner child exits non-zero and the job is recorded as inspector_failed.
+        monkeypatch.setattr('sys.executable',shutil.which('false'))
+    else:
+        real_process=workflow.process_once
+        def inspector(data,mime):raise RuntimeError('PRIVATE SCANNER FAILURE Max Mustermann')
+        async def inspection(factory,org):return await real_process(factory,org,inspector=inspector)
+        monkeypatch.setattr(workflow,'process_once',inspection)
     async def organizations():return (org,)
     runner=WorkflowRunner(organizations,build_adapters(['intake_inspection']))
     assert (await runner.run_once()).code=='PROCESSED'
     tracker.flush()
     assert len(events)==1
-    assert events[0]['tags']=={'worker':'intake_inspection','job_id':receipt['job_id'],'request_id':receipt['job_id']}
+    assert events[0]['tags']=={'worker':'intake_inspection','job_id':receipt['job_id'],'request_id':receipt['job_id'],'error_code':'inspector_failed'}
+    assert [value['type'] for value in events[0]['exception']['values']]==(['JobFailed'] if failure=='child_crash' else ['RuntimeError'])
     assert 'Mustermann' not in json.dumps(events[0])

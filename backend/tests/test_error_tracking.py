@@ -396,6 +396,50 @@ def test_job_failure_absorbed_by_the_worker_is_reported_once_even_when_it_also_e
     assert [event["tags"]["job_id"] for event in events] == [JOB_ID]
 
 
+def test_only_the_first_failure_of_a_job_is_reported(offline_tracker):
+    from app.workers.error_tracking import report_job_failure, tracked_job
+
+    events, client = offline_tracker
+    with pytest.raises(OSError):
+        with tracked_job("declaration_import", JOB_ID):
+            report_job_failure(RuntimeError("cause"))
+            raise OSError("consequence while recording the failure")
+    client.flush()
+    assert [[value["type"] for value in event["exception"]["values"]] for event in events] == [["RuntimeError"]]
+
+
+def test_recorded_processor_failure_is_one_event_with_its_code_and_other_codes_are_not_reported(offline_tracker):
+    from app.workers.error_tracking import report_recorded_failure, tracked_job
+
+    events, client = offline_tracker
+    with tracked_job("intake_inspection", JOB_ID):
+        report_recorded_failure("invalid_pdf")
+        report_recorded_failure(None)
+        report_recorded_failure("inspector_failed")
+        report_recorded_failure("inspector_failed")
+    client.flush()
+    assert len(events) == 1
+    assert events[0]["tags"] == {"worker": "intake_inspection", "job_id": JOB_ID, "request_id": JOB_ID, "error_code": "inspector_failed"}
+    assert [value["type"] for value in events[0]["exception"]["values"]] == ["JobFailed"]
+
+
+def test_job_event_carries_no_breadcrumbs_and_a_failure_outside_a_job_is_not_sent(offline_tracker):
+    import logging
+    from app.workers.error_tracking import report_job_failure, tracked_job
+
+    events, client = offline_tracker
+    report_job_failure(RuntimeError("outside any job"))
+    logging.getLogger("worker.library").warning(PRIVATE_MESSAGE)
+    with pytest.raises(RuntimeError):
+        with tracked_job("outbox", JOB_ID):
+            logging.getLogger("worker.library").warning(PRIVATE_MESSAGE)
+            raise RuntimeError(PRIVATE_MESSAGE)
+    client.flush()
+    assert len(events) == 1
+    assert "breadcrumbs" not in events[0]
+    assert "Mustermann" not in json.dumps(events[0])
+
+
 async def test_cancelled_job_is_not_a_failure_and_leaves_no_job_tags(offline_tracker):
     import asyncio
     import sentry_sdk

@@ -532,9 +532,9 @@ Text filtering remains bounded to the first 8192 characters per string.
 No person directory is loaded: names are matched heuristically,
 so this is not a guarantee for arbitrary names or unrecognized free text.
 Each worker entry point (`workers/error_tracking.py`) initializes the same tracker and
-reports one event per failed job, tagged with the worker name and the durable job ID and
-carrying the exception type and stack without its message; failures before a job is
-claimed stay in the logs.
+reports a job at most once, on its first failure, tagged with the worker name and the
+durable job ID and carrying the exception type and stack without message or breadcrumbs;
+failures before a job is claimed stay in the logs.
 Transport tests stay offline. Configuration, hosted GlitchTip and log lookup are
 documented in [DEPLOY.md](../DEPLOY.md#request-ids-and-optional-error-tracking).
 

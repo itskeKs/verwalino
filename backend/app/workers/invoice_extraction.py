@@ -10,7 +10,7 @@ import subprocess
 import tempfile
 import uuid
 
-from app.workers.error_tracking import configure_worker_error_tracking, report_job_failure, tracked_job
+from app.workers.error_tracking import configure_worker_error_tracking, report_recorded_failure, tracked_job
 
 from sqlalchemy import select
 
@@ -34,6 +34,7 @@ async def process_once(factory, org_id, *, processor=run_isolated_extraction):
     if claim is None:
         return False
     with tracked_job("invoice_extraction", claim["attempt_id"]):
+        failure = None
         try:
             data = get_store().get(claim["storage_uri"])
             if compute_sha256(data) != claim["sha256"]:
@@ -41,8 +42,9 @@ async def process_once(factory, org_id, *, processor=run_isolated_extraction):
             else:
                 result = await run_bounded_processor(processor, data, claim["mime_type"])
         except Exception as error:
-            report_job_failure(error)
+            failure = error
             result = outcome("failed", "processor_failed")
+        report_recorded_failure(result.get("error_code"), failure)
         async def finish():
             async with factory() as session, session.begin():
                 await set_tenant_context(session, org_id)
