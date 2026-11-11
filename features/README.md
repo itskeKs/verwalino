@@ -314,6 +314,14 @@ against the local browser stack and in PR CI's browser job.
 The populated cost-table browser regression also requires a locally seeded,
 isolated organization and is skipped on external targets; local PR browser CI
 checks it at 360 and 1280 px without depending on earlier scenarios' records.
+The `scope_team_rights`, `mandate_sources`, `property_data_domains` and
+`declaration_import_start` browser features sign in as the seed clerk (the last one also
+claims from the in-process worker queue), which an external installation does not have;
+they are skipped on external targets and run in PR CI's browser job.
+The `scope_creation_forms`, `scoped_statements` and `legacy_payment_review` browser features create
+immutable scopes and booked payments; on an external installation they pile up in the one shared
+organization and break org-wide lists (the scope selector page, the payments order of
+`weg_settlement.feature`), so they are skipped there too and run in PR CI's browser job.
 Each skipped scenario records its reason in the report. Local runs continue to
 exercise both organizations, all isolation scenarios, first-run setup, the inbox
 review chain, deletion, export/import and password reset; PR CI retains this
@@ -425,8 +433,16 @@ deposits, interest/PDF, selected drafts and scoped dunning. Parsing/deduplicatio
 DTO fields, permission matrices, concurrency and calculation edge cases stay in API
 or component tests (including `bank_statement_import.feature`). Browser scenarios
 retain visible review, confirmation, persistence, navigation and cancellation.
-Other scripts in `scripts/acceptance/` remain for later batches; this batch adds no
-new product journeys.
+Batch 2a replaces the ten `b1_*` scripts: property list paging and bounded filters
+(`property_listing.feature`), scope creation, team grants and the scoped pause
+(`scope_team_rights.feature`), scoped creation forms (`scope_creation_forms.feature`),
+scoped statements, open items and the deadline monitor (`scoped_statements.feature`),
+the legacy-payment review (`legacy_payment_review.feature`), mandate sources
+(`mandate_sources.feature`), shared building-data domains (`property_data_domains.feature`)
+and the declaration import start/principal journey (`declaration_import_start.feature`).
+Their SQL fixtures are gone; the data is created through the API World instead.
+Other scripts in `scripts/acceptance/` remain for batches 2b to 5; these batches add
+no new product journeys.
 
 ## Journey twins
 
