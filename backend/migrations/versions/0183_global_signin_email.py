@@ -18,9 +18,10 @@ depends_on: Union[str, Sequence[str], None] = None
 
 def upgrade() -> None:
     # Hosted mode: an address belongs to exactly one organization (owner
-    # decision on itskeKs/verwalino#134). Cross-organization duplicates must
-    # be resolved by hand; the refusal names a bounded sample of canonical
-    # addresses and the operator re-runs the upgrade after resolving them.
+    # decision on itskeKs/verwalino#134). Cross-organization duplicates are
+    # resolved by hand before the upgrade (procedure: DEPLOY.md, "Migration
+    # 0183: duplicate sign-in addresses"); this revision never rewrites rows.
+    # The refusal names a bounded sample of canonical addresses.
     op.execute(
         """
         DO $$
@@ -38,8 +39,12 @@ def upgrade() -> None:
             ) duplicates;
             IF conflicts IS NOT NULL THEN
                 RAISE EXCEPTION 'Duplicate sign-in addresses across organizations: %. '
-                    'Resolve by hand: change or deactivate one address per duplicate, '
-                    'then re-run the upgrade.', conflicts;
+                    'Resolve them by hand as the migrator role before the upgrade, see DEPLOY.md '
+                    '(Migration 0183: duplicate sign-in addresses): an inactive imported placeholder '
+                    'without credentials gets the address <user id>-<organization id>@imported.archive.invalid, '
+                    'two real accounts need a decision of the owner which organization keeps the address. '
+                    'Deactivating an account does not help, the index covers inactive rows. '
+                    'Then re-run the upgrade.', conflicts;
             END IF;
         END $$;
         """

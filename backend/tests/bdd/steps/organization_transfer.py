@@ -22,6 +22,12 @@ def export_client(world, rent_world, export_store):
         world.run(source.aclose())
 
 
+@given("a separate organization has rental records for export")
+def export_organization_records(world, rent_world, export_client):
+    world.actor = export_client
+    world.data["export_source"] = rent_world
+
+
 @given("a separate organization has rental records and an original for export")
 def export_organization(world, rent_world, export_client):
     world.actor = export_client
@@ -77,19 +83,32 @@ async def empty_import_organization(rent_db, rent_world):
     return await import_target.__wrapped__(rent_db, rent_world)
 
 
-@when('the archive is imported into an empty organization')
-def import_archive(world, empty_import_organization, rent_db, rent_world):
-    from tests.test_organization_import import repack, source_organization_deleted
+def restore_archive(world, target, release_source=None):
+    from tests.test_organization_import import repack
     async def restore():
-        # The supported restore (issue #134): the source organization no longer
-        # holds its administrator's address, which the importing administrator carries.
-        await source_organization_deleted(rent_db, rent_world['org'], rent_world['admin'], empty_import_organization)
-        async with api_client(empty_import_organization) as target:
-            return await target.post('/api/organizations/import', files={'file': ('organization.tar.gz', repack(world.data['export_files']))})
+        if release_source:
+            await release_source()
+        async with api_client(target) as client:
+            return await client.post('/api/organizations/import', files={'file': ('organization.tar.gz', repack(world.data['export_files']))})
     answer = world.run(restore())
     assert answer.status_code == 200, answer.text
     world.data['import_result'] = answer.json()
-    world.data['import_target'] = empty_import_organization
+    world.data['import_target'] = target
+
+
+@when('the archive is imported into an empty organization')
+def import_archive(world, empty_import_organization):
+    # The source organization lives on and keeps its administrator's address.
+    restore_archive(world, empty_import_organization)
+
+
+@when('the archive is imported into an empty organization after its source organization was deleted')
+def import_archive_after_source_deletion(world, empty_import_organization, rent_db, rent_world):
+    from tests.test_organization_import import source_organization_deleted
+    # The supported restore (issue #134): the source organization no longer
+    # holds its administrator's address, which the importing administrator carries.
+    restore_archive(world, empty_import_organization, lambda: source_organization_deleted(
+        rent_db, rent_world['org'], rent_world['admin'], empty_import_organization))
 
 
 @then('the imported organization has equal entity counts and normalized content')

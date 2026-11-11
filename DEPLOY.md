@@ -1696,7 +1696,7 @@ before that release is declared done.
 | 0180 (parent 0179) | Adds a nullable administrator request timeout per configured provider endpoint (1–3600 seconds). Existing settings keep their function defaults; compatible endpoints default to 180 seconds. Downgrade refuses explicit configured timeouts. |
 | 0181 (parent 0180) | Allows `RESERVE_SOLL` owner statement lines for the planned reserve contribution. Existing finalized statements remain unchanged; downgrade explicitly refuses retained `RESERVE_SOLL` rows with "Retain planned reserve statement evidence; populated downgrade refused" before changing the CHECK; without those rows it restores the prior line types. |
 | 0182 (parent 0181) | Adds a trigger on `settlement_run` that refuses a non-identical overlap between a new or moved lease run and another active run of the same lease and type that belongs to a different accounting scope, including runs the acting user cannot read (a legacy run without a scope counts as its own context; row security off, no row data returned, per-lease advisory lock). Identical bounds, superseded runs, runs of one scope and runs without a lease are unaffected. Also adds the integer-only `financial_property_settlement_start_month(org, property)` reader (current organization and live member only, `app_rw` execute). No rows are read or rewritten, so existing overlaps are retained. Downgrade drops the trigger and both functions. |
-| 0183 (head; parent 0182) | Makes the sign-in address globally unique across organizations with a unique index on `lower(btrim(email))`; the per-organization canonical expression index it subsumes is dropped. No rows are rewritten. Upgrade refuses pre-existing cross-organization duplicates by naming a bounded sample of canonical addresses for hand resolution, then re-run; downgrade restores the 0027 per-organization canonical index exactly. Grants `app_rw` EXECUTE on the existing definer lookup `signup_email_registered(text)` (0144), so the runtime import can keep archived placeholders off live addresses without a global read grant; downgrade takes the grant back. |
+| 0183 (head; parent 0182) | Makes the sign-in address globally unique across organizations with a unique index on `lower(btrim(email))`; the per-organization canonical expression index it subsumes is dropped. No rows are rewritten. Upgrade refuses pre-existing cross-organization duplicates by naming a bounded sample of canonical addresses and never rewrites rows; resolve them by hand before the upgrade as described in [Migration 0183: duplicate sign-in addresses](#migration-0183-duplicate-sign-in-addresses); downgrade restores the 0027 per-organization canonical index exactly. Grants `app_rw` EXECUTE on the existing definer lookup `signup_email_registered(text)` (0144), so the runtime import can keep archived placeholders off live addresses without a global read grant; downgrade takes the grant back. |
 
 DDL uses the existing PostgreSQL/Alembic transaction; 0123 also takes financial
 and ACL locks with NOWAIT table locks. Contention or unexpected data/function
@@ -1707,6 +1707,59 @@ the 0122→0183, 0139→0183 and accepted-source 0140→0183, 0141→0183 and
 compare existing ACLs, allowing only the explicit organization INSERT/reserve UPDATE revocations and the capability-checked
 0159 binding adapter and the 0168 column-level resolution-link grant;
 it does not prove live data validity or cross-version runtime compatibility.
+
+### Migration 0183: duplicate sign-in addresses
+
+0183 makes the sign-in address unique across all organizations. While two
+accounts of different organizations share one canonical address
+(`lower(btrim(email))`), the upgrade refuses, names up to five of the addresses
+and changes nothing. It never rewrites rows itself: duplicates are resolved by
+hand, as the `app_migrator` role (`compose exec db psql -U app_migrator -d
+hausverwaltung`), before the upgrade. Take a backup first
+([Backups](#backups)). An instance that imported an organization archive while
+the source organization still existed holds such duplicates, because earlier
+releases restored every archived account as an inactive placeholder with its
+archived address. Deactivating an account does not resolve a duplicate (the
+index covers inactive rows too), and no API changes an address.
+
+1. List every duplicate (read-only):
+
+   ```sql
+   SELECT lower(btrim(u.email)) AS address, u.id AS user_id, u.organization_id,
+          u.is_active, u.password_hash = '!' AS no_credentials, m.role
+     FROM "user" u
+     LEFT JOIN membership m ON m.user_id = u.id AND m.organization_id = u.organization_id
+    WHERE lower(btrim(u.email)) IN (
+            SELECT lower(btrim(email)) FROM "user" GROUP BY 1 HAVING count(*) > 1)
+    ORDER BY 1, u.organization_id, u.id;
+   ```
+
+2. An inactive imported placeholder (`is_active` false and `no_credentials`
+   true) cannot sign in and holds no credentials. It gets the non-sign-in form
+   `<user id>-<organization id>@imported.archive.invalid` that the import writes
+   today. Run this once, in one transaction, as the migrator role:
+
+   ```sql
+   BEGIN;
+   UPDATE "user" u
+      SET email = u.id::text || '-' || u.organization_id::text || '@imported.archive.invalid'
+    WHERE u.password_hash = '!' AND u.is_active = false
+      AND lower(btrim(u.email)) IN (
+            SELECT lower(btrim(email)) FROM "user" GROUP BY 1 HAVING count(*) > 1);
+   COMMIT;
+   ```
+
+3. Two real accounts of different organizations (active, or with credentials)
+   need the owner's decision which organization keeps the address. The other
+   account gets a new address chosen with its person; the old address no longer
+   signs in to it and password reset mail goes to the new one. One statement per
+   account:
+
+   ```sql
+   UPDATE "user" SET email = 'new.address@example.test' WHERE id = '<user id from the listing>';
+   ```
+
+4. Run the listing again; it must return no rows. Then run the upgrade again.
 
 ### Release-target checklist
 

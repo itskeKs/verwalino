@@ -175,7 +175,8 @@ typed confirmation, seven-day read-only cooling-off/cancel, and operator erasure
 are implemented. Historical protected scope/evidence restoration can still be
 refused under current integrity rules; accounting scopes, bindings, grants and
 attachments are restored only when the importing administrator is the archived
-actor (the source organization deleted or another installation, same address),
-and beside the living source organization such an import is refused (#134,
-[details](operations/organization-export.md)). A real fresh-install import is maintainer
+actor of every such row (a second administrator or a clerk as actor is always
+refused; the source organization must be deleted or the installation another
+one, with the same address), and beside the living source organization such an
+import is refused (#134, [details](operations/organization-export.md)). A real fresh-install import is maintainer
 acceptance; local validation uses two synthetic organizations in the test DB.

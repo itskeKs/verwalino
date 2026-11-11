@@ -1,8 +1,11 @@
 """Upgrade/backup checks using only the guarded synthetic database and files."""
 import io
+import re
 import subprocess
 import tarfile
+import textwrap
 import uuid
+from pathlib import Path
 from datetime import date
 from decimal import Decimal
 
@@ -1238,9 +1241,13 @@ def test_global_signin_email_upgrade_refuses_cross_organization_duplicates(run_m
                     connection.execute(text('INSERT INTO "user"(id,organization_id,email,password_hash,display_name) '
                         "VALUES (:id,:org,:email,'synthetic-not-a-login','Twin')"),
                         {'id': str(uuid.uuid4()), 'org': org, 'email': shared})
-                with pytest.raises(DBAPIError, match='Duplicate sign-in addresses'):
+                with pytest.raises(DBAPIError, match='Duplicate sign-in addresses') as refused:
                     with connection.begin_nested():
                         module.upgrade()
+                # The operator is pointed to the procedure; deactivation is no resolution.
+                message = str(refused.value.orig)
+                assert 'DEPLOY.md' in message and '@imported.archive.invalid' in message
+                assert 'change or deactivate' not in message and 'does not help' in message
                 assert connection.scalar(global_index) is None
                 connection.execute(text('DELETE FROM "user" WHERE email=:email AND organization_id=:org'),
                                    {'email': shared, 'org': second_org})
@@ -1254,6 +1261,78 @@ def test_global_signin_email_upgrade_refuses_cross_organization_duplicates(run_m
             connection.rollback()
     finally:
         engine.dispose()
+def documented_duplicate_statements():
+    """The SQL blocks of DEPLOY.md, "Migration 0183: duplicate sign-in addresses"."""
+    guide = (Path(__file__).resolve().parents[2] / 'DEPLOY.md').read_text(encoding='utf-8')
+    section = guide.split('### Migration 0183: duplicate sign-in addresses', 1)[1].split('\n### ', 1)[0]
+    listing, placeholders, real_account = (
+        textwrap.dedent(block) for block in re.findall(r'```sql\n(.*?)\n\s*```', section, re.S))
+    # The test runs inside one rollback-only transaction; the guide's own
+    # transaction brackets would end it.
+    return listing, re.sub(r'(?m)^(BEGIN|COMMIT);\n?', '', placeholders), real_account
+
+
+def test_global_signin_email_duplicates_are_resolved_by_the_documented_statements(run_migrations):
+    # The operator procedure of DEPLOY.md runs as written: the listing shows
+    # every duplicate, the placeholder statement frees inactive imported
+    # placeholders without credentials, a real account is changed by hand, and
+    # only then does the upgrade succeed. Nothing is deactivated.
+    listing, placeholders, real_account = documented_duplicate_statements()
+    _, _, url = require_disposable_database_settings(settings)
+    engine = create_engine(url)
+    try:
+        with engine.connect() as connection, connection.begin(), Operations.context(MigrationContext.configure(connection)):
+            first_org, second_org = str(uuid.uuid4()), str(uuid.uuid4())
+            connection.execute(text("INSERT INTO organization(id,name) VALUES (:a,'Twin A'),(:b,'Twin B')"),
+                               {'a': first_org, 'b': second_org})
+            global_index = text("SELECT to_regclass('public.uq_user_signin_email')")
+            module = ScriptDirectory('migrations').get_revision('0183').module
+            module.downgrade()
+            imported_twin = f"imported-{uuid.uuid4().hex}@upgrade.invalid"
+            real_twin = f"real-{uuid.uuid4().hex}@upgrade.invalid"
+
+            def add_user(org, email, password_hash, active):
+                user_id = str(uuid.uuid4())
+                connection.execute(text('INSERT INTO "user"(id,organization_id,email,password_hash,display_name,is_active) '
+                    "VALUES (:id,:org,:email,:hash,'Twin',:active)"),
+                    {'id': user_id, 'org': org, 'email': email, 'hash': password_hash, 'active': active})
+                return user_id
+
+            owner_of_imported = add_user(first_org, f" {imported_twin.upper()} ", 'synthetic-not-a-login', True)
+            placeholder = add_user(second_org, imported_twin, '!', False)
+            keeps_address = add_user(first_org, real_twin, 'synthetic-not-a-login', True)
+            gets_new_address = add_user(second_org, real_twin, 'synthetic-not-a-login', True)
+
+            shown = {str(row.user_id): row for row in connection.execute(text(listing)).all()}
+            assert set(shown) == {owner_of_imported, placeholder, keeps_address, gets_new_address}
+            assert (shown[placeholder].no_credentials, shown[placeholder].is_active) == (True, False)
+            assert (shown[owner_of_imported].no_credentials, shown[owner_of_imported].is_active) == (False, True)
+            with pytest.raises(DBAPIError, match='Duplicate sign-in addresses'):
+                with connection.begin_nested():
+                    module.upgrade()
+
+            connection.execute(text(placeholders))
+            assert connection.scalar(text('SELECT email FROM "user" WHERE id=:id'), {'id': placeholder}) == (
+                f"{placeholder}-{second_org}@imported.archive.invalid")
+            assert connection.scalar(text('SELECT is_active FROM "user" WHERE id=:id'), {'id': owner_of_imported}) is True
+            # Two real accounts remain: the placeholder statement leaves them alone.
+            assert {str(row.user_id) for row in connection.execute(text(listing)).all()} == {keeps_address, gets_new_address}
+            with pytest.raises(DBAPIError, match='Duplicate sign-in addresses'):
+                with connection.begin_nested():
+                    module.upgrade()
+
+            statement = real_account.replace('new.address@example.test', f"new-{uuid.uuid4().hex}@upgrade.invalid").replace(
+                '<user id from the listing>', gets_new_address)
+            connection.execute(text(statement))
+            assert connection.execute(text(listing)).all() == []
+            assert connection.scalar(text('SELECT is_active FROM "user" WHERE id=:id'), {'id': gets_new_address}) is True
+            module.upgrade()
+            assert connection.scalar(global_index) is not None
+            connection.rollback()
+    finally:
+        engine.dispose()
+
+
 def test_settlement_period_guard_upgrades_from_0181(run_migrations):
     revision = ScriptDirectory('migrations').get_revision('0182')
     assert revision.down_revision == '0181'
