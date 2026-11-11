@@ -157,6 +157,25 @@ class PaymentRepository(TenantRepository[Payment]):
         result = await self._session.execute(stmt)
         return result.scalars().all()
 
+    async def booked_hausgeld_months(
+        self, property_id: uuid.UUID, first_year: int, last_year: int,
+    ) -> set[tuple[uuid.UUID, int, int]]:
+        """(owner, year, month) of every booked, not reversed Hausgeld payment received on a property.
+
+        The same rows the owner statement counts as Ist; a draft, a Storno row and its reversed
+        original do not count, a refund (OUT) is no payment of that month.
+        """
+        stmt = (
+            self._booked_active()
+            .where(Payment.payment_type == "HAUSGELD_VORSCHUSS", Payment.direction == "IN")
+            .where(Payment.property_id == property_id)
+            .where(Payment.period_year.between(first_year, last_year), Payment.period_month.is_not(None))
+            .where(Payment.owner_profile_id.is_not(None))
+            .with_only_columns(Payment.owner_profile_id, Payment.period_year, Payment.period_month)
+            .distinct()
+        )
+        return {(owner, year, month) for owner, year, month in (await self._session.execute(stmt)).all()}
+
     async def derived_for_hausgeld(
         self, owner_profile_id: uuid.UUID, period_year: int,
     ) -> Sequence[Payment]:

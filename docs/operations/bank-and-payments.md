@@ -170,6 +170,21 @@ The [bank assignment browser feature](../../features/bank_assignment.feature) ch
 partial payment, ignoring and rent account values after reload (`make test-browser`).
 Concurrent assignment conflicts remain covered by API tests.
 
+## Booking the monthly Hausgeld of a finalized plan
+
+On a finalized economic plan that has not been replaced by a correction, **Hausgeld buchen**
+opens a form for the Hausgeld an owner paid. Choose the bank account of the plan's property once
+and one owner: the form lists every month of the plan period with the owner's expected amount and
+the plan's due day as value date. Untick the months that were not paid, change an amount or a value
+date where it differs, and confirm once: all ticked months are created and booked together as
+Hausgeld advances (type `HAUSGELD_VORSCHUSS`), or none if a row is refused. Months that already
+have a booked payment of that owner are shown as „gebucht“ and are not offered again, so repeating
+the action cannot book a month twice; a reversed (Storno) month is offered again. After an owner
+change within the year the buyer's rows start with the month of the transfer; a transfer inside a
+month gives both owners that month, split by days. Single payments and the bank statement
+assignment stay as they are. Details: [M4 §2.4a](../m4-weg-abrechnung.md#24a-booking-the-monthly-hausgeld-from-the-finalized-plan-186),
+scenarios in [hausgeld_booking.feature](../../features/hausgeld_booking.feature).
+
 ## Payment and cost lists as CSV
 
 Both lists offer **CSV herunterladen** (download CSV) with the same active filters as the

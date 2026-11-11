@@ -124,6 +124,13 @@ PERIOD = {"period_start": "2025-01-01", "period_end": "2025-12-31"}
 NO_MATCH = "a filter by another organization's id matches nothing"
 
 PLAN_INPUTS = {"planned_costs": [], "reserve_contribution_total": "0.00"}
+HAUSGELD_IDS = other(
+    "x.id AS plan_id, b.id AS bank_account_id, o.id AS owner_profile_id",
+    '"economic_plan" x JOIN "bank_account" b ON b.organization_id = x.organization_id '
+    'JOIN "owner_profile" o ON o.organization_id = x.organization_id')
+HAUSGELD_BOOKING = {"bank_account_id": "{bank_account_id}", "rows": [{
+    "owner_profile_id": "{owner_profile_id}", "period_year": 2025, "period_month": 1, "amount": "10.00",
+    "value_date": "2025-01-05"}]}
 WEG_INPUTS = {"reserve_override_reason": "Reviewed synthetic opening balance", "reserve_opening_balance": "0.00", "paid_advances": []}
 REPORT_INPUTS = {"reserve_override_reason": "Reviewed synthetic opening balance", "reserve_opening_balance": "0.00",
                  "bank_balances": [], "receivables": [], "payables": []}
@@ -172,6 +179,7 @@ PROBES: dict[str, Probe] = {
     # app/api/economic_plans.py
     "GET /api/economic-plans": Probe(PROPERTY, status=200, because=NO_MATCH),
     "GET /api/economic-plans/{plan_id}": Probe(row("economic_plan", plan_id="id")),
+    "GET /api/economic-plans/{plan_id}/hausgeld-booking": Probe(row("economic_plan", plan_id="id")),
     "GET /api/economic-plans/{plan_id}/pdf": Probe(row("economic_plan", plan_id="id")),
     "POST /api/economic-plans": Probe(PROPERTY, body={"property_id": "{property_id}", "plan_year": 2025, **PERIOD}),
     "POST /api/economic-plans/previous": Probe(PROPERTY, body={
@@ -181,6 +189,7 @@ PROBES: dict[str, Probe] = {
     "POST /api/economic-plans/{plan_id}/compute": Probe(row("economic_plan", plan_id="id"), body=PLAN_INPUTS),
     "POST /api/economic-plans/{plan_id}/correction": Probe(row("economic_plan", plan_id="id")),
     "POST /api/economic-plans/{plan_id}/finalize": Probe(row("economic_plan", plan_id="id"), body=PLAN_INPUTS),
+    "POST /api/economic-plans/{plan_id}/hausgeld-booking": Probe(HAUSGELD_IDS, body=HAUSGELD_BOOKING),
     # app/api/financial_input_coverage.py
     "GET /api/financial-input-coverage/source-options": Probe(row("settlement_run", subject_id="id")),
     "POST /api/financial-input-coverage": Probe(row("settlement_run", subject_id="id")),
