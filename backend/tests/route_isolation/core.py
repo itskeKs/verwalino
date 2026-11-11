@@ -72,6 +72,15 @@ async def core_seeded(isolated_batch_seed, rent_world, attachment_store, attachm
     await created(client_a_admin, f"/api/mandates/{mandate_doc_seed['mandate_a']}/documents", **_pdf(
         "vertrag.pdf", b"%PDF-1.4 isolation", "VERWALTERVERTRAG", "Vertrag", scope=mandate_doc_seed["scope"]))
 
+    # Invitation probes need one pending invitation of another organization;
+    # mail is not configured in the sweep, so the row is seeded directly.
+    async with sweep.engine.begin() as connection:
+        await connection.execute(text('''INSERT INTO user_invitation(organization_id,email,role,invited_by,token_hash)
+            SELECT u.organization_id,:email,'CLERK',u.id,
+                   decode(replace(gen_random_uuid()::text,'-','')||replace(gen_random_uuid()::text,'-',''),'hex')
+            FROM "user" u WHERE u.organization_id IS DISTINCT FROM :b ORDER BY u.id LIMIT 1'''),
+            {'email': f'sweep-foreign-{uuid.uuid4().hex}@example.invalid', 'b': sweep.b})
+
     weg = await created(api, "/api/properties", json={"name": "WEG Isolationstest", "management_type": "WEG"})
     meeting = await created(api, "/api/meetings", json={
         "property_id": weg["id"], "meeting_date": "2026-09-01", "meeting_type": "ORDENTLICH", "location": "Buero"})
@@ -335,6 +344,11 @@ PROBES: dict[str, Probe] = {
     "PATCH /api/users/{user_id}": Probe(row("user", user_id="id"), body={"is_active": True}),
     "POST /api/users": Probe(body={"email": f"sweep-{uuid.uuid4().hex}@example.invalid", "password": "isolation-sweep-1234"}),
     "POST /api/users/{user_id}/reset-password": Probe(row("user", user_id="id")),
+    # app/api/user_invitations.py (registered before /api/users/{user_id})
+    "GET /api/users/invitations": Probe(),
+    "POST /api/users/invitations": Probe(body={"email": f"sweep-{uuid.uuid4().hex}@example.invalid", "role": "CLERK"}),
+    "DELETE /api/users/invitations/{invitation_id}": Probe(row("user_invitation", invitation_id="id")),
+    "POST /api/users/invitations/{invitation_id}/resend": Probe(row("user_invitation", invitation_id="id")),
     # app/api/vendors.py
     "GET /api/vendors": Probe(row("person", person_id="id"), status=200, because=EMPTY_FILTER),
     "POST /api/vendors": Probe(row("person", person_id="id")),
