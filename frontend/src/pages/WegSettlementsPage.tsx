@@ -83,7 +83,7 @@ export function WegSettlementsPage() {
             <label>
               WEG-Objekt *
               <select aria-label="WEG-Objekt *" required value={form.property_id} onChange={(e) => setForm({ ...form, property_id: e.target.value, economic_plan_id: "", period_start: "", period_end: "" })}>
-                <option value="">-- Objekt waehlen --</option>
+                <option value="">-- Objekt wählen --</option>
                 {wegProps.map((p) => <option key={p.id} value={p.id}>{p.name} ({p.management_type})</option>)}
               </select>
             </label>
@@ -93,7 +93,7 @@ export function WegSettlementsPage() {
                 const plan = plansForProperty.find(p => p.id === e.target.value);
                 setForm({ ...form, economic_plan_id: e.target.value, period_start: plan?.period_start ?? "", period_end: plan?.period_end ?? "" });
               }}>
-                <option value="">-- Wirtschaftsplan waehlen --</option>
+                <option value="">-- Wirtschaftsplan wählen --</option>
                 {(form.property_id ? plansForProperty : []).map((p) => <option key={p.id} value={p.id}>{planLabel(p)}</option>)}
               </select>
             </label>

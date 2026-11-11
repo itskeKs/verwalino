@@ -22,7 +22,7 @@ import { AccountingScopeSelector } from "../components/AccountingScopeSelector";
 
 const ACCOUNT_TYPE_LABELS: Record<string, string> = {
   LAUFEND: "Laufendes Konto",
-  RUECKLAGE: "Ruecklage",
+  RUECKLAGE: "Rücklage",
   KAUTION: "Kaution",
 };
 
@@ -34,7 +34,7 @@ const ACCOUNT_TYPE_CSS: Record<string, string> = {
 
 const ACCOUNT_TYPE_OPTIONS: { value: BankAccountType; label: string }[] = [
   { value: "LAUFEND", label: "Laufendes Konto" },
-  { value: "RUECKLAGE", label: "Ruecklage" },
+  { value: "RUECKLAGE", label: "Rücklage" },
   { value: "KAUTION", label: "Kaution" },
 ];
 

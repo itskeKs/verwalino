@@ -1072,8 +1072,27 @@ the affected file.
   "z.B." both occur; ellipsis `…` and `...` both occur. Technical labels may stay English-derived codes
   (MEA, GoBD, SEPA, DATEV).
 - Page titles: each page renders its own `h1`; `document.title` is the static "Hausverwaltung".
-- Deviation: about 60 strings are written without umlauts ("Strasse", "waehlen", "Ruecklage",
-  "Mietvertraege", "FLAECHE").
+- Spelling: visible copy keeps umlauts and ß ("wählen", "Rücklage", "Eigentümer", "Durchführung");
+  enum values such as `UMLAGEFAEHIG`, URL paths and template placeholders stay ASCII.
+  `frontend/src/lib/copyHygiene.test.ts` fails on the transliterated spellings that occurred (a fixed
+  word list; extend it when a new one appears). Deviation: the property, unit, person and cost screens
+  still contain some ("Strasse", "Flaeche", "Eigentuemer"); the test exempts those files until #495
+  replaces them.
+- Payment types: `PAYMENT_TYPE_LABELS` in `lib/paymentTypes.ts` names each type once ("Rücklagenanteil",
+  "Rücklagenentnahme"); the payment, rent account, open items, dunning and report pages read it; the
+  bank assignment list keeps its own map typed by the API's payment type, which also has `NACHZAHLUNG`;
+  change a spelling there too.
+
+Spelling change on the pages outside the property, unit, person and cost screens (synthetic data, test database):
+
+| Screen | 1280 px | 360 px |
+|---|---|---|
+| New payment, owner type | [before](docs/assets/design/ascii-copy/before-payments-1280.png) · [after](docs/assets/design/ascii-copy/after-payments-1280.png) | [before](docs/assets/design/ascii-copy/before-payments-360.png) · [after](docs/assets/design/ascii-copy/after-payments-360.png) |
+| New dunning notice, owner recipient | [before](docs/assets/design/ascii-copy/before-dunning-1280.png) · [after](docs/assets/design/ascii-copy/after-dunning-1280.png) | [before](docs/assets/design/ascii-copy/before-dunning-360.png) · [after](docs/assets/design/ascii-copy/after-dunning-360.png) |
+| Meeting detail | [before](docs/assets/design/ascii-copy/before-meeting-1280.png) · [after](docs/assets/design/ascii-copy/after-meeting-1280.png) | [before](docs/assets/design/ascii-copy/before-meeting-360.png) · [after](docs/assets/design/ascii-copy/after-meeting-360.png) |
+| Resolution register, no property | [before](docs/assets/design/ascii-copy/before-resolutions-1280.png) · [after](docs/assets/design/ascii-copy/after-resolutions-1280.png) | [before](docs/assets/design/ascii-copy/before-resolutions-360.png) · [after](docs/assets/design/ascii-copy/after-resolutions-360.png) |
+| New bank account, reserve type | [before](docs/assets/design/ascii-copy/before-bankaccounts-1280.png) · [after](docs/assets/design/ascii-copy/after-bankaccounts-1280.png) | [before](docs/assets/design/ascii-copy/before-bankaccounts-360.png) · [after](docs/assets/design/ascii-copy/after-bankaccounts-360.png) |
+| Rent account, owner view | [before](docs/assets/design/ascii-copy/before-mietkonto-1280.png) · [after](docs/assets/design/ascii-copy/after-mietkonto-1280.png) | [before](docs/assets/design/ascii-copy/before-mietkonto-360.png) · [after](docs/assets/design/ascii-copy/after-mietkonto-360.png) |
 
 ### Lease and manual cost amount validation
 
