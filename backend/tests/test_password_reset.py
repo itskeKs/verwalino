@@ -374,8 +374,11 @@ async def test_tenant_context_refuses_both_definers_without_changing_victim(pass
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize('identities', [[], [False], [True, True], [True, False]])
+@pytest.mark.parametrize('identities', [[], [False], [True]])
 async def test_issuer_requires_exactly_one_active_normalized_identity(app_rw_session, identities):
+    # A second account for one canonical address cannot be created across
+    # organizations at all (issue #134, uq_user_signin_email), so the
+    # multi-identity variants no longer exist.
     from tests.test_auth_hardening import temporary_auth_rows
     email = 'issuer-uniqueness@example.test'
     with temporary_auth_rows([{'email': email, 'is_active': active} for active in identities]):
@@ -386,11 +389,13 @@ async def test_issuer_requires_exactly_one_active_normalized_identity(app_rw_ses
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize('other', [{'is_active': False}, {'membership': False}])
-async def test_login_and_reset_choose_the_same_addressable_account(client_unauth, signup_mail, other):
+async def test_login_and_reset_choose_the_same_addressable_account(client_unauth, signup_mail):
+    # One address belongs to exactly one organization (issue #134): login and
+    # reset resolve that single account, and a second organization can never
+    # register the same canonical address to compete with it.
     from tests.test_auth_hardening import temporary_auth_rows
     email = 'shared-reset-address@example.test'
-    with temporary_auth_rows([{'email': email}, {'email': email, **other}]) as rows:
+    with temporary_auth_rows([{'email': email}]) as rows:
         login = await client_unauth.post('/api/auth/login', json={'email': email, 'password': 'testpass1234'})
         assert login.status_code == 200, login.text
         assert login.json()['user_id'] == str(rows[0]['user_id'])
@@ -399,14 +404,12 @@ async def test_login_and_reset_choose_the_same_addressable_account(client_unauth
         token = reset_token(signup_mail)
         async with reset_store() as session:
             assert (await session.execute(text('''SELECT user_id FROM password_reset_request
-                WHERE user_id IN (:first,:second)'''),
-                {'first': rows[0]['user_id'], 'second': rows[1]['user_id']})).scalars().all() == [rows[0]['user_id']]
+                WHERE user_id IN (:first)'''),
+                {'first': rows[0]['user_id']})).scalars().all() == [rows[0]['user_id']]
         assert (await client_unauth.post('/api/auth/password-reset/confirm', json={'token': token, 'password': NEW_PASSWORD})).status_code == 204
         login = await client_unauth.post('/api/auth/login', json={'email': email, 'password': NEW_PASSWORD})
         assert login.status_code == 200, login.text
         assert login.json()['user_id'] == str(rows[0]['user_id'])
-        async with reset_store() as session:
-            assert await session.scalar(text('SELECT session_version FROM "user" WHERE id=:id'), {'id': rows[1]['user_id']}) == 0
 
 
 @pytest.mark.asyncio
@@ -423,15 +426,20 @@ async def test_memberless_account_gets_generic_receipt_without_mail_or_reset_row
 
 
 @pytest.mark.asyncio
-async def test_confirmation_refuses_an_account_that_login_now_finds_ambiguous(password_identity, client_unauth, signup_mail):
+async def test_confirmation_stays_usable_when_a_duplicate_address_is_refused(password_identity, client_unauth, signup_mail):
+    # A second account for one canonical address cannot be created at all
+    # (issue #134): the ambiguity this guard existed for is impossible, and
+    # the issued reset stays valid for the single owner of the address.
     from tests.test_auth_hardening import temporary_auth_rows
     _, email = password_identity
     await client_unauth.post('/api/auth/password-reset', json={'email': email})
     token = reset_token(signup_mail)
-    with temporary_auth_rows([{'email': email}]):
-        assert (await client_unauth.post('/api/auth/login', json={'email': email, 'password': 'testpass1234'})).status_code == 401
-        assert (await client_unauth.post('/api/auth/password-reset/confirm', json={'token': token, 'password': NEW_PASSWORD})).status_code == 403
+    import psycopg2
+    with pytest.raises(psycopg2.IntegrityError):
+        with temporary_auth_rows([{'email': email}]):
+            pass
     assert (await client_unauth.post('/api/auth/password-reset/confirm', json={'token': token, 'password': NEW_PASSWORD})).status_code == 204
+    assert (await client_unauth.post('/api/auth/login', json={'email': email, 'password': NEW_PASSWORD})).status_code == 200
 
 
 @pytest.mark.asyncio

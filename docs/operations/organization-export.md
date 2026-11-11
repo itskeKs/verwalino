@@ -159,7 +159,7 @@ to exactly one organization (issue #134): an archived address still used by a
 live account — usually of the still-existing source organization — is not
 occupied by the import. Imported users are inactive placeholders with an
 unusable password and a deterministic non-sign-in address
-(`<id>@imported.archive.invalid`); an administrator must create or reset
+(`<id>-<destination organization id>@imported.archive.invalid`); an administrator must create or reset
 accounts locally before login. An existing destination account with a matching
 normalized address is still reused and deactivated instead of duplicated.
 Round-trip count comparisons account for the kept destination administrator and

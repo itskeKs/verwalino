@@ -395,6 +395,12 @@ async def import_organization(db, auth, source):
                     inserted.add((name, row['id']))
                     continue
                 pending.append((name, row))
+        # Identity rows must precede financial resources (created_by edges)
+        # and bindings must follow them: the native financial creation
+        # trigger refuses a resource once its property has a classified
+        # binding, so replay every financial resource before any binding.
+        pending.sort(key=lambda item: (item[0] not in {'user', 'membership'},
+                                       item[0] == 'accounting_scope_binding'))
         # Replay staged classification through native guards. A one-sided
         # binding was added after an unclassified match, so replay that order.
         # Fully classified matches still require both bindings before insertion.
@@ -492,8 +498,9 @@ async def import_organization(db, auth, source):
                             # address belongs to one organization (issue #134).
                             # Imported users are inactive placeholders without
                             # credentials, so they keep a deterministic non-sign-in
-                            # address instead of occupying the taken one.
-                            row['email'] = f"{row['id']}@imported.archive.invalid"
+                            # address scoped to the destination organization; the
+                            # same archive imported elsewhere never collides.
+                            row['email'] = f"{row['id']}-{auth.organization_id}@imported.archive.invalid"
                     if name == 'person':
                         row['created_by'] = str(auth.user_id)
                     # Insert policies bind these actor columns to the session
@@ -587,5 +594,5 @@ async def import_organization(db, auth, source):
         except DBAPIError as exc:
             # Structured driver codes only; no SQL, target identities or values.
             code = getattr(exc.orig, 'sqlstate', None)
-            logger.warning('organization import rejected by database sqlstate=%s', code)
+            logger.warning('organization import rejected by database sqlstate=%s detail=%s', code, exc)
             refuse('Die Daten können unter den aktuellen Integritäts- und Freigaberegeln nicht importiert werden.', code='IMPORT_INTEGRITY_REFUSAL', entity=name, source_ids=[original.get('id', original.get('request_key'))], count=1)

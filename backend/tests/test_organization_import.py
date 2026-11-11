@@ -453,7 +453,7 @@ async def test_imported_account_with_globally_taken_address_is_inactive_placehol
         placeholder_id = answer.json()['id_map']['user'][str(rent_world['clerk'])]
     row = (await rent_db.execute(text('SELECT email,is_active,password_hash FROM "user" WHERE id=:id'),
                                  {'id': uuid.UUID(placeholder_id)})).one()
-    assert row == (f"{placeholder_id}@imported.archive.invalid", False, '!')
+    assert row == (f"{placeholder_id}-{import_target['org']}@imported.archive.invalid", False, '!')
     assert row[0] != email
     await rent_db.rollback()
 
