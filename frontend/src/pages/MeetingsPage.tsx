@@ -1,5 +1,5 @@
 /**
- * Meetings list page -- Eigentuemerversammlungen with property/status filter
+ * Meetings list page -- Eigentümerversammlungen with property/status filter
  * and creation form.
  *
  * M8 Versammlung: meeting CRUD, status planned/held.
@@ -24,12 +24,12 @@ import { formatDate } from "../lib/format";
 const STATUS_OPTIONS: { value: string; label: string }[] = [
   { value: "", label: "Alle Status" },
   { value: "PLANNED", label: "Geplant" },
-  { value: "HELD", label: "Durchgefuehrt" },
+  { value: "HELD", label: "Durchgeführt" },
 ];
 
 const STATUS_LABELS: Record<string, string> = {
   PLANNED: "Geplant",
-  HELD: "Durchgefuehrt",
+  HELD: "Durchgeführt",
 };
 
 const STATUS_CSS: Record<string, string> = {
@@ -39,7 +39,7 @@ const STATUS_CSS: Record<string, string> = {
 
 const MEETING_TYPE_LABELS: Record<string, string> = {
   ORDENTLICH: "Ordentlich",
-  AUSSERORDENTLICH: "Ausserordentlich",
+  AUSSERORDENTLICH: "Außerordentlich",
 };
 
 function makeEmptyForm(): MeetingCreate {
@@ -152,7 +152,7 @@ export function MeetingsPage() {
           gap: "0.5rem",
         }}
       >
-        <h1 style={{ margin: 0 }}>Eigentuemerversammlungen</h1>
+        <h1 style={{ margin: 0 }}>Eigentümerversammlungen</h1>
         <button className="btn btn--primary" onClick={openCreate}>
           + Neue Versammlung
         </button>
@@ -207,7 +207,7 @@ export function MeetingsPage() {
                   setForm({ ...form, property_id: e.target.value })
                 }
               >
-                <option value="">-- Objekt waehlen --</option>
+                <option value="">-- Objekt wählen --</option>
                 {wegProperties.map((p) => (
                   <option key={p.id} value={p.id}>
                     {p.name}
@@ -236,7 +236,7 @@ export function MeetingsPage() {
                 }
               >
                 <option value="ORDENTLICH">Ordentlich</option>
-                <option value="AUSSERORDENTLICH">Ausserordentlich</option>
+                <option value="AUSSERORDENTLICH">Außerordentlich</option>
               </select>
             </label>
             <label>

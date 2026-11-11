@@ -121,8 +121,8 @@ function deferred<T>() {
 }
 it("posts owner scope without a plan or manual interest rate", async () => {
   show(); await ready();
-  fireEvent.change(screen.getByLabelText("Empfaengertyp *"), { target: { value: "owner" } });
-  fireEvent.change(screen.getByLabelText("Eigentuemer *"), { target: { value: "owner" } });
+  fireEvent.change(screen.getByLabelText("Empfängertyp *"), { target: { value: "owner" } });
+  fireEvent.change(screen.getByLabelText("Eigentümer *"), { target: { value: "owner" } });
   fireEvent.change(screen.getByLabelText("WEG-Objekt *"), { target: { value: "property" } });
   fireEvent.click(screen.getByRole("button", { name: "Kreis wählen" }));
   const button = screen.getByRole("button", { name: "Mahnung erstellen" });
@@ -136,7 +136,7 @@ it("posts owner scope without a plan or manual interest rate", async () => {
 it("preserves input on POST error and synchronously locks duplicate submissions", async () => {
   const post = deferred<unknown>(); vi.mocked(api.post).mockReturnValue(post.promise);
   show(); await ready();
-  const input = screen.getByLabelText("Mahngebuehr (Override)"); fireEvent.change(input, { target: { value: "4" } });
+  const input = screen.getByLabelText("Mahngebühr (Override)"); fireEvent.change(input, { target: { value: "4" } });
   act(() => { fireEvent.submit(input.closest("form")!); fireEvent.submit(input.closest("form")!); });
   expect(api.post).toHaveBeenCalledTimes(1); expect(input).toBeDisabled();
   await act(async () => post.reject(new Error("POST offline")));

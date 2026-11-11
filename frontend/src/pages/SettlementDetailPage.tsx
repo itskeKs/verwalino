@@ -87,8 +87,8 @@ const STATUS_CSS: Record<string, string> = {
 
 const DISTRIBUTION_KEY_LABELS: Record<string, string> = {
   MEA: "MEA",
-  AREA: "Flaeche",
-  HEATED_AREA: "Beheizte Flaeche",
+  AREA: "Fläche",
+  HEATED_AREA: "Beheizte Fläche",
   UNIT_COUNT: "Einheiten",
   PERSON_COUNT: "Personen",
   CONSUMPTION: "Verbrauch",
@@ -571,7 +571,7 @@ export function SettlementDetailPage() {
     if (!runId || consumptionBlocked || heatingBlocked) return;
     const confirmed = window.confirm(
       "Abrechnung finalisieren? Nach der Finalisierung ist die Abrechnung " +
-        "unveraenderbar (GoBD). Aenderungen sind nur als Korrekturabrechnung moeglich.",
+        "unveränderbar (GoBD). Änderungen sind nur als Korrekturabrechnung möglich.",
     );
     if (!confirmed) return;
     setActionLoading(true);
@@ -598,7 +598,7 @@ export function SettlementDetailPage() {
     if (!runId) return;
     const confirmed = window.confirm(
       "Korrekturabrechnung erstellen? Die bestehende Abrechnung bleibt " +
-        "unveraendert erhalten (Storno/Neu). Ein neuer Entwurf wird angelegt.",
+        "unverändert erhalten (Storno/Neu). Ein neuer Entwurf wird angelegt.",
     );
     if (!confirmed) return;
     setActionLoading(true);
@@ -644,7 +644,7 @@ export function SettlementDetailPage() {
                 <tr>
                   <th>Kostenart</th>
                   <th>Gesamtkosten</th>
-                  <th>Umlageschluessel</th>
+                  <th>Umlageschlüssel</th>
                   <th>Anteilsbasis</th>
                   <th>Zeitanteil</th>
                   <th style={{ textAlign: "right" }}>Mieteranteil</th>
@@ -779,8 +779,8 @@ export function SettlementDetailPage() {
             marginBottom: "0.75rem",
           }}
         >
-          Einige Kostenpositionen erfordern zusaetzliche Angaben fuer die
-          Berechnung. Fehlende Werte fuehren zu einer Fehlermeldung beim
+          Einige Kostenpositionen erfordern zusätzliche Angaben für die
+          Berechnung. Fehlende Werte führen zu einer Fehlermeldung beim
           Berechnen.
         </p>
 
@@ -811,7 +811,7 @@ export function SettlementDetailPage() {
         {hasManuals && (
           <>
             <h3 style={{ fontSize: "0.95rem", margin: "0.75rem 0 0.5rem" }}>
-              Manuelle Betraege (je Einheit)
+              Manuelle Beträge (je Einheit)
             </h3>
             <div className="form-grid">
               {manualAmounts.map((man, idx) => (
@@ -999,8 +999,8 @@ export function SettlementDetailPage() {
           }}
         >
           <strong>GoBD:</strong> Diese Abrechnung ist finalisiert und
-          unveraenderbar. Aenderungen sind nur als Korrekturabrechnung
-          (Storno/Neu) moeglich.
+          unveränderbar. Änderungen sind nur als Korrekturabrechnung
+          (Storno/Neu) möglich.
           {run.snapshot_sha256 && (
             <div style={{ marginTop: "0.5rem", fontSize: "0.82rem" }}>
               Snapshot SHA-256:{" "}
@@ -1035,7 +1035,7 @@ export function SettlementDetailPage() {
 
       {/* Overview card */}
       <div className="card" style={{ marginBottom: "1.5rem" }}>
-        <h2>Uebersicht</h2>
+        <h2>Übersicht</h2>
         <table className="info-table">
           <tbody>
             <tr>
@@ -1095,7 +1095,7 @@ export function SettlementDetailPage() {
                       style={{ marginLeft: "0.5rem" }}
                       onClick={() => { setAdvanceErrors({ operating: false, heating: false }); setEditingAdvance(true); }}
                     >
-                      Aendern
+                      Ändern
                     </button>
                     <button
                       className="btn btn--small"
@@ -1330,7 +1330,7 @@ export function SettlementDetailPage() {
               className="btn"
               onClick={() => setShowPreview(false)}
             >
-              Vorschau schliessen
+              Vorschau schließen
             </button>
           </div>
         </div>

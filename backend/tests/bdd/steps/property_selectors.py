@@ -27,7 +27,7 @@ SCREENS = {
 HEADINGS = {
     'Tasks': 'Aufgaben', 'Letters': 'Briefe', 'Reports': 'Berichte', 'Costs': 'Kostenpositionen',
     'CostForm': 'Kostenpositionen',
-    'Levies': 'Sonderumlagen', 'Meetings': 'Eigentuemerversammlungen',
+    'Levies': 'Sonderumlagen', 'Meetings': 'Eigentümerversammlungen',
     'Resolutions': 'Beschluss-Sammlung', 'Payments': 'Zahlungen', 'Person': 'Selector Contact',
 }
 
