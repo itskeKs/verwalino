@@ -77,10 +77,10 @@ export function HausgeldBooking({ plan, ownerLabel }: { plan: EconomicPlan; owne
   }, [rows]);
   const ownerRows = useMemo(() => (rows ?? []).filter(row => row.owner_profile_id === ownerId), [rows, ownerId]);
 
-  // Start every open month of the chosen owner ticked, with the plan's amount and due day.
+  // Every month starts unticked, with the plan's amount and due day: the user ticks what was paid.
   useEffect(() => {
     setEntries(Object.fromEntries(ownerRows.map(row => [monthKey(row), {
-      amount: row.amount.replace(".", ","), value_date: row.value_date, selected: !row.booked,
+      amount: row.amount.replace(".", ","), value_date: row.value_date, selected: false,
     }])));
   }, [ownerRows]);
 
@@ -93,7 +93,15 @@ export function HausgeldBooking({ plan, ownerLabel }: { plan: EconomicPlan; owne
     setEntries(current => ({ ...current, [key]: { ...current[key], ...change } }));
   }
 
-  const chosen = ownerRows.filter(row => !row.booked && entries[monthKey(row)]?.selected);
+  function selectAllOpen(selected: boolean) {
+    setEntries(current => Object.fromEntries(Object.entries(current).map(([key, entry]) => [
+      key, ownerRows.some(row => monthKey(row) === key && row.booked) ? entry : { ...entry, selected },
+    ])));
+  }
+
+  const openRows = ownerRows.filter(row => !row.booked && entries[monthKey(row)]);
+  const allSelected = openRows.length > 0 && openRows.every(row => entries[monthKey(row)].selected);
+  const chosen = openRows.filter(row => entries[monthKey(row)].selected);
   const invalidKeys = new Set(chosen.filter(row => {
     const entry = entries[monthKey(row)];
     const amount = cents(entry.amount);
@@ -124,6 +132,8 @@ export function HausgeldBooking({ plan, ownerLabel }: { plan: EconomicPlan; owne
       await load();
     } catch (err) {
       setError(message(err));
+      // A conflict means the offer changed under the form (a month was booked meanwhile): show the real state.
+      if (err instanceof ApiError && err.status === 409) await load();
     } finally {
       setBusy(false);
     }
@@ -138,7 +148,7 @@ export function HausgeldBooking({ plan, ownerLabel }: { plan: EconomicPlan; owne
         <div id="hausgeld-booking" style={{ marginTop: "1rem" }}>
           <h2>Hausgeld buchen</h2>
           <p style={{ marginBottom: "1rem" }}>
-            Je Eigentümer und Monat des Plans {plan.plan_year}. Nach der Buchung sind die Zahlungen unveränderbar (GoBD); Korrekturen sind nur als Stornobuchung möglich.
+            Je Eigentümer und Monat des Plans {plan.plan_year}. Haken Sie die Monate an, die bezahlt wurden. Nach der Buchung sind die Zahlungen unveränderbar (GoBD); Korrekturen sind nur als Stornobuchung möglich.
           </p>
           {loadError && <p role="alert" className="error-text">{loadError}</p>}
           {rows && rows.length === 0 && <p>Der Plan enthält kein Hausgeld, das gebucht werden kann.</p>}
@@ -164,6 +174,13 @@ export function HausgeldBooking({ plan, ownerLabel }: { plan: EconomicPlan; owne
                   </select>
                 </label>
               </div>
+              {openRows.length > 0 && (
+                <p style={{ marginTop: "1rem" }}>
+                  <button type="button" className="btn btn--small" onClick={() => selectAllOpen(!allSelected)}>
+                    {allSelected ? "Auswahl aufheben" : "Alle offenen Monate auswählen"}
+                  </button>
+                </p>
+              )}
               {ownerRows.length > 0 && (
                 <div className="overflow-x-auto" style={{ marginTop: "1rem" }}>
                   <table className="data-table">

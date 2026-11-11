@@ -40,6 +40,9 @@ async function openFor(owner: string) {
   fireEvent.change(select, { target: { value: owner } });
 }
 
+const SELECT_ALL = "Alle offenen Monate auswählen";
+function selectAll() { fireEvent.click(screen.getByRole("button", { name: SELECT_ALL })); }
+
 afterEach(() => { cleanup(); vi.restoreAllMocks(); });
 
 it("stays closed and loads nothing until the action is opened", () => {
@@ -58,18 +61,52 @@ it("offers the active accounts of the plan's property and the owners with their 
   expect(owners).toEqual(["-- Eigentümer wählen --", "Anna Berg – 12 offen", "Karl Weiß – 6 offen", "Lena Roth – 6 offen"]);
 });
 
-it("shows twelve months with the plan amount and the due day as value date, all ticked", async () => {
+it("shows twelve months with the plan amount and the due day as value date, none ticked", async () => {
   mocks(); show(); await openFor("anna");
   const rows = screen.getAllByRole("row").slice(1);
   expect(rows).toHaveLength(12);
   expect(within(rows[0]).getByText("Januar 2026")).toBeVisible();
   expect(within(rows[11]).getByText("Dezember 2026")).toBeVisible();
   for (const row of rows) {
-    expect(within(row).getByRole("checkbox")).toBeChecked();
+    expect(within(row).getByRole("checkbox")).not.toBeChecked();
     expect(within(row).getByLabelText(/Betrag/)).toHaveValue("600,00");
   }
   expect(within(rows[0]).getByLabelText(/Wertstellung/)).toHaveValue("2026-01-01");
   expect(within(rows[1]).getByLabelText(/Wertstellung/)).toHaveValue("2026-02-01");
+  expect(screen.getByRole("button", { name: "Ausgewählte Monate buchen" })).toBeDisabled();
+});
+
+it("posts nothing as long as no month is ticked, even after choosing the account", async () => {
+  mocks(); const post = vi.spyOn(api, "post").mockResolvedValue([] as never);
+  const confirm = vi.spyOn(window, "confirm").mockReturnValue(true);
+  show(); await openFor("anna");
+  fireEvent.change(screen.getByLabelText("Bankkonto"), { target: { value: "bank-1" } });
+  const book = screen.getByRole("button", { name: "Ausgewählte Monate buchen" });
+  expect(book).toBeDisabled();
+  fireEvent.click(book);
+  expect(confirm).not.toHaveBeenCalled();
+  expect(post).not.toHaveBeenCalled();
+  expect(screen.queryByText(/Zahlungen? · /)).not.toBeInTheDocument();
+});
+
+it("ticks only the open months of the chosen owner with one explicit control and clears them again", async () => {
+  mocks([...months("anna", 1, 2, "600.00", true), ...months("anna", 3, 12, "600.00")]); show(); await openFor("anna");
+  const rows = () => screen.getAllByRole("row").slice(1);
+  expect(rows().filter(row => (within(row).getByRole("checkbox") as HTMLInputElement).checked)).toHaveLength(0);
+  selectAll();
+  expect(rows().filter(row => (within(row).getByRole("checkbox") as HTMLInputElement).checked)).toHaveLength(10);
+  expect(within(rows()[0]).getByRole("checkbox")).not.toBeChecked();
+  expect(screen.getByText("10 Zahlungen · 6.000,00 €")).toBeVisible();
+  fireEvent.click(screen.getByRole("button", { name: "Auswahl aufheben" }));
+  expect(rows().filter(row => (within(row).getByRole("checkbox") as HTMLInputElement).checked)).toHaveLength(0);
+  fireEvent.click(within(rows()[4]).getByRole("checkbox"));
+  expect(screen.getByText("1 Zahlung · 600,00 €")).toBeVisible();
+});
+
+it("starts unticked again after another owner is chosen", async () => {
+  mocks(); show(); await openFor("karl"); selectAll();
+  fireEvent.change(screen.getByLabelText("Eigentümer"), { target: { value: "lena" } });
+  for (const row of screen.getAllByRole("row").slice(1)) expect(within(row).getByRole("checkbox")).not.toBeChecked();
 });
 
 it("shows a booked month as booked and never submits it", async () => {
@@ -92,6 +129,7 @@ it("books the ticked months in one confirmed request with the edited amount and 
   const confirm = vi.spyOn(window, "confirm").mockReturnValue(true);
   show(); await openFor("anna");
   fireEvent.change(screen.getByLabelText("Bankkonto"), { target: { value: "bank-1" } });
+  selectAll();
   fireEvent.change(within(screen.getAllByRole("row")[1]).getByLabelText(/Wertstellung/), { target: { value: "2026-01-05" } });
   fireEvent.click(screen.getByRole("button", { name: "Ausgewählte Monate buchen" }));
   expect(await screen.findByRole("status")).toHaveTextContent("12 Zahlungen über 7.200,00 € gebucht.");
@@ -113,7 +151,8 @@ it("sends only the ticked months and accepts a decimal comma amount", async () =
   show(); await openFor("karl");
   fireEvent.change(screen.getByLabelText("Bankkonto"), { target: { value: "bank-1" } });
   const rows = screen.getAllByRole("row").slice(1);
-  for (const row of rows.slice(2)) fireEvent.click(within(row).getByRole("checkbox"));
+  fireEvent.click(within(rows[0]).getByRole("checkbox"));
+  fireEvent.click(within(rows[1]).getByRole("checkbox"));
   fireEvent.change(within(rows[1]).getByLabelText(/Betrag/), { target: { value: "390,5" } });
   fireEvent.click(screen.getByRole("button", { name: "Ausgewählte Monate buchen" }));
   await waitFor(() => expect(post).toHaveBeenCalledTimes(1));
@@ -124,7 +163,7 @@ it("sends only the ticked months and accepts a decimal comma amount", async () =
 it("does not book when the confirmation is declined", async () => {
   mocks(); const post = vi.spyOn(api, "post").mockResolvedValue([] as never);
   vi.spyOn(window, "confirm").mockReturnValue(false);
-  show(); await openFor("anna");
+  show(); await openFor("anna"); selectAll();
   fireEvent.change(screen.getByLabelText("Bankkonto"), { target: { value: "bank-1" } });
   fireEvent.click(screen.getByRole("button", { name: "Ausgewählte Monate buchen" }));
   expect(post).not.toHaveBeenCalled();
@@ -132,7 +171,7 @@ it("does not book when the confirmation is declined", async () => {
 
 it("blocks booking without an account, without a ticked month and with an invalid amount", async () => {
   mocks(); const post = vi.spyOn(api, "post").mockResolvedValue([] as never);
-  show(); await openFor("anna");
+  show(); await openFor("anna"); selectAll();
   const book = screen.getByRole("button", { name: "Ausgewählte Monate buchen" });
   expect(book).toBeDisabled();
   fireEvent.change(screen.getByLabelText("Bankkonto"), { target: { value: "bank-1" } });
@@ -146,33 +185,65 @@ it("blocks booking without an account, without a ticked month and with an invali
   expect(screen.getByText("Bitte geben Sie für jeden ausgewählten Monat einen Betrag über 0,00 € und ein Wertstellungsdatum an.")).toBeVisible();
   fireEvent.change(first, { target: { value: "600" } });
   expect(book).toBeEnabled();
-  for (const row of screen.getAllByRole("row").slice(1)) fireEvent.click(within(row).getByRole("checkbox"));
+  fireEvent.click(screen.getByRole("button", { name: "Auswahl aufheben" }));
   expect(book).toBeDisabled();
   expect(post).not.toHaveBeenCalled();
 });
 
-it("reports a refusal and keeps the entries so the booking can be repeated", async () => {
+it("reports a refusal other than a conflict and keeps the entries so the booking can be repeated", async () => {
   mocks();
   const post = vi.spyOn(api, "post")
-    .mockRejectedValueOnce(new ApiError(409, "Für Anna Berg ist der Monat März 2026 bereits gebucht."))
+    .mockRejectedValueOnce(new ApiError(422, "Das Bankkonto gehört nicht zum Objekt des Wirtschaftsplans."))
     .mockResolvedValueOnce([] as never);
   vi.spyOn(window, "confirm").mockReturnValue(true);
-  show(); await openFor("anna");
+  show(); await openFor("anna"); selectAll();
   fireEvent.change(screen.getByLabelText("Bankkonto"), { target: { value: "bank-1" } });
   fireEvent.change(within(screen.getAllByRole("row")[2]).getByLabelText(/Betrag/), { target: { value: "590,00" } });
   fireEvent.click(screen.getByRole("button", { name: "Ausgewählte Monate buchen" }));
-  expect(await screen.findByRole("alert")).toHaveTextContent("Für Anna Berg ist der Monat März 2026 bereits gebucht.");
+  expect(await screen.findByRole("alert")).toHaveTextContent("Das Bankkonto gehört nicht zum Objekt des Wirtschaftsplans.");
   expect(within(screen.getAllByRole("row")[2]).getByLabelText(/Betrag/)).toHaveValue("590,00");
+  expect(within(screen.getAllByRole("row")[2]).getByRole("checkbox")).toBeChecked();
   expect(screen.queryByRole("status")).not.toBeInTheDocument();
   fireEvent.click(screen.getByRole("button", { name: "Ausgewählte Monate buchen" }));
   await waitFor(() => expect(post).toHaveBeenCalledTimes(2));
+});
+
+it("reloads the offer after a conflict and shows the real state instead of the stale one", async () => {
+  const get = mocks();
+  const post = vi.spyOn(api, "post")
+    .mockRejectedValueOnce(new ApiError(409, "Für diesen Eigentümer ist der Monat 03/2026 bereits gebucht."))
+    .mockResolvedValueOnce([] as never);
+  vi.spyOn(window, "confirm").mockReturnValue(true);
+  show(); await openFor("anna"); selectAll();
+  fireEvent.change(screen.getByLabelText("Bankkonto"), { target: { value: "bank-1" } });
+  const offerCalls = () => get.mock.calls.filter(([path]) => path === "/api/economic-plans/plan-1/hausgeld-booking").length;
+  expect(offerCalls()).toBe(1);
+  // Meanwhile March was booked elsewhere.
+  get.mockImplementation(async path => {
+    if (path === "/api/economic-plans/plan-1/hausgeld-booking") return [...months("anna", 1, 2, "600.00"), ...months("anna", 3, 3, "600.00", true), ...months("anna", 4, 12, "600.00")] as never;
+    return accounts as never;
+  });
+  fireEvent.click(screen.getByRole("button", { name: "Ausgewählte Monate buchen" }));
+  expect(await screen.findByRole("alert")).toHaveTextContent("Für diesen Eigentümer ist der Monat 03/2026 bereits gebucht.");
+  await waitFor(() => expect(offerCalls()).toBe(2));
+  const rows = screen.getAllByRole("row").slice(1);
+  expect(within(rows[2]).getByText("gebucht")).toBeVisible();
+  expect(within(rows[2]).getByRole("checkbox")).toBeDisabled();
+  expect(screen.getByLabelText("Eigentümer")).toHaveDisplayValue("Anna Berg – 11 offen");
+  // The reloaded state starts unticked; the user ticks again and the retry no longer names March.
+  expect(screen.getByRole("button", { name: "Ausgewählte Monate buchen" })).toBeDisabled();
+  selectAll();
+  fireEvent.click(screen.getByRole("button", { name: "Ausgewählte Monate buchen" }));
+  await waitFor(() => expect(post).toHaveBeenCalledTimes(2));
+  const body = post.mock.calls[1][1] as { rows: { period_month: number }[] };
+  expect(body.rows.map(r => r.period_month)).toEqual([1, 2, 4, 5, 6, 7, 8, 9, 10, 11, 12]);
 });
 
 it("reloads the offer after booking so the months show as booked", async () => {
   const get = mocks();
   const post = vi.spyOn(api, "post").mockResolvedValue(months("anna", 1, 12, "600.00") as never);
   vi.spyOn(window, "confirm").mockReturnValue(true);
-  show(); await openFor("anna");
+  show(); await openFor("anna"); selectAll();
   fireEvent.change(screen.getByLabelText("Bankkonto"), { target: { value: "bank-1" } });
   get.mockImplementation(async path => {
     if (path === "/api/economic-plans/plan-1/hausgeld-booking") return months("anna", 1, 12, "600.00", true) as never;

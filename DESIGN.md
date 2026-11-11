@@ -2181,8 +2181,9 @@ to writers only (read-only sessions, drafts and replaced plans do not see it). T
 form below it and then reads “Hausgeld-Buchung schließen” (`aria-expanded`). “Bankkonto” lists the
 active accounts of the plan's property; “Eigentümer” lists the owners of the plan as “Name – n offen”
 or “Name – alle gebucht” (a single owner is preselected, long names wrap in the select).
-For the chosen owner the table lists one row per month of the plan period: a checkbox (ticked for
-open months), the month (“Januar 2026”) and, in one cell that wraps at 360 px, “Betrag (EUR) und
+For the chosen owner the table lists one row per month of the plan period: a checkbox (every month
+starts unticked, the user ticks what was paid; one explicit button above the table, “Alle offenen
+Monate auswählen” and then “Auswahl aufheben”, ticks or clears all open months of that owner), the month (“Januar 2026”) and, in one cell that wraps at 360 px, “Betrag (EUR) und
 Wertstellung” as an editable amount input in the money-input format (`600,00`; comma and dot are
 accepted, the request carries `600.00`) and a date input prefilled with the plan's due day. A booked
 month shows the badge “gebucht” below its name, a disabled checkbox and no inputs (the plan's values
@@ -2195,7 +2196,9 @@ zusammen 7.200,00 € für Anna Berg buchen? Nach der Buchung sind die Zahlungen
 (GoBD). Korrekturen sind nur als Stornobuchung möglich.”). Success shows the status line
 “12 Zahlungen über 7.200,00 € gebucht.” with the link “Zahlungen ansehen” (payment list filtered by
 account and type) and reloads the offer, so the months read “gebucht”. A refusal of the server shows
-its German message as an alert and keeps every entry for a retry. At 360 px the amount and the date
+its German message as an alert; after a conflict (409, for example a month booked meanwhile) the offer
+is reloaded and the form starts unticked again with the real state, after any other refusal every
+entry is kept for a retry. At 360 px the amount and the date
 wrap inside their cell; the table container keeps `overflow-x-auto` as a fallback and the plan's own
 tables are unchanged.
 
@@ -2205,6 +2208,8 @@ sharing unit 2 around a transfer on 1 July), 1280 and 360 px:
 | State | Desktop | 360 px |
 | --- | --- | --- |
 | Before: finalized plan without the action | [view](docs/assets/design/hausgeld-booking/before-1280.png) | [view](docs/assets/design/hausgeld-booking/before-360.png) |
-| After: twelve months of Anna-Katharina Freifrau von Hohenzollern-Sigmaringen, January edited | [view](docs/assets/design/hausgeld-booking/form-1280.png) | [view](docs/assets/design/hausgeld-booking/form-360.png) |
+| After: form as loaded, nothing ticked | [view](docs/assets/design/hausgeld-booking/start-1280.png) | [view](docs/assets/design/hausgeld-booking/start-360.png) |
+| After: “Alle offenen Monate auswählen” for Anna-Katharina Freifrau von Hohenzollern-Sigmaringen, January edited | [view](docs/assets/design/hausgeld-booking/form-1280.png) | [top](docs/assets/design/hausgeld-booking/form-360.png), [bottom](docs/assets/design/hausgeld-booking/form-360-end.png) |
+| After: conflict, a month was booked meanwhile; the offer is reloaded and unticked | [view](docs/assets/design/hausgeld-booking/conflict-1280.png) | [view](docs/assets/design/hausgeld-booking/conflict-360.png) |
 | After: booked (1280 px: Karl Weiß, 360 px: Lena Roth), offer reloaded | [view](docs/assets/design/hausgeld-booking/done-1280.png) | [view](docs/assets/design/hausgeld-booking/done-360.png) |
-| After: buyer's open months from the transfer (Lena Roth, July to December) | [view](docs/assets/design/hausgeld-booking/transfer-1280.png) | [view](docs/assets/design/hausgeld-booking/transfer-360.png) |
+| After: buyer's open months from the transfer (Lena Roth, July to December, all ticked) | [view](docs/assets/design/hausgeld-booking/transfer-1280.png) | [view](docs/assets/design/hausgeld-booking/transfer-360.png) |
