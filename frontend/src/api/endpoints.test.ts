@@ -162,6 +162,8 @@ callCases.push(
   { name: "getPayment", run: () => endpoints.getPayment("p1"), method: "get", args: ["/api/payments/p1"] },
   { name: "createPayment", run: () => endpoints.createPayment(BODY), method: "post", args: ["/api/payments", BODY] },
   { name: "updatePayment", run: () => endpoints.updatePayment("p1", BODY), method: "patch", args: ["/api/payments/p1", BODY] },
+  { name: "getHausgeldBooking", run: () => endpoints.getHausgeldBooking("plan-1"), method: "get", args: ["/api/economic-plans/plan-1/hausgeld-booking"] },
+  { name: "bookHausgeld", run: () => endpoints.bookHausgeld("plan-1", { bank_account_id: "b1", rows: [] }), method: "post", args: ["/api/economic-plans/plan-1/hausgeld-booking", { bank_account_id: "b1", rows: [] }] },
   { name: "bookPayment", run: () => endpoints.bookPayment("p1"), method: "post", args: ["/api/payments/p1/book"] },
   { name: "reversePayment with note", run: () => endpoints.reversePayment("p1", "Storno"), method: "post", args: ["/api/payments/p1/reverse", { note: "Storno" }] },
   { name: "reversePayment without note posts an empty object", run: () => endpoints.reversePayment("p1"), method: "post", args: ["/api/payments/p1/reverse", {}] },

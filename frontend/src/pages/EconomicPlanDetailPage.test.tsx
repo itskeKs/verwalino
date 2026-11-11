@@ -241,3 +241,14 @@ it("keeps an edit made during computation dirty when the result arrives", async 
   expect(screen.getByRole("cell", { name: "600,00 €" })).toBeVisible();
   expect(finalize).toBeEnabled();
 });
+
+it.each([
+  ["a finalized plan for a writer", { status: "finalized" }, "CLERK", true],
+  ["a draft plan", { status: "draft" }, "CLERK", false],
+  ["a superseded plan", { status: "finalized", superseded_by_id: "next" }, "CLERK", false],
+  ["a read-only session", { status: "finalized" }, "READ_ONLY", false],
+])("offers the Hausgeld booking only on the current finalized plan for writers: %s", async (_case, change, role, offered) => {
+  mocks({ ...draft, ...change, lines: [advanceLines[0]] }); show(role);
+  await screen.findByRole("heading", { name: /Wirtschaftsplan 2027/ });
+  expect(!!screen.queryByRole("button", { name: "Hausgeld buchen" })).toBe(offered);
+});
