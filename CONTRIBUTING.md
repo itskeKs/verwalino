@@ -79,6 +79,9 @@ AGENTS.md retains the safety baseline and tests/CI check parity.
   owns/stops its local API and Vite stack. See [browser setup and runner](features/README.md#browser-features).
 - **`make test-scenarios-report`** — all API/browser features on the local stack with JSON,
   Markdown and failure artifacts in `report/`. See [reports and external targets](features/README.md#scenario-reports-and-nightly-runs).
+- **`make screenshots`** — refreshes the DESIGN.md theme-table screenshots in
+  `docs/assets/design/` from synthetic records on the test database (browser scenario with
+  `VERWALINO_CAPTURE_DESIGN=1`, shared DB lock).
 - **`make test-agent-rules`** — paired bodies/activation, the `CLAUDE.md` symlink and Codex hook
   contracts; Python stdlib, no database or backend dependencies. Run after changing rules or the adapter.
 - **`make test-installer`** — release-download, install-scenario reporting, portable

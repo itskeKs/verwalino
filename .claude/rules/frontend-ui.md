@@ -21,6 +21,7 @@ paths:
   not while a backend test run is active) and open every changed screen in a real browser at
   1280 px and 360 px with synthetic records you create there. Put before/after screenshots in
   the PR body, taken on the test database and never on production. A screen listed in
-  DESIGN.md's screenshot table refreshes its files in `docs/assets/design/`.
+  DESIGN.md's screenshot table refreshes its files in `docs/assets/design/`; the whole
+  table regenerates with `make screenshots`.
 - Put interaction regressions in the area's existing `*.test.tsx` file and run
   it with `cd frontend && npm test -- src/pages/X.test.tsx` (use the actual file).
