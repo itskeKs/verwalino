@@ -435,6 +435,12 @@ async def import_organization(db, auth, source):
                 'id': flat[row['id']]}
         await db.execute(text("SELECT set_config('app.organization_import_registrations',:registrations,true)"),
                          {'registrations': json.dumps(registrations)})
+        # The archived scope grants belong to inactive placeholder accounts
+        # after import (issue #134), so they cannot satisfy the native
+        # capability checks during replay. As each scope is restored, the
+        # importing administrator holds its capabilities for the duration of
+        # the import; the temporary grants are revoked before the commit.
+        restore_reason = 'Archivwiederherstellung'
         try:
             while pending:
                 progress = False
@@ -479,8 +485,28 @@ async def import_organization(db, auth, source):
                         row['snapshot_sha256'] = canonical_sha256(row['snapshot_payload'])
                     if name == 'user':
                         row.update(password_hash='!', is_active=False)
+                        if await db.scalar(text('SELECT public.signin_email_taken(:email)'), {'email': row['email']}):
+                            # The archived address belongs to a live account, usually
+                            # of the still-existing source organization: one sign-in
+                            # address belongs to one organization (issue #134).
+                            # Imported users are inactive placeholders without
+                            # credentials, so they keep a deterministic non-sign-in
+                            # address instead of occupying the taken one.
+                            row['email'] = f"{row['id']}@imported.archive.invalid"
                     if name == 'person':
                         row['created_by'] = str(auth.user_id)
+                    # Insert policies bind these actor columns to the session
+                    # principal. The archived actors are inactive placeholder
+                    # accounts after import (issue #134: one live sign-in
+                    # address belongs to one organization), so the importing
+                    # administrator restores them on their behalf.
+                    for actor_column in {
+                        'accounting_scope': ('created_by',),
+                        'accounting_scope_binding': ('reviewed_by',),
+                        'scope_grant': ('granted_by',),
+                    }.get(name, ()):
+                        if row.get(actor_column):
+                            row[actor_column] = str(auth.user_id)
                     member = documents.get((name, original.get('id')))
                     if row.get('storage_uri') and row.get('content_sha256'):
                         if member is None or members[member][1] != row['content_sha256']:
@@ -516,17 +542,45 @@ async def import_organization(db, auth, source):
                         previous_scope = await db.scalar(text("SELECT current_setting('app.current_scope_id',true)"))
                         await db.execute(text("SELECT set_config('app.current_scope_id',:scope,true)"),
                             {'scope': row['accounting_scope_id']})
-                    await db.execute(text(f'INSERT INTO public."{name}" ({columns}) SELECT {projection} '
-                        f'FROM json_populate_record(NULL::public."{name}",CAST(:row AS json)) v'),
-                        {'row': json_bytes(row).decode()})
+                    if name == 'attachment' and row.get('uploaded_by'):
+                        # The insert policy binds the uploader to the session
+                        # actor; replay the archived uploader (a placeholder
+                        # account) so the original custody stays intact.
+                        previous_actor = await db.scalar(text("SELECT current_setting('app.current_user_id',true)"))
+                        await db.execute(text("SELECT set_config('app.current_user_id',:actor,true)"),
+                            {'actor': row['uploaded_by']})
+                    try:
+                        await db.execute(text(f'INSERT INTO public."{name}" ({columns}) SELECT {projection} '
+                            f'FROM json_populate_record(NULL::public."{name}",CAST(:row AS json)) v'),
+                            {'row': json_bytes(row).decode()})
+                    finally:
+                        if name == 'attachment' and row.get('uploaded_by'):
+                            await db.execute(text("SELECT set_config('app.current_user_id',:actor,true)"),
+                                {'actor': previous_actor or ''})
                     if name == 'special_levy':
                         await db.execute(text("SELECT set_config('app.current_scope_id',:scope,true)"),
                             {'scope': previous_scope or ''})
                     inserted.add((name, original.get('id')))
                     pending.remove((name, original))
                     progress = True
+                    if name == 'accounting_scope':
+                        await db.execute(text(
+                            "INSERT INTO scope_grant(organization_id,scope_id,user_id,capabilities,granted_by,reason) "
+                            "SELECT :org,:scope,:admin,ARRAY['read','prepare','confirm','approve','send','export']::varchar[],"
+                            ":admin,:reason WHERE NOT EXISTS(SELECT 1 FROM scope_grant "
+                            "WHERE organization_id=:org AND scope_id=:scope "
+                            "AND user_id=:admin AND revoked_at IS NULL)"),
+                            {'org': auth.organization_id, 'scope': row['id'], 'admin': str(auth.user_id),
+                             'reason': restore_reason})
                 if not progress:
                     refuse('Das Archiv enthält zyklische oder nicht auflösbare Abhängigkeiten.')
+            if entities.get('accounting_scope'):
+                # Grants are append-only: revoke instead of delete. The
+                # revoked restoration grants remain as evidence rows.
+                await db.execute(text('UPDATE scope_grant SET revoked_at=clock_timestamp(),revoked_by=:admin '
+                    "WHERE organization_id=:org AND user_id=:admin AND granted_by=:admin "
+                    "AND reason=:reason AND revoked_at IS NULL"),
+                    {'org': auth.organization_id, 'admin': str(auth.user_id), 'reason': restore_reason})
             counts = {name: len(rows) for name, rows in entities.items()}
             source_ids = {name: {id_map[name][r['id']]: r.get('source_id', r['id']) for r in rows if r.get('id')}
                           for name, rows in entities.items() if name in id_map}

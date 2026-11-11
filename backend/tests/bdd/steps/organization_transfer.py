@@ -107,7 +107,11 @@ def import_equals_source(world):
     reverse = {v: k for values in mapping.values() for k, v in values.items()}
     for name, count in json.loads(source['manifest.json'])['row_counts'].items():
         actual_count = json.loads(target['manifest.json'])['row_counts'][name]
-        assert actual_count == count + (1 if name == 'audit_event' else 0), name
+        # The kept destination administrator adds one local user and one local
+        # membership row; the new local import receipt adds one audit row.
+        # Archived users are placeholder accounts with synthetic sign-in
+        # addresses (issue #134).
+        assert actual_count == count + (1 if name in {'audit_event', 'user', 'membership'} else 0), name
         if name in {'user', 'membership', 'audit_event'}:
             continue
         original = [json.loads(line) for line in source[f'entities/{name}.jsonl'].splitlines()]

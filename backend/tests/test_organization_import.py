@@ -28,12 +28,14 @@ def repack(files):
 
 @pytest.fixture
 async def import_target(rent_db, rent_world):
-    target = {'org': uuid.uuid4(), 'admin': uuid.uuid4()}
-    # A fresh install's administrator uses the same mailbox as the source admin.
-    email = await rent_db.scalar(text('SELECT email FROM "user" WHERE id=:id'), {'id': rent_world['admin']})
+    target = {'org': uuid.uuid4(), 'admin': uuid.uuid4(), 'email': f"target-{uuid.uuid4().hex}@rent-change.invalid"}
+    # The target administrator has their own sign-in address: one address
+    # belongs to one organization (issue #134), so every archived address is
+    # still owned by the live source organization and the imported
+    # placeholders receive deterministic synthetic addresses.
     await rent_db.execute(text("INSERT INTO organization(id,name) VALUES (:org,'Empty target')"), target)
     await rent_db.execute(text('''INSERT INTO "user"(id,organization_id,email,password_hash,display_name)
-        VALUES (:admin,:org,:email,'keep-this-account','Target admin')'''), {**target, 'email': email})
+        VALUES (:admin,:org,:email,'keep-this-account','Target admin')'''), target)
     await rent_db.execute(text("INSERT INTO membership(organization_id,user_id,role) VALUES (:org,:admin,'OWNER_ADMIN')"), target)
     await rent_db.commit()
     return target
@@ -239,8 +241,10 @@ async def test_import_remaps_collisions_and_preserves_source_identity(rent_world
         rows = [json.loads(line) for line in files['entities/property.jsonl'].splitlines()]
         assert {row['source_id'] for row in rows} == {str(rent_world['property']), str(rent_world['hidden_property'])}
     assert await rent_db.scalar(text('SELECT password_hash FROM "user" WHERE id=:admin'), import_target) == 'keep-this-account'
+    # The archived administrator is an inactive placeholder too: its sign-in
+    # address still belongs to the live source organization (issue #134).
     people = (await rent_db.execute(text('SELECT is_active,password_hash FROM "user" WHERE organization_id=:org AND id<>:admin'), import_target)).all()
-    assert len(people) == 2 and all(not active and password == '!' for active, password in people)
+    assert len(people) == 3 and all(not active and password == '!' for active, password in people)
     await rent_db.rollback()
 
 
@@ -435,18 +439,20 @@ async def test_invalid_organization_metadata_is_a_refusal_and_preserves_target(r
     await rent_db.rollback()
 
 
-async def test_relinked_nonadmin_account_is_inactive_and_requires_a_reset(rent_world, import_target, rent_db, export_store):
+async def test_imported_account_with_globally_taken_address_is_inactive_placeholder(rent_world, import_target, rent_db, export_store):
+    # One sign-in address belongs to one organization (issue #134): the source
+    # clerk's address is still owned by the live source organization, so the
+    # imported placeholder keeps a deterministic synthetic address and cannot
+    # sign in.
     email = await rent_db.scalar(text('SELECT email FROM "user" WHERE id=:clerk'), rent_world)
-    existing_id = uuid.uuid4()
-    await rent_db.execute(text('''INSERT INTO "user"(id,organization_id,email,password_hash,display_name)
-      VALUES (:id,:org,:email,'previous-password','Existing clerk')'''), {**import_target, 'id': existing_id, 'email': email})
-    await rent_db.execute(text("INSERT INTO membership(organization_id,user_id,role) VALUES (:org,:id,'CLERK')"), {**import_target, 'id': existing_id})
-    await rent_db.commit()
     async with api_client(import_target) as api:
         answer = await api.post('/api/organizations/import', files={'file': ('org.tar.gz', await exported(rent_world))})
         assert answer.status_code == 200, answer.text
-        assert answer.json()['id_map']['user'][str(rent_world['clerk'])] == str(existing_id)
-    assert (await rent_db.execute(text('SELECT is_active,password_hash FROM "user" WHERE id=:id'), {'id': existing_id})).one() == (False, '!')
+        placeholder_id = answer.json()['id_map']['user'][str(rent_world['clerk'])]
+    row = (await rent_db.execute(text('SELECT email,is_active,password_hash FROM "user" WHERE id=:id'),
+                                 {'id': uuid.UUID(placeholder_id)})).one()
+    assert row == (f"{placeholder_id}@imported.archive.invalid", False, '!')
+    assert row[0] != email
     await rent_db.rollback()
 
 
@@ -579,11 +585,10 @@ async def test_import_retains_historical_unlinked_levy_and_frozen_allocations(
     ):
         await levy_db.execute(text(statement), ids)
     ids.update(units=[ids['unit']], owners=[ids['owner']], histories=[ids['history']], legacy_meas=[1000])
-    # A fresh target retains its administrator's existing mailbox identity.
-    email = await levy_db.scalar(text('SELECT email FROM "user" WHERE id=:actor'), ids)
+    # The target administrator keeps their own mailbox identity; the archived
+    # actor's address still belongs to the live source organization and the
+    # imported placeholder receives a synthetic address (issue #134).
     await levy_db.commit()
-    await rent_db.execute(text('UPDATE "user" SET email=:email WHERE id=:admin'), {**import_target, 'email': email})
-    await rent_db.commit()
     levy = await legacy_levy(levy_db, ids)
     await levy_db.execute(text("INSERT INTO scope_grant(organization_id,scope_id,user_id,capabilities,granted_by,reason) VALUES (:org,:scope,:actor,ARRAY['read','prepare','export'],:actor,'Archive historical levy')"), ids)
     await levy_db.commit()
