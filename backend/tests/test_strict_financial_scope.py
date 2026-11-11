@@ -214,6 +214,38 @@ async def test_financial_property_existence_requires_current_organization_and_li
         assert await read_value(own, ids, actor_key='clerk') is False
 
 
+async def test_settlement_start_month_lookup_is_a_restricted_security_definer(app_rw_session):
+    signature = {'signature': 'public.financial_property_settlement_start_month(uuid,uuid)'}
+    security = (await app_rw_session.execute(text("""SELECT prosecdef,proconfig,prorettype::regtype::text
+        FROM pg_proc WHERE oid=CAST(:signature AS regprocedure)"""), signature)).one()
+    assert security.prosecdef is True
+    assert security.proconfig == ['search_path=pg_catalog, pg_temp', 'row_security=off']
+    assert security.prorettype == 'integer'
+    grantees = (await app_rw_session.execute(text("""SELECT pg_get_userbyid(acl.grantee),
+        acl.privilege_type,acl.is_grantable FROM pg_proc p
+        CROSS JOIN LATERAL aclexplode(COALESCE(p.proacl,acldefault('f',p.proowner))) acl
+        WHERE p.oid=CAST(:signature AS regprocedure) AND acl.grantee<>p.proowner"""), signature)).all()
+    assert grantees == [('app_rw', 'EXECUTE', False)]
+
+
+async def test_settlement_start_month_requires_current_organization_and_live_actor(migrator_session, scope_seed, seed_data):
+    ids = await scope_fixture(migrator_session, scope_seed)
+    ids.update(foreign_org=seed_data['org_b_id'], foreign_property=uuid.uuid4())
+    await migrator_session.execute(text('UPDATE property SET fiscal_year_start_month=4 WHERE id=:property'), ids)
+    await migrator_session.execute(text("INSERT INTO property(id,organization_id,name,management_type,fiscal_year_start_month) VALUES (:foreign_property,:foreign_org,'Foreign start month','WEG',7)"), ids)
+    await migrator_session.commit()
+    own = 'SELECT financial_property_settlement_start_month(:org,:property)'
+    async with synthetic_enforcement(scope_seed):
+        # The clerk cannot read the property itself, only the month the creation paths need.
+        assert await read_value('SELECT count(*) FROM property WHERE id=:property', ids, actor_key='clerk') == 0
+        assert await read_value(own, ids, actor_key='clerk') == 4
+        assert await read_value('SELECT financial_property_settlement_start_month(:org,:foreign_property)', ids, actor_key='clerk') is None
+        assert await read_value('SELECT financial_property_settlement_start_month(:foreign_org,:foreign_property)', ids, actor_key='clerk') is None
+        assert await read_value('SELECT financial_property_settlement_start_month(:org,gen_random_uuid())', ids, actor_key='clerk') is None
+        await mutate(text('UPDATE "user" SET is_active=false WHERE organization_id=:org AND id=:clerk'), ids)
+        assert await read_value(own, ids, actor_key='clerk') is None
+
+
 async def money_fixture(session, seed):
     ids = await scope_fixture(session, seed)
     ids.update({key: uuid.uuid4() for key in ['cost','plan','line','run','document','payment','attempt','person','owner']})
