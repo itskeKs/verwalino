@@ -6,8 +6,10 @@ statement (so a booked month leaves no one-cent open item). `book` creates and b
 rows through the ordinary single-payment path (`PaymentService.create_draft` and `book`), in one
 transaction: one refused row books nothing.
 
-A month counts as booked when a booked, not reversed Hausgeld payment of that owner exists for
-it on the plan's property; it is neither offered nor bookable again. `book` takes the
+A month counts as booked when the owner statement would assign a booked, not reversed Hausgeld
+payment of that owner on the plan's property to it (`PaymentService.booked_hausgeld_months`: the
+statement's own payment load and period scoping; a payment without a month counts by its value
+date); it is neither offered nor bookable again. `book` takes the
 organization-wide financial input lock before it reads that state, so two identical requests at
 the same moment book once and the second one is refused.
 """
@@ -29,7 +31,6 @@ from app.models.payment import Payment
 from app.repositories.bank_account_repo import BankAccountRepository
 from app.repositories.economic_plan_repo import EconomicPlanRepository
 from app.repositories.owner_profile_repo import OwnerProfileRepository
-from app.repositories.payment_repo import PaymentRepository
 from app.services.financial_scope_service import FinancialScopeService
 from app.services.payment_service import PaymentService
 
@@ -141,9 +142,9 @@ class HausgeldBookingService:
         return plan
 
     async def _rows(self, plan: EconomicPlan) -> list[HausgeldRow]:
-        charges = await PaymentService(self._session, self._org_id, self._user_id).plan_hausgeld_charges(plan)
-        booked = await PaymentRepository(self._session, self._org_id).booked_hausgeld_months(
-            plan.property_id, plan.period_start.year, plan.period_end.year)
+        payments = PaymentService(self._session, self._org_id, self._user_id)
+        charges = await payments.plan_hausgeld_charges(plan)
+        booked = await payments.booked_hausgeld_months(plan, {charge.owner_profile_id for charge in charges})
         due_day = plan.monthly_due_day or 1
         return sorted((
             HausgeldRow(

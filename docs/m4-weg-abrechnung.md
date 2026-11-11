@@ -330,11 +330,17 @@ chosen rows (`HAUSGELD_VORSCHUSS`, direction IN, `period_year` and `period_month
   owners a row for that month, split by owner days (Karl until 15 July, Lena from 16 July: 193.55 and
   206.45 of 400.00). A unit without an owner in a plan month is a data error the statement already
   refuses (`hausgeld_ownership_invalid`); the offer refuses it the same way and books nothing.
-- **Booked months** are marked `booked` and not offered again: a booked, not reversed, non-Storno
-  Hausgeld payment (direction IN) of that owner for that year and month on the plan's property. A
-  draft does not count; a Storno makes the month bookable again. `POST` takes the organization-wide
-  financial input lock before it reads that state, so two identical requests at the same moment
-  book once (the second answers 409 `HAUSGELD_MONTH_BOOKED`).
+- **Booked months** are marked `booked` and not offered again. The set is read by
+  `PaymentService.booked_hausgeld_months` the way the owner statement reads its Ist: the owner's
+  payments of the plan's property (`list_for_owner`), kept by `_scope_payments_to_period` over the
+  plan period, and only booked, not reversed, non-Storno rows (the engine's Ist filter). Of those the
+  Hausgeld payments received (direction IN) belong to the month they name (`period_year` and
+  `period_month`); a payment without a month, or with a month but no year, belongs to the month of its
+  value date. The statement keeps a payment out of the plan period when its month, its year or, without
+  a year, its value date lies outside it: 600.00 with value date 05.01.2026 and no month marks January
+  2026, the same payment dated 05.01.2027 marks nothing. A draft does not count; a Storno frees the month
+  again. `POST` takes the organization-wide financial input lock before it reads that state, so two
+  identical requests at the same moment book once (the second answers 409 `HAUSGELD_MONTH_BOOKED`).
 - **Request:** one bank account of the plan's property (else 422) and at most 144 rows, each one an
   offered row (`owner_profile_id`, `period_year`, `period_month`), named once, with a positive
   decimal string amount of at most two places and a value date. A foreign plan, account or owner

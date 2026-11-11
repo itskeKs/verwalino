@@ -734,6 +734,31 @@ class PaymentService:
                 plan.period_start, plan.period_end)
         return charges
 
+    async def booked_hausgeld_months(
+        self, plan: EconomicPlan, owner_profile_ids,
+    ) -> set[tuple[uuid.UUID, int, int]]:
+        """(owner, year, month) of the plan period that a booked Hausgeld payment already covers.
+
+        Read exactly as the owner statement reads its Ist: the owner's payments of the plan's
+        property (`list_for_owner`), kept by `_scope_payments_to_period` over the plan period, and
+        only booked, not reversed, non-Storno rows (the engine's own Ist filter). Of those the
+        Hausgeld payments received (IN) are assigned to the month they name; one without a
+        year and month, or with a month but no year, is assigned to the month of its value date.
+        """
+        covered: set[tuple[uuid.UUID, int, int]] = set()
+        for owner_profile_id in owner_profile_ids:
+            payments = await self._repo.list_for_owner(owner_profile_id, property_id=plan.property_id)
+            for p in self._scope_payments_to_period(payments, plan.period_start, plan.period_end):
+                ist = to_payment_input(p)
+                if (p.payment_type != "HAUSGELD_VORSCHUSS" or p.direction != "IN"
+                        or not ist.is_booked or ist.is_reversed or ist.is_reversal):
+                    continue
+                if p.period_year is not None and p.period_month is not None:
+                    covered.add((owner_profile_id, p.period_year, p.period_month))
+                else:
+                    covered.add((owner_profile_id, p.value_date.year, p.value_date.month))
+        return covered
+
     async def account_statement_for_owner(
         self,
         owner_profile_id: uuid.UUID,
