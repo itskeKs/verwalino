@@ -26,7 +26,7 @@ trap 'rmdir /tmp/verwalino-testdb.lock' EXIT
 endef
 
 .PHONY: help test test-agent-rules test-scenario-issues test-backend test-installer test-selfhost-format test-frontend test-bdd test-bdd-hosted test-browser test-scenarios-report typecheck lint lint-backend lint-frontend \
-        docs-check mail-previews frontend-deps hooks check-testdb
+        docs-check mail-previews screenshots frontend-deps hooks check-testdb
 
 help: ## List the documented targets
 	@awk 'BEGIN {FS = ":.*## "} /^[a-zA-Z_-]+:.*## / {printf "  %-16s %s\n", $$1, $$2}' $(MAKEFILE_LIST)
@@ -88,6 +88,12 @@ test-scenarios-report: frontend/node_modules ## All API and browser features aga
 	$(MAKE) --no-print-directory check-testdb && \
 	( unset VERWALINO_TARGET_URL VERWALINO_TARGET_ADMIN_EMAIL VERWALINO_TARGET_ADMIN_PASSWORD; \
 	  . ./scripts/test-env.sh && cd backend && $(UV_TEST) pytest tests/bdd --run-browser --scenario-report ../report $(PYTEST_ARGS) )
+
+screenshots: frontend/node_modules ## Refresh the DESIGN.md theme-table screenshots from synthetic records on the test database
+	@$(TESTDB_LOCK); \
+	$(MAKE) --no-print-directory check-testdb && \
+	( unset VERWALINO_TARGET_URL VERWALINO_TARGET_ADMIN_EMAIL VERWALINO_TARGET_ADMIN_PASSWORD; \
+	  . ./scripts/test-env.sh && cd backend && VERWALINO_CAPTURE_DESIGN=1 $(UV_TEST) pytest tests/bdd/test_personal_design.py --run-browser -q -k design_table )
 
 # ---- static checks ---------------------------------------------------------
 

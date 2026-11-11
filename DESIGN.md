@@ -51,7 +51,8 @@ active palette. Product-specific shell, personal-preview, dashboard and property
 layout classes live in `index.css`; existing domain components remain in place.
 
 The following captures use only synthetic records on the disposable test database.
-The before dashboard shows the previous navigation and financial-first order.
+They regenerate with `make screenshots` (the design-table scenario of the personal-design
+browser feature). The before dashboard shows the previous navigation and financial-first order.
 
 | Screen | Klar desktop / phone | Warm desktop / phone |
 | --- | --- | --- |
