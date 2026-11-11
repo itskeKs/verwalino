@@ -164,6 +164,38 @@ async def test_moving_a_run_into_an_overlap_with_another_scope_is_refused(migrat
     assert refused.value.orig.sqlstate == '23P01'
 
 
+@pytest.mark.parametrize('foreign_overlap', [False, True])
+async def test_a_foreign_organization_insert_gets_the_plain_rls_refusal(migrator_session, scope_seed, seed_data, foreign_overlap):
+    """A session of one organization must not learn whether another holds an overlapping run."""
+    ids = await overlap_fixture(migrator_session, scope_seed)
+    ids.update(org_b=seed_data['org_b_id'], foreign_property=uuid.uuid4(), foreign_scope=uuid.uuid4(),
+               foreign_person=uuid.uuid4(), foreign_profile=uuid.uuid4(), foreign_unit=uuid.uuid4(),
+               foreign_lease=uuid.uuid4(), foreign_run=uuid.uuid4(), b_admin=seed_data['user_b_admin_id'])
+    await migrator_session.execute(text("INSERT INTO property(id,organization_id,name,street,zip_code,city,management_type) VALUES (:foreign_property,:org_b,'Foreign','','','','MISCH')"), ids)
+    await migrator_session.execute(text("INSERT INTO accounting_scope(id,organization_id,property_id,scope_type,label,valid_from,whole_property,origin,created_by) VALUES (:foreign_scope,:org_b,:foreign_property,'MIET','Foreign sphere','2025-01-01',true,'REVIEWED',:b_admin)"), ids)
+    await migrator_session.execute(text("INSERT INTO person(id,organization_id,last_name,street,zip_code,city) VALUES (:foreign_person,:org_b,'Foreign','','','')"), ids)
+    await migrator_session.execute(text("INSERT INTO tenant_profile(id,organization_id,person_id,notes) VALUES (:foreign_profile,:org_b,:foreign_person,'')"), ids)
+    await migrator_session.execute(text("INSERT INTO unit(id,organization_id,property_id,number,usage_type) VALUES (:foreign_unit,:org_b,:foreign_property,'1','WOHNUNG')"), ids)
+    await migrator_session.execute(text("INSERT INTO lease_agreement(id,organization_id,unit_id,tenant_profile_id,valid_from,base_rent,advance_payment,notes) VALUES (:foreign_lease,:org_b,:foreign_unit,:foreign_profile,'2024-01-01',500,100,'')"), ids)
+    if foreign_overlap:
+        # Org B holds an active run of another scope over the contested period.
+        await migrator_session.execute(text("""INSERT INTO settlement_run(id,organization_id,property_id,run_type,period_start,period_end,unit_id,
+            lease_agreement_id,tenant_profile_id,status,engine_version) VALUES (:foreign_run,:org_b,:foreign_property,'BK_MIETER','2026-01-01','2026-12-31',
+            :foreign_unit,:foreign_lease,:foreign_profile,'draft','test')"""), ids)
+        await migrator_session.execute(text("""INSERT INTO accounting_scope_binding(organization_id,property_id,scope_id,settlement_run_id,origin,reason,reviewed_by)
+            VALUES (:org_b,:foreign_property,:foreign_scope,:foreign_run,'REVIEWED','Foreign overlap',:b_admin)"""), ids)
+    await actor(migrator_session, ids)
+    try:
+        with pytest.raises(DBAPIError) as refused:
+            async with migrator_session.begin_nested():
+                await migrator_session.execute(text("""INSERT INTO settlement_run(organization_id,property_id,run_type,period_start,period_end,unit_id,
+                    lease_agreement_id,tenant_profile_id,status,engine_version) VALUES (:org_b,:foreign_property,'BK_MIETER','2026-06-01','2027-05-31',
+                    :foreign_unit,:foreign_lease,:foreign_profile,'draft','test')"""), ids)
+        assert refused.value.orig.sqlstate == '42501'
+    finally:
+        await migrator_session.execute(text('RESET ROLE'))
+
+
 async def settlement_count(ids):
     from tests.test_scope_payment_reconciliation import read_value
     return await read_value('SELECT count(*) FROM settlement_run WHERE lease_agreement_id=:lease', ids)

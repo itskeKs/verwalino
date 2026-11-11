@@ -5,7 +5,9 @@ application check can only compare periods inside the visible scope. This
 trigger compares a new or moved lease run with every active (non-superseded)
 run of the same lease and type that belongs to a different accounting scope (a
 legacy run without a scope counts as its own context), with row security off
-and without returning row data. Identical bounds stay valid (repeats and
+and without returning row data. Rows of another organization are left to the
+organization RLS policy, which rejects them without revealing anything about
+that organization. Identical bounds stay valid (repeats and
 corrections). Runs of one scope stay with the application checks, as before.
 
 Also adds the narrow organization-bound reader of a property's settlement start
@@ -26,6 +28,9 @@ def upgrade():
     LANGUAGE plpgsql SECURITY DEFINER SET search_path=pg_catalog,pg_temp SET row_security=off AS $$
     DECLARE sphere uuid;
     BEGIN
+      -- A row of another organization is left to the organization RLS policy,
+      -- which rejects it without revealing anything about that organization.
+      IF NEW.organization_id IS DISTINCT FROM NULLIF(current_setting('app.current_org_id',true),'')::uuid THEN RETURN NEW; END IF;
       IF NEW.lease_agreement_id IS NULL OR NEW.superseded_by_id IS NOT NULL THEN RETURN NEW; END IF;
       -- Concurrent creators of one lease and type serialize here; the check below then sees
       -- the committed run of the other scope.
