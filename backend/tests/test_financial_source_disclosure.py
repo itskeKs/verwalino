@@ -3,14 +3,14 @@ import uuid
 import pytest
 from sqlalchemy import text
 from app.core.db import get_tenant_session
-from tests.test_m4_weg import m4_seed, _create_and_finalize_plan  # noqa: F401
-from tests.test_m3_settlement import m3_seed, _extras_for_exit  # noqa: F401
+from tests.test_m4_weg import m4_seed as m4_seed, _create_and_finalize_plan
+from tests.test_m3_settlement import m3_seed as m3_seed, _extras_for_exit
 from tests.test_financial_input_policy import draft, attest
 from tests.test_property_source_access import grant
 from tests.test_property_source_enforcement import synthetic_enforcement, change_mode
 from tests.test_scoped_account_statements import mutate
 from tests.contact_source_fixtures import grant_property_contacts
-from tests.test_invoice_extraction_worker import worker_tenant  # noqa: F401
+from tests.test_invoice_extraction_worker import worker_tenant as worker_tenant
 
 pytestmark = pytest.mark.asyncio
 

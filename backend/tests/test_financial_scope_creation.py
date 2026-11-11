@@ -6,8 +6,8 @@ import pytest
 from sqlalchemy import text
 from sqlalchemy.exc import DBAPIError
 
-from tests.test_financial_scope_boundary import actor, financial_fixture, scope_seed
-from tests.test_invoice_extraction_worker import worker_tenant
+from tests.test_financial_scope_boundary import actor, financial_fixture, scope_seed as scope_seed
+from tests.test_invoice_extraction_worker import worker_tenant as worker_tenant
 
 pytestmark = pytest.mark.asyncio
 

@@ -1,6 +1,8 @@
 """Opt-in, errors-only Sentry-compatible reporting with filtered payloads."""
 
 from contextvars import ContextVar
+from importlib.metadata import version
+import os
 
 import sentry_sdk
 from sentry_sdk.integrations.dedupe import DedupeIntegration
@@ -27,6 +29,11 @@ def before_send(event, hint):
     if state.get("organization_id") is not None:
         tags["organization_id"] = str(state["organization_id"])
     return scrub(event)
+
+
+def release_id() -> str:
+    """Tracker release: HV_RELEASE_ID from the process environment, else the app version."""
+    return os.environ.get("HV_RELEASE_ID") or version("hausverwaltung-backend")
 
 
 def configure_error_tracking(settings: Settings, *, release: str, transport=None):

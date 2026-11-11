@@ -87,6 +87,22 @@ def shared_hosted_property_headroom(seed_data, request):
     )
 
 
+def reset_shared_hosted_records():
+    """Drop the domain records scenarios created; organizations, users, memberships and mandates stay."""
+    import psycopg2
+    from tests.conftest import MIGRATOR_SYNC_URL, clear_disposable_source_context
+
+    with psycopg2.connect(MIGRATOR_SYNC_URL, options="-c lock_timeout=10000") as connection, connection.cursor() as cursor:
+        clear_disposable_source_context(cursor)
+
+
+@pytest.fixture(scope="module")
+def shared_hosted_records_reset(shared_hosted_property_headroom):
+    """Start each feature at the seeded counts so features do not add up to the free-plan cap."""
+    if shared_hosted_property_headroom is not None:
+        reset_shared_hosted_records()
+
+
 def shared_property_counts(seed_data):
     import psycopg2
     from tests.conftest import MIGRATOR_SYNC_URL
@@ -114,7 +130,7 @@ def pytest_runtest_call(item):
 
 
 @pytest.fixture
-def world(bdd_loop, request, shared_hosted_property_headroom):
+def world(bdd_loop, request, shared_hosted_property_headroom, shared_hosted_records_reset):
     request.node.stash[_SHARED_HOSTED_USAGE] = shared_hosted_property_headroom
     if target_url():
         admin = httpx.AsyncClient(base_url=target_url(), timeout=60)
@@ -242,6 +258,14 @@ from tests.bdd.steps.person_retention import *  # noqa: E402,F401,F403
 from tests.bdd.steps.source_access import *  # noqa: E402,F401,F403
 from tests.bdd.steps.property_selectors import *  # noqa: E402,F401,F403
 from tests.bdd.steps.persons_key import *  # noqa: E402,F401,F403
+from tests.bdd.steps.browser_listing import *  # noqa: E402,F401,F403
+from tests.bdd.steps.browser_scopes import *  # noqa: E402,F401,F403
+from tests.bdd.steps.browser_scope_forms import *  # noqa: E402,F401,F403
+from tests.bdd.steps.browser_statements import *  # noqa: E402,F401,F403
+from tests.bdd.steps.browser_reconciliation import *  # noqa: E402,F401,F403
+from tests.bdd.steps.browser_mandates import *  # noqa: E402,F401,F403
+from tests.bdd.steps.browser_data_domains import *  # noqa: E402,F401,F403
+from tests.bdd.steps.browser_declaration_principal import *  # noqa: E402,F401,F403
 
 from tests.bdd.steps.meetings import *  # noqa: E402,F401,F403
 from tests.bdd.steps.special_levy import *  # noqa: E402,F401,F403

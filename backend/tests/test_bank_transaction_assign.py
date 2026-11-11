@@ -18,8 +18,8 @@ from app.core.security import create_session_token
 from app.main import app
 from app.services.payment_service import PaymentService
 from tests.financial_coverage_helpers import attest_fixture
-from tests.test_invoice_extraction_worker import worker_tenant  # noqa: F401
-from tests.test_financial_scope_boundary import scope_seed  # noqa: F401
+from tests.test_invoice_extraction_worker import worker_tenant as worker_tenant
+from tests.test_financial_scope_boundary import scope_seed as scope_seed
 from tests.test_scoped_account_statements import statement_fixture, client as scope_client
 
 pytestmark = pytest.mark.asyncio

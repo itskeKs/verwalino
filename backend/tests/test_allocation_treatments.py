@@ -2,8 +2,8 @@
 import uuid
 import pytest
 from tests.migration_rehearsal import rewind_bank_allocation_functions
-from tests.test_financial_scope_boundary import worker_tenant,scope_seed  # noqa: F401
-from tests.test_invoice_source_custody import store,fixture,foreign_fixture
+from tests.test_financial_scope_boundary import worker_tenant as worker_tenant,scope_seed as scope_seed
+from tests.test_invoice_source_custody import store as store,fixture,foreign_fixture
 from tests.test_scoped_account_statements import client
 from tests.test_scope_payment_reconciliation import read_value
 from tests.test_allocation_proposals import context,lines,command as allocation_command

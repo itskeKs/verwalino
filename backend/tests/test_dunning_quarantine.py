@@ -1,7 +1,7 @@
 """Quarantined dunning remains retained history without invented provenance."""
 import uuid
 import pytest
-from tests.test_financial_scope_boundary import worker_tenant, scope_seed  # noqa: F401
+from tests.test_financial_scope_boundary import worker_tenant as worker_tenant, scope_seed as scope_seed
 from tests.test_scoped_account_statements import statement_fixture, client
 from tests.test_scoped_dunning import legacy_notice
 

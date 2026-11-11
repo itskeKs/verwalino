@@ -4,7 +4,7 @@ import pytest
 from sqlalchemy import text
 from sqlalchemy.exc import DBAPIError
 from app.core.db import get_tenant_session
-from tests.test_m8_meetings import m8_seed  # noqa: F401
+from tests.test_m8_meetings import m8_seed as m8_seed
 from tests.test_derived_source_access import actor_session
 from tests.test_property_source_access import grant
 from tests.test_property_source_enforcement import synthetic_enforcement,change_mode

@@ -5,9 +5,9 @@ from app.core.db import get_worker_session_factory
 from app.core.invoice_ocr import extract_invoice
 from app.workers.invoice_extraction import process_once
 from tests.migration_rehearsal import rewind_bank_allocation_functions
-from tests.test_invoice_extraction_worker import worker_tenant,pdf_bytes  # noqa: F401
-from tests.test_invoice_source_custody import store  # noqa: F401
-from tests.test_financial_scope_boundary import scope_seed  # noqa: F401
+from tests.test_invoice_extraction_worker import worker_tenant as worker_tenant,pdf_bytes
+from tests.test_invoice_source_custody import store as store
+from tests.test_financial_scope_boundary import scope_seed as scope_seed
 
 pytestmark=pytest.mark.asyncio
 

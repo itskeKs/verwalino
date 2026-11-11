@@ -19,7 +19,7 @@ from decimal import Decimal
 import pytest
 import pytest_asyncio
 
-from tests.test_rent_changes import rent_db, rent_world, api_client  # noqa: F401
+from tests.test_rent_changes import rent_db as rent_db, rent_world as rent_world, api_client
 
 SYNC_URL = os.environ.get(
     "HV_DATABASE_URL_SYNC",

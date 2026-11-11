@@ -33,6 +33,7 @@ from app.repositories.declaration_import_repo import (
     DeclarationPrincipalDenied,
     WorkerLease,
 )
+from app.workers.error_tracking import configure_worker_error_tracking, report_job_failure, tracked_job
 
 logger = logging.getLogger(__name__)
 
@@ -327,6 +328,7 @@ class DeclarationImportWorker:
                 except Exception as error:
                     # Do not log arbitrary exception text: providers and parsers
                     # may attach untrusted document fragments to it.
+                    report_job_failure(error)
                     error_type, location = _safe_error_details(error)
                     logger.warning(
                         "declaration worker result=PIPELINE_ERROR import_id=%s error_type=%s location=%s",
@@ -364,7 +366,7 @@ class DeclarationImportWorker:
         lease = await self.claim_one(organization_id) if organization_id is not None else await self.claim_one()
         if lease is None:
             return WorkerResult("IDLE")
-        with correlation_context(lease.import_id):
+        with tracked_job("declaration_import", lease.import_id):
             try:
                 if await self._attempt_limit_reached(lease):
                     if await self._fail_attempt_limit(lease):
@@ -381,6 +383,7 @@ class DeclarationImportWorker:
                     await DeclarationImportRepository(session, lease.organization_id).cancel_unauthorized(lease)
                 return WorkerResult("JOB_PERMISSION_CHANGED", lease.import_id)
             except Exception as error:
+                report_job_failure(error)
                 error_type, location = _safe_error_details(error)
                 logger.warning(
                     "declaration worker result=WORKER_UNEXPECTED_ERROR import_id=%s error_type=%s location=%s",
@@ -472,6 +475,7 @@ def main(argv: list[str] | None = None) -> int:
     options = parser.parse_args(argv)
     if options.healthcheck:
         return 0 if asyncio.run(run_healthcheck()) else 1
+    configure_worker_error_tracking()
     asyncio.run(_main())
     return 0
 

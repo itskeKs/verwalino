@@ -11,6 +11,8 @@ import pytest
 
 from app.engine.bank_import import BankImportError, parse_csv
 
+pytestmark = pytest.mark.no_db
+
 FIXTURES = Path(__file__).parents[1] / "fixtures" / "bank"
 HEADER = "Buchungstag;Wertstellung;Betrag;Name;IBAN;Verwendungszweck;Währung\n"
 ROW = "02.01.2026;03.01.2026;1.234,56;Müller;DE02120300000000202051;Miete Januar;EUR\n"

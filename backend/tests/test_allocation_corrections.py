@@ -3,8 +3,8 @@ import asyncio
 import json
 import uuid
 import pytest
-from tests.test_financial_scope_boundary import worker_tenant,scope_seed  # noqa: F401
-from tests.test_invoice_source_custody import store,fixture
+from tests.test_financial_scope_boundary import worker_tenant as worker_tenant,scope_seed as scope_seed
+from tests.test_invoice_source_custody import store as store,fixture
 from tests.test_scoped_account_statements import client
 from tests.test_scope_payment_reconciliation import read_value
 from tests.test_allocation_adoptions import confirm_grant
@@ -265,6 +265,7 @@ async def test_correction_guards_runtime_writes_and_retains_evidence_on_downgrad
     from sqlalchemy.exc import DBAPIError
     from app.core.db import get_session_factory,set_tenant_context
     from tests.conftest import MIGRATOR_SYNC_URL
+    from tests.migration_rehearsal import lock_for_rehearsal
     ids=await fixture(migrator_session,scope_seed);await confirm_grant(ids)
     async with client(ids) as api:
         old,_,review,_=await prepared(api,ids);run=await parent(ids)
@@ -288,6 +289,7 @@ async def test_correction_guards_runtime_writes_and_retains_evidence_on_downgrad
     migration=importlib.import_module('migrations.versions.0114_allocation_corrections');engine=create_engine(MIGRATOR_SYNC_URL)
     try:
         with engine.begin() as db,Operations.context(MigrationContext.configure(db)):
+            lock_for_rehearsal(db)
             with pytest.raises(DBAPIError,match='Retain allocation correction'),db.begin_nested():migration.downgrade()
             for table in ('allocation_correction','allocation_correction_impact'):
                 with pytest.raises(DBAPIError,match='immutable|Immutable'),db.begin_nested():db.execute(text('DELETE FROM '+table+' WHERE organization_id=:org'),ids)

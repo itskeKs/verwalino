@@ -3,8 +3,8 @@ import uuid
 import pytest
 from sqlalchemy import text
 from tests.migration_rehearsal import rewind_bank_allocation_functions
-from tests.test_financial_scope_boundary import worker_tenant,scope_seed  # noqa: F401
-from tests.test_invoice_source_custody import store,fixture
+from tests.test_financial_scope_boundary import worker_tenant as worker_tenant,scope_seed as scope_seed
+from tests.test_invoice_source_custody import store as store,fixture
 from tests.test_scoped_account_statements import client,mutate
 from tests.test_scope_payment_reconciliation import read_value
 from tests.test_allocation_adoptions import confirm_grant,ready,command as adoption_command
@@ -177,11 +177,13 @@ async def test_mapping_roles_pause_private_table_seal_and_guarded_downgrade(migr
     from alembic.operations import Operations
     from app.core.db import get_worker_session_factory,get_review_session_factory,set_tenant_context
     from tests.conftest import MIGRATOR_SYNC_URL
+    from tests.migration_rehearsal import lock_for_rehearsal
     from tests.test_property_source_enforcement import synthetic_enforcement,change_mode
     ids=await fixture(migrator_session,scope_seed);await confirm_grant(ids)
     migration=importlib.import_module('migrations.versions.0112_context_mappings');engine=create_engine(MIGRATOR_SYNC_URL)
     try:
         with engine.begin() as db,Operations.context(MigrationContext.configure(db)):
+            lock_for_rehearsal(db)
             before=db.scalar(text("SELECT pg_get_functiondef('access_coverage_manifest(uuid,jsonb)'::regprocedure)"))
             point=db.begin_nested()
             try:
@@ -238,6 +240,7 @@ async def test_mapping_roles_pause_private_table_seal_and_guarded_downgrade(migr
                 assert (await api.post('/api/context-mappings',**body)).status_code in (403,404)
                 assert (await api.post('/api/context-mappings/'+saved['id']+'/revocations',**revocation(saved))).status_code in (403,404)
             with engine.begin() as db,Operations.context(MigrationContext.configure(db)):
+                lock_for_rehearsal(db)
                 with pytest.raises(DBAPIError,match='Retain opted-in'),db.begin_nested():migration.downgrade()
                 assert "'mapping_version'" in db.scalar(text("SELECT pg_get_functiondef('access_coverage_manifest(uuid,jsonb)'::regprocedure)"))
     finally:engine.dispose()

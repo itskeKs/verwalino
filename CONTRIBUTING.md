@@ -97,6 +97,10 @@ AGENTS.md retains the safety baseline and tests/CI check parity.
 - While iterating, run one file: `cd backend && uv run pytest tests/test_x.py -k name`,
   `cd frontend && npm test -- src/pages/X.test.tsx`; `make test-backend PYTEST_ARGS="…"` does the
   same with the test environment loaded.
+- `cd backend && uv run pytest -m no_db` runs the pure-function tests (`tests/engine`) without the
+  database: no migrations and no engine, so `infra-postgres-1` need not run; the test environment
+  still has to be loaded (`. scripts/test-env.sh`) because the conftest validates the URLs.
+  `-m "not slow"` leaves out the three hypothesis modules.
 - The backend suite truncates tables in the shared test database: never run two suites at once.
   For direct pytest runs or a dev stack, acquire the lock in that same shell with
   `until mkdir /tmp/verwalino-testdb.lock 2>/dev/null; do sleep 10; done` and
@@ -254,7 +258,7 @@ downloaded `.test_durations` to `backend/.test_durations` before reviewing the d
 | `backend/migrations/versions/` | Alembic migrations; committed ones are never edited |
 | `backend/tests/` | unit and API tests; `bdd/` binds scenarios, `bdd/browser.py` owns browser fixtures, `bdd/report.py` writes reports, `bdd/steps/browser_*.py` shares browser steps |
 | `features/` | API and `@browser` Gherkin scenarios (executable specs) |
-| `.github/workflows/nightly-scenarios.yaml` | nightly self-host scenarios, 90-day report artifacts and deduplicated failure issues; hosted mode pending #18 |
+| `.github/workflows/nightly-scenarios.yaml` | nightly scenarios in both modes (`selfhost` on the installer's stack, `hosted` API features on the local stack), 90-day report artifacts and deduplicated failure issues; [where each mode runs](features/README.md#deployment-modes) |
 | `.github/workflows/build-main-image.yaml` | filtered main pushes: publishes and signs SHA-only staging images without a release |
 | `.github/workflows/deploy-staging.yaml` | successful `Build main image` completion via `workflow_run`: deploys that run's main SHA through the existing forced-command SSH key |
 | `.github/workflows/canary.yaml`, `scripts/canary.py`, `scripts/test-canary.py` | 15-minute production API journey, sanitized reports, e-mail/issue alerts and fake HTTP contracts |

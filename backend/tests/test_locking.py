@@ -8,7 +8,7 @@ from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
-from tests.test_rent_changes import rent_db  # noqa: F401
+from tests.test_rent_changes import rent_db as rent_db
 
 
 @pytest.mark.parametrize('path', ['deletion', 'quota'])

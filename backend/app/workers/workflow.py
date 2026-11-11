@@ -5,7 +5,7 @@ import hashlib
 import json
 import uuid
 
-from app.core.request_id import correlation_context
+from app.workers.error_tracking import configure_worker_error_tracking, report_recorded_failure, tracked_job
 from sqlalchemy import text
 from app.core.db import set_tenant_context
 from app.core.intake_inspection import run_isolated_inspection,valid_result,VERSION
@@ -19,7 +19,7 @@ async def process_once(session_factory,org_id,*,inspector=run_isolated_inspectio
         claim=await db.scalar(text('SELECT claim_intake_inspection(:org)'),{'org':org_id})
     if claim is None:
         return False
-    with correlation_context(claim['job_id']):
+    with tracked_job('intake_inspection',claim['job_id']):
         params={'org':org_id,'job':uuid.UUID(claim['job_id']),'fence':uuid.UUID(claim['fence'])}
         failure=None;chunks=[];total=0
         async with session_factory() as db,db.begin():
@@ -39,6 +39,7 @@ async def process_once(session_factory,org_id,*,inspector=run_isolated_inspectio
         data=b''.join(chunks)
         if failure is None and (total!=claim['content_byte_size'] or hashlib.sha256(data).hexdigest()!=claim['content_sha256']):
             failure='storage_integrity_mismatch'
+        crash=None
         if failure:
             inspection={'status':'blocked','error_code':failure,'content_sha256':claim['content_sha256'],
                 'content_byte_size':claim['content_byte_size'],'mime_type':claim['mime_type'],'page_count':None,'inspector_version':VERSION}
@@ -47,9 +48,11 @@ async def process_once(session_factory,org_id,*,inspector=run_isolated_inspectio
                 inspection=await run_bounded_processor(inspector,data,claim['mime_type'])
                 if not valid_result(inspection,data,claim['mime_type']):
                     raise ValueError('Invalid inspector result')
-            except Exception:
+            except Exception as caught:
+                crash=caught
                 inspection={'status':'blocked','error_code':'inspector_failed','content_sha256':claim['content_sha256'],
                     'content_byte_size':claim['content_byte_size'],'mime_type':claim['mime_type'],'page_count':None,'inspector_version':VERSION}
+        report_recorded_failure(inspection.get('error_code'),crash)
         async with session_factory() as db,db.begin():
             await set_tenant_context(db,org_id)
             return bool(await db.scalar(text('SELECT complete_intake_inspection(:org,:job,:fence,CAST(:inspection AS jsonb))'),
@@ -64,6 +67,7 @@ async def main():
     parser.add_argument('--organization',action='append',required=True,type=uuid.UUID)
     parser.add_argument('--once',action='store_true')
     args=parser.parse_args()
+    configure_worker_error_tracking()
     while True:
         for org in args.organization:
             await process_once(get_worker_session_factory(),org)

@@ -2,10 +2,10 @@
 import pytest
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import create_async_engine
-from tests.test_declaration_import_api import isolated_document_store, enable_declaration_imports  # noqa: F401
-from tests.test_invoice_source_custody import store  # noqa: F401
+from tests.test_declaration_import_api import isolated_document_store as isolated_document_store, enable_declaration_imports as enable_declaration_imports
+from tests.test_invoice_source_custody import store as store
 from tests.conftest import MIGRATOR_URL
-from tests.test_financial_scope_boundary import worker_tenant, scope_seed  # noqa: F401
+from tests.test_financial_scope_boundary import worker_tenant as worker_tenant, scope_seed as scope_seed
 from tests.test_scoped_account_statements import statement_fixture, client
 from tests.test_report_source_access import contacts_for_clerk, property_for_clerk
 from tests.test_property_source_enforcement import synthetic_enforcement, change_mode

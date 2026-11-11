@@ -4,9 +4,9 @@ import pytest
 from sqlalchemy import text
 from sqlalchemy.exc import DBAPIError
 from app.core.db import get_tenant_session, get_review_tenant_session
-from tests.test_derived_source_access import committed_scope,actor_session  # noqa: F401
-from tests.test_financial_scope_boundary import scope_seed,worker_tenant  # noqa: F401
-from tests.test_declaration_import_api import isolated_document_store,enable_declaration_imports  # noqa: F401
+from tests.test_derived_source_access import committed_scope as committed_scope,actor_session
+from tests.test_financial_scope_boundary import scope_seed as scope_seed,worker_tenant as worker_tenant
+from tests.test_declaration_import_api import isolated_document_store as isolated_document_store,enable_declaration_imports as enable_declaration_imports
 from tests.test_declaration_worker_effects import effect_seed,CANDIDATE_SQL
 from tests.test_property_source_enforcement import synthetic_enforcement
 from tests.test_scoped_account_statements import mutate
@@ -190,6 +190,7 @@ async def test_review_command_migration_preserves_history_and_refuses_strict_dow
     from alembic.migration import MigrationContext
     from alembic.operations import Operations
     from tests.conftest import MIGRATOR_SYNC_URL
+    from tests.migration_rehearsal import lock_for_rehearsal
     seed=committed_scope;params=await review_seed(seed)
     migration=importlib.import_module('migrations.versions.0072_declaration_review_commands')
     engine=create_engine(MIGRATOR_SYNC_URL)
@@ -199,9 +200,11 @@ async def test_review_command_migration_preserves_history_and_refuses_strict_dow
                 await actor_session(db,params['actor'])
                 assert await db.scalar(text(COMMAND),command_params(params))==2
             with engine.begin() as db,Operations.context(MigrationContext.configure(db)):
+                lock_for_rehearsal(db)
                 with pytest.raises(DBAPIError,match='Retain atomic declaration reviews'):
                     with db.begin_nested(): migration.downgrade()
         with engine.begin() as db,Operations.context(MigrationContext.configure(db)):
+            lock_for_rehearsal(db)
             point=db.begin_nested()
             try:
                 snapshots={table:db.scalar(text(f"SELECT md5(COALESCE(string_agg(to_jsonb(r)::text,',' ORDER BY id),'')) FROM {table} r"))

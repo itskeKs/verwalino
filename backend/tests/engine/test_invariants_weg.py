@@ -32,6 +32,8 @@ from app.engine.types import (
 from app.engine.weg import compute_weg_jahresabrechnung
 from app.engine.wirtschaftsplan import compute_wirtschaftsplan
 
+pytestmark = [pytest.mark.no_db, pytest.mark.slow]
+
 YEAR_START = date(2025, 1, 1)
 YEAR_END = date(2025, 12, 31)
 

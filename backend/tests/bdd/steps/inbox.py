@@ -12,9 +12,9 @@ from tests.test_allocation_proposals import command as allocation_command
 from tests.test_allocation_treatments import command as treatment_command
 from tests.test_assignment_proposals import command as assignment_command
 from tests.test_context_decisions import command as context_command
-from tests.test_invoice_extraction_worker import pdf_bytes, worker_tenant  # noqa: F401
+from tests.test_invoice_extraction_worker import pdf_bytes, worker_tenant as worker_tenant
 from tests.test_invoice_reviews import command as review_command
-from tests.test_invoice_source_custody import store  # noqa: F401
+from tests.test_invoice_source_custody import store as store
 from tests.test_source_partitions import command as partition_command
 
 

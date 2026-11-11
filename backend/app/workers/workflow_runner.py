@@ -16,6 +16,8 @@ import signal
 import tempfile
 import uuid
 
+from app.workers.error_tracking import configure_worker_error_tracking
+
 logger=logging.getLogger(__name__)
 STAGES=('intake_inspection','invoice_extraction','declaration_import','outbox','intake_extraction')
 INBOX_STAGES=('intake_inspection','outbox','intake_extraction')
@@ -64,7 +66,6 @@ class WorkflowRunner:
 
 def build_adapters(stages=INBOX_STAGES,*,session_factory=None,declaration_worker=None):
     """Construction performs no database or provider request."""
-    from app.core.config import settings
     from app.core.db import get_worker_session_factory
     from app.workers.workflow import process_once as inspect_once
     from app.workers.invoice_extraction import process_once as invoice_once
@@ -130,6 +131,7 @@ async def main(argv=None):
         logger.error('workflow result=readiness_failed (check worker DB role, storage, ClamAV signatures and German OCR)')
         return 1
     if args.healthcheck:return 0
+    configure_worker_error_tracking()
     if 'intake_inspection' in stages:
         from app.core.intake_inspection import run_isolated_inspection
         from app.core.worker_process import run_bounded_processor

@@ -36,7 +36,7 @@ from app.engine.mietkonto import (
 )
 from app.engine.rounding import CENT
 from app.engine.settlement import compute_bk_settlement
-from app.engine.snapshot import build_snapshot_payload, build_weg_snapshot_payload
+from app.engine.snapshot import build_snapshot_payload
 from app.engine.types import (
     CostPositionInput,
     LeasePeriodInput,
@@ -50,6 +50,8 @@ from app.engine.types import (
     WegSettlementInput,
 )
 from app.engine.weg import compute_weg_jahresabrechnung
+
+pytestmark = [pytest.mark.no_db, pytest.mark.slow]
 
 YEAR_START = date(2025, 1, 1)
 YEAR_END = date(2025, 12, 31)

@@ -1803,17 +1803,36 @@ docker compose --project-name verwalino --env-file .env.selfhost \
 ```
 
 Error reporting is **off by default**, including self-host. These optional keys
-are read from the API process environment (or its `.env`):
+are read from the process environment of the API and of every worker (or its `.env`):
 
 | Key | Default | Meaning |
 | --- | --- | --- |
 | `HV_ERROR_TRACKING_DSN` | empty | Empty disables SDK initialization and tracker transport. A nonempty Sentry-compatible project DSN opts in. Keep it in operator-managed secrets. |
 | `HV_ERROR_TRACKING_ENVIRONMENT` | `selfhost` | Deployment label, e.g. `hosted-production`; never a person's or organization's name. |
 
-The portable installer keeps tracking disabled and does not accept/forward these
-keys in `.env.selfhost`. The existing production Compose configuration also needs
-separately reviewed environment wiring before opting in; adding keys to the
-host's dotenv file alone does not forward them into a container.
+`docker-compose.prod.yml` and `infra/docker-compose.yml` forward both keys, with the
+defaults above, to the API and to every worker service (production: `worker`,
+`invoice-worker`, `inbox-worker`; portable: `declaration-worker`, `inbox-worker`).
+Production reads them from its protected env file or the invoking environment. The
+portable installer does not accept them in `.env.selfhost`; export them in the shell
+that runs `scripts/self-host.sh`, like `HV_RELEASE_ID`. Compose applies a changed value
+when it recreates the services.
+
+A worker reports a job at most once, on its first failure: a job recorded as
+`processor_failed` or `inspector_failed` (the isolated child crashed or returned
+unusable output, or its wrapper raised), a declaration `PIPELINE_ERROR` or unexpected
+worker error, or any other exception that aborts the job. Tags are `worker`
+(`intake_inspection`, `intake_extraction`, `outbox`, `invoice_extraction` or
+`declaration_import`), `job_id` and, for the two processor codes, `error_code`;
+`request_id` carries the same job ID as in the log lines. The event holds the exception
+type and stack but not the exception message or any breadcrumb, because parsers,
+providers and libraries can put document fragments there, and no job payload. A retried
+job reports again for each failed attempt with the same `job_id`. Timeouts, unsupported
+or invalid documents, integrity mismatches and failures before a job is claimed
+(database outage, organization discovery, readiness) stay in the logs and the job record.
+The invoice and inbox workers run only on the internal `backend` network because they
+handle untrusted documents. Their events arrive only if the DSN host is reachable from
+that network; otherwise only the API and the declaration worker (network `egress`) deliver.
 
 For the hosted offer, use **self-hosted GlitchTip** as the Sentry-compatible
 tracker. Provision its project, access controls, retention and TLS separately,

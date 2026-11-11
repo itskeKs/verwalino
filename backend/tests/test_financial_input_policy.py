@@ -1,7 +1,7 @@
 """Financial completeness is explicit, scoped and checked by legacy endpoints."""
 import pytest
-from tests.test_m3_settlement import m3_seed, _extras_for_exit
-from tests.test_m4_weg import m4_seed
+from tests.test_m3_settlement import m3_seed as m3_seed, _extras_for_exit
+from tests.test_m4_weg import m4_seed as m4_seed
 
 
 async def draft(client, seed, amount):
@@ -248,7 +248,7 @@ async def test_explicit_zero_budget_requires_and_accepts_declaration(client_a_ad
 
 # Isolated property/lease fixture; the declared contractual monthly advance alone
 # is never evidence that those receipts have arrived.
-from tests.test_m6_zahlungen import m6_seed
+from tests.test_m6_zahlungen import m6_seed as m6_seed
 
 
 @pytest.mark.asyncio

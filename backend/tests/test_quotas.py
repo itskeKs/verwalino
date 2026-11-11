@@ -6,9 +6,9 @@ import uuid
 import pytest
 
 from app.core.config import Settings, settings
-from tests.test_rent_changes import rent_db, rent_world, api_client  # noqa: F401
+from tests.test_rent_changes import rent_db as rent_db, rent_world as rent_world, api_client
 from tests.test_master_import import body, preview, apply, inventory
-from tests.test_financial_scope_boundary import scope_seed, worker_tenant  # noqa: F401
+from tests.test_financial_scope_boundary import scope_seed as scope_seed, worker_tenant as worker_tenant
 from sqlalchemy import text
 from fastapi import HTTPException
 

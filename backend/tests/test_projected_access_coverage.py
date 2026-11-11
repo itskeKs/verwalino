@@ -2,11 +2,11 @@
 import uuid
 import pytest
 from sqlalchemy import text
-from tests.test_financial_scope_boundary import worker_tenant,scope_seed  # noqa: F401
+from tests.test_financial_scope_boundary import worker_tenant as worker_tenant,scope_seed as scope_seed
 from tests.test_scoped_account_statements import statement_fixture,client,mutate
 from tests.test_report_source_access import property_for_clerk,contacts_for_clerk
-from tests.test_declaration_import_api import isolated_document_store, enable_declaration_imports  # noqa: F401
-from tests.test_invoice_source_custody import store  # noqa: F401
+from tests.test_declaration_import_api import isolated_document_store as isolated_document_store, enable_declaration_imports as enable_declaration_imports
+from tests.test_invoice_source_custody import store as store
 from tests.test_projected_combined_authority import projected
 from tests.test_access_coverage import capture
 from tests.test_scope_payment_reconciliation import read_value

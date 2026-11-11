@@ -16,7 +16,7 @@ from sqlalchemy.exc import DBAPIError
 from app import deployment
 from app.core.config import settings
 from app.core.declaration_test_database import require_disposable_database_settings
-from tests.test_rent_changes import rent_db, rent_world  # noqa: F401
+from tests.test_rent_changes import rent_db as rent_db, rent_world as rent_world
 
 
 @pytest.mark.asyncio

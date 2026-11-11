@@ -7,7 +7,7 @@ import uuid
 
 import pytest
 
-from tests.legacy_migration_database import legacy_auth_database
+from tests.legacy_migration_database import legacy_auth_database as legacy_auth_database
 import psycopg2
 from alembic import command
 from alembic.config import Config

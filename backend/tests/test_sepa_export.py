@@ -12,7 +12,7 @@ import pytest
 import pytest_asyncio
 from sqlalchemy import text
 
-from tests.test_rent_changes import rent_db, rent_world, api_client, post_change  # noqa: F401
+from tests.test_rent_changes import rent_db as rent_db, rent_world as rent_world, api_client, post_change
 
 IBAN = 'DE89370400440532013000'
 CREDITOR = 'DE98ZZZ09999999999'

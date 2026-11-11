@@ -29,6 +29,8 @@ from app.engine.vermoegensbericht import build_vermoegensbericht
 from app.engine.weg import WegValidationError
 from app.engine.wirtschaftsplan import compute_wirtschaftsplan
 
+pytestmark = pytest.mark.no_db
+
 YEAR_START = date(2025, 1, 1)
 YEAR_END = date(2025, 12, 31)
 

@@ -20,7 +20,7 @@ the M3 BK path.
 from __future__ import annotations
 
 import uuid
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import date, datetime, timezone
 from decimal import Decimal
 from types import SimpleNamespace

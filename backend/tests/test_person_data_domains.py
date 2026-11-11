@@ -141,17 +141,28 @@ async def test_raw_database_evidence_and_actor_fences(client_a_admin,seed_data):
 async def test_grant_expiry_uses_database_clock(client_a_admin,seed_data):
     from datetime import datetime,timedelta,timezone
     _,_,result_domain = await domain_fixture(client_a_admin)
-    domain = result_domain["id"]
-    actor = seed_data['user_a_readonly_id']
+    domain = uuid.UUID(result_domain["id"])
+    org,admin,actor,kept = seed_data['org_a_id'],seed_data['user_a_admin_id'],seed_data['user_a_readonly_id'],seed_data['user_a_clerk_id']
+    # The API stores an expiry that request latency cannot consume; the stored value is checked after the short grant expired.
     result = await client_a_admin.post(f'/api/person-data-domains/{domain}/grants',headers={'Idempotency-Key':str(uuid.uuid4())},json={
-        'user_id':str(actor),'capabilities':['read','export'],'reason_code':'TEAM_ACCESS',
-        'expires_at':(datetime.now(timezone.utc)+timedelta(seconds=1)).isoformat()})
+        'user_id':str(kept),'capabilities':['read'],'reason_code':'TEAM_ACCESS',
+        'expires_at':(datetime.now(timezone.utc)+timedelta(hours=1)).isoformat()})
     assert result.status_code == 201,result.text
-    assert await capability(seed_data,domain,actor,'read')
-    async with get_tenant_session(seed_data['org_a_id']) as session:
-        await session.execute(text("SELECT set_config('app.current_user_id', :actor, true)"),{'actor':str(actor)})
-        await session.execute(text('SELECT pg_sleep(GREATEST(0,EXTRACT(EPOCH FROM expires_at-clock_timestamp()))+0.02) FROM person_data_grant WHERE domain_id=:domain'), {'domain':uuid.UUID(domain)})
-        assert not await session.scalar(text("SELECT has_person_data_capability(:org,:domain,'read')"),{'org':seed_data['org_a_id'],'domain':uuid.UUID(domain)})
+    # The short grant takes its expiry from the database clock inside the INSERT and every check up to the denial runs in
+    # this one transaction, so no HTTP request sits inside the window (#132).
+    async with get_tenant_session(org) as session:
+        await actor_session(session,admin)
+        grant = await session.scalar(text("INSERT INTO person_data_grant(organization_id,domain_id,user_id,capabilities,reason_code,granted_by,request_key,expires_at) "
+            "VALUES(:org,:domain,:actor,ARRAY['read','export'],'TEAM_ACCESS',:admin,gen_random_uuid(),clock_timestamp()+interval '2 seconds') RETURNING id"),
+            {'org':org,'domain':domain,'actor':actor,'admin':admin})
+        await actor_session(session,actor)
+        assert await session.scalar(text("SELECT has_person_data_capability(:org,:domain,'read')"),{'org':org,'domain':domain})
+        await session.execute(text('SELECT pg_sleep(GREATEST(0,EXTRACT(EPOCH FROM expires_at-clock_timestamp()))+0.02) FROM person_data_grant WHERE id=:grant'),{'grant':grant})
+        assert not await session.scalar(text("SELECT has_person_data_capability(:org,:domain,'read')"),{'org':org,'domain':domain})
+    async with get_tenant_session(org) as session:
+        await actor_session(session,kept)
+        assert await session.scalar(text("SELECT expires_at>clock_timestamp()+interval '30 minutes' AND has_person_data_capability(:org,:domain,'read') FROM person_data_grant WHERE id=:grant"),
+            {'org':org,'domain':domain,'grant':uuid.UUID(result.json()['id'])})
 
 
 async def test_stale_admin_snapshot_cannot_prepare_grant(client_a_admin,seed_data,monkeypatch):

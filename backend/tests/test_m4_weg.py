@@ -509,7 +509,7 @@ async def test_previous_edited_values_compute_without_changing_final_original(cl
     assert (await api.get(f"/api/economic-plans/{old_id}/pdf")).content == original_pdf.content
 
 
-from tests.test_financial_scope_boundary import worker_tenant, scope_seed  # noqa: E402,F401
+from tests.test_financial_scope_boundary import worker_tenant as worker_tenant, scope_seed as scope_seed  # noqa: E402,F401
 
 
 def previous_plan_count(ids):
@@ -1633,8 +1633,8 @@ async def test_foreign_details_match_missing_german_responses(client_a_admin, cl
 
 
 # Resolution authority for special levies uses the existing frozen-levy fixtures.
-from tests.test_special_levy import (  # noqa: E402,F401
-    levy_db, levy_fixture, scope_seed, worker_tenant, client as levy_client,
+from tests.test_special_levy import (  # noqa: E402
+    levy_db as levy_db, levy_fixture as levy_fixture, client as levy_client,
     body as levy_body, create as create_levy,
 )
 

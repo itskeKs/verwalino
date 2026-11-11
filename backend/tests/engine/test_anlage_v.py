@@ -11,6 +11,8 @@ from app.engine.anlage_v import (
 )
 from app.services.report_service import PropertyYearReport
 
+pytestmark = pytest.mark.no_db
+
 
 def year_report(income=(), expenses=()):
     income = [dict(payment_type=code, amount=amount) for code, amount in income]

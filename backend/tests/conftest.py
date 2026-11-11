@@ -382,12 +382,20 @@ def pytest_collection_modifyitems(items):
     items.sort(key=lambda item: item.path.name != "test_testdb_reset.py")
 
 
+# False when every selected test is marked `no_db` (pytest -m no_db): the run then
+# needs neither the migrations nor a reachable test database.
+_session_needs_database = True
+
+
+def pytest_collection_finish(session):
+    global _session_needs_database
+    _session_needs_database = any(not item.get_closest_marker('no_db') for item in session.items)
+
+
 # ---------------------------------------------------------------------------
 # Run Alembic migrations before tests
 # ---------------------------------------------------------------------------
-def clear_disposable_source_context(cursor):
-    """Only for destructive migration rehearsals in the guarded disposable DB."""
-    from psycopg2 import sql
+def require_disposable_rehearsal_cursor(cursor):
     from sqlalchemy.engine import make_url
 
     _, _, sync_url = require_disposable_database_settings(settings)
@@ -400,6 +408,13 @@ def clear_disposable_source_context(cursor):
     cursor.execute("SELECT pg_get_userbyid(datdba) FROM pg_database WHERE datname=current_database()")
     if cursor.fetchone() != ('app_migrator',):
         raise RuntimeError("Migration rehearsal requires the owned disposable database")
+
+
+def clear_disposable_source_context(cursor):
+    """Only for destructive migration rehearsals in the guarded disposable DB."""
+    from psycopg2 import sql
+
+    require_disposable_rehearsal_cursor(cursor)
     # Reset only synthetic session invalidations in this owned disposable DB.
     # The production downgrade still refuses any positive generation.
     cursor.execute("SELECT EXISTS(SELECT 1 FROM information_schema.columns WHERE table_schema='public' AND table_name='user' AND column_name='session_version')")
@@ -781,6 +796,9 @@ def _upgrade_test_database(alembic_cfg):
 
 @pytest.fixture(scope="session", autouse=True)
 def run_migrations(request=None):
+    if not _session_needs_database:
+        yield
+        return
     # Keep the fileConfig patch active for later migration rehearsals during the session.
     with patch("logging.config.fileConfig"):
         yield migrate_test_database(request)
@@ -806,13 +824,17 @@ def configured_ai(seed_data):
 
 
 @pytest_asyncio.fixture(autouse=True)
-async def inject_test_engine(run_migrations):
+async def inject_test_engine(request, run_migrations):
     """Replace the app's DB engine with a fresh one per test function.
 
     This avoids asyncpg event-loop mismatch: each test function gets
     its own event loop (pytest-asyncio default), so the engine must be
-    recreated to use the current loop.
+    recreated to use the current loop. Tests marked `no_db` never touch
+    the database, so no engine is injected for them.
     """
+    if request.node.get_closest_marker('no_db'):
+        yield
+        return
     global _test_app_rw_engine
     _test_app_rw_engine = create_async_engine(
         APP_RW_URL, pool_pre_ping=True, pool_size=10, max_overflow=5
