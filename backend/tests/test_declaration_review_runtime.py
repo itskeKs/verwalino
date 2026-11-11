@@ -254,9 +254,11 @@ async def test_review_runtime_migration_rejects_unsafe_role(seed_data,change):
     from alembic.migration import MigrationContext
     from alembic.operations import Operations
     from tests.conftest import MIGRATOR_SYNC_URL
+    from tests.migration_rehearsal import lock_for_rehearsal
     migration=importlib.import_module('migrations.versions.0073_declaration_review_runtime');engine=create_engine(MIGRATOR_SYNC_URL)
     try:
         with engine.begin() as db,Operations.context(MigrationContext.configure(db)):
+            lock_for_rehearsal(db, *migration.TABLES)
             point=db.begin_nested()
             try:
                 db.execute(text(change))
@@ -264,6 +266,36 @@ async def test_review_runtime_migration_rejects_unsafe_role(seed_data,change):
                     with db.begin_nested(): migration.upgrade()
             finally: point.rollback()
     finally: engine.dispose()
+
+
+async def test_unsafe_role_probe_waits_for_transient_table_holder(seed_data):
+    import threading
+    import psycopg2
+    from tests.conftest import MIGRATOR_SYNC_URL
+    holder=psycopg2.connect(MIGRATOR_SYNC_URL);probe_ended=threading.Event();released=threading.Event()
+    try:
+        with holder.cursor() as cursor:
+            cursor.execute('SELECT pg_backend_pid()');pid=cursor.fetchone()[0]
+            cursor.execute('LOCK TABLE public.declaration_candidate IN SHARE UPDATE EXCLUSIVE MODE')
+
+        def release_once_waited_on():
+            # Release only after the probe is seen waiting behind this holder, like an
+            # autovacuum ANALYZE that ends shortly after the probe starts.
+            with holder.cursor() as watcher:
+                while not probe_ended.is_set():
+                    watcher.execute('SELECT pg_stat_clear_snapshot()')  # pg_stat_activity is cached per transaction
+                    watcher.execute("SELECT EXISTS(SELECT 1 FROM pg_stat_activity WHERE wait_event_type='Lock' AND %s=ANY(pg_blocking_pids(pid)))",(pid,))
+                    if watcher.fetchone()[0]:
+                        holder.rollback();released.set();return
+                    probe_ended.wait(0.01)
+        thread=threading.Thread(target=release_once_waited_on);thread.start()
+        try:
+            await test_review_runtime_migration_rejects_unsafe_role(seed_data,'ALTER ROLE app_review INHERIT')
+        finally:
+            probe_ended.set();thread.join(10)
+        assert released.is_set()
+    finally:
+        holder.rollback();holder.close()
 
 
 async def test_expired_review_context_rolls_back_entire_http_review(committed_scope):
