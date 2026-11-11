@@ -65,7 +65,7 @@ it("shows a failed extraction as stored original and queues a retry without a co
 
 afterEach(() => vi.restoreAllMocks());
 
-it.each(["Objekt *", "Kategorie *", "Umlagefaehigkeit *"])("explicitly labels the active invoice draft's %s without including options", async name => {
+it.each(["Objekt *", "Kategorie *", "Umlagefähigkeit *"])("explicitly labels the active invoice draft's %s without including options", async name => {
   const document: InvoiceDocument = {
     id: "doc-label", organization_id: "org", cost_entry_id: null, storage_backend: "local",
     original_filename: "Rechnung.pdf", mime_type: "application/pdf", content_byte_size: 100,
@@ -144,14 +144,14 @@ async function fillInvoiceCostForm() {
 }
 
 it.each([
-  ["Voll umlagefaehig", "UMLAGEFAEHIG"],
-  ["Teilweise umlagefaehig", "TEILWEISE_PRUEFEN"],
-  ["Nicht umlagefaehig", "NICHT_UMLAGEFAEHIG"],
+  ["Voll umlagefähig", "UMLAGEFAEHIG"],
+  ["Teilweise umlagefähig", "TEILWEISE_PRUEFEN"],
+  ["Nicht umlagefähig", "NICHT_UMLAGEFAEHIG"],
 ])("submits canonical apportionability for the visible choice %s", async (label, canonical) => {
   const create = await openInvoiceCostForPayload();
   await fillInvoiceCostForm();
   const option = screen.getByRole("option", { name: label }) as HTMLOptionElement;
-  fireEvent.change(screen.getByRole("combobox", { name: "Umlagefaehigkeit *" }), { target: { value: option.value } });
+  fireEvent.change(screen.getByRole("combobox", { name: "Umlagefähigkeit *" }), { target: { value: option.value } });
   fireEvent.click(screen.getByRole("button", { name: "Entwurf erstellen" }));
   await screen.findByText("Saved invoice cost");
   expect(create).toHaveBeenCalledTimes(1);
@@ -166,12 +166,12 @@ it.each([
 });
 
 it.each([
-  ["Voll umlagefaehig", "UMLAGEFAEHIG"],
-  ["Teilweise umlagefaehig", "TEILWEISE_PRUEFEN"],
-  ["Nicht umlagefaehig", "NICHT_UMLAGEFAEHIG"],
+  ["Voll umlagefähig", "UMLAGEFAEHIG"],
+  ["Teilweise umlagefähig", "TEILWEISE_PRUEFEN"],
+  ["Nicht umlagefähig", "NICHT_UMLAGEFAEHIG"],
 ])("keeps the category default %s selected and submits it without manual apportionability changes", async (label, canonical) => {
   const create = await openInvoiceCostForPayload(canonical);
-  const select = screen.getByRole("combobox", { name: "Umlagefaehigkeit *" });
+  const select = screen.getByRole("combobox", { name: "Umlagefähigkeit *" });
   expect(select).toHaveValue(canonical);
   expect((screen.getByRole("option", { name: label }) as HTMLOptionElement).selected).toBe(true);
   await fillInvoiceCostForm();

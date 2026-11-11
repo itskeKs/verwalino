@@ -38,8 +38,8 @@ def create_dated_owner_drafts(browser_world, dated_owners):
         for owner, months in [(w['owners'][1], list(range(1, 7))), (w['buyer'], list(range(7, 13)))]:
             await b.visit('/mahnungen')
             await button(b.page, '+ Neue Mahnung').click()
-            await field(b.page, 'Empfaengertyp *').select_option('owner')
-            await b.select('Eigentuemer *', owner)
+            await field(b.page, 'Empfängertyp *').select_option('owner')
+            await b.select('Eigentümer *', owner)
             await b.select('WEG-Objekt *', w['property'])
             await b.select('Wirtschaftsplan', w['plan'])
             for label, value in [('Zeitraum von *', '2026-01-01'), ('Zeitraum bis *', '2026-12-31'), ('Stichtag', '2027-01-15')]:
@@ -52,8 +52,8 @@ def create_dated_owner_drafts(browser_world, dated_owners):
             assert [row['period_month'] for row in notice['included_items']] == months
             for width in (1280, 360):
                 await b.page.set_viewport_size({'width': width, 'height': 900})
-                await b.row('Hauptforderung (Rueckstand)', '2.400,00 €')
-                table = b.page.locator('.card').filter(has=b.page.get_by_role('heading', name='Rueckstandsaufstellung', exact=True)).get_by_role('table')
+                await b.row('Hauptforderung (Rückstand)', '2.400,00 €')
+                table = b.page.locator('.card').filter(has=b.page.get_by_role('heading', name='Rückstandsaufstellung', exact=True)).get_by_role('table')
                 await expect(table.locator('tbody tr')).to_have_count(6)
                 for month in months:
                     await expect(table.get_by_role('cell', name=f'2026/{month:02}', exact=True)).to_be_visible()
@@ -82,7 +82,7 @@ def july_plan(world, seed_data):
 def submit_early_owner_notice(browser_world, july_plan, width):
     b, w = browser_world, july_plan
     w['selections'] = {
-        'Eigentuemer *': w['owners'][0], 'WEG-Objekt *': w['property'], 'Wirtschaftsplan': w['plan'],
+        'Eigentümer *': w['owners'][0], 'WEG-Objekt *': w['property'], 'Wirtschaftsplan': w['plan'],
         'Zeitraum von *': '2026-07-01', 'Zeitraum bis *': '2026-07-31', 'Stichtag': '2026-07-02',
     }
 
@@ -90,9 +90,9 @@ def submit_early_owner_notice(browser_world, july_plan, width):
         await b.page.set_viewport_size({'width': width, 'height': 800})
         await b.visit('/mahnungen')
         await button(b.page, '+ Neue Mahnung').click()
-        await field(b.page, 'Empfaengertyp *').select_option('owner')
+        await field(b.page, 'Empfängertyp *').select_option('owner')
         for label, value in w['selections'].items():
-            if label in {'Eigentuemer *', 'WEG-Objekt *', 'Wirtschaftsplan'}:
+            if label in {'Eigentümer *', 'WEG-Objekt *', 'Wirtschaftsplan'}:
                 await b.select(label, value)
             else:
                 await field(b.page, label).fill(value)
@@ -113,11 +113,11 @@ def early_owner_notice_is_refused(browser_world, world, july_plan):
 
     async def check_form():
         await expect(b.page.get_by_text(detail, exact=True)).to_be_in_viewport(ratio=1)
-        await expect(b.page.get_by_role('combobox', name='Empfaengertyp *', exact=True)).to_have_value('owner')
+        await expect(b.page.get_by_role('combobox', name='Empfängertyp *', exact=True)).to_have_value('owner')
         await expect(b.page.get_by_role('combobox', name='Abrechnungskreis', exact=True)).to_have_value(w['scope'])
         for label, value in w['selections'].items():
             control = (b.page.get_by_role('combobox', name=label, exact=True)
-                       if label in {'Eigentuemer *', 'WEG-Objekt *', 'Wirtschaftsplan'} else field(b.page, label))
+                       if label in {'Eigentümer *', 'WEG-Objekt *', 'Wirtschaftsplan'} else field(b.page, label))
             await expect(control).to_have_value(value)
 
     rows = world.act('GET', '/api/dunning', params={'owner_profile_id': w['owners'][0]})
@@ -139,7 +139,7 @@ def retry_owner_notice(browser_world, july_plan):
 @then('exactly one owner draft opens with 600 EUR principal for the charge due on 3 July')
 def july_owner_draft_is_correct(browser_world, world, july_plan):
     notice = july_plan['draft']
-    browser_world.run(browser_world.row('Hauptforderung (Rueckstand)', '600,00 €'))
+    browser_world.run(browser_world.row('Hauptforderung (Rückstand)', '600,00 €'))
     rows = world.act('GET', '/api/dunning', params={'owner_profile_id': july_plan['owners'][0]})
     assert rows.status_code == 200 and [row['id'] for row in rows.json()] == [notice['id']], rows.text
     draft = world.act('GET', f"/api/dunning/{notice['id']}")
@@ -172,7 +172,7 @@ def tenant_draft_without_duplicate(browser_world, world):
     notice = world.data['immediate_tenant_draft']
     assert notice['principal_amount'] == '700.00'
     assert notice['tenant_profile_id'] == world.data['tenants'][0]['id']
-    browser_world.run(browser_world.row('Hauptforderung (Rueckstand)', '700,00 €'))
+    browser_world.run(browser_world.row('Hauptforderung (Rückstand)', '700,00 €'))
     rows = world.act('GET', '/api/dunning', params={'tenant_profile_id': notice['tenant_profile_id']})
     assert rows.status_code == 200 and [row['id'] for row in rows.json()] == [notice['id']], rows.text
 
@@ -191,12 +191,12 @@ async def submit_without_scope(browser_world, width):
     for label, value in dates.items():
         await field(b.page, label).fill(value)
     data['dunning_fields'] = {
-        'Empfaengertyp *': 'tenant',
+        'Empfängertyp *': 'tenant',
         'Mieter *': data['tenants'][0]['id'],
         'Mietvertrag *': data['leases'][0]['id'],
         **dates,
         'Karenzzeit (Tage)': await field(b.page, 'Karenzzeit (Tage)').input_value(),
-        'Mahngebuehr (Override)': await field(b.page, 'Mahngebuehr (Override)').input_value(),
+        'Mahngebühr (Override)': await field(b.page, 'Mahngebühr (Override)').input_value(),
         'Abrechnungskreis': '',
     }
     await expect(field(b.page, 'Abrechnungskreis')).to_have_value('')
@@ -225,7 +225,7 @@ async def visible_scope_refusal(browser_world):
     for label, value in b.world.data['dunning_fields'].items():
         control = (
             b.page.get_by_role('combobox', name=label, exact=True)
-            if label in {'Empfaengertyp *', 'Mieter *', 'Mietvertrag *', 'Abrechnungskreis'}
+            if label in {'Empfängertyp *', 'Mieter *', 'Mietvertrag *', 'Abrechnungskreis'}
             else field(b.page, label)
         )
         await expect(control).to_have_value(value)
@@ -240,7 +240,7 @@ async def retry_with_scope(browser_world):
 
 @then('exactly one tenant draft exists and opens with 750 EUR principal')
 def scoped_tenant_principal(browser_world, world):
-    browser_world.run(browser_world.row('Hauptforderung (Rueckstand)', '750,00 €'))
+    browser_world.run(browser_world.row('Hauptforderung (Rückstand)', '750,00 €'))
     notice = world.data['scoped_tenant_draft']
     assert notice['principal_amount'] == '750.00'
     rows = world.act('GET', '/api/dunning', params={'tenant_profile_id': world.data['tenants'][0]['id']})
@@ -264,7 +264,7 @@ async def open_fee_form(browser, width):
 
 async def submit_fee(browser, kind, fee, tmp_path):
     page = browser.page
-    await field(page, "Mahngebuehr (Override)").fill(fee)
+    await field(page, "Mahngebühr (Override)").fill(fee)
     async with page.expect_response(lambda r: r.request.method == "POST" and r.url.endswith(f"/api/dunning/{kind}")) as pending:
         await button(page, "Mahnung erstellen").click()
     response = await pending.value
@@ -296,8 +296,8 @@ async def zero_fee_tenant(browser_world, fee, width, tmp_path):
 async def zero_fee_owner(browser_world, july_plan, fee, width, tmp_path):
     b, w = browser_world, july_plan
     await open_fee_form(b, width)
-    await field(b.page, "Empfaengertyp *").select_option("owner")
-    await b.select("Eigentuemer *", w["owners"][0])
+    await field(b.page, "Empfängertyp *").select_option("owner")
+    await b.select("Eigentümer *", w["owners"][0])
     await b.select("WEG-Objekt *", w["property"])
     await b.select("Wirtschaftsplan", w["plan"])
     for label, value in [("Zeitraum von *", "2026-07-01"), ("Zeitraum bis *", "2026-07-31"), ("Stichtag", "2026-07-04")]:
