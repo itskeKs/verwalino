@@ -1,7 +1,10 @@
 """User -- an authentication account, scoped to one Organization (assumption A-2).
 
 Tenant-behaftet: carries organization_id, RLS active.
-Constraint: UNIQUE(organization_id, email) -- email unique per org, not globally.
+Constraint: UNIQUE(organization_id, email); additionally a globally unique
+canonical sign-in address (uq_user_signin_email, migration 0183): one address
+belongs to exactly one organization, so login, reset and signup resolve one
+account per address.
 """
 
 from __future__ import annotations

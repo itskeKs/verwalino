@@ -11,7 +11,7 @@ Feature: Organization export import
   Scenario: An administrator imports into an empty organization with consistent identities
     Given a separate organization has rental records and an original for export
     When its administrator downloads the organization archive
-    And the archive is imported into an empty organization
+    And the archive is imported into an empty organization after its source organization was deleted
     Then the imported organization has equal entity counts and normalized content
 
   Scenario: Missing dependencies refuse the whole import

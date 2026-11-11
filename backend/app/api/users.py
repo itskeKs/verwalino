@@ -26,6 +26,11 @@ from app.repositories.pagination import Page, PageQuery, page_query, page_rows
 
 router = APIRouter(prefix="/api/users", tags=["users"])
 
+# Generic receipt for a taken sign-in address: identical for a duplicate in
+# the own organization and for an address held by another organization, so
+# the response never reveals where an address is used (issue #134).
+SIGNIN_ADDRESS_TAKEN = "Diese E-Mail-Adresse kann nicht verwendet werden."
+
 
 class UserOut(BaseModel):
     id: str
@@ -184,7 +189,7 @@ async def create_user(
     # Check uniqueness
     existing = await user_repo.get_by_email(body.email)
     if existing is not None:
-        raise HTTPException(status_code=409, detail="Email already in use")
+        raise HTTPException(status_code=409, detail=SIGNIN_ADDRESS_TAKEN)
 
     user = User(
         email=body.email,
@@ -198,9 +203,9 @@ async def create_user(
     except IntegrityError as exc:
         constraint = getattr(getattr(exc.orig, "__cause__", None), "constraint_name", None)
         if getattr(exc.orig, "sqlstate", None) == "23505" and constraint in {
-            "uq_user_org_email", "uq_user_org_canonical_email"
+            "uq_user_org_email", "uq_user_signin_email"
         }:
-            raise HTTPException(409, "Email already in use") from exc
+            raise HTTPException(status_code=409, detail=SIGNIN_ADDRESS_TAKEN) from exc
         raise
 
     # Create membership
