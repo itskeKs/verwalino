@@ -3,7 +3,7 @@
  * download PDF (issued only). GoBD-compliant: issued notices are immutable.
  *
  * M7 Mahnwesen: dunning notice lifecycle with GoBD immutability.
- * Shows included items (Rueckstandsaufstellung), amounts breakdown,
+ * Shows included items (Rückstandsaufstellung), amounts breakdown,
  * and status-dependent actions.
  */
 
@@ -27,6 +27,7 @@ import type {
 import { centsFromDecimal, formatDate, formatDateTime, formatMoney } from "../lib/format";
 import { ApiError } from "../api/client";
 import { MailDispatch } from "../components/MailDispatch";
+import { PAYMENT_TYPE_LABELS } from "../lib/paymentTypes";
 
 const STATUS_LABELS: Record<string, string> = {
   draft: "Entwurf",
@@ -43,15 +44,6 @@ const LEVEL_LABELS: Record<number, string> = {
   1: "Zahlungserinnerung",
   2: "Mahnung",
   3: "Letzte Mahnung",
-};
-
-const PAYMENT_TYPE_LABELS: Record<string, string> = {
-  KALTMIETE: "Kaltmiete",
-  NK_VORAUSZAHLUNG: "Betriebskosten-Vorauszahlung", HK_VORAUSZAHLUNG: "Heizkosten-Vorauszahlung",
-  KAUTION: "Kaution",
-  HAUSGELD_VORSCHUSS: "Hausgeld-Vorschuss",
-  RUECKLAGENANTEIL: "Ruecklagenanteil",
-  SONDERZAHLUNG: "Sonder-/Nachzahlung",
 };
 
 export function DunningNoticeDetailPage() {
@@ -118,7 +110,7 @@ export function DunningNoticeDetailPage() {
     }
     if (notice.owner_profile_id) {
       const op = ownerProfiles.find((o) => o.id === notice.owner_profile_id);
-      return op ? `Eigentuemer: ${getPersonName(op.person_id)}` : "-";
+      return op ? `Eigentümer: ${getPersonName(op.person_id)}` : "-";
     }
     return "-";
   }
@@ -131,7 +123,7 @@ export function DunningNoticeDetailPage() {
   async function handleIssue() {
     if (!dunningId) return;
     const confirmed = window.confirm(
-      "Mahnung ausgeben? Nach der Ausgabe ist die Mahnung unveraenderbar (GoBD). " +
+      "Mahnung ausgeben? Nach der Ausgabe ist die Mahnung unveränderbar (GoBD). " +
         "Der Entwurf wird endgültig als Mahnung gespeichert. Die Ausstellung weist keine Zustellung nach.",
     );
     if (!confirmed) return;
@@ -146,7 +138,7 @@ export function DunningNoticeDetailPage() {
         if (err.status === 409) {
           setActionError(
             "Fehler: Die Mahnung kann in diesem Status nicht ausgegeben werden. " +
-              "Moeglicherweise wurde sie bereits ausgegeben.",
+              "Möglicherweise wurde sie bereits ausgegeben.",
           );
         } else {
           setActionError(err.message);
@@ -177,7 +169,7 @@ export function DunningNoticeDetailPage() {
         if ([401, 403, 404].includes(err.status)) { setNotice(null); setError(err.message); }
         if (err.status === 409) {
           setActionError(
-            "Fehler: Ausgestellte Mahnungen koennen nicht geloescht werden (GoBD).",
+            "Fehler: Ausgestellte Mahnungen können nicht gelöscht werden (GoBD).",
           );
         } else {
           setActionError(err.message);
@@ -256,7 +248,7 @@ export function DunningNoticeDetailPage() {
             borderColor: "#ffcc02",
           }}
         >
-          <strong>GoBD:</strong> Diese Mahnung ist ausgestellt und unveraenderbar.
+          <strong>GoBD:</strong> Diese Mahnung ist ausgestellt und unveränderbar.
           Die gespeicherten Inhalte dürfen nicht nachträglich geändert werden. Die Ausstellung allein ist kein Zustellnachweis.
           {notice.issued_at && (
             <div style={{ marginTop: "0.25rem", fontSize: "0.82rem" }}>
@@ -268,11 +260,11 @@ export function DunningNoticeDetailPage() {
 
       {/* Detail card */}
       <div className="card" style={{ marginBottom: "1.5rem" }}>
-        <h2>Uebersicht</h2>
+        <h2>Übersicht</h2>
         <table className="info-table">
           <tbody>
             <tr>
-              <td>Empfaenger</td>
+              <td>Empfänger</td>
               <td>{getRecipientLabel()}</td>
             </tr>
             <tr>
@@ -315,11 +307,11 @@ export function DunningNoticeDetailPage() {
 
       {/* Amounts summary */}
       <div className="card" style={{ marginBottom: "1.5rem" }}>
-        <h2>Betraege</h2>
+        <h2>Beträge</h2>
         <table className="info-table">
           <tbody>
             <tr>
-              <td>Hauptforderung (Rueckstand)</td>
+              <td>Hauptforderung (Rückstand)</td>
               <td
                 style={{
                   fontFamily: "var(--mono)",
@@ -400,10 +392,10 @@ export function DunningNoticeDetailPage() {
         </div>}
       </section>}
 
-      {/* Included items (Rueckstandsaufstellung) */}
+      {/* Included items (Rückstandsaufstellung) */}
       {includedItems.length > 0 && (
         <div className="card" style={{ marginBottom: "1.5rem" }}>
-          <h2>Rueckstandsaufstellung</h2>
+          <h2>Rückstandsaufstellung</h2>
           <div style={{ overflowX: "auto" }}>
             <table className="data-table">
               <thead>
@@ -492,7 +484,7 @@ export function DunningNoticeDetailPage() {
               disabled={actionLoading}
               style={{ color: "#b71c1c" }}
             >
-              {notice.accounting_scope_id ? "Entwurf verwerfen" : "Entwurf loeschen"}
+              {notice.accounting_scope_id ? "Entwurf verwerfen" : "Entwurf löschen"}
             </button>
           </>
         )}

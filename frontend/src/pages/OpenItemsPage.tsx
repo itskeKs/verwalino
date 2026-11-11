@@ -2,7 +2,7 @@
  * Open items page -- overview of offene Posten across all leases.
  *
  * Loads one complete scoped result and displays a summary per tenant/lease.
- * Rueckstand (debt) highlighted in red, Guthaben in green.
+ * Rückstand (debt) highlighted in red, Guthaben in green.
  */
 
 import { useEffect, useState, useCallback, useContext } from "react";
@@ -28,15 +28,7 @@ import { ApiError } from "../api/client";
 import { centsFromDecimal, formatMoney } from "../lib/format";
 import { AuthCtx } from "../auth/useAuth";
 import { DunningBatch } from "../components/DunningBatch";
-
-const PAYMENT_TYPE_LABELS: Record<string, string> = {
-  KALTMIETE: "Kaltmiete",
-  NK_VORAUSZAHLUNG: "Betriebskosten-Vorauszahlung", HK_VORAUSZAHLUNG: "Heizkosten-Vorauszahlung",
-  KAUTION: "Kaution",
-  HAUSGELD_VORSCHUSS: "Hausgeld-Vorschuss",
-  RUECKLAGENANTEIL: "Ruecklagenanteil",
-  SONDERZAHLUNG: "Sonder-/Nachzahlung",
-};
+import { PAYMENT_TYPE_LABELS } from "../lib/paymentTypes";
 
 interface LeaseOpenItems {
   lease: LeaseRecord;
@@ -153,7 +145,7 @@ export function OpenItemsPage() {
 
       {/* Period selection */}
       <div className="card" style={{ marginBottom: "1.5rem" }}>
-        <h2>Zeitraum waehlen</h2>
+        <h2>Zeitraum wählen</h2>
         <fieldset disabled={querying} className="form-grid" style={{ border: 0, padding: 0, margin: 0, minWidth: 0 }} onChangeCapture={() => { setResults(null); setError(null); }}>
           <AccountingScopeSelector kind="MIET" capability="read" value={scopeId} onChange={setScopeId} />
           <label>
