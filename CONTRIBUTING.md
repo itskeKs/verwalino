@@ -251,7 +251,7 @@ downloaded `.test_durations` to `backend/.test_durations` before reviewing the d
 | `backend/migrations/versions/` | Alembic migrations; committed ones are never edited |
 | `backend/tests/` | unit and API tests; `bdd/` binds scenarios, `bdd/browser.py` owns browser fixtures, `bdd/report.py` writes reports, `bdd/steps/browser_*.py` shares browser steps |
 | `features/` | API and `@browser` Gherkin scenarios (executable specs) |
-| `.github/workflows/nightly-scenarios.yaml` | nightly self-host scenarios, 90-day report artifacts and deduplicated failure issues; hosted mode pending #18 |
+| `.github/workflows/nightly-scenarios.yaml` | nightly scenarios in both modes (`selfhost` on the installer's stack, `hosted` API features on the local stack), 90-day report artifacts and deduplicated failure issues; [where each mode runs](features/README.md#deployment-modes) |
 | `.github/workflows/build-main-image.yaml` | filtered main pushes: publishes and signs SHA-only staging images without a release |
 | `.github/workflows/deploy-staging.yaml` | successful `Build main image` completion via `workflow_run`: deploys that run's main SHA through the existing forced-command SSH key |
 | `.github/workflows/canary.yaml`, `scripts/canary.py`, `scripts/test-canary.py` | 15-minute production API journey, sanitized reports, e-mail/issue alerts and fake HTTP contracts |
