@@ -369,7 +369,8 @@ the hosted API with the existing captured-SMTP fixture. It needs no Mailpit serv
 and removes its synthetic organization on teardown, even after a UI failure,
 using the existing guarded test cleanup for retained originals. Screenshots go
 to pytest's temporary directory by default; set `VERWALINO_CAPTURE_DESIGN=1`
-explicitly to refresh the tracked images in `docs/assets/design/`.
+explicitly to refresh the tracked images in `docs/assets/design/`. `make screenshots`
+runs the design-table scenario of the personal-design feature with it set.
 
 **Runner decision:** pytest-playwright keeps pytest-bdd, the API World and one Python
 step library instead of adding playwright-bdd and a second Node test runner.

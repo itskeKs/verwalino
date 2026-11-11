@@ -37,6 +37,7 @@ import type {
 import { ReserveEvidenceFields } from "../components/ReserveEvidenceFields";
 import { ApiError } from "../api/client";
 import { centsFromDecimal, formatDate, formatDateTime, formatMoney } from "../lib/format";
+import { PAYMENT_TYPE_LABELS } from "../lib/paymentTypes";
 
 const STATUS_LABELS: Record<string, string> = {
   draft: "Entwurf",
@@ -48,16 +49,6 @@ const STATUS_CSS: Record<string, string> = {
   draft: "badge--draft",
   booked: "badge--confirmed",
   cancelled: "badge--superseded",
-};
-
-const PAYMENT_TYPE_LABELS: Record<string, string> = {
-  KALTMIETE: "Kaltmiete",
-  NK_VORAUSZAHLUNG: "Betriebskosten-Vorauszahlung", HK_VORAUSZAHLUNG: "Heizkosten-Vorauszahlung",
-  KAUTION: "Kaution",
-  HAUSGELD_VORSCHUSS: "Hausgeld-Vorschuss",
-  RUECKLAGENANTEIL: "Ruecklagenanteil",
-  RUECKLAGENENTNAHME: "Rücklagenentnahme",
-  SONDERZAHLUNG: "Sonder-/Nachzahlung",
 };
 
 const DIRECTION_LABELS: Record<string, string> = {
@@ -170,7 +161,7 @@ export function PaymentDetailPage() {
     }
     if (payment.owner_profile_id) {
       const op = ownerProfiles.find((o) => o.id === payment.owner_profile_id);
-      return op ? `Eigentuemer: ${getPersonName(op.person_id)}` : "-";
+      return op ? `Eigentümer: ${getPersonName(op.person_id)}` : "-";
     }
     return "-";
   }
@@ -199,8 +190,8 @@ export function PaymentDetailPage() {
   async function handleBook() {
     if (!paymentId) return;
     const confirmed = window.confirm(
-      "Zahlung buchen? Nach der Buchung ist die Zahlung unveraenderbar (GoBD). " +
-        "Korrekturen sind nur als Stornobuchung moeglich.",
+      "Zahlung buchen? Nach der Buchung ist die Zahlung unveränderbar (GoBD). " +
+        "Korrekturen sind nur als Stornobuchung möglich.",
     );
     if (!confirmed) return;
     setActionLoading(true);
@@ -379,8 +370,8 @@ export function PaymentDetailPage() {
             borderColor: "#ffcc02",
           }}
         >
-          <strong>GoBD:</strong> Diese Zahlung ist gebucht und unveraenderbar.
-          Korrekturen sind nur als Stornobuchung (Gegenbuchung) moeglich.
+          <strong>GoBD:</strong> Diese Zahlung ist gebucht und unveränderbar.
+          Korrekturen sind nur als Stornobuchung (Gegenbuchung) möglich.
           {payment.retention_until && (
             <div style={{ marginTop: "0.25rem", fontSize: "0.82rem" }}>
               Aufbewahrung bis: {formatDate(payment.retention_until)}

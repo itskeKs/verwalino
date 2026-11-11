@@ -43,7 +43,7 @@ it("classifies owner balances at the selected cutoff and displays the resolved d
   });
   const user = userEvent.setup(); render(<MietkontoPage />);
   await user.selectOptions(await screen.findByRole("combobox", { name: "Ansicht" }), "owner");
-  await user.selectOptions(screen.getByRole("combobox", { name: "Eigentuemer *" }), "owner-due");
+  await user.selectOptions(screen.getByRole("combobox", { name: "Eigentümer *" }), "owner-due");
   fireEvent.change(screen.getByLabelText("Fällig am *"), { target: { value: "2026-07-02" } });
   await user.click(screen.getByRole("button", { name: "Abrufen" }));
   const saldo = (await screen.findByText("Saldo", { exact: true })).closest("tr")!;
@@ -137,7 +137,7 @@ it("gives native owner account selectors exact accessible names", async () => {
   render(<MemoryRouter><MietkontoPage /></MemoryRouter>);
   const view = await screen.findByRole("combobox", { name: "Ansicht" });
   await user.selectOptions(view, "owner");
-  expect(screen.getByRole("combobox", { name: "Eigentuemer *" })).toBeVisible();
+  expect(screen.getByRole("combobox", { name: "Eigentümer *" })).toBeVisible();
   expect(screen.getByRole("option", { name: /Sonderumlagen/ })).toBeVisible();
 });
 
@@ -149,7 +149,7 @@ it("loads frozen levy dues for an owner without an economic plan using an explic
   const user = userEvent.setup(); render(<MemoryRouter><MietkontoPage /></MemoryRouter>);
   await user.selectOptions(await screen.findByRole("combobox", { name: "Ansicht" }), "owner");
   await screen.findByRole("option", { name: "Ada Besitzer" });
-  await user.selectOptions(screen.getByRole("combobox", { name: "Eigentuemer *" }), "owner-levy");
+  await user.selectOptions(screen.getByRole("combobox", { name: "Eigentümer *" }), "owner-levy");
   await user.selectOptions(screen.getByRole("combobox", { name: "Abrechnungskreis read" }), "weg-scope");
   await user.click(screen.getByRole("button", { name: "Abrufen" }));
   await waitFor(() => expect(api.ownerStatement).toHaveBeenCalledWith("owner-levy", expect.any(String), expect.any(String), undefined, "weg-scope", expect.any(String)));

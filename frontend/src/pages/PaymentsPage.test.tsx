@@ -1,6 +1,6 @@
 import { api, ApiError } from "../api/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { MemoryRouter, useLocation } from "react-router-dom";
 import userEvent from "@testing-library/user-event";
 import type { Mock, MockInstance } from "vitest";
@@ -44,11 +44,16 @@ it.each(["Bankkonto *", "Zahlungstyp *", "Richtung *", "Mieter", "Mietvertrag"])
   await openCreate();
   expectExplicitSelect(label);
 });
-it("explicitly names Eigentuemer after switching to an owner payment type", async () => {
+it("offers the reserve share payment type with its umlaut", async () => {
+  await openCreate();
+  const type = expectExplicitSelect("Zahlungstyp *");
+  expect(within(type).getByRole("option", { name: "Rücklagenanteil" })).toHaveValue("RUECKLAGENANTEIL");
+});
+it("explicitly names Eigentümer after switching to an owner payment type", async () => {
   await openCreate();
   const type = Array.from(document.querySelectorAll("label")).find(item => item.firstChild?.textContent?.trim() === "Zahlungstyp *")!.querySelector("select")!;
   fireEvent.change(type, { target: { value: "HAUSGELD_VORSCHUSS" } });
-  expectExplicitSelect("Eigentuemer");
+  expectExplicitSelect("Eigentümer");
 });
 it('offers a reserve withdrawal without an owner or tenant counterparty', async () => {
   await openCreate();
@@ -56,7 +61,7 @@ it('offers a reserve withdrawal without an owner or tenant counterparty', async 
   expect(screen.getByLabelText('Zahlungstyp *', { exact: true })).toHaveValue('RUECKLAGENENTNAHME');
   expect(await screen.findByLabelText('Bestätigter Kostenbeleg *')).toBeInTheDocument();
   expect(screen.getByLabelText('Beschluss-Sammlung *')).toBeInTheDocument();
-  expect(screen.queryByLabelText('Eigentuemer', { exact: true })).not.toBeInTheDocument();
+  expect(screen.queryByLabelText('Eigentümer', { exact: true })).not.toBeInTheDocument();
   expect(screen.queryByLabelText('Mieter', { exact: true })).not.toBeInTheDocument();
 });
 it('shows the German app refusal when a manual reserve payout has no evidence', async () => {

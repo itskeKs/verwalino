@@ -61,7 +61,7 @@ async def _browser_notice(browser_world, period_start, period_end, cutoff):
     data = browser_world.world.data
     await browser_world.visit("/mahnungen")
     await button(page, "+ Neue Mahnung").click()
-    await field(page, "Empfaengertyp *").select_option("tenant")
+    await field(page, "Empfängertyp *").select_option("tenant")
     await browser_world.select("Mieter *", data["tenants"][0]["id"])
     await browser_world.select("Mietvertrag *", data["leases"][0]["id"])
     for label, value in (("Zeitraum von *", period_start), ("Zeitraum bis *", period_end), ("Stichtag", cutoff)):
@@ -117,7 +117,7 @@ async def readable_issued_amounts(browser_world):
             await expect(page.locator("aside")).to_have_count(0)
         for title, amounts in (
             ("Eingefrorene Zinsberechnung", ["1.234,56 €", "11,66 €"]),
-            ("Rueckstandsaufstellung", ["1.234,56 €"]),
+            ("Rückstandsaufstellung", ["1.234,56 €"]),
         ):
             card = page.locator(".card").filter(has=page.get_by_role("heading", name=title, exact=True))
             table = card.get_by_role("table").first
@@ -224,7 +224,7 @@ async def scope_retained(browser_world):
 @when("the manager creates the scoped notice")
 @browser_step
 async def create_scoped_notice(browser_world):
-    await field(browser_world.page, "Mahngebuehr (Override)").fill("0")
+    await field(browser_world.page, "Mahngebühr (Override)").fill("0")
     await submit(browser_world, "Mahnung erstellen", "/api/dunning/tenant")
     await expect(button(browser_world.page, "Entwurf verwerfen")).to_be_visible()
     browser_world.world.data["notice_url"] = browser_world.page.url
@@ -233,7 +233,7 @@ async def create_scoped_notice(browser_world):
 @then("the notice shows only the first scope's outstanding rent")
 @browser_step
 async def scoped_amount(browser_world):
-    await browser_world.row("Hauptforderung (Rueckstand)", "10.100,00 €")
+    await browser_world.row("Hauptforderung (Rückstand)", "10.100,00 €")
 
 
 @when('the manager confirms "Entwurf verwerfen"')
@@ -338,7 +338,7 @@ async def no_notices(browser_world):
     await browser_world.visit("/mahnungen")
     await browser_world.page.reload()
     settled = browser_world.page.get_by_text("Keine Mahnungen vorhanden.", exact=True).or_(
-        browser_world.page.get_by_role("columnheader", name="Empfaenger", exact=True)
+        browser_world.page.get_by_role("columnheader", name="Empfänger", exact=True)
     )
     await expect(settled).to_be_visible()
     await expect(browser_world.page.get_by_role("alert")).to_have_count(0)
@@ -369,7 +369,7 @@ async def batch_history(browser_world):
         await expect(row.get_by_text("Entwurf", exact=True)).to_be_visible()
         await row.get_by_role("link", name="Details", exact=True).click()
         await browser_world.row("Status", "Entwurf")
-        await browser_world.row("Hauptforderung (Rueckstand)", "850,00 €")
+        await browser_world.row("Hauptforderung (Rückstand)", "850,00 €")
         await browser_world.row("Verzugszinsen", "6,23 €")
 
 
