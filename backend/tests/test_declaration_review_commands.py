@@ -190,6 +190,7 @@ async def test_review_command_migration_preserves_history_and_refuses_strict_dow
     from alembic.migration import MigrationContext
     from alembic.operations import Operations
     from tests.conftest import MIGRATOR_SYNC_URL
+    from tests.migration_rehearsal import lock_for_rehearsal
     seed=committed_scope;params=await review_seed(seed)
     migration=importlib.import_module('migrations.versions.0072_declaration_review_commands')
     engine=create_engine(MIGRATOR_SYNC_URL)
@@ -199,9 +200,11 @@ async def test_review_command_migration_preserves_history_and_refuses_strict_dow
                 await actor_session(db,params['actor'])
                 assert await db.scalar(text(COMMAND),command_params(params))==2
             with engine.begin() as db,Operations.context(MigrationContext.configure(db)):
+                lock_for_rehearsal(db)
                 with pytest.raises(DBAPIError,match='Retain atomic declaration reviews'):
                     with db.begin_nested(): migration.downgrade()
         with engine.begin() as db,Operations.context(MigrationContext.configure(db)):
+            lock_for_rehearsal(db)
             point=db.begin_nested()
             try:
                 snapshots={table:db.scalar(text(f"SELECT md5(COALESCE(string_agg(to_jsonb(r)::text,',' ORDER BY id),'')) FROM {table} r"))

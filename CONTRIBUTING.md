@@ -160,10 +160,13 @@ shared inbox before each mail scenario, polls briefly, and fails if Mailpit is u
 CI provides the same digest-pinned Mailpit image in each backend shard. The browser scenarios
 do not send mail and need no Mailpit container. Mail-service unit tests keep FakeSMTP.
 
-If the shared database holds a migration revision unknown to the checkout, the session fixture
-logs that revision, drops and recreates `public` with its runtime schema grants, preserves the
-cluster roles, and runs the existing upgrade rehearsals. Known revisions still downgrade to
-base first. The reset requires `VERWALINO_TEST_DB=1` (exported by `scripts/test-env.sh`) and the
+If the shared database holds a migration revision unknown to the checkout, or a known one that
+this checkout's migration scripts did not build (a parallel branch may own the same number; the
+session fixture records the scripts' digest as a comment on `public.organization` after every
+upgrade, and a missing or different digest counts), the session fixture logs that revision, drops
+and recreates `public` with its runtime schema grants, preserves the cluster roles, and runs the
+existing upgrade rehearsals. A revision built by this checkout's scripts still downgrades to base
+first. The reset requires `VERWALINO_TEST_DB=1` (exported by `scripts/test-env.sh`) and the
 validated `app_migrator` connection to `hausverwaltung` on `127.0.0.1` or `localhost`, port
 `55432`; it refuses every other target before connecting. As a manual alternative, hold the
 same lock, recreate only the disposable container with
@@ -255,7 +258,7 @@ downloaded `.test_durations` to `backend/.test_durations` before reviewing the d
 | `backend/migrations/versions/` | Alembic migrations; committed ones are never edited |
 | `backend/tests/` | unit and API tests; `bdd/` binds scenarios, `bdd/browser.py` owns browser fixtures, `bdd/report.py` writes reports, `bdd/steps/browser_*.py` shares browser steps |
 | `features/` | API and `@browser` Gherkin scenarios (executable specs) |
-| `.github/workflows/nightly-scenarios.yaml` | nightly self-host scenarios, 90-day report artifacts and deduplicated failure issues; hosted mode pending #18 |
+| `.github/workflows/nightly-scenarios.yaml` | nightly scenarios in both modes (`selfhost` on the installer's stack, `hosted` API features on the local stack), 90-day report artifacts and deduplicated failure issues; [where each mode runs](features/README.md#deployment-modes) |
 | `.github/workflows/build-main-image.yaml` | filtered main pushes: publishes and signs SHA-only staging images without a release |
 | `.github/workflows/deploy-staging.yaml` | successful `Build main image` completion via `workflow_run`: deploys that run's main SHA through the existing forced-command SSH key |
 | `.github/workflows/canary.yaml`, `scripts/canary.py`, `scripts/test-canary.py` | 15-minute production API journey, sanitized reports, e-mail/issue alerts and fake HTTP contracts |

@@ -12,6 +12,7 @@ from tests.test_scoped_account_statements import client,mutate
 from tests.test_scope_payment_reconciliation import read_value
 from tests.test_invoice_extraction_worker import pdf_bytes
 from tests.test_intake_batches import receive,work_sql
+from tests.test_error_tracking import offline_tracker as offline_tracker
 
 pytestmark=pytest.mark.asyncio
 
@@ -228,3 +229,26 @@ async def test_automatic_delivery_obeys_the_shared_logical_source_cap(migrator_s
         assert await read_value('SELECT error_code FROM outbox_delivery WHERE organization_id=:org',ids)=='logical_child_limit'
         assert await read_value('SELECT count(*) FROM logical_document WHERE organization_id=:org',ids)==200
         assert len((await api.get('/api/logical-documents',params={'document_ref_id':ref['id']})).json()['items'])==200
+
+
+async def test_failing_delivery_is_one_tracker_event_with_the_delivery_id(migrator_session,scope_seed,store,offline_tracker):
+    from app.core.request_id import request_id
+    from app.workers.outbox import process_once as deliver_once
+    events,tracker=offline_tracker
+    ids=await fixture(migrator_session,scope_seed)
+    async with client(ids) as api:
+        await receive(api,pdf_bytes())
+        assert await inspect_once(get_worker_session_factory(),ids['org'],inspector=lambda data,mime:result(data,'clean',mime=mime,pages=1))
+    real=get_worker_session_factory();opened=[];deliveries=[]
+    def factory():
+        opened.append(1)
+        if len(opened)==2:
+            deliveries.append(request_id.get())
+            raise RuntimeError('simulated outage')
+        return real()
+    with pytest.raises(RuntimeError,match='simulated outage'):
+        await deliver_once(factory,ids['org'])
+    tracker.flush()
+    assert len(deliveries)==1 and str(uuid.UUID(deliveries[0]))==deliveries[0]
+    assert len(events)==1
+    assert events[0]['tags']=={'worker':'outbox','job_id':deliveries[0],'request_id':deliveries[0]}

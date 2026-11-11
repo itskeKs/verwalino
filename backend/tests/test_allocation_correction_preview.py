@@ -151,11 +151,13 @@ async def test_preview_helpers_bound_before_traversal_and_migration_roundtrip(mi
     from sqlalchemy import create_engine
     from sqlalchemy.exc import DBAPIError
     from tests.conftest import MIGRATOR_SYNC_URL
+    from tests.migration_rehearsal import lock_for_rehearsal
     engine=create_engine(MIGRATOR_SYNC_URL)
     signatures=['allocation_correction_preview(uuid,uuid,uuid)','allocation_correction_impacts(uuid,uuid,uuid)','correction_duplicate_snapshot(uuid,uuid)','correction_snapshot_cost_ids(jsonb)']
     migration=importlib.import_module('migrations.versions.0113_allocation_correction_preview')
     try:
         with engine.begin() as db,Operations.context(MigrationContext.configure(db)):
+            lock_for_rehearsal(db)
             point=db.begin_nested()
             db.execute(text('TRUNCATE bank_transaction,cost_entry CASCADE'))
             bank_correction=importlib.import_module('migrations.versions.0172_bank_cost_corrections')

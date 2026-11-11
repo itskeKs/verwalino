@@ -38,7 +38,7 @@ from app.services import mail_service
 from app.core.deployment_policy import get_deployment_policy
 from app.core.logging import configure_logging
 from app.core.request_id import RequestIdMiddleware, http_error, unhandled_error, validation_error
-from app.core.error_tracking import configure_error_tracking
+from app.core.error_tracking import configure_error_tracking, release_id
 from app.core.organization_lifecycle import OrganizationLifecycleMiddleware
 
 configure_logging()
@@ -56,7 +56,7 @@ app = FastAPI(
     docs_url=settings.docs_url,
     openapi_url=settings.openapi_url,
 )
-configure_error_tracking(settings, release=os.environ.get("HV_RELEASE_ID") or app.version)
+configure_error_tracking(settings, release=release_id())
 app.add_middleware(TrustedHostMiddleware, allowed_hosts=settings.allowed_host_list)
 app.add_middleware(RequestBodyLimitMiddleware)
 app.add_middleware(signup.ConfirmationLinkPrivacyMiddleware)

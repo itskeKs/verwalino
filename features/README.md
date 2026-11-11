@@ -88,17 +88,21 @@ with the scenario name, sampling before fixture cleanup can empty the tables.
 Fresh-installation scenarios use an isolated rollback-only transaction and are
 excluded from shared-count sampling.
 No external network or model call is involved.
-Browser app processes inherit the
-selected mode too; `@browser` remains a separate opt-in tag. Browser scenarios do not
-send mail, so only CI's backend shards provision the same digest-pinned Mailpit service.
+`@browser` remains a separate opt-in tag. The browser runner passes the selected mode to its
+app process but not the public host and SMTP settings that hosted mode requires at startup, so
+browser scenarios run in selfhost mode only until #537. Browser scenarios do not
+send mail; the backend shards and the nightly workflow provision the same digest-pinned Mailpit service for the mail scenarios.
 
-**CI integration:** PR CI runs the selfhost backend suite in four duration-balanced
-shards; each shard then runs its slice of the hosted API scenarios against its own
-disposable Postgres and Mailpit services (see CONTRIBUTING, CI). The nightly runs selfhost mode and uses
-the self-host installer, which starts a selfhost server; changing the pytest
-process's mode only selects tags and cannot change that server's policy. A
-nightly run in both modes, including a server started with
-`HV_DEPLOYMENT_MODE=hosted`, is tracked in #103.
+**Where each mode runs.** Changing the pytest process's mode only selects tags; the
+application under test has to run in the same mode. The portable installer starts only
+selfhost servers, so hosted scenarios run on the local stack, where the app, the database
+fixtures and Mailpit sit in the pytest process's reach.
+
+| Where | selfhost | hosted |
+|---|---|---|
+| Developer machine | `make test-bdd`, `make test-browser`, `make test-scenarios-report` | `make test-bdd-hosted` (API scenarios) |
+| PR CI (`tests-on-pr.yaml`) | `Backend shard n/4` (`make test-backend`, including the `@selfhost` scenarios) and `Browser` (`make test-browser`) | the same shards' step `Hosted API scenarios` (`make test-bdd-hosted`: `@hosted` and untagged scenarios, own Postgres and Mailpit) |
+| Nightly (`nightly-scenarios.yaml`) | leg `selfhost`: all API and browser features against the installer's stack; `@hosted` scenarios skip by mode and the ones that need local fixtures skip by target (see [external targets](#external-disposable-targets)) | leg `hosted`: the API features through `make test-bdd-hosted` on the local stack with Postgres and Mailpit |
 
 The `save_lifecycle.feature` browser journey saves units, people, profiles, leases and bank
 accounts and assigns a receipt at desktop and 360 px. It pauses each real post-save read to
@@ -209,7 +213,7 @@ nothing; issues are never automatically closed. Lookups finish before the write
 batch, and searches and writes are sequential with at least two seconds between requests.
 Error text in issue bodies and comments retains at most 20,000 original characters,
 split between the head and tail with a marker counting omitted characters and pointing to the full run artifact.
-Each run creates at most 10 new failure issues plus one summary issue listing any
+Each filing step (one per mode in the nightly) creates at most 10 new failure issues plus one summary issue listing any
 remaining scenario names and fingerprints; comments and reopenings are not capped.
 
 To silence a known flaky scenario, add `@known-flaky` above its `Scenario:` (or
@@ -314,6 +318,14 @@ against the local browser stack and in PR CI's browser job.
 The populated cost-table browser regression also requires a locally seeded,
 isolated organization and is skipped on external targets; local PR browser CI
 checks it at 360 and 1280 px without depending on earlier scenarios' records.
+The `scope_team_rights`, `mandate_sources`, `property_data_domains` and
+`declaration_import_start` browser features sign in as the seed clerk (the last one also
+claims from the in-process worker queue), which an external installation does not have;
+they are skipped on external targets and run in PR CI's browser job.
+The `scope_creation_forms`, `scoped_statements` and `legacy_payment_review` browser features create
+immutable scopes and booked payments; on an external installation they pile up in the one shared
+organization and break org-wide lists (the scope selector page, the payments order of
+`weg_settlement.feature`), so they are skipped there too and run in PR CI's browser job.
 Each skipped scenario records its reason in the report. Local runs continue to
 exercise both organizations, all isolation scenarios, first-run setup, the inbox
 review chain, deletion, export/import and password reset; PR CI retains this
@@ -338,7 +350,7 @@ and runs all features against that instance. Host-side scenario dependencies inc
 The job collects installer logs and
 the last 2 MiB of backend logs into `report/logs/` after execution, propagates pytest
 failures, always attempts normal stop, publishes the Markdown job summary, and
-uploads `report/` as `scenarios-selfhost-<UTC date>`.
+uploads `report/` as `scenarios-selfhost-<UTC date>`; the hosted leg uploads `scenarios-hosted-<UTC date>`.
 Download it from the workflow run's **Artifacts** area; retention is **90 days**.
 Artifacts are the history store; there is no dashboard or separate history database.
 The job does not back up the disposable installation; it only stops it, and the
@@ -347,12 +359,20 @@ It also bootstraps the three separate retention organizations with independent r
 masked passwords passed through stdin. These passwords live only in that run's
 environment; each additional login is used only by its corresponding retention fixture.
 
-Only `mode: [selfhost]` is implemented. Report metadata uses the same validated
+The matrix is `mode: [selfhost, hosted]`. Report metadata uses the same validated
 `HV_DEPLOYMENT_MODE` policy as scenario tag selection and defaults to `selfhost`;
-the workflow sets it from its matrix. Running both modes in the nightly is tracked
-in #103 and requires a hosted server in addition to the selfhost installation.
+the workflow sets it from its matrix, and failure issues carry the leg's mode. The
+legs share one concurrency group, because issue filing must not run twice at once, so
+they run one after the other; a manual run on another ref that starts meanwhile can cancel the queued hosted leg. The `selfhost` leg is the installation described above and
+the only leg that uses it. The `hosted` leg skips the installer, because the portable installer
+never starts hosted mode (DEPLOY.md). It starts the shared test database and the
+workflow's Mailpit service, installs the system libraries of the PR backend shards and
+runs `make test-bdd-hosted PYTEST_ARGS="-q --scenario-report ../report"`; its report has
+the same shape, with `mode: hosted` and no `target_url`. Browser scenarios appear in it as
+skipped until #537.
 **The self-host startup and full nightly integration are unverified until the first
-GitHub runner run.** Local checks parse the workflow and test the local runners;
+GitHub runner run, and so is the hosted leg's runner setup (its command is the one PR CI
+runs).** Local checks parse the workflow and test the local runners;
 they do not start the self-host stack.
 
 ## Browser features
@@ -425,8 +445,16 @@ deposits, interest/PDF, selected drafts and scoped dunning. Parsing/deduplicatio
 DTO fields, permission matrices, concurrency and calculation edge cases stay in API
 or component tests (including `bank_statement_import.feature`). Browser scenarios
 retain visible review, confirmation, persistence, navigation and cancellation.
-Other scripts in `scripts/acceptance/` remain for later batches; this batch adds no
-new product journeys.
+Batch 2a replaces the ten `b1_*` scripts: property list paging and bounded filters
+(`property_listing.feature`), scope creation, team grants and the scoped pause
+(`scope_team_rights.feature`), scoped creation forms (`scope_creation_forms.feature`),
+scoped statements, open items and the deadline monitor (`scoped_statements.feature`),
+the legacy-payment review (`legacy_payment_review.feature`), mandate sources
+(`mandate_sources.feature`), shared building-data domains (`property_data_domains.feature`)
+and the declaration import start/principal journey (`declaration_import_start.feature`).
+Their SQL fixtures are gone; the data is created through the API World instead.
+Other scripts in `scripts/acceptance/` remain for batches 2b to 5; these batches add
+no new product journeys.
 
 ## Journey twins
 

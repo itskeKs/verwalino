@@ -290,16 +290,19 @@ async def test_financial_scope_migration_preserves_rows_and_function_identity(mi
     from alembic.migration import MigrationContext
     from alembic.operations import Operations
     from tests.conftest import MIGRATOR_SYNC_URL
+    from tests.migration_rehearsal import lock_for_rehearsal
     ids = await money_fixture(migrator_session, scope_seed)
     migration = importlib.import_module('migrations.versions.0081_strict_financial_scope')
     engine = create_engine(MIGRATOR_SYNC_URL)
     try:
         async with synthetic_enforcement(scope_seed):
             with engine.begin() as db, Operations.context(MigrationContext.configure(db)):
+                lock_for_rehearsal(db)
                 with pytest.raises(DBAPIError, match='Retain strict financial scope access'):
                     with db.begin_nested():
                         migration.downgrade()
         with engine.begin() as db, Operations.context(MigrationContext.configure(db)):
+            lock_for_rehearsal(db)
             point = db.begin_nested()
             try:
                 def hashes():

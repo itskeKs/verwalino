@@ -143,21 +143,19 @@ async def test_worker_effect_migration_roundtrip_and_strict_refusal(committed_sc
     from alembic.migration import MigrationContext
     from alembic.operations import Operations
     from tests.conftest import MIGRATOR_SYNC_URL
+    from tests.migration_rehearsal import lock_for_rehearsal
     migration=importlib.import_module('migrations.versions.0071_declaration_worker_effects')
     engine=create_engine(MIGRATOR_SYNC_URL)
-    dependencies='LOCK TABLE '+','.join(migration.TABLES)+',declaration_worker_context IN ACCESS EXCLUSIVE MODE'
     try:
         async with synthetic_enforcement(committed_scope):
             with engine.begin() as db,Operations.context(MigrationContext.configure(db)):
                 # This case tests the data guard; incidental table contention
                 # is tested separately by the busy-dependency cases below.
-                db.execute(text("SET LOCAL lock_timeout='5s'"))
-                db.execute(text(dependencies))
+                lock_for_rehearsal(db, *migration.TABLES, 'declaration_worker_context')
                 with pytest.raises(DBAPIError,match='Retain strict worker effect fencing'):
                     with db.begin_nested(): migration.downgrade()
         with engine.begin() as db,Operations.context(MigrationContext.configure(db)):
-            db.execute(text("SET LOCAL lock_timeout='5s'"))
-            db.execute(text(dependencies))
+            lock_for_rehearsal(db, *migration.TABLES, 'declaration_worker_context')
             point=db.begin_nested()
             try:
                 migration.downgrade();migration.upgrade()

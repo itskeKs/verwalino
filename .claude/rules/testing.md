@@ -34,8 +34,10 @@ paths:
   release `/tmp/verwalino-testdb.lock` themselves. Direct pytest runs and dev stacks
   must hold that lock in their shell until finished; release between runs.
   Use only the test database and compose commands in AGENTS.md.
-  A foreign Alembic head is reset automatically by the test session fixture (#75/#82), only in
-  the guarded local test DB with `VERWALINO_TEST_DB=1`; known heads still downgrade to base.
+  A foreign Alembic head, and a known head whose migration scripts differ from this checkout's
+  (parallel branches may both own a `0142`) or that has no recorded origin, is reset automatically
+  by the test session fixture (#75/#82/#87), only in the guarded local test DB with
+  `VERWALINO_TEST_DB=1`; a head built by this checkout's scripts still downgrades to base.
   Never restart a running test database. Only when it is down, hold the otherwise free
   lock and use `docker compose -f infra/docker-compose.declaration-test.yml up -d postgres`
   as allowed by AGENTS.md's Worktrees and cleanup rule.

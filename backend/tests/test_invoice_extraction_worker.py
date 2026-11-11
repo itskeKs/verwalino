@@ -1,10 +1,12 @@
 """Durable ordinary-invoice extraction, synthetic sources only."""
 import io
+import json
 import uuid
 import pytest
 import pytest_asyncio
 from reportlab.pdfgen import canvas
 from app.core.invoice_ocr import extract_invoice, run_isolated_extraction
+from tests.test_error_tracking import offline_tracker as offline_tracker
 
 
 @pytest_asyncio.fixture
@@ -420,3 +422,37 @@ async def test_worker_retries_finished_output_after_lock_timeout_without_extract
         assert sessions[0] is not sessions[1]
     finally:
         set_store(None)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("failure", ["child_crash", "raises"])
+async def test_failing_invoice_job_is_one_tracker_event_with_the_attempt_id(failure, worker_tenant, tmp_path, monkeypatch, offline_tracker):
+    import shutil
+    from app.core.storage import LocalFsDocumentStore, set_store
+    from app.core.db import get_worker_session_factory
+    from app.workers.invoice_extraction import process_once
+
+    events, tracker = offline_tracker
+    api, ids = worker_tenant
+    set_store(LocalFsDocumentStore(str(tmp_path)))
+    try:
+        uploaded = await api.post("/api/invoice-documents/upload", files={"file": ("scan.pdf", pdf_bytes(), "application/pdf")})
+        assert uploaded.status_code == 201, uploaded.text
+        options = {}
+        if failure == "child_crash":
+            # The production path: the isolated child exits non-zero and the worker records processor_failed.
+            monkeypatch.setattr("sys.executable", shutil.which("false"))
+        else:
+            def processor(data, mime):
+                raise RuntimeError("Synthetic invoice text: Max Mustermann DE89 3704 0044 0532 0130 00")
+            options["processor"] = processor
+        assert await process_once(get_worker_session_factory(), ids["org_a_id"], **options)
+        attempts = (await api.get(f"/api/invoice-documents/{uploaded.json()['id']}/processing-attempts")).json()
+        assert [(item["status"], item["error_code"]) for item in attempts] == [("failed", "processor_failed")]
+    finally:
+        set_store(None)
+    tracker.flush()
+    assert len(events) == 1
+    assert events[0]["tags"] == {"worker": "invoice_extraction", "job_id": attempts[0]["id"], "request_id": attempts[0]["id"], "error_code": "processor_failed"}
+    assert [value["type"] for value in events[0]["exception"]["values"]] == (["JobFailed"] if failure == "child_crash" else ["RuntimeError"])
+    assert "Mustermann" not in json.dumps(events[0]) and "DE89" not in json.dumps(events[0])
