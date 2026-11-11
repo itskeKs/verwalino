@@ -7,10 +7,10 @@ import tarfile
 import pytest
 from pytest_bdd import given, when, then
 
-from tests.bdd.browser import browser_world  # noqa: F401
-from tests.test_rent_changes import rent_db, rent_world, api_client  # noqa: F401
-from tests.test_organization_export import export_store  # noqa: F401
-from tests.signup_support import signup_mail  # noqa: F401
+from tests.bdd.browser import browser_world as browser_world
+from tests.test_rent_changes import rent_db as rent_db, rent_world as rent_world, api_client
+from tests.test_organization_export import export_store as export_store
+from tests.signup_support import signup_mail as signup_mail
 
 
 @pytest.fixture

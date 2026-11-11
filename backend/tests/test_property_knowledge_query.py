@@ -828,7 +828,6 @@ async def test_query_endpoint_disabled_and_transport_outage_do_not_break_search(
     monkeypatch,
 ) -> None:
     from app.api.property_knowledge import get_knowledge_provider
-    from app.core.config import settings
     from app.declarations.fake_knowledge_provider import FakeKnowledgeProvider
     from app.main import app
     from app.models.property_knowledge_query_run import PropertyKnowledgeQueryRun
@@ -1063,10 +1062,8 @@ async def test_provider_construction_is_deferred_until_known_property_has_hits(
     client_b_admin,
     monkeypatch,
 ) -> None:
-    from pydantic import SecretStr
 
     from app.api.property_knowledge import close_knowledge_provider
-    from app.core.config import settings
 
     configure_ai(approved_knowledge_graph.organization_id, qa_enabled=True)
     configure_ai(approved_knowledge_graph.organization_id, model="unverified-model")

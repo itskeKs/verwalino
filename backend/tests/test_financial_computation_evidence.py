@@ -1,8 +1,8 @@
 """Only actual engine writes receive private, transaction-bound computation proof."""
 import uuid
 import pytest
-from tests.test_m3_settlement import m3_seed,_extras_for_exit  # noqa: F401
-from tests.test_m4_weg import m4_seed,_create_and_finalize_plan  # noqa: F401
+from tests.test_m3_settlement import m3_seed as m3_seed,_extras_for_exit
+from tests.test_m4_weg import m4_seed as m4_seed,_create_and_finalize_plan
 from tests.financial_coverage_helpers import attest_fixture,weg_values
 from tests.test_financial_input_policy import draft
 from tests.test_scope_payment_reconciliation import read_value

@@ -1,7 +1,7 @@
 """Current administrative quarantine decisions never grant original access."""
 import uuid
 import pytest
-from tests.test_financial_scope_boundary import worker_tenant, scope_seed  # noqa: F401
+from tests.test_financial_scope_boundary import worker_tenant as worker_tenant, scope_seed as scope_seed
 from tests.test_scoped_mandate_documents import document_fixture
 from tests.test_scoped_account_statements import client
 from tests.mandate_legacy_fixture import seed_legacy_mandate
@@ -61,7 +61,6 @@ async def test_pages_are_bounded_signed_and_tenant_scoped(migrator_session, scop
 
 async def test_stale_digest_parallel_retry_and_immutable_disposition(migrator_session, scope_seed):
     import asyncio
-    from sqlalchemy import text
     from sqlalchemy.exc import DBAPIError
     from tests.test_scope_payment_reconciliation import read_value
     ids = await document_fixture(migrator_session, scope_seed)

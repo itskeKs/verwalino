@@ -33,6 +33,8 @@ from app.engine.types import (
     UnitInput,
 )
 
+pytestmark = pytest.mark.no_db
+
 YEAR_START = date(2025, 1, 1)
 YEAR_END = date(2025, 12, 31)
 

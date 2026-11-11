@@ -6,7 +6,7 @@ import uuid
 from datetime import date
 from typing import Sequence
 
-from sqlalchemy import select, and_, or_
+from sqlalchemy import and_, or_
 
 from app.models.ownership_history import OwnershipHistory
 from app.repositories.base import TenantRepository

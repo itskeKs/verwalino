@@ -7,7 +7,6 @@ SameSite=lax cookie.  The server is the single source of truth for
 
 from __future__ import annotations
 
-import json
 import uuid
 from typing import Any
 

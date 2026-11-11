@@ -7,8 +7,8 @@ import pytest
 from sqlalchemy import text
 
 from tests.test_special_levy import (
-    levy_db, levy_fixture, scope_seed, worker_tenant, client, create, query,
-)  # noqa: F401
+    levy_db as levy_db, levy_fixture as levy_fixture, scope_seed as scope_seed, worker_tenant as worker_tenant, client, create, query,
+)
 
 from tests.test_scoped_fristen import add_monitor_plan
 

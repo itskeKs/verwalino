@@ -9,8 +9,7 @@ import uuid
 from datetime import date
 from typing import Sequence
 
-from sqlalchemy import func, select, Select
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import func
 
 from app.models.cost_category import CostCategory
 from app.models.cost_entry import CostEntry

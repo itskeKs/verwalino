@@ -10,7 +10,7 @@ from tests.conftest import MIGRATOR_URL
 from app.core.config import settings
 from tests.conftest import _make_session_cookie as create_session_token
 from app.main import app
-from tests.test_financial_scope_boundary import worker_tenant, scope_seed  # noqa: F401
+from tests.test_financial_scope_boundary import worker_tenant as worker_tenant, scope_seed as scope_seed
 from tests.test_scope_grants import scope_fixture
 
 pytestmark = pytest.mark.asyncio

@@ -11,7 +11,7 @@ import psycopg2
 import pytest
 
 from tests.conftest import MIGRATOR_SYNC_URL
-from tests.test_invoice_extraction_worker import worker_tenant  # noqa: F401
+from tests.test_invoice_extraction_worker import worker_tenant as worker_tenant
 
 CSV = (
     "Buchungstag;Wertstellung;Betrag;Name;IBAN;Verwendungszweck;Währung\n"

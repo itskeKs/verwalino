@@ -2,7 +2,7 @@
 import pytest
 from sqlalchemy import text
 from app.core.db import get_tenant_session
-from tests.test_financial_scope_boundary import worker_tenant, scope_seed  # noqa: F401
+from tests.test_financial_scope_boundary import worker_tenant as worker_tenant, scope_seed as scope_seed
 from tests.test_scoped_account_statements import statement_fixture, client
 from tests.test_property_source_enforcement import synthetic_enforcement
 

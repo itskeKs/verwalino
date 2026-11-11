@@ -14,7 +14,6 @@ import uuid
 from collections.abc import Callable
 from typing import Any
 
-from app.core.config import settings
 from app.declarations.openai_models import create_client
 
 

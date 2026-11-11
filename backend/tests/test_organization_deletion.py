@@ -10,12 +10,12 @@ import pytest_asyncio
 from sqlalchemy import text
 
 from app.services.organization_deletion_service import ERASURE_SCRUB_COLUMNS
-from tests.test_rent_changes import rent_db, rent_world as base_rent_world, api_client  # noqa: F401
-from tests.test_organization_export import export_store  # noqa: F401
+from tests.test_rent_changes import rent_db as rent_db, rent_world as base_rent_world, api_client  # noqa: F401
+from tests.test_organization_export import export_store as export_store
 
 
 @pytest_asyncio.fixture
-async def rent_world(base_rent_world, rent_db):
+async def rent_world(base_rent_world, rent_db):  # noqa: F811
     rent_db.info['erasure_test_organizations'] = [base_rent_world['org'], base_rent_world['foreign_org']]
     return base_rent_world
 

@@ -8,7 +8,7 @@ import uuid
 
 import pytest
 
-from tests.legacy_migration_database import legacy_auth_database as legacy_0028_database
+from tests.legacy_migration_database import legacy_auth_database as legacy_0028_database  # noqa: F401
 from sqlalchemy import select, text
 from sqlalchemy.exc import DBAPIError
 
@@ -64,7 +64,7 @@ def test_pass_ledger_model_and_repository_expose_typed_append_only_seam() -> Non
 
 
 @pytest.mark.asyncio
-async def test_pass_ledger_schema_is_rls_force_and_append_only(legacy_0028_database, migrator_session) -> None:
+async def test_pass_ledger_schema_is_rls_force_and_append_only(legacy_0028_database, migrator_session) -> None:  # noqa: F811
     table = "declaration_import_pass"
     rls = await migrator_session.execute(
         text(

@@ -6,7 +6,9 @@ from decimal import Decimal
 
 import pytest
 
-from app.engine.rounding import CENT, DistributionError, distribute_amount
+from app.engine.rounding import DistributionError, distribute_amount
+
+pytestmark = pytest.mark.no_db
 
 
 class TestDistributeAmountEdgeCases:

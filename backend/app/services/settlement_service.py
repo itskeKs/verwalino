@@ -71,7 +71,7 @@ from app.engine.types import (
 from app.models.audit_event import AuditEvent
 from app.services.financial_scope_service import FinancialScopeService
 from app.services.financial_computation_service import begin_computation, record_computation
-from app.services.financial_input_policy import FinancialInputPolicy, rental_values, incomplete
+from app.services.financial_input_policy import FinancialInputPolicy, rental_values
 from app.models.property import Property
 from app.models.settlement_line import SettlementLine
 from app.models.settlement_run import SettlementRun

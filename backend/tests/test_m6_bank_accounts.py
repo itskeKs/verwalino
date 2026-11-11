@@ -7,8 +7,8 @@ import uuid
 
 import pytest
 import psycopg2
-from tests.test_rent_changes import rent_db, rent_world, api_client  # noqa: F401
-from tests.test_sepa_export import sepa_world, configure, account_url, export_body  # noqa: F401
+from tests.test_rent_changes import rent_db as rent_db, rent_world as rent_world, api_client
+from tests.test_sepa_export import sepa_world as sepa_world, configure, account_url, export_body
 
 SYNC_URL = os.environ.get(
     "HV_DATABASE_URL_SYNC",

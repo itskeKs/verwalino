@@ -5,7 +5,6 @@ from __future__ import annotations
 import uuid
 from typing import Sequence
 
-from sqlalchemy import select
 
 from app.models.property_document import PropertyDocument
 from app.repositories.base import TenantRepository

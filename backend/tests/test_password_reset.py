@@ -64,8 +64,8 @@ def test_reset_migration_roundtrip_is_exact_and_refuses_retained_state(run_migra
         engine.dispose()
 
 
-from tests.password_reset_support import MESSAGE, REFUSED, NEW_PASSWORD, reset_token, reset_store, signup_mail  # noqa: E402,F401
-from tests.test_auth_password import password_identity  # noqa: E402,F401
+from tests.password_reset_support import MESSAGE, REFUSED, NEW_PASSWORD, reset_token, reset_store, signup_mail as signup_mail  # noqa: E402,F401
+from tests.test_auth_password import password_identity as password_identity  # noqa: E402,F401
 
 
 @pytest.mark.asyncio
@@ -296,7 +296,6 @@ async def test_reset_queries_are_removed_before_access_logging_and_get_has_no_ef
 @pytest.mark.asyncio
 async def test_invalid_bodies_do_not_echo_secrets_or_count_confirm_failures(client_unauth):
     from app.core.db import get_session_factory
-    from app.core.rate_limit import key_hash
     for body in [{'token': 'x' * 257, 'password': NEW_PASSWORD}, {'token': 123, 'password': NEW_PASSWORD}, {'token': 'secret-token'}]:
         reply = await client_unauth.post('/api/auth/password-reset/confirm', json=body)
         assert reply.status_code == 422

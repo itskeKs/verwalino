@@ -17,7 +17,7 @@
     "icons": "node scripts/icons.mjs"
   },
   "dependencies": {
-    "astro": "~5.18.2",
+    "astro": "~7.3.8",
     "@astrojs/sitemap": "^3.7.4",
     "@fontsource/barlow-condensed": "^5.2.8",
     "@fontsource/ibm-plex-sans": "^5.2.8",

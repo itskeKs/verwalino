@@ -8,11 +8,11 @@ import pytest
 from sqlalchemy import text
 
 from app.core.config import Settings, settings
-from tests.test_m7_dunning import m7_seed  # noqa: F401
+from tests.test_m7_dunning import m7_seed as m7_seed
 from tests.test_scoped_account_statements import mutate
-from tests.test_m3_settlement import m3_seed, _create_run, _extras_for_exit  # noqa: F401
-from tests.test_m8_meetings import m8_seed, invitation_data  # noqa: F401
-from tests.test_financial_scope_boundary import worker_tenant, scope_seed  # noqa: F401
+from tests.test_m3_settlement import m3_seed as m3_seed, _create_run, _extras_for_exit
+from tests.test_m8_meetings import m8_seed as m8_seed, invitation_data as invitation_data
+from tests.test_financial_scope_boundary import worker_tenant as worker_tenant, scope_seed as scope_seed
 from tests.test_scoped_account_statements import statement_fixture, client as scoped_client
 from tests.test_scoped_dunning import grant, tenant_body
 

@@ -8,8 +8,6 @@ from __future__ import annotations
 import uuid
 from typing import Sequence
 
-from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.invoice_document import InvoiceDocument
 from app.repositories.document_cost_link import cost_source_predicate

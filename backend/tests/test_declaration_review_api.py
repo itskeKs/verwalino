@@ -27,7 +27,6 @@ from app.models.unit import Unit
 @pytest.fixture(autouse=True)
 def enable_declaration_imports(configured_ai) -> None:
     """Keep retry endpoint coverage independent of the deploy-time default."""
-    from app.core.config import settings
 
 
 

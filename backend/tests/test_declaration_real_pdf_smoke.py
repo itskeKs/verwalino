@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import os
 import hashlib
 import json
 from decimal import Decimal
@@ -16,7 +15,6 @@ from app.evals.declaration_knowledge import (
     LivePipelineCaseMetrics,
     LivePipelineReport,
     LiveHarnessUnavailable,
-    ProductionPipelineEvaluationAdapter,
     live_eval_missing_gates,
     run_real_pdf_smoke,
 )

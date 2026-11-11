@@ -42,7 +42,6 @@ async def configure_budget(seed):
 
 @asynccontextmanager
 async def granted_graph(api,seed,graph):
-    from app.core.config import settings
     with pytest.MonkeyPatch.context() as budget_settings:
         configure_ai(seed['org_a_id'], qa_enabled=True)
         import uuid
