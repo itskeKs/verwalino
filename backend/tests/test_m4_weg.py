@@ -2432,8 +2432,9 @@ async def test_input_roster_keeps_original_plan_owner_after_history_correction(c
     assert await CoverageDeclarationRepository(app_rw_session, org).owner_ids(original) == expected
 
 
-@pytest.mark.parametrize('payload_version', [None, 'm4.2.0', 'm4.3.0', 'm4.3.2', 'm4.4.0', 'm4.5.0'])
-def test_pdf_reserve_payment_source_uses_only_the_frozen_engine_version(payload_version):
+@pytest.mark.parametrize('payload_version,shown', [(None, False), ('m4.2.0', False), ('m4.3.0', False),
+    ('m4.3.2', False), ('m4.4.0', True), ('m4.5.0', True), ('m4.6.0', True)])
+def test_pdf_reserve_payment_source_uses_only_the_frozen_engine_version(payload_version, shown):
     from types import SimpleNamespace
     from app.services.weg_jahresabrechnung_pdf import build_weg_jahresabrechnung_html
 
@@ -2454,8 +2455,8 @@ def test_pdf_reserve_payment_source_uses_only_the_frozen_engine_version(payload_
     html = build_weg_jahresabrechnung_html(run, [line])
     sentence = ('Gesondert gebuchte Rücklagenzahlungen zählen nur, soweit das Hausgeld-Soll nicht bereits '
                 'durch Hausgeldzahlungen gedeckt ist; ein Überschuss bleibt in der Rücklage.')
-    assert (sentence in html) == (payload_version in ('m4.4.0', 'm4.5.0'))
-    if payload_version not in ('m4.4.0', 'm4.5.0'):
+    assert (sentence in html) == shown
+    if not shown:
         assert '(Periodenzuordnung, einschließlich Erstattungen). Offene oder ungebuchte Zahlungen' in html
 
 

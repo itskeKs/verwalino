@@ -47,6 +47,23 @@ _RESERVE_DEV_TYPES = ("RESERVE_OPENING", "RESERVE_WITHDRAWAL", "RESERVE_CLOSING"
                       "RESERVE_LATE_CASH", "RESERVE_ADJUSTMENT")
 
 
+def _engine_version_at_least(version: str | None, floor: str) -> bool:
+    """Component-wise >= for 'm<major>.<minor>.<patch>' engine versions.
+
+    Missing or unparseable versions are treated as older than any floor, so a
+    future ENGINE_VERSION bump cannot silently drop a version-gated sentence.
+    """
+    if not version:
+        return False
+    try:
+        parts = tuple(int(p) for p in version.removeprefix("m").split("."))
+        floor_parts = tuple(int(p) for p in floor.removeprefix("m").split("."))
+    except ValueError:
+        return False
+    width = max(len(parts), len(floor_parts))
+    return (parts + (0,) * (width - len(parts))) >= (floor_parts + (0,) * (width - len(floor_parts)))
+
+
 @dataclass
 class WegDisplayNames:
     """Human-readable names resolved at render time (never stored in snapshot)."""
@@ -163,7 +180,7 @@ def build_weg_jahresabrechnung_html(
             reserve_payment_source = (
                 'Gesondert gebuchte Rücklagenzahlungen zählen nur, soweit das Hausgeld-Soll nicht bereits '
                 'durch Hausgeldzahlungen gedeckt ist; ein Überschuss bleibt in der Rücklage. '
-                if (run.snapshot_payload or {}).get('engine_version') in ('m4.4.0', 'm4.5.0') else '')
+                if _engine_version_at_least((run.snapshot_payload or {}).get('engine_version'), 'm4.4.0') else '')
             balance_rows = ''.join(
                 f"<tr class='{('spitze' if key == 'abrechnungsspitze' else 'cost-total' if key == 'payment_amount' else '')}'>"
                 f"<td>{label}</td><td class='num'>{_eur(Decimal(balance[key]))}</td></tr>"

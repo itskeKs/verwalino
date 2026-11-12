@@ -476,6 +476,14 @@ rational numbers (distribute_amount's rational mode), so the largest-remainder g
 Σ rounded == windowed total holds for any input. Finalized runs stay frozen; drafts and
 corrections recompute (ENGINE_VERSION m4.6.0).
 
+The exact rational weights also remove 28-digit Decimal noise from the share computation, so a
+draft recomputed under m4.6.0 can land one cent higher or lower per owner than the m4.5.0
+result in rare cases — even when no cost crosses the year; the head values match an independent
+exact largest-remainder calculation, and the totals per position are unchanged.
+
+Switchover: a year finalized before m4.6.0 charged a cross-year cost in full, and the following
+year computed under m4.6.0 adds its day share on top; finalized years are not corrected.
+
 ### 4.4 Addressee Model for the Owner Distribution (Engine Mirror of M3)
 
 The key insight: `distribute_position` **already today** generates, for each item, all (unit, time-slice) cells across the entire property and knows **owner cells** (vacancy → `vacancy_attribution` with `owner_profile_id`). For M4 the **addressee focus** shifts:
