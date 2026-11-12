@@ -40,7 +40,9 @@ it("retains the selected choice and active saved theme on a failed save", async 
   await waitFor(() => expect(screen.getByRole("radio", { name: /Warm/ })).toBeEnabled());
   fireEvent.click(screen.getByRole("radio", { name: /Warm/ }));
   fireEvent.click(screen.getByRole("button", { name: "Design speichern" }));
-  expect(await screen.findByRole("alert")).toHaveTextContent("Speichern derzeit nicht möglich.");
+  const alert = await screen.findByRole("alert");
+  expect(alert).toHaveTextContent("Speichern derzeit nicht möglich.");
+  expect(alert.closest(".theme-save-row")).not.toBeNull();
   expect(screen.getByRole("radio", { name: /Warm/ })).toBeChecked();
   expect(screen.getByText("klar", { selector: "output" })).toBeVisible();
   expect(screen.getByRole("button", { name: "Design speichern" })).toBeEnabled();
@@ -77,7 +79,9 @@ it("discards a late save after logout and a different user's login", async () =>
 it("reports a failed preference read honestly and offers retry before saving", async () => {
   const load = vi.spyOn(api, "get").mockRejectedValueOnce(new Error("offline")).mockResolvedValue({ design_theme: "warm" });
   render(<View />);
-  expect(await screen.findByRole("alert")).toHaveTextContent("Design konnte nicht geladen werden.");
+  const alert = await screen.findByRole("alert");
+  expect(alert).toHaveTextContent("Design konnte nicht geladen werden.");
+  expect(alert.closest(".theme-save-row")).toBeNull();
   expect(screen.getByRole("button", { name: "Design speichern" })).toBeDisabled();
   fireEvent.click(screen.getByRole("button", { name: "Erneut laden" }));
   await screen.findByText("warm", { selector: "output" });

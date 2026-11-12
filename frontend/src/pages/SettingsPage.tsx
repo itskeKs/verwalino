@@ -28,7 +28,7 @@ function PersonalDesign() {
       <h2 id="design-heading">Persönliches Design</h2>
       <p className="text-sm text-muted-foreground">Die Auswahl gilt nur für Ihr Benutzerkonto. Andere Personen Ihrer Organisation behalten ihr eigenes Design. Alle Funktionen bleiben verfügbar.</p>
       {loading && <p role="status" className="mt-4">Design wird geladen …</p>}
-      {error && <div role="alert" className="error-text mt-4">{error}{!loaded && <Button variant="outline" className="ml-3" onClick={reload}>Erneut laden</Button>}</div>}
+      {error && !loaded && <div role="alert" className="error-text mt-4">{error}<Button variant="outline" className="ml-3" onClick={reload}>Erneut laden</Button></div>}
       <fieldset className="theme-options" disabled={!loaded || saving}>
         <legend className="sr-only">Design auswählen</legend>
         {(["klar", "warm"] as const).map(option => <label className={`theme-option theme-option--${option}`} key={option}>
@@ -39,7 +39,7 @@ function PersonalDesign() {
           <div className="theme-option-caption"><input type="radio" name="design-theme" value={option} checked={selected === option} onChange={() => { setDraft(option); setSaved(false); }} /><div><strong>{option === "klar" ? "Klar" : "Warm"}</strong><p>{option === "klar" ? "Klare Struktur, blaue Akzente und seitliche Navigation." : "Ruhige Flächen, Petrol und horizontale Navigation."}</p></div>{selected === option && <Check className="text-primary" size={18} aria-hidden="true" />}</div>
         </label>)}
       </fieldset>
-      <div className="theme-save-row"><Button onClick={() => void submit()} disabled={!loaded || !changed || saving}>{saving ? "Wird gespeichert …" : "Design speichern"}</Button><p role="status">{saved ? "Design für Ihr Benutzerkonto gespeichert." : changed ? "Noch nicht gespeichert." : loaded ? "Das gespeicherte Design ist aktiv." : ""}</p></div>
+      <div className="theme-save-row"><Button onClick={() => void submit()} disabled={!loaded || !changed || saving}>{saving ? "Wird gespeichert …" : "Design speichern"}</Button>{error && loaded && <div role="alert" className="error-text">{error}</div>}<p role="status">{saved ? "Design für Ihr Benutzerkonto gespeichert." : changed ? "Noch nicht gespeichert." : loaded ? "Das gespeicherte Design ist aktiv." : ""}</p></div>
     </section>
     {session?.role === 'OWNER_ADMIN' && <OrganizationAiSettingsSection key={session.organization_id} organizationId={session.organization_id} />}
   </div>;

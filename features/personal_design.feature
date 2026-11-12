@@ -19,6 +19,20 @@ Feature: Personal design
     Then Klar is selected and the mobile navigation is usable
 
   @browser
+  Scenario: A failed design save announces the error at the save action
+    Given the personal design settings are open
+    When the user selects Warm and the save request fails on a 360 pixel screen
+    Then the save failure is announced at the save action and Klar remains active
+    When the connection is restored and the user saves the design again
+    Then Warm is saved and applied
+    When the user selects Klar and the save request fails on a 360 pixel screen
+    Then the save failure is announced at the save action and Warm remains active
+    When the connection is restored and the user saves the design again
+    Then Klar is saved and applied
+    When the user selects Warm and the save request fails on a desktop screen
+    Then the save failure is announced at the save action and Klar remains active
+
+  @browser
   Scenario: The design table screenshots come from synthetic records
     Given a synthetic property for the design table
     When the main screens are captured in both designs at 1280 and 360 pixels

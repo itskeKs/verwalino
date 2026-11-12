@@ -27,8 +27,11 @@ layout without remounting routed work. Account changes discard stale reads/saves
 
 Choosing a radio is a draft. “Noch nicht gespeichert.” remains until explicit
 “Design speichern” succeeds. “Wird gespeichert …” disables repeat submission;
-failure retains the choice and the last saved appearance. A failed initial read
-shows “Design konnte nicht geladen werden.” and “Erneut laden”, with saving
+failure retains the choice and the last saved appearance. A failed save announces
+the error as `role="alert"` in the same row as “Design speichern”
+(`.theme-save-row`), visible at 360 px without scrolling in both designs; only the
+initial-read failure keeps its message and “Erneut laden” above the selection.
+A failed initial read shows “Design konnte nicht geladen werden.” and “Erneut laden”, with saving
 disabled. Success says “Design für Ihr Benutzerkonto gespeichert.” Only then does
 the new design apply. No appearance preference is stored in browser storage.
 
@@ -2233,3 +2236,21 @@ sharing unit 2 around a transfer on 1 July), 1280 and 360 px:
 | After: conflict, a month was booked meanwhile; the offer is reloaded and unticked | [view](docs/assets/design/hausgeld-booking/conflict-1280.png) | [view](docs/assets/design/hausgeld-booking/conflict-360.png) |
 | After: booked (1280 px: Karl Weiß, 360 px: Lena Roth), offer reloaded | [view](docs/assets/design/hausgeld-booking/done-1280.png) | [view](docs/assets/design/hausgeld-booking/done-360.png) |
 | After: buyer's open months from the transfer (Lena Roth, July to December, all ticked) | [view](docs/assets/design/hausgeld-booking/transfer-1280.png) | [view](docs/assets/design/hausgeld-booking/transfer-360.png) |
+
+### Personal-design save error placement (#375)
+
+A failed “Design speichern” announces “Design konnte nicht gespeichert werden. Bitte erneut
+versuchen.” (or the server message) as `role="alert"` inside `.theme-save-row`, directly at the
+save action, so the feedback stays visible at 360 px without scrolling in both designs. The
+previously saved design stays active and the unsaved radio choice remains checked; a successful
+retry applies the choice. Only the initial-read failure keeps its message and “Erneut laden”
+above the selection, with saving disabled.
+
+Synthetic records on the shared test database, failed save with the save row in view:
+
+| | Desktop | 360 px |
+| --- | --- | --- |
+| Before (Klar active) | [view](docs/assets/design/issue-375-save-error/before-klar-1280.png) | [view](docs/assets/design/issue-375-save-error/before-klar-360.png) |
+| Before (Warm active) | | [view](docs/assets/design/issue-375-save-error/before-warm-360.png) |
+| After (Klar active) | [view](docs/assets/design/issue-375-save-error/after-klar-1280.png) | [view](docs/assets/design/issue-375-save-error/after-klar-360.png) |
+| After (Warm active) | | [view](docs/assets/design/issue-375-save-error/after-warm-360.png) |
