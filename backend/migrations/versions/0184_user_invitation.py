@@ -89,6 +89,29 @@ def patch_password_reset_cleanup(reverse=False):
     op.execute(definition)
 
 
+def patch_lifecycle_guard(reverse=False):
+    """The cleanup runs as the runtime role and must also delete finished
+    invitations of an organization in erasure, like the reset requests the
+    guard already exempts; the 0147-owned body is replaced here, not edited.
+    Only DELETE is exempt: inserts and updates stay refused (read-only)."""
+    definition = op.get_bind().scalar(
+        text(
+            "SELECT pg_get_functiondef('public.organization_lifecycle_guard()'::regprocedure)"
+        )
+    )
+    before = "('organization_deletion','audit_event','password_reset_request') THEN"
+    after = (
+        "('organization_deletion','audit_event','password_reset_request')\n"
+        "        AND NOT (TG_TABLE_NAME='user_invitation' AND TG_OP='DELETE') THEN"
+    )
+    if reverse:
+        before, after = after, before
+        if before not in definition and after in definition:
+            return
+    assert definition.count(before) == 1
+    op.execute(definition.replace(before, after))
+
+
 def upgrade():
     op.execute("""
     CREATE TABLE public.user_invitation (
@@ -174,6 +197,7 @@ def upgrade():
     patch_retention_catalog()
     patch_import_admission()
     patch_password_reset_cleanup()
+    patch_lifecycle_guard()
 
 
 def downgrade():
@@ -190,3 +214,4 @@ def downgrade():
     patch_retention_catalog(reverse=True)
     patch_import_admission(reverse=True)
     patch_password_reset_cleanup(reverse=True)
+    patch_lifecycle_guard(reverse=True)

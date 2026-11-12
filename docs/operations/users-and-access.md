@@ -76,8 +76,15 @@ with the same message, so an invitation can never collide with an existing sign-
 „Offene Einladungen“ lists pending invitations with validity and
 offers „Erneut senden“ (issues a new link, invalidates the old one and makes the
 resending administrator the inviter) and „Widerrufen“. Issuing, resending and
-revoking are audit-logged. Finished invitations (accepted, revoked or expired)
-are deleted seven days after they finished, like password-reset requests.
+revoking are audit-logged, without the invitee's address. Finished invitations
+(accepted, revoked or expired) can be deleted seven days after they finished. The
+deletion has no schedule of its own: it is the shared cleanup of password-reset
+requests, at most 100 finished invitations per run, which the application starts
+after each invitation an administrator creates and after every 100th
+password-reset request per web process. It also covers an organization in its
+erasure period. An installation where nobody invites and nobody requests a
+password reset keeps finished invitations, with the invitee's address, until the
+next such request.
 Without a configured mail server no invitation card appears and user creation works
 only with an admin-chosen password.
 

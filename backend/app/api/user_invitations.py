@@ -29,7 +29,11 @@ from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import AsyncSession
 from starlette.concurrency import run_in_threadpool
 
-from app.api.password_reset import PASSWORD_POLICY, RECIPIENT_RULES
+from app.api.password_reset import (
+    PASSWORD_POLICY,
+    RECIPIENT_RULES,
+    cleanup_expired_requests,
+)
 from app.api.users import user_admin_db
 from app.core import rate_limit
 from app.core.config import settings
@@ -314,12 +318,13 @@ async def create_invitation(
             auth,
             str(row.id),
             "RESEND",
-            {"after": {"email": row.email, "role": row.role}},
+            {"after": {"role": row.role}},
         )
         message = await build_invitation_mail(
             db, auth, token=token, recipient=row.email
         )
         background.add_task(submit_invitation_mail, message)
+        background.add_task(cleanup_expired_requests)
         return invitation_out(row)
     row = (
         await db.execute(
@@ -344,10 +349,11 @@ async def create_invitation(
         auth,
         str(row.id),
         "INVITE",
-        {"after": {"email": row.email, "role": row.role}},
+        {"after": {"role": row.role}},
     )
     message = await build_invitation_mail(db, auth, token=token, recipient=row.email)
     background.add_task(submit_invitation_mail, message)
+    background.add_task(cleanup_expired_requests)
     return invitation_out(row)
 
 
@@ -417,7 +423,7 @@ async def resend_invitation(
         auth,
         str(row.id),
         "RESEND",
-        {"after": {"email": row.email, "role": row.role}},
+        {"after": {"role": row.role}},
     )
     message = await build_invitation_mail(db, auth, token=token, recipient=row.email)
     background.add_task(submit_invitation_mail, message)

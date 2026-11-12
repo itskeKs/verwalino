@@ -313,6 +313,74 @@ async def test_invite_revoke_and_resend_are_audit_logged(
 
 
 @pytest.mark.asyncio
+async def test_audit_rows_of_the_invitation_flow_never_contain_the_invitee_address(
+    client_a_admin, client_unauth, signup_mail, seed_data
+):
+    from tests.password_reset_support import reset_store
+
+    # Three issued mails per address are allowed; each address uses two.
+    resent = unique("audit-erneut@example.test")
+    revoked = unique("audit-widerrufen@example.test")
+    expired = unique("audit-abgelaufen@example.test")
+    accepted = unique("audit-angenommen@example.test")
+    first = await invite(client_a_admin, resent)
+    assert (
+        await client_a_admin.post(f"/api/users/invitations/{first['id']}/resend")
+    ).status_code == 200
+    second = await invite(client_a_admin, revoked)
+    assert (
+        await client_a_admin.delete(f"/api/users/invitations/{second['id']}")
+    ).status_code == 204
+    assert (await invite(client_a_admin, revoked))["id"] != second["id"]
+    third = await invite(client_a_admin, expired)
+    async with reset_store() as session:
+        await session.execute(
+            text(
+                "UPDATE user_invitation SET expires_at=now()-interval '1 minute' WHERE id=:id"
+            ),
+            {"id": third["id"]},
+        )
+    # Re-inviting an expired pending invitation rotates it and logs RESEND.
+    assert (await invite(client_a_admin, expired))["id"] == third["id"]
+    await invite(client_a_admin, accepted)
+    answer = await client_unauth.post(
+        "/api/auth/invitation/accept",
+        json={"token": invitation_token(signup_mail), "password": INVITED_PASSWORD},
+    )
+    assert answer.status_code == 204, answer.text
+    org = str(seed_data["org_a_id"])
+    async with reset_store() as session:
+        actions = (
+            await session.scalars(
+                text(
+                    "SELECT action FROM audit_event WHERE organization_id=:org "
+                    "AND entity_type='user_invitation' ORDER BY occurred_at, id"
+                ),
+                {"org": org},
+            )
+        ).all()
+        # Every column of every audit row of the organization, as text.
+        leaks = [
+            (address, row.entity_type, row.action)
+            for address in (resent, revoked, expired, accepted)
+            for row in (
+                await session.execute(
+                    text(
+                        "SELECT a.entity_type, a.action FROM audit_event a "
+                        "WHERE a.organization_id=:org AND position(:needle IN "
+                        "lower(row_to_json(a)::text))>0"
+                    ),
+                    {"org": org, "needle": address.split("@")[0].lower()},
+                )
+            ).all()
+        ]
+    assert actions.count("INVITE") >= 5
+    assert actions.count("RESEND") >= 2
+    assert actions.count("REVOKE") >= 1
+    assert leaks == []
+
+
+@pytest.mark.asyncio
 async def test_tenant_context_refuses_the_accept_definer_without_changing_the_invitation(
     client_a_admin, client_unauth, signup_mail, app_rw_session, seed_data
 ):
@@ -755,6 +823,162 @@ async def test_cleanup_removes_finished_invitations_after_seven_days(
 
 
 @pytest.mark.asyncio
+async def test_runtime_cleanup_deletes_finished_rows_beside_an_organization_in_erasure(
+    client_b_admin, signup_mail, seed_data
+):
+    from tests.password_reset_support import reset_store, runtime_store
+
+    erasing = (str(seed_data["org_b_id"]), str(seed_data["user_b_admin_id"]))
+    live = (str(seed_data["org_a_id"]), str(seed_data["user_a_admin_id"]))
+    ids = {}
+
+    async def add_invitation(session, name, scope, **times):
+        columns = "".join(f",{column}" for column in times)
+        values = "".join(f",now()-interval '{days} days'" for days in times.values())
+        ids[name] = str(
+            await session.scalar(
+                text(
+                    f"INSERT INTO user_invitation(organization_id,email,role,invited_by,"
+                    f"token_hash,expires_at{columns}) VALUES (:org,:email,'CLERK',:user,"
+                    f"sha256(convert_to(:email,'UTF8')),now()+interval '72 hours'{values}) "
+                    f"RETURNING id"
+                ),
+                {"org": scope[0], "user": scope[1], "email": unique(f"{name}@example.test")},
+            )
+        )
+
+    async def add_reset(session, name, scope, days):
+        ids[name] = str(
+            await session.scalar(
+                text(
+                    "INSERT INTO password_reset_request(user_id,organization_id,token_hash,"
+                    f"expires_at) VALUES (:user,:org,sha256(convert_to(:name,'UTF8')),"
+                    f"now()-interval '{days} days') RETURNING id"
+                ),
+                {"org": scope[0], "user": scope[1], "name": unique(f"{name}@x.test")},
+            )
+        )
+
+    async with reset_store() as session:
+        # The erasing organization holds the oldest rows, so the batch reaches them first.
+        await add_invitation(session, "erasing_old_invitation", erasing, revoked_at=30)
+        await add_invitation(session, "erasing_young_invitation", erasing, revoked_at=1)
+        await add_reset(session, "erasing_old_reset", erasing, 30)
+        await add_invitation(session, "live_old_invitation", live, accepted_at=8)
+        await add_reset(session, "live_old_reset", live, 8)
+        await add_invitation(session, "live_open_invitation", live)
+        await session.execute(
+            text(
+                "INSERT INTO organization_deletion(organization_id,status,execute_after) "
+                "VALUES (:org,'cooling_off',now()+interval '7 days')"
+            ),
+            {"org": erasing[0]},
+        )
+    try:
+        # The guard still refuses new invitations of an organization in erasure.
+        refused = await client_b_admin.post(
+            "/api/users/invitations",
+            json={"email": unique("gesperrt@example.test"), "role": "CLERK"},
+        )
+        assert refused.status_code == 409, refused.text
+        removed = 0
+        for _ in range(20):  # bounded batches; earlier tests may leave old rows
+            async with runtime_store() as session:
+                batch = await session.scalar(
+                    text("SELECT public.cleanup_password_reset_requests()")
+                )
+            removed += batch
+            if batch == 0:
+                break
+        async with reset_store() as session:
+            remaining = {
+                str(row)
+                for row in (
+                    await session.scalars(
+                        text(
+                            "SELECT id FROM user_invitation WHERE id = ANY(CAST(:ids AS uuid[])) "
+                            "UNION ALL SELECT id FROM password_reset_request "
+                            "WHERE id = ANY(CAST(:ids AS uuid[]))"
+                        ),
+                        {"ids": list(ids.values())},
+                    )
+                ).all()
+            }
+    finally:
+        async with reset_store() as session:
+            await session.execute(
+                text("DELETE FROM organization_deletion WHERE organization_id=:org"),
+                {"org": erasing[0]},
+            )
+            await session.execute(
+                text("DELETE FROM user_invitation WHERE id = ANY(CAST(:ids AS uuid[]))"),
+                {"ids": list(ids.values())},
+            )
+            await session.execute(
+                text(
+                    "DELETE FROM password_reset_request WHERE id = ANY(CAST(:ids AS uuid[]))"
+                ),
+                {"ids": list(ids.values())},
+            )
+    assert removed >= 4
+    # Rows of the organization in erasure are deleted like its reset rows; young
+    # finished rows and pending rows stay.
+    assert remaining == {ids["erasing_young_invitation"], ids["live_open_invitation"]}
+
+
+@pytest.mark.asyncio
+async def test_creating_an_invitation_deletes_finished_invitations_older_than_seven_days(
+    client_a_admin, signup_mail
+):
+    from tests.password_reset_support import reset_store
+
+    revoked_old = await invite(client_a_admin, unique("alt-widerrufen@example.test"))
+    assert (
+        await client_a_admin.delete(f"/api/users/invitations/{revoked_old['id']}")
+    ).status_code == 204
+    expired_old = await invite(client_a_admin, unique("alt-abgelaufen@example.test"))
+    revoked_young = await invite(client_a_admin, unique("jung-widerrufen@example.test"))
+    assert (
+        await client_a_admin.delete(f"/api/users/invitations/{revoked_young['id']}")
+    ).status_code == 204
+    async with reset_store() as session:
+        for column, invitation, days in (
+            ("revoked_at", revoked_old, 8),
+            ("expires_at", expired_old, 8),
+            ("revoked_at", revoked_young, 6),
+        ):
+            await session.execute(
+                text(
+                    f"UPDATE user_invitation SET {column}=now()-interval '{days} days' "
+                    f"WHERE id=:id"
+                ),
+                {"id": invitation["id"]},
+            )
+    # Nothing deletes them before the next invitation is created.
+    fresh = await invite(client_a_admin, unique("neu@example.test"))
+    async with reset_store() as session:
+        remaining = {
+            str(row)
+            for row in (
+                await session.scalars(
+                    text(
+                        "SELECT id FROM user_invitation WHERE id = ANY(CAST(:ids AS uuid[]))"
+                    ),
+                    {
+                        "ids": [
+                            revoked_old["id"],
+                            expired_old["id"],
+                            revoked_young["id"],
+                            fresh["id"],
+                        ]
+                    },
+                )
+            ).all()
+        }
+    assert remaining == {revoked_young["id"], fresh["id"]}
+
+
+@pytest.mark.asyncio
 async def test_resend_makes_the_acting_administrator_the_inviter(
     client_unauth, signup_mail
 ):
@@ -868,6 +1092,10 @@ def test_invitation_migration_roundtrip_is_exact_and_refuses_retained_state(
             # invitations; the refusal rehearsal needs an empty table.
             connection.execute(text("DELETE FROM public.user_invitation"))
             before = _chain_snapshot(connection)
+            guard = "SELECT prosrc FROM pg_proc WHERE oid='public.organization_lifecycle_guard()'::regprocedure"
+            assert "TG_TABLE_NAME='user_invitation' AND TG_OP='DELETE'" in (
+                connection.scalar(text(guard))
+            )
             with Operations.context(MigrationContext.configure(connection)):
                 migration.downgrade()
                 assert (
@@ -875,6 +1103,13 @@ def test_invitation_migration_roundtrip_is_exact_and_refuses_retained_state(
                         text("SELECT to_regclass('public.user_invitation')")
                     )
                     is None
+                )
+                # The guard returns to the 0147 text, which never names the table.
+                restored = connection.scalar(text(guard))
+                assert "user_invitation" not in restored
+                assert (
+                    "('organization_deletion','audit_event','password_reset_request') THEN"
+                    in restored
                 )
                 migration.upgrade()
                 assert _chain_snapshot(connection) == before
