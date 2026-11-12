@@ -553,7 +553,7 @@ def test_invitation_migration_roundtrip_is_exact_and_refuses_retained_state(
     from tests.test_session_review_access import _chain_snapshot
 
     scripts = ScriptDirectory("migrations")
-    migration = scripts.get_revision("0182").module
+    migration = scripts.get_revision("0184").module
     engine = create_engine(MIGRATOR_SYNC_URL)
     try:
         with engine.connect() as connection, connection.begin() as transaction:

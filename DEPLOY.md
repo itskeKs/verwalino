@@ -1643,11 +1643,11 @@ run `docker compose down -v` or delete the volumes.
 A deploy workflow that was disabled by hand during a release is re-enabled in the same release,
 before that release is declared done.
 
-## Migration compatibility: 0029–0182
+## Migration compatibility: 0029–0184
 
 | Revisions | Effect on existing data and runtime compatibility |
 | --- | --- |
-| 0029–0122 | Adds financial, declaration, source custody and review data structures and guards. The 0028 runtime cannot interpret the new schema or enforce its later security rules. The 0028→0182 rehearsal preserves all old columns and rows with synthetic organization, user, document, draft/failed import and failed extraction-run data, but does not prove every live-data combination. |
+| 0029–0122 | Adds financial, declaration, source custody and review data structures and guards. The 0028 runtime cannot interpret the new schema or enforce its later security rules. The 0028→0184 rehearsal preserves all old columns and rows with synthetic organization, user, document, draft/failed import and failed extraction-run data, but does not prove every live-data combination. |
 | 0123 | Adds nullable replacement evidence and changes exception-completion functions/outcomes. Existing rows retain their old disposition; old clients cannot interpret new replacement outcomes. Downgrade refuses retained evidence. |
 | 0124–0125 | Adds bank transactions and a nullable payment link, then enforces tenant/account coherence and immutable booked links. A 0122 database has no pre-existing links; inconsistent intermediate data is not silently repaired. |
 | 0126–0127 | Adds append-only rent history and frozen special levies; replaces financial/source/report adapters. No old financial rows are rewritten. Older runtimes do not understand the new obligations/history. Their downgrades can drop populated new tables; they are not a safe recovery path. |
@@ -1695,17 +1695,72 @@ before that release is declared done.
 | 0179 (parent 0178) | Adds compatible API destinations and provider selection without changing existing encrypted keys. Runtime reservations distinguish provider origins. Downgrade refuses configured non-OpenAI destinations. |
 | 0180 (parent 0179) | Adds a nullable administrator request timeout per configured provider endpoint (1–3600 seconds). Existing settings keep their function defaults; compatible endpoints default to 180 seconds. Downgrade refuses explicit configured timeouts. |
 | 0181 (parent 0180) | Allows `RESERVE_SOLL` owner statement lines for the planned reserve contribution. Existing finalized statements remain unchanged; downgrade explicitly refuses retained `RESERVE_SOLL` rows with "Retain planned reserve statement evidence; populated downgrade refused" before changing the CHECK; without those rows it restores the prior line types. |
-| 0182 (head; parent 0181) | Adds the tenant-scoped `user_invitation` table (RLS, hashed single-use tokens, audit) and the `accept_user_invitation` definer that creates user and membership at acceptance; the retention catalog classifies invitations for erasure. Downgrade refuses retained invitation rows with "Cannot discard retained invitation state" and restores the previous catalog body. |
+| 0182 (parent 0181) | Adds a trigger on `settlement_run` that refuses a non-identical overlap between a new or moved lease run and another active run of the same lease and type that belongs to a different accounting scope, including runs the acting user cannot read (a legacy run without a scope counts as its own context; row security off, no row data returned, per-lease advisory lock). Identical bounds, superseded runs, runs of one scope and runs without a lease are unaffected. Also adds the integer-only `financial_property_settlement_start_month(org, property)` reader (current organization and live member only, `app_rw` execute). No rows are read or rewritten, so existing overlaps are retained. Downgrade drops the trigger and both functions. |
+| 0183 (parent 0182) | Makes the sign-in address globally unique across organizations with a unique index on `lower(btrim(email))`; the per-organization canonical expression index it subsumes is dropped. No rows are rewritten. Upgrade refuses pre-existing cross-organization duplicates by naming a bounded sample of canonical addresses and never rewrites rows; resolve them by hand before the upgrade as described in [Migration 0183: duplicate sign-in addresses](#migration-0183-duplicate-sign-in-addresses); downgrade restores the 0027 per-organization canonical index exactly. Grants `app_rw` EXECUTE on the existing definer lookup `signup_email_registered(text)` (0144), so the runtime import can keep archived placeholders off live addresses without a global read grant; downgrade takes the grant back. |
+| 0184 (head; parent 0183) | Adds the tenant-scoped `user_invitation` table (RLS, hashed single-use tokens, audit) and the `accept_user_invitation` definer that creates user and membership at acceptance; invitation rows are excluded from import admission and the retention catalog classifies them for erasure; finished invitations (accepted, revoked or expired) are deleted by the shared `cleanup_password_reset_requests` mechanism seven days after they finished. Downgrade refuses retained invitation rows with "Cannot discard retained invitation state" and restores the previous catalog and admission bodies. |
 
 DDL uses the existing PostgreSQL/Alembic transaction; 0123 also takes financial
 and ACL locks with NOWAIT table locks. Contention or unexpected data/function
 definitions must abort, not trigger repair/deletion. A rollback-only synthetic
-0028→0182 rehearsal compares every old table column/row and retained RLS flags;
-the 0122→0182, 0139→0182 and accepted-source 0140→0182, 0141→0182 and
-0142→0182, 0143→0182, 0144→0182, 0145→0182, 0146→0182, 0147→0182, 0148→0182, 0149→0182, 0150→0182, 0151→0182, 0152→0182, 0153→0182, 0154→0182, 0155→0182, 0159→0182, 0160→0182, 0161→0182, 0162→0182, 0163→0182, 0164→0182, 0165→0182, 0166→0182, 0167→0182, 0168→0182, 0169→0182, 0170→0182, 0171→0182, 0172→0182, 0173→0182, 0174→0182, 0175→0182, 0176→0182, 0177→0182, 0178→0182, 0179→0182 and 0180→0182 and 0181→0182 (accepted sources) rehearsals also
+0028→0184 rehearsal compares every old table column/row and retained RLS flags;
+the 0122→0184, 0139→0184 and accepted-source 0140→0184, 0141→0184 and
+0142→0184, 0143→0184, 0144→0184, 0145→0184, 0146→0184, 0147→0184, 0148→0184, 0149→0184, 0150→0184, 0151→0184, 0152→0184, 0153→0184, 0154→0184, 0155→0184, 0159→0184, 0160→0184, 0161→0184, 0162→0184, 0163→0184, 0164→0184, 0165→0184, 0166→0184, 0167→0184, 0168→0184, 0169→0184, 0170→0184, 0171→0184, 0172→0184, 0173→0184, 0174→0184, 0175→0184, 0176→0184, 0177→0184, 0178→0184, 0179→0184, 0180→0184, 0181→0184 and 0182→0184 (accepted sources) rehearsals also
 compare existing ACLs, allowing only the explicit organization INSERT/reserve UPDATE revocations and the capability-checked
 0159 binding adapter and the 0168 column-level resolution-link grant;
 it does not prove live data validity or cross-version runtime compatibility.
+
+### Migration 0183: duplicate sign-in addresses
+
+0183 makes the sign-in address unique across all organizations. While two
+accounts of different organizations share one canonical address
+(`lower(btrim(email))`), the upgrade refuses, names up to five of the addresses
+and changes nothing. It never rewrites rows itself: duplicates are resolved by
+hand, as the `app_migrator` role (`compose exec db psql -U app_migrator -d
+hausverwaltung`), before the upgrade. Take a backup first
+([Backups](#backups)). An instance that imported an organization archive while
+the source organization still existed holds such duplicates, because earlier
+releases restored every archived account as an inactive placeholder with its
+archived address. Deactivating an account does not resolve a duplicate (the
+index covers inactive rows too), and no API changes an address.
+
+1. List every duplicate (read-only):
+
+   ```sql
+   SELECT lower(btrim(u.email)) AS address, u.id AS user_id, u.organization_id,
+          u.is_active, u.password_hash = '!' AS no_credentials, m.role
+     FROM "user" u
+     LEFT JOIN membership m ON m.user_id = u.id AND m.organization_id = u.organization_id
+    WHERE lower(btrim(u.email)) IN (
+            SELECT lower(btrim(email)) FROM "user" GROUP BY 1 HAVING count(*) > 1)
+    ORDER BY 1, u.organization_id, u.id;
+   ```
+
+2. An inactive imported placeholder (`is_active` false and `no_credentials`
+   true) cannot sign in and holds no credentials. It gets the non-sign-in form
+   `<user id>-<organization id>@imported.archive.invalid` that the import writes
+   today. Run this once, in one transaction, as the migrator role:
+
+   ```sql
+   BEGIN;
+   UPDATE "user" u
+      SET email = u.id::text || '-' || u.organization_id::text || '@imported.archive.invalid'
+    WHERE u.password_hash = '!' AND u.is_active = false
+      AND lower(btrim(u.email)) IN (
+            SELECT lower(btrim(email)) FROM "user" GROUP BY 1 HAVING count(*) > 1);
+   COMMIT;
+   ```
+
+3. Two real accounts of different organizations (active, or with credentials)
+   need the owner's decision which organization keeps the address. The other
+   account gets a new address chosen with its person; the old address no longer
+   signs in to it and password reset mail goes to the new one. One statement per
+   account:
+
+   ```sql
+   UPDATE "user" SET email = 'new.address@example.test' WHERE id = '<user id from the listing>';
+   ```
+
+4. Run the listing again; it must return no rows. Then run the upgrade again.
 
 ### Release-target checklist
 
@@ -1725,10 +1780,10 @@ When adding a migration, update these together in the same release:
 
 ## Deployment boundary and accepted head
 
-The reviewed code targets **0182**. `backend/app/deployment.py` retains `TARGET`,
+The reviewed code targets **0184**. `backend/app/deployment.py` retains `TARGET`,
 `SUPPORTED`, `release_head()` and the read-only schema/role/runtime checks used
-by the migration rehearsals. Those checks accept measured **0028 → 0182**,
-**0122 → 0182**, **0139 → 0182**, **0140 → 0182**, **0141 → 0182**, **0142 → 0182**, **0143 → 0182**, **0144 → 0182**, **0145 → 0182**, **0146 → 0182**, **0147 → 0182**, **0148 → 0182**, **0149 → 0182**, **0150 → 0182**, **0151 → 0182**, **0152 → 0182**, **0153 → 0182**, **0154 → 0182**, **0155 → 0182**, **0159 → 0182**, **0160 → 0182**, **0161 → 0182**, **0162 → 0182**, **0163 → 0182**, **0164 → 0182**, **0165 → 0182**, **0166 → 0182** (accepted sources), **0167 → 0182** (accepted source), **0168 → 0182** (accepted source), **0169 → 0182** (accepted source), **0170 → 0182** (accepted source), **0171 → 0182** (accepted source), **0172 → 0182** (accepted source), **0173 → 0182** (accepted source), **0174 → 0182** (accepted source), **0175 → 0182** (accepted source), **0176 → 0182** (accepted source), **0177 → 0182**, **0178 → 0182**, **0179 → 0182**, **0180 → 0182** or **0181 → 0182**; unknown,
+by the migration rehearsals. Those checks accept measured **0028 → 0184**,
+**0122 → 0184**, **0139 → 0184**, **0140 → 0184**, **0141 → 0184**, **0142 → 0184**, **0143 → 0184**, **0144 → 0184**, **0145 → 0184**, **0146 → 0184**, **0147 → 0184**, **0148 → 0184**, **0149 → 0184**, **0150 → 0184**, **0151 → 0184**, **0152 → 0184**, **0153 → 0184**, **0154 → 0184**, **0155 → 0184**, **0159 → 0184**, **0160 → 0184**, **0161 → 0184**, **0162 → 0184**, **0163 → 0184**, **0164 → 0184**, **0165 → 0184**, **0166 → 0184** (accepted sources), **0167 → 0184** (accepted source), **0168 → 0184** (accepted source), **0169 → 0184** (accepted source), **0170 → 0184** (accepted source), **0171 → 0184** (accepted source), **0172 → 0184** (accepted source), **0173 → 0184** (accepted source), **0174 → 0184** (accepted source), **0175 → 0184** (accepted source), **0176 → 0184** (accepted source), **0177 → 0184**, **0178 → 0184**, **0179 → 0184**, **0180 → 0184**, **0181 → 0184**, **0182 → 0184** or **0183 → 0184**; unknown,
 missing, multiple or intermediate revisions are rejected. These are code and
 rehearsal boundaries, not a measurement of a running installation.
 
@@ -2453,5 +2508,5 @@ a numeric ledger placeholder is never displayed as free usage.
 Migration 0179 preserves existing encrypted settings and adds the optional compatible
 endpoint and provider constraint. Downgrade refuses configured non-OpenAI destinations
 rather than silently losing their configuration. Existing rows keep their OpenAI
-origin and credentials. 0180 is an accepted source for upgrades to 0182 alongside the
+origin and credentials. 0180 is an accepted source for upgrades to 0184 alongside the
 previous sources; production moves only through a reviewed release.

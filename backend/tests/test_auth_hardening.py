@@ -455,12 +455,14 @@ async def test_login_failures_have_identical_public_response(client_unauth, monk
 
 @pytest.mark.asyncio
 async def test_login_sensitive_failures_have_one_public_response(client_unauth):
-    shared_email = f"auth-{uuid.uuid4().hex}@example.test"
+    # A second active account for one canonical address cannot be created
+    # across organizations at all (issue #134, uq_user_signin_email), so the
+    # ambiguous-lookup class no longer exists; every remaining sensitive
+    # failure still answers with the identical public receipt.
     rows = [
         {"email": f"inactive-{uuid.uuid4().hex}@example.test", "is_active": False},
         {"email": f"memberless-{uuid.uuid4().hex}@example.test", "membership": False},
-        {"email": shared_email},
-        {"email": f" {shared_email.upper()} "},
+        {"email": f"valid-{uuid.uuid4().hex}@example.test", "password": "wrong-password"},
         {"email": f"invalid-hash-{uuid.uuid4().hex}@example.test", "password_hash": "not-an-argon2-hash"},
     ]
     with temporary_auth_rows(rows):
@@ -468,7 +470,7 @@ async def test_login_sensitive_failures_have_one_public_response(client_unauth):
         for row in rows:
             response = await client_unauth.post(
                 "/api/auth/login",
-                json={"email": row["email"], "password": "testpass1234"},
+                json={"email": row["email"], "password": row.get("password", "testpass1234")},
             )
             responses.append((response.status_code, response.json()))
         assert responses == [INVALID_CREDENTIALS] * len(rows)
@@ -670,7 +672,7 @@ async def test_user_create_rejects_normalized_legacy_email_without_a_server_erro
                 },
             )
         assert response.status_code == 409
-        assert response.json() == {"detail": "Email already in use"}
+        assert response.json() == {"detail": "Diese E-Mail-Adresse kann nicht verwendet werden."}
     finally:
         try:
             with connection.cursor() as cursor:
@@ -682,6 +684,37 @@ async def test_user_create_rejects_normalized_legacy_email_without_a_server_erro
             raise
         finally:
             connection.close()
+
+
+@pytest.mark.asyncio
+async def test_user_create_rejects_another_organizations_email_with_the_generic_receipt(seed_data):
+    # A sign-in address belongs to exactly one organization (issue #134): the
+    # admin of organization B reusing organization A's address is refused with
+    # the same generic receipt as an own-organization duplicate, so login and
+    # password reset of the legitimate account keep working.
+    from app.main import app
+
+    token = create_session_token(seed_data["user_b_admin_id"], seed_data["org_b_id"])
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app, raise_app_exceptions=False),
+        base_url="http://test",
+        cookies={settings.session_cookie_name: token},
+    ) as client:
+        response = await client.post(
+            "/api/users",
+            json={
+                "email": "admin@alpha.de",
+                "password": "this-password-is-valid",
+                "role": "CLERK",
+            },
+        )
+        assert response.status_code == 409
+        assert response.json() == {"detail": "Diese E-Mail-Adresse kann nicht verwendet werden."}
+
+        login = await client.post(
+            "/api/auth/login", json={"email": "admin@alpha.de", "password": "testpass1234"}
+        )
+        assert login.status_code == 200
 
 
 @pytest.mark.asyncio

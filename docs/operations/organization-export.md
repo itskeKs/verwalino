@@ -157,10 +157,53 @@ new local receipt. The latest local completion receipt takes precedence. Request
 archive. Its existing administrator account is kept. Users match normalized
 email addresses within the destination only. Other users are inactive with an
 unusable password; an administrator must reset their password and activate them
-before login. A different bootstrap mailbox remains an additional local account;
-round-trip count comparisons use a matching bootstrap mailbox and exclude the
-new local import audit receipt. Contact creation records the importing administrator as the new
+before login. A sign-in address belongs to exactly one organization: an
+archived user whose address a live account holds (usually the still-existing
+source organization) gets the deterministic non-sign-in address
+`<id>-<destination organization id>@imported.archive.invalid`, and the address
+stays with its live owner. An address nobody holds is restored unchanged. A
+different bootstrap mailbox remains an additional local account; round-trip
+count comparisons use a matching bootstrap mailbox (a different one adds one
+local user and membership row) and exclude the new local import audit receipt.
+Contact creation records the importing administrator as the new
 custodian, without claiming the historical author performed a local operation.
+
+**Importing accounting scopes and attachments: when it works and when it is refused.**
+Scopes, scope bindings, scope grants and attachments keep the archived account
+as creator, reviewer, grantor or uploader. The import runs as the importing
+administrator and the database accepts these rows only when that archived
+account is the importing administrator's own account (insert policies
+`scope_insert` and `attachment_insert` bind the actor column to the session
+user). This is the same limit as on earlier releases. In practice:
+
+- It works when the source organization is gone (deleted, or the archive is
+  restored on another installation), the importing administrator signs in with
+  the address of the archived administrator, and that administrator is the only
+  account that created the scopes, reviewed the bindings, gave the grants and
+  uploaded the attachments. Deleting an organization rewrites all its account
+  addresses to `<id>@deleted.invalid`, which frees that address, and the address
+  match above maps the archived administrator to the importing administrator.
+  Evidence keeps its original actors; the importing administrator receives no
+  extra grant.
+- It is refused when any of these rows names another archived account, even
+  after the source organization is gone: a scope grant given, a binding
+  reviewed or an attachment uploaded by a second administrator or a clerk, or
+  by an administrator whose address the importing administrator does not carry.
+  Such an account is an inactive placeholder after the import, so its first row
+  cannot be inserted.
+- It is refused while the source organization still holds the archived
+  administrator's address (the archive is imported beside the living
+  original): that administrator then is such a placeholder too.
+
+On a refusal the administrator sees the German message "Die Daten können unter
+den aktuellen Integritäts- und Freigaberegeln nicht importiert werden." with the
+technical details (code `IMPORT_INTEGRITY_REFUSAL`, entity such as
+`accounting_scope`, `scope_grant` or `attachment`, source IDs, count). Nothing
+is written: rows, files and the destination organization stay as they were. To
+restore an archive whose scopes were created by the archived administrator,
+delete the source organization first and import as the administrator who
+carries the archived address. Cloning an organization with its scopes beside
+the living original is not supported (owner decision on issue #134).
 
 Rows are inserted in dependency order in one transaction under ordinary runtime
 RLS and integrity guards. Original registration reuses its native validated

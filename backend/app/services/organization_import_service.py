@@ -479,6 +479,8 @@ async def import_organization(db, auth, source):
                         row['snapshot_sha256'] = canonical_sha256(row['snapshot_payload'])
                     if name == 'user':
                         row.update(password_hash='!', is_active=False)
+                        if await db.scalar(text('SELECT public.signup_email_registered(:email)'), {'email': row['email']}):
+                            row['email'] = f"{row['id']}-{auth.organization_id}@imported.archive.invalid"
                     if name == 'person':
                         row['created_by'] = str(auth.user_id)
                     member = documents.get((name, original.get('id')))

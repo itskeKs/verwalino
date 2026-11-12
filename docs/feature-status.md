@@ -107,7 +107,7 @@ The bounded provider transport/settings decision is described in [ADR 0014](adr/
 
 | Feature | Status | Location |
 | --- | --- | --- |
-| Property settlement period | 🟡 month-based offers, lease-clipped single/batch statements and offers, short-window service-day cost shares, plan dates and prior actuals; NK/HK advances credited separately over lease-covered months/days, day splits only between statements of the same lease; frozen-credit remainder after late end edits, bucket-aware DERIVED end guard and legacy check, outside-lease payment notice once on the statement containing the relevant lease boundary; single nonidentical overlaps with finalized periods rejected within the acting user's visibility; batch skips finalized coverage of the clipped span; identical repeats allowed; cross-scope database constraint pending | `engine/periods.py`, `engine/distribution.py`, `engine/rounding.py`, `services/payment_service.py`, `api/properties.py` (`/settlement-periods`), `pages/SettlementsPage.tsx`, issues #68, #122, #136 |
+| Property settlement period | 🟡 month-based offers, lease-clipped single/batch statements and offers, short-window service-day cost shares, plan dates and prior actuals; NK/HK advances credited separately over lease-covered months/days, day splits only between statements of the same lease; frozen-credit remainder after late end edits, bucket-aware DERIVED end guard and legacy check, outside-lease payment notice once on the statement containing the relevant lease boundary; single nonidentical overlaps with finalized periods rejected within the acting user's visibility and, by a database guard (0182), against runs of other accounting scopes whatever the user may read; batch skips finalized coverage of the clipped span; identical repeats allowed | `engine/periods.py`, `engine/distribution.py`, `engine/rounding.py`, `services/payment_service.py`, `api/properties.py` (`/settlement-periods`), `pages/SettlementsPage.tsx`, issues #68, #95, #122, #136 |
 | Operating cost statement per lease: compute, finalize, PDF, correction | ✅ | `api/settlements.py`, `services/settlement_service.py`, `services/settlement_pdf.py` |
 | Commercial preallocation per position | ✅ explicit percentage or fixed amount with required reason, shared across tenant drafts, exact group/occupant cents, frozen statement/PDF evidence; direct amounts/internal HeizkostenV excluded | `engine/settlement.py`, `models/commercial_preallocation.py`, `components/CommercialPreallocationInputs.tsx`, [semantics](m3-abrechnungs-engine.md#63-commercial-preallocation-vorwegabzug-gewerbe-202), #202 |
 | Keys area/MEA/units, pro rata, vacancy | ✅ | `engine/distribution.py` |
@@ -164,7 +164,7 @@ The bounded provider transport/settings decision is described in [ADR 0014](adr/
 - VAT-liable letting (People and tenancies): no VAT on rent, advances and statements for units with the VAT option (#71); no input VAT apportionment (#72).
 - Bank retrieval PSD2/FinTS (Tenant ledger, bank and payments): no automatic bank statement retrieval; import is by CSV/CAMT file only (#40).
 - Inbox (Posteingang) with review chain (Vouchers and costs): worker service and upload-to-cost scenario are present; real-stack acceptance with ClamAV signatures remains pending ([#35](https://github.com/itskeKs/verwalino/issues/35), [runbook](operations/inbox-review-chain.md)).
-- Settlement period (Operating and heating cost statements): overlaps with runs or plans outside the acting user's visible accounting scopes are not detected; a follow-up database constraint is still needed. Identical periods remain allowed (#68).
+- Settlement period (Operating and heating cost statements): economic plans that overlap a plan outside the acting user's visible accounting scopes are not detected; tenant statements of one lease are guarded across scopes by the database. Identical periods remain allowed (#68, #95).
 - Maintenance reserve investment remains outside scope; ledger cash movements are not automatic bank reconciliation (#36).
 - Tenant portal (Documents, communication, reports): not built; planned right after the hosted launch (#41).
 - Year overview per property (Anlage V) (Documents, communication, reports): mapping aid available; no automatic tax-year cash-outflow calculation, ownership allocation, organization overrides or ELSTER submission.
@@ -174,5 +174,10 @@ Organization lifecycle (#23): archive v2 with v1 import, consistent ID remapping
 empty-tenant admission and atomic refusal, retention preview/fresh-export offer,
 typed confirmation, seven-day read-only cooling-off/cancel, and operator erasure
 are implemented. Historical protected scope/evidence restoration can still be
-refused under current integrity rules. A real fresh-install import is maintainer
+refused under current integrity rules; accounting scopes, bindings, grants and
+attachments are restored only when the importing administrator is the archived
+actor of every such row (a second administrator or a clerk as actor is always
+refused; the source organization must be deleted or the installation another
+one, with the same address), and beside the living source organization such an
+import is refused (#134, [details](operations/organization-export.md)). A real fresh-install import is maintainer
 acceptance; local validation uses two synthetic organizations in the test DB.

@@ -33,8 +33,23 @@ period bounds are identical (repeat/correction runs). For finalized bounds
 shared starts or ends and overlap on a boundary day all conflict. Mixed batches
 report conflicting leases as per-lease errors, create the other drafts, and
 continue skipping identical existing runs. An entirely conflicting batch retains
-409. Drafts do not block single-statement creation. Batches skip identical drafts
-and reject any other overlapping draft of the same lease. Short transition
+409. Drafts of one accounting scope do not block single-statement creation. Batches skip identical drafts
+and reject any other overlapping draft of the same lease.
+
+Migration 0182 enforces the same rule where RLS hides rows. A trigger on
+`settlement_run` compares each new or moved lease run with every other active
+(non-superseded) run of that lease and type in the organization, with row
+security off and without returning row data. A non-identical overlap with a run
+of a different accounting scope, draft or finalized, is refused (`23P01`,
+constraint `settlement_run_active_period`); a legacy run without a scope counts as
+its own context. Identical bounds stay valid, superseded runs do not count, runs
+of one scope stay with the application checks above, and runs without a lease
+(WEG annual statements, asset reports) are not covered; their scope-aware rules are
+unchanged. A per-lease advisory lock serializes concurrent creators. Single
+creation and correction answer 409 `settlement_period_conflict` with "Für diesen
+Mietvertrag existiert bereits eine Abrechnung mit überschneidendem Zeitraum."; a
+batch reports it as a per-lease error and creates the other drafts. Existing rows
+are not read or rewritten. Short transition
 periods remain possible after a property's start month changes. An
 inclusive period from 29 February 2024 through 28 February 2025 is twelve months
 and is accepted.
