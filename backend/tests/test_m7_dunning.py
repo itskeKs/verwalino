@@ -1967,3 +1967,129 @@ async def test_unscoped_ledger_requires_exact_lease_provenance(isolated_batch_se
     assert {row["id"] for row in history.json()} == {notice_id, str(legacy_id)}
     assert (await client.get(legacy_path)).json() == legacy.json()
     assert (await client.get(f"{legacy_path}/pdf")).content == legacy_pdf.content
+
+# ===========================================================================
+# Escalation anchors on the currently overdue items (#407)
+# ===========================================================================
+from tests.test_special_levy import levy_db as levy_db, levy_fixture as levy_fixture  # noqa: E402,F401
+
+
+async def _escalation_lease(api, w, property_key, number):
+    unit = await api.post("/api/units", json={
+        "property_id": str(w[property_key]), "number": number, "usage_type": "WOHNUNG"})
+    assert unit.status_code == 201, unit.text
+    response = await api.post("/api/leases", json={
+        "unit_id": unit.json()["id"], "tenant_profile_id": str(w["tenant"]),
+        "valid_from": "2026-01-01", "base_rent": "700.00", "advance_payment": "0.00"})
+    assert response.status_code == 201, response.text
+    return response.json()["id"]
+
+
+async def _escalation_account(api, w, property_key):
+    response = await api.post("/api/bank-accounts", json={
+        "property_id": str(w[property_key]), "account_type": "LAUFEND",
+        "label": "Mahnkonto", "iban": "DE36302501010002042407"})
+    assert response.status_code == 201, response.text
+    return response.json()["id"]
+
+
+async def _tenant_notice(api, w, lease_id, period_start, period_end, reference_date):
+    response = await api.post("/api/dunning/tenant", json={
+        "tenant_profile_id": str(w["tenant"]), "lease_agreement_id": str(lease_id),
+        "period_start": period_start, "period_end": period_end, "reference_date": reference_date})
+    assert response.status_code == 201, response.text
+    return response.json()
+
+
+async def _issue_notice(api, notice_id):
+    response = await api.post(f"/api/dunning/{notice_id}/issue")
+    assert response.status_code == 200, response.text
+
+
+async def _pay_rent(api, w, lease_id, account_id, period_month, value_date):
+    response = await api.post("/api/payments", json={
+        "bank_account_id": str(account_id), "direction": "IN", "amount": "700.00",
+        "value_date": value_date, "payment_type": "KALTMIETE",
+        "tenant_profile_id": str(w["tenant"]), "lease_agreement_id": str(lease_id),
+        "period_year": 2026, "period_month": period_month})
+    assert response.status_code == 201, response.text
+    response = await api.post(f"/api/payments/{response.json()['id']}/book")
+    assert response.status_code == 200, response.text
+
+
+@pytest.mark.asyncio
+async def test_paid_earlier_arrears_do_not_raise_new_notice_level(rent_world):
+    w = rent_world
+    async with api_client(w) as api:
+        lease = await _escalation_lease(api, w, "hidden_property", "Esc 1")
+        account = await _escalation_account(api, w, "hidden_property")
+        first = await _tenant_notice(api, w, lease, "2026-01-01", "2026-01-31", "2026-02-20")
+        assert (first["level"], first["fee_amount"], first["total_amount"]) == (1, "0.00", "700.00")
+        await _issue_notice(api, first["id"])
+        await _pay_rent(api, w, lease, account, 1, "2026-02-21")
+        second = await _tenant_notice(api, w, lease, "2026-03-01", "2026-03-31", "2026-04-20")
+        assert (second["level"], second["fee_amount"], second["total_amount"]) == (1, "0.00", "700.00")
+
+
+@pytest.mark.asyncio
+async def test_notice_for_second_lease_starts_at_level_one(rent_world):
+    w = rent_world
+    async with api_client(w) as api:
+        first_lease = await _escalation_lease(api, w, "property", "Esc 1")
+        second_lease = await _escalation_lease(api, w, "property", "Esc 2")
+        await _escalation_account(api, w, "property")
+        first = await _tenant_notice(api, w, first_lease, "2026-01-01", "2026-01-31", "2026-02-20")
+        assert first["level"] == 1
+        await _issue_notice(api, first["id"])
+        second = await _tenant_notice(api, w, second_lease, "2026-01-01", "2026-01-31", "2026-02-20")
+        assert (second["level"], second["fee_amount"], second["total_amount"]) == (1, "0.00", "700.00")
+
+
+@pytest.mark.asyncio
+async def test_same_arrears_escalate_levels_one_two_three(rent_world):
+    w = rent_world
+    async with api_client(w) as api:
+        lease = await _escalation_lease(api, w, "hidden_property", "Esc 1")
+        account = await _escalation_account(api, w, "hidden_property")
+        first = await _tenant_notice(api, w, lease, "2026-03-01", "2026-03-31", "2026-04-20")
+        assert (first["level"], first["fee_amount"]) == (1, "0.00")
+        await _issue_notice(api, first["id"])
+        second = await _tenant_notice(api, w, lease, "2026-03-01", "2026-03-31", "2026-05-05")
+        assert (second["level"], second["fee_amount"], second["total_amount"]) == (2, "2.50", "702.50")
+        await _issue_notice(api, second["id"])
+        third = await _tenant_notice(api, w, lease, "2026-03-01", "2026-03-31", "2026-05-20")
+        assert (third["level"], third["fee_amount"], third["total_amount"]) == (3, "2.50", "702.50")
+
+
+@pytest.mark.asyncio
+async def test_paid_levy_notice_does_not_raise_later_levy_notice_level(levy_db, levy_fixture):
+    from tests.test_special_levy import client, create
+    ids = levy_fixture
+    await levy_db.execute(text("INSERT INTO scope_grant(organization_id,scope_id,user_id,capabilities,granted_by,reason) "
+        "VALUES (:org,:scope,:actor,ARRAY['read','prepare','approve','confirm','export'],:actor,'Levy escalation lifecycle test')"), ids)
+    await levy_db.commit()
+    async with client(ids, "actor") as api:
+        await create(api, ids, due_date="2026-06-15")
+
+        def body(period_start, period_end, reference_date):
+            return {"owner_profile_id": str(ids["owners"][0]), "period_start": period_start,
+                    "period_end": period_end, "reference_date": reference_date,
+                    "accounting_scope_id": str(ids["scope"])}
+
+        first = await api.post("/api/dunning/owner", json=body("2026-06-01", "2026-06-30", "2026-06-16"))
+        assert first.status_code == 201, first.text
+        first = first.json()
+        assert (first["level"], first["fee_amount"], first["total_amount"]) == (1, "0.00", "3000.00")
+        issued = await api.post(f"/api/dunning/{first['id']}/issue")
+        assert issued.status_code == 200, issued.text
+        payment = await api.post("/api/payments", json={
+            "bank_account_id": str(ids["bank"]), "direction": "IN", "amount": "3000.00",
+            "value_date": "2026-06-20", "payment_type": "SONDERZAHLUNG",
+            "owner_profile_id": str(ids["owners"][0]), "period_year": 2026, "period_month": 6})
+        assert payment.status_code == 201, payment.text
+        assert (await api.post(f"/api/payments/{payment.json()['id']}/book")).status_code == 200
+        await create(api, ids, due_date="2026-09-15")
+        second = await api.post("/api/dunning/owner", json=body("2026-09-01", "2026-09-30", "2026-09-16"))
+        assert second.status_code == 201, second.text
+        second = second.json()
+        assert (second["level"], second["fee_amount"], second["total_amount"]) == (1, "0.00", "3000.00")

@@ -6,9 +6,10 @@ Extends TenantRepository with queries for the Mahnwesen (M7).
 from __future__ import annotations
 
 import uuid
-from typing import Sequence
+from typing import Any, Mapping, Sequence
 
-from sqlalchemy import and_, func, select
+from sqlalchemy import and_, cast, func, or_, select
+from sqlalchemy.dialects.postgresql import JSONB
 
 from app.models.dunning_notice import LEASE_SOURCE_KEY, DunningNotice
 from app.models.dunning_scope_context import DunningScopeContext
@@ -73,27 +74,52 @@ class DunningNoticeRepository(TenantRepository[DunningNotice]):
         ).order_by(DunningNotice.issue_date.desc(), DunningNotice.id)
         return (await self._session.execute(stmt)).mappings().all()
 
-    async def count_issued_for_tenant(self, tenant_profile_id: uuid.UUID) -> int:
-        """Count issued dunning notices for a tenant (for escalation level)."""
-        stmt = (
-            select(func.count())
-            .select_from(DunningNotice)
-            .where(DunningNotice.organization_id == self._org_id)
-            .where(DunningNotice.tenant_profile_id == tenant_profile_id)
-            .where(DunningNotice.status == "issued")
-        )
-        result = await self._session.execute(stmt)
-        return result.scalar_one()
+    async def count_issued_with_overdue_items(
+        self,
+        *,
+        item_keys: Sequence[Mapping[str, Any]],
+        tenant_profile_id: uuid.UUID | None = None,
+        owner_profile_id: uuid.UUID | None = None,
+        lease_id: uuid.UUID | None = None,
+        scope_id: uuid.UUID | None = None,
+    ) -> int:
+        """Count issued notices that escalate the currently overdue items.
 
-    async def count_issued_for_owner(self, owner_profile_id: uuid.UUID) -> int:
-        """Count issued dunning notices for an owner (for escalation level)."""
-        stmt = (
-            select(func.count())
-            .select_from(DunningNotice)
-            .where(DunningNotice.organization_id == self._org_id)
-            .where(DunningNotice.owner_profile_id == owner_profile_id)
-            .where(DunningNotice.status == "issued")
+        An already-issued notice raises the level of a new one only when it
+        belongs to the same person (the same lease for tenants, mirroring
+        issued_for_lease) and its frozen included_items contain at least one
+        of the currently overdue items -- identity is payment_type +
+        period_year + period_month. Notices for paid-off or unrelated arrears
+        do not count.
+        """
+        if not item_keys:
+            return 0
+        stmt = select(func.count()).select_from(DunningNotice)
+        if lease_id is not None:
+            context = DunningScopeContext
+            stmt = stmt.outerjoin(context, and_(
+                context.organization_id == DunningNotice.organization_id,
+                context.dunning_notice_id == DunningNotice.id,
+            ))
+        stmt = stmt.where(
+            DunningNotice.organization_id == self._org_id,
+            DunningNotice.status == "issued",
+            DunningNotice.cancelled_at.is_(None),
+            or_(*(
+                DunningNotice.included_items.op("@>")(cast([key], JSONB))
+                for key in item_keys
+            )),
         )
+        if tenant_profile_id is not None:
+            stmt = stmt.where(DunningNotice.tenant_profile_id == tenant_profile_id)
+        else:
+            stmt = stmt.where(DunningNotice.owner_profile_id == owner_profile_id)
+        if lease_id is not None:
+            stmt = stmt.where(
+                context.scope_id == scope_id,
+                (context.lease_agreement_id == lease_id if scope_id is not None
+                 else DunningNotice.included_items[0][LEASE_SOURCE_KEY].astext == str(lease_id)),
+            )
         result = await self._session.execute(stmt)
         return result.scalar_one()
 
