@@ -16,10 +16,11 @@ Start with the project overview, then choose a page for the task at hand.
 | [Invoice extraction](operations/invoice-extraction.md) | Upload review, extraction queue, OCR limits, retry, and rollback. |
 | [Invoice/cost linking](operations/invoice-cost-linking.md) | Source-link reconciliation, immutable originals, and rollout constraints. |
 | [Hosted legal preparation](operations/hosted-legal.md) | Source inventory, legal references and draft launch documents requiring owner/counsel approval. |
-| [Hosted retention and exit](operations/hosted-retention.md) | Export, account closure, retained evidence, backups and unresolved deadlines. |
+| [Hosted retention and exit](operations/hosted-retention.md) | Decided export/deletion policy, managed backups and implementation gaps. |
 | [Controller processing record](operations/hosted-processing-controller.md) | Public template for the operator's private Article 30(1) record. |
 | [Processor processing record](operations/hosted-processing-processor.md) | Public template for the operator's private Article 30(2) record. |
 | [Breach response](operations/hosted-breach-response.md) | Draft notification, assistance and recovery procedure. |
+| [DPO/DPIA owner assessment](operations/hosted-dpo-dpia-assessment.md) | Criteria, sources and private completion template. |
 
 | Design documents (June 2026, pre-implementation) | Purpose |
 | --- | --- |

@@ -1,13 +1,15 @@
 # Personal-data breach response — operator procedure template
 
-**Draft, 12 November 2026.** Appoint responders, deputies and a secure emergency contact before
-launch (`OPEN Q12`); complete and exercise this procedure privately. No incident or customer
+**Draft, 13 November 2026.** Q12 assigns rights requests, security and incidents to
+Christian Kunkel, with an absence deputy. [TO SUPPLY Q12: deputy’s name.] Complete protected
+contact routes, authority and availability privately and exercise this procedure before launch. No incident or customer
 data belongs in this repository. Sources: GDPR Articles 4(12), 28(3)(f), 32–34 and accountability
 under Article 5(2), [S01/S11](hosted-legal.md#primary-sources-and-dates).
 
 | Role | Private completion field |
 | --- | --- |
-| Accountable management / incident lead / deputy | [Name, reachable channel, authority to contain and notify] |
+| Accountable management / rights / incident lead | Christian Kunkel; public contact hello@fogu.app; private emergency route and authority record to complete |
+| Absence cover | Named deputy from Q12 above; owner documents handover, access and notification authority privately |
 | Technical containment / recovery lead / deputy | [Name, restricted access, escalation route] |
 | Privacy/legal adviser; DPO if appointed | [Contact and availability; management retains accountability] |
 | Customer incident contacts | [Per organization, verified emergency channel and substitute] |
@@ -66,9 +68,9 @@ Initial customer/authority notice template (complete privately):
 
 Provide continuing assistance, evidence and updates. Do not put personal contents into email
 subjects or public status pages. A target for internal escalation must leave room for the
-statutory “without undue delay”; `OPEN Q12` proposes initial internal escalation immediately and
-the first customer notice within 24 hours where feasible, never waiting for that target when
-earlier notice is possible. This is not an extension of the legal deadline (S01).
+statutory “without undue delay”. Christian Kunkel, or the deputy in his absence, escalates
+immediately and sends available customer information without undue delay. No new 24-hour
+contractual SLA is assumed from the staffing decision; the statutory deadline governs (S01).
 
 ## 4. Recover, close and learn
 

@@ -1,26 +1,35 @@
 # Hosted legal preparation
 
-Research and drafting as of **12 November 2026**, for issue #26. This is not legal advice,
+Research and drafting as of **13 November 2026**, for issue #26. This is not legal advice,
 a certification, or permission to launch. The owner and qualified counsel must approve the
-completed documents and actual operating arrangements. `OPEN Qxx` identifies an owner decision;
-the questions are collected in the external review report. No customer records belong here.
+completed documents and actual operating arrangements. `OPEN Q06` is the remaining product decision. `TO SUPPLY` marks missing facts;
+implementation and counsel review labels are not reopened owner decisions. No customer records belong here.
 
 ## Documents and publication boundary
 
 - [Controller processing record](hosted-processing-controller.md) and
   [processor processing record](hosted-processing-processor.md): complete and maintain private copies.
-- [Breach procedure](hosted-breach-response.md): appoint the responders and exercise it.
-- [Retention and service exit](hosted-retention.md): current capability and unresolved commitments.
+- [Breach procedure](hosted-breach-response.md): owner and named deputy; complete and exercise it.
+- [DPO/DPIA assessment](hosted-dpo-dpia-assessment.md): owner completes and signs a private assessment (Q11).
+- [Retention and service exit](hosted-retention.md): decided policy, current capability and implementation dependencies.
 - [Website legal content](../../website/README.md#legal-publication-boundary): German text is
   authoritative after approval; English is a translation. Privacy, terms and AV-Vertrag remain drafts.
 
 The operator in [issue #26](https://github.com/itskeKs/verwalino/issues/26) is fogu UG
 (haftungsbeschränkt), Im Großenbruch 34, 66583 Spiesen-Elversberg, represented by managing
-director Christian Kunkel; Amtsgericht Krefeld HRB 15557; VAT ID DE305418362;
-hello@fogu.app. The named authority is the Unabhängiges Datenschutzzentrum Saarland.
-The company details are owner-supplied, not independently registry-certified. `OPEN Q01`:
-confirm they remain current, a rapid direct contact channel in addition to email, and whether
-a Wirtschafts-Identifikationsnummer must also be disclosed. See S03 and S12 below.
+director Christian Kunkel; Amtsgericht Krefeld HRB 15557; hello@fogu.app. The named authority is
+the Unabhängiges Datenschutzzentrum Saarland. These details are owner-supplied, not independently
+registry-certified. The latest Q01 decision supersedes the previously printed VAT number.
+
+| Decision | Missing fact / required evidence |
+| --- | --- |
+| Q01 telephone as second direct channel | [TO SUPPLY Q01: monitored telephone number] |
+| Q01 tax identifier | [TO SUPPLY Q01: VAT identification number or Wirtschafts-Identifikationsnummer; identify type and disclose both if applicable under DDG §5] |
+| Q02 Contabo retained; owner concludes AV agreement before launch | [TO SUPPLY Q02: data-centre location from hosting contract]; verify contracting entity/address, access countries and downstream providers in the executed agreement |
+| Q03 EU mail provider with AV agreement | [TO SUPPLY Q03: mail provider]; complete entity/address, locations, retention and contract before use |
+| Q04 host-managed backup under the same AV agreement | [TO SUPPLY Q04: backup product and retention from contract]; verify all-copy expiry and recovery safeguards |
+| Q12 owner handles rights, security and incidents | Christian Kunkel; deputy fact is recorded in the [breach procedure](hosted-breach-response.md) |
+| Q06 external AI on hosted service | [OPEN Q06: decide permitted external AI, roles, providers, countries, retention and transfer safeguards before activation] |
 
 ## Repository fact map
 
@@ -35,9 +44,9 @@ management. Older design prose in [architecture](../architecture.md) is not depl
 | Property management | Tenants, owners, vendors/contacts, representatives, staff and people mentioned in uploads; addresses/contact/bank data, leases, rents/deposits, arrears, bank movements, invoices, consumption, ownership, votes, correspondence, signatures, original files and audit/source records | Customer normally controller; operator processor. A customer acting as processor needs upstream authorization and the appropriate chain | [Feature status](../feature-status.md), [export inventory](organization-export.md#version-two-format-version-one-remains-importable); attachments/free text may contain Art. 9/10 data; no reliable automatic exclusion |
 | Document mail | Recipient addresses, message and generated PDF (settlement, dunning, invitation), dispatch status and retained original | Processor on customer instruction; SMTP then recipient's mail system | `services/mail_service.py`, `services/document_mail_service.py`, [mail operations](../../DEPLOY.md#optional-document-smtp-t47-no-deployment-authorization); SMTP acceptance is not delivery |
 | OCR / AI | Uploaded pages/images, extracted text, user questions, answers, source references, usage/cost metadata; encrypted customer API key | Local OCR; optional remote processing at organization's selected endpoint | `declarations/provider_runtime.py`, `declarations/openai_provider.py`, `core/invoice_ocr.py`, [AI runtime](../adr/0014-provider-neutral-ai-runtime.md); OpenAI, Anthropic, compatible endpoints, web Q&A/model discovery and worker extraction. BYOK does not settle the legal role or transfer mechanism |
-| Hosting/storage | All app data; database and original files on local filesystem | Contabo in Germany is stated by [#24](https://github.com/itskeKs/verwalino/issues/24) and site copy | Exact contracting entity, site, remote administration, physical controls and AV agreement: `OPEN Q02`. Do not infer every recipient is in Germany |
-| Backups | Database, documents and private configuration | Operator for availability, processor for customer contents | [DEPLOY backups](../../DEPLOY.md#backups): same-server backup, 14 daily/8 weekly unlabelled generations plus 10 labelled; no firm maximum age for labelled backups. Actual schedule/off-site copy/encryption unverified (`OPEN Q04`) |
-| Logs, error tracking, support | Request/job/organization IDs, security and error metadata; voluntarily submitted diagnostics or support material | Controller for proportionate security/support metadata, processor for customer contents | `core/logging.py`, `core/error_tracking.py`, `core/scrub.py`; [DEPLOY](../../DEPLOY.md) prescribes self-hosted GlitchTip, disabled with empty DSN; scrubbers reduce data, do not establish anonymity. Actual destination, log fields and durations: `OPEN Q05` |
+| Hosting/storage | All app data; database and original files on local filesystem | Contabo in Germany is stated by [#24](https://github.com/itskeKs/verwalino/issues/24) and site copy | Q02 retains Contabo; verify exact contracting entity, site, remote administration, physical controls and execute AV agreement before launch. Do not infer every recipient is in Germany |
+| Backups | Database, documents and private configuration | Operator for availability, processor for customer contents | [DEPLOY backups](../../DEPLOY.md#backups): same-server backup, 14 daily/8 weekly unlabelled generations plus 10 labelled; no firm maximum age for labelled backups. Q04 selects host-managed backup under the same AV agreement; contract, activation and recovery evidence still required |
+| Logs, error tracking, support | Request/job/organization IDs, security and error metadata; voluntarily submitted diagnostics or support material | Controller for proportionate security/support metadata, processor for customer contents | `core/logging.py`, `core/error_tracking.py`, `core/scrub.py`; [DEPLOY](../../DEPLOY.md) prescribes self-hosted GlitchTip, disabled with empty DSN; scrubbers reduce data, do not establish anonymity. Q05: logs 14 days, error reports 30 days, closed support 90 days; actual destinations/fields and enforced cleanup still need evidence |
 | Exit and erasure | Entire organization, users and retained evidence | Customer instruction, continuing processor duties for retained customer data | `services/organization_deletion_service.py`, migration 0147 retention catalog and subsequent amendments, [retention policy](hosted-retention.md). No automatic final purge or post-erasure customer login |
 
 The app cookie is `hv_session`, HttpOnly, SameSite=Lax, default 7,200 seconds; Secure depends
@@ -46,8 +55,11 @@ economic-plan form draft (including user/organization identity). Website local s
 `verwalino-theme` after a theme click, without an application expiry; language comes from the URL.
 No marketing consent mechanism was found. See `api/auth.py:97`, `core/config.py:45`,
 `frontend/src/pages/SignupPage.tsx:10`, `PasswordResetPage.tsx:9`, `EconomicPlansPage.tsx:18`.
-`OPEN Q13`: document necessity separately for every storage purpose under S04; persistent
-preference storage is not exempt merely because it is called functional.
+Q13 keeps these stores and no consent banner. Document purpose and duration in the privacy notice.
+Counsel must validate strict necessity for each purpose under S04, particularly persistent theme
+preference and the tab-bound draft; the owner’s choice is not a statutory exemption. No tracking
+is authorized. If the exception fails, resolve the conflict before launch rather than asserting
+consent or silently changing storage.
 
 ## Legal conclusions for the launch boundary
 
@@ -67,9 +79,9 @@ Screen DPIA and DPO duties before launch. Article 35 depends on likely high risk
 the word “cloud” or “AI”. Article 37 includes large-scale regular/systematic monitoring and
 large-scale special-category/criminal data as core activities; BDSG §38 additionally uses at
 least 20 persons regularly engaged in automated processing and independent triggers including
-DPIA-required processing. Small headcount alone does not settle the result. `OPEN Q11`: record
-staff count, actual scale, sensitive uploads and purposes, assess the DSK list, and appoint a
-non-conflicted DPO if required (S01, S02, S07). The managing director is not a suitable automatic
+DPIA-required processing. Small headcount alone does not settle the result. Q11 assigns the owner to record
+staff count, scale, sensitive uploads and purposes in the [assessment template](hosted-dpo-dpia-assessment.md),
+assess the DSK list, and arrange a non-conflicted DPO if required (S01, S02, S07). The managing director is not a suitable automatic
 choice where deciding processing purposes conflicts with DPO independence (Article 38(6)).
 
 No blanket EU-only or zero-retention claim is supportable. Identify actual legal entities,
@@ -80,16 +92,109 @@ Use a currently valid adequacy basis within its scope or appropriate safeguards,
 transfer assessment/supplementary measures where needed. Routine transfers should not be built
 on exceptional Article 49 derogations. `OPEN Q06` (S01, S09).
 
-Free hosting is not automatically a Schenkung or Leihe. Those contract types and their
-liability privileges require classification of the actual promises and economic arrangement;
-ongoing hosting, support and custody duties need individual analysis. Even the gift/loan rules
-include liability for fraudulently concealed defects (BGB §§523, 524, 600); their return rules
-(e.g. §604) are not a substitute for an agreed digital-data exit procedure. B2B terms still face
-§307 control; §309 is not directly applicable under §310(1), but its values may inform that
-control. Do not use a zero-fee liability cap or a blanket exclusion of data loss. The draft
-keeps statutory liability pending counsel's classification and insurance review (`OPEN Q10`,
-S05). B2B restriction must be real: a private landlord or a WEG is not automatically an
-entrepreneur merely by using property software (`OPEN Q09`, BGB §§13–14 in S05).
+## Consumer customers (Q09) and liability (Q10)
+
+**Current-primary-source review: 13 November 2026; research and drafting, not legal advice.**
+Q09 admits businesses, private landlords and WEGs. Natural-person status depends on the purpose
+of the transaction, not the product label ([BGB §§13–14](https://www.gesetze-im-internet.de/bgb/__13.html)).
+The BGH treats a WEG with at least one consumer member as a consumer when acting outside
+commercial/professional purposes, including where represented by a professional manager
+([VIII ZR 243/13, 25 March 2015](https://juris.bundesgerichtshof.de/cgi-bin/rechtsprechung/document.py?Art=pm&Blank=1&Datum=2015-3&Gericht=bgh&file=dokument.pdf&linked=urt&nr=70979)).
+Do not require a false business-status declaration. Confirm the contracting party and authority.
+
+**Terms control applies despite no fee.** Consumers receive incorporation/access and assent
+protection under [§305](https://www.gesetze-im-internet.de/bgb/__305.html), transparency and
+essential-duty control under [§307](https://www.gesetze-im-internet.de/bgb/__307.html), and
+[§§308–309](https://www.gesetze-im-internet.de/bgb/__309.html), subject to
+[§310(3)](https://www.gesetze-im-internet.de/bgb/__310.html), including certain one-use forms.
+Section 309 no. 7 bars exclusions/caps for negligent personal injury and gross fault, including
+representatives/assistants; no. 8(a) protects release from the contract after attributable breach.
+No. 8(b) concerns new goods/work contracts, not automatically every SaaS arrangement. In B2B,
+§309 is not directly applicable, but §307 remains. A damages clause must not erase defect,
+performance, termination or withdrawal rights (same sources; S05).
+
+**Free service and personal data.** Under [§312(1a)](https://www.gesetze-im-internet.de/bgb/__312.html)
+and [§327(3)](https://www.gesetze-im-internet.de/bgb/__327.html), consumer-data provision can
+bring a no-money contract within distance-contract and digital-product law. The exception is
+exclusive processing to perform the service or meet legal requirements, with no other purpose.
+A GDPR legitimate-interest basis does not itself satisfy that exception. Hosting that stores and
+processes user data fits the digital-service definition in §327(2); an AGPL licence for source
+code does not automatically exempt hosted operations under §327(6) no. 6. Assess account,
+security, diagnostics, support, any improvement/marketing and Q06 provider uses individually.
+**Fact-sensitive/unsettled here:** the full purpose boundary, contract classification and any
+privilege analogous to gift/loan cannot be established from free pricing or source code alone
+([§§516](https://www.gesetze-im-internet.de/bgb/__516.html),
+[521](https://www.gesetze-im-internet.de/bgb/__521.html),
+[598](https://www.gesetze-im-internet.de/bgb/__598.html),
+[599](https://www.gesetze-im-internet.de/bgb/__599.html)). Counsel must approve the applicable
+branch before consumer signup; the public draft includes the conditional consumer protections.
+
+Where applicable, preserve statutory provision/conformity remedies, security updates for the
+provision period and change protections ([§327f](https://www.gesetze-im-internet.de/bgb/__327f.html),
+[§327i](https://www.gesetze-im-internet.de/bgb/__327i.html),
+[§327r](https://www.gesetze-im-internet.de/bgb/__327r.html)).
+[§327s(4)](https://www.gesetze-im-internet.de/bgb/__327s.html) leaves damages exclusions to
+ordinary controls; it does not license a blanket disclaimer. Q10's strongest defensible draft
+therefore excludes ordinary negligence outside essential duties, limits ordinary-negligence
+essential-duty damages to foreseeable typical loss, and expressly preserves intent, gross fault,
+negligent personal injury, fraud, guarantees, mandatory product liability and GDPR liability.
+No zero-fee cap, blanket data-loss exclusion or shortened limitation period. Counsel must check
+this specific wording, classification and risk; no claim of judicially established validity.
+Bases: §§276(3), 307, 309 nos. 7–8, 310 (S05), GDPR Art. 82 (S01).
+
+**Information and withdrawal if §312(1a) applies.** Give clear pre-contract information under
+[Art. 246a §§1](https://www.gesetze-im-internet.de/bgbeg/art_246a__1.html)
+and [4 EGBGB](https://www.gesetze-im-internet.de/bgbeg/art_246a__4.html): features, identity,
+address/telephone/email, zero price/additional costs, performance/complaints, duration/termination,
+applicable defect rights, updates, functionality/technical protection, compatibility/interoperability,
+ADR and withdrawal with model form. Supply the confirmation on a durable medium before service
+begins ([§312f](https://www.gesetze-im-internet.de/bgb/__312f.html)); a mutable webpage alone
+is insufficient. Telephone and operational particulars must be completed; signup delivery is
+an implementation dependency, not achieved by publishing drafts.
+
+For distance contracts in scope, [§312g](https://www.gesetze-im-internet.de/bgb/__312g.html)
+and [§355](https://www.gesetze-im-internet.de/bgb/__355.html) normally give 14 days from
+conclusion, not before proper information; absent information, expiry is generally at 12 months
+and 14 days. The current [§356(5) no. 1](https://www.gesetze-im-internet.de/bgb/__356.html)
+ends a no-price **service** right only on full performance: opening an account is not full
+performance of ongoing hosting. Distinguish §356(6) no. 1 for non-physical **digital content**,
+where beginning performance can suffice. Do not use a content-download waiver for ongoing SaaS.
+No service value compensation is due under [§357a(2)](https://www.gesetze-im-internet.de/bgb/__357a.html)
+without a price obligation. Q08 termination at any time does not replace withdrawal information.
+The current [§356a](https://www.gesetze-im-internet.de/bgb/__356a.html) also requires an online
+withdrawal/confirmation function and prompt durable acknowledgment where applicable; not implemented
+by this task. The [§312k](https://www.gesetze-im-internet.de/bgb/__312k.html) termination button
+has a separate paid-performance trigger; do not equate it with the withdrawal function.
+
+**Dispute resolution.** [VSBG §36](https://www.gesetze-im-internet.de/vsbg/__36.html) requires
+website/terms information on willingness or obligation to participate; the exception for no more
+than ten persons on 31 December of the previous year concerns only §36(1) no. 1. An actual
+participation commitment/duty requires the competent body's name, address and website. Q09 does
+not establish headcount, willingness or a sector duty: counsel must verify and complete the
+publication text, without inventing a nonparticipation decision. After an unresolved consumer
+dispute, [§37](https://www.gesetze-im-internet.de/vsbg/__37.html) separately requires text-form
+information and a participation statement, without that small-employer exemption. The EU ODR
+platform stopped accepting complaints on 20 March 2025 and was discontinued on 20 July 2025;
+Regulation 524/2013 was repealed from the latter date. Do not add an obsolete platform link
+([Regulation (EU) 2024/3228, Arts. 1–2](https://eur-lex.europa.eu/eli/reg/2024/3228/oj)).
+
+**The DPA model remains appropriate.** Civil-law consumer status is distinct from GDPR roles.
+A private landlord deciding tenant-data purposes/means is a controller; letting is economic
+activity, not exclusively personal/household activity under GDPR Art. 2(2)(c), recital 18 and
+Art. 4(7). Using the hosted service does not supply a household exemption. This application
+follows the statutory distinction and the DSK's landlord guidance
+([GDPR](https://eur-lex.europa.eu/eli/reg/2016/679/oj),
+[DSK rental guidance v2.0, January 2026](https://www.datenschutzkonferenz-online.de/media/oh/OH_Einholung_von_Selbstauskuenften_Mietinteressenten_V2.pdf)).
+A self-managing WEG can likewise determine purposes/means and contract as controller through its
+authorized representative. A professional manager is not automatically its processor: identify
+separate/joint controllership or processing from actual decisions, and obtain upstream authority
+where relevant. The exact WEG/manager allocation is fact-sensitive, not settled by these terms
+([EDPB Guidelines 07/2020](https://www.edpb.europa.eu/documents/guideline/guidelines-072020-on-the-concepts-of-controller-and-processor-in-the-gdpr_en),
+[authority guidance on property management](https://www.datenschutz.rlp.de/themen/immobilienverwaltung)).
+The operator remains processor for instructed contents and controller for its own account/operations
+purposes; electronic Article 28 agreement and completed annexes remain necessary (S01/S09).
+
+## Decided exit policy
 
 Customer tax/commercial retention is category-specific: generally ten years for books and
 accounts, eight for booking vouchers and six for relevant correspondence, subject to scope,
@@ -98,11 +203,16 @@ record legally. A deletion guard is not itself a statutory retention duty. Outso
 not remove the customer's responsibility; the operator also needs an agreed usable retrieval
 and exit route and must respect applicable access duties for third-party stored tax records
 (AO §147(6)). A permission-filtered JSONL/PDF/CSV archive is not by itself proof of GoBD-compliant
-system migration (S06). See [retention](hosted-retention.md), `OPEN Q07–Q08`.
+system migration (S06). Q07 selects complete export then deletion, with no archive service; Q08 allows customer
+termination at any time and requires 90 days’ operator notice, with export until the end.
+See [retention](hosted-retention.md) for the implementation gaps. Q14 selects versioned electronic
+terms/DPA assent before data entry and 30-day advance sub-processor notice with 21-day objections;
+assent, notices and objection handling are implementation dependencies.
 
 ## Primary sources and dates
 
-All URLs below were checked on **2026-11-12**. “No date displayed” means no reliable publication
+First-pass sources S01–S13 were checked on **2026-11-12**. Second-pass checks on **2026-11-13**
+cover GDPR, BGB, BDSG, EGBGB, VSBG, the DSK DPIA list, Saarland DPIA page and S14–S18 below. “No date displayed” means no reliable publication
 or revision date was exposed; a search crawl date is not treated as a publication date. Statute
 dates are the official site's displayed consolidated status, not a claim that every cited
 section changed that day. Authority guidance informs practice; courts may interpret differently.
@@ -121,7 +231,13 @@ section changed that day. Authority guidance informs practice; courts may interp
 | S10 | DSK [Standard-Datenschutzmodell v3.1](https://www.datenschutzkonferenz-online.de/media/ah/SDM-Methode-V31.pdf), adopted 14 May 2024 | TOM reference objectives: minimization, availability, integrity, confidentiality, transparency, unlinkability, intervenability; not proof of installed controls |
 | S11 | Saarland [breach reporting](https://www.datenschutz.saarland.de/online-dienste/meldung-datenpanne), no publication date displayed | Current authority channel; Article 33 risk exception and Article 34 threshold still govern |
 | S12 | CJEU [C-298/07 in official case-law digest](https://curia.europa.eu/site/upload/docs/application/pdf/2019-06/fiche_thematique_-commerce_electronique_et_obligations_contractuelles_-_en.pdf), judgment 16 October 2008; digest July 2024 | Additional rapid/direct/effective contact information beyond email; telephone not invariably mandatory |
-| S13 | [MStV §18, authority text](https://www.die-medienanstalten.de/fileadmin/user_upload/Rechtsgrundlagen/Gesetze_Staatsvertraege/Medienstaatsvertrag_MStV.pdf), seventh amendment effective 1 December 2025 per the authority page; [VSBG §36](https://www.gesetze-im-internet.de/vsbg/__36.html), current section checked, no separate section revision date displayed | Editorial designation and consumer-dispute statements depend on scope; neither was established here |
+| S13 | [MStV §18, authority text](https://www.die-medienanstalten.de/fileadmin/user_upload/Rechtsgrundlagen/Gesetze_Staatsvertraege/Medienstaatsvertrag_MStV.pdf), seventh amendment effective 1 December 2025 per the authority page; [VSBG §36](https://www.gesetze-im-internet.de/vsbg/__36.html), current section checked, no separate section revision date displayed | No editorial activity established. Consumer scope is now affirmative; see Q09 analysis and S16 |
+
+| S14 | [BGB](https://www.gesetze-im-internet.de/bgb/BJNR001950896.html) header: 23 July 2026; sections linked in the Q09/Q10 analysis checked 13 November 2026, including current §356(5)/(6) and §356a | Do not reuse older §356 paragraph numbering; section pages have no individual amendment date. Fact-sensitive purpose/type classification remains for counsel |
+| S15 | [EGBGB](https://www.gesetze-im-internet.de/bgbeg/BJNR006049896.html) header: 22 October 2026; Art. 246a §§1/4 and model form in [Annex 2](https://www.gesetze-im-internet.de/bgbeg/anlage_2.html) | Current pre-contract information includes digital-product defect rights and update information; no claim of official-model safe harbour for the adapted draft |
+| S16 | [VSBG](https://www.gesetze-im-internet.de/vsbg/BJNR025410016.html) header: 8 December 2025; [EU 2024/3228](https://eur-lex.europa.eu/eli/reg/2024/3228/oj), adopted 19 December 2024, OJ 30 December 2024 | §§36/37 current text; ODR complaint cutoff 20 March 2025, repeal/discontinuation 20 July 2025 |
+| S17 | [BGH VIII ZR 243/13](https://juris.bundesgerichtshof.de/cgi-bin/rechtsprechung/document.py?Art=pm&Blank=1&Datum=2015-3&Gericht=bgh&file=dokument.pdf&linked=urt&nr=70979), judgment 25 March 2015 | WEG consumer treatment; judgment date, not search crawl date |
+| S18 | [DSK rental guidance v2.0](https://www.datenschutzkonferenz-online.de/media/oh/OH_Einholung_von_Selbstauskuenften_Mietinteressenten_V2.pdf), January 2026; [Rhineland-Palatinate property-management guidance](https://www.datenschutz.rlp.de/themen/immobilienverwaltung), no publication/revision date displayed | Landlord GDPR duties; actual WEG/manager role allocation requires individual analysis. Older examples on the authority page are not a current headcount rule |
 
 Recheck laws, authority guidance, provider terms and the deployed data flows before final sign-off.
 Counsel must decide unsettled contract classification and proportionality questions; an authority's

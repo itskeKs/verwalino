@@ -1,6 +1,6 @@
 # Record of processing activities — processor template
 
-**Draft — complete privately before launch. Version 2026-11-12.** Article 30(2) GDPR requires
+**Draft — complete privately before launch. Version 2026-11-13.** Article 30(2) GDPR requires
 categories of processing for each controller, identities/contact details, transfers and a
 general TOM description. Ongoing hosted processing does not fit the occasional-processing
 exception. [Sources S01, S07, S08](hosted-legal.md#primary-sources-and-dates).
@@ -8,10 +8,10 @@ exception. [Sources S01, S07, S08](hosted-legal.md#primary-sources-and-dates).
 ## Processor identity
 
 fogu UG (haftungsbeschränkt), Im Großenbruch 34, 66583 Spiesen-Elversberg, Germany;
-managing director Christian Kunkel; hello@fogu.app. DPO: [OPEN Q11: assessment and contact if
-appointed]. Other processors/joint processors and representatives: [identify if applicable].
+managing director Christian Kunkel; hello@fogu.app. DPO: [Complete the owner’s DPO assessment and contact if
+appointment is required]. Other processors/joint processors and representatives: [identify if applicable].
 An Article 27 representative is not required for this German-established processor. Private
-register owner/deputy: [OPEN Q12]. Approval date, reviewer and next review: [complete].
+register owner: Christian Kunkel; deputy as specified in the [breach procedure](hosted-breach-response.md). Approval date, reviewer and next review: [complete].
 
 ## One entry per controller / processing chain
 
@@ -27,7 +27,7 @@ register owner/deputy: [OPEN Q12]. Approval date, reviewer and next review: [com
 | Sub-processors | [Exact legal entities, task, places incl. remote support, downstream recipients, AV agreement, authorization/version] |
 | International transfers | [Country/recipient, mechanism and scope, safeguards/assessment; Article 49(1) second-subparagraph documentation if used; or verified none] |
 | General TOM / evidence | [Versioned AV annex 2, deployed settings, test/restore evidence, physical/organizational controls] |
-| Return/deletion/continued archive | [Customer instruction, categories/bases/deadlines, usable return test, backups, completion/exception evidence] |
+| Complete return and deletion (no archive service) | [Customer instruction, categories/bases/deadlines, usable return test, backups, completion/exception evidence] |
 | Changes / review | [Date, approver, notice/objection outcome, next review] |
 
 The additional instruction/retention fields support Article 28 and accountability; Article 30(2)
@@ -37,15 +37,22 @@ itself does not require the controller's full lawful-basis/purpose register (S01
 
 | ID | Operations | Data / subjects | Places and recipients to verify |
 | --- | --- | --- | --- |
-| P01 Hosted management | Collect through customer input/import; store, organize, retrieve, edit and calculate rentals, WEG/SEV management and communications | Tenant/owner/vendor/representative and customer-staff identifiers, addresses, contact/bank data, leases, deposits, costs, payments, arrears, consumption and ownership/meeting records | Host: Contabo Germany stated; actual entity/site/access OPEN Q02 |
+| P01 Hosted management | Collect through customer input/import; store, organize, retrieve, edit and calculate rentals, WEG/SEV management and communications | Tenant/owner/vendor/representative and customer-staff identifiers, addresses, contact/bank data, leases, deposits, costs, payments, arrears, consumption and ownership/meeting records | Q02: Contabo retained; execute AV agreement and verify entity/site/access before launch; facts in [legal preparation](hosted-legal.md) |
 | P02 Documents/evidence | Upload, hash, retain originals; generate PDFs, audit/source links, review and corrections | Originals, correspondence, invoices, signatures, financial and audit records; persons mentioned in files | Local filesystem/database; authorized staff; sensitive data may occur incidentally. Customer must establish Art. 9/10 conditions where relevant |
-| P03 Mail | Prepare and submit customer-requested messages/PDFs, retain dispatch evidence | Recipients, content, generated documents and delivery metadata | SMTP provider/regions/sub-processors OPEN Q03; recipient mail systems are not automatically the operator's sub-processors |
+| P03 Mail | Prepare and submit customer-requested messages/PDFs, retain dispatch evidence | Recipients, content, generated documents and delivery metadata | Q03: EU provider with AV agreement; provider particulars to supply in [legal preparation](hosted-legal.md); recipient mail systems are not automatically the operator's sub-processors |
 | P04 Optional AI/OCR | Local OCR; selected-provider extraction and property Q&A; store results/provenance/usage | Document pages/text, questions/answers and person-related contents; encrypted API key as service credential | Local OCR is not a third party. Remote OpenAI, Anthropic or compatible endpoint only after role, agreement, approval, regions and transfer analysis OPEN Q06 |
-| P05 Security/support/recovery | Organization isolation, authorized troubleshooting, backup/restore and incident assistance | Customer records only as necessary; audit and support evidence | Operator personnel and approved hosting/backup/maintenance recipients; OPEN Q04/Q05/Q12; metadata processed for own purposes belongs in controller record |
-| P06 Return/restriction/erasure | Permission-filtered export, seven-day cooling-off, operator erasure and restricted evidence retrieval | Organization archive, account identities, retained documents and dependencies | Customer/authorized successor; protected residual storage and backups. OPEN Q07/Q08 final purge, maximum duration and retrieval service |
+| P05 Security/support/recovery | Organization isolation, authorized troubleshooting, backup/restore and incident assistance | Customer records only as necessary; audit and support evidence | Q04/Q12: Christian Kunkel and named deputy; Contabo managed backup under hosting AV agreement, contract/product/retention proof pending; own-purpose metadata in controller record |
+| P06 Return/restriction/erasure | Permission-filtered export, seven-day cooling-off, operator erasure and restricted evidence retrieval | Organization archive, account identities, retained documents and dependencies | Q07/Q08: complete export before end, then deletion; no archive service. Complete return, final purge and bounded backup erasure require implementation; ordinary operator notice 90 days, customer may terminate any time |
 
 Technical evidence and distinctions between source and deployed practice are in the
 [fact map](hosted-legal.md#repository-fact-map), [export documentation](organization-export.md)
 and [retention procedure](hosted-retention.md). This template neither authorizes new recipients
 nor approves unknown transfers. Keep customer-specific versions available to the authority
 under Article 30(4), with access limited to responsible staff (S01).
+
+Q09 includes private landlords and WEGs as customers, including consumers. Consumer status does
+not remove GDPR controller duties or the Article 28 contract. Record the actual controller and
+representative/upstream chain for each organization; see the [consumer and role analysis](hosted-legal.md#consumer-customers-q09-and-liability-q10).
+Q11: the owner completes the [DPO/DPIA assessment](hosted-dpo-dpia-assessment.md) privately.
+Q14: record versioned terms/DPA assent before first data entry; notify new sub-processors 30 days
+ahead and allow 21 days for objections. Both workflows require implementation, not just a register.
