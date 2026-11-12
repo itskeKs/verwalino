@@ -46,8 +46,10 @@ Screenshots show demo data.
   dashboard with deadlines, due tasks, and monthly rent figures.
 - **Properties and units:** rental, WEG, SEV, and mixed properties; unit areas and
   co-ownership shares (MEA); meters and readings; CSV master-data import;
-  AI-assisted declaration-of-division import (feature flag and OpenAI key required)
-  and property knowledge with sources.
+  AI-assisted declaration-of-division import and property knowledge with sources
+  (the import and the optional Q&A stay off until an organization administrator
+  configures a provider; browsing and search of approved knowledge need no model; see
+  [AI features](#ai-features)).
 - **People and tenancies:** contacts, tenant and owner profiles, vendors, leases,
   tenant and owner changes, and effective-date rent history with graduated
   (Staffelmiete) and index-linked rent (Indexmiete).
@@ -72,6 +74,45 @@ Screenshots show demo data.
 
 Partial and missing features are listed in [Gaps](docs/feature-status.md#gaps).
 Usage notes and operational limits are linked in the documentation table below.
+
+## AI features
+
+Two features use a language model. Both stay off until an organization
+administrator configures a provider in Einstellungen. There is no
+application-owned key and no automatic fallback to another provider.
+
+- **Declaration-of-division import:** upload the Teilungserklärung as PDF. A
+  fixed pipeline runs a local precheck and OCR, then inventory, core and rule
+  extraction, reconciliation, local validation and one bounded vision
+  recheck pass. It proposes units, co-ownership shares and rules. It is not an
+  autonomous agent: the model has no tools and cannot change data.
+- **Evidence and review:** every proposed value must quote the page it comes
+  from. A quote that is not on the cited page blocks the draft, and conflicting
+  readings are kept side by side. A successful run ends in `NEEDS_REVIEW`; only a human
+  approval turns a draft into property data.
+- **Property knowledge with sources:** search over approved facts, rules and
+  page evidence works without a model. The optional Q&A answers a question
+  about one property from a bounded retrieval of approved records. Citations
+  are checked against what was retrieved; an answer that fails the check is
+  replaced by a fixed "could not be verified" text. With no hits the model is
+  not called.
+- **Providers and cost:** OpenAI, OpenAI-compatible endpoints (including
+  self-hosted) and Anthropic, with one model per organization and an encrypted
+  key. Tokens and cost are reserved before each call, with per-run caps and an
+  optional monthly limit. For models without a known price the money limit is
+  not enforced; token, attempt and time bounds still apply.
+- **Evals:** a deterministic offline suite runs ten synthetic and redacted
+  cases with fake providers and reports, among others, invalid-citation
+  acceptance, unsupported answers, blocker recall, tenant leakage and retrieval
+  recall. It runs in CI with the backend tests.
+
+**Not established yet:** no model is marked as evaluated. Live extraction
+quality, vision input and Q&A acceptance are tracked in
+[#399](https://github.com/itskeKs/verwalino/issues/399), and the Anthropic
+transport has not been validated live. The evidence check confirms that a quote
+appears on the cited page; whether it supports the value is the reviewer's
+call. Details: [declaration imports](docs/operations/declaration-imports.md),
+[ADR 0014](docs/adr/0014-provider-neutral-ai-runtime.md).
 
 ## Quick start
 
@@ -113,8 +154,9 @@ for a reviewed upgrade with a retained backup and recovery on failure
 If setup or startup fails, run `bash scripts/self-host.sh doctor` first; it prints German next steps and
 exits 1 on blockers ([diagnostics](DEPLOY.md#portable-troubleshooting-start-with-doctor)).
 
-The portable stack ships without AI import and AI Q&A, SMTP and automatic invoice
-OCR; manual voucher processing works. An optional inbox worker (compose profile `inbox`)
+The portable stack includes the declaration worker; AI import and AI Q&A stay off until an
+organization administrator configures a provider (see [AI features](#ai-features)). It ships
+without SMTP and automatic invoice OCR; manual voucher processing works. An optional inbox worker (compose profile `inbox`)
 processes intake documents locally; see [DEPLOY.md](DEPLOY.md#inbox-worker) and the
 [inbox review chain](docs/operations/inbox-review-chain.md). Database and documents live in named volumes:
 back up the private configuration, database, and documents together. A signed
