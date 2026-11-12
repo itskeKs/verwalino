@@ -65,6 +65,7 @@ AREAS = {"core": core, "finance": finance, "documents": documents, "access": acc
 EXEMPT: dict[str, str] = {
     **{f"POST /api/auth/password-reset{suffix}": "organization-free mailbox proof; tested in password_reset.feature and test_password_reset.py"
        for suffix in ("", "/confirm")},
+    "POST /api/auth/invitation/accept": "organization-free token proof; tested in user_invitation.feature and test_user_invitation.py",
     **core.EXEMPT,
     "GET /api/health": "organization-free: answers without a session and reads no organization data",
     "GET /api/health/live": "organization-free: answers without a session and reads no organization data",

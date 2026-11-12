@@ -893,6 +893,9 @@ with expiry or use time older than seven days using `SKIP LOCKED`.
 Revision 0145 materializes the selected batch once before deleting it: a nested-loop
 semi-join can rescan an `IN` subquery and otherwise exceed its inner limit.
 The cadence is best effort; retained security state remains in PostgreSQL.
+Since revision 0184 the same definer also deletes at most 100 finished user
+invitations per run (accepted, revoked or expired more than seven days ago), and
+each created invitation schedules this cleanup too; no worker runs it on a timer.
 
 The recovery page reads `/passwort-zuruecksetzen?token=…`, saves the token in
 sessionStorage before replacing the query and POSTs on explicit submit only.

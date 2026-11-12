@@ -74,6 +74,15 @@ export interface User {
   role?: string | null;
 }
 
+export interface UserInvitation {
+  id: string;
+  email: string;
+  role: string;
+  created_at: string;
+  expires_at: string;
+  last_sent_at: string;
+}
+
 // --- M1 Stammdaten ---
 
 export type ManagementType = "MIET" | "WEG" | "SEV" | "MISCH";

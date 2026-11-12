@@ -23,7 +23,7 @@ SAMPLES = {context.kind: context for context in (
     SignupConfirmation(confirm_link=f"{ORIGIN}/signup/confirm?token={TOKEN}", valid_hours=24),
     SignupWelcome(admin_name=PERSON, organization_name=ORGANIZATION, login_link=f"{ORIGIN}/login"),
     UserInvitation(inviter_name=PERSON, organization_name=LONG_ORGANIZATION,
-                   set_password_link=f"{ORIGIN}/einladung?token={TOKEN}", valid_hours=24),
+                   set_password_link=f"{ORIGIN}/einladung?token={TOKEN}", valid_hours=72),
     EmailChangeConfirm(confirm_link=f"{ORIGIN}/email/bestaetigen?token={TOKEN}", valid_hours=24),
     EmailChangeNotice(new_address="m.mustermann@example.de", changed_at=NOW,
                       reset_request_link=f"{ORIGIN}/passwort-vergessen"),

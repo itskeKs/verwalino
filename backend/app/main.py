@@ -11,6 +11,7 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from app.api import auth, organizations, users, mandates, intake_batches, intake_items, exceptions, invoice_reviews, context_decisions, allocation_proposals, allocation_treatments, allocation_adoptions, duplicate_comparisons
 from app.api import context_mappings, setup, signup, password_reset, diagnostics
+from app.api import user_invitations
 from app.api import properties, units, persons, ownership, leases
 from app.api import owner_profiles, tenant_profiles, vendors
 from app.api import cost_categories, cost_entries, invoice_documents, document_refs, logical_documents, extraction_revisions, source_partitions, visual_extracts, visual_disclosures
@@ -76,7 +77,10 @@ app.include_router(auth.router)
 app.include_router(setup.router)
 app.include_router(signup.router)
 app.include_router(password_reset.router)
+app.include_router(user_invitations.accept_router)
 app.include_router(organizations.router)
+# Before /api/users/{user_id}: the literal /invitations paths must win.
+app.include_router(user_invitations.router)
 app.include_router(users.router)
 app.include_router(diagnostics.router)
 app.include_router(accounting_scopes.router)
@@ -201,4 +205,4 @@ if _frontend_dist and os.path.isdir(_frontend_dist):
             raise HTTPException(status_code=404, detail="Not Found")
         return FileResponse(resolve_spa_file(_frontend_dist, full_path), headers={
             "Referrer-Policy": "no-referrer", "Cache-Control": "no-store",
-        } if full_path in {"signup/confirm", "passwort-zuruecksetzen"} else None)
+        } if full_path in {"signup/confirm", "passwort-zuruecksetzen", "einladung"} else None)

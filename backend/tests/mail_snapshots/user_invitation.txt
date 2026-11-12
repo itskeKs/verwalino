@@ -15,7 +15,7 @@ einzurichten.
 Passwort festlegen:
 https://verwaltung.example.de/einladung?token=synthetischer-vorschau-token-0123456789abcdef0123456789abcdef
 
-Der Link ist 24 Stunden gültig.
+Der Link ist 72 Stunden gültig.
 
 Wenn Sie diese Einladung nicht erwartet haben, ignorieren Sie diese
 E-Mail.
