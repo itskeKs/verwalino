@@ -353,19 +353,22 @@ class DunningService:
                 detail=f"Cannot issue from status '{notice.status}'",
             )
 
-        account = await self._select_payment_account(notice, bank_account_id)
         values = await self._display_values(notice)
-        prop, unit = await self._notice_property_unit(notice)
-        if prop is not None:
-            values["property_name"] = prop.name
-            if unit is not None:
-                label = unit.number or ""
-                if unit.location:
-                    label += f" ({unit.location})"
-                values["unit_label"] = label
-        values["bank_iban"] = account.iban
-        values["bank_bic"] = account.bic or ""
-        values["bank_name"] = account.bank_name or ""
+        # Owner notices are outside the destination rule (#578): they issue as
+        # before, with the generic payment wording and no frozen destination.
+        if notice.tenant_profile_id is not None:
+            account = await self._select_payment_account(notice, bank_account_id)
+            prop, unit = await self._notice_property_unit(notice)
+            if prop is not None:
+                values["property_name"] = prop.name
+                if unit is not None:
+                    label = unit.number or ""
+                    if unit.location:
+                        label += f" ({unit.location})"
+                    values["unit_label"] = label
+            values["bank_iban"] = account.iban
+            values["bank_bic"] = account.bic or ""
+            values["bank_name"] = account.bank_name or ""
 
         now = datetime.now(timezone.utc)
         # Adressat-Anzeige-Namen einfrieren (ADR-0012): noch als Entwurf
