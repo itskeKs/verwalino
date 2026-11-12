@@ -301,6 +301,26 @@ legacy request that used the former rate field. New applies and all previews use
 policy. No M6 payments are added, old issued
 letters/PDFs are not changed and nothing is sent.
 
+### Escalation levels (M7)
+
+The level of a new notice is `1 +` the number of already-issued notices of the same
+person -- for tenants restricted to the same lease -- whose frozen `included_items`
+contain at least one item that is overdue now. Item identity is
+`payment_type + period_year + period_month`. A Zahlungserinnerung whose arrears were
+paid off afterwards does not raise the level of a later, unrelated notice; only a
+further notice for the same still-overdue arrears escalates 1 -> 2 -> 3. The batch
+preview and individual creation use the same count.
+
+A notice that contains an already demanded item together with a new one gets the level
+and the fee of the demanded item for the whole notice; the level is not set per item.
+
+Notices issued before the lease link was stored carry neither `_dunning_lease_id` in
+their frozen items nor a scope context. When a new unscoped tenant notice is created, such
+an old notice counts for the tenant, whichever lease it was for, as long as its frozen
+items contain one of the overdue items. A notice that carries a lease link keeps the
+same-lease rule, and scoped notices are always matched on their scope and lease. Issued
+notices are not changed.
+
 ### 2.3 Expected-amount engine as a pure function
 
 `app/engine/mietkonto.py`:

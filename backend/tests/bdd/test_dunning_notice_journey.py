@@ -6,6 +6,7 @@ from playwright.async_api import expect
 from pytest_bdd import scenarios, given, when, then, parsers
 
 from tests.bdd.steps.browser_common import browser_step, button, field, submit
+from tests.bdd.steps.browser_setup import bank_account, create, rental
 from tests.bdd.test_weg_settlement import create_balance_world
 from tests.bdd.test_weg_settlement import dated_owners as create_dated_owners
 
@@ -315,3 +316,60 @@ def zero_fee_saved(world, principal, total):
     assert (notice["principal_amount"], notice["fee_amount"], notice["interest_amount"], notice["total_amount"]) == (
         f"{principal}.00", "0.00", "0.00", f"{total}.00",
     )
+
+
+@given("a tenant whose January 2026 rent was reminded and then paid in full")
+def reminded_and_paid_january(world, seed_data):
+    rental(world, seed_data, advance="0.00")
+    account = bank_account(world)
+    data = world.data
+
+    def notice(period_start, period_end, reference_date):
+        response = world.act("POST", "/api/dunning/tenant", json={
+            "tenant_profile_id": data["tenants"][0]["id"],
+            "lease_agreement_id": data["leases"][0]["id"],
+            "accounting_scope_id": data["scope"]["id"],
+            "period_start": period_start, "period_end": period_end,
+            "reference_date": reference_date})
+        assert response.status_code == 201, world.describe_response()
+        return response.json()
+
+    first = notice("2026-01-01", "2026-01-31", "2026-02-20")
+    assert (first["level"], first["fee_amount"], first["total_amount"]) == (1, "0.00", "700.00")
+    issued = world.act("POST", f"/api/dunning/{first['id']}/issue")
+    assert issued.status_code == 200, world.describe_response()
+    payment = create(world, "/api/payments", {
+        "accounting_scope_id": data["scope"]["id"],
+        "bank_account_id": account["id"],
+        "tenant_profile_id": data["tenants"][0]["id"],
+        "lease_agreement_id": data["leases"][0]["id"],
+        "amount": "700.00", "direction": "IN", "value_date": "2026-02-21",
+        "payment_type": "KALTMIETE", "period_year": 2026, "period_month": 1,
+    })
+    assert world.act("POST", f"/api/payments/{payment['id']}/book").status_code == 200
+    data["escalation_notice"] = notice
+
+
+@when("the manager creates a notice for the March 2026 arrears as of 20 April 2026")
+def march_arrears_notice(world):
+    world.data["march_notice"] = world.data["escalation_notice"]("2026-03-01", "2026-03-31", "2026-04-20")
+
+
+@then("the notice is a level 1 reminder with 0.00 fee and 700.00 total")
+def march_notice_is_first_reminder(world):
+    notice = world.data["march_notice"]
+    assert (notice["level"], notice["fee_amount"], notice["total_amount"]) == (1, "0.00", "700.00")
+
+
+@when("the manager issues the notice and creates another one on 5 May 2026")
+def issue_and_create_second_notice(world):
+    data = world.data
+    issued = world.act("POST", f"/api/dunning/{data['march_notice']['id']}/issue")
+    assert issued.status_code == 200, world.describe_response()
+    data["second_notice"] = data["escalation_notice"]("2026-03-01", "2026-03-31", "2026-05-05")
+
+
+@then("the second notice is a level 2 dunning with 2.50 fee and 702.50 total")
+def second_notice_escalates(world):
+    notice = world.data["second_notice"]
+    assert (notice["level"], notice["fee_amount"], notice["total_amount"]) == (2, "2.50", "702.50")

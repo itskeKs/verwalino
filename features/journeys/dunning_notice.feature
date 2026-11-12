@@ -24,6 +24,13 @@ Feature: Readable issued dunning notice
     When the manager creates an ordinary January tenant notice as of 2 March 2026
     Then the tenant draft opens immediately with 700 EUR principal and no duplicate
 
+  Scenario: A paid-off earlier arrears does not raise the level of a later notice
+    Given a tenant whose January 2026 rent was reminded and then paid in full
+    When the manager creates a notice for the March 2026 arrears as of 20 April 2026
+    Then the notice is a level 1 reminder with 0.00 fee and 700.00 total
+    When the manager issues the notice and creates another one on 5 May 2026
+    Then the second notice is a level 2 dunning with 2.50 fee and 702.50 total
+
   Scenario Outline: A missing accounting scope is explained in German before a draft is created
     Given a rental agreement with receipts in two separate accounting scopes
     When the manager submits a June tenant notice without an accounting scope at <width> px
