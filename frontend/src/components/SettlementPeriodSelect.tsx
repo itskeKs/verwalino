@@ -3,13 +3,16 @@ import { listSettlementPeriods } from "../api/endpoints";
 import type { LeaseRecord, SettlementPeriod } from "../api/types";
 import { formatDate } from "../lib/format";
 
-/** Dates come from the backend's property-period function; free dates remain possible. */
-export function SettlementPeriodSelect({ propertyId, year, start, end, lease, onSelect }: {
+/** Dates come from the backend's property-period function; free dates remain possible.
+ * With keepFittingDates, dates that fit an offered period survive a property or year change;
+ * dates that fit none are replaced by the offered period. */
+export function SettlementPeriodSelect({ propertyId, year, start, end, lease, keepFittingDates, onSelect }: {
   propertyId: string;
   year?: number;
   start: string;
   end: string;
   lease?: Pick<LeaseRecord, "valid_from" | "valid_to">;
+  keepFittingDates?: boolean;
   onSelect: (period: SettlementPeriod) => void;
 }) {
   const [periods, setPeriods] = useState<SettlementPeriod[]>([]);
@@ -31,10 +34,15 @@ export function SettlementPeriodSelect({ propertyId, year, start, end, lease, on
       setPeriods(offeredPeriods);
       setError(null);
       const offered = offeredPeriods.find(row => row.year === year) ?? offeredPeriods[0];
-      if (!currentDates.current.start && !currentDates.current.end && offered) select.current(offered);
+      if (!offered) return;
+      const { start: currentStart, end: currentEnd } = currentDates.current;
+      if (!currentStart && !currentEnd) { select.current(offered); return; }
+      if (!keepFittingDates) return;
+      const fits = offeredPeriods.some(p => p.period_start <= currentStart && currentEnd <= p.period_end);
+      if (!fits) select.current(offered);
     }).catch(() => { if (active) setError("Abrechnungszeiträume konnten nicht geladen werden. Bitte versuchen Sie es erneut."); });
     return () => { active = false; };
-  }, [propertyId, year, leaseStart, leaseEnd]);
+  }, [propertyId, year, leaseStart, leaseEnd, keepFittingDates]);
   if (!propertyId) return null;
   const selected = periods.find(p => p.period_start === start && p.period_end === end);
   return <>

@@ -14,6 +14,22 @@ import { AccountingScopeSelector } from "../components/AccountingScopeSelector";
 
 const STATUS_LABELS: Record<string, string> = { draft: "Entwurf", finalized: "Finalisiert" };
 const STATUS_CSS: Record<string, string> = { draft: "badge--draft", finalized: "badge--confirmed" };
+const DRAFT_KEY = "economic-plan-form-draft";
+
+type PlanFormDraft = { form: EconomicPlanCreate; showForm: boolean };
+
+function loadDraft(): PlanFormDraft | null {
+  try {
+    const raw = sessionStorage.getItem(DRAFT_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as { form?: EconomicPlanCreate; showForm?: unknown };
+    const form = parsed?.form;
+    if (!form || typeof form.plan_year !== "number") return null;
+    return { form: { ...emptyForm(), ...form }, showForm: parsed.showForm === true };
+  } catch {
+    return null;
+  }
+}
 
 function emptyForm(): EconomicPlanCreate {
   const y = new Date().getFullYear();
@@ -33,9 +49,15 @@ export function EconomicPlansPage() {
   const [properties, setProperties] = useState<Property[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
-  const [showForm, setShowForm] = useState(false);
-  const [form, setForm] = useState<EconomicPlanCreate>(emptyForm());
+  const [initialDraft] = useState(loadDraft);
+  const [showForm, setShowForm] = useState(() => initialDraft?.showForm ?? false);
+  const [form, setForm] = useState<EconomicPlanCreate>(() => initialDraft?.form ?? emptyForm());
   const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    if (showForm) sessionStorage.setItem(DRAFT_KEY, JSON.stringify({ form, showForm }));
+    else sessionStorage.removeItem(DRAFT_KEY);
+  }, [form, showForm]);
 
   const wegProps = properties.filter(
     (p) => p.management_type === "WEG" || p.management_type === "MISCH",
@@ -95,7 +117,7 @@ export function EconomicPlansPage() {
           <form onSubmit={handleSubmit} className="form-grid [&>*]:min-w-0 [&_select]:w-full">
             <label>
               WEG-Objekt *
-              <select aria-label="WEG-Objekt *" required value={form.property_id} onChange={(e) => setForm({ ...form, accounting_scope_id: null, property_id: e.target.value, period_start: "", period_end: "" })}>
+              <select aria-label="WEG-Objekt *" required value={form.property_id} onChange={(e) => setForm({ ...form, accounting_scope_id: null, property_id: e.target.value })}>
                 <option value="">-- Objekt wählen --</option>
                 {wegProps.map((p) => (
                   <option key={p.id} value={p.id}>{p.name} ({p.management_type})</option>
@@ -105,9 +127,10 @@ export function EconomicPlansPage() {
             <label>
               Wirtschaftsjahr *
               <input type="number" required value={form.plan_year}
-                onChange={(e) => setForm({ ...form, plan_year: parseInt(e.target.value, 10) || form.plan_year, period_start: "", period_end: "" })} />
+                onChange={(e) => setForm({ ...form, plan_year: parseInt(e.target.value, 10) || form.plan_year })} />
             </label>
             <SettlementPeriodSelect key={`${form.property_id}-${form.plan_year}`} propertyId={form.property_id} year={form.plan_year}
+              keepFittingDates
               start={form.period_start} end={form.period_end}
               onSelect={period => setForm(current => ({ ...current, plan_year: period.year, period_start: period.period_start, period_end: period.period_end }))} />
             <label>

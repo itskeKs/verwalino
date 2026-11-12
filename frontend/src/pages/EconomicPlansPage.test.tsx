@@ -5,7 +5,7 @@ import { api, ApiError } from "../api/client";
 import type { Property } from "../api/types";
 import { EconomicPlansPage } from "./EconomicPlansPage";
 
-afterEach(() => { cleanup(); vi.restoreAllMocks(); });
+afterEach(() => { cleanup(); sessionStorage.clear(); vi.restoreAllMocks(); });
 
 it("explicitly labels the WEG property select without including property options", async () => {
   const property: Property = { id: "property-weg", name: "WEG Haus", street: "Weg 1", zip_code: "10115", city: "Berlin", management_type: "WEG", fiscal_year_start_month: 1, mea_denominator: 1000, mea_scale_status: "CONFIRMED" };
@@ -45,6 +45,82 @@ it("prefills property periods and refreshes them when the start year changes", a
   await screen.findByRole("option", { name: "2025/2026" });
   expect(screen.getByLabelText("Zeitraum von *")).toHaveValue("2025-04-01");
   expect(screen.getByLabelText("Zeitraum bis *")).toHaveValue("2026-03-31");
+});
+
+it("keeps dates that still fit the offered period when the property changes", async () => {
+  vi.spyOn(api, "get").mockImplementation(async path => {
+    if (path === "/api/economic-plans") return [] as never;
+    if (path === "/api/properties") return [
+      { id: "april", name: "Aprilhaus", management_type: "WEG", fiscal_year_start_month: 4 },
+      { id: "april2", name: "Zweithaus", management_type: "WEG", fiscal_year_start_month: 4 },
+    ] as never;
+    if (path.includes("/settlement-periods")) return [{ year: 2026, label: "2026/2027", period_start: "2026-04-01", period_end: "2027-03-31" }] as never;
+    if (path.startsWith("/api/accounting-scopes/page?")) return { items: [], next_cursor: null } as never;
+    throw new Error(path);
+  });
+  render(<MemoryRouter><EconomicPlansPage /></MemoryRouter>);
+  await screen.findByText("Keine Wirtschaftspläne vorhanden.");
+  fireEvent.click(screen.getByRole("button", { name: "+ Neuer Wirtschaftsplan" }));
+  fireEvent.change(screen.getByRole("combobox", { name: "WEG-Objekt *" }), { target: { value: "april" } });
+  await waitFor(() => expect(screen.getByLabelText("Zeitraum von *")).toHaveValue("2026-04-01"));
+  fireEvent.change(screen.getByLabelText("Zeitraum von *"), { target: { value: "2026-06-01" } });
+  fireEvent.change(screen.getByRole("combobox", { name: "WEG-Objekt *" }), { target: { value: "april2" } });
+  expect(screen.getByLabelText("Zeitraum von *")).toHaveValue("2026-06-01");
+  expect(screen.getByLabelText("Zeitraum bis *")).toHaveValue("2027-03-31");
+});
+
+it("restores the form draft after leaving and returning to the page", async () => {
+  vi.spyOn(api, "get").mockImplementation(async path => {
+    if (path === "/api/economic-plans") return [] as never;
+    if (path === "/api/properties") return [] as never;
+    if (path.startsWith("/api/accounting-scopes/page?")) return { items: [], next_cursor: null } as never;
+    throw new Error(path);
+  });
+  const first = render(<MemoryRouter><EconomicPlansPage /></MemoryRouter>);
+  await screen.findByText("Keine Wirtschaftspläne vorhanden.");
+  fireEvent.click(screen.getByRole("button", { name: "+ Neuer Wirtschaftsplan" }));
+  fireEvent.change(screen.getByLabelText("Rücklagenzuführung (Jahr)"), { target: { value: "3000.00" } });
+  first.unmount();
+  render(<MemoryRouter><EconomicPlansPage /></MemoryRouter>);
+  await screen.findByText("Keine Wirtschaftspläne vorhanden.");
+  expect(screen.getByLabelText("Rücklagenzuführung (Jahr)")).toHaveValue("3000.00");
+});
+
+it("resets the form when starting a new plan even with a restored draft", async () => {
+  vi.spyOn(api, "get").mockImplementation(async path => {
+    if (path === "/api/economic-plans") return [] as never;
+    if (path === "/api/properties") return [] as never;
+    if (path.startsWith("/api/accounting-scopes/page?")) return { items: [], next_cursor: null } as never;
+    throw new Error(path);
+  });
+  const first = render(<MemoryRouter><EconomicPlansPage /></MemoryRouter>);
+  await screen.findByText("Keine Wirtschaftspläne vorhanden.");
+  fireEvent.click(screen.getByRole("button", { name: "+ Neuer Wirtschaftsplan" }));
+  fireEvent.change(screen.getByLabelText("Rücklagenzuführung (Jahr)"), { target: { value: "3000.00" } });
+  first.unmount();
+  render(<MemoryRouter><EconomicPlansPage /></MemoryRouter>);
+  await screen.findByText("Keine Wirtschaftspläne vorhanden.");
+  expect(screen.getByLabelText("Rücklagenzuführung (Jahr)")).toHaveValue("3000.00");
+  fireEvent.click(screen.getByRole("button", { name: "+ Neuer Wirtschaftsplan" }));
+  expect(screen.getByLabelText("Rücklagenzuführung (Jahr)")).toHaveValue("0.00");
+});
+
+it("discards the draft when the form is cancelled", async () => {
+  vi.spyOn(api, "get").mockImplementation(async path => {
+    if (path === "/api/economic-plans") return [] as never;
+    if (path === "/api/properties") return [] as never;
+    if (path.startsWith("/api/accounting-scopes/page?")) return { items: [], next_cursor: null } as never;
+    throw new Error(path);
+  });
+  const first = render(<MemoryRouter><EconomicPlansPage /></MemoryRouter>);
+  await screen.findByText("Keine Wirtschaftspläne vorhanden.");
+  fireEvent.click(screen.getByRole("button", { name: "+ Neuer Wirtschaftsplan" }));
+  fireEvent.change(screen.getByLabelText("Rücklagenzuführung (Jahr)"), { target: { value: "3000.00" } });
+  fireEvent.click(screen.getByRole("button", { name: "Abbrechen" }));
+  first.unmount();
+  render(<MemoryRouter><EconomicPlansPage /></MemoryRouter>);
+  await screen.findByText("Keine Wirtschaftspläne vorhanden.");
+  expect(screen.queryByLabelText("Rücklagenzuführung (Jahr)")).not.toBeInTheDocument();
 });
 
 it.each([
