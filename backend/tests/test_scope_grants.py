@@ -15,7 +15,7 @@ async def scope_fixture(session, seed):
         await session.execute(text("INSERT INTO property(id,organization_id,name,street,zip_code,city,management_type) VALUES (:id,:org,'Test','','','','MISCH')"), {**ids, "id": ids[key]})
     for key, kind in (("scope", "WEG"), ("other_scope", "MIET")):
         await session.execute(text("INSERT INTO accounting_scope(id,organization_id,property_id,scope_type,label,valid_from,whole_property,origin,created_by) VALUES (:id,:org,:property,:kind,'Reviewed sphere','2025-01-01',true,'REVIEWED',:actor)"), {**ids, "id": ids[key], "kind": kind})
-    await session.execute(text("INSERT INTO bank_account(id,organization_id,property_id,account_type,label) VALUES (:bank,:org,:property,'LAUFEND','Test')"), ids)
+    await session.execute(text("INSERT INTO bank_account(id,organization_id,property_id,account_type,label,iban) VALUES (:bank,:org,:property,'LAUFEND','Test','DE02200505501015871393')"), ids)
     await session.execute(text("INSERT INTO scope_grant(id,organization_id,scope_id,user_id,capabilities,granted_by,reason) VALUES (:grant,:org,:scope,:clerk,ARRAY['read','prepare'],:actor,'Reviewed team assignment')"), ids)
     return ids
 

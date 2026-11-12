@@ -141,6 +141,93 @@ async def test_scoped_dunning_distinguishes_prepare_approve_export_and_revocatio
         assert (await api.get(f"/api/dunning/{notice['id']}/pdf")).status_code == 404
 
 
+async def test_scoped_issue_autoselects_only_the_scope_bound_account(migrator_session, scope_seed):
+    """Only an active LAUFEND account with IBAN, bound to the notice's scope, is eligible."""
+    import io
+
+    import pdfplumber
+
+    ids = await statement_fixture(migrator_session, scope_seed, 'lease')
+    await grant(ids, ['read', 'prepare', 'approve', 'export'])
+    async with client(ids) as api:
+        created = await api.post('/api/dunning/tenant', json=tenant_body(ids))
+        assert created.status_code == 201, created.text
+        notice_id = created.json()['id']
+    # An unbound account with an IBAN on the same property must not become
+    # eligible for a scoped notice; it appears only after the draft exists,
+    # because an unclassified input would block the scoped calculation.
+    ids['stray'] = uuid.uuid4()
+    await mutate(text("INSERT INTO bank_account(id,organization_id,property_id,account_type,label,iban) "
+        "VALUES (:stray,:org,:property,'LAUFEND','Ungebunden','DE89370400440532013000')"), ids)
+    async with client(ids) as api:
+        issued = await api.post(f'/api/dunning/{notice_id}/issue')
+        assert issued.status_code == 200, issued.text
+        pdf = await api.get(f'/api/dunning/{notice_id}/pdf')
+        assert pdf.status_code == 200 and pdf.content.startswith(b'%PDF')
+        with pdfplumber.open(io.BytesIO(pdf.content)) as doc:
+            page_text = "\n".join(page.extract_text() or '' for page in doc.pages)
+        # The scope-bound fixture account carries the IBAN (scope_fixture); the
+        # unbound account with an IBAN on the same property must not appear.
+        assert 'DE02200505501015871393' in page_text
+        assert 'DE89370400440532013000' not in page_text
+
+
+async def test_scoped_selection_freezes_choice_and_refuses_other_scope_accounts(
+    migrator_session, scope_seed,
+):
+    """Two eligible accounts in the notice's scope: explicit selection, the
+    chosen one is frozen, an account of another scope is refused."""
+    import io
+
+    import pdfplumber
+
+    ids = await statement_fixture(migrator_session, scope_seed, 'lease')
+    ids['extra'] = uuid.uuid4()
+    await mutate(text("INSERT INTO bank_account(id,organization_id,property_id,account_type,label,iban) "
+        "VALUES (:extra,:org,:property,'LAUFEND','Zweites Konto','DE44120300000000202052')"), ids)
+    await mutate(text("INSERT INTO accounting_scope_binding(organization_id,property_id,scope_id,bank_account_id,origin,reason,reviewed_by) "
+        "VALUES (:org,:property,:scope,:extra,'REVIEWED','Second eligible account',:actor)"), ids)
+    # An IBAN-bearing account bound to the OTHER scope must not be selectable
+    # for this notice either.
+    ids['other_scope_account'] = uuid.uuid4()
+    await mutate(text("INSERT INTO bank_account(id,organization_id,property_id,account_type,label,iban) "
+        "VALUES (:other_scope_account,:org,:property,'LAUFEND','Anderkreis-Konto','DE89370400440532013000')"), ids)
+    await mutate(text("INSERT INTO accounting_scope_binding(organization_id,property_id,scope_id,bank_account_id,origin,reason,reviewed_by) "
+        "VALUES (:org,:property,:second_scope,:other_scope_account,'REVIEWED','Other scope account',:actor)"), ids)
+    await grant(ids, ['read', 'prepare', 'approve', 'export'])
+    async with client(ids) as api:
+        created = await api.post('/api/dunning/tenant', json=tenant_body(ids))
+        assert created.status_code == 201, created.text
+        notice_id = created.json()['id']
+    async with client(ids) as api:
+        refused = await api.post(f'/api/dunning/{notice_id}/issue')
+        assert refused.status_code == 409, refused.text
+        detail = refused.json()['detail']
+        assert detail['code'] == 'dunning_bank_selection_required'
+        offered = {row['id'] for row in detail['bank_accounts']}
+        assert offered == {str(ids['bank']), str(ids['extra'])}
+
+        # An account of another scope is refused: it is neither offered nor
+        # visible inside this scope context (foreign id -> 404), and the
+        # eligibility filter above excludes it from the candidates.
+        foreign = await api.post(
+            f'/api/dunning/{notice_id}/issue',
+            json={'bank_account_id': str(ids['other_scope_account'])},
+        )
+        assert foreign.status_code == 404, foreign.text
+
+        chosen = await api.post(
+            f'/api/dunning/{notice_id}/issue', json={'bank_account_id': str(ids['extra'])},
+        )
+        assert chosen.status_code == 200, chosen.text
+        pdf = await api.get(f'/api/dunning/{notice_id}/pdf')
+        assert pdf.status_code == 200
+        with pdfplumber.open(io.BytesIO(pdf.content)) as doc:
+            page_text = "\n".join(page.extract_text() or '' for page in doc.pages)
+        assert 'DE44120300000000202052' in page_text
+        assert 'DE02200505501015871393' not in page_text
+
+
 async def test_unclassified_escalation_history_blocks_scoped_draft(migrator_session, scope_seed):
     ids = await statement_fixture(migrator_session, scope_seed, 'lease')
     await legacy_notice(ids)

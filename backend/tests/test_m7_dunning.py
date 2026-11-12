@@ -65,9 +65,10 @@ def m7_seed(seed_data):
             (str(ids["prop_m7"]), org_a, "Mahnhaus", "MIET"),
         )
         cur.execute(
-            "INSERT INTO bank_account (id, organization_id, property_id, account_type, label) "
-            "VALUES (%s,%s,%s,%s,%s)",
-            (str(ids["acct_m7"]), org_a, str(ids["prop_m7"]), "LAUFEND", "Konto M7"),
+            "INSERT INTO bank_account (id, organization_id, property_id, account_type, label, iban) "
+            "VALUES (%s,%s,%s,%s,%s,%s)",
+            (str(ids["acct_m7"]), org_a, str(ids["prop_m7"]), "LAUFEND", "Konto M7",
+             "DE02200505501015871393"),
         )
 
         # Unit
@@ -569,8 +570,16 @@ async def test_batch_receipt_is_actor_scoped_and_immutable(rent_world):
 
 
 @pytest.mark.asyncio
-async def test_batch_escalation_change_invalidates_basis_and_preserves_issued_notice(rent_world):
+async def test_batch_escalation_change_invalidates_basis_and_preserves_issued_notice(rent_world, rent_db):
     w = rent_world
+    # Issuance freezes the payment destination: one eligible account.
+    await _set_org(rent_db, w["org"])
+    await rent_db.execute(
+        text("INSERT INTO bank_account (id, organization_id, property_id, account_type, label, iban) "
+             "VALUES (:id, :org, :property, 'LAUFEND', 'T23 Mietkonto', 'DE36302501010002042407')"),
+        {"id": uuid.uuid4(), "org": w["org"], "property": w["property"]},
+    )
+    await rent_db.commit()
     body = fresh_batch_request()
     async with api_client(w) as api:
         old = await batch_preview(api, body)
@@ -1373,6 +1382,286 @@ class TestT35Interest:
                 assert connection.scalar(text("SELECT interest_amount FROM dunning_notice WHERE id=:id"), {"id": notice["id"]}) == Decimal("6.70")
         finally:
             engine.dispose()
+
+
+M7_IBAN = "DE02200505501015871393"
+
+
+def _pdf_text(content: bytes) -> str:
+    import io
+
+    import pdfplumber
+
+    with pdfplumber.open(io.BytesIO(content)) as pdf:
+        return "\n".join(page.extract_text() or "" for page in pdf.pages)
+
+
+def _m7_draft_body(seed, **extra):
+    return {
+        "tenant_profile_id": str(seed["tenant_m7"]),
+        "lease_agreement_id": str(seed["lease_m7"]),
+        "period_start": "2025-03-01", "period_end": "2025-03-31",
+        "reference_date": "2025-04-30", "override_fee": "0.00", **extra,
+    }
+
+
+@pytest.mark.asyncio
+async def test_issue_autoselects_single_eligible_account_and_freezes_destination(
+    client_a_admin, m7_seed, rent_db,
+):
+    created = await client_a_admin.post("/api/dunning/tenant", json=_m7_draft_body(m7_seed))
+    assert created.status_code == 201, created.text
+    notice_id = created.json()["id"]
+
+    issued = await client_a_admin.post(f"/api/dunning/{notice_id}/issue")
+    assert issued.status_code == 200, issued.text
+
+    await _set_org(rent_db, m7_seed["org_a_id"])
+    values = await rent_db.scalar(
+        text("SELECT frozen_display_names->'values' FROM dunning_notice WHERE id=:id"),
+        {"id": uuid.UUID(notice_id)},
+    )
+    assert values["bank_iban"] == M7_IBAN
+    assert values["property_name"] == "Mahnhaus"
+    assert values["unit_label"] == "M7-1"
+
+    pdf = await client_a_admin.get(f"/api/dunning/{notice_id}/pdf")
+    assert pdf.status_code == 200
+    page_text = _pdf_text(pdf.content)
+    assert "Mahnhaus" in page_text and "M7-1" in page_text and M7_IBAN in page_text
+
+
+@pytest.mark.asyncio
+async def test_issue_requires_explicit_selection_with_several_eligible_accounts(
+    client_a_admin, m7_seed, rent_db,
+):
+    second = uuid.uuid4()
+    await _set_org(rent_db, m7_seed["org_a_id"])
+    await rent_db.execute(
+        text("INSERT INTO bank_account (id, organization_id, property_id, account_type, label, iban) "
+             "VALUES (:id, :org, :property, 'LAUFEND', 'Zweites Mietkonto', 'DE44120300000000202052')"),
+        {"id": second, "org": m7_seed["org_a_id"], "property": m7_seed["prop_m7"]},
+    )
+    # A foreign-organization account with an IBAN must never be offered.
+    await rent_db.execute(
+        text("UPDATE bank_account SET iban='DE89370400440532013000' WHERE id=:id"),
+        {"id": m7_seed["acct_b_m7"]},
+    )
+    await rent_db.commit()
+
+    # The seed organization is session-scoped; remove the extra account again
+    # so tests after this one keep exactly one eligible account.
+    try:
+        created = await client_a_admin.post("/api/dunning/tenant", json=_m7_draft_body(m7_seed))
+        assert created.status_code == 201, created.text
+        notice_id = created.json()["id"]
+
+        refused = await client_a_admin.post(f"/api/dunning/{notice_id}/issue")
+        assert refused.status_code == 409, refused.text
+        detail = refused.json()["detail"]
+        assert detail["code"] == "dunning_bank_selection_required"
+        offered = {row["id"]: row for row in detail["bank_accounts"]}
+        assert set(offered) == {str(m7_seed["acct_m7"]), str(second)}
+        assert offered[str(second)]["iban"] == "DE44120300000000202052"
+
+        chosen = await client_a_admin.post(
+            f"/api/dunning/{notice_id}/issue", json={"bank_account_id": str(second)},
+        )
+        assert chosen.status_code == 200, chosen.text
+        page_text = _pdf_text((await client_a_admin.get(f"/api/dunning/{notice_id}/pdf")).content)
+        assert "DE44120300000000202052" in page_text and M7_IBAN not in page_text
+    finally:
+        await _set_org(rent_db, m7_seed["org_a_id"])
+        await rent_db.execute(
+            text("DELETE FROM bank_account WHERE id=:id"), {"id": second},
+        )
+        await rent_db.execute(
+            text("UPDATE bank_account SET iban=NULL WHERE id=:id"),
+            {"id": m7_seed["acct_b_m7"]},
+        )
+        await rent_db.commit()
+
+
+@pytest.mark.asyncio
+async def test_issue_refused_without_eligible_account_and_recovers(
+    client_a_admin, m7_seed, rent_db,
+):
+    await _set_org(rent_db, m7_seed["org_a_id"])
+    await rent_db.execute(
+        text("UPDATE bank_account SET is_active=false WHERE id=:id"),
+        {"id": m7_seed["acct_m7"]},
+    )
+    await rent_db.commit()
+
+    created = await client_a_admin.post("/api/dunning/tenant", json=_m7_draft_body(m7_seed))
+    assert created.status_code == 201, created.text
+    notice_id = created.json()["id"]
+
+    refused = await client_a_admin.post(f"/api/dunning/{notice_id}/issue")
+    assert refused.status_code == 409, refused.text
+    detail = refused.json()["detail"]
+    assert detail["code"] == "dunning_bank_account_missing"
+    assert "Konto" in detail["message"]
+    current = await client_a_admin.get(f"/api/dunning/{notice_id}")
+    assert current.json()["status"] == "draft"
+
+    await _set_org(rent_db, m7_seed["org_a_id"])
+    await rent_db.execute(
+        text("UPDATE bank_account SET is_active=true WHERE id=:id"),
+        {"id": m7_seed["acct_m7"]},
+    )
+    await rent_db.commit()
+    assert (await client_a_admin.post(f"/api/dunning/{notice_id}/issue")).status_code == 200
+
+
+@pytest.mark.asyncio
+async def test_issue_rejects_unknown_or_ineligible_selected_account(
+    client_a_admin, m7_seed, rent_db,
+):
+    reserve = uuid.uuid4()
+    await _set_org(rent_db, m7_seed["org_a_id"])
+    await rent_db.execute(
+        text("INSERT INTO bank_account (id, organization_id, property_id, account_type, label, iban) "
+             "VALUES (:id, :org, :property, 'RUECKLAGE', 'Ruecklage', 'DE89370400440532013000')"),
+        {"id": reserve, "org": m7_seed["org_a_id"], "property": m7_seed["prop_m7"]},
+    )
+    await rent_db.commit()
+
+    created = await client_a_admin.post("/api/dunning/tenant", json=_m7_draft_body(m7_seed))
+    assert created.status_code == 201, created.text
+    notice_id = created.json()["id"]
+
+    ineligible = await client_a_admin.post(
+        f"/api/dunning/{notice_id}/issue", json={"bank_account_id": str(reserve)},
+    )
+    assert ineligible.status_code == 409, ineligible.text
+    assert ineligible.json()["detail"]["code"] == "dunning_bank_account_ineligible"
+    assert (await client_a_admin.post(
+        f"/api/dunning/{notice_id}/issue", json={"bank_account_id": str(m7_seed["acct_b_m7"])},
+    )).status_code == 404
+    assert (await client_a_admin.post(
+        f"/api/dunning/{notice_id}/issue", json={"bank_account_id": str(uuid.uuid4())},
+    )).status_code == 404
+    # The refused notice is untouched and issues with the auto-selected account.
+    assert (await client_a_admin.post(f"/api/dunning/{notice_id}/issue")).status_code == 200
+
+
+@pytest.mark.asyncio
+async def test_issue_treats_whitespace_iban_as_no_eligible_account(
+    client_a_admin, m7_seed, rent_db,
+):
+    """A whitespace-only IBAN is not "an IBAN": the account is not eligible,
+    and with no other eligible account issuance stops with guidance."""
+    blank = uuid.uuid4()
+    await _set_org(rent_db, m7_seed["org_a_id"])
+    # The used seed account cannot be rewritten (trigger), so it is deactivated
+    # (allowed) and a fresh account with a blank IBAN takes its place.
+    await rent_db.execute(
+        text("UPDATE bank_account SET is_active=false WHERE id=:id"),
+        {"id": m7_seed["acct_m7"]},
+    )
+    await rent_db.execute(
+        text("INSERT INTO bank_account (id, organization_id, property_id, account_type, label, iban) "
+             "VALUES (:id, :org, :property, 'LAUFEND', 'Blankes Konto', '   ')"),
+        {"id": blank, "org": m7_seed["org_a_id"], "property": m7_seed["prop_m7"]},
+    )
+    await rent_db.commit()
+    try:
+        created = await client_a_admin.post("/api/dunning/tenant", json=_m7_draft_body(m7_seed))
+        assert created.status_code == 201, created.text
+        notice_id = created.json()["id"]
+
+        refused = await client_a_admin.post(f"/api/dunning/{notice_id}/issue")
+        assert refused.status_code == 409, refused.text
+        detail = refused.json()["detail"]
+        assert detail["code"] == "dunning_bank_account_missing"
+        assert (await client_a_admin.get(f"/api/dunning/{notice_id}")).json()["status"] == "draft"
+    finally:
+        await _set_org(rent_db, m7_seed["org_a_id"])
+        await rent_db.execute(text("DELETE FROM bank_account WHERE id=:id"), {"id": blank})
+        await rent_db.execute(
+            text("UPDATE bank_account SET is_active=true WHERE id=:id"),
+            {"id": m7_seed["acct_m7"]},
+        )
+        await rent_db.commit()
+
+
+@pytest.mark.asyncio
+async def test_issued_notice_keeps_frozen_destination_after_master_data_changes(
+    client_a_admin, m7_seed, rent_db,
+):
+    """The frozen notice is self-supporting: later Stammdaten changes and even
+    deactivating or re-IBANing the destination account must not change the
+    issued PDF. The destination is a fresh unused account, so its IBAN may be
+    rewritten (the used-account trigger does not apply)."""
+    chosen = uuid.uuid4()
+    await _set_org(rent_db, m7_seed["org_a_id"])
+    await rent_db.execute(
+        text("INSERT INTO bank_account (id, organization_id, property_id, account_type, label, iban) "
+             "VALUES (:id, :org, :property, 'LAUFEND', 'Zweites Konto', 'DE44120300000000202052')"),
+        {"id": chosen, "org": m7_seed["org_a_id"], "property": m7_seed["prop_m7"]},
+    )
+    await rent_db.commit()
+
+    created = await client_a_admin.post("/api/dunning/tenant", json=_m7_draft_body(m7_seed))
+    assert created.status_code == 201, created.text
+    notice_id = created.json()["id"]
+    # Two eligible accounts: pick the fresh one explicitly.
+    issued = await client_a_admin.post(
+        f"/api/dunning/{notice_id}/issue", json={"bank_account_id": str(chosen)},
+    )
+    assert issued.status_code == 200, issued.text
+    original = (await client_a_admin.get(f"/api/dunning/{notice_id}/pdf")).content
+    assert "DE44120300000000202052" in _pdf_text(original)
+
+    await _set_org(rent_db, m7_seed["org_a_id"])
+    await rent_db.execute(
+        text("UPDATE bank_account SET iban='DE89370400440532013000', is_active=false "
+             "WHERE id=:id"),
+        {"id": chosen},
+    )
+    await rent_db.execute(
+        text("UPDATE property SET name='Umbenannt' WHERE id=:id"),
+        {"id": m7_seed["prop_m7"]},
+    )
+    await rent_db.execute(
+        text("UPDATE unit SET number='M7-99' WHERE id=:id"),
+        {"id": m7_seed["unit_m7"]},
+    )
+    await rent_db.execute(
+        text("UPDATE person SET last_name='Ungenannt' WHERE id=:id"),
+        {"id": m7_seed["person_m7"]},
+    )
+    await rent_db.commit()
+    try:
+        current = await client_a_admin.get(f"/api/dunning/{notice_id}/pdf")
+        assert current.status_code == 200
+        assert current.content == original
+        text_after = _pdf_text(current.content)
+        assert "Mahnhaus" in text_after and "M7-1" in text_after
+        assert "DE44120300000000202052" in text_after
+        assert "Max Mahner" in text_after
+        assert "Umbenannt" not in text_after
+        assert "M7-99" not in text_after
+        assert "Ungenannt" not in text_after
+    finally:
+        await _set_org(rent_db, m7_seed["org_a_id"])
+        await rent_db.execute(
+            text("DELETE FROM bank_account WHERE id=:id"), {"id": chosen},
+        )
+        await rent_db.execute(
+            text("UPDATE property SET name='Mahnhaus' WHERE id=:id"),
+            {"id": m7_seed["prop_m7"]},
+        )
+        await rent_db.execute(
+            text("UPDATE unit SET number='M7-1' WHERE id=:id"),
+            {"id": m7_seed["unit_m7"]},
+        )
+        await rent_db.execute(
+            text("UPDATE person SET last_name='Mahner' WHERE id=:id"),
+            {"id": m7_seed["person_m7"]},
+        )
+        await rent_db.commit()
 
 
 @pytest.mark.asyncio

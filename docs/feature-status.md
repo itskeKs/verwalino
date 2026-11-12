@@ -141,7 +141,7 @@ The bounded provider transport/settings decision is described in [ADR 0014](adr/
 
 | Feature | Status | Location |
 | --- | --- | --- |
-| Dunning notice, 3 levels, fee, PDF | ✅ dated rent and Hausgeld obligations, organization fees per level, optional override, and frozen issued amounts in the notice and PDF | `api/dunning.py`, `engine/dunning.py`, `services/dunning_pdf.py` |
+| Dunning notice, 3 levels, fee, PDF | ✅ dated rent and Hausgeld obligations, organization fees per level, optional override, and frozen issued amounts in the notice and PDF; issued tenant notices also render the frozen unit/property identity and the payment destination (single eligible active current account with IBAN auto-selected, explicit per-notice selection when several, issuance refused with guidance when none) | `api/dunning.py`, `engine/dunning.py`, `services/dunning_pdf.py`, `services/dunning_service.py` |
 | Default interest, selected dunning run | ✅ optional organization-wide interest at statutory base rate + 5 or 9 pp, split by rate and payment dates; selected batch drafts use the same policy | `engine/dunning.py`, `services/dunning_batch_service.py`, `api/dunning.py` (`/batch/preview`, `/batch`), `components/DunningBatch.tsx`, T35, T53, [usage](operations/bank-and-payments.md) |
 | Deadline monitor (Fristenmonitor) | ✅ derived; WEG scopes include owner arrears from the same dated ledger used by dunning | `api/fristen.py`, `services/fristen_service.py`, `engine/fristen.py`, `pages/FristenmonitorPage.tsx` |
 | Tasks, follow-ups | ✅ create from property and unit, due tasks on the dashboard | `models/task.py`, `api/tasks.py`, `services/task_service.py`, `pages/TasksPage.tsx`, T41, T42, [usage](operations/tasks-and-documents.md) |

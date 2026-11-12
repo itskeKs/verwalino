@@ -1138,7 +1138,10 @@ export function createDunningForOwner(body: DunningCreateOwner): Promise<Dunning
   return api.post<DunningNotice>("/api/dunning/owner", body);
 }
 
-export function issueDunningNotice(id: string): Promise<DunningNotice> {
+export function issueDunningNotice(id: string, bankAccountId?: string): Promise<DunningNotice> {
+  if (bankAccountId) {
+    return api.post<DunningNotice>(`/api/dunning/${id}/issue`, { bank_account_id: bankAccountId });
+  }
   return api.post<DunningNotice>(`/api/dunning/${id}/issue`);
 }
 

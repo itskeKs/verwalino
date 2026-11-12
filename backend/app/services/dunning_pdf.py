@@ -31,10 +31,20 @@ class DunningDisplayNames:
 
     These are NOT stored in the snapshot; resolved on-the-fly from the IDs.
     If a name cannot be resolved, the fallback is a dash (never raw UUIDs).
+
+    Issued notices carry the additional frozen values (ADR-0012 block): the
+    property/unit identity and the payment destination chosen at issue time
+    (#331). Older notices without these values keep their established
+    rendering (no identity rows, generic payment wording).
     """
     person_name: str = "---"
     person_address: str = ""
     organization_name: str = ""
+    property_name: str = ""
+    unit_label: str = ""
+    bank_iban: str | None = None
+    bank_bic: str = ""
+    bank_name: str = ""
 
 
 _CSS = (Path(__file__).resolve().parent.parent / "templates" / "mahnung.css").read_text(
@@ -200,6 +210,34 @@ def build_dunning_html(
     if dn.person_address:
         addressee += f"<br/><span class='meta-sub'>{_esc(dn.person_address)}</span>"
 
+    # Tenancy/property identity, frozen at issue time (#331). Absent on
+    # previously issued notices, which keep their established rendering.
+    identity_rows = ""
+    if dn.property_name:
+        identity_rows += (
+            f"<tr><td class='label'>Objekt</td><td>{_esc(dn.property_name)}</td></tr>"
+        )
+    if dn.unit_label:
+        identity_rows += (
+            f"<tr><td class='label'>Einheit</td><td>{_esc(dn.unit_label)}</td></tr>"
+        )
+
+    # Payment destination, frozen at issue time (#331). Without it the
+    # established generic wording stays (previously issued notices).
+    if dn.bank_iban and dn.bank_iban.strip():
+        payment_sentence = """auf das folgende Konto
+    zu ueberweisen:"""
+        destination_block = f"""<table class="meta">
+    <tr><td class="label">IBAN</td><td><strong>{_esc(dn.bank_iban)}</strong></td></tr>{f"<tr><td class='label'>BIC</td><td>{_esc(dn.bank_bic)}</td></tr>" if dn.bank_bic else ""}{f"<tr><td class='label'>Bank</td><td>{_esc(dn.bank_name)}</td></tr>" if dn.bank_name else ""}
+  </table>"""
+    else:
+        payment_sentence = """auf unser Konto
+    zu ueberweisen."""
+        destination_block = ""
+    # After the body text: nothing for legacy notices (byte-identical
+    # rendering), the destination table for new ones.
+    after_body = f"  {destination_block}\n" if destination_block else ""
+
     interest_hint = (
         "Verzugszinsen werden anhand des angegebenen Basiszinssatzes ausgewiesen."
         if snapshot is not None else "Verzugszinsen sind nicht enthalten."
@@ -223,7 +261,7 @@ def build_dunning_html(
   <div class="subtitle">Ausstellungsdatum: {notice.issue_date.strftime('%d.%m.%Y')}</div>
 
   <table class="meta">
-    <tr><td class="label">An</td><td>{addressee}</td></tr>
+    <tr><td class="label">An</td><td>{addressee}</td></tr>{identity_rows}
     <tr><td class="label">Datum</td><td>{notice.issue_date.strftime('%d.%m.%Y')}</td></tr>
     <tr><td class="label">Zahlungsfrist</td><td>{notice.due_date.strftime('%d.%m.%Y')}</td></tr>
     <tr><td class="label">Mahnstufe</td><td>{notice.level} ({_esc(level_label)})</td></tr>
@@ -234,11 +272,10 @@ def build_dunning_html(
     trotz Faelligkeit konnten wir fuer die nachfolgend aufgefuehrten
     Positionen leider keinen vollstaendigen Zahlungseingang feststellen.
     Wir bitten Sie, den ausstehenden Betrag bis zum
-    <strong>{notice.due_date.strftime('%d.%m.%Y')}</strong> auf unser Konto
-    zu ueberweisen.
+    <strong>{notice.due_date.strftime('%d.%m.%Y')}</strong> {payment_sentence}
   </div>
 
-  <table class="lines">
+{after_body}  <table class="lines">
     <thead>
       <tr>
         <th>Zeitraum</th>

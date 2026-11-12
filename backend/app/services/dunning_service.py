@@ -19,7 +19,7 @@ from datetime import date, datetime, timezone
 from decimal import Decimal
 
 from fastapi import HTTPException
-from sqlalchemy import text
+from sqlalchemy import func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.engine.dunning import (
@@ -33,8 +33,11 @@ from app.engine.mietkonto import (
     account_statement,
     special_levy_expected_charges,
 )
+from app.models.accounting_scope import AccountingScopeBinding
 from app.models.audit_event import AuditEvent
+from app.models.bank_account import BankAccount
 from app.models.dunning_notice import LEASE_SOURCE_KEY, DunningNotice
+from app.models.dunning_scope_context import DunningScopeContext
 from app.repositories.audit_repo import AuditRepository
 from app.core.rbac import ScopeCapability
 from app.services.dunning_scope_service import DunningScopeService
@@ -324,11 +327,19 @@ class DunningService:
     # ------------------------------------------------------------------
     # Issue (freeze)
     # ------------------------------------------------------------------
-    async def issue(self, dunning_id: uuid.UUID) -> DunningNotice:
+    async def issue(self, dunning_id: uuid.UUID, bank_account_id: uuid.UUID | None = None) -> DunningNotice:
         """Issue a draft dunning notice -- atomic freeze (ADR-0003 pattern).
 
         Sets status='issued', issued_at/by + audit. The trigger (0019)
         freezes it from commit. Only issued notices can be rendered as PDF.
+
+        Payment destination (Owner decision on #331): the single eligible
+        active current account (LAUFEND) with IBAN for the notice's property
+        and accounting scope is used automatically; with several eligible
+        accounts an explicit per-notice selection is required; with none,
+        issuance stops with actionable guidance. The chosen destination is
+        frozen into the display block like the addressee names (ADR-0012);
+        previously issued notices keep their established rendering.
         """
         context = DunningScopeService(self._session, self._org_id, self._user_id)
         await context.financial.lock_inputs()
@@ -342,12 +353,29 @@ class DunningService:
                 detail=f"Cannot issue from status '{notice.status}'",
             )
 
+        values = await self._display_values(notice)
+        # Owner notices are outside the destination rule (#578): they issue as
+        # before, with the generic payment wording and no frozen destination.
+        if notice.tenant_profile_id is not None:
+            account = await self._select_payment_account(notice, bank_account_id)
+            prop, unit = await self._notice_property_unit(notice)
+            if prop is not None:
+                values["property_name"] = prop.name
+                if unit is not None:
+                    label = unit.number or ""
+                    if unit.location:
+                        label += f" ({unit.location})"
+                    values["unit_label"] = label
+            values["bank_iban"] = account.iban
+            values["bank_bic"] = account.bic or ""
+            values["bank_name"] = account.bank_name or ""
+
         now = datetime.now(timezone.utc)
         # Adressat-Anzeige-Namen einfrieren (ADR-0012): noch als Entwurf
         # (OLD.status='draft', Trigger lässt das Schreiben zu) in derselben
         # Ausstell-UPDATE. Danach unveränderbar; ein späteres DSGVO-Anonymisieren
         # der Person verändert das ausgestellte Mahn-PDF nicht mehr.
-        notice.frozen_display_names = freeze_block(await self._display_values(notice))
+        notice.frozen_display_names = freeze_block(values)
         notice.status = "issued"
         notice.issued_at = now
         notice.issued_by = self._user_id
@@ -367,6 +395,127 @@ class DunningService:
             )
         )
         return notice
+
+    # ------------------------------------------------------------------
+    # Payment destination selection (Owner decision on #331)
+    # ------------------------------------------------------------------
+    async def _notice_property_unit(self, notice: DunningNotice):
+        """(property, unit) behind a tenant notice, or (None, None).
+
+        Scoped notices carry their lease in the scope context; unscoped ones
+        store it in the first snapshot row (LEASE_SOURCE_KEY).
+        """
+        if not notice.tenant_profile_id:
+            return None, None
+        lease_id = await self._session.scalar(
+            select(DunningScopeContext.lease_agreement_id).where(
+                DunningScopeContext.organization_id == self._org_id,
+                DunningScopeContext.dunning_notice_id == notice.id,
+            )
+        )
+        if lease_id is None and notice.included_items:
+            lease_id = notice.included_items[0].get(LEASE_SOURCE_KEY)
+        if lease_id is None:
+            return None, None
+        lease = await self._leases.get_by_id(uuid.UUID(str(lease_id)))
+        if lease is None:
+            return None, None
+        unit = await UnitRepository(self._session, self._org_id).get_by_id(lease.unit_id)
+        if unit is None:
+            return None, None
+        prop = await self._properties.get_by_id(unit.property_id)
+        return prop, unit
+
+    async def _payment_account_candidates(self, notice: DunningNotice):
+        """(property, eligible accounts) for the notice's destination.
+
+        Eligible: active LAUFEND account with IBAN of the notice's property;
+        for a scoped notice additionally bound to its accounting scope. Never
+        an account of another property or scope.
+        """
+        prop, _ = await self._notice_property_unit(notice)
+        if prop is None:
+            return None, []
+        query = (
+            select(BankAccount)
+            .where(
+                BankAccount.organization_id == self._org_id,
+                BankAccount.property_id == prop.id,
+                BankAccount.is_active.is_(True),
+                BankAccount.account_type == "LAUFEND",
+                # "with an IBAN" means a non-blank one; whitespace-only values
+                # stored by the bank-account API are not a destination (#331).
+                BankAccount.iban.isnot(None),
+                func.length(func.trim(BankAccount.iban)) > 0,
+            )
+            .order_by(BankAccount.label, BankAccount.id)
+        )
+        if notice.accounting_scope_id is not None:
+            query = query.where(
+                select(AccountingScopeBinding.id)
+                .where(
+                    AccountingScopeBinding.organization_id == self._org_id,
+                    AccountingScopeBinding.bank_account_id == BankAccount.id,
+                    AccountingScopeBinding.scope_id == notice.accounting_scope_id,
+                )
+                .exists()
+            )
+        return prop, list((await self._session.scalars(query)).all())
+
+    async def _select_payment_account(self, notice: DunningNotice, bank_account_id):
+        """Resolve the destination account per the Owner decision on #331."""
+        prop, eligible = await self._payment_account_candidates(notice)
+        if bank_account_id is not None:
+            account = next((a for a in eligible if a.id == bank_account_id), None)
+            if account is not None:
+                return account
+            exists = await self._session.scalar(
+                select(BankAccount.id).where(
+                    BankAccount.organization_id == self._org_id,
+                    BankAccount.id == bank_account_id,
+                )
+            )
+            if exists is None:
+                raise HTTPException(status_code=404, detail="Bank account not found")
+            raise HTTPException(status_code=409, detail={
+                "code": "dunning_bank_account_ineligible",
+                "message": (
+                    "Das gewählte Konto ist für das Objekt und den Abrechnungskreis "
+                    "dieser Mahnung nicht zulässig. Wählen Sie ein aktives laufendes "
+                    "Konto mit IBAN für dieses Objekt."
+                ),
+            })
+        if not eligible:
+            if prop is None:
+                message = (
+                    "Dieser Mahnung ist kein Objekt zugeordnet, daher kann kein "
+                    "Zielkonto bestimmt werden."
+                )
+            else:
+                message = (
+                    f"Für das Objekt '{prop.name}' ist kein aktives laufendes Konto "
+                    "(LAUFEND) mit IBAN hinterlegt. Legen Sie für das Objekt ein "
+                    "aktives laufendes Konto mit IBAN an, bevor Sie die Mahnung "
+                    "ausgeben."
+                )
+            raise HTTPException(status_code=409, detail={
+                "code": "dunning_bank_account_missing",
+                "message": message,
+            })
+        if len(eligible) > 1:
+            raise HTTPException(status_code=409, detail={
+                "code": "dunning_bank_selection_required",
+                "message": (
+                    f"Für das Objekt '{prop.name}' sind mehrere laufende Konten mit "
+                    "IBAN hinterlegt. Wählen Sie das Zielkonto aus, bevor Sie die "
+                    "Mahnung ausgeben."
+                ),
+                "bank_accounts": [
+                    {"id": str(a.id), "label": a.label, "iban": a.iban}
+                    for a in eligible
+                ],
+            })
+        return eligible[0]
 
     # ------------------------------------------------------------------
     # Delete draft
@@ -450,9 +599,11 @@ class DunningService:
     async def _display_values(self, notice: DunningNotice) -> dict:
         """Aufgelöste Adressat-Anzeige-Werte -- EINE Quelle für Einfrieren + Live.
 
-        Die eingefrorene und die live aufgelöste Form haben exakt dieselbe
-        Struktur (person_name, person_address, organization_name); Einfrieren
-        heißt nur, dieses dict beim Ausstellen zu persistieren.
+        Die eingefrorene und die live aufgelöste Form haben dieselbe Struktur
+        (person_name, person_address, organization_name); Einfrieren heißt,
+        dieses dict beim Ausstellen zu persistieren. Der Ausstell-Pfad ergänzt
+        Objekt-/Einheit-Identität und das gewählte Zielkonto (#331); diese
+        Werte gibt es nur eingefroren, damit Altbestand unverändert rendert.
         """
         return {
             "person_name": await self.resolve_person_name(notice),
@@ -475,7 +626,10 @@ class DunningService:
             else None
         )
         values = frozen if frozen is not None else await self._display_values(notice)
-        allowed = {"person_name", "person_address", "organization_name"}
+        allowed = {
+            "person_name", "person_address", "organization_name",
+            "property_name", "unit_label", "bank_iban", "bank_bic", "bank_name",
+        }
         return DunningDisplayNames(**{k: v for k, v in values.items() if k in allowed})
 
     @staticmethod

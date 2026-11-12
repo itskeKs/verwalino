@@ -746,6 +746,23 @@ issue times on 5 November 2026 and the explicitly stored 8 April interest start:
 | Before | [View](docs/assets/design/dunning-notice/before-1280.png) | [View](docs/assets/design/dunning-notice/before-360.png) |
 | After | [View](docs/assets/design/dunning-notice/after-1280.png) | [View](docs/assets/design/dunning-notice/after-360.png) |
 
+When a draft is issued, the API freezes the payment destination together with the
+addressee names: the single eligible active current account (LAUFEND) with IBAN
+for the notice's property and accounting scope is used automatically; with
+several eligible accounts the issue refusal returns them and the detail page
+shows a **Zielkonto für die Zahlung** select above the action buttons; with none,
+issuance is refused with an actionable German message. The issued tenant PDF
+renders the frozen `Objekt`/`Einheit` rows and the destination as `IBAN`
+(with `BIC`/`Bank` when stored) instead of the generic „auf unser Konto“.
+Previously issued notices keep their established rendering. The PDF was
+inspected through text extraction with long synthetic names and addresses;
+native mobile PDF gestures and printer output remain untested.
+
+| Dunning destination selection | 1280 px | 360 px |
+|---|---|---|
+| Before | [View](docs/assets/design/dunning-destination/before-1280.png) | [View](docs/assets/design/dunning-destination/before-360.png) |
+| After | [View](docs/assets/design/dunning-destination/after-1280.png) | [View](docs/assets/design/dunning-destination/after-360.png) |
+
 Under **Mahnungen**, the collapsible **Mahneinstellungen** card contains three
 labelled EUR fields and **Verzugszinsen automatisch berechnen**. The card uses
 the standard responsive form grid, with fees stacked at 360 px. Organization

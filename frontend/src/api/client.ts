@@ -8,13 +8,16 @@ export class ApiError extends Error {
   status: number;
   code?: string;
   technicalDetails?: string;
+  /** Structured error body (FastAPI `detail` object), when the API sent one. */
+  payload?: unknown;
 
-  constructor(status: number, message: string, code?: string, technicalDetails?: string) {
+  constructor(status: number, message: string, code?: string, technicalDetails?: string, payload?: unknown) {
     super(message);
     this.name = "ApiError";
     this.status = status;
     this.code = code;
     this.technicalDetails = technicalDetails;
+    this.payload = payload;
   }
 }
 
@@ -51,6 +54,7 @@ async function responseError(response: Response): Promise<ApiError> {
   let detail = response.statusText;
   let code: string | undefined;
   let technicalDetails: string | undefined;
+  let payload: unknown;
   try {
     const body = await response.json();
     if (typeof body.detail === "string" && body.detail) {
@@ -65,11 +69,12 @@ async function responseError(response: Response): Promise<ApiError> {
       } else if (code === "financial_inputs_incomplete") {
         detail = financialInputMessage(body.detail);
       } else detail = "Eingaben unvollständig oder ungültig. Bitte die angegebenen Felder prüfen.";
+      payload = body.detail;
     }
   } catch {
     // Use the status text when the response body cannot be parsed.
   }
-  return new ApiError(response.status, withRequestId(response, detail), code, technicalDetails);
+  return new ApiError(response.status, withRequestId(response, detail), code, technicalDetails, payload);
 }
 
 async function request<T>(

@@ -1,8 +1,10 @@
 """T33: frozen special levies use the existing owner dunning lifecycle."""
+import io
 import uuid
 from datetime import date
 from decimal import Decimal
 
+import pdfplumber
 import pytest
 from sqlalchemy import text
 
@@ -132,6 +134,10 @@ async def test_levy_without_plan_real_dunning_payment_issue_pdf(levy_db, levy_fi
         pdf = await api.get(f"/api/dunning/{draft['id']}/pdf")
         assert pdf.status_code == 200, pdf.text
         assert pdf.content.startswith(b'%PDF-')
+        # Owner notices are outside the #331 destination rule: generic wording, no IBAN row.
+        with pdfplumber.open(io.BytesIO(pdf.content)) as doc:
+            words = ' '.join(' '.join(page.extract_text() or '' for page in doc.pages).split())
+        assert 'auf unser Konto' in words and 'IBAN' not in words
         assert (await api.post(f"/api/dunning/{draft['id']}/issue")).status_code == 409
         assert (await api.delete(f"/api/dunning/{draft['id']}")).status_code == 409
     assert await levy_db.scalar(text("SELECT count(*) FROM audit_event WHERE entity_id=:id AND action IN ('dunning_notice.created','dunning_notice.issued')"), {'id': uuid.UUID(draft['id'])}) == 2
