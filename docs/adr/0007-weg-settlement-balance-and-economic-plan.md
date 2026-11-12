@@ -145,9 +145,12 @@ unit whose dated charges are all zero keeps its plan-line amounts. The plan
 itself stays month-based (12 largest-remainder installments, option M) and its
 OWNER_ADVANCE lines remain frozen at the plan-start owner; only the
 settlement's Soll derivation changed (engine input, `ENGINE_VERSION` m4.5.0).
-The reserve-coverage cap of decision 1(b) reads the same dated Soll, so booked
-reserve counts only against the dated unpaid Soll. An ownership history the
-ledger refuses (`hausgeld_ownership_invalid`) refuses the calculation with the
-same German 422. The planned reserve Soll stays on the frozen reserve-ledger
+The reserve-coverage cap of decision 1(b) and the reserve ledger's
+SPLIT_RESERVE correction (current and late-cash branches) read the same dated
+Soll, so booked reserve counts only against the dated unpaid Soll everywhere.
+A history the owner ledger refuses (`hausgeld_ownership_invalid`) refuses the
+calculation, the derived paid advances and the reserve ledger with the same
+German 422; the plan-line fallback of the division applies only where the
+ledger accepts the history. The planned reserve Soll stays on the frozen reserve-ledger
 cells at plan start (amendment #401). Liability between seller and buyer
 remains out of scope.

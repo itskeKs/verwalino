@@ -12,7 +12,6 @@ from __future__ import annotations
 
 import uuid
 from datetime import date
-from decimal import Decimal
 from typing import Sequence
 
 from sqlalchemy import select, or_
@@ -102,15 +101,6 @@ class EconomicPlanRepository(TenantRepository[EconomicPlan]):
 
 class EconomicPlanLineRepository(TenantRepository[EconomicPlanLine]):
     model = EconomicPlanLine
-
-    async def advance_totals_per_owner(self, economic_plan_id: uuid.UUID) -> dict[uuid.UUID, Decimal]:
-        """The owner's Soll sums OWNER_ADVANCE lines over all of their units."""
-        totals = {}
-        for line in await self.list_for_plan(economic_plan_id):
-            if line.line_type == 'OWNER_ADVANCE' and line.owner_profile_id is not None:
-                owner = line.owner_profile_id
-                totals[owner] = totals.get(owner, Decimal('0.00')) + line.planned_amount
-        return totals
 
     async def list_for_plan(
         self, economic_plan_id: uuid.UUID

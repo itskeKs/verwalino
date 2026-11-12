@@ -35,7 +35,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.temporal import db_exclusive_to_engine_inclusive
 from app.engine.canonical import canonical_json, sha256_hex
-from app.engine.rounding import DistributionError, distribute_amount
+from app.engine.rounding import DistributionError
 from app.engine.reserve_ledger import planned_reserve_per_owner
 from app.engine.snapshot import (
     build_asset_report_payload,
@@ -80,6 +80,7 @@ from app.repositories.settlement_repo import (
 )
 
 from app.services.reserve_ledger_service import ReserveLedgerService
+from app.services.payment_service import dated_plan_soll
 
 ENGINE_VERSION = "m4.5.0"
 
@@ -99,34 +100,6 @@ class ManualOwnerAdvance:
 
     owner_profile_id: uuid.UUID
     paid_total: Decimal
-
-
-def _dated_plan_soll(
-    shares: dict[tuple[uuid.UUID, uuid.UUID], tuple[Decimal, Decimal]],
-) -> dict[uuid.UUID, Decimal]:
-    """Per-owner plan Soll: each unit's line amount divided by its dated charges.
-
-    The owners' Soll of a unit always sums to the unit's OWNER_ADVANCE
-    planned_amount to the cent (central largest-remainder, remainder exactly
-    once); the dated charges decide only the division, so a plan period shorter
-    than twelve months keeps its full planned amount. A unit whose dated
-    charges are all zero keeps its plan-line amounts (#402).
-    """
-    per_owner: dict[uuid.UUID, Decimal] = {}
-    by_unit: dict[uuid.UUID, list[tuple[uuid.UUID, Decimal, Decimal]]] = {}
-    for (unit_id, owner_id), (line_amount, dated) in shares.items():
-        by_unit.setdefault(unit_id, []).append((owner_id, line_amount, dated))
-    for rows in by_unit.values():
-        rows = sorted(rows, key=lambda row: str(row[0]))
-        planned = sum((line_amount for _, line_amount, _ in rows), Decimal('0.00'))
-        if any(dated for _, _, dated in rows):
-            for (owner_id, _, _), share in zip(rows, distribute_amount(
-                    planned, [dated for _, _, dated in rows])):
-                per_owner[owner_id] = per_owner.get(owner_id, Decimal('0.00')) + share
-        else:
-            for owner_id, line_amount, _ in rows:
-                per_owner[owner_id] = per_owner.get(owner_id, Decimal('0.00')) + line_amount
-    return per_owner
 
 
 @dataclass
@@ -626,7 +599,7 @@ class WegSettlementService:
         owner_ids = await CoverageDeclarationRepository(self._session, self._org_id).owner_ids(subject)
         # Decision 1(b) caps reserve coverage with the same dated Soll the settlement shows.
         shares = await pay_svc.owner_plan_charge_totals(plan, start, end)
-        plan_soll = _dated_plan_soll(shares)
+        plan_soll = dated_plan_soll(shares)
         result: list[ManualOwnerAdvance] = []
         for owner_id in sorted(owner_ids, key=str):
             total = await pay_svc.derive_hausgeld_total_for_period(
@@ -731,7 +704,7 @@ class WegSettlementService:
         shares = await pay_svc.owner_plan_charge_totals(plan, run.period_start, run.period_end)
         plan_advances = [
             OwnerAdvanceInput(owner_profile_id=owner_id, plan_advance_total=amount)
-            for owner_id, amount in sorted(_dated_plan_soll(shares).items(), key=lambda item: str(item[0]))
+            for owner_id, amount in sorted(dated_plan_soll(shares).items(), key=lambda item: str(item[0]))
         ]
         provided_owners = [str(p.owner_profile_id) for p in extras.paid_advances]
         if set(provided_owners) != expected_owners or len(provided_owners) != len(set(provided_owners)):
