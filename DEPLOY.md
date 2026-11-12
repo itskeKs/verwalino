@@ -172,8 +172,8 @@ existing worker lifecycle; restarting does not reset it. Calendar-month accounti
 includes work that crosses into the current month. Old-month reservations whose
 leases expired before this month do not consume the new month's allowance. Existing per-call/token limits
 continue to bound actual requests. Refusals return **409** with “Das monatliche
-KI-Budget ist ausgeschöpft. Bitte wenden Sie sich an den Betreiber.” Worker-side
-and HTTP refusals use `ORGANIZATION_AI_BUDGET_EXCEEDED`.
+KI-Budget Ihrer Organisation ist ausgeschöpft. Bitte passen Sie das Limit in den
+Einstellungen an.” Worker-side and HTTP refusals use `ORGANIZATION_AI_BUDGET_EXCEEDED`.
 
 Before enabling hosted quotas on an existing document store, apply **0146** and
 run this one-time reconciliation for each existing organization, with its usual
@@ -2290,8 +2290,9 @@ Production changes follow the [deployment boundary](#deployment-boundary-and-acc
 
 ## Declaration-worker network boundary
 
-The portable stack, including the hosted server, has no declaration-worker
-service and disables import/Q&A. In the retained local production configuration,
+The portable stack, including the hosted server, ships the `declaration-worker`
+service; import and Q&A stay off for an organization until its administrator
+enables them in Einstellungen. In the retained local production configuration,
 PostgreSQL stays on the internal `backend` network. Migration and bootstrap
 services attach only there; the API additionally attaches to the external
 `traefik` proxy network. The declaration worker alone additionally attaches to
@@ -2302,12 +2303,16 @@ through the egress gateway.
 
 That worker uses the fixed `https://api.openai.com/v1` SDK origin. The extraction
 harness has no URL, browser or tool capability: provider calls use structured
-outputs. The optional `python -m app.workers.declaration_provider_smoke` command
-checks the configured primary/escalation model IDs through the non-billable
-Models API with a short timeout and one bounded SDK retry. It consumes no jobs
-and sends no prompt, PDF, document content or Responses API request. Its key is
-read only from the worker environment and never printed. This probe is not part
-of the portable installer or hosted deploy workflow.
+outputs. The optional
+`python -m app.workers.declaration_provider_smoke --organization-id <uuid>`
+command requires that option (without it the command prints a message and exits
+2). Run in the worker environment, it reads that organization's stored provider,
+key, base URL and model through the worker database role and checks that the
+model appears in the provider's model list. The organization needs import
+enabled, a key and a model; otherwise the command exits 1. It consumes no jobs
+and sends no prompt, PDF, document content or Responses API request. The key is
+never printed. This probe is not part of the portable installer or hosted deploy
+workflow.
 
 Docker's non-internal network is **not** a domain firewall. The fixed client
 origin and tool-free harness prevent application-configured alternate destinations;

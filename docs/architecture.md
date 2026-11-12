@@ -225,8 +225,9 @@ uses the default self-hosted policy and does not forward an arbitrary caller's e
 
 `core/quotas.py` is the single source of plan limits and the pure inclusive
 `check_quota(usage, plan, kind, delta)` decision. Hosted uses the free plan:
-2 GiB retained storage, 25 MiB per file, 20 properties, 200 units, USD 0 per
-calendar month (UTC). Selfhost selects unlimited through `quota_enforcement`.
+2 GiB retained storage, 25 MiB per file, 20 properties, 200 units. Model calls
+are not capped by the plan but by each organization's optional monthly USD limit
+(see AI admission below). Selfhost selects unlimited through `quota_enforcement`.
 One shared plan applies to all hosted organizations; individual overrides and
 paid plans are deferred. `core/document_limits.py:MAX_UPLOAD_BYTES` supplies
 the shared file safety cap to plans, upload readers, declaration defaults, intake
@@ -310,11 +311,15 @@ properties and processes, in addition to existing per-call controls. Finalized
 costs and conservative unresolved reservations count against the calendar month;
 expired Q&A reservations are not free credit. Work crossing a month boundary is
 included. Abandoned reservations from earlier months with expired leases do not
-consume the new month's allowance. Default USD 0 prevents both Q&A and declaration provider calls, with
-“Das monatliche KI-Budget ist ausgeschöpft. Bitte wenden Sie sich an den
-Betreiber.” HTTP admission uses 409; workers record
+consume the new month's allowance. The cap is the organization's optional
+monthly limit (`require_organization_ai_budget` in `services/ai_settings_service.py`);
+with no limit, or with a model whose price is unknown, nothing is capped. A
+Q&A or declaration provider call whose reservation would exceed the limit, or
+that finds it already reached, is refused with “Das monatliche KI-Budget Ihrer
+Organisation ist ausgeschöpft. Bitte passen Sie das Limit in den Einstellungen
+an.” HTTP admission uses 409; workers record
 `ORGANIZATION_AI_BUDGET_EXCEEDED`. Existing feature switches and reviewed Q&A
-budgets remain additional requirements, not overrides of the hosted cap.
+budgets remain additional requirements, not overrides of the limit.
 
 Any authenticated member can read `GET /api/organizations/quota`, including
 source-restricted and read-only members. It accepts no organization identifier.
