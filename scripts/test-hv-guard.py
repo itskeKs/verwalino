@@ -281,40 +281,104 @@ class GuardTests(unittest.TestCase):
 
     def test_acceptance_cleanup_removes_only_label_filtered_project(self):
         label = "com.docker.compose.project=verwalino"
-        loops = [
-            ("docker container ls --all --quiet --filter 'label=%s' |\n"
-             "  while IFS= read -r resource; do\n"
-             "    docker container rm --force --volumes \"$resource\" || exit 1\n"
-             "  done" % label),
-            ("docker volume ls --quiet --filter 'label=%s' |\n"
-             "  while IFS= read -r resource; do\n"
-             "    docker volume rm \"$resource\" || exit 1\n"
-             "  done" % label),
-            ("docker network ls --quiet --filter 'label=%s' |\n"
-             "  while IFS= read -r resource; do\n"
-             "    docker network rm \"$resource\" || exit 1\n"
-             "  done" % label),
-            ("docker image ls --quiet --no-trunc --filter 'label=%s' |\n"
-             "  sort -u |\n"
-             "  while IFS= read -r resource; do\n"
-             "    docker image rm \"$resource\" || exit 1\n"
-             "  done" % label),
-        ]
+        container_loop = (
+            "docker container ls --all --quiet --filter 'label=%s' |\n"
+            "  while IFS= read -r resource; do\n"
+            "    docker container rm --force --volumes \"$resource\" || exit 1\n"
+            "  done" % label)
+        volume_loop = (
+            "docker volume ls --quiet --filter 'label=%s' |\n"
+            "  while IFS= read -r resource; do\n"
+            "    docker volume rm \"$resource\" || exit 1\n"
+            "  done" % label)
+        network_loop = (
+            "docker network ls --quiet --filter 'label=%s' |\n"
+            "  while IFS= read -r resource; do\n"
+            "    docker network rm \"$resource\" || exit 1\n"
+            "  done" % label)
+        image_loop = (
+            "docker image ls --quiet --no-trunc --filter 'label=%s' |\n"
+            "  sort -u |\n"
+            "  while IFS= read -r resource; do\n"
+            "    docker image rm \"$resource\" || exit 1\n"
+            "  done" % label)
+        loops = (container_loop, volume_loop, network_loop, image_loop)
         for command in loops:
             with self.subTest(command=command.splitlines()[0]):
                 self.allow(command)
-        self.allow("docker volume rm --filter label=%s verwalino_pgdata" % label)
-        for command in (
-                "docker volume rm verwalino_pgdata",
-                "docker volume rm hausverwaltung_pgdata --filter label=%s" % label,
-                "docker network rm alpha --filter label=%s" % label,
-                "docker container rm --force --volumes infra-app-1 --filter label=%s" % label,
-                "docker image ls --quiet --filter 'label=%s' | xargs -n1 docker image rm" % label,
-                "DOCKER_HOST=ssh://alpha docker volume rm \"$resource\" --filter label=%s" % label,
-                "docker system prune -af --filter label=%s" % label,
-                "docker volume prune --filter label=%s" % label,
-                "docker compose --project-name verwalino down -v --filter label=%s" % label):
-            with self.subTest(command=command):
+        self.allow("\n\n".join(loops))
+        self.allow(volume_loop.replace("--filter 'label=%s'" % label,
+                                       "--filter=label=%s" % label))
+        self.allow(volume_loop.replace("'label=%s'" % label, "\"label=%s\"" % label))
+        bypasses = [
+            "docker container ls -q --filter label=%s; docker container rm -f "
+            "$(docker container ls -aq); docker volume rm $(docker volume ls -q)" % label,
+            "echo label=%s; docker container rm -f $(docker container ls -aq)" % label,
+            "docker volume ls -q --filter label=%s && docker volume rm pgdata documents" % label,
+            "docker volume rm x --filter label=%s || docker container rm -f "
+            "$(docker container ls -aq)" % label,
+            "docker volume rm x --filter label=%s & docker container rm -f "
+            "$(docker container ls -aq)" % label,
+            "docker container ls -aq --filter label=%s-review |\n"
+            "while IFS= read -r resource; do\n"
+            "docker container rm -f \"$resource\"\n"
+            "done" % label,
+            "docker container ls -aq --filter label=%sx |\n"
+            "while IFS= read -r resource; do\n"
+            "docker container rm -f \"$resource\"\n"
+            "done" % label,
+            "docker container ls -aq --filter label=%s_x |\n"
+            "while IFS= read -r resource; do\n"
+            "docker container rm -f \"$resource\"\n"
+            "done" % label,
+            "docker container ls -aq --filter label=%s=x |\n"
+            "while IFS= read -r resource; do\n"
+            "docker container rm -f \"$resource\"\n"
+            "done" % label,
+            "docker container ls -aq |\n"
+            "while IFS= read -r resource; do\n"
+            "docker container rm -f \"$resource\" # label=%s\n"
+            "done" % label,
+            "docker container ls -aq --filter label!=%s |\n"
+            "while IFS= read -r resource; do\n"
+            "docker container rm -f \"$resource\"\n"
+            "done\n"
+            "docker container ls -aq --filter label=%s" % (label, label),
+            "docker container ls -aq --filter label=%s |\n"
+            "while IFS= read -r resource; do\n"
+            "docker container rm -f \"$resource\"\n"
+            "done < /tmp/allids" % label,
+            "docker container ls -aq --filter label=%s | cat - /tmp/ids |\n"
+            "while IFS= read -r resource; do\n"
+            "docker container rm -f \"$resource\"\n"
+            "done" % label,
+            "docker volume ls -q --filter label=%s\n"
+            "docker volume rm infra_pgdata" % label,
+            "docker container ls --all --quiet --filter label=%s |\n"
+            "  while IFS= read -r resource; do\n"
+            "    docker container rm --force --volumes infra_postgres_1\n"
+            "  done" % label,
+            "docker volume ls -q --filter label=%s && docker volume rm infra_pgdata alpha_pgdata" % label,
+            "docker network ls -q --filter label=%s; docker network rm traefik" % label,
+            "docker image ls -q --filter label=%s; docker image rm -f postgres:17" % label,
+            container_loop + "\n"
+            "docker container ls -aq |\n"
+            "while IFS= read -r resource; do\n"
+            "docker container rm -f \"$resource\"\n"
+            "done",
+            "docker volume rm --filter label=%s verwalino_pgdata" % label,
+            "docker volume rm verwalino_pgdata",
+            "docker volume rm hausverwaltung_pgdata --filter label=%s" % label,
+            "docker network rm alpha --filter label=%s" % label,
+            "docker container rm --force --volumes infra-app-1 --filter label=%s" % label,
+            "docker image ls --quiet --filter 'label=%s' | xargs -n1 docker image rm" % label,
+            "DOCKER_HOST=ssh://alpha docker volume rm \"$resource\" --filter label=%s" % label,
+            "docker system prune -af --filter label=%s" % label,
+            "docker volume prune --filter label=%s" % label,
+            "docker compose --project-name verwalino down -v --filter label=%s" % label,
+        ]
+        for command in bypasses:
+            with self.subTest(command=command.splitlines()[0]):
                 self.block(command)
 
     def test_existing_test_database_and_unrelated_commands(self):

@@ -7,8 +7,8 @@ Blocks what an agent must never do there, whatever the permission mode:
 - edit a migration that is already committed;
 - edit this guard or the user hooks file.
 Exception (issue #193): removing the session's own disposable acceptance stack is
-allowed for docker container/volume/network/image rm when the same command carries
-the filter label=com.docker.compose.project=verwalino and no foreign stack name.
+allowed only as the label-filtered removal loops documented in
+docs/operations/acceptance-cleanup.md, matched in full.
 Any other workspace passes untouched. Exit 0 with a deny JSON blocks the call.
 """
 import json
@@ -34,10 +34,16 @@ PORTABLE_FILES = {
     "infra/docker-compose.yml": "3ed4ad60cce94fc1cedc181217bac3b659d3b5892d6af64e1ed54cf94d0d7fc1",
     "infra/Caddyfile": "6dd9a73b44d736d04f9fbaf17c292e515f21ced9d1bb753a92981ca0dbf61d49",
 }
-# Removal of a session's own disposable acceptance stack (issue #193): only together
-# with this label filter in the same command, and never for a foreign stack name.
-ACCEPTANCE_LABEL = "label=com.docker.compose.project=verwalino"
-FOREIGN_STACK = re.compile(r"\b(?:hausverwaltung|alpha|infra)\b")
+# Removal of a session's own disposable acceptance stack (issue #193): only the
+# label-filtered removal loops of docs/operations/acceptance-cleanup.md, matched
+# in full; anything else stays denied.
+ACCEPTANCE_FILTER = "label=com.docker.compose.project=verwalino"
+ACCEPTANCE_LOOPS = {
+    "container": (["--all", "--quiet"], ["--force", "--volumes"]),
+    "volume": (["--quiet"], []),
+    "network": (["--quiet"], []),
+    "image": (["--quiet", "--no-trunc"], []),
+}
 
 
 def deny(reason):
@@ -333,32 +339,82 @@ def caddy_allowed(argv, cwd):
         "caddy:2.10.2-alpine", "caddy", "validate", "--config", "/etc/caddy/Caddyfile", "--adapter", "caddyfile"])
 
 
-def acceptance_rm_allowed(cmd):
-    """Label-filtered removal of the session's own disposable acceptance stack.
+def parse_acceptance_loop(tokens, pos):
+    """Parse one documented cleanup loop at tokens[pos]; return the position after it.
 
-    docker container/volume/network/image rm may pass only when the same command
-    carries the verwalino project label filter (a filtered listing feeding the
-    removal, or the filter on the removal itself) and names no foreign stack;
-    docker compose down and global prunes stay denied.
+    docker <type> ls <listflags> --filter <filter> ['|' 'sort' '-u'] '|'
+    while IFS= read -r resource ';' do docker <type> rm <rmflags> "$resource"
+    ['||' 'exit' '1'] ';' done
     """
-    if not docker_environment_safe() or ACCEPTANCE_LABEL not in cmd:
+    if not (len(tokens) > pos + 2 and tokens[pos] == "docker"
+            and tokens[pos + 1] in ACCEPTANCE_LOOPS and tokens[pos + 2] == "ls"):
+        return None
+    kind = tokens[pos + 1]
+    listflags, rmflags = ACCEPTANCE_LOOPS[kind]
+    pos += 3
+    for flag in listflags:
+        if pos >= len(tokens) or tokens[pos] != flag:
+            return None
+        pos += 1
+    if pos < len(tokens) and tokens[pos] == "--filter":
+        if pos + 1 >= len(tokens) or tokens[pos + 1] != ACCEPTANCE_FILTER:
+            return None
+        pos += 2
+    elif pos < len(tokens) and tokens[pos].startswith("--filter="):
+        if tokens[pos] != "--filter=" + ACCEPTANCE_FILTER:
+            return None
+        pos += 1
+    else:
+        return None
+    if kind == "image" and tokens[pos:pos + 3] == ["|", "sort", "-u"]:
+        pos += 3
+    if tokens[pos:pos + 8] != ["|", "while", "IFS=", "read", "-r", "resource", ";", "do"]:
+        return None
+    pos += 8
+    body = ["docker", kind, "rm", *rmflags, "$resource"]
+    if tokens[pos:pos + len(body)] != body:
+        return None
+    pos += len(body)
+    if tokens[pos:pos + 3] == ["||", "exit", "1"]:
+        pos += 3
+    if pos < len(tokens) and tokens[pos] == ";":
+        pos += 1
+    if pos >= len(tokens) or tokens[pos] != "done":
+        return None
+    return pos + 1
+
+
+def acceptance_rm_allowed(cmd):
+    """Allow only the documented label-filtered acceptance cleanup loops, in full.
+
+    The whole command must be one or more of the removal loops of
+    docs/operations/acceptance-cleanup.md (each a listing filtered by exactly
+    label=com.docker.compose.project=verwalino piped into the while loop that
+    removes "$resource"), joined only by newlines; every other token — extra
+    operands, other filters, substitutions, redirections, comments, docker
+    compose down, prunes — stays denied.
+    """
+    if not docker_environment_safe():
         return False
-    if FOREIGN_STACK.search(cmd) or re.search(r"\b(?:DOCKER|COMPOSE)_[A-Z_]+=", cmd):
+    try:
+        lexer = shlex.shlex(cmd, posix=True, punctuation_chars="|&;<>")
+        lexer.whitespace_split = True
+        lexer.commenters = ""
+        tokens = list(lexer)
+    except ValueError:
         return False
-    saw_rm = False
-    for segment in re.split(r"[|;\n]+", cmd):
-        matches = list(re.finditer(r"\bdocker\s+(\S+)(?:\s+(\S+))?", segment))
-        if not matches:
-            continue
-        if not segment.strip().startswith("docker"):
+    pos = parse_acceptance_loop(tokens, 0)
+    if pos is None:
+        return False
+    while pos < len(tokens):
+        if tokens[pos] == ";" and pos + 1 < len(tokens):
+            pos += 1
+        if tokens[pos:pos + 1] != ["docker"]:
             return False
-        for match in matches:
-            kind, verb = match.group(1), match.group(2)
-            if kind in ("container", "volume", "network", "image") and verb in ("ls", "rm"):
-                saw_rm = saw_rm or verb == "rm"
-            else:
-                return False
-    return saw_rm
+        pos = parse_acceptance_loop(tokens, pos)
+        if pos is None:
+            return False
+    return True
 
 
 def check_command(cmd, cwd):
