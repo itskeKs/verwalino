@@ -47,7 +47,8 @@ Screenshots show demo data.
 - **Properties and units:** rental, WEG, SEV, and mixed properties; unit areas and
   co-ownership shares (MEA); meters and readings; CSV master-data import;
   AI-assisted declaration-of-division import and property knowledge with sources
-  (both off until an organization administrator configures a provider; see
+  (the import and the optional Q&A stay off until an organization administrator
+  configures a provider; browsing and search of approved knowledge need no model; see
   [AI features](#ai-features)).
 - **People and tenancies:** contacts, tenant and owner profiles, vendors, leases,
   tenant and owner changes, and effective-date rent history with graduated
@@ -82,12 +83,12 @@ application-owned key and no automatic fallback to another provider.
 
 - **Declaration-of-division import:** upload the Teilungserklärung as PDF. A
   fixed pipeline runs a local precheck and OCR, then inventory, core and rule
-  extraction, reconciliation, local validation and at most one bounded vision
-  recheck. It proposes units, co-ownership shares and rules. It is not an
+  extraction, reconciliation, local validation and one bounded vision
+  recheck pass. It proposes units, co-ownership shares and rules. It is not an
   autonomous agent: the model has no tools and cannot change data.
 - **Evidence and review:** every proposed value must quote the page it comes
   from. A quote that is not on the cited page blocks the draft, and conflicting
-  readings are kept side by side. A run ends in `NEEDS_REVIEW`; only a human
+  readings are kept side by side. A successful run ends in `NEEDS_REVIEW`; only a human
   approval turns a draft into property data.
 - **Property knowledge with sources:** search over approved facts, rules and
   page evidence works without a model. The optional Q&A answers a question
