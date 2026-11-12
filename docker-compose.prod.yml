@@ -80,8 +80,6 @@ services:
       HV_DATA_REGION: ${HV_DATA_REGION:-EU}
       HV_ERROR_TRACKING_DSN: ${HV_ERROR_TRACKING_DSN:-}
       HV_ERROR_TRACKING_ENVIRONMENT: ${HV_ERROR_TRACKING_ENVIRONMENT:-selfhost}
-      # The API needs the server-only key only for optional cited Q&A.  Browse
-      # and lexical search are deterministic and remain available without it.
       HV_DECLARATION_MAX_PDF_BYTES: ${HV_DECLARATION_MAX_PDF_BYTES:-26214400}
       HV_DECLARATION_MAX_DOCUMENTS: ${HV_DECLARATION_MAX_DOCUMENTS:-10}
       HV_DECLARATION_MAX_PAGES: ${HV_DECLARATION_MAX_PAGES:-500}
