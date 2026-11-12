@@ -526,8 +526,10 @@ split by inclusive ownership days, with the existing cent distribution; an
 ambiguous transfer refuses calculation rather than shifting unrelated shares.
 For unit 2, Karl Weiß through 30 June 2026 and Lena Roth from 1 July, a monthly
 400.00 EUR produces 2,400.00 EUR for each. The 2026 plan names Karl and the
-31 December report names Lena. Annual-settlement ownership periods and its
-existing frozen plan basis remain unchanged; this does not decide contractual
+31 December report names Lena. Annual-settlement ownership periods stay as they
+are; since #402 the settlement's plan Soll follows the same dated ownership
+instead of charging the whole advance to the plan-start owner, while the plan
+lines themselves remain frozen. This does not decide contractual
 liability between seller and buyer.
 
 ---

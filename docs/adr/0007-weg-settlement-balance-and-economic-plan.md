@@ -128,3 +128,20 @@ canonical `reserve_plan_cells`. Independent rounding of costs, reserve Soll and
 Hausgeld Soll can leave an accepted ±0.01 Spitze per owner when costs match the
 plan, while the aggregate remains exact. Finalized runs are never recalculated;
 historical payloads, digests and PDF bytes remain unchanged.
+
+
+## Amendment 2026-11-12 (#402)
+
+The annual settlement's plan Soll follows dated ownership. The seller no longer
+carries the whole annual advance: each roster owner's `plan_advance_total` is
+derived from `PaymentService.owner_plan_charges` over the settlement period —
+the same month rule the Hausgeld ledger and dunning already apply — so a
+transfer month splits by inclusive ownership days and the settlement and the
+owner account agree on who owes which month. The plan itself stays month-based
+(12 equal installments, option M) and its OWNER_ADVANCE lines remain frozen at
+the plan-start owner; only the settlement's Soll derivation changed (engine
+input, `ENGINE_VERSION` m4.5.0). An ownership history the ledger refuses
+(`hausgeld_ownership_invalid`) refuses the calculation with the same German
+422. The planned reserve Soll stays on the frozen reserve-ledger cells at plan
+start (amendment #401). Liability between seller and buyer remains out of
+scope.

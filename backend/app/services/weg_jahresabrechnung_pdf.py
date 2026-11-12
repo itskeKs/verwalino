@@ -163,7 +163,7 @@ def build_weg_jahresabrechnung_html(
             reserve_payment_source = (
                 'Gesondert gebuchte Rücklagenzahlungen zählen nur, soweit das Hausgeld-Soll nicht bereits '
                 'durch Hausgeldzahlungen gedeckt ist; ein Überschuss bleibt in der Rücklage. '
-                if (run.snapshot_payload or {}).get('engine_version') == 'm4.4.0' else '')
+                if (run.snapshot_payload or {}).get('engine_version') in ('m4.4.0', 'm4.5.0') else '')
             balance_rows = ''.join(
                 f"<tr class='{('spitze' if key == 'abrechnungsspitze' else 'cost-total' if key == 'payment_amount' else '')}'>"
                 f"<td>{label}</td><td class='num'>{_eur(Decimal(balance[key]))}</td></tr>"

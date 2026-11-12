@@ -84,7 +84,7 @@ from app.repositories.settlement_repo import (
 
 from app.services.reserve_ledger_service import ReserveLedgerService
 
-ENGINE_VERSION = "m4.4.0"
+ENGINE_VERSION = "m4.5.0"
 
 DELETE_MESSAGES = {
     'SETTLEMENT_DELETE_SOURCE_ACCESS_REQUIRED': 'Zum Löschen dieses Entwurfs benötigen Sie Zugriff auf alle Finanzquellen des Objekts.',
@@ -549,12 +549,12 @@ class WegSettlementService:
     async def _plan_advances_per_owner(
         self, economic_plan_id: uuid.UUID
     ) -> list[OwnerAdvanceInput]:
-        """Aggregate the plan's OWNER_ADVANCE lines per owner (the Soll source).
+        """Aggregate the plan's OWNER_ADVANCE lines per owner.
 
-        A plan has one OWNER_ADVANCE line per (owner, unit). The WEG Soll per
-        owner is the SUM over the owner's units (an owner with multiple units
-        owes the sum). [F4-1] the plan must be computed (have lines); else the
-        Soll is unknown and we escalate.
+        A plan has one OWNER_ADVANCE line per (owner, unit); the sum over the
+        owner's units is the frozen plan-line Soll, which caps how much booked
+        reserve counts as Hausgeld paid (decision 1(b)). The settlement Soll
+        itself is dated (#402). [F4-1] the plan must be computed (have lines).
         """
         per_owner = await self._plan_lines.advance_totals_per_owner(economic_plan_id)
         return [
@@ -600,7 +600,7 @@ class WegSettlementService:
         the engine. Plan owners and owners active within the period both belong
         to the roster, including a successor with no OWNER_ADVANCE plan line.
         These payments affect only account_balance/payment_amount; the Spitze
-        remains actual costs plus planned reserve Soll minus the unchanged plan advance.
+        remains actual costs plus planned reserve Soll minus the dated plan advance.
         """
         from app.services.payment_service import PaymentService
 
@@ -714,8 +714,21 @@ class WegSettlementService:
             if row['kind'] == 'CONTRIBUTION' and row.get('owner_profile_id'):
                 oid = uuid.UUID(row['owner_profile_id'])
                 paid_reserve[oid] = paid_reserve.get(oid, Decimal('0.00')) + Decimal(row['amount'])
-        plan_advances = await self._plan_advances_per_owner(run.economic_plan_id)
         expected_owners = await CoverageDeclarationRepository(self._session, self._org_id).owner_ids(run)
+        # The Soll follows dated ownership: the Hausgeld ledger's month rule
+        # (owner_plan_charges) decides who owes which plan month (#402).
+        from app.services.payment_service import PaymentService
+        pay_svc = PaymentService(self._session, self._org_id, self._user_id)
+        plan_advances = [
+            OwnerAdvanceInput(
+                owner_profile_id=uuid.UUID(owner_id),
+                plan_advance_total=sum(
+                    (charge.amount for charge in await pay_svc.owner_plan_charges(
+                        plan, uuid.UUID(owner_id), run.period_start, run.period_end)),
+                    Decimal('0.00')),
+            )
+            for owner_id in sorted(expected_owners, key=str)
+        ]
         provided_owners = [str(p.owner_profile_id) for p in extras.paid_advances]
         if set(provided_owners) != expected_owners or len(provided_owners) != len(set(provided_owners)):
             incomplete("owner_payment_coverage_missing", "paid_advances")
