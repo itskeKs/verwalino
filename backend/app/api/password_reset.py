@@ -102,14 +102,15 @@ async def submit_mail(message) -> None:
 
 
 async def cleanup_expired_requests() -> None:
-    """Bounded definer cleanup in a separate post-response transaction."""
+    """Bounded definer cleanup of finished reset requests and invitations in a
+    separate post-response transaction."""
     try:
         async with get_session_factory()() as session, session.begin():
             await session.execute(text("SET LOCAL lock_timeout='100ms'"))
             await session.execute(text("SET LOCAL statement_timeout='1s'"))
             await session.execute(text('SELECT public.cleanup_password_reset_requests()'))
     except DBAPIError:
-        logger.warning('Password reset request cleanup failed')
+        logger.warning('Password reset and invitation cleanup failed')
 
 
 @router.post('', status_code=202)

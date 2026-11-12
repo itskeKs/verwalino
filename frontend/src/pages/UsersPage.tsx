@@ -4,10 +4,12 @@ import { useAuth } from "../auth/useAuth";
 import { usePagedList } from "../hooks/usePagedList";
 import { ListSearch, MoreResults } from "../components/ListSearch";
 import { Dialog, DialogContent, DialogTitle, DialogDescription } from "../components/ui/dialog";
-import { createUser, resetUserPassword, updateUser } from "../api/endpoints";
+import { createUser, createUserInvitation, listUserInvitations, resetUserPassword, resendUserInvitation, revokeUserInvitation, updateUser } from "../api/endpoints";
 import { api, ApiError, getLastErrorRequestId } from "../api/client";
+import { useDeploymentMode } from "../auth/useDeploymentMode";
+import { formatDateTime } from "../lib/format";
 import { Button } from "../components/ui/button";
-import type { User, UserRole } from "../api/types";
+import type { User, UserInvitation, UserRole } from "../api/types";
 import { OrganizationDataCard } from "../components/OrganizationDataCard";
 
 const roles: { value: UserRole; label: string }[] = [
@@ -89,6 +91,136 @@ function CreateUserForm({ onSuccess }: { onSuccess: () => void }) {
       </fieldset>
     </form>
   );
+}
+
+function InviteUserForm({ onSuccess }: { onSuccess: () => void }) {
+  const [email, setEmail] = React.useState("");
+  const [role, setRole] = React.useState("CLERK");
+  const [error, setError] = React.useState("");
+  const [notice, setNotice] = React.useState("");
+  const [inviting, setInviting] = React.useState(false);
+  const { mountedRef, busyRef } = useMutationGuard();
+
+  async function handleSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    if (busyRef.current || !mountedRef.current) return;
+    setError(""); setNotice("");
+    if (!email) {
+      setError("Eine E-Mail-Adresse ist erforderlich."); return;
+    }
+    busyRef.current = true;
+    setInviting(true);
+    try {
+      await createUserInvitation(email, role);
+      if (!mountedRef.current) return;
+      setEmail(""); setRole("CLERK");
+      setNotice(`Einladung an ${email} versendet.`);
+      onSuccess();
+    } catch (err: unknown) {
+      if (mountedRef.current) setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      busyRef.current = false;
+      if (mountedRef.current) setInviting(false);
+    }
+  }
+
+  return (
+    <form onSubmit={handleSubmit} className="card" style={{ marginBottom: "1rem" }}>
+      <h3>Benutzer einladen</h3>
+      {error && <p role="alert" className="error-text">{error}</p>}
+      {notice && <p role="status">{notice}</p>}
+      <p>Der Nutzer erhält eine E-Mail mit einem Link, über den er sein Passwort festlegt. Der Link ist 72 Stunden gültig.</p>
+      <fieldset disabled={inviting} className="m-0 min-w-0 border-0 p-0">
+        <div className="form-grid">
+          <label className="min-w-0">E-Mail *
+            <input className="min-w-0 w-full" type="email" placeholder="E-Mail *" value={email} onChange={e => setEmail(e.target.value)} required />
+          </label>
+          <label className="min-w-0">Rolle
+            <select className="min-w-0 w-full" value={role} onChange={e => setRole(e.target.value)}>
+              {roles.map(option => <option key={option.value} value={option.value}>{option.label}</option>)}
+            </select>
+          </label>
+          <div className="form-actions">
+            <Button type="submit" disabled={inviting}>
+              {inviting ? "Lade…" : "Einladung senden"}
+            </Button>
+          </div>
+        </div>
+      </fieldset>
+    </form>
+  );
+}
+
+function PendingInvitations({ reloadToken }: { reloadToken: number }) {
+  const [invitations, setInvitations] = React.useState<UserInvitation[]>([]);
+  const [error, setError] = React.useState("");
+  const [notice, setNotice] = React.useState("");
+  const { mountedRef, busyRef } = useMutationGuard();
+
+  const reload = React.useCallback(async () => {
+    try {
+      setInvitations(await listUserInvitations());
+    } catch {
+      setInvitations([]);
+    }
+  }, []);
+  React.useEffect(() => { void reload(); }, [reload, reloadToken]);
+
+  async function resend(invitation: UserInvitation) {
+    if (busyRef.current || !mountedRef.current) return;
+    busyRef.current = true; setError(""); setNotice("");
+    try {
+      await resendUserInvitation(invitation.id);
+      if (!mountedRef.current) return;
+      setNotice(`Einladung an ${invitation.email} erneut gesendet.`);
+      await reload();
+    } catch (err: unknown) {
+      if (mountedRef.current) setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      busyRef.current = false;
+    }
+  }
+
+  async function revoke(invitation: UserInvitation) {
+    if (busyRef.current || !mountedRef.current) return;
+    busyRef.current = true; setError(""); setNotice("");
+    try {
+      await revokeUserInvitation(invitation.id);
+      if (!mountedRef.current) return;
+      setNotice(`Einladung an ${invitation.email} widerrufen.`);
+      await reload();
+    } catch (err: unknown) {
+      if (mountedRef.current) setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      busyRef.current = false;
+    }
+  }
+
+  return <div className="card" style={{ marginBottom: "1rem" }}>
+    <h3>Offene Einladungen</h3>
+    {error && <p role="alert" className="error-text">{error}</p>}
+    {notice && <p role="status">{notice}</p>}
+    {invitations.length === 0 ? <p>Keine offenen Einladungen.</p> : <table className="data-table">
+      <thead><tr><th>E-Mail</th><th>Rolle</th><th>Link gültig bis</th><th>Aktion</th></tr></thead>
+      <tbody>{invitations.map(invitation => <tr key={invitation.id}>
+        <td>{invitation.email}</td>
+        <td>{roles.find(option => option.value === invitation.role)?.label ?? invitation.role}</td>
+        <td>{formatDateTime(invitation.expires_at)}</td>
+        <td><button type="button" onClick={() => void resend(invitation)}>Erneut senden</button>
+          <button type="button" onClick={() => void revoke(invitation)}>Widerrufen</button></td>
+      </tr>)}</tbody>
+    </table>}
+  </div>;
+}
+
+function InvitationSection() {
+  const deployment = useDeploymentMode();
+  const [reloadToken, setReloadToken] = React.useState(0);
+  if (!deployment.mailAvailable) return null;
+  return <>
+    <InviteUserForm onSuccess={() => setReloadToken(token => token + 1)} />
+    <PendingInvitations reloadToken={reloadToken} />
+  </>;
 }
 
 type UserAction = { user: User; mode: "edit" | "reset" };
@@ -250,6 +382,7 @@ function UserAdministration({ actorId }: { actorId: string }) {
   const [action, setAction] = React.useState<UserAction | null>(null);
   return <>
     <div className="mb-4"><ProblemReport /></div>
+    <InvitationSection />
     <CreateUserForm onSuccess={page.reload} />
     <ListSearch label="Benutzer suchen" onSearch={page.setQuery} />
     {page.error && <p className="error-text">{page.error}</p>}

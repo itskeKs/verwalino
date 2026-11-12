@@ -323,7 +323,7 @@ async def run_deletion(db, org, *, now=None, nowait=False):
       JOIN pg_attribute a ON a.attrelid=c.oid AND a.attnum=k.num
       WHERE ns.nspname='public' AND c.relkind='r' AND EXISTS(SELECT 1 FROM pg_attribute org
         WHERE org.attrelid=c.oid AND org.attname='organization_id')
-      AND c.relname NOT IN ('organization_deletion','password_reset_request')
+      AND c.relname NOT IN ('organization_deletion','password_reset_request','user_invitation')
       GROUP BY c.relname'''))).all()
     # Snapshot hashes are stored before erasure and checked again before commit.
     # A retention dependency has the same protection as its immutable root.
@@ -354,6 +354,7 @@ async def run_deletion(db, org, *, now=None, nowait=False):
     await db.execute(text('''UPDATE "user" SET email=id::text||'@deleted.invalid',display_name='Gelöscht',
         password_hash='!',design_theme=DEFAULT,is_active=false WHERE organization_id=:org'''), {'org': org})
     await db.execute(text('DELETE FROM password_reset_request WHERE organization_id=:org'), {'org': org})
+    await db.execute(text('DELETE FROM user_invitation WHERE organization_id=:org'), {'org': org})
     for name, columns in ERASURE_SCRUB_COLUMNS.items():
         assignments = []
         for column in columns:
