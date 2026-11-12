@@ -27,7 +27,7 @@ registry-certified. The latest Q01 decision supersedes the previously printed VA
 | Q01 tax identifier | [TO SUPPLY Q01: VAT identification number or Wirtschafts-Identifikationsnummer; identify type and disclose both if applicable under DDG §5] |
 | Q02 Contabo retained; owner concludes AV agreement before launch | [TO SUPPLY Q02: data-centre location from hosting contract]; verify contracting entity/address, access countries and downstream providers in the executed agreement |
 | Q03 EU mail provider with AV agreement | [TO SUPPLY Q03: mail provider]; complete entity/address, locations, retention and contract before use |
-| Q04 host-managed backup under the same AV agreement | [TO SUPPLY Q04: backup product and retention from contract]; verify all-copy expiry and recovery safeguards |
+| Q04 host-managed backup under the same AV agreement | [TO SUPPLY Q04: backup product from contract]; [TO SUPPLY Q04: backup retention, including maximum age of all copies]; verify all-copy expiry and recovery safeguards |
 | Q12 owner handles rights, security and incidents | Christian Kunkel; deputy fact is recorded in the [breach procedure](hosted-breach-response.md) |
 | Q06 external AI on hosted service | [OPEN Q06: decide permitted external AI, roles, providers, countries, retention and transfer safeguards before activation] |
 
@@ -212,7 +212,7 @@ assent, notices and objection handling are implementation dependencies.
 ## Primary sources and dates
 
 First-pass sources S01–S13 were checked on **2026-11-12**. Second-pass checks on **2026-11-13**
-cover GDPR, BGB, BDSG, EGBGB, VSBG, the DSK DPIA list, Saarland DPIA page and S14–S18 below. “No date displayed” means no reliable publication
+cover GDPR, BGB, BDSG, EGBGB, VSBG, the DSK DPIA list, Saarland DPIA page and S14–S19 below. “No date displayed” means no reliable publication
 or revision date was exposed; a search crawl date is not treated as a publication date. Statute
 dates are the official site's displayed consolidated status, not a claim that every cited
 section changed that day. Authority guidance informs practice; courts may interpret differently.
@@ -232,12 +232,12 @@ section changed that day. Authority guidance informs practice; courts may interp
 | S11 | Saarland [breach reporting](https://www.datenschutz.saarland.de/online-dienste/meldung-datenpanne), no publication date displayed | Current authority channel; Article 33 risk exception and Article 34 threshold still govern |
 | S12 | CJEU [C-298/07 in official case-law digest](https://curia.europa.eu/site/upload/docs/application/pdf/2019-06/fiche_thematique_-commerce_electronique_et_obligations_contractuelles_-_en.pdf), judgment 16 October 2008; digest July 2024 | Additional rapid/direct/effective contact information beyond email; telephone not invariably mandatory |
 | S13 | [MStV §18, authority text](https://www.die-medienanstalten.de/fileadmin/user_upload/Rechtsgrundlagen/Gesetze_Staatsvertraege/Medienstaatsvertrag_MStV.pdf), seventh amendment effective 1 December 2025 per the authority page; [VSBG §36](https://www.gesetze-im-internet.de/vsbg/__36.html), current section checked, no separate section revision date displayed | No editorial activity established. Consumer scope is now affirmative; see Q09 analysis and S16 |
-
 | S14 | [BGB](https://www.gesetze-im-internet.de/bgb/BJNR001950896.html) header: 23 July 2026; sections linked in the Q09/Q10 analysis checked 13 November 2026, including current §356(5)/(6) and §356a | Do not reuse older §356 paragraph numbering; section pages have no individual amendment date. Fact-sensitive purpose/type classification remains for counsel |
-| S15 | [EGBGB](https://www.gesetze-im-internet.de/bgbeg/BJNR006049896.html) header: 22 October 2026; Art. 246a §§1/4 and model form in [Annex 2](https://www.gesetze-im-internet.de/bgbeg/anlage_2.html) | Current pre-contract information includes digital-product defect rights and update information; no claim of official-model safe harbour for the adapted draft |
+| S15 | [EGBGB](https://www.gesetze-im-internet.de/bgbeg/BJNR006049896.html) header: 22 October 2026; Art. 246a §§1/4 and model form in [Annex 2](https://www.gesetze-im-internet.de/bgbeg/art_253anlage_2.html) | Current pre-contract information includes digital-product defect rights and update information; no claim of official-model safe harbour for the adapted draft |
 | S16 | [VSBG](https://www.gesetze-im-internet.de/vsbg/BJNR025410016.html) header: 8 December 2025; [EU 2024/3228](https://eur-lex.europa.eu/eli/reg/2024/3228/oj), adopted 19 December 2024, OJ 30 December 2024 | §§36/37 current text; ODR complaint cutoff 20 March 2025, repeal/discontinuation 20 July 2025 |
 | S17 | [BGH VIII ZR 243/13](https://juris.bundesgerichtshof.de/cgi-bin/rechtsprechung/document.py?Art=pm&Blank=1&Datum=2015-3&Gericht=bgh&file=dokument.pdf&linked=urt&nr=70979), judgment 25 March 2015 | WEG consumer treatment; judgment date, not search crawl date |
 | S18 | [DSK rental guidance v2.0](https://www.datenschutzkonferenz-online.de/media/oh/OH_Einholung_von_Selbstauskuenften_Mietinteressenten_V2.pdf), January 2026; [Rhineland-Palatinate property-management guidance](https://www.datenschutz.rlp.de/themen/immobilienverwaltung), no publication/revision date displayed | Landlord GDPR duties; actual WEG/manager role allocation requires individual analysis. Older examples on the authority page are not a current headcount rule |
+| S19 | [Rome I, Regulation (EC) 593/2008](https://eur-lex.europa.eu/eli/reg/2008/593/oj), 17 June 2008; OJ 4 July 2008; current consolidated version shown as 24 July 2008, checked 13 November 2026 | Article 6 preserves applicable mandatory consumer protection despite choice of German law |
 
 Recheck laws, authority guidance, provider terms and the deployed data flows before final sign-off.
 Counsel must decide unsettled contract classification and proportionality questions; an authority's

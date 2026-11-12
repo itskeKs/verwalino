@@ -11,7 +11,6 @@ export const operator = {
   privacyEmail: 'hello@fogu.app',
   court: 'Amtsgericht Krefeld',
   register: 'HRB 15557',
-  vat: 'DE305418362',
   authority: 'Unabhängiges Datenschutzzentrum Saarland',
   authorityGenitive: 'Unabhängigen Datenschutzzentrums Saarland',
 } as const;

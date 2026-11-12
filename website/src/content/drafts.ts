@@ -25,7 +25,13 @@ export const draftSections = {
     "draft.terms.termination",
     "draft.terms.retention",
     "draft.terms.liability",
+    "draft.terms.liability_basis",
     "draft.terms.law",
+    "draft.terms.consumer",
+    "draft.terms.information",
+    "draft.terms.withdrawal",
+    "draft.terms.withdrawal_form",
+    "draft.terms.disputes",
     "draft.terms.sources"
   ],
   "dpa": [
