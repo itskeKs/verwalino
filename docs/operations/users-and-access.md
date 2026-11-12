@@ -71,11 +71,15 @@ When mail delivery is configured, the „Benutzer“ page additionally offers
 the colleague receives an e-mail with a link that is valid for 72 hours and can be
 used once. The link opens a public page where the colleague sets a password and is
 then signed in-capable with the invited role; no admin-chosen password travels by
-chat or phone. „Offene Einladungen“ lists pending invitations with validity and
-offers „Erneut senden“ (issues a new link and invalidates the old one) and
-„Widerrufen“. Issuing, resending and revoking are audit-logged. Without a
-configured mail server no invitation card appears and user creation works only
-with an admin-chosen password.
+chat or phone. An address that belongs to a user of any organization is refused
+with the same message, so an invitation can never collide with an existing sign-in.
+„Offene Einladungen“ lists pending invitations with validity and
+offers „Erneut senden“ (issues a new link, invalidates the old one and makes the
+resending administrator the inviter) and „Widerrufen“. Issuing, resending and
+revoking are audit-logged. Finished invitations (accepted, revoked or expired)
+are deleted seven days after they finished, like password-reset requests.
+Without a configured mail server no invitation card appears and user creation works
+only with an admin-chosen password.
 
 Admins create users in the „Neuen Benutzer anlegen“ card. Its persistent labels
 are „E-Mail“, „Name“, „Startpasswort“ and „Rolle“; email and a 12–128-character

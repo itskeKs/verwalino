@@ -148,6 +148,15 @@ Feature: Organization isolation
     Then they see no invitation for the invited address
     When they try to revoke and resend the invitation
     Then the invitation is not found either way
+    When the administrator of "Verwaltung Alpha" lists the pending invitations
+    Then the invited address is still pending
+
+  Scenario: An invitation refuses an address that belongs to another organization
+    Given an administrator of "Verwaltung Alpha" is signed in
+    And a test mailbox for invitations
+    When the administrator invites the address of "Verwaltung Beta"'s administrator
+    Then the invitation is refused like an address of the own organization
+    And no invitation is pending and no mail is sent
 
   Scenario: An organization archive cannot be downloaded by another organization
     Given a separate organization has rental records and an original for export

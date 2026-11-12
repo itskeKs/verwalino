@@ -139,6 +139,50 @@ def invitation_not_found_either_way(world):
     assert world.data["foreign_attempts"] == [404, 404]
 
 
+@then("the invited address is still pending")
+def invited_address_still_pending(world):
+    assert world.data["email"] in [item["email"] for item in world.response.json()]
+
+
+@when(
+    parsers.parse(
+        'the administrator invites the address of "{organization}"\'s administrator'
+    )
+)
+def invite_foreign_admin_address(world, organization):
+    foreign = world.administrator_of(organization)
+    session = world.send(foreign, "GET", "/api/auth/session")
+    assert session.status_code == 200, world.describe_response()
+    user_id = session.json()["user_id"]
+    users = world.send(foreign, "GET", "/api/users")
+    assert users.status_code == 200, world.describe_response()
+    email = next(item["email"] for item in users.json() if item["id"] == user_id)
+    world.data["email"] = email
+    world.send(
+        world.actor,
+        "POST",
+        "/api/users/invitations",
+        json={"email": email, "role": "CLERK"},
+    )
+
+
+@then("the invitation is refused like an address of the own organization")
+def refused_like_an_own_address(world):
+    assert world.response.status_code == 409, world.describe_response()
+    assert world.response.json() == {
+        "detail": "Diese E-Mail-Adresse wird bereits verwendet."
+    }
+
+
+@then("no invitation is pending and no mail is sent")
+def no_pending_and_no_mail(world, mailpit):
+    answer = world.send(world.actor, "GET", "/api/users/invitations")
+    assert answer.status_code == 200, world.describe_response()
+    assert world.data["email"] not in [item["email"] for item in answer.json()]
+    inbox = mailpit.request("GET", "/api/v1/messages")
+    assert inbox.json()["total"] == 0, "A refused invitation must not send mail"
+
+
 @then("the invitee can sign in with the invited role")
 def invitee_signs_in(world):
     answer = world.send(

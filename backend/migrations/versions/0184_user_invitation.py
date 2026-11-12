@@ -46,6 +46,49 @@ def patch_import_admission(reverse=False):
     op.execute(definition.replace(before, after))
 
 
+def patch_password_reset_cleanup(reverse=False):
+    """Finished invitations share the password-reset cleanup: seven days
+    after they finished (accepted, revoked or expired) they are deleted by
+    the same bounded mechanism and schedule; the 0145-owned body is
+    replaced here, not edited."""
+    definition = op.get_bind().scalar(
+        text(
+            "SELECT pg_get_functiondef("
+            "'public.cleanup_password_reset_requests()'::regprocedure)"
+        )
+    )
+    before = "      GET DIAGNOSTICS removed = ROW_COUNT;\n      RETURN removed;"
+    after = (
+        "      GET DIAGNOSTICS removed = ROW_COUNT;\n"
+        "      WITH finished AS MATERIALIZED (\n"
+        "        SELECT id FROM public.user_invitation\n"
+        "        WHERE accepted_at<clock_timestamp()-interval '7 days'\n"
+        "          OR revoked_at<clock_timestamp()-interval '7 days'\n"
+        "          OR (accepted_at IS NULL AND revoked_at IS NULL\n"
+        "              AND expires_at<clock_timestamp()-interval '7 days')\n"
+        "        ORDER BY COALESCE(accepted_at,revoked_at,expires_at),id\n"
+        "        LIMIT 100 FOR UPDATE SKIP LOCKED)\n"
+        "      DELETE FROM public.user_invitation AS invitations\n"
+        "        USING finished WHERE invitations.id=finished.id;\n"
+        "      GET DIAGNOSTICS invitation_removed = ROW_COUNT;\n"
+        "      RETURN removed+invitation_removed;"
+    )
+    if reverse:
+        before, after = after, before
+        if before not in definition and after in definition:
+            return
+    assert definition.count(before) == 1
+    definition = definition.replace(before, after)
+    declaration = "DECLARE removed integer;"
+    extended = "DECLARE removed integer; invitation_removed integer;"
+    if not reverse:
+        assert extended not in definition
+        definition = definition.replace(declaration, extended)
+    else:
+        definition = definition.replace(extended, declaration)
+    op.execute(definition)
+
+
 def upgrade():
     op.execute("""
     CREATE TABLE public.user_invitation (
@@ -112,8 +155,7 @@ def upgrade():
           AND m.user_id=pending.invited_by AND m.role='OWNER_ADMIN') THEN
         RAISE EXCEPTION 'Invitation acceptance refused';
       END IF;
-      IF EXISTS(SELECT 1 FROM public."user" u WHERE u.organization_id=pending.organization_id
-        AND pg_catalog.lower(pg_catalog.btrim(u.email))=pg_catalog.lower(pg_catalog.btrim(pending.email))) THEN
+      IF public.signup_email_registered(pending.email) THEN
         RAISE EXCEPTION 'Invitation acceptance refused';
       END IF;
       PERFORM set_config('app.current_org_id',pending.organization_id::text,true);
@@ -131,6 +173,7 @@ def upgrade():
     """)
     patch_retention_catalog()
     patch_import_admission()
+    patch_password_reset_cleanup()
 
 
 def downgrade():
@@ -146,3 +189,4 @@ def downgrade():
     """)
     patch_retention_catalog(reverse=True)
     patch_import_admission(reverse=True)
+    patch_password_reset_cleanup(reverse=True)

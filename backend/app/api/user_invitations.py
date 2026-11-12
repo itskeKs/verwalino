@@ -270,13 +270,9 @@ async def create_invitation(
         db, body.email, throttle
     )
     taken = await db.scalar(
-        text(
-            'SELECT 1 FROM "user" WHERE organization_id=:org '
-            "AND lower(btrim(email))=lower(btrim(:email))"
-        ),
-        {"org": str(auth.organization_id), "email": body.email},
+        text("SELECT public.signup_email_registered(:email)"), {"email": body.email}
     )
-    if taken is not None:
+    if taken:
         raise HTTPException(409, "Diese E-Mail-Adresse wird bereits verwendet.")
     existing = (
         await db.execute(
@@ -402,11 +398,17 @@ async def resend_invitation(
         await db.execute(
             text(
                 "UPDATE user_invitation SET token_hash=sha256(convert_to(:token,'UTF8')), "
+                "invited_by=:actor, "
                 "expires_at=now() + (:hours || ' hours')::interval, last_sent_at=now() "
                 f"WHERE id=:id AND {PENDING} "
                 "RETURNING id,email,role,created_at,expires_at,last_sent_at"
             ),
-            {"id": invitation_id, "token": token, "hours": str(INVITATION_VALID_HOURS)},
+            {
+                "id": invitation_id,
+                "actor": str(auth.user_id),
+                "token": token,
+                "hours": str(INVITATION_VALID_HOURS),
+            },
         )
     ).one()
     await record_send(db, recipient_attempt, recipient_hash)
