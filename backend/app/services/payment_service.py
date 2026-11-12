@@ -734,6 +734,39 @@ class PaymentService:
                 plan.period_start, plan.period_end)
         return charges
 
+    async def owner_plan_charge_totals(
+        self, plan: EconomicPlan, period_start: date, period_end: date,
+    ) -> dict[tuple[uuid.UUID, uuid.UUID], tuple[Decimal, Decimal]]:
+        """Frozen line amount and dated charge per (unit, owner) over the clamped period.
+
+        One load of plan lines, ownership history and property for the whole
+        run (#402); the engine walks each unit's own lines, so units stay
+        independent. The settlement divides each unit's line amount by these
+        dated charges, so a short plan's Soll is not truncated to the charged
+        instalments.
+        """
+        advance_lines, history, prop = await self._owner_plan_inputs(plan)
+        start, end = max(period_start, plan.period_start), min(period_end, plan.period_end)
+        totals: dict[tuple[uuid.UUID, uuid.UUID], tuple[Decimal, Decimal]] = {}
+        for unit_id in sorted({ln.unit_id for ln in advance_lines}, key=str):
+            lines = [ln for ln in advance_lines if ln.unit_id == unit_id]
+            overlapping = [p for p in history
+                           if p.unit_id == unit_id and p.valid_from <= end
+                           and (p.valid_to is None or p.valid_to >= start)]
+            if not overlapping:
+                # No dated owner in the period: the frozen line amounts stay (as on main).
+                for ln in lines:
+                    totals[(unit_id, ln.owner_profile_id)] = (ln.annual_amount, Decimal('0.00'))
+                continue
+            owners = {ln.owner_profile_id for ln in lines} | {p.owner_profile_id for p in overlapping}
+            for owner_id in sorted(owners, key=str):
+                charges = self._owner_charges(plan, prop, lines, history, owner_id, start, end)
+                line_amount = sum((ln.annual_amount for ln in lines
+                                   if ln.owner_profile_id == owner_id), Decimal('0.00'))
+                totals[(unit_id, owner_id)] = (line_amount,
+                    sum((c.amount for c in charges), Decimal('0.00')))
+        return totals
+
     async def booked_hausgeld_months(
         self, plan: EconomicPlan, owner_profile_ids,
     ) -> set[tuple[uuid.UUID, int, int]]:

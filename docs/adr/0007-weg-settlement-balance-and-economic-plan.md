@@ -134,14 +134,20 @@ historical payloads, digests and PDF bytes remain unchanged.
 
 The annual settlement's plan Soll follows dated ownership. The seller no longer
 carries the whole annual advance: each roster owner's `plan_advance_total` is
-derived from `PaymentService.owner_plan_charges` over the settlement period —
-the same month rule the Hausgeld ledger and dunning already apply — so a
+derived from the same month rule the Hausgeld ledger and dunning already apply
+(`PaymentService.owner_plan_charge_totals` over the settlement period), so a
 transfer month splits by inclusive ownership days and the settlement and the
-owner account agree on who owes which month. The plan itself stays month-based
-(12 equal installments, option M) and its OWNER_ADVANCE lines remain frozen at
-the plan-start owner; only the settlement's Soll derivation changed (engine
-input, `ENGINE_VERSION` m4.5.0). An ownership history the ledger refuses
-(`hausgeld_ownership_invalid`) refuses the calculation with the same German
-422. The planned reserve Soll stays on the frozen reserve-ledger cells at plan
-start (amendment #401). Liability between seller and buyer remains out of
-scope.
+owner account agree on who owes which month. The owners' Soll of a unit always
+sums to the unit's OWNER_ADVANCE `planned_amount` to the cent — the dated
+charges only divide it (central largest-remainder, remainder exactly once), so
+a plan period shorter than twelve months keeps its full planned amount — and a
+unit whose dated charges are all zero keeps its plan-line amounts. The plan
+itself stays month-based (12 largest-remainder installments, option M) and its
+OWNER_ADVANCE lines remain frozen at the plan-start owner; only the
+settlement's Soll derivation changed (engine input, `ENGINE_VERSION` m4.5.0).
+The reserve-coverage cap of decision 1(b) reads the same dated Soll, so booked
+reserve counts only against the dated unpaid Soll. An ownership history the
+ledger refuses (`hausgeld_ownership_invalid`) refuses the calculation with the
+same German 422. The planned reserve Soll stays on the frozen reserve-ledger
+cells at plan start (amendment #401). Liability between seller and buyer
+remains out of scope.

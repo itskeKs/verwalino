@@ -1493,8 +1493,9 @@ async def test_weg_owner_change_keeps_each_owners_own_bookings(client_a_admin, m
     assert '01.01.2025 bis 30.06.2025' in content and '01.07.2025 bis 31.12.2025' in content
 
 
-async def _single_unit_weg(client, seed_data):
-    """One unit with MEA 1000, a 12,000.00 plan (no reserve) and a 12,000.00 cost entry for 2025."""
+async def _single_unit_weg(client, seed_data, *, period_start='2025-01-01', period_end='2025-12-31',
+                           amount='12000.00'):
+    """One unit with MEA 1000, a plan without reserve and a matching cost entry."""
     property_response = await client.post('/api/properties', json={
         'name': 'WEG Lindweg 1', 'management_type': 'WEG', 'mea_denominator': 1000})
     assert property_response.status_code == 201, property_response.text
@@ -1518,22 +1519,22 @@ async def _single_unit_weg(client, seed_data):
                     if row['code'] == 'GARTENPFLEGE')
     cost = await client.post('/api/cost-entries', json={'property_id': property_id,
         'cost_category_id': category['id'], 'cost_category_plan_version': category['plan_version'],
-        'document_number': 'RE-LINDWEG', 'invoice_date': '2025-02-01',
-        'service_period_from': '2025-01-01', 'service_period_to': '2025-12-31',
-        'gross_amount': '12000.00', 'owner_distribution_key': 'MEA',
+        'document_number': 'RE-LINDWEG', 'invoice_date': period_start,
+        'service_period_from': period_start, 'service_period_to': period_end,
+        'gross_amount': amount, 'owner_distribution_key': 'MEA',
         'tenant_apportionable': 'NICHT_UMLAGEFAEHIG', 'source': 'MANUAL'})
     assert cost.status_code == 201, cost.text
     assert (await client.post(f"/api/cost-entries/{cost.json()['id']}/confirm")).status_code == 200
     plan = await client.post('/api/economic-plans', json={'property_id': property_id, 'plan_year': 2025,
-        'period_start': '2025-01-01', 'period_end': '2025-12-31'})
+        'period_start': period_start, 'period_end': period_end})
     assert plan.status_code == 201, plan.text
     values = {'planned_costs': [{'category_code': 'GARTENPFLEGE', 'label': 'Bewirtschaftung',
-        'planned_amount': '12000.00', 'cost_group': 'UMLAGEFAEHIG'}], 'reserve_contribution_total': '0.00'}
+        'planned_amount': amount, 'cost_group': 'UMLAGEFAEHIG'}], 'reserve_contribution_total': '0.00'}
     await attest_fixture(client, 'economic_plan', plan.json()['id'], values)
     response = await client.post(f"/api/economic-plans/{plan.json()['id']}/finalize", json=values)
     assert response.status_code == 200, response.text
     return {'property': property_id, 'unit': unit_id, 'anna': anna, 'bank': bank.json()['id'],
-            'plan': plan.json()['id']}
+            'plan': plan.json()['id'], 'period_start': period_start, 'period_end': period_end}
 
 
 @pytest.mark.asyncio
@@ -1583,6 +1584,99 @@ async def test_mid_year_owner_change_charges_the_plan_soll_to_the_dated_owner(
     assert reloaded['owner_results'] == result['owner_results']
     assert reloaded['snapshot_sha256'] == result['snapshot_sha256']
     assert (await api.get(f'/api/weg-settlements/{run}/pdf')).content == frozen_pdf
+
+
+async def _sell_unit(api, unit_id, valid_to, valid_from, first_name='Bernd', last_name='Neu'):
+    old = (await api.get('/api/ownership', params={'unit_id': unit_id})).json()[0]
+    response = await api.patch(f"/api/ownership/{old['id']}", json={'valid_to': valid_to})
+    assert response.status_code == 200, response.text
+    person = await api.post('/api/persons', json={'first_name': first_name, 'last_name': last_name})
+    assert person.status_code == 201, person.text
+    owner = await api.post('/api/owner-profiles', json={'person_id': person.json()['id']})
+    assert owner.status_code == 201, owner.text
+    response = await api.post('/api/ownership', json={'unit_id': unit_id,
+        'owner_profile_id': owner.json()['id'], 'valid_from': valid_from})
+    assert response.status_code == 201, response.text
+    return owner.json()['id']
+
+
+async def _finalize_single_run(api, w, owners):
+    response = await api.post('/api/weg-settlements', json={'property_id': w['property'],
+        'economic_plan_id': w['plan'], 'period_start': w['period_start'], 'period_end': w['period_end']})
+    assert response.status_code == 201, response.text
+    run = response.json()['id']
+    values = {'paid_advances': [{'owner_profile_id': oid, 'paid_total': '0.00'} for oid in owners]}
+    await attest_fixture(api, 'settlement', run, values)
+    response = await api.post(f'/api/weg-settlements/{run}/finalize', json=values)
+    assert response.status_code == 200, response.text
+    return response.json()
+
+
+@pytest.mark.asyncio
+async def test_short_plan_keeps_its_full_planned_soll(client_a_admin, seed_data):
+    api = client_a_admin
+    w = await _single_unit_weg(api, seed_data, period_start='2025-07-01', period_end='2025-09-30',
+                               amount='3000.00')
+    result = await _finalize_single_run(api, w, [w['anna']])
+    owner = result['owner_results'][0]
+    assert (owner['plan_soll'], owner['abrechnungsspitze']) == ('3000.00', '0.00')
+
+
+@pytest.mark.asyncio
+async def test_short_plan_splits_the_planned_soll_between_dated_owners(client_a_admin, seed_data):
+    api = client_a_admin
+    w = await _single_unit_weg(api, seed_data, period_start='2025-07-01', period_end='2025-09-30',
+                               amount='3000.00')
+    bernd = await _sell_unit(api, w['unit'], '2025-07-31', '2025-08-01')
+    result = await _finalize_single_run(api, w, [w['anna'], bernd])
+    owners = {o['owner_profile_id']: o for o in result['owner_results']}
+    assert owners[w['anna']]['plan_soll'] == '1000.00'
+    assert owners[bernd]['plan_soll'] == '2000.00'
+
+
+@pytest.mark.asyncio
+async def test_reserve_covers_only_the_unpaid_dated_soll(client_a_admin, seed_data):
+    api = client_a_admin
+    w = await _single_unit_weg(api, seed_data)
+    bernd = await _sell_unit(api, w['unit'], '2025-06-30', '2025-07-01')
+    for oid, hausgeld, month in ((w['anna'], '6000.00', 6), (bernd, '5500.00', 7)):
+        for amount, payment_type in ((hausgeld, 'HAUSGELD_VORSCHUSS'), ('500.00', 'RUECKLAGENANTEIL')):
+            response = await api.post('/api/payments', json={'bank_account_id': w['bank'],
+                'owner_profile_id': oid, 'direction': 'IN', 'amount': amount,
+                'value_date': f'2025-{month:02d}-01', 'payment_type': payment_type,
+                'period_year': 2025, 'period_month': month})
+            assert response.status_code == 201, response.text
+            assert (await api.post(f"/api/payments/{response.json()['id']}/book")).status_code == 200
+    response = await api.post('/api/weg-settlements', json={'property_id': w['property'],
+        'economic_plan_id': w['plan'], 'period_start': w['period_start'], 'period_end': w['period_end']})
+    assert response.status_code == 201, response.text
+    run = response.json()['id']
+    derived = (await api.post(f'/api/weg-settlements/{run}/paid-advances-derived')).json()
+    assert {r['owner_profile_id']: r['paid_total'] for r in derived} == {
+        w['anna']: '6000.00', bernd: '6000.00'}
+    values = {'paid_advances': derived}
+    await attest_fixture(api, 'settlement', run, values)
+    response = await api.post(f'/api/weg-settlements/{run}/finalize', json=values)
+    assert response.status_code == 200, response.text
+    owners = {o['owner_profile_id']: o for o in response.json()['owner_results']}
+    assert (owners[w['anna']]['plan_soll'], owners[w['anna']]['payment_amount']) == ('6000.00', '-49.32')
+    assert (owners[bernd]['plan_soll'], owners[bernd]['payment_amount']) == ('6000.00', '49.32')
+
+
+def test_dated_plan_soll_divides_the_planned_amount_by_the_dated_charges():
+    from app.services.weg_settlement_service import _dated_plan_soll
+    unit, anna, bernd = uuid.uuid4(), uuid.uuid4(), uuid.uuid4()
+    shares = {(unit, anna): (Decimal('3000.00'), Decimal('250.00')),
+              (unit, bernd): (Decimal('0.00'), Decimal('500.00'))}
+    assert _dated_plan_soll(shares) == {anna: Decimal('1000.00'), bernd: Decimal('2000.00')}
+
+
+def test_dated_plan_soll_keeps_the_planned_amount_without_dated_charges():
+    from app.services.weg_settlement_service import _dated_plan_soll
+    unit, anna, bernd = uuid.uuid4(), uuid.uuid4(), uuid.uuid4()
+    shares = {(unit, anna): (Decimal('3000.00'), Decimal('0.00')),
+              (unit, bernd): (Decimal('0.00'), Decimal('0.00'))}
+    assert _dated_plan_soll(shares) == {anna: Decimal('3000.00'), bernd: Decimal('0.00')}
 
 
 @pytest.mark.asyncio
@@ -2126,7 +2220,7 @@ async def test_separate_reserve_only_covers_unpaid_plan_soll(
 
 
 @pytest.mark.asyncio
-async def test_separate_reserve_without_plan_soll_cannot_cover_negative_hausgeld(client_a_admin, m4_seed):
+async def test_separate_reserve_covers_negative_hausgeld_up_to_the_dated_soll(client_a_admin, m4_seed):
     from tests.test_reserve_ledger import payment
 
     api, w = client_a_admin, m4_seed
@@ -2156,10 +2250,10 @@ async def test_separate_reserve_without_plan_soll_cannot_cover_negative_hausgeld
     result = await api.post(f'/api/weg-settlements/{run}/finalize', json=values)
     assert result.status_code == 200, result.text
     owner = next(o for o in result.json()['owner_results'] if o['owner_profile_id'] == oid)
-    # The dated plan Soll (6 x 650.00) minus the paid -100.00; the reserve still
-    # cannot cover negative Hausgeld without an OWNER_ADVANCE line (decision 1(b)).
-    assert (owner['plan_soll'], owner['account_balance'], owner['payment_amount']) == ('3900.00', '4000.00', '2217.26')
-    assert next(o['paid_total'] for o in derived.json() if o['owner_profile_id'] == oid) == '-100.00'
+    # Decision 1(b) with the dated Soll: paid = -100.00 + min(500.00, 3900.00 + 100.00) = 400.00,
+    # account_balance = 3900.00 - 400.00, payment = (2117.26 - 3900.00) + 3500.00.
+    assert (owner['plan_soll'], owner['account_balance'], owner['payment_amount']) == ('3900.00', '3500.00', '1717.26')
+    assert next(o['paid_total'] for o in derived.json() if o['owner_profile_id'] == oid) == '400.00'
 
 
 @pytest.mark.asyncio
