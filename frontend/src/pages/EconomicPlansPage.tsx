@@ -11,21 +11,23 @@ import { ApiError } from "../api/client";
 import { centsFromDecimal, formatDate, formatMoney } from "../lib/format";
 import { PreviousPlan } from "../components/PreviousPlan";
 import { AccountingScopeSelector } from "../components/AccountingScopeSelector";
+import { useAuth } from "../auth/useAuth";
 
 const STATUS_LABELS: Record<string, string> = { draft: "Entwurf", finalized: "Finalisiert" };
 const STATUS_CSS: Record<string, string> = { draft: "badge--draft", finalized: "badge--confirmed" };
 const DRAFT_KEY = "economic-plan-form-draft";
 
-type PlanFormDraft = { form: EconomicPlanCreate; showForm: boolean };
+type PlanFormDraft = { identity: string; form: EconomicPlanCreate; showForm: boolean };
 
-function loadDraft(): PlanFormDraft | null {
+function loadDraft(identity: string): PlanFormDraft | null {
   try {
     const raw = sessionStorage.getItem(DRAFT_KEY);
     if (!raw) return null;
-    const parsed = JSON.parse(raw) as { form?: EconomicPlanCreate; showForm?: unknown };
-    const form = parsed?.form;
+    const parsed = JSON.parse(raw) as { identity?: unknown; form?: EconomicPlanCreate; showForm?: unknown };
+    if (parsed?.identity !== identity) return null;
+    const form = parsed.form;
     if (!form || typeof form.plan_year !== "number") return null;
-    return { form: { ...emptyForm(), ...form }, showForm: parsed.showForm === true };
+    return { identity, form: { ...emptyForm(), ...form }, showForm: parsed.showForm === true };
   } catch {
     return null;
   }
@@ -49,15 +51,28 @@ export function EconomicPlansPage() {
   const [properties, setProperties] = useState<Property[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
-  const [initialDraft] = useState(loadDraft);
-  const [showForm, setShowForm] = useState(() => initialDraft?.showForm ?? false);
-  const [form, setForm] = useState<EconomicPlanCreate>(() => initialDraft?.form ?? emptyForm());
+  const [showForm, setShowForm] = useState(false);
+  const [form, setForm] = useState<EconomicPlanCreate>(emptyForm());
   const [saving, setSaving] = useState(false);
+  const { session } = useAuth();
+  const identity = session ? `${session.organization_id}:${session.user_id}` : null;
+  const [draftApplied, setDraftApplied] = useState(false);
 
   useEffect(() => {
-    if (showForm) sessionStorage.setItem(DRAFT_KEY, JSON.stringify({ form, showForm }));
+    if (draftApplied || !identity) return;
+    setDraftApplied(true);
+    const draft = loadDraft(identity);
+    if (draft) {
+      setForm(draft.form);
+      setShowForm(draft.showForm);
+    }
+  }, [identity, draftApplied]);
+
+  useEffect(() => {
+    if (!identity) return;
+    if (showForm) sessionStorage.setItem(DRAFT_KEY, JSON.stringify({ identity, form, showForm }));
     else sessionStorage.removeItem(DRAFT_KEY);
-  }, [form, showForm]);
+  }, [form, showForm, identity]);
 
   const wegProps = properties.filter(
     (p) => p.management_type === "WEG" || p.management_type === "MISCH",
