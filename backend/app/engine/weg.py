@@ -14,6 +14,10 @@ Flow (m4 section 10.1):
      inconsistent reserve) -- escalate, never emit a plausible-but-wrong bill.
   2. build each unit's gap-free OWNER cover (build_owner_cover).
   3. for every cost position:
+       - the amount to distribute is the position's effective total WINDOWED to
+         the settlement period for weighted keys (inclusive day share,
+         ADR-0004, mirroring M3 #122); a cross-year service period therefore
+         contributes only its days of the settlement year.
        - if reserve_relevant: it is a RESERVE CONTRIBUTION (Vermoegensbildung),
          distributed to owners by key but summed into the reserve subtotal, NOT
          into OWNER_COST_TOTAL (m4 section 3).
@@ -36,7 +40,9 @@ the addressee aggregation (per owner) differ.
 from __future__ import annotations
 
 import uuid
+from datetime import date
 from decimal import Decimal
+from fractions import Fraction
 
 from app.engine.periods import (
     OwnerCoverPeriod,
@@ -45,7 +51,12 @@ from app.engine.periods import (
     overlap_days,
     time_factor,
 )
-from app.engine.rounding import CENT, DistributionError, distribute_amount
+from app.engine.rounding import (
+    CENT,
+    DistributionError,
+    day_share_for_period,
+    distribute_amount,
+)
 from app.engine.types import (
     ALL_KEYS,
     COST_GROUP_NICHT_UMLAGEFAEHIG,
@@ -137,6 +148,27 @@ def _effective_total(pos: WegCostPositionInput) -> Decimal:
     if key == "MANUELLER_BETRAG":
         return sum((m.amount for m in pos.manual_amounts), Decimal(0)) - pos.reserve_funded_amount
     return pos.gross_amount - pos.reserve_funded_amount
+
+
+def _windowed_effective_total(
+    pos: WegCostPositionInput, period_start: date, period_end: date
+) -> Decimal:
+    """The effective total attributable to the settlement period (ADR-0004).
+
+    A service period crossing the settlement boundary contributes only its
+    inclusive day share (cumulative cents via day_share_for_period, the same
+    windowing the M3 tenant side has used since #122); adjacent years
+    telescope exactly back to the effective total. The window applies to the
+    effective total, i.e. after reserve financing (ADR-0013). Direct keys
+    (EXTERNE_ABRECHNUNG / MANUELLER_BETRAG) keep their explicit per-unit
+    amounts (m4 section 4.5) and are not windowed.
+    """
+    total = _effective_total(pos)
+    if pos.owner_distribution_key in WEIGHTED_KEYS:
+        return day_share_for_period(
+            total, pos.service_period_from, pos.service_period_to, period_start, period_end
+        )
+    return total
 
 
 def _co_owner_shares(
@@ -243,6 +275,8 @@ def _distribute_one_position(
     pos: WegCostPositionInput,
     units: list[UnitInput],
     owner_covers: dict[uuid.UUID, list[OwnerCoverPeriod]],
+    period_start: date,
+    period_end: date,
 ) -> list[tuple[uuid.UUID, OwnerCoverPeriod, Decimal, Decimal | None, Decimal | None, int, int]]:
     """Build the rounded (owner-slice) cells for ONE position.
 
@@ -251,7 +285,8 @@ def _distribute_one_position(
        billed_days, sp_total_days)
     one per (unit, owner-slice) cell with a non-zero time factor. The single
     Largest-Remainder pass (distribute_amount, ADR-0005) runs over ALL cells of
-    the position so Σ rounded == effective total exactly.
+    the position so Σ rounded == total exactly, where total is the effective
+    total windowed to the settlement period for weighted keys (ADR-0004).
 
     Cell exact weight (mirrors M3 distribution.py, plus the co-owner stage):
        weight = (unit_key_share) * time_factor(slice vs service period)
@@ -261,7 +296,7 @@ def _distribute_one_position(
     of the unit's share -- m4 section 4.3 stage 2).
     """
     key = pos.owner_distribution_key
-    total = _effective_total(pos)
+    total = _windowed_effective_total(pos, period_start, period_end)
     sp_from = pos.service_period_from
     sp_to = pos.service_period_to
     sp_total = day_count(sp_from, sp_to)
@@ -316,17 +351,22 @@ def _distribute_one_position(
                 f"weights for key {key} is zero (no participating unit with a "
                 f"positive base) -- escalate."
             )
+        # EXACT rational cell weights (distribute_amount's rational mode):
+        # the windowed total makes shares straddle cents, and Decimal's
+        # 28-digit context can round total*weight across a cent boundary,
+        # which would break the largest-remainder guarantee. Fractions keep
+        # the exact shares exact, so Σ rounded == windowed total always.
         for unit in participating:
             w = weights[unit.id]
-            key_share = w / weight_sum
+            key_share = Fraction(w) / Fraction(weight_sum)
             slices = owner_covers.get(unit.id, [])
             for sl in slices:
-                f = time_factor(sp_from, sp_to, sl.start, sl.end)
-                if f == 0:
+                overlap = overlap_days(sp_from, sp_to, sl.start, sl.end)
+                if overlap == 0:
                     continue
-                co_w = _co_owner_shares(unit.id, sl, slices)
-                weight = key_share * f * co_w
-                billed = overlap_days(sp_from, sp_to, sl.start, sl.end)
+                co_w = Fraction(_co_owner_shares(unit.id, sl, slices))
+                weight = key_share * Fraction(overlap, sp_total) * co_w
+                billed = overlap
                 cell_specs.append((unit.id, sl, weight, w, weight_sum, billed))
     else:
         raise DistributionError(f"Unsupported distribution key: {key}")
@@ -383,7 +423,7 @@ def compute_weg_jahresabrechnung(inp: WegSettlementInput) -> WegResult:
 
     sort_order = 0
     for pos in positions:
-        cells = _distribute_one_position(pos, units, owner_covers)
+        cells = _distribute_one_position(pos, units, owner_covers, inp.period_start, inp.period_end)
         if not cells:
             continue
 
@@ -410,7 +450,7 @@ def compute_weg_jahresabrechnung(inp: WegSettlementInput) -> WegResult:
                     p_sp,
                 )
 
-        eff_total = _money(_effective_total(pos))
+        eff_total = _money(_windowed_effective_total(pos, inp.period_start, inp.period_end))
         is_reserve = pos.reserve_relevant
         if is_reserve:
             reserve_contrib_total += eff_total

@@ -268,6 +268,56 @@ class TestI4G_PlanMonthlyRatesSumExact:
 
 
 # ===========================================================================
+# I4-I: a service period crossing the year boundary is windowed day-accurately:
+# the adjacent yearly settlements together charge exactly the gross amount.
+# ===========================================================================
+class TestI4I_CrossYearWindowsSumToGross:
+    @settings(max_examples=150)
+    @given(
+        meas=st.lists(mea_values(), min_size=1, max_size=6),
+        gross=money_amounts(min_eur=1),
+        sp_from=st.dates(min_value=date(2025, 1, 1), max_value=date(2025, 12, 31)),
+        sp_to=st.dates(min_value=date(2026, 1, 1), max_value=date(2026, 12, 31)),
+    )
+    def test_adjacent_year_settlements_sum_to_gross(self, meas, gross, sp_from, sp_to):
+        n = len(meas)
+        units = tuple(
+            UnitInput(id=_U(10 + i), number=str(i), usage_type="WOHNUNG", mea=m)
+            for i, m in enumerate(meas)
+        )
+        owners = tuple(
+            OwnerPeriodInput(
+                unit_id=_U(10 + i),
+                owner_profile_id=_U(100 + i),
+                valid_from=date(2000, 1, 1),
+                valid_to=None,
+            )
+            for i in range(n)
+        )
+        pos = (
+            WegCostPositionInput(
+                cost_entry_id=_U(50), category_id=_U(99), category_code="GEBAEUDEVERSICHERUNG",
+                label="x", gross_amount=gross, service_period_from=sp_from, service_period_to=sp_to,
+                owner_distribution_key="MEA", cost_group="UMLAGEFAEHIG",
+            ),
+        )
+        totals = []
+        for year in (2025, 2026):
+            inp = WegSettlementInput(
+                period_start=date(year, 1, 1),
+                period_end=date(year, 12, 31),
+                property=PropertyInput(id=_U(1), name="WEG", management_type="WEG"),
+                units=units, owner_periods=owners, cost_positions=pos, plan_advances=(),
+            )
+            r = compute_weg_jahresabrechnung(inp)
+            # Within each settlement the owners carry the windowed total exactly.
+            assert sum((o.owner_cost_total for o in r.owners), Decimal("0.00")) == r.cost_total
+            totals.append(r.cost_total)
+        # Adjacent years telescope: cumulative cents never lose or double a cent.
+        assert totals[0] + totals[1] == gross
+
+
+# ===========================================================================
 # I4-H: determinism (same input -> identical canonical payload + hash).
 # ===========================================================================
 class TestI4H_Determinism:

@@ -1,4 +1,5 @@
 """The issue #204 hand calculation through real HTTP and PDF output."""
+from decimal import Decimal
 from pathlib import Path
 
 import pytest
@@ -736,6 +737,85 @@ def paid_hausgeld_browser(browser_world, world, dated_owners, tmp_path):
 def planned_reserve_balance(world, seed_data):
     return create_balance_world(world, seed_data, actual_cost='7000.00',
                                 planned_cost='7000.00', planned_reserve='6000.00')
+
+
+@given('a WEG with one unit and one owner has Gebäudeversicherung of 3650 euros for July 2024 through June 2025',
+       target_fixture='cross_year_weg')
+def cross_year_insurance_weg(world, seed_data):
+    user = str(seed_data['user_a_admin_id'])
+    world.actor = world.administrator_of('Verwaltung Alpha')
+    world.actor_organization = 'Verwaltung Alpha'
+    home = create(world, '/api/properties', {'name': 'WEG Bergstraße 3',
+        'management_type': 'WEG', 'mea_denominator': 1000,
+        'data_audience': {'label': 'Bergstraße', 'reason': 'Synthetic settlement',
+            'grants': [{'user_id': user, 'capabilities': ['read', 'prepare', 'approve', 'export'],
+                        'reason': 'Synthetic settlement'}]}}, keyed=True)
+    unit = create(world, '/api/units', {'property_id': home['id'], 'number': '1',
+        'usage_type': 'WOHNUNG', 'mea': '1000', 'area': '100'})
+    person = create_person(world, 'Verwaltung Alpha', 'Theo Einfach')
+    owner = create(world, '/api/owner-profiles', {'person_id': person.id})
+    create(world, '/api/ownership', {'unit_id': unit['id'], 'owner_profile_id': owner['id'],
+        'valid_from': '2020-01-01'})
+    scope = create(world, '/api/accounting-scopes', {'property_id': home['id'], 'scope_type': 'WEG',
+        'label': 'WEG Bergstraße', 'valid_from': '2024-01-01', 'whole_property': True}, keyed=True)
+    create(world, f"/api/accounting-scopes/{scope['id']}/grants", {'user_id': user,
+        'capabilities': ['read', 'prepare', 'approve', 'confirm', 'export'], 'reason': 'Synthetic settlement'}, keyed=True)
+    basis = {'property_id': home['id'], 'accounting_scope_id': scope['id']}
+    category = next(row for row in world.act('GET', '/api/cost-categories').json()
+                    if row['code'] == 'GEBAEUDEVERSICHERUNG')
+    cost = create(world, '/api/cost-entries', {**basis, 'cost_category_id': category['id'],
+        'cost_category_plan_version': category['plan_version'], 'document_number': 'RE-VERSICHERUNG',
+        'invoice_date': '2024-07-01', 'service_period_from': '2024-07-01',
+        'service_period_to': '2025-06-30', 'gross_amount': '3650.00',
+        'owner_distribution_key': 'MEA',
+        'tenant_apportionable': 'NICHT_UMLAGEFAEHIG', 'source': 'MANUAL'})
+    assert world.act('POST', f"/api/cost-entries/{cost['id']}/confirm").status_code == 200
+    runs = {}
+    for year in (2024, 2025):
+        plan = create(world, '/api/economic-plans', {**basis, 'plan_year': year,
+            'period_start': f'{year}-01-01', 'period_end': f'{year}-12-31'})
+        values = {'planned_costs': [{'category_code': 'GEBAEUDEVERSICHERUNG', 'label': 'Gebäudeversicherung',
+            'planned_amount': '3650.00', 'cost_group': 'UMLAGEFAEHIG'}], 'reserve_contribution_total': '0.00'}
+        world.run(attest_fixture(world.actor, 'economic_plan', plan['id'], values))
+        response = world.act('POST', f"/api/economic-plans/{plan['id']}/finalize", json=values)
+        assert response.status_code == 200, response.text
+        run = create(world, '/api/weg-settlements', {**basis, 'economic_plan_id': plan['id'],
+            'period_start': f'{year}-01-01', 'period_end': f'{year}-12-31'})
+        runs[year] = run['id']
+    return {'owner': owner['id'], 'runs': runs}
+
+
+@when('I compute the WEG annual settlements for 2024 and 2025')
+def compute_cross_year_settlements(world, cross_year_weg):
+    w = cross_year_weg
+    for year, run_id in w['runs'].items():
+        values = {'paid_advances': [{'owner_profile_id': w['owner'], 'paid_total': '0.00'}]}
+        world.run(attest_fixture(world.actor, 'settlement', run_id, values))
+        response = world.act('POST', f"/api/weg-settlements/{run_id}/compute", json=values)
+        assert response.status_code == 200, response.text
+        w[f'statement_{year}'] = response.json()
+
+
+@then('the 2024 settlement charges 1840 euros of Gesamtkosten and the 2025 settlement charges 1810 euros')
+def cross_year_total_costs(world, cross_year_weg):
+    assert cross_year_weg['statement_2024']['total_cost'] == '1840.00'
+    assert cross_year_weg['statement_2025']['total_cost'] == '1810.00'
+
+
+@then("the owner's share is 1840 euros in the 2024 settlement and 1810 euros in the 2025 settlement")
+def cross_year_owner_share(world, cross_year_weg):
+    w = cross_year_weg
+    for year, amount in ((2024, '1840.00'), (2025, '1810.00')):
+        owner = next(row for row in w[f'statement_{year}']['owner_results']
+                     if row['owner_profile_id'] == w['owner'])
+        assert owner['owner_cost_total'] == amount
+
+
+@then('both settlements together charge exactly 3650 euros')
+def cross_year_sum_exact(world, cross_year_weg):
+    total = sum((Decimal(cross_year_weg[f'statement_{year}']['total_cost']) for year in (2024, 2025)),
+                Decimal('0.00'))
+    assert total == Decimal('3650.00')
 
 
 @then('both owners have zero Spitze with reserve Soll of 3600 and 2400 euros and Hausgeld Soll of 7800 and 5200 euros')
