@@ -72,6 +72,20 @@ it("requires an explicit account selection when several accounts are eligible", 
   expect((await screen.findAllByText("Ausgestellt")).length).toBeGreaterThan(0);
 });
 
+it("shows only the guidance when the selection refusal carries no accounts", async () => {
+  vi.spyOn(api, "post").mockRejectedValue(new ApiError(409,
+    "Für das Objekt sind mehrere laufende Konten mit IBAN hinterlegt. Wählen Sie das Zielkonto aus.",
+    "dunning_bank_selection_required", undefined, {
+      code: "dunning_bank_selection_required",
+      message: "Für das Objekt sind mehrere laufende Konten mit IBAN hinterlegt. Wählen Sie das Zielkonto aus.",
+      bank_accounts: [],
+    }));
+  show();
+  fireEvent.click(await screen.findByRole("button", { name: "Mahnung ausgeben" }));
+  expect(await screen.findByText(/mehrere laufende Konten/)).toBeVisible();
+  expect(screen.queryByLabelText("Zielkonto für die Zahlung")).toBeNull();
+});
+
 it("shows the actionable guidance when no eligible account exists", async () => {
   vi.spyOn(api, "post").mockRejectedValue(new ApiError(409,
     "Für das Objekt ist kein aktives laufendes Konto (LAUFEND) mit IBAN hinterlegt.",

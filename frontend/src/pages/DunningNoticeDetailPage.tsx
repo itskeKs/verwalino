@@ -151,7 +151,7 @@ export function DunningNoticeDetailPage() {
           const accounts =
             (err.payload as { bank_accounts?: { id: string; label: string; iban: string }[] })
               ?.bank_accounts ?? [];
-          setBankChoices(accounts);
+          setBankChoices(accounts.length > 0 ? accounts : null);
           setSelectedBankId(accounts[0]?.id ?? "");
           setActionError(err.message);
         } else if (

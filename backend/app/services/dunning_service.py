@@ -19,7 +19,7 @@ from datetime import date, datetime, timezone
 from decimal import Decimal
 
 from fastapi import HTTPException
-from sqlalchemy import select, text
+from sqlalchemy import func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.engine.dunning import (
@@ -443,8 +443,10 @@ class DunningService:
                 BankAccount.property_id == prop.id,
                 BankAccount.is_active.is_(True),
                 BankAccount.account_type == "LAUFEND",
+                # "with an IBAN" means a non-blank one; whitespace-only values
+                # stored by the bank-account API are not a destination (#331).
                 BankAccount.iban.isnot(None),
-                BankAccount.iban != "",
+                func.length(func.trim(BankAccount.iban)) > 0,
             )
             .order_by(BankAccount.label, BankAccount.id)
         )

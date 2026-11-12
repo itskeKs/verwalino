@@ -224,7 +224,7 @@ def build_dunning_html(
 
     # Payment destination, frozen at issue time (#331). Without it the
     # established generic wording stays (previously issued notices).
-    if dn.bank_iban:
+    if dn.bank_iban and dn.bank_iban.strip():
         payment_sentence = """auf das folgende Konto
     zu ueberweisen:"""
         destination_block = f"""<table class="meta">
