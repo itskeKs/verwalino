@@ -140,10 +140,10 @@ async def test_compatible_inventory_reservation_schema_and_metadata_match_actual
         result=await provider.inventory(documents,max_output_tokens=100)
         assert result.output.documents[0].document_key == "doc"
         assert estimate.input_tokens >= len(json.dumps(seen[0],ensure_ascii=False).encode())
-        assert result.metadata.harness_version == "7"
+        assert result.metadata.harness_version == "9"
         from app.declarations.prompts import INVENTORY_PROMPT
         from app.declarations.provider_runtime import _schema_instruction
-        expected=fingerprint_static_contract(developer_prompt=INVENTORY_PROMPT+"\n\n"+_schema_instruction(seen[0]["response_format"]["json_schema"]["schema"]),schema=seen[0]["response_format"]["json_schema"]["schema"],harness="declaration-openai_compatible-v7|structured-output|schema-in-system|core-contract-reminder|subject-key-syntax|utf8-byte-reservation|no-tools|bounded-schema-repair|fixed-pass-manager")
+        expected=fingerprint_static_contract(developer_prompt=INVENTORY_PROMPT+"\n\n"+_schema_instruction(seen[0]["response_format"]["json_schema"]["schema"]),schema=seen[0]["response_format"]["json_schema"]["schema"],harness="declaration-openai_compatible-v9|structured-output|schema-in-system|core-contract-reminder|subject-key-syntax|utf8-byte-reservation|no-tools|bounded-schema-repair|fixed-pass-manager|core-subject-prefix")
         assert result.metadata.schema_sha256 == expected.schema_sha256
         assert result.metadata.harness_sha256 == expected.harness_sha256
         assert len(seen)==1
@@ -337,14 +337,14 @@ async def test_endpoint_timeout_defaults_and_explicit_override(name, expected):
         try:
             assert extraction._timeout_seconds == (override or expected or settings.declaration_provider_timeout_seconds)
             assert knowledge._timeout_seconds == (override or expected or settings.declaration_qa_timeout_seconds)
-            assert extraction._harness_version == ("7" if name == "openai_compatible" else settings.declaration_harness_version)
+            assert extraction._harness_version == ("9" if name == "openai_compatible" else settings.declaration_harness_version)
         finally:
             await extraction._client.close()
             await knowledge._client.close()
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("name,expected", [("openai", "3"), ("openai_compatible", "7")])
+@pytest.mark.parametrize("name,expected", [("openai", "3"), ("openai_compatible", "9"), ("anthropic", "3")])
 async def test_persisted_run_header_uses_selected_provider_harness(monkeypatch, name, expected):
     from contextlib import asynccontextmanager
     from types import SimpleNamespace

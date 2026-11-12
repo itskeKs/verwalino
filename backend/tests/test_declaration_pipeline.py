@@ -3,8 +3,10 @@ import base64
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 import io
+import json
 from pathlib import Path
 from types import SimpleNamespace
+from unittest.mock import AsyncMock
 import uuid
 
 import pytest
@@ -57,6 +59,7 @@ from app.models.declaration_import import (
     DeclarationExtractionRun,
     DeclarationImport,
     DeclarationImportDocument,
+    DeclarationImportPass,
 )
 from app.models.property import Property
 from app.models.property_document import PropertyDocument
@@ -70,7 +73,7 @@ from app.repositories.declaration_candidate_repo import (
 from app.repositories.declaration_import_repo import DeclarationImportRepository
 from app.repositories.declaration_import_repo import WorkerLease
 from app.services.declaration_import_service import DeclarationImportService
-from app.declarations.validation import ValidationIssue
+from app.declarations.validation import ValidationIssue, validate_reconciliation
 from app.workers.declaration_import import DeclarationImportWorker
 from tests.declaration_fixtures import DeclarationProcessingGate, make_text_pdf
 
@@ -716,6 +719,80 @@ def test_each_conflicting_fixed_fact_gets_its_own_candidate_bound_blocker() -> N
         "fact:property:new:street",
         "fact:property:new:city",
     }
+
+
+@pytest.mark.parametrize(
+    "subject, values, candidate_type",
+    [
+        ("property", {"street": "Lindenweg 1", "city": "Berlin"}, "PROPERTY_FIELD"),
+        ("unit", {"number": "1", "usage_type": "WOHNUNG"}, "UNIT_CREATE"),
+        ("legal_reference", {"reference_type": "GRUNDBUCH", "district": "Berlin"}, "LEGAL_REFERENCE"),
+        ("assignment", {"assignment_type": "SONDERNUTZUNG", "designation": "Stellplatz 1"}, "ASSIGNMENT"),
+    ],
+)
+def test_valid_bare_core_subjects_produce_unique_approval_shaped_drafts(
+    subject, values, candidate_type
+) -> None:
+    evidence = [{"document_key": "d", "pdf_page": 1, "quote": "Synthetic evidence"}]
+    normalized = {field: {"kind": "TEXT", "value": value} for field, value in values.items()}
+    output = ReconciliationOutput(
+        facts=[
+            FactPayload(
+                subject_key=subject,
+                field=field,
+                raw_value=values[field],
+                normalized_value=value,
+                confidence=0.9,
+                evidence=evidence,
+            )
+            for field, value in normalized.items()
+        ],
+        rules=[],
+    )
+
+    drafts, issues = _candidate_drafts(
+        SimpleNamespace(mode="NEW_PROPERTY", target_property_id=None),
+        DocumentInventoryOutput(documents=[{"document_key": "d", "document_type": "DECLARATION", "title": "Teilung"}]),
+        output,
+        (),
+        {"d": uuid.uuid4()},
+        None,
+        (),
+    )
+
+    assert len({draft.stable_key for draft in drafts}) == len(drafts)
+    assert {draft.subject_key for draft in drafts} == {subject}
+    assert {draft.candidate_type for draft in drafts} == {candidate_type}
+    if candidate_type == "PROPERTY_FIELD":
+        assert {draft.field_key: draft.proposed_value_json for draft in drafts} == normalized
+    else:
+        draft, = drafts
+        assert draft.field_key is None
+        assert draft.proposed_value_json == normalized
+    assert not issues
+
+
+def test_duplicate_unit_number_validation_includes_bare_unit_subjects() -> None:
+    evidence = [{"document_key": "d", "pdf_page": 1, "quote": "Einheit 1"}]
+    output = ReconciliationOutput(
+        facts=[
+            FactPayload(
+                subject_key=subject,
+                field="number",
+                raw_value="1",
+                normalized_value=TextValue(kind="TEXT", value="1"),
+                confidence=0.9,
+                evidence=evidence,
+            )
+            for subject in ("unit", "unit:other")
+        ],
+        rules=[],
+        mea_set_status="PARTIAL",
+    )
+
+    issues = validate_reconciliation(output, {"d": 1}, declared_mea_denominator=1)
+
+    assert [issue.code for issue in issues] == ["DUPLICATE_UNIT_NUMBER"]
 
 
 def test_additional_management_fact_becomes_a_valid_narrow_rule_candidate() -> None:
@@ -1651,12 +1728,26 @@ async def test_shared_pipeline_serializes_two_org_runs_without_cross_publication
 
 
 @pytest.mark.asyncio
-async def test_pipeline_publishes_real_tenant_graph_without_canonical_writes(seed_data) -> None:
+@pytest.mark.parametrize(
+    "property_subject, unit_subject",
+    [("property:main", "unit:one"), ("property", "unit")],
+    ids=["suffixed-subjects", "bare-subjects"],
+)
+async def test_pipeline_publishes_real_tenant_graph_without_canonical_writes(
+    seed_data, property_subject, unit_subject
+) -> None:
     # Upload metadata starts at the safe placeholder of one page; preflight
     # owns the actual count and must publish both pages atomically.
     pdf = make_text_pdf("Teilungserklärung\nHauptstraße 1\nEinheit 1", "Fortsetzung")
     lease, document_key, store = await _seed_pipeline_import(seed_data, pdf)
     provider = _RecordingProvider(document_key)
+    subjects = {"property:main": property_subject, "unit:one": unit_subject}
+    for output in (provider.core_output, provider.reconciliation_output):
+        output.facts = [
+            FactPayload.model_validate(fact.model_dump() | {"subject_key": subjects[fact.subject_key]})
+            for fact in output.facts
+        ]
+    provider.reconciliation_output.unresolved_issues = ["Synthetic review warning"]
     async with get_tenant_session(lease.organization_id) as session:
         before_properties = await session.scalar(select(func.count()).select_from(Property))
         before_units = await session.scalar(select(func.count()).select_from(Unit))
@@ -1672,16 +1763,24 @@ async def test_pipeline_publishes_real_tenant_graph_without_canonical_writes(see
         evidence = await session.scalar(
             select(func.count()).select_from(DeclarationCandidateEvidence).join(DeclarationCandidate).where(DeclarationCandidate.import_id == lease.import_id)
         )
-        issues = await session.scalar(
-            select(func.count()).select_from(DeclarationCandidateIssue).where(DeclarationCandidateIssue.import_id == lease.import_id)
-        )
+        issues = (await session.scalars(
+            select(DeclarationCandidateIssue).where(DeclarationCandidateIssue.import_id == lease.import_id)
+        )).all()
         after_properties = await session.scalar(select(func.count()).select_from(Property))
         after_units = await session.scalar(select(func.count()).select_from(Unit))
     assert item is not None and item.status == "NEEDS_REVIEW" and item.progress_percent == 100
     assert item.input_tokens == 52 and item.output_tokens == 28 and item.attempt_count == 4
     assert run is not None and run.status == "SUCCEEDED" and run.input_tokens == 52
     assert document is not None and document.page_count == 2
-    assert candidates and evidence and issues is not None
+    assert {(draft.candidate_type, draft.subject_key, draft.field_key) for draft in candidates} == {
+        ("PROPERTY_FIELD", property_subject, "street"),
+        ("PROPERTY_FIELD", property_subject, "mea_denominator"),
+        ("UNIT_CREATE", unit_subject, None),
+    }
+    assert len(candidates) == evidence == 3
+    assert all(draft.review_status == "PENDING" for draft in candidates)
+    assert [(issue.code, issue.candidate_id) for issue in issues] == [("PROVIDER_UNRESOLVED_ISSUE", None)]
+    assert item.applied_property_id is None
     assert (after_properties, after_units) == (before_properties, before_units)
     async with get_tenant_session(seed_data["org_b_id"]) as session:
         hidden = await session.scalar(select(DeclarationImport).where(DeclarationImport.id == lease.import_id))
@@ -1709,6 +1808,103 @@ async def test_pipeline_publishes_real_tenant_graph_without_canonical_writes(see
     assert hidden is None
     assert hidden_document is None
     assert (hidden_documents, hidden_runs, hidden_candidates, hidden_evidence, hidden_issues) == (0, 0, 0, 0, 0)
+
+
+async def test_value_error_diagnostic_ignores_foreign_code_and_exception_contents(caplog) -> None:
+    private_text = "synthetic private document text"
+    private_path = "synthetic/private/input.pdf"
+    foreign_code = compile("raise ValueError(private_text)", private_path, "exec")
+
+    async def reject_load(lease):
+        exec(
+            foreign_code,
+            {"__name__": pipeline_module.__name__, "__file__": private_path, "private_text": private_text},
+        )
+
+    pipeline = SimpleNamespace(_load=reject_load, _fail=AsyncMock())
+    lease = object()
+    await DeclarationPipeline._run_unlocked(pipeline, lease)
+
+    pipeline._fail.assert_awaited_once_with(lease, "DRAFT_PUBLICATION_FAILED", retryable=False, ledger=None)
+    prefix = "event=DECLARATION_PIPELINE_VALUE_ERROR data="
+    records = [record for record in caplog.records if record.getMessage().startswith(prefix)]
+    assert len(records) == 1
+    assert records[0].exc_info is records[0].stack_info is None
+    diagnostic = json.loads(records[0].getMessage().removeprefix(prefix))
+    assert diagnostic["stage"] == "load"
+    assert diagnostic["location"]["module"] == pipeline_module.__name__
+    assert private_text not in caplog.text and private_path not in caplog.text
+
+
+@pytest.mark.parametrize("failure", ["convert", "duplicate_key", "dangling_issue"])
+async def test_value_error_reports_safe_code_location_and_preserves_failure_accounting(
+    seed_data, monkeypatch, caplog, failure
+) -> None:
+    pdf = make_text_pdf("Teilungserklärung\nHauptstraße 1\nEinheit 1", "Fortsetzung")
+    lease, document_key, store = await _seed_pipeline_import(seed_data, pdf)
+    provider = _RecordingProvider(document_key)
+    private_text = "synthetic private document text"
+    if failure == "convert":
+        stage = "convert"
+        # A frame from outside the allowlist must not contribute its filename,
+        # source text, exception message, or locals to the log.
+        def reject_conversion(*args):
+            raise ValueError(private_text)
+
+        monkeypatch.setattr(pipeline_module, "_candidate_drafts", reject_conversion)
+        expected_module = "app.declarations.pipeline"
+    else:
+        stage = "publish"
+        convert = DeclarationPipeline._convert
+
+        async def invalid_graph(self, *args):
+            drafts, issues = await convert(self, *args)
+            if failure == "duplicate_key":
+                return (*drafts, drafts[0]), issues
+            issue = DraftIssue("SYNTHETIC_DANGLING", "BLOCKER", "Synthetic issue", "missing-candidate")
+            return drafts, (*issues, issue)
+
+        monkeypatch.setattr(DeclarationPipeline, "_convert", invalid_graph)
+        expected_module = "app.repositories.declaration_candidate_repo"
+
+    await DeclarationPipeline(provider, store=store).run(lease)
+
+    async with get_tenant_session(lease.organization_id) as session:
+        item = await session.get(DeclarationImport, lease.import_id)
+        run = await session.scalar(
+            select(DeclarationExtractionRun).where(DeclarationExtractionRun.import_id == lease.import_id)
+        )
+        document = await session.get(PropertyDocument, uuid.UUID(document_key))
+        candidates = await DeclarationCandidateRepository(session, lease.organization_id).list_by_import(lease.import_id)
+        issues = await session.scalar(
+            select(func.count())
+            .select_from(DeclarationCandidateIssue)
+            .where(DeclarationCandidateIssue.import_id == lease.import_id)
+        )
+        pass_count = await session.scalar(
+            select(func.count())
+            .select_from(DeclarationImportPass)
+            .where(DeclarationImportPass.declaration_extraction_run_id == run.id)
+        )
+    assert item.status == run.status == "FAILED"
+    assert item.applied_property_id is None
+    assert item.error_code == run.error_code == "DRAFT_PUBLICATION_FAILED"
+    assert item.input_tokens == run.input_tokens == 52
+    assert item.output_tokens == run.output_tokens == 28
+    assert item.estimated_cost_usd == run.estimated_cost_usd == Decimal("0.000004")
+    assert item.attempt_count == pass_count == 4
+    assert document.page_count == 1
+    assert not candidates and issues == 0
+
+    prefix = "event=DECLARATION_PIPELINE_VALUE_ERROR data="
+    records = [record for record in caplog.records if record.getMessage().startswith(prefix)]
+    assert len(records) == 1
+    assert records[0].exc_info is records[0].stack_info is None
+    diagnostic = json.loads(records[0].getMessage().removeprefix(prefix))
+    location = diagnostic["location"]
+    assert diagnostic == {"stage": stage, "location": {"module": expected_module, "line": location["line"]}}
+    assert type(location["line"]) is int and location["line"] > 0
+    assert private_text not in caplog.text
 
 
 @pytest.mark.asyncio

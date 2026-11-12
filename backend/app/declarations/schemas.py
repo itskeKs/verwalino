@@ -97,6 +97,11 @@ FIXED_CORE_FIELDS = MappingProxyType({
 })
 
 
+def core_subject_prefix(subject_key: str) -> str:
+    """Use the whole key for bare subjects and its first segment otherwise."""
+    return subject_key.partition(":")[0]
+
+
 class FactPayload(StrictModel):
     subject_key: str = Field(min_length=1, max_length=180)
     field: str = Field(min_length=1, max_length=100)
@@ -108,7 +113,7 @@ class FactPayload(StrictModel):
 
     @model_validator(mode="after")
     def field_and_value_type_match(self) -> "FactPayload":
-        prefix = self.subject_key.split(":", 1)[0]
+        prefix = core_subject_prefix(self.subject_key)
         if prefix not in FIXED_CORE_FIELDS or self.field not in FIXED_CORE_FIELDS[prefix]:
             raise PydanticCustomError('fact_core_field_unsupported', "Value error, unsupported fixed-core subject or field")
         if self.field == "mea" and not isinstance(self.normalized_value, MeaFraction):

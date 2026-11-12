@@ -14,6 +14,7 @@ from app.declarations.schemas import (
     ReconciliationOutput,
     RulePayload,
     TextValue,
+    core_subject_prefix,
 )
 from app.declarations.evidence import EvidenceTextIndex, validate_quote_on_known_page
 
@@ -243,7 +244,7 @@ def _validate_unit_numbers(output: ReconciliationOutput) -> list[ValidationIssue
         fact.normalized_value.value.strip().casefold()
         for fact in _distinct_facts(output)
         if fact.field == "number"
-        and fact.subject_key.startswith("unit:")
+        and core_subject_prefix(fact.subject_key) == "unit"
         and isinstance(fact.normalized_value, TextValue)
     ]
     if len(unit_numbers) == len(set(unit_numbers)):

@@ -290,42 +290,59 @@ async def test_rule_candidate_requires_individual_review(client_a_clerk, review_
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "candidate_name, subject_key, corrected_value",
+    [
+        ("street", "property:new", "Talstraße 112"),
+        ("street", "property", "Talstraße 112"),
+        ("safe", "unit", "1. Obergeschoss"),
+    ],
+    ids=["suffixed-property", "bare-property", "bare-matched-unit"],
+)
 async def test_correction_is_typed_revisioned_idempotent_and_audited_without_values(
-    client_a_clerk, review_import, review_session: AsyncSession
+    client_a_clerk, review_import, review_session: AsyncSession, candidate_name, subject_key, corrected_value
 ) -> None:
+    candidate = getattr(review_import, candidate_name)
+    candidate.subject_key = subject_key
+    candidate.stable_key = f"fact:{subject_key}:{candidate.field_key}"
+    if candidate_name == "safe":
+        candidate.operation = "UPDATE"
+        candidate.previous_value_json = {"kind": "TEXT", "value": "EG"}
+    await review_session.commit()
     payload = {
         "draft_revision": review_import.item.draft_revision,
         "decision": "CORRECTED",
-        "corrected_value": "Talstraße 112",
+        "corrected_value": corrected_value,
         "comment": " Schreibweise geprüft ",
     }
     response = await client_a_clerk.patch(
-        f"/api/declaration-imports/{review_import.item.id}/candidates/{review_import.street.id}",
+        f"/api/declaration-imports/{review_import.item.id}/candidates/{candidate.id}",
         json=payload,
     )
-    assert response.status_code == 200
+    assert response.status_code == 200, response.json()
     body = response.json()
+    assert body["candidate"]["subject_key"] == subject_key
     assert body["candidate"]["review_status"] == "CORRECTED"
-    assert body["candidate"]["corrected_value_json"] == {"kind": "TEXT", "value": "Talstraße 112"}
+    assert body["candidate"]["corrected_value_json"] == {"kind": "TEXT", "value": corrected_value}
     assert body["draft_revision"] == 4
-    await review_session.refresh(review_import.street)
-    first_reviewed_at = review_import.street.reviewed_at
+    await review_session.refresh(candidate)
+    first_reviewed_at = candidate.reviewed_at
 
     replay = await client_a_clerk.patch(
-        f"/api/declaration-imports/{review_import.item.id}/candidates/{review_import.street.id}",
+        f"/api/declaration-imports/{review_import.item.id}/candidates/{candidate.id}",
         json={**payload, "draft_revision": 4, "comment": "Schreibweise geprüft"},
     )
     assert replay.status_code == 200
     assert replay.json()["draft_revision"] == 4
-    await review_session.refresh(review_import.street)
-    assert review_import.street.reviewed_at == first_reviewed_at
+    await review_session.refresh(candidate)
+    assert candidate.reviewed_at == first_reviewed_at
     events = (await review_session.execute(
         select(AuditEvent).where(AuditEvent.entity_id == review_import.item.id)
     )).scalars().all()
     assert len(events) == 1
     assert events[0].payload_diff == {
         "import_id": str(review_import.item.id),
-        "candidate_id": str(review_import.street.id),
+        "candidate_id": str(candidate.id),
         "decision": "CORRECTED",
         "revision": 4,
     }
@@ -665,11 +682,17 @@ async def test_retry_rejects_non_allowlisted_and_run_budget_and_cancel_rejects_a
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "property_subject, unit_subject",
+    [("property:new", "unit:mea-1"), ("property", "unit")],
+    ids=["suffixed-subjects", "bare-subjects"],
+)
 async def test_effective_graph_revalidates_global_mea_total_and_duplicate_unit_numbers(
-    client_a_clerk, review_import, review_session: AsyncSession, seed_data: dict
+    client_a_clerk, review_import, review_session: AsyncSession, seed_data: dict,
+    property_subject, unit_subject,
 ) -> None:
     first = _unit_create_candidate(
-        review_import.item, "unit-create:mea-1", "unit:mea-1", "1", 600
+        review_import.item, f"unit-create:{unit_subject}", unit_subject, "1", 600
     )
     second = _unit_create_candidate(
         review_import.item, "unit-create:mea-2", "unit:mea-2", "1", 500
@@ -681,9 +704,9 @@ async def test_effective_graph_revalidates_global_mea_total_and_duplicate_unit_n
     denominator = DeclarationCandidate(
         organization_id=seed_data["org_a_id"],
         import_id=review_import.item.id,
-        stable_key="fact:property:new:mea_denominator",
+        stable_key=f"fact:{property_subject}:mea_denominator",
         candidate_type="PROPERTY_FIELD",
-        subject_key="property:new",
+        subject_key=property_subject,
         field_key="mea_denominator",
         operation="CREATE",
         proposed_value_json={"kind": "INTEGER", "value": 1_000},

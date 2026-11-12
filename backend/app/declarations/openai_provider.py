@@ -80,8 +80,8 @@ _VERIFIED_HIGH_IMAGE_INPUT_TOKENS = 3_001
 _PNG_DATA_URL = re.compile(r"^data:image/png;base64,([A-Za-z0-9+/]*={0,2})$")
 _PNG_SIGNATURE = b"\x89PNG\r\n\x1a\n"
 _STATIC_HARNESS = (
-    "declaration-responses-v3|structured-output-kind-anyof|store=false|"
-    "no-previous-response-id|fixed-pass-manager"
+    "declaration-responses-v7|structured-output-kind-anyof|store=false|"
+    "no-previous-response-id|fixed-pass-manager|core-subject-prefix"
 )
 _SAFE_RESPONSE_IDENTIFIER = re.compile(r"^[A-Za-z0-9._:-]{1,128}$")
 _OPENAI_API_BASE_URL = "https://api.openai.com/v1"

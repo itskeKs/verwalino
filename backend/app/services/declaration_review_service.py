@@ -30,6 +30,7 @@ from app.declarations.schemas import (
     FactPayload,
     NormalizedValue,
     RulePayload,
+    core_subject_prefix,
 )
 from app.declarations.validation import validate_allocation_formulas, validate_mea_totals
 from app.models.declaration_candidate import (
@@ -404,7 +405,7 @@ def _expected_kind(field_key: str | None) -> str | None:
 
 def _fact_subject(candidate: DeclarationCandidate) -> str:
     """Reject schema-incompatible field candidates rather than inventing a type."""
-    if candidate.subject_key.startswith(("property:", "unit:")):
+    if core_subject_prefix(candidate.subject_key) in {"property", "unit"}:
         return candidate.subject_key
     raise ValueError("field correction requires a fixed-core subject")
 
@@ -549,7 +550,7 @@ class _EffectiveGraph:
         values = [
             _integer_value(fact.value)
             for fact in self.facts
-            if fact.subject_key.startswith("property:") and fact.field == "mea_denominator"
+            if core_subject_prefix(fact.subject_key) == "property" and fact.field == "mea_denominator"
         ]
         if not values or any(value is None or value <= 0 for value in values):
             return None
@@ -593,7 +594,7 @@ class _EffectiveGraph:
         values: list[str] = []
         seen: set[tuple[str, str, str]] = set()
         for fact in self.facts:
-            if not fact.subject_key.startswith("unit:") or fact.field != "number":
+            if core_subject_prefix(fact.subject_key) != "unit" or fact.field != "number":
                 continue
             parsed = _text_value(fact.value)
             if parsed is None:

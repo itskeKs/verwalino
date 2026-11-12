@@ -46,7 +46,7 @@ from app.declarations.provider import (
     ProviderReservationEstimate,
     ProviderUsage,
 )
-from app.declarations.observability import PassLedgerEntry, ProviderPassMetadata
+from app.declarations.observability import PassLedgerEntry, ProviderPassMetadata, log_pipeline_value_error
 from app.declarations.schemas import (
     AdditionalFactPayload,
     CoreExtractionOutput,
@@ -56,6 +56,7 @@ from app.declarations.schemas import (
     RuleExtractionOutput,
     RulePayload,
     TargetedRecheckOutput,
+    core_subject_prefix,
 )
 from app.declarations.validation import (
     ValidationIssue,
@@ -267,6 +268,7 @@ class DeclarationPipeline:
         self._active_lease = lease
         self._active_run_id: uuid.UUID | None = None
         ledger: _Ledger | None = None
+        stage = "load"
         try:
             imported, documents = await self._load(lease)
             ledger = _Ledger(
@@ -285,6 +287,7 @@ class DeclarationPipeline:
             ledger.initial_output_tokens = ledger.output_tokens
             ledger.initial_cost_usd = ledger.cost_usd
             ledger.initial_attempts = ledger.attempts
+            stage = "preflight"
             await self._transition(
                 lease,
                 {"QUEUED", "PREFLIGHT", "RETRY_WAIT"},
@@ -309,6 +312,7 @@ class DeclarationPipeline:
                 preflight_budget,
             ) = await self._preflight_documents(lease, documents)
             evidence_index = EvidenceTextIndex.from_pages(page_inputs)
+            stage = "extract"
             await self._transition(lease, {"PREFLIGHT"}, "EXTRACTING", {"current_stage": "extracting"})
             batches = self._page_batches(page_inputs)
             if not batches:
@@ -329,9 +333,11 @@ class DeclarationPipeline:
             _validate_inventory_documents(inventory, document_ids)
             core = _merge_core(cores)
             rules = _merge_rules(rulesets)
+            stage = "reconcile"
             await self._transition(lease, {"EXTRACTING"}, "RECONCILING", {"current_stage": "reconciling"})
             reconciliation = await self._reconcile_bounded(inventory, core, rules, ledger)
 
+            stage = "validate"
             declared_denominator = _declared_denominator(reconciliation)
             issues = [
                 *preflight_issues,
@@ -347,6 +353,7 @@ class DeclarationPipeline:
             ]
             if any(issue.code == "UNKNOWN_EVIDENCE_DOCUMENT" for issue in issues):
                 raise PipelineFailure("UNKNOWN_EVIDENCE_DOCUMENT")
+            stage = "recheck"
             recheck, recheck_route_reasons = self._selected_recheck(
                 reconciliation, inventory, issues, page_inputs
             )
@@ -402,11 +409,13 @@ class DeclarationPipeline:
                                 )
                             )
 
+            stage = "convert"
             drafts, draft_issues = await self._convert(
                 imported, inventory, reconciliation, issues, document_ids, lease
             )
             if len(drafts) > self._settings.declaration_max_candidates:
                 raise PipelineFailure("CANDIDATE_LIMIT_EXCEEDED")
+            stage = "publish"
             await self._publish(lease, page_counts, drafts, draft_issues, ledger)
         except DeclarationPrincipalDenied:
             raise
@@ -419,7 +428,8 @@ class DeclarationPipeline:
             await self._fail(lease, exc.code, retryable=exc.retryable, ledger=ledger)
         except PipelineFailure as exc:
             await self._fail(lease, exc.code, retryable=exc.retryable, ledger=ledger)
-        except ValueError:
+        except ValueError as exc:
+            log_pipeline_value_error(stage=stage, traceback=exc.__traceback__)
             await self._fail(lease, "DRAFT_PUBLICATION_FAILED", retryable=False, ledger=ledger)
         except Exception as exc:
             # Database contention interrupts this worker just like a lost process;
@@ -1670,7 +1680,7 @@ def _declared_denominator(output: ReconciliationOutput) -> int | None:
     values = {
         fact.normalized_value.value
         for fact in output.facts
-        if fact.subject_key.startswith("property:") and fact.field == "mea_denominator" and hasattr(fact.normalized_value, "value")
+        if core_subject_prefix(fact.subject_key) == "property" and fact.field == "mea_denominator" and hasattr(fact.normalized_value, "value")
     }
     return next(iter(values)) if len(values) == 1 and isinstance(next(iter(values)), int) and not isinstance(next(iter(values)), bool) else None
 
@@ -1692,21 +1702,20 @@ def _candidate_drafts(imported, inventory, output, validation_issues, document_i
     unit_groups: dict[str, dict[str, list[FactPayload]]] = defaultdict(dict)
     special_subjects: dict[str, dict[str, list[FactPayload]]] = defaultdict(dict)
     for (subject, field), facts in grouped.items():
-        if subject.startswith("unit:"):
+        prefix = core_subject_prefix(subject)
+        if prefix == "unit":
             unit_groups[subject][field] = facts
-            continue
-        if subject.startswith(("legal_reference:", "assignment:")):
+        elif prefix in {"legal_reference", "assignment"}:
             special_subjects[subject][field] = facts
-            continue
-        draft = (
-            _property_fact_candidate(subject, field, facts, property_row, subject_issues[subject], document_ids)
-            if subject.startswith("property:") and property_row is not None
-            else _fact_candidate(subject, field, facts, subject_issues[subject], document_ids)
-        )
-        drafts.append(draft)
+        elif prefix == "property":
+            drafts.append(
+                _property_fact_candidate(subject, field, facts, property_row, subject_issues[subject], document_ids)
+            )
+        else:
+            raise PipelineFailure("PROVIDER_RESULT_INVALID")
     for subject, fields in sorted(special_subjects.items()):
         facts = [fact for values in fields.values() for fact in values]
-        candidate_type = "LEGAL_REFERENCE" if subject.startswith("legal_reference:") else "ASSIGNMENT"
+        candidate_type = "LEGAL_REFERENCE" if core_subject_prefix(subject) == "legal_reference" else "ASSIGNMENT"
         stable = f"legal-reference:{subject}" if candidate_type == "LEGAL_REFERENCE" else f"assignment:{subject}"
         if candidate_type == "ASSIGNMENT" and "unit_subject_key" in fields:
             reference_values = {
@@ -1821,7 +1830,7 @@ def _candidate_drafts(imported, inventory, output, validation_issues, document_i
         if target is not None and target != property_row.mea_denominator:
             denominator_facts = [
                 fact for fact in output.facts
-                if fact.subject_key.startswith("property:") and fact.field == "mea_denominator"
+                if core_subject_prefix(fact.subject_key) == "property" and fact.field == "mea_denominator"
             ]
             drafts.append(
                 _draft(
@@ -1867,7 +1876,7 @@ def _candidate_drafts(imported, inventory, output, validation_issues, document_i
         and _declared_denominator(output) is not None
         and property_row.mea_scale_status != "CONFIRMED"
     ):
-        property_subject = next((subject for subject in first_by_subject if subject.startswith("property:")), None)
+        property_subject = next((subject for subject in first_by_subject if core_subject_prefix(subject) == "property"), None)
         if property_subject is not None:
             draft_issues.append(
                 DraftIssue(
@@ -1914,25 +1923,15 @@ def _candidate_drafts(imported, inventory, output, validation_issues, document_i
     )
 
 
-def _fact_candidate(subject, field, facts, issues, document_ids):
-    candidate_type = "PROPERTY_FIELD" if subject.startswith("property:") else "LEGAL_REFERENCE" if subject.startswith("legal_reference:") else "ASSIGNMENT"
-    stable = f"fact:{subject}:{field}"
-    if candidate_type == "LEGAL_REFERENCE": stable = f"legal-reference:{subject}"
-    if candidate_type == "ASSIGNMENT": stable = f"assignment:{subject}"
-    values = {_normalized_json(fact): fact for fact in facts}
-    has_conflict = len(values) > 1
-    proposed: dict[str, Any] = {"alternatives": [json.loads(key) for key in sorted(values)]} if has_conflict else json.loads(next(iter(values)))
-    evidence = _evidence([fact for fact in facts], document_ids)
-    confidence = min(Decimal(str(fact.confidence)) for fact in facts)
-    return _draft(stable, candidate_type, subject, field if candidate_type == "PROPERTY_FIELD" else None, "CREATE", None, proposed, confidence, evidence, issues, has_conflict)
-
-
 def _property_fact_candidate(subject, field, facts, property_row, issues, document_ids):
     values = {_normalized_json(fact): fact for fact in facts}
     has_conflict = len(values) > 1
     proposed = {"alternatives": [json.loads(key) for key in sorted(values)]} if has_conflict else json.loads(next(iter(values)))
-    previous = _property_value(property_row, field)
-    operation = "UPDATE" if has_conflict or not _values_semantically_equal(proposed, previous) else "KEEP"
+    previous = None
+    operation = "CREATE"
+    if property_row is not None:
+        previous = _property_value(property_row, field)
+        operation = "UPDATE" if has_conflict or not _values_semantically_equal(proposed, previous) else "KEEP"
     evidence = _evidence(facts, document_ids)
     return _draft(f"fact:{subject}:{field}", "PROPERTY_FIELD", subject, field, operation, previous, proposed, min(Decimal(str(fact.confidence)) for fact in facts), evidence, issues, has_conflict)
 
