@@ -6,6 +6,9 @@ Blocks what an agent must never do there, whatever the permission mode:
 - use Docker outside the test DB or narrowly reviewed portable operations;
 - edit a migration that is already committed;
 - edit this guard or the user hooks file.
+Exception (issue #193): removing the session's own disposable acceptance stack is
+allowed only as the label-filtered removal loops documented in
+docs/operations/acceptance-cleanup.md, matched in full.
 Any other workspace passes untouched. Exit 0 with a deny JSON blocks the call.
 """
 import json
@@ -30,6 +33,16 @@ DOCKER_DESTRUCTIVE = re.compile(
 PORTABLE_FILES = {
     "infra/docker-compose.yml": "3ed4ad60cce94fc1cedc181217bac3b659d3b5892d6af64e1ed54cf94d0d7fc1",
     "infra/Caddyfile": "6dd9a73b44d736d04f9fbaf17c292e515f21ced9d1bb753a92981ca0dbf61d49",
+}
+# Removal of a session's own disposable acceptance stack (issue #193): only the
+# label-filtered removal loops of docs/operations/acceptance-cleanup.md, matched
+# in full; anything else stays denied.
+ACCEPTANCE_FILTER = "label=com.docker.compose.project=verwalino"
+ACCEPTANCE_LOOPS = {
+    "container": (["--all", "--quiet"], ["--force", "--volumes"]),
+    "volume": (["--quiet"], []),
+    "network": (["--quiet"], []),
+    "image": (["--quiet", "--no-trunc"], []),
 }
 
 
@@ -326,6 +339,84 @@ def caddy_allowed(argv, cwd):
         "caddy:2.10.2-alpine", "caddy", "validate", "--config", "/etc/caddy/Caddyfile", "--adapter", "caddyfile"])
 
 
+def parse_acceptance_loop(tokens, pos):
+    """Parse one documented cleanup loop at tokens[pos]; return the position after it.
+
+    docker <type> ls <listflags> --filter <filter> ['|' 'sort' '-u'] '|'
+    while IFS= read -r resource ';' do docker <type> rm <rmflags> "$resource"
+    ['||' 'exit' '1'] ';' done
+    """
+    if not (len(tokens) > pos + 2 and tokens[pos] == "docker"
+            and tokens[pos + 1] in ACCEPTANCE_LOOPS and tokens[pos + 2] == "ls"):
+        return None
+    kind = tokens[pos + 1]
+    listflags, rmflags = ACCEPTANCE_LOOPS[kind]
+    pos += 3
+    for flag in listflags:
+        if pos >= len(tokens) or tokens[pos] != flag:
+            return None
+        pos += 1
+    if pos < len(tokens) and tokens[pos] == "--filter":
+        if pos + 1 >= len(tokens) or tokens[pos + 1] != ACCEPTANCE_FILTER:
+            return None
+        pos += 2
+    elif pos < len(tokens) and tokens[pos].startswith("--filter="):
+        if tokens[pos] != "--filter=" + ACCEPTANCE_FILTER:
+            return None
+        pos += 1
+    else:
+        return None
+    if kind == "image" and tokens[pos:pos + 3] == ["|", "sort", "-u"]:
+        pos += 3
+    if tokens[pos:pos + 8] != ["|", "while", "IFS=", "read", "-r", "resource", ";", "do"]:
+        return None
+    pos += 8
+    body = ["docker", kind, "rm", *rmflags, "$resource"]
+    if tokens[pos:pos + len(body)] != body:
+        return None
+    pos += len(body)
+    if tokens[pos:pos + 3] == ["||", "exit", "1"]:
+        pos += 3
+    if pos < len(tokens) and tokens[pos] == ";":
+        pos += 1
+    if pos >= len(tokens) or tokens[pos] != "done":
+        return None
+    return pos + 1
+
+
+def acceptance_rm_allowed(cmd):
+    """Allow only the documented label-filtered acceptance cleanup loops, in full.
+
+    The whole command must be one or more of the removal loops of
+    docs/operations/acceptance-cleanup.md (each a listing filtered by exactly
+    label=com.docker.compose.project=verwalino piped into the while loop that
+    removes "$resource"), joined only by newlines; every other token — extra
+    operands, other filters, substitutions, redirections, comments, docker
+    compose down, prunes — stays denied.
+    """
+    if not docker_environment_safe():
+        return False
+    try:
+        lexer = shlex.shlex(cmd, posix=True, punctuation_chars="|&;<>")
+        lexer.whitespace_split = True
+        lexer.commenters = ""
+        tokens = list(lexer)
+    except ValueError:
+        return False
+    pos = parse_acceptance_loop(tokens, 0)
+    if pos is None:
+        return False
+    while pos < len(tokens):
+        if tokens[pos] == ";" and pos + 1 < len(tokens):
+            pos += 1
+        if tokens[pos:pos + 1] != ["docker"]:
+            return False
+        pos = parse_acceptance_loop(tokens, pos)
+        if pos is None:
+            return False
+    return True
+
+
 def check_command(cmd, cwd):
     c = " ".join(cmd.split())
     argv = simple_argv(cmd)
@@ -349,7 +440,8 @@ def check_command(cmd, cwd):
     elif re.search(r"\bdocker\s+(?:start|create)\b|\bdocker\s+container\s+(?:start|create|run)\b", c):
         deny("arbitrary container starts are not allowed")
     elif DOCKER_DESTRUCTIVE.search(c):
-        deny("destructive docker commands are not allowed; only ps, logs, inspect and exec")
+        if not acceptance_rm_allowed(cmd):
+            deny("destructive docker commands are not allowed; only ps, logs, inspect and exec")
     if "migrations/versions" in c and re.search(
             r"\bsed\s+-i|\bperl\s+-[a-z]*i|>|\btee\b|\bmv\b|\brm\b|\bcp\b|"
             r"\bgit\s+(checkout|restore|reset|revert)\b|\btruncate\b|\bpython3?\s+-c\b", c):
