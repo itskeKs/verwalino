@@ -1,7 +1,10 @@
 """Documented shared plans; all quota decisions use the deployment policy.
 
 The hosted free allowance is 2 GiB retained storage, 25 MiB per upload,
-20 properties, 200 units and USD 0 per calendar month (UTC) for model calls.
+20 properties and 200 units. Model calls are capped by the organization's own
+optional monthly limit (ai_settings_service.require_organization_ai_budget),
+not by this plan; ai_budget_usd (still 0) is only reported by the quota summary
+and no model call is admitted or refused by it.
 Change FREE_PLAN in code to change the hosted offer; per-organization overrides
 and paid plans are deliberately deferred. None means unlimited, including AI.
 
