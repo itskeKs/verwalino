@@ -82,7 +82,9 @@ on exceptional Article 49 derogations. `OPEN Q06` (S01, S09).
 
 Free hosting is not automatically a Schenkung or Leihe. Those contract types and their
 liability privileges require classification of the actual promises and economic arrangement;
-ongoing hosting, support and custody duties need individual analysis. B2B terms still face
+ongoing hosting, support and custody duties need individual analysis. Even the gift/loan rules
+include liability for fraudulently concealed defects (BGB §§523, 524, 600); their return rules
+(e.g. §604) are not a substitute for an agreed digital-data exit procedure. B2B terms still face
 §307 control; §309 is not directly applicable under §310(1), but its values may inform that
 control. Do not use a zero-fee liability cap or a blanket exclusion of data loss. The draft
 keeps statutory liability pending counsel's classification and insurance review (`OPEN Q10`,
@@ -119,6 +121,7 @@ section changed that day. Authority guidance informs practice; courts may interp
 | S10 | DSK [Standard-Datenschutzmodell v3.1](https://www.datenschutzkonferenz-online.de/media/ah/SDM-Methode-V31.pdf), adopted 14 May 2024 | TOM reference objectives: minimization, availability, integrity, confidentiality, transparency, unlinkability, intervenability; not proof of installed controls |
 | S11 | Saarland [breach reporting](https://www.datenschutz.saarland.de/online-dienste/meldung-datenpanne), no publication date displayed | Current authority channel; Article 33 risk exception and Article 34 threshold still govern |
 | S12 | CJEU [C-298/07 in official case-law digest](https://curia.europa.eu/site/upload/docs/application/pdf/2019-06/fiche_thematique_-commerce_electronique_et_obligations_contractuelles_-_en.pdf), judgment 16 October 2008; digest July 2024 | Additional rapid/direct/effective contact information beyond email; telephone not invariably mandatory |
+| S13 | [MStV §18, authority text](https://www.die-medienanstalten.de/fileadmin/user_upload/Rechtsgrundlagen/Gesetze_Staatsvertraege/Medienstaatsvertrag_MStV.pdf), seventh amendment effective 1 December 2025 per the authority page; [VSBG §36](https://www.gesetze-im-internet.de/vsbg/__36.html), current section checked, no separate section revision date displayed | Editorial designation and consumer-dispute statements depend on scope; neither was established here |
 
 Recheck laws, authority guidance, provider terms and the deployed data flows before final sign-off.
 Counsel must decide unsettled contract classification and proportionality questions; an authority's

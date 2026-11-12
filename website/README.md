@@ -50,7 +50,7 @@ registration is not open.
 - `src/styles/`: the approved Kontor Signal tokens, square geometry and responsive rules.
 - `src/content/operator.ts`: supplied provider details for the final legal notice.
 - `src/content/repository.ts`: shared public GitHub repository URL.
-- `src/content/drafts.ts`: shared legal-document outlines and operator checklist keys.
+- `src/content/drafts.ts`: shared legal-document sections and operator checklist keys.
 - `public/`: favicon, touch icon and committed share images.
 
 Every page links to its corresponding page in the other language, with `html lang`, `de` / `en`
@@ -114,23 +114,40 @@ images. Review and commit the resulting `public/og/` PNGs.
 
 ## Legal publication boundary
 
-The legal notice contains the final fogu UG (haftungsbeschränkt) provider data supplied in #26:
+The legal notice contains the fogu UG (haftungsbeschränkt) provider data supplied in #26:
 address, managing director, register court/number, VAT ID, email and supervisory authority.
-The earlier telephone number was not supplied in that decision and is omitted.
+The earlier telephone number was not supplied in that decision and is omitted. The contact is
+`hello@fogu.app`, as supplied in #26; the previously used service-specific aliases were not
+confirmed there. The notice flags the outstanding additional direct communication channel
+and any applicable business identification number. No journalistic/editorial activity or
+consumer-dispute participation duty was established, so the earlier categorical statements
+about those subjects are omitted pending the customer-scope review.
 Its English translation states that
 the German version is authoritative. Privacy, terms of use and the Article 28 GDPR data processing
-agreement are **unreviewed drafts**. Each begins with a visible warning and uses only bracketed
-placeholders under its section headings. The boxed checklist at the end of **each draft page**
-is driven by `src/content/drafts.ts` and translated in the dictionaries.
+agreement remain **unapproved drafts**, dated 12 November 2026. Each begins with a visible warning;
+German is authoritative after approval and English is a translation. Completed draft clauses
+distinguish current source behavior from proposed commitments and `[OFFEN Qxx]` / `[OPEN Qxx]`
+owner decisions. The boxed checklist at the end of each draft page is driven by
+`src/content/drafts.ts` and translated in the dictionaries. Neither a build nor this drafting
+constitutes legal sign-off. Existing noindex/sitemap exclusions remain in place.
 
-Before publication of the hosted service, the operator must supply the hosting provider and
-location, all sub-processors (including email and backup), retention and erasure periods,
-technical and organisational measures, a decision about a data-protection officer, and legal
-review, including the configured contact for data-protection requests. The draft pages use
-`datenschutz@verwalino.de`; the public contact in the legal notice is `hallo@verwalino.de`.
-No provider, retention period or availability promise is invented here. The current browser setup
-exists in the checkout; its public release acceptance is still pending, as shown in the self-hosting
-release list.
+The AV-Vertrag has four annexes: processing scope, evidence-qualified TOMs, the unfinished
+sub-processor register/change procedure, and return/deletion. Downloadable copies are
+[German](public/legal/av-vertrag.de.md) and [English](public/legal/av-vertrag.en.md).
+Keep their clauses identical to the rendered DPA sections in the dictionaries, substituting
+the shared operator values; update both formats together. Customer execution details and
+operational security evidence belong in private copies, never this public repository.
+
+Before opening hosted registration the operator must confirm exact hosting/SMTP/backup/tracking
+entities and locations, approve optional AI recipients and transfers, verify deployed safeguards,
+set enforceable retention/exit periods and resolve the final-erasure and complete-return gaps.
+The current signup confirms email but does not conclude a versioned AV-Vertrag. These are
+documented follow-ups, not implemented by the website. See the
+[legal source and data-flow inventory](../docs/operations/hosted-legal.md),
+[retention/exit procedure](../docs/operations/hosted-retention.md),
+[controller record](../docs/operations/hosted-processing-controller.md),
+[processor record](../docs/operations/hosted-processing-processor.md), and
+[breach procedure](../docs/operations/hosted-breach-response.md).
 
 The repository `itskeKs/verwalino` is public on GitHub under AGPL-3.0. The landing page,
 self-hosting page and footer link to it using the shared URL in `src/content/repository.ts`.

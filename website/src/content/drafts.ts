@@ -8,18 +8,25 @@ export const draftSections = {
     "draft.privacy.properties",
     "draft.privacy.storage",
     "draft.privacy.email",
+    "draft.privacy.ai",
+    "draft.privacy.security",
+    "draft.privacy.retention",
     "draft.privacy.rights",
-    "draft.privacy.authority"
+    "draft.privacy.authority",
+    "draft.privacy.sources"
   ],
   "terms": [
     "draft.terms.scope",
+    "draft.terms.contract",
     "draft.terms.free",
     "draft.terms.availability",
     "draft.terms.duties",
     "draft.terms.data",
     "draft.terms.termination",
+    "draft.terms.retention",
     "draft.terms.liability",
-    "draft.terms.law"
+    "draft.terms.law",
+    "draft.terms.sources"
   ],
   "dpa": [
     "draft.dpa.subject",
@@ -27,10 +34,20 @@ export const draftSections = {
     "draft.dpa.data",
     "draft.dpa.subjects",
     "draft.dpa.duties",
-    "draft.dpa.tom",
-    "draft.dpa.processors",
+    "draft.dpa.assistance",
+    "draft.dpa.breach",
     "draft.dpa.controller",
-    "draft.dpa.deletion"
+    "draft.dpa.tom",
+    "draft.dpa.tom_access",
+    "draft.dpa.tom_integrity",
+    "draft.dpa.tom_availability",
+    "draft.dpa.tom_organization",
+    "draft.dpa.processors",
+    "draft.dpa.changes",
+    "draft.dpa.transfers",
+    "draft.dpa.deletion",
+    "draft.dpa.completion",
+    "draft.dpa.sources"
   ]
 } as const;
 
