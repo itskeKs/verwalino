@@ -11,9 +11,27 @@ import { ApiError } from "../api/client";
 import { centsFromDecimal, formatDate, formatMoney } from "../lib/format";
 import { PreviousPlan } from "../components/PreviousPlan";
 import { AccountingScopeSelector } from "../components/AccountingScopeSelector";
+import { useAuth } from "../auth/useAuth";
 
 const STATUS_LABELS: Record<string, string> = { draft: "Entwurf", finalized: "Finalisiert" };
 const STATUS_CSS: Record<string, string> = { draft: "badge--draft", finalized: "badge--confirmed" };
+const DRAFT_KEY = "economic-plan-form-draft";
+
+type PlanFormDraft = { identity: string; form: EconomicPlanCreate; showForm: boolean };
+
+function loadDraft(identity: string): PlanFormDraft | null {
+  try {
+    const raw = sessionStorage.getItem(DRAFT_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as { identity?: unknown; form?: EconomicPlanCreate; showForm?: unknown };
+    if (parsed?.identity !== identity) return null;
+    const form = parsed.form;
+    if (!form || typeof form.plan_year !== "number") return null;
+    return { identity, form: { ...emptyForm(), ...form }, showForm: parsed.showForm === true };
+  } catch {
+    return null;
+  }
+}
 
 function emptyForm(): EconomicPlanCreate {
   const y = new Date().getFullYear();
@@ -36,6 +54,25 @@ export function EconomicPlansPage() {
   const [showForm, setShowForm] = useState(false);
   const [form, setForm] = useState<EconomicPlanCreate>(emptyForm());
   const [saving, setSaving] = useState(false);
+  const { session } = useAuth();
+  const identity = session ? `${session.organization_id}:${session.user_id}` : null;
+  const [draftApplied, setDraftApplied] = useState(false);
+
+  useEffect(() => {
+    if (draftApplied || !identity) return;
+    setDraftApplied(true);
+    const draft = loadDraft(identity);
+    if (draft) {
+      setForm(draft.form);
+      setShowForm(draft.showForm);
+    }
+  }, [identity, draftApplied]);
+
+  useEffect(() => {
+    if (!identity) return;
+    if (showForm) sessionStorage.setItem(DRAFT_KEY, JSON.stringify({ identity, form, showForm }));
+    else sessionStorage.removeItem(DRAFT_KEY);
+  }, [form, showForm, identity]);
 
   const wegProps = properties.filter(
     (p) => p.management_type === "WEG" || p.management_type === "MISCH",
@@ -95,7 +132,7 @@ export function EconomicPlansPage() {
           <form onSubmit={handleSubmit} className="form-grid [&>*]:min-w-0 [&_select]:w-full">
             <label>
               WEG-Objekt *
-              <select aria-label="WEG-Objekt *" required value={form.property_id} onChange={(e) => setForm({ ...form, accounting_scope_id: null, property_id: e.target.value, period_start: "", period_end: "" })}>
+              <select aria-label="WEG-Objekt *" required value={form.property_id} onChange={(e) => setForm({ ...form, accounting_scope_id: null, property_id: e.target.value })}>
                 <option value="">-- Objekt wählen --</option>
                 {wegProps.map((p) => (
                   <option key={p.id} value={p.id}>{p.name} ({p.management_type})</option>
@@ -105,9 +142,10 @@ export function EconomicPlansPage() {
             <label>
               Wirtschaftsjahr *
               <input type="number" required value={form.plan_year}
-                onChange={(e) => setForm({ ...form, plan_year: parseInt(e.target.value, 10) || form.plan_year, period_start: "", period_end: "" })} />
+                onChange={(e) => setForm({ ...form, plan_year: parseInt(e.target.value, 10) || form.plan_year })} />
             </label>
             <SettlementPeriodSelect key={`${form.property_id}-${form.plan_year}`} propertyId={form.property_id} year={form.plan_year}
+              keepFittingDates
               start={form.period_start} end={form.period_end}
               onSelect={period => setForm(current => ({ ...current, plan_year: period.year, period_start: period.period_start, period_end: period.period_end }))} />
             <label>
