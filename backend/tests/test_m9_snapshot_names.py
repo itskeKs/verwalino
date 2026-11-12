@@ -34,6 +34,7 @@ import types
 import uuid
 from datetime import date
 from decimal import Decimal
+import json
 
 from tests.financial_coverage_helpers import attest_fixture
 import pytest
@@ -396,11 +397,21 @@ class TestBkSnapshotNames:
 # ===========================================================================
 @pytest_asyncio.fixture(scope="function")
 def sn_dunning_seed(seed_data):
-    """Eigene Mahn-Adressat-Person (getrennt von der BK-Person)."""
+    """Eigene Mahn-Adressat-Person (getrennt von der BK-Person) plus Objekt,
+    Einheit, Mietvertrag und laufendes Konto mit IBAN -- das Ausstellen einer
+    Mieter-Mahnung bestimmt seit #331 ein Zielkonto und verlangt ein
+    zulässiges."""
     import psycopg2
 
     org = str(seed_data["org_a_id"])
-    ids = {"person": str(uuid.uuid4()), "tenant_profile": str(uuid.uuid4())}
+    ids = {
+        "person": str(uuid.uuid4()),
+        "tenant_profile": str(uuid.uuid4()),
+        "property": str(uuid.uuid4()),
+        "unit": str(uuid.uuid4()),
+        "lease": str(uuid.uuid4()),
+        "bank_account": str(uuid.uuid4()),
+    }
     conn = psycopg2.connect(SYNC_URL)
     conn.autocommit = False
     try:
@@ -414,6 +425,27 @@ def sn_dunning_seed(seed_data):
             "INSERT INTO tenant_profile (id, organization_id, person_id) VALUES (%s,%s,%s)",
             (ids["tenant_profile"], org, ids["person"]),
         )
+        cur.execute(
+            "INSERT INTO property (id, organization_id, name, management_type) VALUES (%s,%s,%s,%s)",
+            (ids["property"], org, "Miethaus M9", "MIET"),
+        )
+        cur.execute(
+            "INSERT INTO unit (id, organization_id, property_id, number, usage_type, area, heated_area, mea) "
+            "VALUES (%s,%s,%s,%s,%s,%s,%s,%s)",
+            (ids["unit"], org, ids["property"], "1", "WOHNUNG", 60, 60, 300),
+        )
+        cur.execute(
+            "INSERT INTO lease_agreement (id, organization_id, unit_id, tenant_profile_id, "
+            "valid_from, base_rent, advance_payment) VALUES (%s,%s,%s,%s,%s,%s,%s)",
+            (ids["lease"], org, ids["unit"], ids["tenant_profile"],
+             date(2025, 1, 1), Decimal("400.00"), Decimal("80.00")),
+        )
+        cur.execute(
+            "INSERT INTO bank_account (id, organization_id, property_id, account_type, label, iban) "
+            "VALUES (%s,%s,%s,%s,%s,%s)",
+            (ids["bank_account"], org, ids["property"], "LAUFEND", "Konto M9",
+             "DE02120300000000202051"),
+        )
         conn.commit()
     except Exception:
         conn.rollback()
@@ -426,10 +458,12 @@ def sn_dunning_seed(seed_data):
 def _insert_draft_dunning(seed, *, frozen: bool) -> str:
     """Lege eine Entwurfs-Mahnung direkt an. frozen=False lässt
     frozen_display_names NULL (für den Altbestand-Fall bei bereits ausgestellten
-    Mahnungen)."""
+    Mahnungen). Der Mietvertrag steckt im Snapshot, damit das Ausstellen das
+    Objekt auflösen und das Zielkonto bestimmen kann (#331)."""
     import psycopg2
 
     notice_id = str(uuid.uuid4())
+    items = json.dumps([{"_dunning_lease_id": seed["lease"]}])
     conn = psycopg2.connect(SYNC_URL)
     conn.autocommit = True
     try:
@@ -440,7 +474,7 @@ def _insert_draft_dunning(seed, *, frozen: bool) -> str:
             "included_items, status) VALUES (%s,%s,%s,1,%s,%s,%s,%s,%s,%s,'draft')",
             (notice_id, str(seed["org_a_id"]), seed["tenant_profile"],
              date(2025, 3, 1), date(2025, 3, 15),
-             Decimal("120.00"), Decimal("0.00"), Decimal("120.00"), "[]"),
+             Decimal("120.00"), Decimal("0.00"), Decimal("120.00"), items),
         )
     finally:
         conn.close()

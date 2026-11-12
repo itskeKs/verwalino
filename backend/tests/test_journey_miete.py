@@ -82,11 +82,13 @@ def t12_seed(seed_data):
              date(2025, 1, 1), date(2026, 1, 1), Decimal("500.00"), Decimal("100.00")),
         )
 
-        # Bank account
+        # Bank account (IBAN: issuing a tenant notice freezes the payment
+        # destination and requires an eligible account, #331)
         cur.execute(
-            "INSERT INTO bank_account (id, organization_id, property_id, account_type, label) "
-            "VALUES (%s,%s,%s,%s,%s)",
-            (str(ids["bank_account"]), org, str(ids["property"]), "LAUFEND", "Konto T12"),
+            "INSERT INTO bank_account (id, organization_id, property_id, account_type, label, iban) "
+            "VALUES (%s,%s,%s,%s,%s,%s)",
+            (str(ids["bank_account"]), org, str(ids["property"]), "LAUFEND", "Konto T12",
+             "DE02120300000000202051"),
         )
 
         # Payments: 11 months (Jan–Nov) fully paid (500 rent + 100 NK = 600 each).
