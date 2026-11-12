@@ -37,7 +37,7 @@ export function deleteReserveContribution(runId: string, entryId: string, reason
   return api.post(`/api/weg-settlements/${runId}/reserve-ledger/overrides/${entryId}/delete`, { reason });
 }
 
-import type { Task, TaskInput, TaskFilters, TaskPage, User, UserRole, PropertyYearReport, PropertyYearReportQuery, AnlageVSummary } from "./types";
+import type { Task, TaskInput, TaskFilters, TaskPage, User, UserInvitation, UserRole, PropertyYearReport, PropertyYearReportQuery, AnlageVSummary } from "./types";
 
 import type { Attachment, AttachmentFilters, AttachmentPage, AttachmentUpload } from "./types";
 import type { SpecialLevy, SpecialLevyCreate } from "./types";
@@ -1315,6 +1315,22 @@ export function updateUser(id: string, body: { role?: UserRole; is_active?: bool
 
 export function resetUserPassword(id: string, password: string): Promise<void> {
   return api.post<void>(`/api/users/${encodeURIComponent(id)}/reset-password`, { password });
+}
+
+export function createUserInvitation(email: string, role: string): Promise<UserInvitation> {
+  return api.post<UserInvitation>("/api/users/invitations", { email, role });
+}
+
+export function listUserInvitations(): Promise<UserInvitation[]> {
+  return api.get<UserInvitation[]>("/api/users/invitations");
+}
+
+export function revokeUserInvitation(id: string): Promise<void> {
+  return api.delete<void>(`/api/users/invitations/${encodeURIComponent(id)}`);
+}
+
+export function resendUserInvitation(id: string): Promise<UserInvitation> {
+  return api.post<UserInvitation>(`/api/users/invitations/${encodeURIComponent(id)}/resend`);
 }
 
 // T09: Paid advances derived

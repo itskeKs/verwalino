@@ -16,6 +16,7 @@ import { AppShell } from "./components/AppShell";
 import { LoginPage } from "./pages/LoginPage";
 import { PasswordResetRequestPage } from "./pages/PasswordResetRequestPage";
 import { PasswordResetPage } from "./pages/PasswordResetPage";
+import { InvitationAcceptPage } from "./pages/InvitationAcceptPage";
 import { SignupPage, SignupConfirmPage } from "./pages/SignupPage";
 import { SetupPage } from "./pages/SetupPage";
 import { useDeploymentMode } from "./auth/useDeploymentMode";
@@ -97,6 +98,7 @@ function PublicAuthRoutes() {
 
   if (location.pathname === "/passwort-vergessen") return <PasswordResetRequestPage />;
   if (location.pathname === "/passwort-zuruecksetzen") return <PasswordResetPage />;
+  if (location.pathname === "/einladung") return <InvitationAcceptPage />;
 
   return <LoginPage signupEnabled={deployment.mode === "hosted"} mailAvailable={deployment.mailAvailable} />;
 }
@@ -128,7 +130,8 @@ export function AppRoutes() {
     location.pathname === "/signup" ||
     location.pathname === "/signup/confirm" ||
     location.pathname === "/passwort-vergessen" ||
-    location.pathname === "/passwort-zuruecksetzen"
+    location.pathname === "/passwort-zuruecksetzen" ||
+    location.pathname === "/einladung"
   ) {
     return <PublicAuthRoutes />;
   }

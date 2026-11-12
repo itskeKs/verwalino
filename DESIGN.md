@@ -1551,6 +1551,9 @@ synthetic browser-intercepted API responses, without starting a backend or acces
 | Password reset | `/passwort-zuruecksetzen` | [`password-reset-1280.png`](docs/assets/design/password-reset-1280.png) | [`password-reset-360.png`](docs/assets/design/password-reset-360.png) |
 | Reset receipt | `/passwort-vergessen`, accepted request | — | [`password-reset-receipt-360.png`](docs/assets/design/password-reset-receipt-360.png) |
 | Reset success | `/passwort-zuruecksetzen`, accepted reset | — | [`password-reset-success-360.png`](docs/assets/design/password-reset-success-360.png) |
+| Invitation accept | `/einladung` | [`einladung-desktop.png`](docs/assets/design/user-invitation/einladung-desktop.png) | [`einladung-phone.png`](docs/assets/design/user-invitation/einladung-phone.png) |
+| User invitation | `/users`, „Benutzer einladen“ | [`users-invite-desktop.png`](docs/assets/design/user-invitation/users-invite-desktop.png) | [`users-invite-phone.png`](docs/assets/design/user-invitation/users-invite-phone.png) |
+| Pending invitations | `/users`, „Offene Einladungen“ | — | [`users-pending-phone.png`](docs/assets/design/user-invitation/users-pending-phone.png) |
 | Form | `/objekte`, "+ Neues Objekt" | [`form-objekt-desktop.png`](docs/assets/design/form-objekt-desktop.png) | [`form-objekt-360.png`](docs/assets/design/form-objekt-360.png) |
 | Dialog | "Passwort ändern" in the topbar | [`dialog-password-desktop.png`](docs/assets/design/dialog-password-desktop.png) | [`dialog-password-360.png`](docs/assets/design/dialog-password-360.png) |
 

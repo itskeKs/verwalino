@@ -40,6 +40,10 @@ def test_reset_migration_roundtrip_is_exact_and_refuses_retained_state(run_migra
         # loses it; every other trigger and all other snapshot fields stay exact.
         snapshot['triggers'] = [row for row in snapshot['triggers']
                                 if not (row[0] == 'password_reset_request' and row[1] == 'a_organization_lifecycle')]
+        # 0184 extends this cleanup with the invitation deletion. Recreating
+        # 0145's function alone legitimately restores the unextended body.
+        snapshot['functions'] = [row for row in snapshot['functions']
+                                 if row[0] != 'cleanup_password_reset_requests']
         return snapshot
     try:
         with engine.connect() as connection, connection.begin() as transaction:

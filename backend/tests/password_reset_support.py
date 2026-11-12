@@ -4,6 +4,8 @@ from email import policy
 from email.parser import BytesParser
 from urllib.parse import parse_qs, urlsplit
 
+from sqlalchemy import text
+
 from tests.signup_support import signup_mail  # noqa: F401
 
 MESSAGE = {'message': 'Wenn ein Konto zu dieser Adresse besteht, erhalten Sie eine E-Mail zum Zurücksetzen Ihres Passworts.'}
@@ -31,6 +33,20 @@ async def reset_store():
     engine = create_async_engine(MIGRATOR_URL)
     try:
         async with async_sessionmaker(engine)() as session, session.begin():
+            yield session
+    finally:
+        await engine.dispose()
+
+
+@asynccontextmanager
+async def runtime_store():
+    """Run statements as the runtime role app_rw, one committed transaction."""
+    from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker
+    from tests.conftest import APP_RW_URL
+    engine = create_async_engine(APP_RW_URL)
+    try:
+        async with async_sessionmaker(engine)() as session, session.begin():
+            assert await session.scalar(text('SELECT session_user')) == 'app_rw'
             yield session
     finally:
         await engine.dispose()
