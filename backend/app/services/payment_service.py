@@ -152,9 +152,9 @@ def dated_plan_soll(
     planned_amount to the cent (central largest-remainder, remainder exactly
     once); the dated charges decide only the division, so a plan period shorter
     than twelve months keeps its full planned amount. A unit whose dated
-    charges are all zero keeps its plan-line amounts (#402). The settlement,
-    the 1(b) reserve-coverage cap and the reserve ledger read this one
-    derivation.
+    charges are all zero keeps its plan-line amounts (#402). An owner whose
+    dated Soll is 0.00 is without Soll — no entry — for the settlement, the
+    1(b) reserve-coverage cap and the reserve ledger alike.
     """
     per_owner: dict[uuid.UUID, Decimal] = {}
     by_unit: dict[uuid.UUID, list[tuple[uuid.UUID, Decimal, Decimal]]] = {}
@@ -170,7 +170,7 @@ def dated_plan_soll(
         else:
             for owner_id, line_amount, _ in rows:
                 per_owner[owner_id] = per_owner.get(owner_id, Decimal('0.00')) + line_amount
-    return per_owner
+    return {owner: amount for owner, amount in per_owner.items() if amount != Decimal('0.00')}
 
 
 class PaymentService:

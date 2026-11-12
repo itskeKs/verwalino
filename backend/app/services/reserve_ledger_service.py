@@ -244,7 +244,10 @@ class ReserveLedgerService:
             historical_plan = next((p for p in cash_plans if str(p.id) == source_id), None)
             if historical_plan is None:
                 raise HTTPException(404, {'code': 'RESERVE_NOT_FOUND', 'message': 'Rücklagenabrechnung nicht gefunden.'})
-            soll = await self._dated_plan_soll(historical_plan, historical.period_start, historical.period_end)
+            # The finalized year's Soll comes from its frozen snapshot, never from
+            # today's ownership history: a later edit must not re-decide the year (#402).
+            soll = {row['owner_profile_id']: Decimal(row['plan_advance_total'])
+                    for row in ((historical.snapshot_payload or {}).get('inputs') or {}).get('plan_advances', [])}
             planned = planned_reserve_per_owner(await self.repo.plan_rows(historical_plan))
             frozen_states = {str(p.owner_profile_id): {'hausgeld': ZERO, 'reserve': ZERO, 'hausgeld_share': ZERO}
                              for p in late_payments if str(p.owner_profile_id) in soll}

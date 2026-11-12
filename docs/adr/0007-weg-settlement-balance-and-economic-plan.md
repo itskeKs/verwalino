@@ -148,6 +148,10 @@ settlement's Soll derivation changed (engine input, `ENGINE_VERSION` m4.5.0).
 The reserve-coverage cap of decision 1(b) and the reserve ledger's
 SPLIT_RESERVE correction (current and late-cash branches) read the same dated
 Soll, so booked reserve counts only against the dated unpaid Soll everywhere.
+An owner whose dated Soll is 0.00 is without Soll for the cap and the reserve
+ledger alike. A finalized year's late cash is decided from the Soll frozen in
+that year's snapshot (`inputs.plan_advances`) — for a run stored as m4.4.0 the
+undated basis it was decided with — never from ownership edits after the fact.
 A history the owner ledger refuses (`hausgeld_ownership_invalid`) refuses the
 calculation, the derived paid advances and the reserve ledger with the same
 German 422; the plan-line fallback of the division applies only where the

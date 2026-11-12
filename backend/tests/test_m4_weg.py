@@ -1586,6 +1586,15 @@ async def test_mid_year_owner_change_charges_the_plan_soll_to_the_dated_owner(
     assert (await api.get(f'/api/weg-settlements/{run}/pdf')).content == frozen_pdf
 
 
+async def _book_payment(api, w, oid, amount, payment_type, value_date, *, direction='IN'):
+    response = await api.post('/api/payments', json={'bank_account_id': w['bank'],
+        'owner_profile_id': oid, 'direction': direction, 'amount': amount,
+        'value_date': value_date, 'payment_type': payment_type,
+        'period_year': int(value_date[:4]), 'period_month': int(value_date[5:7])})
+    assert response.status_code == 201, response.text
+    assert (await api.post(f"/api/payments/{response.json()['id']}/book")).status_code == 200
+
+
 async def _sell_unit(api, unit_id, valid_to, valid_from, first_name='Bernd', last_name='Neu'):
     old = (await api.get('/api/ownership', params={'unit_id': unit_id})).json()[0]
     response = await api.patch(f"/api/ownership/{old['id']}", json={'valid_to': valid_to})
@@ -1703,6 +1712,101 @@ async def test_covered_reserve_stays_in_the_reserve_ledger(client_a_admin, seed_
 
 
 @pytest.mark.asyncio
+async def test_late_cash_uses_the_frozen_m4_4_0_soll(client_a_admin, seed_data, monkeypatch):
+    from unittest.mock import AsyncMock
+    from app.services import weg_settlement_service as service
+    from app.services.payment_service import PaymentService
+    api = client_a_admin
+    w = await _single_unit_weg(api, seed_data)
+    bernd = await _sell_unit(api, w['unit'], '2025-06-30', '2025-07-01')
+    # Simulate the m4.4.0 basis: the Soll is the frozen plan line, never divided.
+    monkeypatch.setattr(PaymentService, 'owner_plan_charge_totals', AsyncMock(
+        return_value={(w['unit'], w['anna']): (Decimal('12000.00'), Decimal('12000.00'))}))
+    monkeypatch.setattr(service, 'ENGINE_VERSION', 'm4.4.0')
+    await _book_payment(api, w, w['anna'], '6000.00', 'HAUSGELD_VORSCHUSS', '2025-06-01')
+    await _book_payment(api, w, bernd, '5500.00', 'HAUSGELD_VORSCHUSS', '2025-07-01')
+    await _book_payment(api, w, bernd, '500.00', 'RUECKLAGENANTEIL', '2025-07-01')
+    response = await api.post('/api/weg-settlements', json={'property_id': w['property'],
+        'economic_plan_id': w['plan'], 'period_start': w['period_start'], 'period_end': w['period_end']})
+    assert response.status_code == 201, response.text
+    run = response.json()['id']
+    derived = (await api.post(f'/api/weg-settlements/{run}/paid-advances-derived')).json()
+    assert {r['owner_profile_id']: r['paid_total'] for r in derived} == {
+        w['anna']: '6000.00', bernd: '5500.00'}
+    values = {'paid_advances': derived}
+    await attest_fixture(api, 'settlement', run, values)
+    response = await api.post(f'/api/weg-settlements/{run}/finalize', json=values)
+    assert response.status_code == 200, response.text
+    # The m4.4.0 year keeps Bernd's 500.00 in the reserve; no correction was stored.
+    frozen = (await api.get(f'/api/weg-settlements/{run}/reserve-ledger')).json()
+    assert frozen['contributions_total'] == '500.00'
+    # From here the live derivation rules again: the late cash must not re-decide 2025.
+    monkeypatch.undo()
+    # A late 100.00 Hausgeld from Bernd dated 15.12.2025 must not re-decide 2025.
+    await _book_payment(api, w, bernd, '100.00', 'HAUSGELD_VORSCHUSS', '2025-12-15')
+    response = await api.post('/api/weg-settlements/asset-reports', json={
+        'property_id': w['property'], 'period_start': '2026-01-01', 'period_end': '2026-12-31'})
+    assert response.status_code == 201, response.text
+    ledger = (await api.get(f"/api/weg-settlements/{response.json()['id']}/reserve-ledger")).json()
+    assert (ledger['late_cash_total'], ledger['closing_balance']) == ('0.00', '500.00')
+
+
+@pytest.mark.asyncio
+async def test_late_cash_of_a_finalized_year_survives_a_later_history_edit(client_a_admin, seed_data):
+    api = client_a_admin
+    w = await _single_unit_weg(api, seed_data)
+    bernd = await _sell_unit(api, w['unit'], '2025-06-30', '2025-07-01')
+    await _book_payment(api, w, w['anna'], '6000.00', 'HAUSGELD_VORSCHUSS', '2025-06-01')
+    await _book_payment(api, w, bernd, '5500.00', 'HAUSGELD_VORSCHUSS', '2025-07-01')
+    await _book_payment(api, w, bernd, '500.00', 'RUECKLAGENANTEIL', '2025-07-01')
+    response = await api.post('/api/weg-settlements', json={'property_id': w['property'],
+        'economic_plan_id': w['plan'], 'period_start': w['period_start'], 'period_end': w['period_end']})
+    assert response.status_code == 201, response.text
+    run = response.json()['id']
+    derived = (await api.post(f'/api/weg-settlements/{run}/paid-advances-derived')).json()
+    values = {'paid_advances': derived}
+    await attest_fixture(api, 'settlement', run, values)
+    response = await api.post(f'/api/weg-settlements/{run}/finalize', json=values)
+    assert response.status_code == 200, response.text
+    # 2025 froze with the dated Soll and a -500.00 correction for Bernd (contributions 0.00).
+    await _book_payment(api, w, bernd, '100.00', 'HAUSGELD_VORSCHUSS', '2025-12-15')
+    response = await api.post('/api/weg-settlements/asset-reports', json={
+        'property_id': w['property'], 'period_start': '2026-01-01', 'period_end': '2026-12-31'})
+    assert response.status_code == 201, response.text
+    report = response.json()['id']
+    ledger = (await api.get(f'/api/weg-settlements/{report}/reserve-ledger')).json()
+    assert (ledger['late_cash_total'], ledger['closing_balance']) == ('100.00', '100.00')
+    # A later correction of the 2025 history (Anna until 31.05., Bernd from 01.06.) must not move 2025.
+    with psycopg2.connect(SYNC_URL) as connection, connection.cursor() as cursor:
+        cursor.execute('UPDATE ownership_history SET valid_to=%s WHERE unit_id=%s AND owner_profile_id=%s',
+            ('2025-06-01', w['unit'], w['anna']))
+        cursor.execute('UPDATE ownership_history SET valid_from=%s WHERE unit_id=%s AND owner_profile_id=%s',
+            ('2025-06-01', w['unit'], bernd))
+    edited = (await api.get(f'/api/weg-settlements/{report}/reserve-ledger')).json()
+    assert (edited['late_cash_total'], edited['closing_balance']) == ('100.00', '100.00')
+
+
+@pytest.mark.asyncio
+async def test_zero_dated_soll_is_no_soll_for_the_reserve_ledger(client_a_admin, seed_data):
+    api = client_a_admin
+    w = await _single_unit_weg(api, seed_data)
+    bernd = await _sell_unit(api, w['unit'], '2024-12-31', '2025-01-01')
+    # Anna's 100.00 Hausgeld refund and her 500.00 reserve in 2025.
+    await _book_payment(api, w, w['anna'], '100.00', 'HAUSGELD_VORSCHUSS', '2025-01-05', direction='OUT')
+    await _book_payment(api, w, w['anna'], '500.00', 'RUECKLAGENANTEIL', '2025-01-05')
+    response = await api.post('/api/weg-settlements', json={'property_id': w['property'],
+        'economic_plan_id': w['plan'], 'period_start': w['period_start'], 'period_end': w['period_end']})
+    assert response.status_code == 201, response.text
+    run = response.json()['id']
+    derived = (await api.post(f'/api/weg-settlements/{run}/paid-advances-derived')).json()
+    assert next(r['paid_total'] for r in derived if r['owner_profile_id'] == w['anna']) == '-100.00'
+    # Without a Soll the reserve cannot cover negative Hausgeld: no correction, the 500.00 stays.
+    ledger = (await api.get(f'/api/weg-settlements/{run}/reserve-ledger')).json()
+    assert [row for row in ledger['entries'] if row.get('correction') == 'SPLIT_RESERVE'] == []
+    assert ledger['contributions_total'] == '500.00'
+
+
+@pytest.mark.asyncio
 async def test_ended_ownership_without_successor_is_refused_like_the_owner_ledger(client_a_admin, seed_data):
     api = client_a_admin
     w = await _single_unit_weg(api, seed_data)
@@ -1739,7 +1843,7 @@ def test_dated_plan_soll_keeps_the_planned_amount_without_dated_charges():
     unit, anna, bernd = uuid.uuid4(), uuid.uuid4(), uuid.uuid4()
     shares = {(unit, anna): (Decimal('3000.00'), Decimal('0.00')),
               (unit, bernd): (Decimal('0.00'), Decimal('0.00'))}
-    assert dated_plan_soll(shares) == {anna: Decimal('3000.00'), bernd: Decimal('0.00')}
+    assert dated_plan_soll(shares) == {anna: Decimal('3000.00')}
 
 
 @pytest.mark.asyncio

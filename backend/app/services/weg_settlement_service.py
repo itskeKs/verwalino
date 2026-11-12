@@ -604,7 +604,7 @@ class WegSettlementService:
         for owner_id in sorted(owner_ids, key=str):
             total = await pay_svc.derive_hausgeld_total_for_period(
                 uuid.UUID(owner_id), start, end, property_id=plan.property_id,
-                plan_soll=plan_soll.get(uuid.UUID(owner_id)) or None)
+                plan_soll=plan_soll.get(uuid.UUID(owner_id)))
             result.append(
                 ManualOwnerAdvance(owner_profile_id=uuid.UUID(owner_id), paid_total=total)
             )
