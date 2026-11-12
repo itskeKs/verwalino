@@ -39,6 +39,12 @@ Then run these commands in order, after the ownership check above. Each loop han
 list without passing an empty argument to a removal command. Stop on an error and inspect it;
 do not force removal of shared volumes, networks or images.
 
+The workspace guard (`scripts/hv_guard.py`) denies destructive docker commands, with one
+exception: it allows `docker container/volume/network/image rm` only when the same command
+carries the filter `label=com.docker.compose.project=verwalino` (the filtered listing above
+counts) and no `hausverwaltung`, `alpha` or `infra` resource is named. `docker compose down -v`
+and global prune commands stay denied. The loops below are written to that contract.
+
 ```sh
 docker container ls --all --quiet --filter 'label=com.docker.compose.project=verwalino' |
   while IFS= read -r resource; do

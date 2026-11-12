@@ -6,6 +6,9 @@ Blocks what an agent must never do there, whatever the permission mode:
 - use Docker outside the test DB or narrowly reviewed portable operations;
 - edit a migration that is already committed;
 - edit this guard or the user hooks file.
+Exception (issue #193): removing the session's own disposable acceptance stack is
+allowed for docker container/volume/network/image rm when the same command carries
+the filter label=com.docker.compose.project=verwalino and no foreign stack name.
 Any other workspace passes untouched. Exit 0 with a deny JSON blocks the call.
 """
 import json
@@ -31,6 +34,10 @@ PORTABLE_FILES = {
     "infra/docker-compose.yml": "3ed4ad60cce94fc1cedc181217bac3b659d3b5892d6af64e1ed54cf94d0d7fc1",
     "infra/Caddyfile": "6dd9a73b44d736d04f9fbaf17c292e515f21ced9d1bb753a92981ca0dbf61d49",
 }
+# Removal of a session's own disposable acceptance stack (issue #193): only together
+# with this label filter in the same command, and never for a foreign stack name.
+ACCEPTANCE_LABEL = "label=com.docker.compose.project=verwalino"
+FOREIGN_STACK = re.compile(r"\b(?:hausverwaltung|alpha|infra)\b")
 
 
 def deny(reason):
@@ -326,6 +333,34 @@ def caddy_allowed(argv, cwd):
         "caddy:2.10.2-alpine", "caddy", "validate", "--config", "/etc/caddy/Caddyfile", "--adapter", "caddyfile"])
 
 
+def acceptance_rm_allowed(cmd):
+    """Label-filtered removal of the session's own disposable acceptance stack.
+
+    docker container/volume/network/image rm may pass only when the same command
+    carries the verwalino project label filter (a filtered listing feeding the
+    removal, or the filter on the removal itself) and names no foreign stack;
+    docker compose down and global prunes stay denied.
+    """
+    if not docker_environment_safe() or ACCEPTANCE_LABEL not in cmd:
+        return False
+    if FOREIGN_STACK.search(cmd) or re.search(r"\b(?:DOCKER|COMPOSE)_[A-Z_]+=", cmd):
+        return False
+    saw_rm = False
+    for segment in re.split(r"[|;\n]+", cmd):
+        matches = list(re.finditer(r"\bdocker\s+(\S+)(?:\s+(\S+))?", segment))
+        if not matches:
+            continue
+        if not segment.strip().startswith("docker"):
+            return False
+        for match in matches:
+            kind, verb = match.group(1), match.group(2)
+            if kind in ("container", "volume", "network", "image") and verb in ("ls", "rm"):
+                saw_rm = saw_rm or verb == "rm"
+            else:
+                return False
+    return saw_rm
+
+
 def check_command(cmd, cwd):
     c = " ".join(cmd.split())
     argv = simple_argv(cmd)
@@ -349,7 +384,8 @@ def check_command(cmd, cwd):
     elif re.search(r"\bdocker\s+(?:start|create)\b|\bdocker\s+container\s+(?:start|create|run)\b", c):
         deny("arbitrary container starts are not allowed")
     elif DOCKER_DESTRUCTIVE.search(c):
-        deny("destructive docker commands are not allowed; only ps, logs, inspect and exec")
+        if not acceptance_rm_allowed(cmd):
+            deny("destructive docker commands are not allowed; only ps, logs, inspect and exec")
     if "migrations/versions" in c and re.search(
             r"\bsed\s+-i|\bperl\s+-[a-z]*i|>|\btee\b|\bmv\b|\brm\b|\bcp\b|"
             r"\bgit\s+(checkout|restore|reset|revert)\b|\btruncate\b|\bpython3?\s+-c\b", c):

@@ -279,6 +279,44 @@ class GuardTests(unittest.TestCase):
                         "docker container run alpine sh", "docker container start arbitrary"):
             self.block(command)
 
+    def test_acceptance_cleanup_removes_only_label_filtered_project(self):
+        label = "com.docker.compose.project=verwalino"
+        loops = [
+            ("docker container ls --all --quiet --filter 'label=%s' |\n"
+             "  while IFS= read -r resource; do\n"
+             "    docker container rm --force --volumes \"$resource\" || exit 1\n"
+             "  done" % label),
+            ("docker volume ls --quiet --filter 'label=%s' |\n"
+             "  while IFS= read -r resource; do\n"
+             "    docker volume rm \"$resource\" || exit 1\n"
+             "  done" % label),
+            ("docker network ls --quiet --filter 'label=%s' |\n"
+             "  while IFS= read -r resource; do\n"
+             "    docker network rm \"$resource\" || exit 1\n"
+             "  done" % label),
+            ("docker image ls --quiet --no-trunc --filter 'label=%s' |\n"
+             "  sort -u |\n"
+             "  while IFS= read -r resource; do\n"
+             "    docker image rm \"$resource\" || exit 1\n"
+             "  done" % label),
+        ]
+        for command in loops:
+            with self.subTest(command=command.splitlines()[0]):
+                self.allow(command)
+        self.allow("docker volume rm --filter label=%s verwalino_pgdata" % label)
+        for command in (
+                "docker volume rm verwalino_pgdata",
+                "docker volume rm hausverwaltung_pgdata --filter label=%s" % label,
+                "docker network rm alpha --filter label=%s" % label,
+                "docker container rm --force --volumes infra-app-1 --filter label=%s" % label,
+                "docker image ls --quiet --filter 'label=%s' | xargs -n1 docker image rm" % label,
+                "DOCKER_HOST=ssh://alpha docker volume rm \"$resource\" --filter label=%s" % label,
+                "docker system prune -af --filter label=%s" % label,
+                "docker volume prune --filter label=%s" % label,
+                "docker compose --project-name verwalino down -v --filter label=%s" % label):
+            with self.subTest(command=command):
+                self.block(command)
+
     def test_existing_test_database_and_unrelated_commands(self):
         self.allow("docker compose -f infra/docker-compose.declaration-test.yml up -d")
         self.block("docker compose -f infra/docker-compose.declaration-test.yml down -v")
