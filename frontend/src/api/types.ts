@@ -989,6 +989,21 @@ export interface EconomicPlan {
   } | null;
 }
 
+/** One owner and month of a finalized plan's Hausgeld; `booked` rows already have a booked payment. */
+export interface HausgeldBookingRow {
+  owner_profile_id: string;
+  period_year: number;
+  period_month: number;
+  amount: string;
+  value_date: string;
+  booked: boolean;
+}
+
+export interface HausgeldBookingRequest {
+  bank_account_id: string;
+  rows: Omit<HausgeldBookingRow, "booked">[];
+}
+
 export interface EconomicPlanCreate {
   accounting_scope_id?: string | null;
   property_id: string;

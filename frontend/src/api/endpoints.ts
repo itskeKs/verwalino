@@ -112,6 +112,8 @@ import type {
   BankAssignmentLine,
   BankAssignmentResult,
   BankImportResult,
+  HausgeldBookingRequest,
+  HausgeldBookingRow,
   Payment,
   PaymentCreate,
   DepositAccount,
@@ -979,6 +981,16 @@ export function importBankTransactions(id: string, file: File, dryRun = true): P
   const data = new FormData();
   data.append("file", file);
   return uploadFormData<BankImportResult>(`/api/bank-accounts/${encodeURIComponent(id)}/imports?dry_run=${dryRun}`, data);
+}
+
+// --- Hausgeld booking from a finalized economic plan ---
+
+export function getHausgeldBooking(planId: string): Promise<HausgeldBookingRow[]> {
+  return api.get<HausgeldBookingRow[]>(`/api/economic-plans/${planId}/hausgeld-booking`);
+}
+
+export function bookHausgeld(planId: string, body: HausgeldBookingRequest): Promise<Payment[]> {
+  return api.post<Payment[]>(`/api/economic-plans/${planId}/hausgeld-booking`, body);
 }
 
 // --- M6: Payments ---

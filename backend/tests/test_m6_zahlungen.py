@@ -1014,3 +1014,450 @@ async def test_correct_draft_month_before_booking(client_a_clerk, m6_seed):
         })
         assert resp.status_code == 200, resp.text
         assert resp.json()["ist_total"] == expected
+
+
+# ===========================================================================
+# Booking the monthly Hausgeld of a finalized economic plan in one step (#186).
+#
+# Expected values come from the domain: "Gartenstraße 5", plan 2026 of 12.000,00 EUR over
+# MEA 600 / 400 gives Anna Berg 7.200,00 EUR (600,00 a month) and unit 2 4.800,00 EUR
+# (400,00 a month). Karl Weiß owns unit 2 until 30.06., Lena Roth from 01.07.
+# ===========================================================================
+PLAN_PATH = "/api/economic-plans/{plan}/hausgeld-booking"
+ALL_MONTHS = range(1, 13)
+
+
+async def _hausgeld_world(client, *, karl_until="2026-06-30", lena_from="2026-07-01", plan="finalized",
+                          planned="12000.00"):
+    async def create(path, body):
+        response = await client.post(path, json=body)
+        assert response.status_code == 201, f"{path}: {response.text}"
+        return response.json()
+
+    prop = await create("/api/properties", {"name": "Gartenstraße 5", "management_type": "WEG", "mea_denominator": 1000})
+    units, owners = {}, {}
+    for number, mea in (("1", "600"), ("2", "400")):
+        units[number] = await create("/api/units", {
+            "property_id": prop["id"], "number": number, "usage_type": "WOHNUNG", "mea": mea, "area": "70"})
+    for key, first, last in (("anna", "Anna", "Berg"), ("karl", "Karl", "Weiß"), ("lena", "Lena", "Roth")):
+        person = await create("/api/persons", {"first_name": first, "last_name": last})
+        owners[key] = (await create("/api/owner-profiles", {"person_id": person["id"]}))["id"]
+    await create("/api/ownership", {"unit_id": units["1"]["id"], "owner_profile_id": owners["anna"], "valid_from": "2020-01-01"})
+    await create("/api/ownership", {"unit_id": units["2"]["id"], "owner_profile_id": owners["karl"],
+        "valid_from": "2020-01-01", "valid_to": karl_until})
+    await create("/api/ownership", {"unit_id": units["2"]["id"], "owner_profile_id": owners["lena"], "valid_from": lena_from})
+    account = await create("/api/bank-accounts", {"property_id": prop["id"], "account_type": "LAUFEND", "label": "Hausgeldkonto"})
+    world = {"property": prop["id"], "units": units, "owners": owners, "account": account["id"], "plan": None}
+    if plan is not None:
+        created = await create("/api/economic-plans", {"property_id": prop["id"], "plan_year": 2026,
+            "period_start": "2026-01-01", "period_end": "2026-12-31", "monthly_due_day": 1})
+        inputs = {"planned_costs": [{"category_code": "GARTENPFLEGE", "label": "Garten", "planned_amount": planned}],
+                  "reserve_contribution_total": "0.00"}
+        if plan == "finalized":
+            await attest_fixture(client, "economic_plan", created["id"], inputs)
+            answer = await client.post(f"/api/economic-plans/{created['id']}/finalize", json=inputs)
+            assert answer.status_code == 200, answer.text
+        world["plan"] = created["id"]
+    return world
+
+
+def _booking(world, owner, months=ALL_MONTHS, amount="600.00", **overrides):
+    return {"bank_account_id": world["account"], "rows": [
+        {"owner_profile_id": world["owners"][owner], "period_year": 2026, "period_month": month,
+         "amount": amount, "value_date": f"2026-{month:02d}-01"} for month in months], **overrides}
+
+
+async def _booked(client, world, **filters):
+    response = await client.get("/api/payments", params={"bank_account_id": world["account"], **filters})
+    assert response.status_code == 200, response.text
+    return response.json()
+
+
+def _by_owner(rows, world):
+    names = {owner_id: key for key, owner_id in world["owners"].items()}
+    grouped: dict[str, dict[int, str]] = {}
+    for row in rows:
+        grouped.setdefault(names[row["owner_profile_id"]], {})[row["period_month"]] = row["amount"]
+    return grouped
+
+
+async def _single_hausgeld(client, world, *, value_date, amount="600.00", owner="anna", **period):
+    """A Hausgeld payment through the single path (create, then book); without a month unless given."""
+    created = await client.post("/api/payments", json={
+        "bank_account_id": world["account"], "direction": "IN", "amount": amount, "value_date": value_date,
+        "payment_type": "HAUSGELD_VORSCHUSS", "owner_profile_id": world["owners"][owner], **period})
+    assert created.status_code == 201, created.text
+    booked = await client.post(f"/api/payments/{created.json()['id']}/book")
+    assert booked.status_code == 200, booked.text
+    return booked.json()
+
+
+def _anna_booked(offer, world):
+    return {row["period_month"]: row["booked"] for row in offer if row["owner_profile_id"] == world["owners"]["anna"]}
+
+
+class TestHausgeldBooking:
+    @pytest.mark.asyncio
+    async def test_offer_follows_the_ownership_periods_of_the_plan(self, client_a_admin):
+        world = await _hausgeld_world(client_a_admin)
+        response = await client_a_admin.get(PLAN_PATH.format(plan=world["plan"]))
+        assert response.status_code == 200, response.text
+        rows = response.json()
+        assert len(rows) == 24
+        assert not any(row["booked"] for row in rows)
+        assert {row["period_year"] for row in rows} == {2026}
+        assert _by_owner(rows, world) == {
+            "anna": {month: "600.00" for month in ALL_MONTHS},
+            "karl": {month: "400.00" for month in range(1, 7)},
+            "lena": {month: "400.00" for month in range(7, 13)},
+        }
+        # The plan's due day of the month, not a shifted bank day (1 January and 1 February are no bank days).
+        assert {row["value_date"] for row in rows if row["owner_profile_id"] == world["owners"]["anna"]} == {
+            f"2026-{month:02d}-01" for month in ALL_MONTHS}
+
+    @pytest.mark.asyncio
+    async def test_one_request_creates_and_books_every_row_and_the_statement_balances(self, client_a_clerk, client_a_admin):
+        world = await _hausgeld_world(client_a_admin)
+        body = _booking(world, "anna")
+        body["rows"][0]["value_date"] = "2026-01-05"
+        response = await client_a_clerk.post(PLAN_PATH.format(plan=world["plan"]), json=body)
+        assert response.status_code == 201, response.text
+        created = response.json()
+        assert [row["period_month"] for row in created] == list(ALL_MONTHS)
+        assert {row["status"] for row in created} == {"booked"}
+        assert {(row["payment_type"], row["direction"], row["period_year"], row["bank_account_id"], row["property_id"])
+                for row in created} == {("HAUSGELD_VORSCHUSS", "IN", 2026, world["account"], world["property"])}
+        assert {row["owner_profile_id"] for row in created} == {world["owners"]["anna"]}
+        assert created[0]["value_date"] == "2026-01-05" and created[1]["value_date"] == "2026-02-01"
+        assert sum(Decimal(row["amount"]) for row in created) == Decimal("7200.00")
+        listed = await _booked(client_a_admin, world, payment_type="HAUSGELD_VORSCHUSS", status="booked")
+        assert sorted(row["id"] for row in listed) == sorted(row["id"] for row in created)
+        statement = await client_a_admin.get(f"/api/payments/mietkonto/owner/{world['owners']['anna']}", params={
+            "period_start": "2026-01-01", "period_end": "2026-12-31", "economic_plan_id": world["plan"]})
+        assert statement.status_code == 200, statement.text
+        assert (statement.json()["soll_total"], statement.json()["ist_total"], statement.json()["balance"]) == (
+            "7200.00", "7200.00", "0.00")
+        again = (await client_a_admin.get(PLAN_PATH.format(plan=world["plan"]))).json()
+        assert {row["booked"] for row in again if row["owner_profile_id"] == world["owners"]["anna"]} == {True}
+        assert {row["booked"] for row in again if row["owner_profile_id"] != world["owners"]["anna"]} == {False}
+
+    @pytest.mark.asyncio
+    async def test_rows_are_ordinary_booked_payments_like_single_ones(self, client_a_admin, migrator_session):
+        world = await _hausgeld_world(client_a_admin)
+        single = (await client_a_admin.post("/api/payments", json={
+            "bank_account_id": world["account"], "direction": "IN", "amount": "600.00", "value_date": "2026-01-05",
+            "payment_type": "HAUSGELD_VORSCHUSS", "owner_profile_id": world["owners"]["anna"],
+            "period_year": 2026, "period_month": 1})).json()
+        assert (await client_a_admin.post(f"/api/payments/{single['id']}/book")).status_code == 200
+        bulk = (await client_a_admin.post(PLAN_PATH.format(plan=world["plan"]), json=_booking(world, "anna", [2]))).json()[0]
+        single = (await client_a_admin.get(f"/api/payments/{single['id']}")).json()
+        ignored = {"id", "value_date", "period_month", "booked_at", "retention_until", "note"}
+        assert {k: v for k, v in bulk.items() if k not in ignored} == {k: v for k, v in single.items() if k not in ignored}
+        assert (bulk["retention_until"], bulk["note"]) == (single["retention_until"], single["note"])
+        for payment in (single, bulk):
+            actions = (await migrator_session.scalars(text(
+                "SELECT action FROM audit_event WHERE entity_type='payment' AND entity_id=:id"),
+                {"id": payment["id"]})).all()
+            assert sorted(actions) == ["payment.booked", "payment.created"]
+            bound = await migrator_session.scalar(text(
+                "SELECT scope_id FROM accounting_scope_binding WHERE payment_id=:id"), {"id": payment["id"]})
+            assert bound is None  # the unscoped property gives bulk and single rows the same (legacy) context
+
+    @pytest.mark.asyncio
+    async def test_an_edited_amount_and_value_date_are_booked_as_entered(self, client_a_admin):
+        world = await _hausgeld_world(client_a_admin)
+        body = _booking(world, "anna", [3], amount="590.50")
+        body["rows"][0]["value_date"] = "2026-02-27"
+        response = await client_a_admin.post(PLAN_PATH.format(plan=world["plan"]), json=body)
+        assert response.status_code == 201, response.text
+        assert (response.json()[0]["amount"], response.json()[0]["value_date"]) == ("590.50", "2026-02-27")
+
+    @pytest.mark.asyncio
+    async def test_one_invalid_row_books_nothing(self, client_a_admin):
+        world = await _hausgeld_world(client_a_admin)
+        body = _booking(world, "anna", range(1, 5))
+        body["rows"][3]["owner_profile_id"] = world["owners"]["lena"]  # Lena owns unit 2 only from July: April is not hers
+        response = await client_a_admin.post(PLAN_PATH.format(plan=world["plan"]), json=body)
+        assert response.status_code == 422, response.text
+        assert await _booked(client_a_admin, world) == []
+
+    @pytest.mark.asyncio
+    async def test_a_refusal_after_some_rows_were_booked_rolls_all_of_them_back(self, client_a_admin, monkeypatch):
+        from fastapi import HTTPException
+        from app.services.payment_service import PaymentService
+
+        world = await _hausgeld_world(client_a_admin)
+        original, calls = PaymentService.book, []
+
+        async def refuse_third(service, payment_id):
+            calls.append(payment_id)
+            if len(calls) == 3:
+                raise HTTPException(409, "Synthetic refusal on the third row")
+            return await original(service, payment_id)
+
+        monkeypatch.setattr(PaymentService, "book", refuse_third)
+        response = await client_a_admin.post(PLAN_PATH.format(plan=world["plan"]), json=_booking(world, "anna"))
+        assert response.status_code == 409, response.text
+        assert len(calls) == 3  # two rows were created and booked before the refusal
+        assert await _booked(client_a_admin, world) == []
+        offer = (await client_a_admin.get(PLAN_PATH.format(plan=world["plan"]))).json()
+        assert not any(row["booked"] for row in offer)
+
+    @pytest.mark.asyncio
+    async def test_a_booked_month_is_neither_offered_nor_bookable_a_second_time(self, client_a_admin):
+        world = await _hausgeld_world(client_a_admin)
+        first = await client_a_admin.post(PLAN_PATH.format(plan=world["plan"]), json=_booking(world, "anna", range(1, 4)))
+        assert first.status_code == 201, first.text
+        offer = (await client_a_admin.get(PLAN_PATH.format(plan=world["plan"]))).json()
+        anna = {row["period_month"]: row["booked"] for row in offer if row["owner_profile_id"] == world["owners"]["anna"]}
+        assert anna == {month: month <= 3 for month in ALL_MONTHS}
+        # March again together with the still open April: refused as a whole.
+        second = await client_a_admin.post(PLAN_PATH.format(plan=world["plan"]), json=_booking(world, "anna", [3, 4]))
+        assert second.status_code == 409, second.text
+        assert second.json()["detail"]["code"] == "HAUSGELD_MONTH_BOOKED"
+        assert sorted(row["period_month"] for row in await _booked(client_a_admin, world)) == [1, 2, 3]
+        # The same month for another owner is unaffected: nothing else is booked there.
+        other = await client_a_admin.post(PLAN_PATH.format(plan=world["plan"]), json=_booking(world, "karl", [3], amount="400.00"))
+        assert other.status_code == 201, other.text
+
+    @pytest.mark.asyncio
+    async def test_two_identical_requests_at_the_same_moment_book_once(self, client_a_admin, client_a_clerk):
+        import asyncio
+
+        world = await _hausgeld_world(client_a_admin)
+        body = _booking(world, "anna")
+        results = await asyncio.gather(
+            client_a_admin.post(PLAN_PATH.format(plan=world["plan"]), json=body),
+            client_a_clerk.post(PLAN_PATH.format(plan=world["plan"]), json=body))
+        assert sorted(result.status_code for result in results) == [201, 409], [r.text for r in results]
+        booked = await _booked(client_a_admin, world, owner_profile_id=world["owners"]["anna"])
+        assert sorted(row["period_month"] for row in booked) == list(ALL_MONTHS)
+        assert sum(Decimal(row["amount"]) for row in booked) == Decimal("7200.00")
+
+    @pytest.mark.asyncio
+    async def test_a_reversed_month_is_offered_and_bookable_again(self, client_a_admin):
+        world = await _hausgeld_world(client_a_admin)
+        created = (await client_a_admin.post(PLAN_PATH.format(plan=world["plan"]), json=_booking(world, "anna", [1]))).json()
+        assert (await client_a_admin.post(f"/api/payments/{created[0]['id']}/reverse")).status_code == 201
+        offer = (await client_a_admin.get(PLAN_PATH.format(plan=world["plan"]))).json()
+        assert not any(row["booked"] for row in offer)
+        again = await client_a_admin.post(PLAN_PATH.format(plan=world["plan"]), json=_booking(world, "anna", [1]))
+        assert again.status_code == 201, again.text
+
+    @pytest.mark.asyncio
+    async def test_a_payment_without_a_month_marks_the_month_of_its_value_date_as_booked(self, client_a_admin):
+        # The owner statement assigns a Hausgeld payment without a period to the month of its value date.
+        world = await _hausgeld_world(client_a_admin)
+        base = PLAN_PATH.format(plan=world["plan"])
+        single = await _single_hausgeld(client_a_admin, world, value_date="2026-01-05")
+        offer = (await client_a_admin.get(base)).json()
+        assert _anna_booked(offer, world) == {month: month == 1 for month in ALL_MONTHS}
+        refused = await client_a_admin.post(base, json=_booking(world, "anna", [1, 2]))
+        assert refused.status_code == 409, refused.text
+        assert refused.json()["detail"]["code"] == "HAUSGELD_MONTH_BOOKED"
+        assert [row["id"] for row in await _booked(client_a_admin, world)] == [single["id"]]
+        statement = await client_a_admin.get(f"/api/payments/mietkonto/owner/{world['owners']['anna']}", params={
+            "period_start": "2026-01-01", "period_end": "2026-12-31", "economic_plan_id": world["plan"]})
+        assert statement.json()["ist_total"] == "600.00"  # the statement counts the same payment
+        february = await client_a_admin.post(base, json=_booking(world, "anna", [2]))
+        assert february.status_code == 201, february.text
+
+    @pytest.mark.asyncio
+    async def test_a_payment_without_a_month_assigned_by_a_year_marks_the_month_of_its_value_date(self, client_a_admin):
+        world = await _hausgeld_world(client_a_admin)
+        await _single_hausgeld(client_a_admin, world, value_date="2026-03-02", period_year=2026)
+        offer = (await client_a_admin.get(PLAN_PATH.format(plan=world["plan"]))).json()
+        assert _anna_booked(offer, world) == {month: month == 3 for month in ALL_MONTHS}
+
+    @pytest.mark.asyncio
+    async def test_a_payment_without_a_month_dated_in_another_year_does_not_block_the_month(self, client_a_admin):
+        world = await _hausgeld_world(client_a_admin)
+        base = PLAN_PATH.format(plan=world["plan"])
+        await _single_hausgeld(client_a_admin, world, value_date="2027-01-05")
+        await _single_hausgeld(client_a_admin, world, value_date="2025-12-31")
+        assert not any(row["booked"] for row in (await client_a_admin.get(base)).json())
+        january = await client_a_admin.post(base, json=_booking(world, "anna", [1]))
+        assert january.status_code == 201, january.text
+
+    @pytest.mark.asyncio
+    async def test_a_reversed_payment_without_a_month_frees_its_month_again(self, client_a_admin):
+        world = await _hausgeld_world(client_a_admin)
+        base = PLAN_PATH.format(plan=world["plan"])
+        single = await _single_hausgeld(client_a_admin, world, value_date="2026-01-05")
+        assert _anna_booked((await client_a_admin.get(base)).json(), world)[1] is True
+        assert (await client_a_admin.post(f"/api/payments/{single['id']}/reverse")).status_code == 201
+        assert not any(row["booked"] for row in (await client_a_admin.get(base)).json())
+        january = await client_a_admin.post(base, json=_booking(world, "anna", [1]))
+        assert january.status_code == 201, january.text
+
+    @pytest.mark.asyncio
+    async def test_the_buyer_of_a_unit_gets_the_months_from_the_transfer_on_the_first(self, client_a_admin):
+        world = await _hausgeld_world(client_a_admin)
+        base = PLAN_PATH.format(plan=world["plan"])
+        karl_july = await client_a_admin.post(base, json=_booking(world, "karl", [7], amount="400.00"))
+        assert karl_july.status_code == 422, karl_july.text
+        lena_june = await client_a_admin.post(base, json=_booking(world, "lena", [6], amount="400.00"))
+        assert lena_june.status_code == 422, lena_june.text
+        assert await _booked(client_a_admin, world) == []
+        karl = await client_a_admin.post(base, json=_booking(world, "karl", range(1, 7), amount="400.00"))
+        lena = await client_a_admin.post(base, json=_booking(world, "lena", range(7, 13), amount="400.00"))
+        assert (karl.status_code, lena.status_code) == (201, 201), (karl.text, lena.text)
+        statement = await client_a_admin.get(f"/api/payments/mietkonto/owner/{world['owners']['lena']}", params={
+            "period_start": "2026-01-01", "period_end": "2026-12-31", "economic_plan_id": world["plan"]})
+        assert (statement.json()["soll_total"], statement.json()["balance"]) == ("2400.00", "0.00")
+
+    @pytest.mark.asyncio
+    async def test_a_transfer_inside_a_month_splits_that_month_by_owner_days_between_both_owners(self, client_a_admin):
+        # Karl owns until 15.07. (15 of 31 days), Lena from 16.07. (16 days): 400,00 EUR split 193,55 / 206,45.
+        world = await _hausgeld_world(client_a_admin, karl_until="2026-07-15", lena_from="2026-07-16")
+        rows = (await client_a_admin.get(PLAN_PATH.format(plan=world["plan"]))).json()
+        grouped = _by_owner(rows, world)
+        assert grouped["karl"] == {**{month: "400.00" for month in range(1, 7)}, 7: "193.55"}
+        assert grouped["lena"] == {7: "206.45", **{month: "400.00" for month in range(8, 13)}}
+        assert Decimal(grouped["karl"][7]) + Decimal(grouped["lena"][7]) == Decimal("400.00")
+        both = await client_a_admin.post(PLAN_PATH.format(plan=world["plan"]), json={
+            "bank_account_id": world["account"], "rows": [
+                {"owner_profile_id": world["owners"]["karl"], "period_year": 2026, "period_month": 7,
+                 "amount": "193.55", "value_date": "2026-07-01"},
+                {"owner_profile_id": world["owners"]["lena"], "period_year": 2026, "period_month": 7,
+                 "amount": "206.45", "value_date": "2026-07-01"}]})
+        assert both.status_code == 201, both.text
+
+    @pytest.mark.asyncio
+    async def test_a_unit_without_an_owner_in_a_plan_month_offers_and_books_nothing(self, client_a_admin):
+        # Karl until 31.03., Lena from 01.05.: nobody owns unit 2 in April.
+        world = await _hausgeld_world(client_a_admin, karl_until="2026-03-31", lena_from="2026-05-01")
+        for response in (
+            await client_a_admin.get(PLAN_PATH.format(plan=world["plan"])),
+            await client_a_admin.post(PLAN_PATH.format(plan=world["plan"]), json=_booking(world, "anna", [1])),
+        ):
+            assert response.status_code == 422, response.text
+            assert response.json()["detail"]["code"] == "hausgeld_ownership_invalid"
+        assert await _booked(client_a_admin, world) == []
+
+    @pytest.mark.asyncio
+    async def test_a_plan_that_is_not_finalized_offers_and_books_nothing(self, client_a_admin):
+        world = await _hausgeld_world(client_a_admin, plan="draft")
+        for response in (
+            await client_a_admin.get(PLAN_PATH.format(plan=world["plan"])),
+            await client_a_admin.post(PLAN_PATH.format(plan=world["plan"]), json=_booking(world, "anna", [1])),
+        ):
+            assert response.status_code == 409, response.text
+            assert response.json()["detail"]["code"] == "ECONOMIC_PLAN_NOT_FINALIZED"
+        assert await _booked(client_a_admin, world) == []
+
+    @pytest.mark.asyncio
+    async def test_a_superseded_plan_offers_and_books_nothing(self, client_a_admin):
+        world = await _hausgeld_world(client_a_admin)
+        assert (await client_a_admin.post(f"/api/economic-plans/{world['plan']}/correction")).status_code == 201
+        for response in (
+            await client_a_admin.get(PLAN_PATH.format(plan=world["plan"])),
+            await client_a_admin.post(PLAN_PATH.format(plan=world["plan"]), json=_booking(world, "anna", [1])),
+        ):
+            assert response.status_code == 409, response.text
+            assert response.json()["detail"]["code"] == "ECONOMIC_PLAN_SUPERSEDED"
+        assert await _booked(client_a_admin, world) == []
+
+    @pytest.mark.asyncio
+    async def test_a_plan_line_without_an_amount_is_not_offered_or_bookable(self, client_a_admin):
+        world = await _hausgeld_world(client_a_admin, planned="0.00")
+        response = await client_a_admin.get(PLAN_PATH.format(plan=world["plan"]))
+        assert response.status_code == 200, response.text
+        assert response.json() == []
+        refused = await client_a_admin.post(PLAN_PATH.format(plan=world["plan"]), json=_booking(world, "anna", [1], amount="1.00"))
+        assert refused.status_code == 422, refused.text
+        assert await _booked(client_a_admin, world) == []
+
+    @pytest.mark.asyncio
+    async def test_a_zero_line_of_one_owner_leaves_the_other_owners_rows(self, client_a_admin, seed_data):
+        import psycopg2
+
+        world = await _hausgeld_world(client_a_admin, plan=None)
+        org, actor, plan = str(seed_data["org_a_id"]), str(seed_data["user_a_admin_id"]), uuid.uuid4()
+        with psycopg2.connect(SYNC_URL) as connection, connection.cursor() as cursor:
+            cursor.execute("INSERT INTO economic_plan(id,organization_id,property_id,plan_year,period_start,period_end,status,"
+                           "engine_version,monthly_due_day) VALUES (%s,%s,%s,2026,'2026-01-01','2026-12-31','draft','fixture',1)",
+                           (str(plan), org, world["property"]))
+            for unit, owner, annual, monthly in (("1", "anna", "7200.00", "600.00"), ("2", "karl", "0.00", "0.00")):
+                cursor.execute("INSERT INTO economic_plan_line(organization_id,economic_plan_id,line_type,unit_id,owner_profile_id,"
+                               "label,planned_amount,monthly_amount,sort_order) VALUES (%s,%s,'OWNER_ADVANCE',%s,%s,'Hausgeldvorschuss',%s,%s,1)",
+                               (org, str(plan), world["units"][unit]["id"], world["owners"][owner], annual, monthly))
+            cursor.execute("UPDATE economic_plan SET status='finalized',finalized_at=now(),finalized_by=%s,snapshot_payload='{}',"
+                           "snapshot_sha256=%s WHERE id=%s", (actor, "d" * 64, str(plan)))
+        rows = (await client_a_admin.get(PLAN_PATH.format(plan=plan))).json()
+        assert _by_owner(rows, world) == {"anna": {month: "600.00" for month in ALL_MONTHS}}
+        refused = await client_a_admin.post(PLAN_PATH.format(plan=plan), json=_booking(world, "karl", [1], amount="400.00"))
+        assert refused.status_code == 422, refused.text
+        assert await _booked(client_a_admin, world) == []
+
+    @pytest.mark.asyncio
+    async def test_foreign_records_answer_404_and_book_nothing(self, client_a_admin, client_b_admin):
+        world = await _hausgeld_world(client_a_admin)
+        base = PLAN_PATH.format(plan=world["plan"])
+        assert (await client_a_admin.get(base)).status_code == 200  # the plan exists for its own organization
+        foreign_property = (await client_b_admin.post("/api/properties", json={"name": "Beta WEG", "management_type": "WEG"})).json()
+        foreign_account = (await client_b_admin.post("/api/bank-accounts", json={
+            "property_id": foreign_property["id"], "account_type": "LAUFEND", "label": "Beta"})).json()
+        foreign_person = (await client_b_admin.post("/api/persons", json={"last_name": "Beta"})).json()
+        foreign_owner = (await client_b_admin.post("/api/owner-profiles", json={"person_id": foreign_person["id"]})).json()
+        # Another organization's plan, as a known id or an unknown one, looks the same.
+        missing = [(await client_b_admin.get(base)), (await client_b_admin.post(base, json=_booking(world, "anna", [1]))),
+                   (await client_b_admin.get(PLAN_PATH.format(plan=uuid.uuid4())))]
+        assert {response.status_code for response in missing} == {404}
+        assert missing[0].json() == missing[2].json()
+        # Own plan with another organization's bank account or owner.
+        account = _booking(world, "anna", [1], bank_account_id=foreign_account["id"])
+        owner = _booking(world, "anna", [1])
+        owner["rows"][0]["owner_profile_id"] = foreign_owner["id"]
+        unknown_owner = _booking(world, "anna", [1])
+        unknown_owner["rows"][0]["owner_profile_id"] = str(uuid.uuid4())
+        responses = [await client_a_admin.post(base, json=body) for body in (account, owner, unknown_owner)]
+        assert [response.status_code for response in responses] == [404, 404, 404], [r.text for r in responses]
+        assert responses[1].json() == responses[2].json()
+        assert await _booked(client_a_admin, world) == []
+        assert await _booked(client_b_admin, world) == []
+
+    @pytest.mark.asyncio
+    async def test_the_account_must_belong_to_the_plan_property_and_be_active(self, client_a_admin):
+        world = await _hausgeld_world(client_a_admin)
+        base = PLAN_PATH.format(plan=world["plan"])
+        other = await _hausgeld_world(client_a_admin, plan=None)
+        elsewhere = await client_a_admin.post(base, json=_booking(world, "anna", [1], bank_account_id=other["account"]))
+        assert elsewhere.status_code == 422, elsewhere.text
+        assert elsewhere.json()["detail"]["code"] == "HAUSGELD_ACCOUNT_PROPERTY_MISMATCH"
+        assert (await client_a_admin.patch(f"/api/bank-accounts/{world['account']}", json={"is_active": False})).status_code == 200
+        inactive = await client_a_admin.post(base, json=_booking(world, "anna", [1]))
+        assert inactive.status_code == 409, inactive.text  # the refusal of a single payment on an inactive account
+        assert await _booked(client_a_admin, world) == [] and await _booked(client_a_admin, other) == []
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("change", [
+        {"amount": "0.00"}, {"amount": "-5.00"}, {"amount": "600.001"}, {"amount": "abc"}, {"amount": "NaN"},
+        {"amount": "1000000000000.00"}, {"amount": 600.0}, {"period_month": 13}, {"value_date": "not a date"},
+    ])
+    async def test_invalid_row_values_are_refused_and_book_nothing(self, client_a_admin, change):
+        world = await _hausgeld_world(client_a_admin)
+        body = _booking(world, "anna", [1, 2])
+        body["rows"][1].update(change)
+        response = await client_a_admin.post(PLAN_PATH.format(plan=world["plan"]), json=body)
+        assert response.status_code == 422, response.text
+        assert await _booked(client_a_admin, world) == []
+
+    @pytest.mark.asyncio
+    async def test_the_request_names_each_month_once_and_stays_bounded(self, client_a_admin):
+        world = await _hausgeld_world(client_a_admin)
+        base = PLAN_PATH.format(plan=world["plan"])
+        duplicate = _booking(world, "anna", [1, 1])
+        empty = _booking(world, "anna", [])
+        too_many = _booking(world, "anna", [1] * 145)
+        responses = [await client_a_admin.post(base, json=body) for body in (duplicate, empty, too_many)]
+        assert [response.status_code for response in responses] == [422, 422, 422], [r.text for r in responses]
+        assert await _booked(client_a_admin, world) == []
+
+    @pytest.mark.asyncio
+    async def test_a_read_only_member_may_read_but_not_book(self, client_a_admin, client_a_readonly):
+        world = await _hausgeld_world(client_a_admin)
+        base = PLAN_PATH.format(plan=world["plan"])
+        assert (await client_a_readonly.get(base)).status_code == 200
+        assert (await client_a_readonly.post(base, json=_booking(world, "anna", [1]))).status_code == 403
+        assert await _booked(client_a_admin, world) == []
