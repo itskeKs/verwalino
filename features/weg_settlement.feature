@@ -97,3 +97,10 @@ Feature: WEG settlement and the owner's Hausgeld balance
     Given the WEG plan has 7000 euros of costs and 6000 euros of reserve for owners with 600 and 400 MEA
     When I finalize their WEG annual settlement
     Then both owners have zero Spitze with reserve Soll of 3600 and 2400 euros and Hausgeld Soll of 7800 and 5200 euros
+
+  Scenario: Building insurance across the year boundary is charged day-accurate in each year
+    Given a WEG with one unit and one owner has Gebäudeversicherung of 3650 euros for July 2024 through June 2025
+    When I compute the WEG annual settlements for 2024 and 2025
+    Then the 2024 settlement charges 1840 euros of Gesamtkosten and the 2025 settlement charges 1810 euros
+    And the owner's share is 1840 euros in the 2024 settlement and 1810 euros in the 2025 settlement
+    And both settlements together charge exactly 3650 euros

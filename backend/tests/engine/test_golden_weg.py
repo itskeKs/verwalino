@@ -628,6 +628,133 @@ class TestGolden6CoOwnership:
 
 
 # ===========================================================================
+# Golden 10: service period crossing the year boundary (issue #403)
+#   A weighted key's effective total is windowed to the settlement period
+#   day-accurately (ADR-0004), like the M3 tenant side since #122: 184/365 of
+#   3,650.00 = 1,840.00 in 2024 and 181/365 = 1,810.00 in 2025, never the
+#   full amount in both years. Cumulative cents make adjacent years telescope
+#   exactly back to the gross amount.
+# ===========================================================================
+class TestGolden10CrossYearServicePeriod:
+    def _scenario(self, *, period_start, period_end, gross, sp_from, sp_to,
+                  units=None, owner_periods=None):
+        if units is None:
+            units = (UnitInput(id=_U(11), number="1", usage_type="WOHNUNG", mea=Decimal("1000")),)
+        if owner_periods is None:
+            owner_periods = (
+                OwnerPeriodInput(unit_id=_U(11), owner_profile_id=_U(21), valid_from=date(2000, 1, 1), valid_to=None),
+            )
+        pos = (
+            WegCostPositionInput(
+                cost_entry_id=_U(50), category_id=_U(99), category_code="GEBAEUDEVERSICHERUNG",
+                label="Gebaeudeversicherung", gross_amount=gross,
+                service_period_from=sp_from, service_period_to=sp_to,
+                owner_distribution_key="MEA", cost_group="UMLAGEFAEHIG",
+            ),
+        )
+        return WegSettlementInput(
+            period_start=period_start, period_end=period_end,
+            property=PropertyInput(id=_U(1), name="WEG", management_type="WEG"),
+            units=units, owner_periods=owner_periods, cost_positions=pos, plan_advances=(),
+        )
+
+    def test_3650_splits_1840_1810(self):
+        gross = Decimal("3650.00")
+        pos_period = (date(2024, 7, 1), date(2025, 6, 30))  # 184 + 181 = 365 days
+        r2024 = compute_weg_jahresabrechnung(self._scenario(
+            period_start=date(2024, 1, 1), period_end=date(2024, 12, 31),
+            gross=gross, sp_from=pos_period[0], sp_to=pos_period[1]))
+        r2025 = compute_weg_jahresabrechnung(self._scenario(
+            period_start=date(2025, 1, 1), period_end=date(2025, 12, 31),
+            gross=gross, sp_from=pos_period[0], sp_to=pos_period[1]))
+        owner_2024 = _owner_result(r2024, _U(21))
+        owner_2025 = _owner_result(r2025, _U(21))
+        # 3650 * 184/365 = 1840.00 ; 3650 * 181/365 = 1810.00.
+        assert r2024.cost_total == Decimal("1840.00")
+        assert owner_2024.owner_cost_total == Decimal("1840.00")
+        assert r2025.cost_total == Decimal("1810.00")
+        assert owner_2025.owner_cost_total == Decimal("1810.00")
+        # The line carries the windowed total and the real day counts.
+        ln2024 = _cost_line(owner_2024, "GEBAEUDEVERSICHERUNG")
+        assert ln2024.total_amount == Decimal("1840.00")
+        assert (ln2024.time_share_days, ln2024.time_share_total_days) == (184, 365)
+        ln2025 = _cost_line(owner_2025, "GEBAEUDEVERSICHERUNG")
+        assert ln2025.total_amount == Decimal("1810.00")
+        assert (ln2025.time_share_days, ln2025.time_share_total_days) == (181, 365)
+        # Adjacent years telescope exactly to the gross amount.
+        assert r2024.cost_total + r2025.cost_total == gross
+
+    def test_1200_splits_604_93_595_07(self):
+        gross = Decimal("1200.00")
+        pos_period = (date(2025, 7, 1), date(2026, 6, 30))  # 184 + 181 = 365 days
+        r2025 = compute_weg_jahresabrechnung(self._scenario(
+            period_start=date(2025, 1, 1), period_end=date(2025, 12, 31),
+            gross=gross, sp_from=pos_period[0], sp_to=pos_period[1]))
+        r2026 = compute_weg_jahresabrechnung(self._scenario(
+            period_start=date(2026, 1, 1), period_end=date(2026, 12, 31),
+            gross=gross, sp_from=pos_period[0], sp_to=pos_period[1]))
+        # floor(1200 * 184/365) = 604.93 ; the remainder 1200 - 604.93 = 595.07.
+        assert r2025.cost_total == Decimal("604.93")
+        assert r2026.cost_total == Decimal("595.07")
+        assert r2025.cost_total + r2026.cost_total == gross
+
+    def test_two_units_owner_change_inside_the_window_sums_exactly(self):
+        # Units MEA 600/400; unit 1 changes owner at the year boundary
+        # (seller until 31.12.2025, buyer from 01.01.2026). One position
+        # 1,200.00 for 01.07.2025-30.06.2026, key MEA.
+        units = (
+            UnitInput(id=_U(11), number="1", usage_type="WOHNUNG", mea=Decimal("600")),
+            UnitInput(id=_U(12), number="2", usage_type="WOHNUNG", mea=Decimal("400")),
+        )
+        owners = (
+            OwnerPeriodInput(unit_id=_U(11), owner_profile_id=_U(21), valid_from=date(2000, 1, 1), valid_to=date(2025, 12, 31)),
+            OwnerPeriodInput(unit_id=_U(11), owner_profile_id=_U(22), valid_from=date(2026, 1, 1), valid_to=None),
+            OwnerPeriodInput(unit_id=_U(12), owner_profile_id=_U(23), valid_from=date(2000, 1, 1), valid_to=None),
+        )
+        sp_from, sp_to = date(2025, 7, 1), date(2026, 6, 30)
+        r2025 = compute_weg_jahresabrechnung(self._scenario(
+            period_start=date(2025, 1, 1), period_end=date(2025, 12, 31),
+            gross=Decimal("1200.00"), sp_from=sp_from, sp_to=sp_to,
+            units=units, owner_periods=owners))
+        r2026 = compute_weg_jahresabrechnung(self._scenario(
+            period_start=date(2026, 1, 1), period_end=date(2026, 12, 31),
+            gross=Decimal("1200.00"), sp_from=sp_from, sp_to=sp_to,
+            units=units, owner_periods=owners))
+        seller = _owner_result(r2025, _U(21))
+        buyer = _owner_result(r2026, _U(22))
+        steady = (  # the owner of unit 2 appears in both settlements
+            _owner_result(r2025, _U(23)), _owner_result(r2026, _U(23)))
+        # Windowed totals: 604.93 (2025) / 595.07 (2026).
+        assert r2025.cost_total == Decimal("604.93")
+        assert r2026.cost_total == Decimal("595.07")
+        # 2025: 604.93 x 0.6 = 362.958 -> 362.96 (larger remnant gets the cent);
+        #       604.93 x 0.4 = 241.972 -> 241.97.
+        # 2026: 595.07 x 0.6 = 357.042 -> 357.04 ; 595.07 x 0.4 = 238.028 -> 238.03.
+        assert seller.owner_cost_total == Decimal("362.96")
+        assert steady[0].owner_cost_total == Decimal("241.97")
+        assert buyer.owner_cost_total == Decimal("357.04")
+        assert steady[1].owner_cost_total == Decimal("238.03")
+        # Unit 1 across the boundary: exactly its 60% share (720.00).
+        assert seller.owner_cost_total + buyer.owner_cost_total == Decimal("720.00")
+        # Unit 2 across the boundary: exactly its 40% share (480.00).
+        assert steady[0].owner_cost_total + steady[1].owner_cost_total == Decimal("480.00")
+        assert r2025.cost_total + r2026.cost_total == Decimal("1200.00")
+
+    def test_service_period_inside_the_year_is_unchanged_in_full(self):
+        # Jan-Jun service period fully inside the 2025 settlement: no window.
+        r = compute_weg_jahresabrechnung(self._scenario(
+            period_start=date(2025, 1, 1), period_end=date(2025, 12, 31),
+            gross=Decimal("1000.00"),
+            sp_from=date(2025, 1, 1), sp_to=date(2025, 6, 30)))
+        owner = _owner_result(r, _U(21))
+        assert r.cost_total == Decimal("1000.00")
+        assert owner.owner_cost_total == Decimal("1000.00")
+        ln = _cost_line(owner, "GEBAEUDEVERSICHERUNG")
+        assert ln.total_amount == Decimal("1000.00")
+        assert (ln.time_share_days, ln.time_share_total_days) == (181, 181)
+
+
+# ===========================================================================
 # Golden 9 (engine part): snapshot/hash determinism (m4 section 9.1 #9)
 #   Scenario 2 finalized twice (identical inputs) -> identical sha256.
 # ===========================================================================

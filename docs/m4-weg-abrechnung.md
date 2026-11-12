@@ -454,6 +454,28 @@ actual annual costs of 365 EUR. This flow is verified in the browser, including 
 release, finalization, reload, and an opened PDF; the plan is not subsequently changed in
 the process.
 
+### 4.3.2 Service Periods Crossing the Settlement Year (#403)
+
+A cost entry whose **Leistungszeitraum crosses the settlement-year boundary** is charged
+in **each** settlement year only for its days inside that year (ADR-0004), exactly as the
+M3 tenant side has windowed such sources since #122. Before the cell distribution, the
+position's **effective total** — i.e. after evidenced reserve financing (§4.5, ADR-0013) —
+is windowed to the settlement period with the cumulative-cent day share
+(`day_share_for_period`): the inclusive day share rounded down per cumulative boundary, so
+the **last day of the source period carries the remaining cents** and adjacent years
+**telescope exactly** back to the effective total. Building insurance 3.650,00 € for
+01.07.2024–30.06.2025 therefore charges **1.840,00 €** (184/365) in the 2024 settlement and
+**1.810,00 €** (181/365) in the 2025 settlement — never 3.650,00 € twice. The windowed
+amount is also the line's `total_amount` and what `cost_total` accumulates, so the
+statement's "Gesamtkosten (Ist)" matches the days billed; `time_share_days`/
+`time_share_total_days` already show 184/365. A service period fully inside the year is
+unchanged (the window covers the whole source). **Direct-amount keys** (`EXTERNE_ABRECHNUNG`,
+`MANUELLER_BETRAG`) keep their explicit per-unit amounts unwindowed, as in M3. Because the
+windowed total makes shares straddle cents, the weighted-key cell weights are exact
+rational numbers (distribute_amount's rational mode), so the largest-remainder guarantee
+Σ rounded == windowed total holds for any input. Finalized runs stay frozen; drafts and
+corrections recompute (ENGINE_VERSION m4.6.0).
+
 ### 4.4 Addressee Model for the Owner Distribution (Engine Mirror of M3)
 
 The key insight: `distribute_position` **already today** generates, for each item, all (unit, time-slice) cells across the entire property and knows **owner cells** (vacancy → `vacancy_attribution` with `owner_profile_id`). For M4 the **addressee focus** shifts:
@@ -697,6 +719,7 @@ There are **no** real WEG sample settlements. Test cases are **synthetic**, deri
 7. **Mixed property dual disclosure (close to exit):** mixed property; the same `cost_entry` set **independently** produces a `BK_MIETER` run (rented unit, allocable only) **and** a `WEG_JAHRESABRECHNUNG` run (all units/owners, all groups, balance, reserve). Tests §7: administrator costs **only** in WEG, never in operating costs; Σ consistency of both spheres.
 8. **Economic plan → monthly installments:** planned costs 11.999,00 € + reserve contribution 1,00 € = 12.000,00 €, MEA 600/400 → annual advance 7200/4800 → monthly installments 600,00/400,00 €; and an "uneven" case (annual advance 7201,00 € → 12 installments via largest remainder, Σ installments == 7201,00 €). Tests §5.3 + ADR-0007 basis.
 9. **Snapshot/hash determinism:** scenarios 2 + 7 finalized twice (identical inputs) → identical `snapshot_sha256`. Tests the M3 §1.8 mechanics for M4 payloads.
+10. **Service period crossing the year (#403):** building insurance 3.650,00 € for 01.07.2024–30.06.2025, one unit/owner. Expected: 1.840,00 € (184/365) in the 2024 settlement and 1.810,00 € (181/365) in 2025; also 1.200,00 € for 01.07.2025–30.06.2026 → 604,93 €/595,07 €, and two units with an owner change at the year boundary summing exactly per unit across the years (§4.3.2).
 
 Each golden test checks **not only the final total** but the **individual line amounts, key base values, subtotals, balance, and reserve development** against the hand calculation (otherwise a compensating double error slips through — M3 discipline).
 
@@ -710,6 +733,7 @@ Each golden test checks **not only the final total** but the **individual line a
 - **I4-F "Reserve/non-allocable never in tenant operating costs":** in no `BK_MIETER` run does a `RESERVE_*` or `NICHT_UMLAGEFAEHIG` item appear (mirror of M3 I-F, secures the sphere separation §7).
 - **I4-G "Plan monthly installments sum-exact":** `Σ over 12 monthly installments == annual advance` exactly per owner.
 - **I4-H "Determinism" + "Consistency payload ↔ lines":** same input twice → identical canonical payload + hash; Σ/values of `snapshot_payload.result` == Σ/values of `settlement_line`.
+- **I4-I "Adjacent year windows telescope":** for a service period crossing a year boundary and random gross amounts/unit mixes, the two adjacent yearly settlements' `cost_total`s sum **exactly** to the gross amount, and within each settlement Σ owner shares == windowed total (§4.3.2).
 
 These invariants hold for **any** valid input (not only the examples) and are the objective, model-independent benchmark.
 
