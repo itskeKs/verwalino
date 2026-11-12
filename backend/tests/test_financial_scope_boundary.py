@@ -317,11 +317,13 @@ async def test_plan_payment_derivation_enters_exact_scope_before_summing(migrato
     from app.services.payment_service import PaymentService
     session = migrator_session
     ids = await scope_fixture(session, scope_seed)
-    ids.update(person=uuid.uuid4(), owner=uuid.uuid4(), outside_owner=uuid.uuid4(), outside_unit=uuid.uuid4(), plan=uuid.uuid4(), second_scope=uuid.uuid4(), second_bank=uuid.uuid4())
+    ids.update(person=uuid.uuid4(), owner=uuid.uuid4(), outside_owner=uuid.uuid4(), outside_unit=uuid.uuid4(), plan=uuid.uuid4(), second_scope=uuid.uuid4(), second_bank=uuid.uuid4(), unit=uuid.uuid4())
     await session.execute(text("INSERT INTO person(id,organization_id,first_name,last_name,street,zip_code,city) VALUES (:person,:org,'Shared','Owner','','','')"), ids)
     await session.execute(text("INSERT INTO owner_profile(id,organization_id,person_id,notes) VALUES (:owner,:org,:person,''),(:outside_owner,:org,:person,'Separate profile outside scope')"), ids)
     await session.execute(text("INSERT INTO unit(id,organization_id,property_id,number,usage_type) VALUES (:outside_unit,:org,:other_property,'Outside','WOHNUNG')"), ids)
     await session.execute(text("INSERT INTO ownership_history(organization_id,unit_id,owner_profile_id,valid_from) VALUES (:org,:outside_unit,:outside_owner,'2025-01-01')"), ids)
+    await session.execute(text("INSERT INTO unit(id,organization_id,property_id,number,usage_type,mea,area,heated_area) VALUES (:unit,:org,:property,'1','WOHNUNG',1000,100,100)"), ids)
+    await session.execute(text("INSERT INTO ownership_history(organization_id,unit_id,owner_profile_id,valid_from) VALUES (:org,:unit,:owner,'2025-01-01')"), ids)
     await session.execute(text("INSERT INTO accounting_scope(id,organization_id,property_id,scope_type,label,valid_from,whole_property,origin,created_by) VALUES (:second_scope,:org,:other_property,'WEG','Second WEG','2025-01-01',true,'REVIEWED',:actor)"), ids)
     await session.execute(text("INSERT INTO bank_account(id,organization_id,property_id,account_type,label) VALUES (:second_bank,:org,:other_property,'LAUFEND','Second bank')"), ids)
     for bank, prop, sphere, amount in [('bank','property','scope',100), ('second_bank','other_property','second_scope',900)]:
@@ -332,7 +334,7 @@ async def test_plan_payment_derivation_enters_exact_scope_before_summing(migrato
         await session.execute(text("INSERT INTO accounting_scope_binding(organization_id,property_id,scope_id,payment_id,payment_bank_account_id,origin,reason,reviewed_by) VALUES (:org,:prop,:sphere,:payment,:pbank,'REVIEWED','Reviewed payment',:actor)"), params)
     await session.execute(text("INSERT INTO scope_grant(organization_id,scope_id,user_id,capabilities,granted_by,reason) VALUES (:org,:second_scope,:clerk,ARRAY['read','prepare'],:actor,'Other WEG')"), ids)
     await session.execute(text("INSERT INTO economic_plan(id,organization_id,property_id,plan_year,period_start,period_end,status,engine_version) VALUES (:plan,:org,:property,2025,'2025-01-01','2025-12-31','draft','test')"), ids)
-    await session.execute(text("INSERT INTO economic_plan_line(organization_id,economic_plan_id,line_type,owner_profile_id,label,planned_amount,monthly_amount,sort_order) VALUES (:org,:plan,'OWNER_ADVANCE',:owner,'Owner advance',1200,100,1)"), ids)
+    await session.execute(text("INSERT INTO economic_plan_line(organization_id,economic_plan_id,line_type,owner_profile_id,unit_id,label,planned_amount,monthly_amount,sort_order) VALUES (:org,:plan,'OWNER_ADVANCE',:owner,:unit,'Owner advance',1200,100,1)"), ids)
     await session.execute(text("INSERT INTO accounting_scope_binding(organization_id,property_id,scope_id,economic_plan_id,origin,reason,reviewed_by) VALUES (:org,:property,:scope,:plan,'REVIEWED','Reviewed plan',:actor)"), ids)
     await actor(session, ids)
     with pytest.raises(HTTPException) as ambiguous:
