@@ -857,6 +857,18 @@ class WegSettlementService:
             raise HTTPException(422, {'code': 'RESERVE_ASSIGNMENT_REQUIRED', 'message': 'Bitte klären Sie alle Zahlungen ohne Planbezug vor der Berechnung.'})
         if ledger.get('unlinked_payment_ids'):
             raise HTTPException(422, {'code': 'RESERVE_PAYOUT_EVIDENCE_REQUIRED', 'message': 'Bitte verknüpfen Sie alle Rücklagenentnahmen mit Kostenbeleg und Beschluss.'})
+        # Freeze the Soll the reserve ledger was decided with, in the annual run's shape (#402).
+        plans = await reserves.repo.plans(run)
+        if run.economic_plan_id:
+            plans = [p for p in plans if p.id == run.economic_plan_id]
+        plan_advances: tuple[OwnerAdvanceInput, ...] = ()
+        if len(plans) == 1:
+            from app.services.payment_service import PaymentService
+            shares = await PaymentService(self._session, self._org_id, self._user_id).owner_plan_charge_totals(
+                plans[0], run.period_start, run.period_end)
+            plan_advances = tuple(
+                OwnerAdvanceInput(owner_profile_id=owner_id, plan_advance_total=amount)
+                for owner_id, amount in sorted(dated_plan_soll(shares).items(), key=lambda item: str(item[0])))
         inp = VermoegensberichtInput(
             period_start=run.period_start,
             period_end=run.period_end,
@@ -869,6 +881,7 @@ class WegSettlementService:
             ),
             reserve_contributions_total=Decimal(ledger["contributions_total"]),
             reserve_ledger=ledger,
+            plan_advances=plan_advances,
             bank_balances=tuple(
                 BankBalanceInput(
                     bank_account_id=b.bank_account_id, label=b.label,

@@ -1806,6 +1806,109 @@ async def test_zero_dated_soll_is_no_soll_for_the_reserve_ledger(client_a_admin,
     assert ledger['contributions_total'] == '500.00'
 
 
+async def _finalize_asset_report(api, w, year):
+    response = await api.post('/api/weg-settlements/asset-reports', json={
+        'property_id': w['property'], 'period_start': f'{year}-01-01', 'period_end': f'{year}-12-31'})
+    assert response.status_code == 201, response.text
+    report = response.json()['id']
+    values = {'bank_balances': [{'bank_account_id': w['bank'], 'label': 'Giro',
+        'account_type': 'LAUFEND', 'balance': '0.00'}], 'receivables': [], 'payables': []}
+    await attest_fixture(api, 'settlement', report, values)
+    response = await api.post(f'/api/weg-settlements/asset-reports/{report}/finalize', json=values)
+    assert response.status_code == 200, response.text
+    return report
+
+
+@pytest.mark.asyncio
+async def test_late_cash_uses_the_soll_frozen_by_an_asset_report(client_a_admin, seed_data):
+    api = client_a_admin
+    w = await _single_unit_weg(api, seed_data)
+    await _book_payment(api, w, w['anna'], '11500.00', 'HAUSGELD_VORSCHUSS', '2025-06-01')
+    await _book_payment(api, w, w['anna'], '500.00', 'RUECKLAGENANTEIL', '2025-06-01')
+    # Only the 2025 asset report is finalized; it freezes the -500.00 correction.
+    report = await _finalize_asset_report(api, w, 2025)
+    frozen = (await api.get(f'/api/weg-settlements/{report}/reserve-ledger')).json()
+    assert frozen['contributions_total'] == '0.00'
+    # A late 100.00 Hausgeld from Anna dated 15.12.2025 returns 100.00 to the reserve.
+    await _book_payment(api, w, w['anna'], '100.00', 'HAUSGELD_VORSCHUSS', '2025-12-15')
+    response = await api.post('/api/weg-settlements/asset-reports', json={
+        'property_id': w['property'], 'period_start': '2026-01-01', 'period_end': '2026-12-31'})
+    assert response.status_code == 201, response.text
+    ledger = (await api.get(f"/api/weg-settlements/{response.json()['id']}/reserve-ledger")).json()
+    assert (ledger['late_cash_total'], ledger['closing_balance']) == ('100.00', '100.00')
+
+
+@pytest.mark.asyncio
+async def test_late_cash_of_an_old_basis_asset_report_uses_the_undated_lines(
+        client_a_admin, seed_data, monkeypatch):
+    from app.services import weg_settlement_service as service
+    api = client_a_admin
+    w = await _single_unit_weg(api, seed_data)
+    bernd = await _sell_unit(api, w['unit'], '2025-06-30', '2025-07-01')
+    await _book_payment(api, w, w['anna'], '6000.00', 'HAUSGELD_VORSCHUSS', '2025-06-01')
+    await _book_payment(api, w, bernd, '5500.00', 'HAUSGELD_VORSCHUSS', '2025-07-01')
+    await _book_payment(api, w, bernd, '500.00', 'RUECKLAGENANTEIL', '2025-07-01')
+    # The year is frozen without the Soll key, as asset reports were before #402.
+    original_builder = service.build_asset_report_payload
+    def legacy_builder(inp, result):
+        payload = original_builder(inp, result)
+        payload['inputs'].pop('plan_advances', None)
+        return payload
+    monkeypatch.setattr(service, 'build_asset_report_payload', legacy_builder)
+    report = await _finalize_asset_report(api, w, 2025)
+    monkeypatch.undo()
+    frozen = (await api.get(f'/api/weg-settlements/{report}/reserve-ledger')).json()
+    assert frozen['contributions_total'] == '0.00'
+    # Main's basis for such a year is the plan's undated line totals: Bernd has
+    # no line, so his late 100.00 Hausgeld dated 15.12.2025 books no correction.
+    await _book_payment(api, w, bernd, '100.00', 'HAUSGELD_VORSCHUSS', '2025-12-15')
+    response = await api.post('/api/weg-settlements/asset-reports', json={
+        'property_id': w['property'], 'period_start': '2026-01-01', 'period_end': '2026-12-31'})
+    assert response.status_code == 201, response.text
+    ledger = (await api.get(f"/api/weg-settlements/{response.json()['id']}/reserve-ledger")).json()
+    assert (ledger['late_cash_total'], ledger['closing_balance']) == ('0.00', '0.00')
+
+
+@pytest.mark.asyncio
+async def test_a_year_without_a_plan_freezes_an_explicit_empty_soll(client_a_admin, seed_data):
+    api = client_a_admin
+    property_response = await api.post('/api/properties', json={
+        'name': 'WEG Ohneplan 1', 'management_type': 'WEG', 'mea_denominator': 1000})
+    assert property_response.status_code == 201, property_response.text
+    property_id = property_response.json()['id']
+    unit_response = await api.post('/api/units', json={'property_id': property_id, 'number': '1',
+        'usage_type': 'WOHNUNG', 'mea': '1000', 'area': '100'})
+    assert unit_response.status_code == 201, unit_response.text
+    unit_id = unit_response.json()['id']
+    person = await api.post('/api/persons', json={'first_name': 'Anna', 'last_name': 'Alt'})
+    assert person.status_code == 201, person.text
+    owner = await api.post('/api/owner-profiles', json={'person_id': person.json()['id']})
+    assert owner.status_code == 201, owner.text
+    anna = owner.json()['id']
+    response = await api.post('/api/ownership', json={'unit_id': unit_id, 'owner_profile_id': anna,
+        'valid_from': '2020-01-01'})
+    assert response.status_code == 201, response.text
+    bank = await api.post('/api/bank-accounts', json={'property_id': property_id,
+        'account_type': 'LAUFEND', 'label': 'Girokonto'})
+    assert bank.status_code == 201, bank.text
+    w = {'property': property_id, 'unit': unit_id, 'anna': anna, 'bank': bank.json()['id']}
+    await _book_payment(api, w, anna, '500.00', 'RUECKLAGENANTEIL', '2025-06-01')
+    report = await _finalize_asset_report(api, w, 2025)
+    # The frozen Soll is an explicit empty list, never a silently missing key.
+    with psycopg2.connect(SYNC_URL) as connection, connection.cursor() as cursor:
+        cursor.execute('SELECT snapshot_payload FROM settlement_run WHERE id=%s', (report,))
+        payload = cursor.fetchone()[0]
+    assert payload['inputs']['plan_advances'] == []
+    # A late 100.00 reserve from Anna dated 15.12.2025 books cash, no correction.
+    await _book_payment(api, w, anna, '100.00', 'RUECKLAGENANTEIL', '2025-12-15')
+    response = await api.post('/api/weg-settlements/asset-reports', json={
+        'property_id': w['property'], 'period_start': '2026-01-01', 'period_end': '2026-12-31'})
+    assert response.status_code == 201, response.text
+    ledger = (await api.get(f"/api/weg-settlements/{response.json()['id']}/reserve-ledger")).json()
+    assert [row for row in ledger['entries'] if row.get('correction') == 'SPLIT_RESERVE'] == []
+    assert (ledger['late_cash_total'], ledger['closing_balance']) == ('100.00', '600.00')
+
+
 @pytest.mark.asyncio
 async def test_ended_ownership_without_successor_is_refused_like_the_owner_ledger(client_a_admin, seed_data):
     api = client_a_admin

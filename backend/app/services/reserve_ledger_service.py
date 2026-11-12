@@ -10,6 +10,7 @@ from app.engine.reserve_ledger import money, planned_reserve_per_owner, reserve_
 from app.models.audit_event import AuditEvent
 from app.models.reserve_ledger_entry import ReserveLedgerEntry
 from app.repositories.audit_repo import AuditRepository
+from app.repositories.economic_plan_repo import EconomicPlanLineRepository
 from app.repositories.reserve_ledger_repo import ReserveLedgerRepository
 from app.repositories.settlement_repo import SettlementLineRepository, SettlementRunRepository
 from app.services.financial_scope_service import FinancialScopeService
@@ -244,10 +245,17 @@ class ReserveLedgerService:
             historical_plan = next((p for p in cash_plans if str(p.id) == source_id), None)
             if historical_plan is None:
                 raise HTTPException(404, {'code': 'RESERVE_NOT_FOUND', 'message': 'Rücklagenabrechnung nicht gefunden.'})
-            # The finalized year's Soll comes from its frozen snapshot, never from
-            # today's ownership history: a later edit must not re-decide the year (#402).
-            soll = {row['owner_profile_id']: Decimal(row['plan_advance_total'])
-                    for row in ((historical.snapshot_payload or {}).get('inputs') or {}).get('plan_advances', [])}
+            # The finalized year's Soll comes from data frozen with that year, never
+            # from today's ownership history: a later edit must not re-decide it (#402).
+            # Snapshots frozen before the Soll was part of them (asset reports) were
+            # decided with the finalized plan's undated line totals, which cannot change.
+            frozen_advances = ((historical.snapshot_payload or {}).get('inputs') or {}).get('plan_advances')
+            if frozen_advances is not None:
+                soll = {row['owner_profile_id']: Decimal(row['plan_advance_total'])
+                        for row in frozen_advances}
+            else:
+                soll = {str(owner): amount for owner, amount in (
+                    await EconomicPlanLineRepository(self.session, self.org_id).advance_totals_per_owner(historical_plan.id)).items()}
             planned = planned_reserve_per_owner(await self.repo.plan_rows(historical_plan))
             frozen_states = {str(p.owner_profile_id): {'hausgeld': ZERO, 'reserve': ZERO, 'hausgeld_share': ZERO}
                              for p in late_payments if str(p.owner_profile_id) in soll}

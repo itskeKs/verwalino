@@ -152,6 +152,9 @@ An owner whose dated Soll is 0.00 is without Soll for the cap and the reserve
 ledger alike. A finalized year's late cash is decided from the Soll frozen in
 that year's snapshot (`inputs.plan_advances`) — for a run stored as m4.4.0 the
 undated basis it was decided with — never from ownership edits after the fact.
+An asset report freezes the Soll its reserve ledger was decided with in its own
+snapshot in the same shape; a year frozen before that carries no key, and its
+late cash uses the finalized plan's undated line totals, which cannot change.
 A history the owner ledger refuses (`hausgeld_ownership_invalid`) refuses the
 calculation, the derived paid advances and the reserve ledger with the same
 German 422; the plan-line fallback of the division applies only where the
