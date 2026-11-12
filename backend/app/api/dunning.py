@@ -72,6 +72,14 @@ class DunningCreateOwner(BaseModel):
     override_fee: str | None = None
 
 
+class DunningIssueBody(BaseModel):
+    model_config = {"extra": "forbid"}
+
+    # Explicit per-notice payment-destination selection; required at issue
+    # time when several accounts are eligible (Owner decision on #331).
+    bank_account_id: uuid.UUID | None = None
+
+
 class DunningBatchPreview(BaseModel):
     model_config = {"extra": "forbid"}
 
@@ -322,11 +330,15 @@ async def create_dunning_for_owner(
 @router.post("/{dunning_id}/issue", response_model=DunningOut)
 async def issue_dunning_notice(
     dunning_id: uuid.UUID,
+    body: DunningIssueBody | None = None,
     auth: AuthContext = Depends(require_write_dep),
     db: AsyncSession = Depends(get_db, scope="function"),
 ):
     svc = DunningService(db, auth.organization_id, auth.user_id)
-    notice = await svc.issue(dunning_id)
+    notice = await svc.issue(
+        dunning_id,
+        bank_account_id=body.bank_account_id if body is not None else None,
+    )
     return _to_out(notice)
 
 

@@ -141,6 +141,37 @@ async def test_scoped_dunning_distinguishes_prepare_approve_export_and_revocatio
         assert (await api.get(f"/api/dunning/{notice['id']}/pdf")).status_code == 404
 
 
+async def test_scoped_issue_autoselects_only_the_scope_bound_account(migrator_session, scope_seed):
+    """Only an active LAUFEND account with IBAN, bound to the notice's scope, is eligible."""
+    import io
+
+    import pdfplumber
+
+    ids = await statement_fixture(migrator_session, scope_seed, 'lease')
+    await grant(ids, ['read', 'prepare', 'approve', 'export'])
+    async with client(ids) as api:
+        created = await api.post('/api/dunning/tenant', json=tenant_body(ids))
+        assert created.status_code == 201, created.text
+        notice_id = created.json()['id']
+    # An unbound account with an IBAN on the same property must not become
+    # eligible for a scoped notice; it appears only after the draft exists,
+    # because an unclassified input would block the scoped calculation.
+    ids['stray'] = uuid.uuid4()
+    await mutate(text("INSERT INTO bank_account(id,organization_id,property_id,account_type,label,iban) "
+        "VALUES (:stray,:org,:property,'LAUFEND','Ungebunden','DE89370400440532013000')"), ids)
+    async with client(ids) as api:
+        issued = await api.post(f'/api/dunning/{notice_id}/issue')
+        assert issued.status_code == 200, issued.text
+        pdf = await api.get(f'/api/dunning/{notice_id}/pdf')
+        assert pdf.status_code == 200 and pdf.content.startswith(b'%PDF')
+        with pdfplumber.open(io.BytesIO(pdf.content)) as doc:
+            page_text = "\n".join(page.extract_text() or '' for page in doc.pages)
+        # The scope-bound fixture account carries the IBAN (scope_fixture); the
+        # unbound account with an IBAN on the same property must not appear.
+        assert 'DE02200505501015871393' in page_text
+        assert 'DE89370400440532013000' not in page_text
+
+
 async def test_unclassified_escalation_history_blocks_scoped_draft(migrator_session, scope_seed):
     ids = await statement_fixture(migrator_session, scope_seed, 'lease')
     await legacy_notice(ids)

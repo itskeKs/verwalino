@@ -273,6 +273,38 @@ def test_legacy_dunning_html_is_identical_without_a_frozen_interest_start(kind, 
     assert sha256(recipient_documents()[kind].encode()).hexdigest() == expected
 
 
+def _plain_notice():
+    from types import SimpleNamespace
+
+    return SimpleNamespace(level=1, issue_date=date(2026, 4, 8), due_date=date(2026, 4, 22),
+        principal_amount=Decimal('100.00'), fee_amount=Decimal('0'), total_amount=Decimal('100.00'),
+        interest_amount=Decimal('0'), included_items=[], interest_snapshot=None)
+
+
+def test_dunning_html_with_destination_names_account_and_identity():
+    from app.services.dunning_pdf import build_dunning_html, DunningDisplayNames
+
+    names = DunningDisplayNames(person_name='Anna Beispiel', property_name='Musterstraße 1',
+        unit_label='unit1', bank_iban='DE75512108001245126199',
+        bank_bic='HELADEFF', bank_name='Musterbank')
+    html = build_dunning_html(_plain_notice(), names)
+    assert 'Objekt' in html and 'Musterstraße 1' in html
+    assert 'Einheit' in html and 'unit1' in html
+    assert 'DE75512108001245126199' in html
+    assert 'HELADEFF' in html and 'Musterbank' in html
+    assert 'auf das folgende Konto' in html
+    assert 'auf unser Konto' not in html
+
+
+def test_dunning_html_without_destination_keeps_legacy_wording():
+    from app.services.dunning_pdf import build_dunning_html, DunningDisplayNames
+
+    html = build_dunning_html(_plain_notice(), DunningDisplayNames(person_name='Anna Beispiel'))
+    assert 'auf unser Konto' in html
+    assert 'IBAN' not in html
+    assert 'Objekt' not in html
+
+
 @pytest.mark.parametrize('payment_type', ['KALTMIETE', 'NK_VORAUSZAHLUNG'])
 def test_dunning_pdf_names_only_the_stored_interest_start_in_mixed_snapshot_rows(payment_type):
     from types import SimpleNamespace

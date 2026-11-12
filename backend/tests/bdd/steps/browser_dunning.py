@@ -23,6 +23,7 @@ def unpaid_four_digit_rent(world, seed_data):
     unpaid_rent(world, seed_data)
     response = world.act("PATCH", f"/api/leases/{world.data['leases'][0]['id']}", json={"base_rent": "1234.56"})
     assert response.status_code == 200, world.describe_response()
+    bank_account(world)
 
 
 @when("the manager creates a January notice as of 2 March 2026 with automatic interest")
@@ -451,6 +452,10 @@ async def explicit_april_interest_start(browser_world):
             text = " ".join(part.extract_text() or "" for part in pdf.pages)
         assert re.search(r"Zinsbeginn:\s*08\.04\.2026", text), text
         assert "07.04.2026" in text and re.search(r"0[.,]02", text), text
+        # The issued document identifies the tenancy and the payment destination.
+        assert "Wohnung 1" in text, text
+        assert "Sonnenhof" in text, text
+        assert "DE02120300000000202051" in text, text
     finally:
         await popup.close()
     for width in (1280, 360):
