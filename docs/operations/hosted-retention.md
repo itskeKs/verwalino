@@ -2,7 +2,7 @@
 
 **Draft, 13 November 2026. Not approved for launch.** This is the operator procedure and capability
 record. Customer wording is in the website's German Nutzungsbedingungen and AV-Vertrag; English
-is a translation. Owner decisions Q04/Q05/Q07/Q08 are applied below. Implementation dependencies must be
+is a translation. Owner decisions Q04/Q05/Q06/Q07/Q08 are applied below. Implementation dependencies must be
 closed before customer data is accepted; the decisions are not evidence of deployed behavior. Legal sources: [S01, S06 and S08](hosted-legal.md#primary-sources-and-dates).
 
 ## Return, access and deletion
@@ -51,6 +51,7 @@ Evidence: [organization export and erasure](organization-export.md),
 | Signup requests | 24-hour token, confirmed row removed; unconfirmed rows eligible for cleanup seven days after expiry, best effort every 100th signup | Q05: automatically delete never-confirmed sign-ups independently of traffic. Implementation dependency: schedule cleanup using the current eligibility boundary (24-hour token plus seven days), bound execution delay and monitor failures; eligibility is not a promised day-eight deletion |
 | Reset requests / throttle state | Reset token one hour; rows eligible seven days after expiry or use, with bounded opportunistic cleanup; throttle entries eligible after one day without update | Verify configured jobs and measured deletion; token expiry is not row expiry. Enforce a maximum elapsed retention before publishing one |
 | Server logs, tracker, support and contracts | No universal deployed time limit established | Q05: server logs 14 days from creation, error reports 30 days from creation, support 90 days after closure. Implementation dependency: enforce and verify every store/provider. Individually justify incident/claim or statutory exceptions; versioned contract evidence needs a separate purpose-based schedule (Q14) |
+| AI data, credentials and instruction evidence | Local results/provenance/usage and encrypted organization key; no recorded #617 confirmation today. Source does not establish provider retention or deletion | Q06: customer directly contracts its provider and determines/verifies its retention, locations and training exclusion. Provider copies belong in a separate customer-recipient schedule, not the operator sub-processor list under the intended model. Key removal is not proof of remote erasure. Account for local outputs/evidence under return/deletion rules; define necessary retention of #617 instruction evidence when implementing it, without inventing a duration or claiming automatic purge. fogu retains its own transmission/transfer duties; see [Q06 review](hosted-legal.md#customer-selected-ai-q06-roles-and-remaining-duties) |
 
 ## Accounting retention and service closure
 

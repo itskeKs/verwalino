@@ -126,7 +126,10 @@ The English legal notice is a translation of the authoritative German text. Priv
 the Article 28 GDPR processing agreement remain **unapproved drafts**, dated 13 November 2026.
 Visible warnings and existing noindex/sitemap exclusions remain. German is authoritative after
 approval. The drafts apply the Q01–Q14 decisions, distinguish implementation dependencies from
-current capabilities, retain individual missing-fact markers, and leave Q06 external AI open.
+current capabilities and retain individual missing-fact markers. Q06 includes optional AI at hosted
+launch through the customer's directly contracted provider and own key. Its instruction clause,
+separate recipient category and privacy disclosure depend on role/transfer review and recorded
+key-save confirmation in #617, which is not implemented yet.
 Neither a build nor this drafting constitutes legal sign-off. The terms now contain conditional
 consumer/digital-service and withdrawal information, an adapted withdrawal form, statutory-rights
 preservation and a liability clause expressly requiring counsel's wording review.
@@ -144,9 +147,10 @@ service; customer termination any time and operator ordinary termination/discont
 with a named deputy still to supply. Existing browser storage remains documented without a banner,
 subject to counsel confirming the strict-necessity exception for every purpose.
 
-Before registration opens, complete provider/location/backup/deputy facts and contracts, Q06,
+Before registration opens, complete provider/location/backup/deputy facts and contracts, Q06 role/transfer review,
 DPO/DPIA assessments and counsel review. Reliable retention jobs, complete return/final purge,
-versioned terms/DPA assent before first entry, and 30-day sub-processor notice with 21-day objections
+versioned terms/DPA assent before first entry, recorded AI key-save confirmation (#617), and
+30-day sub-processor notice with 21-day objections
 remain implementation dependencies. If consumer distance-contract rules apply, information and
 durable confirmation plus the current statutory electronic withdrawal function are also required.
 The website does not implement or certify any of those workflows. See the

@@ -45,7 +45,9 @@ Sources for retention: [S01/S06](hosted-legal.md#primary-sources-and-dates).
 - Third-country register: country/recipient, Article 45 basis and verified scope or Article 46
   instrument, transfer assessment/supplementary safeguards as needed; Article 49 safeguards
   documentation if relying on its second subparagraph exceptional route. If none, record the
-  verified absence, including remote access. Q02–Q04 contract evidence and `OPEN Q06` (S01/S09).
+  verified absence, including remote access. Q02–Q04 contract evidence remains required (S01/S09).
+  Q06 customer-instructed AI transmission belongs in the [processor record](hosted-processing-processor.md);
+  its separate recipient/transfer evidence and unimplemented #617 confirmation remain prerequisites.
 - Erasure schedule: trigger, maximum, responsible person, backup treatment, exceptions and
   evidence of execution. Use the [retention procedure](hosted-retention.md); do not replace
   unknown maxima with token validity (Articles 5(1)(e), 30(1)(f)).

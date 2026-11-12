@@ -2,7 +2,8 @@
 
 Research and drafting as of **13 November 2026**, for issue #26. This is not legal advice,
 a certification, or permission to launch. The owner and qualified counsel must approve the
-completed documents and actual operating arrangements. `OPEN Q06` is the remaining product decision. `TO SUPPLY` marks missing facts;
+completed documents and actual operating arrangements. Q06 is decided; its recorded confirmation
+depends on unimplemented issue #617. `TO SUPPLY` marks missing facts;
 implementation and counsel review labels are not reopened owner decisions. No customer records belong here.
 
 ## Documents and publication boundary
@@ -29,11 +30,12 @@ registry-certified. The latest Q01 decision supersedes the previously printed VA
 | Q03 EU mail provider with AV agreement | [TO SUPPLY Q03: mail provider]; complete entity/address, locations, retention and contract before use |
 | Q04 host-managed backup under the same AV agreement | [TO SUPPLY Q04: backup product from contract]; [TO SUPPLY Q04: backup retention, including maximum age of all copies]; verify all-copy expiry and recovery safeguards |
 | Q12 owner handles rights, security and incidents | Christian Kunkel; deputy fact is recorded in the [breach procedure](hosted-breach-response.md) |
-| Q06 external AI on hosted service | [OPEN Q06: decide permitted external AI, roles, providers, countries, retention and transfer safeguards before activation] |
+| Q06 external AI at hosted launch | Customer chooses and directly contracts with its own provider and supplies its own key; instructed transmission, customer responsibility for provider contract/locations/training exclusion, and privacy disclosure. Intended role: customer's own processor, not operator sub-processor. Counsel must validate actual roles/transfers; recorded key-save confirmation depends on [#617](https://github.com/itskeKs/verwalino/issues/617), not implemented |
 
 ## Repository fact map
 
-This inventory describes source at `8dcd4e26`, not an inspection of a running service.
+This inventory describes source at `8dcd4e26`, with the AI settings/flow rechecked at `3c941545`
+for Q06, not an inspection of a running service.
 The project status in [README](../../README.md) still warns against reliance for real property
 management. Older design prose in [architecture](../architecture.md) is not deployment evidence.
 
@@ -43,7 +45,7 @@ management. Older design prose in [architecture](../architecture.md) is not depl
 | Signup, accounts, security | Prospective/active administrators and staff; organization/name/email, Argon2 password hash, token digests, roles, preferences, timestamps, pseudonymous IP/email throttle keys | Operator controller for service administration/security; SMTP sends confirmation/reset messages | `backend/app/api/signup.py`, `api/auth.py`, `api/password_reset.py`, `core/rate_limit.py`; [users](users-and-access.md); signup has no terms/DPA version acceptance or privacy link |
 | Property management | Tenants, owners, vendors/contacts, representatives, staff and people mentioned in uploads; addresses/contact/bank data, leases, rents/deposits, arrears, bank movements, invoices, consumption, ownership, votes, correspondence, signatures, original files and audit/source records | Customer normally controller; operator processor. A customer acting as processor needs upstream authorization and the appropriate chain | [Feature status](../feature-status.md), [export inventory](organization-export.md#version-two-format-version-one-remains-importable); attachments/free text may contain Art. 9/10 data; no reliable automatic exclusion |
 | Document mail | Recipient addresses, message and generated PDF (settlement, dunning, invitation), dispatch status and retained original | Processor on customer instruction; SMTP then recipient's mail system | `services/mail_service.py`, `services/document_mail_service.py`, [mail operations](../../DEPLOY.md#optional-document-smtp-t47-no-deployment-authorization); SMTP acceptance is not delivery |
-| OCR / AI | Uploaded pages/images, extracted text, user questions, answers, source references, usage/cost metadata; encrypted customer API key | Local OCR; optional remote processing at organization's selected endpoint | `declarations/provider_runtime.py`, `declarations/openai_provider.py`, `core/invoice_ocr.py`, [AI runtime](../adr/0014-provider-neutral-ai-runtime.md); OpenAI, Anthropic, compatible endpoints, web Q&A/model discovery and worker extraction. BYOK does not settle the legal role or transfer mechanism |
+| OCR / AI | Outbound document text/page images, questions and context; returned results, source references and usage/cost metadata; encrypted customer API key | Local OCR; transmission on customer instruction to its directly commissioned AI processor under Q06 | `backend/app/api/ai_settings.py`, `backend/app/services/ai_settings_service.py`, `backend/app/schemas/ai_settings.py`, [AI pipeline rule](../../.claude/rules/ai-pipeline.md), [AI runtime](../adr/0014-provider-neutral-ai-runtime.md). Administrator can configure OpenAI, Anthropic or an OpenAI-compatible endpoint; hosted custom endpoints require public HTTPS. No content processing without a stored key, selected model and enabled function. Model discovery can authenticate with a key entered before saving, without document/question content. Settings storage does not record the #617 instruction/confirmation |
 | Hosting/storage | All app data; database and original files on local filesystem | Contabo in Germany is stated by [#24](https://github.com/itskeKs/verwalino/issues/24) and site copy | Q02 retains Contabo; verify exact contracting entity, site, remote administration, physical controls and execute AV agreement before launch. Do not infer every recipient is in Germany |
 | Backups | Database, documents and private configuration | Operator for availability, processor for customer contents | [DEPLOY backups](../../DEPLOY.md#backups): same-server backup, 14 daily/8 weekly unlabelled generations plus 10 labelled; no firm maximum age for labelled backups. Q04 selects host-managed backup under the same AV agreement; contract, activation and recovery evidence still required |
 | Logs, error tracking, support | Request/job/organization IDs, security and error metadata; voluntarily submitted diagnostics or support material | Controller for proportionate security/support metadata, processor for customer contents | `core/logging.py`, `core/error_tracking.py`, `core/scrub.py`; [DEPLOY](../../DEPLOY.md) prescribes self-hosted GlitchTip, disabled with empty DSN; scrubbers reduce data, do not establish anonymity. Q05: logs 14 days, error reports 30 days, closed support 90 days; actual destinations/fields and enforced cleanup still need evidence |
@@ -90,7 +92,53 @@ each third-country transfer and remote access under Articles 44–49; a customer
 “EU region” setting does not supply an AV contract or prove all processing stays in the EEA.
 Use a currently valid adequacy basis within its scope or appropriate safeguards, including a
 transfer assessment/supplementary measures where needed. Routine transfers should not be built
-on exceptional Article 49 derogations. `OPEN Q06` (S01, S09).
+on exceptional Article 49 derogations. Q06 does not waive these checks (S01, S09).
+
+## Customer-selected AI (Q06): roles and remaining duties
+
+**Decision applied; primary sources checked 13 November 2026.** Hosted AI is included at launch
+through the customer's own provider contract/key. The DPA instruction and privacy disclosure
+are drafted; the recorded confirmation when storing the key depends on
+[#617](https://github.com/itskeKs/verwalino/issues/617). Saving settings today neither records
+that confirmation nor verifies a provider contract, location or training exclusion. Local OCR
+and AI content processing are distinct; model discovery has the unsaved-key exception above.
+
+**Role conclusion — conditional application.** EDPB Guidelines 07/2020, paragraph 75, distinguish
+several processors directly engaged by a controller from a processor engaging sub-processors.
+This supports the Q06 model: a directly customer-contracted provider receiving data on the
+customer's instruction is its own processor, outside fogu's sub-processor list. But customer
+selection alone is insufficient: paragraphs 159–160 preserve Article 28(4) responsibility where
+the processor engages the provider, even with customer selection criteria. Actual functions and
+contracts govern, not the key or label. The sources do not decide this integration's facts.
+[EDPB 07/2020 v2.1, paragraphs 28–29, 75, 159–160](https://www.edpb.europa.eu/system/files/documents/2023-10/EDPB_guidelines_202007_controllerprocessor_final_en.pdf).
+The German authority likewise requires factual role allocation and recognizes direct processor
+duties; it gives no blanket exemption for customer keys.
+[LfDI Baden-Württemberg role FAQ, 14 July 2021](https://www.baden-wuerttemberg.datenschutz.de/faq-zur-abgrenzung-der-verantwortlichkeiten-und-des-begriffs-der-auftragsverarbeitung/).
+
+**fogu's duties remain.** Transmission requires documented instructions under Article 28(3)(a),
+risk-appropriate security under Article 32 (including destination/key protection and secure
+transport), and immediate notice to the controller if fogu considers an instruction unlawful
+under Article 28(3), last subparagraph. The draft suspends the affected processing pending
+resolution. The customer's provider contract/location/training responsibilities and confirmation
+do not waive these duties or turn an unlawful transfer into a lawful one.
+[GDPR Articles 28 and 32](https://eur-lex.europa.eu/eli/reg/2016/679/oj).
+
+**Transfers are a separate test.** If fogu discloses data to a separate recipient in a third
+country, it can itself be the exporter, even when that recipient is the customer's own processor.
+It must satisfy Articles 44 ff.; the customer's contract alone does not prove that fogu's
+transfer is covered. Verify the actual recipient, locations/access, adequacy scope or safeguards,
+and any required transfer assessment and supplementary measures before transmission.
+[EDPB 05/2021 v2.0, sections 2–3](https://www.edpb.europa.eu/system/files/documents/2023-02/edpb_guidelines_05-2021_interplay_between_the_application_of_art3-chapter_v_of_the_gdpr_v2_en_0.pdf).
+
+**For counsel:** Does the actual contracting and technical arrangement support parallel direct
+processors under paragraph 75, or does fogu engage a sub-processor under Article 28(2)/(4)?
+Does the provider process solely on customer instructions, including no training, or have own
+purposes? How does this work for private landlords and WEGs: who is controller, who contracts,
+and who can give the instruction; what upstream authority is needed when a manager is itself
+a processor? Consumer status alone settles none of these roles. Review the #617 confirmation's
+scope/evidence, pre-save model discovery, and the instrument covering fogu's own transfers.
+These service-specific questions remain unsettled pending contract/fact review, not a reopened
+product decision. See also the [private-landlord/WEG analysis](#consumer-customers-q09-and-liability-q10).
 
 ## Consumer customers (Q09) and liability (Q10)
 
@@ -212,7 +260,9 @@ assent, notices and objection handling are implementation dependencies.
 ## Primary sources and dates
 
 First-pass sources S01–S13 were checked on **2026-11-12**. Second-pass checks on **2026-11-13**
-cover GDPR, BGB, BDSG, EGBGB, VSBG, the DSK DPIA list, Saarland DPIA page and S14–S19 below. “No date displayed” means no reliable publication
+cover GDPR, BGB, BDSG, EGBGB, VSBG, the DSK DPIA list, Saarland DPIA page and S14–S19 below.
+The Q06 third pass on the same date rechecks GDPR and EDPB 07/2020 and adds S20–S21.
+“No date displayed” means no reliable publication
 or revision date was exposed; a search crawl date is not treated as a publication date. Statute
 dates are the official site's displayed consolidated status, not a claim that every cited
 section changed that day. Authority guidance informs practice; courts may interpret differently.
@@ -227,7 +277,7 @@ section changed that day. Authority guidance informs practice; courts may interp
 | S06 | [AO §147](https://www.gesetze-im-internet.de/ao_1977/__147.html), act amended 22 October 2026; [HGB §257](https://www.gesetze-im-internet.de/hgb/__257.html), act amended 4 February 2026; [BMF GoBD 2026 handbook](https://ao.bundesfinanzministerium.de/ao/2026/Anhaenge/BMF-Schreiben-und-gleichlautende-Laendererlasse/Anhang-33/inhalt.html); [14 July 2025 amendment](https://www.bundesfinanzministerium.de/Content/DE/Downloads/BMF_Schreiben/Weitere_Steuerthemen/Abgabenordnung/2025-07-14-GoBD-2-aenderung.pdf?__blob=publicationFile&v=2) to 28 November 2019 GoBD, previously amended 11 March 2024 | GoBD are administrative guidance, not certification. Preserve original structured e-invoice data, not only rendered PDF. Handbook indexed but direct retrieval returned 503; statute and amendment text were retrieved. No later GoBD amendment found in the official search |
 | S07 | DSK [Kurzpapier 1](https://www.datenschutzkonferenz-online.de/media/kp/dsk_kpnr_1.pdf), [5](https://www.datenschutzkonferenz-online.de/media/kp/dsk_kpnr_5.pdf), [13](https://www.datenschutzkonferenz-online.de/media/kp/dsk_kpnr_13.pdf), each 17 December 2018; [DPIA list v1.1](https://www.datenschutzkonferenz-online.de/media/ah/20181017_ah_DSK_DSFA_Muss-Liste_Version_1.1_Deutsch.pdf), 17 October 2018 | Source: Konferenz der unabhängigen Datenschutzbehörden des Bundes und der Länder (Datenschutzkonferenz). [Index](https://www.datenschutzkonferenz-online.de/kurzpapiere.html) marks 13 and several others under revision, and 4/12 partly outdated; do not use those as current transfer/DPO rules |
 | S08 | Saarland [AV guidance and linked templates](https://www.datenschutz.saarland.de/themen/auftragsverarbeitung), page undated; [Formulierungshilfe](https://www.datenschutz.saarland.de/fileadmin/user_upload/uds/alle_Dateien_und_Ordner_bis_2025/datenschutz/ds-gvo/kurzpapiere/Auftragsverarbeitungsvertrag_Formulierungshilfe_3-2018_web.pdf), March 2018 file version; linked controller/processor register templates undated | Adapted structure, not copied boilerplate or official standard clauses. Authority expressly excludes a civil-law/AGB assessment |
-| S09 | EDPB [Guidelines 07/2020](https://www.edpb.europa.eu/documents/guideline/guidelines-072020-on-the-concepts-of-controller-and-processor-in-the-gdpr_en), final 7 July 2021; [Recommendations 01/2020](https://www.edpb.europa.eu/documents/recommendation/recommendations-012020-on-measures-that-supplement-transfer-tools-to_en), final 18 June 2021; [EU 2021/915](https://eur-lex.europa.eu/eli/dec_impl/2021/915/oj), 4 June 2021 | Role analysis, safeguards; 2021/915 is an Article 28 clause set, not the separate third-country transfer SCCs |
+| S09 | EDPB [Guidelines 07/2020](https://www.edpb.europa.eu/documents/guideline/guidelines-072020-on-the-concepts-of-controller-and-processor-in-the-gdpr_en), adopted 7 July 2021, v2.1 corrections 20 September 2022 (PDF rechecked 13 November 2026); [Recommendations 01/2020](https://www.edpb.europa.eu/documents/recommendation/recommendations-012020-on-measures-that-supplement-transfer-tools-to_en), final 18 June 2021; [EU 2021/915](https://eur-lex.europa.eu/eli/dec_impl/2021/915/oj), 4 June 2021 | Role analysis, safeguards; 2021/915 is an Article 28 clause set, not the separate third-country transfer SCCs |
 | S10 | DSK [Standard-Datenschutzmodell v3.1](https://www.datenschutzkonferenz-online.de/media/ah/SDM-Methode-V31.pdf), adopted 14 May 2024 | TOM reference objectives: minimization, availability, integrity, confidentiality, transparency, unlinkability, intervenability; not proof of installed controls |
 | S11 | Saarland [breach reporting](https://www.datenschutz.saarland.de/online-dienste/meldung-datenpanne), no publication date displayed | Current authority channel; Article 33 risk exception and Article 34 threshold still govern |
 | S12 | CJEU [C-298/07 in official case-law digest](https://curia.europa.eu/site/upload/docs/application/pdf/2019-06/fiche_thematique_-commerce_electronique_et_obligations_contractuelles_-_en.pdf), judgment 16 October 2008; digest July 2024 | Additional rapid/direct/effective contact information beyond email; telephone not invariably mandatory |
@@ -238,6 +288,8 @@ section changed that day. Authority guidance informs practice; courts may interp
 | S17 | [BGH VIII ZR 243/13](https://juris.bundesgerichtshof.de/cgi-bin/rechtsprechung/document.py?Art=pm&Blank=1&Datum=2015-3&Gericht=bgh&file=dokument.pdf&linked=urt&nr=70979), judgment 25 March 2015 | WEG consumer treatment; judgment date, not search crawl date |
 | S18 | [DSK rental guidance v2.0](https://www.datenschutzkonferenz-online.de/media/oh/OH_Einholung_von_Selbstauskuenften_Mietinteressenten_V2.pdf), January 2026; [Rhineland-Palatinate property-management guidance](https://www.datenschutz.rlp.de/themen/immobilienverwaltung), no publication/revision date displayed | Landlord GDPR duties; actual WEG/manager role allocation requires individual analysis. Older examples on the authority page are not a current headcount rule |
 | S19 | [Rome I, Regulation (EC) 593/2008](https://eur-lex.europa.eu/eli/reg/2008/593/oj), 17 June 2008; OJ 4 July 2008; current consolidated version shown as 24 July 2008, checked 13 November 2026 | Article 6 preserves applicable mandatory consumer protection despite choice of German law |
+| S20 | [LfDI Baden-Württemberg controller/processor FAQ](https://www.baden-wuerttemberg.datenschutz.de/faq-zur-abgrenzung-der-verantwortlichkeiten-und-des-begriffs-der-auftragsverarbeitung/), stated FAQ date 14 July 2021; checked 13 November 2026 | Actual roles prevail over labels; direct processor and Chapter V duties. General guidance, not a ruling on this AI integration |
+| S21 | [EDPB 05/2021 v2.0](https://www.edpb.europa.eu/system/files/documents/2023-02/edpb_guidelines_05-2021_interplay_between_the_application_of_art3-chapter_v_of_the_gdpr_v2_en_0.pdf), adopted 14 February 2023, webpage 24 February 2023; checked 13 November 2026 | Sections 2–3: processor can be exporter to another controller/processor; transfer safeguards depend on actual flow |
 
 Recheck laws, authority guidance, provider terms and the deployed data flows before final sign-off.
 Counsel must decide unsettled contract classification and proportionality questions; an authority's
