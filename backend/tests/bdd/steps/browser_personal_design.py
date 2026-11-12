@@ -1,6 +1,7 @@
 """Persist personal appearance through the real settings and navigation."""
 import os
 from pathlib import Path
+from urllib.parse import urlsplit
 
 from playwright.async_api import expect
 from pytest_bdd import given, then, when
@@ -93,6 +94,103 @@ async def mobile_navigation(browser_world):
 @given('a synthetic property for the design table')
 def design_table_property(world):
     create_property(world, 'Verwaltung Alpha', 'Musterhaus an der Musterstraße 12')
+
+
+SAVE_ERROR = 'Design konnte nicht gespeichert werden. Bitte erneut versuchen.'
+
+
+async def select_and_fail_save(browser_world, world, tmp_path, choice, width):
+    """Select the other design, cut the save request, click save, keep evidence."""
+    page = browser_world.page
+    await page.set_viewport_size({'width': width, 'height': 820})
+    radio = page.get_by_role('radio', name=choice, exact=False)
+    await expect(radio).to_be_enabled()
+    await radio.check()
+    await expect(page.locator('.theme-save-row').get_by_role('status')).to_have_text('Noch nicht gespeichert.')
+    state = {'fail': True}
+    world.data['design_save_fail'] = state
+
+    async def fail_preferences(route):
+        request = route.request
+        if state['fail'] and request.method == 'PATCH' and urlsplit(request.url).path == '/api/auth/preferences':
+            await route.abort()
+            return
+        await route.continue_()
+
+    await page.route('**/api/auth/preferences', fail_preferences)
+    await page.get_by_role('button', name='Design speichern', exact=True).click()
+    await expect(page.get_by_role('alert').filter(has_text=SAVE_ERROR)).to_be_visible()
+    # Evidence of the point of action before asserting the error placement.
+    await page.locator('.theme-save-row').scroll_into_view_if_needed()
+    active = 'warm' if choice == 'Klar' else 'klar'
+    await page.screenshot(path=str(tmp_path / f'issue-375-save-error-{active}-{width}.png'))
+
+
+@when('the user selects Warm and the save request fails on a 360 pixel screen')
+@browser_step
+async def fail_save_warm_phone(browser_world, world, tmp_path):
+    await select_and_fail_save(browser_world, world, tmp_path, 'Warm', 360)
+
+
+@when('the user selects Klar and the save request fails on a 360 pixel screen')
+@browser_step
+async def fail_save_klar_phone(browser_world, world, tmp_path):
+    await select_and_fail_save(browser_world, world, tmp_path, 'Klar', 360)
+
+
+@when('the user selects Warm and the save request fails on a desktop screen')
+@browser_step
+async def fail_save_warm_desktop(browser_world, world, tmp_path):
+    await select_and_fail_save(browser_world, world, tmp_path, 'Warm', 1280)
+
+
+async def assert_save_failure_at_action(browser_world, active):
+    """The saved design stays ``active``; the failure alert sits at the save action."""
+    page = browser_world.page
+    alert = page.locator('.theme-save-row').get_by_role('alert')
+    await expect(alert).to_be_visible()
+    await expect(alert).to_have_text(SAVE_ERROR)
+    await expect(alert).to_be_in_viewport()
+    await expect(page.locator('.app-layout')).to_have_attribute('data-design-theme', active)
+    draft = 'Klar' if active == 'warm' else 'Warm'
+    await expect(page.get_by_role('radio', name=draft, exact=False)).to_be_checked()
+
+
+@then('the save failure is announced at the save action and Klar remains active')
+@browser_step
+async def save_failure_and_klar_remains(browser_world):
+    await assert_save_failure_at_action(browser_world, 'klar')
+
+
+@then('the save failure is announced at the save action and Warm remains active')
+@browser_step
+async def save_failure_and_warm_remains(browser_world):
+    await assert_save_failure_at_action(browser_world, 'warm')
+
+
+@when('the connection is restored and the user saves the design again')
+@browser_step
+async def retry_save(browser_world, world):
+    world.data['design_save_fail']['fail'] = False
+    await browser_world.page.get_by_role('button', name='Design speichern', exact=True).click()
+    await expect(browser_world.page.locator('.theme-save-row').get_by_role('status')).to_have_text(
+        'Design für Ihr Benutzerkonto gespeichert.')
+
+
+@then('Warm is saved and applied')
+@browser_step
+async def warm_saved_and_applied(browser_world):
+    page = browser_world.page
+    await expect(page.locator('.app-layout')).to_have_attribute('data-design-theme', 'warm')
+    await expect(page.get_by_role('radio', name='Warm', exact=False)).to_be_checked()
+
+
+@then('Klar is saved and applied')
+@browser_step
+async def klar_saved_and_applied(browser_world):
+    page = browser_world.page
+    await expect(page.locator('.app-layout')).to_have_attribute('data-design-theme', 'klar')
+    await expect(page.get_by_role('radio', name='Klar', exact=False)).to_be_checked()
 
 
 async def capture_screen(page, path, width, whole=False):
