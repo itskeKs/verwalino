@@ -39,6 +39,13 @@ Then run these commands in order, after the ownership check above. Each loop han
 list without passing an empty argument to a removal command. Stop on an error and inspect it;
 do not force removal of shared volumes, networks or images.
 
+The workspace guard (`scripts/hv_guard.py`) denies destructive docker commands, with one
+exception: it allows exactly the removal loops shown below — a listing filtered by
+`label=com.docker.compose.project=verwalino` piped into the `while IFS= read -r resource`
+loop that removes `"$resource"` — matched in full, so any extra operand, other filter,
+substitution, redirection or comment keeps the command denied, as do `docker compose down -v`
+and global prune commands. The loops below are written to that contract.
+
 ```sh
 docker container ls --all --quiet --filter 'label=com.docker.compose.project=verwalino' |
   while IFS= read -r resource; do
