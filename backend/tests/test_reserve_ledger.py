@@ -600,7 +600,6 @@ async def test_late_hausgeld_uses_frozen_plan_and_storno_amount_after_source_cha
     from types import SimpleNamespace as S
     from unittest.mock import AsyncMock
     from datetime import date
-    from app.repositories.economic_plan_repo import EconomicPlanLineRepository
     from app.services.reserve_ledger_service import ReserveLedgerService
     start, end = date(2025, 1, 1), date(2025, 12, 31)
     payload = {'inputs': {'units': [{'id': 'a', 'number': '1', 'mea': '2'}, {'id': 'b', 'number': '2', 'mea': '1'}],
@@ -613,7 +612,8 @@ async def test_late_hausgeld_uses_frozen_plan_and_storno_amount_after_source_cha
     frozen = S(id='closed', status='finalized', period_start=start, period_end=end, management_mandate_id=None,
         snapshot_payload={'reserve_ledger': {'closing_balance': '50.00', 'economic_plan_id': original.id,
             'entries': [{'kind': 'CONTRIBUTION', 'payment_id': 'original-cash', 'amount': '50.00',
-                         'owner_profile_id': 'payer', 'date': '2025-05-05'}]}})
+                         'owner_profile_id': 'payer', 'date': '2025-05-05'}]},
+            'inputs': {'plan_advances': [{'owner_profile_id': 'payer', 'plan_advance_total': '100.00'}]}})
     run = S(id='next', status='draft', period_start=date(2026, 1, 1), period_end=date(2026, 12, 31),
         management_mandate_id=None, economic_plan_id=None)
     cash = S(id='late-cash', payment_type='HAUSGELD_VORSCHUSS', amount=Decimal('100'), direction='OUT' if storno else 'IN',
@@ -629,12 +629,9 @@ async def test_late_hausgeld_uses_frozen_plan_and_storno_amount_after_source_cha
         cash_plans=AsyncMock(return_value=[replacement, original]), hausgeld_share=AsyncMock(return_value=Decimal('50')),
         plan_rows=AsyncMock(return_value=[{'kind': 'PLANNED', 'date': '2025-01-01',
             'owner_profile_id': 'payer', 'amount': '50.00'}]))
-    lines = AsyncMock(return_value=[S(line_type='OWNER_ADVANCE', owner_profile_id='payer', planned_amount=Decimal('100'))])
-    monkeypatch.setattr(EconomicPlanLineRepository, 'list_for_plan', lines)
     ledger = await service.read(run)
     assert ledger['late_cash_total'] == ('-50.00' if storno else '50.00')
     assert ledger['closing_balance'] == ('0.00' if storno else '100.00')
-    lines.assert_awaited_once_with(original.id)
     service.repo.plan_rows.assert_awaited_once_with(original)
 
 
@@ -817,7 +814,11 @@ async def test_split_reserve_uses_cash_date_ownership_and_never_invents_successo
         cash.append(await payment(api, local, h, kind='HAUSGELD_VORSCHUSS', when=when))
         await payment(api, local, r, when=when)
     ledger = (await api.get(f"/api/weg-settlements/{w['run']}/reserve-ledger")).json()
-    assert ledger['contributions_total'] == ('5538.46' if successor else '6000.00')
+    # Decision 1(b) with the dated Soll: owner_a's 4,200.00 Hausgeld covers his 3,900.00
+    # (6 x 650.00), so neither his 3,600.00 reserve nor his 1,938.46 share is corrected;
+    # owner_b's covered 2,400.00 stays and only his share above the planned 2,400.00
+    # (1,292.31) leaves the reserve.
+    assert ledger['contributions_total'] == ('5538.46' if successor else '7938.46')
     if not successor:
         # Raw payment rows retain the different unit sets at each value date.
         raw = {row['payment_id']: row['amount'] for row in ledger['entries'] if row.get('payment_id') in cash}
@@ -834,7 +835,7 @@ async def test_split_reserve_correction_uses_only_run_plan_and_actual_credited_h
     from unittest.mock import AsyncMock
     from uuid import UUID
     from app.services.reserve_ledger_service import ReserveLedgerService
-    from app.repositories.economic_plan_repo import EconomicPlanLineRepository
+    from app.services.payment_service import PaymentService
     owner = UUID(int=1)
     run = S(id='run', status='draft', period_start=date(2025, 1, 1), period_end=date(2025, 12, 31),
             economic_plan_id='plan' if selected else None, management_mandate_id=None)
@@ -853,14 +854,14 @@ async def test_split_reserve_correction_uses_only_run_plan_and_actual_credited_h
         entries=AsyncMock(return_value=[assignment] if manual else []), payments=AsyncMock(return_value=payments),
         owner_units=AsyncMock(return_value={}), cash_plan=AsyncMock(return_value=plan),
         hausgeld_share=AsyncMock(return_value=Decimal('1938.46')))
-    lines = AsyncMock(return_value=[S(line_type='OWNER_ADVANCE', owner_profile_id=owner, planned_amount=Decimal('7800'))])
-    monkeypatch.setattr(EconomicPlanLineRepository, 'list_for_plan', lines)
+    shares = AsyncMock(return_value={(UUID(int=2), owner): (Decimal('7800'), Decimal('7800'))})
+    monkeypatch.setattr(PaymentService, 'owner_plan_charge_totals', shares)
     ledger = await service.read(run)
     assert ledger['contributions_total'] == expected
     if selected:
-        lines.assert_awaited_once_with('plan')
+        shares.assert_awaited_once_with(plan, run.period_start, run.period_end)
     else:
-        lines.assert_not_awaited()
+        shares.assert_not_awaited()
 
 
 @pytest.mark.asyncio
@@ -943,7 +944,6 @@ async def test_split_reserve_late_cash_corrects_a_legacy_frozen_overcount(
     from unittest.mock import AsyncMock
     from uuid import UUID
     from app.services.reserve_ledger_service import ReserveLedgerService
-    from app.repositories.economic_plan_repo import EconomicPlanLineRepository
     owner = UUID(int=1)
     plan = S(id='historical-plan', period_start=date(2025, 1, 1), period_end=date(2025, 12, 31))
     payments = [S(id=identifier, payment_type=kind, amount=Decimal(amount), direction='IN',
@@ -963,8 +963,9 @@ async def test_split_reserve_late_cash_corrects_a_legacy_frozen_overcount(
                      'owner_profile_id': str(owner), 'amount': amount}
                     for identifier, amount in [('hausgeld', '1938.46'), ('reserve', format(Decimal(reserve), '.2f'))]
                     if identifier != 'hausgeld' or Decimal(hausgeld)]}
+    basis = {'plan_advances': [{'owner_profile_id': str(owner), 'plan_advance_total': '7800.00'}]}
     historical = S(id='history', status='finalized', period_start=plan.period_start, period_end=plan.period_end,
-        snapshot_payload={'reserve_ledger': deepcopy(frozen)}, snapshot_sha256='retained-hash')
+        snapshot_payload={'reserve_ledger': deepcopy(frozen), 'inputs': basis}, snapshot_sha256='retained-hash')
     run = S(id='current', status='draft', period_start=date(2026, 1, 1), period_end=date(2026, 12, 31),
         economic_plan_id=None, management_mandate_id=None)
     service = ReserveLedgerService(None, 'org', 'actor')
@@ -975,10 +976,8 @@ async def test_split_reserve_late_cash_corrects_a_legacy_frozen_overcount(
         hausgeld_share=AsyncMock(return_value=Decimal('46.15')),
         plan_rows=AsyncMock(return_value=[{'kind': 'PLANNED', 'owner_profile_id': str(owner),
             'amount': '3600.00', 'date': '2025-01-01'}]))
-    monkeypatch.setattr(EconomicPlanLineRepository, 'advance_totals_per_owner',
-        AsyncMock(return_value={owner: Decimal('7800')}))
     ledger = await service.read(run)
-    assert historical.snapshot_payload == {'reserve_ledger': frozen}
+    assert historical.snapshot_payload == {'reserve_ledger': frozen, 'inputs': basis}
     assert historical.snapshot_sha256 == 'retained-hash'
     assert (await service.read(historical))['closing_balance'] == opening
     assert (ledger['late_cash_total'], ledger['closing_balance']) == (expected, closing)
@@ -995,7 +994,6 @@ async def test_split_reserve_late_cash_counts_the_same_periods_annual_and_asset_
     from unittest.mock import AsyncMock
     from uuid import UUID
     from app.services.reserve_ledger_service import ReserveLedgerService
-    from app.repositories.economic_plan_repo import EconomicPlanLineRepository
     owner = UUID(int=1)
     plan = S(id='historical-plan', period_start=date(2025, 1, 1), period_end=date(2025, 12, 31))
     payments = [S(id=identifier, payment_type=kind, amount=Decimal(amount), direction=direction,
@@ -1013,9 +1011,10 @@ async def test_split_reserve_late_cash_counts_the_same_periods_annual_and_asset_
                          'owner_profile_id': str(owner), 'correction': 'SPLIT_RESERVE',
                          # Recognized by the structured marker, never by its display text.
                          'reason': 'Früherer Wortlaut der Korrektur'}]}
+    basis = {'plan_advances': [{'owner_profile_id': str(owner), 'plan_advance_total': '7800.00'}]}
     history = [S(id=kind, status='finalized', run_type=kind,
         period_start=plan.period_start, period_end=plan.period_end,
-        snapshot_payload={'reserve_ledger': deepcopy(frozen)}, snapshot_sha256=kind + '-hash')
+        snapshot_payload={'reserve_ledger': deepcopy(frozen), 'inputs': basis}, snapshot_sha256=kind + '-hash')
         for kind in ('WEG_JAHRESABRECHNUNG', 'VERMOEGENSBERICHT')]
     run = S(id='current', status='draft', period_start=date(2026, 1, 1), period_end=date(2026, 12, 31),
         economic_plan_id=None, management_mandate_id=None)
@@ -1026,11 +1025,9 @@ async def test_split_reserve_late_cash_counts_the_same_periods_annual_and_asset_
         owner_units=AsyncMock(return_value={}), cash_plans=AsyncMock(return_value=[plan]),
         plan_rows=AsyncMock(return_value=[{'kind': 'PLANNED', 'owner_profile_id': str(owner),
             'amount': '3600.00', 'date': '2025-01-01'}]))
-    monkeypatch.setattr(EconomicPlanLineRepository, 'advance_totals_per_owner',
-        AsyncMock(return_value={owner: Decimal('7800')}))
     ledger = await service.read(run)
     for historical in history:
-        assert historical.snapshot_payload == {'reserve_ledger': frozen}
+        assert historical.snapshot_payload == {'reserve_ledger': frozen, 'inputs': basis}
         assert historical.snapshot_sha256 == historical.run_type + '-hash'
         assert await service.read(historical) == {**frozen, 'frozen': True}
     assert (ledger['late_cash_total'], ledger['closing_balance']) == ('-1661.54', '1938.46')

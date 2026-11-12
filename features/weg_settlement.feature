@@ -33,7 +33,7 @@ Feature: WEG settlement and the owner's Hausgeld balance
     And the owner's ledger is unchanged by finalization
     And finalization has not changed the booked Hausgeld payments
 
-  Scenario: A successor's assigned payment remains visible without cost or plan shares
+  Scenario: A successor's assigned payment remains visible with her dated plan Soll
     Given a successor owns unit 2 from July after the plan was finalized and all costs belong to January through June
     And the successor has booked 1900 euros for December 2026 with a January 2027 value date
     When I finalize their WEG annual settlement
@@ -55,6 +55,12 @@ Feature: WEG settlement and the owner's Hausgeld balance
     And Karl and Lena each owe six monthly Hausgeld advances of 400 euros
     And their issued dunning notices each request only their six unpaid advances
     And the annual settlement still lists both ownership periods
+
+  Scenario: The plan Soll follows the dated owner after a mid-year change
+    Given Anna owns the whole unit until June and Bernd owns it from July with a 12000 euro plan and 12000 euro costs
+    When I compute their WEG annual settlement
+    Then Anna's Hausgeld Soll is 6000 euros and her Abrechnungsspitze is minus 49,32 euros
+    And Bernd's Hausgeld Soll is 6000 euros and his Abrechnungsspitze is 49,32 euros
 
   @browser
   Scenario: The document addressees and key dates fit desktop and a 360 pixel phone

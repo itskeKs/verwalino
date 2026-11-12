@@ -309,11 +309,11 @@ def successor_credit(world, weg_balance):
     assert owner is not None, 'The finalized statement omitted the successor with a booked payment'
     assert {key: owner[key] for key in ('owner_cost_total', 'plan_soll', 'abrechnungsspitze',
                                       'paid', 'account_balance', 'payment_amount')} == {
-        'owner_cost_total': '0.00', 'plan_soll': '0.00', 'abrechnungsspitze': '0.00',
-        'paid': '1900.00', 'account_balance': '-1900.00', 'payment_amount': '-1900.00'}
+        'owner_cost_total': '0.00', 'plan_soll': '2400.00', 'abrechnungsspitze': '-2400.00',
+        'paid': '1900.00', 'account_balance': '500.00', 'payment_amount': '-1900.00'}
     assert owner['ownership_periods'] == [{'unit_number': '2', 'valid_from': '2026-07-01', 'valid_to': '2026-12-31'}]
     originals = {row['owner_profile_id']: row for row in result['owner_results'] if row['owner_profile_id'] != w['successor']}
-    for oid, cost, plan, spitze in zip(w['owners'][:2], ('6400.00', '4266.67'), ('7200.00', '4800.00'), ('-800.00', '-533.33')):
+    for oid, cost, plan, spitze in zip(w['owners'][:2], ('6400.00', '4266.67'), ('7200.00', '2400.00'), ('-800.00', '1866.67')):
         assert originals[oid]['owner_cost_total'] == cost
         assert originals[oid]['plan_soll'] == plan and originals[oid]['abrechnungsspitze'] == spitze
         assert originals[oid]['paid'] == '0.00'
@@ -471,6 +471,83 @@ def dated_annual_periods(world, dated_owners):
     for oid, start, end in [(w['owners'][1], '2026-01-01', '2026-06-30'),
                              (w['buyer'], '2026-07-01', '2026-12-31')]:
         assert results[oid]['ownership_periods'] == [{'unit_number': '2', 'valid_from': start, 'valid_to': end}]
+
+
+@given('Anna owns the whole unit until June and Bernd owns it from July with a 12000 euro plan and 12000 euro costs',
+       target_fixture='dated_soll')
+def dated_plan_soll_world(world, seed_data):
+    user = str(seed_data['user_a_admin_id'])
+    world.actor = world.administrator_of('Verwaltung Alpha')
+    world.actor_organization = 'Verwaltung Alpha'
+    home = create(world, '/api/properties', {'name': 'WEG Lindweg 1',
+        'management_type': 'WEG', 'mea_denominator': 1000,
+        'data_audience': {'label': 'Lindweg', 'reason': 'Synthetic settlement',
+            'grants': [{'user_id': user, 'capabilities': ['read', 'prepare', 'approve', 'export'],
+                        'reason': 'Synthetic settlement'}]}}, keyed=True)
+    unit = create(world, '/api/units', {'property_id': home['id'], 'number': '1',
+        'usage_type': 'WOHNUNG', 'mea': '1000', 'area': '100'})
+    anna_person = create_person(world, 'Verwaltung Alpha', 'Anna Alt')
+    anna = create(world, '/api/owner-profiles', {'person_id': anna_person.id})
+    create(world, '/api/ownership', {'unit_id': unit['id'], 'owner_profile_id': anna['id'],
+        'valid_from': '2020-01-01'})
+    scope = create(world, '/api/accounting-scopes', {'property_id': home['id'], 'scope_type': 'WEG',
+        'label': 'WEG Lindweg', 'valid_from': '2026-01-01', 'whole_property': True}, keyed=True)
+    create(world, f"/api/accounting-scopes/{scope['id']}/grants", {'user_id': user,
+        'capabilities': ['read', 'prepare', 'approve', 'confirm', 'export'], 'reason': 'Synthetic settlement'}, keyed=True)
+    basis = {'property_id': home['id'], 'accounting_scope_id': scope['id']}
+    account = create(world, '/api/bank-accounts', {**basis, 'account_type': 'LAUFEND', 'label': 'WEG Giro'})
+    category = next(row for row in world.act('GET', '/api/cost-categories').json() if row['code'] == 'GARTENPFLEGE')
+    cost = create(world, '/api/cost-entries', {**basis, 'cost_category_id': category['id'],
+        'cost_category_plan_version': category['plan_version'], 'document_number': 'RE-LINDWEG',
+        'invoice_date': '2026-02-01', 'service_period_from': '2026-01-01',
+        'service_period_to': '2026-12-31', 'gross_amount': '12000.00',
+        'owner_distribution_key': 'MEA',
+        'tenant_apportionable': 'NICHT_UMLAGEFAEHIG', 'source': 'MANUAL'})
+    assert world.act('POST', f"/api/cost-entries/{cost['id']}/confirm").status_code == 200
+    plan = create(world, '/api/economic-plans', {**basis, 'plan_year': 2026,
+        'period_start': '2026-01-01', 'period_end': '2026-12-31'})
+    values = {'planned_costs': [{'category_code': 'GARTENPFLEGE', 'label': 'Bewirtschaftung',
+        'planned_amount': '12000.00', 'cost_group': 'UMLAGEFAEHIG'}], 'reserve_contribution_total': '0.00'}
+    world.run(attest_fixture(world.actor, 'economic_plan', plan['id'], values))
+    response = world.act('POST', f"/api/economic-plans/{plan['id']}/finalize", json=values)
+    assert response.status_code == 200, response.text
+    old = world.act('GET', f"/api/ownership?unit_id={unit['id']}").json()[0]
+    response = world.act('PATCH', f"/api/ownership/{old['id']}", json={'valid_to': '2026-06-30'})
+    assert response.status_code == 200, response.text
+    bernd_person = create_person(world, 'Verwaltung Alpha', 'Bernd Neu')
+    bernd = create(world, '/api/owner-profiles', {'person_id': bernd_person.id})
+    create(world, '/api/ownership', {'unit_id': unit['id'], 'owner_profile_id': bernd['id'],
+        'valid_from': '2026-07-01'})
+    run = create(world, '/api/weg-settlements', {**basis, 'economic_plan_id': plan['id'],
+        'period_start': '2026-01-01', 'period_end': '2026-12-31'})
+    return {'run': run['id'], 'property': home['id'], 'bank': account['id'], 'anna': anna['id'],
+            'bernd': bernd['id'], 'owners': [anna['id'], bernd['id']], 'plan': plan['id'], 'scope': scope['id']}
+
+
+@when('I compute their WEG annual settlement')
+def compute_dated_soll(world, dated_soll):
+    w = dated_soll
+    values = {'paid_advances': [{'owner_profile_id': oid, 'paid_total': '0.00'} for oid in w['owners']]}
+    world.run(attest_fixture(world.actor, 'settlement', w['run'], values))
+    response = world.act('POST', f"/api/weg-settlements/{w['run']}/compute", json=values)
+    assert response.status_code == 200, response.text
+    w['statement'] = response.json()
+
+
+@then("Anna's Hausgeld Soll is 6000 euros and her Abrechnungsspitze is minus 49,32 euros")
+def anna_dated_soll(world, dated_soll):
+    owner = next(o for o in dated_soll['statement']['owner_results']
+                 if o['owner_profile_id'] == dated_soll['anna'])
+    assert (owner['owner_cost_total'], owner['plan_soll'], owner['abrechnungsspitze']) == (
+        '5950.68', '6000.00', '-49.32')
+
+
+@then("Bernd's Hausgeld Soll is 6000 euros and his Abrechnungsspitze is 49,32 euros")
+def bernd_dated_soll(world, dated_soll):
+    owner = next(o for o in dated_soll['statement']['owner_results']
+                 if o['owner_profile_id'] == dated_soll['bernd'])
+    assert (owner['owner_cost_total'], owner['plan_soll'], owner['abrechnungsspitze']) == (
+        '6049.32', '6000.00', '49.32')
 
 
 @then('both document pages show their dated addressees at desktop and phone widths')

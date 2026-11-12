@@ -104,7 +104,10 @@ class EconomicPlanLineRepository(TenantRepository[EconomicPlanLine]):
     model = EconomicPlanLine
 
     async def advance_totals_per_owner(self, economic_plan_id: uuid.UUID) -> dict[uuid.UUID, Decimal]:
-        """The owner's Soll sums OWNER_ADVANCE lines over all of their units."""
+        """The owner's Soll sums OWNER_ADVANCE lines over all of their units.
+
+        The undated basis of snapshots frozen before the dated Soll existed (#402).
+        """
         totals = {}
         for line in await self.list_for_plan(economic_plan_id):
             if line.line_type == 'OWNER_ADVANCE' and line.owner_profile_id is not None:

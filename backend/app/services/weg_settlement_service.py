@@ -73,18 +73,16 @@ from app.repositories.audit_repo import AuditRepository
 from app.repositories.coverage_declaration_repo import CoverageDeclarationRepository
 from app.repositories.bank_account_repo import BankAccountRepository
 from app.repositories.reserve_ledger_repo import ReserveLedgerRepository
-from app.repositories.economic_plan_repo import (
-    EconomicPlanLineRepository,
-    EconomicPlanRepository,
-)
+from app.repositories.economic_plan_repo import EconomicPlanRepository
 from app.repositories.settlement_repo import (
     SettlementLineRepository,
     SettlementRunRepository,
 )
 
 from app.services.reserve_ledger_service import ReserveLedgerService
+from app.services.payment_service import dated_plan_soll
 
-ENGINE_VERSION = "m4.4.0"
+ENGINE_VERSION = "m4.5.0"
 
 DELETE_MESSAGES = {
     'SETTLEMENT_DELETE_SOURCE_ACCESS_REQUIRED': 'Zum Löschen dieses Entwurfs benötigen Sie Zugriff auf alle Finanzquellen des Objekts.',
@@ -149,7 +147,6 @@ class WegSettlementService:
         self._runs = SettlementRunRepository(session, org_id)
         self._lines = SettlementLineRepository(session, org_id)
         self._plans = EconomicPlanRepository(session, org_id)
-        self._plan_lines = EconomicPlanLineRepository(session, org_id)
         self._audit = AuditRepository(session, org_id)
 
     async def delete_restriction(self, run_id: uuid.UUID) -> dict[str, str] | None:
@@ -546,22 +543,6 @@ class WegSettlementService:
             raise HTTPException(status_code=422, detail=f"WEG-Berechnung nicht moeglich: {exc}")
         return inp, result
 
-    async def _plan_advances_per_owner(
-        self, economic_plan_id: uuid.UUID
-    ) -> list[OwnerAdvanceInput]:
-        """Aggregate the plan's OWNER_ADVANCE lines per owner (the Soll source).
-
-        A plan has one OWNER_ADVANCE line per (owner, unit). The WEG Soll per
-        owner is the SUM over the owner's units (an owner with multiple units
-        owes the sum). [F4-1] the plan must be computed (have lines); else the
-        Soll is unknown and we escalate.
-        """
-        per_owner = await self._plan_lines.advance_totals_per_owner(economic_plan_id)
-        return [
-            OwnerAdvanceInput(owner_profile_id=oid, plan_advance_total=amt)
-            for oid, amt in per_owner.items()
-        ]
-
     def _plan_reserve_per_owner(self, rows: list[dict]) -> tuple[OwnerAdvanceInput, ...]:
         """Sum canonical reserve plan rows without another owner distribution (#401)."""
         return tuple(OwnerAdvanceInput(owner_profile_id=uuid.UUID(oid), plan_advance_total=amount)
@@ -600,7 +581,7 @@ class WegSettlementService:
         the engine. Plan owners and owners active within the period both belong
         to the roster, including a successor with no OWNER_ADVANCE plan line.
         These payments affect only account_balance/payment_amount; the Spitze
-        remains actual costs plus planned reserve Soll minus the unchanged plan advance.
+        remains actual costs plus planned reserve Soll minus the dated plan advance.
         """
         from app.services.payment_service import PaymentService
 
@@ -616,8 +597,9 @@ class WegSettlementService:
         subject = SimpleNamespace(property_id=plan.property_id, period_start=start, period_end=end,
                                   economic_plan_id=plan.id, run_type='WEG_JAHRESABRECHNUNG')
         owner_ids = await CoverageDeclarationRepository(self._session, self._org_id).owner_ids(subject)
-        plan_soll = {p.owner_profile_id: p.plan_advance_total
-                     for p in await self._plan_advances_per_owner(economic_plan_id)}
+        # Decision 1(b) caps reserve coverage with the same dated Soll the settlement shows.
+        shares = await pay_svc.owner_plan_charge_totals(plan, start, end)
+        plan_soll = dated_plan_soll(shares)
         result: list[ManualOwnerAdvance] = []
         for owner_id in sorted(owner_ids, key=str):
             total = await pay_svc.derive_hausgeld_total_for_period(
@@ -714,8 +696,16 @@ class WegSettlementService:
             if row['kind'] == 'CONTRIBUTION' and row.get('owner_profile_id'):
                 oid = uuid.UUID(row['owner_profile_id'])
                 paid_reserve[oid] = paid_reserve.get(oid, Decimal('0.00')) + Decimal(row['amount'])
-        plan_advances = await self._plan_advances_per_owner(run.economic_plan_id)
         expected_owners = await CoverageDeclarationRepository(self._session, self._org_id).owner_ids(run)
+        # The Soll follows dated ownership: the Hausgeld ledger's month rule
+        # (owner_plan_charge_totals) decides who owes which plan month (#402).
+        from app.services.payment_service import PaymentService
+        pay_svc = PaymentService(self._session, self._org_id, self._user_id)
+        shares = await pay_svc.owner_plan_charge_totals(plan, run.period_start, run.period_end)
+        plan_advances = [
+            OwnerAdvanceInput(owner_profile_id=owner_id, plan_advance_total=amount)
+            for owner_id, amount in sorted(dated_plan_soll(shares).items(), key=lambda item: str(item[0]))
+        ]
         provided_owners = [str(p.owner_profile_id) for p in extras.paid_advances]
         if set(provided_owners) != expected_owners or len(provided_owners) != len(set(provided_owners)):
             incomplete("owner_payment_coverage_missing", "paid_advances")
@@ -867,6 +857,18 @@ class WegSettlementService:
             raise HTTPException(422, {'code': 'RESERVE_ASSIGNMENT_REQUIRED', 'message': 'Bitte klären Sie alle Zahlungen ohne Planbezug vor der Berechnung.'})
         if ledger.get('unlinked_payment_ids'):
             raise HTTPException(422, {'code': 'RESERVE_PAYOUT_EVIDENCE_REQUIRED', 'message': 'Bitte verknüpfen Sie alle Rücklagenentnahmen mit Kostenbeleg und Beschluss.'})
+        # Freeze the Soll the reserve ledger was decided with, in the annual run's shape (#402).
+        plans = await reserves.repo.plans(run)
+        if run.economic_plan_id:
+            plans = [p for p in plans if p.id == run.economic_plan_id]
+        plan_advances: tuple[OwnerAdvanceInput, ...] = ()
+        if len(plans) == 1:
+            from app.services.payment_service import PaymentService
+            shares = await PaymentService(self._session, self._org_id, self._user_id).owner_plan_charge_totals(
+                plans[0], run.period_start, run.period_end)
+            plan_advances = tuple(
+                OwnerAdvanceInput(owner_profile_id=owner_id, plan_advance_total=amount)
+                for owner_id, amount in sorted(dated_plan_soll(shares).items(), key=lambda item: str(item[0])))
         inp = VermoegensberichtInput(
             period_start=run.period_start,
             period_end=run.period_end,
@@ -879,6 +881,7 @@ class WegSettlementService:
             ),
             reserve_contributions_total=Decimal(ledger["contributions_total"]),
             reserve_ledger=ledger,
+            plan_advances=plan_advances,
             bank_balances=tuple(
                 BankBalanceInput(
                     bank_account_id=b.bank_account_id, label=b.label,

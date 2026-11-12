@@ -478,6 +478,9 @@ class VermoegensberichtInput:
     bank_balances: tuple[BankBalanceInput, ...] = ()
     receivables: tuple[AssetItemInput, ...] = ()
     payables: tuple[AssetItemInput, ...] = ()
+    # The dated Hausgeld Soll the reserve ledger was decided with, frozen in the
+    # same shape the annual run uses (#402); empty when the year has no plan.
+    plan_advances: tuple[OwnerAdvanceInput, ...] = ()
     engine_version: str = "m4.1.0"
     reserve_ledger: dict | None = None
 

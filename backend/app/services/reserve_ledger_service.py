@@ -70,6 +70,13 @@ class ReserveLedgerService:
         if await self.repo.has_later_opening_import(run, scope_id):
             raise HTTPException(422, OPENING_IMPORT_EXISTS)
 
+    async def _dated_plan_soll(self, plan, period_start, period_end):
+        """The dated Hausgeld Soll per owner, the same derivation the settlement shows."""
+        from app.services.payment_service import PaymentService, dated_plan_soll
+        pay_svc = PaymentService(self.session, self.org_id, self.user_id)
+        shares = await pay_svc.owner_plan_charge_totals(plan, period_start, period_end)
+        return {str(owner): amount for owner, amount in dated_plan_soll(shares).items()}
+
     async def read(self, run):
         if run.status == 'finalized':
             ledger = (run.snapshot_payload or {}).get('reserve_ledger')
@@ -202,8 +209,7 @@ class ReserveLedgerService:
                 if not backed and not (payment.reversed_by_id in payment_ids or payment.reverses_id in payment_ids):
                     unlinked.append(str(payment.id))
         if plan and reserve_cash:
-            soll = {str(owner): amount for owner, amount in (
-                await EconomicPlanLineRepository(self.session, self.org_id).advance_totals_per_owner(plan.id)).items()}
+            soll = await self._dated_plan_soll(plan, run.period_start, run.period_end)
             planned = planned_reserve_per_owner(rows)
             for owner, reserve in sorted(reserve_cash.items()):
                 if owner not in soll:
@@ -239,8 +245,17 @@ class ReserveLedgerService:
             historical_plan = next((p for p in cash_plans if str(p.id) == source_id), None)
             if historical_plan is None:
                 raise HTTPException(404, {'code': 'RESERVE_NOT_FOUND', 'message': 'Rücklagenabrechnung nicht gefunden.'})
-            soll = {str(owner): amount for owner, amount in (
-                await EconomicPlanLineRepository(self.session, self.org_id).advance_totals_per_owner(historical_plan.id)).items()}
+            # The finalized year's Soll comes from data frozen with that year, never
+            # from today's ownership history: a later edit must not re-decide it (#402).
+            # Snapshots frozen before the Soll was part of them (asset reports) were
+            # decided with the finalized plan's undated line totals, which cannot change.
+            frozen_advances = ((historical.snapshot_payload or {}).get('inputs') or {}).get('plan_advances')
+            if frozen_advances is not None:
+                soll = {row['owner_profile_id']: Decimal(row['plan_advance_total'])
+                        for row in frozen_advances}
+            else:
+                soll = {str(owner): amount for owner, amount in (
+                    await EconomicPlanLineRepository(self.session, self.org_id).advance_totals_per_owner(historical_plan.id)).items()}
             planned = planned_reserve_per_owner(await self.repo.plan_rows(historical_plan))
             frozen_states = {str(p.owner_profile_id): {'hausgeld': ZERO, 'reserve': ZERO, 'hausgeld_share': ZERO}
                              for p in late_payments if str(p.owner_profile_id) in soll}

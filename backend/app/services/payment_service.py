@@ -36,6 +36,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.temporal import db_exclusive_to_engine_inclusive
 from app.engine.types import OwnerPeriodInput
 from app.engine.reserve_ledger import covered_reserve
+from app.engine.rounding import distribute_amount
 from app.engine.mietkonto import (
     AdvanceFilter,
     AdvanceCredit,
@@ -140,6 +141,36 @@ def to_payment_input(
         combined_advance=combined_advance,
         unallocated_advance=unallocated_advance,
     )
+
+
+def dated_plan_soll(
+    shares: dict[tuple[uuid.UUID, uuid.UUID], tuple[Decimal, Decimal]],
+) -> dict[uuid.UUID, Decimal]:
+    """Per-owner plan Soll: each unit's line amount divided by its dated charges.
+
+    The owners' Soll of a unit always sums to the unit's OWNER_ADVANCE
+    planned_amount to the cent (central largest-remainder, remainder exactly
+    once); the dated charges decide only the division, so a plan period shorter
+    than twelve months keeps its full planned amount. A unit whose dated
+    charges are all zero keeps its plan-line amounts (#402). An owner whose
+    dated Soll is 0.00 is without Soll — no entry — for the settlement, the
+    1(b) reserve-coverage cap and the reserve ledger alike.
+    """
+    per_owner: dict[uuid.UUID, Decimal] = {}
+    by_unit: dict[uuid.UUID, list[tuple[uuid.UUID, Decimal, Decimal]]] = {}
+    for (unit_id, owner_id), (line_amount, dated) in shares.items():
+        by_unit.setdefault(unit_id, []).append((owner_id, line_amount, dated))
+    for rows in by_unit.values():
+        rows = sorted(rows, key=lambda row: str(row[0]))
+        planned = sum((line_amount for _, line_amount, _ in rows), Decimal('0.00'))
+        if any(dated for _, _, dated in rows):
+            for (owner_id, _, _), share in zip(rows, distribute_amount(
+                    planned, [dated for _, _, dated in rows])):
+                per_owner[owner_id] = per_owner.get(owner_id, Decimal('0.00')) + share
+        else:
+            for owner_id, line_amount, _ in rows:
+                per_owner[owner_id] = per_owner.get(owner_id, Decimal('0.00')) + line_amount
+    return {owner: amount for owner, amount in per_owner.items() if amount != Decimal('0.00')}
 
 
 class PaymentService:
@@ -733,6 +764,35 @@ class PaymentService:
             charges += self._owner_charges(plan, prop, lines, history, owner_profile_id,
                 plan.period_start, plan.period_end)
         return charges
+
+    async def owner_plan_charge_totals(
+        self, plan: EconomicPlan, period_start: date, period_end: date,
+    ) -> dict[tuple[uuid.UUID, uuid.UUID], tuple[Decimal, Decimal]]:
+        """Frozen line amount and dated charge per (unit, owner) over the clamped period.
+
+        One load of plan lines, ownership history and property for the whole
+        run (#402); the engine walks each unit's own lines, so units stay
+        independent. The settlement divides each unit's line amount by these
+        dated charges, so a short plan's Soll is not truncated to the charged
+        instalments. A history the ledger refuses raises its 422 here exactly
+        as in the owner account.
+        """
+        advance_lines, history, prop = await self._owner_plan_inputs(plan)
+        start, end = max(period_start, plan.period_start), min(period_end, plan.period_end)
+        totals: dict[tuple[uuid.UUID, uuid.UUID], tuple[Decimal, Decimal]] = {}
+        for unit_id in sorted({ln.unit_id for ln in advance_lines}, key=str):
+            lines = [ln for ln in advance_lines if ln.unit_id == unit_id]
+            owners = {ln.owner_profile_id for ln in lines}
+            owners |= {p.owner_profile_id for p in history
+                       if p.unit_id == unit_id and p.valid_from <= end
+                       and (p.valid_to is None or p.valid_to >= start)}
+            for owner_id in sorted(owners, key=str):
+                charges = self._owner_charges(plan, prop, lines, history, owner_id, start, end)
+                line_amount = sum((ln.annual_amount for ln in lines
+                                   if ln.owner_profile_id == owner_id), Decimal('0.00'))
+                totals[(unit_id, owner_id)] = (line_amount,
+                    sum((c.amount for c in charges), Decimal('0.00')))
+        return totals
 
     async def booked_hausgeld_months(
         self, plan: EconomicPlan, owner_profile_ids,

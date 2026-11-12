@@ -565,6 +565,13 @@ def build_asset_report_payload(
             "management_type": inp.property.management_type,
         },
         "inputs": {
+            "plan_advances": [
+                {
+                    "owner_profile_id": str(a.owner_profile_id),
+                    "plan_advance_total": _m(a.plan_advance_total),
+                }
+                for a in sorted(inp.plan_advances, key=lambda a: str(a.owner_profile_id))
+            ],
             "reserve": {
                 "opening_balance": _m(inp.reserve.opening_balance),
                 "withdrawals_total": _m(inp.reserve.withdrawals_total),
