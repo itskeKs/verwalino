@@ -2093,3 +2093,41 @@ async def test_paid_levy_notice_does_not_raise_later_levy_notice_level(levy_db, 
         assert second.status_code == 201, second.text
         second = second.json()
         assert (second["level"], second["fee_amount"], second["total_amount"]) == (1, "0.00", "3000.00")
+
+
+@pytest.mark.asyncio
+async def test_notice_without_lease_link_still_escalates_the_same_arrears(isolated_batch_seed, rent_db):
+    client, seed = isolated_batch_seed
+    await _set_org(rent_db, seed["org_a_id"])
+    await TestDunningImmutability()._insert_issued(rent_db, seed)
+    await rent_db.commit()
+    body = TestT35Interest.tenant_body(seed)
+    del body["override_fee"]
+    response = await client.post("/api/dunning/tenant", json=body)
+    assert response.status_code == 201, response.text
+    notice = response.json()
+    assert (notice["level"], notice["fee_amount"]) == (2, "2.50")
+
+
+@pytest.mark.asyncio
+async def test_notice_without_lease_link_does_not_escalate_other_months_of_another_lease(
+        isolated_batch_seed, rent_db):
+    client, seed = isolated_batch_seed
+    unit = await client.post("/api/units", json={
+        "property_id": str(seed["prop_m7"]), "number": "M7-3", "usage_type": "WOHNUNG"})
+    assert unit.status_code == 201, unit.text
+    lease = await client.post("/api/leases", json={
+        "unit_id": unit.json()["id"], "tenant_profile_id": str(seed["tenant_m7"]),
+        "valid_from": "2025-01-01", "base_rent": "550.00", "advance_payment": "50.00"})
+    assert lease.status_code == 201, lease.text
+    await _set_org(rent_db, seed["org_a_id"])
+    await TestDunningImmutability()._insert_issued(rent_db, seed)
+    await rent_db.commit()
+    body = TestT35Interest.tenant_body(
+        seed, lease_agreement_id=lease.json()["id"],
+        period_start="2025-04-01", period_end="2025-04-30", reference_date="2025-05-31")
+    del body["override_fee"]
+    response = await client.post("/api/dunning/tenant", json=body)
+    assert response.status_code == 201, response.text
+    notice = response.json()
+    assert (notice["level"], notice["fee_amount"]) == (1, "0.00")

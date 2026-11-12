@@ -90,7 +90,8 @@ class DunningNoticeRepository(TenantRepository[DunningNotice]):
         issued_for_lease) and its frozen included_items contain at least one
         of the currently overdue items -- identity is payment_type +
         period_year + period_month. Notices for paid-off or unrelated arrears
-        do not count.
+        do not count. An unscoped tenant notice without any lease link (issued
+        before the link existed) matches on the tenant and the items alone.
         """
         if not item_keys:
             return 0
@@ -115,10 +116,13 @@ class DunningNoticeRepository(TenantRepository[DunningNotice]):
         else:
             stmt = stmt.where(DunningNotice.owner_profile_id == owner_profile_id)
         if lease_id is not None:
+            # An unscoped notice issued before the lease link existed carries neither
+            # the link nor a scope context; it counts for the tenant as it always did.
+            linked_lease = DunningNotice.included_items[0][LEASE_SOURCE_KEY].astext
             stmt = stmt.where(
                 context.scope_id == scope_id,
                 (context.lease_agreement_id == lease_id if scope_id is not None
-                 else DunningNotice.included_items[0][LEASE_SOURCE_KEY].astext == str(lease_id)),
+                 else or_(linked_lease == str(lease_id), linked_lease.is_(None))),
             )
         result = await self._session.execute(stmt)
         return result.scalar_one()

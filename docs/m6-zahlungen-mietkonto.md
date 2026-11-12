@@ -311,6 +311,16 @@ paid off afterwards does not raise the level of a later, unrelated notice; only 
 further notice for the same still-overdue arrears escalates 1 -> 2 -> 3. The batch
 preview and individual creation use the same count.
 
+A notice that contains an already demanded item together with a new one gets the level
+and the fee of the demanded item for the whole notice; the level is not set per item.
+
+Notices issued before the lease link was stored carry neither `_dunning_lease_id` in
+their frozen items nor a scope context. When a new unscoped tenant notice is created, such
+an old notice counts for the tenant, whichever lease it was for, as long as its frozen
+items contain one of the overdue items. A notice that carries a lease link keeps the
+same-lease rule, and scoped notices are always matched on their scope and lease. Issued
+notices are not changed.
+
 ### 2.3 Expected-amount engine as a pure function
 
 `app/engine/mietkonto.py`:
