@@ -15,7 +15,7 @@ def financial_details(world, seed_data):
     from tests.bdd.steps.browser_setup import create
 
     records = create_balance_world(world, seed_data)
-    world.data['isolated_owner_schedule'] = {'owner': records['owners'][0], 'plan': records['plan']}
+    world.data['isolated_owner_schedule'] = {'owner': records['owners'][0], 'plan': records['plan'], 'bank': records['bank']}
     payment = create(world, "/api/payments", {"bank_account_id": records["bank"],
         "owner_profile_id": records["owners"][0], "direction": "IN", "amount": "600.00",
         "value_date": "2026-01-05", "payment_type": "HAUSGELD_VORSCHUSS"})
@@ -67,6 +67,35 @@ def missing_owner_schedule(foreign_owner_schedule):
     assert foreign.status_code == missing.status_code == 404
     assert foreign.json() == missing.json()
     assert set(foreign.json()) == {'detail'}
+
+
+@when("Verwaltung Beta tries to read and book the monthly Hausgeld of Alpha's plan", target_fixture='foreign_hausgeld')
+def foreign_hausgeld(world, financial_details):
+    data = world.data['isolated_owner_schedule']
+    alpha = world.administrator_of('Verwaltung Alpha')
+    beta = world.administrator_of('Verwaltung Beta')
+    unknown = '00000000-0000-0000-0000-000000000000'
+    booking = {'bank_account_id': data['bank'], 'rows': [{'owner_profile_id': data['owner'], 'period_year': 2026,
+        'period_month': 1, 'amount': '600.00', 'value_date': '2026-01-05'}]}
+    own = world.look(alpha, f"/api/economic-plans/{data['plan']}/hausgeld-booking")
+    assert own.status_code == 200, own.text
+    answers = []
+    for plan in (data['plan'], unknown):
+        path = f'/api/economic-plans/{plan}/hausgeld-booking'
+        answers.append((world.look(beta, path), world.send(beta, 'POST', path, json=booking)))
+    return answers
+
+
+@then("the plan looks missing for both requests and Alpha has no booked Hausgeld month")
+def foreign_hausgeld_missing(world, foreign_hausgeld):
+    (foreign_read, foreign_book), (missing_read, missing_book) = foreign_hausgeld
+    for foreign, missing in ((foreign_read, missing_read), (foreign_book, missing_book)):
+        assert foreign.status_code == missing.status_code == 404
+        assert foreign.json() == missing.json()
+    data = world.data['isolated_owner_schedule']
+    alpha = world.administrator_of('Verwaltung Alpha')
+    payments = world.look(alpha, f"/api/payments?owner_profile_id={data['owner']}&payment_type=HAUSGELD_VORSCHUSS").json()
+    assert [p for p in payments if p['period_month'] is not None] == []
 
 
 @when("Verwaltung Alpha saves its own dunning settings")

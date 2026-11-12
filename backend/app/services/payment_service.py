@@ -670,11 +670,8 @@ class PaymentService:
         inputs = await self._tenant_payment_inputs(lease, rent_changes, [p for p in scoped if p.payment_type != "KAUTION"])
         return account_statement(charges, inputs, as_of=as_of or date.today(), include_payment_dates=include_payment_dates)
 
-    async def owner_plan_charges(
-        self, plan: EconomicPlan, owner_profile_id: uuid.UUID,
-        period_start: date, period_end: date,
-    ) -> list[ExpectedCharge]:
-        """Dated advances for an authorized finalized plan, shared with dunning."""
+    async def _owner_plan_inputs(self, plan: EconomicPlan):
+        """Frozen owner advances, dated ownership and the property of a plan's Hausgeld Soll."""
         lines = await self._plan_lines.list_for_plan(plan.id)
         advance_lines = [
             OwnerAdvanceChargeInput(
@@ -691,14 +688,79 @@ class PaymentService:
         prop = await PropertyRepository(self._session, self._org_id).get_by_id(plan.property_id)
         if prop is None:
             raise HTTPException(404, 'Property not found')
+        return advance_lines, history, prop
+
+    @staticmethod
+    def _owner_charges(plan, prop, advance_lines, history, owner_profile_id, period_start, period_end):
         try:
-            return owner_expected_charges(advance_lines, owner_profile_id,
-                max(period_start, plan.period_start), min(period_end, plan.period_end),
+            return owner_expected_charges(advance_lines, owner_profile_id, period_start, period_end,
                 owner_periods=history, plan_start=plan.period_start,
                 monthly_due_day=plan.monthly_due_day, federal_state=prop.federal_state)
         except ValueError as exc:
             raise HTTPException(422, {"code": "hausgeld_ownership_invalid",
                 "message": "Die Eigentumszeiträume oder Miteigentumsanteile für das Hausgeld sind unvollständig."}) from exc
+
+    async def owner_plan_charges(
+        self, plan: EconomicPlan, owner_profile_id: uuid.UUID,
+        period_start: date, period_end: date,
+    ) -> list[ExpectedCharge]:
+        """Dated advances for an authorized finalized plan, shared with dunning."""
+        advance_lines, history, prop = await self._owner_plan_inputs(plan)
+        return self._owner_charges(plan, prop, advance_lines, history, owner_profile_id,
+            max(period_start, plan.period_start), min(period_end, plan.period_end))
+
+    async def plan_hausgeld_charges(self, plan: EconomicPlan) -> list[ExpectedCharge]:
+        """The Hausgeld Soll of every owner of the plan's units over the whole plan period.
+
+        Candidates are the plan line owners and everybody whose ownership period of a planned
+        unit overlaps the plan period. Each is computed by the owner statement's own call, on
+        the lines of that owner's units only: the engine treats units independently, so the work
+        grows with the units, not with owners times units.
+        """
+        advance_lines, history, prop = await self._owner_plan_inputs(plan)
+        planned_units = {ln.unit_id for ln in advance_lines}
+        units_of: dict[uuid.UUID, set[uuid.UUID]] = {}
+        for ln in advance_lines:
+            units_of.setdefault(ln.owner_profile_id, set()).add(ln.unit_id)
+        for period in history:
+            if (period.unit_id in planned_units and period.valid_from <= plan.period_end
+                    and (period.valid_to is None or period.valid_to >= plan.period_start)):
+                units_of.setdefault(period.owner_profile_id, set()).add(period.unit_id)
+        charges: list[ExpectedCharge] = []
+        for owner_profile_id, units in units_of.items():
+            # A line without a unit stays in every subset, so the engine refuses it as for a statement.
+            lines = [ln for ln in advance_lines if ln.unit_id is None or ln.unit_id in units]
+            charges += self._owner_charges(plan, prop, lines, history, owner_profile_id,
+                plan.period_start, plan.period_end)
+        return charges
+
+    async def booked_hausgeld_months(
+        self, plan: EconomicPlan, owner_profile_ids,
+    ) -> set[tuple[uuid.UUID, int, int]]:
+        """(owner, year, month) of the plan period that a booked Hausgeld payment already covers.
+
+        The payments are the ones the owner statement counts as Ist: the owner's payments of the
+        plan's property (`list_for_owner`), kept by `_scope_payments_to_period` over the plan
+        period, and only booked, not reversed, non-Storno rows (the engine's own Ist filter). The
+        month assignment is this action's own rule, the statement never files a payment without a
+        month under a month: a Hausgeld payment received (IN) covers the month it names; one
+        without year and month, or without one of them, covers the month of its value date. A
+        payment that names the plan year but no month and whose value date lies outside that year
+        therefore covers no month of the plan although the statement counts it (issue #566).
+        """
+        covered: set[tuple[uuid.UUID, int, int]] = set()
+        for owner_profile_id in owner_profile_ids:
+            payments = await self._repo.list_for_owner(owner_profile_id, property_id=plan.property_id)
+            for p in self._scope_payments_to_period(payments, plan.period_start, plan.period_end):
+                ist = to_payment_input(p)
+                if (p.payment_type != "HAUSGELD_VORSCHUSS" or p.direction != "IN"
+                        or not ist.is_booked or ist.is_reversed or ist.is_reversal):
+                    continue
+                if p.period_year is not None and p.period_month is not None:
+                    covered.add((owner_profile_id, p.period_year, p.period_month))
+                else:
+                    covered.add((owner_profile_id, p.value_date.year, p.value_date.month))
+        return covered
 
     async def account_statement_for_owner(
         self,

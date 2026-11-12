@@ -310,6 +310,47 @@ The engine sums **three subtotals** per owner (`SUBTOTAL` lines): Σ allocable, 
   produce Hausgeld Soll of 7,800.00/5,200.00. Actual costs of 7,000.00 produce owner
   costs of 4,200.00/2,800.00 plus reserve Soll of 3,600.00/2,400.00: both Spitzen
   are 0.00. The reserve is asset building, not cost consumption.
+
+### 2.4a Booking the monthly Hausgeld from the finalized plan (#186)
+
+On a finalized, not superseded plan, "Hausgeld buchen" books the Hausgeld an owner paid in one
+confirmation instead of one payment form per month. `GET /api/economic-plans/{id}/hausgeld-booking`
+lists one row per owner and month of the plan period; `POST` on the same path creates and books the
+chosen rows (`HAUSGELD_VORSCHUSS`, direction IN, `period_year` and `period_month` set), all or none.
+
+- **Rows** come from `PaymentService.plan_hausgeld_charges`, the call behind the owner account and
+  the dunning (§2.2 of [M6](m6-zahlungen-mietkonto.md#22-owner-expected-amount-per-owner-from-the-finalized-economic-plan)):
+  the amount of a row is the owner's expected Hausgeld of that month (the twelve largest-remainder
+  installments, so a booked month never leaves a one-cent open item; `monthly_amount` is only the
+  first installment). A month with a zero amount is not offered. An owner with several units gets
+  the summed amount. The value date is prefilled with the plan's due day of that month (clamped to the
+  last day, without the § 193 BGB shift of the statement's due date) and stays editable, like the amount.
+- **Owner change within the year:** rows follow the ownership periods exactly as the owner account
+  does. A change on the 1st gives the whole month to the buyer; a change inside a month gives both
+  owners a row for that month, split by owner days (Karl until 15 July, Lena from 16 July: 193.55 and
+  206.45 of 400.00). A unit without an owner in a plan month is a data error the statement already
+  refuses (`hausgeld_ownership_invalid`); the offer refuses it the same way and books nothing.
+- **Booked months** are marked `booked` and not offered again. The set is read by
+  `PaymentService.booked_hausgeld_months` from the payments the owner statement counts as Ist: the
+  owner's payments of the plan's property (`list_for_owner`), kept by `_scope_payments_to_period` over
+  the plan period, and only booked, not reversed, non-Storno rows (the engine's Ist filter). The month
+  assignment is this action's own rule, because the statement never files a payment without a month
+  under a month: a Hausgeld payment received (direction IN) covers the month it names (`period_year`
+  and `period_month`); a payment without a month, or with a month but no year, covers the month of its
+  value date. A payment that names the plan year but no month and whose value date lies outside that
+  year (December 2026 Hausgeld entered with year 2026, no month, value date 05.01.2027) is counted by
+  the statement in 2026 but marks no month here, so the month stays offered; tick only what was not
+  paid yet (#566). The statement keeps a payment out of the plan period when its month, its year or, without
+  a year, its value date lies outside it: 600.00 with value date 05.01.2026 and no month marks January
+  2026, the same payment dated 05.01.2027 marks nothing. A draft does not count; a Storno frees the month
+  again. `POST` takes the organization-wide financial input lock before it reads that state, so two
+  identical requests at the same moment book once (the second answers 409 `HAUSGELD_MONTH_BOOKED`).
+- **Request:** one bank account of the plan's property (else 422) and at most 144 rows, each one an
+  offered row (`owner_profile_id`, `period_year`, `period_month`), named once, with a positive
+  decimal string amount of at most two places and a value date. A foreign plan, account or owner
+  answers 404; a plan that is not finalized or is superseded answers 409. Each row goes through
+  `PaymentService.create_draft` and `book`, so account rules, accounting scope, audit events and
+  retention are those of a single payment; any refusal rolls back every row.
 - Engine `m4.4.0` stores `plan_reserve_soll` beside `plan_soll`, `paid`, `account_balance`
   and `payment_amount` in the existing hashed per-owner result. Migration `0181`
   allows the separate `RESERVE_SOLL` statement line. The API and PDF read frozen values;

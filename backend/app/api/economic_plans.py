@@ -23,7 +23,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.schemas.document_addressee import DocumentAddressee
 from app.core.tenant import AuthContext, get_current_user, get_db, require_write_dep
-from app.core.live_principal import get_live_writer_db
+from app.core.live_principal import get_live_member_db, get_live_writer_db
+from app.api.payments import PaymentOut, _to_out as _payment_out
 from app.models.economic_plan import EconomicPlan
 from app.models.economic_plan_line import EconomicPlanLine
 from app.repositories.economic_plan_repo import (
@@ -31,6 +32,7 @@ from app.repositories.economic_plan_repo import (
     EconomicPlanRepository,
 )
 from app.services.financial_scope_service import FinancialScopeService
+from app.services.hausgeld_booking_service import MAX_ROWS, HausgeldBookingService, RequestedRow
 from app.services.economic_plan_service import (
     EconomicPlanService,
     PlanInputs,
@@ -136,6 +138,23 @@ class EconomicPlanOut(BaseModel):
     lines: list[PlanLineOut] = []
     draft_inputs: dict | None = None
     accounting_scope_id: str | None = None
+
+
+class HausgeldRowIn(BaseModel):
+    owner_profile_id: uuid.UUID
+    period_year: int
+    period_month: int
+    amount: str
+    value_date: date
+
+
+class HausgeldBookingIn(BaseModel):
+    bank_account_id: uuid.UUID
+    rows: list[HausgeldRowIn] = Field(min_length=1, max_length=MAX_ROWS)
+
+
+class HausgeldRowOut(HausgeldRowIn):
+    booked: bool
 
 
 def _dec(value: str, field: str) -> Decimal:
@@ -327,6 +346,32 @@ async def create_plan_correction(
     svc = EconomicPlanService(db, auth.organization_id, auth.user_id, session_version=auth.session_version)
     plan = await svc.create_correction_run(plan_id)
     return _plan_out(plan, [])
+
+
+@router.get("/{plan_id}/hausgeld-booking", response_model=list[HausgeldRowOut])
+async def get_hausgeld_booking(
+    plan_id: uuid.UUID,
+    auth: AuthContext = Depends(get_current_user),
+    db: AsyncSession = Depends(get_live_member_db),
+):
+    """One row per owner and month of a finalized plan; booked months are marked, not hidden."""
+    rows = await HausgeldBookingService(db, auth.organization_id, auth.user_id).offer(plan_id)
+    return [HausgeldRowOut(
+        owner_profile_id=row.owner_profile_id, period_year=row.period_year, period_month=row.period_month,
+        amount=format(row.amount, ".2f"), value_date=row.value_date, booked=row.booked) for row in rows]
+
+
+@router.post("/{plan_id}/hausgeld-booking", response_model=list[PaymentOut], status_code=201)
+async def book_hausgeld(
+    plan_id: uuid.UUID,
+    body: HausgeldBookingIn,
+    auth: AuthContext = Depends(require_write_dep),
+    db: AsyncSession = Depends(get_live_writer_db),
+):
+    """Create and book the chosen months (type HAUSGELD_VORSCHUSS), all or none."""
+    payments = await HausgeldBookingService(db, auth.organization_id, auth.user_id).book(
+        plan_id, body.bank_account_id, [RequestedRow(**row.model_dump()) for row in body.rows])
+    return [_payment_out(payment) for payment in payments]
 
 
 @router.get("/{plan_id}/pdf")

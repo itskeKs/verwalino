@@ -1,5 +1,6 @@
 import { DocumentAddressees } from "../components/DocumentAddressees";
 import { FinancialCoverageReview } from "../components/FinancialCoverageReview";
+import { HausgeldBooking } from "../components/HausgeldBooking";
 /**
  * Wirtschaftsplan detail (M4): planned-cost editor, compute (per-owner monthly
  * Hausgeld), finalize, PDF, correction.
@@ -357,6 +358,8 @@ export function EconomicPlanDetailPage() {
           <button className="btn" disabled={busy} onClick={handleCorrection}>Korrektur erstellen</button>
         </div>
       )}
+
+      {isFinalized && !plan.superseded_by_id && canWrite && <HausgeldBooking plan={plan} ownerLabel={ownerName} />}
 
       {!needsRecompute && ownerLines.length > 0 && (
         <div className="card" style={{ marginBottom: "1rem" }}>

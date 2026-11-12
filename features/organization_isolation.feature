@@ -33,6 +33,11 @@ Feature: Organization isolation
     When Verwaltung Beta opens those financial details and their input-owner list
     Then the foreign financial records have the same German explanation as missing records
 
+  Scenario: Another organization cannot read or book the Hausgeld of a finalized plan
+    Given a payment, economic plan and annual WEG settlement belong to Verwaltung Alpha
+    When Verwaltung Beta tries to read and book the monthly Hausgeld of Alpha's plan
+    Then the plan looks missing for both requests and Alpha has no booked Hausgeld month
+
   Scenario: Another organization cannot read an owner's due-date schedule
     Given a payment, economic plan and annual WEG settlement belong to Verwaltung Alpha
     When Verwaltung Beta requests Alpha's owner ledger at a selected due-date cutoff
