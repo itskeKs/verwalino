@@ -58,6 +58,10 @@ export function DunningNoticeDetailPage() {
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [actionError, setActionError] = useState<string | null>(null);
+  const [bankChoices, setBankChoices] = useState<
+    { id: string; label: string; iban: string }[] | null
+  >(null);
+  const [selectedBankId, setSelectedBankId] = useState("");
   const [actionLoading, setActionLoading] = useState(false);
 
   const reload = useCallback(() => {
@@ -130,12 +134,33 @@ export function DunningNoticeDetailPage() {
     setActionLoading(true);
     setActionError(null);
     try {
-      const updated = await issueDunningNotice(dunningId);
+      const updated = await issueDunningNotice(
+        dunningId,
+        bankChoices ? selectedBankId || undefined : undefined,
+      );
       setNotice(updated);
+      setBankChoices(null);
     } catch (err) {
       if (err instanceof ApiError) {
-        if ([401, 403, 404].includes(err.status)) { setNotice(null); setError(err.message); }
-        if (err.status === 409) {
+        if ([401, 403, 404].includes(err.status)) {
+          setNotice(null);
+          setError(err.message);
+        } else if (err.status === 409 && err.code === "dunning_bank_selection_required") {
+          // Several eligible accounts: the manager picks the destination per
+          // notice; retry issues with the selected account.
+          const accounts =
+            (err.payload as { bank_accounts?: { id: string; label: string; iban: string }[] })
+              ?.bank_accounts ?? [];
+          setBankChoices(accounts);
+          setSelectedBankId(accounts[0]?.id ?? "");
+          setActionError(err.message);
+        } else if (
+          err.status === 409 &&
+          (err.code === "dunning_bank_account_missing" ||
+            err.code === "dunning_bank_account_ineligible")
+        ) {
+          setActionError(err.message);
+        } else if (err.status === 409) {
           setActionError(
             "Fehler: Die Mahnung kann in diesem Status nicht ausgegeben werden. " +
               "Möglicherweise wurde sie bereits ausgegeben.",
@@ -459,6 +484,26 @@ export function DunningNoticeDetailPage() {
       )}
 
       {isIssued && notice.id === dunningId && <MailDispatch kind="dunning" documentId={notice.id} />}
+
+      {isDraft && bankChoices && (
+        <div style={{ marginBottom: "1rem", maxWidth: "32rem" }}>
+          <label htmlFor="dunning-bank-account" style={{ display: "block", marginBottom: "0.25rem" }}>
+            Zielkonto für die Zahlung
+          </label>
+          <select
+            id="dunning-bank-account"
+            value={selectedBankId}
+            onChange={(event) => setSelectedBankId(event.target.value)}
+            style={{ width: "100%", marginBottom: "0.25rem" }}
+          >
+            {bankChoices.map((account) => (
+              <option key={account.id} value={account.id}>
+                {account.label} (IBAN: {account.iban})
+              </option>
+            ))}
+          </select>
+        </div>
+      )}
 
       {/* Action buttons */}
       <div
