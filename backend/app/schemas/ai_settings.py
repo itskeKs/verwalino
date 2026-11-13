@@ -1,4 +1,6 @@
 """Write-only credential inputs and public AI settings."""
+import uuid
+from datetime import datetime
 from decimal import Decimal
 from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field, SecretStr
@@ -14,6 +16,7 @@ class AiSettingsBody(BaseModel):
     qa_enabled: bool = False
     request_timeout_seconds: int | None = Field(None, strict=True, ge=1, le=3600)
     monthly_limit_usd: Decimal | None = Field(None, ge=0, max_digits=14, decimal_places=2)
+    confirmation: bool = False
 
 
 class AiModelsBody(BaseModel):
@@ -21,6 +24,15 @@ class AiModelsBody(BaseModel):
     base_url: str | None = Field(None, max_length=2048)
     model_config = ConfigDict(extra='forbid', hide_input_in_errors=True)
     api_key: SecretStr | None = None
+
+
+class AiConfirmationOut(BaseModel):
+    confirmed_by_user_id: uuid.UUID
+    confirmed_by_name: str
+    provider: Literal['openai', 'openai_compatible', 'anthropic']
+    base_url: str | None
+    text_version: str
+    confirmed_at: datetime
 
 
 class AiSettingsOut(BaseModel):
@@ -33,6 +45,8 @@ class AiSettingsOut(BaseModel):
     qa_enabled: bool
     monthly_limit_usd: Decimal | None
     price_known: bool
+    confirmation: AiConfirmationOut | None = None
+    confirmation_required: bool = False
 
 
 class AiModelOut(BaseModel):

@@ -1,9 +1,11 @@
 import { useEffect, useState, type FormEvent } from 'react';
 import { getAiSettings, listAiModels, saveAiSettings } from '../api/endpoints';
+import { ApiError } from '../api/client';
 import type { AiModel, OrganizationAiSettings, OrganizationAiSettingsBody } from '../api/types';
 import { Button } from '../components/ui/button';
 import { Input } from '../components/ui/input';
 import { Label } from '../components/ui/label';
+import { formatDateTime } from '../lib/format';
 
 export function OrganizationAiSettingsSection({ organizationId }: { organizationId: string }) {
   const [settings, setSettings] = useState<OrganizationAiSettings | null>(null);
@@ -15,6 +17,8 @@ export function OrganizationAiSettingsSection({ organizationId }: { organization
   const [error, setError] = useState<string | null>(null);
   const [message, setMessage] = useState('');
   const [reload, setReload] = useState(0);
+  const [confirmation, setConfirmation] = useState(false);
+  const [confirmationError, setConfirmationError] = useState<string | null>(null);
   useEffect(() => {
     let current = true;
     getAiSettings(organizationId).then(value => {
@@ -39,16 +43,23 @@ export function OrganizationAiSettingsSection({ organizationId }: { organization
       provider:settings.provider, base_url:settings.base_url ?? null, model:settings.model, import_enabled:settings.import_enabled,
       qa_enabled:settings.qa_enabled, monthly_limit_usd:limit.trim() || null, request_timeout_seconds:settings.request_timeout_seconds ?? null,
       ...(removeKey ? { api_key:null } : key.trim() ? { api_key:key.trim() } : {}),
+      ...(confirmationNeeded ? { confirmation } : {}),
     };
     try {
       const result = await saveAiSettings(organizationId, body);
-      setSettings(result); setKey(''); setRemoveKey(false); setLimit(result.monthly_limit_usd ?? '');
+      setSettings(result); setKey(''); setRemoveKey(false); setConfirmation(false); setConfirmationError(null); setLimit(result.monthly_limit_usd ?? '');
       setMessage('KI-Einstellungen gespeichert. Sie gelten ab dem nächsten Auftrag oder der nächsten Frage.');
-    } catch (error) { setError(error instanceof Error ? error.message : 'Die KI-Einstellungen konnten nicht gespeichert werden.'); }
+    } catch (error) {
+      if (error instanceof ApiError && error.code === 'ORGANIZATION_AI_CONFIRMATION_REQUIRED') setConfirmationError(error.message);
+      else setError(error instanceof Error ? error.message : 'Die KI-Einstellungen konnten nicht gespeichert werden.');
+    }
     finally { setBusy(false); }
   }
   const selected = models.find(item => item.id === settings?.model);
   const known = selected?.price_known ?? settings?.price_known;
+  // Storing or replacing the key, or confirming a stored key that predates
+  // the confirmation, requires the provider confirmation in the same save.
+  const confirmationNeeded = !removeKey && Boolean(key.trim() || (settings?.key_set && settings.confirmation_required));
   return <section className="card mt-6 p-5 sm:p-6 min-w-0" aria-labelledby="ai-heading">
     <h2 id="ai-heading">KI für Ihre Organisation</h2>
     <p className="text-sm text-muted-foreground mt-2">Ihre Organisation verwendet ihren eigenen API-Schlüssel beim gewählten Anbieter. Das gewählte Modell gilt für alle Imports, Nachprüfungen und Fragen zum Objektwissen.</p>
@@ -60,7 +71,7 @@ export function OrganizationAiSettingsSection({ organizationId }: { organization
           <div><Label htmlFor="ai-provider">Anbieter</Label>
             <select id="ai-provider" className="w-full min-w-0 rounded-md border border-input bg-background p-2 text-sm" value={settings.provider} onChange={event => {
               setSettings({...settings, provider:event.target.value as OrganizationAiSettings['provider'], base_url:null, request_timeout_seconds:null, model:null, key_set:false, price_known:false, import_enabled:false, qa_enabled:false});
-              setKey(''); setModels([]); setRemoveKey(false); setMessage('Bitte geben Sie für den neuen Anbieter einen eigenen Schlüssel ein und laden Sie dessen Modelle.');
+              setKey(''); setModels([]); setRemoveKey(false); setConfirmation(false); setConfirmationError(null); setMessage('Bitte geben Sie für den neuen Anbieter einen eigenen Schlüssel ein und laden Sie dessen Modelle.');
             }}>
               <option value="openai">OpenAI</option><option value="openai_compatible">OpenAI-kompatible API</option><option value="anthropic">Anthropic</option>
             </select>
@@ -68,7 +79,7 @@ export function OrganizationAiSettingsSection({ organizationId }: { organization
           {settings.provider === 'openai_compatible' && <div>
             <Label htmlFor="ai-base-url">API-Basis-URL</Label>
             <Input id="ai-base-url" type="url" value={settings.base_url ?? ''} maxLength={2048} placeholder="http://localhost:11434/v1" onChange={event => {
-              setSettings({...settings, base_url:event.target.value, request_timeout_seconds:null, key_set:false, model:null, price_known:false, import_enabled:false, qa_enabled:false}); setKey(''); setModels([]); setMessage('');
+              setSettings({...settings, base_url:event.target.value, request_timeout_seconds:null, key_set:false, model:null, price_known:false, import_enabled:false, qa_enabled:false}); setKey(''); setModels([]); setConfirmation(false); setConfirmationError(null); setMessage('');
             }} aria-describedby="ai-endpoint-info" />
             <p id="ai-endpoint-info" className="text-sm text-muted-foreground mt-2">Verwenden Sie die API-Adresse einschließlich Pfad, z. B. /v1. Lokale Ziele sind nur im selbst gehosteten Betrieb verfügbar. Auch ein lokaler Dienst benötigt hier einen Schlüsselwert. Prüfen Sie Datenschutz und Speicherregeln des Anbieters.</p>
           </div>}
@@ -82,12 +93,21 @@ export function OrganizationAiSettingsSection({ organizationId }: { organization
           {settings.provider === 'anthropic'  && <p className="text-sm text-muted-foreground">Verwenden Sie einen Anthropic-Schlüssel für einen einzelnen Workspace. Prüfen Sie die Datenaufbewahrung Ihres Vertrags; Verwalino aktiviert keine Zero Data Retention.</p>}
           <div>
             <Label htmlFor="ai-key">API-Schlüssel</Label>
-            <Input id="ai-key" type="password" autoComplete="off" spellCheck={false} value={key} maxLength={4096} onChange={event => { setKey(event.target.value); setRemoveKey(false); setMessage(''); }} aria-describedby="ai-key-status" />
+            <Input id="ai-key" type="password" autoComplete="off" spellCheck={false} value={key} maxLength={4096} onChange={event => { setKey(event.target.value); setRemoveKey(false); setConfirmationError(null); setMessage(''); }} aria-describedby="ai-key-status" />
             <p id="ai-key-status" className="text-sm text-muted-foreground mt-2">{removeKey ? 'Der gespeicherte Schlüssel wird beim Speichern entfernt.' : settings.key_set ? 'Ein Schlüssel ist gespeichert. Leer lassen, um ihn beizubehalten; zum Ersetzen einen neuen eingeben.' : 'Es ist noch kein Schlüssel gespeichert.'} Der gespeicherte Schlüssel wird niemals angezeigt.</p>
             {settings.key_set && <label className="flex gap-2 items-start mt-3 text-sm"><input type="checkbox" checked={removeKey} onChange={event => {
-              setRemoveKey(event.target.checked); setKey(''); setMessage('');
+              setRemoveKey(event.target.checked); setKey(''); setConfirmation(false); setConfirmationError(null); setMessage('');
               if (event.target.checked) setSettings({...settings, import_enabled:false, qa_enabled:false});
             }} />Gespeicherten Schlüssel entfernen und KI-Funktionen ausschalten</label>}
+            {settings.key_set && !settings.confirmation_required && settings.confirmation && !removeKey && !key.trim() ?
+              <p className="text-sm text-muted-foreground mt-3">Bestätigt am {formatDateTime(settings.confirmation.confirmed_at)} von {settings.confirmation.confirmed_by_name}.</p> :
+              confirmationNeeded && <div className="mt-3">
+                <label className="flex gap-2 items-start text-sm">
+                  <input type="checkbox" checked={confirmation} onChange={event => { setConfirmation(event.target.checked); setConfirmationError(null); setMessage(''); }} />
+                  <span>Wir haben den Anbieter selbst gewählt und mit ihm einen Vertrag geschlossen, der die Datenverarbeitung, den Speicherort und den Verzicht auf eine Trainingsnutzung abdeckt. Wir weisen den Betreiber dieser Installation an, Dokumente und extrahierte Texte an den gewählten Anbieter zu übermitteln.</span>
+                </label>
+                {confirmationError && <p role="alert" className="error-text mt-2">{confirmationError}</p>}
+              </div>}
           </div>
           <div><Button type="button" variant="outline" disabled={removeKey || (!key.trim() && !settings.key_set)} onClick={() => void loadModels()}>{busy ? 'Bitte warten …' : 'Modelle laden'}</Button></div>
           <div>

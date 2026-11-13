@@ -6,12 +6,23 @@ from decimal import Decimal
 from cryptography.fernet import Fernet, InvalidToken
 from fastapi import HTTPException
 from pydantic import SecretStr
+from sqlalchemy import select
 from app.core.config import settings
 from app.core.ai_models import EVALUATED_MODELS, model_price
 from app.models.audit_event import AuditEvent
+from app.models.organization_ai_confirmation import OrganizationAiConfirmation
+from app.models.user import User
 from app.repositories.audit_repo import AuditRepository
 from app.repositories.organization_ai_settings_repo import OrganizationAiSettingsRepository
-from app.schemas.ai_settings import AiSettingsOut, AiModelOut, AiModelsOut
+from app.schemas.ai_settings import AiSettingsOut, AiConfirmationOut, AiModelOut, AiModelsOut
+
+# Version of the German provider-confirmation text the organization agrees to;
+# the copy lives in the frontend, the reviewed wording follows #26.
+AI_PROVIDER_CONFIRMATION_VERSION = '1'
+
+CONFIRMATION_REQUIRED_MESSAGE = ('Bitte bestätigen Sie vor dem Speichern, dass Ihre Organisation '
+    'den Anbieter selbst ausgewählt und beauftragt hat und den Betreiber anweist, '
+    'Dokumente und extrahierte Texte an diesen Anbieter zu übermitteln.')
 
 
 def _cipher(organization_id):
@@ -39,6 +50,21 @@ class EffectiveAiSettings:
     request_timeout_seconds: int | None = None
 
 
+def _confirmation_match(provider, base_url):
+    return (OrganizationAiConfirmation.provider == provider,
+        OrganizationAiConfirmation.base_url.isnot_distinct_from(base_url))
+
+
+async def matching_confirmation(db, organization_id, provider, base_url):
+    """The newest recorded confirmation for exactly this destination, if any."""
+    return (await db.execute(select(OrganizationAiConfirmation, User.display_name)
+        .join(User, (User.id == OrganizationAiConfirmation.confirmed_by_user_id)
+            & (User.organization_id == OrganizationAiConfirmation.organization_id))
+        .where(OrganizationAiConfirmation.organization_id == organization_id, *_confirmation_match(provider, base_url))
+        .order_by(OrganizationAiConfirmation.confirmed_at.desc(), OrganizationAiConfirmation.id.desc())
+        .limit(1))).first()
+
+
 async def effective_ai_settings(db, organization_id) -> EffectiveAiSettings:
     row = await OrganizationAiSettingsRepository(db, organization_id).get()
     if row is None:
@@ -49,6 +75,10 @@ async def effective_ai_settings(db, organization_id) -> EffectiveAiSettings:
             key = SecretStr(_cipher(organization_id).decrypt(row.encrypted_api_key.encode()).decode())
         except (InvalidToken, ValueError):
             raise AiKeyUnreadableError() from None
+        if await matching_confirmation(db, organization_id, row.provider, row.base_url) is None:
+            # A stored key without a recorded confirmation for its destination
+            # stays unused: every AI entry point fails closed on a missing key.
+            key = None
     return EffectiveAiSettings(row.provider, key, row.model, row.import_enabled, row.qa_enabled, row.monthly_limit_usd, row.base_url, row.request_timeout_seconds)
 
 
@@ -62,15 +92,26 @@ async def worker_ai_settings(organization_id):
     return effective
 
 
-def public_settings(row) -> AiSettingsOut:
+def public_settings(row, confirmation=None) -> AiSettingsOut:
+    active = None
+    if row and row.encrypted_api_key and confirmation:
+        record, confirmer_name = confirmation
+        active = AiConfirmationOut(confirmed_by_user_id=record.confirmed_by_user_id,
+            confirmed_by_name=confirmer_name, provider=record.provider, base_url=record.base_url,
+            text_version=record.text_version, confirmed_at=record.confirmed_at)
     return AiSettingsOut(request_timeout_seconds=row.request_timeout_seconds if row else None, provider=row.provider if row else 'openai', base_url=row.base_url if row else None, key_set=bool(row and row.encrypted_api_key),
         model=row.model if row else None, import_enabled=bool(row and row.import_enabled),
         qa_enabled=bool(row and row.qa_enabled), monthly_limit_usd=row.monthly_limit_usd if row else None,
-        price_known=bool(row and model_price(row.model, row.provider)))
+        price_known=bool(row and model_price(row.model, row.provider)),
+        confirmation=active, confirmation_required=bool(row and row.encrypted_api_key and confirmation is None))
 
 
 async def read_settings(db, organization_id):
-    return public_settings(await OrganizationAiSettingsRepository(db, organization_id).get())
+    row = await OrganizationAiSettingsRepository(db, organization_id).get()
+    confirmation = None
+    if row and row.encrypted_api_key:
+        confirmation = await matching_confirmation(db, organization_id, row.provider, row.base_url)
+    return public_settings(row, confirmation)
 
 
 def entered_key(value):
@@ -99,6 +140,10 @@ def _audit_diff(previous, body, encrypted, organization_id):
         after = bool(getattr(body, switch))
         if before != after:
             diff[switch] = {'from': before, 'to': after}
+    if previous and previous.provider != body.provider:
+        diff['provider'] = {'from': previous.provider, 'to': body.provider}
+    if previous and previous.base_url != body.base_url:
+        diff['base_url'] = {'from': previous.base_url, 'to': body.base_url}
     return diff
 
 
@@ -116,18 +161,49 @@ async def write_settings(db, organization_id, body, auth):
         raise HTTPException(422, 'Eine eigene Basis-URL ist nur für OpenAI-kompatible Anbieter vorgesehen.')
     destination_changed = previous and (previous.provider, previous.base_url) != (body.provider, body.base_url)
     encrypted = previous.encrypted_api_key if previous and not destination_changed else None
+    entered_new_key = False
     if 'api_key' in body.model_fields_set:
-        encrypted = _cipher(organization_id).encrypt(entered_key(body.api_key).encode()).decode() if body.api_key is not None else None
+        if body.api_key is not None:
+            entered = entered_key(body.api_key)
+            if encrypted is not None:
+                try:
+                    entered_new_key = _cipher(organization_id).decrypt(encrypted.encode()).decode() != entered
+                except (InvalidToken, ValueError):
+                    entered_new_key = True
+            else:
+                entered_new_key = True
+            encrypted = _cipher(organization_id).encrypt(entered.encode()).decode()
+        else:
+            encrypted = None
     if (body.import_enabled or body.qa_enabled) and (not encrypted or not body.model):
         raise HTTPException(422, 'Bitte hinterlegen Sie zuerst einen API-Schlüssel und wählen Sie ein Modell.')
-    values = body.model_dump(exclude={'api_key'})
+    record_confirmation = False
+    if encrypted is not None:
+        existing_confirmation = await matching_confirmation(db, organization_id, body.provider, body.base_url)
+        if entered_new_key and not body.confirmation:
+            raise HTTPException(422, {'code': 'ORGANIZATION_AI_CONFIRMATION_REQUIRED', 'message': CONFIRMATION_REQUIRED_MESSAGE})
+        # Confirming an already confirmed, unchanged key records nothing; a key
+        # kept without any confirmation (stored before this change) can be
+        # confirmed once, without re-entering it.
+        record_confirmation = bool(body.confirmation and (entered_new_key or existing_confirmation is None))
+    values = body.model_dump(exclude={'api_key', 'confirmation'})
     diff = _audit_diff(previous, body, encrypted, organization_id)
+    if record_confirmation:
+        diff['confirmation'] = 'recorded'
     row = await repo.save({**values, 'encrypted_api_key': encrypted})
+    confirmation = None
+    if encrypted is not None:
+        if record_confirmation:
+            db.add(OrganizationAiConfirmation(organization_id=organization_id, confirmed_by_user_id=auth.user_id,
+                provider=body.provider, base_url=body.base_url, text_version=AI_PROVIDER_CONFIRMATION_VERSION))
+            await db.flush()
+        # Re-read after save(): the repository expires all state it returns.
+        confirmation = await matching_confirmation(db, organization_id, body.provider, body.base_url)
     if diff:
         await AuditRepository(db, organization_id).create(AuditEvent(
             actor_user_id=auth.user_id, entity_type='organization_ai_settings', entity_id=organization_id,
             action='ai_settings.updated', payload_diff=diff))
-    return public_settings(row)
+    return public_settings(row, confirmation)
 
 
 async def discover_models(db, organization_id, body):

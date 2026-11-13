@@ -48,7 +48,7 @@ async def test_advance_mode_downgrade_refuses_to_erase_dated_meaning(rent_world)
 def test_eligible_reserve_erasure_is_the_next_release_revision():
     revision = ScriptDirectory('migrations').get_revision('0161')
     assert revision.down_revision == '0160'
-    assert deployment.TARGET == '0185'
+    assert deployment.TARGET == '0186'
 
 
 @pytest.mark.asyncio
@@ -1016,7 +1016,7 @@ def test_quiescence_rejects_another_database_client():
 def test_report_recipients_are_the_next_release_revision():
     revision = ScriptDirectory('migrations').get_revision('0162')
     assert revision.down_revision == '0161'
-    assert deployment.TARGET == '0185'
+    assert deployment.TARGET == '0186'
 
 
 def test_report_retention_empty_downgrade_restores_functions_and_upgrade_is_reversible(run_migrations):
@@ -1080,7 +1080,7 @@ def test_report_retention_empty_downgrade_restores_functions_and_upgrade_is_reve
 def test_dated_successor_dunning_is_the_next_release_revision():
     revision = ScriptDirectory('migrations').get_revision('0163')
     assert revision.down_revision == '0162'
-    assert deployment.TARGET == '0185'
+    assert deployment.TARGET == '0186'
 
 
 @pytest.mark.parametrize('column', ['distribution_base_total', 'distribution_base_share'])
@@ -1151,7 +1151,7 @@ async def test_provider_upgrade_monthly_usage_executes_origin_scoped_reservation
     assert run_migrations['upgrade_0178_to_0185_tables'] > 50
     org = seed_data['org_a_id']
     path = f"/api/organizations/{org}/ai-settings"
-    assert (await client_a_admin.put(path,json={'api_key':'synthetic-key','model':'gpt-5.6-luna','import_enabled':True})).status_code == 200
+    assert (await client_a_admin.put(path,json={'api_key':'synthetic-key','model':'gpt-5.6-luna','import_enabled':True,'confirmation':True})).status_code == 200
     created = await client_a_admin.post('/api/declaration-imports',json={'mode':'NEW_PROPERTY'})
     assert created.status_code == 201
     await migrator_session.execute(text("SELECT set_config('app.current_org_id',:org,true),set_config('app.current_user_id',:actor,true)"),
@@ -1209,7 +1209,7 @@ async def test_planned_reserve_downgrade_refuses_retained_lines(rent_world):
 def test_global_signin_email_is_the_next_release_revision():
     revision = ScriptDirectory('migrations').get_revision('0183')
     assert revision.down_revision == '0182'
-    assert deployment.TARGET == '0185'
+    assert deployment.TARGET == '0186'
 
 
 def test_global_signin_email_constraint_upgrades_and_downgrades(run_migrations):

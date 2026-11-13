@@ -863,6 +863,7 @@ async def inject_test_engine(request, run_migrations):
         with connection, connection.cursor() as cursor:
             cursor.execute("SELECT to_regclass('public.organization_ai_settings')")
             if cursor.fetchone()[0]:
+                cursor.execute('DELETE FROM public.organization_ai_confirmation')
                 cursor.execute('DELETE FROM public.organization_ai_settings')
     await review_engine.dispose()
     override_review_engine(None)

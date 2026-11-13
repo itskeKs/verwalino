@@ -762,3 +762,42 @@ async def test_import_keeps_the_signup_assents_of_the_importing_organization(ren
         {'org': import_target['org']})).mappings().all()
     assert {(row['document'], row['version']) for row in kept} == {('TERMS', '2026-10-01'), ('AV', '2026-10-01')}
     assert all(row['assented_at'] == own_at for row in kept)
+
+
+async def test_import_accepts_but_does_not_restore_forged_ai_confirmations(rent_world, import_target, rent_db, export_store):
+    """Provider confirmations are evidence the installation collected; an archive
+    must not plant them. The export carries the record; a forged archive
+    (rewritten version and time, an added row, re-hashed) imports with 200 and
+    stores no confirmation rows from the archive."""
+    from app.services.ai_settings_service import _cipher
+    encrypted = _cipher(rent_world['org']).encrypt(b'synthetic-export-key').decode()
+    await rent_db.execute(text('INSERT INTO organization_ai_settings (organization_id,encrypted_api_key) VALUES (:org,:key)'),
+                          {'org': rent_world['org'], 'key': encrypted})
+    await rent_db.execute(text('''INSERT INTO organization_ai_confirmation
+        (organization_id,confirmed_by_user_id,provider,base_url,text_version) VALUES (:org,:admin,'openai',NULL,'1')'''),
+                          {'org': rent_world['org'], 'admin': rent_world['admin']})
+    await rent_db.commit()
+    files = unpack(await exported(rent_world))
+    lines = files['entities/organization_ai_confirmation.jsonl'].splitlines()
+    assert len(lines) == 1
+    assert 'synthetic-export-key' not in files['entities/organization_ai_confirmation.jsonl'].decode()
+    forged = []
+    for line in lines:
+        row = json.loads(line)
+        row['text_version'] = 'forged'
+        row['confirmed_at'] = '2099-01-01T00:00:00+00'
+        forged.append(json.dumps(row).encode() + b'\n')
+    extra = json.loads(forged[0])
+    extra['id'] = str(uuid.uuid4())
+    forged.append(json.dumps(extra).encode() + b'\n')
+    manifest = json.loads(files['manifest.json'])
+    manifest['row_counts']['organization_ai_confirmation'] = len(forged)
+    files = {**files, 'entities/organization_ai_confirmation.jsonl': b''.join(forged),
+             'manifest.json': json.dumps(manifest).encode()}
+    async with api_client(import_target) as api:
+        answer = await api.post('/api/organizations/import', files={'file': ('organization.tar.gz', repack(files))})
+    assert answer.status_code == 200, answer.text
+    stored = (await rent_db.execute(text(
+        'SELECT count(*) FROM organization_ai_confirmation WHERE organization_id=:org'),
+        {'org': import_target['org']})).scalar()
+    assert stored == 0

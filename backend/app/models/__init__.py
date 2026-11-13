@@ -1,6 +1,7 @@
 from app.models.base import Base
 from app.models.organization import Organization
 from app.models.organization_ai_settings import OrganizationAiSettings
+from app.models.organization_ai_confirmation import OrganizationAiConfirmation
 from app.models.user import User
 from app.models.membership import Membership
 from app.models.management_mandate import ManagementMandate
@@ -81,6 +82,7 @@ __all__ = [
     "Base",
     "Organization",
     "OrganizationAiSettings",
+    "OrganizationAiConfirmation",
     "User",
     "Membership",
     "ManagementMandate",

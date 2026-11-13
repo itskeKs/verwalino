@@ -56,7 +56,7 @@ async def test_ai_settings_encrypt_key_and_hide_foreign_and_non_admin_access(
     path = f"/api/organizations/{seed_data['org_a_id']}/ai-settings"
     body = {'provider': 'openai', 'api_key': 'synthetic-secret-never-returned',
             'model': 'gpt-5.6-luna', 'import_enabled': True, 'qa_enabled': True,
-            'monthly_limit_usd': '0.50'}
+            'monthly_limit_usd': '0.50', 'confirmation': True}
     response = await client_a_admin.put(path, json=body)
     assert response.status_code == 200, response.text
     assert response.json()['key_set'] is True

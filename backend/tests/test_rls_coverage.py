@@ -37,6 +37,7 @@ PRIVATE_POLICIES = {
 
 TENANT_TABLES = frozenset({
     "organization_ai_settings",
+    "organization_ai_confirmation",
     "user_invitation",
     "legal_document_assent",
     "organization_deletion",
