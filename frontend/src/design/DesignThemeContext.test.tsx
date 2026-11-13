@@ -9,12 +9,16 @@ import { api, ApiError } from "../api/client";
 const auth = vi.hoisted(() => ({ session: { user_id: "one", organization_id: "org", role: "READ_ONLY" } as { user_id: string; organization_id: string; role: string } | null }));
 vi.mock("../auth/useAuth", () => ({ useAuth: () => auth }));
 afterEach(() => { vi.restoreAllMocks(); auth.session = { user_id: "one", organization_id: "org", role: "READ_ONLY" }; });
+function mockReads() {
+  return vi.spyOn(api, "get").mockImplementation((url) =>
+    url === "/api/organizations/legal-assents" ? Promise.resolve([]) : Promise.resolve({ design_theme: "klar" }));
+}
 function deferred<T>() { let resolve!: (v: T) => void; const promise = new Promise<T>(r => { resolve = r; }); return { promise, resolve }; }
 function Probe() { const { theme } = useDesignTheme(); const [value, setValue] = useState(""); return <><output>{theme}</output><input aria-label="Unfinished work" value={value} onChange={e => setValue(e.target.value)} /></>; }
 function View() { return <DesignThemeProvider><Probe /><SettingsPage /></DesignThemeProvider>; }
 
 it("defaults to Klar and saves a read-only user's personal choice without remounting work", async () => {
-  vi.spyOn(api, "get").mockResolvedValue({ design_theme: "klar" });
+  mockReads();
   const reply = deferred<{ design_theme: string }>();
   const save = vi.spyOn(api, "patch").mockReturnValue(reply.promise);
   render(<View />);
@@ -34,7 +38,7 @@ it("defaults to Klar and saves a read-only user's personal choice without remoun
 });
 
 it("retains the selected choice and active saved theme on a failed save", async () => {
-  vi.spyOn(api, "get").mockResolvedValue({ design_theme: "klar" });
+  mockReads();
   vi.spyOn(api, "patch").mockRejectedValue(new ApiError(503, "Speichern derzeit nicht möglich."));
   render(<View />);
   await waitFor(() => expect(screen.getByRole("radio", { name: /Warm/ })).toBeEnabled());
@@ -50,7 +54,7 @@ it("retains the selected choice and active saved theme on a failed save", async 
 
 it("discards a late preference read after switching user", async () => {
   const old = deferred<{ design_theme: string }>();
-  vi.spyOn(api, "get").mockReturnValueOnce(old.promise).mockResolvedValue({ design_theme: "klar" });
+  mockReads().mockReturnValueOnce(old.promise);
   const view = render(<View />);
   auth.session = { user_id: "two", organization_id: "org", role: "READ_ONLY" };
   view.rerender(<View />);
@@ -61,7 +65,7 @@ it("discards a late preference read after switching user", async () => {
 });
 
 it("discards a late save after logout and a different user's login", async () => {
-  vi.spyOn(api, "get").mockResolvedValue({ design_theme: "klar" });
+  mockReads();
   const old = deferred<{ design_theme: string }>();
   vi.spyOn(api, "patch").mockReturnValue(old.promise);
   const view = render(<View />);
@@ -77,7 +81,8 @@ it("discards a late save after logout and a different user's login", async () =>
 });
 
 it("reports a failed preference read honestly and offers retry before saving", async () => {
-  const load = vi.spyOn(api, "get").mockRejectedValueOnce(new Error("offline")).mockResolvedValue({ design_theme: "warm" });
+  const load = vi.spyOn(api, "get").mockRejectedValueOnce(new Error("offline")).mockImplementation((url) =>
+    url === "/api/organizations/legal-assents" ? Promise.resolve([]) : Promise.resolve({ design_theme: "warm" }));
   render(<View />);
   const alert = await screen.findByRole("alert");
   expect(alert).toHaveTextContent("Design konnte nicht geladen werden.");
