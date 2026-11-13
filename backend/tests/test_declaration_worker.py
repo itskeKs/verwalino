@@ -19,6 +19,7 @@ from tests.test_error_tracking import offline_tracker as offline_tracker
 from tests.test_property_source_enforcement import synthetic_enforcement
 from app.core.config import settings
 from app.core.db import get_worker_tenant_session as get_tenant_session
+from app.core.db import get_worker_unscoped_session
 from app.models.declaration_import import DeclarationExtractionRun, DeclarationImport
 from app.models.organization import Organization
 from app.services.ai_settings_service import _cipher, effective_ai_settings
@@ -945,3 +946,131 @@ async def test_simultaneous_pipeline_and_heartbeat_completion_prefers_pipeline()
 
     result = await SimultaneousWorker(Pipeline())._run_claimed(lease)
     assert result.code == "PROCESSED"
+
+
+def _insert_expired_signup_request(email: str) -> None:
+    with closing(psycopg2.connect(MIGRATOR_SYNC_URL)) as connection, connection, connection.cursor() as cursor:
+        cursor.execute(
+            "INSERT INTO signup_request "
+            "(email_normalized,organization_name,admin_name,password_hash,token_hash,expires_at) "
+            "VALUES (%s,'Synthetic org','Synthetic name','synthetic hash',"
+            "sha256(convert_to(%s,'UTF8')),clock_timestamp()-interval '8 days')",
+            (email, email))
+
+
+def _signup_request_count(email: str) -> int:
+    with closing(psycopg2.connect(MIGRATOR_SYNC_URL)) as connection, connection, connection.cursor() as cursor:
+        cursor.execute('SELECT count(*) FROM public.signup_request WHERE email_normalized=%s', (email,))
+        return cursor.fetchone()[0]
+
+
+@pytest.mark.asyncio
+async def test_worker_cycle_deletes_expired_signup_request_without_signup_traffic(monkeypatch, caplog) -> None:
+    monkeypatch.setattr(settings, 'deployment_mode', 'hosted')
+    _insert_expired_signup_request('worker-stale@example.test')
+
+    async def stop_after_first_cycle(_seconds: float) -> None:
+        raise asyncio.CancelledError()
+
+    worker = DeclarationImportWorker(sleep=stop_after_first_cycle)
+    with caplog.at_level(logging.INFO, logger='app.workers.declaration_import'):
+        with pytest.raises(asyncio.CancelledError):
+            await worker.run_forever()
+    assert _signup_request_count('worker-stale@example.test') == 0
+    lines = [record for record in caplog.records if 'result=SIGNUP_CLEANUP ' in record.getMessage()]
+    assert len(lines) == 1
+    assert 'removed=' in lines[0].getMessage()
+    assert 'worker-stale@example.test' not in lines[0].getMessage()
+
+
+@pytest.mark.asyncio
+async def test_worker_signup_cleanup_runs_at_most_once_per_interval(monkeypatch) -> None:
+    monkeypatch.setattr(settings, 'deployment_mode', 'hosted')
+    base = datetime.now(timezone.utc)
+    ticks = iter([0, 30, 60])
+    worker = DeclarationImportWorker(clock=lambda: base + timedelta(seconds=next(ticks)))
+    _insert_expired_signup_request('interval-first@example.test')
+    await worker._cleanup_signup_requests()
+    assert _signup_request_count('interval-first@example.test') == 0
+    _insert_expired_signup_request('interval-second@example.test')
+    await worker._cleanup_signup_requests()
+    assert _signup_request_count('interval-second@example.test') == 1
+    await worker._cleanup_signup_requests()
+    assert _signup_request_count('interval-second@example.test') == 0
+
+
+@pytest.mark.asyncio
+async def test_worker_signup_cleanup_is_skipped_in_selfhost_mode(monkeypatch, caplog) -> None:
+    monkeypatch.setattr(settings, 'deployment_mode', 'selfhost')
+    _insert_expired_signup_request('selfhost-stale@example.test')
+    await DeclarationImportWorker()._cleanup_signup_requests()
+    assert _signup_request_count('selfhost-stale@example.test') == 1
+    assert not [record for record in caplog.records if 'SIGNUP_CLEANUP' in record.getMessage()]
+
+
+@pytest.mark.asyncio
+async def test_worker_signup_cleanup_sets_bounded_statement_timeouts(monkeypatch) -> None:
+    monkeypatch.setattr(settings, 'deployment_mode', 'hosted')
+    statements: list[str] = []
+    original_factory = get_worker_unscoped_session
+
+    @asynccontextmanager
+    async def recording_factory():
+        async with original_factory() as session:
+            original_execute = session.execute
+
+            async def execute(*args, **kwargs):
+                statements.append(str(args[0]))
+                return await original_execute(*args, **kwargs)
+
+            session.execute = execute
+            yield session
+
+    worker = DeclarationImportWorker(unscoped_session_factory=recording_factory)
+    await worker._cleanup_signup_requests()
+    issued = '\n'.join(statements)
+    assert "SET LOCAL lock_timeout='100ms'" in issued
+    assert "SET LOCAL statement_timeout='1s'" in issued
+
+
+@pytest.mark.asyncio
+async def test_worker_signup_cleanup_failure_logs_bounded_line_and_recovers_next_cycle(
+    monkeypatch, caplog,
+) -> None:
+    monkeypatch.setattr(settings, 'deployment_mode', 'hosted')
+    _insert_expired_signup_request('cleanup-locked@example.test')
+    clock_now = datetime.now(timezone.utc)
+
+    def clock() -> datetime:
+        return clock_now
+
+    with closing(psycopg2.connect(MIGRATOR_SYNC_URL)) as connection:
+        with connection.cursor() as cursor:
+            cursor.execute('LOCK TABLE public.signup_request IN ACCESS EXCLUSIVE MODE')
+            cycles = 0
+
+            async def advance_and_stop_after_three_cycles(_seconds: float) -> None:
+                nonlocal clock_now, cycles
+                clock_now += timedelta(seconds=45)
+                cycles += 1
+                if cycles >= 3:
+                    raise asyncio.CancelledError()
+
+            worker = DeclarationImportWorker(sleep=advance_and_stop_after_three_cycles, clock=clock)
+            with caplog.at_level(logging.INFO, logger='app.workers.declaration_import'):
+                with pytest.raises(asyncio.CancelledError):
+                    await worker.run_forever()
+            failures = [record for record in caplog.records
+                        if 'result=SIGNUP_CLEANUP_FAILED' in record.getMessage()]
+            # The first cycle fails; the second cycle is inside the cadence
+            # interval and must not re-attempt; the third cycle retries after
+            # the interval and fails again.
+            assert len(failures) == 2
+            for record in failures:
+                assert 'cleanup-locked@example.test' not in record.getMessage()
+                assert 'error_type=' in record.getMessage()
+            idles = [record for record in caplog.records if 'result=IDLE' in record.getMessage()]
+            assert len(idles) == 3
+    assert _signup_request_count('cleanup-locked@example.test') == 1
+    await DeclarationImportWorker()._cleanup_signup_requests()
+    assert _signup_request_count('cleanup-locked@example.test') == 0

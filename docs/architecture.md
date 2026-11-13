@@ -842,10 +842,24 @@ See [test setup](../features/README.md#running).
 
 Every 100th signup per worker schedules one separate transaction after the response
 to delete at most 100 requests expired for more than seven days, using
-`FOR UPDATE SKIP LOCKED`. Cleanup is best effort; no worker or scheduler is needed.
-Confirmed requests are deleted immediately, so removing an organization and its
-users allows the address to register again. Replaying a used token finds no row
-and receives the same generic refusal.
+`FOR UPDATE SKIP LOCKED`. That web-path cleanup stays best effort; independently,
+the always-deployed hosted declaration worker calls the same bounded definer at
+most once every 60 seconds per worker process (issue #634), only when the
+deployment policy enables sign-up (hosted mode). The worker session is
+fail-closed with the nil-organization context, so the call clears
+`app.current_org_id` locally for this one deliberate global statement; revision
+0187 grants `app_worker` EXECUTE on `cleanup_signup_requests()` only, stating
+the authorization independent of role inheritance. The call carries the same
+bounds as the web path (`lock_timeout` 100 ms, `statement_timeout` 1 s); a
+failure logs one bounded line without addresses, advances the cadence too (so a
+persistent failure logs at most once per interval) and never stops the import
+loop. Eligibility is
+unchanged (24-hour token validity plus seven days): token validity is never
+reported as physical erasure and no deletion on a specific day is promised, but
+a quiet hosted instance no longer retains never-confirmed addresses
+indefinitely. Confirmed requests are deleted immediately, so removing an
+organization and its users allows the address to register again. Replaying a
+used token finds no row and receives the same generic refusal.
 
 Submit, resend and confirm use separate scopes: `signup`, `signup_resend` and
 `signup_confirm`. Submit/resend count only their scoped IP buckets for flood

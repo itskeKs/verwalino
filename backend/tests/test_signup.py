@@ -222,7 +222,7 @@ async def test_selfhost_signup_matches_unknown_routes_before_parsing_or_database
 @pytest.mark.asyncio
 async def test_signup_function_has_fixed_security_metadata_and_narrow_grants(app_rw_session):
     for name in ('provision_organization(text,text)', 'request_signup_assented(text,text,text,text,text,text)',
-                 'resend_signup(text)', 'signup_confirmation(text)', 'cleanup_signup_requests()'):
+                 'resend_signup(text)', 'signup_confirmation(text)'):
         args = {'signature': 'public.' + name}
         row = (await app_rw_session.execute(text('SELECT pg_get_userbyid(proowner),prosecdef,proconfig FROM pg_proc WHERE oid=CAST(:signature AS regprocedure)'), args)).one()
         assert tuple(row) == ('app_migrator', True, ['search_path=pg_catalog, pg_temp', 'row_security=off'])
@@ -230,6 +230,15 @@ async def test_signup_function_has_fixed_security_metadata_and_narrow_grants(app
             FROM pg_proc p CROSS JOIN LATERAL aclexplode(COALESCE(p.proacl,acldefault('f',p.proowner))) a
             WHERE p.oid=CAST(:signature AS regprocedure) AND a.grantee<>p.proowner"""), args)).all()
         assert grants == [('app_rw', 'EXECUTE', False)]
+    # 0187 extends the 0144 boundary for exactly this one function: the hosted
+    # worker deletes never-confirmed requests on its own cadence (#634).
+    args = {'signature': 'public.cleanup_signup_requests()'}
+    row = (await app_rw_session.execute(text('SELECT pg_get_userbyid(proowner),prosecdef,proconfig FROM pg_proc WHERE oid=CAST(:signature AS regprocedure)'), args)).one()
+    assert tuple(row) == ('app_migrator', True, ['search_path=pg_catalog, pg_temp', 'row_security=off'])
+    grants = (await app_rw_session.execute(text("""SELECT pg_get_userbyid(a.grantee),a.privilege_type,a.is_grantable
+        FROM pg_proc p CROSS JOIN LATERAL aclexplode(COALESCE(p.proacl,acldefault('f',p.proowner))) a
+        WHERE p.oid=CAST(:signature AS regprocedure) AND a.grantee<>p.proowner"""), args)).all()
+    assert sorted(grants) == [('app_rw', 'EXECUTE', False), ('app_worker', 'EXECUTE', False)]
     assert not await app_rw_session.scalar(text("SELECT has_table_privilege(current_user,'organization','INSERT')"))
     for name in ('bootstrap_organization_admin(text,text,text,text)',
                  'bootstrap_organization_admin(text,text,text,text,boolean)'):
@@ -240,6 +249,22 @@ async def test_signup_function_has_fixed_security_metadata_and_narrow_grants(app
             CROSS JOIN LATERAL aclexplode(COALESCE(p.proacl,acldefault('f',p.proowner))) a
             WHERE p.oid=CAST(:signature AS regprocedure) AND a.grantee<>p.proowner"""), args)).all()
         assert grants == []
+
+
+@pytest.mark.asyncio
+async def test_worker_role_holds_an_explicit_grant_only_for_the_bounded_signup_cleanup(app_rw_session):
+    rows = (await app_rw_session.execute(text("""
+        SELECT p.proname || '(' || pg_get_function_arguments(p.oid) || ')' AS signature,
+               pg_get_userbyid(a.grantee) AS grantee
+        FROM pg_proc p
+        JOIN pg_namespace n ON n.oid = p.pronamespace
+        CROSS JOIN LATERAL aclexplode(COALESCE(p.proacl, acldefault('f', p.proowner))) a
+        WHERE n.nspname = 'public' AND a.grantee <> p.proowner
+          AND p.proname IN ('request_signup', 'request_signup_assented', 'resend_signup',
+                            'signup_confirmation', 'cleanup_signup_requests', 'provision_organization')
+    """))).all()
+    direct = sorted((signature, grantee) for signature, grantee in rows if grantee == 'app_worker')
+    assert direct == [('cleanup_signup_requests()', 'app_worker')]
 
 
 def test_signup_migration_roundtrip_is_exact_and_refuses_retained_state(run_migrations):
@@ -279,6 +304,10 @@ def test_signup_migration_roundtrip_is_exact_and_refuses_retained_state(run_migr
                 # this revision's own upgrade re-grants it. Lift the grant
                 # again so the comparison stays on the state 0144 owns.
                 connection.execute(text('REVOKE EXECUTE ON FUNCTION public.request_signup(text,text,text,text) FROM app_rw'))
+                # 0187 grants the worker role EXECUTE on this revision's cleanup
+                # definer; the roundtrip drops and recreates the function, so
+                # replay that later layer's grant for the same reason.
+                connection.execute(text('GRANT EXECUTE ON FUNCTION public.cleanup_signup_requests() TO app_worker'))
                 assert _chain_snapshot(connection) == before
                 connection.execute(text("""INSERT INTO signup_request(email_normalized,organization_name,admin_name,password_hash,token_hash)
                     VALUES ('roundtrip@example.test','Synthetic','Admin','hash',sha256('token'::bytea))"""))
