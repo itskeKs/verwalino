@@ -26,6 +26,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import Settings, settings
 from app.core.db import get_worker_tenant_session, get_worker_unscoped_session
+from app.core.deployment_policy import get_deployment_policy
 from app.models.declaration_import import DeclarationExtractionRun
 from app.models.organization import Organization
 from app.repositories.declaration_import_repo import (
@@ -41,6 +42,9 @@ _PIPELINE_ENTRY_STATUSES = {"QUEUED", "RETRY_WAIT"}
 _REQUIRED_IMPORT_COLUMNS = {"lease_token", "lease_generation", "lease_expires_at", "queue_request_id",
                             "approval_request_digest", "publication_domain_id", "publication_grant_id"}
 _HEALTHCHECK_TESSERACT_TIMEOUT_SECONDS = 5
+# Fixed cadence cap for the bounded never-confirmed sign-up cleanup; the
+# eligibility window itself lives in 0144's cleanup_signup_requests().
+SIGNUP_CLEANUP_INTERVAL_SECONDS = 60
 # Run rows name the provider class `create_extraction_provider` would build, the
 # vocabulary the run history prices by; the class itself may be unimportable here.
 _PROVIDER_CLASS_NAMES = {"openai": "OpenAiDeclarationProvider", "anthropic": "AnthropicDeclarationProvider"}
@@ -89,6 +93,7 @@ class DeclarationImportWorker:
         self._clock = clock or (lambda: datetime.now(timezone.utc))
         self._sleep = sleep
         self._last_claimed_organization_id: uuid.UUID | None = None
+        self._last_signup_cleanup: datetime | None = None
         self._unreadable_key_logged: set[uuid.UUID] = set()
         self._validate_settings(heartbeat_seconds)
         self._heartbeat_seconds = (
@@ -407,6 +412,37 @@ class DeclarationImportWorker:
                 await self._record_unexpected_failure(lease)
                 return WorkerResult("WORKER_UNEXPECTED_ERROR", lease.import_id)
 
+    async def _cleanup_signup_requests(self) -> None:
+        """Delete never-confirmed hosted sign-ups at a bounded cadence (#634).
+
+        A failure leaves the cadence untouched so the next cycle retries and
+        the loop keeps claiming import work.
+        """
+        if not get_deployment_policy().self_service_signup_enabled:
+            return
+        now = self._clock()
+        if (self._last_signup_cleanup is not None
+                and (now - self._last_signup_cleanup).total_seconds() < SIGNUP_CLEANUP_INTERVAL_SECONDS):
+            return
+        try:
+            async with self._unscoped_session_factory() as session:
+                # The worker session is fail-closed with the nil-organization
+                # context; the 0144 definer refuses every non-empty context, so
+                # this one deliberate global cleanup clears it for its call.
+                await session.execute(text("SELECT set_config('app.current_org_id','',true)"))
+                await session.execute(text("SET LOCAL lock_timeout='100ms'"))
+                await session.execute(text("SET LOCAL statement_timeout='1s'"))
+                removed = await session.scalar(text('SELECT public.cleanup_signup_requests()'))
+        except Exception as error:
+            error_type, location = _safe_error_details(error)
+            logger.warning(
+                "declaration worker result=SIGNUP_CLEANUP_FAILED error_type=%s location=%s",
+                error_type, location,
+            )
+            return
+        self._last_signup_cleanup = now
+        logger.info("declaration worker result=SIGNUP_CLEANUP removed=%s", removed)
+
     async def run_forever(self) -> None:
         delay = float(self._settings.declaration_worker_poll_seconds)
         while True:
@@ -424,6 +460,8 @@ class DeclarationImportWorker:
                 continue
             with correlation_context(result.import_id or "-"):
                 logger.info("declaration worker result=%s import_id=%s", result.code, result.import_id)
+            if result.code != "SCHEMA_NOT_READY":
+                await self._cleanup_signup_requests()
             # Keep retrying missing migrations/empty queues, but bound any idle
             # wait to avoid an unresponsive process after configuration changes.
             await self._sleep(min(max(delay, 0.01), 30.0))

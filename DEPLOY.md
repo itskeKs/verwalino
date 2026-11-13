@@ -263,6 +263,32 @@ name-reuse behavior. Successful confirmation deletes the pending signup data;
 the address can register again if its organization and user have been removed.
 Every 100th signup per worker opportunistically deletes at most 100 requests
 expired for more than seven days, in a separate best-effort transaction.
+Independently of that traffic, the always-deployed hosted declaration worker
+(`declaration-worker`) calls the same bounded cleanup at most once every 60
+seconds per worker process, only in hosted mode: one bounded call
+(`lock_timeout` 100 ms, `statement_timeout` 1 s, at most 100 rows with
+`FOR UPDATE SKIP LOCKED`) after each import cycle. A failure logs one bounded
+line without addresses, does not delay import work and is retried on the next
+cycle. Eligibility is unchanged: a request becomes eligible after its 24-hour token
+validity plus seven more days. Token validity is never reported as physical
+erasure and no deletion on a specific day is promised; the guarantee is that a
+quiet hosted instance no longer retains never-confirmed addresses indefinitely.
+
+## Hosted retention limits
+
+The hosted privacy notice promises concrete retention limits. The product
+enforces the sign-up row itself; the remaining rows are operations duties on
+the host:
+
+| Data | Limit | Enforced by | Where to read the effective value | Checked by |
+| --- | --- | --- | --- | --- |
+| Never-confirmed sign-up request | automatic deletion | Product: bounded cleanup in the hosted declaration worker (see above), at most 100 rows per call, 24 h token validity plus 7 days | worker log (`result=SIGNUP_CLEANUP removed=…`), unit tests | product tests in CI |
+| Server and container logs | 14 days from creation | Operations: log rotation **by age** on the host; the compose `local` log driver alone is size-bound only (`max-size 10m`, `max-file 3`) and does not enforce this | host rotation configuration (e.g. `logrotate` for `/srv/verwalino/logs` and the Docker data-root json-files) | owner, at every hosted release |
+| Error reports in the tracker | 30 days from creation | Operations: event retention configured in the tracker project behind `HV_ERROR_TRACKING_DSN`; the product sends no personal data (scrubber) | tracker project retention setting | owner, at every hosted release |
+| Closed support requests | 90 days after closure | Operations: the support mailbox policy; the product stores no support requests | support mailbox retention setting | owner, at every hosted release |
+
+Log rotation by age is a hosted requirement: without a host-side rule the
+size-bound compose log driver keeps quiet-instance logs beyond 14 days.
 
 ## Login lockout and proxy trust
 
@@ -1643,11 +1669,11 @@ run `docker compose down -v` or delete the volumes.
 A deploy workflow that was disabled by hand during a release is re-enabled in the same release,
 before that release is declared done.
 
-## Migration compatibility: 0029–0186
+## Migration compatibility: 0029–0187
 
 | Revisions | Effect on existing data and runtime compatibility |
 | --- | --- |
-| 0029–0122 | Adds financial, declaration, source custody and review data structures and guards. The 0028 runtime cannot interpret the new schema or enforce its later security rules. The 0028→0186 rehearsal preserves all old columns and rows with synthetic organization, user, document, draft/failed import and failed extraction-run data, but does not prove every live-data combination. |
+| 0029–0122 | Adds financial, declaration, source custody and review data structures and guards. The 0028 runtime cannot interpret the new schema or enforce its later security rules. The 0028→0187 rehearsal preserves all old columns and rows with synthetic organization, user, document, draft/failed import and failed extraction-run data, but does not prove every live-data combination. |
 | 0123 | Adds nullable replacement evidence and changes exception-completion functions/outcomes. Existing rows retain their old disposition; old clients cannot interpret new replacement outcomes. Downgrade refuses retained evidence. |
 | 0124–0125 | Adds bank transactions and a nullable payment link, then enforces tenant/account coherence and immutable booked links. A 0122 database has no pre-existing links; inconsistent intermediate data is not silently repaired. |
 | 0126–0127 | Adds append-only rent history and frozen special levies; replaces financial/source/report adapters. No old financial rows are rewritten. Older runtimes do not understand the new obligations/history. Their downgrades can drop populated new tables; they are not a safe recovery path. |
@@ -1700,13 +1726,14 @@ before that release is declared done.
 | 0184 (parent 0183) | Adds the tenant-scoped `user_invitation` table (RLS, hashed single-use tokens, audit) and the `accept_user_invitation` definer that creates user and membership at acceptance; invitation rows are excluded from import admission and the retention catalog classifies them for erasure; finished invitations (accepted, revoked or expired) can be deleted seven days after they finished by the shared `cleanup_password_reset_requests` run (at most 100 invitations per run), which the app starts after each invitation an administrator creates and after every 100th password-reset request per web process; there is no scheduled worker. The revision also lets that cleanup delete (only DELETE) invitation rows of an organization in its erasure period through `organization_lifecycle_guard`, as it already does for reset requests; invitation inserts and updates stay refused. Downgrade refuses retained invitation rows with "Cannot discard retained invitation state" and restores the previous catalog, admission, cleanup and guard bodies. |
 | 0185 (parent 0184) | Adds two nullable version columns to `signup_request` and the new definer `request_signup_assented` storing them; the hosted sign-up API refuses a request without both current versions before any state or mail. Adds the tenant-scoped `legal_document_assent` table (RLS read-only for the runtime, composite user key, lifecycle guard) recording terms and AV-Vertrag version, time and administrator; a trigger on `signup_request` DELETE writes both rows in the provisioning transaction (identified by the administrator created in the same transaction), so the 0144 definer remains byte-identical for rehearsals. The retention catalog classifies the table as retained contract-conclusion evidence and excludes it from import admission; the import accepts archives carrying the entity but never restores its rows (they are evidence the installation collected at its own sign-up), and the runtime EXECUTE on the legacy four-argument `request_signup` is revoked (0144's own upgrade re-grants it, so rehearsals lift the grant around the roundtrip). Downgrade re-grants `request_signup` and drops the trigger, the new definer, the table and the columns; it refuses retained assent rows with "Cannot discard retained assent state". 0144's `request_signup(text×4)` stays as the rehearsed accepted source. |
 
-| 0186 (head; parent 0185) | Adds the tenant-scoped `organization_ai_confirmation` table recording the organization's provider confirmation (confirmer, time, text version and the provider or base-URL destination) before its own AI key is stored or replaced; storing or replacing the key without the confirmation is refused with a structured code, and a stored key without a matching confirmation stays unused because the AI entry points resolve effective settings through the confirmation check. Removing the key ends the instruction and keeps the record; destination changes join the `ai_settings.updated` audit diff. The runtime reads and writes confirmations through RLS like the settings row; the table is excluded from import admission and its rows are export-only evidence that an archive can carry but never plant back; the retention catalog erases it with the organization. Downgrade refuses populated rows with "Cannot discard recorded AI provider confirmations". 0185 stays as the rehearsed accepted source. |
+| 0186 (parent 0185) | Adds the tenant-scoped `organization_ai_confirmation` table recording the organization's provider confirmation (confirmer, time, text version and the provider or base-URL destination) before its own AI key is stored or replaced; storing or replacing the key without the confirmation is refused with a structured code, and a stored key without a matching confirmation stays unused because the AI entry points resolve effective settings through the confirmation check. Removing the key ends the instruction and keeps the record; destination changes join the `ai_settings.updated` audit diff. The runtime reads and writes confirmations through RLS like the settings row; the table is excluded from import admission and its rows are export-only evidence that an archive can carry but never plant back; the retention catalog erases it with the organization. Downgrade refuses populated rows with "Cannot discard recorded AI provider confirmations". 0185 stays as the rehearsed accepted source. |
+| 0187 (head; parent 0186) | Grants the worker role `EXECUTE` on the 0144 definer `cleanup_signup_requests()` so the always-deployed hosted declaration worker deletes never-confirmed sign-up requests on its own bounded cadence (at most once every 60 seconds per worker, `lock_timeout` 100 ms, `statement_timeout` 1 s) without sign-up traffic; the function takes no input and deletes only `signup_request` rows expired more than seven days, so the 0144 `app_rw` boundary moves for exactly this one function and the grant states the authorization independent of role inheritance. Downgrade revokes the grant. 0186 stays as the rehearsed accepted source. |
 DDL uses the existing PostgreSQL/Alembic transaction; 0123 also takes financial
 and ACL locks with NOWAIT table locks. Contention or unexpected data/function
 definitions must abort, not trigger repair/deletion. A rollback-only synthetic
-0028→0186 rehearsal compares every old table column/row and retained RLS flags;
-the 0122→0186, 0139→0186 and accepted-source 0140→0186, 0141→0186 and
-0142→0186, 0143→0186, 0144→0186, 0145→0186, 0146→0186, 0147→0186, 0148→0186, 0149→0186, 0150→0186, 0151→0186, 0152→0186, 0153→0186, 0154→0186, 0155→0186, 0159→0186, 0160→0186, 0161→0186, 0162→0186, 0163→0186, 0164→0186, 0165→0186, 0166→0186, 0167→0186, 0168→0186, 0169→0186, 0170→0186, 0171→0186, 0172→0186, 0173→0186, 0174→0186, 0175→0186, 0176→0186, 0177→0186, 0178→0186, 0179→0186, 0180→0186, 0181→0186 and 0182→0186 (accepted sources), 0183→0186, 0184→0186 and 0185→0186 rehearsals also
+0028→0187 rehearsal compares every old table column/row and retained RLS flags;
+the 0122→0187, 0139→0187 and accepted-source 0140→0187, 0141→0187 and
+0142→0187, 0143→0187, 0144→0187, 0145→0187, 0146→0187, 0147→0187, 0148→0187, 0149→0187, 0150→0187, 0151→0187, 0152→0187, 0153→0187, 0154→0187, 0155→0187, 0159→0187, 0160→0187, 0161→0187, 0162→0187, 0163→0187, 0164→0187, 0165→0187, 0166→0187, 0167→0187, 0168→0187, 0169→0187, 0170→0187, 0171→0187, 0172→0187, 0173→0187, 0174→0187, 0175→0187, 0176→0187, 0177→0187, 0178→0187, 0179→0187, 0180→0187, 0181→0187 and 0182→0187 (accepted sources), 0183→0187, 0184→0187 and 0185→0187 rehearsals also
 compare existing ACLs, allowing only the explicit organization INSERT/reserve UPDATE revocations and the capability-checked
 0159 binding adapter and the 0168 column-level resolution-link grant;
 it does not prove live data validity or cross-version runtime compatibility.
@@ -1782,10 +1809,10 @@ When adding a migration, update these together in the same release:
 
 ## Deployment boundary and accepted head
 
-The reviewed code targets **0186**. `backend/app/deployment.py` retains `TARGET`,
+The reviewed code targets **0187**. `backend/app/deployment.py` retains `TARGET`,
 `SUPPORTED`, `release_head()` and the read-only schema/role/runtime checks used
-by the migration rehearsals. Those checks accept measured **0028 → 0186**,
-**0122 → 0186**, **0139 → 0186**, **0140 → 0186**, **0141 → 0186**, **0142 → 0186**, **0143 → 0186**, **0144 → 0186**, **0145 → 0186**, **0146 → 0186**, **0147 → 0186**, **0148 → 0186**, **0149 → 0186**, **0150 → 0186**, **0151 → 0186**, **0152 → 0186**, **0153 → 0186**, **0154 → 0186**, **0155 → 0186**, **0159 → 0186**, **0160 → 0186**, **0161 → 0186**, **0162 → 0186**, **0163 → 0186**, **0164 → 0186**, **0165 → 0186**, **0166 → 0186** (accepted sources), **0167 → 0186** (accepted source), **0168 → 0186** (accepted source), **0169 → 0186** (accepted source), **0170 → 0186** (accepted source), **0171 → 0186** (accepted source), **0172 → 0186** (accepted source), **0173 → 0186** (accepted source), **0174 → 0186** (accepted source), **0175 → 0186** (accepted source), **0176 → 0186** (accepted source), **0177 → 0186**, **0178 → 0186**, **0179 → 0186**, **0180 → 0186**, **0181 → 0186**, **0182 → 0186**, **0183 → 0186**, **0184 → 0186** or **0185 → 0186**; unknown,
+by the migration rehearsals. Those checks accept measured **0028 → 0187**,
+**0122 → 0187**, **0139 → 0187**, **0140 → 0187**, **0141 → 0187**, **0142 → 0187**, **0143 → 0187**, **0144 → 0187**, **0145 → 0187**, **0146 → 0187**, **0147 → 0187**, **0148 → 0187**, **0149 → 0187**, **0150 → 0187**, **0151 → 0187**, **0152 → 0187**, **0153 → 0187**, **0154 → 0187**, **0155 → 0187**, **0159 → 0187**, **0160 → 0187**, **0161 → 0187**, **0162 → 0187**, **0163 → 0187**, **0164 → 0187**, **0165 → 0187**, **0166 → 0187** (accepted sources), **0167 → 0187** (accepted source), **0168 → 0187** (accepted source), **0169 → 0187** (accepted source), **0170 → 0187** (accepted source), **0171 → 0187** (accepted source), **0172 → 0187** (accepted source), **0173 → 0187** (accepted source), **0174 → 0187** (accepted source), **0175 → 0187** (accepted source), **0176 → 0187** (accepted source), **0177 → 0187**, **0178 → 0187**, **0179 → 0187**, **0180 → 0187**, **0181 → 0187**, **0182 → 0187**, **0183 → 0187**, **0184 → 0187**, **0185 → 0187** or **0186 → 0187**; unknown,
 missing, multiple or intermediate revisions are rejected. These are code and
 rehearsal boundaries, not a measurement of a running installation.
 
@@ -2519,5 +2546,5 @@ a numeric ledger placeholder is never displayed as free usage.
 Migration 0179 preserves existing encrypted settings and adds the optional compatible
 endpoint and provider constraint. Downgrade refuses configured non-OpenAI destinations
 rather than silently losing their configuration. Existing rows keep their OpenAI
-origin and credentials. 0180 is an accepted source for upgrades to 0186 alongside the
+origin and credentials. 0180 is an accepted source for upgrades to 0187 alongside the
 previous sources; production moves only through a reviewed release.
