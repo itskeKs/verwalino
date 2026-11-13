@@ -728,12 +728,16 @@ message. An OWNER_ADMIN resets another user's factor through
 a transaction-local GUC names the reset account to the 0138 trigger so exactly
 that user's `session_version` advances and the target's sessions end. Hosted
 mode (owner decision, 5 Nov 2026) makes the factor mandatory for every staff
-role: an unenrolled account receives a restricted session cookie that reaches
-only the second-factor enrolment routes, `/api/auth/session` and logout until
-enrolment completes, which reissues a full session. Self-hosted mode keeps the
-factor optional. The tenant tables `user_second_factor` and `user_recovery_code`
-carry RLS (row to its user; admin policies for the reset) and are erased with
-the organization.
+role: `get_current_user` derives the enrolment obligation from the database
+(the confirmed factor, read in the same statement as the deletion state, so no
+cookie issuer can hand out an unrestricted hosted session) and lets an
+unenrolled account reach only the second-factor enrolment routes,
+`/api/auth/session` and logout; `/api/auth/session` reports the restriction, so
+a browser reload returns to the wizard. Self-hosted mode keeps the factor
+optional. The tenant tables `user_second_factor` and `user_recovery_code`
+carry RLS (row to its user; the audited admin reset runs through the `reset_second_factor` definer function because a command-scoped admin DELETE policy miscompiles in the planner), bind
+`(organization_id,user_id)` to the user like 0145, and are erased with the
+organization.
 - **Audit:** login, logout, failed logins, role changes → `audit_event`.
 
 **First-run bootstrap (accepted source revision 0141):** in self-hosted mode, `GET /api/setup` reports

@@ -10,7 +10,7 @@ from __future__ import annotations
 import uuid
 from datetime import datetime
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, String, UniqueConstraint
+from sqlalchemy import Boolean, DateTime, ForeignKey, ForeignKeyConstraint, Integer, String, UniqueConstraint
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -27,11 +27,7 @@ class UserSecondFactor(Base, UUIDPrimaryKeyMixin, TimestampMixin):
         index=True,
     )
 
-    user_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True),
-        ForeignKey("user.id", ondelete="CASCADE"),
-        nullable=False,
-    )
+    user_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
 
     # Fernet ciphertext (app.services.second_factor_service); never plaintext.
     secret_encrypted: Mapped[str] = mapped_column(String(255), nullable=False)
@@ -45,4 +41,9 @@ class UserSecondFactor(Base, UUIDPrimaryKeyMixin, TimestampMixin):
 
     __table_args__ = (
         UniqueConstraint("organization_id", "user_id", name="uq_user_second_factor_org_user"),
+        ForeignKeyConstraint(
+            ["organization_id", "user_id"],
+            ["user.organization_id", "user.id"],
+            ondelete="CASCADE",
+        ),
     )

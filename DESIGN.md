@@ -409,13 +409,16 @@ the authenticator app beside the plain secret for manual entry, then a “Aktuel
 6-stelliger Code” field and “Zweiten Faktor bestätigen”. Confirmation shows the
 ten recovery codes once, in a two-column list (single column below 560 px),
 with “Wiederherstellungscodes drucken” (`window.print()`; the action row hides
-in print) and “Fertig”.
+in print) and “Fertig”; the codes stay until “Fertig” is pressed.
 
 In hosted mode an account without a factor sees only the wizard
 `/zweiter-faktor`: the same public-auth card with the heading “Zweiten Faktor
 einrichten”, explaining that the factor is prescribed. The app shell stays
 unreachable until the enrolment is confirmed; the backend restricts the session
-to the second-factor routes, so the wizard renders without shell data.
+to the second-factor routes, so the wizard renders without shell data. `GET
+/api/auth/session` reports the restriction, so a browser reload lands back on
+the wizard; after “Fertig” the wizard reloads the session and opens the
+application.
 
 The user administration adds “Zweiten Faktor zurücksetzen” per row, opening a
 confirm dialog that names the person and states that the factor and the recovery

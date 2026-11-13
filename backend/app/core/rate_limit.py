@@ -129,6 +129,24 @@ class ThrottleAttempt:
                 lockouts=:lockouts,last_lockout_at=:last_lockout_at,updated_at=:now
                 WHERE key_kind=:key_kind AND key_hash=:key_hash"""), {**row, "now": now})
 
+    async def refund_reservation(self) -> None:
+        """Undo this attempt's own reservation, keeping failure history.
+
+        The two-step login uses this at the password step of an enrolled
+        account: the code still has to pass, so history must survive until
+        the second step succeeds (and cannot be cleared with the password).
+        """
+        for row in self.rows:
+            current = (await self.session.execute(text("""SELECT * FROM public.auth_throttle
+                WHERE key_kind=:key_kind AND key_hash=:key_hash FOR UPDATE"""), row)).mappings().one_or_none()
+            if current is None or current["window_start"] != row["window_start"]:
+                continue
+            current = dict(current)
+            current["failures"] = max(current["failures"] - 1, 0)
+            await self.session.execute(text("""UPDATE public.auth_throttle SET
+                failures=:failures, updated_at=:now
+                WHERE key_kind=:key_kind AND key_hash=:key_hash"""), {**current, "now": utcnow()})
+
     async def reset(self) -> None:
         """Refund success, clearing email history and preserving IP failures."""
         for row in self.rows:

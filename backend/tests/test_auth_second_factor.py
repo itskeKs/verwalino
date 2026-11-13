@@ -151,7 +151,7 @@ async def test_wrong_code_counts_toward_the_password_lockout(second_factor_ident
         assert answer.json()["detail"] == "Invalid credentials"
 
     locked = await client.post(
-        "/api/auth/login/second-factor", json={"pending_token": pending, "code": totp_code(secret)}
+        "/api/auth/login/second-factor", json={"pending_token": pending, "code": _next_step_code(secret)}
     )
     assert locked.status_code == 401, "Ten wrong codes lock the address as ten wrong passwords do"
 
@@ -292,3 +292,253 @@ async def test_hosted_admin_reset_revokes_the_target_sessions(
     login = await _login(client, identity["email"])
     assert login.status_code == 200, login.text
     assert login.json()["second_factor_enrolment_required"] is True
+
+
+# --- Review round 1 (PR #656, base 0fd7b10d): red first for every finding. ---
+
+from datetime import datetime, timedelta, timezone  # noqa: E402
+
+
+def _wrong_code(secret: str) -> str:
+    current = totp_code(secret)
+    return "000000" if current != "000000" else "000001"
+
+
+def _next_step_code(secret: str) -> str:
+    """A code of the following time step (accepted within the +/-1 window)."""
+    return totp_code(secret, step_offset=1)
+
+
+@pytest.mark.anyio
+async def test_password_step_does_not_reset_lockout_progress(second_factor_identity, monkeypatch):
+    """Knowing the password must not let an attacker dodge the e-mail lock."""
+    from app.core import rate_limit
+
+    client, identity = second_factor_identity
+    secret, _ = await _enrol(client)
+    clock = {"now": datetime(2026, 11, 13, 12, 0, tzinfo=timezone.utc)}
+    monkeypatch.setattr(rate_limit, "utcnow", lambda: clock["now"])
+
+    # Two cycles: a correct password followed by wrong codes. Without the fix
+    # the password step resets the failure row and the lock never fires.
+    login = await _login(client, identity["email"])
+    assert login.status_code == 200, login.text
+    for _ in range(9):
+        answer = await client.post(
+            "/api/auth/login/second-factor",
+            json={"pending_token": login.json()["pending_token"], "code": _wrong_code(secret)},
+        )
+        assert answer.status_code == 401, answer.text
+
+    login = await _login(client, identity["email"])
+    assert login.status_code == 200, login.text
+    refused = await client.post(
+        "/api/auth/login/second-factor",
+        json={"pending_token": login.json()["pending_token"], "code": _wrong_code(secret)},
+    )
+    assert refused.status_code == 401, refused.text
+
+    # Ten failures reached: the right code is refused while the lock runs.
+    locked = await client.post(
+        "/api/auth/login/second-factor",
+        json={"pending_token": login.json()["pending_token"], "code": _next_step_code(secret)},
+    )
+    assert locked.status_code == 401, "The right code is refused while the address is locked"
+
+    clock["now"] += timedelta(minutes=16)
+    login = await _login(client, identity["email"])
+    reopened = await client.post(
+        "/api/auth/login/second-factor",
+        json={"pending_token": login.json()["pending_token"], "code": _next_step_code(secret)},
+    )
+    assert reopened.status_code == 200, reopened.text
+
+
+@pytest.mark.anyio
+async def test_session_reports_the_enrolment_requirement(second_factor_identity, monkeypatch):
+    """A restricted hosted session must stay restricted across reloads."""
+    monkeypatch.setattr(settings, "deployment_mode", "hosted")
+    client, identity = second_factor_identity
+
+    login = await _login(client, identity["email"])
+    assert login.json()["second_factor_enrolment_required"] is True
+    session = await client.get("/api/auth/session")
+    assert session.status_code == 200, session.text
+    assert session.json()["second_factor_enrolment_required"] is True, (
+        "GET /api/auth/session must carry the restriction state"
+    )
+
+    answer = await client.post("/api/auth/second-factor/enrolment")
+    confirm = await client.post(
+        "/api/auth/second-factor/enrolment/confirm",
+        json={"code": _next_step_code(answer.json()["secret"])},
+    )
+    assert confirm.status_code == 200, confirm.text
+    session = await client.get("/api/auth/session")
+    assert session.json()["second_factor_enrolment_required"] is False, session.text
+
+
+@pytest.mark.anyio
+async def test_hosted_gate_holds_for_any_session_cookie(second_factor_identity, monkeypatch):
+    """The hosted gate derives from database state, not from the cookie issuer."""
+    monkeypatch.setattr(settings, "deployment_mode", "hosted")
+    client, identity = second_factor_identity
+
+    # A full (unrestricted) session token issued out of band — the way e.g. a
+    # sign-up confirmation issues one — must not open the application either.
+    foreign_issued = create_session_token(identity["user_id"], identity["organization_id"])
+    async with _api_test_client(cookies={settings.session_cookie_name: foreign_issued}) as other:
+        blocked = await other.get("/api/auth/preferences")
+        assert blocked.status_code == 403, blocked.text
+        assert blocked.json()["detail"]["code"] == "second_factor_enrolment_required"
+        enrol = await other.post("/api/auth/second-factor/enrolment")
+        assert enrol.status_code == 200, enrol.text
+
+
+@pytest.mark.anyio
+async def test_unreadable_totp_secret_is_refused_not_a_server_error(second_factor_identity, monkeypatch):
+    """A rotated/restored-away SESSION_SECRET must give the generic refusal."""
+    client, identity = second_factor_identity
+    await _enrol(client)
+    monkeypatch.setattr(settings, "session_secret", "rotated-secret-material")
+    login = await _login(client, identity["email"])
+    answer = await client.post(
+        "/api/auth/login/second-factor",
+        json={"pending_token": login.json()["pending_token"], "code": "123456"},
+    )
+    assert answer.status_code == 401, answer.text
+    assert answer.json()["detail"] == "Invalid credentials"
+
+
+@pytest.mark.anyio
+async def test_confirm_code_cannot_be_replayed_at_the_next_login(second_factor_identity):
+    """The confirm code is a used step; the next login needs a fresh one."""
+    client, identity = second_factor_identity
+    answer = await client.post("/api/auth/second-factor/enrolment")
+    secret = answer.json()["secret"]
+    confirm_code = totp_code(secret)
+    confirm = await client.post(
+        "/api/auth/second-factor/enrolment/confirm", json={"code": confirm_code}
+    )
+    assert confirm.status_code == 200, confirm.text
+
+    login = await _login(client, identity["email"])
+    replay = await client.post(
+        "/api/auth/login/second-factor",
+        json={"pending_token": login.json()["pending_token"], "code": confirm_code},
+    )
+    assert replay.status_code == 401, "The enrolment-confirm code must not sign in again"
+
+    login = await _login(client, identity["email"])
+    fresh = await client.post(
+        "/api/auth/login/second-factor",
+        json={"pending_token": login.json()["pending_token"], "code": _next_step_code(secret)},
+    )
+    assert fresh.status_code == 200, fresh.text
+
+
+@pytest.mark.anyio
+async def test_recovery_code_input_is_normalized(second_factor_identity):
+    """Lower case, missing hyphen or stray spaces must not block a valid code."""
+    client, identity = second_factor_identity
+    _, codes = await _enrol(client)
+    # Each code works once, so every variant style gets its own fresh code.
+    variants = [codes[2].lower().replace("-", ""), codes[3].replace("-", " "), codes[4]]
+    for variant in variants:
+        login = await _login(client, identity["email"])
+        answer = await client.post(
+            "/api/auth/login/second-factor",
+            json={"pending_token": login.json()["pending_token"], "recovery_code": variant},
+        )
+        assert answer.status_code == 200, f"{variant!r} refused: {answer.text}"
+
+
+@pytest.mark.anyio
+async def test_admin_cannot_read_a_colleagues_factor_row():
+    """The admin policy manages (deletes) factors; it must not SELECT them."""
+    from tests.password_reset_support import runtime_store
+    from sqlalchemy import text as sql_text
+
+    org_id, admin_id, clerk_id = str(uuid.uuid4()), str(uuid.uuid4()), str(uuid.uuid4())
+    connection = psycopg2.connect(MIGRATOR_SYNC_URL)
+    try:
+        with connection.cursor() as cursor:
+            cursor.execute("INSERT INTO public.organization (id, name) VALUES (%s, %s)",
+                           (org_id, "Factor RLS probe"))
+            for user_id, email, role in ((admin_id, f"factor-admin-{uuid.uuid4()}@example.test", "OWNER_ADMIN"),
+                                         (clerk_id, f"factor-clerk-{uuid.uuid4()}@example.test", "CLERK")):
+                cursor.execute(
+                    'INSERT INTO public."user" (id, organization_id, email, password_hash, display_name)'
+                    " VALUES (%s, %s, %s, %s, %s)",
+                    (user_id, org_id, email, "synthetic-not-a-login", "RLS probe"))
+                cursor.execute(
+                    "INSERT INTO public.membership (id, organization_id, user_id, role)"
+                    " VALUES (%s, %s, %s, %s)",
+                    (str(uuid.uuid4()), org_id, user_id, role))
+            cursor.execute(
+                "INSERT INTO public.user_second_factor (organization_id, user_id, secret_encrypted)"
+                " VALUES (%s, %s, %s)",
+                (org_id, clerk_id, "gAAAAA-synthetic"))
+        connection.commit()
+    finally:
+        connection.close()
+
+    try:
+        async with runtime_store() as session:
+            await session.execute(sql_text("SELECT set_config('app.current_org_id', :org, true)"),
+                                  {"org": org_id})
+            await session.execute(sql_text("SELECT set_config('app.current_user_id', :uid, true)"),
+                                  {"uid": admin_id})
+            rows = (await session.execute(sql_text(
+                "SELECT count(*) FROM public.user_second_factor WHERE user_id = :uid"),
+                {"uid": clerk_id})).scalar_one()
+            assert rows == 0, "An OWNER_ADMIN must not read a colleague's factor row"
+            blocked = await session.execute(sql_text(
+                "DELETE FROM public.user_second_factor WHERE organization_id = :org AND user_id = :uid"),
+                {"org": org_id, "uid": clerk_id})
+            assert blocked.rowcount == 0, (
+                "Direct table DELETE is not the admin path; the reset runs through"
+                " the reset_second_factor function (covered by the endpoint test)"
+            )
+    finally:
+        connection = psycopg2.connect(MIGRATOR_SYNC_URL)
+        try:
+            with connection.cursor() as cursor:
+                cursor.execute("DELETE FROM public.user_second_factor WHERE organization_id = %s", (org_id,))
+                cursor.execute("DELETE FROM public.membership WHERE organization_id = %s", (org_id,))
+                cursor.execute('DELETE FROM public."user" WHERE organization_id = %s', (org_id,))
+                cursor.execute("DELETE FROM public.organization WHERE id = %s", (org_id,))
+            connection.commit()
+        finally:
+            connection.close()
+
+
+@pytest.mark.anyio
+async def test_factor_rows_bind_user_and_organization_together():
+    """A factor of another organization's user must not be insertable (0145 style)."""
+    import psycopg2.errors
+
+    first = {"email": f"fk-first-{uuid.uuid4()}@example.test", "role": "CLERK"}
+    second = {"email": f"fk-second-{uuid.uuid4()}@example.test", "role": "CLERK"}
+    with temporary_auth_rows([first]):
+        with temporary_auth_rows([second]):
+            try:
+                _db(
+                    'INSERT INTO public.user_second_factor (organization_id, user_id, secret_encrypted)'
+                    ' VALUES (%s, %s, %s)',
+                    (str(first["organization_id"]), str(second["user_id"]), "gAAAAA-synthetic"),
+                )
+            except psycopg2.errors.ForeignKeyViolation:
+                pass
+            else:
+                raise AssertionError("Composite (organization_id, user_id) foreign key not enforced")
+            try:
+                _db(
+                    'INSERT INTO public.user_recovery_code (organization_id, user_id, position, code_hash)'
+                    ' VALUES (%s, %s, 0, %s)',
+                    (str(first["organization_id"]), str(second["user_id"]), "ab" * 32),
+                )
+            except psycopg2.errors.ForeignKeyViolation:
+                pass
+            else:
+                raise AssertionError("Composite (organization_id, user_id) foreign key not enforced")

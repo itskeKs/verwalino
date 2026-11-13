@@ -17,7 +17,7 @@ type Phase =
   | { kind: "pending"; secret: string; otpauthUri: string; qrDataUrl: string }
   | { kind: "confirmed"; recoveryCodes: string[] };
 
-export function SecondFactorEnrolment({ onConfirmed }: { onConfirmed?: () => void }) {
+export function SecondFactorEnrolment({ onDone }: { onDone?: () => void }) {
   const [phase, setPhase] = useState<Phase>({ kind: "intro" });
   const [code, setCode] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -45,7 +45,6 @@ export function SecondFactorEnrolment({ onConfirmed }: { onConfirmed?: () => voi
     try {
       const answer = await endpoints.confirmSecondFactorEnrolment(code.replace(/\s/g, ""));
       setPhase({ kind: "confirmed", recoveryCodes: answer.recovery_codes });
-      onConfirmed?.();
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Bestätigung fehlgeschlagen");
     } finally {
@@ -62,7 +61,7 @@ export function SecondFactorEnrolment({ onConfirmed }: { onConfirmed?: () => voi
         </ol>
         <div className="theme-save-row">
           <Button variant="outline" onClick={() => window.print()}>Wiederherstellungscodes drucken</Button>
-          <Button onClick={() => { setPhase({ kind: "intro" }); setCode(""); }}>Fertig</Button>
+          <Button onClick={() => { setPhase({ kind: "intro" }); setCode(""); onDone?.(); }}>Fertig</Button>
         </div>
       </div>
     );

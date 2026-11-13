@@ -11,7 +11,7 @@ from __future__ import annotations
 import uuid
 from datetime import datetime
 
-from sqlalchemy import DateTime, ForeignKey, Integer, String, UniqueConstraint
+from sqlalchemy import DateTime, ForeignKey, ForeignKeyConstraint, Integer, String, UniqueConstraint
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -28,11 +28,7 @@ class UserRecoveryCode(Base, UUIDPrimaryKeyMixin, TimestampMixin):
         index=True,
     )
 
-    user_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True),
-        ForeignKey("user.id", ondelete="CASCADE"),
-        nullable=False,
-    )
+    user_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
 
     position: Mapped[int] = mapped_column(Integer, nullable=False)
 
@@ -43,4 +39,9 @@ class UserRecoveryCode(Base, UUIDPrimaryKeyMixin, TimestampMixin):
 
     __table_args__ = (
         UniqueConstraint("organization_id", "user_id", "position", name="uq_user_recovery_code_org_user_position"),
+        ForeignKeyConstraint(
+            ["organization_id", "user_id"],
+            ["user.organization_id", "user.id"],
+            ondelete="CASCADE",
+        ),
     )

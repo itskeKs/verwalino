@@ -6,7 +6,7 @@ import uuid
 
 from fastapi import APIRouter, Depends, HTTPException, Response
 from pydantic import BaseModel, ConfigDict, StrictBool, StrictStr, field_validator, model_validator
-from sqlalchemy import delete, exists, select, text
+from sqlalchemy import exists, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.exc import IntegrityError
 
@@ -21,8 +21,6 @@ from app.repositories.membership_repo import MembershipRepository
 from app.models.user import User
 from app.models.membership import Membership
 from app.models.audit_event import AuditEvent
-from app.models.user_recovery_code import UserRecoveryCode
-from app.models.user_second_factor import UserSecondFactor
 from app.repositories.audit_repo import AuditRepository as CanonicalAuditRepository
 
 from app.repositories.pagination import Page, PageQuery, page_query, page_rows
@@ -271,21 +269,15 @@ async def reset_second_factor(
     db: AsyncSession = Depends(user_admin_db),
 ):
     """Reset another user's second factor; the user enrols again at the next
-    login. Audited. In hosted mode the target's sessions end at once, so an
+    login. Audited. The delete runs through the 0188 definer function: RLS
+    gives an OWNER_ADMIN no read or direct-delete access to a colleague's
+    factor rows. In hosted mode the target's sessions end at once, so an
     account without a factor reaches the application only through the
     enrolment flow (issue #208, owner decision of 5 Nov 2026)."""
     user, membership = await locked_target(db, auth, user_id)
-    await db.execute(
-        delete(UserSecondFactor).where(
-            UserSecondFactor.organization_id == auth.organization_id,
-            UserSecondFactor.user_id == user_id,
-        )
-    )
-    await db.execute(
-        delete(UserRecoveryCode).where(
-            UserRecoveryCode.organization_id == auth.organization_id,
-            UserRecoveryCode.user_id == user_id,
-        )
+    await db.scalar(
+        text("SELECT public.reset_second_factor(:org, :uid)"),
+        {"org": str(auth.organization_id), "uid": str(user_id)},
     )
     if get_deployment_policy().deployment_mode == "hosted":
         # The trigger-owned session_version advances for exactly this user

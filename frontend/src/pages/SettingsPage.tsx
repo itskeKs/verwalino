@@ -57,7 +57,7 @@ function SecondFactorSettingsSection() {
     <p className="text-sm text-muted-foreground">Code aus einer Authenticator-App zusätzlich zum Passwort. Ohne Telefon signieren Sie mit einem der zehn Wiederherstellungscodes ein.</p>
     {enrolled === null && !error && <p role="status" className="mt-4">Status wird geladen …</p>}
     {error && <div role="alert" className="error-text mt-4">{error}</div>}
-    {enrolled === false && <div className="mt-4"><SecondFactorEnrolment onConfirmed={reload} /></div>}
+    {enrolled === false && <div className="mt-4"><SecondFactorEnrolment onDone={reload} /></div>}
     {enrolled === true && <p role="status" className="mt-4">Der zweite Faktor ist eingerichtet. Verlorene Geräte ersetzt eine Administratorin oder ein Administrator über die Benutzerverwaltung.</p>}
   </section>;
 }

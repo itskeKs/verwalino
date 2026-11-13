@@ -70,14 +70,8 @@ def create_session_token(
     user_id: uuid.UUID,
     organization_id: uuid.UUID,
     session_version: int = 0,
-    restricted: bool = False,
 ) -> str:
-    """Return a signed session token (cookie value).
-
-    A restricted token is issued by the hosted login when the staff account
-    has no confirmed second factor yet; it reaches only the second-factor
-    enrolment routes until enrolment completes (issue #208).
-    """
+    """Return a signed session token (cookie value)."""
     payload: dict[str, Any] = {
         "uid": str(user_id),
         "oid": str(organization_id),
@@ -86,8 +80,6 @@ def create_session_token(
         raise ValueError("Invalid session generation")
     if session_version:
         payload["sv"] = session_version
-    if restricted:
-        payload["r"] = 1
     return _serializer.dumps(payload, salt=_SALT)
 
 
@@ -100,12 +92,10 @@ def decode_session_token(token: str) -> dict[str, Any] | None:
             max_age=settings.session_max_age_seconds,
         )
         # Validate expected keys
-        if not isinstance(data, dict) or not {"uid", "oid"} <= set(data) or not set(data) <= {"uid", "oid", "sv", "r"}:
+        if not isinstance(data, dict) or set(data) not in ({"uid", "oid"}, {"uid", "oid", "sv"}):
             return None
         generation = data.get("sv", 0)
         if type(generation) is not int or generation < 0:
-            return None
-        if data.get("r") not in (None, 1):
             return None
         user_id = data["uid"]
         organization_id = data["oid"]

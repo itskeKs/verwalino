@@ -71,9 +71,11 @@ def sign_in_with_password(world):
 
 @when("the user answers the second-factor step with the current code")
 def answer_with_current_code(world):
+    # The enrolment-confirm code consumed its time step; the authenticator's
+    # next code is within the tolerated +/-1 window.
     world.response = world.send(world.anonymous, "POST", "/api/auth/login/second-factor", json={
         "pending_token": world.data["login_response"].json()["pending_token"],
-        "code": totp_code(world.data["totp_secret"]),
+        "code": totp_code(world.data["totp_secret"], step_offset=1),
     })
 
 

@@ -266,3 +266,34 @@ async def test_export_retains_a_post_deleted_reserve_correction_and_its_audit(re
         assert reductions[0]['actor_user_id'] == str(w['admin'])
         assert reductions[0]['payload_diff'] == {'entry_id': counter_id, 'reverses_entry_id': original_id,
             'old_amount': '300.00', 'new_amount': '0.00', 'reason': 'Fehlbuchung'}
+
+
+@pytest.mark.anyio
+async def test_export_omits_second_factor_credentials(rent_world, export_store):
+    """Factor secrets and recovery-code hashes are credential infrastructure."""
+    import base64 as _b64
+    import hashlib as _hl
+    import hmac as _hm
+    import struct as _st
+
+    w = rent_world
+    clock = int(__import__("time").time() // 30)
+    async with api_client(w) as api:
+        start = await api.post("/api/auth/second-factor/enrolment")
+        assert start.status_code == 200, start.text
+        secret = start.json()["secret"]
+        raw = _b64.b32decode(secret + "=" * (-len(secret) % 8))
+        digest = _hm.new(raw, _st.pack(">Q", clock), _hl.sha1).digest()
+        code = f"{(_st.unpack('>I', digest[(digest[-1] & 0x0F):(digest[-1] & 0x0F) + 4])[0] & 0x7FFFFFFF) % 1_000_000:06d}"
+        confirm = await api.post("/api/auth/second-factor/enrolment/confirm", json={"code": code})
+        assert confirm.status_code == 200, confirm.text
+
+        response = await api.post("/api/organizations/export")
+        assert response.status_code == 200, response.text
+        files = unpack(response.content)
+        manifest = json.loads(files["manifest.json"])
+        assert "user_second_factor" not in manifest["entity_order"]
+        assert "user_recovery_code" not in manifest["entity_order"]
+        assert not any("second_factor" in name or "recovery_code" in name for name in files), (
+            f"credential tables leaked into the archive: {sorted(files)}"
+        )

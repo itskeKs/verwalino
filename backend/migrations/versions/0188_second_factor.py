@@ -20,14 +20,15 @@ def upgrade():
     CREATE TABLE public.user_second_factor (
       id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
       organization_id uuid NOT NULL REFERENCES public.organization(id) ON DELETE RESTRICT,
-      user_id uuid NOT NULL REFERENCES public."user"(id) ON DELETE CASCADE,
+      user_id uuid NOT NULL,
       secret_encrypted text NOT NULL,
       confirmed boolean NOT NULL DEFAULT false,
       confirmed_at timestamptz,
       last_totp_step integer,
       created_at timestamptz NOT NULL DEFAULT statement_timestamp(),
       updated_at timestamptz NOT NULL DEFAULT statement_timestamp(),
-      CONSTRAINT uq_user_second_factor_org_user UNIQUE (organization_id,user_id)
+      CONSTRAINT uq_user_second_factor_org_user UNIQUE (organization_id,user_id),
+      FOREIGN KEY (organization_id,user_id) REFERENCES public."user"(organization_id,id) ON DELETE CASCADE
     );
     CREATE INDEX ix_user_second_factor_org ON public.user_second_factor(organization_id);
     ALTER TABLE public.user_second_factor ENABLE ROW LEVEL SECURITY;
@@ -47,11 +48,6 @@ def upgrade():
     CREATE POLICY user_second_factor_self_delete ON public.user_second_factor FOR DELETE TO app_rw
       USING (organization_id = NULLIF(current_setting('app.current_org_id',true),'')::uuid
         AND user_id = NULLIF(current_setting('app.current_user_id',true),'')::uuid);
-    CREATE POLICY user_second_factor_admin ON public.user_second_factor FOR ALL TO app_rw
-      USING (organization_id = NULLIF(current_setting('app.current_org_id',true),'')::uuid
-        AND public.scope_actor_role(organization_id) = 'OWNER_ADMIN')
-      WITH CHECK (organization_id = NULLIF(current_setting('app.current_org_id',true),'')::uuid
-        AND public.scope_actor_role(organization_id) = 'OWNER_ADMIN');
     REVOKE ALL ON public.user_second_factor FROM PUBLIC,app_worker,app_review;
     GRANT SELECT, INSERT, UPDATE, DELETE ON public.user_second_factor TO app_rw;
     CREATE TRIGGER a_organization_lifecycle BEFORE INSERT OR UPDATE OR DELETE ON public.user_second_factor
@@ -87,13 +83,14 @@ def upgrade():
     CREATE TABLE public.user_recovery_code (
       id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
       organization_id uuid NOT NULL REFERENCES public.organization(id) ON DELETE RESTRICT,
-      user_id uuid NOT NULL REFERENCES public."user"(id) ON DELETE CASCADE,
+      user_id uuid NOT NULL,
       position integer NOT NULL CHECK (position >= 0),
       code_hash text NOT NULL CHECK (code_hash ~ '^[0-9a-f]{64}$'),
       used_at timestamptz,
       created_at timestamptz NOT NULL DEFAULT statement_timestamp(),
       updated_at timestamptz NOT NULL DEFAULT statement_timestamp(),
-      CONSTRAINT uq_user_recovery_code_org_user_position UNIQUE (organization_id,user_id,position)
+      CONSTRAINT uq_user_recovery_code_org_user_position UNIQUE (organization_id,user_id,position),
+      FOREIGN KEY (organization_id,user_id) REFERENCES public."user"(organization_id,id) ON DELETE CASCADE
     );
     CREATE INDEX ix_user_recovery_code_org ON public.user_recovery_code(organization_id);
     ALTER TABLE public.user_recovery_code ENABLE ROW LEVEL SECURITY;
@@ -114,13 +111,43 @@ def upgrade():
     CREATE POLICY user_recovery_code_self_delete ON public.user_recovery_code FOR DELETE TO app_rw
       USING (organization_id = NULLIF(current_setting('app.current_org_id',true),'')::uuid
         AND user_id = NULLIF(current_setting('app.current_user_id',true),'')::uuid);
-    CREATE POLICY user_recovery_code_admin_reset ON public.user_recovery_code FOR DELETE TO app_rw
-      USING (organization_id = NULLIF(current_setting('app.current_org_id',true),'')::uuid
-        AND public.scope_actor_role(organization_id) = 'OWNER_ADMIN');
     REVOKE ALL ON public.user_recovery_code FROM PUBLIC,app_worker,app_review;
     GRANT SELECT, INSERT, UPDATE, DELETE ON public.user_recovery_code TO app_rw;
     CREATE TRIGGER a_organization_lifecycle BEFORE INSERT OR UPDATE OR DELETE ON public.user_recovery_code
       FOR EACH ROW EXECUTE FUNCTION public.organization_lifecycle_guard();
+
+    -- The audited admin reset. RLS deliberately gives an OWNER_ADMIN no read
+    -- access and no DELETE policy on another user's rows, so this function
+    -- re-verifies actor, active role and target in one transaction and
+    -- removes the factor and the recovery codes together.
+    CREATE FUNCTION public.reset_second_factor(org uuid, target uuid)
+    RETURNS integer
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path=pg_catalog,pg_temp SET row_security=off AS $$
+    DECLARE
+      actor uuid;
+      removed integer;
+    BEGIN
+      actor := NULLIF(current_setting('app.current_user_id',true),'')::uuid;
+      IF org IS NULL OR target IS NULL OR actor IS NULL
+        OR org IS DISTINCT FROM NULLIF(current_setting('app.current_org_id',true),'')::uuid
+        OR NOT EXISTS(SELECT 1 FROM public.membership m JOIN public."user" u
+          ON u.id=m.user_id AND u.organization_id=m.organization_id
+          WHERE m.organization_id=org AND m.user_id=actor
+            AND m.role='OWNER_ADMIN' AND u.is_active)
+        OR NOT EXISTS(SELECT 1 FROM public."user" u
+          WHERE u.organization_id=org AND u.id=target AND u.is_active) THEN
+        RAISE EXCEPTION 'Second-factor reset refused' USING ERRCODE='42501';
+      END IF;
+      DELETE FROM public.user_second_factor f
+        WHERE f.organization_id=org AND f.user_id=target;
+      GET DIAGNOSTICS removed = ROW_COUNT;
+      DELETE FROM public.user_recovery_code c
+        WHERE c.organization_id=org AND c.user_id=target;
+      RETURN removed;
+    END $$;
+    REVOKE ALL ON FUNCTION public.reset_second_factor(uuid,uuid) FROM PUBLIC,app_worker,app_review;
+    GRANT EXECUTE ON FUNCTION public.reset_second_factor(uuid,uuid) TO app_rw;
     """)
 
 
@@ -133,6 +160,7 @@ def downgrade():
         RAISE EXCEPTION 'Cannot discard retained second-factor state';
       END IF;
     END $$;
+    DROP FUNCTION public.reset_second_factor(uuid,uuid);
     DROP TABLE public.user_recovery_code;
     DROP TABLE public.user_second_factor;
     """)

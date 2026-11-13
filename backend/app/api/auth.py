@@ -22,7 +22,6 @@ from app.core.db import get_session_factory, set_tenant_context
 from app.core.security import (
     MAX_PASSWORD_LENGTH,
     create_session_token,
-    decode_session_token,
     hash_password,
     normalize_email,
     validate_new_password,
@@ -197,8 +196,13 @@ async def login(body: LoginRequest, response: Response, throttle: ThrottleReques
         factor_confirmed = False
         async with session.begin():
             if authenticated:
-                factor_confirmed = await _confirmed_second_factor(session, principal)
-                await attempt.reset()
+                if factor_confirmed := await _confirmed_second_factor(session, principal):
+                    # The code still has to pass: refund only this attempt's
+                    # reservation so the failure history cannot be cleared
+                    # with the password before the second step.
+                    await attempt.refund_reservation()
+                else:
+                    await attempt.reset()
             else:
                 await attempt.record_failure()
 
@@ -218,12 +222,12 @@ async def login(body: LoginRequest, response: Response, throttle: ThrottleReques
         )
 
     if get_deployment_policy().deployment_mode == "hosted":
-        # Every hosted staff account needs a factor: enrolment runs in this
-        # restricted session before the application opens (owner decision,
-        # 5 Nov 2026). Self-hosted mode keeps the factor optional.
-        token = create_session_token(
-            principal.user_id, principal.organization_id, principal.session_version, restricted=True
-        )
+        # Every hosted staff account needs a factor (owner decision, 5 Nov
+        # 2026). The cookie is a normal session: get_current_user derives the
+        # restriction from the database and lets this session reach only the
+        # enrolment flow until a factor is confirmed. Self-hosted mode keeps
+        # the factor optional.
+        token = create_session_token(principal.user_id, principal.organization_id, principal.session_version)
         _set_session_cookie(response, token)
         return _login_answer(principal, second_factor_enrolment_required=True)
 
@@ -304,11 +308,14 @@ async def login_second_factor(
                         secret = second_factor_service.decrypt_secret(
                             principal.organization_id, factor.secret_encrypted
                         )
-                        accepted, used_step = second_factor_service.verify_totp(
-                            secret, body.code, time.time(), factor.last_totp_step
-                        )
-                        if accepted and (factor.last_totp_step is None or used_step > factor.last_totp_step):
-                            factor.last_totp_step = used_step
+                        if secret is None:
+                            accepted = False
+                        else:
+                            accepted, used_step = second_factor_service.verify_totp(
+                                secret, body.code, time.time(), factor.last_totp_step
+                            )
+                            if accepted and (factor.last_totp_step is None or used_step > factor.last_totp_step):
+                                factor.last_totp_step = used_step
                     else:
                         row = await session.scalar(
                             select(UserRecoveryCode).where(
@@ -353,11 +360,14 @@ async def login_second_factor(
 
 
 @router.get("/session", response_model=LoginResponse)
-async def current_session(auth: AuthContext = Depends(get_current_user)):
+async def current_session(request: Request, auth: AuthContext = Depends(get_current_user)):
     return LoginResponse(
         user_id=str(auth.user_id),
         organization_id=str(auth.organization_id),
         role=auth.role,
+        second_factor_enrolment_required=bool(
+            getattr(request.state, "second_factor_enrolment_required", False)
+        ),
     )
 
 
@@ -499,8 +509,6 @@ async def _account_labels(db: AsyncSession, auth: AuthContext) -> tuple[str, str
 @router.post("/second-factor/enrolment/confirm", response_model=EnrolmentConfirmResponse)
 async def confirm_second_factor_enrolment(
     body: EnrolmentConfirmRequest,
-    request: Request,
-    response: Response,
     auth: AuthContext = Depends(get_current_user),
     db: AsyncSession = Depends(get_db, scope="function"),
 ):
@@ -511,7 +519,9 @@ async def confirm_second_factor_enrolment(
         raise HTTPException(409, {"code": "second_factor_no_pending_enrolment"})
 
     secret = second_factor_service.decrypt_secret(auth.organization_id, factor.secret_encrypted)
-    accepted, _used_step = second_factor_service.verify_totp(secret, body.code, time.time(), None)
+    if secret is None:
+        raise _invalid_credentials()
+    accepted, used_step = second_factor_service.verify_totp(secret, body.code, time.time(), None)
     if not accepted:
         raise _invalid_credentials()
 
@@ -531,18 +541,8 @@ async def confirm_second_factor_enrolment(
         ))
     factor.confirmed = True
     factor.confirmed_at = datetime.now(timezone.utc)
-    # Replay protection starts with the first login: persisting the confirm
-    # step here would refuse the user's own sign-in within the same step.
-    factor.last_totp_step = None
+    # The confirm code is a used step: it must not sign anyone in again.
+    factor.last_totp_step = used_step
     await db.flush()
 
-    # A hosted enrolment session becomes a full session (owner decision,
-    # 5 Nov 2026); other sessions are already full.
-    token = request.cookies.get(settings.session_cookie_name)
-    data = decode_session_token(token) if token else None
-    if data is not None and data.get("r") == 1:
-        reissued = create_session_token(
-            auth.user_id, auth.organization_id, auth.session_version
-        )
-        _set_session_cookie(response, reissued)
     return EnrolmentConfirmResponse(recovery_codes=codes)

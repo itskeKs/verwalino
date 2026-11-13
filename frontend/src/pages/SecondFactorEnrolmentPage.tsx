@@ -16,7 +16,7 @@ export function SecondFactorEnrolmentPage() {
       title="Zweiten Faktor einrichten"
       description="Für Ihr Benutzerkonto ist ein zweiter Faktor vorgeschrieben. Richten Sie ihn jetzt ein, um verwalino zu nutzen."
     >
-      <SecondFactorEnrolment onConfirmed={() => void reloadSession()} />
+      <SecondFactorEnrolment onDone={() => void reloadSession()} />
     </PublicAuthLayout>
   );
 }

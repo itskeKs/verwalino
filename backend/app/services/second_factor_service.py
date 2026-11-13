@@ -12,14 +12,17 @@ from __future__ import annotations
 import base64
 import hashlib
 import hmac
+import logging
 import secrets
 import struct
 import time
 import uuid
 
-from cryptography.fernet import Fernet
+from cryptography.fernet import Fernet, InvalidToken
 
 from app.core.config import settings
+
+logger = logging.getLogger(__name__)
 
 TOTP_STEP_SECONDS = 30
 TOTP_DIGITS = 6
@@ -42,8 +45,22 @@ def encrypt_secret(organization_id: uuid.UUID, secret: str) -> str:
     return _cipher(organization_id).encrypt(secret.encode()).decode()
 
 
-def decrypt_secret(organization_id: uuid.UUID, ciphertext: str) -> str:
-    return _cipher(organization_id).decrypt(ciphertext.encode()).decode()
+def decrypt_secret(organization_id: uuid.UUID, ciphertext: str) -> str | None:
+    """The plaintext secret, or None when it is undecryptable.
+
+    A rotated or restored-away HV_SESSION_SECRET makes stored secrets
+    unreadable; callers refuse like a wrong code and the user re-enrols
+    after an admin reset. Logged without secret material.
+    """
+    try:
+        return _cipher(organization_id).decrypt(ciphertext.encode()).decode()
+    except (InvalidToken, ValueError):
+        logger.warning(
+            "Stored second-factor secret is undecryptable (organization %s); "
+            "an admin reset and re-enrolment are required",
+            organization_id,
+        )
+        return None
 
 
 def generate_secret() -> str:
@@ -95,9 +112,22 @@ def verify_totp(
     return False, None
 
 
+def normalize_recovery_code(code: str) -> str:
+    """Canonical form: upper case, hyphen after the fourth character.
+
+    Accepts what a user reasonably types: lower case, a missing hyphen or
+    stray spaces.
+    """
+    compact = "".join(code.upper().split()).replace("-", "")
+    if len(compact) == RECOVERY_CODE_LENGTH:
+        return f"{compact[:4]}-{compact[4:]}"
+    return code.strip().upper()
+
+
 def recovery_code_hash(organization_id: uuid.UUID, code: str) -> str:
     material = f"verwalino:recovery-code:v1:{organization_id}:{settings.session_secret}".encode()
-    return hmac.new(hashlib.sha256(material).digest(), code.encode(), hashlib.sha256).hexdigest()
+    canonical = normalize_recovery_code(code).encode()
+    return hmac.new(hashlib.sha256(material).digest(), canonical, hashlib.sha256).hexdigest()
 
 
 def generate_recovery_codes() -> list[str]:

@@ -320,6 +320,15 @@ A WARNING includes the HMAC key hash and a server-generated request id, never ra
 email/IP. HMAC-SHA256 uses a pepper derived from the existing `HV_SESSION_SECRET`;
 rotating that secret clears effective throttling state (old rows age out), as
 well as invalidating existing session cookies. No new secret setting is needed.
+
+The second factor derives its storage key from the same `HV_SESSION_SECRET`
+(like the organization AI key): rotating the secret, or restoring a backup or
+staging copy under different secrets, makes every stored TOTP secret
+undecryptable and every recovery-code hash unmatchable. Sign-in with the code
+then receives the same generic refusal as a wrong code (no 500), and the
+operator has an OWNER_ADMIN reset the affected users' second factors in the
+user administration; each person enrols again. There is no recovery of the old
+factor material.
 The German login message is unchanged.
 
 Native IPv6 addresses share a /64 throttle key; IPv4-mapped IPv6 maps to IPv4.
@@ -1729,7 +1738,7 @@ before that release is declared done.
 
 | 0186 (parent 0185) | Adds the tenant-scoped `organization_ai_confirmation` table recording the organization's provider confirmation (confirmer, time, text version and the provider or base-URL destination) before its own AI key is stored or replaced; storing or replacing the key without the confirmation is refused with a structured code, and a stored key without a matching confirmation stays unused because the AI entry points resolve effective settings through the confirmation check. Removing the key ends the instruction and keeps the record; destination changes join the `ai_settings.updated` audit diff. The runtime reads and writes confirmations through RLS like the settings row; the table is excluded from import admission and its rows are export-only evidence that an archive can carry but never plant back; the retention catalog erases it with the organization. Downgrade refuses populated rows with "Cannot discard recorded AI provider confirmations". 0185 stays as the rehearsed accepted source. |
 | 0187 (accepted source; parent 0186) | Grants the worker role `EXECUTE` on the 0144 definer `cleanup_signup_requests()` so the always-deployed hosted declaration worker deletes never-confirmed sign-up requests on its own bounded cadence (at most once every 60 seconds per worker, `lock_timeout` 100 ms, `statement_timeout` 1 s) without sign-up traffic; the function takes no input and deletes only `signup_request` rows expired more than seven days, so the 0144 `app_rw` boundary moves for exactly this one function and the grant states the authorization independent of role inheritance. Downgrade revokes the grant. 0186 stays as the rehearsed accepted source. |
-| 0188 (head; parent 0187) | Adds the tenant-scoped `user_second_factor` and `user_recovery_code` tables of the staff-account second factor (issue #208): the TOTP secret is stored Fernet-encrypted (domain-separated like the AI key), recovery codes only as keyed hashes; RLS restricts a factor and its codes to the user, with OWNER_ADMIN policies for the audited reset, and a transaction-local GUC names the reset account to the 0138 trigger so the hosted reset advances exactly that user's `session_version` and ends the target's sessions. The retention catalog classifies both tables as deleted with the organization; a populated downgrade refuses to discard retained second-factor state and restores the 0138 trigger body. 0187 stays as the rehearsed accepted source. |
+| 0188 (head; parent 0187) | Adds the tenant-scoped `user_second_factor` and `user_recovery_code` tables of the staff-account second factor (issue #208): the TOTP secret is stored Fernet-encrypted (domain-separated like the AI key), recovery codes only as keyed hashes; RLS restricts a factor and its codes to their user with no admin read or direct-delete path, the audited reset runs through the definer `reset_second_factor(org,target)` re-verifying actor, active OWNER_ADMIN role and target, the rows bind `(organization_id,user_id)` to the user like 0145, and a transaction-local GUC names the reset account to the 0138 trigger so the hosted reset advances exactly that user's `session_version` and ends the target's sessions. The retention catalog classifies both tables as deleted with the organization; a populated downgrade refuses to discard retained second-factor state and restores the 0138 trigger body. 0187 stays as the rehearsed accepted source. |
 DDL uses the existing PostgreSQL/Alembic transaction; 0123 also takes financial
 and ACL locks with NOWAIT table locks. Contention or unexpected data/function
 definitions must abort, not trigger repair/deletion. A rollback-only synthetic

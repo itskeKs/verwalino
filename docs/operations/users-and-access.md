@@ -67,14 +67,21 @@ flow is repeatable with
 In „Einstellungen“, the „Zweiter Faktor“ card sets up an authenticator app:
 „Zweiten Faktor einrichten“ shows a QR code (or the plain secret for manual
 entry); after confirming with the current 6-digit code, ten one-time
-Wiederherstellungscodes (recovery codes) appear once — save or print them. From
-then on, sign-in asks for „Code aus der Authenticator-App“ after the password;
-without the phone, a recovery code works exactly once and the sign-in says how
-many remain. A wrong code counts like a wrong password towards the lockout. In
-the hosted offer the second factor is mandatory: an account without it sees only
-the enrolment page until setup is complete. An administrator resets a lost factor
-in the user management („Zweiten Faktor zurücksetzen“); the person enrols again
-at the next sign-in.
+Wiederherstellungscodes (recovery codes) appear once — save or print them
+before pressing „Fertig“. From then on, sign-in asks for „Code aus der
+Authenticator-App“ after the password; without the phone, a recovery code
+works exactly once and the sign-in says how many remain. A wrong code counts
+like a wrong password towards the lockout. In the hosted offer the second
+factor is mandatory: an account without it sees only the enrolment page until
+setup is complete. An administrator resets a lost factor in the user
+management („Zweiten Faktor zurücksetzen“); the person enrols again at the
+next sign-in.
+
+A sole OWNER_ADMIN who lost the device **and** all recovery codes has no
+in-application way back into the account today: every path (own settings,
+another admin) is closed. The operator-side reset for this case is tracked in
+issue #657; until it exists, prevent it by storing the recovery codes at
+enrolment.
 
 ## User management
 
