@@ -203,7 +203,10 @@ ends with `Refs #N` or `Closes #N`. `Closes` only when every acceptance box of t
 
 The PR description states what the change is for, which scenarios and tests were added (and that
 they were red first), how `make test` and `make lint` went, and carries screenshots when the UI
-changed. CI (`.github/workflows/tests-on-pr.yaml`) must be green:
+changed. A finding outside the issue's scope is recorded on a bundle, the issue that covers it or
+the inbox, not filed as an issue of its own; the description says where
+([AGENTS.md](AGENTS.md#work-comes-from-issues)). CI (`.github/workflows/tests-on-pr.yaml`) must be
+green:
 
 | Job | What it proves |
 |---|---|

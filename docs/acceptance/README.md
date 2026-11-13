@@ -35,10 +35,13 @@ in the repository.
 
 ## Twins and findings
 
-A blind run finds what nobody wrote down; a twin keeps it found. Every finding the owner confirms
-first fails as a step in the twin of its journey, then the fix turns it green, so CI holds it from
-then on and the next blind run reports only what is new. A twin is written with the first issue
-that touches its journey, not in advance.
+A blind run finds what nobody wrote down; a twin keeps it found. The blind run reports everything
+it sees, with a class guess per finding; the session that started it confirms each finding and
+records it as in [AGENTS.md](../../AGENTS.md#work-comes-from-issues) (bundle, covering issue or
+inbox line; a new issue only for the cases named there). Every confirmed finding first fails as a
+step in the twin of its journey, then the fix turns it green, so CI holds it from then on and the
+next blind run reports only what is new. A twin is written with the first issue that touches its
+journey, not in advance.
 
 ## The user check in an issue
 
@@ -60,8 +63,10 @@ rounds ([AGENTS.md](../../AGENTS.md), "Work comes from issues").
 - **What still blocks after the freeze.** The PR merges when CI is green and no finding remains in
   the four blocker categories: wrong money amount, organization isolation, GoBD immutability,
   GDPR.
-- **Everything else is a follow-up.** A finding outside those four categories, from a review or a
-  blind run, becomes an issue with a user check of its own; it does not start another round or run.
+- **Everything else is recorded.** A finding outside those four categories, from a review or a
+  blind run, goes to one place as in [AGENTS.md](../../AGENTS.md#work-comes-from-issues): a
+  comment line on its class's bundle, on the open issue that covers it, or on the inbox. It does
+  not start another round or run, and the merge comment names what was recorded where.
 
 ## Mandatory last step: cleanup
 
