@@ -35,6 +35,7 @@ from app.core.static_files import resolve_spa_file
 from app.core.uploads import RequestBodyLimitMiddleware
 from app.core.config import settings
 from app.core.document_limits import MAX_UPLOAD_BYTES
+from app.core import legal_documents
 from app.services import mail_service
 from app.core.deployment_policy import get_deployment_policy
 from app.core.logging import configure_logging
@@ -162,12 +163,16 @@ app.include_router(property_knowledge.router)
 
 
 @app.get("/api/meta")
-async def meta(response: Response) -> dict[str, str | bool | int]:
+async def meta(response: Response) -> dict[str, str | bool | int | dict]:
     """Public deployment facts only; no settings or organization data."""
     response.headers["Cache-Control"] = "no-store"
-    return {"deployment_mode": get_deployment_policy().deployment_mode, "version": app.version,
-            "mail_available": mail_service.password_reset_available(settings),
-            "max_upload_bytes": MAX_UPLOAD_BYTES}
+    metadata = {"deployment_mode": get_deployment_policy().deployment_mode, "version": app.version,
+                "mail_available": mail_service.password_reset_available(settings),
+                "max_upload_bytes": MAX_UPLOAD_BYTES}
+    if get_deployment_policy().deployment_mode == "hosted":
+        # Only the hosted sign-up page reads the versioned legal documents.
+        metadata["legal_documents"] = legal_documents.DOCUMENTS
+    return metadata
 
 
 @app.get("/api/health/live")

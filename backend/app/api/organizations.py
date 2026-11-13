@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import uuid
+from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
 from pydantic import BaseModel
+from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.tenant import AuthContext, get_current_user, get_db, require_admin_dep
@@ -130,6 +132,28 @@ async def get_my_org(
     state = await deletion_status(db, auth.organization_id)
     available = auth.role == 'OWNER_ADMIN' and (not state or state['status'] not in {'cooling_off', 'deleted_pending_retention'})
     return OrgOut(id=str(org.id), name=org.name, import_available=available, deletion=state)
+
+
+class LegalAssentOut(BaseModel):
+    document: str
+    version: str
+    assented_at: datetime
+    admin_name: str
+
+
+@router.get("/legal-assents", response_model=list[LegalAssentOut])
+async def get_legal_assents(
+    auth: AuthContext = Depends(require_admin_dep),
+    db: AsyncSession = Depends(get_live_member_db),
+):
+    """The document versions this organization agreed to, when and by whom (administrators only)."""
+    rows = (await db.execute(text(
+        'SELECT DISTINCT ON (a.document) a.document, a.version, a.assented_at,'
+        ' u.display_name AS admin_name'
+        ' FROM legal_document_assent a JOIN "user" u ON u.id=a.user_id AND u.organization_id=a.organization_id'
+        ' WHERE a.organization_id=:org ORDER BY a.document, a.assented_at DESC, a.id'),
+        {'org': str(auth.organization_id)})).mappings().all()
+    return [LegalAssentOut(**row) for row in rows]
 
 
 async def get_import_db(auth: AuthContext = Depends(require_admin_dep), db: AsyncSession = Depends(get_db, scope="function")):

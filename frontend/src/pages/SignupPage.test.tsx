@@ -17,7 +17,7 @@ function json(body: unknown, status = 200) {
 beforeEach(() => {
   complete.mockReset();
   sessionStorage.clear();
-  vi.stubGlobal("fetch", vi.fn().mockImplementation(async (url) => json(url === "/api/meta" ? { deployment_mode: "hosted", version: "0.1.0" } : { message })));
+  vi.stubGlobal("fetch", vi.fn().mockImplementation(async (url) => json(url === "/api/meta" ? { deployment_mode: "hosted", version: "0.1.0", legal_documents: { terms: { version: "2026-11-13", url: "https://verwalino.de/nutzungsbedingungen/" }, av_vertrag: { version: "2026-11-13", url: "https://verwalino.de/av-vertrag/" } } } : { message })));
 });
 function open(path = "/signup") {
   return render(<StrictMode><MemoryRouter initialEntries={[path]}><Routes>
@@ -31,13 +31,15 @@ async function fill(repeat = password) {
   for (const [label, value] of [["Organisation", "Hausverwaltung mit einem sehr langen deutschen Organisationsnamen GmbH"], ["Name", "Erika Mustermann"], ["E-Mail", "erika@example.test"], ["Passwort", password], ["Passwort wiederholen", repeat]]) {
     fireEvent.change(screen.getByLabelText(label, { exact: true }), { target: { value } });
   }
+  await userEvent.click(screen.getByRole("checkbox", { name: /Nutzungsbedingungen/ }));
+  await userEvent.click(screen.getByRole("checkbox", { name: /Auftragsverarbeitungsvertrag/ }));
 }
 it("submits signup once, shows the generic receipt and requests a resend", async () => {
   open(); await fill();
   await userEvent.click(screen.getByRole("button", { name: "Konto erstellen" }));
   expect(await screen.findByRole("status")).toHaveTextContent(message);
   const signup = vi.mocked(fetch).mock.calls.find(([url]) => url === "/api/signup");
-  expect(JSON.parse(signup![1]!.body as string)).toMatchObject({ admin_name: "Erika Mustermann", email: "erika@example.test", password, website: "" });
+  expect(JSON.parse(signup![1]!.body as string)).toMatchObject({ admin_name: "Erika Mustermann", email: "erika@example.test", password, website: "", terms_version: "2026-11-13", av_version: "2026-11-13" });
   expect(screen.queryByLabelText("Passwort", { exact: true })).not.toBeInTheDocument();
   await userEvent.click(screen.getByRole("button", { name: "Erneut senden" }));
   expect(vi.mocked(fetch).mock.calls.find(([url]) => url === "/api/signup/resend")?.[1]).toMatchObject({ method: "POST", body: JSON.stringify({ email: "erika@example.test", website: "" }) });
@@ -160,5 +162,20 @@ it("keeps labelled signup fields disabled during one pending request", async () 
   expect(screen.queryByRole("textbox", { name: "Website" })).not.toBeInTheDocument();
   expect(vi.mocked(fetch).mock.calls.filter(([url]) => url === "/api/signup")).toHaveLength(1);
   finish(json({ message }));
+  expect(await screen.findByRole("status")).toHaveTextContent(message);
+});
+it("refuses to submit without both assents and names the documents at the missing box", async () => {
+  open(); await fill();
+  await userEvent.click(screen.getByRole("checkbox", { name: /Nutzungsbedingungen/ }));
+  await userEvent.click(screen.getByRole("button", { name: "Konto erstellen" }));
+  expect(await screen.findByRole("alert")).toHaveTextContent("Bitte bestätigen Sie die aktuellen Nutzungsbedingungen.");
+  expect(vi.mocked(fetch).mock.calls.find(([url]) => url === "/api/signup")).toBeUndefined();
+  await userEvent.click(screen.getByRole("checkbox", { name: /Nutzungsbedingungen/ }));
+  await userEvent.click(screen.getByRole("checkbox", { name: /Auftragsverarbeitungsvertrag/ }));
+  await userEvent.click(screen.getByRole("button", { name: "Konto erstellen" }));
+  expect(await screen.findByRole("alert")).toHaveTextContent("Bitte bestätigen Sie den Auftragsverarbeitungsvertrag.");
+  expect(vi.mocked(fetch).mock.calls.find(([url]) => url === "/api/signup")).toBeUndefined();
+  await userEvent.click(screen.getByRole("checkbox", { name: /Auftragsverarbeitungsvertrag/ }));
+  await userEvent.click(screen.getByRole("button", { name: "Konto erstellen" }));
   expect(await screen.findByRole("status")).toHaveTextContent(message);
 });

@@ -43,6 +43,7 @@ function renderRoutes(path: string, role?: string, setupStatus: { required: bool
     if (url === "/api/access-preparation/source-security") return permissionsStatusFails ? Promise.reject(new Error("unavailable")) : Promise.resolve({ mode: permissionsMode, changed_at: null, last_transition: null });
     if (url === "/api/access-preparation/runtime-budget") return Promise.resolve({ policy: { enabled: false, max_cost_usd: "1.00", window_minutes: 60, reservation_seconds: 120 }, policy_digest: "a".repeat(64), review: null, matches_reviewed_policy: false });
     if (url === "/api/accounting-scopes/control") return Promise.resolve({ mode: "compatibility", event: null });
+    if (url === "/api/organizations/legal-assents") return Promise.resolve([]);
     return Promise.resolve({ items: [], next_cursor: null });
   });
   vi.spyOn(endpoints, "getPropertyKnowledge").mockResolvedValue({ property_id: "property-1", documents: [], document_relations: [], rules_by_topic: {}, open_rule_topics: [] });

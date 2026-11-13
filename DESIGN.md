@@ -326,6 +326,29 @@ and keyboard focus. Busy forms retain their inputs and disable their fieldset.
 Errors use `role="alert"` and preserve inputs; password mismatch is explained
 before submitting. “Zur Anmeldung” remains available.
 
+Hosted registration shows two unticked required checkboxes below the password
+fields, one for the “Nutzungsbedingungen” and one for the
+“Auftragsverarbeitungsvertrag”. Each label links its document (new tab,
+`rel="noreferrer"`) and names the served version: “Ich habe die
+Nutzungsbedingungen (Version 2026-11-13) gelesen und akzeptiere diese.” and “Ich
+habe den Auftragsverarbeitungsvertrag (Version 2026-11-13) gelesen und akzeptiere
+diesen.” Versions and links come from the public metadata (`legal_documents`,
+hosted mode only), never from code duplicated in the page. Submitting with an
+unticked box keeps the inputs and shows that box's sentence in `role="alert"`
+directly under it — “Bitte bestätigen Sie die aktuellen Nutzungsbedingungen.” at
+the terms box, “Bitte bestätigen Sie den Auftragsverarbeitungsvertrag.” at the
+AV-Vertrag box; the server refusal names the box through its structured `field`.
+Nothing is posted until both are ticked. The resend receipt does not show the
+boxes.
+
+Settings shows a read-only “Rechtliches” card to OWNER_ADMIN listing each
+accepted document — “Nutzungsbedingungen”, “Auftragsverarbeitungsvertrag” — with
+version, confirmation time and administrator, e.g. “Nutzungsbedingungen —
+Version 2026-11-13, bestätigt am 31.10.2026, 14:05 Uhr durch Sabine Beispiel”
+(shared `formatDateTime`, administrators only). It
+loads through `GET /api/organizations/legal-assents` and states “Diese Angaben
+sind nur zur Ansicht.”
+
 On acceptance the form is replaced by the server's generic `role="status"` receipt:
 “Wenn die Adresse frei ist, haben wir eine E-Mail geschickt”. Passwords are cleared.
 A muted note explains checking spam and the ten-minute resend interval. The outlined

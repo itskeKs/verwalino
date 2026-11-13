@@ -4,6 +4,7 @@ import io
 import json
 import tarfile
 import uuid
+from datetime import datetime, timezone
 
 import pytest
 from sqlalchemy import text
@@ -706,3 +707,58 @@ async def test_import_retains_historical_unlinked_levy_and_frozen_allocations(
         payload = {'property_id': prop, 'accounting_scope_id': scope, 'amount': '1200.00', 'due_date': '2026-07-01'}
         assert (await api.post('/api/special-levies', json=payload)).status_code == 422
     await rent_db.rollback()
+
+
+async def test_import_accepts_but_does_not_restore_forged_legal_assents(rent_world, import_target, rent_db, export_store):
+    """Assent records are evidence the installation collected; an archive must not
+    be able to plant them. A forged archive (rewritten version and time, an added
+    row, re-hashed) imports with 200 and stores no assent rows from the archive."""
+    await rent_db.execute(text('''INSERT INTO legal_document_assent(organization_id,user_id,document,version,assented_at)
+        VALUES (:org,:admin,'TERMS','2026-11-13',now()),(:org,:admin,'AV','2026-11-13',now())'''),
+        {'org': rent_world['org'], 'admin': rent_world['admin']})
+    await rent_db.commit()
+    files = unpack(await exported(rent_world))
+    forged = []
+    for line in files['entities/legal_document_assent.jsonl'].splitlines():
+        row = json.loads(line)
+        row['version'] = '1999-01-01'
+        row['assented_at'] = '2099-01-01T00:00:00+00'
+        forged.append(json.dumps(row).encode() + b'\n')
+    extra = json.loads(forged[0])
+    extra['id'] = str(uuid.uuid4())
+    forged.append(json.dumps(extra).encode() + b'\n')
+    manifest = json.loads(files['manifest.json'])
+    manifest['row_counts']['legal_document_assent'] = len(forged)
+    files = {**files, 'entities/legal_document_assent.jsonl': b''.join(forged),
+             'manifest.json': json.dumps(manifest).encode()}
+    async with api_client(import_target) as api:
+        answer = await api.post('/api/organizations/import', files={'file': ('organization.tar.gz', repack(files))})
+    assert answer.status_code == 200, answer.text
+    stored = (await rent_db.execute(text(
+        'SELECT count(*) FROM legal_document_assent WHERE organization_id=:org'),
+        {'org': import_target['org']})).scalar()
+    assert stored == 0
+
+
+async def test_import_keeps_the_signup_assents_of_the_importing_organization(rent_world, import_target, rent_db, export_store):
+    """An organization created by a hosted sign-up keeps exactly its own assent
+    records when an archive fills it; the archived assents are not taken over."""
+    await rent_db.execute(text('''INSERT INTO legal_document_assent(organization_id,user_id,document,version,assented_at)
+        VALUES (:org,:admin,'TERMS','2026-11-13',now()),(:org,:admin,'AV','2026-11-13',now())'''),
+        {'org': rent_world['org'], 'admin': rent_world['admin']})
+    await rent_db.commit()
+    # The importing organization signed up on 2026-10-01 with the older documents.
+    own_at = datetime(2026, 10, 1, 9, 0, tzinfo=timezone.utc)
+    await rent_db.execute(text('''INSERT INTO legal_document_assent(organization_id,user_id,document,version,assented_at)
+        VALUES (:org,:admin,'TERMS','2026-10-01',:at),(:org,:admin,'AV','2026-10-01',:at)'''),
+        {'org': import_target['org'], 'admin': import_target['admin'], 'at': own_at})
+    await rent_db.commit()
+    files = unpack(await exported(rent_world))
+    async with api_client(import_target) as api:
+        answer = await api.post('/api/organizations/import', files={'file': ('organization.tar.gz', repack(files))})
+    assert answer.status_code == 200, answer.text
+    kept = (await rent_db.execute(text(
+        'SELECT document, version, assented_at FROM legal_document_assent WHERE organization_id=:org'),
+        {'org': import_target['org']})).mappings().all()
+    assert {(row['document'], row['version']) for row in kept} == {('TERMS', '2026-10-01'), ('AV', '2026-10-01')}
+    assert all(row['assented_at'] == own_at for row in kept)

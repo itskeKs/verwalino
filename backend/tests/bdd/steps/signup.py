@@ -81,6 +81,7 @@ def signup_isolation(world, mailpit, monkeypatch):
         cursor.execute('DELETE FROM signup_request WHERE email_normalized=%s', (body['email'],))
     if created := world.data.get('signup_created_organization'):
         with psycopg2.connect(MIGRATOR_SYNC_URL) as connection, connection.cursor() as cursor:
+            cursor.execute('DELETE FROM legal_document_assent WHERE organization_id=%s', (created,))
             cursor.execute('DELETE FROM membership WHERE organization_id=%s', (created,))
             cursor.execute('DELETE FROM "user" WHERE organization_id=%s', (created,))
             cursor.execute('DELETE FROM organization WHERE id=%s', (created,))
@@ -113,3 +114,55 @@ def creates_separate_organization(world):
 def original_session_preserved(world):
     assert world.look(world.actor, '/api/auth/session').json() == world.data['original_signup_session']
     assert world.look(world.actor, '/api/organizations/me').json()['name'] == 'Verwaltung Alpha'
+
+
+ASSENT_DOCUMENTS = ("terms_version", "av_version")
+
+
+@when('the visitor submits the sign-up without assent to both documents')
+def register_without_assent(world):
+    body = {key: value for key, value in BODY.items() if key not in ASSENT_DOCUMENTS}
+    body['email'] = f'no-assent-{uuid.uuid4().hex}@example.test'
+    world.data['no_assent_email'] = body['email'].strip().lower()
+    world.data['no_assent_response'] = world.send(world.anonymous, 'POST', '/api/signup', json=body)
+
+
+@then('the sign-up is refused with a structured error and no mail is sent')
+def refused_without_assent(world):
+    answer = world.data['no_assent_response']
+    assert answer.status_code == 422, world.describe_response()
+    assert answer.json()['detail']['code'] == 'legal_assent_refused'
+    messages = world.data['mailpit'].request('GET', '/api/v1/messages').json()['messages']
+    recipients = [address['Address'] for message in messages for address in message['To']]
+    assert world.data['no_assent_email'] not in recipients
+
+
+@when('the administrator registers a new organization with assent to both documents')
+def register_with_assent(world):
+    answer = world.send(world.anonymous, 'POST', '/api/signup', json=BODY)
+    assert (answer.status_code, answer.json()) == (202, MESSAGE)
+
+
+@then('both assent versions are recorded for the organization and the administrator')
+def assents_recorded(world):
+    # The scenario transaction holds every tenant table for the app; records
+    # are verified through the API here and against the database in
+    # tests/test_signup.py.
+    meta = world.look(world.anonymous, '/api/meta').json()
+    expected = {document: meta['legal_documents'][document]['version'] for document in ('terms', 'av_vertrag')}
+    answer = world.look(world.anonymous, '/api/organizations/legal-assents')
+    assert answer.status_code == 200, world.describe_response()
+    recorded = {entry['document']: entry['version'] for entry in answer.json()}
+    assert recorded == {'TERMS': expected['terms'], 'AV': expected['av_vertrag']}, answer.json()
+
+
+@then('the settings show both assents with version, time and administrator')
+def settings_show_assents(world):
+    answer = world.look(world.anonymous, '/api/organizations/legal-assents')
+    assert answer.status_code == 200, world.describe_response()
+    entries = {entry['document']: entry for entry in answer.json()}
+    assert set(entries) == {'TERMS', 'AV'}
+    for entry in entries.values():
+        assert entry['version']
+        assert entry['assented_at']
+        assert entry['admin_name'] == BODY['admin_name']

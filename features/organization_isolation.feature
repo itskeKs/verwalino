@@ -208,3 +208,13 @@ Feature: Organization isolation
     Given Verwaltung Alpha has configured its own AI model
     When Verwaltung Beta tries to read and change Alpha's AI settings
     Then the AI settings are reported missing and Alpha keeps its model
+
+  Scenario: Another organization cannot read legal document assents
+    Given a hosted signup's legal document assent belongs to Verwaltung Alpha
+    When Verwaltung Beta asks for the legal document assents
+    Then Verwaltung Beta sees none of Alpha's assents and Alpha keeps its own
+
+  Scenario: Non-administrators do not read legal document assents
+    Given a hosted signup's legal document assent belongs to Verwaltung Alpha
+    When a clerk of Verwaltung Alpha asks for the legal document assents
+    Then the clerk is refused and the administrator still sees the assents

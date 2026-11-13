@@ -792,6 +792,42 @@ remain counted; success calls the shared limiter's `reset()` to refund admission
 Downgrade refuses retained signup requests and otherwise removes the new objects
 exactly. The released 0142 auth-throttle migration remains unchanged.
 
+Hosted sign-up additionally records a versioned assent (issue #633, owner decision
+Q14 on #26). The current version identifiers of the terms and the AV-Vertrag are
+documented constants in `app/core/legal_documents.py` and are served publicly by
+`GET /api/meta` as `legal_documents`; the sign-up page links to exactly those
+versions and submits them. `POST /api/signup` refuses a request whose versions
+differ from the constants with a structured 422 (`code: legal_assent_refused`)
+before any pending state or mail; resend requests stay email-only. The accepted
+versions are stored on `signup_request`; the definer
+`request_signup_assented(email, org_name, admin_name, password_hash, terms_version, av_version)`
+stores them (0144's `request_signup` stays byte-identical as a rehearsed accepted
+source). Revision 0185's trigger `record_signup_assent` fires on the provisioning
+DELETE of `signup_request` and writes two `legal_document_assent` rows — document
+kind TERMS/AV, version, database time and the administrator — in the same
+transaction; it recognizes the provisioning delete by an administrator with the
+request's normalized address created in the same transaction. The table is
+tenant-scoped (RLS read-only for the runtime, composite user key, lifecycle
+guard), classified as retained contract-conclusion evidence by the retention
+catalog and excluded from import admission. `GET /api/organizations/legal-assents` (OWNER_ADMIN only) returns the latest
+assent per document with time and display name for the settings page, and the
+organization export includes the table. An import never restores assent rows:
+they are evidence this installation collected at its own sign-up, and an
+archive must not be able to plant them; an archive carrying them still imports
+with 200 and the rows are skipped (docs/operations/organization-export.md).
+The table stays writable only by the sign-up provisioning trigger, and the
+runtime role keeps no EXECUTE on the legacy four-argument `request_signup`,
+which nothing calls any more (0144's own upgrade re-grants it, so the release
+rehearsal lifts the grant around the roundtrip like the 0183 grant). The
+`legal_documents` metadata is returned only in hosted mode, the only mode whose
+sign-up page reads it. The sub-processor
+notice (30 days ahead, 21-day objection from receipt, Q14) is the operator command
+`python -m app.operator_notice subprocessor-notice --notice-id … --subprocessor …
+--effective-date … [--dry-run]`: it sends the existing `operator_notice` template
+to every organization's OWNER_ADMINs and writes one audit event per organization
+(notice id, effective date, objection deadline); a second run for the same notice
+id sends nothing.
+
 Mail uses the shared SMTP transport after the HTTP response body. Hosted startup
 requires SMTP and a valid `HV_PUBLIC_HOST`; confirmation links always use HTTPS
 and never derive their origin from request headers. The public routing hostname

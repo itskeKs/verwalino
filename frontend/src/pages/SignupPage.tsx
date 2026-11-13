@@ -17,6 +17,9 @@ export function SignupPage() {
   const [password, setPassword] = useState("");
   const [repeat, setRepeat] = useState("");
   const [website, setWebsite] = useState("");
+  const [termsAccepted, setTermsAccepted] = useState(false);
+  const [avAccepted, setAvAccepted] = useState(false);
+  const [assentError, setAssentError] = useState<{ field: "terms" | "av"; message: string } | null>(null);
   const [receipt, setReceipt] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -30,16 +33,31 @@ export function SignupPage() {
       setError("Die Passwörter stimmen nicht überein. Bitte prüfen Sie Ihre Eingabe.");
       return;
     }
+    const legal = deployment.legalDocuments;
+    if (!receipt && legal && !termsAccepted) {
+      setAssentError({ field: "terms", message: "Bitte bestätigen Sie die aktuellen Nutzungsbedingungen." });
+      return;
+    }
+    if (!receipt && legal && !avAccepted) {
+      setAssentError({ field: "av", message: "Bitte bestätigen Sie den Auftragsverarbeitungsvertrag." });
+      return;
+    }
     inFlight.current = true;
     setBusy(true);
     try {
       const answer = await api.post<{ message: string }>(receipt ? "/api/signup/resend" : "/api/signup", receipt ? { email, website } : {
         organization_name: organization, admin_name: name, email, password, website,
+        terms_version: legal?.terms.version ?? "", av_version: legal?.av_vertrag.version ?? "",
       });
       setReceipt(answer.message);
       setPassword(""); setRepeat("");
     } catch (failure) {
-      setError(failure instanceof ApiError ? failure.message : "Registrierung fehlgeschlagen. Bitte versuchen Sie es erneut.");
+      if (failure instanceof ApiError && failure.code === "legal_assent_refused") {
+        const payload = failure.payload as { field?: string } | undefined;
+        setAssentError({ field: payload?.field === "av_version" ? "av" : "terms", message: failure.message });
+      } else {
+        setError(failure instanceof ApiError ? failure.message : "Registrierung fehlgeschlagen. Bitte versuchen Sie es erneut.");
+      }
     } finally {
       inFlight.current = false;
       setBusy(false);
@@ -48,6 +66,7 @@ export function SignupPage() {
 
   if (deployment.mode === null && !deployment.error) return <main className="p-6" role="status">Lade...</main>;
   if (deployment.mode !== "hosted") return <Navigate to="/login" replace />;
+  const legalDocuments = deployment.legalDocuments;
   return <PublicAuthLayout title="Konto erstellen" description="Registrieren Sie Ihre Organisation. Bestätigen Sie anschließend Ihre E-Mail-Adresse über den Link in der E-Mail.">
     {error && <PublicAuthMessage id="signup-error">{error}</PublicAuthMessage>}
     {receipt ? <>
@@ -62,6 +81,24 @@ export function SignupPage() {
         <div className="public-auth-field"><Label htmlFor="signup-password">Passwort</Label><Input id="signup-password" className="h-11" type="password" value={password} onChange={(e) => setPassword(e.target.value)} minLength={12} maxLength={128} required autoComplete="new-password" aria-describedby="signup-password-help" /><p id="signup-password-help" className="text-sm text-muted-foreground">Verwenden Sie 12 bis 128 Zeichen.</p></div>
         <div className="public-auth-field"><Label htmlFor="signup-repeat">Passwort wiederholen</Label><Input id="signup-repeat" className="h-11" type="password" value={repeat} onChange={(e) => setRepeat(e.target.value)} minLength={12} maxLength={128} required autoComplete="new-password" /></div>
         <div className="hidden" aria-hidden="true"><Label htmlFor="signup-website">Website</Label><Input id="signup-website" name="website" value={website} onChange={(e) => setWebsite(e.target.value)} tabIndex={-1} autoComplete="off" /></div>
+        {legalDocuments && <div className="public-auth-field space-y-2" data-testid="signup-assent">
+          {([["terms", termsAccepted, setTermsAccepted, "Nutzungsbedingungen", "die", "diese", "signup-terms"],
+             ["av_vertrag", avAccepted, setAvAccepted, "Auftragsverarbeitungsvertrag", "den", "diesen", "signup-av"]] as const).map(([key, checked, setChecked, label, article, pronoun, id]) => (
+            <div key={key}>
+              <div className="flex items-start gap-2">
+                <input id={id} type="checkbox" className="mt-1 h-4 w-4 shrink-0"
+                       checked={checked} onChange={(e) => { setAssentError(null); setChecked(e.target.checked); }} />
+                <label htmlFor={id} className="text-sm leading-snug">
+                  Ich habe {article} <a className="link" href={legalDocuments[key].url} target="_blank" rel="noreferrer">{label}</a>{" "}
+                  (Version {legalDocuments[key].version}) gelesen und akzeptiere {pronoun}.
+                </label>
+              </div>
+              {assentError?.field === (key === "terms" ? "terms" : "av") &&
+                <p role="alert" className="mt-1 text-sm text-destructive">{assentError.message}</p>}
+            </div>
+          ))}
+        </div>}
+        {!legalDocuments && assentError && <p role="alert" className="text-sm text-destructive">{assentError.message}</p>}
         <Button type="submit" size="lg" className="w-full">{busy ? "Registrierung läuft …" : "Konto erstellen"}</Button>
       </fieldset>
     </form>}

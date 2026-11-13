@@ -18,6 +18,9 @@ from tests.test_meters_api import new_meter
 from tests.test_rent_changes import rent_db, rent_world  # noqa: F401
 
 EXEMPT = {
+    "GET /api/organizations/legal-assents": "read without record ids in the answer, so the sweep cannot seed a foreign id into it; "
+        "organization-scoped read and the administrator-only role are covered by features/organization_isolation.feature "
+        "('Another organization cannot read legal document assents', 'Non-administrators do not read legal document assents')",
     "GET /api/meta": "organization-free deployment facts and file safety cap only; covered by test_deployment_policy.py",
     **{f"{method} /api/signup{suffix}": "organization-free hosted signup; pending identity and atomic new-tenant creation covered by self_service_signup.feature and test_signup.py"
        for suffix in ("", "/confirm", "/resend")

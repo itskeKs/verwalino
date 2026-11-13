@@ -384,6 +384,12 @@ async def import_organization(db, auth, source):
             if name in {'organization', 'cost_category', 'organization_deletion'}:
                 continue
             for row in rows:
+                if name == 'legal_document_assent':
+                    # Exported for the customer's own portability, but never
+                    # imported: an assent is evidence this installation
+                    # collected, and an archive must not be able to plant it.
+                    # docs/operations/organization-export.md documents this.
+                    continue
                 if name == 'user' and row['id'] in reused_users:
                     inserted.add((name, row['id']))
                     continue
@@ -518,9 +524,10 @@ async def import_organization(db, auth, source):
                         previous_scope = await db.scalar(text("SELECT current_setting('app.current_scope_id',true)"))
                         await db.execute(text("SELECT set_config('app.current_scope_id',:scope,true)"),
                             {'scope': row['accounting_scope_id']})
-                    await db.execute(text(f'INSERT INTO public."{name}" ({columns}) SELECT {projection} '
-                        f'FROM json_populate_record(NULL::public."{name}",CAST(:row AS json)) v'),
-                        {'row': json_bytes(row).decode()})
+                    if name != 'legal_document_assent':
+                        await db.execute(text(f'INSERT INTO public."{name}" ({columns}) SELECT {projection} '
+                            f'FROM json_populate_record(NULL::public."{name}",CAST(:row AS json)) v'),
+                            {'row': json_bytes(row).decode()})
                     if name == 'special_levy':
                         await db.execute(text("SELECT set_config('app.current_scope_id',:scope,true)"),
                             {'scope': previous_scope or ''})
