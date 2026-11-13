@@ -4,6 +4,8 @@ from app.models.organization_ai_settings import OrganizationAiSettings
 from app.models.organization_ai_confirmation import OrganizationAiConfirmation
 from app.models.user import User
 from app.models.membership import Membership
+from app.models.user_second_factor import UserSecondFactor
+from app.models.user_recovery_code import UserRecoveryCode
 from app.models.management_mandate import ManagementMandate
 from app.models.audit_event import AuditEvent
 
@@ -85,6 +87,8 @@ __all__ = [
     "OrganizationAiConfirmation",
     "User",
     "Membership",
+    "UserSecondFactor",
+    "UserRecoveryCode",
     "ManagementMandate",
     "AuditEvent",
     # M1

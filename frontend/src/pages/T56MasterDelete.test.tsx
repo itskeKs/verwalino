@@ -25,7 +25,7 @@ const lease = { id: "lease", unit_id: "unit", tenant_profile_id: "tenant", valid
 let fetchMock: ReturnType<typeof vi.fn>;
 let leases: typeof lease[];
 function content(path = "/objekte/property/einheiten/unit", role = "CLERK", user = "user") {
-  return <AuthCtx.Provider value={{ loading: false, session: { ...session, user_id: user, role }, login: vi.fn(), logout: vi.fn() }}>
+  return <AuthCtx.Provider value={{ loading: false, session: { ...session, user_id: user, role }, login: vi.fn(), completeSecondFactor: vi.fn(), reloadSession: vi.fn(), logout: vi.fn() }}>
     <MemoryRouter initialEntries={[path]}><Link to="/objekte/property/einheiten/other">Andere Einheit</Link><Routes>
       <Route path="/objekte/:propertyId/einheiten/:unitId" element={<UnitDetailPage />} />
       <Route path="/objekte/:propertyId" element={<PropertyDetailPage />} />

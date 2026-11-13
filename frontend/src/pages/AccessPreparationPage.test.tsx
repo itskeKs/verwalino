@@ -20,7 +20,7 @@ const snapshot: AccessPreparation = {
 };
 afterEach(() => { cleanup(); vi.restoreAllMocks(); });
 function show(role: "OWNER_ADMIN" | "CLERK" = "OWNER_ADMIN") {
-  vi.spyOn(auth, "useAuth").mockReturnValue({ loading: false, session: { user_id: "actor", organization_id: "org", role }, login: vi.fn(), logout: vi.fn() });
+  vi.spyOn(auth, "useAuth").mockReturnValue({ loading: false, session: { user_id: "actor", organization_id: "org", role }, login: vi.fn(), completeSecondFactor: vi.fn(), reloadSession: vi.fn(), logout: vi.fn() });
   render(<MemoryRouter><AccessPreparationPage /></MemoryRouter>);
 }
 

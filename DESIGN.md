@@ -392,6 +392,36 @@ malformed request address shows “Bitte geben Sie eine gültige E-Mail-Adresse 
 and preserves the entered address. Errors offer “Neuen Link anfordern”. Fields retain useful inputs,
 use `new-password` autocomplete and remain labelled and usable at 360 px.
 
+### Second factor (issue #208)
+
+The login of an enrolled account continues inside the same public-auth card:
+after the password the heading reads “Code aus der Authenticator-App”, with the
+account address in the description, one numeric “6-stelliger Code” input
+(`autocomplete="one-time-code"`) and the full-width primary “Anmelden”. “Authenticator-
+App nicht zur Hand?” switches to a “Wiederherstellungscode” input; “Zum Authenticator-
+Code” switches back. A wrong code or recovery code shows the same generic
+“Invalid credentials” alert as a wrong password. After a recovery-code sign-in
+a `role="status"` receipt states how many codes remain.
+
+Settings gains a “Zweiter Faktor” card: the status (“eingerichtet”, with the
+admin-reset path named) or the enrolment flow. Enrolment shows the QR code for
+the authenticator app beside the plain secret for manual entry, then a “Aktueller
+6-stelliger Code” field and “Zweiten Faktor bestätigen”. Confirmation shows the
+ten recovery codes once, in a two-column list (single column below 560 px),
+with “Wiederherstellungscodes drucken” (`window.print()`; the action row hides
+in print) and “Fertig”.
+
+In hosted mode an account without a factor sees only the wizard
+`/zweiter-faktor`: the same public-auth card with the heading “Zweiten Faktor
+einrichten”, explaining that the factor is prescribed. The app shell stays
+unreachable until the enrolment is confirmed; the backend restricts the session
+to the second-factor routes, so the wizard renders without shell data.
+
+The user administration adds “Zweiten Faktor zurücksetzen” per row, opening a
+confirm dialog that names the person and states that the factor and the recovery
+codes are removed, the person enrols again at the next sign-in, hosted sessions
+end immediately and the action is recorded in the audit log.
+
 ### Sidebar groups
 
 Source: `GROUPS` in `Sidebar.tsx`, shared by both designs and the mobile menu.

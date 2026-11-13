@@ -12,7 +12,7 @@ let rows: (User & { role?: string | null })[];
 const usersCalls = () => vi.mocked(api.get).mock.calls.filter(([path]) => path.startsWith("/api/users/page?"));
 const reloads = () => usersCalls().length;
 function show(role = "OWNER_ADMIN", userId = "actor") {
-  const content = (nextRole: string, nextUserId: string) => <AuthCtx.Provider value={{ loading: false, session: { role: nextRole, user_id: nextUserId, organization_id: "org" }, login: vi.fn(), logout: vi.fn() }}><MemoryRouter><UsersPage /></MemoryRouter></AuthCtx.Provider>;
+  const content = (nextRole: string, nextUserId: string) => <AuthCtx.Provider value={{ loading: false, session: { role: nextRole, user_id: nextUserId, organization_id: "org" }, login: vi.fn(), completeSecondFactor: vi.fn(), reloadSession: vi.fn(), logout: vi.fn() }}><MemoryRouter><UsersPage /></MemoryRouter></AuthCtx.Provider>;
   const view = render(content(role, userId));
   return { ...view, changeSession: (nextRole: string, nextUserId = userId) => view.rerender(content(nextRole, nextUserId)) };
 }

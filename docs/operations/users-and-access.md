@@ -62,6 +62,20 @@ flow is repeatable with
 `scripts/acceptance/t14_password_browser.cjs` against `scripts/dev-local.sh`
 (existing Playwright via `HV_PLAYWRIGHT_PACKAGE`, Chrome).
 
+## Second factor for your account
+
+In „Einstellungen“, the „Zweiter Faktor“ card sets up an authenticator app:
+„Zweiten Faktor einrichten“ shows a QR code (or the plain secret for manual
+entry); after confirming with the current 6-digit code, ten one-time
+Wiederherstellungscodes (recovery codes) appear once — save or print them. From
+then on, sign-in asks for „Code aus der Authenticator-App“ after the password;
+without the phone, a recovery code works exactly once and the sign-in says how
+many remain. A wrong code counts like a wrong password towards the lockout. In
+the hosted offer the second factor is mandatory: an account without it sees only
+the enrolment page until setup is complete. An administrator resets a lost factor
+in the user management („Zweiten Faktor zurücksetzen“); the person enrols again
+at the next sign-in.
+
 ## User management
 
 T57 introduced this workflow.

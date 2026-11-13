@@ -36,6 +36,7 @@ PRIVATE_POLICIES = {
 }
 
 TENANT_TABLES = frozenset({
+    "user_second_factor", "user_recovery_code",
     "organization_ai_settings",
     "organization_ai_confirmation",
     "user_invitation",

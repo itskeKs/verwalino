@@ -11,6 +11,30 @@ export interface LoginResponse {
   user_id: string;
   organization_id: string;
   role: string;
+  /** Issue #208: the password was correct; the login continues with a TOTP code. */
+  second_factor_required?: boolean;
+  /** Issue #208 (hosted): enrolment must be completed before the app opens. */
+  second_factor_enrolment_required?: boolean;
+  /** Issue #208: short-lived token for the second login step. */
+  pending_token?: string | null;
+}
+
+export interface SecondFactorLoginResponse extends LoginResponse {
+  /** How many one-time recovery codes remain, when one was used. */
+  recovery_codes_remaining?: number | null;
+}
+
+export interface SecondFactorStatus {
+  enrolled: boolean;
+}
+
+export interface SecondFactorEnrolment {
+  secret: string;
+  otpauth_uri: string;
+}
+
+export interface SecondFactorEnrolmentConfirmation {
+  recovery_codes: string[];
 }
 
 export interface Organization {

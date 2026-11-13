@@ -49,7 +49,7 @@ it('keeps personal settings for non-admins without fetching organization AI sett
   render(<SettingsPage />);
   expect(screen.getByRole('heading',{name:'Persönliches Design'})).toBeVisible();
   expect(screen.queryByLabelText('API-Schlüssel')).not.toBeInTheDocument();
-  await waitFor(() => expect(api.get).not.toHaveBeenCalled());
+  await waitFor(() => expect(api.get).not.toHaveBeenCalledWith(expect.stringContaining('/ai-settings')));
 });
 
 

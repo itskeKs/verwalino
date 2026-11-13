@@ -6,6 +6,8 @@ import type { DesignTheme } from "../api/types";
 import { Button } from "../components/ui/button";
 import { OrganizationAiSettingsSection } from './OrganizationAiSettingsSection';
 import { LegalAssentsSection } from './LegalAssentsSection';
+import { SecondFactorEnrolment } from '../components/SecondFactorEnrolment';
+import { useSecondFactorStatus } from '../components/useSecondFactorStatus';
 
 export function SettingsPage() {
   const { session } = useAuth();
@@ -44,5 +46,18 @@ function PersonalDesign() {
     </section>
     {session?.role === 'OWNER_ADMIN' && <OrganizationAiSettingsSection key={session.organization_id} organizationId={session.organization_id} />}
     {session?.role === 'OWNER_ADMIN' && <LegalAssentsSection />}
+    <SecondFactorSettingsSection />
   </div>;
+}
+
+function SecondFactorSettingsSection() {
+  const { enrolled, error, reload } = useSecondFactorStatus();
+  return <section className="card second-factor-settings" aria-labelledby="second-factor-heading">
+    <h2 id="second-factor-heading">Zweiter Faktor</h2>
+    <p className="text-sm text-muted-foreground">Code aus einer Authenticator-App zusätzlich zum Passwort. Ohne Telefon signieren Sie mit einem der zehn Wiederherstellungscodes ein.</p>
+    {enrolled === null && !error && <p role="status" className="mt-4">Status wird geladen …</p>}
+    {error && <div role="alert" className="error-text mt-4">{error}</div>}
+    {enrolled === false && <div className="mt-4"><SecondFactorEnrolment onConfirmed={reload} /></div>}
+    {enrolled === true && <p role="status" className="mt-4">Der zweite Faktor ist eingerichtet. Verlorene Geräte ersetzt eine Administratorin oder ein Administrator über die Benutzerverwaltung.</p>}
+  </section>;
 }

@@ -39,7 +39,7 @@ class AuthContext:
     session_version: int = 0
 
 
-def _get_versioned_session(request: Request) -> tuple[uuid.UUID, uuid.UUID, int] | None:
+def _get_versioned_session(request: Request) -> tuple[uuid.UUID, uuid.UUID, int, bool] | None:
     """Decode once; legacy cookies represent generation zero, never a wildcard."""
     token = request.cookies.get(settings.session_cookie_name)
     if not token:
@@ -47,13 +47,36 @@ def _get_versioned_session(request: Request) -> tuple[uuid.UUID, uuid.UUID, int]
     data = decode_session_token(token)
     if not data:
         return None
-    return uuid.UUID(data["uid"]), uuid.UUID(data["oid"]), data.get("sv", 0)
+    return uuid.UUID(data["uid"]), uuid.UUID(data["oid"]), data.get("sv", 0), data.get("r") == 1
 
 
 def _get_session_identities(request: Request) -> tuple[uuid.UUID, uuid.UUID] | None:
     """Compatibility helper for callers that only need cookie identities."""
     identities = _get_versioned_session(request)
     return identities[:2] if identities is not None else None
+
+
+# Routes a hosted second-factor enrolment session may reach: enrolment,
+# session state and logout (issue #208, owner decision of 5 Nov 2026).
+SECOND_FACTOR_ENROLMENT_PATHS = {
+    "/api/auth/second-factor",
+    "/api/auth/second-factor/enrolment",
+    "/api/auth/second-factor/enrolment/confirm",
+    "/api/auth/session",
+    "/api/auth/logout",
+}
+
+
+def _second_factor_enrolment_required(request: Request) -> bool:
+    """Hosted: a restricted session reaches only enrolment and sign-out."""
+    from app.core.deployment_policy import get_deployment_policy
+
+    if get_deployment_policy().deployment_mode != "hosted":
+        return False
+    identities = _get_versioned_session(request)
+    if identities is None or not identities[3]:
+        return False
+    return request.url.path not in SECOND_FACTOR_ENROLMENT_PATHS
 
 
 async def get_current_user(request: Request) -> AuthContext:
@@ -64,7 +87,12 @@ async def get_current_user(request: Request) -> AuthContext:
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Not authenticated",
         )
-    user_id, organization_id, session_version = identities
+    if _second_factor_enrolment_required(request):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail={"code": "second_factor_enrolment_required"},
+        )
+    user_id, organization_id, session_version = identities[:3]
     async with get_session_factory()() as session:
         async with session.begin():
             role = await validate_session_principal(session, user_id, organization_id, session_version)

@@ -6,13 +6,14 @@ import uuid
 
 from fastapi import APIRouter, Depends, HTTPException, Response
 from pydantic import BaseModel, ConfigDict, StrictBool, StrictStr, field_validator, model_validator
-from sqlalchemy import exists, select
+from sqlalchemy import delete, exists, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.exc import IntegrityError
 
 from app.core.tenant import AuthContext, get_current_user, get_db, require_admin_dep
 from app.core.live_principal import require_live_principal
 from app.core.auth_db import validate_session_principal
+from app.core.deployment_policy import get_deployment_policy
 from app.core.security import hash_password, normalize_email, validate_new_password
 from app.core.rbac import Role
 from app.repositories.user_repo import UserRepository
@@ -20,6 +21,8 @@ from app.repositories.membership_repo import MembershipRepository
 from app.models.user import User
 from app.models.membership import Membership
 from app.models.audit_event import AuditEvent
+from app.models.user_recovery_code import UserRecoveryCode
+from app.models.user_second_factor import UserSecondFactor
 from app.repositories.audit_repo import AuditRepository as CanonicalAuditRepository
 
 from app.repositories.pagination import Page, PageQuery, page_query, page_rows
@@ -258,4 +261,43 @@ async def reset_password(
     user.password_hash = hash_password(body.password)
     await db.flush()
     await audit_user(db, auth, user_id, "RESET_PASSWORD", {"action": "reset_password"})
+    return Response(status_code=204)
+
+
+@router.post("/{user_id}/reset-second-factor", status_code=204, response_class=Response)
+async def reset_second_factor(
+    user_id: uuid.UUID,
+    auth: AuthContext = Depends(require_admin_dep),
+    db: AsyncSession = Depends(user_admin_db),
+):
+    """Reset another user's second factor; the user enrols again at the next
+    login. Audited. In hosted mode the target's sessions end at once, so an
+    account without a factor reaches the application only through the
+    enrolment flow (issue #208, owner decision of 5 Nov 2026)."""
+    user, membership = await locked_target(db, auth, user_id)
+    await db.execute(
+        delete(UserSecondFactor).where(
+            UserSecondFactor.organization_id == auth.organization_id,
+            UserSecondFactor.user_id == user_id,
+        )
+    )
+    await db.execute(
+        delete(UserRecoveryCode).where(
+            UserRecoveryCode.organization_id == auth.organization_id,
+            UserRecoveryCode.user_id == user_id,
+        )
+    )
+    if get_deployment_policy().deployment_mode == "hosted":
+        # The trigger-owned session_version advances for exactly this user
+        # (migration 0188), ending the target's sessions at once.
+        await db.execute(
+            text("SELECT set_config('app.second_factor_reset_user_id', :uid, true)"),
+            {"uid": str(user_id)},
+        )
+        await db.execute(
+            text('UPDATE "user" SET updated_at = now() WHERE id = :uid AND organization_id = :org'),
+            {"uid": str(user_id), "org": str(auth.organization_id)},
+        )
+    await db.flush()
+    await audit_user(db, auth, user_id, "RESET_SECOND_FACTOR", {"action": "reset_second_factor"})
     return Response(status_code=204)

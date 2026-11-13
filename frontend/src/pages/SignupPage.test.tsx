@@ -118,13 +118,13 @@ it.each([403, 422, 503])("clears a refused token but retains it for a retryable 
 });
 it.each(["selfhost", "hosted"])("offers the login signup link only in hosted mode (%s)", async (mode) => {
   vi.mocked(fetch).mockImplementation(async (url) => json(url === "/api/meta" ? { deployment_mode: mode } : { required: false }));
-  render(<AuthCtx.Provider value={{ loading: false, session: null, login: vi.fn(), logout: vi.fn() }}><MemoryRouter initialEntries={["/login"]}><AppRoutes /></MemoryRouter></AuthCtx.Provider>);
+  render(<AuthCtx.Provider value={{ loading: false, session: null, login: vi.fn(), completeSecondFactor: vi.fn(), reloadSession: vi.fn(), logout: vi.fn() }}><MemoryRouter initialEntries={["/login"]}><AppRoutes /></MemoryRouter></AuthCtx.Provider>);
   await screen.findByRole("button", { name: "Anmelden" });
   if (mode === "hosted") expect(screen.getByRole("link", { name: "Konto erstellen" })).toHaveAttribute("href", "/signup");
   else expect(screen.queryByRole("link", { name: "Konto erstellen" })).not.toBeInTheDocument();
 });
 it("routes unauthenticated hosted visitors to the signup form", async () => {
-  render(<AuthCtx.Provider value={{ loading: false, session: null, login: vi.fn(), logout: vi.fn() }}><MemoryRouter initialEntries={["/signup"]}><AppRoutes /></MemoryRouter></AuthCtx.Provider>);
+  render(<AuthCtx.Provider value={{ loading: false, session: null, login: vi.fn(), completeSecondFactor: vi.fn(), reloadSession: vi.fn(), logout: vi.fn() }}><MemoryRouter initialEntries={["/signup"]}><AppRoutes /></MemoryRouter></AuthCtx.Provider>);
   expect(await screen.findByLabelText("Organisation")).toBeInTheDocument();
 });
 

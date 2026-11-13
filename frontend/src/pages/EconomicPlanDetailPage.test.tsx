@@ -7,7 +7,7 @@ import { EconomicPlanDetailPage } from "./EconomicPlanDetailPage";
 vi.mock("../components/FinancialCoverageReview", () => ({ FinancialCoverageReview: () => null }));
 const costs = [{ category_id: "historical-id", category_code: "OLD", label: "Historische Heizung", planned_amount: "7100.10", distribution_key: "MEA", cost_group: "UMLAGEFAEHIG" }];
 const draft = { id: "new", property_id: "p", status: "draft", plan_year: 2027, period_start: "2027-01-01", period_end: "2027-12-31", reserve_contribution_total: "6200.20", lines: [], draft_inputs: { planned_costs: costs, reserve_contribution_total: "6200.20" } };
-const auth = { loading: false, session: { organization_id: "o", user_id: "u", role: "CLERK" }, login: vi.fn(), logout: vi.fn() } as AuthContextValue;
+const auth = { loading: false, session: { organization_id: "o", user_id: "u", role: "CLERK" }, login: vi.fn(), completeSecondFactor: vi.fn(), reloadSession: vi.fn(), logout: vi.fn() } as AuthContextValue;
 function show(role = "CLERK") {
   return render(<AuthCtx.Provider value={{ ...auth, session: { ...auth.session!, role } as AuthContextValue["session"] }}><MemoryRouter initialEntries={["/wirtschaftsplaene/new"]}><Routes><Route path="/wirtschaftsplaene/:planId" element={<EconomicPlanDetailPage />} /></Routes></MemoryRouter></AuthCtx.Provider>);
 }

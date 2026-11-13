@@ -39,7 +39,7 @@ beforeEach(() => {
 
 describe("SetupPage", () => {
   it("routes an unclaimed installation from app load to setup", async () => {
-    render(<AuthCtx.Provider value={{ loading: false, session: null, login: vi.fn(), logout: vi.fn() }}>
+    render(<AuthCtx.Provider value={{ loading: false, session: null, login: vi.fn(), completeSecondFactor: vi.fn(), reloadSession: vi.fn(), logout: vi.fn() }}>
       <MemoryRouter><AppRoutes /></MemoryRouter>
     </AuthCtx.Provider>);
     expect(await screen.findByRole("heading", { name: "Verwalino einrichten" })).toBeInTheDocument();
@@ -48,7 +48,7 @@ describe("SetupPage", () => {
 
   it("routes a closed setup URL to the login page on app load", async () => {
     vi.mocked(fetch).mockResolvedValue(json({ required: false }));
-    render(<AuthCtx.Provider value={{ loading: false, session: null, login: vi.fn(), logout: vi.fn() }}>
+    render(<AuthCtx.Provider value={{ loading: false, session: null, login: vi.fn(), completeSecondFactor: vi.fn(), reloadSession: vi.fn(), logout: vi.fn() }}>
       <MemoryRouter initialEntries={["/setup"]}><AppRoutes /></MemoryRouter>
     </AuthCtx.Provider>);
     expect(await screen.findByRole("button", { name: "Anmelden" })).toBeInTheDocument();
@@ -60,7 +60,7 @@ describe("SetupPage", () => {
       if (url === "/api/setup") return json({ required: true });
       throw new TypeError("Unrelated request unavailable");
     });
-    render(<AuthCtx.Provider value={{ loading: false, session: null, login: vi.fn(), logout: vi.fn() }}>
+    render(<AuthCtx.Provider value={{ loading: false, session: null, login: vi.fn(), completeSecondFactor: vi.fn(), reloadSession: vi.fn(), logout: vi.fn() }}>
       <MemoryRouter initialEntries={[path]}><AppRoutes /></MemoryRouter>
     </AuthCtx.Provider>);
     expect(await screen.findByRole("heading", { name: "Verwalino einrichten" })).toBeInTheDocument();
@@ -76,7 +76,7 @@ describe("SetupPage", () => {
       if (checks > 5) throw new Error("Repeated setup redirects");
       return json({ required: checks <= 2 });
     });
-    render(<AuthCtx.Provider value={{ loading: false, session: null, login: vi.fn(), logout: vi.fn() }}>
+    render(<AuthCtx.Provider value={{ loading: false, session: null, login: vi.fn(), completeSecondFactor: vi.fn(), reloadSession: vi.fn(), logout: vi.fn() }}>
       <MemoryRouter><AppRoutes /></MemoryRouter>
     </AuthCtx.Provider>);
     await fill();

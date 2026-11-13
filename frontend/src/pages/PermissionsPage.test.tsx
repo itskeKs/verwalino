@@ -21,7 +21,7 @@ const inventory = {
 
 function renderPage(role: string) {
   return render(
-    <AuthCtx.Provider value={{ loading: false, session: { user_id: "u", organization_id: "o", role }, login: vi.fn(), logout: vi.fn() } as never}>
+    <AuthCtx.Provider value={{ loading: false, session: { user_id: "u", organization_id: "o", role }, login: vi.fn(), completeSecondFactor: vi.fn(), reloadSession: vi.fn(), logout: vi.fn() } as never}>
       <MemoryRouter>
         <PermissionsOverview />
       </MemoryRouter>

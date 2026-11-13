@@ -20,7 +20,7 @@ function response(url: string, current = item) {
   return json(current);
 }
 function page(path = '/klaerungsfaelle/case-1') {
-  return render(<AuthCtx.Provider value={{ loading: false, session: { user_id: 'actor-1', organization_id: 'org-1', role: 'CLERK' }, login: vi.fn(), logout: vi.fn() }}>
+  return render(<AuthCtx.Provider value={{ loading: false, session: { user_id: 'actor-1', organization_id: 'org-1', role: 'CLERK' }, login: vi.fn(), completeSecondFactor: vi.fn(), reloadSession: vi.fn(), logout: vi.fn() }}>
     <MemoryRouter initialEntries={[path]}><Routes><Route path="/klaerungsfaelle/:caseId" element={<ExceptionDetailPage />} /><Route path="/klaerungsfaelle" element={<ExceptionsPage />} /></Routes></MemoryRouter>
   </AuthCtx.Provider>);
 }

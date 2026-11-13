@@ -9,7 +9,7 @@ import type { Task } from "../api/types";
 
 const task: Task = { id: "task-1", organization_id: "org", created_by: "user", assigned_user_id: "user", property_id: null, unit_id: null, lease_agreement_id: null, title: "Heizung prüfen", note: "<b>Nur Text</b>", due_date: "2026-10-22", completed: false, created_at: "2026-10-21", updated_at: "2026-10-21", property_name: null, unit_number: null, lease_label: null, assigned_user_name: "Anna" };
 function show(role = "CLERK", path = "/aufgaben") {
-  return render(<AuthCtx.Provider value={{ loading: false, session: { user_id: "user", organization_id: "org", role }, login: vi.fn(), logout: vi.fn() }}><MemoryRouter initialEntries={[path]}><TasksPage /></MemoryRouter></AuthCtx.Provider>);
+  return render(<AuthCtx.Provider value={{ loading: false, session: { user_id: "user", organization_id: "org", role }, login: vi.fn(), completeSecondFactor: vi.fn(), reloadSession: vi.fn(), logout: vi.fn() }}><MemoryRouter initialEntries={[path]}><TasksPage /></MemoryRouter></AuthCtx.Provider>);
 }
 beforeEach(() => {
   vi.spyOn(endpoints, "listTasks").mockResolvedValue({ items: [task], next_offset: null });
@@ -133,7 +133,7 @@ it("replaces private rows immediately when link context changes and ignores an o
   vi.mocked(endpoints.listProperties).mockResolvedValue([{ id: "p", name: "Haus" }, { id: "other", name: "Neues Haus" }] as never);
   let finish!: (task: Task) => void;
   vi.mocked(endpoints.updateTask).mockReturnValueOnce(new Promise(resolve => { finish = resolve; }));
-  render(<AuthCtx.Provider value={{ loading: false, session: { user_id: "user", organization_id: "org", role: "CLERK" }, login: vi.fn(), logout: vi.fn() }}><MemoryRouter initialEntries={["/aufgaben?property_id=p"]}><Link to="/aufgaben?property_id=other">Kontext wechseln</Link><TasksPage /></MemoryRouter></AuthCtx.Provider>);
+  render(<AuthCtx.Provider value={{ loading: false, session: { user_id: "user", organization_id: "org", role: "CLERK" }, login: vi.fn(), completeSecondFactor: vi.fn(), reloadSession: vi.fn(), logout: vi.fn() }}><MemoryRouter initialEntries={["/aufgaben?property_id=p"]}><Link to="/aufgaben?property_id=other">Kontext wechseln</Link><TasksPage /></MemoryRouter></AuthCtx.Provider>);
   await screen.findByText(task.title); fireEvent.click(screen.getByRole("button", { name: "Erledigen" }));
   vi.mocked(endpoints.listTasks).mockResolvedValue({ items: [], next_offset: null });
   fireEvent.click(screen.getByRole("link", { name: "Kontext wechseln" }));

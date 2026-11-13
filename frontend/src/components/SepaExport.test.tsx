@@ -24,7 +24,7 @@ beforeEach(() => {
   click = vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => {});
 });
 afterEach(() => { cleanup(); vi.restoreAllMocks(); vi.unstubAllGlobals(); });
-function show(role = "OWNER_ADMIN") { return render(<AuthCtx.Provider value={{ loading: false, session: { user_id: "u", organization_id: "o", role }, login: vi.fn(), logout: vi.fn() }}><SepaExport bankAccounts={bankAccounts} properties={properties} /></AuthCtx.Provider>); }
+function show(role = "OWNER_ADMIN") { return render(<AuthCtx.Provider value={{ loading: false, session: { user_id: "u", organization_id: "o", role }, login: vi.fn(), completeSecondFactor: vi.fn(), reloadSession: vi.fn(), logout: vi.fn() }}><SepaExport bankAccounts={bankAccounts} properties={properties} /></AuthCtx.Provider>); }
 function change(label: string, value: string) { fireEvent.change(screen.getByLabelText(label), { target: { value } }); }
 async function load() { change("SEPA-Bankkonto *", "b1"); fireEvent.click(screen.getByRole("button", { name: "SEPA-Konfiguration laden" })); await screen.findByRole("region", { name: "Mandat SIGNED-1" }); }
 async function ready() {

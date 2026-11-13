@@ -4,7 +4,7 @@ import { useAuth } from "../auth/useAuth";
 import { usePagedList } from "../hooks/usePagedList";
 import { ListSearch, MoreResults } from "../components/ListSearch";
 import { Dialog, DialogContent, DialogTitle, DialogDescription } from "../components/ui/dialog";
-import { createUser, createUserInvitation, listUserInvitations, resetUserPassword, resendUserInvitation, revokeUserInvitation, updateUser } from "../api/endpoints";
+import { createUser, createUserInvitation, listUserInvitations, resetUserPassword, resetUserSecondFactor, resendUserInvitation, revokeUserInvitation, updateUser } from "../api/endpoints";
 import { api, ApiError, getLastErrorRequestId } from "../api/client";
 import { useDeploymentMode } from "../auth/useDeploymentMode";
 import { formatDateTime } from "../lib/format";
@@ -223,7 +223,7 @@ function InvitationSection() {
   </>;
 }
 
-type UserAction = { user: User; mode: "edit" | "reset" };
+type UserAction = { user: User; mode: "edit" | "reset" | "reset-second-factor" };
 
 function UserActionDialog({ action, actorId, onClose, onSuccess }: {
   action: UserAction; actorId: string; onClose: () => void; onSuccess: () => void;
@@ -238,10 +238,11 @@ function UserActionDialog({ action, actorId, onClose, onSuccess }: {
   const [error, setError] = React.useState("");
   const [saving, setSaving] = React.useState(false);
   const { mountedRef, busyRef } = useMutationGuard();
-  const title = mode === "edit" ? "Benutzer bearbeiten" : "Passwort zurücksetzen";
+  const title = mode === "edit" ? "Benutzer bearbeiten" : mode === "reset" ? "Passwort zurücksetzen" : "Zweiten Faktor zurücksetzen";
   const changed = role !== initialRole || active !== user.is_active;
   const deactivating = user.is_active && !active;
   const valid = mode === "reset" ? password.length >= 12 && password.length <= 128
+    : mode === "reset-second-factor" ? true
     : !self && changed && (!deactivating || confirmed);
 
   function close() {
@@ -258,6 +259,7 @@ function UserActionDialog({ action, actorId, onClose, onSuccess }: {
     setError("");
     try {
       if (mode === "reset") await resetUserPassword(user.id, password);
+      else if (mode === "reset-second-factor") await resetUserSecondFactor(user.id);
       else {
         const patch: { role?: UserRole; is_active?: boolean } = {};
         if (role && role !== initialRole) patch.role = role;
@@ -294,12 +296,14 @@ function UserActionDialog({ action, actorId, onClose, onSuccess }: {
             <label><input type="checkbox" checked={active} disabled={self} onChange={event => { setActive(event.target.checked); setConfirmed(false); }} />Aktiv</label>
             {self && <p>Die eigene Admin-Rolle und der eigene Aktivstatus können hier nicht geändert werden. Der Server verhindert Selbstherabstufung und Selbstdeaktivierung (409).</p>}
             {deactivating && !self && <label><input type="checkbox" checked={confirmed} onChange={event => setConfirmed(event.target.checked)} />Deaktivierung bestätigen: {user.email} verliert den Zugang.</label>}
-          </> : <>
+          </> : mode === "reset" ? <>
             <label>Neues Passwort<input type="password" autoComplete="new-password" value={password} minLength={12} maxLength={128} required onChange={event => setPassword(event.target.value)} /></label>
             <p>12 bis 128 Zeichen. Das Passwort wird nicht angezeigt oder automatisch zugestellt.</p>
             {self && <p>Das Zurücksetzen des eigenen Passworts beendet die aktuelle Sitzung. Danach ist eine erneute Anmeldung erforderlich.</p>}
+          </> : <>
+            <p>Der zweite Faktor ({user.display_name || user.email}) wird entfernt. Bei der nächsten Anmeldung richtet die Person den Faktor neu ein; die bisherigen Wiederherstellungscodes verfallen. Im gehosteten Angebot enden die bestehenden Sitzungen sofort. Die Aktion wird im Prüfprotokoll festgehalten.</p>
           </>}
-          <button type="submit" disabled={saving || !valid}>{mode === "edit" ? "Änderungen speichern" : "Passwort zurücksetzen"}</button>
+          <button type="submit" disabled={saving || !valid}>{mode === "edit" ? "Änderungen speichern" : mode === "reset" ? "Passwort zurücksetzen" : "Zweiten Faktor zurücksetzen"}</button>
           <button type="button" disabled={saving} onClick={close}>Abbrechen</button>
         </fieldset>
       </form>
@@ -393,7 +397,8 @@ function UserAdministration({ actorId }: { actorId: string }) {
           <td>{roles.find(option => option.value === user.role)?.label ?? user.role ?? "–"}</td>
           <td>{user.is_active ? "Aktiv" : "Deaktiviert"}</td>
           <td><button type="button" disabled={!!action} onClick={() => setAction({ user, mode: "edit" })}>Benutzer bearbeiten</button>
-            <button type="button" disabled={!!action} onClick={() => setAction({ user, mode: "reset" })}>Passwort zurücksetzen</button></td>
+            <button type="button" disabled={!!action} onClick={() => setAction({ user, mode: "reset" })}>Passwort zurücksetzen</button>
+            <button type="button" disabled={!!action} onClick={() => setAction({ user, mode: "reset-second-factor" })}>Zweiten Faktor zurücksetzen</button></td>
         </tr>)}</tbody>
       </table>
       {page.items.length === 0 && <p>Keine Benutzer gefunden.</p>}

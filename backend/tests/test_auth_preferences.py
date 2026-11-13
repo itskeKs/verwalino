@@ -12,7 +12,7 @@ from tests.test_auth_hardening import temporary_auth_rows
 
 @pytest.mark.anyio
 @pytest.mark.parametrize('role', ['OWNER_ADMIN', 'CLERK', 'READ_ONLY'])
-async def test_each_role_can_persist_only_its_own_theme_and_login_contract_stays_unchanged(role):
+async def test_each_role_can_persist_only_its_own_theme_and_login_contract_is_pinned(role):
     rows = [{'email': f'theme-{uuid.uuid4()}@example.test', 'role': role}]
     with temporary_auth_rows(rows):
         identity = rows[0]
@@ -24,7 +24,11 @@ async def test_each_role_can_persist_only_its_own_theme_and_login_contract_stays
             assert changed.json() == {'design_theme': 'warm'}
             await client.post('/api/auth/logout')
             login = await client.post('/api/auth/login', json={'email': identity['email'], 'password': 'testpass1234'})
-            assert set(login.json()) == {'user_id', 'organization_id', 'role'}
+            assert set(login.json()) == {'user_id', 'organization_id', 'role', 'second_factor_required',
+                                         'second_factor_enrolment_required', 'pending_token'}
+            assert login.json()['second_factor_required'] is False
+            assert login.json()['second_factor_enrolment_required'] is False
+            assert login.json()['pending_token'] is None
             assert (await client.get('/api/auth/preferences')).json() == {'design_theme': 'warm'}
         async with _api_test_client(cookies={settings.session_cookie_name: cookie}) as reloaded:
             assert (await reloaded.get('/api/auth/preferences')).json() == {'design_theme': 'warm'}

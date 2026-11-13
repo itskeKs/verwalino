@@ -207,6 +207,7 @@ def pytest_collection_modifyitems(config, items):
                     "bank_cost_correction.feature": "needs local reviewed intake and its document store",
                     "password_reset.feature": "needs the Mailpit test mailbox",
                     "profile_hints.feature": "needs a fresh organization seeded through the local database fixture",
+                    "second_factor.feature": "the audit-log assertion reads the database directly",
                     "cost_table_browser.feature": "needs an isolated organization seeded through the local database fixture",
                 }.get(Path(template.feature.filename).name)
                 if reason:
@@ -229,6 +230,7 @@ def pytest_bdd_step_error(feature, scenario, step, exception, **_):
 from tests.bdd.steps.common import *  # noqa: E402,F401,F403
 from tests.bdd.steps.organization import *  # noqa: E402,F401,F403
 from tests.bdd.steps.password import *  # noqa: E402,F401,F403
+from tests.bdd.steps.second_factor import *  # noqa: E402,F401,F403
 from tests.bdd.steps.personal_design import *  # noqa: E402,F401,F403
 from tests.bdd.steps.browser_personal_design import *  # noqa: E402,F401,F403
 from tests.bdd.steps.bank_import import *  # noqa: E402,F401,F403

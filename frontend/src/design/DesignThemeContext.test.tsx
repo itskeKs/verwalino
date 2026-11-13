@@ -90,5 +90,5 @@ it("reports a failed preference read honestly and offers retry before saving", a
   expect(screen.getByRole("button", { name: "Design speichern" })).toBeDisabled();
   fireEvent.click(screen.getByRole("button", { name: "Erneut laden" }));
   await screen.findByText("warm", { selector: "output" });
-  expect(load).toHaveBeenCalledTimes(2);
+  expect(load.mock.calls.filter(([url]) => url === "/api/auth/preferences")).toHaveLength(2);
 });

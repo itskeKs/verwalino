@@ -44,7 +44,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const loginFn = useCallback(async (email: string, password: string) => {
     const resp = await endpoints.login({ email, password });
+    setState({ loading: false, session: resp.second_factor_required ? null : resp });
+    return resp;
+  }, []);
+
+  const completeSecondFactorFn = useCallback(async (body: { pending_token: string; code?: string; recovery_code?: string }) => {
+    const resp = await endpoints.completeSecondFactorLogin(body);
     setState({ loading: false, session: resp });
+    return resp;
   }, []);
 
   const logoutFn = useCallback(async () => {
@@ -52,9 +59,18 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setState({ loading: false, session: null });
   }, []);
 
+  const reloadSessionFn = useCallback(async () => {
+    try {
+      const session = await endpoints.getCurrentSession();
+      setState({ loading: false, session });
+    } catch {
+      setState({ loading: false, session: null });
+    }
+  }, []);
+
   return (
     <AuthCtx.Provider
-      value={{ ...state, login: loginFn, logout: logoutFn }}
+      value={{ ...state, login: loginFn, completeSecondFactor: completeSecondFactorFn, reloadSession: reloadSessionFn, logout: logoutFn }}
     >
       {children}
     </AuthCtx.Provider>

@@ -9,7 +9,7 @@ import { LettersPage } from "./LettersPage";
 const template = { id: "t1", name: "Hinweis", subject: "An {{mieter.name}}", body: "<script>alert(1)</script> {{objekt.adresse}}", created_at: "2026-10-21", updated_at: "2026-10-21" };
 const document = { id: "d1", request_id: "r1", template_id: "t1", property_id: "p1", person_id: "person", recipient_name: "Anna Mieter", subject: "An Anna Mieter", as_of: "2026-10-21", created_at: "2026-10-21T12:00:00Z", pdf_url: "/api/letters/documents/d1/pdf" };
 function show(role = "CLERK") {
-  return render(<AuthCtx.Provider value={{ loading: false, session: { user_id: "u", organization_id: "o", role }, login: vi.fn(), logout: vi.fn() }}><LettersPage /></AuthCtx.Provider>);
+  return render(<AuthCtx.Provider value={{ loading: false, session: { user_id: "u", organization_id: "o", role }, login: vi.fn(), completeSecondFactor: vi.fn(), reloadSession: vi.fn(), logout: vi.fn() }}><LettersPage /></AuthCtx.Provider>);
 }
 async function selectInputs() {
   await screen.findByRole("option", { name: "Hinweis" });

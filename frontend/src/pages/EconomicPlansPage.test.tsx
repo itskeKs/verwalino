@@ -12,7 +12,7 @@ const SESSION_A: LoginResponse = { user_id: "user-a", organization_id: "org-a", 
 
 function renderPage(session: LoginResponse = SESSION_A) {
   return render(
-    <AuthCtx.Provider value={{ loading: false, session, login: vi.fn(), logout: vi.fn() }}>
+    <AuthCtx.Provider value={{ loading: false, session, login: vi.fn(), completeSecondFactor: vi.fn(), reloadSession: vi.fn(), logout: vi.fn() }}>
       <MemoryRouter><EconomicPlansPage /></MemoryRouter>
     </AuthCtx.Provider>,
   );

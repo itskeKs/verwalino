@@ -24,7 +24,7 @@ function shell(desktop = false) {
     removeEventListener: (_type: string, listener: (event: MediaQueryListEvent) => void) => listeners.delete(listener),
   };
   vi.stubGlobal("matchMedia", vi.fn(() => media));
-  render(<AuthCtx.Provider value={{ loading: false, session: { user_id: "u", organization_id: "o", role: "OWNER_ADMIN" }, login: vi.fn(), logout: vi.fn() }}>
+  render(<AuthCtx.Provider value={{ loading: false, session: { user_id: "u", organization_id: "o", role: "OWNER_ADMIN" }, login: vi.fn(), completeSecondFactor: vi.fn(), reloadSession: vi.fn(), logout: vi.fn() }}>
     <MemoryRouter><AppShell><button>Page action</button></AppShell></MemoryRouter>
   </AuthCtx.Provider>);
   return (desktop: boolean) => act(() => {
