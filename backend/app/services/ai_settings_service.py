@@ -8,6 +8,8 @@ from fastapi import HTTPException
 from pydantic import SecretStr
 from app.core.config import settings
 from app.core.ai_models import EVALUATED_MODELS, model_price
+from app.models.audit_event import AuditEvent
+from app.repositories.audit_repo import AuditRepository
 from app.repositories.organization_ai_settings_repo import OrganizationAiSettingsRepository
 from app.schemas.ai_settings import AiSettingsOut, AiModelOut, AiModelsOut
 
@@ -78,7 +80,29 @@ def entered_key(value):
     return key
 
 
-async def write_settings(db, organization_id, body):
+def _audit_diff(previous, body, encrypted, organization_id):
+    """What changed for the audit event; never the key, ciphertext, hash or length."""
+    diff = {}
+    had_key = bool(previous and previous.encrypted_api_key)
+    has_key = encrypted is not None
+    if had_key != has_key:
+        diff['api_key'] = 'set' if has_key else 'removed'
+    elif has_key and 'api_key' in body.model_fields_set:
+        try:
+            same_key = _cipher(organization_id).decrypt(previous.encrypted_api_key.encode()).decode() == entered_key(body.api_key)
+        except (InvalidToken, ValueError):
+            same_key = False
+        if not same_key:
+            diff['api_key'] = 'replaced'
+    for switch in ('import_enabled', 'qa_enabled'):
+        before = bool(previous and getattr(previous, switch))
+        after = bool(getattr(body, switch))
+        if before != after:
+            diff[switch] = {'from': before, 'to': after}
+    return diff
+
+
+async def write_settings(db, organization_id, body, auth):
     repo = OrganizationAiSettingsRepository(db, organization_id)
     await repo.lock_budget()
     previous = await repo.get()
@@ -97,7 +121,13 @@ async def write_settings(db, organization_id, body):
     if (body.import_enabled or body.qa_enabled) and (not encrypted or not body.model):
         raise HTTPException(422, 'Bitte hinterlegen Sie zuerst einen API-Schlüssel und wählen Sie ein Modell.')
     values = body.model_dump(exclude={'api_key'})
-    return public_settings(await repo.save({**values, 'encrypted_api_key': encrypted}))
+    diff = _audit_diff(previous, body, encrypted, organization_id)
+    row = await repo.save({**values, 'encrypted_api_key': encrypted})
+    if diff:
+        await AuditRepository(db, organization_id).create(AuditEvent(
+            actor_user_id=auth.user_id, entity_type='organization_ai_settings', entity_id=organization_id,
+            action='ai_settings.updated', payload_diff=diff))
+    return public_settings(row)
 
 
 async def discover_models(db, organization_id, body):

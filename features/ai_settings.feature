@@ -14,3 +14,10 @@ Feature: Organization AI settings
     And a compatible provider lists a synthetic model
     When the administrator selects that provider and enables imports
     Then the selected endpoint and model are saved without returning the key
+
+
+  Scenario: Key and switch changes are audited without the key
+    Given an administrator of "Verwaltung Alpha" is signed in
+    When the administrator saves an AI key and enables declaration import
+    And the administrator removes the saved key and switches the AI features off
+    Then the new audit events record both changes without the key

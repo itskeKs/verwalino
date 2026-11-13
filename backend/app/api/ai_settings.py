@@ -29,8 +29,10 @@ async def read(organization_id: uuid.UUID, db: AsyncSession = Depends(admin_db))
 
 
 @router.put('', response_model=AiSettingsOut)
-async def write(organization_id: uuid.UUID, body: AiSettingsBody, db: AsyncSession = Depends(admin_db)):
-    return await ai_settings_service.write_settings(db, organization_id, body)
+async def write(organization_id: uuid.UUID, body: AiSettingsBody,
+                auth: AuthContext = Depends(get_current_user),
+                db: AsyncSession = Depends(admin_db)):
+    return await ai_settings_service.write_settings(db, organization_id, body, auth)
 
 
 @router.post('/models', response_model=AiModelsOut)
