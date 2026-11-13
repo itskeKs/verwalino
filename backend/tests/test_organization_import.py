@@ -706,3 +706,28 @@ async def test_import_retains_historical_unlinked_levy_and_frozen_allocations(
         payload = {'property_id': prop, 'accounting_scope_id': scope, 'amount': '1200.00', 'due_date': '2026-07-01'}
         assert (await api.post('/api/special-levies', json=payload)).status_code == 422
     await rent_db.rollback()
+
+
+async def test_import_restores_legal_document_assent_records(rent_world, import_target, rent_db, export_store):
+    """Assent records are retained contract evidence: the portable archive moves them
+    unchanged (same user mapping, time, document, version) into the empty target."""
+    from datetime import datetime, timezone
+    assented_at = datetime(2026, 11, 13, 10, 0, tzinfo=timezone.utc)
+    await rent_db.execute(text('''INSERT INTO legal_document_assent(organization_id,user_id,document,version,assented_at)
+        VALUES (:org,:admin,'TERMS','2026-11-13',:at),(:org,:admin,'AV','2026-11-13',:at)'''),
+        {'org': rent_world['org'], 'admin': rent_world['admin'], 'at': assented_at})
+    await rent_db.commit()
+    files = unpack(await exported(rent_world))
+    rows = [json.loads(line) for line in files['entities/legal_document_assent.jsonl'].splitlines()]
+    assert {row['document'] for row in rows} == {'TERMS', 'AV'}
+    async with api_client(import_target) as api:
+        answer = await api.post('/api/organizations/import', files={'file': ('organization.tar.gz', repack(files))})
+    assert answer.status_code == 200, answer.text
+    restored = (await rent_db.execute(text(
+        'SELECT document, version, assented_at, user_id FROM legal_document_assent WHERE organization_id=:org'),
+        {'org': import_target['org']})).mappings().all()
+    assert {(row['document'], row['version']) for row in restored} == {('TERMS', '2026-11-13'), ('AV', '2026-11-13')}
+    assert all(row['assented_at'] == assented_at for row in restored)
+    # The assent keeps pointing at the administrator through the import's identity map.
+    mapped = answer.json()['id_map']['user'][str(rent_world['admin'])]
+    assert {str(row['user_id']) for row in restored} == {mapped}

@@ -149,6 +149,28 @@ def upgrade():
     REVOKE ALL ON FUNCTION public.record_signup_assent() FROM PUBLIC,app_rw,app_worker,app_review;
     CREATE TRIGGER t_record_signup_assent BEFORE DELETE ON public.signup_request
       FOR EACH ROW EXECUTE FUNCTION public.record_signup_assent();
+
+    -- Portable-archive restore (issue #633 round 1): the table stays read-only
+    -- for the runtime role; the import replays archived assent records through
+    -- this narrow definer, which admits only the organization's administrator
+    -- during an import into that same organization.
+    CREATE FUNCTION public.restore_legal_document_assent(id uuid, organization_id uuid, user_id uuid,
+                                                         document text, version text, assented_at timestamptz)
+    RETURNS void LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path=pg_catalog,pg_temp SET row_security=off AS $$
+    BEGIN
+      IF session_user<>'app_rw'
+        OR COALESCE(NULLIF(current_setting('app.current_org_id',true),''),'00000000-0000-0000-0000-000000000000')::uuid
+           IS DISTINCT FROM organization_id
+        OR public.scope_actor_role(organization_id) IS DISTINCT FROM 'OWNER_ADMIN' THEN
+        RAISE EXCEPTION 'Current administrator required' USING ERRCODE='42501';
+      END IF;
+      INSERT INTO public.legal_document_assent(id,organization_id,user_id,document,version,assented_at)
+        VALUES (id,organization_id,user_id,document,version,assented_at);
+    END $$;
+    REVOKE ALL ON FUNCTION public.restore_legal_document_assent(uuid,uuid,uuid,text,text,timestamptz) FROM PUBLIC,app_rw,app_worker,app_review;
+    GRANT EXECUTE ON FUNCTION public.restore_legal_document_assent(uuid,uuid,uuid,text,text,timestamptz) TO app_rw;
+
     """)
     patch_retention_catalog()
     patch_import_admission()
@@ -156,6 +178,7 @@ def upgrade():
 
 def downgrade():
     op.execute("""
+    DROP FUNCTION public.restore_legal_document_assent(uuid,uuid,uuid,text,text,timestamptz);
     LOCK TABLE public.legal_document_assent IN ACCESS EXCLUSIVE MODE;
     DO $$ BEGIN
       IF EXISTS(SELECT 1 FROM public.legal_document_assent) THEN

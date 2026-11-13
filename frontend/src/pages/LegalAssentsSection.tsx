@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { api } from "../api/client";
+import { formatDateTime } from "../lib/format";
 
 type Assent = { document: string; version: string; assented_at: string; admin_name: string };
 
@@ -26,7 +27,7 @@ export function LegalAssentsSection() {
       {assents.map((assent) => <li key={assent.document}>
         <strong>{DOCUMENT_LABELS[assent.document] ?? assent.document}</strong>
         {" — Version "}{assent.version}{", bestätigt am "}
-        {new Date(assent.assented_at).toLocaleString("de-DE", { dateStyle: "medium", timeStyle: "short" })}
+        {formatDateTime(assent.assented_at)}
         {" durch "}{assent.admin_name}
       </li>)}
       {assents.length === 0 && <li>Keine Zustimmungen aufgezeichnet.</li>}

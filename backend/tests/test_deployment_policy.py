@@ -111,8 +111,11 @@ async def test_public_metadata_returns_public_facts_and_the_file_cap_without_cac
     monkeypatch.setattr(settings, 'smtp_host', None)
     response = await client_unauth.get('/api/meta')
     assert response.status_code == 200
-    assert response.json() == {'deployment_mode': mode, 'version': app.version, 'mail_available': False,
-                               'max_upload_bytes': MAX_UPLOAD_BYTES, 'legal_documents': legal_documents.DOCUMENTS}
+    expected = {'deployment_mode': mode, 'version': app.version, 'mail_available': False,
+                'max_upload_bytes': MAX_UPLOAD_BYTES}
+    if mode == 'hosted':
+        expected['legal_documents'] = legal_documents.DOCUMENTS
+    assert response.json() == expected
     assert type(response.json()['max_upload_bytes']) is int
     assert response.headers['cache-control'] == 'no-store'
     assert 'set-cookie' not in response.headers
@@ -125,7 +128,9 @@ async def test_meta_reports_only_usable_mail_configuration(client_unauth, signup
     monkeypatch.setattr(settings, 'public_host', host)
     response = await client_unauth.get('/api/meta')
     assert response.json()['mail_available'] is available
-    assert set(response.json()) == {'deployment_mode', 'version', 'mail_available', 'max_upload_bytes', 'legal_documents'}
+    keys = set(response.json())
+    assert {'deployment_mode', 'version', 'mail_available', 'max_upload_bytes'} <= keys
+    assert ('legal_documents' in keys) is (response.json()['deployment_mode'] == 'hosted')
 
 
 async def test_selfhost_smtp_and_public_host_enable_mail_and_public_metadata(client_unauth, signup_mail, monkeypatch):

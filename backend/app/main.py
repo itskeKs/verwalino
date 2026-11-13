@@ -166,9 +166,13 @@ app.include_router(property_knowledge.router)
 async def meta(response: Response) -> dict[str, str | bool | int | dict]:
     """Public deployment facts only; no settings or organization data."""
     response.headers["Cache-Control"] = "no-store"
-    return {"deployment_mode": get_deployment_policy().deployment_mode, "version": app.version,
-            "mail_available": mail_service.password_reset_available(settings),
-            "max_upload_bytes": MAX_UPLOAD_BYTES, "legal_documents": legal_documents.DOCUMENTS}
+    metadata = {"deployment_mode": get_deployment_policy().deployment_mode, "version": app.version,
+                "mail_available": mail_service.password_reset_available(settings),
+                "max_upload_bytes": MAX_UPLOAD_BYTES}
+    if get_deployment_policy().deployment_mode == "hosted":
+        # Only the hosted sign-up page reads the versioned legal documents.
+        metadata["legal_documents"] = legal_documents.DOCUMENTS
+    return metadata
 
 
 @app.get("/api/health/live")

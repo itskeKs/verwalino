@@ -12,5 +12,6 @@ it('lists both assents with version, time and administrator', async () => {
   await screen.findByText(/Nutzungsbedingungen/);
   expect(screen.getByText(/Auftragsverarbeitungsvertrag/)).toBeVisible();
   expect(screen.getAllByText(/Version 2026-11-13/).length).toBe(2);
+  expect(screen.getAllByText(/13\.11\.2026, 11:00 Uhr/).length).toBe(2);
   expect(screen.getAllByText(/durch Sabine Beispiel/).length).toBe(2);
 });

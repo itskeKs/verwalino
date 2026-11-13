@@ -164,13 +164,18 @@ it("keeps labelled signup fields disabled during one pending request", async () 
   finish(json({ message }));
   expect(await screen.findByRole("status")).toHaveTextContent(message);
 });
-it("refuses to submit without both assents and names the documents", async () => {
+it("refuses to submit without both assents and names the documents at the missing box", async () => {
   open(); await fill();
   await userEvent.click(screen.getByRole("checkbox", { name: /Nutzungsbedingungen/ }));
   await userEvent.click(screen.getByRole("button", { name: "Konto erstellen" }));
-  expect(await screen.findByRole("alert")).toHaveTextContent("Bitte bestätigen Sie die Nutzungsbedingungen und den Auftragsverarbeitungsvertrag.");
+  expect(await screen.findByRole("alert")).toHaveTextContent("Bitte bestätigen Sie die aktuellen Nutzungsbedingungen.");
   expect(vi.mocked(fetch).mock.calls.find(([url]) => url === "/api/signup")).toBeUndefined();
   await userEvent.click(screen.getByRole("checkbox", { name: /Nutzungsbedingungen/ }));
+  await userEvent.click(screen.getByRole("checkbox", { name: /Auftragsverarbeitungsvertrag/ }));
+  await userEvent.click(screen.getByRole("button", { name: "Konto erstellen" }));
+  expect(await screen.findByRole("alert")).toHaveTextContent("Bitte bestätigen Sie den Auftragsverarbeitungsvertrag.");
+  expect(vi.mocked(fetch).mock.calls.find(([url]) => url === "/api/signup")).toBeUndefined();
+  await userEvent.click(screen.getByRole("checkbox", { name: /Auftragsverarbeitungsvertrag/ }));
   await userEvent.click(screen.getByRole("button", { name: "Konto erstellen" }));
   expect(await screen.findByRole("status")).toHaveTextContent(message);
 });

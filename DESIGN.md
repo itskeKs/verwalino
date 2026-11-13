@@ -340,7 +340,8 @@ posted until both are ticked. The resend receipt does not show the boxes.
 Settings shows a read-only “Rechtliches” card to OWNER_ADMIN listing each
 accepted document — “Nutzungsbedingungen”, “Auftragsverarbeitungsvertrag” — with
 version, confirmation time and administrator, e.g. “Nutzungsbedingungen —
-Version 2026-11-13, bestätigt am 13.11.2026 um 12:00 durch Sabine Beispiel”. It
+Version 2026-11-13, bestätigt am 31.10.2026, 14:05 Uhr durch Sabine Beispiel”
+(shared `formatDateTime`, administrators only). It
 loads through `GET /api/organizations/legal-assents` and states “Diese Angaben
 sind nur zur Ansicht.”
 

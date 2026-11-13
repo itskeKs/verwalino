@@ -297,3 +297,52 @@ def household_retained(world):
     assert all(r.status_code == 404 for r in world.data['household_refusals'])
     response = world.look(world.administrator_of('Verwaltung Alpha'), f"/api/units/{world.data['household_unit']}/household")
     assert response.json() == ANNA_HOUSEHOLD
+
+
+@given("a hosted signup's legal document assent belongs to Verwaltung Alpha")
+def alpha_legal_assent(world):
+    import psycopg2
+    from tests.conftest import MIGRATOR_SYNC_URL
+    with psycopg2.connect(MIGRATOR_SYNC_URL) as connection, connection.cursor() as cursor:
+        cursor.execute('SELECT u.id, o.id FROM "user" u JOIN organization o ON o.id=u.organization_id '
+                       "WHERE u.email='admin@alpha.de'")
+        user_id, org_id = cursor.fetchone()
+        cursor.execute("INSERT INTO legal_document_assent(organization_id,user_id,document,version,assented_at)"
+                       " VALUES (%s,%s,'TERMS','2026-11-13','2026-11-13T10:00:00+00'),"
+                       " (%s,%s,'AV','2026-11-13','2026-11-13T10:00:00+00')", (org_id, user_id, org_id, user_id))
+    world.data['alpha_assent_admin'] = 'Admin Alpha'
+
+
+@when("Verwaltung Beta asks for the legal document assents")
+def beta_reads_legal_assents(world):
+    world.data['beta_assents'] = world.look(world.administrator_of('Verwaltung Beta'), '/api/organizations/legal-assents')
+
+
+@then("Verwaltung Beta sees none of Alpha's assents and Alpha keeps its own")
+def beta_sees_no_assents(world):
+    answer = world.data['beta_assents']
+    assert answer.status_code == 200, world.describe_response()
+    assert answer.json() == [], answer.json()
+    own = world.look(world.administrator_of('Verwaltung Alpha'), '/api/organizations/legal-assents')
+    assert own.status_code == 200, world.describe_response()
+    entries = {entry['document']: entry for entry in own.json()}
+    assert set(entries) == {'TERMS', 'AV'}
+    assert all(entry['version'] == '2026-11-13' and entry['admin_name'] == 'Admin Alpha' for entry in entries.values())
+    assert world.data['alpha_assent_admin'] not in answer.text
+
+
+@when("a clerk of Verwaltung Alpha asks for the legal document assents")
+def clerk_reads_legal_assents(world):
+    from tests.bdd.steps.browser_common import signed_in_client
+    clerk = signed_in_client(world, 'clerk@alpha.de', 'testpass1234')
+    try:
+        world.data['clerk_assents'] = world.look(clerk, '/api/organizations/legal-assents')
+    finally:
+        world.run(clerk.aclose())
+
+
+@then("the clerk is refused and the administrator still sees the assents")
+def clerk_refused(world):
+    assert world.data['clerk_assents'].status_code == 403, world.describe_response()
+    own = world.look(world.administrator_of('Verwaltung Alpha'), '/api/organizations/legal-assents')
+    assert own.status_code == 200 and len(own.json()) == 2, own.text

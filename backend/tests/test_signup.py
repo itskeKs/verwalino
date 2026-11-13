@@ -222,6 +222,7 @@ async def test_selfhost_signup_matches_unknown_routes_before_parsing_or_database
 @pytest.mark.asyncio
 async def test_signup_function_has_fixed_security_metadata_and_narrow_grants(app_rw_session):
     for name in ('provision_organization(text,text)', 'request_signup_assented(text,text,text,text,text,text)',
+                 'restore_legal_document_assent(uuid,uuid,uuid,text,text,timestamptz)',
                  'resend_signup(text)', 'signup_confirmation(text)', 'cleanup_signup_requests()'):
         args = {'signature': 'public.' + name}
         row = (await app_rw_session.execute(text('SELECT pg_get_userbyid(proowner),prosecdef,proconfig FROM pg_proc WHERE oid=CAST(:signature AS regprocedure)'), args)).one()
@@ -264,7 +265,10 @@ def test_signup_migration_roundtrip_is_exact_and_refuses_retained_state(run_migr
             connection.execute(text('DELETE FROM signup_request'))
             # 0183 grants app_rw EXECUTE on this revision's address lookup, and
             # the downgrade drops the function with that grant; compare only
-            # the state 0144 itself owns.
+            # the state 0144 itself owns. (0185 keeps 0144's own grant on the
+            # legacy request_signup: 0144's upgrade re-grants it, so head must
+            # carry it for an exact rehearsal; rows it creates hold no assent
+            # versions and the provisioning trigger refuses them.)
             connection.execute(text('REVOKE EXECUTE ON FUNCTION public.signup_email_registered(text) FROM app_rw'))
             before = _chain_snapshot(connection)
             with Operations.context(MigrationContext.configure(connection)):
@@ -733,12 +737,15 @@ async def test_resubmission_preserves_unexpired_owner_credentials_and_names(sign
 async def test_tenant_context_refuses_all_signup_capabilities(app_rw_session, seed_data):
     from app.core.security import hash_password
     password = hash_password(BODY['password'])
-    values = {'email': 'context-guard@example.test', 'org': 'Synthetic', 'name': 'Owner', 'password': password}
-    token = await app_rw_session.scalar(text('SELECT public.request_signup(:email,:org,:name,:password)'), values)
+    values = {'email': 'context-guard@example.test', 'org': 'Synthetic', 'name': 'Owner', 'password': password,
+              'terms': '2026-11-13', 'av': '2026-11-13'}
+    token = await app_rw_session.scalar(
+        text('SELECT public.request_signup_assented(:email,:org,:name,:password,:terms,:av)'), values)
     assert token
     await app_rw_session.execute(text("SELECT set_config('app.current_org_id',:org,true)"),
                                  {'org': str(seed_data['org_a_id'])})
-    assert await app_rw_session.scalar(text('SELECT public.request_signup(:email,:org,:name,:password)'), values) is None
+    assert await app_rw_session.scalar(
+        text('SELECT public.request_signup_assented(:email,:org,:name,:password,:terms,:av)'), values) is None
     assert await app_rw_session.scalar(text('SELECT public.resend_signup(:email)'), values) is None
     assert (await app_rw_session.execute(text('SELECT * FROM public.signup_confirmation(:token)'), {'token': token})).all() == []
     assert await app_rw_session.scalar(text('SELECT public.cleanup_signup_requests()')) == 0
@@ -841,3 +848,15 @@ async def test_organization_export_contains_both_assent_records(signup):
     assert {row['document']: row['version'] for row in rows} == {
         'TERMS': legal_documents.TERMS_VERSION, 'AV': legal_documents.AV_VERTRAG_VERSION}
     assert all(row['assented_at'] and row['organization_id'] for row in rows)
+
+
+@pytest.mark.parametrize('statement', [
+    "INSERT INTO public.legal_document_assent(id,organization_id,user_id,document,version)"
+    " VALUES (gen_random_uuid(),'00000000-0000-0000-0000-000000000000',"
+    "'00000000-0000-0000-0000-000000000000','TERMS','2026-11-13')",
+    "DELETE FROM public.legal_document_assent WHERE document='TERMS'",
+])
+async def test_runtime_role_cannot_write_legal_assents(app_rw_session, statement):
+    with pytest.raises(DBAPIError):
+        async with app_rw_session.begin_nested():
+            await app_rw_session.execute(text(statement))

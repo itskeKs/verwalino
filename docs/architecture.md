@@ -809,9 +809,17 @@ transaction; it recognizes the provisioning delete by an administrator with the
 request's normalized address created in the same transaction. The table is
 tenant-scoped (RLS read-only for the runtime, composite user key, lifecycle
 guard), classified as retained contract-conclusion evidence by the retention
-catalog and excluded from import admission. `GET /api/organizations/legal-assents`
-returns the latest assent per document with time and display name for the
-settings page, and the organization export includes the table. The sub-processor
+catalog and excluded from import admission. `GET /api/organizations/legal-assents` (OWNER_ADMIN only) returns the latest
+assent per document with time, user and display name for the settings page, and
+the organization export includes the table. An import replays archived assent
+records unchanged (same user mapping, time, document, version) through the
+narrow definer `restore_legal_document_assent`, which admits only the importing
+organization's administrator; the runtime role stays read-only on the table.
+0185 also revokes the runtime EXECUTE on the legacy four-argument
+`request_signup`, which nothing calls any more (0144's own upgrade re-grants it,
+so release rehearsals neutralize the revocation like the 0183 grant). The
+`legal_documents` metadata is returned only in hosted mode, the only mode whose
+sign-up page reads it. The sub-processor
 notice (30 days ahead, 21-day objection from receipt, Q14) is the operator command
 `python -m app.operator_notice subprocessor-notice --notice-id … --subprocessor …
 --effective-date … [--dry-run]`: it sends the existing `operator_notice` template
