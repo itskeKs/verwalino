@@ -73,6 +73,27 @@ class SettlementRunRepository(TenantRepository[SettlementRun]):
         ).order_by(SettlementRun.period_start, SettlementRun.period_end, SettlementRun.created_at.desc()))
         return (await self._session.execute(stmt)).scalars().all()
 
+    async def finalized_persons_key_runs(self, property_id: uuid.UUID) -> Sequence[SettlementRun]:
+        """Frozen BK runs of the property whose snapshot holds a PERSONENZAHL position.
+
+        Their positions lock the household history the person-day shares were
+        computed from; a correction run supersedes and releases the lock. A
+        statement spanning two property years keeps the first year's positions
+        at the top level and every year's under inputs.property_periods.
+        """
+        persons_key = [{'tenant_distribution_key': 'PERSONENZAHL'}]
+        stmt = (self._base_query().where(
+            SettlementRun.property_id == property_id,
+            SettlementRun.run_type == "BK_MIETER", SettlementRun.status == "finalized",
+            SettlementRun.superseded_by_id.is_(None),
+            or_(
+                SettlementRun.snapshot_payload['inputs']['cost_positions'].contains(persons_key),
+                SettlementRun.snapshot_payload['inputs']['property_periods'].contains(
+                    [{'inputs': {'cost_positions': persons_key}}]),
+            ),
+        ).order_by(SettlementRun.period_start))
+        return (await self._session.execute(stmt)).scalars().all()
+
     async def delete(self, entity: SettlementRun) -> None:
         """Delete a draft run. Trigger blocks finalized runs."""
         await self._session.delete(entity)

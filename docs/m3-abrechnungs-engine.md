@@ -512,7 +512,22 @@ No household names are stored. `GET /api/units/{id}/household` returns the rows;
 `PUT` atomically replaces the entire list, including deletion with `[]`.
 Duplicate dates within a stream and invalid counts are refused before replacement.
 The table has forced organization RLS and a composite organization/unit FK;
-writes require the unit's master-data preparation authority.
+writes require the unit's master-data preparation authority. Once a finalized,
+non-superseded `BK_MIETER` run of the property holds a `PERSONENZAHL` position,
+`PUT` refuses with 409 `household_finalized` (a German message naming the
+statement period) whenever a day would carry a different person count inside
+the locked window. The locked window is the union of the service periods of
+the run's `PERSONENZAHL` positions — the engine counts person-days over each
+cost's service period, not the statement period — read from the frozen
+snapshot, including the per-year `inputs.property_periods` parts of a
+statement spanning two property years (`settlement_service._load_engine_input`
+keeps only the first year's positions at the snapshot's top level). The guard
+locks every unit of the property, including units outside a subset allocation:
+stricter than needed, never wrong. Identical re-saves and rows from a date
+after every locked window stay editable; the correction run that supersedes the
+finalized run releases the lock. The check runs under the input lock
+finalization takes, in one repository query over the frozen snapshots; no new
+column.
 
 For each cost's inclusive service period, integrate persons × days separately
 for every tenant/vacancy cover. The denominator is the sum of these person-days

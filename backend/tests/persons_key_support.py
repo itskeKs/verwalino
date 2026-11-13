@@ -31,8 +31,8 @@ async def persons_property(api, *, save_households=True, bernd_from='2026-03-01'
     return data
 
 
-async def persons_run(api, data, *, bernd=False):
-    payload = statement(data, '2026-01-01', '2026-12-31')
+async def persons_run(api, data, *, bernd=False, period_start='2026-01-01', period_end='2026-12-31'):
+    payload = statement(data, period_start, period_end)
     if bernd:
         payload['lease_agreement_id'] = data['bernd']['id']
     run = await create(api, '/api/settlements', {**payload,
