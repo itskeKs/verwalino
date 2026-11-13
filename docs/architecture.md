@@ -851,8 +851,9 @@ fail-closed with the nil-organization context, so the call clears
 0187 grants `app_worker` EXECUTE on `cleanup_signup_requests()` only, stating
 the authorization independent of role inheritance. The call carries the same
 bounds as the web path (`lock_timeout` 100 ms, `statement_timeout` 1 s); a
-failure logs one bounded line without addresses, does not advance the cadence
-(so the next cycle retries) and never stops the import loop. Eligibility is
+failure logs one bounded line without addresses, advances the cadence too (so a
+persistent failure logs at most once per interval) and never stops the import
+loop. Eligibility is
 unchanged (24-hour token validity plus seven days): token validity is never
 reported as physical erasure and no deletion on a specific day is promised, but
 a quiet hosted instance no longer retains never-confirmed addresses

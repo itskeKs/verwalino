@@ -268,8 +268,8 @@ Independently of that traffic, the always-deployed hosted declaration worker
 seconds per worker process, only in hosted mode: one bounded call
 (`lock_timeout` 100 ms, `statement_timeout` 1 s, at most 100 rows with
 `FOR UPDATE SKIP LOCKED`) after each import cycle. A failure logs one bounded
-line without addresses, does not delay import work and is retried on the next
-cycle. Eligibility is unchanged: a request becomes eligible after its 24-hour token
+line without addresses, does not delay import work and is retried after the
+same interval. Eligibility is unchanged: a request becomes eligible after its 24-hour token
 validity plus seven more days. Token validity is never reported as physical
 erasure and no deletion on a specific day is promised; the guarantee is that a
 quiet hosted instance no longer retains never-confirmed addresses indefinitely.
@@ -280,15 +280,16 @@ The hosted privacy notice promises concrete retention limits. The product
 enforces the sign-up row itself; the remaining rows are operations duties on
 the host:
 
-| Data | Limit | Enforced by | Where to read the effective value | Checked by |
-| --- | --- | --- | --- | --- |
-| Never-confirmed sign-up request | automatic deletion | Product: bounded cleanup in the hosted declaration worker (see above), at most 100 rows per call, 24 h token validity plus 7 days | worker log (`result=SIGNUP_CLEANUP removed=…`), unit tests | product tests in CI |
-| Server and container logs | 14 days from creation | Operations: log rotation **by age** on the host; the compose `local` log driver alone is size-bound only (`max-size 10m`, `max-file 3`) and does not enforce this | host rotation configuration (e.g. `logrotate` for `/srv/verwalino/logs` and the Docker data-root json-files) | owner, at every hosted release |
-| Error reports in the tracker | 30 days from creation | Operations: event retention configured in the tracker project behind `HV_ERROR_TRACKING_DSN`; the product sends no personal data (scrubber) | tracker project retention setting | owner, at every hosted release |
-| Closed support requests | 90 days after closure | Operations: the support mailbox policy; the product stores no support requests | support mailbox retention setting | owner, at every hosted release |
+| Data | Limit | Enforced by | Where to read the effective value | Checked by | Last checked |
+| --- | --- | --- | --- | --- | --- |
+| Never-confirmed sign-up request | automatic deletion | Product: bounded cleanup in the hosted declaration worker (see above), at most 100 rows per call, 24 h token validity plus 7 days | worker log (`result=SIGNUP_CLEANUP removed=…`), unit tests | product tests in CI | each CI run |
+| Server and container logs | 14 days from creation | Operations: today the compose `local` log driver is size-bound only (`max-size 10m`, `max-file 3`, `infra/docker-compose.yml:5-9`), so age is not enforced and quiet-instance logs outlive 14 days. Hosted requirement: run the hosted services with the `journald` log driver and set `MaxRetentionSec=14day` in a drop-in under `/etc/systemd/journald.conf.d/`, so journald vacuuming enforces the age (restart `systemd-journald` to apply; `docker logs` is then unavailable for those services, read with `journalctl CONTAINER_NAME=…`) | `systemd-analyze cat-config systemd/journald.conf` shows the configured value; `journalctl --vacuum-time=14day` deletes older entries at once | owner, at every hosted release | not yet |
+| Error reports in the tracker | 30 days from creation | Operations: event retention configured in the tracker project behind `HV_ERROR_TRACKING_DSN`; the product sends no personal data (scrubber) | tracker project retention setting | owner, at every hosted release | not yet |
+| Closed support requests | 90 days after closure | Operations: the support mailbox policy; the product stores no support requests | support mailbox retention setting | owner, at every hosted release | not yet |
 
-Log rotation by age is a hosted requirement: without a host-side rule the
-size-bound compose log driver keeps quiet-instance logs beyond 14 days.
+Nothing in this repository configures the journald driver or rotates logs by
+age: the journald drop-in is a host-side setup step. Until the log row above is
+checked on the host, the 14-day statement must not be published.
 
 ## Login lockout and proxy trust
 
