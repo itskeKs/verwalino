@@ -773,6 +773,15 @@ administrators can save the form and receive an inline confirmation. Other membe
 can read the fees and switch state. New individual notices and batch previews use
 the saved organization policy. The batch form uses the same responsive grid.
 
+From 60 days before the stored statutory base-rate table ends, the card shows
+every member the notice „Der amtliche Basiszinssatz ist nur bis 31.12.2026
+hinterlegt. Mahnungen mit Verzugszinsen sind danach erst mit dem nächsten Update
+möglich.“ until a release extends the table; it wraps at 360 px.
+
+| Base-rate coverage notice | 1280 px | 360 px |
+|---|---|---|
+| With stored table ending 31.12.2026 | [View](docs/assets/design/dunning-settings/base-rate-notice-1280.png) | [View](docs/assets/design/dunning-settings/base-rate-notice-360.png) |
+
 When the calculation requires an accounting scope and none was selected,
 the existing error above **Neue Mahnung anlegen** says „Wählen Sie einen
 eindeutigen Abrechnungskreis und prüfen Sie noch nicht zugeordnete Daten,

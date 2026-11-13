@@ -281,5 +281,6 @@ def reset_dunning_settings(world):
     yield
     if "fee_level_1" in previous:
         world.actor = world.administrator_of("Verwaltung Alpha")
-        response = world.act("PUT", "/api/dunning/settings", json=previous)
+        body = {key: value for key, value in previous.items() if key != "base_rate_covered_until"}
+        response = world.act("PUT", "/api/dunning/settings", json=body)
         assert response.status_code == 200, world.describe_response()

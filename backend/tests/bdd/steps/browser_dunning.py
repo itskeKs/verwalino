@@ -477,13 +477,25 @@ def april_unit_use(world, usage):
 def _set_interest(world):
     path = "/api/dunning/settings"
     settings = world.act("GET", path).json()
-    response = world.act("PUT", path, json={**settings, "default_interest_enabled": True})
+    body = {key: value for key, value in settings.items() if key != "base_rate_covered_until"}
+    response = world.act("PUT", path, json={**body, "default_interest_enabled": True})
     assert response.status_code == 200, world.describe_response()
 
 
 @given("the organization enables automatic dunning interest")
 def enable_automatic_interest(world, reset_dunning_settings):
     _set_interest(world)
+
+
+@when("the administrator opens the dunning settings")
+def open_dunning_settings(world):
+    world.act("GET", "/api/dunning/settings")
+
+
+@then("the settings report the base rate is covered until the end of 2026")
+def base_rate_coverage(world):
+    assert world.response.status_code == 200, world.describe_response()
+    assert world.response.json()["base_rate_covered_until"] == "2026-12-31"
 
 
 @when("the administrator saves reminder fees of 0, 3 and 4 EUR and enables interest")

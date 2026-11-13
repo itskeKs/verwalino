@@ -1,5 +1,7 @@
 """Load or atomically replace one organization's dunning policy."""
-from sqlalchemy import select
+from datetime import date
+
+from sqlalchemy import func, select
 from sqlalchemy.dialects.postgresql import insert
 
 from app.engine.dunning import DEFAULT_FEES
@@ -27,6 +29,15 @@ class DunningSettingsRepository:
         return (await self._session.scalars(
             stmt.returning(DunningSettings), execution_options={"populate_existing": True},
         )).one()
+
+    async def base_rate_covered_until(self) -> date | None:
+        """End of the last stored half-year of the statutory base-rate table."""
+        latest = await self._session.scalar(select(func.max(BaseInterestRate.valid_from)))
+        if latest is None:
+            return None
+        if latest.month == 1:
+            return date(latest.year, 6, 30)
+        return date(latest.year, 12, 31)
 
     async def rates(self):
         return tuple((row.valid_from, row.rate_percent) for row in await self._session.scalars(

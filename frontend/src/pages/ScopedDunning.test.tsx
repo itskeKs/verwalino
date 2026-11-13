@@ -19,7 +19,7 @@ const notice = { id: "notice", accounting_scope_id: "scope", tenant_profile_id: 
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); vi.restoreAllMocks(); });
 beforeEach(() => {
   vi.resetAllMocks();
-  vi.mocked(endpoints.getDunningSettings).mockResolvedValue({ fee_level_1: "0.00", fee_level_2: "2.50", fee_level_3: "2.50", default_interest_enabled: false });
+  vi.mocked(endpoints.getDunningSettings).mockResolvedValue({ fee_level_1: "0.00", fee_level_2: "2.50", fee_level_3: "2.50", default_interest_enabled: false, base_rate_covered_until: "2026-12-31" });
   vi.mocked(endpoints.listProperties).mockResolvedValue([{ id: "property", name: "Sonnenhof", management_type: "WEG" }] as never);
   const resolved = (name: "listLeases" | "listTenantProfiles" | "listOwnerProfiles" | "listPersons" | "listUnits" | "listEconomicPlans" | "listDunningNotices", value: unknown) => vi.mocked(endpoints[name]).mockResolvedValue(value as never);
   resolved("listLeases", [{ id: "lease", unit_id: "unit", tenant_profile_id: "tenant", valid_from: "2025-01-01" }, { id: "other", unit_id: "unit", tenant_profile_id: "tenant", valid_from: "2025-02-01" }]);

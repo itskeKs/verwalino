@@ -261,7 +261,7 @@ async def test_batch_policy_change_requires_refresh_and_same_policy_is_saved(iso
     body = batch_request()
     old = await batch_preview(client, body)
     path = "/api/dunning/settings"
-    settings = (await client.get(path)).json()
+    settings = _mutable_settings((await client.get(path)).json())
     answer = await client.put(path, json={**settings, "fee_level_1": "3.00", "default_interest_enabled": True})
     assert answer.status_code == 200, answer.text
 
@@ -1752,13 +1752,28 @@ DUNNING_DEFAULT_SETTINGS = {
     "default_interest_enabled": False,
 }
 
+# Read-only on the GET response; the PUT body forbids it (extra=forbid).
+BASE_RATE_COVERED_UNTIL = "base_rate_covered_until"
+
+
+def _mutable_settings(response_json):
+    return {key: value for key, value in response_json.items()
+            if key != BASE_RATE_COVERED_UNTIL}
+
+
+@pytest.mark.asyncio
+async def test_dunning_settings_report_base_rate_coverage(client_a_admin):
+    response = await client_a_admin.get("/api/dunning/settings")
+    assert response.status_code == 200, response.text
+    assert response.json()[BASE_RATE_COVERED_UNTIL] == "2026-12-31"
+
 
 @pytest.mark.asyncio
 async def test_organization_dunning_settings_require_a_live_admin(
     client_a_admin, client_a_clerk, client_a_readonly, client_b_admin, seed_data,
 ):
     path = "/api/dunning/settings"
-    assert (await client_a_readonly.get(path)).json() == DUNNING_DEFAULT_SETTINGS
+    assert _mutable_settings((await client_a_readonly.get(path)).json()) == DUNNING_DEFAULT_SETTINGS
     updated = {**DUNNING_DEFAULT_SETTINGS, "fee_level_2": "3.00",
                "fee_level_3": "4.00", "default_interest_enabled": True}
     for client in (client_a_clerk, client_a_readonly):
@@ -1768,8 +1783,8 @@ async def test_organization_dunning_settings_require_a_live_admin(
     try:
         response = await client_a_admin.put(path, json=updated)
         assert response.status_code == 200, response.text
-        assert (await client_a_readonly.get(path)).json() == updated
-        assert (await client_b_admin.get(path)).json() == DUNNING_DEFAULT_SETTINGS
+        assert _mutable_settings((await client_a_readonly.get(path)).json()) == updated
+        assert _mutable_settings((await client_b_admin.get(path)).json()) == DUNNING_DEFAULT_SETTINGS
     finally:
         await client_a_admin.put(path, json=DUNNING_DEFAULT_SETTINGS)
 
@@ -1778,7 +1793,7 @@ async def test_organization_dunning_settings_require_a_live_admin(
 @pytest_asyncio.fixture
 async def enabled_dunning_interest(client_a_admin):
     path = "/api/dunning/settings"
-    original = (await client_a_admin.get(path)).json()
+    original = _mutable_settings((await client_a_admin.get(path)).json())
     response = await client_a_admin.put(path, json={**original, "default_interest_enabled": True})
     assert response.status_code == 200, response.text
     try:

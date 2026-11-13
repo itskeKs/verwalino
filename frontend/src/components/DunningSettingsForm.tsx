@@ -5,6 +5,23 @@ import type { DunningSettings } from "../api/types";
 
 const FEES = ["fee_level_1", "fee_level_2", "fee_level_3"] as const;
 
+// Documented constant (DESIGN.md): show the notice from this many days before
+// the stored statutory base-rate table ends until a release extends it.
+const BASE_RATE_NOTICE_DAYS = 60;
+
+function daysUntil(date: string): number {
+  const [year, month, day] = date.split("-").map(Number);
+  const target = Date.UTC(year, month - 1, day);
+  const now = new Date();
+  const today = Date.UTC(now.getFullYear(), now.getMonth(), now.getDate());
+  return Math.round((target - today) / 86_400_000);
+}
+
+function formatGermanDate(date: string): string {
+  const [year, month, day] = date.split("-");
+  return `${day}.${month}.${year}`;
+}
+
 export function DunningSettingsForm({ editable }: { editable: boolean }) {
   const [settings, setSettings] = useState<DunningSettings | null>(null);
   const [error, setError] = useState("");
@@ -28,9 +45,10 @@ export function DunningSettingsForm({ editable }: { editable: boolean }) {
 
     setError("");
     setMessage("");
-    const body = { ...settings };
+    const body = { default_interest_enabled: settings.default_interest_enabled } as
+      Pick<DunningSettings, "fee_level_1" | "fee_level_2" | "fee_level_3" | "default_interest_enabled">;
     for (const fee of FEES) {
-      const value = body[fee].trim().replace(",", ".");
+      const value = settings[fee].trim().replace(",", ".");
       if (!/^\d{1,12}(?:\.\d{1,2})?$/.test(value)) {
         setError("Bitte für jede Mahnstufe einen Betrag ab 0,00 € mit höchstens zwei Nachkommastellen eingeben.");
         return;
@@ -40,7 +58,10 @@ export function DunningSettingsForm({ editable }: { editable: boolean }) {
 
     setSaving(true);
     try {
-      setSettings(await saveDunningSettings(body));
+      setSettings({
+        ...(await saveDunningSettings(body)),
+        base_rate_covered_until: settings.base_rate_covered_until,
+      });
       setMessage("Mahneinstellungen gespeichert.");
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : String(reason));
@@ -55,6 +76,13 @@ export function DunningSettingsForm({ editable }: { editable: boolean }) {
       {!settings && !error && <p role="status">Mahneinstellungen werden geladen…</p>}
       {settings && (
         <form onSubmit={save} className="mt-4">
+          {settings.base_rate_covered_until !== null
+            && daysUntil(settings.base_rate_covered_until) <= BASE_RATE_NOTICE_DAYS && (
+            <p className="muted">
+              Der amtliche Basiszinssatz ist nur bis {formatGermanDate(settings.base_rate_covered_until)}{" "}
+              hinterlegt. Mahnungen mit Verzugszinsen sind danach erst mit dem nächsten Update möglich.
+            </p>
+          )}
           <fieldset disabled={saving} className="form-grid min-w-0 border-0 p-0">
             {FEES.map((fee, index) => (
               <label key={fee}>

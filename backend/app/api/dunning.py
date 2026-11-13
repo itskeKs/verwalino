@@ -46,6 +46,12 @@ class DunningSettingsBody(BaseModel):
     default_interest_enabled: bool
 
 
+class DunningSettingsOut(DunningSettingsBody):
+    """GET response: the saved policy plus the read-only base-rate table horizon."""
+
+    base_rate_covered_until: date | None
+
+
 class DunningCreateTenant(BaseModel):
     model_config = {"extra": "forbid"}
 
@@ -232,12 +238,20 @@ async def list_dunning_notices(
     return [_to_out(n) for n in items]
 
 
-@router.get("/settings", response_model=DunningSettingsBody)
+@router.get("/settings", response_model=DunningSettingsOut)
 async def dunning_settings(
     auth: AuthContext = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    return await DunningSettingsRepository(db, auth.organization_id).get()
+    repo = DunningSettingsRepository(db, auth.organization_id)
+    settings = await repo.get()
+    return DunningSettingsOut(
+        fee_level_1=settings.fee_level_1,
+        fee_level_2=settings.fee_level_2,
+        fee_level_3=settings.fee_level_3,
+        default_interest_enabled=settings.default_interest_enabled,
+        base_rate_covered_until=await repo.base_rate_covered_until(),
+    )
 
 
 @router.put("/settings", response_model=DunningSettingsBody)
