@@ -1039,29 +1039,38 @@ async def test_worker_signup_cleanup_failure_logs_bounded_line_and_recovers_next
 ) -> None:
     monkeypatch.setattr(settings, 'deployment_mode', 'hosted')
     _insert_expired_signup_request('cleanup-locked@example.test')
+    clock_now = datetime.now(timezone.utc)
+
+    def clock() -> datetime:
+        return clock_now
+
     with closing(psycopg2.connect(MIGRATOR_SYNC_URL)) as connection:
         with connection.cursor() as cursor:
             cursor.execute('LOCK TABLE public.signup_request IN ACCESS EXCLUSIVE MODE')
             cycles = 0
 
-            async def stop_after_two_cycles(_seconds: float) -> None:
-                nonlocal cycles
+            async def advance_and_stop_after_three_cycles(_seconds: float) -> None:
+                nonlocal clock_now, cycles
+                clock_now += timedelta(seconds=45)
                 cycles += 1
-                if cycles >= 2:
+                if cycles >= 3:
                     raise asyncio.CancelledError()
 
-            worker = DeclarationImportWorker(sleep=stop_after_two_cycles)
+            worker = DeclarationImportWorker(sleep=advance_and_stop_after_three_cycles, clock=clock)
             with caplog.at_level(logging.INFO, logger='app.workers.declaration_import'):
                 with pytest.raises(asyncio.CancelledError):
                     await worker.run_forever()
             failures = [record for record in caplog.records
                         if 'result=SIGNUP_CLEANUP_FAILED' in record.getMessage()]
+            # The first cycle fails; the second cycle is inside the cadence
+            # interval and must not re-attempt; the third cycle retries after
+            # the interval and fails again.
             assert len(failures) == 2
             for record in failures:
                 assert 'cleanup-locked@example.test' not in record.getMessage()
                 assert 'error_type=' in record.getMessage()
             idles = [record for record in caplog.records if 'result=IDLE' in record.getMessage()]
-            assert len(idles) == 2
+            assert len(idles) == 3
     assert _signup_request_count('cleanup-locked@example.test') == 1
     await DeclarationImportWorker()._cleanup_signup_requests()
     assert _signup_request_count('cleanup-locked@example.test') == 0

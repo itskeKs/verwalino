@@ -415,8 +415,8 @@ class DeclarationImportWorker:
     async def _cleanup_signup_requests(self) -> None:
         """Delete never-confirmed hosted sign-ups at a bounded cadence (#634).
 
-        A failure leaves the cadence untouched so the next cycle retries and
-        the loop keeps claiming import work.
+        The cadence covers failed attempts too, so a persistent failure logs at
+        most one bounded line per interval; the loop keeps claiming import work.
         """
         if not get_deployment_policy().self_service_signup_enabled:
             return
@@ -439,9 +439,9 @@ class DeclarationImportWorker:
                 "declaration worker result=SIGNUP_CLEANUP_FAILED error_type=%s location=%s",
                 error_type, location,
             )
-            return
+        else:
+            logger.info("declaration worker result=SIGNUP_CLEANUP removed=%s", removed)
         self._last_signup_cleanup = now
-        logger.info("declaration worker result=SIGNUP_CLEANUP removed=%s", removed)
 
     async def run_forever(self) -> None:
         delay = float(self._settings.declaration_worker_poll_seconds)
