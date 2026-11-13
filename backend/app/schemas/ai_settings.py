@@ -1,5 +1,4 @@
 """Write-only credential inputs and public AI settings."""
-import uuid
 from datetime import datetime
 from decimal import Decimal
 from typing import Literal
@@ -27,11 +26,7 @@ class AiModelsBody(BaseModel):
 
 
 class AiConfirmationOut(BaseModel):
-    confirmed_by_user_id: uuid.UUID
     confirmed_by_name: str
-    provider: Literal['openai', 'openai_compatible', 'anthropic']
-    base_url: str | None
-    text_version: str
     confirmed_at: datetime
 
 

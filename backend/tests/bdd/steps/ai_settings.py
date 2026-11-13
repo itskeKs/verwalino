@@ -52,9 +52,7 @@ def read_ai(world):
     assert body['request_timeout_seconds'] is None
     assert body['confirmation_required'] is False
     confirmation = body['confirmation']
-    assert confirmation['provider'] == 'openai'
-    assert confirmation['base_url'] is None
-    assert confirmation['text_version'] == '1'
+    assert set(confirmation) == {'confirmed_by_name', 'confirmed_at'}
     assert confirmation['confirmed_by_name']
     assert confirmation['confirmed_at']
 
@@ -116,7 +114,7 @@ def read_compatible_ai(world):
     assert response.json()['import_enabled'] is True
     assert response.json()['key_set'] is True
     assert response.json()['confirmation_required'] is False
-    assert response.json()['confirmation']['base_url'] == 'https://compatible.example/v1'
+    assert set(response.json()['confirmation']) == {'confirmed_by_name', 'confirmed_at'}
     assert 'synthetic-compatible-key' not in response.text
 
 
@@ -170,8 +168,7 @@ def read_confirmation(world):
     assert body['key_set'] is True
     assert body['confirmation_required'] is False
     confirmation = body['confirmation']
-    assert confirmation['provider'] == 'openai'
-    assert confirmation['text_version'] == '1'
+    assert set(confirmation) == {'confirmed_by_name', 'confirmed_at'}
     assert confirmation['confirmed_by_name']
     assert confirmation['confirmed_at']
 

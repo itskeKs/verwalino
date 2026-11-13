@@ -96,9 +96,7 @@ def public_settings(row, confirmation=None) -> AiSettingsOut:
     active = None
     if row and row.encrypted_api_key and confirmation:
         record, confirmer_name = confirmation
-        active = AiConfirmationOut(confirmed_by_user_id=record.confirmed_by_user_id,
-            confirmed_by_name=confirmer_name, provider=record.provider, base_url=record.base_url,
-            text_version=record.text_version, confirmed_at=record.confirmed_at)
+        active = AiConfirmationOut(confirmed_by_name=confirmer_name, confirmed_at=record.confirmed_at)
     return AiSettingsOut(request_timeout_seconds=row.request_timeout_seconds if row else None, provider=row.provider if row else 'openai', base_url=row.base_url if row else None, key_set=bool(row and row.encrypted_api_key),
         model=row.model if row else None, import_enabled=bool(row and row.import_enabled),
         qa_enabled=bool(row and row.qa_enabled), monthly_limit_usd=row.monthly_limit_usd if row else None,
@@ -162,9 +160,11 @@ async def write_settings(db, organization_id, body, auth):
     destination_changed = previous and (previous.provider, previous.base_url) != (body.provider, body.base_url)
     encrypted = previous.encrypted_api_key if previous and not destination_changed else None
     entered_new_key = False
+    stores_key = False
     if 'api_key' in body.model_fields_set:
         if body.api_key is not None:
             entered = entered_key(body.api_key)
+            stores_key = True
             if encrypted is not None:
                 try:
                     entered_new_key = _cipher(organization_id).decrypt(encrypted.encode()).decode() != entered
@@ -180,7 +180,7 @@ async def write_settings(db, organization_id, body, auth):
     record_confirmation = False
     if encrypted is not None:
         existing_confirmation = await matching_confirmation(db, organization_id, body.provider, body.base_url)
-        if entered_new_key and not body.confirmation:
+        if stores_key and not body.confirmation:
             raise HTTPException(422, {'code': 'ORGANIZATION_AI_CONFIRMATION_REQUIRED', 'message': CONFIRMATION_REQUIRED_MESSAGE})
         # Confirming an already confirmed, unchanged key records nothing; a key
         # kept without any confirmation (stored before this change) can be

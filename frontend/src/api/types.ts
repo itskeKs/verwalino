@@ -1933,11 +1933,7 @@ export interface UnitHouseholdRow {
   is_vacancy: boolean;
 }
 export interface OrganizationAiConfirmation {
-  confirmed_by_user_id: string;
   confirmed_by_name: string;
-  provider: 'openai' | 'openai_compatible' | 'anthropic';
-  base_url: string | null;
-  text_version: string;
   confirmed_at: string;
 }
 export interface OrganizationAiSettings {

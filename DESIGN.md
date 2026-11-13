@@ -2186,12 +2186,12 @@ the administrator's organization card after this change.
 
 | Organization AI settings | Desktop | 360 px |
 |---|---|---|
-| Before | [personal settings](docs/assets/design/ai-settings/settings-before-1280.png) | [personal settings](docs/assets/design/ai-settings/settings-before-360.png) |
-| Klar | [AI card](docs/assets/design/ai-settings/settings-after-klar-1280.png) | [AI card](docs/assets/design/ai-settings/settings-after-klar-360.png) |
-| Warm | [AI card](docs/assets/design/ai-settings/settings-after-warm-1280.png) | [AI card](docs/assets/design/ai-settings/settings-after-warm-360.png) |
+| Before (key entered, no confirmation step) | [view](docs/assets/design/ai-settings/ai-confirmation-before-1280.png) | [view](docs/assets/design/ai-settings/ai-confirmation-before-360.png) |
 | Provider confirmation checkbox | [view](docs/assets/design/ai-settings/ai-confirmation-checkbox-1280.png) | [view](docs/assets/design/ai-settings/ai-confirmation-checkbox-360.png) |
 | Confirmation refused | [view](docs/assets/design/ai-settings/ai-confirmation-refused-1280.png) | [view](docs/assets/design/ai-settings/ai-confirmation-refused-360.png) |
 | Confirmed state | [view](docs/assets/design/ai-settings/ai-confirmation-confirmed-1280.png) | [view](docs/assets/design/ai-settings/ai-confirmation-confirmed-360.png) |
+| Klar (card theme) | [AI card](docs/assets/design/ai-settings/settings-after-klar-1280.png) | [AI card](docs/assets/design/ai-settings/settings-after-klar-360.png) |
+| Warm (card theme) | [AI card](docs/assets/design/ai-settings/settings-after-warm-1280.png) | [AI card](docs/assets/design/ai-settings/settings-after-warm-360.png) |
 
 
 Provider selection uses the same settings card and native select. API-Basis-URL appears

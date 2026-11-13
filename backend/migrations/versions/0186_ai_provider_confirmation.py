@@ -9,6 +9,29 @@ branch_labels = None
 depends_on = None
 
 
+def patch_retention_catalog(reverse=False):
+    """The runtime role holds no UPDATE/DELETE on the evidence, so the catalog
+    would file it as protected and retain it; confirmations are erased with
+    the organization instead. The 0147-owned body is replaced here, not
+    edited."""
+    definition = op.get_bind().scalar(
+        text(
+            "SELECT pg_get_functiondef('public.organization_retention_catalog()'::regprocedure)"
+        )
+    )
+    before = "          WHEN protected THEN 'retain'"
+    after = (
+        "          WHEN entity='organization_ai_confirmation' THEN 'delete'\n"
+        "          WHEN protected THEN 'retain'"
+    )
+    if reverse:
+        before, after = after, before
+        if before not in definition and after in definition:
+            return
+    assert definition.count(before) == 1
+    op.execute(definition.replace(before, after))
+
+
 def patch_import_admission(reverse=False):
     """Confirmation rows are evidence, not data: like assents and invitations
     they must not make an organization non-empty for archive import. The
@@ -52,15 +75,42 @@ def upgrade():
       WITH CHECK (organization_id=NULLIF(current_setting('app.current_org_id',true),'')::uuid
         AND public.scope_actor_role(organization_id)='OWNER_ADMIN');
     REVOKE ALL ON public.organization_ai_confirmation FROM PUBLIC,app_rw,app_worker,app_review;
-    GRANT SELECT,INSERT,UPDATE,DELETE ON public.organization_ai_confirmation TO app_rw;
+    GRANT SELECT,INSERT ON public.organization_ai_confirmation TO app_rw;
     CREATE TRIGGER a_organization_lifecycle BEFORE INSERT OR UPDATE OR DELETE ON public.organization_ai_confirmation
       FOR EACH ROW EXECUTE FUNCTION public.organization_lifecycle_guard();
+
+    -- Evidence rows are insert-only for the runtime (like audit_event): the
+    -- database binds the confirmer to the acting session user and the time to
+    -- database time, and refuses UPDATE/DELETE. The migrator role stays
+    -- exempt so erasure and synthetic test seeds can delete and insert.
+    CREATE FUNCTION public.guard_organization_ai_confirmation() RETURNS trigger
+      LANGUAGE plpgsql SET search_path=pg_catalog,pg_temp AS $$
+    BEGIN
+      IF current_user='app_migrator' AND session_user='app_migrator' THEN
+        IF TG_OP='DELETE' THEN RETURN OLD; END IF;
+        RETURN NEW;
+      END IF;
+      IF TG_OP='INSERT' THEN
+        IF NULLIF(current_setting('app.current_user_id',true),'')::uuid IS DISTINCT FROM NEW.confirmed_by_user_id THEN
+          RAISE EXCEPTION 'AI provider confirmation must name the acting user' USING ERRCODE='23514';
+        END IF;
+        NEW.confirmed_at := statement_timestamp();
+        RETURN NEW;
+      END IF;
+      RAISE EXCEPTION 'AI provider confirmations are immutable' USING ERRCODE='23514';
+    END $$;
+    REVOKE ALL ON FUNCTION public.guard_organization_ai_confirmation() FROM PUBLIC,app_rw,app_worker,app_review;
+    CREATE TRIGGER organization_ai_confirmation_guard BEFORE INSERT OR UPDATE OR DELETE ON public.organization_ai_confirmation
+      FOR EACH ROW EXECUTE FUNCTION public.guard_organization_ai_confirmation();
     """)
+    patch_retention_catalog()
     patch_import_admission()
 
 
 def downgrade():
     op.execute("""
+    DROP TRIGGER organization_ai_confirmation_guard ON public.organization_ai_confirmation;
+    DROP FUNCTION public.guard_organization_ai_confirmation();
     LOCK TABLE public.organization_ai_confirmation IN ACCESS EXCLUSIVE MODE;
     DO $$ BEGIN
       IF EXISTS(SELECT 1 FROM public.organization_ai_confirmation) THEN
@@ -69,4 +119,5 @@ def downgrade():
     END $$;
     DROP TABLE public.organization_ai_confirmation;
     """)
+    patch_retention_catalog(reverse=True)
     patch_import_admission(reverse=True)

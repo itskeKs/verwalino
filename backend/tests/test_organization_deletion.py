@@ -236,6 +236,28 @@ async def test_operator_erasure_removes_an_empty_weg_draft_without_a_runtime_act
     await rent_db.rollback()
 
 
+async def test_erasure_deletes_recorded_ai_provider_confirmations(rent_world, rent_db, export_store):
+    from app.services.ai_settings_service import _cipher
+    from app.services.organization_deletion_service import run_deletion
+    w = rent_world
+    encrypted = _cipher(w['org']).encrypt(b'synthetic-erasure-key').decode()
+    async with rent_db.begin():
+        await rent_db.execute(text('INSERT INTO organization_ai_settings (organization_id,encrypted_api_key) VALUES (:org,:key)'),
+                              {'org': w['org'], 'key': encrypted})
+        await rent_db.execute(text("INSERT INTO organization_ai_confirmation (organization_id,confirmed_by_user_id,provider,base_url,text_version)"
+                                   " VALUES (:org,:admin,'openai',NULL,'1')"), {'org': w['org'], 'admin': w['admin']})
+    async with api_client(w) as api:
+        assert (await api.post('/api/organizations/deletion')).status_code == 200
+        assert (await api.post('/api/organizations/deletion/confirm', json={'organization_name': 'T23 synthetic'})).status_code == 200
+    async with rent_db.begin():
+        await rent_db.execute(text("SELECT set_config('app.current_user_id','',true)"))
+        assert await run_deletion(rent_db, w['org'], now=datetime.now(timezone.utc) + timedelta(days=8))
+    assert await rent_db.scalar(text('SELECT count(*) FROM organization_ai_confirmation WHERE organization_id=:org'), w) == 0
+    assert await rent_db.scalar(text('SELECT count(*) FROM organization_ai_settings WHERE organization_id=:org'), w) == 0
+    assert await rent_db.scalar(text('SELECT status FROM organization_deletion WHERE organization_id=:org'), w) == 'deleted_pending_retention'
+    await rent_db.rollback()
+
+
 @pytest.mark.parametrize('scoped', [False, True], ids=['unscoped', 'immutable-scope-bindings'])
 async def test_erasure_keeps_payment_retention_conditional_with_or_without_scope_bindings(
         rent_world, reserve_erasure_db, app_rw_session, scoped):

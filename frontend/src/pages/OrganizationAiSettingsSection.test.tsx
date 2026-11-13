@@ -3,10 +3,7 @@ import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { api, ApiError } from "../api/client";
 import { OrganizationAiSettingsSection } from "./OrganizationAiSettingsSection";
 
-const confirmation = {
-  confirmed_by_user_id: "user-1", confirmed_by_name: "Admin Alpha", provider: "openai",
-  base_url: null, text_version: "1", confirmed_at: "2026-11-13T10:00:00+00:00",
-};
+const confirmation = { confirmed_by_name: "Admin Alpha", confirmed_at: "2026-11-13T10:00:00+00:00" };
 
 const settings = {
   provider: "openai", base_url: null, key_set: true, model: "evaluated-model",
@@ -38,6 +35,20 @@ it("refuses to store a new key without the provider confirmation and stores it w
   expect(await screen.findByText(/KI-Einstellungen gespeichert/)).toBeVisible();
   expect(put).toHaveBeenLastCalledWith("/api/organizations/org-1/ai-settings", expect.objectContaining({ api_key: "sk-neu", confirmation: true }));
   expect(keyInput).toHaveValue("");
+});
+
+it("refuses a legacy stored key saved without the tick, with the message at the field and no success message", async () => {
+  vi.spyOn(api, "get").mockResolvedValue({ ...settings, confirmation_required: true, confirmation: null } as never);
+  const put = vi.spyOn(api, "put").mockRejectedValue(new ApiError(422,
+    "Bitte bestätigen Sie vor dem Speichern, dass Ihre Organisation den Anbieter selbst beauftragt hat.",
+    "ORGANIZATION_AI_CONFIRMATION_REQUIRED"));
+  render(<OrganizationAiSettingsSection organizationId="org-1" />);
+
+  fireEvent.click(await screen.findByRole("button", { name: "KI-Einstellungen speichern" }));
+
+  expect(await screen.findByText(/Bitte bestätigen Sie vor dem Speichern, dass Ihre Organisation/)).toBeVisible();
+  expect(screen.queryByText(/KI-Einstellungen gespeichert/)).not.toBeInTheDocument();
+  expect(put).toHaveBeenCalledWith("/api/organizations/org-1/ai-settings", expect.objectContaining({ confirmation: false }));
 });
 
 it("names the confirmer and time for a confirmed key and shows the confirmation for a legacy stored key", async () => {

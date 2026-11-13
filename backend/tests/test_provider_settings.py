@@ -131,17 +131,17 @@ async def test_confirmation_records_who_time_version_and_destination(client_a_ad
     body = (await client_a_admin.get(path)).json()
     assert body['confirmation_required'] is False
     confirmation = body['confirmation']
-    assert confirmation['provider'] == 'openai'
-    assert confirmation['base_url'] is None
-    assert confirmation['text_version'] == '1'
+    assert set(confirmation) == {'confirmed_by_name', 'confirmed_at'}
     assert confirmation['confirmed_at']
     row = (await migrator_session.execute(text(
-        'SELECT c.confirmed_by_user_id, c.provider, c.text_version, u.display_name'
+        'SELECT c.confirmed_by_user_id, c.provider, c.base_url, c.text_version, u.display_name'
         ' FROM organization_ai_confirmation c'
         ' JOIN "user" u ON u.id=c.confirmed_by_user_id AND u.organization_id=c.organization_id'
         ' WHERE c.organization_id=:org'), {'org': seed_data['org_a_id']})).mappings().one()
     assert row['provider'] == 'openai'
+    assert row['base_url'] is None
     assert row['text_version'] == '1'
+    assert row['confirmed_by_user_id'] == seed_data['user_a_admin_id']
     assert row['display_name'] == confirmation['confirmed_by_name']
 
 
@@ -238,3 +238,49 @@ async def test_confirmation_without_a_stored_key_records_nothing(client_a_admin,
         'SELECT count(*) FROM organization_ai_confirmation WHERE organization_id=:org'), {'org': seed_data['org_a_id']})
     assert count == 0
     assert len(await _ai_audit_payloads(migrator_session, seed_data['org_a_id'])) == before
+
+
+@pytest.mark.asyncio
+async def test_reentering_the_stored_legacy_key_without_confirmation_is_refused(client_a_admin, seed_data, migrator_session):
+    import psycopg2
+    from app.services.ai_settings_service import _cipher
+    from tests.conftest import MIGRATOR_SYNC_URL
+    path = f"/api/organizations/{seed_data['org_a_id']}/ai-settings"
+    encrypted = _cipher(seed_data['org_a_id']).encrypt(b'synthetic-legacy-key').decode()
+    with psycopg2.connect(MIGRATOR_SYNC_URL) as connection, connection.cursor() as cursor:
+        cursor.execute('INSERT INTO organization_ai_settings (organization_id,encrypted_api_key) VALUES (%s,%s)',
+                       (str(seed_data['org_a_id']), encrypted))
+    response = await client_a_admin.put(path, json={'api_key':'synthetic-legacy-key','model':'gpt-5.6-luna'})
+    assert response.status_code == 422
+    assert response.json()['detail']['code'] == 'ORGANIZATION_AI_CONFIRMATION_REQUIRED'
+    body = (await client_a_admin.get(path)).json()
+    assert body['key_set'] is True
+    assert body['confirmation_required'] is True
+
+
+@pytest.mark.asyncio
+async def test_confirmation_rows_are_immutable_and_bound_to_the_acting_session_user(client_a_admin, seed_data):
+    from sqlalchemy import text
+    from sqlalchemy.exc import DBAPIError
+    from app.core.db import get_tenant_session
+    path = f"/api/organizations/{seed_data['org_a_id']}/ai-settings"
+    stored = await client_a_admin.put(path, json={'api_key':'synthetic-first','model':'gpt-5.6-luna','confirmation':True})
+    assert stored.status_code == 200, stored.text
+    org = seed_data['org_a_id']
+    async with get_tenant_session(org) as db:
+        await db.execute(text("SELECT set_config('app.current_user_id',:actor,true)"), {'actor': str(seed_data['user_a_admin_id'])})
+        with pytest.raises(DBAPIError, match='immutable|permission denied'):
+            async with db.begin_nested():
+                await db.execute(text("UPDATE organization_ai_confirmation SET confirmed_at='2020-01-01', text_version='0' WHERE organization_id=:org"), {'org': org})
+        with pytest.raises(DBAPIError, match='immutable|permission denied'):
+            async with db.begin_nested():
+                await db.execute(text("DELETE FROM organization_ai_confirmation WHERE organization_id=:org"), {'org': org})
+        with pytest.raises(DBAPIError, match='acting user'):
+            async with db.begin_nested():
+                await db.execute(text("INSERT INTO organization_ai_confirmation (organization_id,confirmed_by_user_id,provider,base_url,text_version,confirmed_at)"
+                                      " VALUES (:org,:clerk,'anthropic',NULL,'1','2019-01-01')"), {'org': org, 'clerk': str(seed_data['user_a_clerk_id'])})
+        await db.execute(text("INSERT INTO organization_ai_confirmation (organization_id,confirmed_by_user_id,provider,base_url,text_version,confirmed_at)"
+                              " VALUES (:org,:admin,'openai',NULL,'1','2019-01-01')"), {'org': org, 'admin': str(seed_data['user_a_admin_id'])})
+        confirmed_at = await db.scalar(text("SELECT confirmed_at FROM organization_ai_confirmation"
+                                            " WHERE organization_id=:org AND provider='openai' ORDER BY confirmed_at DESC LIMIT 1"), {'org': org})
+        assert confirmed_at.year >= 2026
