@@ -8,7 +8,6 @@ import logging
 import sys
 import tarfile
 import tempfile
-from datetime import datetime
 import uuid
 import zlib
 from contextlib import contextmanager
@@ -385,6 +384,12 @@ async def import_organization(db, auth, source):
             if name in {'organization', 'cost_category', 'organization_deletion'}:
                 continue
             for row in rows:
+                if name == 'legal_document_assent':
+                    # Exported for the customer's own portability, but never
+                    # imported: an assent is evidence this installation
+                    # collected, and an archive must not be able to plant it.
+                    # docs/operations/organization-export.md documents this.
+                    continue
                 if name == 'user' and row['id'] in reused_users:
                     inserted.add((name, row['id']))
                     continue
@@ -519,16 +524,7 @@ async def import_organization(db, auth, source):
                         previous_scope = await db.scalar(text("SELECT current_setting('app.current_scope_id',true)"))
                         await db.execute(text("SELECT set_config('app.current_scope_id',:scope,true)"),
                             {'scope': row['accounting_scope_id']})
-                    if name == 'legal_document_assent':
-                        # Retained contract evidence: the runtime role is read-only
-                        # on the table, so the archived original replays through
-                        # its narrow restore definer instead of a plain INSERT.
-                        await db.execute(text('SELECT public.restore_legal_document_assent(:id,:org,:user,:document,:version,:assented_at)'),
-                            {'id': uuid.UUID(row['id']), 'org': auth.organization_id,
-                             'user': uuid.UUID(row['user_id']), 'document': row['document'],
-                             'version': row['version'],
-                             'assented_at': datetime.fromisoformat(row['assented_at'])})
-                    else:
+                    if name != 'legal_document_assent':
                         await db.execute(text(f'INSERT INTO public."{name}" ({columns}) SELECT {projection} '
                             f'FROM json_populate_record(NULL::public."{name}",CAST(:row AS json)) v'),
                             {'row': json_bytes(row).decode()})

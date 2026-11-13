@@ -18,6 +18,9 @@ from tests.test_meters_api import new_meter
 from tests.test_rent_changes import rent_db, rent_world  # noqa: F401
 
 EXEMPT = {
+    "GET /api/organizations/legal-assents": "read without record ids in the answer, so the sweep cannot seed a foreign id into it; "
+        "organization-scoped read and the administrator-only role are covered by features/organization_isolation.feature "
+        "('Another organization cannot read legal document assents', 'Non-administrators do not read legal document assents')",
     "GET /api/meta": "organization-free deployment facts and file safety cap only; covered by test_deployment_policy.py",
     **{f"{method} /api/signup{suffix}": "organization-free hosted signup; pending identity and atomic new-tenant creation covered by self_service_signup.feature and test_signup.py"
        for suffix in ("", "/confirm", "/resend")
@@ -81,15 +84,6 @@ async def core_seeded(isolated_batch_seed, rent_world, attachment_store, attachm
                    now() + interval '72 hours'
             FROM "user" u WHERE u.organization_id IS DISTINCT FROM :b ORDER BY u.id LIMIT 1'''),
             {'email': f'sweep-foreign-{uuid.uuid4().hex}@example.invalid', 'b': sweep.b})
-
-    # The legal-assent probe needs one foreign organization with recorded assents.
-    async with sweep.engine.begin() as connection:
-        await connection.execute(text('''INSERT INTO legal_document_assent(organization_id,user_id,document,version,assented_at)
-            SELECT u.organization_id, u.id, v.document, '2026-11-13', '2026-11-13T10:00:00+00'
-            FROM (SELECT * FROM "user" x WHERE x.organization_id IS DISTINCT FROM :b AND x.is_active
-                  AND EXISTS(SELECT 1 FROM membership m WHERE m.organization_id=x.organization_id
-                             AND m.user_id=x.id AND m.role='OWNER_ADMIN') ORDER BY x.id LIMIT 1) u
-            CROSS JOIN (VALUES ('TERMS'),('AV')) v(document)'''), {'b': sweep.b})
 
     weg = await created(api, "/api/properties", json={"name": "WEG Isolationstest", "management_type": "WEG"})
     meeting = await created(api, "/api/meetings", json={
@@ -301,9 +295,6 @@ PROBES: dict[str, Probe] = {
     "POST /api/meters": Probe(row("unit", unit_id="id", property_id="property_id")),
     "POST /api/meters/{meter_id}/readings": Probe(row("meter", meter_id="id"), body={"reading_date": "2026-01-01", "value": "1.0000"}),
     # app/api/organizations.py
-    "GET /api/organizations/legal-assents": Probe(
-        ids=row("legal_document_assent", user_id="user_id"), status=200,
-        because="read of the caller's own records; organization B has no assent rows and the answer must not carry a foreign administrator"),
     "GET /api/organizations/me": Probe(),
     "GET /api/organizations/quota": Probe(),
     # app/api/owner_profiles.py

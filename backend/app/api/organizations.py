@@ -138,7 +138,6 @@ class LegalAssentOut(BaseModel):
     document: str
     version: str
     assented_at: datetime
-    user_id: uuid.UUID
     admin_name: str
 
 
@@ -149,7 +148,7 @@ async def get_legal_assents(
 ):
     """The document versions this organization agreed to, when and by whom (administrators only)."""
     rows = (await db.execute(text(
-        'SELECT DISTINCT ON (a.document) a.document, a.version, a.assented_at, a.user_id,'
+        'SELECT DISTINCT ON (a.document) a.document, a.version, a.assented_at,'
         ' u.display_name AS admin_name'
         ' FROM legal_document_assent a JOIN "user" u ON u.id=a.user_id AND u.organization_id=a.organization_id'
         ' WHERE a.organization_id=:org ORDER BY a.document, a.assented_at DESC, a.id'),

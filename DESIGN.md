@@ -330,12 +330,16 @@ Hosted registration shows two unticked required checkboxes below the password
 fields, one for the “Nutzungsbedingungen” and one for the
 “Auftragsverarbeitungsvertrag”. Each label links its document (new tab,
 `rel="noreferrer"`) and names the served version: “Ich habe die
-Nutzungsbedingungen (Version 2026-11-13) gelesen und akzeptiere diese.” Versions
-and links come from the public metadata (`legal_documents`), never from code
-duplicated in the page. Submitting with an unticked box keeps the inputs and
-shows “Bitte bestätigen Sie die Nutzungsbedingungen und den
-Auftragsverarbeitungsvertrag.” in `role="alert"` under the boxes; nothing is
-posted until both are ticked. The resend receipt does not show the boxes.
+Nutzungsbedingungen (Version 2026-11-13) gelesen und akzeptiere diese.” and “Ich
+habe den Auftragsverarbeitungsvertrag (Version 2026-11-13) gelesen und akzeptiere
+diesen.” Versions and links come from the public metadata (`legal_documents`,
+hosted mode only), never from code duplicated in the page. Submitting with an
+unticked box keeps the inputs and shows that box's sentence in `role="alert"`
+directly under it — “Bitte bestätigen Sie die aktuellen Nutzungsbedingungen.” at
+the terms box, “Bitte bestätigen Sie den Auftragsverarbeitungsvertrag.” at the
+AV-Vertrag box; the server refusal names the box through its structured `field`.
+Nothing is posted until both are ticked. The resend receipt does not show the
+boxes.
 
 Settings shows a read-only “Rechtliches” card to OWNER_ADMIN listing each
 accepted document — “Nutzungsbedingungen”, “Auftragsverarbeitungsvertrag” — with

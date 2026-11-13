@@ -810,14 +810,15 @@ request's normalized address created in the same transaction. The table is
 tenant-scoped (RLS read-only for the runtime, composite user key, lifecycle
 guard), classified as retained contract-conclusion evidence by the retention
 catalog and excluded from import admission. `GET /api/organizations/legal-assents` (OWNER_ADMIN only) returns the latest
-assent per document with time, user and display name for the settings page, and
-the organization export includes the table. An import replays archived assent
-records unchanged (same user mapping, time, document, version) through the
-narrow definer `restore_legal_document_assent`, which admits only the importing
-organization's administrator; the runtime role stays read-only on the table.
-0185 also revokes the runtime EXECUTE on the legacy four-argument
-`request_signup`, which nothing calls any more (0144's own upgrade re-grants it,
-so release rehearsals neutralize the revocation like the 0183 grant). The
+assent per document with time and display name for the settings page, and the
+organization export includes the table. An import never restores assent rows:
+they are evidence this installation collected at its own sign-up, and an
+archive must not be able to plant them; an archive carrying them still imports
+with 200 and the rows are skipped (docs/operations/organization-export.md).
+The table stays writable only by the sign-up provisioning trigger, and the
+runtime role keeps no EXECUTE on the legacy four-argument `request_signup`,
+which nothing calls any more (0144's own upgrade re-grants it, so the release
+rehearsal lifts the grant around the roundtrip like the 0183 grant). The
 `legal_documents` metadata is returned only in hosted mode, the only mode whose
 sign-up page reads it. The sub-processor
 notice (30 days ahead, 21-day objection from receipt, Q14) is the operator command

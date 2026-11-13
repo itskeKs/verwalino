@@ -222,7 +222,6 @@ async def test_selfhost_signup_matches_unknown_routes_before_parsing_or_database
 @pytest.mark.asyncio
 async def test_signup_function_has_fixed_security_metadata_and_narrow_grants(app_rw_session):
     for name in ('provision_organization(text,text)', 'request_signup_assented(text,text,text,text,text,text)',
-                 'restore_legal_document_assent(uuid,uuid,uuid,text,text,timestamptz)',
                  'resend_signup(text)', 'signup_confirmation(text)', 'cleanup_signup_requests()'):
         args = {'signature': 'public.' + name}
         row = (await app_rw_session.execute(text('SELECT pg_get_userbyid(proowner),prosecdef,proconfig FROM pg_proc WHERE oid=CAST(:signature AS regprocedure)'), args)).one()
@@ -264,17 +263,22 @@ def test_signup_migration_roundtrip_is_exact_and_refuses_retained_state(run_migr
             connection.execute(text('ALTER TABLE public.signup_request DROP COLUMN terms_version, DROP COLUMN av_version'))
             connection.execute(text('DELETE FROM signup_request'))
             # 0183 grants app_rw EXECUTE on this revision's address lookup, and
-            # the downgrade drops the function with that grant; compare only
-            # the state 0144 itself owns. (0185 keeps 0144's own grant on the
-            # legacy request_signup: 0144's upgrade re-grants it, so head must
-            # carry it for an exact rehearsal; rows it creates hold no assent
-            # versions and the provisioning trigger refuses them.)
+            # the downgrade drops the function with that grant; 0185 revokes
+            # the runtime grant on the legacy request_signup, which this
+            # revision's upgrade re-grants. Lift both so the comparison stays
+            # on the state 0144 itself owns (the request_signup grant is
+            # revoked again after the upgrade below).
             connection.execute(text('REVOKE EXECUTE ON FUNCTION public.signup_email_registered(text) FROM app_rw'))
+            connection.execute(text('REVOKE EXECUTE ON FUNCTION public.request_signup(text,text,text,text) FROM app_rw'))
             before = _chain_snapshot(connection)
             with Operations.context(MigrationContext.configure(connection)):
                 migration.downgrade()
                 assert connection.scalar(text("SELECT to_regclass('public.signup_request')")) is None
                 migration.upgrade()
+                # 0185 revokes the runtime grant on the legacy request_signup;
+                # this revision's own upgrade re-grants it. Lift the grant
+                # again so the comparison stays on the state 0144 owns.
+                connection.execute(text('REVOKE EXECUTE ON FUNCTION public.request_signup(text,text,text,text) FROM app_rw'))
                 assert _chain_snapshot(connection) == before
                 connection.execute(text("""INSERT INTO signup_request(email_normalized,organization_name,admin_name,password_hash,token_hash)
                     VALUES ('roundtrip@example.test','Synthetic','Admin','hash',sha256('token'::bytea))"""))

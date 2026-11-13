@@ -124,6 +124,17 @@ returns **409**. Existing users, memberships and audit events alone do not make
 a new organization non-empty. The admission function reveals only this boolean
 and collisions of administrator-supplied UUIDs, never foreign row contents.
 
+Legal document assents (`legal_document_assent`: terms and AV-Vertrag version,
+time and administrator recorded at hosted sign-up) are exported with the
+organization but never imported: an assent is evidence this installation
+collected from its own sign-up, and an archive — however well hashed — must not
+be able to plant or rewrite it. An archive containing
+`entities/legal_document_assent.jsonl` therefore still imports with 200 and the
+rest of the organization restores as usual, while the archived assent rows are
+skipped; an organization that signed up on the hosted service keeps exactly its
+own sign-up assent records when it later imports an archive. The table stays
+writable only by the sign-up provisioning trigger.
+
 The importer checks the format, safe regular-file members, exact manifest/member
 hash coverage, row counts, organization identity, and the release's Alembic
 ancestry. The same or an older known schema is accepted; newer/unknown heads are
