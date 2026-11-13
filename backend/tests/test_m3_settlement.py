@@ -3161,6 +3161,59 @@ async def test_person_days_household_replace_all_and_exact_statement_amounts(cli
 
 
 @pytest.mark.asyncio
+async def test_person_days_household_change_inside_finalized_period_is_refused_for_either_unit(client_a_admin):
+    from tests.persons_key_support import persons_property, persons_run, ANNA_HOUSEHOLD, BERND_HOUSEHOLD
+    api = client_a_admin
+    data = await persons_property(api)
+    for bernd in (False, True):
+        run = await persons_run(api, data, bernd=bernd)
+        response = await api.post(f"/api/settlements/{run['id']}/finalize", json={})
+        assert response.status_code == 200, response.text
+    response = await api.put(f"/api/units/{data['unit']['id']}/household",
+        json=[{'valid_from': '2026-01-01', 'persons': 3, 'is_vacancy': False}])
+    assert response.status_code == 409, response.text
+    assert response.json()['detail']['code'] == 'household_finalized'
+    assert (await api.get(f"/api/units/{data['unit']['id']}/household")).json() == ANNA_HOUSEHOLD
+    response = await api.put(f"/api/units/{data['second']['id']}/household", json=[
+        {'valid_from': '2026-01-01', 'persons': 2, 'is_vacancy': True},
+        {'valid_from': '2026-03-01', 'persons': 2, 'is_vacancy': False}])
+    assert response.status_code == 409, response.text
+    assert response.json()['detail']['code'] == 'household_finalized'
+    assert (await api.get(f"/api/units/{data['second']['id']}/household")).json() == list(reversed(BERND_HOUSEHOLD))
+
+
+@pytest.mark.asyncio
+async def test_person_days_household_identical_resave_and_later_rows_stay_editable(client_a_admin):
+    from tests.persons_key_support import persons_property, persons_run, ANNA_HOUSEHOLD
+    api = client_a_admin
+    data = await persons_property(api)
+    for bernd in (False, True):
+        run = await persons_run(api, data, bernd=bernd)
+        response = await api.post(f"/api/settlements/{run['id']}/finalize", json={})
+        assert response.status_code == 200, response.text
+    url = f"/api/units/{data['unit']['id']}/household"
+    response = await api.put(url, json=ANNA_HOUSEHOLD)
+    assert response.status_code == 200, response.text
+    response = await api.put(url, json=ANNA_HOUSEHOLD + [{'valid_from': '2027-01-01', 'persons': 4, 'is_vacancy': False}])
+    assert response.status_code == 200, response.text
+
+
+@pytest.mark.asyncio
+async def test_person_days_household_edit_allowed_once_the_finalized_run_is_superseded(client_a_admin):
+    from tests.persons_key_support import persons_property, persons_run
+    api = client_a_admin
+    data = await persons_property(api)
+    run = await persons_run(api, data)
+    response = await api.post(f"/api/settlements/{run['id']}/finalize", json={})
+    assert response.status_code == 200, response.text
+    correction = await api.post(f"/api/settlements/{run['id']}/correction", json={})
+    assert correction.status_code == 201, correction.text
+    response = await api.put(f"/api/units/{data['unit']['id']}/household",
+        json=[{'valid_from': '2026-01-01', 'persons': 3, 'is_vacancy': False}])
+    assert response.status_code == 200, response.text
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize('rows', [
     [{'valid_from': '2026-01-01', 'persons': -1, 'is_vacancy': False}],
     [{'valid_from': '2026-01-01', 'persons': 1.5, 'is_vacancy': False}],
@@ -3233,7 +3286,9 @@ async def test_person_days_finalized_snapshot_retains_owner_person_days_and_dige
     assert canonical_sha256(payload) == digest
     assert [(v['days'], v['person_days'], v['amount']) for v in payload['vacancy_attribution']] == [(59, 59, '56.34')]
     before = canonical_json(payload)
-    assert (await api.put(f"/api/units/{data['unit']['id']}/household", json=[])).status_code == 200
+    refused = await api.put(f"/api/units/{data['unit']['id']}/household", json=[])
+    assert refused.status_code == 409, refused.text
+    assert refused.json()['detail']['code'] == 'household_finalized'
     retained = (await migrator_session.execute(query, {'id': uuid.UUID(run['id'])})).one()
     assert canonical_json(retained.snapshot_payload) == before
     assert retained.snapshot_sha256 == digest
@@ -3340,7 +3395,9 @@ async def test_person_days_statement_discloses_frozen_vacancy_without_live_recal
     assert visible[0]['unit_number'] == '2'
     assert visible[0]['person_days'] == 59 and visible[0]['amount'] == '56.34'
     assert set(visible[0]) == {'unit_number', 'cost_label', 'days', 'person_days', 'amount'}
-    assert (await api.put(f"/api/units/{data['second']['id']}/household", json=[])).status_code == 200
+    refused = await api.put(f"/api/units/{data['second']['id']}/household", json=[])
+    assert refused.status_code == 409, refused.text
+    assert refused.json()['detail']['code'] == 'household_finalized'
     assert (await api.put(f"/api/units/{data['second']['id']}", json={'number': 'Changed after finalization'})).status_code == 200
     retained = (await api.get(url)).json()
     assert retained['vacancy_attribution'] == visible

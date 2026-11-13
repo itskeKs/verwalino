@@ -5,11 +5,23 @@ Feature: Dated household sizes distribute costs by person-days
   Scenario: A growing household and a two-month vacancy share exactly 1250 euros
     Given an administrator of "Verwaltung Alpha" is signed in
     And Anna has two persons from January and three from June, while Bernd moves in alone in March
-    When the manager calculates both 2026 persons-key statements for 1250 euros
-    Then Anna pays 901.45 euros for 944 person-days and Bernd pays 292.21 euros for 306 person-days
-    And the owner's 59 vacancy person-days cost 56.34 euros and all shares total 1250 euros
     When the manager deletes Bernd's occupied household row
     Then the persons-key draft requires the missing count from 1 March 2026
+    When the manager restores Bernd's occupied household row
+    And the manager calculates both 2026 persons-key statements for 1250 euros
+    Then Anna pays 901.45 euros for 944 person-days and Bernd pays 292.21 euros for 306 person-days
+    And the owner's 59 vacancy person-days cost 56.34 euros and all shares total 1250 euros
+
+  Scenario: A finalized persons-key statement refuses household changes inside its period
+    Given an administrator of "Verwaltung Alpha" is signed in
+    And Anna has two persons from January and three from June, while Bernd moves in alone in March
+    When the manager calculates both 2026 persons-key statements for 1250 euros
+    And the manager corrects Anna's household to three persons from January 2026
+    Then the household save is refused naming the finalized statement
+    And Anna's saved household still shows two persons from January 2026
+    When the manager adds three persons from January 2027 to Anna's household
+    Then the household save succeeds
+    And Bernd's new 2026 statement still costs 292.21 euros
 
   @browser
   Scenario Outline: Household history is saved through the unit editor at <width> pixels

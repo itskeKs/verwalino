@@ -512,7 +512,15 @@ No household names are stored. `GET /api/units/{id}/household` returns the rows;
 `PUT` atomically replaces the entire list, including deletion with `[]`.
 Duplicate dates within a stream and invalid counts are refused before replacement.
 The table has forced organization RLS and a composite organization/unit FK;
-writes require the unit's master-data preparation authority.
+writes require the unit's master-data preparation authority. Once a finalized,
+non-superseded `BK_MIETER` run of the property holds a `PERSONENZAHL` position,
+`PUT` refuses with 409 `household_finalized` (a German message naming the
+statement period) whenever a day inside that run's period would carry a
+different person count, so sibling statements keep adding up to the cost pool.
+Identical re-saves and rows from a date after the period stay editable; the
+correction run that supersedes the finalized run releases the lock. The check
+runs under the input lock finalization takes, in one repository query over the
+frozen snapshots; no new column.
 
 For each cost's inclusive service period, integrate persons × days separately
 for every tenant/vacancy cover. The denominator is the sum of these person-days

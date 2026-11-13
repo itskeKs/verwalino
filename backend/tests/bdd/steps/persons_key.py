@@ -1,6 +1,6 @@
 from decimal import Decimal
 from pytest_bdd import given, when, then, parsers
-from tests.persons_key_support import persons_property, persons_run, BERND_HOUSEHOLD
+from tests.persons_key_support import persons_property, persons_run, ANNA_HOUSEHOLD, BERND_HOUSEHOLD
 from tests.financial_coverage_helpers import attest_fixture
 
 
@@ -42,6 +42,55 @@ def persons_owner(world):
     assert [(row['unit_number'], row['person_days'], row['amount']) for row in vacancy] == [('2', 59, '56.34')]
     assert sum(Decimal(r['total_cost']) for r in runs) + sum(Decimal(v['amount']) for v in vacancy) == Decimal('1250.00')
 
+
+
+@when("the manager restores Bernd's occupied household row")
+def persons_restore(world):
+    data = world.data['persons_house']
+    response = world.act('PUT', f"/api/units/{data['second']['id']}/household", json=BERND_HOUSEHOLD)
+    assert response.status_code == 200, world.describe_response()
+
+
+@when("the manager corrects Anna's household to three persons from January 2026")
+def persons_correct_anna(world):
+    data = world.data['persons_house']
+    world.data['household_save'] = world.act('PUT', f"/api/units/{data['unit']['id']}/household",
+        json=[{'valid_from': '2026-01-01', 'persons': 3, 'is_vacancy': False}])
+
+
+@then("the household save is refused naming the finalized statement")
+def persons_refused(world):
+    response = world.data['household_save']
+    assert response.status_code == 409, world.describe_response()
+    detail = response.json()['detail']
+    assert detail['code'] == 'household_finalized'
+    assert 'finalisiert' in detail['message']
+
+
+@then("Anna's saved household still shows two persons from January 2026")
+def persons_anna_unchanged(world):
+    response = world.act('GET', f"/api/units/{world.data['persons_house']['unit']['id']}/household")
+    assert response.json() == ANNA_HOUSEHOLD
+
+
+@when("the manager adds three persons from January 2027 to Anna's household")
+def persons_add_later(world):
+    data = world.data['persons_house']
+    world.data['household_save'] = world.act('PUT', f"/api/units/{data['unit']['id']}/household",
+        json=ANNA_HOUSEHOLD + [{'valid_from': '2027-01-01', 'persons': 3, 'is_vacancy': False}])
+
+
+@then("the household save succeeds")
+def persons_saved(world):
+    assert world.data['household_save'].status_code == 200, world.describe_response()
+
+
+@then("Bernd's new 2026 statement still costs 292.21 euros")
+def persons_bernd_unchanged(world):
+    run = world.run(persons_run(world.actor, world.data['persons_house'], bernd=True))
+    response = world.act('POST', f"/api/settlements/{run['id']}/compute", json={})
+    assert response.status_code == 200, world.describe_response()
+    assert response.json()['total_cost'] == '292.21'
 
 
 @when("the manager deletes Bernd's occupied household row")
