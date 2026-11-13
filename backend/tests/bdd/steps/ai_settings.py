@@ -105,3 +105,39 @@ def read_compatible_ai(world):
     assert response.json()['import_enabled'] is True
     assert response.json()['key_set'] is True
     assert 'synthetic-compatible-key' not in response.text
+
+
+@when("the administrator saves an AI key and enables declaration import")
+def save_ai_key(world):
+    import psycopg2
+    from tests.conftest import MIGRATOR_SYNC_URL
+    me = world.act('GET', '/api/organizations/me')
+    world.data['ai_org'] = me.json()['id']
+    with psycopg2.connect(MIGRATOR_SYNC_URL) as connection, connection.cursor() as cursor:
+        cursor.execute("SELECT id FROM audit_event WHERE organization_id=%s AND entity_type='organization_ai_settings'", (world.data['ai_org'],))
+        world.data['ai_audit_before'] = {row[0] for row in cursor.fetchall()}
+    response = world.act('PUT', f"/api/organizations/{world.data['ai_org']}/ai-settings", json={
+        'api_key': 'synthetic-audit-key', 'model': 'gpt-5.6-luna', 'import_enabled': True})
+    assert response.status_code == 200, world.describe_response()
+
+
+@when("the administrator removes the saved key and switches the AI features off")
+def remove_ai_key(world):
+    response = world.act('PUT', f"/api/organizations/{world.data['ai_org']}/ai-settings", json={
+        'api_key': None, 'model': 'gpt-5.6-luna', 'import_enabled': False})
+    assert response.status_code == 200, world.describe_response()
+
+
+@then("the new audit events record both changes without the key")
+def audit_records(world):
+    import json
+    import psycopg2
+    from tests.conftest import MIGRATOR_SYNC_URL
+    with psycopg2.connect(MIGRATOR_SYNC_URL) as connection, connection.cursor() as cursor:
+        cursor.execute("SELECT id, action, payload_diff FROM audit_event WHERE organization_id=%s AND entity_type='organization_ai_settings' ORDER BY occurred_at", (world.data['ai_org'],))
+        rows = [(action, payload) for row_id, action, payload in cursor.fetchall() if row_id not in world.data['ai_audit_before']]
+    assert rows == [
+        ('ai_settings.updated', {'api_key': 'set', 'import_enabled': {'from': False, 'to': True}}),
+        ('ai_settings.updated', {'api_key': 'removed', 'import_enabled': {'from': True, 'to': False}}),
+    ], rows
+    assert 'synthetic-audit-key' not in json.dumps(rows)

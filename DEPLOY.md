@@ -2442,7 +2442,11 @@ Keys are encrypted with a tenant-separated key derived from the existing
 containers receive the same secret. Preserve it with the private deployment
 configuration and database backup. Changing it makes previously stored AI keys
 unreadable; administrators can replace or remove them on the page. Read responses
-contain only key presence. Product organization archives exclude AI runtime
+contain only key presence. Every save that sets, replaces or removes the key or
+changes the import or Q&A switch appends an `ai_settings.updated` audit event
+(`entity_type=organization_ai_settings`, actor: the administrator) whose payload
+records only `set`/`replaced`/`removed` and the switch from/to values, never the
+key. Product organization archives exclude AI runtime
 configuration and credentials; destination organizations configure their own key.
 Organization erasure deletes this mutable settings record.
 
