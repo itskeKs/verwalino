@@ -117,9 +117,12 @@ def upgrade():
       FOR EACH ROW EXECUTE FUNCTION public.organization_lifecycle_guard();
 
     -- The audited admin reset. RLS deliberately gives an OWNER_ADMIN no read
-    -- access and no DELETE policy on another user's rows, so this function
-    -- re-verifies actor, active role and target in one transaction and
-    -- removes the factor and the recovery codes together.
+    -- access and no DELETE policy on another user's rows (a DELETE with a
+    -- WHERE clause needs a SELECT policy to see the rows), so this function
+    -- re-verifies the interactive runtime, the active OWNER_ADMIN actor and
+    -- the target's organization in one transaction and removes the factor and
+    -- the recovery codes together. The target may be deactivated: cleaning up
+    -- the factor of a departed user is allowed.
     CREATE FUNCTION public.reset_second_factor(org uuid, target uuid)
     RETURNS integer
     LANGUAGE plpgsql SECURITY DEFINER
@@ -128,6 +131,7 @@ def upgrade():
       actor uuid;
       removed integer;
     BEGIN
+      IF session_user<>'app_rw' THEN RAISE EXCEPTION 'Interactive runtime required' USING ERRCODE='42501'; END IF;
       actor := NULLIF(current_setting('app.current_user_id',true),'')::uuid;
       IF org IS NULL OR target IS NULL OR actor IS NULL
         OR org IS DISTINCT FROM NULLIF(current_setting('app.current_org_id',true),'')::uuid
@@ -136,7 +140,7 @@ def upgrade():
           WHERE m.organization_id=org AND m.user_id=actor
             AND m.role='OWNER_ADMIN' AND u.is_active)
         OR NOT EXISTS(SELECT 1 FROM public."user" u
-          WHERE u.organization_id=org AND u.id=target AND u.is_active) THEN
+          WHERE u.organization_id=org AND u.id=target) THEN
         RAISE EXCEPTION 'Second-factor reset refused' USING ERRCODE='42501';
       END IF;
       DELETE FROM public.user_second_factor f

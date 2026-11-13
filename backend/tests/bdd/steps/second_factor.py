@@ -31,6 +31,22 @@ def totp_code(secret_base32: str, step_offset: int = 0, timestamp: float | None 
     return f"{code % 1_000_000:06d}"
 
 
+async def enrol_second_factor(client) -> tuple[str, list[str]]:
+    """Enrol through the API with the current code; returns the secret and the recovery codes.
+
+    A restricted hosted session may reach exactly these two routes, so tests
+    that sign up or sign in as a new hosted user use it to leave the gate.
+    """
+    started = await client.post("/api/auth/second-factor/enrolment")
+    assert started.status_code == 200, started.text
+    secret = started.json()["secret"]
+    confirmed = await client.post(
+        "/api/auth/second-factor/enrolment/confirm", json={"code": totp_code(secret)}
+    )
+    assert confirmed.status_code == 200, confirmed.text
+    return secret, confirmed.json()["recovery_codes"]
+
+
 def _start_enrolment(world):
     answer = world.act("POST", "/api/auth/second-factor/enrolment")
     assert answer.status_code == 200, world.describe_response()

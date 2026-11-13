@@ -735,7 +735,7 @@ unenrolled account reach only the second-factor enrolment routes,
 `/api/auth/session` and logout; `/api/auth/session` reports the restriction, so
 a browser reload returns to the wizard. Self-hosted mode keeps the factor
 optional. The tenant tables `user_second_factor` and `user_recovery_code`
-carry RLS (row to its user; the audited admin reset runs through the `reset_second_factor` definer function because a command-scoped admin DELETE policy miscompiles in the planner), bind
+carry RLS (a row belongs to its user; an OWNER_ADMIN has no read access to a colleague's factor, and a DELETE policy alone would not let the admin remove it, because a DELETE with a WHERE clause also needs a SELECT policy to see the rows, which is documented PostgreSQL behaviour. The audited admin reset therefore runs through the `reset_second_factor` definer function: it requires the interactive `app_rw` session, re-verifies the active OWNER_ADMIN actor and the target's organization, accepts a deactivated target, and removes the factor and the recovery codes in one transaction), bind
 `(organization_id,user_id)` to the user like 0145, and are erased with the
 organization.
 - **Audit:** login, logout, failed logins, role changes → `audit_event`.

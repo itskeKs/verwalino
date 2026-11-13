@@ -12,7 +12,7 @@ import pytest_asyncio
 
 from app.core.config import settings
 from app.core.security import create_session_token
-from tests.bdd.steps.second_factor import totp_code
+from tests.bdd.steps.second_factor import enrol_second_factor as _enrol, totp_code
 from tests.conftest import MIGRATOR_SYNC_URL, _api_test_client
 from tests.test_auth_hardening import temporary_auth_rows
 
@@ -33,17 +33,6 @@ def _db(query, params=()):
     with psycopg2.connect(MIGRATOR_SYNC_URL) as connection, connection.cursor() as cursor:
         cursor.execute(query, params)
         return cursor.fetchall()
-
-
-async def _enrol(client) -> tuple[str, list[str]]:
-    answer = await client.post("/api/auth/second-factor/enrolment")
-    assert answer.status_code == 200, answer.text
-    secret = answer.json()["secret"]
-    confirm = await client.post(
-        "/api/auth/second-factor/enrolment/confirm", json={"code": totp_code(secret)}
-    )
-    assert confirm.status_code == 200, confirm.text
-    return secret, confirm.json()["recovery_codes"]
 
 
 async def _login(client, email):
@@ -542,3 +531,110 @@ async def test_factor_rows_bind_user_and_organization_together():
                 pass
             else:
                 raise AssertionError("Composite (organization_id, user_id) foreign key not enforced")
+
+
+# --- Review round 3 (PR #656, base 87fa2d42): red first for the reset findings. ---
+
+
+def _add_colleague(identity, *, active: bool) -> str:
+    """A second account of the admin's organization with a confirmed factor and one recovery code."""
+    colleague, organization = str(uuid.uuid4()), str(identity["organization_id"])
+    with psycopg2.connect(MIGRATOR_SYNC_URL) as connection, connection.cursor() as cursor:
+        cursor.execute(
+            'INSERT INTO public."user" (id, organization_id, email, password_hash, display_name, is_active)'
+            " VALUES (%s, %s, %s, %s, %s, %s)",
+            (colleague, organization, f"colleague-{colleague}@example.test", "synthetic-not-a-login", "Colleague", active),
+        )
+        cursor.execute(
+            "INSERT INTO public.membership (id, organization_id, user_id, role) VALUES (%s, %s, %s, 'CLERK')",
+            (str(uuid.uuid4()), organization, colleague),
+        )
+        cursor.execute(
+            "INSERT INTO public.user_second_factor (organization_id, user_id, secret_encrypted, confirmed, confirmed_at)"
+            " VALUES (%s, %s, 'gAAAAA-synthetic', true, now())",
+            (organization, colleague),
+        )
+        cursor.execute(
+            "INSERT INTO public.user_recovery_code (organization_id, user_id, position, code_hash)"
+            " VALUES (%s, %s, 0, %s)",
+            (organization, colleague, "ab" * 32),
+        )
+    return colleague
+
+
+def _remove_colleague(colleague: str) -> None:
+    with psycopg2.connect(MIGRATOR_SYNC_URL) as connection, connection.cursor() as cursor:
+        for statement in (
+            "DELETE FROM public.user_recovery_code WHERE user_id = %s",
+            "DELETE FROM public.user_second_factor WHERE user_id = %s",
+            "DELETE FROM public.membership WHERE user_id = %s",
+            'DELETE FROM public."user" WHERE id = %s',
+        ):
+            cursor.execute(statement, (colleague,))
+
+
+def _factor_state(colleague: str) -> tuple[int, int]:
+    return (
+        _db("SELECT count(*) FROM public.user_second_factor WHERE user_id = %s", (colleague,))[0][0],
+        _db("SELECT count(*) FROM public.user_recovery_code WHERE user_id = %s", (colleague,))[0][0],
+    )
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("mode", ["selfhost", "hosted"])
+async def test_admin_resets_the_factor_of_a_deactivated_user(second_factor_identity, monkeypatch, mode):
+    """A lost device of a deactivated account may be cleaned up; it must not answer 500."""
+    monkeypatch.setattr(settings, "deployment_mode", mode)
+    client, identity = second_factor_identity
+    if mode == "hosted":
+        await _enrol(client)
+    colleague = _add_colleague(identity, active=False)
+    try:
+        reset = await client.post(f"/api/users/{colleague}/reset-second-factor")
+        assert reset.status_code == 204, reset.text
+        assert _factor_state(colleague) == (0, 0)
+        audited = _db(
+            "SELECT count(*) FROM public.audit_event WHERE entity_id = %s AND action = 'RESET_SECOND_FACTOR'",
+            (colleague,),
+        )
+        assert audited[0][0] == 1
+    finally:
+        _remove_colleague(colleague)
+
+
+@pytest.mark.anyio
+async def test_reset_of_a_user_outside_the_organization_stays_refused(second_factor_identity):
+    client, identity = second_factor_identity
+    other = {"email": f"foreign-{uuid.uuid4()}@example.test", "role": "CLERK"}
+    with temporary_auth_rows([other]):
+        reset = await client.post(f"/api/users/{other['user_id']}/reset-second-factor")
+        assert reset.status_code == 404, reset.text
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("runtime", ["worker", "review"])
+async def test_reset_second_factor_function_refuses_other_runtime_roles(second_factor_identity, runtime):
+    """The definer function is for the interactive runtime only (the 0147 session_user guard)."""
+    from sqlalchemy import text as sql_text
+    from sqlalchemy.exc import DBAPIError
+
+    from app.core.db import get_review_session_factory, get_worker_session_factory, set_tenant_context
+
+    _, identity = second_factor_identity
+    colleague = _add_colleague(identity, active=True)
+    factory = get_worker_session_factory() if runtime == "worker" else get_review_session_factory()
+    try:
+        with pytest.raises(DBAPIError, match="permission denied|Interactive runtime required"):
+            async with factory() as session, session.begin():
+                await set_tenant_context(session, identity["organization_id"])
+                await session.execute(
+                    sql_text("SELECT set_config('app.current_user_id', :actor, true)"),
+                    {"actor": str(identity["user_id"])},
+                )
+                await session.execute(
+                    sql_text("SELECT public.reset_second_factor(:org, :target)"),
+                    {"org": str(identity["organization_id"]), "target": colleague},
+                )
+        assert _factor_state(colleague) == (1, 1)
+    finally:
+        _remove_colleague(colleague)

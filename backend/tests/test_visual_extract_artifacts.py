@@ -28,7 +28,7 @@ async def basis(api, ids):
 
 @pytest.mark.parametrize('full', [False, True])
 async def test_hosted_visual_extract_uses_storage_admission_and_accounts_bytes(
-    migrator_session, scope_seed, store, monkeypatch, full
+    migrator_session, scope_seed, store, monkeypatch, full, confirmed_second_factor
 ):
     from dataclasses import replace
     from app.core import quotas
@@ -36,6 +36,7 @@ async def test_hosted_visual_extract_uses_storage_admission_and_accounts_bytes(
     from app.core.db import get_tenant_session
     monkeypatch.setattr(settings, 'deployment_mode', 'hosted')
     ids = await fixture(migrator_session, scope_seed)
+    confirmed_second_factor(ids['org'], ids['clerk'])
     async with client(ids) as api:
         _, _, first, _, body = await basis(api, ids)
         async with get_tenant_session(ids['org']) as db:
@@ -62,7 +63,7 @@ async def test_hosted_visual_extract_uses_storage_admission_and_accounts_bytes(
 
 
 async def test_hosted_visual_extract_proof_retains_bytes_after_request_rollback(
-    migrator_session, scope_seed, store, monkeypatch
+    migrator_session, scope_seed, store, monkeypatch, confirmed_second_factor
 ):
     from fastapi import HTTPException
     from app.core.config import settings
@@ -70,6 +71,7 @@ async def test_hosted_visual_extract_proof_retains_bytes_after_request_rollback(
     from app.services.intake_service import IntakeService
     monkeypatch.setattr(settings, 'deployment_mode', 'hosted')
     ids = await fixture(migrator_session, scope_seed)
+    confirmed_second_factor(ids['org'], ids['clerk'])
     original_call = IntakeService.call
 
     async def fail_completion(self, sql, **params):

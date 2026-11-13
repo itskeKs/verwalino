@@ -1067,6 +1067,43 @@ async def client_unauth() -> AsyncGenerator[httpx.AsyncClient, None]:
         yield client
 
 
+@pytest.fixture
+def confirmed_second_factor():
+    """Give users a confirmed second factor for the length of one test.
+
+    Hosted mode lets an account without one reach only the enrolment routes
+    (issue #208). A test that acts as a seeded or world user in hosted mode
+    calls the returned function with the organization id and the user ids.
+    The rows it inserted are removed when the test ends, so the shared seed
+    users keep signing in with the password alone in every other test.
+    """
+    import psycopg2
+
+    given: list[tuple[str, str]] = []
+
+    def confirm(organization_id, *user_ids) -> None:
+        with psycopg2.connect(MIGRATOR_SYNC_URL) as connection, connection.cursor() as cursor:
+            for user_id in user_ids:
+                cursor.execute(
+                    "INSERT INTO public.user_second_factor"
+                    " (organization_id, user_id, secret_encrypted, confirmed, confirmed_at)"
+                    " VALUES (%s, %s, 'gAAAAA-synthetic-confirmed', true, now())"
+                    " ON CONFLICT (organization_id, user_id) DO NOTHING RETURNING id",
+                    (str(organization_id), str(user_id)),
+                )
+                if cursor.fetchone():
+                    given.append((str(organization_id), str(user_id)))
+
+    yield confirm
+    if given:
+        with psycopg2.connect(MIGRATOR_SYNC_URL) as connection, connection.cursor() as cursor:
+            for organization_id, user_id in given:
+                cursor.execute(
+                    "DELETE FROM public.user_second_factor WHERE organization_id = %s AND user_id = %s",
+                    (organization_id, user_id),
+                )
+
+
 # ---------------------------------------------------------------------------
 # Direct DB sessions for RLS-level tests
 # ---------------------------------------------------------------------------
