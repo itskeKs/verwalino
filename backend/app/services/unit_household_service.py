@@ -1,4 +1,6 @@
 """Read and replace household history under the unit's master-data authority."""
+from datetime import date
+
 from fastapi import HTTPException
 from app.repositories.settlement_repo import SettlementRunRepository
 from app.repositories.unit_household_repo import UnitHouseholdRepository
@@ -17,11 +19,11 @@ def _persons_on(rows, day):
     return persons
 
 
-def _changes_within(stored, submitted, period_start, period_end):
-    """True when a day inside the period carries a different person count."""
-    change_points = {period_start}
+def _changes_within(stored, submitted, window_start, window_end):
+    """True when a day inside the window carries a different person count."""
+    change_points = {window_start}
     for row in [*stored, *submitted]:
-        if period_start < row.valid_from <= period_end:
+        if window_start < row.valid_from <= window_end:
             change_points.add(row.valid_from)
     for vacancy in (False, True):
         before = sorted((r for r in stored if r.is_vacancy == vacancy), key=lambda r: r.valid_from)
@@ -29,6 +31,29 @@ def _changes_within(stored, submitted, period_start, period_end):
         if any(_persons_on(before, day) != _persons_on(after, day) for day in sorted(change_points)):
             return True
     return False
+
+
+def _persons_key_windows(payload):
+    """Service periods of a run's PERSONENZAHL positions, across all property years.
+
+    The engine counts person-days over each cost's service period, so that
+    period -- not the statement period -- is the locked window. A statement
+    spanning two property years keeps the first year's positions at the top
+    level and every year's under inputs.property_periods.
+    """
+    windows = []
+
+    def collect(positions):
+        for position in positions:
+            if position.get('tenant_distribution_key') == 'PERSONENZAHL':
+                service_period = position['service_period']
+                windows.append((date.fromisoformat(service_period['from']), date.fromisoformat(service_period['to'])))
+
+    inputs = (payload or {}).get('inputs') or {}
+    collect(inputs.get('cost_positions') or [])
+    for part in inputs.get('property_periods') or []:
+        collect((part.get('inputs') or {}).get('cost_positions') or [])
+    return windows
 
 
 class UnitHouseholdService:
@@ -57,7 +82,8 @@ class UnitHouseholdService:
         if runs:
             stored = await self.rows.for_units([unit_id])
             for run in runs:
-                if _changes_within(stored, rows, run.period_start, run.period_end):
+                if any(_changes_within(stored, rows, start, end)
+                        for start, end in _persons_key_windows(run.snapshot_payload)):
                     raise HTTPException(409, {'code': 'household_finalized', 'message':
                         f'Die Nebenkostenabrechnung für den Zeitraum {run.period_start:%d.%m.%Y} bis '
                         f'{run.period_end:%d.%m.%Y} ist bereits finalisiert. '

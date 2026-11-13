@@ -3214,6 +3214,78 @@ async def test_person_days_household_edit_allowed_once_the_finalized_run_is_supe
 
 
 @pytest.mark.asyncio
+async def test_person_days_household_change_outside_statement_but_inside_cost_service_period_is_refused(client_a_admin):
+    from tests.persons_key_support import persons_property, persons_run, ANNA_HOUSEHOLD
+    api = client_a_admin
+    data = await persons_property(api)
+    # Bernd's statement is clipped to his lease (01.03.–31.12.2026); the cost's
+    # service period is the full year.
+    run = await persons_run(api, data, bernd=True)
+    finalized = await api.post(f"/api/settlements/{run['id']}/finalize", json={})
+    assert finalized.status_code == 200, finalized.text
+    assert finalized.json()['total_cost'] == '292.21'
+    # Anna's household changes for January–February: outside Bernd's statement
+    # period, inside the cost's service period, so the frozen shares move.
+    response = await api.put(f"/api/units/{data['unit']['id']}/household", json=[
+        {'valid_from': '2026-01-01', 'persons': 9, 'is_vacancy': False},
+        {'valid_from': '2026-03-01', 'persons': 2, 'is_vacancy': False},
+        {'valid_from': '2026-06-01', 'persons': 3, 'is_vacancy': False}])
+    assert response.status_code == 409, response.text
+    assert response.json()['detail']['code'] == 'household_finalized'
+    assert (await api.get(f"/api/units/{data['unit']['id']}/household")).json() == ANNA_HOUSEHOLD
+
+
+@pytest.mark.asyncio
+async def test_person_days_household_change_after_statement_year_but_inside_cost_service_period_is_refused(client_a_admin):
+    from tests.persons_key_support import persons_property, persons_run, BERND_HOUSEHOLD
+    from tests.settlement_period_support import create
+    api = client_a_admin
+    data = await persons_property(api)
+    category = next(c for c in (await api.get('/api/cost-categories')).json() if c['code'] == 'GARTENPFLEGE')
+    cost = await create(api, '/api/cost-entries', {'property_id': data['property']['id'], 'cost_category_id': category['id'],
+        'invoice_date': '2027-06-30', 'service_period_from': '2026-07-01', 'service_period_to': '2027-06-30',
+        'gross_amount': '1000.00', 'tenant_distribution_key': 'PERSONENZAHL', 'tenant_apportionable': 'UMLAGEFAEHIG'})
+    assert (await api.post(f"/api/cost-entries/{cost['id']}/confirm")).status_code == 200
+    run = await persons_run(api, data)
+    assert (await api.post(f"/api/settlements/{run['id']}/finalize", json={})).status_code == 200
+    # Six persons from 01.01.2027: after the statement year, inside the cost's
+    # service period, so the frozen 2026 shares move.
+    response = await api.put(f"/api/units/{data['second']['id']}/household", json=[
+        {'valid_from': '2026-01-01', 'persons': 1, 'is_vacancy': True},
+        {'valid_from': '2026-03-01', 'persons': 1, 'is_vacancy': False},
+        {'valid_from': '2027-01-01', 'persons': 6, 'is_vacancy': False}])
+    assert response.status_code == 409, response.text
+    assert response.json()['detail']['code'] == 'household_finalized'
+    assert (await api.get(f"/api/units/{data['second']['id']}/household")).json() == list(reversed(BERND_HOUSEHOLD))
+
+
+@pytest.mark.asyncio
+async def test_person_days_household_guard_finds_spanning_statement_with_cost_in_second_year(client_a_admin):
+    from tests.persons_key_support import persons_property, persons_run
+    api = client_a_admin
+    data = await persons_property(api)
+    # Households cover the statement start in 2025.
+    assert (await api.put(f"/api/units/{data['unit']['id']}/household", json=[
+        {'valid_from': '2025-07-01', 'persons': 2, 'is_vacancy': False},
+        {'valid_from': '2026-01-01', 'persons': 2, 'is_vacancy': False},
+        {'valid_from': '2026-06-01', 'persons': 3, 'is_vacancy': False}])).status_code == 200
+    assert (await api.put(f"/api/units/{data['second']['id']}/household", json=[
+        {'valid_from': '2025-07-01', 'persons': 1, 'is_vacancy': True},
+        {'valid_from': '2026-01-01', 'persons': 1, 'is_vacancy': True},
+        {'valid_from': '2026-03-01', 'persons': 1, 'is_vacancy': False}])).status_code == 200
+    # The statement spans two property years; its only persons-key cost lies in the second.
+    run = await persons_run(api, data, period_start='2025-07-01', period_end='2026-06-30')
+    finalized = await api.post(f"/api/settlements/{run['id']}/finalize", json={})
+    assert finalized.status_code == 200, finalized.text
+    response = await api.put(f"/api/units/{data['unit']['id']}/household", json=[
+        {'valid_from': '2025-07-01', 'persons': 2, 'is_vacancy': False},
+        {'valid_from': '2026-01-01', 'persons': 7, 'is_vacancy': False},
+        {'valid_from': '2026-06-01', 'persons': 3, 'is_vacancy': False}])
+    assert response.status_code == 409, response.text
+    assert response.json()['detail']['code'] == 'household_finalized'
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize('rows', [
     [{'valid_from': '2026-01-01', 'persons': -1, 'is_vacancy': False}],
     [{'valid_from': '2026-01-01', 'persons': 1.5, 'is_vacancy': False}],
@@ -3286,9 +3358,11 @@ async def test_person_days_finalized_snapshot_retains_owner_person_days_and_dige
     assert canonical_sha256(payload) == digest
     assert [(v['days'], v['person_days'], v['amount']) for v in payload['vacancy_attribution']] == [(59, 59, '56.34')]
     before = canonical_json(payload)
-    refused = await api.put(f"/api/units/{data['unit']['id']}/household", json=[])
-    assert refused.status_code == 409, refused.text
-    assert refused.json()['detail']['code'] == 'household_finalized'
+    # The product-allowed wipe: a correction run supersedes the finalized run
+    # and releases the household lock; the frozen evidence must not notice.
+    correction = await api.post(f"/api/settlements/{run['id']}/correction", json={})
+    assert correction.status_code == 201, correction.text
+    assert (await api.put(f"/api/units/{data['unit']['id']}/household", json=[])).status_code == 200
     retained = (await migrator_session.execute(query, {'id': uuid.UUID(run['id'])})).one()
     assert canonical_json(retained.snapshot_payload) == before
     assert retained.snapshot_sha256 == digest
@@ -3395,9 +3469,9 @@ async def test_person_days_statement_discloses_frozen_vacancy_without_live_recal
     assert visible[0]['unit_number'] == '2'
     assert visible[0]['person_days'] == 59 and visible[0]['amount'] == '56.34'
     assert set(visible[0]) == {'unit_number', 'cost_label', 'days', 'person_days', 'amount'}
-    refused = await api.put(f"/api/units/{data['second']['id']}/household", json=[])
-    assert refused.status_code == 409, refused.text
-    assert refused.json()['detail']['code'] == 'household_finalized'
+    correction = await api.post(f"/api/settlements/{run['id']}/correction", json={})
+    assert correction.status_code == 201, correction.text
+    assert (await api.put(f"/api/units/{data['second']['id']}/household", json=[])).status_code == 200
     assert (await api.put(f"/api/units/{data['second']['id']}", json={'number': 'Changed after finalization'})).status_code == 200
     retained = (await api.get(url)).json()
     assert retained['vacancy_attribution'] == visible
