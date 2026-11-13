@@ -2167,7 +2167,18 @@ or job uses the change. Keys are never read back or stored in browser persistenc
 All provider-listed model IDs remain selectable in a native select. „geprüft“ means
 actual evaluation promotion evidence; the initial registry is empty. Unknown-price
 models show that their monthly limit is not enforced. German copy explains shared
-UTC monthly reservation accounting and document transmission to the selected provider. Changing provider or endpoint clears the key/model and disables both functions until reconfigured. Local endpoints require an explicit key value, including a placeholder for a service without authentication. The import processing notice names the organization's configured provider rather than OpenAI. The form
+UTC monthly reservation accounting and document transmission to the selected provider. Changing provider or endpoint clears the key/model and disables both functions until reconfigured. Local endpoints require an explicit key value, including a placeholder for a service without authentication. The import processing notice names the organization's configured provider rather than OpenAI.
+
+Storing or replacing the key requires the provider confirmation: a checkbox at the
+key field states that the organization chose and contracted the provider itself
+(data processing, storage location and no training use) and instructs the operator
+of this installation to transmit documents and extracted text to that provider; the
+wording is provisional until the reviewed AV-Vertrag of #26. Saving without the tick
+is refused with a German message at the field (structured code
+`ORGANIZATION_AI_CONFIRMATION_REQUIRED`) and no key is stored. A key stored before
+this requirement keeps the checkbox visible without re-entering it and stays unused
+until confirmed once; the confirmed state names who confirmed and when. Removing the
+key ends the instruction; the record of earlier confirmations stays. The form
 uses existing Button, Input, Label, card, spacing and error/status styles; it stays
 usable at 360 px with long model names. Personal settings screenshots above include
 the administrator's organization card after this change.
@@ -2175,9 +2186,12 @@ the administrator's organization card after this change.
 
 | Organization AI settings | Desktop | 360 px |
 |---|---|---|
-| Before | [personal settings](docs/assets/design/ai-settings/settings-before-1280.png) | [personal settings](docs/assets/design/ai-settings/settings-before-360.png) |
-| Klar | [AI card](docs/assets/design/ai-settings/settings-after-klar-1280.png) | [AI card](docs/assets/design/ai-settings/settings-after-klar-360.png) |
-| Warm | [AI card](docs/assets/design/ai-settings/settings-after-warm-1280.png) | [AI card](docs/assets/design/ai-settings/settings-after-warm-360.png) |
+| Before (key entered, no confirmation step) | [view](docs/assets/design/ai-settings/ai-confirmation-before-1280.png) | [view](docs/assets/design/ai-settings/ai-confirmation-before-360.png) |
+| Provider confirmation checkbox | [view](docs/assets/design/ai-settings/ai-confirmation-checkbox-1280.png) | [view](docs/assets/design/ai-settings/ai-confirmation-checkbox-360.png) |
+| Confirmation refused | [view](docs/assets/design/ai-settings/ai-confirmation-refused-1280.png) | [view](docs/assets/design/ai-settings/ai-confirmation-refused-360.png) |
+| Confirmed state | [view](docs/assets/design/ai-settings/ai-confirmation-confirmed-1280.png) | [view](docs/assets/design/ai-settings/ai-confirmation-confirmed-360.png) |
+| Klar (card theme) | [AI card](docs/assets/design/ai-settings/settings-after-klar-1280.png) | [AI card](docs/assets/design/ai-settings/settings-after-klar-360.png) |
+| Warm (card theme) | [AI card](docs/assets/design/ai-settings/settings-after-warm-1280.png) | [AI card](docs/assets/design/ai-settings/settings-after-warm-360.png) |
 
 
 Provider selection uses the same settings card and native select. API-Basis-URL appears

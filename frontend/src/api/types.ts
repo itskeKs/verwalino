@@ -1932,6 +1932,10 @@ export interface UnitHouseholdRow {
   persons: number;
   is_vacancy: boolean;
 }
+export interface OrganizationAiConfirmation {
+  confirmed_by_name: string;
+  confirmed_at: string;
+}
 export interface OrganizationAiSettings {
   request_timeout_seconds?: number | null;
   provider: 'openai' | 'openai_compatible' | 'anthropic';
@@ -1942,6 +1946,8 @@ export interface OrganizationAiSettings {
   qa_enabled: boolean;
   monthly_limit_usd: string | null;
   price_known: boolean;
+  confirmation: OrganizationAiConfirmation | null;
+  confirmation_required: boolean;
 }
 export interface AiModel { id: string; evaluated: boolean; price_known: boolean }
-export type OrganizationAiSettingsBody = Omit<OrganizationAiSettings, 'key_set' | 'price_known'> & { api_key?: string | null };
+export type OrganizationAiSettingsBody = Omit<OrganizationAiSettings, 'key_set' | 'price_known' | 'confirmation' | 'confirmation_required'> & { api_key?: string | null; confirmation?: boolean };
