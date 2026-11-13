@@ -135,6 +135,15 @@ skipped; an organization that signed up on the hosted service keeps exactly its
 own sign-up assent records when it later imports an archive. The table stays
 writable only by the sign-up provisioning trigger.
 
+AI provider confirmations (`organization_ai_confirmation`: confirmer, time,
+text version and the provider or base-URL destination recorded when an
+administrator stores or replaces the organization's own AI key) follow the same
+rule. They are part of the export for the customer's own portability, but an
+archive containing `entities/organization_ai_confirmation.jsonl` imports with
+200 while its rows are skipped: a confirmation is evidence this installation
+collected, and an archive must not be able to plant or rewrite it. The table
+carries no key material and is erased with the organization.
+
 The importer checks the format, safe regular-file members, exact manifest/member
 hash coverage, row counts, organization identity, and the release's Alembic
 ancestry. The same or an older known schema is accepted; newer/unknown heads are
