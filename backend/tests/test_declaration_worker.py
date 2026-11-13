@@ -10,6 +10,7 @@ from decimal import Decimal
 
 import pytest
 import psycopg2
+from fastapi import HTTPException
 from sqlalchemy import func, select
 
 from tests.conftest import MIGRATOR_SYNC_URL
@@ -20,6 +21,7 @@ from app.core.config import settings
 from app.core.db import get_worker_tenant_session as get_tenant_session
 from app.models.declaration_import import DeclarationExtractionRun, DeclarationImport
 from app.models.organization import Organization
+from app.services.ai_settings_service import _cipher, effective_ai_settings
 from app.repositories.declaration_import_repo import (
     DeclarationImportRepository,
     WorkerLease,
@@ -368,6 +370,75 @@ async def test_worker_rotates_organization_start_after_a_successful_claim(seed_d
     assert second is not None
     assert second.organization_id != first.organization_id
     for lease in (first, second):
+        async with get_tenant_session(lease.organization_id) as session:
+            row = await DeclarationImportRepository(
+                session, lease.organization_id
+            ).get_by_id_for_update(lease.import_id)
+            assert row is not None
+            row.status = "FAILED"
+            row.lease_owner = None
+            row.lease_token = None
+            row.lease_expires_at = None
+            await session.flush()
+
+
+@pytest.mark.asyncio
+async def test_worker_skips_organization_with_undecryptable_key_and_keeps_rotating(
+    seed_data, configured_ai, caplog
+) -> None:
+    now = datetime.now(timezone.utc)
+    first_org, second_org = sorted((seed_data["org_a_id"], seed_data["org_b_id"]))
+    first_actor = (
+        seed_data["user_a_admin_id"]
+        if first_org == seed_data["org_a_id"]
+        else seed_data["user_b_admin_id"]
+    )
+    second_actor = (
+        seed_data["user_b_admin_id"]
+        if second_org == seed_data["org_b_id"]
+        else seed_data["user_a_admin_id"]
+    )
+    # Stored under another tenant's cipher, as after a SESSION_SECRET rotation.
+    ciphertext = _cipher(uuid.uuid4()).encrypt(b"stale-secret-key").decode()
+    with closing(psycopg2.connect(MIGRATOR_SYNC_URL)) as connection:
+        with connection, connection.cursor() as cursor:
+            cursor.execute(
+                "UPDATE organization_ai_settings SET encrypted_api_key=%s "
+                "WHERE organization_id=%s",
+                (ciphertext, str(first_org)),
+            )
+    async with get_tenant_session(first_org) as session:
+        with pytest.raises(HTTPException) as excinfo:
+            await effective_ai_settings(session, first_org)
+    assert excinfo.value.status_code == 503
+    assert excinfo.value.detail == (
+        "Der gespeicherte KI-Schlüssel kann nicht entschlüsselt werden. "
+        "Bitte hinterlegen Sie ihn erneut in den Einstellungen."
+    )
+    queued = await _create_import(second_org, second_actor, status="QUEUED")
+    worker = DeclarationImportWorker(object(), clock=lambda: now)
+    with caplog.at_level(logging.WARNING, logger="app.workers.declaration_import"):
+        second_lease = await worker.claim_one()
+    assert second_lease is not None
+    assert second_lease.organization_id == second_org
+    assert second_lease.import_id == queued.id
+    warnings = [record for record in caplog.records if record.name == "app.workers.declaration_import"]
+    assert len(warnings) == 1
+    assert warnings[0].getMessage() == (
+        f"declaration worker result=AI_KEY_UNREADABLE organization_id={first_org}"
+    )
+    for record in caplog.records:
+        assert ciphertext not in record.getMessage()
+        assert "stale-secret-key" not in record.getMessage()
+        assert record.exc_info is record.exc_text is None
+    # Re-entering the key under the current secret claims that organization again.
+    configured_ai(first_org)
+    first_item = await _create_import(first_org, first_actor, status="QUEUED")
+    first_lease = await worker.claim_one()
+    assert first_lease is not None
+    assert first_lease.organization_id == first_org
+    assert first_lease.import_id == first_item.id
+    for lease in (second_lease, first_lease):
         async with get_tenant_session(lease.organization_id) as session:
             row = await DeclarationImportRepository(
                 session, lease.organization_id

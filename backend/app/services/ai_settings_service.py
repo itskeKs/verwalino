@@ -18,6 +18,13 @@ def _cipher(organization_id):
     return Fernet(base64.urlsafe_b64encode(hashlib.sha256(material).digest()))
 
 
+class AiKeyUnreadableError(HTTPException):
+    """Unreadable stored key; API callers keep the 503, the worker classifies by type."""
+
+    def __init__(self) -> None:
+        super().__init__(503, 'Der gespeicherte KI-Schlüssel kann nicht entschlüsselt werden. Bitte hinterlegen Sie ihn erneut in den Einstellungen.')
+
+
 @dataclass(frozen=True)
 class EffectiveAiSettings:
     provider: str = 'openai'
@@ -39,7 +46,7 @@ async def effective_ai_settings(db, organization_id) -> EffectiveAiSettings:
         try:
             key = SecretStr(_cipher(organization_id).decrypt(row.encrypted_api_key.encode()).decode())
         except (InvalidToken, ValueError):
-            raise HTTPException(503, 'Der gespeicherte KI-Schlüssel kann nicht entschlüsselt werden. Bitte hinterlegen Sie ihn erneut in den Einstellungen.') from None
+            raise AiKeyUnreadableError() from None
     return EffectiveAiSettings(row.provider, key, row.model, row.import_enabled, row.qa_enabled, row.monthly_limit_usd, row.base_url, row.request_timeout_seconds)
 
 

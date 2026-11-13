@@ -188,7 +188,11 @@ quality.
 
 An organization administrator enters the OpenAI key in **Einstellungen**. The key
 is encrypted at rest using the deployment session secret, never returned by the
-API, and never included in logs, product archives or tickets. The same selected
+API, and never included in logs, product archives or tickets. Rotating
+`SESSION_SECRET` therefore makes every stored key unreadable until each
+organization re-enters its key (the known 503 message); the declaration import
+worker skips such organizations with one `AI_KEY_UNREADABLE` log line per
+organization and keeps claiming for the others instead of stalling their queue. The same selected
 model is used for extraction, escalation and Q&A. Each request/job reads the current
 organization settings; clients are closed after the request/job. Only after the local
 precheck are bounded, permitted page contents sent to the provider.

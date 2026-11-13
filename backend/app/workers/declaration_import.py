@@ -89,6 +89,7 @@ class DeclarationImportWorker:
         self._clock = clock or (lambda: datetime.now(timezone.utc))
         self._sleep = sleep
         self._last_claimed_organization_id: uuid.UUID | None = None
+        self._unreadable_key_logged: set[uuid.UUID] = set()
         self._validate_settings(heartbeat_seconds)
         self._heartbeat_seconds = (
             float(heartbeat_seconds)
@@ -173,8 +174,21 @@ class DeclarationImportWorker:
             organization_ids = organization_ids[start:] + organization_ids[:start]
         for organization_id in organization_ids:
             async with self._tenant_session_factory(organization_id) as session:
-                from app.services.ai_settings_service import effective_ai_settings
-                effective = await effective_ai_settings(session, organization_id)
+                from app.services.ai_settings_service import (
+                    AiKeyUnreadableError,
+                    effective_ai_settings,
+                )
+
+                try:
+                    effective = await effective_ai_settings(session, organization_id)
+                except AiKeyUnreadableError:
+                    if organization_id not in self._unreadable_key_logged:
+                        self._unreadable_key_logged.add(organization_id)
+                        logger.warning(
+                            "declaration worker result=AI_KEY_UNREADABLE organization_id=%s",
+                            organization_id,
+                        )
+                    continue
                 if not effective.import_enabled or not effective.api_key or not effective.model:
                     continue
                 self._active_ai = effective
@@ -186,6 +200,7 @@ class DeclarationImportWorker:
                     self._settings.declaration_lease_seconds,
                 )
             if lease is not None:
+                self._unreadable_key_logged.discard(organization_id)
                 self._last_claimed_organization_id = organization_id
                 return lease
         return None
