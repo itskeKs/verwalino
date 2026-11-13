@@ -292,6 +292,7 @@ PROBES: dict[str, Probe] = {
     "POST /api/meters": Probe(row("unit", unit_id="id", property_id="property_id")),
     "POST /api/meters/{meter_id}/readings": Probe(row("meter", meter_id="id"), body={"reading_date": "2026-01-01", "value": "1.0000"}),
     # app/api/organizations.py
+    "GET /api/organizations/legal-assents": Probe(),
     "GET /api/organizations/me": Probe(),
     "GET /api/organizations/quota": Probe(),
     # app/api/owner_profiles.py

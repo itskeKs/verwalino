@@ -9,11 +9,13 @@ import pytest_asyncio
 from sqlalchemy import text
 
 from app.core.config import settings
+from app.core.legal_documents import AV_VERTRAG_VERSION, TERMS_VERSION
 from tests.setup_support import fresh_setup as fresh_setup
 from tests.test_mail_service import FakeSMTP
 
 BODY = {"organization_name": "Hausverwaltung mit langem Namen GmbH", "admin_name": "Erika Mustermann",
-        "email": " Signup@Example.test ", "password": "A-long-signup-password-123", "website": ""}
+        "email": " Signup@Example.test ", "password": "A-long-signup-password-123", "website": "",
+        "terms_version": TERMS_VERSION, "av_version": AV_VERTRAG_VERSION}
 MESSAGE = {"message": "Wenn die Adresse frei ist, haben wir eine E-Mail geschickt"}
 REFUSED = {"detail": "Bestätigung nicht möglich. Bitte fordern Sie einen neuen Link an."}
 

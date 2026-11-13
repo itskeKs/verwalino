@@ -38,6 +38,7 @@ PRIVATE_POLICIES = {
 TENANT_TABLES = frozenset({
     "organization_ai_settings",
     "user_invitation",
+    "legal_document_assent",
     "organization_deletion",
     "source_partition_revision", "source_partition_member", "assignment_proposal",
     "exception_case", "exception_dependency", "exception_case_event", "invoice_review_revision",
@@ -101,6 +102,11 @@ TENANT_TABLES = frozenset({
     "property_rule_source",
     "approved_fact_source",
     "property_knowledge_query_run",
+})
+
+# Tenant tables the runtime may only read; a single SELECT policy is the design.
+READONLY_TABLES = frozenset({
+    "legal_document_assent",  # Written only by the provisioning trigger (definer).
 })
 
 # Global tables that intentionally have no RLS.
@@ -171,6 +177,11 @@ class TestRLSCoverage:
             policies = result.fetchall()
             policy_names = {p.policyname for p in policies}
             policy_cmds = {p.cmd for p in policies}
+
+            if table in READONLY_TABLES:
+                assert policy_names == {f"{table}_read"}, policy_names
+                assert policy_cmds == {"SELECT"}, policy_cmds
+                continue
 
             if table in PRIVATE_POLICIES:
                 assert policy_names == {PRIVATE_POLICIES[table]}

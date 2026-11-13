@@ -18,7 +18,7 @@ from starlette.types import ASGIApp, Receive, Scope, Send
 
 from app.api.auth import LoginResponse, _DUMMY_PASSWORD_HASH, _set_session_cookie
 from app.api.setup import SetupRequest
-from app.core import rate_limit
+from app.core import legal_documents, rate_limit
 from app.core.auth_db import lookup_login_principal
 from app.core.config import settings
 from app.core.db import get_session_factory
@@ -105,6 +105,8 @@ class SignupRequest(EmailRequest):
     organization_name: str = Field(min_length=1, max_length=255)
     admin_name: str = Field(min_length=1, max_length=255)
     password: SecretStr
+    terms_version: str = Field(default="", max_length=10)
+    av_version: str = Field(default="", max_length=10)
 
     @field_validator("organization_name", "admin_name", mode="before")
     @classmethod
@@ -144,6 +146,15 @@ async def cleanup_expired_requests() -> None:
         logger.warning("Signup request cleanup failed")
 
 
+ASSENT_REFUSED = ("Bitte bestätigen Sie die aktuellen Nutzungsbedingungen und den "
+                  "Auftragsverarbeitungsvertrag.")
+
+
+def refuse_assent(field: str) -> HTTPException:
+    """Structured refusal for a missing or outdated document version."""
+    return HTTPException(422, {"code": "legal_assent_refused", "field": field, "message": ASSENT_REFUSED})
+
+
 async def accept_request(body: EmailRequest, throttle: ThrottleRequest, background: BackgroundTasks, *, new: SignupRequest | None = None) -> dict:
     token = None
     try:
@@ -159,9 +170,10 @@ async def accept_request(body: EmailRequest, throttle: ThrottleRequest, backgrou
                 await attempt.record_failure()
                 if attempt.allowed:
                     if new is not None:
-                        token = await session.scalar(text("SELECT public.request_signup(:email,:org,:name,:password)"), {
+                        token = await session.scalar(text("SELECT public.request_signup_assented(:email,:org,:name,:password,:terms,:av)"), {
                             "email": body.email, "org": new.organization_name,
                             "name": new.admin_name, "password": password_hash,
+                            "terms": new.terms_version, "av": new.av_version,
                         })
                     else:
                         token = await session.scalar(text("SELECT public.resend_signup(:email)"), {"email": body.email})
@@ -185,6 +197,10 @@ async def signup(body: SignupRequest, background: BackgroundTasks, throttle: Thr
     if trap is not None:
         trap.status_code = 202
         return trap
+    if body.terms_version != legal_documents.TERMS_VERSION:
+        raise refuse_assent("terms_version")
+    if body.av_version != legal_documents.AV_VERTRAG_VERSION:
+        raise refuse_assent("av_version")
     return await accept_request(body, throttle, background, new=body)
 
 

@@ -7,9 +7,10 @@ const auth = vi.hoisted(() => ({ session: { user_id:'admin', organization_id:'or
 vi.mock('../auth/useAuth', () => ({ useAuth: () => auth }));
 vi.mock('../design/useDesignTheme', () => ({ useDesignTheme: () => ({ theme:'klar', loaded:true, loading:false, saving:false, error:null, save:vi.fn(), reload:vi.fn() }) }));
 const initial = { provider:'openai', base_url:null, key_set:false, model:null, import_enabled:false, qa_enabled:false, monthly_limit_usd:null, price_known:false };
+const byUrl = (value: object) => vi.spyOn(api, 'get').mockImplementation(async (url: string) => (url.includes('/legal-assents') ? [] : value) as never);
 beforeEach(() => {
   vi.restoreAllMocks(); auth.session.role = 'OWNER_ADMIN';
-  vi.spyOn(api, 'get').mockResolvedValue(initial);
+  byUrl(initial);
 });
 
 it('allows every listed model, explains unknown prices and clears a saved key', async () => {
@@ -32,7 +33,7 @@ it('allows every listed model, explains unknown prices and clears a saved key', 
 });
 
 it('retains a typed key and chosen model after a failed save', async () => {
-  vi.spyOn(api,'get').mockResolvedValue({...initial, key_set:true,model:'gpt-5.6-luna',price_known:true});
+  byUrl({...initial, key_set:true,model:'gpt-5.6-luna',price_known:true});
   vi.spyOn(api,'put').mockRejectedValue(new Error('Speichern fehlgeschlagen.'));
   render(<SettingsPage />);
   const key = await screen.findByLabelText('API-Schlüssel');
@@ -53,7 +54,7 @@ it('keeps personal settings for non-admins without fetching organization AI sett
 
 
 it('switches provider and endpoint without carrying the old key or model to discovery', async () => {
-  vi.spyOn(api,'get').mockResolvedValue({...initial, key_set:true, model:'gpt-5.6-luna'});
+  byUrl({...initial, key_set:true, model:'gpt-5.6-luna'});
   const discover = vi.spyOn(api,'post').mockResolvedValue({models:[{id:'local-very-long-model-name',evaluated:false,price_known:false}]});
   render(<SettingsPage />);
   fireEvent.change(await screen.findByLabelText('Anbieter'), {target:{value:'openai_compatible'}});
@@ -68,7 +69,7 @@ it('switches provider and endpoint without carrying the old key or model to disc
 
 
 it('saves an endpoint timeout and resets it when the destination changes', async () => {
-  vi.spyOn(api,'get').mockResolvedValue({...initial,provider:'openai_compatible',base_url:'http://localhost:11434/v1',request_timeout_seconds:240});
+  byUrl({...initial,provider:'openai_compatible',base_url:'http://localhost:11434/v1',request_timeout_seconds:240});
   const save = vi.spyOn(api,'put').mockImplementation(async (_url,body) => ({...initial,...body as object}));
   render(<SettingsPage />);
   const timeout = await screen.findByLabelText('Zeitlimit pro Anfrage in Sekunden (optional)');

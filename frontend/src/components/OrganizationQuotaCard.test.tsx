@@ -24,7 +24,7 @@ it.each([
 });
 
 it("uses the shared size formatter for hosted storage usage and limits", async () => {
-  vi.mocked(useDeploymentMode).mockReturnValue({ mode: "hosted", error: false, mailAvailable: false });
+  vi.mocked(useDeploymentMode).mockReturnValue({ mode: "hosted", error: false, mailAvailable: false, legalDocuments: null });
   vi.mocked(getOrganizationQuota).mockResolvedValue({
     plan: "free",
     usage: { storage_bytes: 1_294_537, properties: 1, units: 2, ai_budget_usd: "0" },
@@ -35,7 +35,7 @@ it("uses the shared size formatter for hosted storage usage and limits", async (
 });
 
 it("shows the 2 GiB storage limit in GiB, as the backend refusal does", async () => {
-  vi.mocked(useDeploymentMode).mockReturnValue({ mode: "hosted", error: false, mailAvailable: false });
+  vi.mocked(useDeploymentMode).mockReturnValue({ mode: "hosted", error: false, mailAvailable: false, legalDocuments: null });
   vi.mocked(getOrganizationQuota).mockResolvedValue({
     plan: "free",
     usage: { storage_bytes: 1_294_537, properties: 1, units: 2, ai_budget_usd: "0" },
@@ -46,7 +46,7 @@ it("shows the 2 GiB storage limit in GiB, as the backend refusal does", async ()
 });
 
 it.each(["selfhost", null] as const)("renders nothing and skips quota requests while mode is %s", mode => {
-  vi.mocked(useDeploymentMode).mockReturnValue({ mode, error: false, mailAvailable: false });
+  vi.mocked(useDeploymentMode).mockReturnValue({ mode, error: false, mailAvailable: false, legalDocuments: null });
   vi.mocked(getOrganizationQuota).mockResolvedValue({} as never);
   const { container } = render(<OrganizationQuotaCard />);
   expect(container).toBeEmptyDOMElement();

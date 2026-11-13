@@ -1,12 +1,14 @@
 """Hosted signup, database capability and lifecycle boundaries."""
 import asyncio
 import hashlib
+import json
 
 import pytest
 from sqlalchemy import text
 from sqlalchemy.exc import DBAPIError
 
 from app.core.config import settings
+from tests.test_organization_export import unpack
 from tests.setup_support import fresh_setup as fresh_setup
 from tests.signup_support import BODY, MESSAGE, REFUSED, confirmation_token, signup as signup, signup_mail as signup_mail
 
@@ -219,7 +221,7 @@ async def test_selfhost_signup_matches_unknown_routes_before_parsing_or_database
 
 @pytest.mark.asyncio
 async def test_signup_function_has_fixed_security_metadata_and_narrow_grants(app_rw_session):
-    for name in ('provision_organization(text,text)', 'request_signup(text,text,text,text)',
+    for name in ('provision_organization(text,text)', 'request_signup_assented(text,text,text,text,text,text)',
                  'resend_signup(text)', 'signup_confirmation(text)', 'cleanup_signup_requests()'):
         args = {'signature': 'public.' + name}
         row = (await app_rw_session.execute(text('SELECT pg_get_userbyid(proowner),prosecdef,proconfig FROM pg_proc WHERE oid=CAST(:signature AS regprocedure)'), args)).one()
@@ -253,6 +255,12 @@ def test_signup_migration_roundtrip_is_exact_and_refuses_retained_state(run_migr
         with engine.connect() as connection, connection.begin() as transaction:
             # Reuse the whole-schema/data/ACL snapshot used by release-chain
             # rehearsals: exact means more than reproducing the column names.
+            # 0185 adds two assent columns and the assent trigger to this
+            # revision's table; its downgrade/upgrades restore only the state
+            # 0144 itself owns, so the later layer is lifted off first and
+            # replayed after the rehearsal (like the 0183 grant below).
+            connection.execute(text('DROP TRIGGER t_record_signup_assent ON public.signup_request'))
+            connection.execute(text('ALTER TABLE public.signup_request DROP COLUMN terms_version, DROP COLUMN av_version'))
             connection.execute(text('DELETE FROM signup_request'))
             # 0183 grants app_rw EXECUTE on this revision's address lookup, and
             # the downgrade drops the function with that grant; compare only
@@ -325,6 +333,7 @@ async def test_concurrent_same_email_serializes_signup_and_confirmation(client_u
         await asyncio.gather(*(t for t in (first, second) if t), return_exceptions=True)
         with psycopg2.connect(MIGRATOR_SYNC_URL) as connection, connection.cursor() as cursor:
             cursor.execute('DELETE FROM signup_request WHERE email_normalized=%s', (body['email'],))
+            cursor.execute('DELETE FROM legal_document_assent WHERE user_id IN (SELECT id FROM "user" WHERE email=%s)', (body['email'],))
             cursor.execute('DELETE FROM membership WHERE user_id IN (SELECT id FROM "user" WHERE email=%s)', (body['email'],))
             cursor.execute('DELETE FROM "user" WHERE email=%s', (body['email'],))
             cursor.execute('DELETE FROM organization WHERE name=%s', (body['organization_name'],))
@@ -371,6 +380,7 @@ async def test_concurrent_form_correction_cannot_change_credentials_after_passwo
         await asyncio.gather(*(task for task in (confirmation, correction) if task), return_exceptions=True)
         with psycopg2.connect(MIGRATOR_SYNC_URL) as connection, connection.cursor() as cursor:
             cursor.execute('DELETE FROM signup_request WHERE email_normalized=%s', (body['email'],))
+            cursor.execute('DELETE FROM legal_document_assent WHERE user_id IN (SELECT id FROM "user" WHERE email=%s)', (body['email'],))
             cursor.execute('DELETE FROM membership WHERE user_id IN (SELECT id FROM "user" WHERE email=%s)', (body['email'],))
             cursor.execute('DELETE FROM "user" WHERE email=%s', (body['email'],))
             cursor.execute('DELETE FROM organization WHERE name=%s', (body['organization_name'],))
@@ -459,6 +469,7 @@ async def test_confirmed_address_can_signup_again_after_its_organization_is_remo
     assert response.status_code == 201
     await client.post('/api/auth/logout')
     await connection.execute(text('RESET ROLE'))
+    await connection.execute(text('DELETE FROM legal_document_assent'))
     await connection.execute(text('DELETE FROM membership'))
     await connection.execute(text('DELETE FROM "user"'))
     await connection.execute(text('DELETE FROM organization'))
@@ -747,3 +758,86 @@ def test_confirmation_origin_uses_only_a_valid_public_hostname(monkeypatch, host
     monkeypatch.setattr(settings, 'public_host', host)
     with pytest.raises(ValueError, match='HV_PUBLIC_HOST'):
         confirmation_origin()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('missing', [['terms_version', 'av_version'], ['terms_version'], ['av_version']])
+async def test_signup_refuses_missing_assent_without_state_or_mail(signup, missing):
+    client, connection, mail = signup
+    body = {key: value for key, value in BODY.items() if key not in missing}
+    response = await client.post('/api/signup', json=body)
+    assert response.status_code == 422, response.text
+    detail = response.json()['detail']
+    assert isinstance(detail, dict) and detail.get('code') == 'legal_assent_refused'
+    assert await connection.scalar(text('SELECT count(*) FROM signup_request')) == 0
+    assert mail.messages == []
+
+
+@pytest.mark.asyncio
+async def test_signup_refuses_unknown_assent_version_without_state_or_mail(signup):
+    from app.core import legal_documents
+    client, connection, mail = signup
+    body = (BODY | {'terms_version': legal_documents.TERMS_VERSION,
+                    'av_version': legal_documents.AV_VERTRAG_VERSION}
+            | {'terms_version': '2020-01-01'})
+    response = await client.post('/api/signup', json=body)
+    assert response.status_code == 422, response.text
+    detail = response.json()['detail']
+    assert isinstance(detail, dict) and detail.get('code') == 'legal_assent_refused'
+    assert await connection.scalar(text('SELECT count(*) FROM signup_request')) == 0
+    assert mail.messages == []
+
+
+@pytest.mark.asyncio
+async def test_confirmation_records_both_assents_in_the_provisioning_transaction(signup):
+    from app.core import legal_documents
+    client, connection, mail = signup
+    body = BODY | {'terms_version': legal_documents.TERMS_VERSION,
+                   'av_version': legal_documents.AV_VERTRAG_VERSION}
+    assert (await client.post('/api/signup', json=body)).status_code == 202
+    token = confirmation_token(mail)
+    assert await connection.scalar(text('SELECT count(*) FROM legal_document_assent')) == 0
+    refused = await client.post('/api/signup/confirm', json={'token': token, 'password': 'wrong'})
+    assert refused.status_code in (403, 422)
+    assert await connection.scalar(text('SELECT count(*) FROM legal_document_assent')) == 0
+    answer = await client.post('/api/signup/confirm', json={'token': token, 'password': BODY['password']})
+    assert answer.status_code == 201, answer.text
+    rows = (await connection.execute(text(
+        'SELECT a.document, a.version, a.assented_at, a.user_id, u.display_name'
+        ' FROM legal_document_assent a JOIN "user" u ON u.id=a.user_id'
+        ' WHERE a.organization_id=:org'), {'org': answer.json()['organization_id']})).mappings().all()
+    assert {row['document']: row['version'] for row in rows} == {
+        'TERMS': legal_documents.TERMS_VERSION, 'AV': legal_documents.AV_VERTRAG_VERSION}
+    assert all(row['assented_at'] is not None and row['user_id'] for row in rows)
+    listing = await client.get('/api/organizations/legal-assents')
+    assert listing.status_code == 200, listing.text
+    entries = {entry['document']: entry for entry in listing.json()}
+    assert set(entries) == {'TERMS', 'AV'}
+    assert all(entries[name]['admin_name'] for name in entries)
+
+
+@pytest.mark.asyncio
+async def test_resend_keeps_accepting_email_only_requests(signup):
+    client, connection, mail = signup
+    body = BODY | {'terms_version': '2026-11-13', 'av_version': '2026-11-13'}
+    assert (await client.post('/api/signup', json=body)).status_code == 202
+    response = await client.post('/api/signup/resend', json={'email': BODY['email'], 'website': ''})
+    assert (response.status_code, response.json()) == (202, MESSAGE)
+
+
+@pytest.mark.asyncio
+async def test_organization_export_contains_both_assent_records(signup):
+    from app.core import legal_documents
+    client, connection, mail = signup
+    body = BODY | {'terms_version': legal_documents.TERMS_VERSION,
+                   'av_version': legal_documents.AV_VERTRAG_VERSION}
+    assert (await client.post('/api/signup', json=body)).status_code == 202
+    token = confirmation_token(mail)
+    assert (await client.post('/api/signup/confirm', json={'token': token, 'password': BODY['password']})).status_code == 201
+    answer = await client.post('/api/organizations/export')
+    assert answer.status_code == 200, answer.text
+    files = unpack(answer.content)
+    rows = [json.loads(line) for line in files['entities/legal_document_assent.jsonl'].decode().splitlines()]
+    assert {row['document']: row['version'] for row in rows} == {
+        'TERMS': legal_documents.TERMS_VERSION, 'AV': legal_documents.AV_VERTRAG_VERSION}
+    assert all(row['assented_at'] and row['organization_id'] for row in rows)
