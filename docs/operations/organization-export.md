@@ -592,6 +592,7 @@ not an immutable field; a separate minimization policy remains an owner decision
 | `invoice_processing_attempt` | `error_code`, `processor_version`, `status` | Technical operation/status/error codes, keys and digests; personal event payloads are scrubbed separately. |
 | `invoice_review_revision` | `content_sha256`, `currency`, `document_kind`, `document_number`, `reason`, `request_digest`, `review_scope`, `seller_name` | Retained source, scope or review evidence and its technical provenance. |
 | `invoice_upload_admission` | `payload_digest` | Technical operation/status/error codes, keys and digests; personal event payloads are scrubbed separately. |
+| `legal_document_assent` | `document`, `version` | Versioned contract-conclusion evidence (terms and AV-Vertrag assent); retained unchanged, only the user reference is anonymized at erasure. |
 | `letter_document` | `body`, `content_sha256`, `recipient_name`, `storage_uri`, `subject` | Retained original content, metadata and storage identity. |
 | `logical_document` | `content_sha256`, `origin`, `reason`, `request_digest`, `review_state` | Retained source, scope or review evidence and its technical provenance. |
 | `management_mandate` | `label`, `mandate_type` | Required mandate identity and type. |
