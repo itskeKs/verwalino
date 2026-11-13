@@ -1307,6 +1307,8 @@ export interface DunningSettings {
   fee_level_2: string;
   fee_level_3: string;
   default_interest_enabled: boolean;
+  /** Read-only on GET /api/dunning/settings; the PUT body forbids it. */
+  base_rate_covered_until: string | null;
 }
 
 export interface DunningInterestSegment {

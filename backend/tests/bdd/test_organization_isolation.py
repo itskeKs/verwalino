@@ -112,17 +112,21 @@ def alpha_dunning_settings(world, reset_dunning_settings):
 def beta_dunning_settings(world):
     beta = world.administrator_of("Verwaltung Beta")
     previous = world.look(beta, "/api/dunning/settings").json()
-    settings = {**previous, "fee_level_2": "6.50", "default_interest_enabled": False}
+    body = {key: value for key, value in previous.items() if key != "base_rate_covered_until"}
+    settings = {**body, "fee_level_2": "6.50", "default_interest_enabled": False}
     try:
         answer = world.send(beta, "PUT", "/api/dunning/settings", json=settings)
         assert answer.status_code == 200, world.describe_response()
-        assert world.look(beta, "/api/dunning/settings").json() == settings
-        assert world.act("GET", "/api/dunning/settings").json() == world.data["alpha_dunning_settings"]
+        retained = world.look(beta, "/api/dunning/settings").json()
+        assert {key: value for key, value in retained.items() if key != "base_rate_covered_until"} == settings
+        alpha = world.act("GET", "/api/dunning/settings").json()
+        assert {key: value for key, value in alpha.items() if key != "base_rate_covered_until"} == world.data["alpha_dunning_settings"]
     finally:
-        answer = world.send(beta, "PUT", "/api/dunning/settings", json=previous)
+        answer = world.send(beta, "PUT", "/api/dunning/settings", json=body)
         assert answer.status_code == 200, world.describe_response()
 
 
 @then("each administrator reads only their own dunning settings")
 def alpha_settings_retained(world):
-    assert world.act("GET", "/api/dunning/settings").json() == world.data["alpha_dunning_settings"]
+    retained = world.act("GET", "/api/dunning/settings").json()
+    assert {key: value for key, value in retained.items() if key != "base_rate_covered_until"} == world.data["alpha_dunning_settings"]

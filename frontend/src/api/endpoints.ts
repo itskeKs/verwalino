@@ -1107,8 +1107,10 @@ export function getDunningSettings(): Promise<DunningSettings> {
   return api.get<DunningSettings>("/api/dunning/settings");
 }
 
-export function saveDunningSettings(body: DunningSettings): Promise<DunningSettings> {
-  return api.put<DunningSettings>("/api/dunning/settings", body);
+export type DunningSettingsBody = Omit<DunningSettings, "base_rate_covered_until">;
+
+export function saveDunningSettings(body: DunningSettingsBody): Promise<DunningSettingsBody> {
+  return api.put<DunningSettingsBody>("/api/dunning/settings", body);
 }
 
 export function listDunningNotices(params?: {

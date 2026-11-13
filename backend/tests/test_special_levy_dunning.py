@@ -241,7 +241,8 @@ async def test_automatic_owner_interest_starts_after_the_resolved_hausgeld_due_d
         settings_path = '/api/dunning/settings'
         previous = await api.get(settings_path)
         assert previous.status_code == 200, previous.text
-        enabled = await api.put(settings_path, json={**previous.json(), 'default_interest_enabled': True})
+        settings_body = {key: value for key, value in previous.json().items() if key != 'base_rate_covered_until'}
+        enabled = await api.put(settings_path, json={**settings_body, 'default_interest_enabled': True})
         assert enabled.status_code == 200, enabled.text
         try:
             body = dunning_body(ids, economic_plan_id=str(plan), period_start='2026-07-01', period_end='2026-07-31')
@@ -260,7 +261,7 @@ async def test_automatic_owner_interest_starts_after_the_resolved_hausgeld_due_d
             item = notice['interest_snapshot']['items'][0]
             assert (item['due_date'], item['interest_start'], item['days']) == ('2026-07-03', '2026-07-04', 1)
         finally:
-            restored = await api.put(settings_path, json=previous.json())
+            restored = await api.put(settings_path, json=settings_body)
             assert restored.status_code == 200, restored.text
 
 
@@ -511,7 +512,8 @@ async def test_t35_levy_interest_actual_dates_payment_and_configuration_frozen(l
     async with client(ids, 'actor') as api:
         settings_path = "/api/dunning/settings"
         previous = (await api.get(settings_path)).json()
-        assert (await api.put(settings_path, json={**previous, "default_interest_enabled": True})).status_code == 200
+        settings_body = {key: value for key, value in previous.items() if key != "base_rate_covered_until"}
+        assert (await api.put(settings_path, json={**settings_body, "default_interest_enabled": True})).status_code == 200
         await create(api, ids, due_date='2026-06-15')
         await create(api, ids, due_date='2026-06-25', amount='2000.00')
         response = await api.post('/api/dunning/owner', json=dunning_body(ids, reference_date='2026-06-26', override_fee='0.00'))
@@ -535,7 +537,7 @@ async def test_t35_levy_interest_actual_dates_payment_and_configuration_frozen(l
         assert recalculated.json()['interest_amount'] == '4.57'
         assert [(row['days'], row['principal']) for row in
                 recalculated.json()['interest_snapshot']['items'][0]['segments']] == [(4, '3000.00'), (7, '2000.00')]
-        assert (await api.put(settings_path, json=previous)).status_code == 200
+        assert (await api.put(settings_path, json=settings_body)).status_code == 200
         retained = (await api.get(f'/api/dunning/{notice}')).json()
         for key in ('principal_amount', 'interest_amount', 'interest_snapshot', 'total_amount', 'included_items'):
             assert retained[key] == draft[key]

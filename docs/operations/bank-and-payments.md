@@ -238,6 +238,16 @@ The unscoped statement links to **Mahnungen** for historical notices without a v
 [interest calculation](../m6-zahlungen-mietkonto.md#default-interest-on-dunning-notices)
 and [browser feature](../../features/dunning_interest.feature).
 
+The statutory base-rate table is seeded from the Bundesbank and ends with the last
+published half-year. **Every half-year release** (by 1 January and 1 July), compare the
+table against the published schedule at
+[bundesbank.de](https://www.bundesbank.de/de/bundesbank/organisation/agb-und-regelungen/basiszinssatz-607820)
+and add the new row in a migration taking the next free revision, citing the source like
+`0174_dunning_settings.py`; never estimate an unpublished rate. Until the row lands,
+reminders with interest are refused with 409 for the uncovered half-year, and the
+**Mahneinstellungen** card shows administrators a notice from 60 days before the stored
+table ends.
+
 ## Dunning run with selected drafts
 
 T53 introduced this workflow.

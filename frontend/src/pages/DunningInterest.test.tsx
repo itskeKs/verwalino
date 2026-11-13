@@ -9,7 +9,7 @@ const auth = vi.hoisted(() => ({ role: "CLERK", organization_id: "org" }));
 vi.mock("../auth/useAuth", () => ({ useAuth: () => ({ session: auth }) }));
 vi.mock("../components/AccountingScopeSelector", () => ({ AccountingScopeSelector: (p: { onChange: (id: string) => void; onValidityChange: (valid: boolean) => void }) => <button type="button" onClick={() => { p.onChange("scope"); p.onValidityChange(true); }}>Kreis wählen</button> }));
 const notice = { id: "notice", status: "issued", level: 1, issue_date: "2026-03-02", due_date: "2026-03-16", principal_amount: "700.00", fee_amount: "0.00", interest_amount: "8.63", total_amount: "708.63", included_items: [], interest_snapshot: { base_interest_rate: "2.50", annual_rate: "7.50", reference_date: "2026-03-02", items: [{ payment_type: "KALTMIETE", period_year: 2026, period_month: 1, due_date: "2026-01-01", days: 60, principal: "700.00", interest: "8.63" }] } };
-const defaults = { fee_level_1: "0.00", fee_level_2: "2.50", fee_level_3: "2.50", default_interest_enabled: false };
+const defaults = { fee_level_1: "0.00", fee_level_2: "2.50", fee_level_3: "2.50", default_interest_enabled: false, base_rate_covered_until: "2026-12-31" };
 let settings: () => Promise<typeof defaults>;
 beforeEach(() => {
   auth.role = "CLERK"; auth.organization_id = "org";
@@ -42,7 +42,7 @@ it("reads organization settings without offering a clerk an edit", async () => {
 
 it("an administrator saves the three fees as exact decimal text and enables interest", async () => {
   auth.role = "OWNER_ADMIN";
-  const updated = { ...defaults, fee_level_2: "3.00", fee_level_3: "4.00", default_interest_enabled: true };
+  const updated = { fee_level_1: "0.00", fee_level_2: "3.00", fee_level_3: "4.00", default_interest_enabled: true };
   vi.spyOn(api, "put").mockResolvedValue(updated);
   show(); await ready();
   const fee = await screen.findByLabelText("Mahngebühr Stufe 2 (EUR)");

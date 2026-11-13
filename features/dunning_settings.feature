@@ -1,6 +1,11 @@
 Feature: Organization dunning settings
   An organization sets its reminder fees and can enable automatic statutory interest.
 
+  Scenario: The settings name the last covered base-rate half-year
+    Given an administrator of "Verwaltung Alpha" is signed in
+    When the administrator opens the dunning settings
+    Then the settings report the base rate is covered until the end of 2026
+
   Scenario Outline: The second reminder uses the saved fee and two published base rates
     Given April rent of 700 EUR with 600 EUR paid on 7 April 2026
     And the April rental unit is "<usage>"
