@@ -70,7 +70,7 @@ entry); after confirming with the current 6-digit code, ten one-time
 Wiederherstellungscodes (recovery codes) appear once — save or print them
 before pressing „Fertig“. From then on, sign-in asks for „Code aus der
 Authenticator-App“ after the password; without the phone, a recovery code
-works exactly once and the sign-in says how many remain. A wrong code counts
+works exactly once; the sign-in then says how many remain and continues with „Weiter“. A wrong code counts
 like a wrong password towards the lockout. In the hosted offer the second
 factor is mandatory: an account without it sees only the enrolment page until
 setup is complete. An administrator resets a lost factor in the user

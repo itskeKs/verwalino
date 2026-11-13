@@ -1248,7 +1248,7 @@ code {
 
 /* Second factor (issue #208) */
 .second-factor-settings { max-width: 900px; }
-.second-factor-enrolment { display: flex; gap: 24px; align-items: flex-start; margin: 16px 0; flex-wrap: wrap; }
+.second-factor-enrolment { display: flex; gap: 24px; align-items: flex-start; flex-wrap: wrap; }
 .second-factor-secret { font-size: 15px; letter-spacing: .08em; word-break: break-all; }
 .recovery-codes { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px 24px; padding-left: 20px; margin: 12px 0 18px; }
 .recovery-codes code { font-size: 14px; letter-spacing: .06em; }

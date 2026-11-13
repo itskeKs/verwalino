@@ -52,9 +52,9 @@ function PersonalDesign() {
 
 function SecondFactorSettingsSection() {
   const { enrolled, error, reload } = useSecondFactorStatus();
-  return <section className="card second-factor-settings" aria-labelledby="second-factor-heading">
+  return <section className="card second-factor-settings mt-6 p-5 sm:p-6 min-w-0 text-sm" aria-labelledby="second-factor-heading">
     <h2 id="second-factor-heading">Zweiter Faktor</h2>
-    <p className="text-sm text-muted-foreground">Code aus einer Authenticator-App zusätzlich zum Passwort. Ohne Telefon signieren Sie mit einem der zehn Wiederherstellungscodes ein.</p>
+    <p className="text-muted-foreground mt-2">Code aus einer Authenticator-App zusätzlich zum Passwort. Ohne Telefon melden Sie sich mit einem der zehn Wiederherstellungscodes an.</p>
     {enrolled === null && !error && <p role="status" className="mt-4">Status wird geladen …</p>}
     {error && <div role="alert" className="error-text mt-4">{error}</div>}
     {enrolled === false && <div className="mt-4"><SecondFactorEnrolment onDone={reload} /></div>}

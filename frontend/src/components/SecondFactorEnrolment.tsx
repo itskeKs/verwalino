@@ -69,7 +69,7 @@ export function SecondFactorEnrolment({ onDone }: { onDone?: () => void }) {
 
   if (phase.kind === "pending") {
     return (
-      <form onSubmit={confirm} aria-busy={busy}>
+      <form onSubmit={confirm} aria-busy={busy} className="grid gap-5">
         {error && <p role="alert" className="error-text">{error}</p>}
         <p>Scannen Sie den QR-Code mit Ihrer Authenticator-App, oder geben Sie den Schlüssel manuell ein. Bestätigen Sie danach mit dem aktuellen 6-stelligen Code.</p>
         <div className="second-factor-enrolment">
@@ -80,7 +80,7 @@ export function SecondFactorEnrolment({ onDone }: { onDone?: () => void }) {
           </div>
         </div>
         <fieldset disabled={busy} className="min-w-0 space-y-5">
-          <div className="public-auth-field">
+          <div className="grid gap-2">
             <Label htmlFor="second-factor-confirm-code">Aktueller 6-stelliger Code</Label>
             <Input id="second-factor-confirm-code" inputMode="numeric" autoComplete="one-time-code" pattern="[0-9]*" maxLength={6} value={code} onChange={(event) => setCode(event.target.value)} required autoFocus />
           </div>
@@ -91,7 +91,7 @@ export function SecondFactorEnrolment({ onDone }: { onDone?: () => void }) {
   }
 
   return (
-    <div>
+    <div className="grid gap-4">
       {error && <p role="alert" className="error-text">{error}</p>}
       <p>Schützt Ihr Benutzerkonto mit einem Code aus einer Authenticator-App zusätzlich zum Passwort.</p>
       <Button onClick={() => void start()} disabled={busy}>{busy ? "Wird vorbereitet …" : "Zweiten Faktor einrichten"}</Button>

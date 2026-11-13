@@ -3,7 +3,7 @@ import { Link } from "react-router-dom";
 import { useAuth } from "../auth/useAuth";
 import { usePagedList } from "../hooks/usePagedList";
 import { ListSearch, MoreResults } from "../components/ListSearch";
-import { Dialog, DialogContent, DialogTitle, DialogDescription } from "../components/ui/dialog";
+import { Dialog, DialogContent, DialogTitle, DialogDescription, DialogFooter } from "../components/ui/dialog";
 import { createUser, createUserInvitation, listUserInvitations, resetUserPassword, resetUserSecondFactor, resendUserInvitation, revokeUserInvitation, updateUser } from "../api/endpoints";
 import { api, ApiError, getLastErrorRequestId } from "../api/client";
 import { useDeploymentMode } from "../auth/useDeploymentMode";
@@ -223,10 +223,10 @@ function InvitationSection() {
   </>;
 }
 
-type UserAction = { user: User; mode: "edit" | "reset" | "reset-second-factor" };
+type UserAction = { user: User; mode: "edit" | "reset" } | { user: User; mode: "reset-second-factor" };
 
 function UserActionDialog({ action, actorId, onClose, onSuccess }: {
-  action: UserAction; actorId: string; onClose: () => void; onSuccess: () => void;
+  action: Extract<UserAction, { mode: "edit" | "reset" }>; actorId: string; onClose: () => void; onSuccess: () => void;
 }) {
   const { user, mode } = action;
   const self = user.id === actorId;
@@ -238,11 +238,10 @@ function UserActionDialog({ action, actorId, onClose, onSuccess }: {
   const [error, setError] = React.useState("");
   const [saving, setSaving] = React.useState(false);
   const { mountedRef, busyRef } = useMutationGuard();
-  const title = mode === "edit" ? "Benutzer bearbeiten" : mode === "reset" ? "Passwort zurücksetzen" : "Zweiten Faktor zurücksetzen";
+  const title = mode === "edit" ? "Benutzer bearbeiten" : "Passwort zurücksetzen";
   const changed = role !== initialRole || active !== user.is_active;
   const deactivating = user.is_active && !active;
   const valid = mode === "reset" ? password.length >= 12 && password.length <= 128
-    : mode === "reset-second-factor" ? true
     : !self && changed && (!deactivating || confirmed);
 
   function close() {
@@ -259,7 +258,6 @@ function UserActionDialog({ action, actorId, onClose, onSuccess }: {
     setError("");
     try {
       if (mode === "reset") await resetUserPassword(user.id, password);
-      else if (mode === "reset-second-factor") await resetUserSecondFactor(user.id);
       else {
         const patch: { role?: UserRole; is_active?: boolean } = {};
         if (role && role !== initialRole) patch.role = role;
@@ -296,17 +294,63 @@ function UserActionDialog({ action, actorId, onClose, onSuccess }: {
             <label><input type="checkbox" checked={active} disabled={self} onChange={event => { setActive(event.target.checked); setConfirmed(false); }} />Aktiv</label>
             {self && <p>Die eigene Admin-Rolle und der eigene Aktivstatus können hier nicht geändert werden. Der Server verhindert Selbstherabstufung und Selbstdeaktivierung (409).</p>}
             {deactivating && !self && <label><input type="checkbox" checked={confirmed} onChange={event => setConfirmed(event.target.checked)} />Deaktivierung bestätigen: {user.email} verliert den Zugang.</label>}
-          </> : mode === "reset" ? <>
+          </> : <>
             <label>Neues Passwort<input type="password" autoComplete="new-password" value={password} minLength={12} maxLength={128} required onChange={event => setPassword(event.target.value)} /></label>
             <p>12 bis 128 Zeichen. Das Passwort wird nicht angezeigt oder automatisch zugestellt.</p>
             {self && <p>Das Zurücksetzen des eigenen Passworts beendet die aktuelle Sitzung. Danach ist eine erneute Anmeldung erforderlich.</p>}
-          </> : <>
-            <p>Der zweite Faktor ({user.display_name || user.email}) wird entfernt. Bei der nächsten Anmeldung richtet die Person den Faktor neu ein; die bisherigen Wiederherstellungscodes verfallen. Im gehosteten Angebot enden die bestehenden Sitzungen sofort. Die Aktion wird im Prüfprotokoll festgehalten.</p>
           </>}
-          <button type="submit" disabled={saving || !valid}>{mode === "edit" ? "Änderungen speichern" : mode === "reset" ? "Passwort zurücksetzen" : "Zweiten Faktor zurücksetzen"}</button>
+          <button type="submit" disabled={saving || !valid}>{mode === "edit" ? "Änderungen speichern" : "Passwort zurücksetzen"}</button>
           <button type="button" disabled={saving} onClick={close}>Abbrechen</button>
         </fieldset>
       </form>
+    </DialogContent>
+  </Dialog>;
+}
+
+// Confirmation of the audited second-factor reset: the kit dialog with a named
+// consequence, like the delete confirmation (issue #208).
+function ResetSecondFactorDialog({ user, onClose, onReset }: {
+  user: User; onClose: () => void; onReset: (user: User) => void;
+}) {
+  const [error, setError] = React.useState("");
+  const [saving, setSaving] = React.useState(false);
+  const { mountedRef, busyRef } = useMutationGuard();
+
+  function close() {
+    if (!busyRef.current) onClose();
+  }
+
+  async function confirm() {
+    if (!mountedRef.current || busyRef.current) return;
+    busyRef.current = true;
+    setSaving(true);
+    setError("");
+    try {
+      await resetUserSecondFactor(user.id);
+      if (!mountedRef.current) return;
+      onReset(user);
+      onClose();
+    } catch (err: unknown) {
+      if (mountedRef.current) setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      busyRef.current = false;
+      if (mountedRef.current) setSaving(false);
+    }
+  }
+
+  return <Dialog open onOpenChange={open => { if (!open) close(); }}>
+    <DialogContent onEscapeKeyDown={event => { if (busyRef.current) event.preventDefault(); }} onInteractOutside={event => { if (busyRef.current) event.preventDefault(); }}>
+      <DialogTitle>Zweiten Faktor zurücksetzen</DialogTitle>
+      <DialogDescription>
+        Der zweite Faktor von {user.display_name || user.email} wird entfernt, die bisherigen Wiederherstellungscodes verfallen.
+        Bei der nächsten Anmeldung richtet die Person den Faktor neu ein. Im gehosteten Angebot enden ihre bestehenden Sitzungen sofort.
+        Die Aktion wird im Prüfprotokoll festgehalten.
+      </DialogDescription>
+      {error && <p role="alert" className="error-text">{error}</p>}
+      <DialogFooter className="gap-2 sm:gap-0">
+        <Button variant="outline" disabled={saving} onClick={close}>Abbrechen</Button>
+        <Button disabled={saving} onClick={() => void confirm()}>{saving ? "Wird zurückgesetzt …" : "Zweiten Faktor zurücksetzen"}</Button>
+      </DialogFooter>
     </DialogContent>
   </Dialog>;
 }
@@ -384,27 +428,32 @@ function ProblemReportDialog({ onClose }: { onClose: () => void }) {
 function UserAdministration({ actorId }: { actorId: string }) {
   const page = usePagedList<User>("/api/users/page");
   const [action, setAction] = React.useState<UserAction | null>(null);
+  const [notice, setNotice] = React.useState("");
   return <>
     <div className="mb-4"><ProblemReport /></div>
     <InvitationSection />
     <CreateUserForm onSuccess={page.reload} />
     <ListSearch label="Benutzer suchen" onSearch={page.setQuery} />
     {page.error && <p className="error-text">{page.error}</p>}
+    {notice && <p role="status">{notice}</p>}
     {page.loading && page.items.length === 0 ? <p>Lade…</p> : <div className="card paged-table">
       <table className="data-table"><thead><tr><th>Name</th><th>E-Mail</th><th>Rolle</th><th>Status</th><th>Aktion</th></tr></thead>
         <tbody>{page.items.map(user => <tr key={user.id}>
           <td>{user.display_name || "–"}</td><td>{user.email}</td>
           <td>{roles.find(option => option.value === user.role)?.label ?? user.role ?? "–"}</td>
           <td>{user.is_active ? "Aktiv" : "Deaktiviert"}</td>
-          <td><button type="button" disabled={!!action} onClick={() => setAction({ user, mode: "edit" })}>Benutzer bearbeiten</button>
-            <button type="button" disabled={!!action} onClick={() => setAction({ user, mode: "reset" })}>Passwort zurücksetzen</button>
-            <button type="button" disabled={!!action} onClick={() => setAction({ user, mode: "reset-second-factor" })}>Zweiten Faktor zurücksetzen</button></td>
+          <td><button type="button" disabled={!!action} onClick={() => { setNotice(""); setAction({ user, mode: "edit" }); }}>Benutzer bearbeiten</button>
+            <button type="button" disabled={!!action} onClick={() => { setNotice(""); setAction({ user, mode: "reset" }); }}>Passwort zurücksetzen</button>
+            <button type="button" disabled={!!action} onClick={() => { setNotice(""); setAction({ user, mode: "reset-second-factor" }); }}>Zweiten Faktor zurücksetzen</button></td>
         </tr>)}</tbody>
       </table>
       {page.items.length === 0 && <p>Keine Benutzer gefunden.</p>}
     </div>}
     <MoreResults available={!!page.nextCursor} loading={page.loading} onMore={() => void page.loadMore()} />
-    {action && <UserActionDialog action={action} actorId={actorId} onClose={() => setAction(null)} onSuccess={page.reload} />}
+    {action?.mode === "reset-second-factor"
+      ? <ResetSecondFactorDialog user={action.user} onClose={() => setAction(null)}
+          onReset={user => setNotice(`Der zweite Faktor von ${user.display_name || user.email} wurde zurückgesetzt. Die Person richtet ihn bei der nächsten Anmeldung neu ein.`)} />
+      : action && <UserActionDialog action={action} actorId={actorId} onClose={() => setAction(null)} onSuccess={page.reload} />}
   </>;
 }
 

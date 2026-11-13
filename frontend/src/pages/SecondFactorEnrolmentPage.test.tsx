@@ -1,5 +1,6 @@
 import { MemoryRouter } from "react-router-dom";
 import { render, screen } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { expect, it, vi } from "vitest";
 import { AppRoutes } from "../App";
 import { AuthCtx } from "../auth/useAuth";
@@ -33,4 +34,19 @@ it("sends a restricted session back to the enrolment wizard after a reload", asy
   );
   // A browser reload on a deep route lands on the wizard, not on a 403-ing app.
   expect(await screen.findByRole("heading", { name: "Zweiten Faktor einrichten" })).toBeInTheDocument();
+});
+
+it("lets a restricted session sign out from the enrolment wizard", async () => {
+  vi.stubGlobal("fetch", vi.fn().mockResolvedValue(jsonResponse({ detail: "Not authenticated" }, 401)));
+  const logout = vi.fn().mockResolvedValue(undefined);
+  const session = { user_id: "u1", organization_id: "o1", role: "OWNER_ADMIN", second_factor_enrolment_required: true };
+  render(
+    <MemoryRouter initialEntries={["/zweiter-faktor"]}>
+      <AuthCtx.Provider value={{ loading: false, session, login: vi.fn(), completeSecondFactor: vi.fn(), reloadSession: vi.fn(), logout }}>
+        <AppRoutes />
+      </AuthCtx.Provider>
+    </MemoryRouter>,
+  );
+  await userEvent.click(await screen.findByRole("button", { name: "Abmelden" }));
+  expect(logout).toHaveBeenCalledTimes(1);
 });

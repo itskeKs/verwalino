@@ -16,7 +16,11 @@ export interface AuthContextValue extends AuthState {
    * session that only reaches the enrolment flow (issue #208).
    */
   login: (email: string, password: string) => Promise<LoginResponse>;
-  /** Second login step for an enrolled factor; stores the full session. */
+  /**
+   * Second login step for an enrolled factor; stores the full session, except
+   * after a recovery code (the answer carries `recovery_codes_remaining`):
+   * the caller shows the count and then calls `reloadSession`.
+   */
   completeSecondFactor: (body: { pending_token: string; code?: string; recovery_code?: string }) => Promise<SecondFactorLoginResponse>;
   /** Re-reads the server session, e.g. after enrolment lifts a restriction. */
   reloadSession: () => Promise<void>;

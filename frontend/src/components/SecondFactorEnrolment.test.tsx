@@ -30,3 +30,15 @@ it("keeps the recovery codes visible until the user presses Fertig", async () =>
   fireEvent.click(screen.getByRole("button", { name: "Fertig" }));
   expect(onDone).toHaveBeenCalledTimes(1);
 });
+
+it("spaces label, field and button like the other forms, also outside the public card", async () => {
+  vi.spyOn(endpoints, "startSecondFactorEnrolment").mockResolvedValue({ secret: "SECRETKEY", otpauth_uri: "otpauth://totp/x" });
+  render(<SecondFactorEnrolment />);
+  fireEvent.click(screen.getByRole("button", { name: "Zweiten Faktor einrichten" }));
+  const field = await screen.findByLabelText("Aktueller 6-stelliger Code");
+  // Label and input share a grid with the 8 px gap of the kit pattern; the
+  // form separates its blocks by 20 px. Neither depends on the .public-auth wrapper.
+  expect(field.parentElement).toHaveClass("grid", "gap-2");
+  expect(field.closest("form")).toHaveClass("grid", "gap-5");
+  expect(field.closest(".public-auth")).toBeNull();
+});

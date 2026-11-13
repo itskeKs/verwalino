@@ -10,13 +10,14 @@ import { SecondFactorEnrolment } from "../components/SecondFactorEnrolment";
 import { useAuth } from "../auth/useAuth";
 
 export function SecondFactorEnrolmentPage() {
-  const { reloadSession } = useAuth();
+  const { reloadSession, logout } = useAuth();
   return (
     <PublicAuthLayout
       title="Zweiten Faktor einrichten"
       description="Für Ihr Benutzerkonto ist ein zweiter Faktor vorgeschrieben. Richten Sie ihn jetzt ein, um verwalino zu nutzen."
     >
       <SecondFactorEnrolment onDone={() => void reloadSession()} />
+      <p className="public-auth-footer"><button type="button" className="link" onClick={() => void logout()}>Abmelden</button></p>
     </PublicAuthLayout>
   );
 }

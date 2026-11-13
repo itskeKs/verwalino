@@ -50,7 +50,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const completeSecondFactorFn = useCallback(async (body: { pending_token: string; code?: string; recovery_code?: string }) => {
     const resp = await endpoints.completeSecondFactorLogin(body);
-    setState({ loading: false, session: resp });
+    // A recovery-code sign-in first tells how many codes remain; the login page
+    // loads the session with reloadSession() once the user continues, like
+    // "Fertig" after the enrolment. A code from the app opens the application at once.
+    if (resp.recovery_codes_remaining == null) setState({ loading: false, session: resp });
     return resp;
   }, []);
 

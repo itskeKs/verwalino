@@ -13,7 +13,7 @@ import { Input } from "../components/ui/input";
 import { Label } from "../components/ui/label";
 
 export function LoginPage({ signupEnabled = false, mailAvailable = false }: { signupEnabled?: boolean; mailAvailable?: boolean }) {
-  const { login, completeSecondFactor } = useAuth();
+  const { login, completeSecondFactor, reloadSession } = useAuth();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -70,14 +70,33 @@ export function LoginPage({ signupEnabled = false, mailAvailable = false }: { si
     }
   }
 
+  function backToPassword() {
+    setPendingToken(null);
+    setPassword("");
+    setCode("");
+    setRecoveryCode("");
+    setUseRecovery(false);
+    setError(null);
+  }
+
+  if (pendingToken && recoveryCodesRemaining !== null) {
+    // The recovery-code sign-in succeeded; the session is loaded only after "Weiter".
+    const receipt = recoveryCodesRemaining === 1
+      ? "Angemeldet. Es verbleibt 1 Wiederherstellungscode."
+      : `Angemeldet. Es verbleiben ${recoveryCodesRemaining} Wiederherstellungscodes.`;
+    return (
+      <PublicAuthLayout title="Angemeldet" description={`Für ${email} wurde ein Wiederherstellungscode verwendet.`}>
+        <PublicAuthMessage id="login-recovery-remaining" role="status">{receipt}</PublicAuthMessage>
+        <Button type="button" size="lg" className="w-full" onClick={() => void reloadSession()}>Weiter</Button>
+      </PublicAuthLayout>
+    );
+  }
+
   if (pendingToken) {
     return (
-      <PublicAuthLayout title="Code aus der Authenticator-App" description={`Für ${email} ist ein zweiter Faktor eingerichtet.`}>
+      <PublicAuthLayout title={useRecovery ? "Wiederherstellungscode eingeben" : "Code aus der Authenticator-App"} description={`Für ${email} ist ein zweiter Faktor eingerichtet.`}>
         <form onSubmit={handleSecondFactor} aria-labelledby="public-auth-title" aria-busy={loading} aria-describedby={error ? "login-error" : undefined}>
           {error && <PublicAuthMessage id="login-error">{error}</PublicAuthMessage>}
-          {recoveryCodesRemaining !== null && !error && (
-            <PublicAuthMessage id="login-recovery-remaining">{`Angemeldet. Es verbleiben ${recoveryCodesRemaining} Wiederherstellungscodes.`}</PublicAuthMessage>
-          )}
           <fieldset disabled={loading} className="min-w-0 space-y-5">
             {!useRecovery ? (
               <div className="public-auth-field">
@@ -99,6 +118,7 @@ export function LoginPage({ signupEnabled = false, mailAvailable = false }: { si
             </Button>
           </fieldset>
         </form>
+        <p className="public-auth-footer"><button type="button" className="link" disabled={loading} onClick={backToPassword}>Zurück zur Anmeldung</button></p>
       </PublicAuthLayout>
     );
   }

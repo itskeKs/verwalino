@@ -398,15 +398,23 @@ The login of an enrolled account continues inside the same public-auth card:
 after the password the heading reads “Code aus der Authenticator-App”, with the
 account address in the description, one numeric “6-stelliger Code” input
 (`autocomplete="one-time-code"`) and the full-width primary “Anmelden”. “Authenticator-
-App nicht zur Hand?” switches to a “Wiederherstellungscode” input; “Zum Authenticator-
-Code” switches back. A wrong code or recovery code shows the same generic
-“Invalid credentials” alert as a wrong password. After a recovery-code sign-in
-a `role="status"` receipt states how many codes remain.
+App nicht zur Hand?” switches to a “Wiederherstellungscode” input under the heading
+“Wiederherstellungscode eingeben”; “Zum Authenticator-Code” switches back. “Zurück zur
+Anmeldung” (link in the card footer) returns to the password form with the address kept
+and the password cleared. A wrong code or recovery code shows the same generic
+“Invalid credentials” alert as a wrong password. After a recovery-code sign-in the
+card becomes “Angemeldet” with a `role="status"` receipt (“Angemeldet. Es verbleiben N
+Wiederherstellungscodes.”, singular “Es verbleibt 1 Wiederherstellungscode.”) and the
+full-width primary “Weiter”; the session is loaded, and the application opens, only
+after “Weiter”, so the count is read first. A code from the authenticator app opens
+the application at once.
 
-Settings gains a “Zweiter Faktor” card: the status (“eingerichtet”, with the
-admin-reset path named) or the enrolment flow. Enrolment shows the QR code for
-the authenticator app beside the plain secret for manual entry, then a “Aktueller
-6-stelliger Code” field and “Zweiten Faktor bestätigen”. Confirmation shows the
+Settings gains a “Zweiter Faktor” card below the other cards, with the gap and
+text size of its neighbours (`mt-6`, `p-5 sm:p-6`, `text-sm`): the status
+(“eingerichtet”, with the admin-reset path named) or the enrolment flow. Enrolment
+shows the QR code for the authenticator app beside the plain secret for manual
+entry, then a “Aktueller 6-stelliger Code” field (label and input in a `grid gap-2`,
+blocks 20 px apart) and “Zweiten Faktor bestätigen”. Confirmation shows the
 ten recovery codes once, in a two-column list (single column below 560 px),
 with “Wiederherstellungscodes drucken” (`window.print()`; the action row hides
 in print) and “Fertig”; the codes stay until “Fertig” is pressed.
@@ -418,12 +426,20 @@ unreachable until the enrolment is confirmed; the backend restricts the session
 to the second-factor routes, so the wizard renders without shell data. `GET
 /api/auth/session` reports the restriction, so a browser reload lands back on
 the wizard; after “Fertig” the wizard reloads the session and opens the
-application.
+application. The card footer carries “Abmelden”, the only other way out of the
+wizard.
 
 The user administration adds “Zweiten Faktor zurücksetzen” per row, opening a
-confirm dialog that names the person and states that the factor and the recovery
+kit confirm dialog that names the person and states that the factor and the recovery
 codes are removed, the person enrols again at the next sign-in, hosted sessions
-end immediately and the action is recorded in the audit log.
+end immediately and the action is recorded in the audit log. “Abbrechen” (outline)
+and “Zweiten Faktor zurücksetzen” (primary) sit in the dialog footer; a failure shows
+`role="alert"` inside the open dialog. After success the page shows a `role="status"`
+line above the list (“Der zweite Faktor von … wurde zurückgesetzt. Die Person richtet
+ihn bei der nächsten Anmeldung neu ein.”). A deactivated user's factor can be reset too.
+
+Synthetic captures on the test database (1280 px and 360 px) live in
+[docs/assets/design/issue-208-second-factor/](docs/assets/design/issue-208-second-factor/).
 
 ### Sidebar groups
 
