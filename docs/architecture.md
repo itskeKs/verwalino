@@ -742,13 +742,18 @@ unenrolled account reach only the second-factor enrolment routes,
 `/api/auth/session` and logout; `/api/auth/session` reports the restriction, so
 a browser reload returns to the wizard. While the organization is in the
 seven-day cooling-off period of its deletion (read-only, see Organization
-transfer and erasure), the same routes stay writable (revision 0189, issue #659): the
-cooling-off gate reads the same path list, and the database lifecycle guard
-exempts exactly `user_second_factor` and `user_recovery_code` while the
-deletion is in `cooling_off`, so an account whose factor was reset can enrol
-and then cancel the deletion, which hosted mode only allows with a confirmed
-factor. Every other write stays refused, and after the erasure nothing is
-writable. Self-hosted mode keeps the factor optional. The tenant tables `user_second_factor` and `user_recovery_code`
+transfer and erasure), enrolment and sign-in stay possible and nothing else
+does (revision 0189, issue #659): the cooling-off gate reads the same path
+list, and the database lifecycle guard lets exactly the writes of enrolment,
+its confirmation and sign-in through while the deletion is in `cooling_off`:
+INSERT and UPDATE on `user_second_factor` (secret, confirmation,
+`last_totp_step`) and INSERT, UPDATE and DELETE on `user_recovery_code` (the
+new set, `used_at`, the old set replaced at confirmation). A DELETE on
+`user_second_factor`, the factor reset, stays refused. An account whose factor
+was reset can therefore enrol and then cancel the deletion, which hosted mode
+only allows with a confirmed factor, and an account with a factor can sign in
+with a code or a recovery code. Every other write stays refused, and after
+the erasure nothing is writable. Self-hosted mode keeps the factor optional. The tenant tables `user_second_factor` and `user_recovery_code`
 carry RLS (a row belongs to its user; an OWNER_ADMIN has no read access to a colleague's factor, and a DELETE policy alone would not let the admin remove it, because a DELETE with a WHERE clause also needs a SELECT policy to see the rows, which is documented PostgreSQL behaviour. The audited admin reset therefore runs through the `reset_second_factor` definer function: it requires the interactive `app_rw` session, re-verifies the active OWNER_ADMIN actor and the target's organization, accepts a deactivated target, and removes the factor and the recovery codes in one transaction), bind
 `(organization_id,user_id)` to the user like 0145, and are erased with the
 organization.
@@ -1682,7 +1687,7 @@ date. The organization's additional generic FK dependencies and historical
 owner-name fallback remain private.
 
 Seven-day cooling-off is enforced in both HTTP authentication and database write
-triggers; only the second-factor enrolment and its recovery codes stay writable
+triggers; only the writes of second-factor enrolment and sign-in stay possible
 (see Second factor, revision 0189). Final erasure invalidates every account/session; retained records have
 an operator-only path described in [DEPLOY.md](../DEPLOY.md#organization-erasure-and-retained-record-access).
 Files are cleaned only after the database commit, with retry on later CLI runs.

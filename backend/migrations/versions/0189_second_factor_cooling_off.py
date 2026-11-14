@@ -1,13 +1,17 @@
-"""Second-factor enrolment stays writable during the cooling-off period (issue #659).
+"""Enrolment and sign-in writes of the second factor in cooling-off (issue #659).
 
 An administrator whose factor was reset while the organization is in the
 cooling-off period of its deletion must be able to enrol again, because
-cancelling the deletion needs a confirmed factor in hosted mode. The 0147
-lifecycle guard refuses every runtime write of an organization in cooling-off,
-including the two factor tables, so the 0147-owned body is replaced here, not
-edited: exactly user_second_factor and user_recovery_code are exempt, and only
-while the deletion is in cooling-off. After the erasure they are refused like
-every other table.
+cancelling the deletion needs a confirmed factor in hosted mode, and an
+account with a factor must be able to sign in. The 0147 lifecycle guard
+refuses every runtime write of an organization in cooling-off, including the
+two factor tables, so the 0147-owned body is replaced here, not edited. Only
+the writes that enrolment, its confirmation and sign-in use pass, and only
+while the deletion is in cooling-off: INSERT and UPDATE on user_second_factor
+(the secret, the confirmation, last_totp_step) and INSERT, UPDATE and DELETE
+on user_recovery_code (the new set, used_at, the old set replaced at
+confirmation). A DELETE on user_second_factor, which is the reset, stays
+refused. After the erasure both tables are refused like every other table.
 """
 
 from alembic import op
@@ -28,8 +32,8 @@ def patch_lifecycle_guard(reverse=False):
     before = "AND d.status IN ('cooling_off','deleted_pending_retention')) THEN"
     after = (
         "AND d.status IN ('cooling_off','deleted_pending_retention')\n"
-        "          AND NOT (d.status='cooling_off'\n"
-        "            AND TG_TABLE_NAME IN ('user_second_factor','user_recovery_code'))) THEN"
+        "          AND NOT (d.status='cooling_off' AND (TG_TABLE_NAME='user_recovery_code'\n"
+        "            OR (TG_TABLE_NAME='user_second_factor' AND TG_OP<>'DELETE')))) THEN"
     )
     if reverse:
         before, after = after, before
