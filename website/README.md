@@ -50,7 +50,7 @@ registration is not open.
 - `src/styles/`: the approved Kontor Signal tokens, square geometry and responsive rules.
 - `src/content/operator.ts`: supplied provider details for the final legal notice.
 - `src/content/repository.ts`: shared public GitHub repository URL.
-- `src/content/drafts.ts`: shared legal-document outlines and operator checklist keys.
+- `src/content/drafts.ts`: shared legal-document sections and operator checklist keys.
 - `public/`: favicon, touch icon and committed share images.
 
 Every page links to its corresponding page in the other language, with `html lang`, `de` / `en`
@@ -114,23 +114,52 @@ images. Review and commit the resulting `public/og/` PNGs.
 
 ## Legal publication boundary
 
-The legal notice contains the final fogu UG (haftungsbeschränkt) provider data supplied in #26:
-address, managing director, register court/number, VAT ID, email and supervisory authority.
-The earlier telephone number was not supplied in that decision and is omitted.
-Its English translation states that
-the German version is authoritative. Privacy, terms of use and the Article 28 GDPR data processing
-agreement are **unreviewed drafts**. Each begins with a visible warning and uses only bracketed
-placeholders under its section headings. The boxed checklist at the end of **each draft page**
-is driven by `src/content/drafts.ts` and translated in the dictionaries.
+The legal notice uses the public fogu UG (haftungsbeschränkt) details supplied in #26:
+address, managing director, register court/number, email and supervisory authority. The latest
+Q01 decision supersedes the earlier tax number: telephone and VAT/business identification
+number each remain visibly marked for supply. The contact is `hello@fogu.app`. No journalistic
+activity was established. Consumer customers are now admitted under Q09; the VSBG participation
+statement still needs factual/legal verification, rather than an invented nonparticipation claim.
+The EU ODR platform closed in 2025 and no obsolete platform link is added.
 
-Before publication of the hosted service, the operator must supply the hosting provider and
-location, all sub-processors (including email and backup), retention and erasure periods,
-technical and organisational measures, a decision about a data-protection officer, and legal
-review, including the configured contact for data-protection requests. The draft pages use
-`datenschutz@verwalino.de`; the public contact in the legal notice is `hallo@verwalino.de`.
-No provider, retention period or availability promise is invented here. The current browser setup
-exists in the checkout; its public release acceptance is still pending, as shown in the self-hosting
-release list.
+The English legal notice is a translation of the authoritative German text. Privacy, terms and
+the Article 28 GDPR processing agreement remain **unapproved drafts**, dated 13 November 2026.
+Visible warnings and existing noindex/sitemap exclusions remain. German is authoritative after
+approval. The drafts apply the Q01–Q14 decisions, distinguish implementation dependencies from
+current capabilities and retain individual missing-fact markers. Q06 includes optional AI at hosted
+launch through the customer's directly contracted provider and own key. Its instruction clause,
+separate recipient category and privacy disclosure depend on role/transfer review and recorded
+key-save confirmation in #617, which is not implemented yet.
+Neither a build nor this drafting constitutes legal sign-off. The terms now contain conditional
+consumer/digital-service and withdrawal information, an adapted withdrawal form, statutory-rights
+preservation and a liability clause expressly requiring counsel's wording review.
+
+The AV-Vertrag has four annexes: scope, evidence-qualified TOMs, sub-processors and return/deletion.
+Downloadable copies are [German](public/legal/av-vertrag.de.md) and [English](public/legal/av-vertrag.en.md).
+Keep their clauses identical to the rendered DPA dictionary sections, substituting shared operator
+values. Customer execution details and operational evidence belong in private copies.
+
+Decided policy: Contabo hosting with a pre-launch AV agreement; EU mail provider with AV agreement;
+host-managed backups under the hosting agreement; logs 14 days, errors 30 days, closed support
+90 days and automatic never-confirmed signup cleanup; complete export then deletion, no archive
+service; customer termination any time and operator ordinary termination/discontinuation on
+90 days' notice, export until the end. Christian Kunkel handles rights, security and incidents,
+with a named deputy still to supply. Existing browser storage remains documented without a banner,
+subject to counsel confirming the strict-necessity exception for every purpose.
+
+Before registration opens, complete provider/location/backup/deputy facts and contracts, Q06 role/transfer review,
+DPO/DPIA assessments and counsel review. Reliable retention jobs, complete return/final purge,
+versioned terms/DPA assent before first entry, recorded AI key-save confirmation (#617), and
+30-day sub-processor notice with 21-day objections
+remain implementation dependencies. If consumer distance-contract rules apply, information and
+durable confirmation plus the current statutory electronic withdrawal function are also required.
+The website does not implement or certify any of those workflows. See the
+[legal sources and consumer analysis](../docs/operations/hosted-legal.md),
+[retention/exit procedure](../docs/operations/hosted-retention.md),
+[controller record](../docs/operations/hosted-processing-controller.md),
+[processor record](../docs/operations/hosted-processing-processor.md),
+[breach procedure](../docs/operations/hosted-breach-response.md) and
+[owner DPO/DPIA assessment](../docs/operations/hosted-dpo-dpia-assessment.md).
 
 The repository `itskeKs/verwalino` is public on GitHub under AGPL-3.0. The landing page,
 self-hosting page and footer link to it using the shared URL in `src/content/repository.ts`.

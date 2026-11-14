@@ -7,11 +7,10 @@ export const operator = {
   locality,
   country: 'Deutschland',
   director: 'Christian Kunkel',
-  email: 'hallo@verwalino.de',
-  privacyEmail: 'datenschutz@verwalino.de',
+  email: 'hello@fogu.app',
+  privacyEmail: 'hello@fogu.app',
   court: 'Amtsgericht Krefeld',
   register: 'HRB 15557',
-  vat: 'DE305418362',
   authority: 'Unabhängiges Datenschutzzentrum Saarland',
   authorityGenitive: 'Unabhängigen Datenschutzzentrums Saarland',
 } as const;
