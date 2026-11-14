@@ -123,9 +123,7 @@ class DunningInput:
     def items_snapshot(self) -> list[dict]:
         rows = [
             {
-                "period_year": it.period_year,
-                "period_month": it.period_month,
-                "payment_type": it.payment_type,
+                **item_key(it),
                 **({"combined_advance": True} if it.combined_advance else {}),
                 "soll": str(it.soll),
                 "ist": str(it.ist),
@@ -137,6 +135,26 @@ class DunningInput:
         if rows:
             rows[0][NOTICE_FORMAT_KEY] = SEGMENTED_NOTICE_FORMAT
         return rows
+
+
+def item_key(item: OverdueItem) -> dict:
+    """Identity of an overdue item across notices; the level counts demands per key.
+
+    payment_type + period_year + period_month, plus the due date of a dated item: one month
+    can hold several open items of one type (two special levies falling due in the same
+    month) and only their due dates tell them apart. A yearless item carries a fallback due
+    date that moves with the calendar year, so it does not belong to the identity. Part
+    payments and corrected or reversed postings leave the key as it is. The notice stores
+    these fields in every item row and the next notice counts earlier demands with the key.
+    """
+    key = {
+        "payment_type": item.payment_type,
+        "period_year": item.period_year,
+        "period_month": item.period_month,
+    }
+    if item.period_year and item.due_date is not None:
+        key["due_date"] = item.due_date.isoformat()
+    return key
 
 
 # ---------------------------------------------------------------------------
