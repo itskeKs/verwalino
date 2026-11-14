@@ -80,21 +80,31 @@ next sign-in.
 A sole OWNER_ADMIN who lost the device **and** all recovery codes cannot get back
 in through the application: no other administrator can reset the factor. Store
 the recovery codes at enrolment. If they are lost anyway, the operator of the
-installation resets the factor on the host, with no web route involved:
+installation resets the factor on the host, with no web route involved. On a
+portable installation in local HTTP mode, from the checkout:
 
 ```sh
-python -m app.admin_cli reset-second-factor --email admin@example.org --reason "<why>"
+VERWALINO_ALLOWED_HOSTS=localhost,127.0.0.1 VERWALINO_COOKIE_SECURE=false \
+VERWALINO_COOKIE_NAME=hv_session \
+docker compose --project-name verwalino --env-file .env.selfhost \
+  -f infra/docker-compose.yml --profile ops \
+  run --rm --no-deps -T bootstrap reset-second-factor \
+  --email admin@example.org --reason "<date, channel, ticket>"
 ```
 
-The command removes the factor and the recovery codes of that sign-in address,
-ends the account's open sessions and writes one audit event with the stated
-reason (never put a code or a password into it). An unknown address changes
-nothing. Afterwards the hosted account enrols again before it reaches the
-application; a self-hosted account signs in with the password alone. A hosted
-operator runs it only after the request came from the account's own sign-in
-address and was confirmed through the second contact stated in the legal notice;
-self-hosted, whoever has shell access to the host does. How to run the admin
-CLI is in [DEPLOY.md](../../DEPLOY.md#second-factor-reset-by-the-operator).
+HTTPS mode and the hosted server use other values for the three variables and
+their own paths; both calls are in
+[DEPLOY.md](../../DEPLOY.md#second-factor-reset-by-the-operator). The command
+removes the factor and the recovery codes of that sign-in address, ends the
+account's open sessions and writes one audit event with the stated reason. The
+reason names the request (date, channel, ticket reference), never a person's name
+or contact detail, a code or a password: the event stays in the audit log after
+the organization is erased. An unknown address changes nothing. Afterwards the
+hosted account enrols again before it reaches the application; a self-hosted
+account signs in with the password alone. A hosted operator runs it only after
+the request came from the account's own sign-in address and was confirmed
+through the second contact stated in the legal notice; self-hosted, whoever has
+shell access to the host does.
 
 ## User management
 

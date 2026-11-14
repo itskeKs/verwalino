@@ -385,20 +385,54 @@ sign in, and no administrator inside the organization can reset the factor. The
 same happens to a sole administrator after the deployment's secret changed
 (see above). The operator removes the factor on the host with the admin CLI; no
 web route exists. The command needs only the **migrator** connection
-(`HV_DATABASE_URL_SYNC`), not the session secret; on the portable stack the
-`bootstrap` service starts this entry point:
+(`HV_DATABASE_URL_SYNC`), not the session secret. The `bootstrap` service of the
+installer's Compose project already starts `python -m app.admin_cli`, so its
+arguments follow the service name. Compose requires three values for the
+`app` service even when only `bootstrap` runs; the installer exports them the
+same way. On a portable installation in local HTTP mode, from the checkout
+(`.env.selfhost`, or the file named by `VERWALINO_CONFIG`):
 
 ```sh
-python -m app.admin_cli reset-second-factor --email admin@example.org --reason "<why>"
+VERWALINO_ALLOWED_HOSTS=localhost,127.0.0.1 VERWALINO_COOKIE_SECURE=false \
+VERWALINO_COOKIE_NAME=hv_session \
+docker compose --project-name verwalino --env-file .env.selfhost \
+  -f infra/docker-compose.yml --profile ops \
+  run --rm --no-deps -T bootstrap reset-second-factor \
+  --email admin@example.org --reason "<date, channel, ticket>"
 ```
+
+With HTTPS mode use `VERWALINO_ALLOWED_HOSTS=<domain>,localhost,127.0.0.1`,
+`VERWALINO_COOKIE_SECURE=true` and `VERWALINO_COOKIE_NAME=__Host-hv_session`.
+On the hosted server (production project `verwalino`, checkout
+`/srv/verwalino/app`):
+
+```sh
+cd /srv/verwalino/app
+VERWALINO_ALLOWED_HOSTS=app.verwalino.de,localhost,127.0.0.1 \
+VERWALINO_COOKIE_SECURE=true VERWALINO_COOKIE_NAME=__Host-hv_session \
+docker compose --project-name verwalino \
+  --env-file /srv/verwalino/config/.env.selfhost \
+  -f infra/docker-compose.yml --profile ops \
+  run --rm --no-deps -T bootstrap reset-second-factor \
+  --email admin@example.org --reason "<date, channel, ticket>"
+```
+
+Inside a backend container or checkout whose `HV_DATABASE_URL_SYNC` names the
+migrator, the same command is
+`python -m app.admin_cli reset-second-factor --email ... --reason ...`, like the
+`unlock` calls above.
 
 The address is normalized like at sign-in. In one transaction the command
 removes the account's second factor (also an unfinished enrolment) and its
 recovery codes, raises the account's `session_version` so that every session
 opened before it ends, and writes one audit event `OPERATOR_RESET_SECOND_FACTOR`
 for the account's organization, without an acting user, with the time and the
-stated reason. The reason is kept in the audit log: write how the request was
-confirmed, never a code, a secret or a password (at most 500 characters).
+stated reason. The reason names the request (date, channel, ticket reference),
+never a person's name or contact detail, a code, a secret or a password: the
+audit event is retained after the organization is erased, and erasure scrubs only
+identifiers it knows, not free text. It has 1 to 500 characters and no control
+characters (newline, tab, escape); the command refuses such a value before it
+connects.
 An unknown address changes nothing and exits with status 1; an account without a
 second factor is reported and left unchanged, without an event. The audited
 reset function of the application accepts only the interactive runtime, which is
