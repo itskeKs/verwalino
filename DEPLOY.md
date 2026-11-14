@@ -325,10 +325,11 @@ The second factor derives its storage key from the same `HV_SESSION_SECRET`
 (like the organization AI key): rotating the secret, or restoring a backup or
 staging copy under different secrets, makes every stored TOTP secret
 undecryptable and every recovery-code hash unmatchable. Sign-in with the code
-then receives the same generic refusal as a wrong code (no 500), and the
-operator has an OWNER_ADMIN reset the affected users' second factors in the
-user administration; each person enrols again. There is no recovery of the old
-factor material.
+then receives the same generic refusal as a wrong code (no 500), and every
+affected account needs its second factor reset: an OWNER_ADMIN resets a
+colleague's factor in the user administration, and the operator resets a sole
+administrator with the [`reset-second-factor` command](#second-factor-reset-by-the-operator);
+each person enrols again. There is no recovery of the old factor material.
 The German login message is unchanged.
 
 Native IPv6 addresses share a /64 throttle key; IPv4-mapped IPv6 maps to IPv4.
@@ -376,6 +377,75 @@ confirmation returns the generic 403. The hidden `website` field silently accept
 bots without effects on both signup and resend; confirmation has no honeypot.
 `downgrade()` of 0142 refuses while rows exist; operators must
 delete the `auth_throttle` rows first.
+
+## Second-factor reset by the operator
+
+A sole `OWNER_ADMIN` who lost the authenticator **and** the recovery codes cannot
+sign in, and no administrator inside the organization can reset the factor. The
+same happens to a sole administrator after the deployment's secret changed
+(see above). The operator removes the factor on the host with the admin CLI; no
+web route exists. The command needs only the **migrator** connection
+(`HV_DATABASE_URL_SYNC`), not the session secret. The `bootstrap` service of the
+installer's Compose project already starts `python -m app.admin_cli`, so its
+arguments follow the service name. Compose requires three values for the
+`app` service even when only `bootstrap` runs; the installer exports them the
+same way. On a portable installation in local HTTP mode, from the checkout
+(`.env.selfhost`, or the file named by `VERWALINO_CONFIG`):
+
+```sh
+VERWALINO_ALLOWED_HOSTS=localhost,127.0.0.1 VERWALINO_COOKIE_SECURE=false \
+VERWALINO_COOKIE_NAME=hv_session \
+docker compose --project-name verwalino --env-file .env.selfhost \
+  -f infra/docker-compose.yml --profile ops \
+  run --rm --no-deps -T bootstrap reset-second-factor \
+  --email admin@example.org --reason "<date, channel, ticket>"
+```
+
+With HTTPS mode use `VERWALINO_ALLOWED_HOSTS=<domain>,localhost,127.0.0.1`,
+`VERWALINO_COOKIE_SECURE=true` and `VERWALINO_COOKIE_NAME=__Host-hv_session`.
+On the hosted server (production project `verwalino`, checkout
+`/srv/verwalino/app`):
+
+```sh
+cd /srv/verwalino/app
+VERWALINO_ALLOWED_HOSTS=app.verwalino.de,localhost,127.0.0.1 \
+VERWALINO_COOKIE_SECURE=true VERWALINO_COOKIE_NAME=__Host-hv_session \
+docker compose --project-name verwalino \
+  --env-file /srv/verwalino/config/.env.selfhost \
+  -f infra/docker-compose.yml --profile ops \
+  run --rm --no-deps -T bootstrap reset-second-factor \
+  --email admin@example.org --reason "<date, channel, ticket>"
+```
+
+Inside a backend container or checkout whose `HV_DATABASE_URL_SYNC` names the
+migrator, the same command is
+`python -m app.admin_cli reset-second-factor --email ... --reason ...`, like the
+`unlock` calls above.
+
+The address is normalized like at sign-in. In one transaction the command
+removes the account's second factor (also an unfinished enrolment) and its
+recovery codes, raises the account's `session_version` so that every session
+opened before it ends, and writes one audit event `OPERATOR_RESET_SECOND_FACTOR`
+for the account's organization, without an acting user, with the time and the
+stated reason. The reason names the request (date, channel, ticket reference),
+never a person's name or contact detail, a code, a secret or a password: the
+audit event is retained after the organization is erased, and erasure scrubs only
+identifiers it knows, not free text. It has 1 to 500 characters and no control
+characters (newline, tab, escape); the command refuses such a value before it
+connects.
+An unknown address changes nothing and exits with status 1; an account without a
+second factor is reported and left unchanged, without an event. The audited
+reset function of the application accepts only the interactive runtime, which is
+why the operator path is the migrator, like the other admin commands; no grant
+is widened.
+
+In the hosted offer the account has to enrol again before it reaches the
+application; self-hosted, the password alone signs in again (the factor stays
+optional). Hosted operators run the command only after the request came from the
+account's own sign-in address and was confirmed through the second contact stated
+in the legal notice; self-hosted, whoever has shell access to the host decides.
+An account that is also locked by failed attempts additionally needs
+`unlock --email` (see [Login lockout and proxy trust](#login-lockout-and-proxy-trust)).
 
 ## Install in one command
 
