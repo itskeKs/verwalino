@@ -16,6 +16,7 @@ import uuid
 from dataclasses import replace
 from datetime import date
 from decimal import Decimal
+from fractions import Fraction
 
 import pytest
 
@@ -30,6 +31,7 @@ from app.engine.types import (
     WegSettlementInput,
     WegCostPositionInput,
 )
+from app.engine import weg as weg_engine
 from app.engine.weg import WegValidationError, compute_weg_jahresabrechnung
 
 pytestmark = pytest.mark.no_db
@@ -853,3 +855,268 @@ def test_refund_only_hausgeld_is_a_negative_payment_not_an_unpaid_zero():
     owner = _owner_result(compute_weg_jahresabrechnung(inp), _U(21))
     assert owner.account_balance == Decimal('5550.01')
     assert owner.payment_amount == Decimal('6050.01')
+
+
+# ===========================================================================
+# Golden 12: co-owner shares are ratios inside their unit (issue #404)
+#   A co-owner is weighted by mea_share / (sum of the mea_share of the owners
+#   active on the same days); a sole owner weighs 1 whatever mea_share says.
+#   The unit's ownership timeline is split at every ownership boundary, so a
+#   part-year overlap weights each span by its own days. A calculation is
+#   refused (WegShareSumError) when the active shares of a unit sum to neither
+#   1 nor 100 in some span of the settlement period.
+#
+#   All values by hand, 2025 (365 days: Jan-Jun 181, Jul-Dec 184), cost 1,000.00
+#   by MEA, no cents lost: floors, then the remaining cents by largest remainder.
+# ===========================================================================
+def _co_owner_scenario(unit2_owners, *, unit1_share=None, cost="1000.00", sp=(YEAR_START, YEAR_END)):
+    """Two units of 500 MEA: unit 1 owned by Anna alone, unit 2 by `unit2_owners`.
+
+    `unit2_owners` is a list of (owner id, share, valid_from, valid_to); shares are
+    strings or None, as they are stored in ownership_history.mea_share.
+    """
+    u1, u2 = _U(11), _U(12)
+    units = (
+        UnitInput(id=u1, number="1", usage_type="WOHNUNG", mea=Decimal("500")),
+        UnitInput(id=u2, number="2", usage_type="WOHNUNG", mea=Decimal("500")),
+    )
+    owners = [OwnerPeriodInput(unit_id=u1, owner_profile_id=_U(21), valid_from=date(2000, 1, 1),
+                               valid_to=None, mea_share=None if unit1_share is None else Decimal(unit1_share))]
+    for owner, share, start, end in unit2_owners:
+        owners.append(OwnerPeriodInput(unit_id=u2, owner_profile_id=owner, valid_from=start, valid_to=end,
+                                       mea_share=None if share is None else Decimal(share)))
+    pos = (
+        WegCostPositionInput(
+            cost_entry_id=_U(50), category_id=_U(99), category_code="GRUNDSTEUER",
+            label="Grundsteuer", gross_amount=Decimal(cost),
+            service_period_from=sp[0], service_period_to=sp[1],
+            owner_distribution_key="MEA", cost_group="UMLAGEFAEHIG",
+        ),
+    )
+    return WegSettlementInput(
+        period_start=YEAR_START, period_end=YEAR_END,
+        property=PropertyInput(id=_U(1), name="WEG", management_type="WEG"),
+        units=units, owner_periods=tuple(owners), cost_positions=pos, plan_advances=(),
+    )
+
+
+def _whole_year(owner, share):
+    return (owner, share, date(2000, 1, 1), None)
+
+
+ANNA, BERND, CARLA, DORA = _U(21), _U(22), _U(23), _U(24)
+
+
+def _owner_costs(result, *owners):
+    return tuple(_owner_result(result, o).owner_cost_total for o in owners)
+
+
+class TestGolden12CoOwnerShares:
+    def test_table_50_50_splits_the_unit_share_in_half(self):
+        # Unit 1 share 500.00 -> Anna. Unit 2 share 500.00 -> Bernd 50 / Carla 50 = 1/2 each.
+        # Cell weights 1/2, 1/4, 1/4 -> 500.00 / 250.00 / 250.00 exactly.
+        # (Before #404 the raw 50 outweighed Anna's 1: 9.90 / 495.05 / 495.05.)
+        r = compute_weg_jahresabrechnung(_co_owner_scenario([_whole_year(BERND, "50"), _whole_year(CARLA, "50")]))
+        assert _owner_costs(r, ANNA, BERND, CARLA) == (Decimal("500.00"), Decimal("250.00"), Decimal("250.00"))
+        assert r.cost_total == Decimal("1000.00")
+
+    @pytest.mark.parametrize("fraction,percent,expected", [
+        # 0.6 / 0.4 of 500.00 = 300.00 / 200.00
+        (("0.6", "0.4"), ("60", "40"), ("300.00", "200.00")),
+        # 0.25 / 0.75 of 500.00 = 125.00 / 375.00
+        (("0.25", "0.75"), ("25", "75"), ("125.00", "375.00")),
+        # 0.5 / 0.5 was right before and stays right
+        (("0.5", "0.5"), ("50", "50"), ("250.00", "250.00")),
+    ])
+    def test_share_scale_one_or_hundred_gives_the_same_split(self, fraction, percent, expected):
+        for shares in (fraction, percent):
+            r = compute_weg_jahresabrechnung(
+                _co_owner_scenario([_whole_year(BERND, shares[0]), _whole_year(CARLA, shares[1])]))
+            assert _owner_costs(r, ANNA, BERND, CARLA) == (Decimal("500.00"), *map(Decimal, expected))
+
+    def test_three_co_owners_in_percent(self):
+        # 50 / 30 / 20 of the unit's 500.00 = 250.00 / 150.00 / 100.00.
+        r = compute_weg_jahresabrechnung(_co_owner_scenario(
+            [_whole_year(BERND, "50"), _whole_year(CARLA, "30"), _whole_year(DORA, "20")]))
+        assert _owner_costs(r, ANNA, BERND, CARLA, DORA) == tuple(
+            Decimal(x) for x in ("500.00", "250.00", "150.00", "100.00"))
+
+    def test_july_joiner_is_weighted_by_the_days_of_each_span(self):
+        # One unit MEA 1000. Anna 0.5 all year, Bernd 0.5 from 01.07.
+        # 01.01.-30.06. (181 days): Anna alone -> weight 1.
+        # 01.07.-31.12. (184 days): Anna 1/2, Bernd 1/2.
+        # Anna = 181/365 + 184/365 * 1/2 = 273/365, Bernd = 92/365.
+        # 1000 * 273/365 = 747.945205...; 1000 * 92/365 = 252.054794...
+        # floors 747.94 + 252.05 = 999.99, one cent left: remainders .5205 vs .4794 -> Anna.
+        # (Before #404 the whole slice was weighted: 664.85 / 335.15.)
+        u1 = _U(11)
+        inp = WegSettlementInput(
+            period_start=YEAR_START, period_end=YEAR_END,
+            property=PropertyInput(id=_U(1), name="WEG", management_type="WEG"),
+            units=(UnitInput(id=u1, number="1", usage_type="WOHNUNG", mea=Decimal("1000")),),
+            owner_periods=(
+                OwnerPeriodInput(unit_id=u1, owner_profile_id=ANNA, valid_from=date(2020, 1, 1),
+                                 valid_to=None, mea_share=Decimal("0.5")),
+                OwnerPeriodInput(unit_id=u1, owner_profile_id=BERND, valid_from=date(2025, 7, 1),
+                                 valid_to=None, mea_share=Decimal("0.5")),
+            ),
+            cost_positions=_co_owner_scenario([]).cost_positions, plan_advances=(),
+        )
+        r = compute_weg_jahresabrechnung(inp)
+        assert _owner_costs(r, ANNA, BERND) == (Decimal("747.95"), Decimal("252.05"))
+        assert _cost_line(_owner_result(r, ANNA), "GRUNDSTEUER").time_share_days == 365
+        assert _cost_line(_owner_result(r, BERND), "GRUNDSTEUER").time_share_days == 184
+
+    @pytest.mark.parametrize("anna,bernd", [("0.7", "0.3"), ("70", "30")])
+    def test_july_joiner_with_unequal_shares(self, anna, bernd):
+        # Anna = 181/365 + 184/365 * 0.7 = 309.8/365, Bernd = 184/365 * 0.3 = 55.2/365.
+        # 1000 * 309.8/365 = 848.767123...; 1000 * 55.2/365 = 151.232876...
+        # floors 848.76 + 151.23 = 999.99, remainders .7123 vs .2876 -> the cent goes to Anna.
+        u1 = _U(11)
+        inp = WegSettlementInput(
+            period_start=YEAR_START, period_end=YEAR_END,
+            property=PropertyInput(id=_U(1), name="WEG", management_type="WEG"),
+            units=(UnitInput(id=u1, number="1", usage_type="WOHNUNG", mea=Decimal("1000")),),
+            owner_periods=(
+                OwnerPeriodInput(unit_id=u1, owner_profile_id=ANNA, valid_from=date(2020, 1, 1),
+                                 valid_to=None, mea_share=Decimal(anna)),
+                OwnerPeriodInput(unit_id=u1, owner_profile_id=BERND, valid_from=date(2025, 7, 1),
+                                 valid_to=None, mea_share=Decimal(bernd)),
+            ),
+            cost_positions=_co_owner_scenario([]).cost_positions, plan_advances=(),
+        )
+        r = compute_weg_jahresabrechnung(inp)
+        assert _owner_costs(r, ANNA, BERND) == (Decimal("848.77"), Decimal("151.23"))
+
+    def test_a_co_owner_swap_keeps_every_dated_share(self):
+        # Dated ownership of #601/#663 is unchanged: shares add up to 1 in both spans.
+        # Unit 2 share 500.00: Bernd 0.5 = 250.00; Carla 0.3 until 30.06. and Dora 0.3 from 01.07.
+        # Carla 150 * 181/365 = 74.38; Dora 150 * 184/365 = 75.62; Carla+Dora must give 150.00.
+        r = compute_weg_jahresabrechnung(_co_owner_scenario([
+            _whole_year(BERND, "0.7"),
+            (CARLA, "0.3", date(2000, 1, 1), date(2025, 6, 30)),
+            (DORA, "0.3", date(2025, 7, 1), None),
+        ]))
+        # Bernd 350.00. Carla 500*0.3*181/365 = 74.383561..., Dora 500*0.3*184/365 = 75.616438...
+        # floors 74.38 + 75.61 = 149.99, one cent: remainders .3561 vs .6438 -> Dora 75.62.
+        assert _owner_costs(r, ANNA, BERND, CARLA, DORA) == tuple(
+            Decimal(x) for x in ("500.00", "350.00", "74.38", "75.62"))
+
+    @pytest.mark.parametrize("share", [None, "0.5", "7", "100", "0", "-1"])
+    def test_a_sole_owner_weighs_one_whatever_the_share_says(self, share):
+        r = compute_weg_jahresabrechnung(_co_owner_scenario(
+            [_whole_year(BERND, "50"), _whole_year(CARLA, "50")], unit1_share=share))
+        assert _owner_costs(r, ANNA, BERND, CARLA) == (Decimal("500.00"), Decimal("250.00"), Decimal("250.00"))
+
+    @pytest.mark.parametrize("shares,total", [
+        (("0.6", "0.3"), "0.9"),
+        (("60", "30"), "90"),
+        (("0.5", "0.4"), "0.9"),
+        (("1", "1"), "2"),
+        (("50", "60"), "110"),
+        (("0.5", "0.5", "0.5"), "1.5"),
+        (("0.3", "0.3", "0.3"), "0.9"),
+        # Thirds rounded by the user to two places are not stored rounding noise.
+        (("33.33", "33.33", "33.33"), "99.99"),
+    ])
+    def test_shares_adding_up_to_neither_one_nor_hundred_are_refused(self, shares, total):
+        owners = [_whole_year(o, s) for o, s in zip((BERND, CARLA, DORA), shares)]
+        with pytest.raises(weg_engine.WegShareSumError) as caught:
+            compute_weg_jahresabrechnung(_co_owner_scenario(owners))
+        exc = caught.value
+        assert isinstance(exc, WegValidationError)
+        assert (exc.unit_id, exc.unit_number) == (_U(12), "2")
+        assert (exc.span_start, exc.span_end) == (YEAR_START, YEAR_END)
+        assert exc.share_sum == Decimal(total)
+
+    @pytest.mark.parametrize("shares", [
+        ("0.5", "0.5"), ("50", "50"),
+        # 1/3 + 2/3 as stored (NUMERIC(12,6)): the last digit is rounded, never refused.
+        ("0.333333", "0.666667"), ("0.333333", "0.666666"), ("0.333334", "0.666666"),
+        ("33.333333", "66.666667"), ("33.333333", "66.666666"), ("33.33", "66.67"),
+        ("0.333333", "0.333333", "0.333333"), ("33.333333", "33.333333", "33.333333"),
+        ("0.333334", "0.333333", "0.333333"),
+        ("0.3333333333333333333333333333", "0.6666666666666666666666666667"),
+        ("0.2", "0.3", "0.5"), ("20", "30", "50"),
+    ])
+    def test_shares_adding_up_to_one_or_hundred_within_stored_rounding_are_accepted(self, shares):
+        owners = [_whole_year(o, s) for o, s in zip((BERND, CARLA, DORA), shares)]
+        r = compute_weg_jahresabrechnung(_co_owner_scenario(owners))
+        costs = _owner_costs(r, ANNA, *(o for o, _ in zip((BERND, CARLA, DORA), shares)))
+        assert sum(costs, Decimal("0.00")) == Decimal("1000.00")
+        assert costs[0] == Decimal("500.00")
+        total_share = sum((Decimal(s) for s in shares), Decimal(0))
+        for amount, share in zip(costs[1:], shares):
+            exact = Fraction(500) * Fraction(Decimal(share)) / Fraction(total_share)
+            assert abs(Fraction(amount) - exact) < Fraction(1, 100)
+
+    def test_the_span_with_wrong_shares_is_named_when_the_other_span_is_fine(self):
+        # Bernd 0.5 all year; Carla 0.5 until 30.06. (sum 1 in H1); Dora 0.3 from 01.07. (sum 0.8 in H2).
+        with pytest.raises(weg_engine.WegShareSumError) as caught:
+            compute_weg_jahresabrechnung(_co_owner_scenario([
+                _whole_year(BERND, "0.5"),
+                (CARLA, "0.5", date(2000, 1, 1), date(2025, 6, 30)),
+                (DORA, "0.3", date(2025, 7, 1), None),
+            ]))
+        exc = caught.value
+        assert (exc.unit_number, exc.span_start, exc.span_end, exc.share_sum) == (
+            "2", date(2025, 7, 1), YEAR_END, Decimal("0.8"))
+
+    def test_the_first_span_is_named_when_only_it_is_wrong(self):
+        # Carla 0.3 until 30.06. (sum 0.8 in H1); Dora 0.5 from 01.07. (sum 1 in H2).
+        with pytest.raises(weg_engine.WegShareSumError) as caught:
+            compute_weg_jahresabrechnung(_co_owner_scenario([
+                _whole_year(BERND, "0.5"),
+                (CARLA, "0.3", date(2000, 1, 1), date(2025, 6, 30)),
+                (DORA, "0.5", date(2025, 7, 1), None),
+            ]))
+        exc = caught.value
+        assert (exc.span_start, exc.span_end, exc.share_sum) == (YEAR_START, date(2025, 6, 30), Decimal("0.8"))
+
+    def test_wrong_shares_in_a_span_without_costs_still_refuse_the_calculation(self):
+        # The cost only falls in H1 where the shares add up; the unit's H2 shares do not.
+        with pytest.raises(weg_engine.WegShareSumError) as caught:
+            compute_weg_jahresabrechnung(_co_owner_scenario([
+                _whole_year(BERND, "0.5"),
+                (CARLA, "0.5", date(2000, 1, 1), date(2025, 6, 30)),
+                (DORA, "0.3", date(2025, 7, 1), None),
+            ], sp=(YEAR_START, date(2025, 6, 30))))
+        assert caught.value.span_start == date(2025, 7, 1)
+
+    def test_wrong_shares_before_the_settlement_period_do_not_matter(self):
+        # 2024: Bernd 0.5 + Carla 0.3 = 0.8, but the settlement covers 2025 only,
+        # where Bernd 0.5 + Dora 0.5 = 1.
+        r = compute_weg_jahresabrechnung(_co_owner_scenario([
+            _whole_year(BERND, "0.5"),
+            (CARLA, "0.3", date(2000, 1, 1), date(2024, 12, 31)),
+            (DORA, "0.5", date(2025, 1, 1), None),
+        ]))
+        assert _owner_costs(r, ANNA, BERND, DORA) == (
+            Decimal("500.00"), Decimal("250.00"), Decimal("250.00"))
+        assert all(o.owner_profile_id != CARLA for o in r.owners)
+
+    @pytest.mark.parametrize("shares,message", [
+        ((None, "0.5"), "has no mea_share"),
+        (("0.5", None), "has no mea_share"),
+        (("0.5", "0"), "non-positive mea_share"),
+        (("1.5", "-0.5"), "non-positive mea_share"),
+    ])
+    def test_missing_or_non_positive_shares_keep_their_own_error(self, shares, message):
+        with pytest.raises(WegValidationError, match=message) as caught:
+            compute_weg_jahresabrechnung(_co_owner_scenario(
+                [_whole_year(BERND, shares[0]), _whole_year(CARLA, shares[1])]))
+        assert not isinstance(caught.value, weg_engine.WegShareSumError)
+
+    def test_a_refused_sum_would_still_normalise_to_the_issue_ratio(self):
+        # 0.6 / 0.3 -> 2/3 and 1/3 of the unit's 500.00 = 333.33 / 166.67 (second row of the
+        # issue). The sum check refuses it, so no result carries these amounts; the ratio is
+        # what the weights of any accepted scale are made of.
+        owners = [OwnerPeriodInput(unit_id=_U(12), owner_profile_id=o, valid_from=date(2000, 1, 1),
+                                   valid_to=None, mea_share=Decimal(s))
+                  for o, s in ((BERND, "0.6"), (CARLA, "0.3"))]
+        from app.engine.periods import build_owner_cover
+
+        unit = UnitInput(id=_U(12), number="2", usage_type="WOHNUNG", mea=Decimal("500"))
+        spans = weg_engine._unit_owner_spans(unit, build_owner_cover(_U(12), YEAR_START, YEAR_END, owners))
+        assert len(spans) == 1 and spans[0].share_sum == Decimal("0.9")
+        assert sorted(spans[0].fractions.values()) == [Fraction(1, 3), Fraction(2, 3)]

@@ -831,3 +831,94 @@ def planned_reserve_has_no_spitze(world, weg_balance):
     response = world.act('GET', f"/api/weg-settlements/{w['run']}/pdf")
     assert response.status_code == 200
     assert 'zuzueglich Ruecklagenzufuehrung laut Wirtschaftsplan (Soll)' in pdf_text(response.content)
+
+
+@given(parsers.parse('Anna owns unit 1 alone and Bernd and Carla own unit 2 with shares of {bernd_share} and {carla_share}, '
+                     'both units of 500 MEA with 1000 euros of costs by MEA'), target_fixture='co_owned')
+def co_owned_units_world(world, seed_data, bernd_share, carla_share):
+    user = str(seed_data['user_a_admin_id'])
+    world.actor = world.administrator_of('Verwaltung Alpha')
+    world.actor_organization = 'Verwaltung Alpha'
+    home = create(world, '/api/properties', {'name': 'WEG Birkenweg 7',
+        'management_type': 'WEG', 'mea_denominator': 1000,
+        'data_audience': {'label': 'Birkenweg', 'reason': 'Synthetic settlement',
+            'grants': [{'user_id': user, 'capabilities': ['read', 'prepare', 'approve', 'export'],
+                        'reason': 'Synthetic settlement'}]}}, keyed=True)
+    units = {number: create(world, '/api/units', {'property_id': home['id'], 'number': number,
+        'usage_type': 'WOHNUNG', 'mea': '500', 'area': '100'}) for number in ('1', '2')}
+    owners = {}
+    for name, number, share in (('Anna Alt', '1', None), ('Bernd Bunt', '2', bernd_share),
+                                ('Carla Clever', '2', carla_share)):
+        person = create_person(world, 'Verwaltung Alpha', name)
+        owner = create(world, '/api/owner-profiles', {'person_id': person.id})
+        body = {'unit_id': units[number]['id'], 'owner_profile_id': owner['id'], 'valid_from': '2020-01-01'}
+        create(world, '/api/ownership', {**body, 'mea_share': share} if share else body)
+        owners[name.split()[0]] = owner['id']
+    scope = create(world, '/api/accounting-scopes', {'property_id': home['id'], 'scope_type': 'WEG',
+        'label': 'WEG Birkenweg', 'valid_from': '2026-01-01', 'whole_property': True}, keyed=True)
+    create(world, f"/api/accounting-scopes/{scope['id']}/grants", {'user_id': user,
+        'capabilities': ['read', 'prepare', 'approve', 'confirm', 'export'], 'reason': 'Synthetic settlement'}, keyed=True)
+    basis = {'property_id': home['id'], 'accounting_scope_id': scope['id']}
+    category = next(row for row in world.act('GET', '/api/cost-categories').json() if row['code'] == 'GARTENPFLEGE')
+    cost = create(world, '/api/cost-entries', {**basis, 'cost_category_id': category['id'],
+        'cost_category_plan_version': category['plan_version'], 'document_number': 'RE-BIRKENWEG',
+        'invoice_date': '2026-02-01', 'service_period_from': '2026-01-01',
+        'service_period_to': '2026-12-31', 'gross_amount': '1000.00',
+        'owner_distribution_key': 'MEA',
+        'tenant_apportionable': 'NICHT_UMLAGEFAEHIG', 'source': 'MANUAL'})
+    assert world.act('POST', f"/api/cost-entries/{cost['id']}/confirm").status_code == 200
+    plan = create(world, '/api/economic-plans', {**basis, 'plan_year': 2026,
+        'period_start': '2026-01-01', 'period_end': '2026-12-31'})
+    values = {'planned_costs': [{'category_code': 'GARTENPFLEGE', 'label': 'Bewirtschaftung',
+        'planned_amount': '1000.00', 'cost_group': 'UMLAGEFAEHIG'}], 'reserve_contribution_total': '0.00'}
+    world.run(attest_fixture(world.actor, 'economic_plan', plan['id'], values))
+    response = world.act('POST', f"/api/economic-plans/{plan['id']}/finalize", json=values)
+    assert response.status_code == 200, response.text
+    run = create(world, '/api/weg-settlements', {**basis, 'economic_plan_id': plan['id'],
+        'period_start': '2026-01-01', 'period_end': '2026-12-31'})
+    return {'run': run['id'], 'owners': owners, 'plan': plan['id']}
+
+
+def compute_co_owned(world, w):
+    values = {'paid_advances': [{'owner_profile_id': oid, 'paid_total': '0.00'} for oid in w['owners'].values()]}
+    world.run(attest_fixture(world.actor, 'settlement', w['run'], values))
+    return world.act('POST', f"/api/weg-settlements/{w['run']}/compute", json=values)
+
+
+@when('I compute the WEG annual settlement of the co-owned units')
+def compute_co_owned_units(world, co_owned):
+    response = compute_co_owned(world, co_owned)
+    assert response.status_code == 200, response.text
+    co_owned['statement'] = response.json()
+
+
+@when('I try to compute the WEG annual settlement of the co-owned units')
+def try_compute_co_owned_units(world, co_owned):
+    co_owned['response'] = compute_co_owned(world, co_owned)
+
+
+@then("Anna's cost share is 500 euros and Bernd's and Carla's are 250 euros each")
+def co_owned_cost_shares(co_owned):
+    costs = {name: next(o for o in co_owned['statement']['owner_results']
+                        if o['owner_profile_id'] == oid)['owner_cost_total']
+             for name, oid in co_owned['owners'].items()}
+    assert costs == {'Anna': '500.00', 'Bernd': '250.00', 'Carla': '250.00'}
+
+
+@then('the calculation is refused in German because the shares of unit 2 do not add up')
+def co_owned_refusal(co_owned):
+    response = co_owned['response']
+    assert response.status_code == 422, response.text
+    detail = response.json()['detail']
+    assert (detail['code'], detail['unit_number'], detail['share_sum']) == ('weg_co_owner_shares_mismatch', '2', '0.9')
+    assert 'Einheit 2' in detail['message'] and 'statt 1 oder 100' in detail['message']
+
+
+@then("the plan of the same owners still gave Bernd 333.33 euros and Carla 166.67 euros of unit 2's 500 euros")
+def co_owned_plan_still_normalises(world, co_owned):
+    page = world.act('GET', f"/api/economic-plans/{co_owned['plan']}").json()
+    advances = {line['owner_profile_id']: line['planned_amount']
+                for line in page['lines'] if line['line_type'] == 'OWNER_ADVANCE'}
+    assert advances == {co_owned['owners']['Anna']: '500.00', co_owned['owners']['Bernd']: '333.33',
+                        co_owned['owners']['Carla']: '166.67'}
+

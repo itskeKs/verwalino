@@ -415,3 +415,116 @@ class TestI4H_Determinism:
         h1 = canonical_sha256(build_weg_snapshot_payload(inp, r1))
         h2 = canonical_sha256(build_weg_snapshot_payload(inp, r2))
         assert h1 == h2
+
+
+# ===========================================================================
+# I4-J: a unit's owners always bear exactly the unit's share (#404).
+#   Co-owner shares are ratios of any positive scale; a sole owner weighs 1.
+# ===========================================================================
+def _share_values():
+    """Any positive share with the six decimals the column stores, from 0.000001 to 1000."""
+    return st.integers(min_value=1, max_value=10**9).map(lambda n: Decimal(n) / Decimal(10**6))
+
+
+@st.composite
+def _owner_timelines(draw):
+    """A gap-free timeline of one unit: a base owner for the whole period plus co-owners
+    over random stretches, each with its own positive share on any scale."""
+    unit = _U(11)
+    co_owners = draw(st.integers(min_value=0, max_value=4))
+    # Without a co-owner the base owner is a sole owner and may carry any value, or none.
+    base_share = draw(_share_values() if co_owners else st.one_of(st.none(), _share_values()))
+    owners = [OwnerPeriodInput(unit_id=unit, owner_profile_id=_U(100), valid_from=date(2000, 1, 1),
+                               valid_to=None, mea_share=base_share)]
+    for i in range(co_owners):
+        start = draw(st.dates(min_value=date(2024, 6, 1), max_value=date(2026, 6, 1)))
+        end = draw(st.one_of(st.none(), st.dates(min_value=start, max_value=date(2026, 6, 1))))
+        owners.append(OwnerPeriodInput(unit_id=unit, owner_profile_id=_U(101 + i), valid_from=start,
+                                       valid_to=end, mea_share=draw(_share_values())))
+    return unit, owners
+
+
+class TestI4J_UnitOwnersBearTheUnitShare:
+    @settings(max_examples=300)
+    @given(
+        timeline=_owner_timelines(),
+        sp_from=st.dates(min_value=date(2024, 1, 1), max_value=date(2026, 12, 31)),
+        sp_days=st.integers(min_value=1, max_value=700),
+    )
+    def test_owner_weights_sum_to_the_unit_share_for_any_positive_scale(self, timeline, sp_from, sp_days):
+        from fractions import Fraction
+
+        from app.engine.periods import day_count, overlap_days
+        from app.engine.weg import _owner_time_weight, _unit_owner_spans
+
+        unit_id, owners = timeline
+        sp_to = sp_from + timedelta(days=sp_days - 1)
+        cover = build_owner_cover(unit_id, YEAR_START, YEAR_END, owners)
+        spans = _unit_owner_spans(UnitInput(id=unit_id, number="1", usage_type="WOHNUNG", mea=Decimal(1)), cover)
+        # The spans tile the settlement period without gap or overlap ...
+        assert spans[0].start == YEAR_START and spans[-1].end == YEAR_END
+        assert all(a.end + timedelta(days=1) == b.start for a, b in zip(spans, spans[1:]))
+        # ... in every span the owners' fractions are exactly the whole unit ...
+        assert all(sum(span.fractions.values(), Fraction(0)) == 1 for span in spans)
+        # ... so for any service period the owners together carry exactly the service-period
+        # days inside the settlement period: no day is lost, none is charged twice.
+        total = sum((_owner_time_weight(spans, i, sp_from, sp_to) for i in range(len(cover))), Fraction(0))
+        assert total == Fraction(overlap_days(sp_from, sp_to, YEAR_START, YEAR_END), day_count(sp_from, sp_to))
+
+    @settings(max_examples=150)
+    @given(
+        seat_weights=st.lists(st.integers(min_value=1, max_value=40), min_size=2, max_size=4),
+        scale=st.sampled_from([1, 100]),
+        changes=st.lists(st.lists(st.integers(min_value=1, max_value=364), max_size=2), min_size=4, max_size=4),
+        meas=st.lists(mea_values(), min_size=2, max_size=3),
+        cost=money_amounts(min_eur=1, max_eur=50000),
+    )
+    def test_accepted_scales_charge_every_owner_its_exact_share_within_one_cent(
+        self, seat_weights, scale, changes, meas, cost
+    ):
+        """Unit 0 has one co-owner per seat; a seat may change hands during the year. The seat
+        shares add up to 1 (or 100) as stored (six decimals), so every day is accepted. Every
+        owner is charged within a cent of cost * unit key share * seat fraction * days / 365,
+        and everything is charged exactly once."""
+        from fractions import Fraction
+
+        shares = [(Decimal(w) / Decimal(sum(seat_weights)) * scale).quantize(Decimal("0.000001"))
+                  for w in seat_weights]
+        units = tuple(UnitInput(id=_U(10 + i), number=str(i), usage_type="WOHNUNG", mea=m)
+                      for i, m in enumerate(meas))
+        owners = []
+        exact = {}  # owner -> exact share of the whole cost, as a Fraction
+        mea_total = sum((Fraction(m) for m in meas), Fraction(0))
+        share_total = sum((Fraction(s) for s in shares), Fraction(0))
+        next_id = 100
+        for seat, share in enumerate(shares):
+            starts = [date(2000, 1, 1)] + [YEAR_START + timedelta(days=d) for d in sorted(set(changes[seat]))]
+            ends = [s - timedelta(days=1) for s in starts[1:]] + [None]
+            for start, end in zip(starts, ends):
+                owner, next_id = _U(next_id), next_id + 1
+                owners.append(OwnerPeriodInput(unit_id=_U(10), owner_profile_id=owner, valid_from=start,
+                                               valid_to=end, mea_share=share))
+                days = (min(end or YEAR_END, YEAR_END) - max(start, YEAR_START)).days + 1
+                exact[owner] = (Fraction(cost) * Fraction(meas[0]) / mea_total
+                                * Fraction(max(days, 0), 365) * Fraction(share) / share_total)
+        for i in range(1, len(meas)):
+            owner, next_id = _U(next_id), next_id + 1
+            owners.append(OwnerPeriodInput(unit_id=_U(10 + i), owner_profile_id=owner,
+                                           valid_from=date(2000, 1, 1), valid_to=None))
+            exact[owner] = Fraction(cost) * Fraction(meas[i]) / mea_total
+        pos = (
+            WegCostPositionInput(
+                cost_entry_id=_U(50), category_id=_U(99), category_code="GRUNDSTEUER", label="x",
+                gross_amount=cost, service_period_from=YEAR_START, service_period_to=YEAR_END,
+                owner_distribution_key="MEA", cost_group="UMLAGEFAEHIG",
+            ),
+        )
+        r = compute_weg_jahresabrechnung(WegSettlementInput(
+            period_start=YEAR_START, period_end=YEAR_END,
+            property=PropertyInput(id=_U(1), name="WEG", management_type="WEG"),
+            units=units, owner_periods=tuple(owners), cost_positions=pos, plan_advances=(),
+        ))
+        assert sum((o.owner_cost_total for o in r.owners), Decimal("0.00")) == cost
+        assert sum(exact.values(), Fraction(0)) == Fraction(cost)
+        for o in r.owners:
+            assert abs(Fraction(o.owner_cost_total) - exact[o.owner_profile_id]) < Fraction(1, 100)

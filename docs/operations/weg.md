@@ -16,6 +16,20 @@ checks the visible detail explanations at 1280 px and 360 px; the
 [organization-isolation feature](../../features/organization_isolation.feature)
 checks that foreign financial records remain indistinguishable from missing ones.
 
+## Co-owner shares in the annual settlement
+
+Enter the „MEA-Anteil“ of every co-owner of a unit in the unit's Eigentumshistorie as a fraction
+(0,5 / 0,5) or as percent (50 / 50); the annual settlement divides the unit's share among the
+owners active on the same days by these values as ratios, span by span when an owner joins or
+leaves during the year. A sole owner needs no share. If the active shares of a unit add up to
+neither 1 nor 100 (0,6 and 0,3, or three times 33,33), „Berechnen“ and „Finalisieren“ stop with a
+„Fehler“ naming the unit and the period („Die Miteigentumsanteile der Eigentümer von Einheit 2
+ergeben vom 01.01.2026 bis 31.12.2026 zusammen 0,9 statt 1 oder 100.“); add the missing co-owner or
+correct the shares and calculate again. Thirds stored with six decimals (0,333333) are accepted. The
+economic plan, the Hausgeld Soll and special levies divide by the same ratio but do not stop on a
+wrong sum, so they can already exist while the annual settlement is refused. Rules and values:
+[M4 §4.3.3](../m4-weg-abrechnung.md#433-co-owner-shares-are-ratios-inside-their-unit-404).
+
 ## Special levies backend (Sonderumlagen)
 
 `POST /api/special-levies` creates a one-time special levy with `property_id`,

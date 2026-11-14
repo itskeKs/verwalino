@@ -1682,8 +1682,9 @@ async def test_short_plan_splits_a_mid_month_transfer_by_days_of_the_whole_insta
     owners = {o['owner_profile_id']: o for o in result['owner_results']}
     assert owners[w['anna']]['plan_soll'] == '1483.87'
     assert owners[bernd]['plan_soll'] == '1516.13'
-    # Computed results of the WEG engine changed (a cent moved back, #602; the edge months, #662).
-    assert result['engine_version'] == 'm4.8.0'
+    # Computed results of the WEG engine changed (a cent moved back, #602; the edge months, #662;
+    # co-owner shares as ratios within their unit, #404).
+    assert result['engine_version'] == 'm4.9.0'
 
 
 @pytest.mark.asyncio
@@ -1734,7 +1735,7 @@ async def test_owners_outside_a_mid_month_plan_share_nothing_of_its_edge_instalm
             assert notice.status_code == 422, notice.text
         assert soll.get(owner, Decimal('0.00')) == expected[owner]
     assert sum(soll.values()) == Decimal('3000.00')
-    assert result['engine_version'] == 'm4.8.0'
+    assert result['engine_version'] == 'm4.9.0'
 
 
 @pytest.mark.asyncio
@@ -2539,7 +2540,7 @@ async def test_input_roster_keeps_original_plan_owner_after_history_correction(c
 
 
 @pytest.mark.parametrize('payload_version,shown', [(None, False), ('m4.2.0', False), ('m4.3.0', False),
-    ('m4.3.2', False), ('m4.4.0', True), ('m4.5.0', True), ('m4.6.0', True), ('m4.7.0', True), ('m4.8.0', True)])
+    ('m4.3.2', False), ('m4.4.0', True), ('m4.5.0', True), ('m4.6.0', True), ('m4.7.0', True), ('m4.8.0', True), ('m4.9.0', True)])
 def test_pdf_reserve_payment_source_uses_only_the_frozen_engine_version(payload_version, shown):
     from types import SimpleNamespace
     from app.services.weg_jahresabrechnung_pdf import build_weg_jahresabrechnung_html
