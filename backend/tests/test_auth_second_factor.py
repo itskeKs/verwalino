@@ -674,3 +674,196 @@ async def test_import_admission_ignores_second_factor_rows():
             assert json.loads(result)["empty"] is True
         finally:
             await engine.dispose()
+
+
+# --- Issue #659: the enrolment stays reachable while the organization is in its
+# cooling-off period, so an account without a factor can still rescue it. ---
+
+from contextlib import contextmanager  # noqa: E402
+
+
+@contextmanager
+def _organization_deletion(organization_id, status):
+    """Hold the organization in a deletion state for the length of the block."""
+    with psycopg2.connect(MIGRATOR_SYNC_URL) as connection, connection.cursor() as cursor:
+        cursor.execute(
+            "INSERT INTO public.organization_deletion (organization_id, status, confirmed_at, execute_after)"
+            " VALUES (%s, %s, now(), now() + interval '7 days')",
+            (str(organization_id), status),
+        )
+    try:
+        yield
+    finally:
+        with psycopg2.connect(MIGRATOR_SYNC_URL) as connection, connection.cursor() as cursor:
+            cursor.execute(
+                "DELETE FROM public.organization_deletion WHERE organization_id = %s",
+                (str(organization_id),),
+            )
+
+
+READ_ONLY_DURING_COOLING_OFF = "Widerrufsfrist schreibgeschützt"
+
+
+@pytest.mark.anyio
+async def test_hosted_cooling_off_leaves_an_account_without_a_factor_only_its_enrolment(
+    second_factor_identity, monkeypatch
+):
+    monkeypatch.setattr(settings, "deployment_mode", "hosted")
+    client, identity = second_factor_identity
+    with _organization_deletion(identity["organization_id"], "cooling_off"):
+        # Signing in works and leads to the enrolment, as outside cooling-off.
+        login = await _login(client, identity["email"])
+        assert login.status_code == 200, login.text
+        assert login.json()["second_factor_enrolment_required"] is True
+
+        # Nothing but the enrolment is writable: the records, the preferences
+        # and another account's factor stay refused by the cooling-off gate.
+        refused_writes = [
+            ("POST", "/api/persons", {"json": {"last_name": "Blocked"}}),
+            ("PATCH", "/api/auth/preferences", {"json": {"design_theme": "warm"}}),
+            ("POST", f"/api/users/{identity['user_id']}/reset-second-factor", {}),
+        ]
+        for method, path, options in refused_writes:
+            refused = await client.request(method, path, **options)
+            assert refused.status_code == 409, (method, path, refused.text)
+            assert READ_ONLY_DURING_COOLING_OFF in refused.text, (method, path, refused.text)
+
+        # Every other request still needs the factor, as outside cooling-off:
+        # the export and the cancellation are not reachable without one.
+        for method, path in (
+            ("GET", "/api/auth/preferences"),
+            ("POST", "/api/organizations/export"),
+            ("POST", "/api/organizations/deletion/cancel"),
+        ):
+            gated = await client.request(method, path)
+            assert gated.status_code == 403, (method, path, gated.text)
+            assert gated.json()["detail"]["code"] == "second_factor_enrolment_required"
+
+        started = await client.post("/api/auth/second-factor/enrolment")
+        assert started.status_code == 200, started.text
+        secret = started.json()["secret"]
+        wrong = await client.post(
+            "/api/auth/second-factor/enrolment/confirm", json={"code": _wrong_code(secret)}
+        )
+        assert wrong.status_code == 401, wrong.text
+        confirmed = await client.post(
+            "/api/auth/second-factor/enrolment/confirm", json={"code": totp_code(secret)}
+        )
+        assert confirmed.status_code == 200, confirmed.text
+        assert len(confirmed.json()["recovery_codes"]) == 10
+
+        # The factor is enrolled, the records stay read-only until the deletion
+        # is cancelled, and the cancellation now works.
+        status = await client.get("/api/auth/second-factor")
+        assert status.json() == {"enrolled": True}
+        assert (await client.post("/api/persons", json={"last_name": "Blocked"})).status_code == 409
+        assert (await client.post("/api/organizations/deletion/cancel")).status_code == 200
+        allowed = await client.patch("/api/auth/preferences", json={"design_theme": "warm"})
+        assert allowed.status_code == 200, allowed.text
+
+
+@pytest.mark.anyio
+async def test_selfhost_cooling_off_cancels_without_a_factor_and_keeps_records_read_only(
+    second_factor_identity, monkeypatch
+):
+    monkeypatch.setattr(settings, "deployment_mode", "selfhost")
+    client, identity = second_factor_identity
+    with _organization_deletion(identity["organization_id"], "cooling_off"):
+        refused = await client.post("/api/persons", json={"last_name": "Blocked"})
+        assert refused.status_code == 409, refused.text
+        assert READ_ONLY_DURING_COOLING_OFF in refused.text
+        assert (await client.post("/api/organizations/deletion/cancel")).status_code == 200
+        allowed = await client.patch("/api/auth/preferences", json={"design_theme": "warm"})
+        assert allowed.status_code == 200, allowed.text
+
+
+@pytest.mark.anyio
+async def test_erased_organization_refuses_the_enrolment_at_the_gate(second_factor_identity, monkeypatch):
+    monkeypatch.setattr(settings, "deployment_mode", "hosted")
+    client, identity = second_factor_identity
+    with _organization_deletion(identity["organization_id"], "deleted_pending_retention"):
+        for method, path in (
+            ("POST", "/api/auth/second-factor/enrolment"),
+            ("POST", "/api/auth/second-factor/enrolment/confirm"),
+            ("GET", "/api/auth/second-factor"),
+        ):
+            refused = await client.request(method, path)
+            assert refused.status_code == 401, (method, path, refused.text)
+
+
+@pytest.mark.anyio
+async def test_lifecycle_guard_exempts_only_the_factor_tables_and_only_during_cooling_off(
+    second_factor_identity,
+):
+    """The route gate is not the only barrier: the database refuses an
+    authentication that completed just before the state changed."""
+    from sqlalchemy import text as sql_text
+    from sqlalchemy.exc import DBAPIError
+    from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+
+    from tests.conftest import APP_RW_URL
+
+    _, identity = second_factor_identity
+    organization, user = str(identity["organization_id"]), str(identity["user_id"])
+    factor = (
+        "INSERT INTO public.user_second_factor (organization_id, user_id, secret_encrypted)"
+        " VALUES (:org, :user, 'gAAAAA-synthetic')"
+    )
+    recovery = (
+        "INSERT INTO public.user_recovery_code (organization_id, user_id, position, code_hash)"
+        " VALUES (:org, :user, 0, :hash)"
+    )
+    record = "INSERT INTO public.person (organization_id, last_name) VALUES (:org, 'Blocked')"
+    params = {"org": organization, "user": user, "hash": "ab" * 32}
+
+    async def run_as_runtime(statement):
+        engine = create_async_engine(APP_RW_URL)
+        try:
+            async with async_sessionmaker(engine)() as session, session.begin():
+                await session.execute(sql_text("SELECT set_config('app.current_org_id', :org, true)"), params)
+                await session.execute(sql_text("SELECT set_config('app.current_user_id', :user, true)"), params)
+                await session.execute(sql_text(statement), params)
+        finally:
+            await engine.dispose()
+
+    async def refused(statement):
+        with pytest.raises(DBAPIError) as raised:
+            await run_as_runtime(statement)
+        return getattr(raised.value.orig, "sqlstate", None)
+
+    with _organization_deletion(identity["organization_id"], "cooling_off"):
+        await run_as_runtime(factor)
+        await run_as_runtime(recovery)
+        assert await refused(record) == "P0023", "every other table stays read-only in cooling-off"
+    with _organization_deletion(identity["organization_id"], "deleted_pending_retention"):
+        assert await refused(factor) == "P0023"
+        assert await refused(recovery) == "P0023"
+
+
+def test_cooling_off_guard_exemption_migration_roundtrip(run_migrations):
+    from alembic.migration import MigrationContext
+    from alembic.operations import Operations
+    from alembic.script import ScriptDirectory
+    from sqlalchemy import create_engine, text as sql_text
+
+    guard = "SELECT prosrc FROM pg_proc WHERE oid='public.organization_lifecycle_guard()'::regprocedure"
+    exemption = "TG_TABLE_NAME IN ('user_second_factor','user_recovery_code')"
+    migration = ScriptDirectory("migrations").get_revision("0189").module
+    assert migration.down_revision == "0188"
+    engine = create_engine(MIGRATOR_SYNC_URL)
+    try:
+        with engine.connect() as connection, connection.begin() as transaction:
+            upgraded = connection.scalar(sql_text(guard))
+            assert exemption in upgraded
+            with Operations.context(MigrationContext.configure(connection)):
+                migration.downgrade()
+                downgraded = connection.scalar(sql_text(guard))
+                assert exemption not in downgraded
+                assert "AND d.status IN ('cooling_off','deleted_pending_retention')) THEN" in downgraded
+                # The 0184 invitation exemption is not this revision's to touch.
+                assert "TG_TABLE_NAME='user_invitation' AND TG_OP='DELETE'" in downgraded
+                migration.upgrade()
+                assert connection.scalar(sql_text(guard)) == upgraded
+            transaction.rollback()
+    finally:
+        engine.dispose()

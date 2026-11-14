@@ -73,7 +73,10 @@ Authenticator-App“ after the password; without the phone, a recovery code
 works exactly once; the sign-in then says how many remain and continues with „Weiter“. A wrong code counts
 like a wrong password towards the lockout. In the hosted offer the second
 factor is mandatory: an account without it sees only the enrolment page until
-setup is complete. An administrator resets a lost factor in the user
+setup is complete. This also holds while the organization is in the seven-day
+cooling-off period of a deletion, in which it is otherwise read-only: the
+enrolment stays possible, and with a confirmed factor the administrator can then
+cancel the deletion; every other change waits until the deletion is cancelled. An administrator resets a lost factor in the user
 management („Zweiten Faktor zurücksetzen“); the person enrols again at the
 next sign-in.
 
