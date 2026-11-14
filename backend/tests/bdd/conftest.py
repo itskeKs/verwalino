@@ -140,6 +140,13 @@ def world(bdd_loop, request, shared_hosted_property_headroom, shared_hosted_reco
         admin = request.getfixturevalue("client_a_admin")
         anonymous = request.getfixturevalue("client_unauth")
         state = World(bdd_loop, [admin, request.getfixturevalue("client_b_admin")], anonymous)
+        if get_deployment_policy().deployment_mode == "hosted":
+            # A hosted account without a confirmed second factor reaches only the
+            # enrolment routes (issue #208); the scenarios' administrators have one.
+            seeded = request.getfixturevalue("seed_data")
+            confirm = request.getfixturevalue("confirmed_second_factor")
+            confirm(seeded["org_a_id"], seeded["user_a_admin_id"])
+            confirm(seeded["org_b_id"], seeded["user_b_admin_id"])
     state.data["scenario"] = request.node.name
     try:
         if target_url():
@@ -156,7 +163,13 @@ def world(bdd_loop, request, shared_hosted_property_headroom, shared_hosted_reco
 @pytest.fixture
 def password_identity(request, world):
     if not target_url():
-        yield request.getfixturevalue("local_password_identity")
+        client, email = request.getfixturevalue("local_password_identity")
+        if get_deployment_policy().deployment_mode == "hosted" and not request.node.module.__name__.endswith("test_second_factor"):
+            # Hosted mode lets the new account reach only the enrolment routes (issue #208);
+            # the second-factor feature itself starts from a user without a factor.
+            from tests.bdd.steps.second_factor import enrol_second_factor
+            world.data["second_factor_secret"], _ = world.run(enrol_second_factor(client))
+        yield client, email
         return
     from tests.bdd.steps.password import CURRENT_PASSWORD
     email = f"scenario-password-{uuid4()}@example.test"

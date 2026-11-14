@@ -15,6 +15,27 @@ branch_labels = None
 depends_on = None
 
 
+def patch_import_admission(reverse=False):
+    """Factor rows are account state, not data: every hosted staff account has
+    one, so like invitations, assents and confirmations they must not make an
+    organization non-empty for archive import. The 0147-owned body is
+    replaced here, not edited."""
+    definition = op.get_bind().scalar(
+        text(
+            "SELECT pg_get_functiondef("
+            "'public.organization_import_admission(uuid,jsonb)'::regprocedure)"
+        )
+    )
+    before = "'legal_document_assent','organization_ai_confirmation'"
+    after = "'legal_document_assent','organization_ai_confirmation','user_second_factor','user_recovery_code'"
+    if reverse:
+        before, after = after, before
+        if before not in definition and after in definition:
+            return
+    assert definition.count(before) == 1
+    op.execute(definition.replace(before, after))
+
+
 def upgrade():
     op.execute("""
     CREATE TABLE public.user_second_factor (
@@ -153,9 +174,11 @@ def upgrade():
     REVOKE ALL ON FUNCTION public.reset_second_factor(uuid,uuid) FROM PUBLIC,app_worker,app_review;
     GRANT EXECUTE ON FUNCTION public.reset_second_factor(uuid,uuid) TO app_rw;
     """)
+    patch_import_admission()
 
 
 def downgrade():
+    patch_import_admission(reverse=True)
     op.execute("""
     LOCK TABLE public.user_second_factor IN ACCESS EXCLUSIVE MODE;
     LOCK TABLE public.user_recovery_code IN ACCESS EXCLUSIVE MODE;

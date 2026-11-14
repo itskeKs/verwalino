@@ -86,7 +86,7 @@ async def rent_db(seed_data):
 
 
 @pytest_asyncio.fixture
-async def rent_world(rent_db):
+async def rent_world(rent_db, confirmed_second_factor):
     world = {key: uuid.uuid4() for key in (
         "org", "foreign_org", "admin", "reader", "clerk", "foreign_admin",
         "property", "hidden_property", "foreign_property", "unit", "hidden_unit",
@@ -120,6 +120,10 @@ async def rent_world(rent_db):
         await rent_db.execute(text("""INSERT INTO tenant_profile(id,organization_id,person_id)
             VALUES (:tenant,:org,:person)"""), params)
     await rent_db.commit()
+    if settings.deployment_mode == "hosted":
+        # Hosted mode refuses an account without a confirmed second factor (issue #208).
+        confirmed_second_factor(world["org"], world["admin"], world["reader"], world["clerk"])
+        confirmed_second_factor(world["foreign_org"], world["foreign_admin"])
     async with api_client(world) as api, api_client(world, foreign=True) as foreign:
         for prefix, client in (("", api), ("hidden_", api), ("foreign_", foreign)):
             response = await client.post("/api/leases", json={

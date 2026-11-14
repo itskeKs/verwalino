@@ -47,6 +47,31 @@ async def enrol_second_factor(client) -> tuple[str, list[str]]:
     return secret, confirmed.json()["recovery_codes"]
 
 
+def finish_sign_in(world, client, answer, secret=None):
+    """Finish a hosted sign-in or sign-up the way a real user does (issue #208).
+
+    An account without a confirmed factor is restricted to the enrolment routes,
+    so the scenario's user enrols at once; an account with one answers the code
+    step with its authenticator. Any other answer is returned unchanged, so the
+    steps stay the same in the self-hosted run.
+    """
+    if answer.status_code not in (200, 201):
+        return answer
+    body = answer.json()
+    if body.get("second_factor_enrolment_required"):
+        secret, _ = world.run(enrol_second_factor(client))
+        world.data["second_factor_secret"] = secret
+        return answer
+    if body.get("second_factor_required"):
+        from tests.conftest import CONFIRMED_FACTOR_SECRET
+
+        # One step ahead: a code of the step that enrolled the factor is a replay.
+        code = totp_code(secret or world.data.get("second_factor_secret", CONFIRMED_FACTOR_SECRET), step_offset=1)
+        return world.send(client, "POST", "/api/auth/login/second-factor",
+                          json={"pending_token": body["pending_token"], "code": code})
+    return answer
+
+
 def _start_enrolment(world):
     answer = world.act("POST", "/api/auth/second-factor/enrolment")
     assert answer.status_code == 200, world.describe_response()

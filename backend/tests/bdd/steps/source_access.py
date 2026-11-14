@@ -5,6 +5,7 @@ import pytest
 from pytest_bdd import given, then, when
 
 from tests.bdd.steps.browser_setup import create
+from tests.bdd.steps.second_factor import finish_sign_in
 from tests.conftest import _api_test_client
 from tests.declaration_fixtures import make_text_pdf
 from tests.test_source_security_lifecycle import accepted, status, transition, transition_body
@@ -67,6 +68,7 @@ def reviewed_property(world, source_staff_client):
     })
     login = world.send(source_staff_client, "POST", "/api/auth/login", json={"email": staff["email"], "password": "source-access-testpass"})
     assert login.status_code == 200, world.describe_response()
+    finish_sign_in(world, source_staff_client, login)
     world.data.update(source_admin=admin, source_staff=source_staff_client, source_staff_id=staff["id"],
                       source_property=home, source_domain=domain, source_scope=scope,
                       source_account=account, source_draft=draft, source_document=document, source_pdf=pdf)

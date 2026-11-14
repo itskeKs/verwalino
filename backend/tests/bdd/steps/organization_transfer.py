@@ -77,10 +77,10 @@ def archive_is_private(world):
 
 
 @pytest.fixture
-async def empty_import_organization(rent_db, rent_world):
+async def empty_import_organization(rent_db, rent_world, confirmed_second_factor):
     from tests.test_organization_import import import_target
     # Reuse the same fixture implementation; all product operations use HTTP.
-    return await import_target.__wrapped__(rent_db, rent_world)
+    return await import_target.__wrapped__(rent_db, rent_world, confirmed_second_factor)
 
 
 def restore_archive(world, target, release_source=None):

@@ -638,3 +638,39 @@ async def test_reset_second_factor_function_refuses_other_runtime_roles(second_f
         assert _factor_state(colleague) == (1, 1)
     finally:
         _remove_colleague(colleague)
+
+
+# --- CI round 4 (PR #656, base c36180fb): the hosted BDD run found this. ---
+
+
+@pytest.mark.anyio
+async def test_import_admission_ignores_second_factor_rows():
+    """Every hosted staff account has a factor, so factor rows must not make
+    an organization non-empty for archive import (like invitations and assents)."""
+    import json
+
+    from sqlalchemy import text as sql_text
+    from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+
+    from tests.conftest import APP_RW_URL
+
+    admin = {"email": f"admission-{uuid.uuid4()}@example.test", "role": "OWNER_ADMIN"}
+    with temporary_auth_rows([admin]):
+        organization, user = str(admin["organization_id"]), str(admin["user_id"])
+        with psycopg2.connect(MIGRATOR_SYNC_URL) as connection, connection.cursor() as cursor:
+            cursor.execute(
+                "INSERT INTO public.user_second_factor (organization_id, user_id, secret_encrypted, confirmed, confirmed_at)"
+                " VALUES (%s, %s, 'gAAAAA-synthetic', true, now())", (organization, user))
+            cursor.execute(
+                "INSERT INTO public.user_recovery_code (organization_id, user_id, position, code_hash)"
+                " VALUES (%s, %s, 0, %s)", (organization, user, "ab" * 32))
+        engine = create_async_engine(APP_RW_URL)
+        try:
+            async with async_sessionmaker(engine)() as session, session.begin():
+                await session.execute(sql_text("SELECT set_config('app.current_org_id', :org, false)"), {"org": organization})
+                await session.execute(sql_text("SELECT set_config('app.current_user_id', :actor, false)"), {"actor": user})
+                result = await session.scalar(
+                    sql_text("SELECT public.organization_import_admission(:org, '{}'::jsonb)::text"), {"org": organization})
+            assert json.loads(result)["empty"] is True
+        finally:
+            await engine.dispose()

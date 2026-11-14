@@ -1067,6 +1067,11 @@ async def client_unauth() -> AsyncGenerator[httpx.AsyncClient, None]:
         yield client
 
 
+# The authenticator secret of every factor that confirmed_second_factor gives out,
+# so a scenario can answer the code step of a later password sign-in.
+CONFIRMED_FACTOR_SECRET = "JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP"
+
+
 @pytest.fixture
 def confirmed_second_factor():
     """Give users a confirmed second factor for the length of one test.
@@ -1079,17 +1084,20 @@ def confirmed_second_factor():
     """
     import psycopg2
 
+    from app.services.second_factor_service import encrypt_secret
+
     given: list[tuple[str, str]] = []
 
     def confirm(organization_id, *user_ids) -> None:
+        secret = encrypt_secret(uuid.UUID(str(organization_id)), CONFIRMED_FACTOR_SECRET)
         with psycopg2.connect(MIGRATOR_SYNC_URL) as connection, connection.cursor() as cursor:
             for user_id in user_ids:
                 cursor.execute(
                     "INSERT INTO public.user_second_factor"
                     " (organization_id, user_id, secret_encrypted, confirmed, confirmed_at)"
-                    " VALUES (%s, %s, 'gAAAAA-synthetic-confirmed', true, now())"
+                    " VALUES (%s, %s, %s, true, now())"
                     " ON CONFLICT (organization_id, user_id) DO NOTHING RETURNING id",
-                    (str(organization_id), str(user_id)),
+                    (str(organization_id), str(user_id), secret),
                 )
                 if cursor.fetchone():
                     given.append((str(organization_id), str(user_id)))

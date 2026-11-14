@@ -9,6 +9,7 @@ from datetime import datetime, timezone
 import pytest
 from sqlalchemy import text
 
+from app.core.config import settings
 from tests.test_rent_changes import rent_db as rent_db, rent_world as rent_world, api_client
 from tests.test_organization_export import export_store as export_store, unpack
 
@@ -39,7 +40,7 @@ def archive_with_user_email(files, user_id, email):
 
 
 @pytest.fixture
-async def import_target(rent_db, rent_world):
+async def import_target(rent_db, rent_world, confirmed_second_factor):
     target = {'org': uuid.uuid4(), 'admin': uuid.uuid4(), 'email': f"target-{uuid.uuid4().hex}@rent-change.invalid"}
     # The target administrator has their own sign-in address: one address
     # belongs to one organization (issue #134), so every archived address is
@@ -50,6 +51,9 @@ async def import_target(rent_db, rent_world):
         VALUES (:admin,:org,:email,'keep-this-account','Target admin')'''), target)
     await rent_db.execute(text("INSERT INTO membership(organization_id,user_id,role) VALUES (:org,:admin,'OWNER_ADMIN')"), target)
     await rent_db.commit()
+    if settings.deployment_mode == "hosted":
+        # Hosted mode refuses an account without a confirmed second factor (issue #208).
+        confirmed_second_factor(target['org'], target['admin'])
     return target
 
 

@@ -6,6 +6,7 @@ from urllib.parse import parse_qs, urlsplit
 import pytest
 from pytest_bdd import given, then, when
 from app.core.config import settings
+from tests.bdd.steps.second_factor import finish_sign_in
 from tests.signup_support import BODY, MESSAGE
 
 
@@ -53,7 +54,8 @@ def cannot_sign_in(world):
 
 @when('the administrator confirms the emailed link with the chosen password')
 def confirm(world):
-    world.send(world.anonymous, 'POST', '/api/signup/confirm', json={'token': world.data['signup_token'], 'password': BODY['password']})
+    answer = world.send(world.anonymous, 'POST', '/api/signup/confirm', json={'token': world.data['signup_token'], 'password': BODY['password']})
+    finish_sign_in(world, world.anonymous, answer)
 
 
 @then('the new organization administrator is signed in')
@@ -98,6 +100,7 @@ def confirm_existing_name(world):
     token = emailed_token(world, world.data['signup_isolation_body']['email'])
     answer = world.send(world.anonymous, 'POST', '/api/signup/confirm', json={'token': token, 'password': BODY['password']})
     if answer.status_code == 201:
+        finish_sign_in(world, world.anonymous, answer)
         world.data['signup_created_organization'] = answer.json()['organization_id']
 
 
