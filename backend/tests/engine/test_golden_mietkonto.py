@@ -1163,3 +1163,211 @@ def test_reversing_a_refund_after_a_zero_credit_preserves_the_full_remaining_adv
         payments, filt, date(2025, 7, 1), YEAR_END, finalized_credits=frozen,
     ) == Decimal("50.00")
     assert frozen == (mietkonto.AdvanceCredit(2025, None, YEAR_START, june_end, Decimal("0.00")),)
+
+
+# ===========================================================================
+# #602: a plan shorter than twelve months charges its WHOLE planned amount.
+#   One instalment per calendar month the plan period touches (at most twelve),
+#   decided by app.engine.periods.plan_instalment_count -- the same number the
+#   Wirtschaftsplan engine splits the annual advance into. Expected values are
+#   hand-computed: 3,000.00 over July..September is 3 x 1,000.00, not 3 x 250.00.
+# ===========================================================================
+def _short_plan_charges(amount, start, end, *, history=None, owner=_U(31), unit=_U(11),
+                        window=None):
+    lines = [OwnerAdvanceChargeInput(owner, unit, Decimal(amount))]
+    first, last = window or (start, end)
+    return owner_expected_charges(lines, owner, first, last, owner_periods=history,
+                                  plan_start=start, plan_end=end)
+
+
+def _months(charges):
+    return [(c.period_year, c.period_month, str(c.amount)) for c in charges]
+
+
+@pytest.mark.parametrize('with_history', [False, True])
+@pytest.mark.parametrize('start,end,amount,expected', [
+    # the issue: 3,000.00 over three months
+    (date(2025, 7, 1), date(2025, 9, 30), '3000.00',
+     [(2025, 7, '1000.00'), (2025, 8, '1000.00'), (2025, 9, '1000.00')]),
+    # one month charges everything at once
+    (date(2025, 7, 1), date(2025, 7, 31), '3000.00', [(2025, 7, '3000.00')]),
+    # an amount that does not divide: the spare cents go to the first months
+    (date(2025, 7, 1), date(2025, 9, 30), '1000.00',
+     [(2025, 7, '333.34'), (2025, 8, '333.33'), (2025, 9, '333.33')]),
+    (date(2025, 1, 1), date(2025, 5, 31), '1000.01',
+     [(2025, 1, '200.01')] + [(2025, m, '200.00') for m in range(2, 6)]),
+    (date(2025, 1, 1), date(2025, 11, 30), '1000.00',
+     [(2025, m, '90.91') for m in range(1, 11)] + [(2025, 11, '90.90')]),
+    # a year end inside the plan
+    (date(2025, 11, 1), date(2026, 1, 31), '2500.00',
+     [(2025, 11, '833.34'), (2025, 12, '833.33'), (2026, 1, '833.33')]),
+    # a first and a last month that are only partly covered are charged as whole months
+    (date(2025, 7, 15), date(2025, 9, 10), '3000.00',
+     [(2025, 7, '1000.00'), (2025, 8, '1000.00'), (2025, 9, '1000.00')]),
+    # twelve months from the 15th touch thirteen: twelve instalments, none for the thirteenth
+    (date(2025, 7, 15), date(2026, 7, 14), '12000.00',
+     [(2025, m, '1000.00') for m in range(7, 13)] + [(2026, m, '1000.00') for m in range(1, 7)]),
+    # a plan of twelve months keeps today's instalments
+    (date(2025, 1, 1), date(2025, 12, 31), '1000.00',
+     [(2025, m, '83.34') for m in range(1, 5)] + [(2025, m, '83.33') for m in range(5, 13)]),
+])
+def test_a_short_plan_is_charged_in_full_in_its_months(start, end, amount, expected, with_history):
+    from app.engine.types import OwnerPeriodInput
+
+    history = [OwnerPeriodInput(_U(11), _U(31), date(2020, 1, 1), None)] if with_history else None
+    charges = _short_plan_charges(amount, start, end, history=history)
+    assert _months(charges) == expected
+    assert sum(c.amount for c in charges) == Decimal(amount)
+
+
+@pytest.mark.parametrize('window,expected', [
+    ((date(2025, 8, 1), date(2025, 8, 31)), [(2025, 8, '333.33')]),
+    ((date(2025, 9, 1), date(2025, 9, 30)), [(2025, 9, '333.33')]),
+    # a window that runs past the plan end adds no instalment
+    ((date(2025, 7, 1), date(2025, 12, 31)),
+     [(2025, 7, '333.34'), (2025, 8, '333.33'), (2025, 9, '333.33')]),
+])
+def test_the_instalment_count_belongs_to_the_plan_not_to_the_reporting_window(window, expected):
+    from app.engine.types import OwnerPeriodInput
+
+    history = [OwnerPeriodInput(_U(11), _U(31), date(2020, 1, 1), None)]
+    for owner_periods in (None, history):
+        charges = _short_plan_charges('1000.00', date(2025, 7, 1), date(2025, 9, 30),
+                                      history=owner_periods, window=window)
+        assert _months(charges) == expected
+
+
+def test_without_a_plan_end_the_plan_keeps_its_twelve_instalments():
+    # Unknown is not "short": a caller that cannot name the plan end gets today's twelve
+    # instalments, 3000.00 / 12 = 250.00, and nothing is silently charged in full.
+    lines = [OwnerAdvanceChargeInput(_U(31), _U(11), Decimal('3000.00'))]
+    charges = owner_expected_charges(lines, _U(31), date(2025, 7, 1), date(2025, 9, 30),
+                                     plan_start=date(2025, 7, 1))
+    assert _months(charges) == [(2025, m, '250.00') for m in (7, 8, 9)]
+
+
+@pytest.mark.parametrize('with_history', [False, True])
+def test_a_zero_short_plan_charges_nothing(with_history):
+    from app.engine.types import OwnerPeriodInput
+
+    history = [OwnerPeriodInput(_U(11), _U(31), date(2020, 1, 1), None)] if with_history else None
+    assert _short_plan_charges('0.00', date(2025, 7, 1), date(2025, 9, 30), history=history) == []
+
+
+@pytest.mark.parametrize('amount,expected', [
+    # Positive: the spare cents go to the first instalments (largest remainder, rounded down).
+    ('1000.00', ['333.34', '333.33', '333.33']),
+    ('1000.01', ['333.34', '333.34', '333.33']),
+    # Negative (a credit): the same rule, floor and then the spare cents to the first
+    # instalments -- not mirrored in size: the first instalments are the smaller credits.
+    ('-1000.00', ['-333.33', '-333.33', '-333.34']),
+    ('-1000.01', ['-333.33', '-333.34', '-333.34']),
+])
+def test_the_spare_cents_of_a_short_plan_go_to_the_first_instalments_in_order(amount, expected):
+    charges = _short_plan_charges(amount, date(2025, 7, 1), date(2025, 9, 30))
+    assert [c.amount for c in charges] == [Decimal(value) for value in expected]
+    assert sum(c.amount for c in charges) == Decimal(amount)
+
+
+@pytest.mark.parametrize('with_history', [False, True])
+def test_an_owner_of_two_units_is_charged_the_sum_of_both_short_instalments(with_history):
+    from app.engine.types import OwnerPeriodInput
+
+    owner = _U(31)
+    lines = [OwnerAdvanceChargeInput(owner, _U(11), Decimal('3000.00')),
+             OwnerAdvanceChargeInput(owner, _U(12), Decimal('1000.00'))]
+    history = [OwnerPeriodInput(_U(11), owner, date(2020, 1, 1), None),
+               OwnerPeriodInput(_U(12), owner, date(2020, 1, 1), None)] if with_history else None
+    charges = owner_expected_charges(lines, owner, date(2025, 7, 1), date(2025, 9, 30),
+                                     owner_periods=history, plan_start=date(2025, 7, 1),
+                                     plan_end=date(2025, 9, 30))
+    assert _months(charges) == [(2025, 7, '1333.34'), (2025, 8, '1333.33'), (2025, 9, '1333.33')]
+    assert sum(c.amount for c in charges) == Decimal('4000.00')
+
+
+@pytest.mark.parametrize('start,end', [
+    (date(2025, 7, 1), date(2025, 9, 30)),
+    (date(2025, 11, 15), date(2026, 2, 14)),
+    (date(2025, 7, 15), date(2026, 7, 14)),
+    (date(2025, 1, 1), date(2025, 12, 31)),
+])
+def test_the_ledger_charges_the_instalments_the_plan_shows(start, end):
+    from app.engine.periods import plan_instalment_count
+    from app.engine.types import (
+        OwnerPeriodInput, PlannedCostInput, PropertyInput, UnitInput, WirtschaftsplanInput,
+    )
+    from app.engine.wirtschaftsplan import compute_wirtschaftsplan
+
+    units = tuple(UnitInput(_U(10 + n), str(n), 'WOHNUNG', mea=Decimal(mea))
+                  for n, mea in ((1, '500'), (2, '300'), (3, '200')))
+    history = [OwnerPeriodInput(_U(10 + n), _U(30 + n), date(2020, 1, 1), None) for n in (1, 2, 3)]
+    plan = compute_wirtschaftsplan(WirtschaftsplanInput(
+        plan_year=start.year, period_start=start, period_end=end,
+        property=PropertyInput(_U(20), 'WEG', 'WEG'), units=units, owner_periods=tuple(history),
+        planned_costs=(PlannedCostInput(_U(91), 'HEIZUNG', 'Heizung', Decimal('7777.77'), 'MEA',
+                                        'UMLAGEFAEHIG'),),
+        reserve_contribution_total=Decimal('1234.56')))
+    count = plan_instalment_count(start, end)
+    lines = [OwnerAdvanceChargeInput(o.owner_profile_id, o.unit_id, o.annual_advance)
+             for o in plan.owners]
+    ledger_total = Decimal('0.00')
+    for o in plan.owners:
+        assert len(o.monthly_rates) == count
+        for owner_periods in (None, history):
+            charges = owner_expected_charges(lines, o.owner_profile_id, start, end,
+                owner_periods=owner_periods, plan_start=start, plan_end=end)
+            assert [c.amount for c in charges] == list(o.monthly_rates)
+        ledger_total += sum(c.amount for c in charges)
+    # Everything the owners are charged is exactly what the plan resolved.
+    assert ledger_total == plan.total_advance_volume == Decimal('9012.33')
+
+
+def test_a_transfer_inside_a_short_plan_splits_the_instalment_not_a_twelfth():
+    from app.engine.types import OwnerPeriodInput
+
+    unit, karl, lena = _U(10), _U(1), _U(2)
+    lines = [OwnerAdvanceChargeInput(karl, unit, Decimal('3000.00'))]
+    start, end = date(2025, 7, 1), date(2025, 9, 30)
+
+    def charged(owner, sale_day):
+        history = [OwnerPeriodInput(unit, karl, date(2020, 1, 1), date.fromordinal(sale_day.toordinal() - 1)),
+                   OwnerPeriodInput(unit, lena, sale_day, None)]
+        return owner_expected_charges(lines, owner, start, end, owner_periods=history,
+                                      plan_start=start, plan_end=end)
+
+    # Sold with effect from 16 August: August 1,000.00 splits by owner days, 15 : 16 of 31.
+    karl_charges, lena_charges = charged(karl, date(2025, 8, 16)), charged(lena, date(2025, 8, 16))
+    assert _months(karl_charges) == [(2025, 7, '1000.00'), (2025, 8, '483.87')]
+    assert _months(lena_charges) == [(2025, 8, '516.13'), (2025, 9, '1000.00')]
+    assert sum(c.amount for c in karl_charges + lena_charges) == Decimal('3000.00')
+    # Sold with effect from 1 August: the whole of August goes to the buyer.
+    assert _months(charged(karl, date(2025, 8, 1))) == [(2025, 7, '1000.00')]
+    assert _months(charged(lena, date(2025, 8, 1))) == [(2025, 8, '1000.00'), (2025, 9, '1000.00')]
+
+
+def test_every_continuing_coowner_of_a_short_plan_keeps_the_cents_of_the_plan_line():
+    from app.engine.types import OwnerPeriodInput
+    from app.services.payment_service import dated_plan_soll
+
+    # #601 review: lines 1,500.01 (Anna) and 1,499.99 (Bernd), 01.07.-30.09.2025; Anna sells to
+    # Carla with effect from 16 August. Bernd did not sell and is charged exactly his line.
+    unit, anna, bernd, carla = _U(10), _U(1), _U(2), _U(3)
+    lines = [OwnerAdvanceChargeInput(anna, unit, Decimal('1500.01')),
+             OwnerAdvanceChargeInput(bernd, unit, Decimal('1499.99'))]
+    history = [OwnerPeriodInput(unit, anna, date(2020, 1, 1), date(2025, 8, 15), Decimal('50')),
+               OwnerPeriodInput(unit, bernd, date(2020, 1, 1), None, Decimal('50')),
+               OwnerPeriodInput(unit, carla, date(2025, 8, 16), None, Decimal('50'))]
+    start, end = date(2025, 7, 1), date(2025, 9, 30)
+    charges = {owner: owner_expected_charges(lines, owner, start, end, owner_periods=history,
+                                             plan_start=start, plan_end=end)
+               for owner in (anna, bernd, carla)}
+    assert _months(charges[bernd]) == [(2025, 7, '500.00'), (2025, 8, '500.00'), (2025, 9, '499.99')]
+    assert sum(c.amount for c in charges[anna] + charges[carla]) == Decimal('1500.01')
+    # The settlement divides each line by these dated charges and now returns them unchanged.
+    shares = {(unit, owner): (next((ln.annual_amount for ln in lines if ln.owner_profile_id == owner),
+                                   Decimal('0.00')), sum(c.amount for c in rows))
+              for owner, rows in charges.items()}
+    soll = dated_plan_soll(shares)
+    assert soll[bernd] == Decimal('1499.99')
+    assert {owner: sum(c.amount for c in rows) for owner, rows in charges.items()} == soll
+    assert sum(soll.values()) == Decimal('3000.00')

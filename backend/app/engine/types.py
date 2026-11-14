@@ -414,9 +414,10 @@ class WirtschaftsplanInput:
     """The complete, frozen input for ONE Wirtschaftsplan computation (m4 §5).
 
     Forward-looking; no Ist costs, no Soll-Ist. Planned costs per category +
-    the planned reserve contribution -> per-owner annual advance (MEA) -> 12
-    equal monthly Hausgeld rates (E4-3b, monatsbasiert; Largest-Remainder so
-    sum of 12 rates == annual advance exactly).
+    the planned reserve contribution -> per-owner annual advance (MEA) -> equal
+    monthly Hausgeld rates, one per calendar month of the period and at most twelve
+    (E4-3b, monatsbasiert; Largest-Remainder so the sum of the rates == annual
+    advance exactly).
     """
 
     plan_year: int
@@ -580,10 +581,11 @@ class PlanOwnerResult:
     unit_id: uuid.UUID
     # annual advance share of this owner/unit (cost + reserve, by MEA).
     annual_advance: Decimal
-    # 12 monthly rates (Largest-Remainder; sum == annual_advance exactly).
+    # the monthly rates, one per plan month and at most twelve (Largest-Remainder;
+    # sum == annual_advance exactly).
     monthly_rates: tuple[Decimal, ...]
     # the representative monthly amount shown (== monthly_rates[0]); the exact
-    # 12 rates are in monthly_rates (some cents differ by +/-0.01 over the year).
+    # rates are in monthly_rates (some cents differ by +/-0.01 over the plan).
     monthly_amount: Decimal
     distribution_base_share: Decimal | None
     distribution_base_total: Decimal | None

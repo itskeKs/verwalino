@@ -312,3 +312,32 @@ def test_owner_at_uses_both_inclusive_bounds_and_keeps_coowners(transfer):
     assert {o.owner_profile_id for o in owner_at(history, unit, transfer)} == {buyer, coowner}
     assert {o.owner_profile_id for o in owner_at(history, unit, transfer - timedelta(days=1))} == {seller, coowner}
     assert owner_at(history, uuid.UUID(int=99), transfer) == []
+
+
+@pytest.mark.parametrize('start,end,count', [
+    (date(2025, 1, 1), date(2025, 12, 31), 12),
+    (date(2025, 1, 1), date(2025, 11, 30), 11),
+    (date(2025, 1, 1), date(2025, 5, 31), 5),
+    (date(2025, 7, 1), date(2025, 9, 30), 3),
+    (date(2025, 7, 1), date(2025, 7, 31), 1),
+    (date(2025, 7, 15), date(2025, 7, 15), 1),
+    (date(2024, 2, 1), date(2024, 2, 29), 1),
+    # A year end inside the plan: November, December, January.
+    (date(2025, 11, 1), date(2026, 1, 31), 3),
+    # A partly covered first and last month each count as one whole month (#602).
+    (date(2025, 7, 15), date(2025, 9, 10), 3),
+    (date(2025, 11, 15), date(2026, 2, 14), 4),
+    # Twelve months from the 15th touch thirteen calendar months; a plan has at most twelve.
+    (date(2025, 7, 15), date(2026, 7, 14), 12),
+])
+def test_a_plan_has_one_instalment_per_calendar_month_it_touches_up_to_twelve(start, end, count):
+    from app.engine.periods import plan_instalment_count
+
+    assert plan_instalment_count(start, end) == count
+
+
+def test_a_plan_period_ending_before_it_starts_has_no_instalment_count():
+    from app.engine.periods import plan_instalment_count
+
+    with pytest.raises(ValueError):
+        plan_instalment_count(date(2025, 7, 1), date(2025, 6, 30))

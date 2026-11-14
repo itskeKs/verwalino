@@ -150,8 +150,10 @@ def dated_plan_soll(
 
     The owners' Soll of a unit always sums to the unit's OWNER_ADVANCE
     planned_amount to the cent (central largest-remainder, remainder exactly
-    once); the dated charges decide only the division, so a plan period shorter
-    than twelve months keeps its full planned amount. A unit whose dated
+    once); the dated charges decide only the division. Over the whole plan period
+    they already sum to the planned amount, because the ledger charges one
+    instalment per plan month (#602), so a continuing co-owner keeps the cents of
+    the plan line. A unit whose dated
     charges are all zero keeps its plan-line amounts (#402). An owner whose
     dated Soll is 0.00 is without Soll — no entry — for the settlement, the
     1(b) reserve-coverage cap and the reserve ledger alike.
@@ -725,7 +727,7 @@ class PaymentService:
     def _owner_charges(plan, prop, advance_lines, history, owner_profile_id, period_start, period_end):
         try:
             return owner_expected_charges(advance_lines, owner_profile_id, period_start, period_end,
-                owner_periods=history, plan_start=plan.period_start,
+                owner_periods=history, plan_start=plan.period_start, plan_end=plan.period_end,
                 monthly_due_day=plan.monthly_due_day, federal_state=prop.federal_state)
         except ValueError as exc:
             raise HTTPException(422, {"code": "hausgeld_ownership_invalid",

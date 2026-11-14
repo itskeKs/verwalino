@@ -1,7 +1,8 @@
 """Wirtschaftsplan PDF rendering (M4, m4 section 8.2).
 
 STRICTLY separated from the engine: READS the finalized economic_plan +
-economic_plan_line, computes NOTHING (a test asserts PDF values == line values).
+economic_plan_line, computes NOTHING (a test asserts PDF values == line values);
+the number of monthly rates named in the hint is read from the frozen snapshot.
 Renders only a finalized plan.
 
 Shows: Planbetrag je Kategorie (+ Subtotals), je-Eigentuemer-Jahresvorschuss +
@@ -32,6 +33,13 @@ class WirtschaftsplanDisplayNames:
     property_name: str = "—"
     property_address: str = ""
     owner_names: dict[str, str] = field(default_factory=dict)
+
+
+def _frozen_rate_count(plan: EconomicPlan) -> int:
+    """Monthly rates per owner as frozen in the plan snapshot; twelve without them (legacy)."""
+    owners = ((plan.snapshot_payload or {}).get("result") or {}).get("owners") or []
+    counts = [len(o["monthly_rates"]) for o in owners if o.get("monthly_rates")]
+    return counts[0] if counts else 12
 
 
 def _eur(value: Decimal | None) -> str:
@@ -100,6 +108,16 @@ def build_wirtschaftsplan_html(
             f"{_esc(plan.snapshot_sha256)}<br>Engine-Version: {_esc(plan.engine_version)}</div>"
         )
 
+    count = _frozen_rate_count(plan)
+    # For twelve rates this is the original wording, character for character: a finalized
+    # document keeps its content (GoBD); a shorter plan names its own number of rates (#602).
+    rates_hint = (
+        f"{count} gleiche Monatsraten umgelegt (kaufmaennisch cent-genau; die Summe der {count}\n"
+        "    Raten ergibt exakt den Jahresvorschuss)."
+        if count > 1 else
+        "1 Monatsrate umgelegt (die Rate ergibt exakt\n    den Jahresvorschuss)."
+    )
+
     return f"""<!DOCTYPE html>
 <html lang="de">
 <head><meta charset="utf-8"/><style>{_CSS}</style></head>
@@ -127,8 +145,7 @@ def build_wirtschaftsplan_html(
 
   <div class="hint">
     Die Hausgeldvorschuesse sind nach Miteigentumsanteilen (MEA) verteilt und in
-    12 gleiche Monatsraten umgelegt (kaufmaennisch cent-genau; die Summe der 12
-    Raten ergibt exakt den Jahresvorschuss). Die Zufuehrung zur
+    {rates_hint} Die Zufuehrung zur
     Erhaltungsruecklage ist Vermoegensbildung und keine Kostenumlage.
   </div>
   <div class="disclaimer">

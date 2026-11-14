@@ -320,9 +320,9 @@ chosen rows (`HAUSGELD_VORSCHUSS`, direction IN, `period_year` and `period_month
 
 - **Rows** come from `PaymentService.plan_hausgeld_charges`, the call behind the owner account and
   the dunning (§2.2 of [M6](m6-zahlungen-mietkonto.md#22-owner-expected-amount-per-owner-from-the-finalized-economic-plan)):
-  the amount of a row is the owner's expected Hausgeld of that month (the twelve largest-remainder
-  installments, so a booked month never leaves a one-cent open item; `monthly_amount` is only the
-  first installment). A month with a zero amount is not offered. An owner with several units gets
+  the amount of a row is the owner's expected Hausgeld of that month (the largest-remainder
+  installments of the plan's months, at most twelve, so a booked month never leaves a one-cent open
+  item; `monthly_amount` is only the first installment). A month with a zero amount is not offered. An owner with several units gets
   the summed amount. The value date is prefilled with the plan's due day of that month (clamped to the
   last day, without the § 193 BGB shift of the statement's due date) and stays editable, like the amount.
 - **Owner change within the year:** rows follow the ownership periods exactly as the owner account
@@ -610,12 +610,58 @@ The economic plan is **not** a WEG resolution — it produces proposals/document
 
 ```
 annual_advance_owner    = (Σ planned costs + planned reserve contribution) * MEA share
-monthly Hausgeld amount = annual_advance_owner / 12   (commercially rounded, to the cent)
+monthly Hausgeld amount = annual_advance_owner / n    (largest remainder, to the cent;
+                                                        n = 12 for a full year, fewer for a short plan, §5.3a)
 ```
 
 Rationale: Hausgeld is a **monthly constant installment payable in advance** — the practical and domain-wise expected basis is **12 equal monthly installments**, not day-accurate daily amounts (unlike the retrospective actual cost distribution of the annual settlement, which remains day-accurate — ADR-0004). An owner change during the year does not affect the **plan** (the plan plans for the unit; who pays in which month is a payment/transition question for M6, possibly with a notarial cost arrangement on sale). The **12-installment rounding** runs through the same `distribute_amount` discipline (largest remainder over 12 installments, so that Σ monthly installments == annual advance exactly — no cent drift over the year).
 
 > **[DECISION E4-3]** Plan advance payments **month-based** (12 equal installments, recommended) vs. day-accurate. ADR-0007 records the decision + rationale + the explicit separation "plan = month-based / actual settlement = day-accurate". Confirm.
+
+### 5.3a Plans Shorter Than Twelve Months (#602)
+
+A plan period may be as short as one day (`validate_settlement_period`, up to twelve months; see "Property settlement periods" above).
+The plan has **one installment per calendar month its period touches, at most twelve**:
+`plan_instalment_count(period_start, period_end)` in `engine/periods.py`. The plan engine, the
+Hausgeld ledger (owner account, owner dunning, "Hausgeld buchen"), the settlement's plan Soll and
+the planned reserve schedule of the reserve ledger all read that one function, so the installments
+of a unit sum to its `planned_amount` to the cent for every accepted period. The annual advance
+(the owner's whole share of the plan, whatever its length) is split by the central
+`distribute_amount` into exactly that many installments; the spare cents go to the first ones.
+
+| Plan period | Planned amount | Installments |
+|---|---|---|
+| 01.01.–31.12.2025 | 12.000,00 € | 12 × 1.000,00 € (a twelve-month plan keeps its installments) |
+| 01.07.–31.07.2025 | 3.000,00 € | 1 × 3.000,00 € |
+| 01.07.–30.09.2025 | 3.000,00 € | 3 × 1.000,00 € on the plan page, in the PDF, in the owner account and as the statement's Soll |
+| 01.07.–30.09.2025 | 1.000,00 € | 333,34 € / 333,33 € / 333,33 € |
+| 01.01.–31.05.2025 | 1.000,01 € | 200,01 € / 4 × 200,00 € |
+| 01.11.2025–31.01.2026 | 2.500,00 € | 833,34 € / 833,33 € / 833,33 € (a year end inside the plan) |
+
+"Its months" are **calendar months**: a plan that starts or ends inside a month charges that month
+as a whole installment (15.07.–10.09. has three), because day-accurate installments are not
+planned. Twelve months from the 15th touch thirteen calendar months and have twelve installments;
+the thirteenth month has none. The count belongs to the plan, not to the reporting window: the
+owner account for August alone shows August's 1.000,00 €, and a window running past the plan end
+adds no installment. A caller that cannot name the plan end gets the twelve installments of a full
+year; it is never read as a short plan.
+
+The short-plan count and the owners' time share are separate factors, never multiplied twice: a
+transfer month still splits that month's installment by inclusive owner days (M6 §2.2). Karl until
+15.08., Lena from 16.08. on a plan of 3.000,00 € for July–September: Karl 1.000,00 € + 483,87 €
+(15/31 of 1.000,00 €) = 1.483,87 €, Lena 516,13 € + 1.000,00 € = 1.516,13 €. Continuing co-owners
+keep the cents of their plan line: with lines of 1.500,01 € and 1.499,99 € on one unit and the first
+co-owner selling on 16.08., the second owes exactly 1.499,99 €, because the dated charges the
+settlement divides the line by now sum to the line itself.
+
+A finalized plan keeps its frozen lines, its stored `monthly_amount` and its snapshot, and
+finalized settlements are not corrected (GoBD). The owner account and the Hausgeld offer are
+derived (ADR-0009) and read the frozen `planned_amount`, so a short plan finalized before #602
+shows its full planned amount there; no organization held such a plan (owner decision of
+2026-11-12), so nothing is corrected. The settlement engine is `m4.7.0`: a draft recomputed under
+`m4.7.0` over a short plan can differ by one cent per owner from `m4.6.0`, where the proportional
+division moved a cent away from a continuing co-owner; the version-gated PDF sentences read
+"at least" a version and are unchanged.
 
 ### 5.4 Economic Plan Snapshot
 
@@ -728,6 +774,7 @@ There are **no** real WEG sample settlements. Test cases are **synthetic**, deri
 8. **Economic plan → monthly installments:** planned costs 11.999,00 € + reserve contribution 1,00 € = 12.000,00 €, MEA 600/400 → annual advance 7200/4800 → monthly installments 600,00/400,00 €; and an "uneven" case (annual advance 7201,00 € → 12 installments via largest remainder, Σ installments == 7201,00 €). Tests §5.3 + ADR-0007 basis.
 9. **Snapshot/hash determinism:** scenarios 2 + 7 finalized twice (identical inputs) → identical `snapshot_sha256`. Tests the M3 §1.8 mechanics for M4 payloads.
 10. **Service period crossing the year (#403):** building insurance 3.650,00 € for 01.07.2024–30.06.2025, one unit/owner. Expected: 1.840,00 € (184/365) in the 2024 settlement and 1.810,00 € (181/365) in 2025; also 1.200,00 € for 01.07.2025–30.06.2026 → 604,93 €/595,07 €, and two units with an owner change at the year boundary summing exactly per unit across the years (§4.3.2).
+11. **Short plan (#602):** 3.000,00 € for 01.07.–30.09.2025, one unit/owner → 3 × 1.000,00 € on plan, ledger and statement; 1.000,00 € over three months 333,34/333,33/333,33; one month 3.000,00 €; a year end inside the plan; first and last month partly covered; thirteen touched months → twelve; a transfer on 16.08. (Karl 1.483,87 €, Lena 1.516,13 €); co-owner lines 1.500,01 €/1.499,99 € keep their cents (§5.3a).
 
 Each golden test checks **not only the final total** but the **individual line amounts, key base values, subtotals, balance, and reserve development** against the hand calculation (otherwise a compensating double error slips through — M3 discipline).
 
@@ -739,7 +786,7 @@ Each golden test checks **not only the final total** but the **individual line a
 - **I4-D "Reserve development consistent":** `closing balance == opening balance + Σ contribution − Σ withdrawal` exactly; reserve contribution **never** appears in `OWNER_COST_TOTAL`. Evidenced reserve financing is also excluded from owner costs (§4.5), without removing the withdrawal from the ledger.
 - **I4-E "Owner time shares == 1":** for random `ownership_history` decompositions of a unit, the owner time factors sum exactly to 1 over the period (ADR-0004, mirrored).
 - **I4-F "Reserve/non-allocable never in tenant operating costs":** in no `BK_MIETER` run does a `RESERVE_*` or `NICHT_UMLAGEFAEHIG` item appear (mirror of M3 I-F, secures the sphere separation §7).
-- **I4-G "Plan monthly installments sum-exact":** `Σ over 12 monthly installments == annual advance` exactly per owner.
+- **I4-G "Plan monthly installments sum-exact":** `Σ over the monthly installments == annual advance` exactly per owner; for every accepted plan period their count is `plan_instalment_count`, the Hausgeld ledger charges the same amounts, and Σ over all owners and months == the planned volume (§5.3a).
 - **I4-H "Determinism" + "Consistency payload ↔ lines":** same input twice → identical canonical payload + hash; Σ/values of `snapshot_payload.result` == Σ/values of `settlement_line`.
 - **I4-I "Adjacent year windows telescope":** for a service period crossing a year boundary and random gross amounts/unit mixes, the two adjacent yearly settlements' `cost_total`s sum **exactly** to the gross amount, and within each settlement Σ owner shares == windowed total (§4.3.2).
 
@@ -840,8 +887,10 @@ allocation and WEMoG settlement-balance calculation; it changes neither.
 
 - A current finalized plan supplies frozen MEA/co-owner weights. The central
   largest-remainder module distributes its reserve total to owner/unit cells,
-  then twelve monthly rates, with stable ID ties and exact annual reconciliation.
-  The ledger shows these as `PLANNED` entries and a separate planned total.
+  then the plan's monthly rates (twelve for a full year, one per plan month for a shorter plan, §5.3a),
+  with stable ID ties and exact annual reconciliation.
+  The ledger shows these as `PLANNED` entries, dated on the plan's start day in each plan month
+  (clamped to the month's length and to the plan end), and a separate planned total.
 - Booked `RUECKLAGENANTEIL` payments contribute their signed cash amount.
   `HAUSGELD_VORSCHUSS` represents combined Hausgeld: its reserve component is
   the payment multiplied by the UNIT's frozen annual reserve share divided

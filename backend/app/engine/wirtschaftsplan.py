@@ -4,19 +4,21 @@ m4-weg-abrechnung.md section 5, ADR-0007 (decision E4-3b).
 
 Forward-looking; NO Ist costs, NO Soll-Ist. Planned costs per category + the
 planned reserve contribution are distributed to owners by MEA, then turned into
-12 EQUAL MONTHLY rates (the monatsbasierte Maßstab, ADR-0007):
+EQUAL MONTHLY rates, one per calendar month of the plan period and at most twelve
+(the monatsbasierte Maßstab, ADR-0007; #602):
 
     Jahresvorschuss_owner = (Σ planned costs + reserve contribution) * MEA-share
-    monthly rates          = distribute_amount(Jahresvorschuss, [1]*12)
-                             (Largest-Remainder, ADR-0005 -> Σ 12 rates ==
-                              Jahresvorschuss exactly; no cent drift over the year)
+    n                      = plan_instalment_count(period_start, period_end)
+    monthly rates          = distribute_amount(Jahresvorschuss, [1]*n)
+                             (Largest-Remainder, ADR-0005 -> Σ n rates ==
+                              Jahresvorschuss exactly; no cent drift over the plan)
 
 DISTINCT from the Ist-Abrechnung (which stays tag-exact, ADR-0004): the plan
 abstracts from an unterjaehriger Eigentuemerwechsel (the plan plans for the unit;
 who pays in which month is a payment/transition question M6). We take the owner
 as of `period_start` (co-owners there split the unit by mea_share, m4 §4.3).
 
-EVERY cent split -- the MEA distribution AND the 12 monthly rates -- runs through
+EVERY cent split -- the MEA distribution AND the monthly rates -- runs through
 the single central distribute_amount (ADR-0005). No second rounding place.
 """
 
@@ -25,7 +27,7 @@ from __future__ import annotations
 import uuid
 from decimal import Decimal
 
-from app.engine.periods import owner_at
+from app.engine.periods import owner_at, plan_instalment_count
 from app.engine.rounding import CENT, DistributionError, distribute_amount
 from app.engine.types import (
     COST_GROUP_NICHT_UMLAGEFAEHIG,
@@ -35,8 +37,6 @@ from app.engine.types import (
     WirtschaftsplanInput,
 )
 from app.engine.weg import WegValidationError, _participates, _unit_weight
-
-MONTHS = 12
 
 
 def _money(value: Decimal) -> Decimal:
@@ -148,11 +148,13 @@ def compute_wirtschaftsplan(inp: WirtschaftsplanInput) -> PlanResult:
     cell_weights = [c[2] for c in cell_specs]
     annual_shares = distribute_amount(total_volume, cell_weights)
 
+    # The Hausgeld ledger reads the same number from the same function (#602).
+    instalments = plan_instalment_count(inp.period_start, inp.period_end)
     owners_out: list[PlanOwnerResult] = []
     for (unit_id, owner_id, _w, unit_mea, co_mea), annual in zip(cell_specs, annual_shares):
         annual = _money(annual)
-        # 12 equal monthly rates via the single central rounding (ADR-0005).
-        monthly_rates = tuple(distribute_amount(annual, [Decimal(1)] * MONTHS))
+        # Equal monthly rates via the single central rounding (ADR-0005).
+        monthly_rates = tuple(distribute_amount(annual, [Decimal(1)] * instalments))
         owners_out.append(
             PlanOwnerResult(
                 owner_profile_id=owner_id,

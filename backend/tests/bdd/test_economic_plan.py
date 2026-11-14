@@ -54,6 +54,59 @@ def annual_hausgeld_installments(world):
             (2026, month, '83.34' if month <= 4 else '83.33') for month in range(1, 13)]
 
 
+@given('a finalized plan from 1 July 2026 to 30 September 2026 with planned costs of 3000 euros for one owner')
+def short_plan(world, period_data_cleanup):
+    world.actor = world.administrator_of('Verwaltung Alpha')
+    data = world.run(period_property(world.actor, month=1))
+    plan = world.run(create(world.actor, '/api/economic-plans', {
+        'property_id': data['property']['id'], 'plan_year': 2026,
+        'period_start': '2026-07-01', 'period_end': '2026-09-30'}))
+    inputs = {'planned_costs': [{'category_code': 'GARTENPFLEGE', 'label': 'Garten',
+        'planned_amount': '3000.00'}], 'reserve_contribution_total': '0.00'}
+    world.run(attest_fixture(world.actor, 'economic_plan', plan['id'], inputs))
+    answer = world.act('POST', f"/api/economic-plans/{plan['id']}/finalize", json=inputs)
+    assert answer.status_code == 200, world.describe_response()
+    world.data['hausgeld'] = {**data, 'plan': answer.json()}
+
+
+@when('the manager opens the plan page and its PDF')
+def open_short_plan(world):
+    plan = world.data['hausgeld']['plan']['id']
+    page = world.act('GET', f'/api/economic-plans/{plan}')
+    assert page.status_code == 200, world.describe_response()
+    pdf = world.act('GET', f'/api/economic-plans/{plan}/pdf')
+    assert pdf.status_code == 200, world.describe_response()
+    world.data['short_plan'] = {'lines': page.json()['lines'], 'pdf': pdf_text(pdf.content)}
+
+
+@then('both show a monthly Hausgeld of 1000 euros')
+def short_plan_monthly(world):
+    shown = world.data['short_plan']
+    advances = [line for line in shown['lines'] if line['line_type'] == 'OWNER_ADVANCE']
+    assert [(line['planned_amount'], line['monthly_amount']) for line in advances] == [('3000.00', '1000.00')]
+    assert '3.000,00 EUR 1.000,00 EUR' in shown['pdf']
+
+
+@when("the manager reads the owner's ledger from 1 July 2026 to 30 September 2026")
+def short_plan_ledger(world):
+    data = world.data['hausgeld']
+    answer = world.act('GET', f"/api/payments/mietkonto/owner/{data['owner']['id']}", params={
+        'period_start': '2026-07-01', 'period_end': '2026-09-30',
+        'economic_plan_id': data['plan']['id']})
+    assert answer.status_code == 200, world.describe_response()
+
+
+@then('the total expected Hausgeld is 3000 euros')
+def short_plan_total(world):
+    assert world.response.json()['soll_total'] == '3000.00'
+
+
+@then('the three monthly installments are 1000 euros each')
+def short_plan_installments(world):
+    assert [(item['period_year'], item['period_month'], item['soll'])
+        for item in world.response.json()['open_items']] == [(2026, month, '1000.00') for month in (7, 8, 9)]
+
+
 @given(parsers.parse('a finalized plan with monthly Hausgeld of 600 euros and due day {day}'))
 def resolved_plan(world, period_data_cleanup, day):
     world.actor = world.administrator_of('Verwaltung Alpha')

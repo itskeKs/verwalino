@@ -134,6 +134,96 @@ class TestGolden8bPlanMonthlyOdd:
 
 
 # ===========================================================================
+# Golden 8c: a plan shorter than twelve months charges ITS WHOLE amount (#602).
+#   One instalment per calendar month the period touches (at most twelve); the
+#   largest-remainder cents go to the first instalments; the instalments sum to
+#   the annual advance. Expected values are hand-computed from the domain:
+#   a plan of 3,000.00 over July..September is 3 x 1,000.00, never 3 x 250.00.
+# ===========================================================================
+def _short_plan(start, end, amount, *, reserve="0.00"):
+    unit, owner = _U(11), _U(21)
+    return WirtschaftsplanInput(
+        plan_year=start.year, period_start=start, period_end=end,
+        property=PropertyInput(id=_U(1), name="WEG", management_type="WEG"),
+        units=(UnitInput(id=unit, number="1", usage_type="WOHNUNG", mea=Decimal("1000")),),
+        owner_periods=(OwnerPeriodInput(unit_id=unit, owner_profile_id=owner,
+                                        valid_from=date(2000, 1, 1), valid_to=None),),
+        planned_costs=(PlannedCostInput(category_id=_U(91), category_code="HEIZUNG", label="x",
+                                        planned_amount=Decimal(amount), distribution_key="MEA",
+                                        cost_group="UMLAGEFAEHIG"),),
+        reserve_contribution_total=Decimal(reserve),
+    )
+
+
+def _rates(*parts):
+    """('142.86', 5), ('142.85', 2) -> five and two instalments."""
+    return tuple(Decimal(amount) for amount, count in parts for _ in range(count))
+
+
+@pytest.mark.parametrize("start,end,amount,rates", [
+    # twelve months keep today's instalments
+    (date(2025, 1, 1), date(2025, 12, 31), "12000.00", _rates(("1000.00", 12))),
+    (date(2025, 1, 1), date(2025, 12, 31), "1000.00", _rates(("83.34", 4), ("83.33", 8))),
+    # one month charges the whole amount at once
+    (date(2025, 7, 1), date(2025, 7, 31), "3000.00", _rates(("3000.00", 1))),
+    # the issue: three months of 3,000.00
+    (date(2025, 7, 1), date(2025, 9, 30), "3000.00", _rates(("1000.00", 3))),
+    # cents of an uneven amount go to the first instalments
+    (date(2025, 7, 1), date(2025, 9, 30), "1000.00", _rates(("333.34", 1), ("333.33", 2))),
+    (date(2025, 1, 1), date(2025, 5, 31), "1000.01", _rates(("200.01", 1), ("200.00", 4))),
+    (date(2025, 1, 1), date(2025, 7, 31), "1000.00", _rates(("142.86", 5), ("142.85", 2))),
+    (date(2025, 1, 1), date(2025, 11, 30), "1000.00", _rates(("90.91", 10), ("90.90", 1))),
+    # a year end inside the plan
+    (date(2025, 11, 1), date(2026, 1, 31), "2500.00", _rates(("833.34", 1), ("833.33", 2))),
+    # a first and a last month that are only partly covered still count as whole months
+    (date(2025, 7, 15), date(2025, 9, 10), "3000.00", _rates(("1000.00", 3))),
+    # twelve months from the 15th touch thirteen calendar months: twelve instalments
+    (date(2025, 7, 15), date(2026, 7, 14), "12000.00", _rates(("1000.00", 12))),
+    # a zero plan is zero in every instalment, not an error and not a missing plan
+    (date(2025, 7, 1), date(2025, 9, 30), "0.00", _rates(("0.00", 3))),
+])
+def test_a_short_plan_spreads_its_whole_amount_over_its_months(start, end, amount, rates):
+    owner = compute_wirtschaftsplan(_short_plan(start, end, amount)).owners[0]
+    assert owner.annual_advance == Decimal(amount)
+    assert owner.monthly_rates == rates
+    assert owner.monthly_amount == rates[0]
+    assert sum(owner.monthly_rates, Decimal("0.00")) == Decimal(amount)
+
+
+def test_a_short_plan_with_several_positions_units_and_a_reserve_loses_no_cent():
+    # Planned costs 5,000.00 + 2,500.00 and reserve 1,500.01 = 9,000.01 over four months
+    # (September..December), MEA 600/400: 5,400.006 and 3,600.004 -> the one spare cent goes
+    # to the larger remainder (owner A); 5,400.01 / 4 = 1,350.0025 -> the cent to the first month.
+    units = (UnitInput(id=_U(11), number="1", usage_type="WOHNUNG", mea=Decimal("600")),
+             UnitInput(id=_U(12), number="2", usage_type="WOHNUNG", mea=Decimal("400")))
+    owners = (OwnerPeriodInput(unit_id=_U(11), owner_profile_id=_U(21), valid_from=date(2000, 1, 1), valid_to=None),
+              OwnerPeriodInput(unit_id=_U(12), owner_profile_id=_U(22), valid_from=date(2000, 1, 1), valid_to=None))
+    planned = (
+        PlannedCostInput(category_id=_U(91), category_code="HEIZUNG", label="Heizung",
+                         planned_amount=Decimal("5000.00"), distribution_key="MEA", cost_group="UMLAGEFAEHIG"),
+        PlannedCostInput(category_id=_U(92), category_code="VERWALTUNG", label="Verwaltung",
+                         planned_amount=Decimal("2500.00"), distribution_key="MEA",
+                         cost_group="NICHT_UMLAGEFAEHIG"),
+    )
+    result = compute_wirtschaftsplan(WirtschaftsplanInput(
+        plan_year=2025, period_start=date(2025, 9, 1), period_end=date(2025, 12, 31),
+        property=PropertyInput(id=_U(1), name="WEG", management_type="WEG"),
+        units=units, owner_periods=owners, planned_costs=planned,
+        reserve_contribution_total=Decimal("1500.01")))
+    a, b = _plan_owner(result, _U(21)), _plan_owner(result, _U(22))
+    assert result.total_advance_volume == Decimal("9000.01")
+    assert (a.annual_advance, b.annual_advance) == (Decimal("5400.01"), Decimal("3600.00"))
+    assert a.monthly_rates == _rates(("1350.01", 1), ("1350.00", 3))
+    assert b.monthly_rates == _rates(("900.00", 4))
+    assert sum((r for o in result.owners for r in o.monthly_rates), Decimal("0.00")) == Decimal("9000.01")
+
+
+def test_the_plan_engine_still_refuses_a_negative_planned_amount_in_a_short_plan():
+    with pytest.raises(WegValidationError):
+        compute_wirtschaftsplan(_short_plan(date(2025, 7, 1), date(2025, 9, 30), "-3000.00"))
+
+
+# ===========================================================================
 # Vermoegensbericht (m4 section 6): reserve development automatic + manual.
 # ===========================================================================
 class TestVermoegensbericht:
