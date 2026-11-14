@@ -2021,15 +2021,17 @@ async def _issue_notice(api, notice_id):
     assert response.status_code == 200, response.text
 
 
-async def _pay_rent(api, w, lease_id, account_id, period_month, value_date):
+async def _pay_rent(api, w, lease_id, account_id, period_month, value_date, amount="700.00"):
     response = await api.post("/api/payments", json={
-        "bank_account_id": str(account_id), "direction": "IN", "amount": "700.00",
+        "bank_account_id": str(account_id), "direction": "IN", "amount": amount,
         "value_date": value_date, "payment_type": "KALTMIETE",
         "tenant_profile_id": str(w["tenant"]), "lease_agreement_id": str(lease_id),
         "period_year": 2026, "period_month": period_month})
     assert response.status_code == 201, response.text
-    response = await api.post(f"/api/payments/{response.json()['id']}/book")
+    payment_id = response.json()["id"]
+    response = await api.post(f"/api/payments/{payment_id}/book")
     assert response.status_code == 200, response.text
+    return payment_id
 
 
 @pytest.mark.asyncio
@@ -2076,13 +2078,298 @@ async def test_same_arrears_escalate_levels_one_two_three(rent_world):
         assert (third["level"], third["fee_amount"], third["total_amount"]) == (3, "2.50", "702.50")
 
 
+# The level counts per item (#615): one more than the number of earlier issued notices that
+# demanded the most-demanded item of the new notice, capped at MAX_LEVEL; the whole notice
+# carries that level and its fee. Rent 700.00 per month, so every total is written by hand.
+JANUARY = ("2026-01-01", "2026-01-31", "2026-02-20")
+JANUARY_AGAIN = ("2026-01-01", "2026-01-31", "2026-03-05")
+JANUARY_THIRD = ("2026-01-01", "2026-01-31", "2026-03-20")
+JANUARY_FOURTH = ("2026-01-01", "2026-01-31", "2026-04-05")
+FEBRUARY = ("2026-02-01", "2026-02-28", "2026-03-20")
+MARCH = ("2026-03-01", "2026-03-31", "2026-04-20")
+JANUARY_TO_FEBRUARY = ("2026-01-01", "2026-02-28", "2026-03-25")
+JANUARY_TO_MARCH = ("2026-01-01", "2026-03-31", "2026-04-25")
+# Level 2 and 3 fees that differ from each other and from the 2.50 defaults, so a wrong level
+# shows in the amount as well.
+FEES_5_AND_10 = ("5.00", "10.00")
+
+
+async def _set_dunning_fees(api, level_2, level_3):
+    response = await api.put("/api/dunning/settings", json={
+        **DUNNING_DEFAULT_SETTINGS, "fee_level_2": level_2, "fee_level_3": level_3})
+    assert response.status_code == 200, response.text
+
+
+async def _notice(api, w, lease, period, expected, *, issue=True):
+    """Create a tenant notice, compare (level, fee, total) with the hand-written values, issue it."""
+    notice = await _tenant_notice(api, w, lease, *period)
+    assert (notice["level"], notice["fee_amount"], notice["total_amount"]) == expected, notice
+    if issue:
+        await _issue_notice(api, notice["id"])
+    return notice
+
+
+@pytest.mark.asyncio
+async def test_two_single_month_notices_raise_a_combined_notice_by_one_level(rent_world):
+    """Issue #615: January and February were each demanded once; together they are level 2."""
+    w = rent_world
+    async with api_client(w) as api:
+        lease = await _escalation_lease(api, w, "hidden_property", "Esc 1")
+        await _escalation_account(api, w, "hidden_property")
+        await _notice(api, w, lease, JANUARY, (1, "0.00", "700.00"))
+        await _notice(api, w, lease, FEBRUARY, (1, "0.00", "700.00"))
+        # Default fees: level 2 costs 2.50, so 1400.00 + 2.50. (Level 3 costs 2.50 as well, which is
+        # why the next test makes the fees differ; here the level is what the old rule got wrong.)
+        await _notice(api, w, lease, JANUARY_TO_FEBRUARY, (2, "2.50", "1402.50"), issue=False)
+
+
+@pytest.mark.asyncio
+async def test_combined_notice_takes_the_fee_of_its_level_in_every_output(rent_world):
+    """Preview, draft, issued notice, list and letter all show level 2 with the level-2 fee."""
+    w = rent_world
+    async with api_client(w) as api:
+        lease = await _escalation_lease(api, w, "hidden_property", "Esc 1")
+        await _escalation_account(api, w, "hidden_property")
+        await _set_dunning_fees(api, *FEES_5_AND_10)
+        await _notice(api, w, lease, JANUARY, (1, "0.00", "700.00"))
+        await _notice(api, w, lease, FEBRUARY, (1, "0.00", "700.00"))
+
+        period_start, period_end, reference_date = JANUARY_TO_FEBRUARY
+        body = batch_request(period_start=period_start, period_end=period_end,
+                             reference_date=reference_date, threshold="100.00")
+        preview = await batch_preview(api, body)
+        row = next(row for row in preview["candidates"] if row["lease_agreement_id"] == lease)
+        assert (row["level"], row["principal_amount"], row["fee_amount"], row["total_amount"]) == (
+            2, "1400.00", "5.00", "1405.00")
+        created = await api.post("/api/dunning/batch", json=selected_batch(body, preview, [lease]))
+        assert created.status_code == 201, created.text
+        draft = created.json()[0]
+        assert (draft["level"], draft["fee_amount"], draft["total_amount"]) == (2, "5.00", "1405.00")
+        await _issue_notice(api, draft["id"])
+
+        detail = (await api.get(f"/api/dunning/{draft['id']}")).json()
+        assert (detail["level"], detail["fee_amount"], detail["total_amount"]) == (2, "5.00", "1405.00")
+        listed = (await api.get("/api/dunning", params={"tenant_profile_id": str(w["tenant"])})).json()
+        assert sorted((r["level"], r["fee_amount"]) for r in listed) == [(1, "0.00"), (1, "0.00"), (2, "5.00")]
+        pdf = await api.get(f"/api/dunning/{draft['id']}/pdf")
+        assert pdf.status_code == 200 and pdf.content.startswith(b"%PDF")
+
+    from types import SimpleNamespace
+    from app.services.dunning_pdf import build_dunning_html
+
+    html = build_dunning_html(SimpleNamespace(
+        level=detail["level"], principal_amount=Decimal(detail["principal_amount"]),
+        fee_amount=Decimal(detail["fee_amount"]), interest_amount=Decimal(detail["interest_amount"]),
+        interest_snapshot=detail["interest_snapshot"], total_amount=Decimal(detail["total_amount"]),
+        issue_date=date.fromisoformat(detail["issue_date"]), due_date=date.fromisoformat(detail["due_date"]),
+        included_items=detail["included_items"]))
+    assert "1. Mahnung" in html and "(Stufe 2)" in html
+
+
+@pytest.mark.asyncio
+async def test_three_single_month_notices_make_a_level_two_combined_notice(rent_world):
+    w = rent_world
+    async with api_client(w) as api:
+        lease = await _escalation_lease(api, w, "hidden_property", "Esc 1")
+        await _escalation_account(api, w, "hidden_property")
+        await _set_dunning_fees(api, *FEES_5_AND_10)
+        for period in (JANUARY, FEBRUARY, MARCH):
+            await _notice(api, w, lease, period, (1, "0.00", "700.00"))
+        await _notice(api, w, lease, JANUARY_TO_MARCH, (2, "5.00", "2105.00"), issue=False)
+
+
+@pytest.mark.asyncio
+async def test_same_item_chain_escalates_one_two_three_and_stops_at_the_cap(rent_world):
+    w = rent_world
+    async with api_client(w) as api:
+        lease = await _escalation_lease(api, w, "hidden_property", "Esc 1")
+        await _escalation_account(api, w, "hidden_property")
+        await _set_dunning_fees(api, *FEES_5_AND_10)
+        await _notice(api, w, lease, JANUARY, (1, "0.00", "700.00"))
+        await _notice(api, w, lease, JANUARY_AGAIN, (2, "5.00", "705.00"))
+        await _notice(api, w, lease, JANUARY_THIRD, (3, "10.00", "710.00"))
+        # The fourth demand of the same item stays at the highest level that exists.
+        await _notice(api, w, lease, JANUARY_FOURTH, (3, "10.00", "710.00"))
+
+
+@pytest.mark.asyncio
+async def test_notice_takes_the_highest_level_among_its_items_and_never_counts_drafts(rent_world):
+    w = rent_world
+    async with api_client(w) as api:
+        lease = await _escalation_lease(api, w, "hidden_property", "Esc 1")
+        await _escalation_account(api, w, "hidden_property")
+        await _set_dunning_fees(api, *FEES_5_AND_10)
+        await _notice(api, w, lease, JANUARY, (1, "0.00", "700.00"))
+        await _notice(api, w, lease, JANUARY_AGAIN, (2, "5.00", "705.00"))
+        # February was never demanded; a draft for it is not a demand either.
+        await _notice(api, w, lease, FEBRUARY, (1, "0.00", "700.00"), issue=False)
+        # January twice demanded + February never: the whole notice is level 3 with the level-3 fee.
+        await _notice(api, w, lease, JANUARY_TO_FEBRUARY, (3, "10.00", "1410.00"), issue=False)
+
+
+@pytest.mark.asyncio
+async def test_an_item_first_demanded_in_a_combined_notice_counts_one_demand(rent_world):
+    """February's first demand was the level-2 notice: its next notice is its second demand."""
+    w = rent_world
+    async with api_client(w) as api:
+        lease = await _escalation_lease(api, w, "hidden_property", "Esc 1")
+        await _escalation_account(api, w, "hidden_property")
+        await _set_dunning_fees(api, *FEES_5_AND_10)
+        await _notice(api, w, lease, JANUARY, (1, "0.00", "700.00"))
+        await _notice(api, w, lease, JANUARY_TO_FEBRUARY, (2, "5.00", "1405.00"))
+        await _notice(api, w, lease, FEBRUARY, (2, "5.00", "705.00"))
+        # Now January was demanded twice and February twice: level 3.
+        await _notice(api, w, lease, JANUARY_TO_FEBRUARY, (3, "10.00", "1410.00"), issue=False)
+
+
+@pytest.mark.asyncio
+async def test_partly_paid_item_stays_the_same_item(rent_world):
+    w = rent_world
+    async with api_client(w) as api:
+        lease = await _escalation_lease(api, w, "hidden_property", "Esc 1")
+        account = await _escalation_account(api, w, "hidden_property")
+        await _set_dunning_fees(api, *FEES_5_AND_10)
+        await _notice(api, w, lease, JANUARY, (1, "0.00", "700.00"))
+        await _pay_rent(api, w, lease, account, 1, "2026-02-25", amount="300.00")
+        # January (400.00 still open) was demanded once, February never: 400.00 + 700.00 + 5.00.
+        await _notice(api, w, lease, JANUARY_TO_FEBRUARY, (2, "5.00", "1105.00"), issue=False)
+
+
+@pytest.mark.asyncio
+async def test_reopened_item_after_a_reversed_payment_keeps_its_demand_history(rent_world):
+    """Paid in full, then the payment is reversed: the same month is open again and was demanded once."""
+    w = rent_world
+    async with api_client(w) as api:
+        lease = await _escalation_lease(api, w, "hidden_property", "Esc 1")
+        account = await _escalation_account(api, w, "hidden_property")
+        await _set_dunning_fees(api, *FEES_5_AND_10)
+        await _notice(api, w, lease, JANUARY, (1, "0.00", "700.00"))
+        payment_id = await _pay_rent(api, w, lease, account, 1, "2026-02-25")
+        reversal = await api.post(f"/api/payments/{payment_id}/reverse", json={"note": "returned debit"})
+        assert reversal.status_code == 201, reversal.text
+        await _notice(api, w, lease, JANUARY_AGAIN, (2, "5.00", "705.00"), issue=False)
+
+
+@pytest.mark.asyncio
+async def test_other_leases_tenants_and_organizations_never_count_as_an_earlier_demand(rent_world):
+    w = rent_world
+    async with api_client(w) as api, api_client(w, foreign=True) as foreign:
+        lease = await _escalation_lease(api, w, "hidden_property", "Esc 1")
+        other_lease = await _escalation_lease(api, w, "hidden_property", "Esc 2")
+        await _escalation_account(api, w, "hidden_property")
+        await _escalation_account(foreign, w, "foreign_property")
+        # Same tenant, other lease: its January and February are level 1.
+        await _notice(api, w, other_lease, JANUARY_TO_FEBRUARY, (1, "0.00", "1400.00"))
+        # Another tenant on the same property demanded the same months, rent and advance.
+        period_start, period_end, reference_date = JANUARY_TO_FEBRUARY
+        hidden = await api.post("/api/dunning/tenant", json={
+            "tenant_profile_id": str(w["hidden_tenant"]), "lease_agreement_id": str(w["hidden_lease"]),
+            "period_start": period_start, "period_end": period_end, "reference_date": reference_date})
+        assert hidden.status_code == 201, hidden.text
+        await _issue_notice(api, hidden.json()["id"])
+        # The same months in another organization.
+        other_org = await foreign.post("/api/dunning/tenant", json={
+            "tenant_profile_id": str(w["foreign_tenant"]), "lease_agreement_id": str(w["foreign_lease"]),
+            "period_start": period_start, "period_end": period_end, "reference_date": reference_date})
+        assert other_org.status_code == 201, other_org.text
+        await _issue_notice(foreign, other_org.json()["id"])
+        await _notice(api, w, lease, JANUARY_TO_FEBRUARY, (1, "0.00", "1400.00"), issue=False)
+
+
+@pytest.mark.asyncio
+async def test_notice_issued_under_the_former_rule_keeps_its_level_and_letter(rent_world, rent_db):
+    """Issued notices are frozen: only new notices use the per-item rule."""
+    import json
+    from app.models.dunning_notice import LEASE_SOURCE_KEY
+
+    w = rent_world
+    async with api_client(w) as api:
+        lease = await _escalation_lease(api, w, "hidden_property", "Esc 1")
+        await _escalation_account(api, w, "hidden_property")
+        # The former rule gave a notice for January and February level 3 after one notice per month.
+        items = [{"period_year": 2026, "period_month": month, "payment_type": "KALTMIETE",
+                  "soll": "700.00", "ist": "0.00", "open_amount": "700.00"} for month in (1, 2)]
+        items[0][LEASE_SOURCE_KEY] = lease
+        legacy_id = uuid.uuid4()
+        await _set_org(rent_db, w["org"])
+        await rent_db.execute(text(_insert_dunning_sql()), {
+            "id": str(legacy_id), "org": str(w["org"]), "tenant": str(w["tenant"]), "owner": None,
+            "level": 3, "issue_date": date(2026, 3, 25), "due_date": date(2026, 4, 8),
+            "principal": "1400.00", "fee": "2.50", "total": "1402.50", "items": json.dumps(items),
+            "status": "issued", "issued_at": datetime(2026, 3, 25, 10, 0, tzinfo=_tz.utc),
+            "issued_by": str(w["admin"])})
+        await rent_db.commit()
+        legacy = await api.get(f"/api/dunning/{legacy_id}")
+        assert legacy.status_code == 200, legacy.text
+        assert (legacy.json()["level"], legacy.json()["fee_amount"]) == (3, "2.50")
+        legacy_pdf = await api.get(f"/api/dunning/{legacy_id}/pdf")
+        assert legacy_pdf.status_code == 200 and legacy_pdf.content.startswith(b"%PDF")
+        # It demanded each month once; the new rule makes the next notice level 2.
+        await _notice(api, w, lease, JANUARY_TO_FEBRUARY, (2, "2.50", "1402.50"))
+        assert (await api.get(f"/api/dunning/{legacy_id}")).json() == legacy.json()
+        assert (await api.get(f"/api/dunning/{legacy_id}/pdf")).content == legacy_pdf.content
+
+
+@pytest.mark.asyncio
+async def test_highest_item_demand_count_with_many_items_none_and_no_demand(rent_world):
+    from app.core.db import get_tenant_session
+    from app.repositories.dunning_notice_repo import DunningNoticeRepository
+
+    w = rent_world
+    async with api_client(w) as api:
+        lease = await _escalation_lease(api, w, "hidden_property", "Esc 1")
+        await _escalation_account(api, w, "hidden_property")
+        await _notice(api, w, lease, JANUARY, (1, "0.00", "700.00"))
+        await _notice(api, w, lease, JANUARY_AGAIN, (2, "2.50", "702.50"))
+    # More keys than one statement may select columns for; only January 2026 was demanded (twice).
+    keys = [{"payment_type": "KALTMIETE", "period_year": year, "period_month": month}
+            for year in range(1990, 2100) for month in range(1, 13)]
+    scope = {"tenant_profile_id": w["tenant"], "lease_id": uuid.UUID(lease), "scope_id": None}
+    async with get_tenant_session(w["org"]) as db:
+        await db.execute(text("SELECT set_config('app.current_user_id',:actor,true)"), {"actor": str(w["admin"])})
+        repo = DunningNoticeRepository(db, w["org"])
+        assert len(keys) > 1000
+        assert await repo.highest_item_demand_count(item_keys=keys, **scope) == 2
+        assert await repo.highest_item_demand_count(item_keys=keys[:12], **scope) == 0
+        assert await repo.highest_item_demand_count(item_keys=[], **scope) == 0
+
+
+async def _grant_levy_actor(levy_db, ids):
+    await levy_db.execute(text("INSERT INTO scope_grant(organization_id,scope_id,user_id,capabilities,granted_by,reason) "
+        "VALUES (:org,:scope,:actor,ARRAY['read','prepare','approve','confirm','export'],:actor,'Levy escalation lifecycle test')"), ids)
+    await levy_db.commit()
+
+
+@pytest.mark.asyncio
+async def test_owner_notices_for_two_levies_raise_a_combined_notice_by_one_level(levy_db, levy_fixture):
+    from tests.test_special_levy import client, create
+    ids = levy_fixture
+    await _grant_levy_actor(levy_db, ids)
+    async with client(ids, "actor") as api:
+        await create(api, ids, due_date="2026-06-15")
+        await create(api, ids, due_date="2026-07-15")
+
+        async def notice(period_start, period_end, reference_date, expected, *, issue=True):
+            response = await api.post("/api/dunning/owner", json={
+                "owner_profile_id": str(ids["owners"][0]), "period_start": period_start,
+                "period_end": period_end, "reference_date": reference_date,
+                "accounting_scope_id": str(ids["scope"])})
+            assert response.status_code == 201, response.text
+            created = response.json()
+            assert (created["level"], created["fee_amount"], created["total_amount"]) == expected, created
+            if issue:
+                assert (await api.post(f"/api/dunning/{created['id']}/issue")).status_code == 200
+
+        await notice("2026-06-01", "2026-06-30", "2026-06-16", (1, "0.00", "3000.00"))
+        await notice("2026-07-01", "2026-07-31", "2026-07-16", (1, "0.00", "3000.00"))
+        await notice("2026-06-01", "2026-07-31", "2026-07-20", (2, "2.50", "6002.50"), issue=False)
+
+
 @pytest.mark.asyncio
 async def test_paid_levy_notice_does_not_raise_later_levy_notice_level(levy_db, levy_fixture):
     from tests.test_special_levy import client, create
     ids = levy_fixture
-    await levy_db.execute(text("INSERT INTO scope_grant(organization_id,scope_id,user_id,capabilities,granted_by,reason) "
-        "VALUES (:org,:scope,:actor,ARRAY['read','prepare','approve','confirm','export'],:actor,'Levy escalation lifecycle test')"), ids)
-    await levy_db.commit()
+    await _grant_levy_actor(levy_db, ids)
     async with client(ids, "actor") as api:
         await create(api, ids, due_date="2026-06-15")
 

@@ -59,7 +59,7 @@ from app.services.render_names import freeze_block, read_frozen_values
 
 
 def _overdue_item_keys(overdue_items) -> list[dict]:
-    """Identity of an overdue item for the escalation count: payment_type + period."""
+    """Identity of an overdue item for the escalation: payment_type + period (not a posting id)."""
     return [{"payment_type": item.payment_type, "period_year": item.period_year,
              "period_month": item.period_month} for item in overdue_items]
 
@@ -207,11 +207,11 @@ class DunningService:
         if not overdue:
             return lease, tenant, result, None
         await context.history(tenant_id=tenant.id)
-        issued_count = await self._repo.count_issued_with_overdue_items(
+        demanded = await self._repo.highest_item_demand_count(
             item_keys=_overdue_item_keys(overdue), tenant_profile_id=tenant.id,
             lease_id=lease.id, scope_id=accounting_scope_id)
         dunning = self._engine_result(assemble_dunning, overdue_items=overdue,
-            existing_notice_count=issued_count, issue_date=reference_date,
+            existing_notice_count=demanded, issue_date=reference_date,
             override_fee=override_fee, custom_fees=fees, rate_periods=rates,
             premium=COMMERCIAL_PREMIUM if unit.usage_type == "GEWERBE" else STANDARD_PREMIUM)
         return lease, tenant, result, dunning
@@ -281,12 +281,12 @@ class DunningService:
             )
 
         await context.history(owner_id=owner_profile_id)
-        issued_count = await self._repo.count_issued_with_overdue_items(
+        demanded = await self._repo.highest_item_demand_count(
             item_keys=_overdue_item_keys(overdue), owner_profile_id=owner_profile_id)
         dunning = self._engine_result(
             assemble_dunning,
             overdue_items=overdue,
-            existing_notice_count=issued_count,
+            existing_notice_count=demanded,
             issue_date=ref_date,
             override_fee=override_fee,
             custom_fees=fees, rate_periods=rates, premium=STANDARD_PREMIUM,

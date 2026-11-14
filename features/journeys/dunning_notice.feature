@@ -31,6 +31,11 @@ Feature: Readable issued dunning notice
     When the manager issues the notice and creates another one on 5 May 2026
     Then the second notice is a level 2 dunning with 2.50 fee and 702.50 total
 
+  Scenario: Two single-month notices make a combined notice level 2
+    Given a tenant whose January and February 2026 rent were each reminded once in their own notice
+    When the manager creates a notice for the January and February 2026 arrears as of 25 March 2026
+    Then the combined notice is a level 2 dunning with 2.50 fee and 1402.50 total
+
   Scenario Outline: A missing accounting scope is explained in German before a draft is created
     Given a rental agreement with receipts in two separate accounting scopes
     When the manager submits a June tenant notice without an accounting scope at <width> px

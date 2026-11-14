@@ -304,21 +304,29 @@ letters/PDFs are not changed and nothing is sent.
 
 ### Escalation levels (M7)
 
-The level of a new notice is `1 +` the number of already-issued notices of the same
-person -- for tenants restricted to the same lease -- whose frozen `included_items`
-contain at least one item that is overdue now. Item identity is
-`payment_type + period_year + period_month`. A Zahlungserinnerung whose arrears were
-paid off afterwards does not raise the level of a later, unrelated notice; only a
-further notice for the same still-overdue arrears escalates 1 -> 2 -> 3. The batch
-preview and individual creation use the same count.
+The level counts per item. For each item that is overdue now, the service counts the
+already-issued notices of the same person -- for tenants restricted to the same lease --
+whose frozen `included_items` contain that item; item identity is
+`payment_type + period_year + period_month`, so a corrected or reversed payment, or a
+part payment, does not make a new item. The level of the new notice is one more than the
+highest of these counts, capped at the highest level (3). The whole notice carries that
+level and that level's fee from the organization's fee table; items are not levelled
+separately. Drafts count nothing, and notices for paid-off or unrelated arrears do not
+raise the level of a later notice.
 
-A notice that contains an already demanded item together with a new one gets the level
-and the fee of the demanded item for the whole notice; the level is not set per item.
+Examples with a monthly rent: a notice for January only and a notice for February only
+(both issued) make a combined January and February notice level 2, because each month was
+demanded once. If January was demanded twice and February never, the combined notice is
+level 3; a notice for February alone is still level 1. A further notice for the same
+single item escalates 1 -> 2 -> 3 and then stays at 3. An item first demanded inside a
+combined notice has been demanded once, whatever level that notice had. The batch preview
+and individual creation use the same count. The level and fee are frozen with the notice;
+issued notices and their PDFs keep what they were issued with.
 
 Notices issued before the lease link was stored carry neither `_dunning_lease_id` in
 their frozen items nor a scope context. When a new unscoped tenant notice is created, such
 an old notice counts for the tenant, whichever lease it was for, as long as its frozen
-items contain one of the overdue items. A notice that carries a lease link keeps the
+items contain the item. A notice that carries a lease link keeps the
 same-lease rule, and scoped notices are always matched on their scope and lease. Issued
 notices are not changed.
 
