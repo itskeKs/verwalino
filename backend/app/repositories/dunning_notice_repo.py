@@ -8,9 +8,10 @@ from __future__ import annotations
 import uuid
 from typing import Any, Mapping, Sequence
 
-from sqlalchemy import and_, cast, func, or_, select
-from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy import Boolean, and_, cast, func, or_, select
+from sqlalchemy.dialects.postgresql import JSONB, JSONPATH
 
+from app.engine.mietkonto import PT_HK_VORAUSZAHLUNG, PT_NK_VORAUSZAHLUNG
 from app.models.dunning_notice import LEASE_SOURCE_KEY, DunningNotice
 from app.models.dunning_scope_context import DunningScopeContext
 from app.models.lease_agreement import LeaseAgreement
@@ -19,6 +20,19 @@ from app.repositories.base import TenantRepository
 
 # Item count columns per statement; PostgreSQL allows 1664 select-list entries.
 ITEM_KEYS_PER_STATEMENT = 500
+
+# A stored item of an issued notice demands the item with the given key when its period is the
+# same, its payment type is the same (or it is the joint operating advance that also demanded
+# the heating advance, $joint_advance) and, when the key has a due date (item_key adds it only
+# for special levies), its due date is the same. An item stored without a due date matches every
+# due date of its month and type; so does a key without one.
+_DEMANDED_ITEM = cast(
+    "$[*] ? (@.period_year == $period_year && @.period_month == $period_month"
+    " && (@.payment_type == $payment_type"
+    " || (@.payment_type == $joint_advance && @.combined_advance == true))"
+    " && ($due_date == null || !exists(@.due_date) || @.due_date == $due_date))",
+    JSONPATH,
+)
 
 
 class DunningNoticeRepository(TenantRepository[DunningNotice]):
@@ -91,12 +105,17 @@ class DunningNoticeRepository(TenantRepository[DunningNotice]):
 
         An item was demanded once per already-issued notice of the same person (the
         same lease for tenants, mirroring issued_for_lease) whose frozen included_items
-        contain it -- identity is payment_type + period_year + period_month, so part
-        payments and corrected or reversed postings stay the same item. Drafts count
-        nothing; an item without earlier notices counts 0. The level of a new notice is
-        one more than this number (next_dunning_level). An unscoped tenant notice without
-        any lease link (issued before the link existed) matches on the tenant and the
-        item alone.
+        contain it -- identity is the engine's item_key (payment_type + period_year +
+        period_month, plus the due date of a special levy), so part payments, corrected or
+        reversed postings and a moved due date stay the same item while two levies of one
+        month stay apart. An item stored without a due date matches every item of its
+        month and type. The
+        heating advance also counts a demand made inside the joint operating advance
+        (combined_advance) of its month, because it reappears as its own item once the
+        joint receipt is reversed. Drafts count nothing; an item without earlier notices
+        counts 0. The level of a new notice is one more than this number
+        (next_dunning_level). An unscoped tenant notice without any lease link (issued
+        before the link existed) matches on the tenant and the item alone.
         """
         if not item_keys:
             return 0
@@ -106,7 +125,11 @@ class DunningNoticeRepository(TenantRepository[DunningNotice]):
                 tenant_profile_id=tenant_profile_id, owner_profile_id=owner_profile_id,
                 lease_id=lease_id, scope_id=scope_id,
             ) for start in range(0, len(item_keys), ITEM_KEYS_PER_STATEMENT)])
-        demanded = [DunningNotice.included_items.op("@>")(cast([key], JSONB)) for key in item_keys]
+        demanded = [func.jsonb_path_exists(DunningNotice.included_items, _DEMANDED_ITEM, cast({
+            "payment_type": key["payment_type"], "period_year": key["period_year"],
+            "period_month": key["period_month"], "due_date": key.get("due_date"),
+            "joint_advance": PT_NK_VORAUSZAHLUNG if key["payment_type"] == PT_HK_VORAUSZAHLUNG else None,
+        }, JSONB), type_=Boolean) for key in item_keys]
         # One pass over the person's issued notices, one count column per item.
         stmt = select(*(func.count().filter(item) for item in demanded)).select_from(DunningNotice)
         if lease_id is not None:
