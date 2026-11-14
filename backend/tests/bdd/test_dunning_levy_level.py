@@ -5,12 +5,15 @@ from pytest_bdd import given, parsers, scenarios, then, when
 
 from tests.bdd.steps.browser_setup import bank_account, create
 from tests.bdd.steps.special_levy import levy_payload
+from tests.settlement_period_support import period_data_cleanup as period_data_cleanup
 
 scenarios(str(Path(__file__).resolve().parents[3] / "features" / "dunning_levy_level.feature"))
 
 
 @given("two roof repair levies of 5000 euros fall due on 5 June and on 25 June 2026")
-def two_levies_in_june(world):
+def two_levies_in_june(world, period_data_cleanup):
+    # An organization with special levies answers no unscoped statement read, so the records of
+    # this scenario are released at its end for the features that run after it.
     for due_date in ("2026-06-05", "2026-06-25"):
         create(world, "/api/special-levies", {
             **levy_payload(world), "amount": "5000.00", "due_date": due_date,
