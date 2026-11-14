@@ -77,11 +77,24 @@ setup is complete. An administrator resets a lost factor in the user
 management („Zweiten Faktor zurücksetzen“); the person enrols again at the
 next sign-in.
 
-A sole OWNER_ADMIN who lost the device **and** all recovery codes has no
-in-application way back into the account today: every path (own settings,
-another admin) is closed. The operator-side reset for this case is tracked in
-issue #657; until it exists, prevent it by storing the recovery codes at
-enrolment.
+A sole OWNER_ADMIN who lost the device **and** all recovery codes cannot get back
+in through the application: no other administrator can reset the factor. Store
+the recovery codes at enrolment. If they are lost anyway, the operator of the
+installation resets the factor on the host, with no web route involved:
+
+```sh
+python -m app.admin_cli reset-second-factor --email admin@example.org --reason "<why>"
+```
+
+The command removes the factor and the recovery codes of that sign-in address,
+ends the account's open sessions and writes one audit event with the stated
+reason (never put a code or a password into it). An unknown address changes
+nothing. Afterwards the hosted account enrols again before it reaches the
+application; a self-hosted account signs in with the password alone. A hosted
+operator runs it only after the request came from the account's own sign-in
+address and was confirmed through the second contact stated in the legal notice;
+self-hosted, whoever has shell access to the host does. How to run the admin
+CLI is in [DEPLOY.md](../../DEPLOY.md#second-factor-reset-by-the-operator).
 
 ## User management
 

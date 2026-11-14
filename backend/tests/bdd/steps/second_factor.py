@@ -16,10 +16,12 @@ import time
 from pytest_bdd import given, then, when
 from sqlalchemy import select
 
+from app import admin_cli
 from app.models.audit_event import AuditEvent
 from tests.bdd.steps.password import CURRENT_PASSWORD, _sign_in
 
 GENERIC_INVALID_MESSAGE = "Invalid credentials"
+OPERATOR_REASON = "Lost phone and recovery codes; confirmed through the second contact of the legal notice"
 
 
 def totp_code(secret_base32: str, step_offset: int = 0, timestamp: float | None = None) -> str:
@@ -147,6 +149,14 @@ def admin_resets_second_factor(world):
     world.response = world.act("POST", f"/api/users/{world.data['second_factor_user_id']}/reset-second-factor")
 
 
+@when("the operator resets the user's second factor with a stated reason")
+def operator_resets_second_factor(world):
+    session = world.look(world.actor, "/api/auth/session")
+    assert session.status_code == 200, world.describe_response()
+    world.data["second_factor_user_id"] = session.json()["user_id"]
+    admin_cli.reset_second_factor(["--email", world.data["email"], "--reason", OPERATOR_REASON])
+
+
 @then("the enrolment answers with ten recovery codes")
 def enrolment_answered(world):
     answer = world.response
@@ -210,3 +220,21 @@ def reset_is_audited(world, migrator_session):
     rows = result.scalars().all()
     assert len(rows) == 1, f"Expected exactly one RESET_SECOND_FACTOR audit event, got {len(rows)}"
     assert rows[0].actor_user_id is not None, "The audit event must name who reset the factor"
+
+
+@then("the operator's reset is recorded once in the audit log with the reason")
+def operator_reset_is_audited(world, migrator_session):
+    result = world.run(migrator_session.execute(select(AuditEvent).where(
+        AuditEvent.entity_id == world.data["second_factor_user_id"],
+        AuditEvent.action == "OPERATOR_RESET_SECOND_FACTOR",
+    )))
+    rows = result.scalars().all()
+    assert len(rows) == 1, f"Expected exactly one OPERATOR_RESET_SECOND_FACTOR audit event, got {len(rows)}"
+    assert rows[0].payload_diff["reason"] == OPERATOR_REASON, rows[0].payload_diff
+    assert rows[0].occurred_at is not None
+
+
+@then("the user's earlier session is signed out")
+def earlier_session_is_signed_out(world):
+    answer = world.look(world.actor, "/api/auth/session")
+    assert answer.status_code == 401, world.describe_response()

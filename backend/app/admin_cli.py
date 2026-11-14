@@ -38,6 +38,9 @@ def main() -> None:
     if sys.argv[1:2] == ["quota-recount"]:
         quota_recount(sys.argv[2:])
         return
+    if sys.argv[1:2] == ["reset-second-factor"]:
+        reset_second_factor(sys.argv[2:])
+        return
     ap = argparse.ArgumentParser(description="Create an organization + OWNER_ADMIN user.")
     ap.add_argument("--org", required=True, help="Organization name")
     ap.add_argument("--email", required=True, help="Admin login email")
@@ -107,6 +110,78 @@ def unlock(arguments: list[str]) -> None:
             removed = cursor.rowcount
         conn.commit()
         print(f"Removed {removed} login throttle row(s).")
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+
+
+# Longest operator reason stored in the audit event.
+RESET_REASON_MAX_LENGTH = 500
+
+
+def reset_second_factor(arguments: list[str]) -> None:
+    """Remove one account's second factor as the migrator (issue #657).
+
+    The way back for a sole OWNER_ADMIN who lost the authenticator and the
+    recovery codes: no other administrator can reset the factor and the audited
+    reset function refuses every runtime but the interactive one. The account's
+    sessions end, and the event is audited with the operator's stated reason.
+    """
+    ap = argparse.ArgumentParser(
+        prog="admin_cli reset-second-factor",
+        description="Remove an account's second factor and recovery codes as the migrator.",
+    )
+    ap.add_argument("--email", required=True, help="Sign-in address of the account (normalized like the app)")
+    ap.add_argument("--reason", required=True, help="Why the operator resets it; stored in the audit event")
+    args = ap.parse_args(arguments)
+    try:
+        email = normalize_email(args.email)
+    except ValueError as error:
+        ap.error(str(error))
+    reason = args.reason.strip()
+    if not 1 <= len(reason) <= RESET_REASON_MAX_LENGTH:
+        ap.error(f"--reason must be between 1 and {RESET_REASON_MAX_LENGTH} characters")
+    conn = psycopg2.connect(settings.database_url_sync)
+    try:
+        with conn.cursor() as cursor:
+            cursor.execute(
+                'SELECT id, organization_id FROM public."user" '
+                "WHERE pg_catalog.lower(pg_catalog.btrim(email)) = %s",
+                (email,),
+            )
+            account = cursor.fetchone()
+            if account is None:
+                print(f"No account with the sign-in address {email}; nothing changed.", file=sys.stderr)
+                raise SystemExit(1)
+            user, org = account
+            # Same lock order as the administrator's reset in the application:
+            # the organization's ACL lock, the user row, then the factor rows.
+            # Naming the organization keeps the session-generation trigger to
+            # this organization's lock instead of every organization's.
+            cursor.execute("SELECT set_config('app.current_org_id', %s, true)", (str(org),))
+            cursor.execute("SELECT pg_advisory_xact_lock(hashtextextended(%s,0))", (f"scope-acl:{org}",))
+            cursor.execute('SELECT 1 FROM public."user" WHERE id=%s AND organization_id=%s FOR UPDATE', (user, org))
+            cursor.execute("DELETE FROM public.user_second_factor WHERE organization_id=%s AND user_id=%s", (org, user))
+            factors = cursor.rowcount
+            cursor.execute("DELETE FROM public.user_recovery_code WHERE organization_id=%s AND user_id=%s", (org, user))
+            codes = cursor.rowcount
+            if not factors and not codes:
+                conn.rollback()
+                print(f"{email} has no second factor; nothing changed.")
+                return
+            # The 0188 trigger advances the session generation of exactly this
+            # user, so the sessions open before the reset end at once.
+            cursor.execute("SELECT set_config('app.second_factor_reset_user_id', %s, true)", (str(user),))
+            cursor.execute('UPDATE public."user" SET updated_at=now() WHERE id=%s AND organization_id=%s', (user, org))
+            cursor.execute(
+                "INSERT INTO public.audit_event(organization_id,entity_type,entity_id,action,payload_diff) "
+                "VALUES (%s,'user',%s,'OPERATOR_RESET_SECOND_FACTOR',%s)",
+                (org, user, Json({"action": "operator_reset_second_factor", "reason": reason})),
+            )
+        conn.commit()
+        print(f"Removed the second factor and {codes} recovery code(s) of {email}; its open sessions have ended.")
     except Exception:
         conn.rollback()
         raise
