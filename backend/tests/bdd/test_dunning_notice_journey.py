@@ -318,10 +318,7 @@ def zero_fee_saved(world, principal, total):
     )
 
 
-@given("a tenant whose January 2026 rent was reminded and then paid in full")
-def reminded_and_paid_january(world, seed_data):
-    rental(world, seed_data, advance="0.00")
-    account = bank_account(world)
+def tenant_notice_maker(world):
     data = world.data
 
     def notice(period_start, period_end, reference_date):
@@ -333,6 +330,16 @@ def reminded_and_paid_january(world, seed_data):
             "reference_date": reference_date})
         assert response.status_code == 201, world.describe_response()
         return response.json()
+
+    return notice
+
+
+@given("a tenant whose January 2026 rent was reminded and then paid in full")
+def reminded_and_paid_january(world, seed_data):
+    rental(world, seed_data, advance="0.00")
+    account = bank_account(world)
+    data = world.data
+    notice = tenant_notice_maker(world)
 
     first = notice("2026-01-01", "2026-01-31", "2026-02-20")
     assert (first["level"], first["fee_amount"], first["total_amount"]) == (1, "0.00", "700.00")
@@ -373,3 +380,29 @@ def issue_and_create_second_notice(world):
 def second_notice_escalates(world):
     notice = world.data["second_notice"]
     assert (notice["level"], notice["fee_amount"], notice["total_amount"]) == (2, "2.50", "702.50")
+
+
+@given("a tenant whose January and February 2026 rent were each reminded once in their own notice")
+def reminded_january_and_february_separately(world, seed_data):
+    rental(world, seed_data, advance="0.00")
+    bank_account(world)
+    notice = tenant_notice_maker(world)
+    for period_start, period_end, reference_date in [
+        ("2026-01-01", "2026-01-31", "2026-02-20"), ("2026-02-01", "2026-02-28", "2026-03-20"),
+    ]:
+        reminder = notice(period_start, period_end, reference_date)
+        assert (reminder["level"], reminder["fee_amount"], reminder["total_amount"]) == (1, "0.00", "700.00")
+        issued = world.act("POST", f"/api/dunning/{reminder['id']}/issue")
+        assert issued.status_code == 200, world.describe_response()
+    world.data["escalation_notice"] = notice
+
+
+@when("the manager creates a notice for the January and February 2026 arrears as of 25 March 2026")
+def january_and_february_notice(world):
+    world.data["combined_notice"] = world.data["escalation_notice"]("2026-01-01", "2026-02-28", "2026-03-25")
+
+
+@then("the combined notice is a level 2 dunning with 2.50 fee and 1402.50 total")
+def combined_notice_is_level_two(world):
+    notice = world.data["combined_notice"]
+    assert (notice["level"], notice["fee_amount"], notice["total_amount"]) == (2, "2.50", "1402.50")
