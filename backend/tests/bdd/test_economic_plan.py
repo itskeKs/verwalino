@@ -54,19 +54,41 @@ def annual_hausgeld_installments(world):
             (2026, month, '83.34' if month <= 4 else '83.33') for month in range(1, 13)]
 
 
-@given('a finalized plan from 1 July 2026 to 30 September 2026 with planned costs of 3000 euros for one owner')
-def short_plan(world, period_data_cleanup):
+def finalize_short_plan(world, start, end):
     world.actor = world.administrator_of('Verwaltung Alpha')
     data = world.run(period_property(world.actor, month=1))
     plan = world.run(create(world.actor, '/api/economic-plans', {
         'property_id': data['property']['id'], 'plan_year': 2026,
-        'period_start': '2026-07-01', 'period_end': '2026-09-30'}))
+        'period_start': start, 'period_end': end}))
     inputs = {'planned_costs': [{'category_code': 'GARTENPFLEGE', 'label': 'Garten',
         'planned_amount': '3000.00'}], 'reserve_contribution_total': '0.00'}
     world.run(attest_fixture(world.actor, 'economic_plan', plan['id'], inputs))
     answer = world.act('POST', f"/api/economic-plans/{plan['id']}/finalize", json=inputs)
     assert answer.status_code == 200, world.describe_response()
     world.data['hausgeld'] = {**data, 'plan': answer.json()}
+
+
+@given('a finalized plan from 1 July 2026 to 30 September 2026 with planned costs of 3000 euros for one owner')
+def short_plan(world, period_data_cleanup):
+    finalize_short_plan(world, '2026-07-01', '2026-09-30')
+
+
+@given('a finalized plan from 15 July 2026 to 10 September 2026 with planned costs of 3000 euros for one owner')
+def mid_month_plan(world, period_data_cleanup):
+    finalize_short_plan(world, '2026-07-15', '2026-09-10')
+
+
+@given('the unit is sold with effect from 10 July 2026')
+def unit_sold_before_the_plan(world):
+    data = world.data['hausgeld']
+    old = world.act('GET', f"/api/ownership?unit_id={data['unit']['id']}").json()[0]
+    answer = world.act('PATCH', f"/api/ownership/{old['id']}", json={'valid_to': '2026-07-09'})
+    assert answer.status_code == 200, world.describe_response()
+    person = world.run(create(world.actor, '/api/persons', {'last_name': 'Kaeufer'}))
+    buyer = world.run(create(world.actor, '/api/owner-profiles', {'person_id': person['id']}))
+    world.run(create(world.actor, '/api/ownership', {
+        'unit_id': data['unit']['id'], 'owner_profile_id': buyer['id'], 'valid_from': '2026-07-10'}))
+    data['buyer'] = buyer
 
 
 @when('the manager opens the plan page and its PDF')
@@ -85,6 +107,30 @@ def short_plan_monthly(world):
     advances = [line for line in shown['lines'] if line['line_type'] == 'OWNER_ADVANCE']
     assert [(line['planned_amount'], line['monthly_amount']) for line in advances] == [('3000.00', '1000.00')]
     assert '3.000,00 EUR 1.000,00 EUR' in shown['pdf']
+
+
+@when("the manager reads the seller's ledger from 15 July 2026 to 10 September 2026")
+def mid_month_seller_ledger(world):
+    data = world.data['hausgeld']
+    answer = world.act('GET', f"/api/payments/mietkonto/owner/{data['owner']['id']}", params={
+        'period_start': '2026-07-15', 'period_end': '2026-09-10',
+        'economic_plan_id': data['plan']['id']})
+    assert answer.status_code == 200, world.describe_response()
+
+
+@when("the manager reads the buyer's ledger from 15 July 2026 to 10 September 2026")
+def mid_month_buyer_ledger(world):
+    data = world.data['hausgeld']
+    answer = world.act('GET', f"/api/payments/mietkonto/owner/{data['buyer']['id']}", params={
+        'period_start': '2026-07-15', 'period_end': '2026-09-10',
+        'economic_plan_id': data['plan']['id']})
+    assert answer.status_code == 200, world.describe_response()
+
+
+@then('the seller is charged no Hausgeld')
+def seller_charged_nothing(world):
+    ledger = world.response.json()
+    assert (ledger['soll_total'], ledger['open_items']) == ('0.00', [])
 
 
 @when("the manager reads the owner's ledger from 1 July 2026 to 30 September 2026")

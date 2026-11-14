@@ -1494,7 +1494,7 @@ async def test_weg_owner_change_keeps_each_owners_own_bookings(client_a_admin, m
 
 
 async def _single_unit_weg(client, seed_data, *, period_start='2025-01-01', period_end='2025-12-31',
-                           amount='12000.00', reserve='0.00'):
+                           amount='12000.00', reserve='0.00', plan_year=2025):
     """One unit with MEA 1000, a plan (reserve contribution optional) and a matching cost entry."""
     property_response = await client.post('/api/properties', json={
         'name': 'WEG Lindweg 1', 'management_type': 'WEG', 'mea_denominator': 1000})
@@ -1525,7 +1525,7 @@ async def _single_unit_weg(client, seed_data, *, period_start='2025-01-01', peri
         'tenant_apportionable': 'NICHT_UMLAGEFAEHIG', 'source': 'MANUAL'})
     assert cost.status_code == 201, cost.text
     assert (await client.post(f"/api/cost-entries/{cost.json()['id']}/confirm")).status_code == 200
-    plan = await client.post('/api/economic-plans', json={'property_id': property_id, 'plan_year': 2025,
+    plan = await client.post('/api/economic-plans', json={'property_id': property_id, 'plan_year': plan_year,
         'period_start': period_start, 'period_end': period_end})
     assert plan.status_code == 201, plan.text
     values = {'planned_costs': [{'category_code': 'GARTENPFLEGE', 'label': 'Bewirtschaftung',
@@ -1682,8 +1682,59 @@ async def test_short_plan_splits_a_mid_month_transfer_by_days_of_the_whole_insta
     owners = {o['owner_profile_id']: o for o in result['owner_results']}
     assert owners[w['anna']]['plan_soll'] == '1483.87'
     assert owners[bernd]['plan_soll'] == '1516.13'
-    # Computed results of the WEG engine changed (a cent moved back): the run says so.
-    assert result['engine_version'] == 'm4.7.0'
+    # Computed results of the WEG engine changed (a cent moved back, #602; the edge months, #662).
+    assert result['engine_version'] == 'm4.8.0'
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('sale_day,seller_amount,buyer_amount,seller_months,buyer_months', [
+    # #662: plan 15.07.-10.09.2026, 3,000.00 = 3 x 1,000.00. Sold 10.07., before the plan starts:
+    # the buyer owes everything, the seller nothing (before: 290.32 / 2,709.68).
+    ('2026-07-10', '0.00', '3000.00', [], [7, 8, 9]),
+    # Sold 20.07.: the seller shares July for 15.-19.07., 5 of the 17 plan days of the month:
+    # 1,000.00 x 5/17 = 294.1176 -> 294.12 (the spare cent goes to the larger remainder).
+    ('2026-07-20', '294.12', '2705.88', [7], [7, 8, 9]),
+    # Sold 05.09. inside the last month: 4 of the 10 plan days of September are the seller's.
+    ('2026-09-05', '2400.00', '600.00', [7, 8, 9], [9]),
+    # Sold 20.09., after the plan end: the seller owned every plan day.
+    ('2026-09-20', '3000.00', '0.00', [7, 8, 9], []),
+])
+async def test_owners_outside_a_mid_month_plan_share_nothing_of_its_edge_instalments(
+        client_a_admin, seed_data, sale_day, seller_amount, buyer_amount, seller_months, buyer_months):
+    api = client_a_admin
+    w = await _single_unit_weg(api, seed_data, period_start='2026-07-15', period_end='2026-09-10',
+                               amount='3000.00', plan_year=2026)
+    seller = w['anna']
+    buyer = await _sell_unit(api, w['unit'], str(date.fromordinal(date.fromisoformat(sale_day).toordinal() - 1)),
+                             sale_day)
+    expected = {seller: Decimal(seller_amount), buyer: Decimal(buyer_amount)}
+    months = {seller: seller_months, buyer: buyer_months}
+    period = {'period_start': w['period_start'], 'period_end': w['period_end'], 'economic_plan_id': w['plan']}
+    offer = (await api.get(f"/api/economic-plans/{w['plan']}/hausgeld-booking")).json()
+    # The statement's roster: the plan line's owner and everybody who owned a day of its period.
+    result = await _finalize_single_run(api, w, [seller] + ([buyer] if sale_day <= w['period_end'] else []))
+    soll = {o['owner_profile_id']: Decimal(o['plan_soll']) for o in result['owner_results']}
+    for owner in (seller, buyer):
+        # The owner account (and with it dunning's basis), the Hausgeld offer, dunning and the
+        # settlement's plan Soll all give each owner the same instalments.
+        ledger = await api.get(f'/api/payments/mietkonto/owner/{owner}', params=period)
+        assert ledger.status_code == 200, ledger.text
+        assert Decimal(ledger.json()['soll_total']) == expected[owner]
+        assert [i['period_month'] for i in ledger.json()['open_items']] == months[owner]
+        offered = [(row['period_month'], Decimal(row['amount'])) for row in offer if row['owner_profile_id'] == owner]
+        assert [m for m, _ in offered] == months[owner]
+        assert sum((a for _, a in offered), Decimal('0.00')) == expected[owner]
+        notice = await api.post('/api/dunning/owner', json={**period, 'owner_profile_id': owner,
+            'reference_date': '2027-01-15'})
+        if months[owner]:
+            assert notice.status_code == 201, notice.text
+            assert Decimal(notice.json()['principal_amount']) == expected[owner]
+            assert [i['period_month'] for i in notice.json()['included_items']] == months[owner]
+        else:
+            assert notice.status_code == 422, notice.text
+        assert soll.get(owner, Decimal('0.00')) == expected[owner]
+    assert sum(soll.values()) == Decimal('3000.00')
+    assert result['engine_version'] == 'm4.8.0'
 
 
 @pytest.mark.asyncio
@@ -2488,7 +2539,7 @@ async def test_input_roster_keeps_original_plan_owner_after_history_correction(c
 
 
 @pytest.mark.parametrize('payload_version,shown', [(None, False), ('m4.2.0', False), ('m4.3.0', False),
-    ('m4.3.2', False), ('m4.4.0', True), ('m4.5.0', True), ('m4.6.0', True), ('m4.7.0', True)])
+    ('m4.3.2', False), ('m4.4.0', True), ('m4.5.0', True), ('m4.6.0', True), ('m4.7.0', True), ('m4.8.0', True)])
 def test_pdf_reserve_payment_source_uses_only_the_frozen_engine_version(payload_version, shown):
     from types import SimpleNamespace
     from app.services.weg_jahresabrechnung_pdf import build_weg_jahresabrechnung_html
