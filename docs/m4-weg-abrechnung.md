@@ -889,7 +889,8 @@ allocation and WEMoG settlement-balance calculation; it changes neither.
   largest-remainder module distributes its reserve total to owner/unit cells,
   then the plan's monthly rates (twelve for a full year, one per plan month for a shorter plan, §5.3a),
   with stable ID ties and exact annual reconciliation.
-  The ledger shows these as `PLANNED` entries and a separate planned total.
+  The ledger shows these as `PLANNED` entries, dated on the plan's start day in each plan month
+  (clamped to the month's length and to the plan end), and a separate planned total.
 - Booked `RUECKLAGENANTEIL` payments contribute their signed cash amount.
   `HAUSGELD_VORSCHUSS` represents combined Hausgeld: its reserve component is
   the payment multiplied by the UNIT's frozen annual reserve share divided

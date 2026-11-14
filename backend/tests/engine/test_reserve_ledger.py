@@ -35,18 +35,23 @@ def test_plan_is_split_by_frozen_owner_unit_weights_then_months():
     assert rows[-1]["date"] == "2026-03-01"
 
 
-@pytest.mark.parametrize("start,end,months", [
-    (date(2025, 7, 1), date(2025, 9, 30), [(2025, 7), (2025, 8), (2025, 9)]),
-    (date(2025, 7, 1), date(2025, 7, 31), [(2025, 7)]),
-    (date(2025, 11, 15), date(2026, 2, 14), [(2025, 11), (2025, 12), (2026, 1), (2026, 2)]),
+@pytest.mark.parametrize("start,end,dates", [
+    (date(2025, 7, 1), date(2025, 9, 30), ["2025-07-01", "2025-08-01", "2025-09-01"]),
+    (date(2025, 7, 1), date(2025, 7, 31), ["2025-07-01"]),
+    (date(2025, 11, 15), date(2026, 2, 14), ["2025-11-15", "2025-12-15", "2026-01-15", "2026-02-14"]),
+    # The last month is only partly covered: its row is dated no later than the plan end.
+    (date(2025, 7, 15), date(2025, 9, 10), ["2025-07-15", "2025-08-15", "2025-09-10"]),
+    (date(2025, 7, 15), date(2025, 7, 15), ["2025-07-15"]),
+    # A start day that a shorter month does not have is clamped to that month's last day.
+    (date(2025, 1, 31), date(2025, 4, 30), ["2025-01-31", "2025-02-28", "2025-03-31", "2025-04-30"]),
 ])
-def test_a_short_plan_schedules_its_planned_reserve_only_in_its_own_months(start, end, months):
+def test_a_short_plan_schedules_its_planned_reserve_only_in_its_own_months(start, end, dates):
     # The one owner's reserve share of 1,000.01 is scheduled over the plan's months, the first
-    # months carry the spare cents, and nothing is scheduled after the plan end (#602).
+    # months carry the spare cents, and no row is dated after the plan end (#602).
     rows = planned_reserve_entries(D("1000.01"), [("u1", "o1", D("1"))], start, end)
-    assert [(int(row["date"][:4]), int(row["date"][5:7])) for row in rows] == months
+    assert [row["date"] for row in rows] == dates
+    assert max(row["date"] for row in rows) <= str(end)
     assert sum((D(row["amount"]) for row in rows), D(0)) == D("1000.01")
-    assert [row["date"][8:] for row in rows] == [str(start.day).zfill(2)] * len(months)
     amounts = [D(row["amount"]) for row in rows]
     assert amounts == sorted(amounts, reverse=True) and max(amounts) - min(amounts) <= D("0.01")
 
@@ -59,7 +64,8 @@ def test_a_three_month_plan_schedules_three_equal_reserve_instalments():
 
 def test_a_plan_of_twelve_months_keeps_twelve_reserve_instalments():
     rows = planned_reserve_entries(D("1200.00"), [("u1", "o1", D("1"))], date(2025, 7, 15), date(2026, 7, 14))
-    assert [row["date"] for row in rows][0] == "2025-07-15"
+    # Twelve months from the 15th: the twelfth row falls on 15.06., inside the plan.
+    assert [row["date"] for row in rows][0] == "2025-07-15" and rows[-1]["date"] == "2026-06-15"
     assert len(rows) == 12 and {row["amount"] for row in rows} == {"100.00"}
 
 

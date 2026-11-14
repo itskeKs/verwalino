@@ -71,7 +71,8 @@ def monthly_reserve_entries(cells, period_start, period_end):
         for offset, amount in enumerate(rates):
             month_number = period_start.year * 12 + period_start.month - 1 + offset
             year, month = divmod(month_number, 12)
-            when = date(year, month + 1, min(period_start.day, monthrange(year, month + 1)[1]))
+            # The start day in each month, clamped to the month's length and to the plan end.
+            when = min(date(year, month + 1, min(period_start.day, monthrange(year, month + 1)[1])), period_end)
             rows.append({'kind': 'PLANNED', 'date': str(when), 'unit_id': unit,
                          'owner_profile_id': owner, 'amount': format(amount, '.2f')})
     return sorted(rows, key=lambda row: (row['date'], row['unit_id'], row['owner_profile_id']))

@@ -1254,10 +1254,19 @@ def test_a_zero_short_plan_charges_nothing(with_history):
     assert _short_plan_charges('0.00', date(2025, 7, 1), date(2025, 9, 30), history=history) == []
 
 
-def test_a_credit_line_of_a_short_plan_keeps_its_sign_and_its_cents():
-    charges = _short_plan_charges('-1000.00', date(2025, 7, 1), date(2025, 9, 30))
-    assert sorted(c.amount for c in charges) == [Decimal('-333.34'), Decimal('-333.33'), Decimal('-333.33')]
-    assert sum(c.amount for c in charges) == Decimal('-1000.00')
+@pytest.mark.parametrize('amount,expected', [
+    # Positive: the spare cents go to the first instalments (largest remainder, rounded down).
+    ('1000.00', ['333.34', '333.33', '333.33']),
+    ('1000.01', ['333.34', '333.34', '333.33']),
+    # Negative (a credit): the same rule, floor and then the spare cents to the first
+    # instalments -- not mirrored in size: the first instalments are the smaller credits.
+    ('-1000.00', ['-333.33', '-333.33', '-333.34']),
+    ('-1000.01', ['-333.33', '-333.34', '-333.34']),
+])
+def test_the_spare_cents_of_a_short_plan_go_to_the_first_instalments_in_order(amount, expected):
+    charges = _short_plan_charges(amount, date(2025, 7, 1), date(2025, 9, 30))
+    assert [c.amount for c in charges] == [Decimal(value) for value in expected]
+    assert sum(c.amount for c in charges) == Decimal(amount)
 
 
 @pytest.mark.parametrize('with_history', [False, True])
