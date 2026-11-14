@@ -67,11 +67,12 @@ async def test_definer_has_fixed_metadata_and_only_runtime_execute(app_rw_sessio
 @pytest.mark.asyncio
 @pytest.mark.parametrize("mode", ["selfhost", "hosted"])
 async def test_invited_user_sets_password_and_signs_in_with_invited_role(
-    client_a_admin, client_unauth, signup_mail, monkeypatch, mode
+    client_a_admin, client_unauth, signup_mail, monkeypatch, mode, seed_data, confirmed_second_factor
 ):
     from app.core.config import settings
 
     monkeypatch.setattr(settings, "deployment_mode", mode)
+    confirmed_second_factor(seed_data["org_a_id"], seed_data["user_a_admin_id"])
     email = unique(f"kollegin-{mode}@example.test")
     await invite(client_a_admin, email, "CLERK")
     token = invitation_token(signup_mail)

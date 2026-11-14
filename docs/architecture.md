@@ -713,6 +713,31 @@ Role enforcement takes place in the authorization layer (policy check per endpoi
 - **Password hashing:** Argon2id (or bcrypt as a fallback), never plaintext, never reversible.
 - **Tenant binding:** The user's `organization_id` lives in the server-side session and is the *only* source for the tenant context (Section 2.3, Level 2). No org switch via request parameter.
 - **MFA:** not mandatory for M0; note as a hardening option for M9 (back office with personal + financially relevant data).
+
+**Second factor (revision 0188, issue #208):** staff accounts can enrol a TOTP
+authenticator (RFC 6238, 30-second step, 6 digits, tolerance one step each way,
+per-step replay protection). The secret is stored Fernet-encrypted like the AI
+key with its own domain string; ten one-time recovery codes are shown once and
+stored only as keyed hashes. Login is two-step: a correct password of an
+enrolled account answers with a short-lived signed pending token, and
+`POST /api/auth/login/second-factor` accepts either the TOTP code or a recovery
+code (exactly once, answering how many remain). A wrong answer counts toward the
+same throttle lockout as a wrong password and is refused with the same generic
+message. An OWNER_ADMIN resets another user's factor through
+`/api/users/{id}/reset-second-factor`; the action is audited, and in hosted mode
+a transaction-local GUC names the reset account to the 0138 trigger so exactly
+that user's `session_version` advances and the target's sessions end. Hosted
+mode (owner decision, 5 Nov 2026) makes the factor mandatory for every staff
+role: `get_current_user` derives the enrolment obligation from the database
+(the confirmed factor, read in the same statement as the deletion state, so no
+cookie issuer can hand out an unrestricted hosted session) and lets an
+unenrolled account reach only the second-factor enrolment routes,
+`/api/auth/session` and logout; `/api/auth/session` reports the restriction, so
+a browser reload returns to the wizard. Self-hosted mode keeps the factor
+optional. The tenant tables `user_second_factor` and `user_recovery_code`
+carry RLS (a row belongs to its user; an OWNER_ADMIN has no read access to a colleague's factor, and a DELETE policy alone would not let the admin remove it, because a DELETE with a WHERE clause also needs a SELECT policy to see the rows, which is documented PostgreSQL behaviour. The audited admin reset therefore runs through the `reset_second_factor` definer function: it requires the interactive `app_rw` session, re-verifies the active OWNER_ADMIN actor and the target's organization, accepts a deactivated target, and removes the factor and the recovery codes in one transaction), bind
+`(organization_id,user_id)` to the user like 0145, and are erased with the
+organization.
 - **Audit:** login, logout, failed logins, role changes → `audit_event`.
 
 **First-run bootstrap (accepted source revision 0141):** in self-hosted mode, `GET /api/setup` reports

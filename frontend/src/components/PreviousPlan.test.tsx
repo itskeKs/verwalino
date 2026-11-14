@@ -15,7 +15,7 @@ let auth: AuthContextValue;
 let get: ReturnType<typeof vi.spyOn>;
 let post: ReturnType<typeof vi.spyOn>;
 beforeEach(() => {
-  auth = { session: { organization_id: "org", user_id: "writer", role: "CLERK" } as AuthContextValue["session"], loading: false, login: vi.fn(), logout: vi.fn() };
+  auth = { session: { organization_id: "org", user_id: "writer", role: "CLERK" } as AuthContextValue["session"], loading: false, login: vi.fn(), completeSecondFactor: vi.fn(), reloadSession: vi.fn(), logout: vi.fn() };
   get = vi.spyOn(api, "get").mockResolvedValue({ requires_accounting_scope: false });
   post = vi.spyOn(api, "post").mockImplementation(async path => path.endsWith("/preview") ? proposal : { id: "new" });
 });

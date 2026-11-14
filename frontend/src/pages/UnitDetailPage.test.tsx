@@ -39,7 +39,7 @@ let history: typeof march[];
 let failure: number | "network" | null;
 let fetchMock: ReturnType<typeof vi.fn>;
 function show(role = "OWNER_ADMIN") {
-  return render(<AuthCtx.Provider value={{ loading: false, session: { user_id: "user", organization_id: "org", role }, login: vi.fn(), logout: vi.fn() }}>
+  return render(<AuthCtx.Provider value={{ loading: false, session: { user_id: "user", organization_id: "org", role }, login: vi.fn(), completeSecondFactor: vi.fn(), reloadSession: vi.fn(), logout: vi.fn() }}>
     <MemoryRouter initialEntries={["/objekte/property/einheiten/unit"]}>
       <Routes><Route path="/objekte/:propertyId/einheiten/:unitId" element={<UnitDetailPage />} /></Routes>
     </MemoryRouter>
@@ -640,7 +640,7 @@ it.each([["OWNER_ADMIN", true], ["CLERK", true], ["READ_ONLY", false], ["UNKNOWN
 it("T37 ignores a late unit response after changing the route", async () => {
   let resolveOld!: (value: Awaited<ReturnType<typeof endpoints.getUnit>>) => void;
   vi.mocked(endpoints.getUnit).mockReturnValueOnce(new Promise((resolve) => { resolveOld = resolve; })).mockResolvedValue({ id: "new-unit", number: "2" } as never);
-  render(<AuthCtx.Provider value={{ loading: false, session: null, login: vi.fn(), logout: vi.fn() }}><MemoryRouter initialEntries={["/objekte/property/einheiten/unit"]}>
+  render(<AuthCtx.Provider value={{ loading: false, session: null, login: vi.fn(), completeSecondFactor: vi.fn(), reloadSession: vi.fn(), logout: vi.fn() }}><MemoryRouter initialEntries={["/objekte/property/einheiten/unit"]}>
     <Link to="/objekte/property/einheiten/new-unit">Andere Einheit</Link><Routes><Route path="/objekte/:propertyId/einheiten/:unitId" element={<UnitDetailPage />} /></Routes>
   </MemoryRouter></AuthCtx.Provider>);
   fireEvent.click(screen.getByRole("link", { name: "Andere Einheit" }));
@@ -792,7 +792,7 @@ it("T43 disables staffel until history has loaded and cancels without a mutation
 
 it("T43 checks current role again when an already-open dialog is submitted", async () => {
   function App({ role }: { role: string }) {
-    return <AuthCtx.Provider value={{ loading: false, session: { user_id: "user", organization_id: "org", role }, login: vi.fn(), logout: vi.fn() }}>
+    return <AuthCtx.Provider value={{ loading: false, session: { user_id: "user", organization_id: "org", role }, login: vi.fn(), completeSecondFactor: vi.fn(), reloadSession: vi.fn(), logout: vi.fn() }}>
       <MemoryRouter initialEntries={["/objekte/property/einheiten/unit"]}><Routes>
         <Route path="/objekte/:propertyId/einheiten/:unitId" element={<UnitDetailPage />} />
       </Routes></MemoryRouter>

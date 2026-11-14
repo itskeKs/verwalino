@@ -58,6 +58,10 @@ import type {
   MandateCreate,
   MandateUpdate,
   Property,
+  SecondFactorEnrolment,
+  SecondFactorEnrolmentConfirmation,
+  SecondFactorLoginResponse,
+  SecondFactorStatus,
   PropertyCreate,
   PropertyUpdate,
   Unit,
@@ -188,6 +192,22 @@ export function getCurrentSession(): Promise<LoginResponse> {
 
 export function logout(): Promise<void> {
   return api.post<void>("/api/auth/logout");
+}
+
+export function getSecondFactorStatus(): Promise<SecondFactorStatus> {
+  return api.get<SecondFactorStatus>("/api/auth/second-factor");
+}
+
+export function startSecondFactorEnrolment(): Promise<SecondFactorEnrolment> {
+  return api.post<SecondFactorEnrolment>("/api/auth/second-factor/enrolment");
+}
+
+export function confirmSecondFactorEnrolment(code: string): Promise<SecondFactorEnrolmentConfirmation> {
+  return api.post<SecondFactorEnrolmentConfirmation>("/api/auth/second-factor/enrolment/confirm", { code });
+}
+
+export function completeSecondFactorLogin(body: { pending_token: string; code?: string; recovery_code?: string }): Promise<SecondFactorLoginResponse> {
+  return api.post<SecondFactorLoginResponse>("/api/auth/login/second-factor", body);
 }
 
 export interface ChangePasswordRequest {
@@ -1317,6 +1337,10 @@ export function updateUser(id: string, body: { role?: UserRole; is_active?: bool
 
 export function resetUserPassword(id: string, password: string): Promise<void> {
   return api.post<void>(`/api/users/${encodeURIComponent(id)}/reset-password`, { password });
+}
+
+export function resetUserSecondFactor(id: string): Promise<void> {
+  return api.post<void>(`/api/users/${encodeURIComponent(id)}/reset-second-factor`);
 }
 
 export function createUserInvitation(email: string, role: string): Promise<UserInvitation> {

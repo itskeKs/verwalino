@@ -8,7 +8,7 @@ const recipients = [{ person_id: "p1", name: "Anna Beispiel", email: "anna@examp
 const attempt = { id: "a1", person_id: "p1", email: "anna@example.test", status: "accepted", created_at: "2026-10-21T12:00:00Z", completed_at: "2026-10-21T12:00:01Z" };
 const json = (value: unknown, status = 200) => new Response(JSON.stringify(value), { status });
 function view(role = "OWNER_ADMIN", documentId = "doc1", kind: MailKind = "dunning") {
-  return <AuthCtx.Provider value={{ loading: false, session: { user_id: "u1", organization_id: "o1", role }, login: vi.fn(), logout: vi.fn() }}><MailDispatch kind={kind} documentId={documentId} /></AuthCtx.Provider>;
+  return <AuthCtx.Provider value={{ loading: false, session: { user_id: "u1", organization_id: "o1", role }, login: vi.fn(), completeSecondFactor: vi.fn(), reloadSession: vi.fn(), logout: vi.fn() }}><MailDispatch kind={kind} documentId={documentId} /></AuthCtx.Provider>;
 }
 function select(personId = "p1") { fireEvent.change(screen.getByLabelText("E-Mail-Empfänger"), { target: { value: personId } }); }
 const send = () => screen.getByRole("button", { name: "E-Mail-Versand bestätigen" });

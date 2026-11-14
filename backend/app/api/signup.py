@@ -257,7 +257,10 @@ async def confirm(body: ConfirmRequest, response: Response, throttle: ThrottleRe
             raise HTTPException(422, PASSWORD_REFUSED)
         raise HTTPException(403, REFUSED)
     _set_session_cookie(response, create_session_token(principal.user_id, principal.organization_id, principal.session_version))
-    return LoginResponse(user_id=str(principal.user_id), organization_id=str(principal.organization_id), role=principal.role)
+    # A freshly provisioned hosted account has no second factor yet, so its
+    # session is restricted to the enrolment flow like the session answer says.
+    return LoginResponse(user_id=str(principal.user_id), organization_id=str(principal.organization_id), role=principal.role,
+                         second_factor_enrolment_required=True)
 
 
 @router.api_route("", methods=["GET", "HEAD", "PUT", "PATCH", "DELETE", "OPTIONS", "TRACE", "CONNECT"], include_in_schema=False)

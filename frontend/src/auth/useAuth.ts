@@ -1,5 +1,5 @@
 import { createContext, useContext } from "react";
-import type { LoginResponse } from "../api/types";
+import type { LoginResponse, SecondFactorLoginResponse } from "../api/types";
 
 export interface AuthState {
   /** True while the current server-side session is checked on first load. */
@@ -9,7 +9,21 @@ export interface AuthState {
 }
 
 export interface AuthContextValue extends AuthState {
-  login: (email: string, password: string) => Promise<void>;
+  /**
+   * Password step. Resolves to the server answer: when a second factor is
+   * enrolled the answer carries `second_factor_required` and no session is
+   * stored yet; a hosted account without a factor stores a restricted
+   * session that only reaches the enrolment flow (issue #208).
+   */
+  login: (email: string, password: string) => Promise<LoginResponse>;
+  /**
+   * Second login step for an enrolled factor; stores the full session, except
+   * after a recovery code (the answer carries `recovery_codes_remaining`):
+   * the caller shows the count and then calls `reloadSession`.
+   */
+  completeSecondFactor: (body: { pending_token: string; code?: string; recovery_code?: string }) => Promise<SecondFactorLoginResponse>;
+  /** Re-reads the server session, e.g. after enrolment lifts a restriction. */
+  reloadSession: () => Promise<void>;
   logout: () => Promise<void>;
 }
 

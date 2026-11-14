@@ -22,7 +22,7 @@ const rows = [
 const config = { cost_entry_id: "heat", kind: "HEATING", consumption_fraction: "0.65", base_key: "AREA", consumption_recorded: true,
   mandatory_seventy_percent: false, meter_type: "HEIZUNG", slices: [] };
 function show(role = "OWNER_ADMIN") {
-  return render(<AuthCtx.Provider value={{ loading: false, session: { user_id: "user", organization_id: "org", role }, login: vi.fn(), logout: vi.fn() }}>
+  return render(<AuthCtx.Provider value={{ loading: false, session: { user_id: "user", organization_id: "org", role }, login: vi.fn(), completeSecondFactor: vi.fn(), reloadSession: vi.fn(), logout: vi.fn() }}>
     <MemoryRouter initialEntries={["/abrechnungen/run-1"]}><Routes><Route path="/abrechnungen/:runId" element={<SettlementDetailPage />} /></Routes></MemoryRouter>
   </AuthCtx.Provider>);
 }

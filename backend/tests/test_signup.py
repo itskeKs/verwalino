@@ -8,6 +8,7 @@ from sqlalchemy import text
 from sqlalchemy.exc import DBAPIError
 
 from app.core.config import settings
+from tests.bdd.steps.second_factor import enrol_second_factor
 from tests.test_organization_export import unpack
 from tests.setup_support import fresh_setup as fresh_setup
 from tests.signup_support import BODY, MESSAGE, REFUSED, confirmation_token, signup as signup, signup_mail as signup_mail
@@ -842,6 +843,7 @@ async def test_confirmation_records_both_assents_in_the_provisioning_transaction
     assert await connection.scalar(text('SELECT count(*) FROM legal_document_assent')) == 0
     answer = await client.post('/api/signup/confirm', json={'token': token, 'password': BODY['password']})
     assert answer.status_code == 201, answer.text
+    await enrol_second_factor(client)
     rows = (await connection.execute(text(
         'SELECT a.document, a.version, a.assented_at, a.user_id, u.display_name'
         ' FROM legal_document_assent a JOIN "user" u ON u.id=a.user_id'
@@ -874,6 +876,7 @@ async def test_organization_export_contains_both_assent_records(signup):
     assert (await client.post('/api/signup', json=body)).status_code == 202
     token = confirmation_token(mail)
     assert (await client.post('/api/signup/confirm', json={'token': token, 'password': BODY['password']})).status_code == 201
+    await enrol_second_factor(client)
     answer = await client.post('/api/organizations/export')
     assert answer.status_code == 200, answer.text
     files = unpack(answer.content)

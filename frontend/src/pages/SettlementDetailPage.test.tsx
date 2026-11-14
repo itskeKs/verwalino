@@ -209,7 +209,7 @@ const applied = {
   base_rent: "725.00", advance_payment: "100.00", heating_advance_payment: "0.00", created_at: "2026-10-20T12:00:00Z",
 };
 function auth(role: string) {
-  return { loading: false, session: { user_id: "user", organization_id: "org", role }, login: vi.fn(), logout: vi.fn() };
+  return { loading: false, session: { user_id: "user", organization_id: "org", role }, login: vi.fn(), completeSecondFactor: vi.fn(), reloadSession: vi.fn(), logout: vi.fn() };
 }
 function showProposal(role = "OWNER_ADMIN") {
   return render(<AuthCtx.Provider value={auth(role)}><MemoryRouter initialEntries={["/abrechnungen/run-1"]}>

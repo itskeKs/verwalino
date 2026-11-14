@@ -14,6 +14,7 @@ import { SettingsPage } from "./pages/SettingsPage";
 import { useAuth } from "./auth/useAuth";
 import { AppShell } from "./components/AppShell";
 import { LoginPage } from "./pages/LoginPage";
+import { SecondFactorEnrolmentPage } from "./pages/SecondFactorEnrolmentPage";
 import { PasswordResetRequestPage } from "./pages/PasswordResetRequestPage";
 import { PasswordResetPage } from "./pages/PasswordResetPage";
 import { InvitationAcceptPage } from "./pages/InvitationAcceptPage";
@@ -134,6 +135,15 @@ export function AppRoutes() {
     location.pathname === "/einladung"
   ) {
     return <PublicAuthRoutes />;
+  }
+
+  // Issue #208 (hosted): a restricted session reaches only the enrolment
+  // wizard until the second factor is confirmed.
+  if (session.second_factor_enrolment_required) {
+    return <Routes>
+      <Route path="/zweiter-faktor" element={<SecondFactorEnrolmentPage />} />
+      <Route path="*" element={<Navigate to="/zweiter-faktor" replace />} />
+    </Routes>;
   }
 
   const canWriteDeclarations = session.role === "OWNER_ADMIN" || session.role === "CLERK";

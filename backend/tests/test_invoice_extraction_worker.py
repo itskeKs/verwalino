@@ -10,12 +10,13 @@ from tests.test_error_tracking import offline_tracker as offline_tracker
 
 
 @pytest_asyncio.fixture
-async def worker_tenant():
+async def worker_tenant(confirmed_second_factor):
     """A dedicated queue, independent of queued originals in other test modules."""
     import os
     import psycopg2
     import httpx
     from app.core.config import settings
+    from app.core.deployment_policy import get_deployment_policy
     from app.core.security import create_session_token
     from app.main import app
     org, user = uuid.uuid4(), uuid.uuid4()
@@ -25,6 +26,9 @@ async def worker_tenant():
                     (str(user), str(org), f"{user}@invoice-test.invalid", "unused-fixture-password", "Invoice worker test"))
         cur.execute("INSERT INTO membership (id,organization_id,user_id,role) VALUES (%s,%s,%s,'OWNER_ADMIN')",
                     (str(uuid.uuid4()), str(org), str(user)))
+    if get_deployment_policy().deployment_mode == "hosted":
+        # Hosted mode refuses an account without a confirmed second factor (issue #208).
+        confirmed_second_factor(org, user)
     async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test",
                                 cookies={settings.session_cookie_name: create_session_token(user, org)}) as client:
         yield client, {"org_a_id": org, "user_a_admin_id": user}

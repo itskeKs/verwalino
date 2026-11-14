@@ -191,6 +191,11 @@ PROBES: dict[str, Probe] = {
     "GET /api/auth/session": Probe(),
     "GET /api/auth/preferences": Probe(),
     "PATCH /api/auth/preferences": Probe(body={"design_theme": "klar"}),
+    # app/api/auth.py second factor (issue #208)
+    "GET /api/auth/second-factor": Probe(),
+    "POST /api/auth/second-factor/enrolment": Probe(),
+    "POST /api/auth/second-factor/enrolment/confirm": Probe(body={"code": "123456"}),
+    "POST /api/auth/login/second-factor": Probe(body={"pending_token": "sweep-invalid-token", "code": "123456"}),
     # app/api/cost_categories.py
     "GET /api/cost-categories": Probe(),
     # app/api/dsgvo.py
@@ -348,6 +353,7 @@ PROBES: dict[str, Probe] = {
     "PATCH /api/users/{user_id}": Probe(row("user", user_id="id"), body={"is_active": True}),
     "POST /api/users": Probe(body={"email": f"sweep-{uuid.uuid4().hex}@example.invalid", "password": "isolation-sweep-1234"}),
     "POST /api/users/{user_id}/reset-password": Probe(row("user", user_id="id")),
+    "POST /api/users/{user_id}/reset-second-factor": Probe(row("user", user_id="id")),
     # app/api/user_invitations.py (registered before /api/users/{user_id})
     "GET /api/users/invitations": Probe(),
     "POST /api/users/invitations": Probe(body={"email": f"sweep-{uuid.uuid4().hex}@example.invalid", "role": "CLERK"}),

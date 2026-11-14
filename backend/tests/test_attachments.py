@@ -305,13 +305,15 @@ async def test_attachment_commit_visible_at_http_start(client_a_admin, attachmen
 @pytest.mark.parametrize('preexisting', [False, True])
 @pytest.mark.parametrize('mode', ['hosted', 'selfhost'])
 async def test_attachment_failed_audit_rolls_back_metadata_and_obeys_mode_cleanup(
-        client_a_admin, attachment_world, attachment_store, attachment_pdf, monkeypatch, seed_data, preexisting, mode):
+        client_a_admin, attachment_world, attachment_store, attachment_pdf, monkeypatch, seed_data, preexisting, mode,
+        confirmed_second_factor):
     import psycopg2
     from contextlib import closing
     from tests.conftest import MIGRATOR_SYNC_URL
     from app.repositories.audit_repo import AuditRepository
     from app.core.config import settings
     monkeypatch.setattr(settings, 'deployment_mode', mode)
+    confirmed_second_factor(seed_data['org_a_id'], seed_data['user_a_admin_id'])
     key = make_storage_key(str(seed_data['org_a_id']), sha256(attachment_pdf).hexdigest())
     if preexisting:
         attachment_store.put(key, attachment_pdf, content_type='application/pdf')
@@ -348,12 +350,13 @@ async def test_attachment_storage_failure_is_explicit_without_metadata(client_a_
 
 async def test_hosted_attachment_directory_timeout_is_retryable_without_metadata_or_tracker_event(
         client_a_admin, attachment_world, attachment_store, attachment_pdf, monkeypatch,
-        seed_data, offline_tracker):
+        seed_data, offline_tracker, confirmed_second_factor):
     import os
     from app.core import storage
     from app.core.config import settings
 
     monkeypatch.setattr(settings, 'deployment_mode', 'hosted')
+    confirmed_second_factor(seed_data['org_a_id'], seed_data['user_a_admin_id'])
     monkeypatch.setattr(storage, 'LOCK_WAIT_SECONDS', 0.1)
     holder = storage.open_storage_lock(attachment_store, seed_data['org_a_id'])
     storage.fcntl.flock(holder, storage.fcntl.LOCK_EX | storage.fcntl.LOCK_NB)

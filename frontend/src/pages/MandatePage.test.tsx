@@ -9,7 +9,7 @@ const mandate = { id: "mandate-1", mandate_type: "WEG", label: "WEG Beispiel", s
 
 function renderPage(role: string) {
   return render(
-    <AuthCtx.Provider value={{ loading: false, session: { user_id: "u", organization_id: "o", role }, login: vi.fn(), logout: vi.fn() } as never}>
+    <AuthCtx.Provider value={{ loading: false, session: { user_id: "u", organization_id: "o", role }, login: vi.fn(), completeSecondFactor: vi.fn(), reloadSession: vi.fn(), logout: vi.fn() } as never}>
       <MemoryRouter>
         <MandatePage />
       </MemoryRouter>

@@ -8,7 +8,7 @@ import * as auth from "../auth/useAuth";
 const row = { id: "original-id", document_id: "original-id", snapshot_digest: "a".repeat(64), observed_at: "2026-10-02T12:00:00Z", disposition: null };
 afterEach(() => { cleanup(); vi.restoreAllMocks(); });
 function show(role: "OWNER_ADMIN" | "CLERK" = "OWNER_ADMIN", path = "/") {
-  vi.spyOn(auth, "useAuth").mockReturnValue({ loading: false, session: { user_id: "actor", organization_id: "org", role }, login: vi.fn(), logout: vi.fn() });
+  vi.spyOn(auth, "useAuth").mockReturnValue({ loading: false, session: { user_id: "actor", organization_id: "org", role }, login: vi.fn(), completeSecondFactor: vi.fn(), reloadSession: vi.fn(), logout: vi.fn() });
   render(<MemoryRouter initialEntries={[path]}><MandateQuarantinePage /></MemoryRouter>);
 }
 

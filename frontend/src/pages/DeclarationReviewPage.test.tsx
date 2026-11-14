@@ -49,7 +49,7 @@ function RouteSwitchButton() {
 }
 
 function renderReview(withRouteSwitch = false) {
-  vi.spyOn(auth, "useAuth").mockReturnValue({ loading: false, session: { user_id: "publisher", organization_id: "org", role: "OWNER_ADMIN" }, login: vi.fn(), logout: vi.fn() });
+  vi.spyOn(auth, "useAuth").mockReturnValue({ loading: false, session: { user_id: "publisher", organization_id: "org", role: "OWNER_ADMIN" }, login: vi.fn(), completeSecondFactor: vi.fn(), reloadSession: vi.fn(), logout: vi.fn() });
   return render(
     <MemoryRouter initialEntries={["/teilungserklaerung/import/import-1/review"]}>
       <Routes>

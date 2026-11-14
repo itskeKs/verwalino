@@ -339,9 +339,10 @@ async def test_cancelled_storage_lock_wait_closes_the_handle(monkeypatch, tmp_pa
 
 
 @pytest.mark.asyncio
-async def test_usage_and_uploads_use_database_sizes_without_a_directory_walk(rent_world, monkeypatch, tmp_path):
+async def test_usage_and_uploads_use_database_sizes_without_a_directory_walk(rent_world, monkeypatch, tmp_path, confirmed_second_factor):
     from app.core import storage
     monkeypatch.setattr(settings, "deployment_mode", "hosted")
+    confirmed_second_factor(rent_world["org"], rent_world["admin"])
     monkeypatch.setattr(storage, "_store", storage.LocalFsDocumentStore(tmp_path))
     def forbidden(*args):
         pytest.fail("Request walked the organization directory")
@@ -359,11 +360,12 @@ async def test_usage_and_uploads_use_database_sizes_without_a_directory_walk(ren
 
 
 @pytest.mark.asyncio
-async def test_letter_and_mail_sizes_share_the_deduplicated_database_usage(rent_world, monkeypatch, tmp_path, rent_db):
+async def test_letter_and_mail_sizes_share_the_deduplicated_database_usage(rent_world, monkeypatch, tmp_path, rent_db, confirmed_second_factor):
     import json
     from app.core import storage
     from tests.test_letters import create_template, issue_body, add_recipient
     monkeypatch.setattr(settings, "deployment_mode", "hosted")
+    confirmed_second_factor(rent_world["org"], rent_world["admin"])
     monkeypatch.setattr(storage, "_store", storage.LocalFsDocumentStore(tmp_path))
     await add_recipient(rent_world)
     async with api_client(rent_world) as api:
@@ -435,10 +437,11 @@ async def test_hosted_recount_refuses_a_held_directory_lock_without_charges(rent
 
 
 @pytest.mark.asyncio
-async def test_recount_does_not_add_permanent_charges_for_sized_live_rows(rent_world, rent_db, monkeypatch, tmp_path, capsys):
+async def test_recount_does_not_add_permanent_charges_for_sized_live_rows(rent_world, rent_db, monkeypatch, tmp_path, capsys, confirmed_second_factor):
     from app import admin_cli
     from app.core import storage
     monkeypatch.setattr(settings, "deployment_mode", "hosted")
+    confirmed_second_factor(rent_world["org"], rent_world["admin"])
     monkeypatch.setattr(settings, "document_storage_root", str(tmp_path))
     monkeypatch.setattr(storage, "_store", storage.LocalFsDocumentStore(tmp_path))
     async with api_client(rent_world) as api:
@@ -494,7 +497,7 @@ def test_quota_refusals_include_a_stable_code(kind, code):
 
 
 @pytest.mark.asyncio
-async def test_concurrent_delete_and_upload_follow_one_lock_order(rent_world, rent_db, monkeypatch, tmp_path):
+async def test_concurrent_delete_and_upload_follow_one_lock_order(rent_world, rent_db, monkeypatch, tmp_path, confirmed_second_factor):
     import asyncio
     from app.core import storage
     from app.core.db import get_tenant_session
@@ -504,6 +507,7 @@ async def test_concurrent_delete_and_upload_follow_one_lock_order(rent_world, re
     from app.services.attachment_service import AttachmentService
 
     monkeypatch.setattr(settings, "deployment_mode", "hosted")
+    confirmed_second_factor(rent_world["org"], rent_world["admin"])
     store = storage.LocalFsDocumentStore(tmp_path)
     monkeypatch.setattr(storage, "_store", store)
     org, actor, ident = rent_world["org"], rent_world["admin"], uuid.uuid4()
@@ -649,7 +653,7 @@ async def test_selfhost_delete_never_reads_usage_or_unlinks_live_bytes(monkeypat
 @pytest.mark.parametrize("remaining", [None, "mail_without_size", "letter_without_size", "other_document"])
 @pytest.mark.parametrize("rollback", [None, "outer", "savepoint", "released_savepoint"])
 async def test_accepted_unprotected_deletion_unlinks_only_the_last_committed_reference(
-    rent_world, rent_db, monkeypatch, tmp_path, remaining, rollback
+    rent_world, rent_db, monkeypatch, tmp_path, remaining, rollback, confirmed_second_factor
 ):
     """Exercise a future accepted class using real rows, reference SQL and hooks.
 
@@ -666,6 +670,7 @@ async def test_accepted_unprotected_deletion_unlinks_only_the_last_committed_ref
     from app.services.mandate_document_service import MandateDocumentService
     from tests.test_letters import create_template
     monkeypatch.setattr(settings, "deployment_mode", "hosted")
+    confirmed_second_factor(rent_world["org"], rent_world["admin"])
     store = storage.LocalFsDocumentStore(tmp_path)
     monkeypatch.setattr(storage, "_store", store)
     org, actor = rent_world["org"], rent_world["admin"]
@@ -726,8 +731,9 @@ async def test_accepted_unprotected_deletion_unlinks_only_the_last_committed_ref
 
 @pytest.mark.asyncio
 async def test_quota_is_authenticated_and_scoped_to_the_current_organization(
-        rent_world, client_unauth, monkeypatch):
+        rent_world, client_unauth, monkeypatch, confirmed_second_factor):
     monkeypatch.setattr(settings, "deployment_mode", "hosted")
+    confirmed_second_factor(rent_world["org"], rent_world["reader"])
     assert (await client_unauth.get("/api/organizations/quota")).status_code == 401
     async with api_client(rent_world, "reader") as api:
         answer = await api.get("/api/organizations/quota")
@@ -739,9 +745,10 @@ async def test_quota_is_authenticated_and_scoped_to_the_current_organization(
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("kind", ["properties", "units"])
-async def test_count_refusal_leaves_the_atomic_import_unchanged(rent_world, monkeypatch, kind):
+async def test_count_refusal_leaves_the_atomic_import_unchanged(rent_world, monkeypatch, kind, confirmed_second_factor):
     from app.core import quotas
     monkeypatch.setattr(settings, "deployment_mode", "hosted")
+    confirmed_second_factor(rent_world["org"], rent_world["admin"])
     monkeypatch.setattr(quotas, "FREE_PLAN", replace(quotas.FREE_PLAN, **{kind: 2}))
     async with api_client(rent_world) as api:
         before = await inventory(api)
@@ -758,9 +765,10 @@ async def test_count_refusal_leaves_the_atomic_import_unchanged(rent_world, monk
     ("properties", "/api/properties", {"name": "Weiteres Objekt", "management_type": "MIET"}),
     ("units", "/api/units", {"number": "Weitere Einheit", "usage_type": "WOHNUNG"}),
 ])
-async def test_individual_count_writes_obey_the_limit(rent_world, monkeypatch, kind, path, payload):
+async def test_individual_count_writes_obey_the_limit(rent_world, monkeypatch, kind, path, payload, confirmed_second_factor):
     from app.core import quotas
     monkeypatch.setattr(settings, "deployment_mode", "hosted")
+    confirmed_second_factor(rent_world["org"], rent_world["admin"])
     monkeypatch.setattr(quotas, "FREE_PLAN", replace(quotas.FREE_PLAN, **{kind: 3}))
     if kind == "units":
         payload = {**payload, "property_id": str(rent_world["property"])}
@@ -773,9 +781,10 @@ async def test_individual_count_writes_obey_the_limit(rent_world, monkeypatch, k
 
 @pytest.mark.asyncio
 async def test_upload_at_storage_limit_succeeds_then_refuses_without_rows_or_files(
-        rent_world, monkeypatch, tmp_path):
+        rent_world, monkeypatch, tmp_path, confirmed_second_factor):
     from app.core import quotas, storage
     monkeypatch.setattr(settings, "deployment_mode", "hosted")
+    confirmed_second_factor(rent_world["org"], rent_world["admin"])
     monkeypatch.setattr(quotas, "FREE_PLAN", replace(quotas.FREE_PLAN, storage_bytes=8))
     monkeypatch.setattr(storage, "_store", storage.LocalFsDocumentStore(tmp_path))
     async with api_client(rent_world) as api:
@@ -795,9 +804,10 @@ async def test_upload_at_storage_limit_succeeds_then_refuses_without_rows_or_fil
 
 
 @pytest.mark.asyncio
-async def test_an_unreferenced_existing_original_is_charged_on_upload(rent_world, monkeypatch, tmp_path):
+async def test_an_unreferenced_existing_original_is_charged_on_upload(rent_world, monkeypatch, tmp_path, confirmed_second_factor):
     from app.core import quotas, storage
     monkeypatch.setattr(settings, "deployment_mode", "hosted")
+    confirmed_second_factor(rent_world["org"], rent_world["admin"])
     monkeypatch.setattr(quotas, "FREE_PLAN", replace(quotas.FREE_PLAN, storage_bytes=8))
     store = storage.LocalFsDocumentStore(tmp_path)
     monkeypatch.setattr(storage, "_store", store)
@@ -917,11 +927,12 @@ async def test_selfhost_uploads_and_counts_ignore_hosted_allowances(rent_world, 
 
 @pytest.mark.asyncio
 async def test_hosted_knowledge_is_off_by_default_without_a_provider_call(
-        approved_knowledge_graph, client_a_admin, monkeypatch):
+        approved_knowledge_graph, client_a_admin, monkeypatch, confirmed_second_factor, seed_data):
     from app.api.property_knowledge import get_knowledge_provider
     from app.declarations.fake_knowledge_provider import FakeKnowledgeProvider
     from app.main import app
     monkeypatch.setattr(settings, "deployment_mode", "hosted")
+    confirmed_second_factor(seed_data["org_a_id"], seed_data["user_a_admin_id"])
     provider = FakeKnowledgeProvider()
     app.dependency_overrides[get_knowledge_provider] = lambda: provider
     try:
@@ -1011,9 +1022,10 @@ async def test_expired_previous_month_reservations_do_not_consume_the_new_month(
 
 @pytest.mark.asyncio
 async def test_hosted_declaration_start_refuses_before_creating_a_queue_receipt(
-        rent_world, monkeypatch, tmp_path):
+        rent_world, monkeypatch, tmp_path, confirmed_second_factor):
     from app.core import storage
     monkeypatch.setattr(settings, "deployment_mode", "hosted")
+    confirmed_second_factor(rent_world["org"], rent_world["admin"])
     from tests.ai_settings_support import configure_ai
     configure_ai(rent_world["org"], monthly_limit_usd=Decimal("0"))
     monkeypatch.setattr(storage, "_store", storage.LocalFsDocumentStore(tmp_path))
@@ -1034,12 +1046,13 @@ async def test_hosted_declaration_start_refuses_before_creating_a_queue_receipt(
 
 @pytest.mark.asyncio
 async def test_concurrent_knowledge_calls_share_the_organization_monthly_cap(
-        approved_knowledge_graph, client_a_admin, monkeypatch, seed_data):
+        approved_knowledge_graph, client_a_admin, monkeypatch, seed_data, confirmed_second_factor):
     import asyncio
     from app.api.property_knowledge import get_knowledge_provider
     from app.declarations.fake_knowledge_provider import FakeKnowledgeProvider
     from app.main import app
     monkeypatch.setattr(settings, "deployment_mode", "hosted")
+    confirmed_second_factor(seed_data["org_a_id"], seed_data["user_a_admin_id"])
     from app.core.db import get_tenant_session
     from app.repositories.organization_ai_settings_repo import OrganizationAiSettingsRepository
     async with get_tenant_session(approved_knowledge_graph.organization_id) as db:
@@ -1090,12 +1103,13 @@ async def test_concurrent_knowledge_calls_share_the_organization_monthly_cap(
 
 
 @pytest.mark.asyncio
-async def test_quota_counts_include_source_restricted_rows(scope_seed, migrator_session, monkeypatch):
+async def test_quota_counts_include_source_restricted_rows(scope_seed, migrator_session, monkeypatch, confirmed_second_factor):
     from tests.test_property_source_enforcement import synthetic_enforcement
     from tests.test_scoped_account_statements import client
     await migrator_session.commit()
     monkeypatch.setattr(settings, "deployment_mode", "hosted")
     ids = {"org": scope_seed["org_a_id"], "actor": scope_seed["user_a_admin_id"]}
+    confirmed_second_factor(ids["org"], ids["actor"])
     async with client(ids, "actor") as api:
         created = await api.post("/api/properties", json={"name": "Geschütztes Objekt", "management_type": "MIET"})
         assert created.status_code == 201, created.text
@@ -1113,10 +1127,11 @@ async def test_quota_counts_include_source_restricted_rows(scope_seed, migrator_
 
 
 @pytest.mark.asyncio
-async def test_racing_unit_creates_cannot_exceed_the_count_limit(rent_world, monkeypatch):
+async def test_racing_unit_creates_cannot_exceed_the_count_limit(rent_world, monkeypatch, confirmed_second_factor):
     import asyncio
     from app.core import quotas
     monkeypatch.setattr(settings, "deployment_mode", "hosted")
+    confirmed_second_factor(rent_world["org"], rent_world["admin"])
     monkeypatch.setattr(quotas, "FREE_PLAN", replace(quotas.FREE_PLAN, units=3))
     async with api_client(rent_world) as api:
         async def create(number):

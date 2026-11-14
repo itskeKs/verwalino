@@ -203,7 +203,7 @@ describe("Objekt-Jahresübersicht", () => {
   });
   it("allows READ_ONLY to read and leaves export authorization to the backend", async () => {
     vi.mocked(endpoints.getPropertyYearReportCsv).mockRejectedValueOnce(new ApiError(403, "Exportberechtigung fehlt"));
-    render(<AuthCtx.Provider value={{ loading: false, session: { user_id: "reader", organization_id: "org", role: "READ_ONLY" }, login: vi.fn(), logout: vi.fn() }}><ReportsPage /></AuthCtx.Provider>);
+    render(<AuthCtx.Provider value={{ loading: false, session: { user_id: "reader", organization_id: "org", role: "READ_ONLY" }, login: vi.fn(), completeSecondFactor: vi.fn(), reloadSession: vi.fn(), logout: vi.fn() }}><ReportsPage /></AuthCtx.Provider>);
     const user = await load();
     expect(screen.queryByRole("button", { name: /speichern|buchen|anlegen/i })).toBeNull();
     await user.click(screen.getByRole("button", { name: "CSV herunterladen" }));

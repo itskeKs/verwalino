@@ -10,7 +10,7 @@ vi.mock("../hooks/usePagedList", () => ({ usePagedList: () => ({
 }) }));
 afterEach(cleanup);
 function show(role: string) {
-  render(<AuthCtx.Provider value={{ loading: false, session: { user_id: "actor", organization_id: "org", role }, login: vi.fn(), logout: vi.fn() }}><MemoryRouter><PersonsPage /></MemoryRouter></AuthCtx.Provider>);
+  render(<AuthCtx.Provider value={{ loading: false, session: { user_id: "actor", organization_id: "org", role }, login: vi.fn(), completeSecondFactor: vi.fn(), reloadSession: vi.fn(), logout: vi.fn() }}><MemoryRouter><PersonsPage /></MemoryRouter></AuthCtx.Provider>);
 }
 it.each(["READ_ONLY", "UNKNOWN"])("hides person writes for %s, even with a prepare grant", role => {
   show(role);

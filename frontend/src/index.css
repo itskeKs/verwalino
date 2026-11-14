@@ -1245,3 +1245,16 @@ code {
 @media (max-width: 768px) {
   .reserve-payment-form { grid-template-columns: minmax(0, 1fr); }
 }
+
+/* Second factor (issue #208) */
+.second-factor-settings { max-width: 900px; }
+.second-factor-enrolment { display: flex; gap: 24px; align-items: flex-start; flex-wrap: wrap; }
+.second-factor-secret { font-size: 15px; letter-spacing: .08em; word-break: break-all; }
+.recovery-codes { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px 24px; padding-left: 20px; margin: 12px 0 18px; }
+.recovery-codes code { font-size: 14px; letter-spacing: .06em; }
+@media (max-width: 560px) {
+  .recovery-codes { grid-template-columns: minmax(0, 1fr); }
+}
+@media print {
+  .second-factor-recovery .theme-save-row { display: none; }
+}

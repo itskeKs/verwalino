@@ -136,7 +136,7 @@ describe("T40 filtered list CSV", () => {
     cleanup(); vi.restoreAllMocks(); vi.unstubAllGlobals();
     URL.createObjectURL = originalCreate; URL.revokeObjectURL = originalRevoke;
   });
-  function open(query = "") { return render(<AuthCtx.Provider value={{ loading: false, session: { user_id: "reader", organization_id: "org", role: "READ_ONLY" }, login: vi.fn(), logout: vi.fn() }}><MemoryRouter initialEntries={["/zahlungen" + query]}><PaymentsPage /></MemoryRouter></AuthCtx.Provider>); }
+  function open(query = "") { return render(<AuthCtx.Provider value={{ loading: false, session: { user_id: "reader", organization_id: "org", role: "READ_ONLY" }, login: vi.fn(), completeSecondFactor: vi.fn(), reloadSession: vi.fn(), logout: vi.fn() }}><MemoryRouter initialEntries={["/zahlungen" + query]}><PaymentsPage /></MemoryRouter></AuthCtx.Provider>); }
   const csv = () => screen.getByRole("button", { name: "CSV herunterladen" });
   const exportCalls = () => fetchMock.mock.calls.filter(([url]) => url.startsWith(route + "/export.csv"));
   async function loaded() { await screen.findByRole("status", { name: outputName }); }

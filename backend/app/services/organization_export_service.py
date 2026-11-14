@@ -98,9 +98,11 @@ async def inventory(db):
         AND (c.relname IN ('organization','cost_category') OR EXISTS(
           SELECT 1 FROM pg_attribute org WHERE org.attrelid=c.oid AND org.attname='organization_id'))
       GROUP BY c.oid,c.relname ORDER BY c.relname"""))).mappings().all()
-    # Password-reset links and invitations are credential infrastructure, never data.
+    # Password-reset links, invitations and second-factor credentials are
+    # credential infrastructure, never data.
     return {r["name"]: r for r in rows if r["name"] not in {
         "password_reset_request", "user_invitation",
+        "user_second_factor", "user_recovery_code",
         "organization_deletion", "organization_ai_settings"}}
 
 

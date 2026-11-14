@@ -265,11 +265,12 @@ async def test_mail_parallel_replay_sends_once(client_a_admin, m7_seed, smtp):
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("already_retained", [False, True], ids=["new-original", "deduplicated-original"])
-async def test_mail_retains_prepared_when_completion_commit_fails(client_a_admin, m7_seed, smtp, monkeypatch, tmp_path, already_retained):
+async def test_mail_retains_prepared_when_completion_commit_fails(client_a_admin, m7_seed, smtp, monkeypatch, tmp_path, already_retained, seed_data, confirmed_second_factor):
     from app.services.document_mail_service import DocumentMailService
     from app.core import storage
     monkeypatch.setattr(storage, "_store", storage.LocalFsDocumentStore(tmp_path))
     monkeypatch.setattr(settings, "deployment_mode", "hosted")
+    confirmed_second_factor(seed_data["org_a_id"], seed_data["user_a_admin_id"])
     await mutate(text("UPDATE person SET email='tenant@example.invalid' WHERE id=:person"), {"person": m7_seed["person_m7"]})
     notice = await issued_notice(client_a_admin, m7_seed)
     url = f"/api/mail/dunning/{notice['id']}"

@@ -169,8 +169,11 @@ def temporary_auth_rows(rows: list[dict]):
                 for user_id in reversed(created_membership_user_ids):
                     cursor.execute("DELETE FROM public.membership WHERE user_id = %s", (str(user_id),))
                 for user_id in reversed(created_user_ids):
+                    cursor.execute("DELETE FROM public.user_second_factor WHERE user_id = %s", (str(user_id),))
+                    cursor.execute("DELETE FROM public.user_recovery_code WHERE user_id = %s", (str(user_id),))
                     cursor.execute('DELETE FROM public."user" WHERE id = %s', (str(user_id),))
                 for organization_id in reversed(created_organization_ids):
+                    cursor.execute("DELETE FROM public.audit_event WHERE organization_id = %s", (str(organization_id),))
                     cursor.execute(
                         "DELETE FROM public.organization WHERE id = %s", (str(organization_id),)
                     )

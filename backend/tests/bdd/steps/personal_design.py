@@ -1,6 +1,8 @@
 """Personal design checks through the real authenticated API."""
 from pytest_bdd import given, parsers, then, when
 
+from tests.bdd.steps.second_factor import finish_sign_in
+
 
 @then(parsers.parse('the personal design is "{theme}"'))
 def personal_design_is(world, theme):
@@ -19,6 +21,7 @@ def choose_personal_design(world, theme):
 def sign_in_again(world):
     assert world.act('POST', '/api/auth/logout').status_code == 204
     answer = world.act('POST', '/api/auth/login', json={'email': world.data['email'], 'password': 'testpass1234'})
+    answer = finish_sign_in(world, world.actor, answer)
     assert answer.status_code == 200, world.describe_response()
 
 

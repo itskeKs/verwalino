@@ -12,7 +12,7 @@ let rows: (User & { role?: string | null })[];
 const usersCalls = () => vi.mocked(api.get).mock.calls.filter(([path]) => path.startsWith("/api/users/page?"));
 const reloads = () => usersCalls().length;
 function show(role = "OWNER_ADMIN", userId = "actor") {
-  const content = (nextRole: string, nextUserId: string) => <AuthCtx.Provider value={{ loading: false, session: { role: nextRole, user_id: nextUserId, organization_id: "org" }, login: vi.fn(), logout: vi.fn() }}><MemoryRouter><UsersPage /></MemoryRouter></AuthCtx.Provider>;
+  const content = (nextRole: string, nextUserId: string) => <AuthCtx.Provider value={{ loading: false, session: { role: nextRole, user_id: nextUserId, organization_id: "org" }, login: vi.fn(), completeSecondFactor: vi.fn(), reloadSession: vi.fn(), logout: vi.fn() }}><MemoryRouter><UsersPage /></MemoryRouter></AuthCtx.Provider>;
   const view = render(content(role, userId));
   return { ...view, changeSession: (nextRole: string, nextUserId = userId) => view.rerender(content(nextRole, nextUserId)) };
 }
@@ -165,4 +165,31 @@ it("blocks duplicate resets and cancellation while the reset request is pending"
   expect(dialog).toBeVisible();
   await act(async () => resolve(undefined));
   await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+});
+it("confirms the second-factor reset in a dialog with real buttons and reports the outcome", async () => {
+  show(); const dialog = await open("Zweiten Faktor zurücksetzen");
+  expect(within(dialog).getByText(/Der zweite Faktor von Eva Beispiel wird entfernt/)).toBeVisible();
+  const confirm = within(dialog).getByRole("button", { name: "Zweiten Faktor zurücksetzen" });
+  const cancel = within(dialog).getByRole("button", { name: "Abbrechen" });
+  // Both actions sit in the kit dialog footer (a flex row), not as bare text run together.
+  expect(confirm.parentElement).toBe(cancel.parentElement);
+  expect(confirm.parentElement).toHaveClass("flex");
+  expect(cancel.parentElement?.tagName).toBe("DIV");
+  await userEvent.click(cancel);
+  expect(api.post).not.toHaveBeenCalled();
+  expect(screen.queryByRole("status")).not.toBeInTheDocument();
+
+  const again = await open("Zweiten Faktor zurücksetzen");
+  await userEvent.click(within(again).getByRole("button", { name: "Zweiten Faktor zurücksetzen" }));
+  expect(api.post).toHaveBeenCalledExactlyOnceWith("/api/users/target%2Fid/reset-second-factor");
+  await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+  expect(await screen.findByRole("status")).toHaveTextContent("Der zweite Faktor von Eva Beispiel wurde zurückgesetzt. Die Person richtet ihn bei der nächsten Anmeldung neu ein.");
+});
+it("keeps the second-factor reset dialog open with the server error and reports no success", async () => {
+  vi.mocked(api.post).mockRejectedValueOnce(new ApiError(404, "Benutzer nicht gefunden"));
+  show(); const dialog = await open("Zweiten Faktor zurücksetzen");
+  await userEvent.click(within(dialog).getByRole("button", { name: "Zweiten Faktor zurücksetzen" }));
+  expect(await within(dialog).findByRole("alert")).toHaveTextContent("Benutzer nicht gefunden");
+  expect(screen.queryByRole("status")).not.toBeInTheDocument();
+  expect(screen.getByRole("dialog", { name: "Zweiten Faktor zurücksetzen" })).toBeInTheDocument();
 });

@@ -49,7 +49,7 @@ it('keeps personal settings for non-admins without fetching organization AI sett
   render(<SettingsPage />);
   expect(screen.getByRole('heading',{name:'Persönliches Design'})).toBeVisible();
   expect(screen.queryByLabelText('API-Schlüssel')).not.toBeInTheDocument();
-  await waitFor(() => expect(api.get).not.toHaveBeenCalled());
+  await waitFor(() => expect(api.get).not.toHaveBeenCalledWith(expect.stringContaining('/ai-settings')));
 });
 
 
@@ -81,4 +81,16 @@ it('saves an endpoint timeout and resets it when the destination changes', async
   fireEvent.change(screen.getByLabelText('API-Basis-URL'),{target:{value:'http://localhost:1234/v1'}});
   expect(timeout).toHaveValue(null);
   expect(timeout).toHaveAttribute('placeholder','180');
+});
+
+it('words the recovery hint in German and gives the second-factor card the gap of its neighbours', async () => {
+  vi.spyOn(api, 'get').mockImplementation(async (url: string) => (url.includes('/legal-assents') ? [] : url === '/api/auth/second-factor' ? { enrolled: true } : initial) as never);
+  render(<SettingsPage />);
+  const card = (await screen.findByRole('heading', { name: 'Zweiter Faktor' })).closest('section')!;
+  expect(card).toHaveTextContent('Ohne Telefon melden Sie sich mit einem der zehn Wiederherstellungscodes an.');
+  expect(card).not.toHaveTextContent('signieren');
+  // Same vertical gap and text size as the AI settings card above it.
+  const neighbour = screen.getByRole('heading', { name: 'KI für Ihre Organisation' }).closest('section')!;
+  for (const name of ['mt-6', 'p-5', 'text-sm']) expect(card).toHaveClass(name);
+  expect(neighbour).toHaveClass('mt-6');
 });

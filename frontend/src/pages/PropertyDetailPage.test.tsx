@@ -43,7 +43,7 @@ function renderMeaProperty(managementType: ManagementType, mea: (string | null)[
     location: "Gartenflügel", usage_type: "WOHNUNG", area: null, heated_area: null,
     mea: share, building_part: "",
   })));
-  return render(<AuthCtx.Provider value={{ loading: false, session: { user_id: "u", organization_id: "o", role }, login: vi.fn(), logout: vi.fn() }}>
+  return render(<AuthCtx.Provider value={{ loading: false, session: { user_id: "u", organization_id: "o", role }, login: vi.fn(), completeSecondFactor: vi.fn(), reloadSession: vi.fn(), logout: vi.fn() }}>
     <MemoryRouter initialEntries={["/objekte/property"]}><Routes><Route path="/objekte/:propertyId" element={<PropertyDetailPage />} /></Routes></MemoryRouter>
   </AuthCtx.Provider>);
 }
@@ -55,7 +55,7 @@ it.each([
   [new Error("Synthetic network failure"), "Error: Synthetic network failure"],
 ])("renders missing-property load errors in German and preserves auth and fallback: %s", async (error, expected) => {
   vi.mocked(endpoints.getProperty).mockRejectedValue(error);
-  render(<AuthCtx.Provider value={{ loading: false, session: { user_id: "u", organization_id: "o", role: "CLERK" }, login: vi.fn(), logout: vi.fn() }}>
+  render(<AuthCtx.Provider value={{ loading: false, session: { user_id: "u", organization_id: "o", role: "CLERK" }, login: vi.fn(), completeSecondFactor: vi.fn(), reloadSession: vi.fn(), logout: vi.fn() }}>
     <MemoryRouter initialEntries={["/objekte/missing"]}><Routes><Route path="/objekte/:propertyId" element={<PropertyDetailPage />} /></Routes></MemoryRouter>
   </AuthCtx.Provider>);
   expect(await screen.findByText(expected, { exact: true })).toHaveTextContent(expected);
@@ -124,7 +124,7 @@ it("keeps MEA confirmation and unit editing unavailable to read-only users", asy
 it("keeps the property and panels while a saved unit refreshes", async () => {
   let finish!: (value: never) => void;
   vi.spyOn(endpoints, "createUnit").mockResolvedValue({ id: "new-unit" } as never);
-  render(<AuthCtx.Provider value={{ loading: false, session: { user_id: "u", organization_id: "o", role: "CLERK" }, login: vi.fn(), logout: vi.fn() }}><MemoryRouter initialEntries={["/objekte/property"]}><Routes><Route path="/objekte/:propertyId" element={<PropertyDetailPage />} /></Routes></MemoryRouter></AuthCtx.Provider>);
+  render(<AuthCtx.Provider value={{ loading: false, session: { user_id: "u", organization_id: "o", role: "CLERK" }, login: vi.fn(), completeSecondFactor: vi.fn(), reloadSession: vi.fn(), logout: vi.fn() }}><MemoryRouter initialEntries={["/objekte/property"]}><Routes><Route path="/objekte/:propertyId" element={<PropertyDetailPage />} /></Routes></MemoryRouter></AuthCtx.Provider>);
   const panel = await screen.findByRole("region", { name: "Zähler" });
   vi.mocked(endpoints.getProperty).mockReturnValueOnce(new Promise(resolve => { finish = resolve; }));
   vi.mocked(endpoints.listUnits).mockResolvedValue([{ id: "new-unit", number: "42", location: "Gartenflügel", usage_type: "WOHNUNG" }] as never);
@@ -239,7 +239,7 @@ it.each([
 
 it.each([["OWNER_ADMIN", true], ["CLERK", true], ["READ_ONLY", false], ["UNKNOWN", false]] as const)(
   "binds the property meter panel without a unit and with role %s", async (role, canWrite) => {
-    render(<AuthCtx.Provider value={{ loading: false, session: { user_id: "user", organization_id: "org", role }, login: vi.fn(), logout: vi.fn() }}>
+    render(<AuthCtx.Provider value={{ loading: false, session: { user_id: "user", organization_id: "org", role }, login: vi.fn(), completeSecondFactor: vi.fn(), reloadSession: vi.fn(), logout: vi.fn() }}>
       <MemoryRouter initialEntries={["/objekte/property"]}>
         <Routes><Route path="/objekte/:propertyId" element={<PropertyDetailPage />} /></Routes>
       </MemoryRouter>
@@ -253,7 +253,7 @@ it.each([["OWNER_ADMIN", true], ["CLERK", true], ["READ_ONLY", false], ["UNKNOWN
 
 it.each([["OWNER_ADMIN", true], ["CLERK", true], ["READ_ONLY", false], ["UNKNOWN", false]] as const)("T37 binds loaded property documents for %s", async (role, canWrite) => {
   vi.mocked(endpoints.getProperty).mockResolvedValue({ id: "loaded-property", name: "Loaded", management_type: "MIET", fiscal_year_start_month: 1 } as never);
-  render(<AuthCtx.Provider value={{ loading: false, session: { user_id: "u", organization_id: "o", role }, login: vi.fn(), logout: vi.fn() }}>
+  render(<AuthCtx.Provider value={{ loading: false, session: { user_id: "u", organization_id: "o", role }, login: vi.fn(), completeSecondFactor: vi.fn(), reloadSession: vi.fn(), logout: vi.fn() }}>
     <MemoryRouter initialEntries={["/objekte/property"]}><Routes><Route path="/objekte/:propertyId" element={<PropertyDetailPage />} /></Routes></MemoryRouter>
   </AuthCtx.Provider>);
   const panel = await screen.findByRole("region", { name: "Dokumente" });
@@ -263,7 +263,7 @@ it.each([["OWNER_ADMIN", true], ["CLERK", true], ["READ_ONLY", false], ["UNKNOWN
 it("T37 ignores a late property response after changing the route", async () => {
   let resolveOld!: (value: Awaited<ReturnType<typeof endpoints.getProperty>>) => void;
   vi.mocked(endpoints.getProperty).mockReturnValueOnce(new Promise((resolve) => { resolveOld = resolve; })).mockResolvedValue({ id: "new-property", name: "Neues Haus", management_type: "MIET", fiscal_year_start_month: 1 } as never);
-  render(<AuthCtx.Provider value={{ loading: false, session: null, login: vi.fn(), logout: vi.fn() }}><MemoryRouter initialEntries={["/objekte/property"]}>
+  render(<AuthCtx.Provider value={{ loading: false, session: null, login: vi.fn(), completeSecondFactor: vi.fn(), reloadSession: vi.fn(), logout: vi.fn() }}><MemoryRouter initialEntries={["/objekte/property"]}>
     <Link to="/objekte/new-property">Anderes Objekt</Link><Routes><Route path="/objekte/:propertyId" element={<PropertyDetailPage />} /></Routes>
   </MemoryRouter></AuthCtx.Provider>);
   fireEvent.click(screen.getByRole("link", { name: "Anderes Objekt" }));
@@ -275,7 +275,7 @@ it("T37 ignores a late property response after changing the route", async () => 
 
 it.each(["CLERK", "OWNER_ADMIN", "READ_ONLY", "UNKNOWN"])("T42 offers context task creation only to writers (%s), with loaded IDs", async role => {
   vi.mocked(endpoints.getProperty).mockResolvedValue({ id: "loaded/p&1", name: "Loaded", management_type: "MIET", fiscal_year_start_month: 1 } as never);
-  render(<AuthCtx.Provider value={{ loading: false, session: { user_id: "u", organization_id: "o", role }, login: vi.fn(), logout: vi.fn() }}><MemoryRouter initialEntries={["/objekte/route-id"]}><Routes><Route path="/objekte/:propertyId" element={<PropertyDetailPage />} /></Routes></MemoryRouter></AuthCtx.Provider>);
+  render(<AuthCtx.Provider value={{ loading: false, session: { user_id: "u", organization_id: "o", role }, login: vi.fn(), completeSecondFactor: vi.fn(), reloadSession: vi.fn(), logout: vi.fn() }}><MemoryRouter initialEntries={["/objekte/route-id"]}><Routes><Route path="/objekte/:propertyId" element={<PropertyDetailPage />} /></Routes></MemoryRouter></AuthCtx.Provider>);
   await screen.findByRole("heading", { name: "Loaded" });
   const link = screen.queryByRole("link", { name: "Aufgabe anlegen" });
   if (role === "CLERK" || role === "OWNER_ADMIN") {

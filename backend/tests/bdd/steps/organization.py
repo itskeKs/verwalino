@@ -12,6 +12,7 @@ from uuid import uuid4
 import pytest
 from pytest_bdd import given, parsers, then, when
 
+from tests.bdd.steps.second_factor import finish_sign_in
 from tests.bdd.steps.records import (
     create_bank_account,
     create_person,
@@ -234,6 +235,7 @@ def administrator_signs_in_again(world):
     assert users.status_code == 200, world.describe_response()
     email = next(user["email"] for user in users.json() if user["id"] == session.json()["user_id"])
     answer = world.send(world.anonymous, "POST", "/api/auth/login", json={"email": email, "password": "testpass1234"})
+    answer = finish_sign_in(world, world.anonymous, answer)
     assert answer.status_code == 200, world.describe_response()
     world.actor = world.anonymous
 

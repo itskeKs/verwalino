@@ -757,50 +757,50 @@ def _upgrade_test_database(alembic_cfg):
     upgraded_invitation_tables = rehearse_initial_upgrade('0183')
     command.upgrade(alembic_cfg, "head")
     record_schema_origin(alembic_cfg)
-    return {'upgrade_0028_to_0187_tables': upgraded_0028_tables,
-            'upgrade_0122_to_0187_tables': upgraded_tables,
-            'upgrade_0139_to_0187_tables': upgraded_0139_tables,
-            'upgrade_0140_to_0187_tables': upgraded_parent_tables,
-            'upgrade_0141_to_0187_tables': upgraded_setup_tables,
-            'upgrade_0142_to_0187_tables': upgraded_throttle_tables,
-            'upgrade_0143_to_0187_tables': upgraded_lease_tables,
-            'upgrade_0144_to_0187_tables': upgraded_signup_tables,
-            'upgrade_0145_to_0187_tables': upgraded_reset_tables,
-            'upgrade_0146_to_0187_tables': upgraded_quota_tables,
-            'upgrade_0147_to_0187_tables': upgraded_lifecycle_tables,
-            'upgrade_0148_to_0187_tables': upgraded_retention_tables,
-            'upgrade_0149_to_0187_tables': upgraded_reserve_tables,
-            'upgrade_0150_to_0187_tables': upgraded_heating_tables,
-            'upgrade_0151_to_0187_tables': upgraded_draft_tables,
-            'upgrade_0152_to_0187_tables': upgraded_bank_tables,
-            'upgrade_0153_to_0187_tables': upgraded_restoration_tables,
-            'upgrade_0154_to_0187_tables': upgraded_always_guard_tables,
-            'upgrade_0155_to_0187_tables': upgraded_person_retention_tables,
-            'upgrade_0159_to_0187_tables': upgraded_deadline_tables,
-            'upgrade_0160_to_0187_tables': upgraded_reason_erasure_tables,
-            'upgrade_0161_to_0187_tables': upgraded_report_recipient_tables,
-            'upgrade_0162_to_0187_tables': upgraded_successor_dunning_tables,
-            'upgrade_0163_to_0187_tables': upgraded_household_tables,
-            'upgrade_0164_to_0187_tables': upgraded_person_day_bases,
-            'upgrade_0165_to_0187_tables': upgraded_property_state,
-            'upgrade_0166_to_0187_tables': upgraded_register_date,
-            'upgrade_0167_to_0187_tables': upgraded_levy_authority,
-            'upgrade_0168_to_0187_tables': upgraded_commercial_rules,
-            'upgrade_0169_to_0187_tables': upgraded_statement_notes,
-            'upgrade_0170_to_0187_tables': upgraded_bank_cost,
-            'upgrade_0171_to_0187_tables': upgraded_bank_corrections,
-            'upgrade_0172_to_0187_tables': upgraded_bank_evidence,
-            'upgrade_0173_to_0187_tables': upgraded_dunning_policy,
-            'upgrade_0174_to_0187_tables': upgraded_preferences,
-            'upgrade_0175_to_0187_tables': upgraded_advance_mode,
-            'upgrade_0176_to_0187_tables': protected_advance_mode,
-            'upgrade_0177_to_0187_tables': upgraded_ai_settings,
-            'upgrade_0178_to_0187_tables': upgraded_provider_settings,
-            'upgrade_0179_to_0187_tables': upgraded_provider_endpoints,
-            'upgrade_0180_to_0187_tables': upgraded_request_timeout,
-            'upgrade_0181_to_0187_tables': upgraded_weg_reserve_soll,
-            'upgrade_0182_to_0187_tables': upgraded_overlap_guard,
-            'upgrade_0183_to_0187_tables': upgraded_invitation_tables}
+    return {'upgrade_0028_to_0188_tables': upgraded_0028_tables,
+            'upgrade_0122_to_0188_tables': upgraded_tables,
+            'upgrade_0139_to_0188_tables': upgraded_0139_tables,
+            'upgrade_0140_to_0188_tables': upgraded_parent_tables,
+            'upgrade_0141_to_0188_tables': upgraded_setup_tables,
+            'upgrade_0142_to_0188_tables': upgraded_throttle_tables,
+            'upgrade_0143_to_0188_tables': upgraded_lease_tables,
+            'upgrade_0144_to_0188_tables': upgraded_signup_tables,
+            'upgrade_0145_to_0188_tables': upgraded_reset_tables,
+            'upgrade_0146_to_0188_tables': upgraded_quota_tables,
+            'upgrade_0147_to_0188_tables': upgraded_lifecycle_tables,
+            'upgrade_0148_to_0188_tables': upgraded_retention_tables,
+            'upgrade_0149_to_0188_tables': upgraded_reserve_tables,
+            'upgrade_0150_to_0188_tables': upgraded_heating_tables,
+            'upgrade_0151_to_0188_tables': upgraded_draft_tables,
+            'upgrade_0152_to_0188_tables': upgraded_bank_tables,
+            'upgrade_0153_to_0188_tables': upgraded_restoration_tables,
+            'upgrade_0154_to_0188_tables': upgraded_always_guard_tables,
+            'upgrade_0155_to_0188_tables': upgraded_person_retention_tables,
+            'upgrade_0159_to_0188_tables': upgraded_deadline_tables,
+            'upgrade_0160_to_0188_tables': upgraded_reason_erasure_tables,
+            'upgrade_0161_to_0188_tables': upgraded_report_recipient_tables,
+            'upgrade_0162_to_0188_tables': upgraded_successor_dunning_tables,
+            'upgrade_0163_to_0188_tables': upgraded_household_tables,
+            'upgrade_0164_to_0188_tables': upgraded_person_day_bases,
+            'upgrade_0165_to_0188_tables': upgraded_property_state,
+            'upgrade_0166_to_0188_tables': upgraded_register_date,
+            'upgrade_0167_to_0188_tables': upgraded_levy_authority,
+            'upgrade_0168_to_0188_tables': upgraded_commercial_rules,
+            'upgrade_0169_to_0188_tables': upgraded_statement_notes,
+            'upgrade_0170_to_0188_tables': upgraded_bank_cost,
+            'upgrade_0171_to_0188_tables': upgraded_bank_corrections,
+            'upgrade_0172_to_0188_tables': upgraded_bank_evidence,
+            'upgrade_0173_to_0188_tables': upgraded_dunning_policy,
+            'upgrade_0174_to_0188_tables': upgraded_preferences,
+            'upgrade_0175_to_0188_tables': upgraded_advance_mode,
+            'upgrade_0176_to_0188_tables': protected_advance_mode,
+            'upgrade_0177_to_0188_tables': upgraded_ai_settings,
+            'upgrade_0178_to_0188_tables': upgraded_provider_settings,
+            'upgrade_0179_to_0188_tables': upgraded_provider_endpoints,
+            'upgrade_0180_to_0188_tables': upgraded_request_timeout,
+            'upgrade_0181_to_0188_tables': upgraded_weg_reserve_soll,
+            'upgrade_0182_to_0188_tables': upgraded_overlap_guard,
+            'upgrade_0183_to_0188_tables': upgraded_invitation_tables}
 
 
 @pytest.fixture(scope="session", autouse=True)
@@ -1065,6 +1065,51 @@ async def client_unauth() -> AsyncGenerator[httpx.AsyncClient, None]:
     async with _api_test_client(
     ) as client:
         yield client
+
+
+# The authenticator secret of every factor that confirmed_second_factor gives out,
+# so a scenario can answer the code step of a later password sign-in.
+CONFIRMED_FACTOR_SECRET = "JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP"
+
+
+@pytest.fixture
+def confirmed_second_factor():
+    """Give users a confirmed second factor for the length of one test.
+
+    Hosted mode lets an account without one reach only the enrolment routes
+    (issue #208). A test that acts as a seeded or world user in hosted mode
+    calls the returned function with the organization id and the user ids.
+    The rows it inserted are removed when the test ends, so the shared seed
+    users keep signing in with the password alone in every other test.
+    """
+    import psycopg2
+
+    from app.services.second_factor_service import encrypt_secret
+
+    given: list[tuple[str, str]] = []
+
+    def confirm(organization_id, *user_ids) -> None:
+        secret = encrypt_secret(uuid.UUID(str(organization_id)), CONFIRMED_FACTOR_SECRET)
+        with psycopg2.connect(MIGRATOR_SYNC_URL) as connection, connection.cursor() as cursor:
+            for user_id in user_ids:
+                cursor.execute(
+                    "INSERT INTO public.user_second_factor"
+                    " (organization_id, user_id, secret_encrypted, confirmed, confirmed_at)"
+                    " VALUES (%s, %s, %s, true, now())"
+                    " ON CONFLICT (organization_id, user_id) DO NOTHING RETURNING id",
+                    (str(organization_id), str(user_id), secret),
+                )
+                if cursor.fetchone():
+                    given.append((str(organization_id), str(user_id)))
+
+    yield confirm
+    if given:
+        with psycopg2.connect(MIGRATOR_SYNC_URL) as connection, connection.cursor() as cursor:
+            for organization_id, user_id in given:
+                cursor.execute(
+                    "DELETE FROM public.user_second_factor WHERE organization_id = %s AND user_id = %s",
+                    (organization_id, user_id),
+                )
 
 
 # ---------------------------------------------------------------------------

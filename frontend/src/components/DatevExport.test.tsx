@@ -102,7 +102,7 @@ describe("DATEV export", () => {
   });
   it("allows READ_ONLY to request server-authorized exports and retries errors", async () => {
     vi.mocked(datev.getDatevSources).mockRejectedValueOnce(new ApiError(403, "Exportrecht fehlt"));
-    render(<AuthCtx.Provider value={{ loading: false, session: { user_id: "u", organization_id: "o", role: "READ_ONLY" }, login: vi.fn(), logout: vi.fn() }}><DatevExport properties={properties} /></AuthCtx.Provider>);
+    render(<AuthCtx.Provider value={{ loading: false, session: { user_id: "u", organization_id: "o", role: "READ_ONLY" }, login: vi.fn(), completeSecondFactor: vi.fn(), reloadSession: vi.fn(), logout: vi.fn() }}><DatevExport properties={properties} /></AuthCtx.Provider>);
     const user = await selection(); await user.click(screen.getByRole("button", { name: "DATEV-Quellen laden" }));
     expect(await screen.findByRole("alert")).toHaveTextContent("Exportrecht fehlt");
     await user.click(screen.getByRole("button", { name: "DATEV-Quellen laden" }));

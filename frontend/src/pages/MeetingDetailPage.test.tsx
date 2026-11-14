@@ -7,7 +7,7 @@ import { AuthCtx } from "../auth/useAuth";
 const meeting = { id: "meeting-1", property_id: "property-1", meeting_date: "2026-11-15", meeting_type: "ORDENTLICH", status: "PLANNED", location: "Saal", invitation_text: "Willkommen", protocol_text: null };
 const json = (value: unknown, status = 200) => new Response(JSON.stringify(value), { status, headers: { "Content-Type": "application/json" } });
 function mount(role = "OWNER_ADMIN") {
-  render(<AuthCtx.Provider value={{ loading: false, session: { user_id: "user-1", organization_id: "org-1", role }, login: vi.fn(), logout: vi.fn() }}><MemoryRouter initialEntries={["/versammlungen/meeting-1"]}><Routes><Route path="/versammlungen/:meetingId" element={<MeetingDetailPage />} /></Routes></MemoryRouter></AuthCtx.Provider>);
+  render(<AuthCtx.Provider value={{ loading: false, session: { user_id: "user-1", organization_id: "org-1", role }, login: vi.fn(), completeSecondFactor: vi.fn(), reloadSession: vi.fn(), logout: vi.fn() }}><MemoryRouter initialEntries={["/versammlungen/meeting-1"]}><Routes><Route path="/versammlungen/:meetingId" element={<MeetingDetailPage />} /></Routes></MemoryRouter></AuthCtx.Provider>);
 }
 afterEach(() => { cleanup(); vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 

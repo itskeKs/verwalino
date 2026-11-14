@@ -7,7 +7,7 @@ import { BankTransactionsPage } from "./BankTransactionsPage";
 const json = (data: unknown, status = 200) => new Response(JSON.stringify(data), { status, headers: { "Content-Type": "application/json" } });
 const transaction = { id: "tx", bank_account_id: "a", booking_date: "2026-01-02", value_date: "2026-01-03", amount: "-1234567890123456.78", counterparty_name: "Muster GmbH", counterparty_iban: "DE123", purpose: "Heizung", status: "NEU" };
 const preview = { count: 3, new_count: 3, duplicate_count: 0, imported_count: 0, total_amount: "12.30", new_total_amount: "12.30", date_from: "2026-01-02", date_to: "2026-01-03", transactions: [{ ...transaction, import_hash: "hash", is_duplicate: false }], preview_truncated: true };
-const auth = (role = "OWNER_ADMIN"): AuthContextValue => ({ loading: false, session: { role, user_id: "user", organization_id: "org" }, login: vi.fn(), logout: vi.fn() });
+const auth = (role = "OWNER_ADMIN"): AuthContextValue => ({ loading: false, session: { role, user_id: "user", organization_id: "org" }, login: vi.fn(), completeSecondFactor: vi.fn(), reloadSession: vi.fn(), logout: vi.fn() });
 function setup(handler?: (url: string, options?: RequestInit) => Promise<Response>, role = "OWNER_ADMIN", initial = "/bankkonten/a/umsaetze?import=1") {
   const fetchMock = vi.fn(async (url: string, options?: RequestInit) => {
     if (handler) return handler(url, options);

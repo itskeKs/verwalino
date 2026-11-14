@@ -6,6 +6,7 @@ import httpx
 import pytest
 from pytest_bdd import given, when, then
 
+from tests.bdd.steps.second_factor import finish_sign_in
 from tests.bdd.world import target_url
 from tests.conftest import _api_test_client
 from tests.bdd.steps.records import create_property
@@ -40,6 +41,7 @@ def quota_organizations(world, mailpit, monkeypatch):
         token = emailed_token(world, body["email"])
         answer = world.send(client, "POST", "/api/signup/confirm", json={"token": token, "password": body["password"]})
         assert answer.status_code == 201, world.describe_response()
+        finish_sign_in(world, client, answer)
         world.organizations[organization] = client
         return organization
 

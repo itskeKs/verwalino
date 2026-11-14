@@ -26,7 +26,7 @@ it.each([
   vi.stubGlobal("fetch", fetch);
   const path = kind === "dunning" ? "/mahnungen/:dunningId" : kind === "settlement" ? "/abrechnungen/:runId" : "/versammlungen/:meetingId";
   const entry = kind === "dunning" ? "/mahnungen/doc1" : kind === "settlement" ? "/abrechnungen/doc1" : "/versammlungen/doc1";
-  render(<AuthCtx.Provider value={{ loading: false, session: { user_id: "u1", organization_id: "o1", role: "READ_ONLY" }, login: vi.fn(), logout: vi.fn() }}>
+  render(<AuthCtx.Provider value={{ loading: false, session: { user_id: "u1", organization_id: "o1", role: "READ_ONLY" }, login: vi.fn(), completeSecondFactor: vi.fn(), reloadSession: vi.fn(), logout: vi.fn() }}>
     <MemoryRouter initialEntries={[entry]}><Routes><Route path={path} element={kind === "dunning" ? <DunningNoticeDetailPage /> : kind === "settlement" ? <SettlementDetailPage /> : <MeetingDetailPage />} /></Routes></MemoryRouter>
   </AuthCtx.Provider>);
   await screen.findByRole("heading", { level: 1 });

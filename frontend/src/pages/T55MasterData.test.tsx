@@ -19,7 +19,7 @@ const house = { id: "house", name: "Haus", street: "", zip_code: "", city: "", m
 const vendor = { id: "vendor", person_id: "person", tax_id: "123", vat_id: null, notes: "Alt" };
 const mandate = { id: "mandate", label: "Verwaltung", mandate_type: "MIET", start_date: "2025-01-01", end_date: null };
 function mount(path: string, component: React.ReactNode, role = "OWNER_ADMIN", route = path) {
-  return render(<AuthCtx.Provider value={{ loading: false, session: { user_id: "u", organization_id: "o", role }, login: vi.fn(), logout: vi.fn() }}><MemoryRouter initialEntries={[path]}><Routes><Route path={route} element={component} /></Routes></MemoryRouter></AuthCtx.Provider>);
+  return render(<AuthCtx.Provider value={{ loading: false, session: { user_id: "u", organization_id: "o", role }, login: vi.fn(), completeSecondFactor: vi.fn(), reloadSession: vi.fn(), logout: vi.fn() }}><MemoryRouter initialEntries={[path]}><Routes><Route path={route} element={component} /></Routes></MemoryRouter></AuthCtx.Provider>);
 }
 function setup(options: { failure?: number; canPrepare?: boolean; unknownBuilding?: boolean } = {}) {
   let currentBank = { ...bank, is_active: true };

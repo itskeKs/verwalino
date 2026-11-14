@@ -14,7 +14,7 @@ it("keeps the person list mounted during a saved edit refresh", async () => {
     if (options?.method === "PUT") { saved = true; return json({ ...person, last_name: "Neu" }); }
     return saved ? new Promise<Response>(resolve => { finish = resolve; }) : json({ items: [person], next_cursor: null });
   }));
-  render(<AuthCtx.Provider value={{ loading: false, session: { user_id: "u", organization_id: "o", role: "CLERK" }, login: vi.fn(), logout: vi.fn() }}><MemoryRouter><PersonsPage /></MemoryRouter></AuthCtx.Provider>);
+  render(<AuthCtx.Provider value={{ loading: false, session: { user_id: "u", organization_id: "o", role: "CLERK" }, login: vi.fn(), completeSecondFactor: vi.fn(), reloadSession: vi.fn(), logout: vi.fn() }}><MemoryRouter><PersonsPage /></MemoryRouter></AuthCtx.Provider>);
   await screen.findByRole("link", { name: "Anna Beispiel" });
   const table = screen.getByRole("table");
   fireEvent.click(screen.getByRole("button", { name: "Bearbeiten" }));
@@ -37,7 +37,7 @@ it.each([401, 403, 500])("handles an open private person editor when the retaine
     if (options?.method === 'PUT') { saved = true; return json(persons[0]); }
     return saved ? new Promise<Response>(resolve => { refresh = resolve; }) : json({ items: persons, next_cursor: null });
   }));
-  render(<AuthCtx.Provider value={{ loading: false, session: { user_id: 'u', organization_id: 'o', role: 'CLERK' }, login: vi.fn(), logout: vi.fn() }}><MemoryRouter><PersonsPage /></MemoryRouter></AuthCtx.Provider>);
+  render(<AuthCtx.Provider value={{ loading: false, session: { user_id: 'u', organization_id: 'o', role: 'CLERK' }, login: vi.fn(), completeSecondFactor: vi.fn(), reloadSession: vi.fn(), logout: vi.fn() }}><MemoryRouter><PersonsPage /></MemoryRouter></AuthCtx.Provider>);
   await screen.findByRole('link', { name: 'Kontakt A' });
   fireEvent.click(within(screen.getByRole('link', { name: 'Kontakt A' }).closest('tr')!).getByRole('button', { name: 'Bearbeiten' }));
   fireEvent.click(screen.getByRole('button', { name: 'Speichern' }));
@@ -66,7 +66,7 @@ it.each([401, 403])("invalidates an outstanding person save after the list confi
     return writes ? new Promise<Response>(resolve => { refresh = resolve; }) : json({ items: persons, next_cursor: null });
   });
   vi.stubGlobal('fetch', fetchMock);
-  render(<AuthCtx.Provider value={{ loading: false, session: { user_id: 'u', organization_id: 'o', role: 'CLERK' }, login: vi.fn(), logout: vi.fn() }}><MemoryRouter><PersonsPage /></MemoryRouter></AuthCtx.Provider>);
+  render(<AuthCtx.Provider value={{ loading: false, session: { user_id: 'u', organization_id: 'o', role: 'CLERK' }, login: vi.fn(), completeSecondFactor: vi.fn(), reloadSession: vi.fn(), logout: vi.fn() }}><MemoryRouter><PersonsPage /></MemoryRouter></AuthCtx.Provider>);
   await screen.findByRole('link', { name: 'Kontakt A' });
   for (const id of ['A', 'B']) {
     fireEvent.click(within(screen.getByRole('link', { name: `Kontakt ${id}` }).closest('tr')!).getByRole('button', { name: 'Bearbeiten' }));

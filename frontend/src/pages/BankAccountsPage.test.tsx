@@ -15,7 +15,7 @@ it("keeps the account table mounted while a confirmed edit refreshes", async () 
     if (url.startsWith("/api/bank-accounts")) return saved ? new Promise<Response>(resolve => { finish = resolve; }) : json([account]);
     return json({ items: [], next_cursor: null });
   }));
-  render(<AuthCtx.Provider value={{ loading: false, session: { user_id: "u", organization_id: "o", role: "CLERK" }, login: vi.fn(), logout: vi.fn() }}><MemoryRouter><BankAccountsPage /></MemoryRouter></AuthCtx.Provider>);
+  render(<AuthCtx.Provider value={{ loading: false, session: { user_id: "u", organization_id: "o", role: "CLERK" }, login: vi.fn(), completeSecondFactor: vi.fn(), reloadSession: vi.fn(), logout: vi.fn() }}><MemoryRouter><BankAccountsPage /></MemoryRouter></AuthCtx.Provider>);
   await screen.findByText("Hauskonto");
   const table = screen.getByRole("table");
   fireEvent.click(screen.getByRole("button", { name: "Bankkonto bearbeiten" }));
@@ -37,7 +37,7 @@ it("clears incompatible scope when switching between deposit and reserve account
     }
     throw new Error(`Unexpected URL: ${input}`);
   }));
-  render(<AuthCtx.Provider value={{ loading: false, session: { user_id: "user", organization_id: "org", role: "OWNER_ADMIN" }, login: vi.fn(), logout: vi.fn() }}><MemoryRouter><BankAccountsPage /></MemoryRouter></AuthCtx.Provider>);
+  render(<AuthCtx.Provider value={{ loading: false, session: { user_id: "user", organization_id: "org", role: "OWNER_ADMIN" }, login: vi.fn(), completeSecondFactor: vi.fn(), reloadSession: vi.fn(), logout: vi.fn() }}><MemoryRouter><BankAccountsPage /></MemoryRouter></AuthCtx.Provider>);
   fireEvent.click(screen.getByRole("button", { name: "+ Neues Bankkonto" }));
   await screen.findAllByRole("option", { name: /Testhaus/ });
   fireEvent.change(screen.getByRole("combobox", { name: "Objekt *" }), { target: { value: "property" } });
@@ -60,7 +60,7 @@ it("explicitly names the account type select for exact browser label lookup", as
     if (input.startsWith("/api/properties/page")) return json({ items: [], next_cursor: null });
     throw new Error(`Unexpected URL: ${input}`);
   }));
-  render(<AuthCtx.Provider value={{ loading: false, session: { user_id: "user", organization_id: "org", role: "OWNER_ADMIN" }, login: vi.fn(), logout: vi.fn() }}><MemoryRouter><BankAccountsPage /></MemoryRouter></AuthCtx.Provider>);
+  render(<AuthCtx.Provider value={{ loading: false, session: { user_id: "user", organization_id: "org", role: "OWNER_ADMIN" }, login: vi.fn(), completeSecondFactor: vi.fn(), reloadSession: vi.fn(), logout: vi.fn() }}><MemoryRouter><BankAccountsPage /></MemoryRouter></AuthCtx.Provider>);
   fireEvent.click(screen.getByRole("button", { name: "+ Neues Bankkonto" }));
   const label = Array.from(document.querySelectorAll("label")).find(item => item.firstChild?.textContent?.trim() === "Kontotyp *");
   const select = label?.querySelector("select");
@@ -80,7 +80,7 @@ it.each(["OWNER_ADMIN", "CLERK", "READ_ONLY"])("verlinkt Kontoumsätze und schü
     if (input.startsWith("/api/properties/page")) return json({ items: [], next_cursor: null });
     throw new Error(`Unexpected URL: ${input}`);
   }));
-  render(<AuthCtx.Provider value={{ loading: false, session: { user_id: "user", organization_id: "org", role }, login: vi.fn(), logout: vi.fn() }}><MemoryRouter><BankAccountsPage /></MemoryRouter></AuthCtx.Provider>);
+  render(<AuthCtx.Provider value={{ loading: false, session: { user_id: "user", organization_id: "org", role }, login: vi.fn(), completeSecondFactor: vi.fn(), reloadSession: vi.fn(), logout: vi.fn() }}><MemoryRouter><BankAccountsPage /></MemoryRouter></AuthCtx.Provider>);
   expect(await screen.findByRole("link", { name: "Umsätze" })).toHaveAttribute("href", "/bankkonten/konto/umsaetze");
   if (role === "READ_ONLY") {
     expect(screen.queryByRole("link", { name: "Kontoauszug importieren" })).not.toBeInTheDocument();
@@ -100,7 +100,7 @@ it("keeps the canonical account label during a second edit opened before refresh
     if (url.startsWith('/api/bank-accounts')) return changes.length ? new Promise<Response>(resolve => { refresh = resolve; }) : json([account]);
     return json({ items: [], next_cursor: null });
   }));
-  render(<AuthCtx.Provider value={{ loading: false, session: { user_id: 'u', organization_id: 'o', role: 'CLERK' }, login: vi.fn(), logout: vi.fn() }}><MemoryRouter><BankAccountsPage /></MemoryRouter></AuthCtx.Provider>);
+  render(<AuthCtx.Provider value={{ loading: false, session: { user_id: 'u', organization_id: 'o', role: 'CLERK' }, login: vi.fn(), completeSecondFactor: vi.fn(), reloadSession: vi.fn(), logout: vi.fn() }}><MemoryRouter><BankAccountsPage /></MemoryRouter></AuthCtx.Provider>);
   fireEvent.click(await screen.findByRole('button', { name: 'Bankkonto bearbeiten' }));
   fireEvent.change(screen.getByLabelText('Bezeichnung', { exact: true }), { target: { value: canonical.label } });
   fireEvent.click(screen.getByRole('button', { name: 'Änderungen speichern' }));
