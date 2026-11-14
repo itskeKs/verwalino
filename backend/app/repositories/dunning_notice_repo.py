@@ -23,9 +23,9 @@ ITEM_KEYS_PER_STATEMENT = 500
 
 # A stored item of an issued notice demands the item with the given key when its period is the
 # same, its payment type is the same (or it is the joint operating advance that also demanded
-# the heating advance, $joint_advance) and its due date is the same. An item stored without a
-# due date (before the due date joined the key) matches every due date of its month and type;
-# so does a key without one.
+# the heating advance, $joint_advance) and, when the key has a due date (item_key adds it only
+# for special levies), its due date is the same. An item stored without a due date matches every
+# due date of its month and type; so does a key without one.
 _DEMANDED_ITEM = cast(
     "$[*] ? (@.period_year == $period_year && @.period_month == $period_month"
     " && (@.payment_type == $payment_type"
@@ -106,9 +106,10 @@ class DunningNoticeRepository(TenantRepository[DunningNotice]):
         An item was demanded once per already-issued notice of the same person (the
         same lease for tenants, mirroring issued_for_lease) whose frozen included_items
         contain it -- identity is the engine's item_key (payment_type + period_year +
-        period_month + the due date of a dated item), so part payments and corrected or
-        reversed postings stay the same item while two items of one month stay apart.
-        An item stored without a due date matches every item of its month and type. The
+        period_month, plus the due date of a special levy), so part payments, corrected or
+        reversed postings and a moved due date stay the same item while two levies of one
+        month stay apart. An item stored without a due date matches every item of its
+        month and type. The
         heating advance also counts a demand made inside the joint operating advance
         (combined_advance) of its month, because it reappears as its own item once the
         joint receipt is reversed. Drafts count nothing; an item without earlier notices

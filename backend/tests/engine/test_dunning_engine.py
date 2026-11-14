@@ -460,6 +460,16 @@ def test_an_undated_or_yearless_item_has_no_due_date_in_its_key():
     assert item_key(yearless) == {"payment_type": "SONDERZAHLUNG", "period_year": 0, "period_month": None}
 
 
+@pytest.mark.parametrize("payment_type", [
+    "KALTMIETE", "NK_VORAUSZAHLUNG", "HK_VORAUSZAHLUNG", "HAUSGELD_VORSCHUSS", "RUECKLAGENANTEIL", "NACHZAHLUNG"])
+def test_the_due_date_of_a_monthly_obligation_is_not_part_of_its_key(payment_type):
+    """One item per month and type: its due date moves with the property's federal state, the key must not."""
+    january = [OverdueItem(2026, 1, payment_type, Decimal("700.00"), Decimal("0.00"), Decimal("700.00"),
+                           due_date=due) for due in (date(2026, 1, 6), date(2026, 1, 7))]
+    assert [item_key(item) for item in january] == [
+        {"payment_type": payment_type, "period_year": 2026, "period_month": 1}] * 2
+
+
 def _joint_advance_charges():
     # April 2026: operating advance 150.00 (lease on a joint payment) and heating advance 90.00, both due 7 April.
     due = date(2026, 4, 7)
@@ -484,5 +494,5 @@ def test_a_reversed_joint_receipt_reopens_the_heating_advance_as_its_own_item():
         list(account_statement(_joint_advance_charges(), [reversed_receipt]).open_items),
         date(2026, 4, 25), current_year=2026)
     assert [item_key(it) for it in split] == [
-        {"payment_type": "HK_VORAUSZAHLUNG", "period_year": 2026, "period_month": 4, "due_date": "2026-04-07"},
-        {"payment_type": "NK_VORAUSZAHLUNG", "period_year": 2026, "period_month": 4, "due_date": "2026-04-07"}]
+        {"payment_type": "HK_VORAUSZAHLUNG", "period_year": 2026, "period_month": 4},
+        {"payment_type": "NK_VORAUSZAHLUNG", "period_year": 2026, "period_month": 4}]

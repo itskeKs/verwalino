@@ -1987,6 +1987,7 @@ async def test_unscoped_ledger_requires_exact_lease_provenance(isolated_batch_se
 # Escalation anchors on the currently overdue items (#407)
 # ===========================================================================
 from tests.test_special_levy import levy_db as levy_db, levy_fixture as levy_fixture  # noqa: E402,F401
+from tests.test_ownership_change import ownership_world as ownership_world  # noqa: E402,F401
 
 
 async def _escalation_lease(api, w, property_key, number):
@@ -2556,6 +2557,63 @@ async def test_co_owners_of_a_levy_each_count_their_own_demands(levy_db, levy_fi
         await _levy_notice(api, ids, 1, "2026-06-28", (1, "0.00", "3750.00"))
 
 
+@pytest.mark.asyncio
+async def test_rent_level_survives_a_moved_due_date(rent_world):
+    """January rent falls due on 6 January; once the property is in Bavaria (Epiphany) it falls due on 7 January."""
+    w = rent_world
+    async with api_client(w) as api:
+        lease = await _escalation_lease(api, w, "hidden_property", "Esc 1")
+        await _escalation_account(api, w, "hidden_property")
+        await _notice(api, w, lease, JANUARY, (1, "0.00", "700.00"))
+        await _notice(api, w, lease, JANUARY_AGAIN, (2, "2.50", "702.50"))
+        moved = await api.put(f"/api/properties/{w['hidden_property']}", json={"federal_state": "BY"})
+        assert moved.status_code == 200, moved.text
+        # The same January rent, demanded twice: level 3, not a first demand because its due date moved.
+        await _notice(api, w, lease, JANUARY_THIRD, (3, "2.50", "702.50"), issue=False)
+
+
+@pytest.mark.asyncio
+async def test_hausgeld_level_survives_a_moved_due_date(ownership_world):
+    """Hausgeld of 400.00 per month, due on the 6th: 6 January, 7 January once the property is in Bavaria."""
+    from tests.financial_coverage_helpers import attest_fixture
+    from tests.test_ownership_change import create_owner, ownership_client
+
+    w = ownership_world
+    async with ownership_client(w) as api:
+        await create_owner(api, w)
+        plan = await api.post("/api/economic-plans", json={
+            "property_id": w["property"], "plan_year": 2026, "period_start": "2026-01-01",
+            "period_end": "2026-12-31", "monthly_due_day": 6})
+        assert plan.status_code == 201, plan.text
+        plan = plan.json()["id"]
+        values = {"planned_costs": [{"category_code": "WEG_VERWALTERKOSTEN", "label": "Annual cost",
+                  "planned_amount": "4800.00", "cost_group": "NICHT_UMLAGEFAEHIG"}],
+                  "reserve_contribution_total": "0.00"}
+        await attest_fixture(api, "economic_plan", plan, values)
+        finalized = await api.post(f"/api/economic-plans/{plan}/finalize", json=values)
+        assert finalized.status_code == 200, finalized.text
+
+        async def notice(reference_date, expected, *, issue=True):
+            response = await api.post("/api/dunning/owner", json={
+                "owner_profile_id": w["seller"], "economic_plan_id": plan, "period_start": "2026-01-01",
+                "period_end": "2026-01-31", "reference_date": reference_date})
+            assert response.status_code == 201, response.text
+            created = response.json()
+            assert (created["level"], created["fee_amount"], created["total_amount"]) == expected, created
+            assert [(row["period_month"], row["due_date"]) for row in created["included_items"]] == [
+                (1, expected_due[0])]
+            if issue:
+                assert (await api.post(f"/api/dunning/{created['id']}/issue")).status_code == 200
+
+        expected_due = ["2026-01-06"]
+        await notice("2026-02-20", (1, "0.00", "400.00"))
+        await notice("2026-03-05", (2, "2.50", "402.50"))
+        moved = await api.put(f"/api/properties/{w['property']}", json={"federal_state": "BY"})
+        assert moved.status_code == 200, moved.text
+        expected_due[0] = "2026-01-07"
+        await notice("2026-03-20", (3, "2.50", "402.50"), issue=False)
+
+
 async def _insert_issued_notice(db, w, lease, items, *, level=1):
     import json
     from app.models.dunning_notice import LEASE_SOURCE_KEY
@@ -2578,8 +2636,11 @@ def _stored(payment_type, month, due=None, *, year=2026, **extra):
 
 
 def _key(payment_type, month, due=None, *, year=2026):
-    return {"payment_type": payment_type, "period_year": year, "period_month": month,
-            **({"due_date": due} if due is not None else {})}
+    """The key the engine builds for an overdue item of this type, period and due date."""
+    from app.engine.dunning import OverdueItem, item_key
+
+    return item_key(OverdueItem(year, month, payment_type, Decimal("1.00"), Decimal("0.00"), Decimal("1.00"),
+                                due_date=date.fromisoformat(due) if due is not None else None))
 
 
 @pytest.mark.asyncio
@@ -2600,6 +2661,7 @@ async def test_demands_count_per_due_date_and_an_old_item_without_one_counts_for
         [_stored("SONDERZAHLUNG", 6, "2026-06-25"), _stored("HAUSGELD_VORSCHUSS", 6, "2026-06-03")],
         [_stored("SONDERZAHLUNG", 7)],
         [_stored("SONDERZAHLUNG", None, "2026-01-01", year=0)],
+        [_stored("KALTMIETE", 1, "2026-01-06")],
     ):
         await _insert_issued_notice(rent_db, w, lease, items)
     await rent_db.commit()
@@ -2624,9 +2686,11 @@ async def test_demands_count_per_due_date_and_an_old_item_without_one_counts_for
         # An item without a year or month is matched on its null month, whatever fallback date it stored.
         assert await count(_key("SONDERZAHLUNG", None, year=0)) == 1
         assert await count(_key("SONDERZAHLUNG", None, year=0), _key("SONDERZAHLUNG", 7, "2026-07-10")) == 1
-        # Another payment type of the same month is another item.
+        # Another payment type of the same month is another item. A monthly obligation has one item per
+        # month and type: it counts whatever due date it was stored with, and a moved due date changes nothing.
         assert await count(_key("HAUSGELD_VORSCHUSS", 6, "2026-06-03")) == 1
-        assert await count(_key("HAUSGELD_VORSCHUSS", 6, "2026-06-04")) == 0
+        assert await count(_key("HAUSGELD_VORSCHUSS", 6, "2026-06-04")) == 1
+        assert await count(_key("KALTMIETE", 1, "2026-01-07")) == 1
         assert await count(_key("KALTMIETE", 6, "2026-06-03")) == 0
 
 
@@ -2656,8 +2720,7 @@ async def test_the_heating_advance_counts_a_demand_made_inside_the_joint_advance
         # After the joint receipt is reversed, the heating advance of April is its own item again, demanded once.
         assert await count(_key("HK_VORAUSZAHLUNG", 4, "2026-04-07")) == 1
         assert await count(_key("NK_VORAUSZAHLUNG", 4, "2026-04-07")) == 1
-        # Neither another due date nor another month, and an operating advance demanded alone is no heating demand.
-        assert await count(_key("HK_VORAUSZAHLUNG", 4, "2026-04-08")) == 0
+        # Not another month, and an operating advance demanded alone is no heating demand.
         assert await count(_key("HK_VORAUSZAHLUNG", 5, "2026-05-07")) == 0
         assert await count(_key("NK_VORAUSZAHLUNG", 5, "2026-05-07")) == 1
 

@@ -32,7 +32,7 @@ from decimal import Decimal, localcontext
 
 from app.engine.rounding import round_money
 
-from app.engine.mietkonto import OpenItem
+from app.engine.mietkonto import PT_SONDERZAHLUNG, OpenItem
 
 # ---------------------------------------------------------------------------
 # [section 18/fachlich] Provisional defaults -- must be validated by legal.
@@ -137,13 +137,19 @@ class DunningInput:
         return rows
 
 
+# Payment types of which one month can hold several dated items (one per due date of a special
+# levy). Only there the due date tells two items apart.
+DUE_DATE_KEYED_TYPES = frozenset({PT_SONDERZAHLUNG})
+
+
 def item_key(item: OverdueItem) -> dict:
     """Identity of an overdue item across notices; the level counts demands per key.
 
-    payment_type + period_year + period_month, plus the due date of a dated item: one month
-    can hold several open items of one type (two special levies falling due in the same
-    month) and only their due dates tell them apart. A yearless item carries a fallback due
-    date that moves with the calendar year, so it does not belong to the identity. Part
+    payment_type + period_year + period_month. Rent, advances and Hausgeld have one item per
+    month and type, and their due date moves with the property's federal state or a holiday
+    rule, so it is not part of their key. One month can hold several special levies, which
+    only their due dates tell apart: for DUE_DATE_KEYED_TYPES a dated item's key adds the due
+    date (a yearless item's fallback date moves with the calendar year and stays out). Part
     payments and corrected or reversed postings leave the key as it is. The notice stores
     these fields in every item row and the next notice counts earlier demands with the key.
     """
@@ -152,7 +158,7 @@ def item_key(item: OverdueItem) -> dict:
         "period_year": item.period_year,
         "period_month": item.period_month,
     }
-    if item.period_year and item.due_date is not None:
+    if item.payment_type in DUE_DATE_KEYED_TYPES and item.period_year and item.due_date is not None:
         key["due_date"] = item.due_date.isoformat()
     return key
 
