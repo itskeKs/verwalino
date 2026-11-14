@@ -534,6 +534,14 @@ Drafts recomputed under `m4.9.0` can differ from `m4.8.0` wherever shares did no
 overlapped for part of the year; finalized runs stay frozen (ENGINE_VERSION `m4.9.0`, the
 version-gated PDF sentences read „at least“ a version and are unchanged).
 
+The direct-amount keys (`EXTERNE_ABRECHNUNG`, `MANUELLER_BETRAG`) now use the same exact rational
+cell weights as the weighted keys instead of 28-digit Decimals, so a draft can also differ where two
+exact shares tie at half a cent and the time factor is not 1, even for an owner change without
+co-owners: the remainder cent then follows the engine's rule (the larger exact share wins) and may land
+on the other owner than under `m4.8.0`. Example: `MANUELLER_BETRAG` 108,29 € on one unit, owner B until
+14.06.2025 and owner C from 15.06.2025, service period 09.09.2024–29.07.2025: exact 85,085 / 23,205,
+`m4.8.0` 85,08 / 23,21, `m4.9.0` 85,09 / 23,20; the sum stays 108,29.
+
 ### 4.4 Addressee Model for the Owner Distribution (Engine Mirror of M3)
 
 The key insight: `distribute_position` **already today** generates, for each item, all (unit, time-slice) cells across the entire property and knows **owner cells** (vacancy → `vacancy_attribution` with `owner_profile_id`). For M4 the **addressee focus** shifts:
