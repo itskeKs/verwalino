@@ -726,8 +726,15 @@ same throttle lockout as a wrong password and is refused with the same generic
 message. An OWNER_ADMIN resets another user's factor through
 `/api/users/{id}/reset-second-factor`; the action is audited, and in hosted mode
 a transaction-local GUC names the reset account to the 0138 trigger so exactly
-that user's `session_version` advances and the target's sessions end. Hosted
-mode (owner decision, 5 Nov 2026) makes the factor mandatory for every staff
+that user's `session_version` advances and the target's sessions end. A sole
+administrator who lost the device and the recovery codes is reset by the operator
+on the host: `python -m app.admin_cli reset-second-factor --email ADDRESS --reason TEXT`
+(issue #657) runs as the migrator, because the definer function accepts only the
+interactive `app_rw` runtime; it deletes the factor and the recovery codes, advances
+the account's `session_version` through the same GUC, and writes one
+`OPERATOR_RESET_SECOND_FACTOR` audit event without an actor, carrying the stated
+reason (see [operator guidance](../DEPLOY.md#second-factor-reset-by-the-operator)).
+Hosted mode (owner decision, 5 Nov 2026) makes the factor mandatory for every staff
 role: `get_current_user` derives the enrolment obligation from the database
 (the confirmed factor, read in the same statement as the deletion state, so no
 cookie issuer can hand out an unrestricted hosted session) and lets an

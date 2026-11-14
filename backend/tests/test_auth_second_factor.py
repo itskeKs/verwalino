@@ -10,6 +10,7 @@ import psycopg2
 import pytest
 import pytest_asyncio
 
+from app import admin_cli
 from app.core.config import settings
 from app.core.security import create_session_token
 from tests.bdd.steps.second_factor import enrol_second_factor as _enrol, totp_code
@@ -867,3 +868,262 @@ def test_cooling_off_guard_exemption_migration_roundtrip(run_migrations):
             transaction.rollback()
     finally:
         engine.dispose()
+
+# --- Issue #657: the operator reset for a locked-out sole administrator. ---
+
+OPERATOR_REASON = "Lost phone and recovery codes; confirmed through the second contact of the legal notice"
+
+
+def _operator_reset(monkeypatch, *arguments):
+    """Run `admin_cli reset-second-factor`; the connection must be the migrator's."""
+    monkeypatch.setattr("sys.argv", ["admin_cli", "reset-second-factor", *arguments])
+    original = admin_cli.psycopg2.connect
+
+    def connect(url):
+        assert url == settings.database_url_sync
+        connection = original(url)
+        with connection.cursor() as cursor:
+            cursor.execute("SELECT current_user")
+            assert cursor.fetchone() == ("app_migrator",)
+        return connection
+
+    monkeypatch.setattr(admin_cli.psycopg2, "connect", connect)
+    admin_cli.main()
+
+
+def _session_version(user_id) -> int:
+    return _db('SELECT session_version FROM public."user" WHERE id = %s', (str(user_id),))[0][0]
+
+
+def _operator_events(user_id):
+    return _db(
+        "SELECT organization_id, actor_user_id, entity_type, payload_diff FROM public.audit_event"
+        " WHERE entity_id = %s AND action = 'OPERATOR_RESET_SECOND_FACTOR'",
+        (str(user_id),),
+    )
+
+
+def _organization_event_count(organization_id) -> int:
+    return _db(
+        "SELECT count(*) FROM public.audit_event WHERE organization_id = %s", (str(organization_id),)
+    )[0][0]
+
+
+@pytest.mark.anyio
+async def test_operator_reset_removes_factor_and_codes_and_audits_once(second_factor_identity, monkeypatch, capsys):
+    client, identity = second_factor_identity
+    user = identity["user_id"]
+    secret, codes = await _enrol(client)
+    stored = _db("SELECT secret_encrypted FROM public.user_second_factor WHERE user_id = %s", (str(user),))[0][0]
+    version = _session_version(user)
+
+    # The address is matched like at sign-in: trimmed and case-insensitive.
+    _operator_reset(monkeypatch, "--email", f"  {identity['email'].upper()} ", "--reason", OPERATOR_REASON)
+
+    assert _factor_state(str(user)) == (0, 0)
+    assert _session_version(user) == version + 1
+    events = _operator_events(user)
+    assert len(events) == 1
+    organization, actor, entity_type, payload = events[0]
+    assert (str(organization), actor, entity_type) == (str(identity["organization_id"]), None, "user")
+    assert payload == {"action": "operator_reset_second_factor", "reason": OPERATOR_REASON}
+    printed = capsys.readouterr().out
+    assert "removed the second factor and 10 recovery code(s)" in printed.lower()
+    for material in (secret, stored, *codes):
+        assert material not in printed + str(payload), "No secret material in the audit event or the command output"
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("mode", ["selfhost", "hosted"])
+async def test_operator_reset_ends_open_sessions_and_the_account_signs_in_again(
+    second_factor_identity, monkeypatch, mode
+):
+    monkeypatch.setattr(settings, "deployment_mode", mode)
+    client, identity = second_factor_identity
+    await _enrol(client)
+    assert (await client.get("/api/auth/session")).status_code == 200
+
+    _operator_reset(monkeypatch, "--email", identity["email"], "--reason", OPERATOR_REASON)
+
+    ended = await client.get("/api/auth/session")
+    assert ended.status_code == 401, ended.text
+    login = await _login(client, identity["email"])
+    assert login.status_code == 200, login.text
+    assert login.json()["second_factor_required"] is False
+    preferences = await client.get("/api/auth/preferences")
+    if mode == "hosted":
+        # The hosted account must enrol again before it reaches the application.
+        assert login.json()["second_factor_enrolment_required"] is True
+        assert preferences.status_code == 403, preferences.text
+        assert preferences.json()["detail"]["code"] == "second_factor_enrolment_required"
+        await _enrol(client)
+        assert (await client.get("/api/auth/preferences")).status_code == 200
+    else:
+        # Self-hosted, the password alone is enough.
+        assert login.json()["second_factor_enrolment_required"] is False
+        assert preferences.status_code == 200, preferences.text
+
+
+@pytest.mark.anyio
+async def test_operator_reset_of_an_unknown_address_changes_nothing_and_says_so(
+    second_factor_identity, monkeypatch, capsys
+):
+    client, identity = second_factor_identity
+    user = identity["user_id"]
+    await _enrol(client)
+    version, events = _session_version(user), _organization_event_count(identity["organization_id"])
+
+    with pytest.raises(SystemExit) as refused:
+        _operator_reset(monkeypatch, "--email", f"nobody-{uuid.uuid4()}@example.test", "--reason", OPERATOR_REASON)
+
+    assert refused.value.code == 1
+    assert "no account" in capsys.readouterr().err.lower()
+    assert _factor_state(str(user)) == (1, 10)
+    assert _session_version(user) == version
+    assert _organization_event_count(identity["organization_id"]) == events
+
+
+@pytest.mark.anyio
+async def test_operator_reset_of_an_account_without_a_factor_changes_nothing_and_says_so(
+    second_factor_identity, monkeypatch, capsys
+):
+    _, identity = second_factor_identity
+    user = identity["user_id"]
+    version, events = _session_version(user), _organization_event_count(identity["organization_id"])
+
+    _operator_reset(monkeypatch, "--email", identity["email"], "--reason", OPERATOR_REASON)
+
+    assert "no second factor" in capsys.readouterr().out.lower()
+    assert _session_version(user) == version
+    assert _organization_event_count(identity["organization_id"]) == events
+
+
+@pytest.mark.anyio
+async def test_operator_reset_also_removes_an_unfinished_enrolment(second_factor_identity, monkeypatch):
+    client, identity = second_factor_identity
+    user = identity["user_id"]
+    started = await client.post("/api/auth/second-factor/enrolment")
+    assert started.status_code == 200, started.text
+    assert _factor_state(str(user)) == (1, 0)
+
+    _operator_reset(monkeypatch, "--email", identity["email"], "--reason", OPERATOR_REASON)
+
+    assert _factor_state(str(user)) == (0, 0)
+    assert len(_operator_events(user)) == 1
+
+
+@pytest.mark.anyio
+async def test_operator_reset_touches_only_the_named_account(second_factor_identity, monkeypatch):
+    client, identity = second_factor_identity
+    await _enrol(client)
+    foreign = {"email": f"foreign-{uuid.uuid4()}@example.test", "role": "OWNER_ADMIN"}
+    with temporary_auth_rows([foreign]):
+        colleague = _add_colleague(identity, active=True)
+        stranger = _add_colleague(foreign, active=True)
+        versions = (_session_version(colleague), _session_version(stranger))
+        try:
+            _operator_reset(monkeypatch, "--email", identity["email"], "--reason", OPERATOR_REASON)
+
+            assert _factor_state(str(identity["user_id"])) == (0, 0)
+            assert _factor_state(colleague) == (1, 1)
+            assert _factor_state(stranger) == (1, 1)
+            assert (_session_version(colleague), _session_version(stranger)) == versions
+            assert _operator_events(colleague) == _operator_events(stranger) == []
+        finally:
+            _remove_colleague(colleague)
+            _remove_colleague(stranger)
+
+
+@pytest.mark.parametrize("arguments", [
+    [],
+    ["--email", "someone@example.test"],
+    ["--reason", OPERATOR_REASON],
+    ["--email", "   ", "--reason", OPERATOR_REASON],
+    ["--email", "someone@example.test", "--reason", "   "],
+    ["--email", "someone@example.test", "--reason", "x" * 501],
+])
+def test_operator_reset_rejects_missing_or_unusable_arguments_before_connecting(monkeypatch, capsys, arguments):
+    monkeypatch.setattr("sys.argv", ["admin_cli", "reset-second-factor", *arguments])
+    monkeypatch.setattr(admin_cli.psycopg2, "connect", lambda *_: pytest.fail("must not connect"))
+    with pytest.raises(SystemExit) as refused:
+        admin_cli.main()
+    assert refused.value.code == 2
+    assert "admin_cli reset-second-factor" in capsys.readouterr().err
+
+
+# --- Issue #657, review round 1: control characters, help text, failed audit insert, pending token. ---
+
+
+@pytest.mark.parametrize("reason", [
+    "ticket 4711\nsecond line",
+    "ticket\t4711",
+    "\x1b[31mticket 4711",
+    "ticket 4711\x7f",
+    "ticket 4711\n",
+    "\x00ticket 4711",
+])
+def test_operator_reset_refuses_control_characters_in_the_reason_before_connecting(monkeypatch, capsys, reason):
+    monkeypatch.setattr("sys.argv", ["admin_cli", "reset-second-factor", "--email", "someone@example.test", "--reason", reason])
+    monkeypatch.setattr(admin_cli.psycopg2, "connect", lambda *_: pytest.fail("must not connect"))
+    with pytest.raises(SystemExit) as refused:
+        admin_cli.main()
+    assert refused.value.code == 2
+    assert "control characters" in capsys.readouterr().err
+
+
+def test_operator_reset_help_says_the_reason_names_the_request_not_a_person(monkeypatch, capsys):
+    monkeypatch.setattr("sys.argv", ["admin_cli", "reset-second-factor", "--help"])
+    with pytest.raises(SystemExit) as shown:
+        admin_cli.main()
+    assert shown.value.code == 0
+    text = " ".join(capsys.readouterr().out.split())
+    assert "date, channel and ticket reference" in text
+    assert "never a person's name or contact detail" in text
+
+
+@pytest.mark.anyio
+async def test_a_failed_audit_insert_leaves_the_account_untouched(second_factor_identity, monkeypatch):
+    """The delete, the session bump and the event are one transaction."""
+    client, identity = second_factor_identity
+    user = identity["user_id"]
+    await _enrol(client)
+    version, events = _session_version(user), _organization_event_count(identity["organization_id"])
+    trigger = f"fail_operator_audit_{uuid.uuid4().hex[:8]}"
+    with psycopg2.connect(MIGRATOR_SYNC_URL) as connection, connection.cursor() as cursor:
+        cursor.execute(
+            f"CREATE FUNCTION public.{trigger}() RETURNS trigger LANGUAGE plpgsql AS $$ "
+            "BEGIN RAISE EXCEPTION 'injected audit failure'; END $$"
+        )
+        cursor.execute(
+            f"CREATE TRIGGER {trigger} BEFORE INSERT ON public.audit_event FOR EACH ROW "
+            f"WHEN (NEW.action = 'OPERATOR_RESET_SECOND_FACTOR') EXECUTE FUNCTION public.{trigger}()"
+        )
+    try:
+        with pytest.raises(psycopg2.Error, match="injected audit failure"):
+            _operator_reset(monkeypatch, "--email", identity["email"], "--reason", OPERATOR_REASON)
+    finally:
+        with psycopg2.connect(MIGRATOR_SYNC_URL) as connection, connection.cursor() as cursor:
+            cursor.execute(f"DROP TRIGGER IF EXISTS {trigger} ON public.audit_event")
+            cursor.execute(f"DROP FUNCTION IF EXISTS public.{trigger}()")
+
+    assert _factor_state(str(user)) == (1, 10)
+    assert _session_version(user) == version
+    assert _organization_event_count(identity["organization_id"]) == events
+    assert (await client.get("/api/auth/session")).status_code == 200
+
+
+@pytest.mark.anyio
+async def test_a_second_step_token_issued_before_the_reset_is_refused_afterwards(second_factor_identity, monkeypatch):
+    client, identity = second_factor_identity
+    secret, codes = await _enrol(client)
+    login = await _login(client, identity["email"])
+    assert login.status_code == 200 and login.json()["second_factor_required"] is True
+    pending = login.json()["pending_token"]
+
+    _operator_reset(monkeypatch, "--email", identity["email"], "--reason", OPERATOR_REASON)
+
+    for answer in ({"code": _next_step_code(secret)}, {"recovery_code": codes[0]}):
+        refused = await client.post("/api/auth/login/second-factor", json={"pending_token": pending, **answer})
+        assert refused.status_code == 401, refused.text
+        assert refused.json()["detail"] == "Invalid credentials"
+    assert (await client.get("/api/auth/session")).status_code == 401
