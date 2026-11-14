@@ -40,7 +40,8 @@ the addressee aggregation (per owner) differ.
 from __future__ import annotations
 
 import uuid
-from datetime import date
+from dataclasses import dataclass
+from datetime import date, timedelta
 from decimal import Decimal
 from fractions import Fraction
 
@@ -49,7 +50,6 @@ from app.engine.periods import (
     build_owner_cover,
     day_count,
     overlap_days,
-    time_factor,
 )
 from app.engine.rounding import (
     CENT,
@@ -81,6 +81,29 @@ class WegValidationError(ValueError):
     Carries position/unit/owner context so the service surfaces exactly what is
     wrong (clean 4xx) instead of persisting a partial/wrong WEG snapshot.
     """
+
+
+class WegShareSumError(WegValidationError):
+    """The active co-owner shares of a unit sum to neither 1 nor 100 (#404).
+
+    Structured so the service answers with a code and the unit, never by parsing
+    the message: the unit, the span of the settlement period in which the shares
+    do not add up, and the sum found there.
+    """
+
+    def __init__(
+        self, unit_id: uuid.UUID, unit_number: str, span_start: date, span_end: date,
+        share_sum: Decimal,
+    ) -> None:
+        self.unit_id = unit_id
+        self.unit_number = unit_number
+        self.span_start = span_start
+        self.span_end = span_end
+        self.share_sum = share_sum
+        super().__init__(
+            f"Co-owner shares of unit {unit_number} ({unit_id}) sum to {share_sum} on "
+            f"[{span_start}..{span_end}], neither 1 nor 100 (escalate, #404)."
+        )
 
 
 def _money(value: Decimal) -> Decimal:
@@ -171,50 +194,105 @@ def _windowed_effective_total(
     return total
 
 
-def _co_owner_shares(
-    unit_id: uuid.UUID,
-    owner_slice: OwnerCoverPeriod,
-    all_slices_for_unit: list[OwnerCoverPeriod],
-) -> Decimal:
-    """The mea_share weight of a co-owner slice within its unit (m4 §4.3 stage 2).
+# ownership_history.mea_share is NUMERIC(12,6): a stored share is rounded to six decimals, so it
+# is off by at most half of the last digit. n shares that were exact before they were stored add
+# up to 1 (or 100) only within n times that rounding, e.g. three thirds 0.333333 add up to
+# 0.999999. Anything further off is an incomplete co-owner list, not rounding.
+SHARE_ROUNDING_NOISE = Decimal("0.0000005")
+SHARE_SUM_SCALES = (Decimal(1), Decimal(100))
 
-    For a SOLE owner (only one owner covering the slice's days) this returns 1
-    (the whole unit share goes to that owner). For CO-OWNERSHIP the unit's share
-    on overlapping days is split by mea_share; we return this slice's mea_share,
-    defensively normalised against the co-owners covering the SAME span. A zero
-    or absent total co-owner mea_share with genuine co-ownership is escalated
-    ([F4-7], m4 section 4.3).
 
-    We treat the slice's own [start,end] as the reference span and find the
-    sibling slices (other owners) that overlap it. If there is exactly one owner
-    over the span, weight = 1. If several, weight = this slice's mea_share. The
-    caller normalises by the sum of co-owner weights for that span via the
-    single distribute_amount pass, so absolute mea_share scale is irrelevant as
-    long as the RATIO among co-owners is correct.
+@dataclass(frozen=True)
+class _OwnerSpan:
+    """A stretch of one unit's ownership timeline without an ownership change (#404).
+
+    `fractions` maps the index of an owner slice in the unit's cover to the fraction of the
+    unit's share that owner bears on these days; the fractions add up to exactly 1.
+    `share_sum` is the sum of the active mea_share values, None for a sole owner.
     """
-    siblings = [
-        s
-        for s in all_slices_for_unit
-        if s.owner_profile_id != owner_slice.owner_profile_id
-        and overlap_days(s.start, s.end, owner_slice.start, owner_slice.end) > 0
-    ]
-    if not siblings:
-        # Sole owner over this slice -> the whole unit share.
-        return Decimal(1)
-    # Co-ownership: this slice's mea_share is its weight. Escalate if absent.
-    if owner_slice.mea_share is None:
-        raise WegValidationError(
-            f"Co-ownership of unit {unit_id} but owner "
-            f"{owner_slice.owner_profile_id} has no mea_share on "
-            f"[{owner_slice.start}..{owner_slice.end}] -- cannot split the unit "
-            f"share among co-owners (escalate, [F4-7] m4 section 4.3)."
+
+    start: date
+    end: date
+    fractions: dict[int, Fraction]
+    share_sum: Decimal | None
+
+
+def _unit_owner_spans(unit: UnitInput, slices: list[OwnerCoverPeriod]) -> list[_OwnerSpan]:
+    """Split a unit's owner cover at every ownership boundary (m4 §4.3 stage 2, #404).
+
+    On each span a SOLE owner bears the whole unit share (weight 1, whatever mea_share says).
+    CO-OWNERS bear mea_share / (sum of the mea_share of the owners active on the same days),
+    so the share is a ratio of any scale. A missing or non-positive mea_share of a co-owner is
+    escalated ([F4-7], m4 section 4.3). Whether the shares add up to 1 or 100 is a separate
+    check (_require_share_sums).
+    """
+    bounds = sorted({s.start for s in slices} | {s.end + timedelta(days=1) for s in slices})
+    spans: list[_OwnerSpan] = []
+    for lo, after in zip(bounds, bounds[1:]):
+        hi = after - timedelta(days=1)
+        active = [i for i, s in enumerate(slices) if s.start <= lo and hi <= s.end]
+        if len(active) == 1:
+            spans.append(_OwnerSpan(lo, hi, {active[0]: Fraction(1)}, None))
+            continue
+        for i in active:
+            sl = slices[i]
+            if sl.mea_share is None:
+                raise WegValidationError(
+                    f"Co-ownership of unit {unit.id} but owner "
+                    f"{sl.owner_profile_id} has no mea_share on "
+                    f"[{sl.start}..{sl.end}] -- cannot split the unit "
+                    f"share among co-owners (escalate, [F4-7] m4 section 4.3)."
+                )
+            if sl.mea_share <= 0:
+                raise WegValidationError(
+                    f"Co-ownership of unit {unit.id}: owner {sl.owner_profile_id} "
+                    f"has non-positive mea_share {sl.mea_share} (escalate)."
+                )
+        total = sum((slices[i].mea_share for i in active), Decimal(0))
+        spans.append(
+            _OwnerSpan(
+                lo, hi,
+                {i: Fraction(slices[i].mea_share) / Fraction(total) for i in active},
+                total,
+            )
         )
-    if owner_slice.mea_share <= 0:
-        raise WegValidationError(
-            f"Co-ownership of unit {unit_id}: owner {owner_slice.owner_profile_id} "
-            f"has non-positive mea_share {owner_slice.mea_share} (escalate)."
-        )
-    return owner_slice.mea_share
+    return spans
+
+
+def _require_share_sums(unit: UnitInput, spans: list[_OwnerSpan]) -> None:
+    """Refuse a unit whose active co-owner shares add up to neither 1 nor 100 (#404).
+
+    Normalising a wrong sum would hide an incomplete co-owner list, so the calculation
+    stops and names the unit and the first span in which the shares do not add up. The
+    tolerance is the rounding the stored shares can carry (SHARE_ROUNDING_NOISE per share).
+    """
+    for span in spans:
+        if span.share_sum is None:
+            continue
+        tolerance = SHARE_ROUNDING_NOISE * len(span.fractions)
+        if not any(abs(span.share_sum - scale) <= tolerance for scale in SHARE_SUM_SCALES):
+            raise WegShareSumError(unit.id, unit.number, span.start, span.end, span.share_sum)
+
+
+def _owner_time_weight(
+    spans: list[_OwnerSpan], index: int, sp_from: date, sp_to: date
+) -> Fraction:
+    """The fraction of its unit's key share an owner slice bears for one service period.
+
+    Sum over the unit's spans of (service-period days inside the span / service-period days)
+    times the owner's fraction in that span. Over all slices of a unit this is exactly the
+    service-period days inside the settlement period over the service-period days, whatever
+    scale the shares were entered in. Exact rational, like the cell weights (ADR-0005).
+    """
+    sp_total = day_count(sp_from, sp_to)
+    return sum(
+        (
+            Fraction(overlap_days(sp_from, sp_to, span.start, span.end), sp_total) * span.fractions[index]
+            for span in spans
+            if index in span.fractions
+        ),
+        Fraction(0),
+    )
 
 
 def _validate(inp: WegSettlementInput) -> None:
@@ -275,6 +353,7 @@ def _distribute_one_position(
     pos: WegCostPositionInput,
     units: list[UnitInput],
     owner_covers: dict[uuid.UUID, list[OwnerCoverPeriod]],
+    owner_spans: dict[uuid.UUID, list[_OwnerSpan]],
     period_start: date,
     period_end: date,
 ) -> list[tuple[uuid.UUID, OwnerCoverPeriod, Decimal, Decimal | None, Decimal | None, int, int]]:
@@ -289,11 +368,10 @@ def _distribute_one_position(
     total windowed to the settlement period for weighted keys (ADR-0004).
 
     Cell exact weight (mirrors M3 distribution.py, plus the co-owner stage):
-       weight = (unit_key_share) * time_factor(slice vs service period)
-                                 * (co_owner_weight)
-    where co_owner_weight = 1 for a sole owner, else the slice's mea_share (the
-    distribute_amount normaliser turns the co-owner weights into exact fractions
-    of the unit's share -- m4 section 4.3 stage 2).
+       weight = (unit_key_share) * _owner_time_weight(slice, service period)
+    where the owner time weight is the days of each ownership span inside the service
+    period over its days, times the owner's fraction of the unit in that span (1 for a
+    sole owner, else mea_share over the sum of the active mea_share values, #404).
     """
     key = pos.owner_distribution_key
     total = _windowed_effective_total(pos, period_start, period_end)
@@ -333,12 +411,11 @@ def _distribute_one_position(
             if amt is None:
                 continue
             slices = owner_covers.get(unit.id, [])
-            for sl in slices:
-                f = time_factor(sp_from, sp_to, sl.start, sl.end)
-                if f == 0:
+            for index, sl in enumerate(slices):
+                time_weight = _owner_time_weight(owner_spans[unit.id], index, sp_from, sp_to)
+                if time_weight == 0:
                     continue
-                co_w = _co_owner_shares(unit.id, sl, slices)
-                weight = amt * f * co_w
+                weight = Fraction(amt) * time_weight
                 billed = overlap_days(sp_from, sp_to, sl.start, sl.end)
                 cell_specs.append((unit.id, sl, weight, amt, None, billed))
     elif key in WEIGHTED_KEYS:
@@ -360,13 +437,12 @@ def _distribute_one_position(
             w = weights[unit.id]
             key_share = Fraction(w) / Fraction(weight_sum)
             slices = owner_covers.get(unit.id, [])
-            for sl in slices:
-                overlap = overlap_days(sp_from, sp_to, sl.start, sl.end)
-                if overlap == 0:
+            for index, sl in enumerate(slices):
+                time_weight = _owner_time_weight(owner_spans[unit.id], index, sp_from, sp_to)
+                if time_weight == 0:
                     continue
-                co_w = Fraction(_co_owner_shares(unit.id, sl, slices))
-                weight = key_share * Fraction(overlap, sp_total) * co_w
-                billed = overlap
+                weight = key_share * time_weight
+                billed = overlap_days(sp_from, sp_to, sl.start, sl.end)
                 cell_specs.append((unit.id, sl, weight, w, weight_sum, billed))
     else:
         raise DistributionError(f"Unsupported distribution key: {key}")
@@ -405,6 +481,14 @@ def compute_weg_jahresabrechnung(inp: WegSettlementInput) -> WegResult:
     except (PeriodOverlapError, DistributionError) as exc:
         raise WegValidationError(str(exc)) from exc
 
+    # Split every unit's owner timeline at the ownership boundaries and refuse a unit whose
+    # co-owner shares do not add up (#404). Independent of the cost positions: the shares of
+    # the settlement period are wrong whichever days the costs fall on.
+    owner_spans: dict[uuid.UUID, list[_OwnerSpan]] = {}
+    for unit in units:
+        owner_spans[unit.id] = _unit_owner_spans(unit, owner_covers[unit.id])
+        _require_share_sums(unit, owner_spans[unit.id])
+
     # Deterministic position order (by category_code then id) -> reproducible
     # sort_order + snapshot.
     positions = sorted(
@@ -423,7 +507,9 @@ def compute_weg_jahresabrechnung(inp: WegSettlementInput) -> WegResult:
 
     sort_order = 0
     for pos in positions:
-        cells = _distribute_one_position(pos, units, owner_covers, inp.period_start, inp.period_end)
+        cells = _distribute_one_position(
+            pos, units, owner_covers, owner_spans, inp.period_start, inp.period_end
+        )
         if not cells:
             continue
 

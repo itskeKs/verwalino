@@ -104,3 +104,14 @@ Feature: WEG settlement and the owner's Hausgeld balance
     Then the 2024 settlement charges 1840 euros of Gesamtkosten and the 2025 settlement charges 1810 euros
     And the owner's share is 1840 euros in the 2024 settlement and 1810 euros in the 2025 settlement
     And both settlements together charge exactly 3650 euros
+
+  Scenario: Co-owners entered as percentages share their unit's costs by their relative shares
+    Given Anna owns unit 1 alone and Bernd and Carla own unit 2 with shares of 50 and 50, both units of 500 MEA with 1000 euros of costs by MEA
+    When I compute the WEG annual settlement of the co-owned units
+    Then Anna's cost share is 500 euros and Bernd's and Carla's are 250 euros each
+
+  Scenario: Co-owner shares that do not add up refuse the calculation and name the unit
+    Given Anna owns unit 1 alone and Bernd and Carla own unit 2 with shares of 0.6 and 0.3, both units of 500 MEA with 1000 euros of costs by MEA
+    When I try to compute the WEG annual settlement of the co-owned units
+    Then the calculation is refused in German because the shares of unit 2 do not add up
+    And the plan of the same owners still gave Bernd 333.33 euros and Carla 166.67 euros of unit 2's 500 euros

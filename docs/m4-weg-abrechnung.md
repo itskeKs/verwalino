@@ -422,7 +422,7 @@ The WEG can set a **different** key than MEA for individual cost categories **by
 - **Owner change within the year** (sale): day-accurate via `ownership_history` (ADR-0004). The seller bears their days, the buyer theirs. This is the **mirrored** tenant-change logic from M3 §3 — the same `time_factor`/cover math, only over `OwnerPeriodInput` instead of `LeasePeriodInput`. **[DECISION E4-4, §4.6]** whether, on an owner change during the year, **one** run per owner period or **one** run with both addressee lines arises (analogous to M3-E3-3).
 - **Co-ownership (several `owner_profile`s per unit simultaneously):** `ownership_history` allows several simultaneous owners per unit with `mea_share` (model comment confirms: "Multiple co-owners per unit at the same time ARE allowed"). The MEA share of the **unit** is first used as the weight in the property-wide distribution; the unit's share is then **further distributed by `mea_share`** among the fractional owners (second, exact stage, then largest remainder). This is the **one** additional stage compared to M3 (which could ignore fractional ownership for the tenant operating costs, M3 §2.2).
 
-> **[§18/domain F4-7] `mea_share` sum.** The model does **not** strictly enforce that `Σ mea_share` per unit/point in time == unit MEA (soft validation, real-world data). The M4 engine checks **defensively** and escalates on gross inconsistency (e.g., Σ `mea_share` = 0 when co-ownership exists), but continues to compute normalized for a plausible, slightly deviating sum (documented). Which tolerance is domain-permissible must be accepted.
+> **[§18/domain F4-7] `mea_share` sum.** The model does **not** strictly enforce that `Σ mea_share` per unit/point in time is 1 or 100 (soft validation, co-owners are entered one by one). The settlement therefore reads the shares as **ratios** and **refuses** a unit whose active shares add up to neither 1 nor 100 (owner decision of 2026-11-14, #404, §4.3.3).
 
 ### 4.3.1 Operating Flow Since Phase 2 (T26)
 
@@ -484,6 +484,55 @@ exact largest-remainder calculation, and the totals per position are unchanged.
 
 Switchover: a year finalized before m4.6.0 charged a cross-year cost in full, and the following
 year computed under m4.6.0 adds its day share on top; finalized years are not corrected.
+
+### 4.3.3 Co-Owner Shares Are Ratios Inside Their Unit (#404)
+
+The unit's ownership timeline is **split at every ownership boundary**. On each span a **sole
+owner** bears the whole unit share, whatever `mea_share` says (or whether it is set at all);
+**co-owners** bear `mea_share / Σ mea_share` of the owners active on the same days, so a share is
+a ratio of any scale: 50 / 50 is 0.5 / 0.5. A cell's weight is the unit's key share times, over
+the spans inside the owner's slice, the days of the span inside the service period over the service
+period's days times the owner's fraction in that span (exact rational numbers, one
+largest-remainder pass per position, §4.3.2). Over all slices of a unit the owner time weights
+add up to exactly the unit's share: no day is lost and none is charged twice.
+
+| Case (cost 1.000,00 € by MEA, 2025) | Owners | Before m4.9.0 | Since m4.9.0 |
+|---|---|---|---|
+| Two units of 500 MEA; Anna alone in unit 1, Bernd 50 / Carla 50 in unit 2 | Anna / Bernd / Carla | 9,90 / 495,05 / 495,05 | 500,00 / 250,00 / 250,00 |
+| One unit; Anna 0,5 all year, Bernd 0,5 from 01.07. | Anna / Bernd | 664,85 / 335,15 | 747,95 / 252,05 |
+
+The second row: 01.01.–30.06. (181 days) Anna is the sole owner and bears the whole unit, 01.07.–31.12.
+(184 days) she and Bernd bear half each, so Anna weighs 181/365 + 184/365 · ½ = 273/365 and Bernd
+92/365; 1.000,00 € · 273/365 = 747,9452 and · 92/365 = 252,0548 round to 747,95 and 252,05 (the
+remaining cent goes to the larger remainder, Anna).
+
+**Refusal.** A calculation (compute and finalize) of a settlement whose units have a span of the
+settlement period in which two or more owners are active and their `mea_share` add up to
+**neither 1 nor 100** is refused with HTTP 422 and the structured detail
+`code: weg_co_owner_shares_mismatch`, `unit_id`, `unit_number`, `span_start`, `span_end`, `share_sum`
+and a German `message`, for example „Die Miteigentumsanteile der Eigentümer von Einheit 2 ergeben
+vom 01.01.2026 bis 31.12.2026 zusammen 0,9 statt 1 oder 100. …“. Normalising such a sum would hide
+an incomplete co-owner list. The annual settlement page shows the message in its „Fehler“ banner like
+its other calculation refusals; classification uses the code, never the text.
+
+- The tolerance is the rounding of the stored shares: `mea_share` is `NUMERIC(12,6)`, so a stored
+  share is off by at most 0,0000005; `n` shares may deviate from 1 or 100 by `n` times that. Thirds
+  stored as 0,333333 / 0,666667 or 3 × 0,333333 (= 0,999999) or 3 × 33,333333 are accepted; 3 × 33,33
+  (= 99,99), 0,6 / 0,3 and 60 / 30 are refused.
+- A sole owner is never refused, whatever value `mea_share` carries. A missing or non-positive
+  `mea_share` of a co-owner keeps its own refusal („WEG-Berechnung nicht moeglich: …“), checked first.
+- The check runs per span, over all units of the property and every day of the settlement period,
+  independently of the days the costs fall on; shares before or after the period do not count, and
+  the message names the first span in which they do not add up.
+- The plan (shares at the plan start), the Hausgeld Soll (dated walk, §5.3a) and the special levy
+  (shares on the due date) already normalise by the same ratio with their own code and do **not**
+  refuse: for shares of 0,6 / 0,3 they still compute 2/3 : 1/3, while the annual settlement refuses
+  until the shares are corrected. Within the settlement the planned reserve Soll and the paid reserve
+  contributions come from the frozen plan and the reserve ledger, not from these weights.
+
+Drafts recomputed under `m4.9.0` can differ from `m4.8.0` wherever shares did not add up to 1 or
+overlapped for part of the year; finalized runs stay frozen (ENGINE_VERSION `m4.9.0`, the
+version-gated PDF sentences read „at least“ a version and are unchanged).
 
 ### 4.4 Addressee Model for the Owner Distribution (Engine Mirror of M3)
 
@@ -796,6 +845,7 @@ There are **no** real WEG sample settlements. Test cases are **synthetic**, deri
 9. **Snapshot/hash determinism:** scenarios 2 + 7 finalized twice (identical inputs) → identical `snapshot_sha256`. Tests the M3 §1.8 mechanics for M4 payloads.
 10. **Service period crossing the year (#403):** building insurance 3.650,00 € for 01.07.2024–30.06.2025, one unit/owner. Expected: 1.840,00 € (184/365) in the 2024 settlement and 1.810,00 € (181/365) in 2025; also 1.200,00 € for 01.07.2025–30.06.2026 → 604,93 €/595,07 €, and two units with an owner change at the year boundary summing exactly per unit across the years (§4.3.2).
 11. **Short plan (#602):** 3.000,00 € for 01.07.–30.09.2025, one unit/owner → 3 × 1.000,00 € on plan, ledger and statement; 1.000,00 € over three months 333,34/333,33/333,33; one month 3.000,00 €; a year end inside the plan; first and last month partly covered; thirteen touched months → twelve; a transfer on 16.08. (Karl 1.483,87 €, Lena 1.516,13 €); co-owner lines 1.500,01 €/1.499,99 € keep their cents (§5.3a).
+12. **Co-owner shares (#404):** two units of 500 MEA, Anna alone in unit 1, Bernd 50 / Carla 50 in unit 2 → 500,00 / 250,00 / 250,00 (0,5 / 0,5 and 60 / 40 equal 0,6 / 0,4); a July joiner (Anna 0,5 all year, Bernd 0,5 from 01.07.) → 747,95 / 252,05; 0,7 / 0,3 from July → 848,77 / 151,23; a sole owner weighs 1 for any stored share; 0,6 / 0,3, 60 / 30, 1 / 1, 33,33 × 3 are refused naming the unit and the first wrong span, thirds as stored are accepted (§4.3.3).
 12. **Mid-month plan edges (#662):** 3.000,00 € for 15.07.–10.09.2026 → 3 × 1.000,00 €; sold 10.07. seller 0,00 €/buyer 3.000,00 €; sold 20.07. seller 294,12 €/buyer 2.705,88 €; sold 05.09. seller 2.400,00 €/buyer 600,00 €; sold 20.09. seller 3.000,00 €/buyer 0,00 €; ledger, dunning, Hausgeld offer and settlement Soll agree (§5.3a).
 
 Each golden test checks **not only the final total** but the **individual line amounts, key base values, subtotals, balance, and reserve development** against the hand calculation (otherwise a compensating double error slips through — M3 discipline).
@@ -803,10 +853,11 @@ Each golden test checks **not only the final total** but the **individual line a
 ### 9.2 Property-Based Invariants (Hypothesis, over Random Inputs)
 
 - **I4-A "Σ owner shares == total costs":** per item `Σ over owners distribute_amount(...) == G − net reserve financing` exactly (ADR-0005, mirrored to owners; §4.5).
-- **I4-B "MEA sums coherent":** Σ of the MEA weights used == total MEA basis; for co-ownership, `Σ mea_share` of a unit consistent with the unit MEA (within tolerance, F4-7).
+- **I4-B "MEA sums coherent":** Σ of the MEA weights used == total MEA basis; for co-ownership, the `mea_share` of a unit's co-owners add up to 1 or 100 within the rounding of the stored shares, else the calculation is refused (F4-7, §4.3.3).
 - **I4-C "Settlement balance == costs + planned reserve − expected advances":** for random actual costs, planned reserve and plan advances, per owner `settlement balance == owner_cost_total + plan_reserve_soll − plan_advance` exactly; **and** `Σ settlement balances == Σ actual costs + Σ planned reserve Soll − Σ expected advances` (no drift across owners).
 - **I4-D "Reserve development consistent":** `closing balance == opening balance + Σ contribution − Σ withdrawal` exactly; reserve contribution **never** appears in `OWNER_COST_TOTAL`. Evidenced reserve financing is also excluded from owner costs (§4.5), without removing the withdrawal from the ledger.
 - **I4-E "Owner time shares == 1":** for random `ownership_history` decompositions of a unit, the owner time factors sum exactly to 1 over the period (ADR-0004, mirrored).
+- **I4-J "A unit's owners bear exactly the unit's share" (#404):** for random co-owner timelines with any positive share scale, the fractions of the owners active in each span add up to exactly 1, and over a unit's slices the owner time weights add up exactly to the service-period days inside the settlement period; for accepted scales each owner is charged within one cent of its exact share and Σ owners == cost (§4.3.3).
 - **I4-F "Reserve/non-allocable never in tenant operating costs":** in no `BK_MIETER` run does a `RESERVE_*` or `NICHT_UMLAGEFAEHIG` item appear (mirror of M3 I-F, secures the sphere separation §7).
 - **I4-G "Plan monthly installments sum-exact":** `Σ over the monthly installments == annual advance` exactly per owner; for every accepted plan period their count is `plan_instalment_count`, the Hausgeld ledger charges the same amounts, and Σ over all owners and months == the planned volume (§5.3a).
 - **I4-H "Determinism" + "Consistency payload ↔ lines":** same input twice → identical canonical payload + hash; Σ/values of `snapshot_payload.result` == Σ/values of `settlement_line`.
@@ -876,7 +927,7 @@ These invariants hold for **any** valid input (not only the examples) and are th
 | **F4-2** | Settlement balance == actual − expected advance payment (not − paid) | [§18/domain] | so (prevailing opinion on WEMoG); specialist attorney for WEG law to accept | before production (ADR-0007) |
 | **F4-3** | Owner sphere distributes `gross_amount` (not tenant share) | [§18/domain] | so; accept special cases § 16 II WEG | before production |
 | **F4-4/5** | Data source for reserve opening balance + withdrawals | [§18/domain] | M4 manual; M6/booking later | before production |
-| **F4-7** | `mea_share` sum tolerance for co-ownership | [§18/domain] | check defensively, compute normalized; tolerance domain-wise | before production |
+| **F4-7** | `mea_share` sum tolerance for co-ownership | [DECIDED 2026-11-14, #404] | shares are ratios; the calculation is refused when the active shares add up to neither 1 nor 100 (tolerance: the rounding of the stored shares, §4.3.3) | done |
 | **F4-8** | Input path for bank account balances (asset report) | [§18/domain] | manual key-date balance in the snapshot (no M6 anticipation) | before production (ADR-0008) |
 | **F4-9** | Receivables/liabilities in the asset report | [§18/domain] | manual capture with origin note (or deliberately later) | **decide domain-wise** (ADR-0008) |
 | **F4-10/11** | Key date/layout/§ 35a EStG disclosure | [§18/domain] | data ready; layout + § 35a domain/product | before production |

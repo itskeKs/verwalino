@@ -62,7 +62,7 @@ from app.engine.types import (
     WegSettlementInput,
 )
 from app.engine.vermoegensbericht import AssetReportResult, build_vermoegensbericht
-from app.engine.weg import WegValidationError, compute_weg_jahresabrechnung
+from app.engine.weg import WegShareSumError, WegValidationError, compute_weg_jahresabrechnung
 from app.models.audit_event import AuditEvent
 from app.services.financial_scope_service import FinancialScopeService
 from app.services.financial_computation_service import begin_computation, record_computation
@@ -82,7 +82,7 @@ from app.repositories.settlement_repo import (
 from app.services.reserve_ledger_service import ReserveLedgerService
 from app.services.payment_service import dated_plan_soll
 
-ENGINE_VERSION = "m4.8.0"
+ENGINE_VERSION = "m4.9.0"
 
 DELETE_MESSAGES = {
     'SETTLEMENT_DELETE_SOURCE_ACCESS_REQUIRED': 'Zum Löschen dieses Entwurfs benötigen Sie Zugriff auf alle Finanzquellen des Objekts.',
@@ -92,6 +92,22 @@ DELETE_MESSAGES = {
     'SETTLEMENT_DELETE_SCOPE_DEPENDENCY': 'Dieser Entwurf besitzt eine unveränderbare Zuordnung zu einem Abrechnungskreis und kann nicht gelöscht werden.',
     'SETTLEMENT_DELETE_HAS_EVIDENCE': 'Dieser Entwurf wird von aufbewahrungspflichtigen Nachweisen verwendet und kann nicht gelöscht werden.',
 }
+
+
+def _share_sum_refusal(exc: WegShareSumError) -> dict:
+    """The structured 422 of a unit whose co-owner shares add up to neither 1 nor 100 (#404)."""
+    total = format(exc.share_sum.normalize(), 'f')
+    return {
+        'code': 'weg_co_owner_shares_mismatch',
+        'unit_id': str(exc.unit_id), 'unit_number': exc.unit_number,
+        'span_start': exc.span_start.isoformat(), 'span_end': exc.span_end.isoformat(),
+        'share_sum': total,
+        'message': (
+            f'Die Miteigentumsanteile der Eigentümer von Einheit {exc.unit_number} ergeben vom '
+            f'{exc.span_start:%d.%m.%Y} bis {exc.span_end:%d.%m.%Y} zusammen {total.replace(".", ",")} '
+            f'statt 1 oder 100. Bitte prüfen Sie die MEA-Anteile in der Eigentumshistorie der Einheit '
+            f'und berechnen Sie die Abrechnung erneut.'),
+    }
 
 
 @dataclass
@@ -539,6 +555,8 @@ class WegSettlementService:
         inp = await self._load_weg_input(run, extras)
         try:
             result = compute_weg_jahresabrechnung(inp)
+        except WegShareSumError as exc:
+            raise HTTPException(status_code=422, detail=_share_sum_refusal(exc)) from exc
         except (WegValidationError, DistributionError, PeriodOverlapError) as exc:
             raise HTTPException(status_code=422, detail=f"WEG-Berechnung nicht moeglich: {exc}")
         return inp, result
