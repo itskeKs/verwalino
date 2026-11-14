@@ -857,3 +857,81 @@ def test_operator_reset_rejects_missing_or_unusable_arguments_before_connecting(
         admin_cli.main()
     assert refused.value.code == 2
     assert "admin_cli reset-second-factor" in capsys.readouterr().err
+
+
+# --- Issue #657, review round 1: control characters, help text, failed audit insert, pending token. ---
+
+
+@pytest.mark.parametrize("reason", [
+    "ticket 4711\nsecond line",
+    "ticket\t4711",
+    "\x1b[31mticket 4711",
+    "ticket 4711\x7f",
+    "ticket 4711\n",
+    "\x00ticket 4711",
+])
+def test_operator_reset_refuses_control_characters_in_the_reason_before_connecting(monkeypatch, capsys, reason):
+    monkeypatch.setattr("sys.argv", ["admin_cli", "reset-second-factor", "--email", "someone@example.test", "--reason", reason])
+    monkeypatch.setattr(admin_cli.psycopg2, "connect", lambda *_: pytest.fail("must not connect"))
+    with pytest.raises(SystemExit) as refused:
+        admin_cli.main()
+    assert refused.value.code == 2
+    assert "control characters" in capsys.readouterr().err
+
+
+def test_operator_reset_help_says_the_reason_names_the_request_not_a_person(monkeypatch, capsys):
+    monkeypatch.setattr("sys.argv", ["admin_cli", "reset-second-factor", "--help"])
+    with pytest.raises(SystemExit) as shown:
+        admin_cli.main()
+    assert shown.value.code == 0
+    text = " ".join(capsys.readouterr().out.split())
+    assert "date, channel and ticket reference" in text
+    assert "never a person's name or contact detail" in text
+
+
+@pytest.mark.anyio
+async def test_a_failed_audit_insert_leaves_the_account_untouched(second_factor_identity, monkeypatch):
+    """The delete, the session bump and the event are one transaction."""
+    client, identity = second_factor_identity
+    user = identity["user_id"]
+    await _enrol(client)
+    version, events = _session_version(user), _organization_event_count(identity["organization_id"])
+    trigger = f"fail_operator_audit_{uuid.uuid4().hex[:8]}"
+    with psycopg2.connect(MIGRATOR_SYNC_URL) as connection, connection.cursor() as cursor:
+        cursor.execute(
+            f"CREATE FUNCTION public.{trigger}() RETURNS trigger LANGUAGE plpgsql AS $$ "
+            "BEGIN RAISE EXCEPTION 'injected audit failure'; END $$"
+        )
+        cursor.execute(
+            f"CREATE TRIGGER {trigger} BEFORE INSERT ON public.audit_event FOR EACH ROW "
+            f"WHEN (NEW.action = 'OPERATOR_RESET_SECOND_FACTOR') EXECUTE FUNCTION public.{trigger}()"
+        )
+    try:
+        with pytest.raises(psycopg2.Error, match="injected audit failure"):
+            _operator_reset(monkeypatch, "--email", identity["email"], "--reason", OPERATOR_REASON)
+    finally:
+        with psycopg2.connect(MIGRATOR_SYNC_URL) as connection, connection.cursor() as cursor:
+            cursor.execute(f"DROP TRIGGER IF EXISTS {trigger} ON public.audit_event")
+            cursor.execute(f"DROP FUNCTION IF EXISTS public.{trigger}()")
+
+    assert _factor_state(str(user)) == (1, 10)
+    assert _session_version(user) == version
+    assert _organization_event_count(identity["organization_id"]) == events
+    assert (await client.get("/api/auth/session")).status_code == 200
+
+
+@pytest.mark.anyio
+async def test_a_second_step_token_issued_before_the_reset_is_refused_afterwards(second_factor_identity, monkeypatch):
+    client, identity = second_factor_identity
+    secret, codes = await _enrol(client)
+    login = await _login(client, identity["email"])
+    assert login.status_code == 200 and login.json()["second_factor_required"] is True
+    pending = login.json()["pending_token"]
+
+    _operator_reset(monkeypatch, "--email", identity["email"], "--reason", OPERATOR_REASON)
+
+    for answer in ({"code": _next_step_code(secret)}, {"recovery_code": codes[0]}):
+        refused = await client.post("/api/auth/login/second-factor", json={"pending_token": pending, **answer})
+        assert refused.status_code == 401, refused.text
+        assert refused.json()["detail"] == "Invalid credentials"
+    assert (await client.get("/api/auth/session")).status_code == 401

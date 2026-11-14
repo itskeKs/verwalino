@@ -134,12 +134,19 @@ def reset_second_factor(arguments: list[str]) -> None:
         description="Remove an account's second factor and recovery codes as the migrator.",
     )
     ap.add_argument("--email", required=True, help="Sign-in address of the account (normalized like the app)")
-    ap.add_argument("--reason", required=True, help="Why the operator resets it; stored in the audit event")
+    ap.add_argument(
+        "--reason",
+        required=True,
+        help="The request: date, channel and ticket reference, never a person's name or contact detail. "
+        "The audit event keeps it, also after the organization is erased",
+    )
     args = ap.parse_args(arguments)
     try:
         email = normalize_email(args.email)
     except ValueError as error:
         ap.error(str(error))
+    if any(ord(character) < 0x20 or ord(character) == 0x7F for character in args.reason):
+        ap.error("--reason must not contain control characters (newline, tab, escape)")
     reason = args.reason.strip()
     if not 1 <= len(reason) <= RESET_REASON_MAX_LENGTH:
         ap.error(f"--reason must be between 1 and {RESET_REASON_MAX_LENGTH} characters")
