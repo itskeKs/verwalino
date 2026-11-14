@@ -17,6 +17,10 @@ from app.models.lease_agreement import LeaseAgreement
 from app.repositories.base import TenantRepository
 
 
+# Item count columns per statement; PostgreSQL allows 1664 select-list entries.
+ITEM_KEYS_PER_STATEMENT = 500
+
+
 class DunningNoticeRepository(TenantRepository[DunningNotice]):
     model = DunningNotice
 
@@ -74,7 +78,7 @@ class DunningNoticeRepository(TenantRepository[DunningNotice]):
         ).order_by(DunningNotice.issue_date.desc(), DunningNotice.id)
         return (await self._session.execute(stmt)).mappings().all()
 
-    async def count_issued_with_overdue_items(
+    async def highest_item_demand_count(
         self,
         *,
         item_keys: Sequence[Mapping[str, Any]],
@@ -83,19 +87,28 @@ class DunningNoticeRepository(TenantRepository[DunningNotice]):
         lease_id: uuid.UUID | None = None,
         scope_id: uuid.UUID | None = None,
     ) -> int:
-        """Count issued notices that escalate the currently overdue items.
+        """How often the most often demanded of the given items was already demanded.
 
-        An already-issued notice raises the level of a new one only when it
-        belongs to the same person (the same lease for tenants, mirroring
-        issued_for_lease) and its frozen included_items contain at least one
-        of the currently overdue items -- identity is payment_type +
-        period_year + period_month. Notices for paid-off or unrelated arrears
-        do not count. An unscoped tenant notice without any lease link (issued
-        before the link existed) matches on the tenant and the items alone.
+        An item was demanded once per already-issued notice of the same person (the
+        same lease for tenants, mirroring issued_for_lease) whose frozen included_items
+        contain it -- identity is payment_type + period_year + period_month, so part
+        payments and corrected or reversed postings stay the same item. Drafts count
+        nothing; an item without earlier notices counts 0. The level of a new notice is
+        one more than this number (next_dunning_level). An unscoped tenant notice without
+        any lease link (issued before the link existed) matches on the tenant and the
+        item alone.
         """
         if not item_keys:
             return 0
-        stmt = select(func.count()).select_from(DunningNotice)
+        if len(item_keys) > ITEM_KEYS_PER_STATEMENT:
+            return max([await self.highest_item_demand_count(
+                item_keys=item_keys[start:start + ITEM_KEYS_PER_STATEMENT],
+                tenant_profile_id=tenant_profile_id, owner_profile_id=owner_profile_id,
+                lease_id=lease_id, scope_id=scope_id,
+            ) for start in range(0, len(item_keys), ITEM_KEYS_PER_STATEMENT)])
+        demanded = [DunningNotice.included_items.op("@>")(cast([key], JSONB)) for key in item_keys]
+        # One pass over the person's issued notices, one count column per item.
+        stmt = select(*(func.count().filter(item) for item in demanded)).select_from(DunningNotice)
         if lease_id is not None:
             context = DunningScopeContext
             stmt = stmt.outerjoin(context, and_(
@@ -106,10 +119,7 @@ class DunningNoticeRepository(TenantRepository[DunningNotice]):
             DunningNotice.organization_id == self._org_id,
             DunningNotice.status == "issued",
             DunningNotice.cancelled_at.is_(None),
-            or_(*(
-                DunningNotice.included_items.op("@>")(cast([key], JSONB))
-                for key in item_keys
-            )),
+            or_(*demanded),
         )
         if tenant_profile_id is not None:
             stmt = stmt.where(DunningNotice.tenant_profile_id == tenant_profile_id)
@@ -124,8 +134,7 @@ class DunningNoticeRepository(TenantRepository[DunningNotice]):
                 (context.lease_agreement_id == lease_id if scope_id is not None
                  else or_(linked_lease == str(lease_id), linked_lease.is_(None))),
             )
-        result = await self._session.execute(stmt)
-        return result.scalar_one()
+        return max((await self._session.execute(stmt)).one())
 
     async def update(self, entity: DunningNotice) -> DunningNotice:
         """Flush changes on an already-tracked entity (trigger blocks issued)."""

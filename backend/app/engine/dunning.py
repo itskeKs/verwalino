@@ -8,8 +8,8 @@ HARD RULE (same as the rest of app/engine, SDD section 16):
 Responsibilities:
   1. Overdue detection: given open items + a reference date, determine which
      items are overdue (Soll > Ist, past grace period).
-  2. Escalation level: given the count of already-issued dunning notices for
-     a person, compute the next dunning level (1 -> 2 -> 3).
+  2. Escalation level: given how often the most-demanded item of a notice was
+     already demanded in issued notices, compute the next level (1 -> 2 -> 3).
   3. Fee calculation: per-level organization fees
      [section 18/fachlich -- must be appropriate/contractually agreed].
   4. Dunning notice assembly: combine overdue items into a DunningInput with
@@ -199,8 +199,11 @@ def find_overdue_items(
 # ---------------------------------------------------------------------------
 
 def next_dunning_level(existing_notice_count: int) -> int:
-    """Compute the next dunning level from the count of already-issued notices.
+    """Compute the next dunning level from how often the most-demanded item was demanded.
 
+    existing_notice_count is the number of already-issued notices that contain the
+    item of the new notice that was demanded most often (the level counts per item;
+    the whole notice takes the highest one). 0 when none of its items was demanded.
     Level 1 (Zahlungserinnerung) -> Level 2 (Mahnung) -> Level 3 (letzte Mahnung).
     Capped at MAX_LEVEL; further calls still return MAX_LEVEL (the service
     may decide whether to proceed or escalate to legal).
@@ -241,9 +244,9 @@ def assemble_dunning(
 
     Returns None if there are no overdue items (nothing to dun).
 
-    The level is derived from existing_notice_count (escalation) unless
-    override_level is given. The fee is derived from the level unless
-    override_fee is given.
+    The level is derived from existing_notice_count (how often the most-demanded
+    item was already demanded, see next_dunning_level) unless override_level is
+    given. The fee is derived from the level unless override_fee is given.
     """
     if not overdue_items:
         return None
