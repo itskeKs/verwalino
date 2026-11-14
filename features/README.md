@@ -64,6 +64,8 @@ An untagged scenario holds in both modes. Tag a feature or scenario `@selfhost` 
 the opposite mode with `Requires <mode> deployment; running in <other mode>` as
 the reason. `first_run_setup.feature` is selfhost-only; `hosted_setup.feature`
 checks that an empty hosted installation never offers setup.
+`second_factor_cooling_off.feature` is hosted-only: an account whose second factor was reset
+while the organization is in the cooling-off period of its deletion enrols and revokes the deletion.
 `self_service_signup.feature` is hosted-only and verifies the emailed confirmation
 and subsequent login through real SMTP to Mailpit. The shared `mailpit` fixture in
 `backend/tests/bdd/mailpit.py` clears the inbox before each requesting scenario and

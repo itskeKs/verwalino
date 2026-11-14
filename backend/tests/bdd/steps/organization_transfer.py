@@ -250,6 +250,25 @@ def readonly_deletion(world):
     assert answer.status_code == 409, world.describe_response()
 
 
+@when('the operator removes the second factor of the administrator')
+def operator_removes_second_factor(world, rent_db):
+    from sqlalchemy import text
+    source = world.data['export_source']
+
+    async def remove():
+        async with rent_db.begin():
+            for table in ('user_recovery_code', 'user_second_factor'):
+                await rent_db.execute(text(f'DELETE FROM {table} WHERE organization_id=:org AND user_id=:admin'),
+                                      {'org': source['org'], 'admin': source['admin']})
+    world.run(remove())
+
+
+@when('the administrator enrols a second factor')
+def administrator_enrols_second_factor(world):
+    from tests.bdd.steps.second_factor import enrol_second_factor
+    world.run(enrol_second_factor(world.actor))
+
+
 @when('the administrator revokes the deletion')
 def revoke_deletion(world):
     answer = world.act('POST', '/api/organizations/deletion/cancel')

@@ -60,7 +60,10 @@ def _get_session_identities(request: Request) -> tuple[uuid.UUID, uuid.UUID] | N
 # Routes a hosted account without a confirmed second factor may reach: the
 # enrolment flow, the session state and sign-out (issue #208, owner decision
 # of 5 Nov 2026). The gate derives from the database in get_current_user, so
-# no cookie issuer can hand out an unrestricted hosted session.
+# no cookie issuer can hand out an unrestricted hosted session. The same routes
+# stay writable while the organization is in the cooling-off period of its
+# deletion (issue #659): enrolling changes account state, not the
+# organization's records, and in hosted mode cancelling it still needs the factor.
 SECOND_FACTOR_ENROLMENT_PATHS = {
     "/api/auth/second-factor",
     "/api/auth/second-factor/enrolment",
@@ -98,7 +101,8 @@ async def get_current_user(request: Request) -> AuthContext:
                 if state.deletion == "deleted_pending_retention":
                     role = None
                 elif state.deletion == "cooling_off" and request.method not in {"GET", "HEAD", "OPTIONS"} and request.url.path not in {
-                    "/api/organizations/deletion/cancel", "/api/organizations/export", "/api/auth/logout"
+                    "/api/organizations/deletion/cancel", "/api/organizations/export", "/api/auth/logout",
+                    *SECOND_FACTOR_ENROLMENT_PATHS,
                 }:
                     raise HTTPException(409, "Ihre Organisation ist während der siebentägigen Widerrufsfrist schreibgeschützt.")
                 enrolment_required = (
