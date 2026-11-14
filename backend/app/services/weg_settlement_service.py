@@ -82,7 +82,7 @@ from app.repositories.settlement_repo import (
 from app.services.reserve_ledger_service import ReserveLedgerService
 from app.services.payment_service import dated_plan_soll
 
-ENGINE_VERSION = "m4.7.0"
+ENGINE_VERSION = "m4.8.0"
 
 DELETE_MESSAGES = {
     'SETTLEMENT_DELETE_SOURCE_ACCESS_REQUIRED': 'Zum Löschen dieses Entwurfs benötigen Sie Zugriff auf alle Finanzquellen des Objekts.',

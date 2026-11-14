@@ -328,8 +328,9 @@ chosen rows (`HAUSGELD_VORSCHUSS`, direction IN, `period_year` and `period_month
 - **Owner change within the year:** rows follow the ownership periods exactly as the owner account
   does. A change on the 1st gives the whole month to the buyer; a change inside a month gives both
   owners a row for that month, split by owner days (Karl until 15 July, Lena from 16 July: 193.55 and
-  206.45 of 400.00). A unit without an owner in a plan month is a data error the statement already
-  refuses (`hausgeld_ownership_invalid`); the offer refuses it the same way and books nothing.
+  206.45 of 400.00); the first and the last month of a plan that starts or ends inside it split by
+  the days inside the plan period (§5.3a). A unit without an owner in a plan month is a data error
+  the statement already refuses (`hausgeld_ownership_invalid`); the offer refuses it the same way and books nothing.
 - **Booked months** are marked `booked` and not offered again. The set is read by
   `PaymentService.booked_hausgeld_months` from the payments the owner statement counts as Ist: the
   owner's payments of the plan's property (`list_for_owner`), kept by `_scope_payments_to_period` over
@@ -654,14 +655,34 @@ keep the cents of their plan line: with lines of 1.500,01 € and 1.499,99 € o
 co-owner selling on 16.08., the second owes exactly 1.499,99 €, because the dated charges the
 settlement divides the line by now sum to the line itself.
 
+**First and last month of a mid-month plan (#662).** The installment of a month the plan starts or
+ends in keeps its amount, but only the days of that month inside the plan period are shared by the
+owners: the walk of that month runs from the later of the 1st and the plan start to the earlier of
+the last day and the plan end. Plan 15.07.–10.09.2026, 3.000,00 € (3 × 1.000,00 €), unit sold with
+effect from 10.07.: the seller owned no plan day and owes nothing, the buyer owes 3.000,00 € in the
+owner account, in dunning, in „Hausgeld buchen“ and as the settlement's plan Soll; before, the
+seller was charged 290,32 € of July. Sold with effect from 20.07.: July's 17 plan days (15.–31.07.)
+are shared, the seller's 5 days give 1.000,00 € × 5/17 = 294,1176 → 294,12 € and the buyer 705,88 €
+(floor to the cent, the spare cent to the larger remainder, the rule every dated share uses); the
+buyer owes 2.705,88 € in all. At the plan end the same: sold with effect from 05.09. the seller
+shares September's 10 plan days by 4, 400,00 € (buyer 600,00 €); sold with effect from 20.09., after
+the plan end, the seller owed every plan day and the buyer nothing. A plan that starts on the 1st
+and ends on the last day of a month has nothing outside the plan to leave out: its split is
+unchanged, as is a transfer in any middle month. The planned reserve schedule and the planned
+reserve Soll (#401) are not affected: both follow the plan's frozen owner cells, not a dated walk.
+The due date of the first installment is not part of this rule (a plan starting 15.07. still shows
+01.07. as the due day of July).
+
 A finalized plan keeps its frozen lines, its stored `monthly_amount` and its snapshot, and
 finalized settlements are not corrected (GoBD). The owner account and the Hausgeld offer are
 derived (ADR-0009) and read the frozen `planned_amount`, so a short plan finalized before #602
 shows its full planned amount there; no organization held such a plan (owner decision of
-2026-11-12), so nothing is corrected. The settlement engine is `m4.7.0`: a draft recomputed under
-`m4.7.0` over a short plan can differ by one cent per owner from `m4.6.0`, where the proportional
-division moved a cent away from a continuing co-owner; the version-gated PDF sentences read
-"at least" a version and are unchanged.
+2026-11-12), so nothing is corrected. The settlement engine is `m4.8.0`: a draft recomputed under
+`m4.7.0` or later over a short plan can differ by one cent per owner from `m4.6.0`, where the
+proportional division moved a cent away from a continuing co-owner, and a draft recomputed under
+`m4.8.0` over a plan that starts or ends mid-month moves the plan Soll of an owner who sold before
+the plan start or buys after the plan end (#662); the version-gated PDF sentences read "at least"
+a version and are unchanged.
 
 ### 5.4 Economic Plan Snapshot
 
@@ -775,6 +796,7 @@ There are **no** real WEG sample settlements. Test cases are **synthetic**, deri
 9. **Snapshot/hash determinism:** scenarios 2 + 7 finalized twice (identical inputs) → identical `snapshot_sha256`. Tests the M3 §1.8 mechanics for M4 payloads.
 10. **Service period crossing the year (#403):** building insurance 3.650,00 € for 01.07.2024–30.06.2025, one unit/owner. Expected: 1.840,00 € (184/365) in the 2024 settlement and 1.810,00 € (181/365) in 2025; also 1.200,00 € for 01.07.2025–30.06.2026 → 604,93 €/595,07 €, and two units with an owner change at the year boundary summing exactly per unit across the years (§4.3.2).
 11. **Short plan (#602):** 3.000,00 € for 01.07.–30.09.2025, one unit/owner → 3 × 1.000,00 € on plan, ledger and statement; 1.000,00 € over three months 333,34/333,33/333,33; one month 3.000,00 €; a year end inside the plan; first and last month partly covered; thirteen touched months → twelve; a transfer on 16.08. (Karl 1.483,87 €, Lena 1.516,13 €); co-owner lines 1.500,01 €/1.499,99 € keep their cents (§5.3a).
+12. **Mid-month plan edges (#662):** 3.000,00 € for 15.07.–10.09.2026 → 3 × 1.000,00 €; sold 10.07. seller 0,00 €/buyer 3.000,00 €; sold 20.07. seller 294,12 €/buyer 2.705,88 €; sold 05.09. seller 2.400,00 €/buyer 600,00 €; sold 20.09. seller 3.000,00 €/buyer 0,00 €; ledger, dunning, Hausgeld offer and settlement Soll agree (§5.3a).
 
 Each golden test checks **not only the final total** but the **individual line amounts, key base values, subtotals, balance, and reserve development** against the hand calculation (otherwise a compensating double error slips through — M3 discipline).
 

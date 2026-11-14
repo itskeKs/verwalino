@@ -413,7 +413,10 @@ def owner_expected_charges(
     twelve installments of a full year apply. The volume stays with its unit.
     Dated ownership assigns each month's installment
     to that month's owners, splitting a transfer month by inclusive owner-days
-    and concurrent successors by positive mea_share. Continuing co-owners retain
+    and concurrent successors by positive mea_share. A month the plan starts or ends
+    in is shared by the days of that month INSIDE the plan period only (#662): an owner
+    who sold before the plan started, or buys after it ended, owes nothing of it, and a
+    transfer inside such a month splits by the plan days. Continuing co-owners retain
     their frozen cents; only departed owners' rates pass to successors. Ambiguous
     transfers fail instead of moving other shares. Each holder carries one rate
     per installment, so one walk from the plan's beginning applies every
@@ -452,6 +455,12 @@ def owner_expected_charges(
             previous = {oid: list(amounts) for oid, amounts in lines_here}
             for k, (year, month) in enumerate(months[:nonzero[-1] + 1]):
                 m_first, m_last = _month_bounds(year, month)
+                # Only the plan days of the month are shared; the plan period is unknown
+                # (and the month whole) when the caller names no plan start or end.
+                if plan_start is not None:
+                    m_first = max(m_first, plan_start)
+                if plan_end is not None:
+                    m_last = min(m_last, plan_end)
                 cover = build_owner_cover(unit, m_first, m_last, owner_periods)
                 boundaries = sorted({m_first, *(p.start for p in cover),
                     *(date.fromordinal(p.end.toordinal() + 1) for p in cover if p.end < m_last)})

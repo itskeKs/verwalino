@@ -1371,3 +1371,190 @@ def test_every_continuing_coowner_of_a_short_plan_keeps_the_cents_of_the_plan_li
     assert soll[bernd] == Decimal('1499.99')
     assert {owner: sum(c.amount for c in rows) for owner, rows in charges.items()} == soll
     assert sum(soll.values()) == Decimal('3000.00')
+
+
+# ===========================================================================
+# #662: owners outside the plan period do not share its first and last instalment.
+#   The instalment of a month the plan starts or ends in is shared only by the
+#   days of that month INSIDE the plan period; its amount stays whole (#602).
+#   Plan 15.07.-10.09.2026, 3,000.00 = 3 x 1,000.00. Karl owns until the day before
+#   the sale, Lena from the sale day; the line is Karl's. Hand-computed:
+#     first instalment: 15.07.-31.07. = 17 days; last: 01.09.-10.09. = 10 days.
+#     Shares are weighted rate x owner days and rounded by the engine's own
+#     largest-remainder rule (floor to the cent, spare cents to the largest
+#     remainder, ties by larger share, then by owner id).
+# ===========================================================================
+_PLAN_START, _PLAN_END = date(2026, 7, 15), date(2026, 9, 10)
+_KARL, _LENA, _MIA, _UNIT = _U(1), _U(2), _U(3), _U(10)
+
+
+def _after(day):
+    return date.fromordinal(day.toordinal() - 1)
+
+
+def _sale_charges(amount, sale_day, owner, *, start=_PLAN_START, end=_PLAN_END):
+    from app.engine.types import OwnerPeriodInput
+
+    lines = [OwnerAdvanceChargeInput(_KARL, _UNIT, Decimal(amount))]
+    history = [OwnerPeriodInput(_UNIT, _KARL, date(2020, 1, 1), _after(sale_day)),
+               OwnerPeriodInput(_UNIT, _LENA, sale_day, None)]
+    return owner_expected_charges(lines, owner, start, end, owner_periods=history,
+                                  plan_start=start, plan_end=end)
+
+
+def _amounts(charges):
+    return [(c.period_month, str(c.amount)) for c in charges]
+
+
+_ALL_THREE = [(7, '1000.00'), (8, '1000.00'), (9, '1000.00')]
+
+
+@pytest.mark.parametrize('sale_day,karl,lena', [
+    # The issue: sold 10.07., before the plan starts: the seller owned nothing while the plan ran.
+    (date(2026, 7, 10), [], _ALL_THREE),
+    (date(2026, 7, 1), [], _ALL_THREE),
+    (date(2026, 6, 20), [], _ALL_THREE),
+    # Sold on the plan start day itself: the buyer owns every plan day.
+    (date(2026, 7, 15), [], _ALL_THREE),
+    # Sold 16.07.: Karl owns 15.07. only, 1 of 17 days = 58.8235 -> 58.82; Lena 941.1764 -> 941.17,
+    # and the spare cent goes to the larger remainder (Lena): 941.18.
+    (date(2026, 7, 16), [(7, '58.82')], [(7, '941.18'), (8, '1000.00'), (9, '1000.00')]),
+    # Sold 20.07. (the issue's user check): Karl 15.-19. = 5 of 17 days = 294.1176 -> 294.11,
+    # Lena 12 of 17 = 705.8823 -> 705.88; the spare cent goes to the larger remainder (Karl).
+    (date(2026, 7, 20), [(7, '294.12')], [(7, '705.88'), (8, '1000.00'), (9, '1000.00')]),
+    # Sold 31.07.: Lena owns the last day only, 1 of 17 days.
+    (date(2026, 7, 31), [(7, '941.18')], [(7, '58.82'), (8, '1000.00'), (9, '1000.00')]),
+    # Sold 01.08.: the whole of August on, the first instalment stays with the seller.
+    (date(2026, 8, 1), [(7, '1000.00')], [(8, '1000.00'), (9, '1000.00')]),
+    # Sold 05.09. inside the last month: 01.-04.09. = 4 of 10 plan days -> 400.00, 05.-10.09. -> 600.00.
+    (date(2026, 9, 5), [(7, '1000.00'), (8, '1000.00'), (9, '400.00')], [(9, '600.00')]),
+    # Sold on the plan end day 10.09.: Lena owns 1 of 10 days.
+    (date(2026, 9, 10), [(7, '1000.00'), (8, '1000.00'), (9, '900.00')], [(9, '100.00')]),
+    # Sold the day after the plan end, and later: the seller owned every plan day.
+    (date(2026, 9, 11), _ALL_THREE, []),
+    (date(2026, 9, 20), _ALL_THREE, []),
+    (date(2026, 10, 1), _ALL_THREE, []),
+])
+def test_owners_outside_the_plan_period_do_not_share_its_first_and_last_instalment(sale_day, karl, lena):
+    karl_charges = _sale_charges('3000.00', sale_day, _KARL)
+    lena_charges = _sale_charges('3000.00', sale_day, _LENA)
+    assert _amounts(karl_charges) == karl
+    assert _amounts(lena_charges) == lena
+    # The instalment is never made larger or smaller by who shares it.
+    by_month = {}
+    for charge in karl_charges + lena_charges:
+        by_month[charge.period_month] = by_month.get(charge.period_month, Decimal('0.00')) + charge.amount
+    assert by_month == {7: Decimal('1000.00'), 8: Decimal('1000.00'), 9: Decimal('1000.00')}
+
+
+@pytest.mark.parametrize('amount', ['3000.00', '1000.01', '1000.00', '0.01', '0.00'])
+def test_the_owners_of_every_month_sum_to_the_instalment_on_every_sale_day(amount):
+    from datetime import timedelta
+
+    instalments = _amounts(_short_plan_charges(amount, _PLAN_START, _PLAN_END))
+    day = date(2026, 6, 1)
+    while day <= date(2026, 10, 15):
+        totals = {}
+        for owner in (_KARL, _LENA):
+            for charge in _sale_charges(amount, day, owner):
+                totals[charge.period_month] = totals.get(charge.period_month, Decimal('0.00')) + charge.amount
+        assert [(month, str(total)) for month, total in sorted(totals.items())] == instalments, day
+        day += timedelta(days=1)
+
+
+def test_three_owners_in_the_first_month_share_only_its_plan_days():
+    from app.engine.types import OwnerPeriodInput
+
+    # Karl until 19.07., Lena 20.-24.07., Mia from 25.07.: 5 + 5 + 7 = 17 plan days of July.
+    # 1,000.00 x 5/17 = 294.1176 (twice), x 7/17 = 411.7647; floors 294.11 + 294.11 + 411.76 =
+    # 999.98: two spare cents go to the larger remainders, the two equal ones, i.e. both.
+    lines = [OwnerAdvanceChargeInput(_KARL, _UNIT, Decimal('3000.00'))]
+    history = [OwnerPeriodInput(_UNIT, _KARL, date(2020, 1, 1), date(2026, 7, 19)),
+               OwnerPeriodInput(_UNIT, _LENA, date(2026, 7, 20), date(2026, 7, 24)),
+               OwnerPeriodInput(_UNIT, _MIA, date(2026, 7, 25), None)]
+    charges = {owner: owner_expected_charges(lines, owner, _PLAN_START, _PLAN_END,
+                                             owner_periods=history, plan_start=_PLAN_START,
+                                             plan_end=_PLAN_END)
+               for owner in (_KARL, _LENA, _MIA)}
+    assert _amounts(charges[_KARL]) == [(7, '294.12')]
+    assert _amounts(charges[_LENA]) == [(7, '294.12')]
+    assert _amounts(charges[_MIA]) == [(7, '411.76'), (8, '1000.00'), (9, '1000.00')]
+    assert sum(c.amount for rows in charges.values() for c in rows) == Decimal('3000.00')
+
+
+@pytest.mark.parametrize('sale_day,anna,carla', [
+    # Anna's share of the plan sold 10.07., before the plan: Carla owes it from the first instalment.
+    (date(2026, 7, 10), [], [(7, '500.00'), (8, '500.00'), (9, '500.00')]),
+    # Sold 20.07.: July 1,000.00 over Anna 500 x 5, Bernd 500 x 17, Carla 500 x 12 plan days:
+    # 147.0588 / 500.00 / 352.9411 -> the spare cent goes to Anna (larger remainder): 147.06.
+    (date(2026, 7, 20), [(7, '147.06')], [(7, '352.94'), (8, '500.00'), (9, '500.00')]),
+    # Sold 05.09. inside the last month: Anna 500 x 4, Bernd 500 x 10, Carla 500 x 6 of the 10 days.
+    (date(2026, 9, 5), [(7, '500.00'), (8, '500.00'), (9, '200.00')], [(9, '300.00')]),
+    # Sold 20.09., after the plan end: Anna keeps her share of every instalment.
+    (date(2026, 9, 20), [(7, '500.00'), (8, '500.00'), (9, '500.00')], []),
+])
+def test_a_coowner_selling_around_the_plan_edges_leaves_the_other_one_untouched(sale_day, anna, carla):
+    from app.engine.types import OwnerPeriodInput
+
+    anna_id, bernd, carla_id = _U(1), _U(2), _U(3)
+    lines = [OwnerAdvanceChargeInput(anna_id, _UNIT, Decimal('1500.00')),
+             OwnerAdvanceChargeInput(bernd, _UNIT, Decimal('1500.00'))]
+    history = [OwnerPeriodInput(_UNIT, anna_id, date(2020, 1, 1), _after(sale_day), Decimal('50')),
+               OwnerPeriodInput(_UNIT, bernd, date(2020, 1, 1), None, Decimal('50')),
+               OwnerPeriodInput(_UNIT, carla_id, sale_day, None, Decimal('50'))]
+    charges = {owner: owner_expected_charges(lines, owner, _PLAN_START, _PLAN_END,
+                                             owner_periods=history, plan_start=_PLAN_START,
+                                             plan_end=_PLAN_END)
+               for owner in (anna_id, bernd, carla_id)}
+    assert _amounts(charges[anna_id]) == anna
+    assert _amounts(charges[carla_id]) == carla
+    # The continuing co-owner keeps exactly the instalments of the plan line, the unit its total.
+    assert _amounts(charges[bernd]) == [(7, '500.00'), (8, '500.00'), (9, '500.00')]
+    assert sum(c.amount for rows in charges.values() for c in rows) == Decimal('3000.00')
+
+
+@pytest.mark.parametrize('sale_day,karl,lena', [
+    # A plan inside one month is the first and the last month at once: 15.-20.07. = 6 days.
+    (date(2026, 7, 10), [], [(7, '3000.00')]),
+    (date(2026, 7, 15), [], [(7, '3000.00')]),
+    (date(2026, 7, 17), [(7, '1000.00')], [(7, '2000.00')]),
+    (date(2026, 7, 20), [(7, '2500.00')], [(7, '500.00')]),
+    (date(2026, 7, 21), [(7, '3000.00')], []),
+    (date(2026, 7, 25), [(7, '3000.00')], []),
+])
+def test_a_plan_inside_one_month_shares_its_only_instalment_by_its_own_days(sale_day, karl, lena):
+    start, end = date(2026, 7, 15), date(2026, 7, 20)
+    assert _amounts(_sale_charges('3000.00', sale_day, _KARL, start=start, end=end)) == karl
+    assert _amounts(_sale_charges('3000.00', sale_day, _LENA, start=start, end=end)) == lena
+
+
+@pytest.mark.parametrize('sale_day,karl,lena', [
+    # A plan from the 1st to the last day of its months: nothing outside the plan to clamp,
+    # the owner days of the first and last month are the calendar days as before (#601).
+    (date(2026, 7, 10), [(7, '290.32')], [(7, '709.68'), (8, '1000.00'), (9, '1000.00')]),
+    (date(2026, 7, 1), [], _ALL_THREE),
+    # Sold 22.09.: Karl owns 21 of the 30 days of September, Lena 9.
+    (date(2026, 9, 22), [(7, '1000.00'), (8, '1000.00'), (9, '700.00')], [(9, '300.00')]),
+])
+def test_a_plan_from_the_first_to_the_last_day_of_its_months_keeps_the_calendar_day_split(
+        sale_day, karl, lena):
+    start, end = date(2026, 7, 1), date(2026, 9, 30)
+    assert _amounts(_sale_charges('3000.00', sale_day, _KARL, start=start, end=end)) == karl
+    assert _amounts(_sale_charges('3000.00', sale_day, _LENA, start=start, end=end)) == lena
+
+
+@pytest.mark.parametrize('sale_day,karl,lena', [
+    # 12 instalments July 2026..June 2027 over a plan of 15.07.2026-14.07.2027 (13 touched months):
+    # the first month is clamped to the 15th; the thirteenth has no instalment, so a sale in it
+    # changes nothing, and the last instalment (June) is a whole month.
+    (date(2026, 7, 5), [], [(m, '1000.00') for m in (7, 8, 9, 10, 11, 12, 1, 2, 3, 4, 5, 6)]),
+    (date(2026, 7, 20), [(7, '294.12')],
+     [(7, '705.88')] + [(m, '1000.00') for m in (8, 9, 10, 11, 12, 1, 2, 3, 4, 5, 6)]),
+    (date(2027, 7, 5), [(m, '1000.00') for m in (7, 8, 9, 10, 11, 12, 1, 2, 3, 4, 5, 6)], []),
+    (date(2027, 6, 16), [(m, '1000.00') for m in (7, 8, 9, 10, 11, 12, 1, 2, 3, 4, 5)] + [(6, '500.00')],
+     [(6, '500.00')]),
+])
+def test_a_twelve_month_plan_from_the_15th_clamps_only_its_first_instalment(sale_day, karl, lena):
+    start, end = date(2026, 7, 15), date(2027, 7, 14)
+    assert _amounts(_sale_charges('12000.00', sale_day, _KARL, start=start, end=end)) == karl
+    assert _amounts(_sale_charges('12000.00', sale_day, _LENA, start=start, end=end)) == lena
