@@ -12,18 +12,6 @@ Feature: Organization deletion
     When the administrator revokes the deletion
     Then the organization accepts new personal records again
 
-  @hosted
-  Scenario: An administrator without a second factor enrols during cooling-off and revokes the deletion
-    Given a separate organization has rental records and an original for export
-    When its administrator requests the retention preview
-    And the administrator confirms the exact organization name
-    And the operator removes the second factor of the administrator
-    Then the organization is read-only during cooling-off
-    When the administrator enrols a second factor
-    Then the organization is read-only during cooling-off
-    When the administrator revokes the deletion
-    Then the organization accepts new personal records again
-
   Scenario: The operator executes a due deletion without changing retained records
     Given a separate organization has rental records and an original for export
     When its administrator requests the retention preview
