@@ -267,6 +267,65 @@ class TestI4G_PlanMonthlyRatesSumExact:
         assert r.total_advance_volume == cost + reserve
 
 
+    @settings(max_examples=200)
+    @given(
+        offset=st.integers(min_value=0, max_value=364),
+        length=st.integers(min_value=1, max_value=366),
+        meas=st.lists(mea_values(), min_size=1, max_size=4),
+        cost=money_amounts(min_eur=0, max_eur=200000),
+        reserve=money_amounts(min_eur=0, max_eur=50000),
+    )
+    def test_any_accepted_plan_period_charges_exactly_the_plan_in_its_months(
+        self, offset, length, meas, cost, reserve
+    ):
+        """#602: for every accepted plan period the instalments of the plan engine and the
+        ledger are the same one per calendar month (at most twelve), and everything charged
+        to all owners over all months is exactly the planned volume."""
+        from hypothesis import assume
+
+        from app.engine.mietkonto import OwnerAdvanceChargeInput, owner_expected_charges
+        from app.engine.periods import plan_instalment_count, validate_settlement_period
+
+        start = YEAR_START + timedelta(days=offset)
+        end = start + timedelta(days=length - 1)
+        try:
+            validate_settlement_period(start, end)
+        except ValueError:
+            assume(False)
+        units = tuple(
+            UnitInput(id=_U(10 + i), number=str(i), usage_type="WOHNUNG", mea=m)
+            for i, m in enumerate(meas)
+        )
+        owners = tuple(
+            OwnerPeriodInput(unit_id=_U(10 + i), owner_profile_id=_U(100 + i),
+                             valid_from=date(2000, 1, 1), valid_to=None)
+            for i in range(len(meas))
+        )
+        planned = (
+            PlannedCostInput(category_id=_U(91), category_code="HEIZUNG", label="x",
+                             planned_amount=cost, distribution_key="MEA", cost_group="UMLAGEFAEHIG"),
+        )
+        plan = compute_wirtschaftsplan(WirtschaftsplanInput(
+            plan_year=start.year, period_start=start, period_end=end,
+            property=PropertyInput(id=_U(1), name="WEG", management_type="WEG"),
+            units=units, owner_periods=owners, planned_costs=planned,
+            reserve_contribution_total=reserve,
+        ))
+        count = plan_instalment_count(start, end)
+        assert 1 <= count <= 12
+        lines = [OwnerAdvanceChargeInput(o.owner_profile_id, o.unit_id, o.annual_advance)
+                 for o in plan.owners]
+        charged = Decimal("0.00")
+        for o in plan.owners:
+            assert len(o.monthly_rates) == count
+            assert sum(o.monthly_rates, Decimal("0.00")) == o.annual_advance
+            charges = owner_expected_charges(lines, o.owner_profile_id, start, end,
+                                             plan_start=start, plan_end=end)
+            assert [c.amount for c in charges] == [r for r in o.monthly_rates if r]
+            charged += sum((c.amount for c in charges), Decimal("0.00"))
+        assert charged == plan.total_advance_volume == cost + reserve
+
+
 # ===========================================================================
 # I4-I: a service period crossing the year boundary is windowed day-accurately:
 # the adjacent yearly settlements together charge exactly the gross amount.

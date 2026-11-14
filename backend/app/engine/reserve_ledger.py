@@ -3,6 +3,7 @@ from calendar import monthrange
 from datetime import date
 from decimal import Decimal, ROUND_HALF_UP
 
+from app.engine.periods import plan_instalment_count
 from app.engine.rounding import CENT, distribute_amount
 
 
@@ -46,22 +47,27 @@ def reserve_totals(opening, contributions, withdrawals, overrides, late_cash=Dec
             'closing_balance': format(closing, '.2f'), 'overdrawn': closing < 0}
 
 
-def planned_reserve_entries(total, cells, period_start):
-    """Frozen MEA/co-owner cells, stable ID ties, then twelve cent-exact rates."""
+def planned_reserve_entries(total, cells, period_start, period_end):
+    """Frozen MEA/co-owner cells, stable ID ties, then the plan's cent-exact rates."""
     cells = sorted(cells)
     if not cells:
         if total:
             raise ValueError('Reserve plan has no owner/unit shares')
         return []
     annual = distribute_amount(money(total), [cell[2] for cell in cells])
-    return monthly_reserve_entries([(unit, owner, share) for (unit, owner, _weight), share in zip(cells, annual)], period_start)
+    return monthly_reserve_entries(
+        [(unit, owner, share) for (unit, owner, _weight), share in zip(cells, annual)], period_start, period_end)
 
 
-def monthly_reserve_entries(cells, period_start):
-    """Schedule canonical annual owner/unit amounts without reallocating them."""
+def monthly_reserve_entries(cells, period_start, period_end):
+    """Schedule canonical annual owner/unit amounts without reallocating them.
+
+    One rate per plan month, at most twelve: the same instalment count as the
+    Wirtschaftsplan and the Hausgeld ledger (#602).
+    """
     rows = []
     for unit, owner, share in cells:
-        rates = distribute_amount(share, [Decimal(1)] * 12)
+        rates = distribute_amount(share, [Decimal(1)] * plan_instalment_count(period_start, period_end))
         for offset, amount in enumerate(rates):
             month_number = period_start.year * 12 + period_start.month - 1 + offset
             year, month = divmod(month_number, 12)

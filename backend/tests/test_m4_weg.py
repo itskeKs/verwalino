@@ -1494,8 +1494,8 @@ async def test_weg_owner_change_keeps_each_owners_own_bookings(client_a_admin, m
 
 
 async def _single_unit_weg(client, seed_data, *, period_start='2025-01-01', period_end='2025-12-31',
-                           amount='12000.00'):
-    """One unit with MEA 1000, a plan without reserve and a matching cost entry."""
+                           amount='12000.00', reserve='0.00'):
+    """One unit with MEA 1000, a plan (reserve contribution optional) and a matching cost entry."""
     property_response = await client.post('/api/properties', json={
         'name': 'WEG Lindweg 1', 'management_type': 'WEG', 'mea_denominator': 1000})
     assert property_response.status_code == 201, property_response.text
@@ -1529,7 +1529,7 @@ async def _single_unit_weg(client, seed_data, *, period_start='2025-01-01', peri
         'period_start': period_start, 'period_end': period_end})
     assert plan.status_code == 201, plan.text
     values = {'planned_costs': [{'category_code': 'GARTENPFLEGE', 'label': 'Bewirtschaftung',
-        'planned_amount': amount, 'cost_group': 'UMLAGEFAEHIG'}], 'reserve_contribution_total': '0.00'}
+        'planned_amount': amount, 'cost_group': 'UMLAGEFAEHIG'}], 'reserve_contribution_total': reserve}
     await attest_fixture(client, 'economic_plan', plan.json()['id'], values)
     response = await client.post(f"/api/economic-plans/{plan.json()['id']}/finalize", json=values)
     assert response.status_code == 200, response.text
@@ -1629,6 +1629,61 @@ async def test_short_plan_keeps_its_full_planned_soll(client_a_admin, seed_data)
     result = await _finalize_single_run(api, w, [w['anna']])
     owner = result['owner_results'][0]
     assert (owner['plan_soll'], owner['abrechnungsspitze']) == ('3000.00', '0.00')
+
+
+@pytest.mark.asyncio
+async def test_short_plan_shows_one_monthly_hausgeld_on_every_output(client_a_admin, seed_data):
+    # #602: planned costs 3,000.00 and a reserve contribution 1,200.00 over July..September 2025
+    # are 4,200.00 = 3 x 1,400.00 (reserve 3 x 400.00), never 3 x 350.00.
+    from tests.test_reserve_ledger import pdf_text
+
+    api = client_a_admin
+    w = await _single_unit_weg(api, seed_data, period_start='2025-07-01', period_end='2025-09-30',
+                               amount='3000.00', reserve='1200.00')
+    page = (await api.get(f"/api/economic-plans/{w['plan']}")).json()
+    advance = next(line for line in page['lines'] if line['line_type'] == 'OWNER_ADVANCE')
+    assert (advance['planned_amount'], advance['monthly_amount']) == ('4200.00', '1400.00')
+    pdf = await api.get(f"/api/economic-plans/{w['plan']}/pdf")
+    assert pdf.status_code == 200, pdf.text
+    text = pdf_text(pdf.content)
+    assert '4.200,00 EUR 1.400,00 EUR' in text and '3 gleiche Monatsraten' in text
+    # The owner account, the dunning basis, and the Hausgeld booking charge the same instalments.
+    ledger = await api.get(f"/api/payments/mietkonto/owner/{w['anna']}", params={
+        'period_start': '2025-07-01', 'period_end': '2025-09-30', 'economic_plan_id': w['plan']})
+    assert ledger.status_code == 200, ledger.text
+    assert ledger.json()['soll_total'] == '4200.00'
+    assert [(i['period_month'], i['soll']) for i in ledger.json()['open_items']] == [
+        (7, '1400.00'), (8, '1400.00'), (9, '1400.00')]
+    offer = (await api.get(f"/api/economic-plans/{w['plan']}/hausgeld-booking")).json()
+    assert [(row['period_month'], row['amount']) for row in offer if row['owner_profile_id'] == w['anna']] == [
+        (7, '1400.00'), (8, '1400.00'), (9, '1400.00')]
+    # The statement of the same period shows the whole plan as Soll, the reserve part as 3 x 400.00.
+    result = await _finalize_single_run(api, w, [w['anna']])
+    owner = result['owner_results'][0]
+    assert (owner['plan_soll'], owner['abrechnungsspitze']) == ('4200.00', '0.00')
+    assert [ln['amount'] for ln in result['lines'] if ln['line_type'] == 'RESERVE_SOLL'] == ['1200.00']
+    statement = await api.get(f"/api/weg-settlements/{result['id']}/pdf")
+    assert statement.status_code == 200, statement.text
+    assert '4.200,00' in pdf_text(statement.content)
+    reserve = (await api.get(f"/api/weg-settlements/{result['id']}/reserve-ledger")).json()
+    assert [(row['date'], row['amount']) for row in reserve['entries'] if row['kind'] == 'PLANNED'] == [
+        ('2025-07-01', '400.00'), ('2025-08-01', '400.00'), ('2025-09-01', '400.00')]
+
+
+@pytest.mark.asyncio
+async def test_short_plan_splits_a_mid_month_transfer_by_days_of_the_whole_instalment(client_a_admin, seed_data):
+    # Anna owns until 15 August, Bernd from 16 August: July 1,000.00 and 15/31 of August's 1,000.00
+    # are Anna's, 16/31 of August and September are Bernd's -- not a twelfth of anything.
+    api = client_a_admin
+    w = await _single_unit_weg(api, seed_data, period_start='2025-07-01', period_end='2025-09-30',
+                               amount='3000.00')
+    bernd = await _sell_unit(api, w['unit'], '2025-08-15', '2025-08-16')
+    result = await _finalize_single_run(api, w, [w['anna'], bernd])
+    owners = {o['owner_profile_id']: o for o in result['owner_results']}
+    assert owners[w['anna']]['plan_soll'] == '1483.87'
+    assert owners[bernd]['plan_soll'] == '1516.13'
+    # Computed results of the WEG engine changed (a cent moved back): the run says so.
+    assert result['engine_version'] == 'm4.7.0'
 
 
 @pytest.mark.asyncio
@@ -2433,7 +2488,7 @@ async def test_input_roster_keeps_original_plan_owner_after_history_correction(c
 
 
 @pytest.mark.parametrize('payload_version,shown', [(None, False), ('m4.2.0', False), ('m4.3.0', False),
-    ('m4.3.2', False), ('m4.4.0', True), ('m4.5.0', True), ('m4.6.0', True)])
+    ('m4.3.2', False), ('m4.4.0', True), ('m4.5.0', True), ('m4.6.0', True), ('m4.7.0', True)])
 def test_pdf_reserve_payment_source_uses_only_the_frozen_engine_version(payload_version, shown):
     from types import SimpleNamespace
     from app.services.weg_jahresabrechnung_pdf import build_weg_jahresabrechnung_html

@@ -46,7 +46,9 @@ from typing import Literal
 
 from app.engine.fristen import FederalState, owner_due_date, public_holidays, third_working_day
 
-from app.engine.periods import day_count, owner_at, build_owner_cover
+from app.engine.periods import (
+    PLAN_MAX_INSTALMENTS, build_owner_cover, day_count, owner_at, plan_instalment_count,
+)
 from app.engine.types import OwnerPeriodInput
 from app.engine.rounding import (
     CENT, advance_attributions_through, annual_advance_share_for_period,
@@ -158,9 +160,10 @@ class LeaseChargeInput:
 class OwnerAdvanceChargeInput:
     """Frozen copy of an OWNER_ADVANCE economic_plan_line (m6 section 2.2).
 
-    annual_amount is the frozen planned_amount, split into twelve cent-exact
-    installments (ADR-0007 E4-3b). One line per (owner, unit); the owner Soll
-    per month sums the installments over their units (m6 section 2.2).
+    annual_amount is the frozen planned_amount, split into cent-exact installments,
+    one per calendar month of the plan period and at most twelve (ADR-0007 E4-3b,
+    #602). One line per (owner, unit); the owner Soll per month sums the
+    installments over their units (m6 section 2.2).
     """
 
     owner_profile_id: uuid.UUID
@@ -396,20 +399,25 @@ def owner_expected_charges(
     period_end: date,
     *, owner_periods: list[OwnerPeriodInput] | None = None,
     plan_start: date | None = None,
+    plan_end: date | None = None,
     monthly_due_day: int | None = None,
     federal_state: FederalState | None = None,
 ) -> list[ExpectedCharge]:
     """Monthly owner Hausgeld Soll over the period (m6 section 2.2).
 
-    Each annual advance yields twelve largest-remainder installments, indexed
-    from the plan's first calendar month. The volume stays with its unit.
+    Each annual advance yields largest-remainder installments, one per calendar
+    month of the plan period [plan_start, plan_end] and at most twelve, indexed
+    from the plan's first calendar month (`plan_instalment_count`, the number the
+    Wirtschaftsplan engine splits into as well, so a short plan charges its whole
+    amount, #602). Without plan_end the plan period is unknown, not short: the
+    twelve installments of a full year apply. The volume stays with its unit.
     Dated ownership assigns each month's installment
     to that month's owners, splitting a transfer month by inclusive owner-days
     and concurrent successors by positive mea_share. Continuing co-owners retain
     their frozen cents; only departed owners' rates pass to successors. Ambiguous
     transfers fail instead of moving other shares. Each holder carries one rate
     per installment, so one walk from the plan's beginning applies every
-    transfer to all twelve installments and month k uses installment k.
+    transfer to all installments and month k uses installment k.
     Largest-remainder rounding preserves the unit total.
     Without history, retain each frozen owner's own installments.
 
@@ -418,8 +426,10 @@ def owner_expected_charges(
     not invent a Soll.
     """
     charges: list[ExpectedCharge] = []
-    installments = [(ln, distribute_amount(ln.annual_amount, [Decimal(1)] * 12)) for ln in advance_lines]
-    months = _months_in_period(plan_start or period_start, period_end)[:12]
+    first_month = plan_start or period_start
+    count = PLAN_MAX_INSTALMENTS if plan_end is None else plan_instalment_count(first_month, plan_end)
+    installments = [(ln, distribute_amount(ln.annual_amount, [Decimal(1)] * count)) for ln in advance_lines]
+    months = _months_in_period(first_month, period_end)[:count]
     monthly_totals = [Decimal("0.00")] * len(months)
     if owner_periods is None:
         for k in range(len(months)):
@@ -464,9 +474,9 @@ def owner_expected_charges(
                         raise ValueError("Several concurrent transfers do not identify individual successors")
                     if successors:
                         shares = [o.mea_share if len(successors) > 1 else Decimal(1) for o in successors]
-                        received = {o.owner_profile_id: list(rates.get(o.owner_profile_id, [Decimal(0)] * 12))
+                        received = {o.owner_profile_id: list(rates.get(o.owner_profile_id, [Decimal(0)] * count))
                             for o in successors}
-                        for c in range(12):
+                        for c in range(count):
                             transferred = sum((previous[oid][c] for oid in departed), Decimal(0))
                             for op, amount in zip(successors, distribute_amount(transferred, shares)):
                                 received[op.owner_profile_id][c] += amount

@@ -27,12 +27,40 @@ def test_overdrawn_cash_reserve_is_flagged_without_clipping():
 
 def test_plan_is_split_by_frozen_owner_unit_weights_then_months():
     cells = [("u2", "o2", D("1")), ("u1", "o1", D("1")), ("u3", "o3", D("1"))]
-    rows = planned_reserve_entries(D("1000"), cells, date(2025, 4, 1))
-    assert rows == planned_reserve_entries(D("1000"), list(reversed(cells)), date(2025, 4, 1))
+    rows = planned_reserve_entries(D("1000"), cells, date(2025, 4, 1), date(2026, 3, 31))
+    assert rows == planned_reserve_entries(D("1000"), list(reversed(cells)), date(2025, 4, 1), date(2026, 3, 31))
     assert len(rows) == 36
     assert sum((D(row["amount"]) for row in rows), D(0)) == D("1000.00")
     assert sum((D(row["amount"]) for row in rows if row["unit_id"] == "u1"), D(0)) == D("333.34")
     assert rows[-1]["date"] == "2026-03-01"
+
+
+@pytest.mark.parametrize("start,end,months", [
+    (date(2025, 7, 1), date(2025, 9, 30), [(2025, 7), (2025, 8), (2025, 9)]),
+    (date(2025, 7, 1), date(2025, 7, 31), [(2025, 7)]),
+    (date(2025, 11, 15), date(2026, 2, 14), [(2025, 11), (2025, 12), (2026, 1), (2026, 2)]),
+])
+def test_a_short_plan_schedules_its_planned_reserve_only_in_its_own_months(start, end, months):
+    # The one owner's reserve share of 1,000.01 is scheduled over the plan's months, the first
+    # months carry the spare cents, and nothing is scheduled after the plan end (#602).
+    rows = planned_reserve_entries(D("1000.01"), [("u1", "o1", D("1"))], start, end)
+    assert [(int(row["date"][:4]), int(row["date"][5:7])) for row in rows] == months
+    assert sum((D(row["amount"]) for row in rows), D(0)) == D("1000.01")
+    assert [row["date"][8:] for row in rows] == [str(start.day).zfill(2)] * len(months)
+    amounts = [D(row["amount"]) for row in rows]
+    assert amounts == sorted(amounts, reverse=True) and max(amounts) - min(amounts) <= D("0.01")
+
+
+def test_a_three_month_plan_schedules_three_equal_reserve_instalments():
+    rows = planned_reserve_entries(D("1200.00"), [("u1", "o1", D("1"))], date(2025, 7, 1), date(2025, 9, 30))
+    assert [(row["date"], row["amount"]) for row in rows] == [
+        ("2025-07-01", "400.00"), ("2025-08-01", "400.00"), ("2025-09-01", "400.00")]
+
+
+def test_a_plan_of_twelve_months_keeps_twelve_reserve_instalments():
+    rows = planned_reserve_entries(D("1200.00"), [("u1", "o1", D("1"))], date(2025, 7, 15), date(2026, 7, 14))
+    assert [row["date"] for row in rows][0] == "2025-07-15"
+    assert len(rows) == 12 and {row["amount"] for row in rows} == {"100.00"}
 
 
 @pytest.mark.parametrize("amount", [D("NaN"), D("Infinity")])

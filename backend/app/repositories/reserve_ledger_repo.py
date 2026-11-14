@@ -185,7 +185,8 @@ class ReserveLedgerRepository(TenantRepository[ReserveLedgerEntry]):
     async def plan_rows(self, plan):
         cells = await self.plan_cells(plan)
         rows = monthly_reserve_entries(
-            [(c['unit_id'], c['owner_profile_id'], Decimal(c['amount'])) for c in cells], plan.period_start)
+            [(c['unit_id'], c['owner_profile_id'], Decimal(c['amount'])) for c in cells],
+            plan.period_start, plan.period_end)
         numbers = {c['unit_id']: c['unit_number'] for c in cells}
         return [{**row, 'unit_number': numbers[row['unit_id']]} for row in rows]
 

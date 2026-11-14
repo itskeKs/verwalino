@@ -264,6 +264,23 @@ def test_legacy_finalized_document_html_keeps_its_original_content(kind, expecte
     assert sha256(render(doc, [], names).encode()).hexdigest() == expected
 
 
+@pytest.mark.parametrize('rates,hint', [
+    (12, '12 gleiche Monatsraten umgelegt (kaufmaennisch cent-genau; die Summe der 12\n    Raten ergibt exakt'),
+    (3, '3 gleiche Monatsraten umgelegt (kaufmaennisch cent-genau; die Summe der 3\n    Raten ergibt exakt'),
+    (1, '1 Monatsrate umgelegt (die Rate ergibt exakt\n    den Jahresvorschuss).'),
+])
+def test_the_plan_pdf_names_the_number_of_monthly_rates_frozen_with_the_plan(rates, hint):
+    from datetime import date
+    from types import SimpleNamespace
+    from app.services.wirtschaftsplan_pdf import build_wirtschaftsplan_html, WirtschaftsplanDisplayNames
+
+    doc = SimpleNamespace(period_start=date(2025, 7, 1), period_end=date(2025, 9, 30), plan_year=2025,
+        snapshot_payload={'display_names': {'schema_version': 1, 'values': {}},
+            'result': {'owners': [{'monthly_rates': ['1.00'] * rates}]}},
+        snapshot_sha256='digest', engine_version='m4.1.0')
+    assert hint in build_wirtschaftsplan_html(doc, [], WirtschaftsplanDisplayNames())
+
+
 @pytest.mark.parametrize('kind,expected', [
     ('dunning', '5bb62e2b96ff3f23f04f5e103e8c465dc50cd6a239f1d8ea7023c973e90550c4'),
     ('dunning_interest', 'f274d3a14ba4bb516552c2fbbd171e78d970a9b802af96bb5869ceaba6beed43'),

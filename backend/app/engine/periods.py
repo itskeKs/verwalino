@@ -59,6 +59,25 @@ def validate_settlement_period(start: date, end_inclusive: date) -> None:
         raise ValueError("Der Abrechnungszeitraum darf höchstens zwölf Monate umfassen.")
 
 
+PLAN_MAX_INSTALMENTS = 12
+
+
+def plan_instalment_count(period_start: date, period_end: date) -> int:
+    """Number of monthly Hausgeld instalments of a Wirtschaftsplan period (#602).
+
+    One per calendar month the inclusive period touches, at most twelve: a month that
+    the period covers only partly is a whole instalment (day-accurate instalments are
+    not planned), and a mid-month year touches thirteen months but has twelve
+    instalments. The plan engine splits the annual advance into this many
+    largest-remainder instalments and the Hausgeld ledger charges exactly those, so
+    the instalments of a unit always sum to its planned amount.
+    """
+    if period_end < period_start:
+        raise ValueError("A plan period must not end before it starts")
+    months = (period_end.year - period_start.year) * 12 + period_end.month - period_start.month + 1
+    return min(months, PLAN_MAX_INSTALMENTS)
+
+
 # Period kinds in the unit-internal time cover.
 KIND_TENANT = "TENANT"
 KIND_VACANCY = "VACANCY"

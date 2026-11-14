@@ -8,6 +8,14 @@ Feature: Monthly Hausgeld follows the resolved calendar day
     Then the total expected Hausgeld is 1000 euros
     And the first four monthly installments are 83.34 euros and the remaining eight are 83.33 euros
 
+  Scenario: A three-month plan charges its whole planned amount
+    Given a finalized plan from 1 July 2026 to 30 September 2026 with planned costs of 3000 euros for one owner
+    When the manager opens the plan page and its PDF
+    Then both show a monthly Hausgeld of 1000 euros
+    When the manager reads the owner's ledger from 1 July 2026 to 30 September 2026
+    Then the total expected Hausgeld is 3000 euros
+    And the three monthly installments are 1000 euros each
+
   Scenario Outline: The owner ledger distinguishes future Hausgeld from overdue debt
     Given a finalized plan with monthly Hausgeld of 600 euros and due day <day>
     When the manager reads the owner's <month> ledger on <before>
