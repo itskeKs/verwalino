@@ -1,5 +1,5 @@
 """Organization erasure preserves immutable records and ends all access."""
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 import json
 import asyncio
 import uuid
@@ -12,6 +12,7 @@ from sqlalchemy import text
 from app.services.organization_deletion_service import ERASURE_SCRUB_COLUMNS
 from tests.test_rent_changes import rent_db as rent_db, rent_world as base_rent_world, api_client  # noqa: F401
 from tests.test_organization_export import export_store as export_store
+from tests.payment_reversal_support import book_then_reverse, payment_clock as payment_clock  # noqa: F401
 
 
 @pytest_asyncio.fixture
@@ -148,6 +149,53 @@ async def test_cost_bank_evidence_inherits_retention_without_retaining_unassigne
         assert await run_deletion(db, w['org'], now=datetime.now(timezone.utc) + timedelta(days=8))
     kept = (await db.execute(text('SELECT id,cost_entry_id,amount FROM bank_transaction WHERE bank_account_id=CAST(:bank AS uuid)'), {'bank': bank})).one()
     assert str(kept.id) == tids[0] and str(kept.cost_entry_id) == cost and kept.amount == -60
+
+
+async def test_reversal_of_an_old_payment_is_retained_to_its_own_deadline_through_cooling_off_and_erasure(
+        rent_world, reserve_erasure_db, payment_clock):
+    from app.services.organization_deletion_service import run_deletion
+    db, w = reserve_erasure_db, rent_world
+    async with api_client(w) as api:
+        bank = await api.post('/api/bank-accounts', json={
+            'property_id': str(w['property']), 'account_type': 'LAUFEND', 'label': 'Reversal retention bank'})
+        assert bank.status_code == 201, bank.text
+        rent = {'bank_account_id': bank.json()['id'], 'direction': 'IN', 'amount': '700.00', 'value_date': '2016-03-15',
+                'payment_type': 'KALTMIETE', 'tenant_profile_id': str(w['tenant']),
+                'lease_agreement_id': str(w['lease']), 'period_year': 2016, 'period_month': 3}
+        original, storno = await book_then_reverse(
+            api, rent, payment_clock, booked_on='2016-03-16T09:00:00', reversed_on='2026-11-08T09:00:00')
+        spare = await api.post('/api/payments', json=rent)
+        assert spare.status_code == 201, spare.text
+        assert (await api.post(f"/api/payments/{spare.json()['id']}/book")).status_code == 200
+        rows = (await db.execute(text("""SELECT entity,identity,retention_until FROM organization_retention_plan(:org)
+            WHERE entity IN ('payment','person')"""), w)).all()
+        until = {(row.entity, row.identity['id']): row.retention_until for row in rows}
+        # A booked 2016 payment that was not reversed expired with 2024. The Storno of 2026 and the tenant
+        # it names are retained to 2034, and so is the original it requires; the original's stored date is unchanged.
+        assert until['payment', spare.json()['id']] == date(2024, 12, 31)
+        assert until['payment', storno['id']] == until['payment', original['id']] == date(2034, 12, 31)
+        assert until['person', str(w['person'])] == date(2034, 12, 31)
+        assert [await db.scalar(text('SELECT retention_until FROM payment WHERE id=CAST(:id AS uuid)'), {'id': row['id']})
+                for row in (original, storno)] == [date(2024, 12, 31), date(2034, 12, 31)]
+        await db.rollback()
+        preview = await api.post('/api/organizations/deletion')
+        assert preview.status_code == 200, preview.text
+        assert preview.json()['retention']['retained']['payment']['until'] == '2034-12-31'
+        confirmed = await api.post('/api/organizations/deletion/confirm', json={'organization_name': 'T23 synthetic'})
+        assert confirmed.status_code == 200, confirmed.text
+        # Inside the cooling-off period the organization is read-only: no further Storno, no new anchor.
+        refused = await api.post(f"/api/payments/{spare.json()['id']}/reverse")
+        assert refused.status_code == 409, refused.text
+        assert await db.scalar(text('SELECT count(*) FROM payment WHERE reverses_id=CAST(:id AS uuid)'),
+                               {'id': spare.json()['id']}) == 0
+    before = (await db.execute(text('SELECT id,retention_until,value_date,booked_at FROM payment WHERE id=ANY(CAST(:ids AS uuid[])) ORDER BY id'),
+                               {'ids': [original['id'], storno['id']]})).all()
+    await db.rollback()
+    async with db.begin():
+        assert await run_deletion(db, w['org'], now=datetime.now(timezone.utc) + timedelta(days=8))
+    assert (await db.execute(text('SELECT id,retention_until,value_date,booked_at FROM payment WHERE id=ANY(CAST(:ids AS uuid[])) ORDER BY id'),
+                             {'ids': [original['id'], storno['id']]})).all() == before
+    assert await db.scalar(text('SELECT last_name FROM person WHERE id=:person'), w) == 'T23 tenant'
 
 
 @pytest.mark.parametrize('scoped', [False, True], ids=['booked', 'scope-bound-vouchers'])

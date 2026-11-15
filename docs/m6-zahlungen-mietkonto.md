@@ -110,7 +110,7 @@ A `payment` row is **one recorded money movement** (inflow or outflow) against a
 | `booked_by` | `UUID NULL` FK→`user` (`SET NULL`) | Who booked (audit). |
 | `reverses_id` | `UUID NULL` FK self (`RESTRICT`) | for a **reversal payment**: points to the reversed original payment. |
 | `reversed_by_id` | `UUID NULL` FK self (`RESTRICT`) | for the **reversed** payment: points to the reversal row (forward pointer, E-4 convention like `superseded_by_id`). |
-| `retention_until` | `DATE NULL` | Retention anchor (8 years, architecture.md §3.3 / ADR-0003 #3) — booking voucher retention; GDPR (DSGVO) interlocking (§5). |
+| `retention_until` | `DATE NULL` | Retention anchor (8 years, architecture.md §3.3 / ADR-0003 #3) — booking voucher retention; GDPR (DSGVO) interlocking (§5). Set once when the row becomes `booked`: 31 December of the anchor year + 8 years. The anchor of a booked payment is its `value_date`; the anchor of a reversal row is the later of the original's `value_date` and its own booking date (`booked_at`, UTC), see §5. |
 | `note` | `String(500) NULL` | Payment reference/note (e.g. original transfer text, where entered manually). |
 | `created_at`/`updated_at` | `TIMESTAMPTZ` | as everywhere. |
 
@@ -458,6 +458,7 @@ Payments are **booking vouchers** (GoBD, SDD §6.6/§17, 8-year retention). M6 a
 - **Interlocking with finalized settlements (the actual reason):** A finalized settlement freezes its `advance_payments_total`/actual as a **copy** in the snapshot (M3 §1.2, M4 §1.5). A later reversal does **not** change the **finalized** settlement (snapshot stays immutable); it only affects a new (reversal/correction) settlement. This keeps the chain consistent: immutable payment → immutable settlement snapshot → correction always as a new version.
 - **Audit trail:** `payment.created`, `payment.booked`, `payment.reversed` via the existing `AuditRepository` (append-only `audit_event`, M0).
 - **Retention/GDPR:** `payment.retention_until` is the retention anchor (8 years, architecture.md §3.3); a payment as a booking voucher falls under statutory retention — a GDPR erasure request leads (as with vouchers) to **blocking/restriction of processing**, not hard delete, as long as `retention_until` is running (M9 mechanics, only the anchor here).
+- **Retention anchor of a reversal:** the reversal row is a new booking record, so its retention counts from its own booking, not from the older `value_date` it copies from the original for the accounting period. `reverse_payment` stores `retention_until` = 31 December of the year of `max(original.value_date, reversal booking date)` + 8 years (booking date = UTC date of `booked_at`); a future value date therefore keeps the reversal no earlier than its original. Example: a payment with value date 15.03.2016 reversed on 08.11.2026 gives the reversal `value_date` 2016-03-15 and `retention_until` 2034-12-31, while the original keeps its own stored 2024-12-31. Both dates stay frozen by the `trg_payment_immutability` trigger. Reversals stored before this rule keep their stored date (booked rows are not rewritten); the same question for `book()` on a draft with an old value date is open in ADR-0012 §2.
 
 ---
 
