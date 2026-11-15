@@ -80,7 +80,7 @@ function Overview() {
       {inventoryError && <p role="alert" className="error-text">Die Bestandszahlen sind nicht verfügbar. Bitte erneut laden.</p>}
       {inventory && <>
         <p className="mb-4 text-sm text-muted-foreground">Stand: {formatDateTime(inventory.generated_at)}</p>
-        <dl className="grid gap-x-8 gap-y-3 lg:grid-cols-2">{metrics.map(([key, label]) => <div key={key} className="flex min-w-0 items-start justify-between gap-4"><dt>{label}</dt><dd className="shrink-0 font-semibold tabular-nums">{inventory.counts[key].toLocaleString("de-DE")}</dd></div>)}</dl>
+        <dl className="grid gap-x-8 gap-y-3 lg:grid-cols-2">{metrics.map(([key, label]) => <div key={key} className="flex min-w-0 items-start justify-between gap-4"><dt>{key === "bank_accounts_without_scope" && inventory.counts[key] > 0 ? <Link className="link" to="/bankkonten?ohne_abrechnungskreis=1">{label}</Link> : label}</dt><dd className="shrink-0 font-semibold tabular-nums">{inventory.counts[key].toLocaleString("de-DE")}</dd></div>)}</dl>
       </>}
     </CardContent></Card>
   </div>;

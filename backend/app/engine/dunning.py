@@ -32,7 +32,7 @@ from decimal import Decimal, localcontext
 
 from app.engine.rounding import round_money
 
-from app.engine.mietkonto import OpenItem
+from app.engine.mietkonto import PT_SONDERZAHLUNG, OpenItem
 
 # ---------------------------------------------------------------------------
 # [section 18/fachlich] Provisional defaults -- must be validated by legal.
@@ -123,9 +123,7 @@ class DunningInput:
     def items_snapshot(self) -> list[dict]:
         rows = [
             {
-                "period_year": it.period_year,
-                "period_month": it.period_month,
-                "payment_type": it.payment_type,
+                **item_key(it),
                 **({"combined_advance": True} if it.combined_advance else {}),
                 "soll": str(it.soll),
                 "ist": str(it.ist),
@@ -137,6 +135,32 @@ class DunningInput:
         if rows:
             rows[0][NOTICE_FORMAT_KEY] = SEGMENTED_NOTICE_FORMAT
         return rows
+
+
+# Payment types of which one month can hold several dated items (one per due date of a special
+# levy). Only there the due date tells two items apart.
+DUE_DATE_KEYED_TYPES = frozenset({PT_SONDERZAHLUNG})
+
+
+def item_key(item: OverdueItem) -> dict:
+    """Identity of an overdue item across notices; the level counts demands per key.
+
+    payment_type + period_year + period_month. Rent, advances and Hausgeld have one item per
+    month and type, and their due date moves with the property's federal state or a holiday
+    rule, so it is not part of their key. One month can hold several special levies, which
+    only their due dates tell apart: for DUE_DATE_KEYED_TYPES a dated item's key adds the due
+    date (a yearless item's fallback date moves with the calendar year and stays out). Part
+    payments and corrected or reversed postings leave the key as it is. The notice stores
+    these fields in every item row and the next notice counts earlier demands with the key.
+    """
+    key = {
+        "payment_type": item.payment_type,
+        "period_year": item.period_year,
+        "period_month": item.period_month,
+    }
+    if item.payment_type in DUE_DATE_KEYED_TYPES and item.period_year and item.due_date is not None:
+        key["due_date"] = item.due_date.isoformat()
+    return key
 
 
 # ---------------------------------------------------------------------------

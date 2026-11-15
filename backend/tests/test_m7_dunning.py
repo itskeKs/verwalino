@@ -1987,6 +1987,7 @@ async def test_unscoped_ledger_requires_exact_lease_provenance(isolated_batch_se
 # Escalation anchors on the currently overdue items (#407)
 # ===========================================================================
 from tests.test_special_levy import levy_db as levy_db, levy_fixture as levy_fixture  # noqa: E402,F401
+from tests.test_ownership_change import ownership_world as ownership_world  # noqa: E402,F401
 
 
 async def _escalation_lease(api, w, property_key, number):
@@ -2397,6 +2398,333 @@ async def test_paid_levy_notice_does_not_raise_later_levy_notice_level(levy_db, 
         assert (second["level"], second["fee_amount"], second["total_amount"]) == (1, "0.00", "3000.00")
 
 
+# Two special levies of one owner that fall due in the same month are two items (#666): the item
+# key carries the due date. Property 1000 MEA, owner 1 holds 300 of it, so a levy of 10000.00 is
+# a share of 3000.00; owner 3 holds 400 (4000.00). Every expected value is written by hand.
+LEVY_JUNE = ("2026-06-01", "2026-06-30")
+
+
+async def _levy_notice(api, ids, owner, reference_date, expected, *, issue=True):
+    """Create an owner notice for the levies, compare (level, fee, total) with the hand-written values."""
+    response = await api.post("/api/dunning/owner", json={
+        "owner_profile_id": str(ids["owners"][owner]), "period_start": LEVY_JUNE[0], "period_end": LEVY_JUNE[1],
+        "reference_date": reference_date, "accounting_scope_id": str(ids["scope"])})
+    assert response.status_code == 201, response.text
+    notice = response.json()
+    assert (notice["level"], notice["fee_amount"], notice["total_amount"]) == expected, notice
+    if issue:
+        issued = await api.post(f"/api/dunning/{notice['id']}/issue")
+        assert issued.status_code == 200, issued.text
+    return notice
+
+
+async def _pay_levy_share(api, ids, owner, amount, value_date):
+    payment = await api.post("/api/payments", json={
+        "bank_account_id": str(ids["bank"]), "direction": "IN", "amount": amount, "value_date": value_date,
+        "payment_type": "SONDERZAHLUNG", "owner_profile_id": str(ids["owners"][owner]),
+        "period_year": 2026, "period_month": 6})
+    assert payment.status_code == 201, payment.text
+    assert (await api.post(f"/api/payments/{payment.json()['id']}/book")).status_code == 200
+
+
+@pytest.mark.asyncio
+async def test_a_levy_never_demanded_does_not_inherit_the_demands_of_the_other_levy_of_the_month(
+        levy_db, levy_fixture):
+    """The issue's example: A due 5 June and B due 25 June, 3000.00 each; A reminded twice, then paid."""
+    from tests.test_special_levy import client, create
+    ids = levy_fixture
+    await _grant_levy_actor(levy_db, ids)
+    async with client(ids, "actor") as api:
+        await create(api, ids, due_date="2026-06-05")
+        await create(api, ids, due_date="2026-06-25")
+        # Another owner's two notices for the same levy A are not owner 1's demands.
+        await _levy_notice(api, ids, 2, "2026-06-10", (1, "0.00", "4000.00"))
+        await _levy_notice(api, ids, 2, "2026-06-12", (2, "2.50", "4002.50"))
+        await _levy_notice(api, ids, 0, "2026-06-10", (1, "0.00", "3000.00"))
+        second = await _levy_notice(api, ids, 0, "2026-06-12", (2, "2.50", "3002.50"))
+        frozen = (await api.get(f"/api/dunning/{second['id']}")).json()
+        frozen_pdf = (await api.get(f"/api/dunning/{second['id']}/pdf")).content
+        await _pay_levy_share(api, ids, 0, "3000.00", "2026-06-20")
+
+        # B was never demanded: level 1, no fee (the old key made it level 3 with 2.50 fee, total 3002.50).
+        await _levy_notice(api, ids, 0, "2026-06-28", (1, "0.00", "3000.00"))
+        # Now B was demanded once.
+        await _levy_notice(api, ids, 0, "2026-06-29", (2, "2.50", "3002.50"), issue=False)
+
+        assert (await api.get(f"/api/dunning/{second['id']}")).json() == frozen
+        assert (await api.get(f"/api/dunning/{second['id']}/pdf")).content == frozen_pdf
+
+
+@pytest.mark.asyncio
+async def test_a_levy_demanded_twice_is_level_three_and_a_discarded_draft_counts_nothing(levy_db, levy_fixture):
+    from tests.test_special_levy import client, create
+    ids = levy_fixture
+    await _grant_levy_actor(levy_db, ids)
+    async with client(ids, "actor") as api:
+        await create(api, ids, due_date="2026-06-05")
+        await create(api, ids, due_date="2026-06-25")
+        await _levy_notice(api, ids, 0, "2026-06-10", (1, "0.00", "3000.00"))
+        draft = await _levy_notice(api, ids, 0, "2026-06-11", (2, "2.50", "3002.50"), issue=False)
+        assert (await api.delete(f"/api/dunning/{draft['id']}")).status_code == 204
+        await _levy_notice(api, ids, 0, "2026-06-12", (2, "2.50", "3002.50"))
+        await _levy_notice(api, ids, 0, "2026-06-14", (3, "2.50", "3002.50"))
+
+
+@pytest.mark.asyncio
+async def test_each_levy_keeps_its_own_count_across_reminders_and_a_combined_notice(levy_db, levy_fixture):
+    from tests.test_special_levy import client, create
+    ids = levy_fixture
+    await _grant_levy_actor(levy_db, ids)
+    async with client(ids, "actor") as api:
+        await _set_dunning_fees(api, *FEES_5_AND_10)
+        for due in ("2026-06-05", "2026-06-25", "2026-06-29"):
+            await create(api, ids, due_date=due)
+        await _levy_notice(api, ids, 0, "2026-06-10", (1, "0.00", "3000.00"))
+        await _levy_notice(api, ids, 0, "2026-06-12", (2, "5.00", "3005.00"))
+        # A was demanded twice and B never: the combined notice takes A's level 3 and its fee.
+        await _levy_notice(api, ids, 0, "2026-06-28", (3, "10.00", "6010.00"))
+        await _pay_levy_share(api, ids, 0, "3000.00", "2026-06-29")
+        # B was demanded once (in the combined notice, whatever its level), C never: level 2.
+        await _levy_notice(api, ids, 0, "2026-06-30", (2, "5.00", "6005.00"))
+        # B twice now, C once.
+        await _levy_notice(api, ids, 0, "2026-07-01", (3, "10.00", "6010.00"), issue=False)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("paid, expected", [
+    # A keeps 2000.00 open and was demanded once, B never: level 2, 2000.00 + 3000.00 + 5.00.
+    ("1000.00", (2, "5.00", "5005.00")),
+    # 3000.00 settle A, the remaining 1000.00 reduce B to 2000.00; B was never demanded.
+    ("4000.00", (1, "0.00", "2000.00")),
+])
+async def test_a_part_payment_keeps_the_identity_of_the_levy_it_reduces(levy_db, levy_fixture, paid, expected):
+    from tests.test_special_levy import client, create
+    ids = levy_fixture
+    await _grant_levy_actor(levy_db, ids)
+    async with client(ids, "actor") as api:
+        await _set_dunning_fees(api, *FEES_5_AND_10)
+        await create(api, ids, due_date="2026-06-05")
+        await create(api, ids, due_date="2026-06-25")
+        await _levy_notice(api, ids, 0, "2026-06-10", (1, "0.00", "3000.00"))
+        await _pay_levy_share(api, ids, 0, paid, "2026-06-20")
+        await _levy_notice(api, ids, 0, "2026-06-28", expected, issue=False)
+
+
+@pytest.mark.asyncio
+async def test_two_units_of_one_owner_are_one_item_per_levy(levy_db, levy_fixture):
+    from tests.test_special_levy import client, create
+    ids = levy_fixture
+    await _grant_levy_actor(levy_db, ids)
+    # Owner 1 holds units 1 and 2 (300 + 300 MEA) from 1 February: every levy of 10000.00 allocates 6000.00.
+    await levy_db.execute(text("UPDATE ownership_history SET valid_to='2026-02-01' WHERE id=:history"),
+                          {"history": ids["histories"][1]})
+    await levy_db.execute(text("INSERT INTO ownership_history(organization_id,unit_id,owner_profile_id,valid_from) "
+                               "VALUES (:org,:unit,:owner,'2026-02-01')"),
+                          {"org": ids["org"], "unit": ids["units"][1], "owner": ids["owners"][0]})
+    await levy_db.commit()
+    async with client(ids, "actor") as api:
+        await create(api, ids, due_date="2026-06-05")
+        await create(api, ids, due_date="2026-06-25")
+        await _levy_notice(api, ids, 0, "2026-06-10", (1, "0.00", "6000.00"))
+        await _levy_notice(api, ids, 0, "2026-06-12", (2, "2.50", "6002.50"))
+        await _pay_levy_share(api, ids, 0, "6000.00", "2026-06-20")
+        await _levy_notice(api, ids, 0, "2026-06-28", (1, "0.00", "6000.00"))
+
+
+@pytest.mark.asyncio
+async def test_co_owners_of_a_levy_each_count_their_own_demands(levy_db, levy_fixture):
+    from tests.test_special_levy import client, create
+    ids = levy_fixture
+    await _grant_levy_actor(levy_db, ids)
+    # From 1 February owners 2 and 3 co-own unit 1 (300 MEA) in the ratio 1 : 3, so a levy of 10000.00 allocates
+    # 750.00 and 2250.00 of it: owner 2 owes 3000.00 + 750.00 = 3750.00, owner 3 owes 4000.00 + 2250.00 = 6250.00.
+    await levy_db.execute(text("UPDATE ownership_history SET valid_to='2026-02-01' WHERE id=:history"),
+                          {"history": ids["histories"][0]})
+    for owner, share in ((ids["owners"][1], 1), (ids["owners"][2], 3)):
+        await levy_db.execute(text(
+            "INSERT INTO ownership_history(organization_id,unit_id,owner_profile_id,valid_from,mea_share) "
+            "VALUES (:org,:unit,:owner,'2026-02-01',:share)"),
+            {"org": ids["org"], "unit": ids["units"][0], "owner": owner, "share": share})
+    await levy_db.commit()
+    async with client(ids, "actor") as api:
+        await create(api, ids, due_date="2026-06-05")
+        await create(api, ids, due_date="2026-06-25")
+        await _levy_notice(api, ids, 2, "2026-06-10", (1, "0.00", "6250.00"))
+        await _levy_notice(api, ids, 2, "2026-06-12", (2, "2.50", "6252.50"))
+        # Owner 2 never was reminded: the co-owner's two notices for the same levy are not owner 2's demands.
+        await _levy_notice(api, ids, 1, "2026-06-10", (1, "0.00", "3750.00"))
+        await _pay_levy_share(api, ids, 1, "3750.00", "2026-06-20")
+        await _levy_notice(api, ids, 1, "2026-06-28", (1, "0.00", "3750.00"))
+
+
+@pytest.mark.asyncio
+async def test_rent_level_survives_a_moved_due_date(rent_world):
+    """January rent falls due on 6 January; once the property is in Bavaria (Epiphany) it falls due on 7 January."""
+    w = rent_world
+    async with api_client(w) as api:
+        lease = await _escalation_lease(api, w, "hidden_property", "Esc 1")
+        await _escalation_account(api, w, "hidden_property")
+        await _notice(api, w, lease, JANUARY, (1, "0.00", "700.00"))
+        await _notice(api, w, lease, JANUARY_AGAIN, (2, "2.50", "702.50"))
+        moved = await api.put(f"/api/properties/{w['hidden_property']}", json={"federal_state": "BY"})
+        assert moved.status_code == 200, moved.text
+        # The same January rent, demanded twice: level 3, not a first demand because its due date moved.
+        await _notice(api, w, lease, JANUARY_THIRD, (3, "2.50", "702.50"), issue=False)
+
+
+@pytest.mark.asyncio
+async def test_hausgeld_level_survives_a_moved_due_date(ownership_world):
+    """Hausgeld of 400.00 per month, due on the 6th: 6 January, 7 January once the property is in Bavaria."""
+    from tests.financial_coverage_helpers import attest_fixture
+    from tests.test_ownership_change import create_owner, ownership_client
+
+    w = ownership_world
+    async with ownership_client(w) as api:
+        await create_owner(api, w)
+        plan = await api.post("/api/economic-plans", json={
+            "property_id": w["property"], "plan_year": 2026, "period_start": "2026-01-01",
+            "period_end": "2026-12-31", "monthly_due_day": 6})
+        assert plan.status_code == 201, plan.text
+        plan = plan.json()["id"]
+        values = {"planned_costs": [{"category_code": "WEG_VERWALTERKOSTEN", "label": "Annual cost",
+                  "planned_amount": "4800.00", "cost_group": "NICHT_UMLAGEFAEHIG"}],
+                  "reserve_contribution_total": "0.00"}
+        await attest_fixture(api, "economic_plan", plan, values)
+        finalized = await api.post(f"/api/economic-plans/{plan}/finalize", json=values)
+        assert finalized.status_code == 200, finalized.text
+
+        async def notice(reference_date, expected, *, issue=True):
+            response = await api.post("/api/dunning/owner", json={
+                "owner_profile_id": w["seller"], "economic_plan_id": plan, "period_start": "2026-01-01",
+                "period_end": "2026-01-31", "reference_date": reference_date})
+            assert response.status_code == 201, response.text
+            created = response.json()
+            assert (created["level"], created["fee_amount"], created["total_amount"]) == expected, created
+            assert [(row["period_month"], row["due_date"]) for row in created["included_items"]] == [
+                (1, expected_due[0])]
+            if issue:
+                assert (await api.post(f"/api/dunning/{created['id']}/issue")).status_code == 200
+
+        expected_due = ["2026-01-06"]
+        await notice("2026-02-20", (1, "0.00", "400.00"))
+        await notice("2026-03-05", (2, "2.50", "402.50"))
+        moved = await api.put(f"/api/properties/{w['property']}", json={"federal_state": "BY"})
+        assert moved.status_code == 200, moved.text
+        expected_due[0] = "2026-01-07"
+        await notice("2026-03-20", (3, "2.50", "402.50"), issue=False)
+
+
+async def _insert_issued_notice(db, w, lease, items, *, level=1):
+    import json
+    from app.models.dunning_notice import LEASE_SOURCE_KEY
+
+    items = [dict(item) for item in items]
+    items[0][LEASE_SOURCE_KEY] = lease
+    await db.execute(text(_insert_dunning_sql()), {
+        "id": str(uuid.uuid4()), "org": str(w["org"]), "tenant": str(w["tenant"]), "owner": None,
+        "level": level, "issue_date": date(2026, 6, 30), "due_date": date(2026, 7, 14),
+        "principal": "1.00", "fee": "0.00", "total": "1.00", "items": json.dumps(items), "status": "issued",
+        "issued_at": datetime(2026, 6, 30, 10, 0, tzinfo=_tz.utc), "issued_by": str(w["admin"])})
+
+
+def _stored(payment_type, month, due=None, *, year=2026, **extra):
+    row = {"period_year": year, "period_month": month, "payment_type": payment_type,
+           "soll": "1.00", "ist": "0.00", "open_amount": "1.00", **extra}
+    if due is not None:
+        row["due_date"] = due
+    return row
+
+
+def _key(payment_type, month, due=None, *, year=2026):
+    """The key the engine builds for an overdue item of this type, period and due date."""
+    from app.engine.dunning import OverdueItem, item_key
+
+    return item_key(OverdueItem(year, month, payment_type, Decimal("1.00"), Decimal("0.00"), Decimal("1.00"),
+                                due_date=date.fromisoformat(due) if due is not None else None))
+
+
+@pytest.mark.asyncio
+async def test_demands_count_per_due_date_and_an_old_item_without_one_counts_for_its_whole_month(
+        rent_world, rent_db):
+    from app.core.db import get_tenant_session
+    from app.repositories.dunning_notice_repo import DunningNoticeRepository
+
+    w = rent_world
+    async with api_client(w) as api:
+        lease = await _escalation_lease(api, w, "hidden_property", "Esc 1")
+    await _set_org(rent_db, w["org"])
+    # Levy A (due 5 June) demanded in two notices, levy B (due 25 June) with a Hausgeld instalment in a
+    # third, and a July item stored before items carried a due date.
+    for items in (
+        [_stored("SONDERZAHLUNG", 6, "2026-06-05")],
+        [_stored("SONDERZAHLUNG", 6, "2026-06-05")],
+        [_stored("SONDERZAHLUNG", 6, "2026-06-25"), _stored("HAUSGELD_VORSCHUSS", 6, "2026-06-03")],
+        [_stored("SONDERZAHLUNG", 7)],
+        [_stored("SONDERZAHLUNG", None, "2026-01-01", year=0)],
+        [_stored("KALTMIETE", 1, "2026-01-06")],
+    ):
+        await _insert_issued_notice(rent_db, w, lease, items)
+    await rent_db.commit()
+
+    scope = {"tenant_profile_id": w["tenant"], "lease_id": uuid.UUID(lease), "scope_id": None}
+    async with get_tenant_session(w["org"]) as db:
+        await db.execute(text("SELECT set_config('app.current_user_id',:actor,true)"), {"actor": str(w["admin"])})
+        repo = DunningNoticeRepository(db, w["org"])
+
+        async def count(*keys):
+            return await repo.highest_item_demand_count(item_keys=list(keys), **scope)
+
+        assert await count(_key("SONDERZAHLUNG", 6, "2026-06-05")) == 2
+        assert await count(_key("SONDERZAHLUNG", 6, "2026-06-25")) == 1
+        assert await count(_key("SONDERZAHLUNG", 6, "2026-06-15")) == 0
+        assert await count(_key("SONDERZAHLUNG", 6, "2026-06-05"), _key("SONDERZAHLUNG", 6, "2026-06-25")) == 2
+        # An item without a due date of its own matches every item of its month and type, as before.
+        assert await count(_key("SONDERZAHLUNG", 6)) == 3
+        # An old item without a due date counts for each due date of its month.
+        assert await count(_key("SONDERZAHLUNG", 7, "2026-07-10")) == 1
+        assert await count(_key("SONDERZAHLUNG", 7, "2026-07-20")) == 1
+        # An item without a year or month is matched on its null month, whatever fallback date it stored.
+        assert await count(_key("SONDERZAHLUNG", None, year=0)) == 1
+        assert await count(_key("SONDERZAHLUNG", None, year=0), _key("SONDERZAHLUNG", 7, "2026-07-10")) == 1
+        # Another payment type of the same month is another item. A monthly obligation has one item per
+        # month and type: it counts whatever due date it was stored with, and a moved due date changes nothing.
+        assert await count(_key("HAUSGELD_VORSCHUSS", 6, "2026-06-03")) == 1
+        assert await count(_key("HAUSGELD_VORSCHUSS", 6, "2026-06-04")) == 1
+        assert await count(_key("KALTMIETE", 1, "2026-01-07")) == 1
+        assert await count(_key("KALTMIETE", 6, "2026-06-03")) == 0
+
+
+@pytest.mark.asyncio
+async def test_the_heating_advance_counts_a_demand_made_inside_the_joint_advance_item(rent_world, rent_db):
+    from app.core.db import get_tenant_session
+    from app.repositories.dunning_notice_repo import DunningNoticeRepository
+
+    w = rent_world
+    async with api_client(w) as api:
+        lease = await _escalation_lease(api, w, "hidden_property", "Esc 1")
+    await _set_org(rent_db, w["org"])
+    # April: operating and heating advance demanded as one joint item. May: the operating advance alone.
+    await _insert_issued_notice(rent_db, w, lease, [
+        _stored("NK_VORAUSZAHLUNG", 4, "2026-04-07", combined_advance=True, soll="240.00")])
+    await _insert_issued_notice(rent_db, w, lease, [_stored("NK_VORAUSZAHLUNG", 5, "2026-05-07")])
+    await rent_db.commit()
+
+    scope = {"tenant_profile_id": w["tenant"], "lease_id": uuid.UUID(lease), "scope_id": None}
+    async with get_tenant_session(w["org"]) as db:
+        await db.execute(text("SELECT set_config('app.current_user_id',:actor,true)"), {"actor": str(w["admin"])})
+        repo = DunningNoticeRepository(db, w["org"])
+
+        async def count(*keys):
+            return await repo.highest_item_demand_count(item_keys=list(keys), **scope)
+
+        # After the joint receipt is reversed, the heating advance of April is its own item again, demanded once.
+        assert await count(_key("HK_VORAUSZAHLUNG", 4, "2026-04-07")) == 1
+        assert await count(_key("NK_VORAUSZAHLUNG", 4, "2026-04-07")) == 1
+        # Not another month, and an operating advance demanded alone is no heating demand.
+        assert await count(_key("HK_VORAUSZAHLUNG", 5, "2026-05-07")) == 0
+        assert await count(_key("NK_VORAUSZAHLUNG", 5, "2026-05-07")) == 1
+
+
 @pytest.mark.asyncio
 async def test_notice_without_lease_link_still_escalates_the_same_arrears(isolated_batch_seed, rent_db):
     client, seed = isolated_batch_seed
@@ -2433,3 +2761,353 @@ async def test_notice_without_lease_link_does_not_escalate_other_months_of_anoth
     assert response.status_code == 201, response.text
     notice = response.json()
     assert (notice["level"], notice["fee_amount"]) == (1, "0.00")
+
+
+# ===========================================================================
+# An owner's notice in one WEG never counts in another WEG (#616)
+# ===========================================================================
+# Owner 1 of the levy fixture holds 300 of the 1000 MEA of WEG A, so a levy of 10000.00 there is a
+# share of 3000.00. The second WEG B has one unit of 1000 MEA, so a levy of 7000.00 there is
+# 7000.00 for its only owner. Both levies fall due on 15 June, so the item key (type, month, due date)
+# is the same in both WEGs. The default fees are 0.00, 2.50 and 2.50; a notice adds its level's fee.
+async def _second_weg(levy_db, ids, holders):
+    """A second WEG of the organization: own property, scope, bank account and levy resolution, with one
+    unit of 1000 MEA held by the (owner index, share) pairs of holders."""
+    from tests.test_scope_grants import scope_fixture, bind
+
+    other = await scope_fixture(levy_db, {
+        "org_a_id": ids["org"], "user_a_admin_id": ids["actor"], "user_a_clerk_id": ids["clerk"]})
+    await bind(levy_db, other)
+    other.update(owners=ids["owners"], unit=uuid.uuid4(), meeting=uuid.uuid4(), resolution=uuid.uuid4())
+    await levy_db.execute(text(
+        "INSERT INTO owners_meeting(id,organization_id,property_id,meeting_date,location,meeting_type,status) "
+        "VALUES (:meeting,:org,:property,'2026-05-15','','ORDENTLICH','HELD')"), other)
+    await levy_db.execute(text(
+        "INSERT INTO resolution(id,organization_id,meeting_id,wording,votes_yes,votes_no,votes_abstain,result) "
+        "VALUES (:resolution,:org,:meeting,'Second WEG levy',1,0,0,'ANGENOMMEN')"), other)
+    await levy_db.execute(text(
+        "INSERT INTO unit(id,organization_id,property_id,number,usage_type,mea) "
+        "VALUES (:unit,:org,:property,'B1','WOHNUNG',1000)"), other)
+    for owner, share in holders:
+        await levy_db.execute(text(
+            "INSERT INTO ownership_history(organization_id,unit_id,owner_profile_id,valid_from,mea_share) "
+            "VALUES (:org,:unit,:owner,'2024-01-01',:share)"),
+            {"org": other["org"], "unit": other["unit"], "owner": ids["owners"][owner], "share": share})
+    await levy_db.commit()
+    await _grant_levy_actor(levy_db, other)
+    return other
+
+
+async def _weg_notice(api, ids, owner, reference_date, expected, *, period=LEVY_JUNE, issue=True):
+    """Create an owner notice for the levies of one WEG, compare (level, fee, total) with the hand-written values."""
+    response = await api.post("/api/dunning/owner", json={
+        "owner_profile_id": str(ids["owners"][owner]), "period_start": period[0], "period_end": period[1],
+        "reference_date": reference_date, "accounting_scope_id": str(ids["scope"])})
+    assert response.status_code == 201, response.text
+    notice = response.json()
+    assert (notice["level"], notice["fee_amount"], notice["total_amount"]) == expected, notice
+    if issue:
+        issued = await api.post(f"/api/dunning/{notice['id']}/issue")
+        assert issued.status_code == 200, issued.text
+    return notice
+
+
+def _stored_property(notice):
+    """The property a stored owner notice belongs to, as its first frozen item holds it; the API hides it."""
+    import psycopg2
+    from tests.conftest import MIGRATOR_SYNC_URL
+
+    assert not [key for row in notice["included_items"] for key in row if key.startswith("_dunning")]
+    with psycopg2.connect(MIGRATOR_SYNC_URL) as conn, conn.cursor() as cur:
+        cur.execute("SELECT included_items->0->>'_dunning_property_id' FROM dunning_notice WHERE id=%s",
+                    (notice["id"],))
+        return cur.fetchone()[0]
+
+
+async def _issued_letter(api, notice):
+    """The stored notice and its PDF bytes: what an issued notice must keep forever."""
+    return ((await api.get(f"/api/dunning/{notice['id']}")).json(),
+            (await api.get(f"/api/dunning/{notice['id']}/pdf")).content)
+
+
+@pytest.mark.asyncio
+async def test_an_owner_notice_in_one_weg_never_raises_the_level_of_a_notice_in_another_weg(levy_db, levy_fixture):
+    from tests.test_special_levy import client, create
+    ids = levy_fixture
+    await _grant_levy_actor(levy_db, ids)
+    other = await _second_weg(levy_db, ids, [(0, 1)])
+    async with client(ids, "actor") as api:
+        await create(api, ids, due_date="2026-06-15")
+        await create(api, other, due_date="2026-06-15", amount="7000.00")
+        first_a = await _weg_notice(api, ids, 0, "2026-06-16", (1, "0.00", "3000.00"))
+        # B was never demanded: level 1 without a fee (level 2 with 2.50 before: A's notice counted for B).
+        first_b = await _weg_notice(api, other, 0, "2026-06-16", (1, "0.00", "7000.00"))
+        assert (_stored_property(first_a), _stored_property(first_b)) == (str(ids["property"]), str(other["property"]))
+        letters = [await _issued_letter(api, first_a), await _issued_letter(api, first_b)]
+        # A was demanded once, whatever happened in B (level 3 before: B's notice counted for A) ...
+        await _weg_notice(api, ids, 0, "2026-06-17", (2, "2.50", "3002.50"))
+        # ... and B was demanded once (A's two notices do not count).
+        await _weg_notice(api, other, 0, "2026-06-18", (2, "2.50", "7002.50"), issue=False)
+        assert [await _issued_letter(api, first_a), await _issued_letter(api, first_b)] == letters
+
+
+@pytest.mark.asyncio
+async def test_a_paid_levy_in_one_weg_and_a_part_payment_in_the_other_keep_their_own_levels(levy_db, levy_fixture):
+    from tests.test_special_levy import client, create
+    ids = levy_fixture
+    await _grant_levy_actor(levy_db, ids)
+    other = await _second_weg(levy_db, ids, [(0, 1)])
+    async with client(ids, "actor") as api:
+        await create(api, ids, due_date="2026-06-15")
+        await create(api, other, due_date="2026-06-15", amount="7000.00")
+        await _weg_notice(api, ids, 0, "2026-06-16", (1, "0.00", "3000.00"))
+        await _weg_notice(api, ids, 0, "2026-06-17", (2, "2.50", "3002.50"))
+        await _pay_levy_share(api, ids, 0, "3000.00", "2026-06-20")
+        # A is paid; its two demands are not B's: level 1, the whole 7000.00 (level 3 with 7002.50 before).
+        await _weg_notice(api, other, 0, "2026-06-28", (1, "0.00", "7000.00"))
+        # 2000.00 of B are paid: the remaining 5000.00 are the same item, demanded once.
+        await _pay_levy_share(api, other, 0, "2000.00", "2026-06-29")
+        await _weg_notice(api, other, 0, "2026-06-30", (2, "2.50", "5002.50"), issue=False)
+
+
+@pytest.mark.asyncio
+async def test_a_combined_notice_counts_only_the_demands_of_its_own_weg(levy_db, levy_fixture):
+    from tests.test_special_levy import client, create
+    ids = levy_fixture
+    await _grant_levy_actor(levy_db, ids)
+    other = await _second_weg(levy_db, ids, [(0, 1)])
+    async with client(ids, "actor") as api:
+        await create(api, ids, due_date="2026-06-15")
+        await create(api, ids, due_date="2026-07-15")
+        await create(api, other, due_date="2026-06-15", amount="7000.00")
+        await _weg_notice(api, ids, 0, "2026-06-16", (1, "0.00", "3000.00"))
+        await _weg_notice(api, other, 0, "2026-06-16", (1, "0.00", "7000.00"))
+        # June of A was demanded once, July never: level 2 for both (level 3 before: B's June notice counted).
+        await _weg_notice(api, ids, 0, "2026-07-20", (2, "2.50", "6002.50"),
+                          period=("2026-06-01", "2026-07-31"), issue=False)
+
+
+@pytest.mark.asyncio
+async def test_two_units_of_an_owner_in_one_weg_stay_one_item_next_to_another_weg(levy_db, levy_fixture):
+    from tests.test_special_levy import client, create
+    ids = levy_fixture
+    await _grant_levy_actor(levy_db, ids)
+    # Owner 1 holds units 1 and 2 (300 + 300 MEA) of WEG A from 1 February: a levy of 10000.00 is 6000.00.
+    await levy_db.execute(text("UPDATE ownership_history SET valid_to='2026-02-01' WHERE id=:history"),
+                          {"history": ids["histories"][1]})
+    await levy_db.execute(text("INSERT INTO ownership_history(organization_id,unit_id,owner_profile_id,valid_from) "
+                               "VALUES (:org,:unit,:owner,'2026-02-01')"),
+                          {"org": ids["org"], "unit": ids["units"][1], "owner": ids["owners"][0]})
+    await levy_db.commit()
+    other = await _second_weg(levy_db, ids, [(0, 1)])
+    async with client(ids, "actor") as api:
+        await create(api, ids, due_date="2026-06-15")
+        await create(api, other, due_date="2026-06-15", amount="7000.00")
+        await _weg_notice(api, ids, 0, "2026-06-16", (1, "0.00", "6000.00"))
+        await _weg_notice(api, other, 0, "2026-06-16", (1, "0.00", "7000.00"))
+        await _weg_notice(api, ids, 0, "2026-06-17", (2, "2.50", "6002.50"), issue=False)
+
+
+@pytest.mark.asyncio
+async def test_co_owners_of_a_unit_count_their_own_demands_in_each_weg(levy_db, levy_fixture):
+    from tests.test_special_levy import client, create
+    ids = levy_fixture
+    await _grant_levy_actor(levy_db, ids)
+    # Owners 0 and 1 co-own the unit of WEG B in the ratio 1 : 3, so a levy of 8000.00 is 2000.00 and 6000.00;
+    # owner 1 also holds unit 2 (300 of 1000 MEA) of WEG A: 3000.00 of a levy of 10000.00.
+    other = await _second_weg(levy_db, ids, [(0, 1), (1, 3)])
+    async with client(ids, "actor") as api:
+        await create(api, ids, due_date="2026-06-15")
+        await create(api, other, due_date="2026-06-15", amount="8000.00")
+        await _weg_notice(api, ids, 1, "2026-06-16", (1, "0.00", "3000.00"))
+        await _weg_notice(api, ids, 1, "2026-06-17", (2, "2.50", "3002.50"))
+        # Owner 1 demanded twice in A, never in B; owner 0 never at all.
+        await _weg_notice(api, other, 1, "2026-06-18", (1, "0.00", "6000.00"))
+        await _weg_notice(api, other, 0, "2026-06-18", (1, "0.00", "2000.00"))
+        await _weg_notice(api, other, 1, "2026-06-19", (2, "2.50", "6002.50"), issue=False)
+
+
+def _add_second_weg(w):
+    """A second WEG property with one unit of 1000 MEA in the organization of ownership_world."""
+    import psycopg2
+    from tests.conftest import MIGRATOR_SYNC_URL
+
+    ids = {"property_b": str(uuid.uuid4()), "unit_b": str(uuid.uuid4())}
+    with psycopg2.connect(MIGRATOR_SYNC_URL) as conn, conn.cursor() as cur:
+        cur.execute("INSERT INTO property(id,organization_id,name,management_type) VALUES (%s,%s,'T26 second WEG','WEG')",
+                    (ids["property_b"], str(w["org_a_id"])))
+        cur.execute("""INSERT INTO unit(id,organization_id,property_id,number,usage_type,area,heated_area,mea)
+            VALUES (%s,%s,%s,'1','WOHNUNG',100,100,1000)""", (ids["unit_b"], str(w["org_a_id"]), ids["property_b"]))
+    return ids
+
+
+async def _finalized_hausgeld_plan(api, property_id, yearly):
+    """A finalized 2026 plan whose only owner pays yearly / 12 a month, due on the 6th."""
+    from tests.financial_coverage_helpers import attest_fixture
+
+    plan = await api.post("/api/economic-plans", json={
+        "property_id": property_id, "plan_year": 2026, "period_start": "2026-01-01",
+        "period_end": "2026-12-31", "monthly_due_day": 6})
+    assert plan.status_code == 201, plan.text
+    plan = plan.json()["id"]
+    values = {"planned_costs": [{"category_code": "WEG_VERWALTERKOSTEN", "label": "Annual cost",
+              "planned_amount": yearly, "cost_group": "NICHT_UMLAGEFAEHIG"}],
+              "reserve_contribution_total": "0.00"}
+    await attest_fixture(api, "economic_plan", plan, values)
+    finalized = await api.post(f"/api/economic-plans/{plan}/finalize", json=values)
+    assert finalized.status_code == 200, finalized.text
+    return plan
+
+
+def _insert_owner_refund(w, property_id, iban):
+    """A booked refund (OUT) of 100.00 on the Hausgeld of March 2026 of the owner, on a new account of the property.
+    Without a charge the statement shows it as an open item of 100.00."""
+    import psycopg2
+    from tests.conftest import MIGRATOR_SYNC_URL
+
+    account = str(uuid.uuid4())
+    with psycopg2.connect(MIGRATOR_SYNC_URL) as conn, conn.cursor() as cur:
+        cur.execute("""INSERT INTO bank_account(id,organization_id,property_id,account_type,label,iban)
+            VALUES (%s,%s,%s,'LAUFEND','T26 refund',%s)""", (account, str(w["org_a_id"]), property_id, iban))
+        cur.execute("""INSERT INTO payment(organization_id,bank_account_id,property_id,direction,amount,value_date,
+            payment_type,owner_profile_id,period_year,period_month,status,booked_at,booked_by)
+            VALUES (%s,%s,%s,'OUT',100,'2026-03-10','HAUSGELD_VORSCHUSS',%s,2026,3,'booked',now(),%s)""",
+                    (str(w["org_a_id"]), account, property_id, w["seller"], str(w["user_a_admin_id"])))
+
+
+MARCH_NOTICE = {"period_start": "2026-03-01", "period_end": "2026-03-31", "reference_date": "2026-03-20"}
+
+
+@pytest.mark.asyncio
+async def test_a_notice_without_scope_and_plan_takes_the_property_of_the_payments_it_consists_of(ownership_world):
+    """No plan and no scope: the only open item is a refund of 100.00 booked in WEG A. The notice takes WEG A from
+    that payment, so the first notice of WEG B for the same month is level 1 (level 2 with 2.50 before: the refund's
+    notice stored no property and counted for every property)."""
+    from tests.test_ownership_change import create_owner, ownership_client
+
+    w = ownership_world
+    second = _add_second_weg(w)
+    _insert_owner_refund(w, w["property"], "DE02200505501015871393")
+    async with ownership_client(w) as api:
+        await create_owner(api, w)
+        await create_owner(api, {**w, "unit": second["unit_b"]})
+        plan_b = await _finalized_hausgeld_plan(api, second["property_b"], "2400.00")
+        refund = await api.post("/api/dunning/owner", json={"owner_profile_id": w["seller"], **MARCH_NOTICE})
+        assert refund.status_code == 201, refund.text
+        refund = refund.json()
+        assert (refund["level"], refund["fee_amount"], refund["total_amount"]) == (1, "0.00", "100.00"), refund
+        assert _stored_property(refund) == w["property"]
+        assert (await api.post(f"/api/dunning/{refund['id']}/issue")).status_code == 200
+        other = await api.post("/api/dunning/owner", json={
+            "owner_profile_id": w["seller"], "economic_plan_id": plan_b, **MARCH_NOTICE})
+        assert other.status_code == 201, other.text
+        # Level and fee only: until #675 the refund of WEG A also lowers the Ist of the statement of WEG B.
+        assert (other.json()["level"], other.json()["fee_amount"]) == (1, "0.00"), other.json()
+        assert _stored_property(other.json()) == second["property_b"]
+
+
+@pytest.mark.asyncio
+async def test_a_notice_whose_payments_belong_to_two_properties_is_refused_without_scope_and_plan(ownership_world):
+    from tests.test_ownership_change import ownership_client
+
+    w = ownership_world
+    second = _add_second_weg(w)
+    _insert_owner_refund(w, w["property"], "DE02200505501015871393")
+    _insert_owner_refund(w, second["property_b"], "DE36302501010002042407")
+    async with ownership_client(w) as api:
+        response = await api.post("/api/dunning/owner", json={"owner_profile_id": w["seller"], **MARCH_NOTICE})
+        assert response.status_code == 422, response.text
+        assert response.json()["detail"] == (
+            "Die offenen Beträge des Eigentümers gehören zu mehreren Objekten. "
+            "Bitte einen Wirtschaftsplan oder Abrechnungskreis auswählen.")
+        assert (await api.get("/api/dunning", params={"owner_profile_id": w["seller"]})).json() == []
+
+
+@pytest.mark.asyncio
+async def test_a_hausgeld_notice_in_one_weg_never_raises_the_level_of_a_notice_in_another_weg(ownership_world):
+    """The issue's case: one owner, a unit and a finalized plan in each of two WEGs, March 2026 unpaid in both."""
+    from tests.test_ownership_change import create_owner, ownership_client
+
+    w = ownership_world
+    second = _add_second_weg(w)
+    async with ownership_client(w) as api:
+        await create_owner(api, w)
+        await create_owner(api, {**w, "unit": second["unit_b"]})
+        # Hausgeld of March: 4800.00 / 12 = 400.00 in WEG A, 2400.00 / 12 = 200.00 in WEG B.
+        plans = {"a": await _finalized_hausgeld_plan(api, w["property"], "4800.00"),
+                 "b": await _finalized_hausgeld_plan(api, second["property_b"], "2400.00")}
+
+        async def notice(weg, reference_date, expected, *, issue=True):
+            response = await api.post("/api/dunning/owner", json={
+                "owner_profile_id": w["seller"], "economic_plan_id": plans[weg], "period_start": "2026-03-01",
+                "period_end": "2026-03-31", "reference_date": reference_date})
+            assert response.status_code == 201, response.text
+            created = response.json()
+            assert (created["level"], created["fee_amount"], created["total_amount"]) == expected, created
+            if issue:
+                assert (await api.post(f"/api/dunning/{created['id']}/issue")).status_code == 200
+            return created
+
+        first_a = await notice("a", "2026-03-20", (1, "0.00", "400.00"))
+        # The first notice of WEG B is a Zahlungserinnerung without a fee (level 2 with 2.50 before).
+        first_b = await notice("b", "2026-03-20", (1, "0.00", "200.00"))
+        assert (_stored_property(first_a), _stored_property(first_b)) == (w["property"], second["property_b"])
+        letters = [await _issued_letter(api, first_a), await _issued_letter(api, first_b)]
+        # The same arrears in the same WEG still escalate, and B's notice does not count for A (level 3 before).
+        await notice("a", "2026-03-25", (2, "2.50", "402.50"))
+        await notice("b", "2026-03-26", (2, "2.50", "202.50"), issue=False)
+        assert [await _issued_letter(api, first_a), await _issued_letter(api, first_b)] == letters
+
+
+@pytest.mark.asyncio
+async def test_demands_count_per_property_and_an_old_notice_without_one_counts_for_every_property(
+        ownership_world, rent_db):
+    import json
+    from app.core.db import get_tenant_session
+    from app.models.dunning_notice import PROPERTY_SOURCE_KEY
+    from app.repositories.dunning_notice_repo import DunningNoticeRepository
+
+    w = ownership_world
+    property_a, property_b, property_c = w["property"], str(uuid.uuid4()), str(uuid.uuid4())
+    await _set_org(rent_db, w["org_a_id"])
+    # The Hausgeld of March demanded in three issued notices: one stored before notices carried their property,
+    # one of WEG A and one of WEG B.
+    for linked in (None, property_a, property_b):
+        items = [_stored("HAUSGELD_VORSCHUSS", 3, "2026-03-06")]
+        if linked is not None:
+            items[0][PROPERTY_SOURCE_KEY] = linked
+        await rent_db.execute(text(_insert_dunning_sql()), {
+            "id": str(uuid.uuid4()), "org": str(w["org_a_id"]), "tenant": None, "owner": w["seller"],
+            "level": 1, "issue_date": date(2026, 3, 20), "due_date": date(2026, 4, 3),
+            "principal": "1.00", "fee": "0.00", "total": "1.00", "items": json.dumps(items),
+            "status": "issued", "issued_at": datetime(2026, 3, 20, 10, 0, tzinfo=_tz.utc),
+            "issued_by": str(w["user_a_admin_id"])})
+    await rent_db.commit()
+
+    key = _key("HAUSGELD_VORSCHUSS", 3, "2026-03-06")
+    async with get_tenant_session(w["org_a_id"]) as db:
+        await db.execute(text("SELECT set_config('app.current_user_id',:actor,true)"),
+                         {"actor": str(w["user_a_admin_id"])})
+        repo = DunningNoticeRepository(db, w["org_a_id"])
+
+        async def count(property_id):
+            return await repo.highest_item_demand_count(
+                item_keys=[key], owner_profile_id=uuid.UUID(w["seller"]),
+                property_id=uuid.UUID(property_id) if property_id is not None else None)
+
+        # A property sees the notices of its own WEG and the old one: two each; a third WEG only the old one.
+        assert await count(property_a) == 2
+        assert await count(property_b) == 2
+        assert await count(property_c) == 1
+        # Without a property (a notice whose items belong to several WEGs) everything counts, as before.
+        assert await count(None) == 3
+        # Another owner of the same organization has none of them.
+        assert await repo.highest_item_demand_count(
+            item_keys=[key], owner_profile_id=uuid.UUID(w["buyer"]), property_id=uuid.UUID(property_a)) == 0
+    # Another organization never counts the notices of this one, whatever owner and property it names.
+    async with get_tenant_session(w["org_b_id"]) as db:
+        await db.execute(text("SELECT set_config('app.current_user_id',:actor,true)"),
+                         {"actor": str(w["user_b_admin_id"])})
+        repo = DunningNoticeRepository(db, w["org_b_id"])
+        assert await repo.highest_item_demand_count(
+            item_keys=[key], owner_profile_id=uuid.UUID(w["seller"]), property_id=uuid.UUID(property_a)) == 0

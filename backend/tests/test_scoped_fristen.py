@@ -119,7 +119,8 @@ async def test_monitor_blocks_unclassified_inputs(migrator_session, scope_seed):
     async with client(ids) as api:
         response = await api.get('/api/fristen', params={'reference_date': '2025-12-31', 'accounting_scope_id': str(ids['scope'])})
         assert response.status_code == 409
-        assert 'unclassified' in response.json()['detail']
+        assert response.json()['detail']['code'] == 'SCOPE_ACCOUNT_UNCLASSIFIED'
+        assert '„Unreviewed“' in response.json()['detail']['message']
 
 
 async def test_partial_fiscal_year_requires_reviewed_coverage(migrator_session, scope_seed):

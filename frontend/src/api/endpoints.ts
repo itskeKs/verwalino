@@ -983,6 +983,12 @@ export function updateBankAccount(id: string, body: BankAccountUpdate): Promise<
   return api.patch<BankAccount>(`/api/bank-accounts/${encodeURIComponent(id)}`, body);
 }
 
+/** Classifies an existing account into an Abrechnungskreis; the classification cannot be changed afterwards. */
+export function assignBankAccountScope(scopeId: string, accountId: string, reason: string): Promise<unknown> {
+  return api.post(`/api/accounting-scopes/${encodeURIComponent(scopeId)}/bindings`,
+    { resource_type: "bank_account", resource_id: accountId, reason });
+}
+
 export function listBankTransactions(id: string, status?: BankTransactionStatus, offset = 0): Promise<BankTransactionPage> {
   const params = new URLSearchParams({ offset: String(offset), limit: "50" });
   if (status) params.set("status", status);

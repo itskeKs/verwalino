@@ -12,6 +12,7 @@ import uuid
 from typing import Sequence
 
 from sqlalchemy import and_, select
+from app.models.accounting_scope import AccountingScope, AccountingScopeBinding
 from app.models.property import Property
 
 from app.models.bank_account import BankAccount
@@ -26,10 +27,23 @@ class BankAccountRepository(TenantRepository[BankAccount]):
         result = await self._session.execute(stmt)
         return result.scalars().all()
 
+    async def scope_label(self, account_id: uuid.UUID) -> str | None:
+        """Label of the accounting scope the account is classified into, None while unclassified."""
+        return await self._session.scalar(select(AccountingScope.label).join(AccountingScopeBinding, and_(
+            AccountingScopeBinding.organization_id == AccountingScope.organization_id,
+            AccountingScopeBinding.scope_id == AccountingScope.id,
+        )).where(AccountingScopeBinding.organization_id == self._org_id, AccountingScopeBinding.bank_account_id == account_id))
+
     async def list_with_property_names(self, property_id: uuid.UUID | None = None):
-        statement = select(BankAccount, Property.name).outerjoin(Property, and_(
+        statement = select(BankAccount, Property.name, AccountingScope.label).outerjoin(Property, and_(
             Property.organization_id == BankAccount.organization_id,
             Property.id == BankAccount.property_id,
+        )).outerjoin(AccountingScopeBinding, and_(
+            AccountingScopeBinding.organization_id == BankAccount.organization_id,
+            AccountingScopeBinding.bank_account_id == BankAccount.id,
+        )).outerjoin(AccountingScope, and_(
+            AccountingScope.organization_id == AccountingScopeBinding.organization_id,
+            AccountingScope.id == AccountingScopeBinding.scope_id,
         )).where(BankAccount.organization_id == self._org_id).order_by(BankAccount.label, BankAccount.id)
         if property_id is not None:
             statement = statement.where(BankAccount.property_id == property_id)

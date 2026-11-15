@@ -36,6 +36,12 @@ it("shows aggregate gaps and explicit setup links without an activation action",
   expect(screen.queryByRole("button", { name: /aktivieren/i })).not.toBeInTheDocument();
 });
 
+it("links the open account count to the accounts without an Abrechnungskreis", async () => {
+  vi.spyOn(api, "get").mockResolvedValue(snapshot);
+  show();
+  expect(await screen.findByRole("link", { name: "Konten ohne Abrechnungskreis" })).toHaveAttribute("href", "/bankkonten?ohne_abrechnungskreis=1");
+});
+
 it("hides stale counts after failed refresh and supports retry", async () => {
   const get = vi.spyOn(api, "get").mockResolvedValueOnce(snapshot).mockRejectedValueOnce(new Error("Bestand nicht verfügbar")).mockResolvedValueOnce(snapshot);
   show();

@@ -152,6 +152,7 @@ callCases.push(
   { name: "getBankAccount", run: () => endpoints.getBankAccount("b1"), method: "get", args: ["/api/bank-accounts/b1"] },
   { name: "createBankAccount", run: () => endpoints.createBankAccount(BODY), method: "post", args: ["/api/bank-accounts", BODY] },
   { name: "updateBankAccount encodes the id", run: () => endpoints.updateBankAccount("b/1", BODY), method: "patch", args: ["/api/bank-accounts/b%2F1", BODY] },
+  { name: "assignBankAccountScope encodes the scope and sends type, account and reason", run: () => endpoints.assignBankAccountScope("s/1", "b1", "Konto der WEG"), method: "post", args: ["/api/accounting-scopes/s%2F1/bindings", { resource_type: "bank_account", resource_id: "b1", reason: "Konto der WEG" }] },
   { name: "listBankTransactions with status and offset", run: () => endpoints.listBankTransactions("b1", "NEU" as never, 10), method: "get", args: ["/api/bank-accounts/b1/transactions?offset=10&limit=50&status=NEU"] },
   { name: "listBankMatchingTransactions", run: () => endpoints.listBankMatchingTransactions("b1", "ALL", 5), method: "get", args: ["/api/bank-transactions?bank_account_id=b1&status=ALL&offset=5&limit=50"] },
   { name: "assignBankTransaction to a cost entry", run: () => endpoints.assignBankTransaction("t1", "cost-1"), method: "post", args: ["/api/bank-transactions/t1/assign", { cost_entry_id: "cost-1" }] },
