@@ -495,6 +495,11 @@ New screens follow these page structures and use a German noun as their `h1`.
   MIET offers them only when an existing unit has a recorded MEA (including zero). Unset MEA
   is not a recorded share. The confirmation card appears only for writers with an unconfirmed
   scale, labelled “Skala noch nicht bestätigt”. Confirmed scales do not prompt again.
+  The unit page's “Eigentuemer-Historie” lists every ownership row, corrected ones included. A
+  corrected row is muted, shows the `badge--superseded` badge “Korrigiert” with “am <Datum Uhrzeit> von
+  <Name>” under the owner, and has no actions. “Korrigieren” (beside “Eigentum beenden”, also on an
+  ended row) opens the dialog “Eintrag korrigieren” with “Eigentum ab” and “MEA-Anteil”; a refusal
+  stays in the open dialog as `role="alert"` with the entered values kept.
 - **Form.** `.form-grid` (two columns, one below 768 px). A `<label>` wraps its control with the caption
   above it; required fields end in ` *` plus native `required`; `form-full-width` spans both columns.
   `.form-actions` at the end: submit first (`btn btn--primary`), then "Abbrechen". While saving, the form

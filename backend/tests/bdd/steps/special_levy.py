@@ -77,6 +77,27 @@ def create_roof_levy(world):
     world.data['levy'] = create(world, '/api/special-levies', {**levy_payload(world), 'resolution_id': world.data['levy_resolution']['id']})
 
 
+@when("Berta's ownership entry is corrected to start on 1 August 2026")
+def correct_berta_start(world):
+    berta = world.data['levy_owners'][1]['id']
+    rows = world.act('GET', '/api/ownership').json()
+    entry = next(row for row in rows if row['owner_profile_id'] == berta)
+    answer = world.act('POST', f"/api/ownership/{entry['id']}/correction",
+                       json={'valid_from': '2026-08-01', 'mea_share': entry['mea_share']})
+    assert answer.status_code == 201, world.describe_response()
+
+
+@when('the manager requests the roof repair levy due on 1 July 2026')
+def request_roof_levy(world):
+    world.act('POST', '/api/special-levies', json={**levy_payload(world), 'resolution_id': world.data['levy_resolution']['id']})
+
+
+@then('the levy is refused because a unit has no owner on its due date')
+def levy_needs_due_date_owner(world):
+    assert world.response.status_code == 422, world.describe_response()
+    assert world.response.json()['detail'] == 'Every unit needs positive MEA and due-date ownership'
+
+
 @then('the owner shares are 720 euros and 480 euros due on 1 July 2026')
 def roof_shares(world):
     levy = world.data['levy']

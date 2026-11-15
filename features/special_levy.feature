@@ -17,6 +17,12 @@ Feature: Special levy
     Then the owner shares are 720 euros and 480 euros due on 1 July 2026
     And the roof repair register entry shows its levy amount and due date
 
+  Scenario: A corrected ownership entry no longer takes part in a special levy
+    When Berta's ownership entry is corrected to start on 1 August 2026
+    And the manager requests the roof repair levy due on 1 July 2026
+    Then the levy is refused because a unit has no owner on its due date
+    And no special levy has been created
+
   @browser
   Scenario Outline: Missing resolution feedback preserves the levy inputs at <width> pixels
     When the manager clicks create without a resolution in the browser at <width> pixels

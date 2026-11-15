@@ -62,7 +62,7 @@ class SpecialLevyService:
             raise HTTPException(422, "A complete positive MEA and ownership basis is required")
         history = list((await self.db.scalars(select(OwnershipHistory).where(
             OwnershipHistory.organization_id == self.org, OwnershipHistory.unit_id.in_([u.id for u in units]),
-            OwnershipHistory.valid_from <= due_date,
+            OwnershipHistory.corrected_at.is_(None), OwnershipHistory.valid_from <= due_date,
             (OwnershipHistory.valid_to.is_(None) | (OwnershipHistory.valid_to > due_date)),
         ).order_by(OwnershipHistory.unit_id, OwnershipHistory.owner_profile_id).with_for_update())).all())
         by_unit = defaultdict(list)

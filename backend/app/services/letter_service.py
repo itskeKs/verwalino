@@ -129,7 +129,7 @@ class LetterService:
                 profile_source_access(:org,'owner_profile',o.id,'export') allowed
                 FROM ownership_history h JOIN owner_profile o ON o.id=h.owner_profile_id AND o.organization_id=h.organization_id
                 JOIN person p ON p.id=o.person_id AND p.organization_id=o.organization_id
-                WHERE h.organization_id=:org AND h.unit_id=:unit AND h.valid_from<=:day
+                WHERE h.organization_id=:org AND h.unit_id=:unit AND h.corrected_at IS NULL AND h.valid_from<=:day
                   AND (h.valid_to IS NULL OR h.valid_to>:day) ORDER BY h.id"""),
                 {'org': self.org, 'unit': unit.id, 'day': lease.valid_from})).mappings().all()
             for owner in owners:

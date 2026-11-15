@@ -46,7 +46,7 @@ class CoverageDeclarationRepository(TenantRepository[CoverageDeclaration]):
         result = await self._session.execute(text(
             "SELECT DISTINCT o.owner_profile_id FROM ownership_history o JOIN unit u "
             "ON u.id=o.unit_id AND u.organization_id=o.organization_id WHERE o.organization_id=:org "
-            "AND u.property_id=:property AND o.valid_from<=:end AND (o.valid_to IS NULL OR o.valid_to>:start)"),
+            "AND o.corrected_at IS NULL AND u.property_id=:property AND o.valid_from<=:end AND (o.valid_to IS NULL OR o.valid_to>:start)"),
             {"org": self._org_id, "property": subject.property_id, "start": subject.period_start, "end": subject.period_end})
         owners = {str(i) for i in result.scalars()}
         is_plan = getattr(subject, '__tablename__', None) == 'economic_plan'

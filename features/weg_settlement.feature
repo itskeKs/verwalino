@@ -110,6 +110,15 @@ Feature: WEG settlement and the owner's Hausgeld balance
     When I compute the WEG annual settlement of the co-owned units
     Then Anna's cost share is 500 euros and Bernd's and Carla's are 250 euros each
 
+  Scenario: A mistaken co-owner share is corrected and the annual settlement then calculates
+    Given Anna owns unit 1 alone and Bernd and Carla own unit 2 with shares of 50 and 30, both units of 500 MEA with 1000 euros of costs by MEA
+    When I try to compute the WEG annual settlement of the co-owned units
+    Then the calculation is refused in German, names unit 2 and points to correcting its shares
+    When I correct Carla's share of unit 2 to 50
+    And I compute the WEG annual settlement of the co-owned units
+    Then Anna's cost share is 500 euros and Bernd's and Carla's are 250 euros each
+    And the history of unit 2 shows Carla's first entry as corrected, with who corrected it and when
+
   Scenario: Co-owner shares that do not add up refuse the calculation and name the unit
     Given Anna owns unit 1 alone and Bernd and Carla own unit 2 with shares of 0.6 and 0.3, both units of 500 MEA with 1000 euros of costs by MEA
     When I try to compute the WEG annual settlement of the co-owned units

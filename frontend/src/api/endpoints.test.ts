@@ -93,6 +93,7 @@ const callCases: CallCase[] = [
   { name: "listOwnership", run: () => endpoints.listOwnership("u1"), method: "get", args: ["/api/ownership?unit_id=u1"] },
   { name: "createOwnership", run: () => endpoints.createOwnership(BODY), method: "post", args: ["/api/ownership", BODY] },
   { name: "patchOwnership", run: () => endpoints.patchOwnership("o1", BODY), method: "patch", args: ["/api/ownership/o1", BODY] },
+  { name: "correctOwnership", run: () => endpoints.correctOwnership("o1", BODY), method: "post", args: ["/api/ownership/o1/correction", BODY] },
   { name: "listLeases", run: () => endpoints.listLeases("u1"), method: "get", args: ["/api/leases?unit_id=u1"] },
   { name: "createLease", run: () => endpoints.createLease(BODY), method: "post", args: ["/api/leases", BODY] },
   { name: "patchLease", run: () => endpoints.patchLease("l1", BODY), method: "patch", args: ["/api/leases/l1", BODY] },

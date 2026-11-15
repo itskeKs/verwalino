@@ -186,6 +186,7 @@ class PaymentService:
         self._plans = EconomicPlanRepository(session, org_id)
         self._plan_lines = EconomicPlanLineRepository(session, org_id)
         self._audit = AuditRepository(session, org_id)
+        self._unit_numbers: dict[uuid.UUID, str] = {}  # filled by _owner_plan_inputs, read by its refusal
 
     async def _require_deposit_sources(self, payment: Payment) -> None:
         """A deposit must be attributable to its visible contract, tenant and account."""
@@ -715,23 +716,52 @@ class PaymentService:
             if ln.line_type == "OWNER_ADVANCE"
             and ln.owner_profile_id is not None
         ]
+        runs = SettlementRunRepository(self._session, self._org_id)
         history = [OwnerPeriodInput(o.unit_id, o.owner_profile_id, o.valid_from,
             db_exclusive_to_engine_inclusive(o.valid_to), o.mea_share)
-            for o in await SettlementRunRepository(self._session, self._org_id).ownership_for_property(plan.property_id)]
+            for o in await runs.ownership_for_property(plan.property_id)]
+        self._unit_numbers = {u.id: u.number for u in await runs.units_for_property(plan.property_id)}
         prop = await PropertyRepository(self._session, self._org_id).get_by_id(plan.property_id)
         if prop is None:
             raise HTTPException(404, 'Property not found')
         return advance_lines, history, prop
 
-    @staticmethod
-    def _owner_charges(plan, prop, advance_lines, history, owner_profile_id, period_start, period_end):
-        try:
-            return owner_expected_charges(advance_lines, owner_profile_id, period_start, period_end,
+    def _owner_charges(self, plan, prop, advance_lines, history, owner_profile_id, period_start, period_end):
+        def charges_of(lines):
+            return owner_expected_charges(lines, owner_profile_id, period_start, period_end,
                 owner_periods=history, plan_start=plan.period_start, plan_end=plan.period_end,
                 monthly_due_day=plan.monthly_due_day, federal_state=prop.federal_state)
+        try:
+            return charges_of(advance_lines)
         except ValueError as exc:
-            raise HTTPException(422, {"code": "hausgeld_ownership_invalid",
-                "message": "Die Eigentumszeiträume oder Miteigentumsanteile für das Hausgeld sind unvollständig."}) from exc
+            raise HTTPException(422, self._ownership_refusal(plan, advance_lines, charges_of)) from exc
+
+    def _ownership_refusal(self, plan, advance_lines, charges_of) -> dict:
+        """The 422 of an ownership history the plan's frozen lines cannot follow (#668).
+
+        The units are independent in the engine, so the first unit whose own lines are refused is
+        the one to name. A history corrected after the plan was finalized is followed again once
+        the plan is corrected and finalized anew, which the message names as the way out.
+        """
+        unit_id = None
+        for candidate in sorted({ln.unit_id for ln in advance_lines if ln.unit_id is not None},
+                                key=lambda unit: (self._unit_numbers.get(unit, ''), str(unit))):
+            try:
+                charges_of([ln for ln in advance_lines if ln.unit_id == candidate])
+            except ValueError:
+                unit_id = candidate
+                break
+        number = self._unit_numbers.get(unit_id)
+        return {
+            'code': 'hausgeld_ownership_invalid', 'unit_id': str(unit_id) if unit_id else None, 'unit_number': number,
+            'message': (
+                f'Die Eigentumszeiträume oder Miteigentumsanteile von {"Einheit " + number if number else "einer Einheit"} '
+                f'passen nicht zum finalisierten Wirtschaftsplan {plan.plan_year}: Ein Eigentümerwechsel muss einen '
+                f'bisherigen Eigentümer ablösen, und der Plan muss die Eigentümer zu seinem Beginn enthalten. '
+                f'Bitte prüfen Sie die Eigentümer-Historie der Einheit. Wurde sie nach der Finalisierung des Plans '
+                f'korrigiert, öffnen Sie den Wirtschaftsplan {plan.plan_year} unter „Wirtschaftspläne“, erstellen Sie '
+                f'mit „Korrektur erstellen“ einen Korrektur-Wirtschaftsplan und finalisieren Sie ihn.'),
+        }
 
     async def owner_plan_charges(
         self, plan: EconomicPlan, owner_profile_id: uuid.UUID,
