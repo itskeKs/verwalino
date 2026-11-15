@@ -303,10 +303,11 @@ def _require_levy_owners(
 ) -> None:
     """Refuse a levy whose allocation does not name, per unit, the owners of its due date (#405).
 
-    The ownership rows are read as they are now. Per levy and unit the allocated owners must be
-    exactly the owners active on the due date: co-owners all named, and nobody named who does not
-    own the unit on that day. The first offending levy (by due date, then id) and unit (by number)
-    is reported.
+    The ownership rows are read as they are now. For every unit the levy has at least one
+    allocation row for, the allocated owners must be exactly the owners active on the due date:
+    co-owners all named, and nobody named who does not own the unit on that day. A unit without
+    any row of the levy (added after the levy was created) is not checked and bears no levy. The
+    first offending levy (by due date, then id) and unit (by number) is reported.
     """
     allocated: dict[uuid.UUID, dict[uuid.UUID, set[uuid.UUID]]] = {}
     amounts: dict[uuid.UUID, Decimal] = {}
@@ -319,13 +320,13 @@ def _require_levy_owners(
     for levy_id in sorted(allocated, key=lambda i: (due_dates[i], str(i))):
         due = due_dates[levy_id]
         by_unit = allocated[levy_id]
-        for unit_id in sorted(set(numbers) | set(by_unit), key=lambda i: (numbers.get(i, ""), str(i))):
+        for unit_id in sorted(by_unit, key=lambda i: (numbers.get(i, ""), str(i))):
             owners = {
                 period.owner_profile_id for period in owner_periods
                 if period.unit_id == unit_id and period.valid_from <= due
                 and (period.valid_to is None or due <= period.valid_to)
             }
-            if owners != by_unit.get(unit_id, set()):
+            if owners != by_unit[unit_id]:
                 raise WegLevyOwnerError(levy_id, amounts[levy_id], unit_id, numbers.get(unit_id, str(unit_id)), due)
 
 

@@ -1318,9 +1318,8 @@ class TestGolden13SpecialLevy:
 
     def test_an_owner_with_only_a_levy_share_is_billed(self):
         # Carla owns unit 3 without a MEA, so she bears no cost and has no plan Soll, only a levy
-        # allocation of 100.00 beside the levy of the repair (3,000.00 / 2,000.00): Spitze -100.00,
-        # and the total stays costs - plan - levies = 12,000.00 - 7,000.00 - 5,100.00 = -100.00.
-        inp = _roof_scenario([_levy(ANNA, "3000.00"), _levy(BERND, "2000.00"), _levy(CARLA, "100.00")])
+        # allocation of 100.00: Spitze -100.00, and the total stays costs - plan - levies.
+        inp = _roof_scenario([_levy(CARLA, "100.00")])
         inp = replace(inp,
             units=(*inp.units, UnitInput(id=_U(13), number="3", usage_type="WOHNUNG", mea=Decimal("0"))),
             owner_periods=(*inp.owner_periods, OwnerPeriodInput(
@@ -1329,7 +1328,8 @@ class TestGolden13SpecialLevy:
         carla = _owner_result(r, CARLA)
         assert (carla.levy_soll, carla.abrechnungsspitze, carla.reserve_notice) == (
             Decimal("100.00"), Decimal("-100.00"), None)
-        assert r.abrechnungsspitze_total == Decimal("-100.00")
+        assert r.abrechnungsspitze_total == Decimal("4800.00") - Decimal("2800.00") + Decimal("7200.00") \
+            - Decimal("4200.00") - Decimal("100.00")
 
     def test_a_levy_payment_without_a_levy_is_a_credit_not_a_cost(self):
         inp = _roof_scenario(levy_paid=(OwnerAdvanceInput(CARLA, Decimal("75.00")),),
@@ -1441,16 +1441,33 @@ class TestGolden14LevyOwnerOnDueDate:
         assert [_owner_result(compute_weg_jahresabrechnung(inp), o).levy_soll for o in (BERND, DORA)] == [
             Decimal("1000.00"), Decimal("1000.00")]
 
-    def test_a_unit_without_an_allocation_but_with_an_owner_on_the_due_date_is_refused(self):
-        # Unit 3 exists and has an owner on the due date, the levy was created without it.
+    def test_a_unit_added_after_the_levy_does_not_block_the_settlement(self):
+        # Unit 3 (a garage without MEA) was added after the levy was created, so the levy has no
+        # allocation row for it; Carla owns it on the due date and has a Hausgeld Soll of 100.00.
+        # The unit is not checked and bears no levy: Anna and Bernd keep 3,000.00 / 2,000.00 and
+        # Spitze 0.00 / 0.00, Carla has levy Soll 0.00 and Spitze 0.00 - 100.00 = -100.00.
         inp = _roof_scenario([_levy(ANNA, "3000.00"), _levy(BERND, "2000.00")])
         inp = replace(inp,
             units=(*inp.units, UnitInput(id=_U(13), number="3", usage_type="WOHNUNG", mea=Decimal("0"))),
             owner_periods=(*inp.owner_periods, OwnerPeriodInput(
-                unit_id=_U(13), owner_profile_id=CARLA, valid_from=date(2000, 1, 1), valid_to=None)))
+                unit_id=_U(13), owner_profile_id=CARLA, valid_from=date(2000, 1, 1), valid_to=None)),
+            plan_advances=(*inp.plan_advances, OwnerAdvanceInput(CARLA, Decimal("100.00"))))
+        r = compute_weg_jahresabrechnung(inp)
+        assert _figures(r, ANNA) == (Decimal("7200.00"), Decimal("3000.00"), Decimal("0.00"))
+        assert _figures(r, BERND) == (Decimal("4800.00"), Decimal("2000.00"), Decimal("0.00"))
+        assert _figures(r, CARLA) == (Decimal("0.00"), Decimal("0.00"), Decimal("-100.00"))
+        assert r.abrechnungsspitze_total == Decimal("-100.00")
+
+    def test_a_unit_added_after_the_levy_does_not_excuse_the_units_it_names(self):
+        # The levy still names unit 2's seller: unit 3's missing row changes nothing about unit 2.
+        inp = _unit_2_sold([_levy(ANNA, "3000.00", date(2025, 10, 1)), _levy(BERND, "2000.00", date(2025, 10, 1))])
+        inp = replace(inp,
+            units=(*inp.units, UnitInput(id=_U(13), number="3", usage_type="WOHNUNG", mea=Decimal("0"))),
+            owner_periods=(*inp.owner_periods, OwnerPeriodInput(
+                unit_id=_U(13), owner_profile_id=DORA, valid_from=date(2000, 1, 1), valid_to=None)))
         with pytest.raises(weg_engine.WegLevyOwnerError) as caught:
             compute_weg_jahresabrechnung(inp)
-        assert caught.value.unit_number == "3"
+        assert caught.value.unit_number == "2"
 
     def test_the_earliest_offending_levy_and_the_lowest_unit_are_named(self):
         early, late = date(2025, 5, 1), date(2025, 10, 1)
