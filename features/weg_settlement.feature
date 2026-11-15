@@ -124,3 +124,74 @@ Feature: WEG settlement and the owner's Hausgeld balance
     When I try to compute the WEG annual settlement of the co-owned units
     Then the calculation is refused in German because the shares of unit 2 do not add up
     And the plan of the same owners still gave Bernd 333.33 euros and Carla 166.67 euros of unit 2's 500 euros
+
+  # A special levy is an additional Soll of the owner (#405, ADR-0007 amendment of 2026-11-15).
+  # The plan costs 7000 euros (Anna 4200, Berta 2800); the roof repair adds 5000 euros of costs
+  # (Anna 3000, Berta 2000), so the costs are 12000 euros (Anna 7200, Berta 4800).
+  Scenario Outline: A special levy for the repair is the owners' additional Soll, not a second cost share
+    Given the WEG plan has 7000 euros of costs and the roof repair cost another 5000 euros
+    And Anna and Berta have paid their Hausgeld in full
+    And a resolved special levy of <levy> euros is due on <due>
+    And Anna has paid <anna paid> euros of the levy and Berta <berta paid> euros
+    When I finalize their WEG annual settlement
+    Then Anna's Spitze is <anna spitze> euros and Berta's is <berta spitze> euros
+    And their levy Soll is <anna soll> and <berta soll> euros and paid <anna paid> and <berta paid> euros
+    And Anna's payment is <anna payment> euros and Berta's is <berta payment> euros
+
+    Examples:
+      | levy | due             | anna paid | berta paid | anna spitze | berta spitze | anna soll | berta soll | anna payment | berta payment |
+      | 5000 | 1 March 2026    | 3000      | 2000       | 0           | 0            | 3000      | 2000       | 0            | 0             |
+      | 6000 | 1 March 2026    | 3600      | 2400       | -600        | -400         | 3600      | 2400       | -600         | -400          |
+      | 5000 | 1 March 2026    | 1000      | 2000       | 0           | 0            | 3000      | 2000       | 2000         | 0             |
+      | 5000 | 1 March 2026    | 3500      | 2000       | 0           | 0            | 3000      | 2000       | -500         | 0             |
+      | 5000 | 15 January 2027 | 0         | 0          | 3000        | 2000         | 0         | 0          | 3000         | 2000          |
+
+  Scenario: The finalized statement and PDF show the special levy and keep their figures
+    Given the WEG plan has 7000 euros of costs and the roof repair cost another 5000 euros
+    And Anna and Berta have paid their Hausgeld in full
+    And a resolved special levy of 5000 euros is due on 1 March 2026
+    And Anna has paid 3000 euros of the levy and Berta 2000 euros
+    When I finalize their WEG annual settlement
+    Then the PDF shows the levy Soll and payment of Anna and Berta
+    When Anna pays another 100 euros of the levy
+    Then the finalized statement, its digest and its PDF are unchanged
+
+  Scenario Outline: The owner on the due date owes the levy after a mid-year sale
+    Given a successor owns unit 2 from July after the plan was finalized and all costs belong to January through June
+    And a resolved special levy of 5000 euros is due on <due>
+    When I finalize their WEG annual settlement
+    Then the levy Soll is 3000 euros for Anna, <berta> euros for Berta and <clara> euros for her successor Clara
+
+    Examples:
+      | due            | berta | clara |
+      | 1 March 2026   | 2000  | 0     |
+      | 1 October 2026 | 0     | 2000  |
+
+  Scenario: Co-owners share the levy by their relative shares
+    Given Anna owns unit 1 alone and Bernd and Carla own unit 2 with shares of 50 and 50, both units of 500 MEA with 1000 euros of costs by MEA
+    And a resolved special levy of 1000 euros is due on 1 March 2026
+    When I compute the WEG annual settlement of the co-owned units
+    Then the levy Soll is 500 euros for Anna and 250 euros each for Bernd and Carla
+
+  Scenario: A corrected ownership entry takes no part in a later levy
+    Given the WEG plan has 7000 euros of costs and the roof repair cost another 5000 euros
+    And Berta's ownership entry was corrected to start on 1 June 2019
+    And a resolved special levy of 5000 euros is due on 1 March 2026
+    When I compute the WEG annual settlement with the levy
+    Then the levy Soll is 3000 euros for Anna and 2000 euros once for Berta
+
+  Scenario: A correction after the levy leaves the frozen levy share with its owner
+    Given the WEG plan has 7000 euros of costs and the roof repair cost another 5000 euros
+    And a resolved special levy of 5000 euros is due on 1 March 2026
+    And Berta's ownership entry was corrected to start on 1 June 2019
+    When I compute the WEG annual settlement with the levy
+    Then the levy Soll is 3000 euros for Anna and 2000 euros once for Berta
+
+  @browser
+  Scenario: The special levy block fits desktop and a 360 pixel phone
+    Given the WEG plan has 7000 euros of costs and the roof repair cost another 5000 euros
+    And Anna and Berta have paid their Hausgeld in full
+    And a resolved special levy of 5000 euros is due on 1 March 2026
+    And Anna has paid 3000 euros of the levy and Berta 2000 euros
+    When I finalize their WEG annual settlement
+    Then Anna's statement shows the special levy block without horizontal scrolling

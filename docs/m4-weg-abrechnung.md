@@ -223,6 +223,7 @@ settlement balance (per owner)
    = proportional ACTUAL costs of the owner   (per distribution key/MEA, day-accurate)
    + planned reserve Soll of the owner       (asset building, separate Soll position, #401)
    − resolved EXPECTED advances of the owner  (per economic plan of the same year)
+   − special levy Soll of the owner           (resolved levies due in the period, #405)
 ```
 
 - **Settlement balance > 0 → additional payment (Nachschuss)** (the owner owes more than the plan provided for).
@@ -230,7 +231,7 @@ settlement balance (per owner)
 
 **Important domain distinction (the most common mistake):** The settlement balance is **`actual costs + planned reserve Soll − expected advance`**, **not** `actual − actually-paid advances`. What the owner has **actually** paid (or not paid) is a **separate** quantity (payment arrears/credit on the Hausgeld account), which M4 shows **for information only** but does **not** mix with the resolution-relevant settlement balance. The subject of the resolution is the balance against the **Soll**; the payment status is an enforcement/dunning matter (M6/M7).
 
-> **[§18/domain F4-2]** The amended `actual costs + planned reserve Soll − expected advance` formula follows the owner decision recorded in ADR-0007, amendment 2026-11-08 (#401). The exact presentation (what counts as "resolved", what as "for information") and the handling of an unresolved plan (F4-1) must be domain-accepted (specialist attorney for WEG law); **no self-certification.**
+> **[§18/domain F4-2]** The amended `actual costs + planned reserve Soll − expected advance − special levy Soll` formula follows the owner decisions recorded in ADR-0007, amendments 2026-11-08 (#401) and 2026-11-15 (#405). The levy rule is subject to confirmation by a WEG specialist before productive use, like ADR-0007 itself. The exact presentation (what counts as "resolved", what as "for information") and the handling of an unresolved plan (F4-1) must be domain-accepted (specialist attorney for WEG law); **no self-certification.**
 
 ### 2.2 What the Annual Settlement Discloses per Owner
 
@@ -244,7 +245,8 @@ The settlement discloses, per owner, in a **structured** way (in `settlement_lin
 | **Sum of the owner's proportional actual costs** | `settlement_line(line_type='OWNER_COST_TOTAL')` (new, §3.2) + `settlement_run.owner_cost_total` (in the payload) | only **allocable + non-allocable** WEG costs; **excluding** reserve contribution (that is not a cost, §3). |
 | **Rücklagenzuführung laut Wirtschaftsplan (Soll)** | `settlement_line(line_type='RESERVE_SOLL')` + payload `plan_reserve_soll` | planned reserve share from the linked plan; asset building, separate from costs; shown when nonzero (#401). |
 | **Owner's expected advance payments** (per plan) | `settlement_line(line_type='PLAN_ADVANCE')` (new) | from `economic_plan` (§1.5), copied into the snapshot. |
-| **Settlement balance (additional payment/credit)** | `settlement_line(line_type='ABRECHNUNGSSPITZE')` (new) + payload `abrechnungsspitze` | = proportional actual costs + planned reserve Soll − expected advance payments (§2.1, ADR-0007 amendment #401). **The amount relevant for the resolution.** |
+| **Sonderumlage (Soll / gezahlt / Rückstand)** | payload `levy_soll`, `levy_paid`, `levy_balance` per owner and `inputs.special_levies`; no statement line | additional Soll of the owner (§2.4); present only when the run froze levy figures (#405). |
+| **Settlement balance (additional payment/credit)** | `settlement_line(line_type='ABRECHNUNGSSPITZE')` (new) + payload `abrechnungsspitze` | = proportional actual costs + planned reserve Soll − expected advance payments − special levy Soll (§2.1, ADR-0007 amendments #401, #405). **The amount relevant for the resolution.** |
 | **Owner's reserve contribution** | `settlement_line(line_type='RESERVE_CONTRIBUTION')` (new) | disclosed separately, **not a cost item** (§3). |
 | **Reserve development** (property-wide) | dedicated `RESERVE_*` lines (§3.3) | Opening/contribution/withdrawal/closing. |
 | **(For information) advance payments actually made / payment status** | `settlement_line(line_type='ADVANCE_PAYMENT')` optional + payload | **separate** from the balance (§2.1); derived from booked Hausgeld (§2.4); older snapshots retain their captured values. |
@@ -275,7 +277,26 @@ The engine sums **three subtotals** per owner (`SUBTOTAL` lines): Σ allocable, 
   ledger remains unchanged, even when it predates this plan or uses an older plan.
   It does not determine the settlement's reserve Soll. Σ equals the linked plan's
   `reserve_contribution_total`; there is no second distribution. It stays outside
-  `owner_cost_total`: `abrechnungsspitze = owner_cost_total + plan_reserve_soll − plan_advance`.
+  `owner_cost_total`: `abrechnungsspitze = owner_cost_total + plan_reserve_soll − plan_advance − levy_soll`.
+- **Special levy Soll (#405):** a special levy is an additional Soll of the owner (a resolved advance,
+  § 28 Abs. 1 WEG; to be confirmed by a WEG specialist like ADR-0007 itself). An owner's `levy_soll`
+  is the sum of that owner's frozen shares (`special_levy_allocation.amount`) of the levies of the
+  run's property and accounting scope **whose due date lies within the settlement period** (both
+  days inclusive; `SpecialLevyService.property_allocations`). The allocation already says who owes
+  it: the owner on the due date, the unit's co-owners by their relative shares, a corrected
+  ownership row never receives one, and a later correction changes no frozen share. A levy due
+  outside the period is not read at all and the engine refuses one that is passed in. The costs stay
+  distributed as before: there is no link from a cost entry to a levy, so a levy above or below the
+  repair it financed leaves a credit (Guthaben) or an additional payment (Nachschuss) in the Spitze.
+  The planned reserve Soll (#401) is unchanged. A run without levies computes exactly the figures it
+  did before and its payload carries no levy key.
+- **Special levy payments:** `levy_paid` is the owner's net booked `SONDERZAHLUNG` of the period,
+  counted exactly like the owner account's Ist (`PaymentService.derive_special_levy_total_for_period`:
+  the payments the account statement keeps for the period by assigned month, else value date;
+  booked, not reversed, not a reversal, OUT reducing it). A levy payment names a month, not a levy,
+  so the total is compared with the owner's levy Soll as a whole. `levy_balance = levy_soll − levy_paid`
+  (positive: still owed, negative: overpaid). Like the Hausgeld payments, they change only the
+  payment amount and never the Spitze.
 - **Actual payments:** let `H` be net booked `HAUSGELD_VORSCHUSS`, `R` net booked
   `RUECKLAGENANTEIL`, and `Soll` the owner's summed `OWNER_ADVANCE` amounts over all
   units. New annual settlements use `paid = H + min(max(R, 0), max(Soll − H, 0))`.
@@ -297,11 +318,14 @@ The engine sums **three subtotals** per owner (`SUBTOTAL` lines): Σ allocable, 
   costs, plan Soll and Spitze remain zero, while net Hausgeld remains their own credit;
   separate reserve payments without plan Soll do not create a credit.
 - **Displayed account balance:** `account_balance = plan_soll − paid` (positive arrears,
-  negative credit). `payment_amount = abrechnungsspitze + account_balance`. These are
+  negative credit). `payment_amount = abrechnungsspitze + account_balance + levy_balance`, so what
+  an owner still owes of a levy joins the payment and an unused levy credit leaves it. These are
   informational amounts, not a new fee, claim, resolution or dunning action.
 - The page and PDF label the four financial figures “Abrechnungsspitze (beschlossen,
   § 28 Abs. 2 WEG)”, “Hausgeld-Soll laut Wirtschaftsplan”, “Hausgeld gezahlt”,
-  “Rückstand / Guthaben aus Hausgeld”, followed by “Zahlbetrag”. They explain the plan
+  “Rückstand / Guthaben aus Hausgeld”, followed by “Zahlbetrag”. With levy figures in the payload
+  the Sonderumlage block “Sonderumlage-Soll”, “Sonderumlage gezahlt” and “Rückstand / Guthaben aus
+  Sonderumlage” sits between the Hausgeld rows and the “Zahlbetrag”. They explain the plan
   and booked-payment sources, show the unit and ownership dates within the period,
   and state that only the Spitze is resolved and arrears arise from the plan.
 - Example (#204): costs 6,400.00, plan 7,200.00, paid 6,600.00 → resolved Spitze
@@ -310,6 +334,13 @@ The engine sums **three subtotals** per owner (`SUBTOTAL` lines): Σ allocable, 
   produce Hausgeld Soll of 7,800.00/5,200.00. Actual costs of 7,000.00 produce owner
   costs of 4,200.00/2,800.00 plus reserve Soll of 3,600.00/2,400.00: both Spitzen
   are 0.00. The reserve is asset building, not cost consumption.
+- Example (#405): plan costs 7,000.00 (Soll 4,200.00 / 2,800.00 at 600/400 MEA), actual costs
+  7,000.00 plus a roof repair of 5,000.00 financed by a resolved levy of 5,000.00 (3,000.00 /
+  2,000.00, due 01.03.). Costs 7,200.00 / 4,800.00; Spitze 7,200.00 − 4,200.00 − 3,000.00 = 0.00
+  and 4,800.00 − 2,800.00 − 2,000.00 = 0.00 (before #405: +3,000.00 / +2,000.00, the owners
+  paid the repair twice). A levy of 6,000.00 (3,600.00 / 2,400.00) on the same repair gives
+  −600.00 / −400.00. A levy due on 15.01. of the following year is not part of this settlement.
+  Engine `m4.10.0` introduced the rule; finalized runs keep their stored figures, digest and PDF.
 
 ### 2.4a Booking the monthly Hausgeld from the finalized plan (#186)
 
@@ -567,7 +598,7 @@ its other calculation refusals; classification uses the code, never the text.
   contributions come from the frozen plan and the reserve ledger, not from these weights.
 
 Drafts recomputed under `m4.9.0` can differ from `m4.8.0` wherever shares did not add up to 1 or
-overlapped for part of the year; finalized runs stay frozen (ENGINE_VERSION `m4.9.0`, the
+overlapped for part of the year; finalized runs stay frozen (since engine `m4.9.0`, the
 version-gated PDF sentences read „at least“ a version and are unchanged).
 
 The direct-amount keys (`EXTERNE_ABRECHNUNG`, `MANUELLER_BETRAG`) now use the same exact rational

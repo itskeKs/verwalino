@@ -16,6 +16,9 @@ def owner_balance_results(payload: dict | None) -> list[dict]:
         result = {key: owner[key] for key in (
             'owner_profile_id', 'owner_cost_total', 'abrechnungsspitze',
             'plan_soll', 'paid', 'account_balance', 'payment_amount')}
+        # The special levy block exists only for an owner whose run froze levy figures (#405).
+        if 'levy_soll' in owner:
+            result.update({key: owner[key] for key in ('levy_soll', 'levy_paid', 'levy_balance')})
         result['ownership_periods'] = [
             {'unit_number': units[p['unit_id']],
              'valid_from': max(p['from'], period['start']),

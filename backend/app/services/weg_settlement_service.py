@@ -51,6 +51,7 @@ from app.engine.types import (
     AssetItemInput,
     BankBalanceInput,
     OwnerAdvanceInput,
+    OwnerLevyInput,
     OwnerPeriodInput,
     PeriodOverlapError,
     PropertyInput,
@@ -81,8 +82,9 @@ from app.repositories.settlement_repo import (
 
 from app.services.reserve_ledger_service import ReserveLedgerService
 from app.services.payment_service import dated_plan_soll
+from app.services.special_levy_service import SpecialLevyService
 
-ENGINE_VERSION = "m4.9.0"
+ENGINE_VERSION = "m4.10.0"
 
 DELETE_MESSAGES = {
     'SETTLEMENT_DELETE_SOURCE_ACCESS_REQUIRED': 'Zum Löschen dieses Entwurfs benötigen Sie Zugriff auf alle Finanzquellen des Objekts.',
@@ -733,6 +735,7 @@ class WegSettlementService:
             OwnerAdvanceInput(owner_profile_id=p.owner_profile_id, plan_advance_total=p.paid_total)
             for p in booked
         )
+        special_levies, levy_paid = await self._levy_inputs(run, reserves, pay_svc, expected_owners)
 
         return WegSettlementInput(
             period_start=run.period_start,
@@ -751,12 +754,43 @@ class WegSettlementService:
                 late_cash_total=Decimal(ledger.get('late_cash_total', '0.00')),
             ),
             paid_advances=paid,
+            special_levies=special_levies,
+            levy_paid=levy_paid,
             reserve_ledger=ledger,
             reserve_paid_contributions=tuple(OwnerAdvanceInput(owner_profile_id=oid, plan_advance_total=amt)
                                              for oid, amt in paid_reserve.items()),
             economic_plan_id=run.economic_plan_id,
             engine_version=ENGINE_VERSION,
         )
+
+    async def _levy_inputs(
+        self, run: SettlementRun, reserves: ReserveLedgerService, pay_svc, roster: set[str],
+    ) -> tuple[tuple[OwnerLevyInput, ...], tuple[OwnerAdvanceInput, ...]]:
+        """The special levies falling due in the period and what each owner paid on them (#405).
+
+        A levy is an additional Soll of the owner its frozen allocation names; it counts when its
+        due date lies within the settlement period, wherever the cost it financed falls. The
+        payments are the owner account's net booked SONDERZAHLUNG of the period. A scoped run
+        reads the levies only when every levy of its scope is visible to the actor: a hidden levy
+        must refuse the calculation, never shrink the Soll.
+        """
+        scope = await reserves.repo.current_scope(run)
+        scope_id = scope.id if scope is not None else None
+        if scope_id is not None:
+            await FinancialScopeService(self._session, self._org_id, self._user_id).require_report_sources(scope_id)
+        allocations = await SpecialLevyService(self._session, self._org_id, self._user_id).property_allocations(
+            run.property_id, run.period_start, run.period_end, scope_id)
+        levies = tuple(
+            OwnerLevyInput(owner_profile_id=allocation.owner_profile_id,
+                           special_levy_id=allocation.special_levy_id, due_date=due, amount=allocation.amount)
+            for allocation, due in allocations)
+        paid = []
+        for owner_id in sorted(roster | {str(levy.owner_profile_id) for levy in levies}):
+            total = await pay_svc.derive_special_levy_total_for_period(
+                uuid.UUID(owner_id), run.period_start, run.period_end, property_id=run.property_id)
+            if total:
+                paid.append(OwnerAdvanceInput(owner_profile_id=uuid.UUID(owner_id), plan_advance_total=total))
+        return levies, tuple(paid)
 
     async def _write_weg_lines(self, run: SettlementRun, result: WegResult) -> None:
         sort = 0
@@ -796,7 +830,9 @@ class WegSettlementService:
             self._session.add(self._line(run, owner.owner_profile_id, "ABRECHNUNGSSPITZE",
                                          "Abrechnungsspitze (Nachschuss/Guthaben)" ,
                                          owner.abrechnungsspitze, sort,
-                                         note="Kosten + Ruecklage-Soll - Vorschuss-Soll (WEMoG, beschlussrelevant)")); sort += 1
+                                         note="Kosten + Ruecklage-Soll - Vorschuss-Soll - Sonderumlage-Soll (WEMoG, beschlussrelevant)"
+                                              if owner.levy_soll else
+                                              "Kosten + Ruecklage-Soll - Vorschuss-Soll (WEMoG, beschlussrelevant)")); sort += 1
             if owner.subtotal_reserve != Decimal("0.00"):
                 self._session.add(self._line(run, owner.owner_profile_id, "RESERVE_CONTRIBUTION",
                                              "Zufuehrung Erhaltungsruecklage (Ihr Anteil)",

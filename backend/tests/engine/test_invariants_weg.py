@@ -20,6 +20,7 @@ from app.engine.rounding import CENT, distribute_amount
 from app.engine.periods import build_owner_cover, time_factor
 from app.engine.types import (
     OwnerAdvanceInput,
+    OwnerLevyInput,
     OwnerPeriodInput,
     PlannedCostInput,
     PropertyInput,
@@ -105,7 +106,7 @@ class TestI4A_SumEqualsTotal:
 
 
 # ===========================================================================
-# I4-C: Abrechnungsspitze == cost + planned reserve - plan advance (per owner AND Σ, no drift).
+# I4-C: Abrechnungsspitze == cost + planned reserve - plan advance - levy Soll (per owner AND Σ, no drift).
 # ===========================================================================
 class TestI4C_SpitzeIstMinusSoll:
     @settings(max_examples=200)
@@ -114,8 +115,9 @@ class TestI4C_SpitzeIstMinusSoll:
         cost=money_amounts(min_eur=1),
         reserve=money_amounts(),
         soll_seed=st.lists(money_amounts(min_eur=0, max_eur=50000), min_size=1, max_size=6),
+        levy=money_amounts(max_eur=50000),
     )
-    def test_spitze_equals_ist_minus_soll(self, meas, cost, reserve, soll_seed):
+    def test_spitze_equals_ist_minus_soll(self, meas, cost, reserve, soll_seed, levy):
         n = len(meas)
         units = tuple(
             UnitInput(id=_U(10 + i), number=str(i), usage_type="WOHNUNG", mea=m)
@@ -142,14 +144,19 @@ class TestI4C_SpitzeIstMinusSoll:
             units=units, owner_periods=owners, cost_positions=pos, plan_advances=plan,
             plan_reserve=tuple(OwnerAdvanceInput(_U(100 + i), amount)
                 for i, amount in enumerate(distribute_amount(reserve, meas))),
+            # One special levy (#405), allocated to the owners by the levy's own largest remainder.
+            special_levies=tuple(OwnerLevyInput(_U(100 + i), _U(60), date(2025, 6, 1), amount)
+                for i, amount in enumerate(distribute_amount(levy, meas))),
         )
         r = compute_weg_jahresabrechnung(inp)
-        # Planned reserve is owner Soll, while costs stay separate.
+        # Planned reserve and levy are owner Soll, while costs stay separate.
         for o in r.owners:
-            assert o.abrechnungsspitze == o.owner_cost_total + o.plan_reserve_soll - o.plan_advance
-        # No drift over owners, including the planned reserve.
+            assert o.abrechnungsspitze == o.owner_cost_total + o.plan_reserve_soll - o.plan_advance - o.levy_soll
+        # No drift over owners, including the planned reserve and the levy.
         sum_spitze = sum((o.abrechnungsspitze for o in r.owners), Decimal("0.00"))
-        assert sum_spitze == r.cost_total + sum((o.plan_reserve_soll for o in r.owners), Decimal("0.00")) - r.plan_advances_total
+        assert sum(o.levy_soll for o in r.owners) == levy
+        assert sum_spitze == (r.cost_total + sum((o.plan_reserve_soll for o in r.owners), Decimal("0.00"))
+                              - r.plan_advances_total - levy)
         assert r.abrechnungsspitze_total == sum_spitze
 
 

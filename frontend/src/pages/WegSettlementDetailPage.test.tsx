@@ -351,3 +351,30 @@ it('renders the planned reserve as a separate owner Soll line', async () => {
   const row = within(heading.parentElement!).getByText('Rücklagenzuführung laut Wirtschaftsplan (Soll)').closest('tr')!;
   expect(within(row).getByText('3.600,00 €')).toBeVisible();
 });
+
+it('shows the special levy as its own Soll and gezahlt rows and keeps the Zahlbetrag last', async () => {
+  const levyOwner = { owner_profile_id: seller, owner_cost_total: '7200.00', plan_soll: '4200.00', paid: '4200.00',
+    abrechnungsspitze: '0.00', account_balance: '0.00', payment_amount: '2000.00',
+    levy_soll: '3000.00', levy_paid: '1000.00', levy_balance: '2000.00', ownership_periods: [] };
+  install([{ ...draft(), status: 'finalized' as const, engine_version: 'm4.10.0',
+    lines: [frozenLine('seller', seller, '7200.00')], owner_results: [levyOwner] }]);
+  show();
+  const section = await screen.findByLabelText('Hausgeld-Abgleich · Anna Alt');
+  const rows = Array.from(section.querySelectorAll('dl > div')).map(row => row.textContent);
+  expect(rows).toEqual([
+    'Abrechnungsspitze (beschlossen, § 28 Abs. 2 WEG)0,00 €', 'Hausgeld-Soll laut Wirtschaftsplan4.200,00 €',
+    'Hausgeld gezahlt4.200,00 €', 'Rückstand / Guthaben aus Hausgeld0,00 €',
+    'Sonderumlage-Soll3.000,00 €', 'Sonderumlage gezahlt1.000,00 €',
+    'Rückstand / Guthaben aus Sonderumlage2.000,00 €', 'Zahlbetrag2.000,00 €']);
+  expect(within(section).getByText(/Sonderumlage: Soll aus den beschlossenen Sonderumlagen/)).toBeVisible();
+});
+
+it('shows no special levy rows for a statement without levy figures', async () => {
+  install([{ ...draft(), status: 'finalized' as const, engine_version: 'm4.9.0',
+    lines: [frozenLine('seller', seller, '6400.00')],
+    owner_results: [{ owner_profile_id: seller, owner_cost_total: '6400.00', plan_soll: '7200.00', paid: '6600.00',
+      abrechnungsspitze: '-800.00', account_balance: '600.00', payment_amount: '-200.00', ownership_periods: [] }] }]);
+  show();
+  expect(await screen.findByText('Rückstand / Guthaben aus Hausgeld')).toBeVisible();
+  expect(screen.queryByText(/Sonderumlage/)).toBeNull();
+});

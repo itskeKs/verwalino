@@ -388,6 +388,25 @@ def build_weg_snapshot_payload(
                 }
                 for a in paid_advances
             ],
+            # Special levies (#405) join the payload only when the run has some, so the digest of
+            # every statement without levies stays what it was.
+            **({"special_levies": [
+                {
+                    "owner_profile_id": str(lv.owner_profile_id),
+                    "special_levy_id": str(lv.special_levy_id),
+                    "due_date": lv.due_date.isoformat(),
+                    "amount": _m(lv.amount),
+                }
+                for lv in sorted(inp.special_levies, key=lambda lv: (
+                    str(lv.owner_profile_id), lv.due_date.isoformat(), str(lv.special_levy_id)))
+            ]} if inp.special_levies else {}),
+            **({"levy_paid": [
+                {
+                    "owner_profile_id": str(a.owner_profile_id),
+                    "paid_total": _m(a.plan_advance_total),
+                }
+                for a in sorted(inp.levy_paid, key=lambda a: str(a.owner_profile_id))
+            ]} if inp.levy_paid else {}),
             "reserve": {
                 "opening_balance": _m(inp.reserve.opening_balance),
                 "withdrawals_total": _m(inp.reserve.withdrawals_total),
@@ -435,6 +454,11 @@ def build_weg_snapshot_payload(
                     "paid_advances": _m(o.paid_advances),
                     "plan_soll": _m(o.plan_advance),
                     "plan_reserve_soll": _m(o.plan_reserve_soll),
+                    **({
+                        "levy_soll": _m(o.levy_soll),
+                        "levy_paid": _m(o.levy_paid),
+                        "levy_balance": _m(o.levy_balance),
+                    } if o.levy_soll or o.levy_paid else {}),
                     "paid": _m(o.paid_advances),
                     "account_balance": _m(o.account_balance),
                     "payment_amount": _m(o.payment_amount),
