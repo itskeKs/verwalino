@@ -1432,6 +1432,10 @@ export interface WegOwnerBalance {
   paid: string;
   account_balance: string;
   payment_amount: string;
+  /** Special levy block (#405); present only when the run froze levy figures for this owner. */
+  levy_soll?: string | null;
+  levy_paid?: string | null;
+  levy_balance?: string | null;
   ownership_periods: { unit_number: string; valid_from: string; valid_to: string }[];
 }
 

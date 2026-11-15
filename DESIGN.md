@@ -2002,6 +2002,25 @@ identifiers and keep the existing detail tables within the phone viewport.
 | Before | [view](docs/assets/design/weg-owner-balance/before-1280.png) | [view](docs/assets/design/weg-owner-balance/before-360.png) |
 | After | [view](docs/assets/design/weg-owner-balance/after-1280.png) | [view](docs/assets/design/weg-owner-balance/after-360.png) |
 
+### WEG annual statement: special levy (#405)
+
+When the frozen result carries levy figures for an owner, the balance block gains three rows of
+the same definition list between “Rückstand / Guthaben aus Hausgeld” and the bold “Zahlbetrag”:
+“Sonderumlage-Soll”, “Sonderumlage gezahlt” and “Rückstand / Guthaben aus Sonderumlage”. They
+wrap above the amount at 360 px like the Hausgeld rows and need no new component or colour. One
+paragraph after the source note explains the levy Soll (levies due in the period, shared out
+on the due date), the booked Sonderzahlungen and that the Zahlbetrag includes the levy balance.
+The PDF balance table carries the same three rows and paragraph. An owner without levy figures and
+every legacy statement keep the block unchanged. The captures use synthetic data on the test
+database: plan 7.000,00 €, costs 12.000,00 € including a 5.000,00 € roof repair, levy 5.000,00 €
+due 01.03.2026 (Anna 3.000,00 €, Berta 2.000,00 €), Hausgeld and levy paid in full. Before: the
+owners paid the repair twice (Abrechnungsspitze 3.000,00 € and 2.000,00 €).
+
+| WEG special levy | 1280 px | 360 px |
+| --- | --- | --- |
+| Before | [view](docs/assets/design/weg-special-levy/before-1280.png) | [view](docs/assets/design/weg-special-levy/before-360.png) |
+| After | [view](docs/assets/design/weg-special-levy/after-1280.png) | [view](docs/assets/design/weg-special-levy/after-360.png) |
+
 
 Dated document recipients (#207): the economic-plan and asset-report detail pages
 show a “Dokumentempfänger” card after computation. Each entry identifies the unit,

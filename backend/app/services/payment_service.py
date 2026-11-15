@@ -578,7 +578,10 @@ class PaymentService:
             status="booked",
             booked_at=now,
             booked_by=self._user_id,
-            retention_until=_compute_retention_until(original.value_date),
+            # A Storno is a new record booked now: its retention counts from its own booking
+            # date (UTC, like booked_at), never from the older value date it copies; a future
+            # value date keeps the anchor no earlier than the original's.
+            retention_until=_compute_retention_until(max(original.value_date, now.date())),
             reverses_id=original.id,
             reserve_cost_entry_id=original.reserve_cost_entry_id,
             reserve_register_entry_id=original.reserve_register_entry_id,
@@ -1129,6 +1132,22 @@ class PaymentService:
             owner_profile_id=owner_profile_id,
         )
         return derive_advance_total([to_payment_input(p) for p in rows], filt)
+
+    async def derive_special_levy_total_for_period(
+        self, owner_profile_id: uuid.UUID, period_start: date, period_end: date,
+        *, property_id: uuid.UUID | None = None,
+    ) -> Decimal:
+        """Net booked SONDERZAHLUNG of the owner in the period, exactly as the owner account counts it.
+
+        The payments are the ones `account_statement_for_owner` keeps for the period (assigned
+        month, else value date) and the sum is the statement's Ist: booked, not reversed, not a
+        reversal, OUT reducing it. A levy payment names a month, not a levy, so the total is
+        compared with the owner's levy Soll as a whole (#405).
+        """
+        rows = await self._repo.list_for_owner(owner_profile_id, property_id=property_id)
+        scoped = self._scope_payments_to_period(rows, period_start, period_end)
+        return account_statement(
+            [], [to_payment_input(p) for p in scoped if p.payment_type == "SONDERZAHLUNG"]).ist_total
 
     async def derive_hausgeld_total_for_period(
         self, owner_profile_id: uuid.UUID, period_start: date, period_end: date,

@@ -352,6 +352,23 @@ class OwnerAdvanceInput:
 
 
 @dataclass(frozen=True)
+class OwnerLevyInput:
+    """One owner's frozen share of a special levy due within the settlement period (#405).
+
+    The levy allocation decides who owes it (the owner at the due date, with the unit's
+    co-owner split) and in which cents; the settlement adds the shares up as the owner's
+    additional Soll, after checking per unit that the allocated owners are the owners the
+    ownership rows name on the due date.
+    """
+
+    owner_profile_id: uuid.UUID
+    special_levy_id: uuid.UUID
+    unit_id: uuid.UUID
+    due_date: date
+    amount: Decimal
+
+
+@dataclass(frozen=True)
 class ReserveInput:
     """Frozen reserve development supplied by the cash ledger.
 
@@ -395,6 +412,11 @@ class WegSettlementInput:
     plan_reserve: tuple[OwnerAdvanceInput, ...] = ()
     reserve_paid_contributions: tuple[OwnerAdvanceInput, ...] | None = None
     reserve_ledger: dict | None = None
+    # Special levies due within the period (owner Soll, #405) and the net booked
+    # SONDERZAHLUNG per owner (`plan_advance_total` carries the paid total, as for
+    # `paid_advances`); an owner without an entry has paid nothing.
+    special_levies: tuple[OwnerLevyInput, ...] = ()
+    levy_paid: tuple[OwnerAdvanceInput, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -530,7 +552,8 @@ class OwnerResult:
     owner_cost_total: Decimal
     # PLAN_ADVANCE (Soll) of this owner from the Wirtschaftsplan.
     plan_advance: Decimal
-    # ABRECHNUNGSSPITZE = owner_cost_total + plan_reserve_soll - plan_advance (ADR-0007).
+    # ABRECHNUNGSSPITZE = owner_cost_total + plan_reserve_soll - plan_advance - levy_soll
+    # (ADR-0007).
     abrechnungsspitze: Decimal
     # (nachrichtlich) actually-paid advances of this owner -- separate from the
     # Spitze (m4 section 2.1). None if not supplied.
@@ -540,6 +563,11 @@ class OwnerResult:
     payment_amount: Decimal | None = None
     # Planned reserve is owner Soll, separate from actual costs and cash contributions.
     plan_reserve_soll: Decimal = Decimal("0.00")
+    # Special levies due in the period: owner Soll (a resolved advance, #405), the net booked
+    # SONDERZAHLUNG, and what is still owed (>0) or overpaid (<0) of it.
+    levy_soll: Decimal = Decimal("0.00")
+    levy_paid: Decimal = Decimal("0.00")
+    levy_balance: Decimal = Decimal("0.00")
 
 
 @dataclass(frozen=True)
@@ -569,7 +597,7 @@ class WegResult:
     cost_total: Decimal
     reserve_contributions_total: Decimal
     plan_advances_total: Decimal
-    # Σ owner Spitzen: cost_total + Σ plan_reserve_soll - plan_advances_total.
+    # Σ owner Spitzen: cost_total + Σ plan_reserve_soll - plan_advances_total - Σ levy_soll.
     abrechnungsspitze_total: Decimal
 
 

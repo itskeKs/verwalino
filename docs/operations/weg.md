@@ -87,6 +87,12 @@ These summaries use the existing financial/source read grants; reading a registe
 does not itself disclose levy amounts. The page shows the fixed shares with owner and
 unit names and uses the existing account/dunning pages. Without an
 economic plan, a WEG property and its scope can be explicitly selected there.
+The annual settlement counts the levy as an additional Soll of the owner: the levies that fall due
+within the settlement period (both days inclusive) reduce the Abrechnungsspitze, their booked
+`SONDERZAHLUNG` payments appear as “Sonderumlage gezahlt”, and what is still owed or overpaid joins
+the “Zahlbetrag” ([M4 §2.4](../m4-weg-abrechnung.md#24-origin-of-expected-advances-booked-hausgeld-and-the-payment-amount),
+ADR-0007 amendment of 2026-11-15, subject to confirmation by a WEG specialist). The costs a levy
+financed are distributed as usual; no cost is linked to a levy.
 Special levies become overdue only after their actual due date (plus grace period);
 payments of the same month are applied once to the oldest due date.
 `features/special_levy.feature` exercises the ordinary API and browser flow at

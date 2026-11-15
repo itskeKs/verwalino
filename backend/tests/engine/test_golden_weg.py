@@ -1120,3 +1120,362 @@ class TestGolden12CoOwnerShares:
         spans = weg_engine._unit_owner_spans(unit, build_owner_cover(_U(12), YEAR_START, YEAR_END, owners))
         assert len(spans) == 1 and spans[0].share_sum == Decimal("0.9")
         assert sorted(spans[0].fractions.values()) == [Fraction(1, 3), Fraction(2, 3)]
+
+
+# ===========================================================================
+# #405: a special levy is an additional Soll of the owner (ADR-0007 amendment 2026-11-15).
+#
+#   Spitze = owner costs + planned reserve Soll - plan Soll - levy Soll; the net booked
+#   SONDERZAHLUNG is its own "gezahlt" figure and the open part of the levy joins the payment.
+#   All values by hand. Units 600 / 400 MEA (Anna / Bernd), 2025:
+#     ordinary costs 7,000.00 -> 4,200.00 / 2,800.00; roof repair 5,000.00 -> 3,000.00 / 2,000.00
+#     costs 12,000.00 -> 7,200.00 / 4,800.00; plan Soll 4,200.00 / 2,800.00 (the ordinary costs).
+# ===========================================================================
+from app.engine.types import OwnerLevyInput  # noqa: E402
+
+LEVY_DUE = date(2025, 3, 1)
+# The unit each owner holds on the due date: Anna unit 1, Bernd (and co-owner Dora) unit 2, Carla unit 3.
+LEVY_UNITS = {ANNA: _U(11), BERND: _U(12), DORA: _U(12), CARLA: _U(13)}
+
+
+def _levy(owner, amount, due=LEVY_DUE, levy=50, unit=None):
+    return OwnerLevyInput(owner_profile_id=owner, special_levy_id=_U(levy), unit_id=unit or LEVY_UNITS[owner],
+                          due_date=due, amount=Decimal(amount))
+
+
+def _roof_scenario(levies=(), **changes):
+    inp = TestGolden2Abrechnungsspitze()._scenario()
+    ordinary, roof = (
+        replace(inp.cost_positions[0], cost_entry_id=_U(50 + i), category_code=code, label=code,
+                gross_amount=Decimal(amount))
+        for i, (code, amount) in enumerate((("GARTENPFLEGE", "7000.00"), ("DACHREPARATUR", "5000.00"))))
+    fields = {"cost_positions": (ordinary, roof), "special_levies": tuple(levies),
+              "plan_advances": (OwnerAdvanceInput(ANNA, Decimal("4200.00")),
+                                OwnerAdvanceInput(BERND, Decimal("2800.00"))), **changes}
+    return replace(inp, **fields)
+
+
+def _figures(result, owner):
+    o = _owner_result(result, owner)
+    return (o.owner_cost_total, o.levy_soll, o.abrechnungsspitze)
+
+
+class TestGolden13SpecialLevy:
+    def test_without_the_levy_the_owners_pay_twice(self):
+        # Today's figures (and those of a settlement without levies): 7,200.00 - 4,200.00 = 3,000.00
+        # for Anna and 4,800.00 - 2,800.00 = 2,000.00 for Bernd.
+        r = compute_weg_jahresabrechnung(_roof_scenario())
+        assert _figures(r, ANNA) == (Decimal("7200.00"), Decimal("0.00"), Decimal("3000.00"))
+        assert _figures(r, BERND) == (Decimal("4800.00"), Decimal("0.00"), Decimal("2000.00"))
+
+    def test_a_levy_of_the_repair_leaves_no_spitze(self):
+        # Levy 5,000.00 -> Anna 3,000.00, Bernd 2,000.00.
+        # Anna: 7,200.00 - 4,200.00 - 3,000.00 = 0.00; Bernd: 4,800.00 - 2,800.00 - 2,000.00 = 0.00.
+        r = compute_weg_jahresabrechnung(_roof_scenario([_levy(ANNA, "3000.00"), _levy(BERND, "2000.00")]))
+        assert _figures(r, ANNA) == (Decimal("7200.00"), Decimal("3000.00"), Decimal("0.00"))
+        assert _figures(r, BERND) == (Decimal("4800.00"), Decimal("2000.00"), Decimal("0.00"))
+        assert r.cost_total == Decimal("12000.00")
+        assert r.plan_advances_total == Decimal("7000.00")
+        assert r.abrechnungsspitze_total == Decimal("0.00")
+
+    def test_a_levy_above_the_repair_comes_back_as_credit(self):
+        # Levy 6,000.00 -> Anna 3,600.00, Bernd 2,400.00 on the same 5,000.00 repair.
+        # Anna: 7,200.00 - 4,200.00 - 3,600.00 = -600.00; Bernd: 4,800.00 - 2,800.00 - 2,400.00 = -400.00.
+        r = compute_weg_jahresabrechnung(_roof_scenario([_levy(ANNA, "3600.00"), _levy(BERND, "2400.00")]))
+        assert _figures(r, ANNA)[2] == Decimal("-600.00")
+        assert _figures(r, BERND)[2] == Decimal("-400.00")
+        # Σ Spitzen = costs 12,000.00 - plan 7,000.00 - levies 6,000.00.
+        assert r.abrechnungsspitze_total == Decimal("-1000.00")
+
+    def test_two_levies_of_one_owner_add_up(self):
+        # 5,000.00 (3,000.00 / 2,000.00) and 1,200.00 (720.00 / 480.00): Soll 3,720.00 / 2,480.00.
+        # Anna: 7,200.00 - 4,200.00 - 3,720.00 = -720.00; Bernd: 4,800.00 - 2,800.00 - 2,480.00 = -480.00.
+        r = compute_weg_jahresabrechnung(_roof_scenario([
+            _levy(ANNA, "3000.00"), _levy(BERND, "2000.00"),
+            _levy(ANNA, "720.00", date(2025, 10, 1), 51), _levy(BERND, "480.00", date(2025, 10, 1), 51)]))
+        assert _figures(r, ANNA) == (Decimal("7200.00"), Decimal("3720.00"), Decimal("-720.00"))
+        assert _figures(r, BERND) == (Decimal("4800.00"), Decimal("2480.00"), Decimal("-480.00"))
+        assert r.abrechnungsspitze_total == Decimal("-1200.00")
+
+    @pytest.mark.parametrize("due", [YEAR_START, YEAR_END])
+    def test_a_levy_due_on_the_first_or_last_day_of_the_period_counts(self, due):
+        r = compute_weg_jahresabrechnung(_roof_scenario([_levy(ANNA, "3000.00", due), _levy(BERND, "2000.00", due)]))
+        assert _owner_result(r, ANNA).levy_soll == Decimal("3000.00")
+
+    @pytest.mark.parametrize("due", [date(2024, 12, 31), date(2026, 1, 1)])
+    def test_a_levy_due_outside_the_period_is_refused_not_counted(self, due):
+        with pytest.raises(WegValidationError, match="not within the settlement period"):
+            compute_weg_jahresabrechnung(_roof_scenario([_levy(ANNA, "3000.00", due)]))
+
+    def test_a_negative_levy_share_is_refused(self):
+        with pytest.raises(WegValidationError, match="negative"):
+            compute_weg_jahresabrechnung(_roof_scenario([_levy(ANNA, "-1.00")]))
+
+    @pytest.mark.parametrize("paid,balance,payment", [
+        # Anna's Soll 3,000.00; the Hausgeld is paid in full (account balance 0.00), so the open levy
+        # is the whole payment: spitze 0.00 + 0.00 + levy balance.
+        ("0.00", "3000.00", "3000.00"),      # nothing paid: she owes the levy
+        ("1000.00", "2000.00", "2000.00"),   # part payment
+        ("3000.00", "0.00", "0.00"),         # paid in full
+        ("3500.00", "-500.00", "-500.00"),   # overpaid: credit
+    ])
+    def test_levy_payments_settle_the_levy_without_touching_the_spitze(self, paid, balance, payment):
+        r = compute_weg_jahresabrechnung(_roof_scenario(
+            [_levy(ANNA, "3000.00"), _levy(BERND, "2000.00")],
+            paid_advances=(OwnerAdvanceInput(ANNA, Decimal("4200.00")), OwnerAdvanceInput(BERND, Decimal("2800.00"))),
+            levy_paid=(OwnerAdvanceInput(ANNA, Decimal(paid)), OwnerAdvanceInput(BERND, Decimal("2000.00")))))
+        anna, bernd = _owner_result(r, ANNA), _owner_result(r, BERND)
+        assert (anna.abrechnungsspitze, anna.levy_soll, anna.levy_paid) == (
+            Decimal("0.00"), Decimal("3000.00"), Decimal(paid))
+        assert (anna.levy_balance, anna.account_balance, anna.payment_amount) == (
+            Decimal(balance), Decimal("0.00"), Decimal(payment))
+        # Bernd paid his levy in full: the payment equals his resolved Spitze.
+        assert (bernd.levy_balance, bernd.payment_amount) == (Decimal("0.00"), Decimal("0.00"))
+
+    def test_an_unpaid_levy_is_not_a_credit_of_the_spitze(self):
+        # Only the ordinary costs (7,000.00 -> 4,200.00) against Soll 4,200.00 and a levy of 3,000.00:
+        # the Spitze is -3,000.00 (levy Soll without cost), but when nothing of the levy was paid the
+        # owner owes it, so the payment is -3,000.00 + 3,000.00 = 0.00, not a 3,000.00 credit.
+        inp = _roof_scenario([_levy(ANNA, "3000.00"), _levy(BERND, "2000.00")],
+            paid_advances=(OwnerAdvanceInput(ANNA, Decimal("4200.00")), OwnerAdvanceInput(BERND, Decimal("2800.00"))))
+        inp = replace(inp, cost_positions=inp.cost_positions[:1])
+        anna = _owner_result(compute_weg_jahresabrechnung(inp), ANNA)
+        assert (anna.abrechnungsspitze, anna.levy_balance, anna.payment_amount) == (
+            Decimal("-3000.00"), Decimal("3000.00"), Decimal("0.00"))
+        # Paid in full: the 3,000.00 of the levy that no cost used is her credit.
+        paid = replace(inp, levy_paid=(OwnerAdvanceInput(ANNA, Decimal("3000.00")),))
+        anna = _owner_result(compute_weg_jahresabrechnung(paid), ANNA)
+        assert (anna.abrechnungsspitze, anna.levy_balance, anna.payment_amount) == (
+            Decimal("-3000.00"), Decimal("0.00"), Decimal("-3000.00"))
+
+    def test_the_seller_owes_the_levy_the_successor_owes_none(self):
+        # Anna owns unit 1 until 30.06.2025, Carla from 01.07.2025; every cost belongs to 01.01.-30.06.
+        # (181 days), so Anna bears unit 1's whole share 7,200.00 and Carla none. The levy fell due
+        # on 01.03.2025: the allocation names Anna (3,000.00) and Bernd (2,000.00).
+        # Plan Soll (dated) Anna 2,100.00, Carla 2,100.00, Bernd 2,800.00.
+        # Anna: 7,200.00 - 2,100.00 - 3,000.00 = 2,100.00; Carla: 0.00 - 2,100.00 = -2,100.00;
+        # Bernd: 4,800.00 - 2,800.00 - 2,000.00 = 0.00; Σ = 12,000.00 - 7,000.00 - 5,000.00 = 0.00.
+        inp = _roof_scenario([_levy(ANNA, "3000.00"), _levy(BERND, "2000.00")])
+        inp = replace(inp,
+            owner_periods=(replace(inp.owner_periods[0], valid_to=date(2025, 6, 30)),
+                           replace(inp.owner_periods[0], owner_profile_id=CARLA, valid_from=date(2025, 7, 1)),
+                           inp.owner_periods[1]),
+            cost_positions=tuple(replace(p, service_period_to=date(2025, 6, 30)) for p in inp.cost_positions),
+            plan_advances=(OwnerAdvanceInput(ANNA, Decimal("2100.00")), OwnerAdvanceInput(CARLA, Decimal("2100.00")),
+                           OwnerAdvanceInput(BERND, Decimal("2800.00"))))
+        r = compute_weg_jahresabrechnung(inp)
+        assert _figures(r, ANNA) == (Decimal("7200.00"), Decimal("3000.00"), Decimal("2100.00"))
+        assert _figures(r, CARLA) == (Decimal("0.00"), Decimal("0.00"), Decimal("-2100.00"))
+        assert _figures(r, BERND) == (Decimal("4800.00"), Decimal("2000.00"), Decimal("0.00"))
+        assert r.abrechnungsspitze_total == Decimal("0.00")
+
+    def test_co_owners_each_carry_their_allocated_share(self):
+        # Unit 2 (400 MEA) belongs to Bernd and Dora 50 / 50: costs 4,800.00 -> 2,400.00 each, plan Soll
+        # 1,400.00 each, and the levy allocation (2,000.00 of the unit by the same relative shares)
+        # 1,000.00 each. Spitze = 2,400.00 - 1,400.00 - 1,000.00 = 0.00 for both.
+        inp = _roof_scenario([_levy(ANNA, "3000.00"), _levy(BERND, "1000.00"), _levy(DORA, "1000.00")])
+        inp = replace(inp,
+            owner_periods=(inp.owner_periods[0],
+                           replace(inp.owner_periods[1], mea_share=Decimal("50")),
+                           replace(inp.owner_periods[1], owner_profile_id=DORA, mea_share=Decimal("50"))),
+            plan_advances=(OwnerAdvanceInput(ANNA, Decimal("4200.00")), OwnerAdvanceInput(BERND, Decimal("1400.00")),
+                           OwnerAdvanceInput(DORA, Decimal("1400.00"))))
+        r = compute_weg_jahresabrechnung(inp)
+        assert _figures(r, BERND) == (Decimal("2400.00"), Decimal("1000.00"), Decimal("0.00"))
+        assert _figures(r, DORA) == (Decimal("2400.00"), Decimal("1000.00"), Decimal("0.00"))
+        assert r.abrechnungsspitze_total == Decimal("0.00")
+
+    def test_the_planned_reserve_is_unchanged_by_the_levy(self):
+        # Planned reserve 6,000.00 -> 3,600.00 / 2,400.00, plan advances 7,800.00 / 5,200.00.
+        # Anna: 7,200.00 + 3,600.00 - 7,800.00 - 3,000.00 = 0.00; Bernd: 4,800.00 + 2,400.00 - 5,200.00
+        # - 2,000.00 = 0.00. The reserve Soll and the cost total are what they were without the levy.
+        reserve = (OwnerAdvanceInput(ANNA, Decimal("3600.00")), OwnerAdvanceInput(BERND, Decimal("2400.00")))
+        plan = (OwnerAdvanceInput(ANNA, Decimal("7800.00")), OwnerAdvanceInput(BERND, Decimal("5200.00")))
+        without = compute_weg_jahresabrechnung(_roof_scenario(plan_reserve=reserve, plan_advances=plan))
+        with_levy = compute_weg_jahresabrechnung(_roof_scenario(
+            [_levy(ANNA, "3000.00"), _levy(BERND, "2000.00")], plan_reserve=reserve, plan_advances=plan))
+        for owner, soll, spitze_without in ((ANNA, "3600.00", "3000.00"), (BERND, "2400.00", "2000.00")):
+            before, after = _owner_result(without, owner), _owner_result(with_levy, owner)
+            assert before.plan_reserve_soll == after.plan_reserve_soll == Decimal(soll)
+            assert before.owner_cost_total == after.owner_cost_total
+            assert before.abrechnungsspitze == Decimal(spitze_without)
+            assert after.abrechnungsspitze == Decimal("0.00")
+        assert with_levy.cost_total == without.cost_total == Decimal("12000.00")
+
+    def test_cents_are_never_lost_between_the_owners(self):
+        # Cost 100.01 by MEA 600 / 400: 60.006 / 40.004 -> floors 60.00 / 40.00, the cent goes to the
+        # larger remainder, Anna: 60.01 / 40.00. Plan Soll 50.00 / 30.00, levy 33.33 allocated 20.00 /
+        # 13.33 (19.998 / 13.332, the cent to Anna).
+        # Anna: 60.01 - 50.00 - 20.00 = -9.99; Bernd: 40.00 - 30.00 - 13.33 = -3.33;
+        # Σ = 100.01 - 80.00 - 33.33 = -13.32.
+        inp = _roof_scenario([_levy(ANNA, "20.00"), _levy(BERND, "13.33")])
+        inp = replace(inp, cost_positions=(replace(inp.cost_positions[0], gross_amount=Decimal("100.01")),),
+            plan_advances=(OwnerAdvanceInput(ANNA, Decimal("50.00")), OwnerAdvanceInput(BERND, Decimal("30.00"))))
+        r = compute_weg_jahresabrechnung(inp)
+        assert (_figures(r, ANNA)[0], _figures(r, ANNA)[2]) == (Decimal("60.01"), Decimal("-9.99"))
+        assert (_figures(r, BERND)[0], _figures(r, BERND)[2]) == (Decimal("40.00"), Decimal("-3.33"))
+        assert r.abrechnungsspitze_total == Decimal("-13.32")
+
+    def test_an_owner_with_only_a_levy_share_is_billed(self):
+        # Carla owns unit 3 without a MEA, so she bears no cost and has no plan Soll, only a levy
+        # allocation of 100.00: Spitze -100.00, and the total stays costs - plan - levies.
+        inp = _roof_scenario([_levy(CARLA, "100.00")])
+        inp = replace(inp,
+            units=(*inp.units, UnitInput(id=_U(13), number="3", usage_type="WOHNUNG", mea=Decimal("0"))),
+            owner_periods=(*inp.owner_periods, OwnerPeriodInput(
+                unit_id=_U(13), owner_profile_id=CARLA, valid_from=date(2000, 1, 1), valid_to=None)))
+        r = compute_weg_jahresabrechnung(inp)
+        carla = _owner_result(r, CARLA)
+        assert (carla.levy_soll, carla.abrechnungsspitze, carla.reserve_notice) == (
+            Decimal("100.00"), Decimal("-100.00"), None)
+        assert r.abrechnungsspitze_total == Decimal("4800.00") - Decimal("2800.00") + Decimal("7200.00") \
+            - Decimal("4200.00") - Decimal("100.00")
+
+    def test_a_levy_payment_without_a_levy_is_a_credit_not_a_cost(self):
+        inp = _roof_scenario(levy_paid=(OwnerAdvanceInput(CARLA, Decimal("75.00")),),
+                             paid_advances=(OwnerAdvanceInput(CARLA, Decimal("0.00")),))
+        carla = _owner_result(compute_weg_jahresabrechnung(inp), CARLA)
+        assert (carla.abrechnungsspitze, carla.levy_balance, carla.payment_amount) == (
+            Decimal("0.00"), Decimal("-75.00"), Decimal("-75.00"))
+
+    def test_the_snapshot_freezes_the_levies_and_the_levy_figures(self):
+        inp = _roof_scenario([_levy(BERND, "2000.00"), _levy(ANNA, "3000.00")],
+            paid_advances=(OwnerAdvanceInput(ANNA, Decimal("4200.00")), OwnerAdvanceInput(BERND, Decimal("2800.00"))),
+            levy_paid=(OwnerAdvanceInput(ANNA, Decimal("3000.00")),))
+        payload = build_weg_snapshot_payload(inp, compute_weg_jahresabrechnung(inp))
+        assert payload["inputs"]["special_levies"] == [
+            {"owner_profile_id": str(ANNA), "special_levy_id": str(_U(50)), "unit_id": str(_U(11)),
+             "due_date": "2025-03-01", "amount": "3000.00"},
+            {"owner_profile_id": str(BERND), "special_levy_id": str(_U(50)), "unit_id": str(_U(12)),
+             "due_date": "2025-03-01", "amount": "2000.00"}]
+        assert payload["inputs"]["levy_paid"] == [{"owner_profile_id": str(ANNA), "paid_total": "3000.00"}]
+        anna, bernd = payload["result"]["owners"]
+        assert {k: anna[k] for k in ("levy_soll", "levy_paid", "levy_balance", "abrechnungsspitze")} == {
+            "levy_soll": "3000.00", "levy_paid": "3000.00", "levy_balance": "0.00", "abrechnungsspitze": "0.00"}
+        assert {k: bernd[k] for k in ("levy_soll", "levy_paid", "levy_balance", "payment_amount")} == {
+            "levy_soll": "2000.00", "levy_paid": "0.00", "levy_balance": "2000.00", "payment_amount": "2000.00"}
+
+    def test_a_settlement_without_levies_keeps_its_figures_and_its_payload_digest(self):
+        # The levy keys exist only for a run that has levy figures, so the digest of every other
+        # statement is what it was before #405 (pinned from the unchanged engine).
+        inp = replace(TestGolden2Abrechnungsspitze()._scenario(),
+            paid_advances=(OwnerAdvanceInput(_U(21), Decimal("5000.00")), OwnerAdvanceInput(_U(22), Decimal("4200.00"))),
+            plan_reserve=(OwnerAdvanceInput(_U(21), Decimal("100.00")),))
+        result = compute_weg_jahresabrechnung(inp)
+        payload = build_weg_snapshot_payload(inp, result)
+        assert "special_levies" not in payload["inputs"] and "levy_paid" not in payload["inputs"]
+        assert all("levy_soll" not in o for o in payload["result"]["owners"])
+        assert canonical_sha256(payload) == "6ad5676f5720d1d7c6cea5008ac5b8ed9a36f8b1f2c6cb875cdf764a92ef2a13"
+        assert all(o.levy_soll == o.levy_paid == o.levy_balance == Decimal("0.00") for o in result.owners)
+
+
+# ---------------------------------------------------------------------------
+# #405: the allocation of a levy must name, per unit, the owners of its due date as the ownership
+# rows are now. An ownership change recorded after the levy was created leaves the allocation with
+# the previous owner; charging them would put the Soll on the wrong Spitze, so the calculation stops.
+# Unit 2 (400 MEA): Bernd until 30.06.2025, Carla from 01.07.2025.
+# ---------------------------------------------------------------------------
+def _unit_2_sold(levies):
+    inp = _roof_scenario(levies)
+    return replace(inp, owner_periods=(
+        inp.owner_periods[0],
+        replace(inp.owner_periods[1], valid_to=date(2025, 6, 30)),
+        replace(inp.owner_periods[1], owner_profile_id=CARLA, valid_from=date(2025, 7, 1))))
+
+
+class TestGolden14LevyOwnerOnDueDate:
+    def test_a_levy_allocated_to_the_seller_but_due_after_the_sale_is_refused(self):
+        # Levy 5,000.00 due 01.10.2025, allocated while Bernd owned unit 2: Anna 3,000.00, Bernd 2,000.00.
+        # On 01.10.2025 the rows name Carla for unit 2, so Bernd's 2,000.00 would be charged to the seller
+        # (his Spitze off by -2,000.00) and Carla's stay missing (off by +2,000.00).
+        due = date(2025, 10, 1)
+        inp = _unit_2_sold([_levy(ANNA, "3000.00", due), _levy(BERND, "2000.00", due)])
+        with pytest.raises(weg_engine.WegLevyOwnerError) as caught:
+            compute_weg_jahresabrechnung(inp)
+        assert (caught.value.levy_id, caught.value.unit_id, caught.value.unit_number, caught.value.due_date,
+                caught.value.levy_amount) == (_U(50), _U(12), "2", due, Decimal("5000.00"))
+        assert isinstance(caught.value, WegValidationError)
+
+    def test_a_levy_due_before_the_sale_stays_with_the_seller(self):
+        # The same sale, levy due 01.03.2025: Bernd owns unit 2 that day, so he keeps his 2,000.00.
+        # Costs are not split by the sale in this scenario's dated plan, only the levy matters here.
+        inp = _unit_2_sold([_levy(ANNA, "3000.00"), _levy(BERND, "2000.00")])
+        r = compute_weg_jahresabrechnung(inp)
+        assert [_owner_result(r, o).levy_soll for o in (ANNA, BERND, CARLA)] == [
+            Decimal("3000.00"), Decimal("2000.00"), Decimal("0.00")]
+
+    def test_a_levy_due_on_the_last_day_of_the_sellers_ownership_stays_with_the_seller(self):
+        due = date(2025, 6, 30)
+        r = compute_weg_jahresabrechnung(_unit_2_sold([_levy(ANNA, "3000.00", due), _levy(BERND, "2000.00", due)]))
+        assert _owner_result(r, BERND).levy_soll == Decimal("2000.00")
+
+    def test_a_levy_due_on_the_first_day_of_the_buyers_ownership_belongs_to_the_buyer(self):
+        due = date(2025, 7, 1)
+        r = compute_weg_jahresabrechnung(_unit_2_sold([_levy(ANNA, "3000.00", due), _levy(CARLA, "2000.00", due, unit=_U(12))]))
+        assert [_owner_result(r, o).levy_soll for o in (BERND, CARLA)] == [Decimal("0.00"), Decimal("2000.00")]
+        with pytest.raises(weg_engine.WegLevyOwnerError):
+            compute_weg_jahresabrechnung(_unit_2_sold([_levy(ANNA, "3000.00", due), _levy(BERND, "2000.00", due)]))
+
+    def test_every_co_owner_of_the_due_date_must_be_named(self):
+        # Bernd and Dora own unit 2 (50 / 50) on the due date, but the allocation names only Bernd.
+        inp = replace(_roof_scenario([_levy(ANNA, "3000.00"), _levy(BERND, "2000.00")]),
+            owner_periods=(_roof_scenario().owner_periods[0],
+                           replace(_roof_scenario().owner_periods[1], mea_share=Decimal("50")),
+                           replace(_roof_scenario().owner_periods[1], owner_profile_id=DORA, mea_share=Decimal("50"))))
+        with pytest.raises(weg_engine.WegLevyOwnerError) as caught:
+            compute_weg_jahresabrechnung(inp)
+        assert caught.value.unit_number == "2"
+
+    def test_nobody_may_be_named_who_does_not_own_the_unit_on_the_due_date(self):
+        # Allocation names Bernd and Dora for unit 2, but Dora does not own it.
+        with pytest.raises(weg_engine.WegLevyOwnerError) as caught:
+            compute_weg_jahresabrechnung(_roof_scenario(
+                [_levy(ANNA, "3000.00"), _levy(BERND, "1000.00"), _levy(DORA, "1000.00")]))
+        assert caught.value.unit_number == "2"
+
+    def test_co_owners_who_are_all_named_calculate(self):
+        inp = _roof_scenario([_levy(ANNA, "3000.00"), _levy(BERND, "1000.00"), _levy(DORA, "1000.00")])
+        inp = replace(inp, owner_periods=(inp.owner_periods[0],
+            replace(inp.owner_periods[1], mea_share=Decimal("50")),
+            replace(inp.owner_periods[1], owner_profile_id=DORA, mea_share=Decimal("50"))))
+        assert [_owner_result(compute_weg_jahresabrechnung(inp), o).levy_soll for o in (BERND, DORA)] == [
+            Decimal("1000.00"), Decimal("1000.00")]
+
+    def test_a_unit_added_after_the_levy_does_not_block_the_settlement(self):
+        # Unit 3 (a garage without MEA) was added after the levy was created, so the levy has no
+        # allocation row for it; Carla owns it on the due date and has a Hausgeld Soll of 100.00.
+        # The unit is not checked and bears no levy: Anna and Bernd keep 3,000.00 / 2,000.00 and
+        # Spitze 0.00 / 0.00, Carla has levy Soll 0.00 and Spitze 0.00 - 100.00 = -100.00.
+        inp = _roof_scenario([_levy(ANNA, "3000.00"), _levy(BERND, "2000.00")])
+        inp = replace(inp,
+            units=(*inp.units, UnitInput(id=_U(13), number="3", usage_type="WOHNUNG", mea=Decimal("0"))),
+            owner_periods=(*inp.owner_periods, OwnerPeriodInput(
+                unit_id=_U(13), owner_profile_id=CARLA, valid_from=date(2000, 1, 1), valid_to=None)),
+            plan_advances=(*inp.plan_advances, OwnerAdvanceInput(CARLA, Decimal("100.00"))))
+        r = compute_weg_jahresabrechnung(inp)
+        assert _figures(r, ANNA) == (Decimal("7200.00"), Decimal("3000.00"), Decimal("0.00"))
+        assert _figures(r, BERND) == (Decimal("4800.00"), Decimal("2000.00"), Decimal("0.00"))
+        assert _figures(r, CARLA) == (Decimal("0.00"), Decimal("0.00"), Decimal("-100.00"))
+        assert r.abrechnungsspitze_total == Decimal("-100.00")
+
+    def test_a_unit_added_after_the_levy_does_not_excuse_the_units_it_names(self):
+        # The levy still names unit 2's seller: unit 3's missing row changes nothing about unit 2.
+        inp = _unit_2_sold([_levy(ANNA, "3000.00", date(2025, 10, 1)), _levy(BERND, "2000.00", date(2025, 10, 1))])
+        inp = replace(inp,
+            units=(*inp.units, UnitInput(id=_U(13), number="3", usage_type="WOHNUNG", mea=Decimal("0"))),
+            owner_periods=(*inp.owner_periods, OwnerPeriodInput(
+                unit_id=_U(13), owner_profile_id=DORA, valid_from=date(2000, 1, 1), valid_to=None)))
+        with pytest.raises(weg_engine.WegLevyOwnerError) as caught:
+            compute_weg_jahresabrechnung(inp)
+        assert caught.value.unit_number == "2"
+
+    def test_the_earliest_offending_levy_and_the_lowest_unit_are_named(self):
+        early, late = date(2025, 5, 1), date(2025, 10, 1)
+        inp = _unit_2_sold([_levy(ANNA, "3000.00", late, 52), _levy(BERND, "2000.00", late, 52),
+                            _levy(ANNA, "30.00", early, 51, unit=_U(11)), _levy(CARLA, "20.00", early, 51, unit=_U(12))])
+        with pytest.raises(weg_engine.WegLevyOwnerError) as caught:
+            compute_weg_jahresabrechnung(inp)
+        assert (caught.value.levy_id, caught.value.unit_number) == (_U(51), "2")
+
+    def test_a_run_without_levies_is_not_checked(self):
+        compute_weg_jahresabrechnung(_unit_2_sold([]))
