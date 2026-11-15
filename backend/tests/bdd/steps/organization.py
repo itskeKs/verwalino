@@ -7,6 +7,7 @@ created for that organization.
 
 from __future__ import annotations
 
+from decimal import Decimal
 from uuid import uuid4
 
 import pytest
@@ -299,6 +300,37 @@ def household_retained(world):
     assert all(r.status_code == 404 for r in world.data['household_refusals'])
     response = world.look(world.administrator_of('Verwaltung Alpha'), f"/api/units/{world.data['household_unit']}/household")
     assert response.json() == ANNA_HOUSEHOLD
+
+
+@given("an owner's ownership entry for a unit belongs to Verwaltung Alpha")
+def ownership_entry_alpha(world):
+    from tests.settlement_period_support import create
+    api = world.administrator_of('Verwaltung Alpha')
+    parent = world.run(create(api, '/api/properties', {'name': 'Ownership isolation', 'management_type': 'WEG', 'mea_denominator': 1000}))
+    unit = world.run(create(api, '/api/units', {'property_id': parent['id'], 'number': '1', 'usage_type': 'WOHNUNG', 'mea': '1000'}))
+    person = world.run(create(api, '/api/persons', {'first_name': 'Olga', 'last_name': 'Eigentuemer'}))
+    owner = world.run(create(api, '/api/owner-profiles', {'person_id': person['id']}))
+    entry = world.run(create(api, '/api/ownership', {'unit_id': unit['id'], 'owner_profile_id': owner['id'],
+                                                     'valid_from': '2026-01-01', 'mea_share': '30'}))
+    world.data['ownership_entry'] = (unit['id'], entry)
+
+
+@when("Verwaltung Beta tries to correct that ownership entry")
+def ownership_entry_foreign(world):
+    _, entry = world.data['ownership_entry']
+    beta = world.administrator_of('Verwaltung Beta')
+    world.data['ownership_refusals'] = [
+        world.send(beta, 'POST', f"/api/ownership/{entry['id']}/correction", json={'valid_from': '2026-01-01', 'mea_share': '50'}),
+        world.send(beta, 'PATCH', f"/api/ownership/{entry['id']}", json={'valid_to': '2026-06-30'})]
+
+
+@then("the ownership entry is not found and Verwaltung Alpha's entry stays as entered")
+def ownership_entry_unchanged(world):
+    unit, entry = world.data['ownership_entry']
+    assert all(response.status_code == 404 for response in world.data['ownership_refusals'])
+    rows = world.look(world.administrator_of('Verwaltung Alpha'), f'/api/ownership?unit_id={unit}').json()
+    assert [(row['id'], row['valid_to'], Decimal(row['mea_share']), row['corrected_at']) for row in rows] == [
+        (entry['id'], None, Decimal(30), None)]
 
 
 @given("a hosted signup's legal document assent belongs to Verwaltung Alpha")

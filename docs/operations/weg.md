@@ -25,7 +25,22 @@ leaves during the year. A sole owner needs no share. If the active shares of a u
 neither 1 nor 100 (0,6 and 0,3, or three times 33,33), „Berechnen“ and „Finalisieren“ stop with a
 „Fehler“ naming the unit and the period („Die Miteigentumsanteile der Eigentümer von Einheit 2
 ergeben vom 01.01.2026 bis 31.12.2026 zusammen 0,9 statt 1 oder 100.“); add the missing co-owner or
-correct the shares and calculate again. Thirds stored with six decimals (0,333333) are accepted. The
+correct the shares and calculate again.
+
+A share or start date typed wrongly is corrected in the unit's „Eigentuemer-Historie“: „Korrigieren“
+on the row opens „Eintrag korrigieren“ with the start date and the „MEA-Anteil“; saving marks the old
+entry „Korrigiert“ (with who corrected it and when) and adds the corrected entry in its place.
+The old entry stays visible but no calculation reads it any more; settlements and plans that are
+already finalized stay as they are, drafts and later calculations use the corrected values. An
+entry that was already corrected cannot be corrected again, correct the new entry instead; a
+correction that would overlap another entry of the same person is refused with the reason.
+
+If a finalized Wirtschaftsplan covers the period, a corrected start can make the Hausgeld Soll refuse the
+unit („Die Eigentumszeiträume oder Miteigentumsanteile von Einheit 2 passen nicht zum finalisierten
+Wirtschaftsplan 2026 …“): the plan froze its owners at its start. Open the plan under „Wirtschaftspläne“,
+„Korrektur erstellen“ and finalize the correction plan; it is computed from the corrected history, and the
+Hausgeld Soll answers again. A co-owner who joins after the plan start stays refused whatever the plan
+says: correct such a start to the plan start. The correction dialog gives the same hint before saving. Thirds stored with six decimals (0,333333) are accepted. The
 economic plan, the Hausgeld Soll and special levies divide by the same ratio but do not stop on a
 wrong sum, so they can already exist while the annual settlement is refused. Rules and values:
 [M4 §4.3.3](../m4-weg-abrechnung.md#433-co-owner-shares-are-ratios-inside-their-unit-404).

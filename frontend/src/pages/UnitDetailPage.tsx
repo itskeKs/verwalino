@@ -17,6 +17,7 @@ import {
   listPersons,
   createOwnership,
   patchOwnership,
+  correctOwnership,
   createLease,
   patchLease,
   listLeaseRentChanges,
@@ -41,7 +42,7 @@ import type {
   LeaseRentChange,
 } from "../api/types";
 import { ApiError } from "../api/client";
-import { centsFromDecimal, formatDate, formatMoney } from "../lib/format";
+import { centsFromDecimal, formatDate, formatDateTime, formatMoney } from "../lib/format";
 import { rentAmount } from "../lib/rentAmount";
 import { useAuth } from "../auth/useAuth";
 import { AttachmentsPanel } from "../components/AttachmentsPanel";
@@ -443,25 +444,41 @@ function UnitDetailPageContent({ propertyId, unitId }: { propertyId?: string; un
             </thead>
             <tbody>
               {ownerships.map((o) => (
-                <tr key={o.id}>
-                  <td>{ownerProfileLabel(o.owner_profile_id)}</td>
+                <tr key={o.id} className={o.corrected_at ? "muted" : undefined}>
+                  <td>
+                    {ownerProfileLabel(o.owner_profile_id)}
+                    {o.corrected_at && <div><span className="badge badge--superseded">Korrigiert</span> <small>am {formatDateTime(o.corrected_at)} von {o.corrected_by_name ?? "unbekannt"}</small></div>}
+                  </td>
                   <td>{formatDate(o.valid_from)}</td>
                   <td>{o.valid_to ? formatDate(o.valid_to) : "offen"}</td>
                   <td>{o.mea_share ?? "-"}</td>
-                  {canWriteOwnership && <td>{o.valid_to === null && o.unit_id === unitId && <OwnershipEndAction
-                    ownership={o}
-                    ownerLabel={ownerProfileLabel(o.owner_profile_id)}
-                    disabled={savingOwner}
-                    onEnded={(ended, nextDay) => {
-                      setOwnerships(previous => previous.map(row => row.id === ended.id ? ended : row));
-                      setLeaseStatus(null);
-                      setOwnerStatus(`Eigentum bis einschließlich ${ended.valid_to ? formatDate(ended.valid_to) : "-"} beendet. Neuen Eigentümer ab ${nextDay} bewusst auswählen und speichern.`);
-                      setOwnerFormError(null);
-                      setOwnerSuggestion({ valid_from: nextDay, mea_share: o.mea_share ?? "" });
-                      setOwnerForm({ owner_profile_id: "", valid_from: nextDay, valid_to: "", mea_share: o.mea_share ?? "" });
-                      setShowOwnerForm(true);
-                    }}
-                  />}</td>}
+                  {canWriteOwnership && <td>{!o.corrected_at && o.unit_id === unitId && <>
+                    {o.valid_to === null && <OwnershipEndAction
+                      ownership={o}
+                      ownerLabel={ownerProfileLabel(o.owner_profile_id)}
+                      disabled={savingOwner}
+                      onEnded={(ended, nextDay) => {
+                        setOwnerships(previous => previous.map(row => row.id === ended.id ? ended : row));
+                        setLeaseStatus(null);
+                        setOwnerStatus(`Eigentum bis einschließlich ${ended.valid_to ? formatDate(ended.valid_to) : "-"} beendet. Neuen Eigentümer ab ${nextDay} bewusst auswählen und speichern.`);
+                        setOwnerFormError(null);
+                        setOwnerSuggestion({ valid_from: nextDay, mea_share: o.mea_share ?? "" });
+                        setOwnerForm({ owner_profile_id: "", valid_from: nextDay, valid_to: "", mea_share: o.mea_share ?? "" });
+                        setShowOwnerForm(true);
+                      }}
+                    />}
+                    <OwnershipCorrectAction
+                      ownership={o}
+                      ownerLabel={ownerProfileLabel(o.owner_profile_id)}
+                      disabled={savingOwner}
+                      onCorrected={() => {
+                        setLeaseStatus(null);
+                        setOwnerStatus("Eintrag korrigiert. Der alte Eintrag bleibt als korrigiert sichtbar und geht in keine Berechnung mehr ein.");
+                        setOwnerSuggestion(null);
+                        reload();
+                      }}
+                    />
+                  </>}</td>}
                 </tr>
               ))}
             </tbody>
@@ -727,6 +744,77 @@ function OwnershipEndAction({ ownership, ownerLabel, disabled, onEnded }: {
           {error && <p role="alert" className="error-text">{error}</p>}
           <div className="form-actions">
             <button type="submit" className="btn btn--primary" disabled={saving}>Eigentum beenden</button>
+            <button type="button" className="btn" disabled={saving} onClick={() => { if (!mutationLock.current) setOpen(false); }}>Abbrechen</button>
+          </div>
+        </form>
+      </DialogContent>
+    </Dialog>
+  </>;
+}
+
+function sharePrefill(value: string | null): string {
+  // The API returns the stored six decimals ("30.000000"); show what a person would type.
+  return value !== null && value.includes(".") ? value.replace(/\.?0+$/, "") : (value ?? "");
+}
+
+function OwnershipCorrectAction({ ownership, ownerLabel, disabled, onCorrected }: {
+  ownership: OwnershipRecord;
+  ownerLabel: string;
+  disabled: boolean;
+  onCorrected: () => void;
+}) {
+  const { session } = useAuth();
+  const canWrite = session?.role === "OWNER_ADMIN" || session?.role === "CLERK";
+  const [open, setOpen] = useState(false);
+  const [validFrom, setValidFrom] = useState("");
+  const [share, setShare] = useState("");
+  const [error, setError] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
+  const mutationLock = useRef(false);
+
+  async function submit(event: React.FormEvent) {
+    event.preventDefault();
+    if (mutationLock.current || disabled || !canWrite || ownership.corrected_at) return;
+    if (!validFrom) { setError("Bitte den Beginn des Eigentums eingeben."); return; }
+    setError(null);
+    mutationLock.current = true;
+    setSaving(true);
+    try {
+      await correctOwnership(ownership.id, { valid_from: validFrom, mea_share: share.trim() || null });
+      setOpen(false);
+      onCorrected();
+    } catch (cause) {
+      setError(cause instanceof ApiError && cause.status === 403
+        ? "Keine Berechtigung, diesen Eintrag zu korrigieren."
+        : cause instanceof ApiError && cause.status === 404
+          ? "Eintrag nicht gefunden oder nicht zugänglich."
+          : cause instanceof Error ? cause.message : String(cause));
+    } finally {
+      mutationLock.current = false;
+      setSaving(false);
+    }
+  }
+
+  return <>
+    <button type="button" className="btn" disabled={disabled || saving} onClick={() => {
+      setValidFrom(ownership.valid_from); setShare(sharePrefill(ownership.mea_share)); setError(null); setOpen(true);
+    }}>Korrigieren</button>
+    <Dialog open={open} onOpenChange={next => { if (!mutationLock.current) setOpen(next); }}>
+      <DialogContent>
+        <DialogTitle>Eintrag korrigieren</DialogTitle>
+        <DialogDescription>
+          {ownerLabel} · Eigentum ab {formatDate(ownership.valid_from)} · MEA-Anteil {ownership.mea_share ?? "-"}.
+          Der korrigierte Eintrag ersetzt diesen. Dieser bleibt als korrigiert sichtbar und geht in keine Berechnung mehr ein.
+          Finalisierte Abrechnungen und Wirtschaftspläne werden nicht neu berechnet. Besteht für den Zeitraum ein finalisierter
+          Wirtschaftsplan, kann das Hausgeld-Soll danach abgelehnt werden, bis Sie unter „Wirtschaftspläne“ mit „Korrektur erstellen“
+          einen Korrektur-Wirtschaftsplan angelegt und finalisiert haben.
+        </DialogDescription>
+        <form onSubmit={submit} noValidate>
+          <label>Eigentum ab<Input type="date" required max={ownership.valid_to ?? undefined} value={validFrom} disabled={saving} onChange={event => setValidFrom(event.target.value)} /></label>
+          <label>MEA-Anteil<Input type="text" inputMode="decimal" value={share} disabled={saving} onChange={event => setShare(event.target.value)} /></label>
+          {error && <p role="alert" className="error-text">{error}</p>}
+          <div className="form-actions">
+            <button type="submit" className="btn btn--primary" disabled={saving}>Korrigierten Eintrag speichern</button>
             <button type="button" className="btn" disabled={saving} onClick={() => { if (!mutationLock.current) setOpen(false); }}>Abbrechen</button>
           </div>
         </form>

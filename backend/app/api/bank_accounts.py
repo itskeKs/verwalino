@@ -63,6 +63,7 @@ class BankAccountUpdate(BaseModel):
 class BankAccountOut(BaseModel):
     is_active: bool
     property_name: str | None = None
+    accounting_scope_label: str | None = None
     id: str
     organization_id: str
     property_id: str
@@ -119,10 +120,11 @@ class BankTransactionPageOut(BaseModel):
     next_offset: int | None
 
 
-def _to_out(a: BankAccount, property_name: str | None = None) -> BankAccountOut:
+def _to_out(a: BankAccount, property_name: str | None = None, scope_label: str | None = None) -> BankAccountOut:
     return BankAccountOut(
         is_active=a.is_active,
         property_name=property_name,
+        accounting_scope_label=scope_label,
         id=str(a.id),
         organization_id=str(a.organization_id),
         property_id=str(a.property_id),
@@ -145,7 +147,7 @@ async def list_bank_accounts(
 ):
     repo = BankAccountRepository(db, auth.organization_id)
     items = await repo.list_with_property_names(property_id)
-    return [_to_out(account, name) for account, name in items]
+    return [_to_out(account, name, scope_label) for account, name, scope_label in items]
 
 
 @router.get("/{account_id}", response_model=BankAccountOut)
@@ -158,7 +160,7 @@ async def get_bank_account(
     account = await repo.get_by_id(account_id)
     if account is None:
         raise HTTPException(status_code=404, detail="Bank account not found")
-    return _to_out(account)
+    return _to_out(account, scope_label=await repo.scope_label(account.id))
 
 
 @router.post("", response_model=BankAccountOut, status_code=201)
@@ -186,7 +188,7 @@ async def create_bank_account(
     )
     await FinancialScopeService(db, auth.organization_id, auth.user_id).prepare_new(account, body.accounting_scope_id)
     account = await repo.create(account)
-    return _to_out(account)
+    return _to_out(account, scope_label=await repo.scope_label(account.id))
 
 
 @router.patch("/{account_id}", response_model=BankAccountOut)
@@ -215,7 +217,7 @@ async def update_bank_account(
         if getattr(exc.orig, "sqlstate", None) == "23514":
             raise HTTPException(409, "Used bank account details cannot be rewritten; create a new account instead") from exc
         raise
-    return _to_out(account)
+    return _to_out(account, scope_label=await repo.scope_label(account.id))
 
 
 @router.get("/{account_id}/transactions", response_model=BankTransactionPageOut)

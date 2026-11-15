@@ -846,13 +846,13 @@ def co_owned_units_world(world, seed_data, bernd_share, carla_share):
                         'reason': 'Synthetic settlement'}]}}, keyed=True)
     units = {number: create(world, '/api/units', {'property_id': home['id'], 'number': number,
         'usage_type': 'WOHNUNG', 'mea': '500', 'area': '100'}) for number in ('1', '2')}
-    owners = {}
+    owners, entries = {}, {}
     for name, number, share in (('Anna Alt', '1', None), ('Bernd Bunt', '2', bernd_share),
                                 ('Carla Clever', '2', carla_share)):
         person = create_person(world, 'Verwaltung Alpha', name)
         owner = create(world, '/api/owner-profiles', {'person_id': person.id})
         body = {'unit_id': units[number]['id'], 'owner_profile_id': owner['id'], 'valid_from': '2020-01-01'}
-        create(world, '/api/ownership', {**body, 'mea_share': share} if share else body)
+        entries[name.split()[0]] = create(world, '/api/ownership', {**body, 'mea_share': share} if share else body)
         owners[name.split()[0]] = owner['id']
     scope = create(world, '/api/accounting-scopes', {'property_id': home['id'], 'scope_type': 'WEG',
         'label': 'WEG Birkenweg', 'valid_from': '2026-01-01', 'whole_property': True}, keyed=True)
@@ -876,7 +876,7 @@ def co_owned_units_world(world, seed_data, bernd_share, carla_share):
     assert response.status_code == 200, response.text
     run = create(world, '/api/weg-settlements', {**basis, 'economic_plan_id': plan['id'],
         'period_start': '2026-01-01', 'period_end': '2026-12-31'})
-    return {'run': run['id'], 'owners': owners, 'plan': plan['id']}
+    return {'run': run['id'], 'owners': owners, 'plan': plan['id'], 'entries': entries, 'unit_2': units['2']['id']}
 
 
 def compute_co_owned(world, w):
@@ -895,6 +895,35 @@ def compute_co_owned_units(world, co_owned):
 @when('I try to compute the WEG annual settlement of the co-owned units')
 def try_compute_co_owned_units(world, co_owned):
     co_owned['response'] = compute_co_owned(world, co_owned)
+
+
+@then('the calculation is refused in German, names unit 2 and points to correcting its shares')
+def co_owned_refusal_points_to_correction(co_owned):
+    response = co_owned['response']
+    assert response.status_code == 422, response.text
+    detail = response.json()['detail']
+    assert (detail['code'], detail['unit_number'], detail['share_sum']) == ('weg_co_owner_shares_mismatch', '2', '80')
+    assert 'Einheit 2' in detail['message'] and '„Korrigieren“' in detail['message']
+
+
+@when("I correct Carla's share of unit 2 to 50")
+def correct_carlas_share(world, co_owned):
+    entry = co_owned['entries']['Carla']
+    response = world.act('POST', f"/api/ownership/{entry['id']}/correction",
+                         json={'valid_from': entry['valid_from'], 'mea_share': '50'})
+    assert response.status_code == 201, response.text
+    co_owned['replacement'] = response.json()
+
+
+@then("the history of unit 2 shows Carla's first entry as corrected, with who corrected it and when")
+def history_shows_the_correction(world, co_owned):
+    response = world.act('GET', '/api/ownership', params={'unit_id': co_owned['unit_2']})
+    assert response.status_code == 200, response.text
+    rows = {row['id']: row for row in response.json()}
+    first, replacement = rows[co_owned['entries']['Carla']['id']], rows[co_owned['replacement']['id']]
+    assert Decimal(first['mea_share']) == 30 and first['corrected_at'] and first['corrected_by_name']
+    assert Decimal(replacement['mea_share']) == 50 and replacement['corrected_at'] is None
+    assert len(rows) == 3  # Bernd, Carla's first entry and its replacement
 
 
 @then("Anna's cost share is 500 euros and Bernd's and Carla's are 250 euros each")

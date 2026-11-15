@@ -579,10 +579,19 @@ export interface OwnershipRecord {
   valid_from: string;
   valid_to: string | null;
   mea_share: string | null;
+  /** Set when the row was corrected (#668): it stays visible but counts in no calculation. */
+  corrected_at?: string | null;
+  corrected_by_name?: string | null;
 }
 
 export interface OwnershipEndRequest {
   valid_to: string;
+}
+
+/** The corrected values of a mistaken row, both stated in full; an empty share clears it. */
+export interface OwnershipCorrectionRequest {
+  valid_from: string;
+  mea_share: string | null;
 }
 
 export interface OwnershipCreate {
@@ -1069,6 +1078,8 @@ export type BankAccountType = "LAUFEND" | "RUECKLAGE" | "KAUTION";
 export interface BankAccount {
   is_active?: boolean;
   property_name?: string | null;
+  /** Label of the Abrechnungskreis the account is classified into; null while unclassified. */
+  accounting_scope_label?: string | null;
   id: string;
   organization_id: string;
   property_id: string;

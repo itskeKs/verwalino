@@ -310,6 +310,7 @@ PROBES: dict[str, Probe] = {
     "GET /api/ownership": Probe(row("unit", unit_id="id"), status=200, because=EMPTY_FILTER),
     "PATCH /api/ownership/{ownership_id}": Probe(row("ownership_history", ownership_id="id")),
     "POST /api/ownership": Probe(UNIT_AND_OWNER),
+    "POST /api/ownership/{ownership_id}/correction": Probe(row("ownership_history", ownership_id="id")),
     # app/api/persons.py
     "DELETE /api/persons/{person_id}": Probe(row("person", person_id="id")),
     "GET /api/persons": Probe(),

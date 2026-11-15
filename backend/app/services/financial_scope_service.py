@@ -2,11 +2,12 @@
 from contextlib import asynccontextmanager
 
 from fastapi import HTTPException
-from sqlalchemy import select, text
+from sqlalchemy import exists, select, text
 
 from app.core.rbac import ScopeCapability
 from app.core.tenant import AuthContext
 from app.models.accounting_scope import AccountingScopeBinding
+from app.models.bank_account import BankAccount
 from app.repositories.property_repo import PropertyRepository
 from app.repositories.mandate_repo import MandateRepository
 from app.services.authorization_service import AuthorizationService
@@ -30,6 +31,34 @@ class FinancialScopeService:
         await self.session.execute(text("SELECT set_config('app.current_scope_id',:scope,true)"),
             {'scope': previous})
 
+    async def unclassified_refusal(self, property_id):
+        """The 409 for a scope whose property still has unclassified financial inputs.
+
+        An unclassified bank account is named, ended ones included: ending an account
+        does not classify it and its bookings stay part of the property. Any other
+        unclassified input gets the plain statement. The lookup runs without the
+        calculation context, which hides every row outside the scope; the refused
+        request rolls back, so clearing it here changes nothing.
+        """
+        await self.session.execute(text("SELECT set_config('app.current_scope_id','',true)"))
+        labels = (await self.session.scalars(select(BankAccount.label).where(
+            BankAccount.organization_id == self.org_id, BankAccount.property_id == property_id,
+            ~exists().where(AccountingScopeBinding.organization_id == BankAccount.organization_id,
+                            AccountingScopeBinding.bank_account_id == BankAccount.id),
+        ).order_by(BankAccount.label, BankAccount.id))).all()
+        if not labels:
+            return HTTPException(409, {'code': 'SCOPE_INPUTS_UNCLASSIFIED', 'message':
+                'Für dieses Objekt gibt es noch Zahlungen, Kosten, Abrechnungen oder Wirtschaftspläne ohne Abrechnungskreis. '
+                'Prüfen Sie diese unter „Berechtigungen“ → „Bestand prüfen“, bevor dieser Abrechnungskreis berechnet wird.'})
+        more = len(labels) - 1
+        action = 'unter „Bankkonten“ einen Abrechnungskreis zu (nur Inhaber/Admin); danach kann dieser Abrechnungskreis berechnet werden.'
+        if more == 0:
+            message = f'Das Bankkonto „{labels[0]}“ hat noch keinen Abrechnungskreis. Ordnen Sie ihm {action}'
+        else:
+            others = 'ein weiteres Bankkonto' if more == 1 else f'{more} weitere Bankkonten'
+            message = f'Das Bankkonto „{labels[0]}“ und {others} haben noch keinen Abrechnungskreis. Ordnen Sie ihnen {action}'
+        return HTTPException(409, {'code': 'SCOPE_ACCOUNT_UNCLASSIFIED', 'message': message})
+
     async def lock_inputs(self):
         # Stable order: scope ACL, financial sources, then financial row locks.
         await self.session.execute(text("SELECT pg_advisory_xact_lock_shared(hashtextextended(:key,0))"),
@@ -52,7 +81,7 @@ class FinancialScopeService:
         await self.session.execute(text("SELECT set_config('app.current_scope_id',:scope,true)"), {'scope': str(scope_id)})
         if not await self.session.scalar(text('SELECT scope_financial_inputs_classified(:org,:scope)'),
                 {'org': self.org_id, 'scope': scope_id}):
-            raise HTTPException(409, 'Review unclassified financial inputs before calculating this accounting scope')
+            raise await self.unclassified_refusal(sphere.property_id)
         await self.require_report_sources(scope_id)
         return sphere
 
@@ -153,7 +182,7 @@ class FinancialScopeService:
             await self.lock_inputs()
         if computation and not await self.session.scalar(text('SELECT scope_financial_inputs_classified(:org,:scope)'),
                 {'org': self.org_id, 'scope': scope_id}):
-            raise HTTPException(409, 'Review unclassified financial inputs before calculating this accounting scope')
+            raise await self.unclassified_refusal(subject.property_id)
         return scope_id
 
     async def require_export(self, subject):

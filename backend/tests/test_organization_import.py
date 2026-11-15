@@ -713,6 +713,36 @@ async def test_import_retains_historical_unlinked_levy_and_frozen_allocations(
     await rent_db.rollback()
 
 
+async def test_import_restores_a_corrected_ownership_row_beside_its_replacement(
+    rent_world, import_target, rent_db, export_store,
+):
+    ids = {'org': rent_world['org'], 'admin': rent_world['admin'], 'unit': rent_world['unit'],
+           'person': uuid.uuid4(), 'owner': uuid.uuid4(), 'mistaken': uuid.uuid4(), 'replacement': uuid.uuid4()}
+    for statement in (
+        "INSERT INTO person(id,organization_id,first_name,last_name) VALUES (:person,:org,'Carla','Archive')",
+        "INSERT INTO owner_profile(id,organization_id,person_id) VALUES (:owner,:org,:person)",
+        "INSERT INTO ownership_history(id,organization_id,unit_id,owner_profile_id,valid_from,mea_share,corrected_at,corrected_by)"
+        " VALUES (:mistaken,:org,:unit,:owner,'2025-01-01',30,'2026-11-15T12:00:00+00',:admin)",
+        "INSERT INTO ownership_history(id,organization_id,unit_id,owner_profile_id,valid_from,mea_share)"
+        " VALUES (:replacement,:org,:unit,:owner,'2025-01-01',50)",
+    ):
+        await rent_db.execute(text(statement), ids)
+    await rent_db.commit()
+    files = unpack(await exported(rent_world))
+    await source_organization_deleted(rent_db, ids['org'], ids['admin'], import_target)
+    async with api_client(import_target) as api:
+        answer = await api.post('/api/organizations/import', files={'file': ('organization.tar.gz', repack(files))})
+        assert answer.status_code == 200, answer.text
+        mapping = answer.json()['id_map']['ownership_history']
+        rows = (await api.get('/api/ownership')).json()
+    by_id = {row['id']: row for row in rows}
+    mistaken, replacement = by_id[mapping[str(ids['mistaken'])]], by_id[mapping[str(ids['replacement'])]]
+    assert mistaken['corrected_at'] is not None and replacement['corrected_at'] is None
+    assert mistaken['corrected_by_name'] == 'Target admin'  # the archived author is the importing session user
+    assert (float(mistaken['mea_share']), float(replacement['mea_share'])) == (30.0, 50.0)
+    await rent_db.rollback()
+
+
 async def test_import_accepts_but_does_not_restore_forged_legal_assents(rent_world, import_target, rent_db, export_store):
     """Assent records are evidence the installation collected; an archive must not
     be able to plant them. A forged archive (rewritten version and time, an added

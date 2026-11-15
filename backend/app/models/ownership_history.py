@@ -10,6 +10,10 @@ Key constraints:
   - Multiple co-owners per unit at the same time ARE allowed (different
     owner_profiles with mea_share).  Architecture section 5.3.
   - Gaps (vacancy) are allowed.
+  - A mistaken row is never rewritten: a correction sets corrected_at/corrected_by on
+    it and a replacement row carries the corrected share or start date (#668). The
+    EXCLUDE constraint ignores corrected rows; every calculation reads only rows with
+    corrected_at IS NULL.
   - mea_share sum per unit/time is NOT hard-enforced (soft validation only --
     real-world data, rounding, partial capture).
 
@@ -19,10 +23,10 @@ Tenant-behaftet: carries organization_id, RLS active.
 from __future__ import annotations
 
 import uuid
-from datetime import date
+from datetime import date, datetime
 from decimal import Decimal
 
-from sqlalchemy import Date, ForeignKey, ForeignKeyConstraint, Numeric
+from sqlalchemy import Date, DateTime, ForeignKey, ForeignKeyConstraint, Numeric
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -36,6 +40,8 @@ class OwnershipHistory(Base, UUIDPrimaryKeyMixin, TimestampMixin):
             name="fk_ownership_history_unit_id_tenant", ondelete="RESTRICT"),
         ForeignKeyConstraint(["organization_id", "owner_profile_id"], ["owner_profile.organization_id", "owner_profile.id"],
             name="fk_ownership_history_owner_profile_id_tenant", ondelete="RESTRICT"),
+        ForeignKeyConstraint(["organization_id", "corrected_by"], ["user.organization_id", "user.id"],
+            name="fk_ownership_history_corrected_by"),
     )
 
     organization_id: Mapped[uuid.UUID] = mapped_column(
@@ -63,6 +69,10 @@ class OwnershipHistory(Base, UUIDPrimaryKeyMixin, TimestampMixin):
     # Share of this owner in the unit (for co-ownership / Bruchteilseigentum)
     # NUMERIC(12,6) -- exact, never float (I4)
     mea_share: Mapped[Decimal | None] = mapped_column(Numeric(12, 6), nullable=True)
+
+    # Set when the row was corrected (#668): who and when. NULL = the row counts.
+    corrected_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    corrected_by: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
 
     # EXCLUDE constraint is defined in the migration (requires btree_gist extension
     # and raw DDL -- cannot be expressed via SQLAlchemy ORM declaratively).

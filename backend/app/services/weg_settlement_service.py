@@ -105,8 +105,8 @@ def _share_sum_refusal(exc: WegShareSumError) -> dict:
         'message': (
             f'Die Miteigentumsanteile der Eigentümer von Einheit {exc.unit_number} ergeben vom '
             f'{exc.span_start:%d.%m.%Y} bis {exc.span_end:%d.%m.%Y} zusammen {total.replace(".", ",")} '
-            f'statt 1 oder 100. Bitte prüfen Sie die MEA-Anteile in der Eigentumshistorie der Einheit '
-            f'und berechnen Sie die Abrechnung erneut.'),
+            f'statt 1 oder 100. Bitte korrigieren Sie die MEA-Anteile mit „Korrigieren“ in der '
+            f'Eigentümer-Historie der Einheit und berechnen Sie die Abrechnung erneut.'),
     }
 
 

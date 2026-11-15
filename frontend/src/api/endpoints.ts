@@ -77,6 +77,7 @@ import type {
   OwnershipRecord,
   OwnershipCreate,
   OwnershipEndRequest,
+  OwnershipCorrectionRequest,
   LeaseRecord,
   LeaseCreate,
   LeaseUpdate,
@@ -596,6 +597,11 @@ export function patchOwnership(id: string, body: OwnershipEndRequest): Promise<O
   return api.patch<OwnershipRecord>(`/api/ownership/${id}`, body);
 }
 
+/** Mark a mistaken row as corrected; the answer is its replacement row. */
+export function correctOwnership(id: string, body: OwnershipCorrectionRequest): Promise<OwnershipRecord> {
+  return api.post<OwnershipRecord>(`/api/ownership/${id}/correction`, body);
+}
+
 // --- Leases ---
 
 export function listLeases(unitId?: string): Promise<LeaseRecord[]> {
@@ -975,6 +981,12 @@ export function createBankAccount(body: BankAccountCreate): Promise<BankAccount>
 
 export function updateBankAccount(id: string, body: BankAccountUpdate): Promise<BankAccount> {
   return api.patch<BankAccount>(`/api/bank-accounts/${encodeURIComponent(id)}`, body);
+}
+
+/** Classifies an existing account into an Abrechnungskreis; the classification cannot be changed afterwards. */
+export function assignBankAccountScope(scopeId: string, accountId: string, reason: string): Promise<unknown> {
+  return api.post(`/api/accounting-scopes/${encodeURIComponent(scopeId)}/bindings`,
+    { resource_type: "bank_account", resource_id: accountId, reason });
 }
 
 export function listBankTransactions(id: string, status?: BankTransactionStatus, offset = 0): Promise<BankTransactionPage> {

@@ -22,7 +22,7 @@ class OwnerProfileRepository(TenantRepository[OwnerProfile]):
             Unit.id == OwnershipHistory.unit_id, Unit.organization_id == self._org_id,
         )).where(
             OwnerProfile.organization_id == self._org_id, Unit.property_id == property_id,
-            OwnershipHistory.valid_from <= period_end,
+            OwnershipHistory.corrected_at.is_(None), OwnershipHistory.valid_from <= period_end,
             or_(OwnershipHistory.valid_to.is_(None), OwnershipHistory.valid_to > period_start),
         ).distinct().order_by(OwnerProfile.id)
         return (await self._session.execute(statement)).all()

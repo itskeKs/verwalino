@@ -123,6 +123,7 @@ class DsgvoRepository:
             .select_from(OwnershipHistory)
             .where(OwnershipHistory.organization_id == self._org_id)
             .where(OwnershipHistory.owner_profile_id.in_(owner_ids))
+            .where(OwnershipHistory.corrected_at.is_(None))
             .where(
                 or_(
                     OwnershipHistory.valid_to.is_(None),

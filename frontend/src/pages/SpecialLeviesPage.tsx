@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { Link, useLocation, useSearchParams } from "react-router-dom";
+import { ApiError } from "../api/client";
 import { createSpecialLevy, listSpecialLevies, listProperties, listUnits, listOwnerProfiles, listPersons, listMeetings, listAgendaItems, listResolutions, listRegisterEntries, linkSpecialLevyResolution } from "../api/endpoints";
 import type { SpecialLevy, Property, Unit, OwnerProfile, Person } from "../api/types";
 import { useAuth } from "../auth/useAuth";
@@ -21,6 +22,10 @@ interface ResolutionChoice {
   id: string; label: string; date: string; top: number | null; href: string; adopted: boolean;
 }
 const errorText = (error: unknown) => error instanceof Error ? error.message : "Anfrage fehlgeschlagen. Bitte erneut versuchen.";
+/** A refusal keeps its structured code: the list and the creation of one scope may be refused for the same cause. */
+interface Failure { message: string; code?: string }
+const failure = (error: unknown): Failure => ({ message: errorText(error), code: error instanceof ApiError ? error.code : undefined });
+const sameCause = (code: string | undefined, other: Failure | null) => code !== undefined && other?.code === code;
 const missingResolutionMessage = "Eine Sonderumlage braucht einen Beschluss.";
 
 export default function SpecialLeviesPage() {
@@ -47,8 +52,8 @@ export default function SpecialLeviesPage() {
   const [rows, setRows] = useState<SpecialLevy[]>([]);
   const [loading, setLoading] = useState(false);
   const [pending, setPending] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [listError, setListError] = useState<string | null>(null);
+  const [error, setError] = useState<Failure | null>(null);
+  const [listError, setListError] = useState<Failure | null>(null);
   const [revision, setRevision] = useState(0);
   const alive = useRef(false);
   const generation = useRef(0);
@@ -76,7 +81,10 @@ export default function SpecialLeviesPage() {
         setListError(null);
       }
     }).catch(err => {
-      if (current && alive.current && request === listGeneration.current) setListError(errorText(err));
+      if (current && alive.current && request === listGeneration.current) {
+        const failed = failure(err);
+        setListError(failed); setError(shown => sameCause(failed.code, shown) ? null : shown);
+      }
     }).finally(() => {
       if (current && alive.current && request === listGeneration.current) setLoading(false);
     });
@@ -123,9 +131,9 @@ export default function SpecialLeviesPage() {
     event.preventDefault();
     if (saving.current || !canWrite || !propertyId || !prepareScope || !prepareValid) return;
     const normalized = moneyInput(amount);
-    if (!normalized) { setError("Betrag muss positiv sein, mit höchstens 12 Vorkomma- und 2 Nachkommastellen."); return; }
-    if (!validDate(dueDate)) { setError("Bitte ein gültiges Fälligkeitsdatum angeben."); return; }
-    if (!resolutionId) { setError(missingResolutionMessage); return; }
+    if (!normalized) { setError({ message: "Betrag muss positiv sein, mit höchstens 12 Vorkomma- und 2 Nachkommastellen." }); return; }
+    if (!validDate(dueDate)) { setError({ message: "Bitte ein gültiges Fälligkeitsdatum angeben." }); return; }
+    if (!resolutionId) { setError({ message: missingResolutionMessage }); return; }
     saving.current = true; setPending(true); setError(null);
     const request = generation.current;
     // A list started before this mutation must not remove its newly persisted result.
@@ -140,7 +148,10 @@ export default function SpecialLeviesPage() {
       else { setRows([created]); setReadScope(prepareScope); }
       setListError(null);
     } catch (err) {
-      if (alive.current && request === generation.current) setError(errorText(err));
+      if (alive.current && request === generation.current) {
+        const failed = failure(err);
+        setError(failed); setListError(shown => sameCause(failed.code, shown) ? null : shown);
+      }
     } finally {
       saving.current = false;
       if (alive.current) setPending(false);
@@ -160,7 +171,10 @@ export default function SpecialLeviesPage() {
       createdRows.current = [linked, ...createdRows.current.filter(item => item.id !== linked.id)];
       setRows(items => items.map(item => item.id === linked.id ? linked : item));
     } catch (err) {
-      if (alive.current && request === generation.current) setError(errorText(err));
+      if (alive.current && request === generation.current) {
+        const failed = failure(err);
+        setError(failed); setListError(shown => sameCause(failed.code, shown) ? null : shown);
+      }
     } finally {
       saving.current = false;
       if (alive.current) setPending(false);
@@ -210,15 +224,15 @@ export default function SpecialLeviesPage() {
       <h2>Sonderumlage anlegen</h2>
       <AccountingScopeSelector key={`prepare-${propertyId}`} propertyId={propertyId} kind="WEG" capability="prepare" value={prepareScope} onChange={id => { generation.current++; setPrepareScope(id); }} onValidityChange={setPrepareValid} />
       <label>Beschluss *<select aria-label="Beschluss *" className="w-full min-w-0" required value={resolutionId} disabled={pending || !!resolutionError}
-        onInvalid={event => { event.preventDefault(); setError(missingResolutionMessage); }}
+        onInvalid={event => { event.preventDefault(); setError({ message: missingResolutionMessage }); }}
         onChange={event => setResolutionId(event.target.value)}>{resolutionOptions()}</select></label>
       <label>Betrag (EUR) *<input aria-label="Betrag (EUR) *" type="text" inputMode="decimal" required value={amount} onChange={e => setAmount(e.target.value)} /></label>
       <label>Fällig am *<input aria-label="Fällig am *" type="date" required value={dueDate} onChange={e => setDueDate(e.target.value)} /></label>
       <button className="btn btn--primary" type="submit" disabled={pending || !prepareScope || !prepareValid || !context || !!resolutionError}>Sonderumlage anlegen</button>
       {pending && <p role="status">Sonderumlage wird angelegt…</p>}
     </form>}
-    {error && <p role="alert" className="error-text">{error}</p>}
-    {listError && <p role="alert" className="error-text">{listError}</p>}
+    {error && <p role="alert" className="error-text">{error.message}</p>}
+    {listError && <p role="alert" className="error-text">{listError.message}</p>}
     {loading && <p role="status">Lade Sonderumlagen…</p>}
     {!readScope && <p>Bitte WEG-Objekt und Abrechnungskreis wählen.</p>}
     {readScope && !readValid && <p role="alert">Bitte einen verfügbaren Abrechnungskreis wählen.</p>}

@@ -71,7 +71,7 @@ The bounded provider transport/settings decision is described in [ADR 0014](adr/
 | --- | --- | --- |
 | Contacts, tenant/owner profile | ✅ | `api/persons.py`, `api/tenant_profiles.py`, `api/owner_profiles.py`, `pages/PersonDetailPage.tsx` |
 | Vendors | ✅ edit/end with contact source right | `api/vendors.py`, T55, [usage](operations/selector-pages.md) |
-| Ownership with share | ✅ end ownership ("Eigentum beenden") and new owner from the next day | `api/ownership.py` (`PATCH /{id}`), `pages/UnitDetailPage.tsx`, T26, [usage](operations/tenancies-and-rent.md) |
+| Ownership with share | ✅ end ownership ("Eigentum beenden") and new owner from the next day; a mistaken share or start date is corrected with "Korrigieren": the old entry stays visible as corrected (who, when) and counts in no calculation, finalized settlements and plans stay unchanged, a Hausgeld Soll refusal under a finalized plan names the unit and the plan correction (#668) | `api/ownership.py` (`PATCH /{id}`, `POST /{id}/correction`), migration 0190, `pages/UnitDetailPage.tsx`, T26, [usage](operations/tenancies-and-rent.md), [WEG usage](operations/weg.md#co-owner-shares-in-the-annual-settlement) |
 | Create lease (base rent, operating and heating advances, deposit) | ✅ residential deposit capped at three net base rents on create and deposit/base-rent edits; other unit usage types exempt | `api/leases.py`, `engine/deposit.py`, `pages/UnitDetailPage.tsx`, #167 |
 | Change/end lease, tenant change | ✅ end and note always editable; amounts locked (409) once payments are booked or a settlement is final | `api/leases.py` (`PATCH /{id}`), `pages/UnitDetailPage.tsx`, T04 |
 | Rent change with effective date | ✅ full base rent and separate operating/heating rates | `models/lease_rent_change.py`, `api/leases.py` (`/rent-changes`), `engine/mietkonto.py`, T23, T24, [usage](operations/tenancies-and-rent.md) |
@@ -83,7 +83,7 @@ The bounded provider transport/settings decision is described in [ADR 0014](adr/
 
 | Feature | Status | Location |
 | --- | --- | --- |
-| Bank accounts | ✅ edit/end, historical references kept | `api/bank_accounts.py`, `pages/BankAccountsPage.tsx`, T55, [usage](operations/selector-pages.md) |
+| Bank accounts | ✅ edit/end, historical references kept; the list shows each account's Abrechnungskreis, an administrator assigns one to an account saved without it (also an ended one) and the overview counter „Konten ohne Abrechnungskreis“ links to those accounts | `api/bank_accounts.py`, `pages/BankAccountsPage.tsx`, `components/BankAccountScopeAssignment.tsx`, `features/bank_account_scope_assignment.feature`, T55, #671, [usage](operations/selector-pages.md), [setup](operations/accounting-scope-setup.md#bank-accounts-without-an-abrechnungskreis) |
 | Expected charges (Sollstellung) for rent/operating costs, day-accurate | ✅ derived live, including rent history | `engine/mietkonto.py` (`tenant_expected_charges`) |
 | Record, book, reverse payment | ✅ drafts editable | `api/payments.py`, `pages/PaymentDetailPage.tsx`, T07 |
 | Tenant/owner ledger (Mietkonto), open items | ✅ tenant and owner accounts split signed due/future balances at a selectable cutoff without clipping the reporting period; owner rows expose their due date; an owner account with a plan or an accounting scope counts only the payments of that property (#675) | `api/payments.py` (`/mietkonto/*`, `/open-items`), `pages/MietkontoPage.tsx`, `pages/OpenItemsPage.tsx`, [semantics](m6-zahlungen-mietkonto.md#31-balance--open-items-per-person-pure-arithmetic-decimal) |

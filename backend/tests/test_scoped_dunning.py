@@ -466,6 +466,10 @@ async def test_raw_dated_successor_guard_keeps_plan_scope_period_and_recipient_b
                         from alembic.operations import Operations
                         def check_downgrade(sync):
                             module = import_module('migrations.versions.0163_dated_successor_dunning')
+                            # 0190 patched this function after 0163; the rollback-only roundtrip below
+                            # starts from the 0163 body (the surrounding transaction is rolled back).
+                            with Operations.context(MigrationContext.configure(sync)):
+                                import_module('migrations.versions.0190_ownership_correction').patch_functions(reverse=True)
                             before = sync.scalar(text("SELECT pg_get_functiondef('validate_dunning_context()'::regprocedure)"))
                             contexts_sql = text('SELECT to_jsonb(c) FROM dunning_scope_context c ORDER BY organization_id,dunning_notice_id')
                             before_contexts = sync.execute(contexts_sql).all()
