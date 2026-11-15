@@ -26,7 +26,7 @@ def roof_repair(world, seed_data):
         'valid_from': '2026-01-01', 'whole_property': True,
     }, keyed=True)
     create(world, f"/api/accounting-scopes/{scope['id']}/grants", {
-        'user_id': user, 'capabilities': ['read', 'prepare', 'approve', 'export'], 'reason': 'Synthetic special levy',
+        'user_id': user, 'capabilities': ['read', 'prepare', 'approve', 'confirm', 'export'], 'reason': 'Synthetic special levy',
     }, keyed=True)
     owners = []
     for number, mea, first in [(1, '600', 'Anna'), (2, '400', 'Berta')]:

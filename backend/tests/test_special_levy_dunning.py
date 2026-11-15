@@ -64,6 +64,15 @@ async def test_0128_migration_roundtrip_before_levy_notices(migrator_session):
                     connection.execute(text('DELETE FROM dunning_scope_context WHERE dunning_notice_id=ANY(:ids)'),
                                        {'ids': successors})
                     connection.execute(text('ALTER TABLE dunning_scope_context ENABLE TRIGGER USER'))
+                levy_notices = connection.execute(text(
+                    'SELECT dunning_notice_id FROM dunning_scope_context WHERE cardinality(special_levy_ids)>0')).scalars().all()
+                if levy_notices:
+                    # The downgrade refuses real levy notices (see the downgrade guard test); earlier
+                    # scenarios retain them, so only this rollback-only projection excludes them.
+                    connection.execute(text('ALTER TABLE dunning_scope_context DISABLE TRIGGER USER'))
+                    connection.execute(text('DELETE FROM dunning_scope_context WHERE dunning_notice_id=ANY(:ids)'),
+                                       {'ids': levy_notices})
+                    connection.execute(text('ALTER TABLE dunning_scope_context ENABLE TRIGGER USER'))
                 successor_migration.downgrade()
                 historical = connection.scalar(text("SELECT pg_get_functiondef('validate_dunning_context()'::regprocedure)"))
                 migration.downgrade()

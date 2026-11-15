@@ -12,6 +12,7 @@ from __future__ import annotations
 
 from datetime import date
 from decimal import Decimal
+from uuid import UUID
 
 import pytest
 
@@ -22,9 +23,16 @@ from app.engine.dunning import (
     assemble_dunning,
     dunning_fee,
     find_overdue_items,
+    item_key,
     next_dunning_level,
 )
-from app.engine.mietkonto import OpenItem
+from app.engine.mietkonto import (
+    ExpectedCharge,
+    OpenItem,
+    PaymentInput,
+    account_statement,
+    special_levy_expected_charges,
+)
 
 pytestmark = pytest.mark.no_db
 
@@ -393,3 +401,98 @@ def test_partial_payment_reduces_the_principal_on_its_value_date():
             for row in result.interest_snapshot["items"][0]["segments"]] == [
         (13, "1234.56", "2.76"), (10, "1000.00", "1.71"),
     ]
+
+
+# ---------------------------------------------------------------------------
+# Identity of an item across notices (#666)
+# ---------------------------------------------------------------------------
+OWNER = UUID(int=7)
+LEVY_A_DUE = date(2026, 6, 5)
+LEVY_B_DUE = date(2026, 6, 25)
+LEVY_A = {"payment_type": "SONDERZAHLUNG", "period_year": 2026, "period_month": 6, "due_date": "2026-06-05"}
+LEVY_B = {"payment_type": "SONDERZAHLUNG", "period_year": 2026, "period_month": 6, "due_date": "2026-06-25"}
+
+
+def _two_june_levies(paid: str = "0.00"):
+    """One owner's share of two special levies of 3000.00, due on 5 and 25 June 2026."""
+    charges = special_levy_expected_charges(
+        [(LEVY_A_DUE, Decimal("3000.00")), (LEVY_B_DUE, Decimal("3000.00"))],
+        OWNER, date(2026, 6, 1), date(2026, 6, 30))
+    payments = [PaymentInput(UUID(int=1), "SONDERZAHLUNG", "IN", Decimal(paid), 2026, 6, owner_profile_id=OWNER,
+                             value_date=date(2026, 6, 20))] if Decimal(paid) else []
+    return account_statement(charges, payments)
+
+
+def test_two_levies_of_one_month_are_two_items_with_their_own_keys():
+    overdue = find_overdue_items(list(_two_june_levies().open_items), date(2026, 6, 28), current_year=2026)
+    assert [(it.due_date, it.open_amount) for it in overdue] == [
+        (LEVY_A_DUE, Decimal("3000.00")), (LEVY_B_DUE, Decimal("3000.00"))]
+    assert [item_key(it) for it in overdue] == [LEVY_A, LEVY_B]
+
+
+def test_paying_the_first_levy_leaves_the_second_one_with_its_own_key():
+    statement = _two_june_levies(paid="3000.00")
+    assert [(it.due_date, it.open_amount) for it in statement.open_items] == [
+        (LEVY_A_DUE, Decimal("0.00")), (LEVY_B_DUE, Decimal("3000.00"))]
+    overdue = find_overdue_items(list(statement.open_items), date(2026, 6, 28), current_year=2026)
+    assert [item_key(it) for it in overdue] == [LEVY_B]
+
+
+def test_a_part_payment_does_not_change_the_key_of_the_item_it_reduces():
+    for paid in ("1000.00", "4000.00"):
+        overdue = find_overdue_items(list(_two_june_levies(paid).open_items), date(2026, 6, 28), current_year=2026)
+        assert [item_key(it) for it in overdue] == ([LEVY_A, LEVY_B] if paid == "1000.00" else [LEVY_B])
+
+
+def test_the_key_a_notice_stores_is_the_key_the_next_notice_counts_with():
+    overdue = find_overdue_items(list(_two_june_levies().open_items), date(2026, 6, 28), current_year=2026)
+    rows = assemble_dunning(overdue, 0, date(2026, 6, 28)).items_snapshot()
+    assert [{name: row[name] for name in LEVY_A} for row in rows] == [LEVY_A, LEVY_B]
+
+
+def test_an_undated_or_yearless_item_has_no_due_date_in_its_key():
+    undated = OverdueItem(2025, 3, "KALTMIETE", Decimal("500.00"), Decimal("0.00"), Decimal("500.00"))
+    assert item_key(undated) == {"payment_type": "KALTMIETE", "period_year": 2025, "period_month": 3}
+    # A yearless item carries the first day of the current calendar year as a due date; that
+    # date moves with the year and must not make it a different item next year.
+    yearless = OverdueItem(0, None, "SONDERZAHLUNG", Decimal("10.00"), Decimal("0.00"), Decimal("10.00"),
+                           due_date=date(2026, 1, 1))
+    assert item_key(yearless) == {"payment_type": "SONDERZAHLUNG", "period_year": 0, "period_month": None}
+
+
+@pytest.mark.parametrize("payment_type", [
+    "KALTMIETE", "NK_VORAUSZAHLUNG", "HK_VORAUSZAHLUNG", "HAUSGELD_VORSCHUSS", "RUECKLAGENANTEIL", "NACHZAHLUNG"])
+def test_the_due_date_of_a_monthly_obligation_is_not_part_of_its_key(payment_type):
+    """One item per month and type: its due date moves with the property's federal state, the key must not."""
+    january = [OverdueItem(2026, 1, payment_type, Decimal("700.00"), Decimal("0.00"), Decimal("700.00"),
+                           due_date=due) for due in (date(2026, 1, 6), date(2026, 1, 7))]
+    assert [item_key(item) for item in january] == [
+        {"payment_type": payment_type, "period_year": 2026, "period_month": 1}] * 2
+
+
+def _joint_advance_charges():
+    # April 2026: operating advance 150.00 (lease on a joint payment) and heating advance 90.00, both due 7 April.
+    due = date(2026, 4, 7)
+    return [ExpectedCharge(2026, 4, "NK_VORAUSZAHLUNG", Decimal("150.00"), due_date=due, combined_advance=True),
+            ExpectedCharge(2026, 4, "HK_VORAUSZAHLUNG", Decimal("90.00"), due_date=due)]
+
+
+def test_a_reversed_joint_receipt_reopens_the_heating_advance_as_its_own_item():
+    receipt = PaymentInput(UUID(int=2), "NK_VORAUSZAHLUNG", "IN", Decimal("100.00"), 2026, 4, owner_profile_id=None,
+                           combined_advance=True)
+    joint = find_overdue_items(
+        list(account_statement(_joint_advance_charges(), [receipt]).open_items), date(2026, 4, 20), current_year=2026)
+    assert [(it.payment_type, it.combined_advance, it.soll, it.open_amount) for it in joint] == [
+        ("NK_VORAUSZAHLUNG", True, Decimal("240.00"), Decimal("140.00"))]
+    stored, = assemble_dunning(joint, 0, date(2026, 4, 20)).items_snapshot()
+    assert (stored["payment_type"], stored["combined_advance"], stored["due_date"]) == (
+        "NK_VORAUSZAHLUNG", True, "2026-04-07")
+
+    reversed_receipt = PaymentInput(UUID(int=2), "NK_VORAUSZAHLUNG", "IN", Decimal("100.00"), 2026, 4,
+                                    combined_advance=True, is_reversed=True)
+    split = find_overdue_items(
+        list(account_statement(_joint_advance_charges(), [reversed_receipt]).open_items),
+        date(2026, 4, 25), current_year=2026)
+    assert [item_key(it) for it in split] == [
+        {"payment_type": "HK_VORAUSZAHLUNG", "period_year": 2026, "period_month": 4},
+        {"payment_type": "NK_VORAUSZAHLUNG", "period_year": 2026, "period_month": 4}]

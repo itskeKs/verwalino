@@ -307,12 +307,16 @@ letters/PDFs are not changed and nothing is sent.
 The level counts per item. For each item that is overdue now, the service counts the
 already-issued notices of the same person -- for tenants restricted to the same lease --
 whose frozen `included_items` contain that item; item identity is
-`payment_type + period_year + period_month`, so a corrected or reversed payment, or a
-part payment, does not make a new item. The level of the new notice is one more than the
-highest of these counts, capped at the highest level (3). The whole notice carries that
-level and that level's fee from the organization's fee table; items are not levelled
-separately. Drafts count nothing, and notices for paid-off or unrelated arrears do not
-raise the level of a later notice.
+`payment_type + period_year + period_month` (the engine's `item_key`, which a notice stores in
+its items and the next notice counts with), plus the due date for a special levy
+(`SONDERZAHLUNG`), because one month can hold several levies and only their due dates tell
+them apart. A corrected or reversed payment, a part payment, and a moved due date of rent, an
+advance or Hausgeld (it follows the property's federal state and holidays) do not make a new
+item. The level of the new notice is one more than the highest of these counts, capped at the
+highest level (3).
+The whole notice carries that level and that level's fee from the organization's fee table;
+items are not levelled separately. Drafts count nothing, and notices for paid-off or
+unrelated arrears do not raise the level of a later notice.
 
 Examples with a monthly rent: a notice for January only and a notice for February only
 (both issued) make a combined January and February notice level 2, because each month was
@@ -322,6 +326,19 @@ single item escalates 1 -> 2 -> 3 and then stays at 3. An item first demanded in
 combined notice has been demanded once, whatever level that notice had. The batch preview
 and individual creation use the same count. The level and fee are frozen with the notice;
 issued notices and their PDFs keep what they were issued with.
+
+Two special levies of one owner that fall due in the same month are two items, told apart by
+their due dates; payments carry a month, not a levy, so they settle the earlier due date first.
+Levy A due 5 June and levy B due 25 June with 3.000,00 EUR each, A reminded on 10 and 12 June and
+then paid: a notice for B on 28 June is level 1 with no fee and 3.000,00 EUR, because B was never
+demanded; a notice for A alone after the two reminders is level 3. The shares of one owner's
+several units in one levy are one item. Two levies due on the same day are still one item (the
+statement sums their amounts), so a levy never demanded inherits the demands of the same-day
+levy; that needs the levy carried down to the item and is tracked in #670. An item stored
+without a due date counts for every item of its month and type, as before. A joint operating
+advance (`combined_advance`) demands the heating advance of its month too: after the joint
+receipt is reversed, `HK_VORAUSZAHLUNG` is an item of its own again and counts the demand made
+in the joint item.
 
 Notices issued before the lease link was stored carry neither `_dunning_lease_id` in
 their frozen items nor a scope context. When a new unscoped tenant notice is created, such

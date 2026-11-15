@@ -28,6 +28,7 @@ from app.engine.dunning import (
     MissingBaseInterestRate,
     assemble_dunning,
     find_overdue_items,
+    item_key,
 )
 from app.engine.mietkonto import (
     account_statement,
@@ -56,12 +57,6 @@ from app.repositories.tenant_profile_repo import TenantProfileRepository
 from app.repositories.owner_profile_repo import OwnerProfileRepository
 from app.repositories.property_repo import PropertyRepository
 from app.services.render_names import freeze_block, read_frozen_values
-
-
-def _overdue_item_keys(overdue_items) -> list[dict]:
-    """Identity of an overdue item for the escalation: payment_type + period (not a posting id)."""
-    return [{"payment_type": item.payment_type, "period_year": item.period_year,
-             "period_month": item.period_month} for item in overdue_items]
 
 
 class DunningService:
@@ -208,7 +203,7 @@ class DunningService:
             return lease, tenant, result, None
         await context.history(tenant_id=tenant.id)
         demanded = await self._repo.highest_item_demand_count(
-            item_keys=_overdue_item_keys(overdue), tenant_profile_id=tenant.id,
+            item_keys=[item_key(item) for item in overdue], tenant_profile_id=tenant.id,
             lease_id=lease.id, scope_id=accounting_scope_id)
         dunning = self._engine_result(assemble_dunning, overdue_items=overdue,
             existing_notice_count=demanded, issue_date=reference_date,
@@ -282,7 +277,7 @@ class DunningService:
 
         await context.history(owner_id=owner_profile_id)
         demanded = await self._repo.highest_item_demand_count(
-            item_keys=_overdue_item_keys(overdue), owner_profile_id=owner_profile_id)
+            item_keys=[item_key(item) for item in overdue], owner_profile_id=owner_profile_id)
         dunning = self._engine_result(
             assemble_dunning,
             overdue_items=overdue,
