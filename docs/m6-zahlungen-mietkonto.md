@@ -347,13 +347,15 @@ notice for A is level 2, not level 3, because both WEGs have the same payment ty
 Notices of a selected accounting scope are already kept apart by that scope (while a scope is
 selected, only its own notices are visible, so special levies, which are always scoped, never
 collide across WEGs); the property separates the notices of an organization without scopes. A new owner
-notice stores its property in the first row of its frozen items as `_dunning_property_id` (the
-property of the selected accounting scope, otherwise of the economic plan), hidden from the API
-like `_dunning_lease_id`, and the next notice of the owner counts earlier demands of that
-property only. An owner notice that carries no property (issued before this rule, or an unscoped
-notice without an economic plan) is matched on the owner and the item alone, as before: it counts
-for every property, and a new notice without a property counts every notice of the owner. Issued
-notices are not changed. Rent and the other tenant notices are not affected.
+notice stores its property in the first row of its frozen items as `_dunning_property_id`, hidden
+from the API like `_dunning_lease_id`, and the next notice of the owner counts earlier demands of
+that property only. The property comes from where the items come from: the selected accounting
+scope, otherwise the economic plan; without both, the items are booked payments of the owner (a
+refund without a charge is an open item) and the property is the one of the payments that make up
+the overdue items. If those payments belong to several properties the notice is refused (422,
+choose a plan or an Abrechnungskreis), so every new owner notice carries a property. An owner
+notice issued before this rule carries none and counts for every property, as it always did.
+Issued notices are not changed. Rent and the other tenant notices are not affected.
 
 Notices issued before the lease link was stored carry neither `_dunning_lease_id` in
 their frozen items nor a scope context. When a new unscoped tenant notice is created, such
