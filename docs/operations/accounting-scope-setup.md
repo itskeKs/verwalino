@@ -190,6 +190,29 @@ review/backfill workflow remains outstanding; do not invent historical provenanc
 or remove the context table to restore access. Migration 0039 refuses downgrade
 when scoped notices exist. Repair forward with sources and grants preserved.
 
+### Bank accounts without an Abrechnungskreis
+
+A bank account saved without an Abrechnungskreis keeps its whole property from being
+calculated in any scope: the calculation guard refuses every scope of a property while one
+of its bank accounts is unclassified, ended accounts included, because ending an account
+does not classify it and its bookings stay part of the property. The refusal is a 409 with
+the structured detail `{code, message}`: `SCOPE_ACCOUNT_UNCLASSIFIED` names the first
+unclassified account (and how many more there are) and the way out in German,
+`SCOPE_INPUTS_UNCLASSIFIED` is the plain German statement when payments, costs,
+settlements or plans of the property are unclassified and no account is.
+
+The way out uses the existing `POST /api/accounting-scopes/{id}/bindings` route. On
+**Bankkonten** (`/bankkonten`) the list shows each account's Abrechnungskreis
+(`accounting_scope_label` of `GET /api/bank-accounts`) or the badge **Nicht zugeordnet**.
+An administrator opens **Abrechnungskreis zuordnen** on such a row, chooses one of the
+property's scopes for which they hold PREPARE (rental scopes for a deposit account, WEG
+scopes for a reserve account) and enters a reason. The overview counter „Konten ohne
+Abrechnungskreis“ on **Berechtigungen** and **Bestand prüfen** links to the list with the
+filter `?ohne_abrechnungskreis=1`. The classification is immutable. It rewrites no booked
+record: the payments of the account keep their original booking, stay unclassified until
+the legacy payment review below, and finalized settlements, plans and notices are not
+changed. From then on only team members with a READ grant on the scope see the account.
+
 ### Proven legacy payment review
 
 In a scope's setup page, choose **Altzahlungen prüfen** after reviewing and binding

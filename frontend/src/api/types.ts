@@ -1069,6 +1069,8 @@ export type BankAccountType = "LAUFEND" | "RUECKLAGE" | "KAUTION";
 export interface BankAccount {
   is_active?: boolean;
   property_name?: string | null;
+  /** Label of the Abrechnungskreis the account is classified into; null while unclassified. */
+  accounting_scope_label?: string | null;
   id: string;
   organization_id: string;
   property_id: string;

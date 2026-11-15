@@ -218,7 +218,7 @@ export default function SpecialLeviesPage() {
       {pending && <p role="status">Sonderumlage wird angelegt…</p>}
     </form>}
     {error && <p role="alert" className="error-text">{error}</p>}
-    {listError && <p role="alert" className="error-text">{listError}</p>}
+    {listError && listError !== error && <p role="alert" className="error-text">{listError}</p>}
     {loading && <p role="status">Lade Sonderumlagen…</p>}
     {!readScope && <p>Bitte WEG-Objekt und Abrechnungskreis wählen.</p>}
     {readScope && !readValid && <p role="alert">Bitte einen verfügbaren Abrechnungskreis wählen.</p>}

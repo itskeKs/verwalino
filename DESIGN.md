@@ -2118,6 +2118,38 @@ at 360 px. Register access alone grants no financial disclosure.
 | Register after | [Desktop](docs/assets/design/levy-register-after-1280.png) | [Phone](docs/assets/design/levy-register-after-360.png) |
 
 
+### Bank accounts without an Abrechnungskreis (#671)
+
+The Bankkonten table has a column “Abrechnungskreis”: the scope's label, or the badge
+“Nicht zugeordnet” (`badge--review`) for an account saved without one, ended accounts included.
+Administrators see “Abrechnungskreis zuordnen” in the row's actions; clerks see the badge only. The
+button opens a `ui/dialog.tsx` dialog with the account's label in its description, the permanence
+note (the assignment is recorded with the reason, cannot be changed, leaves booked payments and
+settlements unchanged and limits the account to team members with read rights for the scope), the
+`AccountingScopeSelector` (prepare capability, the account's property, scope type from the account
+type as in the creation form), a hint to “Teamrechte” for a missing scope, the required field
+“Begründung *” and “Zuordnung speichern” / “Abbrechen”. A refusal stays in the dialog as an alert in
+German, chosen by status code, and keeps the inputs. After success the list reloads and says
+“Abrechnungskreis zugeordnet.”
+
+The checkbox “Nur Konten ohne Abrechnungskreis” filters the loaded list (URL parameter
+`ohne_abrechnungskreis=1`); the overview counter “Konten ohne Abrechnungskreis” on Berechtigungen
+and Bestand prüfen is a link to that filter while the count is above zero. With the filter on and
+every account classified the page says “Alle Bankkonten haben einen Abrechnungskreis.”
+
+A refused calculation names the account in one alert: the Sonderumlagen page shows a list failure
+and a creation failure with the same text once.
+
+| Account scope | Desktop | 360 px |
+| --- | --- | --- |
+| List before | [Desktop](docs/assets/design/account-scope-list-before-1280.png) | [Phone](docs/assets/design/account-scope-list-before-360.png) |
+| List after | [Desktop](docs/assets/design/account-scope-list-after-1280.png) | [Phone](docs/assets/design/account-scope-list-after-360.png) |
+| Filtered list, table scrolled to the action | | [Phone](docs/assets/design/account-scope-list-filtered-360.png) |
+| Assignment dialog | [Desktop](docs/assets/design/account-scope-dialog-after-1280.png) | [Phone](docs/assets/design/account-scope-dialog-after-360.png) |
+| Levy refusal before | [Desktop](docs/assets/design/account-scope-refusal-before-1280.png) | [Phone](docs/assets/design/account-scope-refusal-before-360.png) |
+| Levy refusal after | [Desktop](docs/assets/design/account-scope-refusal-after-1280.png) | [Phone](docs/assets/design/account-scope-refusal-after-360.png) |
+
+
 ### Commercial preallocation in tenant drafts (#202)
 
 The draft detail offers a “Vorwegabzug Gewerbe” card only when the property has

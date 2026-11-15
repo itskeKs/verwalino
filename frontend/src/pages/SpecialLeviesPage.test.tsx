@@ -103,6 +103,17 @@ it("retries a failed list request", async () => {
   fireEvent.click(screen.getByRole("button", { name: "Aktualisieren" })); await screen.findByText("Netzwerkfehler");
   getRows = async () => [levy]; fireEvent.click(screen.getByRole("button", { name: "Aktualisieren" })); await screen.findByText("Ada Besitzer 1");
 });
+it("shows a refusal once when the list and the creation fail for the same reason", async () => {
+  const refusal = "Das Bankkonto „Laufendes Konto“ hat noch keinen Abrechnungskreis.";
+  show(); await choose();
+  getRows = async () => { throw new ApiError(409, refusal, "SCOPE_ACCOUNT_UNCLASSIFIED"); };
+  fireEvent.click(screen.getByRole("button", { name: "Aktualisieren" })); await screen.findByText(refusal);
+  vi.mocked(api.post).mockRejectedValueOnce(new ApiError(409, refusal, "SCOPE_ACCOUNT_UNCLASSIFIED"));
+  fill(); fireEvent.click(screen.getByRole("button", { name: "Sonderumlage anlegen" }));
+  await waitFor(() => expect(api.post).toHaveBeenCalledTimes(1));
+  expect(await screen.findAllByRole("alert")).toHaveLength(1);
+  expect(screen.getAllByText(refusal)).toHaveLength(1);
+});
 it("sanitizes extra fields and URL-encodes endpoint filters", async () => {
   const body = { property_id: "p1", accounting_scope_id: "scope-p1", amount: "10000.00", due_date: "2026-06-15", resolution_id: "resolution", allocations: levy.allocations };
   await createSpecialLevy(body);

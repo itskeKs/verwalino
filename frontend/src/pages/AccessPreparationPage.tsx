@@ -73,7 +73,7 @@ function Inventory() {
         {groups.map(group => <section className="card min-w-0 space-y-3" key={group.title}>
           <h2>{group.title}</h2>
           <dl className="space-y-2">{group.metrics.map(([key, label]) => <div className="flex items-start justify-between gap-4" key={key}>
-            <dt>{label}</dt><dd className="shrink-0 font-semibold tabular-nums">{data.counts[key].toLocaleString("de-DE")}</dd>
+            <dt>{key === "bank_accounts_without_scope" && data.counts[key] > 0 ? <Link className="link" to="/bankkonten?ohne_abrechnungskreis=1">{label}</Link> : label}</dt><dd className="shrink-0 font-semibold tabular-nums">{data.counts[key].toLocaleString("de-DE")}</dd>
           </div>)}</dl>
           <Link to={group.to}>{group.action}</Link>
         </section>)}

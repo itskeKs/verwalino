@@ -83,7 +83,7 @@ The bounded provider transport/settings decision is described in [ADR 0014](adr/
 
 | Feature | Status | Location |
 | --- | --- | --- |
-| Bank accounts | ✅ edit/end, historical references kept | `api/bank_accounts.py`, `pages/BankAccountsPage.tsx`, T55, [usage](operations/selector-pages.md) |
+| Bank accounts | ✅ edit/end, historical references kept; the list shows each account's Abrechnungskreis, an administrator assigns one to an account saved without it (also an ended one) and the overview counter „Konten ohne Abrechnungskreis“ links to those accounts | `api/bank_accounts.py`, `pages/BankAccountsPage.tsx`, `components/BankAccountScopeAssignment.tsx`, `features/bank_account_scope_assignment.feature`, T55, #671, [usage](operations/selector-pages.md), [setup](operations/accounting-scope-setup.md#bank-accounts-without-an-abrechnungskreis) |
 | Expected charges (Sollstellung) for rent/operating costs, day-accurate | ✅ derived live, including rent history | `engine/mietkonto.py` (`tenant_expected_charges`) |
 | Record, book, reverse payment | ✅ drafts editable | `api/payments.py`, `pages/PaymentDetailPage.tsx`, T07 |
 | Tenant/owner ledger (Mietkonto), open items | ✅ tenant and owner accounts split signed due/future balances at a selectable cutoff without clipping the reporting period; owner rows expose their due date | `api/payments.py` (`/mietkonto/*`, `/open-items`), `pages/MietkontoPage.tsx`, `pages/OpenItemsPage.tsx`, [semantics](m6-zahlungen-mietkonto.md#31-balance--open-items-per-person-pure-arithmetic-decimal) |
