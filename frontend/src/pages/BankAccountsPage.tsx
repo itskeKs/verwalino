@@ -19,6 +19,7 @@ import { PropertySelector } from "../components/PropertySelector";
 import { ApiError } from "../api/client";
 import { MasterDataEditor } from "../components/MasterDataEditor";
 import { AccountingScopeSelector } from "../components/AccountingScopeSelector";
+import { BankAccountScopeAssignment } from "../components/BankAccountScopeAssignment";
 
 const ACCOUNT_TYPE_LABELS: Record<string, string> = {
   LAUFEND: "Laufendes Konto",
@@ -57,6 +58,7 @@ export function BankAccountsPage() {
 function BankAccounts() {
   const { session } = useAuth();
   const canImport = session?.role === "OWNER_ADMIN" || session?.role === "CLERK";
+  const canAssignScope = session?.role === "OWNER_ADMIN";
   const [searchParams, setSearchParams] = useSearchParams();
   const [accounts, setAccounts] = useState<BankAccount[]>([]);
   const [error, setError] = useState<string | null>(null);
@@ -71,6 +73,8 @@ function BankAccounts() {
   const busyRef = useRef(false);
 
   const propertyFilter = searchParams.get("property_id") ?? "";
+  const withoutScope = searchParams.get("ohne_abrechnungskreis") === "1";
+  const shown = withoutScope ? accounts.filter(account => !account.accounting_scope_label) : accounts;
 
   const reload = useCallback(() => {
     const version = ++requestVersion.current;
@@ -175,6 +179,7 @@ function BankAccounts() {
         }}
       >
         <PropertySelector label="Nach Objekt filtern" value={propertyFilter} onChange={value => setFilter("property_id", value)} />
+        <label className="scope-check"><input type="checkbox" checked={withoutScope} onChange={e => setFilter("ohne_abrechnungskreis", e.target.checked ? "1" : "")} /> Nur Konten ohne Abrechnungskreis</label>
       </div>
 
       {error && <p role="alert" className="error-text">{error} <button className="btn" onClick={reload}>Neu laden</button></p>}
@@ -271,8 +276,8 @@ function BankAccounts() {
       {success && <p role="status" className="sticky top-0 z-10 bg-background py-2">{success}</p>}
       {loading && !loaded ? (
         <p>Lade...</p>
-      ) : accounts.length === 0 ? (
-        !error && <p className="empty-hint">Keine Bankkonten vorhanden.</p>
+      ) : shown.length === 0 ? (
+        !error && <p className="empty-hint">{accounts.length === 0 ? "Keine Bankkonten vorhanden." : "Alle Bankkonten haben einen Abrechnungskreis."}</p>
       ) : (
         <div className="card paged-table">
           <table className="data-table">
@@ -281,13 +286,14 @@ function BankAccounts() {
                 <th>Bezeichnung</th>
                 <th>Objekt</th>
                 <th>Kontotyp</th>
+                <th>Abrechnungskreis</th>
                 <th>IBAN</th>
                 <th>Bank</th>
                 <th>Aktionen</th>
               </tr>
             </thead>
             <tbody>
-              {accounts.map((a) => (
+              {shown.map((a) => (
                 <tr key={a.id}>
                   <td><strong>{a.label}</strong>{a.is_active === false && <span className="badge">Beendet</span>}</td>
                   <td>{a.property_name ?? "Objekt nicht verfügbar"}</td>
@@ -296,6 +302,7 @@ function BankAccounts() {
                       {ACCOUNT_TYPE_LABELS[a.account_type] ?? a.account_type}
                     </span>
                   </td>
+                  <td>{a.accounting_scope_label ?? <span className="badge badge--review">Nicht zugeordnet</span>}</td>
                   <td style={{ fontFamily: "var(--mono)", fontSize: "0.85rem" }}>
                     {a.iban ? formatIban(a.iban) : "-"}
                   </td>
@@ -309,6 +316,8 @@ function BankAccounts() {
                       active={a.is_active !== false} endLabel="Bankkonto beenden" setActive={is_active => saveAccount(a.id, { is_active })}
                       description="Bezeichnung und Bankdaten bearbeiten. Bereits verwendete IBAN/BIC können nicht geändert werden; eine Umbenennung ändert keine SEPA-Daten." />}
 
+                    {canAssignScope && !a.accounting_scope_label && <BankAccountScopeAssignment account={a}
+                      onAssigned={() => { setSuccess("Abrechnungskreis zugeordnet."); reload(); }} />}
                     {canImport && a.is_active !== false && <Link className="btn" to={`/bankkonten/${a.id}/umsaetze?import=1`}>Kontoauszug importieren</Link>}
                   </td>
                 </tr>
