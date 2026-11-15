@@ -2959,20 +2959,41 @@ async def _finalized_hausgeld_plan(api, property_id, yearly):
     return plan
 
 
-def _insert_owner_refund(w, property_id, iban):
-    """A booked refund (OUT) of 100.00 on the Hausgeld of March 2026 of the owner, on a new account of the property.
-    Without a charge the statement shows it as an open item of 100.00."""
+IBAN_A, IBAN_B = "DE02200505501015871393", "DE36302501010002042407"
+
+
+def _insert_account(w, property_id, iban):
+    """A current account of the property in the organization of ownership_world."""
     import psycopg2
     from tests.conftest import MIGRATOR_SYNC_URL
 
     account = str(uuid.uuid4())
     with psycopg2.connect(MIGRATOR_SYNC_URL) as conn, conn.cursor() as cur:
         cur.execute("""INSERT INTO bank_account(id,organization_id,property_id,account_type,label,iban)
-            VALUES (%s,%s,%s,'LAUFEND','T26 refund',%s)""", (account, str(w["org_a_id"]), property_id, iban))
-        cur.execute("""INSERT INTO payment(organization_id,bank_account_id,property_id,direction,amount,value_date,
+            VALUES (%s,%s,%s,'LAUFEND','T26 account',%s)""", (account, str(w["org_a_id"]), property_id, iban))
+    return account
+
+
+def _insert_owner_payment(w, account, property_id, direction, amount):
+    """A booked payment (IN = receipt, OUT = refund) on the Hausgeld of March 2026 of the owner, on an account of
+    the property; returns its id."""
+    import psycopg2
+    from tests.conftest import MIGRATOR_SYNC_URL
+
+    payment = str(uuid.uuid4())
+    with psycopg2.connect(MIGRATOR_SYNC_URL) as conn, conn.cursor() as cur:
+        cur.execute("""INSERT INTO payment(id,organization_id,bank_account_id,property_id,direction,amount,value_date,
             payment_type,owner_profile_id,period_year,period_month,status,booked_at,booked_by)
-            VALUES (%s,%s,%s,'OUT',100,'2026-03-10','HAUSGELD_VORSCHUSS',%s,2026,3,'booked',now(),%s)""",
-                    (str(w["org_a_id"]), account, property_id, w["seller"], str(w["user_a_admin_id"])))
+            VALUES (%s,%s,%s,%s,%s,%s,'2026-03-10','HAUSGELD_VORSCHUSS',%s,2026,3,'booked',now(),%s)""",
+                    (payment, str(w["org_a_id"]), account, property_id, direction, amount, w["seller"],
+                     str(w["user_a_admin_id"])))
+    return payment
+
+
+def _insert_owner_refund(w, property_id, iban):
+    """A booked refund (OUT) of 100.00 on the Hausgeld of March 2026 of the owner, on a new account of the property.
+    Without a charge the statement shows it as an open item of 100.00."""
+    _insert_owner_payment(w, _insert_account(w, property_id, iban), property_id, "OUT", "100.00")
 
 
 MARCH_NOTICE = {"period_start": "2026-03-01", "period_end": "2026-03-31", "reference_date": "2026-03-20"}
@@ -3001,8 +3022,10 @@ async def test_a_notice_without_scope_and_plan_takes_the_property_of_the_payment
         other = await api.post("/api/dunning/owner", json={
             "owner_profile_id": w["seller"], "economic_plan_id": plan_b, **MARCH_NOTICE})
         assert other.status_code == 201, other.text
-        # Level and fee only: until #675 the refund of WEG A also lowers the Ist of the statement of WEG B.
-        assert (other.json()["level"], other.json()["fee_amount"]) == (1, "0.00"), other.json()
+        # The refund of WEG A is not part of the notice of WEG B: its Hausgeld of March is demanded as it is, 200.00
+        # (300.00 before #675: the refund lowered the Ist of WEG B).
+        assert (other.json()["level"], other.json()["fee_amount"], other.json()["total_amount"]) == (
+            1, "0.00", "200.00"), other.json()
         assert _stored_property(other.json()) == second["property_b"]
 
 
@@ -3111,3 +3134,160 @@ async def test_demands_count_per_property_and_an_old_notice_without_one_counts_f
         repo = DunningNoticeRepository(db, w["org_b_id"])
         assert await repo.highest_item_demand_count(
             item_keys=[key], owner_profile_id=uuid.UUID(w["seller"]), property_id=uuid.UUID(property_a)) == 0
+
+
+async def _march_statement(api, w, plan):
+    """The owner statement of the seller for March 2026 under a plan: its balance and the open amount of each item."""
+    response = await api.get(f"/api/payments/mietkonto/owner/{w['seller']}", params={
+        "period_start": "2026-03-01", "period_end": "2026-03-31", "economic_plan_id": plan})
+    assert response.status_code == 200, response.text
+    statement = response.json()
+    return statement["balance"], [row["open_amount"] for row in statement["open_items"]]
+
+
+async def _march_notice(api, w, plan):
+    return await api.post("/api/dunning/owner", json={
+        "owner_profile_id": w["seller"], "economic_plan_id": plan, **MARCH_NOTICE})
+
+
+@pytest.mark.asyncio
+async def test_a_payment_for_one_weg_never_reduces_the_hausgeld_demanded_in_another_weg(ownership_world):
+    """The issue's case: Hausgeld of March 400.00 in WEG A and 200.00 in WEG B, no Abrechnungskreis, and a receipt of
+    400.00 booked for WEG A. The notice of WEG B demands its own 200.00 and so does the owner statement of WEG B (the
+    receipt made WEG B overpaid, -200.00, and the notice refused, before #675)."""
+    from tests.test_ownership_change import create_owner, ownership_client
+
+    w = ownership_world
+    second = _add_second_weg(w)
+    _insert_owner_payment(w, _insert_account(w, w["property"], IBAN_A), w["property"], "IN", "400.00")
+    async with ownership_client(w) as api:
+        await create_owner(api, w)
+        await create_owner(api, {**w, "unit": second["unit_b"]})
+        plans = {"a": await _finalized_hausgeld_plan(api, w["property"], "4800.00"),
+                 "b": await _finalized_hausgeld_plan(api, second["property_b"], "2400.00")}
+        assert await _march_statement(api, w, plans["b"]) == ("200.00", ["200.00"])
+        notice = await _march_notice(api, w, plans["b"])
+        assert notice.status_code == 201, notice.text
+        created = notice.json()
+        assert (created["level"], created["fee_amount"], created["principal_amount"],
+                created["total_amount"]) == (1, "0.00", "200.00", "200.00"), created
+        assert _stored_property(created) == second["property_b"]
+        # WEG A is paid in full: nothing open in its statement, nothing to demand.
+        assert await _march_statement(api, w, plans["a"]) == ("0.00", ["0.00"])
+        paid = await _march_notice(api, w, plans["a"])
+        assert paid.status_code == 422, paid.text
+        assert paid.json()["detail"] == (
+            "Für den ausgewählten Eigentümer gibt es im gewählten Zeitraum zum Stichtag keine überfälligen Beträge.")
+
+
+@pytest.mark.asyncio
+async def test_a_notice_counts_only_the_booked_payments_of_its_own_weg(ownership_world):
+    """Part payment, refund and reversal around the issue's case. WEG A: receipt 400.00 and refund 100.00. WEG B
+    (Hausgeld 200.00): a part payment of 150.00 and a receipt of 200.00 that is reversed (its Storno is a payment of
+    WEG B as well). Only the 150.00 of WEG B count, so 50.00 are open there."""
+    from tests.test_ownership_change import create_owner, ownership_client
+
+    w = ownership_world
+    second = _add_second_weg(w)
+    account_a = _insert_account(w, w["property"], IBAN_A)
+    account_b = _insert_account(w, second["property_b"], IBAN_B)
+    _insert_owner_payment(w, account_a, w["property"], "IN", "400.00")
+    _insert_owner_payment(w, account_a, w["property"], "OUT", "100.00")
+    _insert_owner_payment(w, account_b, second["property_b"], "IN", "150.00")
+    reversed_receipt = _insert_owner_payment(w, account_b, second["property_b"], "IN", "200.00")
+    async with ownership_client(w) as api:
+        await create_owner(api, w)
+        await create_owner(api, {**w, "unit": second["unit_b"]})
+        plan_b = await _finalized_hausgeld_plan(api, second["property_b"], "2400.00")
+        reversal = await api.post(f"/api/payments/{reversed_receipt}/reverse", json={"note": "returned debit"})
+        assert reversal.status_code == 201, reversal.text
+        assert await _march_statement(api, w, plan_b) == ("50.00", ["50.00"])
+        notice = await _march_notice(api, w, plan_b)
+        assert notice.status_code == 201, notice.text
+        created = notice.json()
+        assert (created["level"], created["fee_amount"], created["total_amount"]) == (1, "0.00", "50.00"), created
+        assert _stored_property(created) == second["property_b"]
+
+
+@pytest.mark.asyncio
+async def test_two_units_of_the_owner_in_one_weg_are_one_demand_whatever_was_paid_in_another_weg(ownership_world):
+    """The owner holds both units of WEG B (Hausgeld 2400.00 a year, so 200.00 a month over the two lines) and has paid
+    400.00 for WEG A: the notice of WEG B demands the 200.00 of both units once."""
+    import psycopg2
+    from tests.conftest import MIGRATOR_SYNC_URL
+    from tests.test_ownership_change import create_owner, ownership_client
+
+    w = ownership_world
+    second = _add_second_weg(w)
+    unit_b2 = str(uuid.uuid4())
+    with psycopg2.connect(MIGRATOR_SYNC_URL) as conn, conn.cursor() as cur:
+        cur.execute("""INSERT INTO unit(id,organization_id,property_id,number,usage_type,area,heated_area,mea)
+            VALUES (%s,%s,%s,'2','WOHNUNG',100,100,1000)""", (unit_b2, str(w["org_a_id"]), second["property_b"]))
+    _insert_owner_payment(w, _insert_account(w, w["property"], IBAN_A), w["property"], "IN", "400.00")
+    async with ownership_client(w) as api:
+        for unit in (second["unit_b"], unit_b2):
+            await create_owner(api, {**w, "unit": unit})
+        plan_b = await _finalized_hausgeld_plan(api, second["property_b"], "2400.00")
+        assert await _march_statement(api, w, plan_b) == ("200.00", ["200.00"])
+        notice = await _march_notice(api, w, plan_b)
+        assert notice.status_code == 201, notice.text
+        created = notice.json()
+        assert (created["level"], created["fee_amount"], created["total_amount"]) == (1, "0.00", "200.00"), created
+
+
+@pytest.mark.asyncio
+async def test_a_refund_booked_in_another_weg_is_not_part_of_a_notice_with_a_plan_of_this_weg(ownership_world):
+    """The case of review round 2 of #674: no scope, a draft plan of WEG A for 2027, a refund of 100.00 on the Hausgeld
+    of March 2026 booked for WEG B, and one earlier issued notice of March in A. A notice with the plan of A has no
+    item of A: it is refused (level 2 with 2.50 and 102.50, attributed to A, before #675). The notice for B is the
+    first one there: level 1 without a fee over 100.00."""
+    from tests.test_ownership_change import create_owner, ownership_client
+
+    w = ownership_world
+    second = _add_second_weg(w)
+    async with ownership_client(w) as api:
+        await create_owner(api, w)
+        plan_2026 = await _finalized_hausgeld_plan(api, w["property"], "4800.00")
+        earlier = await _march_notice(api, w, plan_2026)
+        assert earlier.status_code == 201, earlier.text
+        assert (earlier.json()["level"], earlier.json()["total_amount"]) == (1, "400.00"), earlier.json()
+        assert (await api.post(f"/api/dunning/{earlier.json()['id']}/issue")).status_code == 200
+        draft_2027 = await api.post("/api/economic-plans", json={
+            "property_id": w["property"], "plan_year": 2027, "period_start": "2027-01-01",
+            "period_end": "2027-12-31", "monthly_due_day": 6})
+        assert draft_2027.status_code == 201, draft_2027.text
+        _insert_owner_refund(w, second["property_b"], IBAN_B)
+
+        refused = await _march_notice(api, w, draft_2027.json()["id"])
+        assert refused.status_code == 422, refused.text
+        assert refused.json()["detail"] == (
+            "Für den ausgewählten Eigentümer gibt es im gewählten Zeitraum zum Stichtag keine überfälligen Beträge.")
+
+        other = await api.post("/api/dunning/owner", json={"owner_profile_id": w["seller"], **MARCH_NOTICE})
+        assert other.status_code == 201, other.text
+        created = other.json()
+        assert (created["level"], created["fee_amount"], created["total_amount"]) == (1, "0.00", "100.00"), created
+        assert _stored_property(created) == second["property_b"]
+
+
+@pytest.mark.asyncio
+async def test_the_scoped_notice_and_the_owner_statement_of_a_weg_show_the_same_open_amount(levy_db, levy_fixture):
+    """With an Abrechnungskreis per WEG: levy 3000.00 in A paid in full, levy 7000.00 in B part-paid with 2000.00."""
+    from tests.test_special_levy import client, create
+    ids = levy_fixture
+    await _grant_levy_actor(levy_db, ids)
+    other = await _second_weg(levy_db, ids, [(0, 1)])
+    async with client(ids, "actor") as api:
+        await create(api, ids, due_date="2026-06-15")
+        await create(api, other, due_date="2026-06-15", amount="7000.00")
+        await _pay_levy_share(api, ids, 0, "3000.00", "2026-06-20")
+        await _pay_levy_share(api, other, 0, "2000.00", "2026-06-29")
+        balances = []
+        for weg in (ids, other):
+            statement = await api.get(f"/api/payments/mietkonto/owner/{ids['owners'][0]}", params={
+                "accounting_scope_id": str(weg["scope"]), "period_start": LEVY_JUNE[0], "period_end": LEVY_JUNE[1]})
+            assert statement.status_code == 200, statement.text
+            balances.append(statement.json()["balance"])
+        assert balances == ["0.00", "5000.00"]
+        notice = await _weg_notice(api, other, 0, "2026-06-30", (1, "0.00", "5000.00"), issue=False)
+        assert notice["principal_amount"] == balances[1]
