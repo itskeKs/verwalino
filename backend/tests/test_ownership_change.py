@@ -735,7 +735,7 @@ async def test_a_row_can_be_corrected_twice_through_its_replacement(client_a_adm
     ({"valid_from": "2026-07-01"}, 422, "ownership_correction_period"),
     ({"valid_from": "2027-01-01"}, 422, "ownership_correction_period"),
     *[({"mea_share": share}, 422, "ownership_correction_share")
-      for share in ("abc", "0", "-5", "1000000", "NaN", "Infinity", "1,2,3")],
+      for share in ("abc", "0", "-5", "1000000", "NaN", "Infinity", "1,2,3", "999999,9999999", "0,0000001")],
 ])
 async def test_a_refused_correction_names_its_reason_and_changes_nothing(
     client_a_admin, ownership_world, changes, status, code,
@@ -747,6 +747,16 @@ async def test_a_refused_correction_names_its_reason_and_changes_nothing(
     assert response.status_code == status, response.text
     detail = response.json()["detail"]
     assert detail["code"] == code and detail["message"].endswith(".")
+    assert await history(api, w) == before
+
+
+async def test_a_share_that_rounds_to_the_stored_one_is_unchanged_not_a_new_row(client_a_admin, ownership_world):
+    w, api = ownership_world, client_a_admin
+    row = await create_owner(api, w, "buyer", mea_share="50")
+    before = await history(api, w)
+    response = await correct(api, row, mea_share="50,0000001")  # stored as 50.000000 either way
+    assert response.status_code == 422, response.text
+    assert response.json()["detail"]["code"] == "ownership_correction_unchanged"
     assert await history(api, w) == before
 
 
@@ -953,3 +963,52 @@ async def test_every_sql_function_reading_ownership_rows_is_classified_for_corre
         rows = cur.fetchall()
     assert {name for name, skips in rows if skips} == SKIPS_CORRECTED_ROWS
     assert {name for name, skips in rows if not skips} == FOLLOWS_THE_ROW_ITSELF
+
+
+async def finalize_correction_plan(api, plan, planned_amount="4800.00"):
+    """The plan correction run of the UI's „Korrektur erstellen“, then computed and finalized anew."""
+    response = await api.post(f"/api/economic-plans/{plan}/correction")
+    assert response.status_code == 201, response.text
+    renewed = response.json()["id"]
+    values = {"planned_costs": [{"category_code": "WEG_VERWALTERKOSTEN", "label": "Annual cost",
+               "planned_amount": planned_amount, "cost_group": "NICHT_UMLAGEFAEHIG"}],
+              "reserve_contribution_total": "0.00"}
+    await attest_fixture(api, "economic_plan", renewed, values)
+    response = await api.post(f"/api/economic-plans/{renewed}/finalize", json=values)
+    assert response.status_code == 200, response.text
+    return renewed
+
+
+async def test_a_start_corrected_under_a_finalized_plan_names_the_unit_and_the_plan_correction(
+    client_a_admin, ownership_world,
+):
+    w, api = ownership_world, client_a_admin
+    await create_owner(api, w, mea_share="50")
+    carla = await create_owner(api, w, "buyer", mea_share="30", valid_from="2026-03-01")  # the real start was 1 January
+    plan = await finalize_plan(api, w, planned_amount="4800.00")  # frozen: only the seller owns at the plan start
+    period = {"period_start": "2026-01-01", "period_end": "2026-12-31"}
+
+    async def ledger(owner, economic_plan):
+        return await api.get(f"/api/payments/mietkonto/owner/{w[owner]}", params={**period, "economic_plan_id": economic_plan})
+
+    def assert_names_the_way_out(response):
+        assert response.status_code == 422, response.text
+        detail = response.json()["detail"]
+        assert (detail["code"], detail["unit_number"]) == ("hausgeld_ownership_invalid", "1")
+        assert "Einheit 1" in detail["message"] and "Wirtschaftsplan 2026" in detail["message"]
+        assert "„Korrektur erstellen“" in detail["message"]
+
+    assert_names_the_way_out(await ledger("seller", plan))
+    assert (await correct(api, carla, valid_from="2026-01-01")).status_code == 201
+    assert_names_the_way_out(await ledger("seller", plan))  # the frozen plan lines still miss Carla
+    assert_names_the_way_out(await ledger("buyer", plan))
+    hausgeld = await api.get(f"/api/economic-plans/{plan}/hausgeld-booking")
+    assert hausgeld.status_code == 422 and hausgeld.json()["detail"]["code"] == "hausgeld_ownership_invalid", hausgeld.text
+    renewed = await finalize_correction_plan(api, plan)
+    # By hand: 4.800,00 split 50 : 30 gives 3.000,00 and 1.800,00 a year, 250,00 and 150,00 a month.
+    for owner, total, monthly in (("seller", "3000.00", "250.00"), ("buyer", "1800.00", "150.00")):
+        answer = await ledger(owner, renewed)
+        assert answer.status_code == 200, answer.text
+        assert Decimal(answer.json()["soll_total"]) == Decimal(total)
+        assert [(r["period_month"], Decimal(r["soll"])) for r in answer.json()["open_items"]] == [
+            (month, Decimal(monthly)) for month in range(1, 13)]

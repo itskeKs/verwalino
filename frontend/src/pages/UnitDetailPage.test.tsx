@@ -1038,6 +1038,16 @@ it("#668 shows a corrected entry as corrected with who and when and offers no ac
   expect(within(rows[1]).getAllByRole("button").map(button => button.textContent)).toEqual(["Eigentum beenden", "Korrigieren"]);
 });
 
+it("#668 says before saving that a finalized plan needs a plan correction afterwards", async () => {
+  ownershipSetup(); show(); const dialog = await openCorrection();
+  const text = dialog.textContent ?? "";
+  expect(text).toContain("Finalisierte Abrechnungen und Wirtschaftspläne werden nicht neu berechnet.");
+  expect(text).toContain("Besteht für den Zeitraum ein finalisierter Wirtschaftsplan");
+  expect(text).toContain("„Korrektur erstellen“");
+  expect(text).not.toContain("bleiben unverändert");
+  expect(correctionPosts()).toHaveLength(0);
+});
+
 it("#668 corrects a share and a start date with one request and shows the history again", async () => {
   ownershipSetup([{ ...originalOwner, mea_share: "30.000000" }]);
   answerCorrection(body => {

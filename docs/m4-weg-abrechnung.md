@@ -454,6 +454,21 @@ row of the same person and unit (409 `ownership_correction_overlap`); a refusal 
 no-overlap constraint is partial over uncorrected rows (migration 0190). The annual settlement's refusal
 for shares that do not add up (§4.3.3) names „Korrigieren“ as the way out.
 
+**Under a finalized plan.** A plan freezes its owner advances from the owners at its start, and the
+Hausgeld Soll walks the live history. A start corrected after the finalization can therefore leave the
+history unfollowable for the frozen lines (a frozen line without an owner at its dates, or an owner
+without a line). The Hausgeld account, the dunning, the Hausgeld offer
+(`GET /api/economic-plans/{id}/hausgeld-booking`) and the annual settlement then answer 422
+`hausgeld_ownership_invalid` with `unit_id`, `unit_number` and a German `message` that names the unit and
+the way out: open the finalized plan, „Korrektur erstellen“, and finalize the correction plan, which is
+computed from the corrected history. The correction dialog says so before saving. Frozen figures and PDFs
+do not change, and the engine's successor rule (a change of owners must replace a departing owner) is not
+relaxed: a co-owner who joins after the plan start stays refused whatever the plan says, so correct such a
+start to the plan start (or the transfer) instead. Example: Bernd 50 and Carla 30 of one unit of a 4.800,00 €
+plan; Carla entered from 01.03. by mistake. The frozen plan carries only Bernd and the Soll is refused; after
+the start is corrected to 01.01. it is refused until the correction plan is finalized, which then gives
+3.000,00 € and 1.800,00 € a year (250,00 € and 150,00 € a month).
+
 For drafts, `GET /api/weg-settlements/{id}/input-owners` returns the complete authorized
 owner set of the settlement period, with READ scope and disclosure checks. The UI uses the
 same set as coverage validation and paid-Hausgeld derivation: owners whose ownership

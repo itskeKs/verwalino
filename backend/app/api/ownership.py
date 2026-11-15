@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import uuid
 from datetime import date, datetime, timezone
-from decimal import Decimal, InvalidOperation
+from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, ConfigDict, field_validator
@@ -174,15 +174,23 @@ class OwnershipCorrection(BaseModel):
     mea_share: str | None = None
 
 
+SHARE_STEP = Decimal("0.000001")  # NUMERIC(12,6): the stored share is rounded to six decimals
+
+
 def _corrected_share(value: str | None) -> Decimal | None:
-    """The share as typed; blank means none. Positive and within NUMERIC(12,6), like the engine requires."""
+    """The share as the database will store it; blank means none. Positive and within NUMERIC(12,6).
+
+    The checks run on the rounded value: 999999,9999999 would store as 1000000, 0,0000001 as 0, and
+    50,0000001 on a row of 50 changes nothing.
+    """
     if value is None or not value.strip():
         return None
     try:
         share = Decimal(value.strip().replace(",", "."))
+        share = share.quantize(SHARE_STEP, rounding=ROUND_HALF_UP) if share.is_finite() and share.adjusted() < 7 else None
     except InvalidOperation:
         share = None
-    if share is None or not share.is_finite() or share <= 0 or share >= Decimal(10) ** 6:
+    if share is None or share <= 0 or share >= Decimal(10) ** 6:
         raise _correction_refusal(422, "ownership_correction_share",
             "Der MEA-Anteil muss eine positive Zahl sein, zum Beispiel 50 oder 0,5.")
     return share

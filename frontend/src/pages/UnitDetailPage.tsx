@@ -805,7 +805,9 @@ function OwnershipCorrectAction({ ownership, ownerLabel, disabled, onCorrected }
         <DialogDescription>
           {ownerLabel} · Eigentum ab {formatDate(ownership.valid_from)} · MEA-Anteil {ownership.mea_share ?? "-"}.
           Der korrigierte Eintrag ersetzt diesen. Dieser bleibt als korrigiert sichtbar und geht in keine Berechnung mehr ein.
-          Bereits finalisierte Abrechnungen und Wirtschaftspläne bleiben unverändert.
+          Finalisierte Abrechnungen und Wirtschaftspläne werden nicht neu berechnet. Besteht für den Zeitraum ein finalisierter
+          Wirtschaftsplan, kann das Hausgeld-Soll danach abgelehnt werden, bis Sie unter „Wirtschaftspläne“ mit „Korrektur erstellen“
+          einen Korrektur-Wirtschaftsplan angelegt und finalisiert haben.
         </DialogDescription>
         <form onSubmit={submit} noValidate>
           <label>Eigentum ab<Input type="date" required max={ownership.valid_to ?? undefined} value={validFrom} disabled={saving} onChange={event => setValidFrom(event.target.value)} /></label>
