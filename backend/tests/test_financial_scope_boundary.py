@@ -111,7 +111,8 @@ async def test_computation_context_rejects_unclassified_inputs(migrator_session,
     with pytest.raises(HTTPException) as incomplete:
         await FinancialScopeService(session, ids['org'], ids['clerk']).enter(subject, computation=True)
     assert incomplete.value.status_code == 409
-    assert 'unclassified financial inputs' in incomplete.value.detail
+    assert incomplete.value.detail['code'] == 'SCOPE_ACCOUNT_UNCLASSIFIED'
+    assert '„Unclassified input“' in incomplete.value.detail['message']
     await session.execute(text('RESET ROLE'))
 
 
