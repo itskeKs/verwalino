@@ -181,6 +181,7 @@ def build_weg_jahresabrechnung_html(
                 'Gesondert gebuchte Rücklagenzahlungen zählen nur, soweit das Hausgeld-Soll nicht bereits '
                 'durch Hausgeldzahlungen gedeckt ist; ein Überschuss bleibt in der Rücklage. '
                 if _engine_version_at_least((run.snapshot_payload or {}).get('engine_version'), 'm4.4.0') else '')
+            levy_block = 'levy_soll' in balance
             balance_rows = ''.join(
                 f"<tr class='{('spitze' if key == 'abrechnungsspitze' else 'cost-total' if key == 'payment_amount' else '')}'>"
                 f"<td>{label}</td><td class='num'>{_eur(Decimal(balance[key]))}</td></tr>"
@@ -189,8 +190,18 @@ def build_weg_jahresabrechnung_html(
                     ('plan_soll', 'Hausgeld-Soll laut Wirtschaftsplan'),
                     ('paid', 'Hausgeld gezahlt'),
                     ('account_balance', 'Rückstand / Guthaben aus Hausgeld'),
+                    *((('levy_soll', 'Sonderumlage-Soll'),
+                       ('levy_paid', 'Sonderumlage gezahlt'),
+                       ('levy_balance', 'Rückstand / Guthaben aus Sonderumlage')) if levy_block else ()),
                     ('payment_amount', 'Zahlbetrag'))
             )
+            levy_source = (
+                '<p>Sonderumlage: Soll aus den beschlossenen Sonderumlagen, die im Abrechnungszeitraum fällig waren, '
+                'verteilt auf die Eigentümer am Fälligkeitstag. Sie vermindert die Abrechnungsspitze als zusätzliches '
+                'Soll; ein Überschuss oder Fehlbetrag erscheint als Guthaben oder Nachschuss. Gezahlt aus gebuchten, '
+                'nicht stornierten Sonderzahlungen dieses Eigentümers und Objekts im Abrechnungszeitraum. '
+                'Der Zahlbetrag verrechnet zusätzlich den Rückstand oder das Guthaben aus der Sonderumlage.</p>'
+                if levy_block else '')
             ownership = '<br>'.join(
                 f"Einheit {_esc(p['unit_number'])}: {_date(p['valid_from'])} bis {_date(p['valid_to'])}"
                 for p in balance['ownership_periods']
@@ -207,6 +218,7 @@ def build_weg_jahresabrechnung_html(
                 f'{reserve_payment_source}'
                 'Offene oder ungebuchte Zahlungen zählen nicht. '
                 'Bei Eigentümerwechsel bleiben Zahlungen beim zugeordneten Eigentümer.</p>'
+                f'{levy_source}'
                 f'<p>Eigentümerzuordnung im Abrechnungszeitraum:<br>{ownership}</p>'
             )
         owner_blocks.append(

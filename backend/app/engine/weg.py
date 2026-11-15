@@ -28,7 +28,7 @@ Flow (m4 section 10.1):
   4. per owner: sum the rounded position shares into three subtotals
      (umlagefaehig / nicht umlagefaehig / reserve), OWNER_COST_TOTAL = the first
      two; ABRECHNUNGSSPITZE = OWNER_COST_TOTAL + planned reserve Soll - PLAN_ADVANCE
-     (WEMoG, ADR-0007).
+     - the owner's special levy Soll (WEMoG, ADR-0007, amendment #405).
   5. build the reserve development (opening + Σ contributions - withdrawals ==
      closing, checked fail-loud).
 
@@ -63,6 +63,7 @@ from app.engine.types import (
     COST_GROUP_UMLAGEFAEHIG,
     DIRECT_KEYS,
     OwnerCostStep,
+    OwnerPeriodInput,
     OwnerResult,
     PeriodOverlapError,
     ReserveDevelopment,
@@ -103,6 +104,29 @@ class WegShareSumError(WegValidationError):
         super().__init__(
             f"Co-owner shares of unit {unit_number} ({unit_id}) sum to {share_sum} on "
             f"[{span_start}..{span_end}], neither 1 nor 100 (escalate, #404)."
+        )
+
+
+class WegLevyOwnerError(WegValidationError):
+    """A levy allocation names other owners of a unit than the ownership rows do on its due date (#405).
+
+    The allocation is written when the levy is created; an ownership change recorded afterwards
+    leaves it with the previous owner. Charging that owner would put the levy Soll on the wrong
+    Spitze, so the calculation stops and names the levy, the unit and the due date.
+    """
+
+    def __init__(
+        self, levy_id: uuid.UUID, levy_amount: Decimal, unit_id: uuid.UUID, unit_number: str,
+        due_date: date,
+    ) -> None:
+        self.levy_id = levy_id
+        self.levy_amount = levy_amount
+        self.unit_id = unit_id
+        self.unit_number = unit_number
+        self.due_date = due_date
+        super().__init__(
+            f"Special levy {levy_id} due {due_date}: its allocation for unit {unit_number} ({unit_id}) "
+            f"does not name the owners of the unit on the due date (escalate, #405)."
         )
 
 
@@ -274,6 +298,38 @@ def _require_share_sums(unit: UnitInput, spans: list[_OwnerSpan]) -> None:
             raise WegShareSumError(unit.id, unit.number, span.start, span.end, span.share_sum)
 
 
+def _require_levy_owners(
+    inp: WegSettlementInput, units: list[UnitInput], owner_periods: list[OwnerPeriodInput]
+) -> None:
+    """Refuse a levy whose allocation does not name, per unit, the owners of its due date (#405).
+
+    The ownership rows are read as they are now. For every unit the levy has at least one
+    allocation row for, the allocated owners must be exactly the owners active on the due date:
+    co-owners all named, and nobody named who does not own the unit on that day. A unit without
+    any row of the levy (added after the levy was created) is not checked and bears no levy. The
+    first offending levy (by due date, then id) and unit (by number) is reported.
+    """
+    allocated: dict[uuid.UUID, dict[uuid.UUID, set[uuid.UUID]]] = {}
+    amounts: dict[uuid.UUID, Decimal] = {}
+    due_dates: dict[uuid.UUID, date] = {}
+    for levy in inp.special_levies:
+        allocated.setdefault(levy.special_levy_id, {}).setdefault(levy.unit_id, set()).add(levy.owner_profile_id)
+        amounts[levy.special_levy_id] = amounts.get(levy.special_levy_id, Decimal("0.00")) + levy.amount
+        due_dates[levy.special_levy_id] = levy.due_date
+    numbers = {unit.id: unit.number for unit in units}
+    for levy_id in sorted(allocated, key=lambda i: (due_dates[i], str(i))):
+        due = due_dates[levy_id]
+        by_unit = allocated[levy_id]
+        for unit_id in sorted(by_unit, key=lambda i: (numbers.get(i, ""), str(i))):
+            owners = {
+                period.owner_profile_id for period in owner_periods
+                if period.unit_id == unit_id and period.valid_from <= due
+                and (period.valid_to is None or due <= period.valid_to)
+            }
+            if owners != by_unit[unit_id]:
+                raise WegLevyOwnerError(levy_id, amounts[levy_id], unit_id, numbers.get(unit_id, str(unit_id)), due)
+
+
 def _owner_time_weight(
     spans: list[_OwnerSpan], index: int, sp_from: date, sp_to: date
 ) -> Fraction:
@@ -336,6 +392,19 @@ def _validate(inp: WegSettlementInput) -> None:
             raise WegValidationError(
                 f"Cost position {pos.category_code} ({pos.cost_entry_id}) has "
                 f"unknown cost_group: {pos.cost_group}"
+            )
+
+    # A special levy counts when its due date lies within the settlement period (#405): the caller
+    # loads exactly those, a levy outside is a wrong input, never silently dropped or counted.
+    for levy in inp.special_levies:
+        if not inp.period_start <= levy.due_date <= inp.period_end:
+            raise WegValidationError(
+                f"Special levy {levy.special_levy_id} is due on {levy.due_date}, "
+                f"not within the settlement period [{inp.period_start}..{inp.period_end}]"
+            )
+        if levy.amount < 0:
+            raise WegValidationError(
+                f"Special levy {levy.special_levy_id} has a negative share for owner {levy.owner_profile_id}"
             )
 
     # Plan advances: at most one entry per owner; non-negative is not required
@@ -488,6 +557,7 @@ def compute_weg_jahresabrechnung(inp: WegSettlementInput) -> WegResult:
     for unit in units:
         owner_spans[unit.id] = _unit_owner_spans(unit, owner_covers[unit.id])
         _require_share_sums(unit, owner_spans[unit.id])
+    _require_levy_owners(inp, units, owner_periods)
 
     # Deterministic position order (by category_code then id) -> reproducible
     # sort_order + snapshot.
@@ -606,13 +676,22 @@ def compute_weg_jahresabrechnung(inp: WegSettlementInput) -> WegResult:
     plan_by_owner = {a.owner_profile_id: _money(a.plan_advance_total) for a in inp.plan_advances}
     reserve_soll_by_owner = {a.owner_profile_id: _money(a.plan_advance_total) for a in inp.plan_reserve}
     paid_by_owner = {a.owner_profile_id: _money(a.plan_advance_total) for a in inp.paid_advances}
+    # Special levies are an additional Soll of the owner the allocation names (#405); their
+    # payments are the net booked SONDERZAHLUNG. The shares are cent-exact allocations of the
+    # levy, so nothing is rounded here.
+    levy_soll_by_owner: dict[uuid.UUID, Decimal] = {}
+    for levy in inp.special_levies:
+        levy_soll_by_owner[levy.owner_profile_id] = (
+            levy_soll_by_owner.get(levy.owner_profile_id, Decimal("0.00")) + levy.amount)
+    levy_paid_by_owner = {a.owner_profile_id: _money(a.plan_advance_total) for a in inp.levy_paid}
 
     # Payment-only owners still need their own account balance and credit;
     # this does not add any costs or plan Soll to their resolved Spitze.
     if inp.reserve_paid_contributions is not None:
         owner_reserve = {item.owner_profile_id: item.plan_advance_total for item in inp.reserve_paid_contributions}
-    billed_owner_ids = set(owner_cost_lines) | set(plan_by_owner) | set(reserve_soll_by_owner)
-    all_owner_ids = billed_owner_ids | set(owner_reserve) | set(paid_by_owner)
+    billed_owner_ids = set(owner_cost_lines) | set(plan_by_owner) | set(reserve_soll_by_owner) | set(
+        levy_soll_by_owner)
+    all_owner_ids = billed_owner_ids | set(owner_reserve) | set(paid_by_owner) | set(levy_paid_by_owner)
 
     owners: list[OwnerResult] = []
     plan_advances_total = Decimal("0.00")
@@ -624,7 +703,10 @@ def compute_weg_jahresabrechnung(inp: WegSettlementInput) -> WegResult:
         owner_cost_total = _money(uml + nicht)
         plan_advance = plan_by_owner.get(owner_id, Decimal("0.00"))
         plan_reserve_soll = reserve_soll_by_owner.get(owner_id, Decimal("0.00"))
-        spitze = _money(owner_cost_total + plan_reserve_soll - plan_advance)
+        levy_soll = _money(levy_soll_by_owner.get(owner_id, Decimal("0.00")))
+        levy_paid = levy_paid_by_owner.get(owner_id, Decimal("0.00"))
+        levy_balance = _money(levy_soll - levy_paid)
+        spitze = _money(owner_cost_total + plan_reserve_soll - plan_advance - levy_soll)
         paid = paid_by_owner.get(owner_id)
         account_balance = _money(plan_advance - paid) if paid is not None else None
         plan_advances_total += plan_advance
@@ -639,10 +721,13 @@ def compute_weg_jahresabrechnung(inp: WegSettlementInput) -> WegResult:
                 owner_cost_total=owner_cost_total,
                 plan_advance=plan_advance,
                 plan_reserve_soll=plan_reserve_soll,
+                levy_soll=levy_soll,
+                levy_paid=levy_paid,
+                levy_balance=levy_balance,
                 abrechnungsspitze=spitze,
                 paid_advances=paid_by_owner.get(owner_id),
                 account_balance=account_balance,
-                payment_amount=_money(spitze + account_balance) if account_balance is not None else None,
+                payment_amount=_money(spitze + account_balance + levy_balance) if account_balance is not None else None,
                 reserve_notice='Rücklagenzahlung ohne Kosten- oder Planposition. Bitte prüfen Sie die Eigentümerzuordnung.'
                     if owner_id not in billed_owner_ids and owner_id in owner_reserve else None,
             )

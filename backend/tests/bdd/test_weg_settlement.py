@@ -175,6 +175,7 @@ def create_balance_world(world, seed_data, *, cost_period_end='2026-12-31', owne
     assert response.status_code == 200, response.text
     run = create(world, '/api/weg-settlements', {**basis, 'economic_plan_id': plan['id'],
         'period_start': '2026-01-01', 'period_end': '2026-12-31'})
+    world.data['levy_basis'] = basis
     return {'run': run['id'], 'property': home['id'], 'bank': account['id'], 'owners': owners,
             'units': units, 'plan': plan['id'], 'scope': scope['id']}
 
@@ -205,6 +206,12 @@ def yearless_hausgeld(world, weg_balance):
        target_fixture='weg_balance')
 def payment_only_successor(world, seed_data):
     w = create_balance_world(world, seed_data, cost_period_end='2026-06-30')
+    record_sale_of_unit_2(world, w)
+    return w
+
+
+def record_sale_of_unit_2(world, w):
+    """Berta's ownership of unit 2 ends 30.06.2026, Clara owns it from 01.07.2026."""
     response = world.act('GET', f"/api/ownership?unit_id={w['units'][1]}")
     assert response.status_code == 200, response.text
     old = next(row for row in response.json() if row['owner_profile_id'] == w['owners'][1])
@@ -216,7 +223,6 @@ def payment_only_successor(world, seed_data):
         'valid_from': '2026-07-01'})
     w['successor'] = owner['id']
     w['owners'].append(owner['id'])
-    return w
 
 
 @given('the successor has booked 1900 euros for December 2026 with a January 2027 value date')
@@ -876,6 +882,7 @@ def co_owned_units_world(world, seed_data, bernd_share, carla_share):
     assert response.status_code == 200, response.text
     run = create(world, '/api/weg-settlements', {**basis, 'economic_plan_id': plan['id'],
         'period_start': '2026-01-01', 'period_end': '2026-12-31'})
+    world.data['levy_basis'] = basis
     return {'run': run['id'], 'owners': owners, 'plan': plan['id'], 'entries': entries, 'unit_2': units['2']['id']}
 
 
@@ -951,3 +958,229 @@ def co_owned_plan_still_normalises(world, co_owned):
     assert advances == {co_owned['owners']['Anna']: '500.00', co_owned['owners']['Bernd']: '333.33',
                         co_owned['owners']['Carla']: '166.67'}
 
+
+
+# ---------------------------------------------------------------------------
+# #405: a special levy is an additional Soll of the owner
+# ---------------------------------------------------------------------------
+MONTHS = ('January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October',
+          'November', 'December')
+
+
+def iso_day(text):
+    day, month, year = text.split()
+    return f'{int(year):04d}-{MONTHS.index(month) + 1:02d}-{int(day):02d}'
+
+
+def book_payment(world, w, owner, amount, payment_type, value_date, **period):
+    payment = create(world, '/api/payments', {'bank_account_id': w['bank'], 'direction': 'IN',
+        'owner_profile_id': owner, 'amount': amount, 'value_date': value_date,
+        'payment_type': payment_type, **period})
+    response = world.act('POST', f"/api/payments/{payment['id']}/book")
+    assert response.status_code == 200, response.text
+
+
+def owner_row(statement, owner):
+    return next(row for row in statement['owner_results'] if row['owner_profile_id'] == owner)
+
+
+def levy_figure(statement, owner, key='levy_soll'):
+    """The owner's levy figure; a statement without levy figures reports none, which is zero."""
+    return Decimal(owner_row(statement, owner).get(key) or '0.00')
+
+
+def levy_soll(statement, owner):
+    return levy_figure(statement, owner)
+
+
+@given('the WEG plan has 7000 euros of costs and the roof repair cost another 5000 euros', target_fixture='weg_balance')
+def roof_repair_balance(world, seed_data):
+    return create_balance_world(world, seed_data, actual_cost='12000.00', planned_cost='7000.00')
+
+
+@given('Anna and Berta have paid their Hausgeld in full')
+def hausgeld_in_full(world, weg_balance):
+    w = weg_balance
+    for owner, amount in zip(w['owners'], ('4200.00', '2800.00')):
+        book_payment(world, w, owner, amount, 'HAUSGELD_VORSCHUSS', '2026-12-01', period_year=2026)
+
+
+@given(parsers.parse('a resolved special levy of {amount:d} euros is due on {due}'))
+def resolved_levy(world, amount, due):
+    basis = world.data['levy_basis']
+    meeting = create(world, '/api/meetings', {'property_id': basis['property_id'], 'meeting_date': '2026-02-10',
+        'meeting_type': 'ORDENTLICH', 'location': 'Gemeinschaftsraum'})
+    agenda = create(world, f"/api/meetings/{meeting['id']}/agenda", {'meeting_id': meeting['id'], 'title': 'Dachreparatur'})
+    assert world.act('POST', f"/api/meetings/{meeting['id']}/hold").status_code == 200
+    resolution = create(world, '/api/meetings/resolutions', {'meeting_id': meeting['id'], 'agenda_item_id': agenda['id'],
+        'wording': f'Dachreparatur durch Sonderumlage von {amount} € finanzieren.',
+        'votes_yes': 2, 'votes_no': 0, 'votes_abstain': 0, 'result': 'ANGENOMMEN'})
+    world.data['levy'] = create(world, '/api/special-levies', {**basis, 'amount': f'{amount}.00',
+        'due_date': iso_day(due), 'resolution_id': resolution['id']})
+
+
+@given(parsers.parse('Anna has paid {anna:d} euros of the levy and Berta {berta:d} euros'))
+def levy_payments(world, weg_balance, anna, berta):
+    w = weg_balance
+    for owner, amount in zip(w['owners'], (anna, berta)):
+        if amount:
+            book_payment(world, w, owner, f'{amount}.00', 'SONDERZAHLUNG', '2026-03-05', period_year=2026, period_month=3)
+
+
+@given("Berta's ownership entry was corrected to start on 1 June 2019")
+def berta_entry_corrected(world, weg_balance):
+    w = weg_balance
+    rows = world.act('GET', '/api/ownership', params={'unit_id': w['units'][1]}).json()
+    entry = next(row for row in rows if row['owner_profile_id'] == w['owners'][1])
+    response = world.act('POST', f"/api/ownership/{entry['id']}/correction",
+                         json={'valid_from': '2019-06-01', 'mea_share': entry['mea_share']})
+    assert response.status_code == 201, response.text
+
+
+@when('I compute the WEG annual settlement with the levy')
+def compute_with_levy(world, weg_balance):
+    w = weg_balance
+    values = {'paid_advances': [{'owner_profile_id': owner, 'paid_total': '0.00'} for owner in w['owners']]}
+    world.run(attest_fixture(world.actor, 'settlement', w['run'], values))
+    response = world.act('POST', f"/api/weg-settlements/{w['run']}/compute", json=values)
+    assert response.status_code == 200, response.text
+    w['statement'] = response.json()
+
+
+@then(parsers.parse("Anna's Spitze is {anna} euros and Berta's is {berta} euros"))
+def levy_spitzen(weg_balance, anna, berta):
+    w = weg_balance
+    assert [owner_row(w['statement'], owner)['abrechnungsspitze'] for owner in w['owners']] == [
+        f'{Decimal(anna):.2f}', f'{Decimal(berta):.2f}']
+    # The owners' Spitzen add up to the run's total: costs - plan Soll - levies.
+    assert Decimal(w['statement']['balance']) == Decimal(anna) + Decimal(berta)
+
+
+@then(parsers.parse('their levy Soll is {anna_soll} and {berta_soll} euros and paid {anna_paid} and {berta_paid} euros'))
+def levy_figures(weg_balance, anna_soll, berta_soll, anna_paid, berta_paid):
+    w = weg_balance
+    assert [levy_figure(w['statement'], owner) for owner in w['owners']] == [Decimal(anna_soll), Decimal(berta_soll)]
+    assert [levy_figure(w['statement'], owner, 'levy_paid') for owner in w['owners']] == [
+        Decimal(anna_paid), Decimal(berta_paid)]
+
+
+@then(parsers.parse("Anna's payment is {anna} euros and Berta's is {berta} euros"))
+def levy_payment_amounts(weg_balance, anna, berta):
+    w = weg_balance
+    assert [owner_row(w['statement'], owner)['payment_amount'] for owner in w['owners']] == [
+        f'{Decimal(anna):.2f}', f'{Decimal(berta):.2f}']
+
+
+@then('the PDF shows the levy Soll and payment of Anna and Berta')
+def levy_pdf(world, weg_balance):
+    w = weg_balance
+    w['pdf'] = world.look(world.actor, f"/api/weg-settlements/{w['run']}/pdf").content
+    content = pdf_text(w['pdf'])
+    for expected in ('Sonderumlage-Soll', 'Sonderumlage gezahlt', 'Rückstand / Guthaben aus Sonderumlage',
+                     '3.000,00', '2.000,00', 'Sonderumlage: Soll aus den beschlossenen Sonderumlagen'):
+        assert expected in content
+    w['frozen'] = world.look(world.actor, f"/api/weg-settlements/{w['run']}").json()
+
+
+@when('Anna pays another 100 euros of the levy')
+def levy_late_payment(world, weg_balance):
+    w = weg_balance
+    book_payment(world, w, w['owners'][0], '100.00', 'SONDERZAHLUNG', '2026-04-02', period_year=2026, period_month=4)
+
+
+@then('the finalized statement, its digest and its PDF are unchanged')
+def levy_statement_frozen(world, weg_balance):
+    w = weg_balance
+    reloaded = world.look(world.actor, f"/api/weg-settlements/{w['run']}").json()
+    assert reloaded['owner_results'] == w['frozen']['owner_results']
+    assert reloaded['snapshot_sha256'] == w['frozen']['snapshot_sha256']
+    assert world.look(world.actor, f"/api/weg-settlements/{w['run']}/pdf").content == w['pdf']
+
+
+@then(parsers.parse('the levy Soll is 3000 euros for Anna, {berta:d} euros for Berta and {clara:d} euros for her successor Clara'))
+def levy_follows_the_due_date_owner(weg_balance, berta, clara):
+    w = weg_balance
+    anna_id, berta_id, clara_id = w['owners']
+    assert [levy_soll(w['statement'], owner) for owner in (anna_id, berta_id, clara_id)] == [
+        Decimal('3000.00'), Decimal(berta), Decimal(clara)]
+
+
+@then('the levy Soll is 500 euros for Anna and 250 euros each for Bernd and Carla')
+def co_owners_share_the_levy(co_owned):
+    soll = {name: levy_soll(co_owned['statement'], owner) for name, owner in co_owned['owners'].items()}
+    assert soll == {'Anna': 500, 'Bernd': 250, 'Carla': 250}
+
+
+@then('the levy Soll is 3000 euros for Anna and 2000 euros once for Berta')
+def corrected_entry_counts_once(weg_balance):
+    w = weg_balance
+    assert [levy_soll(w['statement'], owner) for owner in w['owners']] == [Decimal('3000.00'), Decimal('2000.00')]
+    assert sum(levy_soll(w['statement'], owner) for owner in w['owners']) == Decimal('5000.00')
+
+
+@then("Anna's statement shows the special levy block without horizontal scrolling")
+def levy_block_browser(browser_world, weg_balance):
+    import os
+    from playwright.async_api import expect
+
+    b = browser_world
+    console_errors = []
+
+    async def check():
+        b.page.on('console', lambda message: console_errors.append(message.text) if message.type == 'error' else None)
+        await b.visit(f"/weg-abrechnungen/{weg_balance['run']}")
+        for width in (1280, 360):
+            await b.page.set_viewport_size({'width': width, 'height': 1000})
+            region = b.page.get_by_role('region', name='Hausgeld-Abgleich · Anna Berg', exact=True)
+            await expect(region).to_be_visible()
+            for label, value in (
+                ('Abrechnungsspitze (beschlossen, § 28 Abs. 2 WEG)', '0,00'), ('Sonderumlage-Soll', '3.000,00'),
+                ('Sonderumlage gezahlt', '3.000,00'), ('Rückstand / Guthaben aus Sonderumlage', '0,00'),
+                ('Zahlbetrag', '0,00')):
+                row = region.locator('dl > div').filter(has=b.page.get_by_text(label, exact=True))
+                await expect(row).to_contain_text(value)
+                assert await row.evaluate('(el) => el.scrollWidth <= el.clientWidth')
+            assert await b.page.locator('main').evaluate('(el) => el.scrollWidth <= el.clientWidth'), 'Main content overflows'
+            if os.environ.get('VERWALINO_CAPTURE_DESIGN') == '1':
+                directory = Path(__file__).resolve().parents[3] / 'docs/assets/design/weg-special-levy'
+                directory.mkdir(parents=True, exist_ok=True)
+                card = region.locator('..')
+                height = await card.evaluate('el => Math.ceil(el.getBoundingClientRect().height) + 200')
+                await b.page.set_viewport_size({'width': width, 'height': max(1000, height)})
+                await card.screenshot(path=str(directory / f'after-{width}.png'))
+                await b.page.set_viewport_size({'width': width, 'height': 1000})
+        assert not console_errors and not b.errors, (console_errors, b.errors)
+
+    b.run(check())
+
+
+@given('the sale of unit 2 from Berta to Clara from July is recorded afterwards')
+def sale_recorded_after_the_levy(world, weg_balance):
+    record_sale_of_unit_2(world, weg_balance)
+
+
+@given('Clara has paid 2000 euros of the levy in October')
+def successor_levy_payment(world, weg_balance):
+    w = weg_balance
+    book_payment(world, w, w['successor'], '2000.00', 'SONDERZAHLUNG', '2026-10-05', period_year=2026, period_month=10)
+
+
+@when('I try to compute the WEG annual settlement with the levy')
+def try_compute_with_levy(world, weg_balance):
+    w = weg_balance
+    values = {'paid_advances': [{'owner_profile_id': owner, 'paid_total': '0.00'} for owner in w['owners']]}
+    world.run(attest_fixture(world.actor, 'settlement', w['run'], values))
+    w['response'] = world.act('POST', f"/api/weg-settlements/{w['run']}/compute", json=values)
+
+
+@then('the calculation is refused in German, naming the 5.000,00 euro levy, unit 2 and 1 October 2026')
+def levy_owner_refusal(world, weg_balance):
+    w = weg_balance
+    response = w['response']
+    assert response.status_code == 422, response.text
+    detail = response.json()['detail']
+    assert {key: detail[key] for key in ('code', 'special_levy_id', 'unit_id', 'unit_number', 'due_date')} == {
+        'code': 'weg_levy_owner_mismatch', 'special_levy_id': world.data['levy']['id'], 'unit_id': w['units'][1],
+        'unit_number': '2', 'due_date': '2026-10-01'}
+    for expected in ('5.000,00 €', 'Einheit 2', '01.10.2026', 'vor der Erfassung des Eigentümerwechsels'):
+        assert expected in detail['message']

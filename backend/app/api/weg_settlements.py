@@ -159,6 +159,9 @@ class OwnerBalanceOut(BaseModel):
     paid: str
     account_balance: str
     payment_amount: str
+    levy_soll: str | None = None
+    levy_paid: str | None = None
+    levy_balance: str | None = None
     ownership_periods: list[OwnerBalancePeriodOut]
 
 

@@ -19,13 +19,27 @@ import {
   listPersons,
   derivePaidAdvances,
 } from "../api/endpoints";
-import type { WegRun, WegLine, WegComputeRequest, Property, OwnerProfile, Person } from "../api/types";
+import type { WegRun, WegLine, WegComputeRequest, WegOwnerBalance, Property, OwnerProfile, Person } from "../api/types";
 import { ApiError } from "../api/client";
 import { centsFromDecimal, formatDate, formatDateTime, formatMoney } from "../lib/format";
 
 const STATUS_LABELS: Record<string, string> = { draft: "Entwurf", finalized: "Finalisiert" };
 const STATUS_CSS: Record<string, string> = { draft: "badge--draft", finalized: "badge--confirmed" };
 const eur = (value: string) => formatMoney(centsFromDecimal(value));
+
+function balanceRows(o: WegOwnerBalance): [string, string][] {
+  const levy: [string, string][] = o.levy_soll != null && o.levy_paid != null && o.levy_balance != null
+    ? [["Sonderumlage-Soll", o.levy_soll], ["Sonderumlage gezahlt", o.levy_paid], ["Rückstand / Guthaben aus Sonderumlage", o.levy_balance]]
+    : [];
+  return [
+    ["Abrechnungsspitze (beschlossen, § 28 Abs. 2 WEG)", o.abrechnungsspitze],
+    ["Hausgeld-Soll laut Wirtschaftsplan", o.plan_soll],
+    ["Hausgeld gezahlt", o.paid],
+    ["Rückstand / Guthaben aus Hausgeld", o.account_balance],
+    ...levy,
+    ["Zahlbetrag", o.payment_amount],
+  ];
+}
 
 const LINE_LABELS: Record<string, string> = {
   OWNER_COST_TOTAL: "Summe Ist-Kosten (Ihr Anteil)",
@@ -243,19 +257,14 @@ export function WegSettlementDetailPage() {
               <section key={o.owner_profile_id} className="weg-owner-balance" aria-label={`Hausgeld-Abgleich · ${ownerName(oid)}`}>
                 <p>Kostenanteil (Ist): {eur(o.owner_cost_total)}</p>
                 <dl>
-                  {([
-                    ["Abrechnungsspitze (beschlossen, § 28 Abs. 2 WEG)", o.abrechnungsspitze],
-                    ["Hausgeld-Soll laut Wirtschaftsplan", o.plan_soll],
-                    ["Hausgeld gezahlt", o.paid],
-                    ["Rückstand / Guthaben aus Hausgeld", o.account_balance],
-                    ["Zahlbetrag", o.payment_amount],
-                  ] as const).map(([label, value]) => <div key={label}>
+                  {balanceRows(o).map(([label, value]) => <div key={label}>
                     <dt>{label}</dt><dd>{eur(value)}</dd>
                   </div>)}
                 </dl>
                 <p><strong>{Number(o.payment_amount) < 0 ? "Guthaben zugunsten des Eigentümers" : Number(o.payment_amount) > 0 ? "Zahlung an die Gemeinschaft" : "Ausgeglichen"}</strong></p>
                 <p>Nur die Abrechnungsspitze ist beschlossen; Rückstände werden aus dem Wirtschaftsplan geschuldet. Der Zahlbetrag verrechnet die Spitze mit Rückstand oder Guthaben aus Hausgeld und begründet keinen neuen Anspruch.</p>
                 <p>Quelle: Soll aus dem verknüpften Wirtschaftsplan; gezahlt aus gebuchten, nicht stornierten Hausgeldzahlungen dieses Eigentümers und Objekts im Abrechnungszeitraum (Periodenzuordnung, einschließlich Erstattungen). {run.engine_version === "m4.4.0" && <>Gesondert gebuchte Rücklagenzahlungen zählen nur, soweit das Hausgeld-Soll nicht bereits durch Hausgeldzahlungen gedeckt ist; ein Überschuss bleibt in der Rücklage. </>}Offene oder ungebuchte Zahlungen zählen nicht. Bei Eigentümerwechsel bleiben Zahlungen beim zugeordneten Eigentümer.</p>
+                {o.levy_soll != null && <p>Sonderumlage: Soll aus den beschlossenen Sonderumlagen, die im Abrechnungszeitraum fällig waren, verteilt auf die Eigentümer am Fälligkeitstag. Sie vermindert die Abrechnungsspitze als zusätzliches Soll; ein Überschuss oder Fehlbetrag erscheint als Guthaben oder Nachschuss. Gezahlt aus gebuchten, nicht stornierten Sonderzahlungen dieses Eigentümers und Objekts im Abrechnungszeitraum. Der Zahlbetrag verrechnet zusätzlich den Rückstand oder das Guthaben aus der Sonderumlage.</p>}
                 <p>Eigentümerzuordnung im Abrechnungszeitraum:</p>
                 {o.ownership_periods.map((p, i) => <p key={i}>Einheit {p.unit_number}: {formatDate(p.valid_from)} bis {formatDate(p.valid_to)}</p>)}
               </section>

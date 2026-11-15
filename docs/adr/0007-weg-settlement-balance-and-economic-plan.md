@@ -163,3 +163,48 @@ German 422; the plan-line fallback of the division applies only where the
 ledger accepts the history. The planned reserve Soll stays on the frozen reserve-ledger
 cells at plan start (amendment #401). Liability between seller and buyer
 remains out of scope.
+
+
+## Amendment 2026-11-15 (#405)
+
+The owner decided how a special levy (Sonderumlage) enters the annual statement. A levy is an
+**additional Soll of the owner**, a resolved advance (§ 28 Abs. 1 WEG), not a second distribution of
+the cost it financed. Decision (1) and non-negotiable point 2 continue to apply: the costs stay
+distributed as before, `OWNER_COST_TOTAL` excludes reserves, and the Spitze is the amount of
+the resolution. Like this ADR itself the rule is **subject to confirmation by a WEG specialist
+before productive use** (alternatives such as netting levy-financed costs like reserve-financed
+ones, ADR-0013, were rejected because they need a link from a cost entry to a levy and a cap
+per cost).
+
+The per-owner formula is now
+`abrechnungsspitze = owner_cost_total + plan_reserve_soll − plan_advance − levy_soll`.
+An owner's `levy_soll` is the sum of that owner's frozen levy allocations
+(`SpecialLevyService.property_allocations`) of the settlement's property and accounting scope
+whose **due date lies within the settlement period**, both days inclusive. The allocation
+already decides who owes a levy (the owner on the due date, co-owners by their relative
+shares) and in which cents; the settlement adds shares up and rounds nothing. A sale recorded after
+the levy was created leaves the allocation with the seller, so the settlement refuses (HTTP 422,
+`weg_levy_owner_mismatch`) a levy whose allocated owners per unit differ from the owners the ownership
+rows name on its due date, until the allocation follows the ownership (#681). A levy due
+outside the period belongs to the settlement that contains its due date. The planned reserve
+Soll of amendment #401 is unchanged.
+
+The booked `SONDERZAHLUNG` payments appear as their own block, “Sonderumlage gezahlt”: the
+owner's net booked `SONDERZAHLUNG` of the period counted exactly as the owner account's Ist
+(assigned month, else value date; booked, not reversed, OUT reducing it). They change only the
+payment amount: `levy_balance = levy_soll − levy_paid` and
+`payment_amount = abrechnungsspitze + account_balance + levy_balance`, so an unpaid levy is owed
+and not a credit of the Spitze, and an unused paid levy is a credit.
+
+For plan costs of 7,000.00 (Soll 4,200.00 / 2,800.00 at 600/400 MEA), actual costs of 7,000.00
+plus a roof repair of 5,000.00 and a levy of 5,000.00 (3,000.00 / 2,000.00, due within the
+period), costs are 7,200.00 / 4,800.00 and both Spitzen are 0.00 (before: +3,000.00 / +2,000.00,
+the owners paid the repair twice). A levy of 6,000.00 on the same repair gives −600.00 / −400.00.
+No cost-to-levy link exists; an excess or shortfall appears as Guthaben or Nachschuss.
+
+The engine input gains the levy shares and the levy payments, the payload freezes them
+(`inputs.special_levies`, `inputs.levy_paid`, and per owner `levy_soll`, `levy_paid`,
+`levy_balance`) only for a run that has levy figures, so statements without levies keep
+their digest. `ENGINE_VERSION` is `m4.10.0`; finalized runs are never recalculated and keep
+their figures, digest and PDF bytes. Liability between seller and buyer for a levy remains out
+of scope.

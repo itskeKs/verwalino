@@ -147,14 +147,24 @@ class SpecialLevyService:
                 result.append((row, allocations))
         return sorted(result, key=lambda item: (item[0].due_date, item[0].id))
 
-    async def owner_allocations(self, owner_id, start: date, end: date, scope_id, property_id=None):
+    def _allocations_due(self, start: date, end: date, scope_id, property_id):
+        """Frozen allocations of the levies falling due from `start` to `end`, both inclusive."""
         stmt = select(SpecialLevyAllocation, SpecialLevy.due_date).join(SpecialLevy,
             SpecialLevy.id == SpecialLevyAllocation.special_levy_id).where(
                 SpecialLevy.organization_id == self.org, SpecialLevyAllocation.organization_id == self.org,
-                SpecialLevyAllocation.owner_profile_id == owner_id,
                 SpecialLevy.due_date >= start, SpecialLevy.due_date <= end)
         if scope_id is not None:
             stmt = stmt.where(SpecialLevy.accounting_scope_id == scope_id)
         if property_id is not None:
             stmt = stmt.where(SpecialLevy.property_id == property_id)
+        return stmt
+
+    async def owner_allocations(self, owner_id, start: date, end: date, scope_id, property_id=None):
+        stmt = self._allocations_due(start, end, scope_id, property_id).where(
+            SpecialLevyAllocation.owner_profile_id == owner_id)
+        return (await self.db.execute(stmt.order_by(SpecialLevy.due_date, SpecialLevyAllocation.id))).all()
+
+    async def property_allocations(self, property_id, start: date, end: date, scope_id):
+        """Every owner's frozen share of the property's levies due in the period (the settlement, #405)."""
+        stmt = self._allocations_due(start, end, scope_id, property_id)
         return (await self.db.execute(stmt.order_by(SpecialLevy.due_date, SpecialLevyAllocation.id))).all()
