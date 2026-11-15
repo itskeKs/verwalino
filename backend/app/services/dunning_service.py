@@ -37,7 +37,7 @@ from app.engine.mietkonto import (
 from app.models.accounting_scope import AccountingScopeBinding
 from app.models.audit_event import AuditEvent
 from app.models.bank_account import BankAccount
-from app.models.dunning_notice import LEASE_SOURCE_KEY, DunningNotice
+from app.models.dunning_notice import LEASE_SOURCE_KEY, PROPERTY_SOURCE_KEY, DunningNotice
 from app.models.dunning_scope_context import DunningScopeContext
 from app.repositories.audit_repo import AuditRepository
 from app.core.rbac import ScopeCapability
@@ -236,6 +236,7 @@ class DunningService:
 
         # Compute Soll from finalized plan (if available)
         charges = []
+        plan = None
         if economic_plan_id is not None:
             plan = await self._plans.get_by_id(economic_plan_id)
             if plan is None:
@@ -275,9 +276,13 @@ class DunningService:
                 ),
             )
 
+        # The WEG the notice belongs to: the property of its scope, else of its plan. Levies are always
+        # scoped, so a notice with neither has no charges of its own; it counts as before.
+        property_id = sphere.property_id if sphere is not None else plan.property_id if plan is not None else None
         await context.history(owner_id=owner_profile_id)
         demanded = await self._repo.highest_item_demand_count(
-            item_keys=[item_key(item) for item in overdue], owner_profile_id=owner_profile_id)
+            item_keys=[item_key(item) for item in overdue], owner_profile_id=owner_profile_id,
+            property_id=property_id)
         dunning = self._engine_result(
             assemble_dunning,
             overdue_items=overdue,
@@ -289,6 +294,9 @@ class DunningService:
         if dunning is None:
             raise HTTPException(status_code=422, detail="Could not assemble dunning notice")
 
+        items = dunning.items_snapshot()
+        if property_id is not None:
+            items[0][PROPERTY_SOURCE_KEY] = str(property_id)
         notice = DunningNotice(
             organization_id=self._org_id,
             owner_profile_id=owner_profile_id,
@@ -301,7 +309,7 @@ class DunningService:
             total_amount=dunning.total_amount,
             interest_amount=dunning.interest_amount,
             interest_snapshot=dunning.interest_snapshot,
-            included_items=dunning.items_snapshot(),
+            included_items=items,
             status="draft",
         )
         await context.attach(notice, sphere, period_start, period_end, plan_id=economic_plan_id,
