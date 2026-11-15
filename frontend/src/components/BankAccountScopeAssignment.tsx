@@ -44,10 +44,10 @@ export function BankAccountScopeAssignment({ account, onAssigned }: { account: B
   return <>
     <button type="button" className="btn btn--small" onClick={() => { setScopeId(null); setReason(""); setError(null); setOpen(true); }}>Abrechnungskreis zuordnen</button>
     <Dialog open={open} onOpenChange={value => { if (!busyRef.current) setOpen(value); }}>
-      <DialogContent onEscapeKeyDown={event => { if (busyRef.current) event.preventDefault(); }} onPointerDownOutside={event => { if (busyRef.current) event.preventDefault(); }}>
+      <DialogContent className="max-h-[calc(100dvh-2rem)] overflow-y-auto" onEscapeKeyDown={event => { if (busyRef.current) event.preventDefault(); }} onPointerDownOutside={event => { if (busyRef.current) event.preventDefault(); }}>
         <DialogTitle>Abrechnungskreis zuordnen</DialogTitle>
         <DialogDescription>
-          Bankkonto „{account.label}“ einem Abrechnungskreis zuordnen. Die Zuordnung wird mit Ihrer Begründung festgehalten und kann nicht geändert werden.
+          Bankkonto „<span className="[overflow-wrap:anywhere]">{account.label}</span>“ einem Abrechnungskreis zuordnen. Die Zuordnung wird mit Ihrer Begründung festgehalten und kann nicht geändert werden.
           Bereits gebuchte Zahlungen und Abrechnungen bleiben unverändert. Danach sehen nur Teammitglieder mit Leserecht für den Abrechnungskreis dieses Konto.
         </DialogDescription>
         <form onSubmit={submit} className="form-grid">

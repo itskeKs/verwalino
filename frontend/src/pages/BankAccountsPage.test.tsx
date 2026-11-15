@@ -1,5 +1,5 @@
 import { afterEach, expect, it, vi } from "vitest";
-import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import { AuthCtx } from "../auth/useAuth";
 import { BankAccountsPage } from "./BankAccountsPage";
@@ -188,4 +188,18 @@ it("offers the assignment to administrators only", async () => {
   await screen.findByText("Girokonto Testhaus");
   expect(screen.getByText("Nicht zugeordnet")).toBeVisible();
   expect(screen.queryByRole("button", { name: "Abrechnungskreis zuordnen" })).toBeNull();
+});
+
+it("lets a 255-character account label wrap inside the assignment dialog", async () => {
+  // One unbroken word has no break opportunity: without overflow-wrap it widens the dialog far past a 360 px screen.
+  const label = `Girokonto${"G".repeat(246)}`;
+  vi.stubGlobal("fetch", vi.fn(async (input: string) => input.startsWith("/api/bank-accounts") ? json([{ ...openAccount, label }]) : json({ items: [], next_cursor: null })));
+  render(<AuthCtx.Provider value={adminAuth}><MemoryRouter><BankAccountsPage /></MemoryRouter></AuthCtx.Provider>);
+  await screen.findByText(label);
+  fireEvent.click(screen.getByRole("button", { name: "Abrechnungskreis zuordnen" }));
+  const dialog = await screen.findByRole("dialog");
+  expect(within(dialog).getByText(label).className).toContain("[overflow-wrap:anywhere]");
+  // A long dialog scrolls inside the screen instead of running off it.
+  expect(dialog.className).toContain("overflow-y-auto");
+  expect(within(dialog).getByRole("button", { name: "Zuordnung speichern" })).toBeInTheDocument();
 });

@@ -2137,8 +2137,11 @@ The checkbox “Nur Konten ohne Abrechnungskreis” filters the loaded list (URL
 and Bestand prüfen is a link to that filter while the count is above zero. With the filter on and
 every account classified the page says “Alle Bankkonten haben einen Abrechnungskreis.”
 
-A refused calculation names the account in one alert: the Sonderumlagen page shows a list failure
-and a creation failure with the same text once.
+A refused calculation names the account in one alert: when the Sonderumlagen page's list and its
+creation fail with the same error code (`SCOPE_ACCOUNT_UNCLASSIFIED`), only the latest message is shown,
+even if it names another account than the earlier one. Failures with different causes stay separate.
+The account label in the dialog description wraps at any character (a 255-character name does not widen
+the dialog at 360 px) and a dialog taller than the screen scrolls inside it.
 
 | Account scope | Desktop | 360 px |
 | --- | --- | --- |
@@ -2146,6 +2149,7 @@ and a creation failure with the same text once.
 | List after | [Desktop](docs/assets/design/account-scope-list-after-1280.png) | [Phone](docs/assets/design/account-scope-list-after-360.png) |
 | Filtered list, table scrolled to the action | | [Phone](docs/assets/design/account-scope-list-filtered-360.png) |
 | Assignment dialog | [Desktop](docs/assets/design/account-scope-dialog-after-1280.png) | [Phone](docs/assets/design/account-scope-dialog-after-360.png) |
+| Dialog, 255-character label | | [Phone](docs/assets/design/account-scope-dialog-long-label-360.png) |
 | Levy refusal before | [Desktop](docs/assets/design/account-scope-refusal-before-1280.png) | [Phone](docs/assets/design/account-scope-refusal-before-360.png) |
 | Levy refusal after | [Desktop](docs/assets/design/account-scope-refusal-after-1280.png) | [Phone](docs/assets/design/account-scope-refusal-after-360.png) |
 

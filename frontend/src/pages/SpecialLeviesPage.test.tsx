@@ -114,6 +114,30 @@ it("shows a refusal once when the list and the creation fail for the same reason
   expect(await screen.findAllByRole("alert")).toHaveLength(1);
   expect(screen.getAllByText(refusal)).toHaveLength(1);
 });
+it("shows only the current refusal when another account is named by the creation than by the list", async () => {
+  const refusal = (name: string) => new ApiError(409, `Das Bankkonto „${name}“ hat noch keinen Abrechnungskreis.`, "SCOPE_ACCOUNT_UNCLASSIFIED");
+  show(); await choose();
+  getRows = async () => { throw refusal("Konto A"); };
+  fireEvent.click(screen.getByRole("button", { name: "Aktualisieren" })); await screen.findByText(/Konto A/);
+  vi.mocked(api.post).mockRejectedValueOnce(refusal("Konto B"));
+  fill(); fireEvent.click(screen.getByRole("button", { name: "Sonderumlage anlegen" }));
+  await screen.findByText(/Konto B/);
+  expect(screen.getAllByRole("alert")).toHaveLength(1);
+  expect(screen.queryByText(/Konto A/)).toBeNull();
+  getRows = async () => { throw refusal("Konto C"); };
+  fireEvent.click(screen.getByRole("button", { name: "Aktualisieren" })); await screen.findByText(/Konto C/);
+  expect(screen.getAllByRole("alert")).toHaveLength(1);
+  expect(screen.queryByText(/Konto B/)).toBeNull();
+});
+it("keeps failures with different causes apart", async () => {
+  show(); await choose();
+  getRows = async () => { throw new ApiError(409, "Das Bankkonto „Konto A“ hat noch keinen Abrechnungskreis.", "SCOPE_ACCOUNT_UNCLASSIFIED"); };
+  fireEvent.click(screen.getByRole("button", { name: "Aktualisieren" })); await screen.findByText(/Konto A/);
+  vi.mocked(api.post).mockRejectedValueOnce(new Error("Netzwerk unterbrochen"));
+  fill(); fireEvent.click(screen.getByRole("button", { name: "Sonderumlage anlegen" }));
+  await screen.findByText("Netzwerk unterbrochen");
+  expect(screen.getAllByRole("alert")).toHaveLength(2);
+});
 it("sanitizes extra fields and URL-encodes endpoint filters", async () => {
   const body = { property_id: "p1", accounting_scope_id: "scope-p1", amount: "10000.00", due_date: "2026-06-15", resolution_id: "resolution", allocations: levy.allocations };
   await createSpecialLevy(body);

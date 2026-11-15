@@ -27,7 +27,9 @@ def try_roof_levy(world):
 @then('the manager is told which account needs an Abrechnungskreis')
 def refusal_names_account(world):
     assert world.response.status_code == 409, world.describe_response()
-    message = world.response.json()['detail']['message']
+    detail = world.response.json()['detail']
+    assert detail['code'] == 'SCOPE_ACCOUNT_UNCLASSIFIED', detail
+    message = detail['message']
     assert f"„{world.data['account']['label']}“" in message and 'Bankkonten' in message and 'Abrechnungskreis' in message, message
 
 
