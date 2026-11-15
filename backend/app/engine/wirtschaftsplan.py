@@ -16,7 +16,8 @@ EQUAL MONTHLY rates, one per calendar month of the plan period and at most twelv
 DISTINCT from the Ist-Abrechnung (which stays tag-exact, ADR-0004): the plan
 abstracts from an unterjaehriger Eigentuemerwechsel (the plan plans for the unit;
 who pays in which month is a payment/transition question M6). We take the owner
-as of `period_start` (co-owners there split the unit by mea_share, m4 §4.3).
+as of `period_start` (co-owners there split the unit by mea_share, m4 §4.3; shares that add
+up to neither 1 nor 100 are refused like the annual settlement refuses them, #678).
 
 EVERY cent split -- the MEA distribution AND the monthly rates -- runs through
 the single central distribute_amount (ADR-0005). No second rounding place.
@@ -36,7 +37,13 @@ from app.engine.types import (
     ResultLine,
     WirtschaftsplanInput,
 )
-from app.engine.weg import WegValidationError, _participates, _unit_weight
+from app.engine.weg import (
+    WegShareSumError,
+    WegValidationError,
+    _participates,
+    _unit_weight,
+    share_sum_is_accepted,
+)
 
 
 def _money(value: Decimal) -> Decimal:
@@ -143,6 +150,12 @@ def compute_wirtschaftsplan(inp: WirtschaftsplanInput) -> PlanResult:
                 frac = o.mea_share / co_sum
                 cell_specs.append(
                     (unit.id, o.owner_profile_id, unit_share * frac, unit_mea, o.mea_share)
+                )
+            # Every share is positive here. A sum that is neither 1 nor 100 is an incomplete
+            # co-owner list; dividing by it would hide that (#678, the settlement's #404 rule).
+            if not share_sum_is_accepted(co_sum, len(owners_here)):
+                raise WegShareSumError(
+                    unit.id, unit.number, inp.period_start, inp.period_start, co_sum
                 )
 
     cell_weights = [c[2] for c in cell_specs]

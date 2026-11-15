@@ -1029,9 +1029,9 @@ def test_a_zero_rate_coowner_passes_the_real_plan_rate_to_the_successor(owner, m
     from app.engine.types import OwnerPeriodInput, PropertyInput, UnitInput, WirtschaftsplanInput
     from app.engine.wirtschaftsplan import compute_wirtschaftsplan
 
-    history = [OwnerPeriodInput(_U(10), _U(1), YEAR_START, None, Decimal('1')),
-               OwnerPeriodInput(_U(10), _U(2), YEAR_START, date(2025, 6, 30), Decimal('1')),
-               OwnerPeriodInput(_U(10), _U(3), date(2025, 7, 1), None, Decimal('1'))]
+    history = [OwnerPeriodInput(_U(10), _U(1), YEAR_START, None, Decimal('0.5')),
+               OwnerPeriodInput(_U(10), _U(2), YEAR_START, date(2025, 6, 30), Decimal('0.5')),
+               OwnerPeriodInput(_U(10), _U(3), date(2025, 7, 1), None, Decimal('0.5'))]
     plan = compute_wirtschaftsplan(WirtschaftsplanInput(
         plan_year=2025, period_start=YEAR_START, period_end=YEAR_END,
         property=PropertyInput(_U(20), 'One-cent WEG', 'WEG'),

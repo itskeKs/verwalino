@@ -252,3 +252,15 @@ it.each([
   await screen.findByRole("heading", { name: /Wirtschaftsplan 2027/ });
   expect(!!screen.queryByRole("button", { name: "Hausgeld buchen" })).toBe(offered);
 });
+
+it.each(["Berechnen", "Finalisieren"])("shows the co-owner share refusal of %s with the unit, the sum and the action", async button => {
+  const message = "Die Miteigentumsanteile der Eigentümer von Einheit 1 ergeben zum Planbeginn am 01.01.2027 zusammen 80 statt 1 oder 100. Bitte korrigieren Sie die MEA-Anteile mit „Korrigieren“ in der Eigentümer-Historie der Einheit und berechnen Sie den Wirtschaftsplan erneut.";
+  const advance = { id: "advance", owner_profile_id: "owner", planned_amount: "7100.10", monthly_amount: "591.68" };
+  mocks({ ...draft, lines: [advance] }); vi.spyOn(window, "confirm").mockReturnValue(true);
+  vi.spyOn(api, "post").mockRejectedValue(new ApiError(422, message, "weg_co_owner_shares_mismatch"));
+  show();
+  fireEvent.click(await screen.findByRole("button", { name: button }));
+  const banner = await screen.findByText(/Fehler:/);
+  expect(banner.parentElement).toHaveTextContent(message);
+  expect(screen.getByDisplayValue("7100.10")).toBeInTheDocument();
+});

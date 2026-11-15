@@ -283,18 +283,27 @@ def _unit_owner_spans(unit: UnitInput, slices: list[OwnerCoverPeriod]) -> list[_
     return spans
 
 
+def share_sum_is_accepted(share_sum: Decimal, owner_count: int) -> bool:
+    """Whether `owner_count` co-owner shares adding up to `share_sum` are a complete list (#404).
+
+    The one rule for the annual settlement and the Wirtschaftsplan (#678): the sum is one of
+    SHARE_SUM_SCALES within SHARE_ROUNDING_NOISE per share.
+    """
+    tolerance = SHARE_ROUNDING_NOISE * owner_count
+    return any(abs(share_sum - scale) <= tolerance for scale in SHARE_SUM_SCALES)
+
+
 def _require_share_sums(unit: UnitInput, spans: list[_OwnerSpan]) -> None:
     """Refuse a unit whose active co-owner shares add up to neither 1 nor 100 (#404).
 
     Normalising a wrong sum would hide an incomplete co-owner list, so the calculation
-    stops and names the unit and the first span in which the shares do not add up. The
-    tolerance is the rounding the stored shares can carry (SHARE_ROUNDING_NOISE per share).
+    stops and names the unit and the first span in which the shares do not add up
+    (share_sum_is_accepted).
     """
     for span in spans:
         if span.share_sum is None:
             continue
-        tolerance = SHARE_ROUNDING_NOISE * len(span.fractions)
-        if not any(abs(span.share_sum - scale) <= tolerance for scale in SHARE_SUM_SCALES):
+        if not share_sum_is_accepted(span.share_sum, len(span.fractions)):
             raise WegShareSumError(unit.id, unit.number, span.start, span.end, span.share_sum)
 
 

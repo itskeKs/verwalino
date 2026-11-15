@@ -111,19 +111,42 @@ Feature: WEG settlement and the owner's Hausgeld balance
     Then Anna's cost share is 500 euros and Bernd's and Carla's are 250 euros each
 
   Scenario: A mistaken co-owner share is corrected and the annual settlement then calculates
-    Given Anna owns unit 1 alone and Bernd and Carla own unit 2 with shares of 50 and 30, both units of 500 MEA with 1000 euros of costs by MEA
-    When I try to compute the WEG annual settlement of the co-owned units
+    Given Anna owns unit 1 alone and Bernd and Carla own unit 2 with shares of 50 and 50, both units of 500 MEA with 1000 euros of costs by MEA
+    When I correct Carla's share of unit 2 to 30
+    And I try to compute the WEG annual settlement of the co-owned units
     Then the calculation is refused in German, names unit 2 and points to correcting its shares
     When I correct Carla's share of unit 2 to 50
     And I compute the WEG annual settlement of the co-owned units
     Then Anna's cost share is 500 euros and Bernd's and Carla's are 250 euros each
-    And the history of unit 2 shows Carla's first entry as corrected, with who corrected it and when
+    And the history of unit 2 shows Carla's two earlier entries as corrected, with who corrected them and when
 
   Scenario: Co-owner shares that do not add up refuse the calculation and name the unit
-    Given Anna owns unit 1 alone and Bernd and Carla own unit 2 with shares of 0.6 and 0.3, both units of 500 MEA with 1000 euros of costs by MEA
-    When I try to compute the WEG annual settlement of the co-owned units
+    Given Anna owns unit 1 alone and Bernd and Carla own unit 2 with shares of 0.5 and 0.5, both units of 500 MEA with 1000 euros of costs by MEA
+    When I correct Bernd's share of unit 2 to 0.6
+    And I correct Carla's share of unit 2 to 0.3
+    And I try to compute the WEG annual settlement of the co-owned units
     Then the calculation is refused in German because the shares of unit 2 do not add up
-    And the plan of the same owners still gave Bernd 333.33 euros and Carla 166.67 euros of unit 2's 500 euros
+
+  Scenario: A Wirtschaftsplan refuses co-owner shares that do not add up and calculates once they are corrected
+    Given Anna owns unit 1 alone and Bernd and Carla own unit 2 with shares of 50 and 30, both units of 500 MEA with a draft Wirtschaftsplan of 1000 euros
+    When I try to compute the Wirtschaftsplan of the co-owned units
+    Then the Wirtschaftsplan is refused in German, names unit 2 and the sum 80 and points to correcting its shares
+    And no Hausgeld was calculated for its owners
+    When I try to finalize the Wirtschaftsplan of the co-owned units
+    Then the Wirtschaftsplan is refused in German, names unit 2 and the sum 80 and points to correcting its shares
+    And the Wirtschaftsplan is still a draft
+    When I correct Carla's share of unit 2 to 50
+    And I compute the Wirtschaftsplan of the co-owned units
+    Then Anna's yearly Hausgeld is 500 euros and Bernd's and Carla's are 250 euros each
+    And the plan records the plan engine version m4.2.0
+
+  Scenario: A calculated Wirtschaftsplan is not finalized once the co-owner shares were changed after the calculation
+    Given Anna owns unit 1 alone and Bernd and Carla own unit 2 with shares of 50 and 50, both units of 500 MEA with a draft Wirtschaftsplan of 1000 euros
+    When I compute the Wirtschaftsplan of the co-owned units
+    And I correct Carla's share of unit 2 to 30
+    And I try to finalize the Wirtschaftsplan of the co-owned units
+    Then the Wirtschaftsplan is refused in German, names unit 2 and the sum 80 and points to correcting its shares
+    And the Wirtschaftsplan is still a draft
 
   # A special levy is an additional Soll of the owner (#405, ADR-0007 amendment of 2026-11-15).
   # The plan costs 7000 euros (Anna 4200, Berta 2800); the roof repair adds 5000 euros of costs

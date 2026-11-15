@@ -50,7 +50,7 @@ from app.engine.types import (
     WirtschaftsplanInput,
 )
 from app.engine.types import PeriodOverlapError
-from app.engine.weg import WegValidationError
+from app.engine.weg import WegShareSumError, WegValidationError
 from app.engine.wirtschaftsplan import PlanResult, compute_wirtschaftsplan
 from app.core.temporal import db_exclusive_to_engine_inclusive
 from app.models.audit_event import AuditEvent
@@ -69,7 +69,27 @@ from app.repositories.economic_plan_repo import (
 )
 from app.repositories.settlement_repo import SettlementRunRepository
 
-ENGINE_VERSION = "m4.1.0"
+ENGINE_VERSION = "m4.2.0"
+
+
+def _share_sum_refusal(exc: WegShareSumError) -> dict:
+    """The structured 422 of a plan whose unit's co-owner shares add up to neither 1 nor 100 (#678).
+
+    The code and the unit are those of the annual settlement's refusal (#404); the plan splits
+    by the owners of its first day, so it names that one date.
+    """
+    total = format(exc.share_sum.normalize(), 'f')
+    return {
+        'code': 'weg_co_owner_shares_mismatch',
+        'unit_id': str(exc.unit_id), 'unit_number': exc.unit_number,
+        'date': exc.span_start.isoformat(),
+        'share_sum': total,
+        'message': (
+            f'Die Miteigentumsanteile der Eigentümer von Einheit {exc.unit_number} ergeben zum '
+            f'Planbeginn am {exc.span_start:%d.%m.%Y} zusammen {total.replace(".", ",")} statt 1 oder 100. '
+            f'Bitte korrigieren Sie die MEA-Anteile mit „Korrigieren“ in der Eigentümer-Historie '
+            f'der Einheit und berechnen Sie den Wirtschaftsplan erneut.'),
+    }
 
 
 @dataclass
@@ -530,6 +550,8 @@ class EconomicPlanService:
         inp = await self._load_engine_input(plan, inputs)
         try:
             result = compute_wirtschaftsplan(inp)
+        except WegShareSumError as exc:
+            raise HTTPException(status_code=422, detail=_share_sum_refusal(exc)) from exc
         except (WegValidationError, DistributionError, PeriodOverlapError) as exc:
             raise HTTPException(status_code=422, detail=f"Plan-Berechnung nicht moeglich: {exc}")
         return inp, result
