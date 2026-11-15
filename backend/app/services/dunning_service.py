@@ -276,9 +276,7 @@ class DunningService:
                 ),
             )
 
-        # The WEG the notice belongs to: the property of its scope, else of its plan. Levies are always
-        # scoped, so a notice with neither has no charges of its own; it counts as before.
-        property_id = sphere.property_id if sphere is not None else plan.property_id if plan is not None else None
+        property_id = self._owner_notice_property(sphere, plan, overdue, scoped)
         await context.history(owner_id=owner_profile_id)
         demanded = await self._repo.highest_item_demand_count(
             item_keys=[item_key(item) for item in overdue], owner_profile_id=owner_profile_id,
@@ -295,8 +293,7 @@ class DunningService:
             raise HTTPException(status_code=422, detail="Could not assemble dunning notice")
 
         items = dunning.items_snapshot()
-        if property_id is not None:
-            items[0][PROPERTY_SOURCE_KEY] = str(property_id)
+        items[0][PROPERTY_SOURCE_KEY] = str(property_id)
         notice = DunningNotice(
             organization_id=self._org_id,
             owner_profile_id=owner_profile_id,
@@ -335,6 +332,34 @@ class DunningService:
             )
         )
         return notice
+
+    @staticmethod
+    def _owner_notice_property(sphere, plan, overdue, payments):
+        """The one property (WEG) an owner notice belongs to, taken from where its items come from.
+
+        The selected accounting scope names it, otherwise the economic plan whose Hausgeld the items
+        are. Without both, the items are the owner's booked payments (a refund without a charge is an
+        open item; levies always carry a scope): the property is the one of the payments that make up
+        the overdue items. No or several properties are refused, because a notice has to count the
+        demands of its own WEG only.
+        """
+        if sphere is not None:
+            return sphere.property_id
+        if plan is not None:
+            return plan.property_id
+        keys = {(item.period_year, item.period_month, item.payment_type) for item in overdue}
+        properties = {p.property_id for p in payments
+                      if p.status == "booked" and p.reversed_by_id is None and p.reverses_id is None
+                      and (p.period_year or 0, p.period_month, p.payment_type) in keys}
+        if len(properties) != 1:
+            raise HTTPException(
+                status_code=422,
+                detail=(
+                    "Die offenen Beträge des Eigentümers gehören zu mehreren Objekten. "
+                    "Bitte einen Wirtschaftsplan oder Abrechnungskreis auswählen."
+                ),
+            )
+        return properties.pop()
 
     # ------------------------------------------------------------------
     # Issue (freeze)

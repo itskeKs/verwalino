@@ -2959,6 +2959,70 @@ async def _finalized_hausgeld_plan(api, property_id, yearly):
     return plan
 
 
+def _insert_owner_refund(w, property_id, iban):
+    """A booked refund (OUT) of 100.00 on the Hausgeld of March 2026 of the owner, on a new account of the property.
+    Without a charge the statement shows it as an open item of 100.00."""
+    import psycopg2
+    from tests.conftest import MIGRATOR_SYNC_URL
+
+    account = str(uuid.uuid4())
+    with psycopg2.connect(MIGRATOR_SYNC_URL) as conn, conn.cursor() as cur:
+        cur.execute("""INSERT INTO bank_account(id,organization_id,property_id,account_type,label,iban)
+            VALUES (%s,%s,%s,'LAUFEND','T26 refund',%s)""", (account, str(w["org_a_id"]), property_id, iban))
+        cur.execute("""INSERT INTO payment(organization_id,bank_account_id,property_id,direction,amount,value_date,
+            payment_type,owner_profile_id,period_year,period_month,status,booked_at,booked_by)
+            VALUES (%s,%s,%s,'OUT',100,'2026-03-10','HAUSGELD_VORSCHUSS',%s,2026,3,'booked',now(),%s)""",
+                    (str(w["org_a_id"]), account, property_id, w["seller"], str(w["user_a_admin_id"])))
+
+
+MARCH_NOTICE = {"period_start": "2026-03-01", "period_end": "2026-03-31", "reference_date": "2026-03-20"}
+
+
+@pytest.mark.asyncio
+async def test_a_notice_without_scope_and_plan_takes_the_property_of_the_payments_it_consists_of(ownership_world):
+    """No plan and no scope: the only open item is a refund of 100.00 booked in WEG A. The notice takes WEG A from
+    that payment, so the first notice of WEG B for the same month is level 1 (level 2 with 2.50 before: the refund's
+    notice stored no property and counted for every property)."""
+    from tests.test_ownership_change import create_owner, ownership_client
+
+    w = ownership_world
+    second = _add_second_weg(w)
+    _insert_owner_refund(w, w["property"], "DE02200505501015871393")
+    async with ownership_client(w) as api:
+        await create_owner(api, w)
+        await create_owner(api, {**w, "unit": second["unit_b"]})
+        plan_b = await _finalized_hausgeld_plan(api, second["property_b"], "2400.00")
+        refund = await api.post("/api/dunning/owner", json={"owner_profile_id": w["seller"], **MARCH_NOTICE})
+        assert refund.status_code == 201, refund.text
+        refund = refund.json()
+        assert (refund["level"], refund["fee_amount"], refund["total_amount"]) == (1, "0.00", "100.00"), refund
+        assert _stored_property(refund) == w["property"]
+        assert (await api.post(f"/api/dunning/{refund['id']}/issue")).status_code == 200
+        other = await api.post("/api/dunning/owner", json={
+            "owner_profile_id": w["seller"], "economic_plan_id": plan_b, **MARCH_NOTICE})
+        assert other.status_code == 201, other.text
+        # Level and fee only: until #675 the refund of WEG A also lowers the Ist of the statement of WEG B.
+        assert (other.json()["level"], other.json()["fee_amount"]) == (1, "0.00"), other.json()
+        assert _stored_property(other.json()) == second["property_b"]
+
+
+@pytest.mark.asyncio
+async def test_a_notice_whose_payments_belong_to_two_properties_is_refused_without_scope_and_plan(ownership_world):
+    from tests.test_ownership_change import ownership_client
+
+    w = ownership_world
+    second = _add_second_weg(w)
+    _insert_owner_refund(w, w["property"], "DE02200505501015871393")
+    _insert_owner_refund(w, second["property_b"], "DE36302501010002042407")
+    async with ownership_client(w) as api:
+        response = await api.post("/api/dunning/owner", json={"owner_profile_id": w["seller"], **MARCH_NOTICE})
+        assert response.status_code == 422, response.text
+        assert response.json()["detail"] == (
+            "Die offenen Beträge des Eigentümers gehören zu mehreren Objekten. "
+            "Bitte einen Wirtschaftsplan oder Abrechnungskreis auswählen.")
+        assert (await api.get("/api/dunning", params={"owner_profile_id": w["seller"]})).json() == []
+
+
 @pytest.mark.asyncio
 async def test_a_hausgeld_notice_in_one_weg_never_raises_the_level_of_a_notice_in_another_weg(ownership_world):
     """The issue's case: one owner, a unit and a finalized plan in each of two WEGs, March 2026 unpaid in both."""

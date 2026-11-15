@@ -121,8 +121,8 @@ class DunningNoticeRepository(TenantRepository[DunningNotice]):
         An owner holds units in several WEGs, and one month of the same payment type (a Hausgeld
         instalment, a levy due on the same day) exists once per WEG: with a property_id only the
         owner's notices of that property count (PROPERTY_SOURCE_KEY in the first stored item). A
-        notice that stores no property (issued before the key existed, or without a scope or plan)
-        counts for every property, and without a property_id every notice of the owner counts.
+        notice issued before the key existed stores no property and counts for every property;
+        without a property_id every notice of the owner counts.
         """
         if not item_keys:
             return 0
