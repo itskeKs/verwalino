@@ -18,6 +18,7 @@ from datetime import date
 from decimal import Decimal
 
 from tests.financial_coverage_helpers import attest_fixture
+from tests.payment_reversal_support import book_then_reverse, payment_clock as payment_clock  # noqa: F401
 import pytest
 from sqlalchemy import text
 
@@ -653,6 +654,70 @@ class TestPaymentAPI:
         # Original now carries reversed_by_id.
         r = await client_a_clerk.get(f"/api/payments/{pid}")
         assert r.json()["reversed_by_id"] == storno["id"]
+
+    @staticmethod
+    def _booking(m6_seed, value_date, counterparty):
+        body = {"bank_account_id": str(m6_seed["acct_a"]), "direction": "IN", "amount": "150.00",
+                "value_date": value_date, "period_year": int(value_date[:4]),
+                "period_month": int(value_date[5:7])}
+        if counterparty == "owner":
+            return {**body, "payment_type": "SONDERZAHLUNG", "owner_profile_id": str(m6_seed["owner"])}
+        return {**body, "payment_type": "KALTMIETE", "tenant_profile_id": str(m6_seed["tenant"]),
+                "lease_agreement_id": str(m6_seed["lease"])}
+
+    async def _book_then_reverse(self, client, m6_seed, payment_clock, *, value_date, booked_on, reversed_on,
+                                 counterparty="tenant"):
+        return await book_then_reverse(client, self._booking(m6_seed, value_date, counterparty), payment_clock,
+                                       booked_on=booked_on, reversed_on=reversed_on)
+
+    @pytest.mark.asyncio
+    async def test_reversal_of_an_old_payment_is_retained_from_its_own_booking_date(
+            self, client_a_clerk, m6_seed, payment_clock):
+        original, storno = await self._book_then_reverse(
+            client_a_clerk, m6_seed, payment_clock,
+            value_date="2016-03-15", booked_on="2016-03-16T09:00:00", reversed_on="2026-11-08T09:00:00")
+        # The original keeps the anchor of its own booking; the Storno is a new record of 2026:
+        # 31.12.2026 + 8 years, while it still belongs to the accounting period of 2016.
+        assert original["retention_until"] == "2024-12-31"
+        assert storno["retention_until"] == "2034-12-31"
+        assert storno["value_date"] == "2016-03-15"
+        assert storno["booked_at"].startswith("2026-11-08")
+        fetched = await client_a_clerk.get(f"/api/payments/{storno['id']}")
+        assert fetched.json()["retention_until"] == "2034-12-31"
+        assert (await client_a_clerk.get(f"/api/payments/{original['id']}")).json()["retention_until"] == "2024-12-31"
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("counterparty", ["tenant", "owner"])
+    @pytest.mark.parametrize(
+        ("value_date", "reversed_on", "original_until", "storno_until"),
+        [
+            pytest.param("2026-05-01", "2026-11-08T09:00:00", "2034-12-31", "2034-12-31", id="same-year"),
+            pytest.param("2028-02-01", "2026-11-08T09:00:00", "2036-12-31", "2036-12-31", id="future-value-date"),
+            pytest.param("2016-03-15", "2026-12-31T23:59:59", "2024-12-31", "2034-12-31", id="last-second-of-year"),
+            pytest.param("2016-03-15", "2027-01-01T00:00:00", "2024-12-31", "2035-12-31", id="first-second-of-next-year"),
+            pytest.param("2026-12-31", "2027-01-01T00:00:00", "2034-12-31", "2035-12-31", id="value-date-in-the-year-before"),
+        ],
+    )
+    async def test_reversal_retention_is_never_earlier_than_the_original_and_follows_its_booking_year(
+            self, client_a_clerk, m6_seed, payment_clock, counterparty, value_date, reversed_on,
+            original_until, storno_until):
+        original, storno = await self._book_then_reverse(
+            client_a_clerk, m6_seed, payment_clock, counterparty=counterparty, value_date=value_date,
+            booked_on="2026-11-08T08:00:00", reversed_on=reversed_on)
+        assert (original["retention_until"], storno["retention_until"]) == (original_until, storno_until)
+        assert storno["retention_until"] >= original["retention_until"]
+        assert storno["value_date"] == original["value_date"] == value_date
+
+    @pytest.mark.asyncio
+    async def test_a_reversal_cannot_be_reversed_so_it_never_gets_a_second_anchor(
+            self, client_a_clerk, m6_seed, payment_clock):
+        _, storno = await self._book_then_reverse(
+            client_a_clerk, m6_seed, payment_clock,
+            value_date="2016-03-15", booked_on="2026-11-08T08:00:00", reversed_on="2026-11-08T09:00:00")
+        payment_clock("2030-01-01T00:00:00")
+        again = await client_a_clerk.post(f"/api/payments/{storno['id']}/reverse")
+        assert again.status_code == 409, again.text
+        assert (await client_a_clerk.get(f"/api/payments/{storno['id']}")).json()["retention_until"] == "2034-12-31"
 
     @pytest.mark.asyncio
     async def test_readonly_cannot_create(self, client_a_readonly, m6_seed):

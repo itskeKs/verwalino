@@ -578,7 +578,10 @@ class PaymentService:
             status="booked",
             booked_at=now,
             booked_by=self._user_id,
-            retention_until=_compute_retention_until(original.value_date),
+            # A Storno is a new record booked now: its retention counts from its own booking
+            # date (UTC, like booked_at), never from the older value date it copies; a future
+            # value date keeps the anchor no earlier than the original's.
+            retention_until=_compute_retention_until(max(original.value_date, now.date())),
             reverses_id=original.id,
             reserve_cost_entry_id=original.reserve_cost_entry_id,
             reserve_register_entry_id=original.reserve_register_entry_id,

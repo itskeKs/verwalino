@@ -17,6 +17,7 @@ from sqlalchemy import event, text
 from sqlalchemy.orm import Session
 from tests.conftest import MIGRATOR_SYNC_URL, clear_disposable_source_context
 from tests.test_rent_changes import rent_db as rent_db, rent_world as rent_world, api_client
+from tests.payment_reversal_support import book_then_reverse, payment_clock as payment_clock  # noqa: F401
 
 
 @pytest_asyncio.fixture
@@ -110,6 +111,24 @@ async def test_export_keeps_original_bytes_exact_decimals_and_existing_csv(rent_
         for entity, path in (("payment", "payments"), ("cost_entry", "cost-entries")):
             csv = await api.get(f"/api/{path}/export.csv")
             assert files[f"csv/{entity}.csv"] == csv.content
+
+
+async def test_export_carries_a_reversals_own_retention_anchor_as_stored(rent_world, export_store, payment_clock):
+    async with api_client(rent_world) as api:
+        bank = await api.post("/api/bank-accounts", json={
+            "property_id": str(rent_world["property"]), "account_type": "LAUFEND", "label": "Archive reversal bank"})
+        assert bank.status_code == 201, bank.text
+        original, storno = await book_then_reverse(api, {
+            "bank_account_id": bank.json()["id"], "direction": "IN", "amount": "700.00", "value_date": "2016-03-15",
+            "payment_type": "KALTMIETE", "tenant_profile_id": str(rent_world["tenant"]),
+            "lease_agreement_id": str(rent_world["lease"]), "period_year": 2016, "period_month": 3},
+            payment_clock, booked_on="2016-03-16T09:00:00", reversed_on="2026-11-08T09:00:00")
+        response = await api.post("/api/organizations/export")
+        assert response.status_code == 200, response.text
+    rows = {row["id"]: row for row in map(json.loads, unpack(response.content)["entities/payment.jsonl"].splitlines())}
+    # The archive holds the stored anchors, not a date recomputed from the copied value date.
+    assert (rows[original["id"]]["retention_until"], rows[storno["id"]]["retention_until"]) == ("2024-12-31", "2034-12-31")
+    assert rows[storno["id"]]["value_date"] == rows[original["id"]]["value_date"] == "2016-03-15"
 
 
 async def test_export_refuses_a_corrupt_original_without_an_artifact(rent_world, export_store):
