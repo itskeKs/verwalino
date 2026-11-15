@@ -431,7 +431,7 @@ class WirtschaftsplanInput:
     # cost umlage; m4 section 3). Distributed by MEA like a planned cost but kept
     # in its own RESERVE_CONTRIBUTION subtotal.
     reserve_contribution_total: Decimal = Decimal("0.00")
-    engine_version: str = "m4.1.0"
+    engine_version: str = "m4.2.0"
 
 
 @dataclass(frozen=True)

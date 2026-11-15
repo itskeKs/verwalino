@@ -833,9 +833,8 @@ def planned_reserve_has_no_spitze(world, weg_balance):
     assert 'zuzueglich Ruecklagenzufuehrung laut Wirtschaftsplan (Soll)' in pdf_text(response.content)
 
 
-@given(parsers.parse('Anna owns unit 1 alone and Bernd and Carla own unit 2 with shares of {bernd_share} and {carla_share}, '
-                     'both units of 500 MEA with 1000 euros of costs by MEA'), target_fixture='co_owned')
-def co_owned_units_world(world, seed_data, bernd_share, carla_share):
+def draft_plan_of_co_owned_units(world, seed_data, bernd_share, carla_share):
+    """Two units of 500 MEA, Bernd and Carla co-owning unit 2, 1000 euros of costs and a draft plan."""
     user = str(seed_data['user_a_admin_id'])
     world.actor = world.administrator_of('Verwaltung Alpha')
     world.actor_organization = 'Verwaltung Alpha'
@@ -871,12 +870,26 @@ def co_owned_units_world(world, seed_data, bernd_share, carla_share):
         'period_start': '2026-01-01', 'period_end': '2026-12-31'})
     values = {'planned_costs': [{'category_code': 'GARTENPFLEGE', 'label': 'Bewirtschaftung',
         'planned_amount': '1000.00', 'cost_group': 'UMLAGEFAEHIG'}], 'reserve_contribution_total': '0.00'}
-    world.run(attest_fixture(world.actor, 'economic_plan', plan['id'], values))
-    response = world.act('POST', f"/api/economic-plans/{plan['id']}/finalize", json=values)
+    return {'owners': owners, 'plan': plan['id'], 'entries': entries, 'unit_2': units['2']['id'],
+            'basis': basis, 'values': values}
+
+
+@given(parsers.parse('Anna owns unit 1 alone and Bernd and Carla own unit 2 with shares of {bernd_share} and {carla_share}, '
+                     'both units of 500 MEA with 1000 euros of costs by MEA'), target_fixture='co_owned')
+def co_owned_units_world(world, seed_data, bernd_share, carla_share):
+    w = draft_plan_of_co_owned_units(world, seed_data, bernd_share, carla_share)
+    world.run(attest_fixture(world.actor, 'economic_plan', w['plan'], w['values']))
+    response = world.act('POST', f"/api/economic-plans/{w['plan']}/finalize", json=w['values'])
     assert response.status_code == 200, response.text
-    run = create(world, '/api/weg-settlements', {**basis, 'economic_plan_id': plan['id'],
+    run = create(world, '/api/weg-settlements', {**w['basis'], 'economic_plan_id': w['plan'],
         'period_start': '2026-01-01', 'period_end': '2026-12-31'})
-    return {'run': run['id'], 'owners': owners, 'plan': plan['id'], 'entries': entries, 'unit_2': units['2']['id']}
+    return {**w, 'run': run['id']}
+
+
+@given(parsers.parse('Anna owns unit 1 alone and Bernd and Carla own unit 2 with shares of {bernd_share} and {carla_share}, '
+                     'both units of 500 MEA with a draft Wirtschaftsplan of 1000 euros'), target_fixture='co_owned')
+def co_owned_plan_world(world, seed_data, bernd_share, carla_share):
+    return draft_plan_of_co_owned_units(world, seed_data, bernd_share, carla_share)
 
 
 def compute_co_owned(world, w):
@@ -906,24 +919,26 @@ def co_owned_refusal_points_to_correction(co_owned):
     assert 'Einheit 2' in detail['message'] and '„Korrigieren“' in detail['message']
 
 
-@when("I correct Carla's share of unit 2 to 50")
-def correct_carlas_share(world, co_owned):
-    entry = co_owned['entries']['Carla']
+@when(parsers.parse("I correct {name}'s share of unit 2 to {share}"))
+def correct_share(world, co_owned, name, share):
+    entry = co_owned['entries'][name]
     response = world.act('POST', f"/api/ownership/{entry['id']}/correction",
-                         json={'valid_from': entry['valid_from'], 'mea_share': '50'})
+                         json={'valid_from': entry['valid_from'], 'mea_share': share})
     assert response.status_code == 201, response.text
-    co_owned['replacement'] = response.json()
+    co_owned['entries'][name] = response.json()
 
 
-@then("the history of unit 2 shows Carla's first entry as corrected, with who corrected it and when")
+@then("the history of unit 2 shows Carla's two earlier entries as corrected, with who corrected them and when")
 def history_shows_the_correction(world, co_owned):
     response = world.act('GET', '/api/ownership', params={'unit_id': co_owned['unit_2']})
     assert response.status_code == 200, response.text
-    rows = {row['id']: row for row in response.json()}
-    first, replacement = rows[co_owned['entries']['Carla']['id']], rows[co_owned['replacement']['id']]
-    assert Decimal(first['mea_share']) == 30 and first['corrected_at'] and first['corrected_by_name']
-    assert Decimal(replacement['mea_share']) == 50 and replacement['corrected_at'] is None
-    assert len(rows) == 3  # Bernd, Carla's first entry and its replacement
+    rows = [row for row in response.json() if row['owner_profile_id'] == co_owned['owners']['Carla']]
+    current = [row for row in rows if row['corrected_at'] is None]
+    earlier = [row for row in rows if row['corrected_at']]
+    assert [Decimal(row['mea_share']) for row in current] == [50]
+    assert sorted(Decimal(row['mea_share']) for row in earlier) == [30, 50]  # the mistaken entry and the first one
+    assert all(row['corrected_by_name'] for row in earlier)
+    assert len(response.json()) == 4  # Bernd and Carla's three entries
 
 
 @then("Anna's cost share is 500 euros and Bernd's and Carla's are 250 euros each")
@@ -943,11 +958,60 @@ def co_owned_refusal(co_owned):
     assert 'Einheit 2' in detail['message'] and 'statt 1 oder 100' in detail['message']
 
 
-@then("the plan of the same owners still gave Bernd 333.33 euros and Carla 166.67 euros of unit 2's 500 euros")
-def co_owned_plan_still_normalises(world, co_owned):
+def plan_request(world, w, action):
+    world.run(attest_fixture(world.actor, 'economic_plan', w['plan'], w['values']))
+    return world.act('POST', f"/api/economic-plans/{w['plan']}/{action}", json=w['values'])
+
+
+@when('I try to compute the Wirtschaftsplan of the co-owned units')
+def try_compute_plan(world, co_owned):
+    co_owned['response'] = plan_request(world, co_owned, 'compute')
+
+
+@when('I compute the Wirtschaftsplan of the co-owned units')
+def compute_plan(world, co_owned):
+    response = plan_request(world, co_owned, 'compute')
+    assert response.status_code == 200, response.text
+    co_owned['planned'] = response.json()
+
+
+@when('I try to finalize the Wirtschaftsplan of the co-owned units')
+def try_finalize_plan(world, co_owned):
+    co_owned['response'] = plan_request(world, co_owned, 'finalize')
+
+
+@then('the Wirtschaftsplan is refused in German, names unit 2 and the sum 80 and points to correcting its shares')
+def plan_refusal_points_to_correction(co_owned):
+    response = co_owned['response']
+    assert response.status_code == 422, response.text
+    detail = response.json()['detail']
+    assert (detail['code'], detail['unit_number'], detail['date'], detail['share_sum']) == (
+        'weg_co_owner_shares_mismatch', '2', '2026-01-01', '80')
+    assert 'Einheit 2' in detail['message'] and 'zusammen 80 statt 1 oder 100' in detail['message']
+    assert '„Korrigieren“' in detail['message'] and 'Wirtschaftsplan' in detail['message']
+
+
+@then('the Wirtschaftsplan is still a draft')
+def plan_is_still_a_draft(world, co_owned):
+    page = world.act('GET', f"/api/economic-plans/{co_owned['plan']}").json()
+    assert (page['status'], page['finalized_at']) == ('draft', None)
+
+
+@then('no Hausgeld was calculated for its owners')
+def plan_has_no_owner_advances(world, co_owned):
+    page = world.act('GET', f"/api/economic-plans/{co_owned['plan']}").json()
+    assert not [line for line in page['lines'] if line['line_type'] == 'OWNER_ADVANCE']
+
+
+@then("Anna's yearly Hausgeld is 500 euros and Bernd's and Carla's are 250 euros each")
+def plan_advances_of_the_co_owners(world, co_owned):
     page = world.act('GET', f"/api/economic-plans/{co_owned['plan']}").json()
     advances = {line['owner_profile_id']: line['planned_amount']
                 for line in page['lines'] if line['line_type'] == 'OWNER_ADVANCE'}
-    assert advances == {co_owned['owners']['Anna']: '500.00', co_owned['owners']['Bernd']: '333.33',
-                        co_owned['owners']['Carla']: '166.67'}
+    assert advances == {co_owned['owners']['Anna']: '500.00', co_owned['owners']['Bernd']: '250.00',
+                        co_owned['owners']['Carla']: '250.00'}
 
+
+@then('the plan records the plan engine version m4.2.0')
+def plan_engine_version(co_owned):
+    assert co_owned['planned']['engine_version'] == 'm4.2.0'

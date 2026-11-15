@@ -16,7 +16,7 @@ checks the visible detail explanations at 1280 px and 360 px; the
 [organization-isolation feature](../../features/organization_isolation.feature)
 checks that foreign financial records remain indistinguishable from missing ones.
 
-## Co-owner shares in the annual settlement
+## Co-owner shares in the Wirtschaftsplan and the annual settlement
 
 Enter the „MEA-Anteil“ of every co-owner of a unit in the unit's Eigentumshistorie as a fraction
 (0,5 / 0,5) or as percent (50 / 50); the annual settlement divides the unit's share among the
@@ -25,7 +25,12 @@ leaves during the year. A sole owner needs no share. If the active shares of a u
 neither 1 nor 100 (0,6 and 0,3, or three times 33,33), „Berechnen“ and „Finalisieren“ stop with a
 „Fehler“ naming the unit and the period („Die Miteigentumsanteile der Eigentümer von Einheit 2
 ergeben vom 01.01.2026 bis 31.12.2026 zusammen 0,9 statt 1 oder 100.“); add the missing co-owner or
-correct the shares and calculate again.
+correct the shares and calculate again. The Wirtschaftsplan applies the same rule to the owners of its
+first day: „Berechnen“ and „Finalisieren“ on the plan stop with a „Fehler“ naming the unit, the plan
+start and the sum („… ergeben zum Planbeginn am 01.01.2026 zusammen 80 statt 1 oder 100. …“) and say
+to correct the shares with „Korrigieren“ in the unit's Eigentümer-Historie; „Finalisieren“ calculates
+again from the current history, so shares changed after the last „Berechnen“ are caught there too.
+A plan that was finalized earlier stays as it is.
 
 A share or start date typed wrongly is corrected in the unit's „Eigentuemer-Historie“: „Korrigieren“
 on the row opens „Eintrag korrigieren“ with the start date and the „MEA-Anteil“; saving marks the old
@@ -41,8 +46,8 @@ Wirtschaftsplan 2026 …“): the plan froze its owners at its start. Open the p
 „Korrektur erstellen“ and finalize the correction plan; it is computed from the corrected history, and the
 Hausgeld Soll answers again. A co-owner who joins after the plan start stays refused whatever the plan
 says: correct such a start to the plan start. The correction dialog gives the same hint before saving. Thirds stored with six decimals (0,333333) are accepted. The
-economic plan, the Hausgeld Soll and special levies divide by the same ratio but do not stop on a
-wrong sum, so they can already exist while the annual settlement is refused. Rules and values:
+Hausgeld Soll and special levies divide by the same ratio but do not stop on a wrong sum, so they can
+already exist while the annual settlement is refused. Rules and values:
 [M4 §4.3.3](../m4-weg-abrechnung.md#433-co-owner-shares-are-ratios-inside-their-unit-404).
 
 ## Special levies backend (Sonderumlagen)

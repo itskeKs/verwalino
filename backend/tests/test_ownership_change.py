@@ -850,8 +850,9 @@ async def test_corrections_apply_to_the_next_settlement_and_never_change_a_final
     w, api = ownership_world, client_a_admin
     seed_financial_inputs(w)
     seller = await create_owner(api, w, mea_share="50")
-    buyer = await create_owner(api, w, "buyer", mea_share="30")
+    buyer = await create_owner(api, w, "buyer", mea_share="50")
     plan = await finalize_plan(api, w)
+    buyer = (await correct(api, buyer, mea_share="30")).json()
     run = await new_settlement(api, w, plan)
     refused = await run_settlement(api, w, run)
     assert refused.status_code == 422, refused.text
@@ -910,13 +911,15 @@ async def test_a_corrected_share_applies_to_the_next_plan_and_not_to_a_finalized
     client_a_admin, ownership_world,
 ):
     w, api = ownership_world, client_a_admin
-    await create_owner(api, w, mea_share="50")
-    buyer = await create_owner(api, w, "buyer", mea_share="30")
+    seller = await create_owner(api, w, mea_share="60")
+    buyer = await create_owner(api, w, "buyer", mea_share="40")
     plan = await finalize_plan(api, w, planned_amount="4800.00")
     frozen = (await api.get(f"/api/economic-plans/{plan}")).json()
     advances = {line["owner_profile_id"]: Decimal(line["planned_amount"])
                 for line in frozen["lines"] if line["line_type"] == "OWNER_ADVANCE"}
-    assert advances == {w["seller"]: Decimal("3000.00"), w["buyer"]: Decimal("1800.00")}
+    assert advances == {w["seller"]: Decimal("2880.00"), w["buyer"]: Decimal("1920.00")}
+    # The real shares were 50 and 50.
+    assert (await correct(api, seller, mea_share="50")).status_code == 201
     assert (await correct(api, buyer, mea_share="50")).status_code == 201
     assert (await api.get(f"/api/economic-plans/{plan}")).json() == frozen
     assert await draft_plan_advances(api, w, 2027) == {w["seller"]: Decimal("2400.00"), w["buyer"]: Decimal("2400.00")}
@@ -983,8 +986,8 @@ async def test_a_start_corrected_under_a_finalized_plan_names_the_unit_and_the_p
     client_a_admin, ownership_world,
 ):
     w, api = ownership_world, client_a_admin
-    await create_owner(api, w, mea_share="50")
-    carla = await create_owner(api, w, "buyer", mea_share="30", valid_from="2026-03-01")  # the real start was 1 January
+    await create_owner(api, w, mea_share="60")
+    carla = await create_owner(api, w, "buyer", mea_share="40", valid_from="2026-03-01")  # the real start was 1 January
     plan = await finalize_plan(api, w, planned_amount="4800.00")  # frozen: only the seller owns at the plan start
     period = {"period_start": "2026-01-01", "period_end": "2026-12-31"}
 
@@ -1005,8 +1008,8 @@ async def test_a_start_corrected_under_a_finalized_plan_names_the_unit_and_the_p
     hausgeld = await api.get(f"/api/economic-plans/{plan}/hausgeld-booking")
     assert hausgeld.status_code == 422 and hausgeld.json()["detail"]["code"] == "hausgeld_ownership_invalid", hausgeld.text
     renewed = await finalize_correction_plan(api, plan)
-    # By hand: 4.800,00 split 50 : 30 gives 3.000,00 and 1.800,00 a year, 250,00 and 150,00 a month.
-    for owner, total, monthly in (("seller", "3000.00", "250.00"), ("buyer", "1800.00", "150.00")):
+    # By hand: 4.800,00 split 60 : 40 gives 2.880,00 and 1.920,00 a year, 240,00 and 160,00 a month.
+    for owner, total, monthly in (("seller", "2880.00", "240.00"), ("buyer", "1920.00", "160.00")):
         answer = await ledger(owner, renewed)
         assert answer.status_code == 200, answer.text
         assert Decimal(answer.json()["soll_total"]) == Decimal(total)

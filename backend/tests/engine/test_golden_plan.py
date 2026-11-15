@@ -11,9 +11,11 @@ from __future__ import annotations
 import uuid
 from datetime import date
 from decimal import Decimal
+from fractions import Fraction
 
 import pytest
 
+from app.engine import weg as weg_engine
 from app.engine.types import (
     AssetItemInput,
     BankBalanceInput,
@@ -221,6 +223,141 @@ def test_a_short_plan_with_several_positions_units_and_a_reserve_loses_no_cent()
 def test_the_plan_engine_still_refuses_a_negative_planned_amount_in_a_short_plan():
     with pytest.raises(WegValidationError):
         compute_wirtschaftsplan(_short_plan(date(2025, 7, 1), date(2025, 9, 30), "-3000.00"))
+
+
+# ===========================================================================
+# Co-owner shares (#678): the plan splits a unit by the shares of the owners active at
+# period_start, so it refuses them under the settlement's rule (#404): the sum is 1 or 100
+# within the stored rounding. Hand values, 2025: unit 1 (500 MEA) belongs to Anna alone,
+# unit 2 (500 MEA) to `unit2_owners`; a plan of 1,000.00 gives each unit 500.00.
+# ===========================================================================
+BERND, CARLA, DORA = _U(31), _U(32), _U(33)
+
+
+def _co_owned_plan(unit2_owners, *, start=YEAR_START):
+    """Two units of 500 MEA: unit 1 owned by Anna alone, unit 2 by `unit2_owners`.
+
+    `unit2_owners` is a list of (owner id, share, valid_from, valid_to); shares are
+    strings or None, as they are stored in ownership_history.mea_share.
+    """
+    u1, u2 = _U(11), _U(12)
+    owners = [OwnerPeriodInput(unit_id=u1, owner_profile_id=_U(21), valid_from=date(2000, 1, 1), valid_to=None)]
+    for owner, share, valid_from, valid_to in unit2_owners:
+        owners.append(OwnerPeriodInput(unit_id=u2, owner_profile_id=owner, valid_from=valid_from,
+                                       valid_to=valid_to, mea_share=None if share is None else Decimal(share)))
+    return WirtschaftsplanInput(
+        plan_year=start.year, period_start=start, period_end=YEAR_END,
+        property=PropertyInput(id=_U(1), name="WEG", management_type="WEG"),
+        units=(UnitInput(id=u1, number="1", usage_type="WOHNUNG", mea=Decimal("500")),
+               UnitInput(id=u2, number="2", usage_type="WOHNUNG", mea=Decimal("500"))),
+        owner_periods=tuple(owners),
+        planned_costs=(PlannedCostInput(category_id=_U(91), category_code="HEIZUNG", label="x",
+                                        planned_amount=Decimal("1000.00"), distribution_key="MEA",
+                                        cost_group="UMLAGEFAEHIG"),),
+    )
+
+
+def _whole_year(owner, share):
+    return (owner, share, date(2000, 1, 1), None)
+
+
+def _advances(result):
+    return {o.owner_profile_id: (o.annual_advance, o.monthly_rates) for o in result.owners}
+
+
+class TestPlanCoOwnerShares:
+    @pytest.mark.parametrize("shares,total", [
+        (("50", "30"), "80"),
+        (("33.33", "33.33", "33.33"), "99.99"),
+        (("1", "1"), "2"),
+        (("0.6", "0.3"), "0.9"),
+        (("50", "60"), "110"),
+    ])
+    def test_shares_adding_up_to_neither_one_nor_hundred_are_refused(self, shares, total):
+        owners = [_whole_year(o, s) for o, s in zip((BERND, CARLA, DORA), shares)]
+        with pytest.raises(weg_engine.WegShareSumError) as caught:
+            compute_wirtschaftsplan(_co_owned_plan(owners))
+        exc = caught.value
+        assert isinstance(exc, WegValidationError)
+        assert (exc.unit_id, exc.unit_number) == (_U(12), "2")
+        assert (exc.span_start, exc.span_end) == (YEAR_START, YEAR_START)
+        assert exc.share_sum == Decimal(total)
+
+    @pytest.mark.parametrize("shares", [
+        ("60", "40"), ("0.6", "0.4"), ("50", "50"), ("0.5", "0.5"),
+        ("0.333333", "0.666667"), ("33.333333", "66.666667"),
+        ("0.333333", "0.333333", "0.333333"), ("33.333333", "33.333333", "33.333333"),
+        ("20", "30", "50"),
+    ])
+    def test_shares_adding_up_to_one_or_hundred_within_stored_rounding_are_accepted(self, shares):
+        owners = [_whole_year(o, s) for o, s in zip((BERND, CARLA, DORA), shares)]
+        r = compute_wirtschaftsplan(_co_owned_plan(owners))
+        advances = _advances(r)
+        assert sum((a for a, _ in advances.values()), Decimal("0.00")) == Decimal("1000.00")
+        assert advances[_U(21)][0] == Decimal("500.00")
+        total_share = sum((Decimal(s) for s in shares), Decimal(0))
+        for owner, share in zip((BERND, CARLA, DORA), shares):
+            exact = Fraction(500) * Fraction(Decimal(share)) / Fraction(total_share)
+            assert abs(Fraction(advances[owner][0]) - exact) < Fraction(1, 100)
+
+    def test_percent_and_fractions_give_the_same_split(self):
+        halves = compute_wirtschaftsplan(_co_owned_plan([_whole_year(BERND, "0.5"), _whole_year(CARLA, "0.5")]))
+        percent = compute_wirtschaftsplan(_co_owned_plan([_whole_year(BERND, "50"), _whole_year(CARLA, "50")]))
+        assert _advances(halves) == _advances(percent)
+        assert _advances(percent)[BERND][0] == _advances(percent)[CARLA][0] == Decimal("250.00")
+
+    @pytest.mark.parametrize("share", [None, "1", "100", "80", "0.3", "0"])
+    def test_a_sole_owner_is_not_checked_whatever_the_share(self, share):
+        r = compute_wirtschaftsplan(_co_owned_plan([_whole_year(BERND, share)]))
+        assert _advances(r)[BERND][0] == Decimal("500.00")
+
+    def test_only_the_owners_active_at_period_start_are_counted(self):
+        # Carla (0.3) ended before the plan started; Dora (0.3) starts after it. At 01.01.2025
+        # Bernd 0.5 and Eva 0.5 are the co-owners: they add up to 1, Carla and Dora are not looked at.
+        eva = _U(34)
+        r = compute_wirtschaftsplan(_co_owned_plan([
+            _whole_year(BERND, "0.5"),
+            (CARLA, "0.3", date(2000, 1, 1), date(2024, 12, 31)),
+            (eva, "0.5", date(2024, 6, 1), None),
+            (DORA, "0.3", date(2025, 7, 1), None),
+        ]))
+        assert set(_advances(r)) == {_U(21), BERND, eva}
+        assert _advances(r)[BERND][0] == _advances(r)[eva][0] == Decimal("250.00")
+
+    def test_the_owners_of_the_day_the_plan_starts_are_the_ones_counted(self):
+        # A plan starting 01.07.2025: Carla (0.5 until 30.06.) is gone, Bernd 0.5 and Dora 0.3 from 01.07.
+        with pytest.raises(weg_engine.WegShareSumError) as caught:
+            compute_wirtschaftsplan(_co_owned_plan([
+                _whole_year(BERND, "0.5"),
+                (CARLA, "0.5", date(2000, 1, 1), date(2025, 6, 30)),
+                (DORA, "0.3", date(2025, 7, 1), None),
+            ], start=date(2025, 7, 1)))
+        assert (caught.value.span_start, caught.value.span_end, caught.value.share_sum) == (
+            date(2025, 7, 1), date(2025, 7, 1), Decimal("0.8"))
+
+    @pytest.mark.parametrize("shares,message", [
+        ((None, "0.5"), "non-positive mea_share"),
+        (("0.5", None), "non-positive mea_share"),
+        (("0.5", "0"), "non-positive mea_share"),
+        (("1.5", "-0.5"), "non-positive mea_share"),
+        ((None, None), "total mea_share is 0"),
+    ])
+    def test_missing_or_non_positive_shares_keep_their_own_error(self, shares, message):
+        with pytest.raises(WegValidationError, match=message) as caught:
+            compute_wirtschaftsplan(_co_owned_plan([_whole_year(BERND, shares[0]), _whole_year(CARLA, shares[1])]))
+        assert not isinstance(caught.value, weg_engine.WegShareSumError)
+
+    def test_the_plan_reads_the_scales_and_the_tolerance_of_the_settlement(self, monkeypatch):
+        owners = [_whole_year(BERND, "500"), _whole_year(CARLA, "500")]
+        with pytest.raises(weg_engine.WegShareSumError):
+            compute_wirtschaftsplan(_co_owned_plan(owners))
+        monkeypatch.setattr(weg_engine, "SHARE_SUM_SCALES", (Decimal(1), Decimal(100), Decimal(1000)))
+        assert _advances(compute_wirtschaftsplan(_co_owned_plan(owners)))[BERND][0] == Decimal("250.00")
+        near = [_whole_year(BERND, "0.5"), _whole_year(CARLA, "0.50001")]
+        with pytest.raises(weg_engine.WegShareSumError):
+            compute_wirtschaftsplan(_co_owned_plan(near))
+        monkeypatch.setattr(weg_engine, "SHARE_ROUNDING_NOISE", Decimal("0.00001"))
+        assert BERND in _advances(compute_wirtschaftsplan(_co_owned_plan(near)))
 
 
 # ===========================================================================

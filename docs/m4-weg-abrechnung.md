@@ -163,7 +163,7 @@ This gives the plan the **same immutability guarantee** (a resolved economic pla
 | `status` | `String(12) NOT NULL DEFAULT 'draft'` | `draft`\|`finalized`. CHECK. Freeze condition `finalized`. |
 | `snapshot_payload` | `JSONB NULL` | canonical, complete plan basis + result (§5.4). |
 | `snapshot_sha256` | `String(64) NULL` | SHA-256 over canonical serialization (as in M3). |
-| `engine_version` | `String(20) NOT NULL` | e.g., `m4.1.0`. |
+| `engine_version` | `String(20) NOT NULL` | e.g., `m4.2.0`. |
 | `finalized_at`/`finalized_by` | `TIMESTAMPTZ` / `UUID NULL` FK→`user` (`SET NULL`) | Audit. |
 | `superseded_by_id` | `UUID NULL` FK self (`RESTRICT`) | Correction chain (E-4). |
 | `created_at`/`updated_at` | `TIMESTAMPTZ` | as everywhere. |
@@ -560,10 +560,10 @@ its other calculation refusals; classification uses the code, never the text.
 - The check runs per span, over all units of the property and every day of the settlement period,
   independently of the days the costs fall on; shares before or after the period do not count, and
   the message names the first span in which they do not add up.
-- The plan (shares at the plan start), the Hausgeld Soll (dated walk, §5.3a) and the special levy
-  (shares on the due date) already normalise by the same ratio with their own code and do **not**
-  refuse: for shares of 0,6 / 0,3 they still compute 2/3 : 1/3, while the annual settlement refuses
-  until the shares are corrected. Within the settlement the planned reserve Soll and the paid reserve
+- The plan refuses the same sums (§5.1a). The Hausgeld Soll (dated walk, §5.3a) and the special levy
+  (shares on the due date) normalise by the same ratio with their own code and do **not** refuse: for
+  shares of 0,6 / 0,3 they still compute 2/3 : 1/3, while the annual settlement refuses until the
+  shares are corrected. Within the settlement the planned reserve Soll and the paid reserve
   contributions come from the frozen plan and the reserve ledger, not from these weights.
 
 Drafts recomputed under `m4.9.0` can differ from `m4.8.0` wherever shares did not add up to 1 or
@@ -680,6 +680,30 @@ data-basis attestation, cost change, finalization, or resolution.
 After a manual draft is calculated, reopening restores the cost rows and reserve used for
 that result. Changes made in the editor require another calculation before finalizing a
 previously calculated draft. The existing data-basis confirmation still applies.
+
+### 5.1a Co-owner shares at the plan start (#678)
+
+The plan splits a unit by the owners active on `period_start` (§5.3). Several owners on that day
+are co-owners and bear `mea_share / Σ mea_share`; the plan accepts a sum only under the settlement's
+rule (§4.3.3): the shares add up to **1 or 100** within the stored rounding. The scales and the
+tolerance are one definition, `SHARE_SUM_SCALES` and `SHARE_ROUNDING_NOISE` in `engine/weg.py`
+(`share_sum_is_accepted`), read by both engines.
+
+- A sole owner is not checked, whatever `mea_share` carries. Owners whose row ended before
+  `period_start` or starts after it are not counted: the plan does not split by them.
+- A missing or non-positive `mea_share` of a co-owner keeps its own refusal („Plan-Berechnung nicht
+  moeglich: …“), checked first; the sum is checked once every share is positive.
+- „Berechnen“ and „Finalisieren“ both refuse with HTTP 422 and the structured detail
+  `code: weg_co_owner_shares_mismatch`, `unit_id`, `unit_number`, `date` (the plan start), `share_sum`
+  and a German `message` („Die Miteigentumsanteile der Eigentümer von Einheit 2 ergeben zum
+  Planbeginn am 01.01.2026 zusammen 80 statt 1 oder 100. Bitte korrigieren Sie die MEA-Anteile mit
+  „Korrigieren“ in der Eigentümer-Historie der Einheit und berechnen Sie den Wirtschaftsplan erneut.“).
+  The plan page shows the message in its „Fehler“ banner; classification uses the code, never the text.
+- „Finalisieren“ does not rely on the stored result: it loads the current ownership history and runs
+  the same engine (`EconomicPlanService.finalize` -> `_compute_engine`), so shares that were
+  changed or corrected after the last „Berechnen“ are refused there, and nothing is frozen.
+- The plan engine version is `m4.2.0`. Plans finalized under `m4.1.0` stay frozen as they are; a
+  draft recomputed under `m4.2.0` can be refused where `m4.1.0` normalised the shares.
 
 ### 5.2 Outputs (SDD §10)
 

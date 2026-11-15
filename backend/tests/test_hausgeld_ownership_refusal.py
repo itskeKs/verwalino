@@ -28,8 +28,8 @@ BERND, CARLA, DAVID = uuid.UUID(int=1), uuid.UUID(int=2), uuid.UUID(int=3)
 
 
 def owners(carla_from: date) -> list[OwnerPeriodInput]:
-    return [OwnerPeriodInput(UNIT, BERND, START, None, Decimal("50")),
-            OwnerPeriodInput(UNIT, CARLA, carla_from, None, Decimal("30"))]
+    return [OwnerPeriodInput(UNIT, BERND, START, None, Decimal("60")),
+            OwnerPeriodInput(UNIT, CARLA, carla_from, None, Decimal("40"))]
 
 
 def frozen_lines(history) -> list[OwnerAdvanceChargeInput]:
@@ -55,10 +55,10 @@ def test_a_start_corrected_to_the_plan_start_is_followed_again_by_a_plan_compute
     with pytest.raises(ValueError, match="successors"):
         soll(frozen, BERND, corrected)  # the correction alone does not help: the frozen lines miss Carla
     renewed = frozen_lines(corrected)
-    # By hand: 4.800,00 split 50 : 30 = 3.000,00 and 1.800,00 a year, 250,00 and 150,00 a month.
+    # By hand: 4.800,00 split 60 : 40 = 2.880,00 and 1.920,00 a year, 240,00 and 160,00 a month.
     assert [(ln.owner_profile_id, ln.annual_amount) for ln in renewed] == [
-        (BERND, Decimal("3000.00")), (CARLA, Decimal("1800.00"))]
-    for owner, monthly in ((BERND, "250.00"), (CARLA, "150.00")):
+        (BERND, Decimal("2880.00")), (CARLA, Decimal("1920.00"))]
+    for owner, monthly in ((BERND, "240.00"), (CARLA, "160.00")):
         charges = soll(renewed, owner, corrected)
         assert [(c.period_month, c.amount) for c in charges] == [(m, Decimal(monthly)) for m in range(1, 13)]
 
@@ -66,7 +66,7 @@ def test_a_start_corrected_to_the_plan_start_is_followed_again_by_a_plan_compute
 def test_a_coowner_joining_after_the_plan_start_stays_refused_whatever_the_plan_says():
     both_from_january, joined_in_march = owners(START), owners(date(2026, 3, 1))
     frozen = frozen_lines(both_from_january)
-    assert [ln.annual_amount for ln in frozen] == [Decimal("3000.00"), Decimal("1800.00")]
+    assert [ln.annual_amount for ln in frozen] == [Decimal("2880.00"), Decimal("1920.00")]
     with pytest.raises(ValueError, match="successors"):
         soll(frozen, BERND, joined_in_march)  # lines for Carla, but she is no owner in January
     renewed = frozen_lines(joined_in_march)  # a plan computed anew carries only Bernd, Carla still joins
