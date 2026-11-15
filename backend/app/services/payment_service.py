@@ -881,6 +881,7 @@ class PaymentService:
                 {'org': self._org_id, 'profile': owner_profile_id}):
             raise HTTPException(404, 'Owner profile not accessible')
         charges = []
+        plan = None
         if economic_plan_id is not None:
             plan = await self._plans.get_by_id(economic_plan_id)
             if plan is None:
@@ -900,9 +901,24 @@ class PaymentService:
         charges.extend(special_levy_expected_charges(
             [(due, allocation.amount) for allocation, due in allocations], owner_profile_id, period_start, period_end))
 
-        payments = await self._repo.list_for_owner(owner_profile_id, property_id=property_id)
+        payments = await self._repo.list_for_owner(
+            owner_profile_id, property_id=self.owner_payments_property(sphere, plan, property_id))
         scoped = self._scope_payments_to_period(payments, period_start, period_end)
         return account_statement(charges, [to_payment_input(p) for p in scoped], as_of=as_of or date.today())
+
+    @staticmethod
+    def owner_payments_property(sphere, plan, property_id=None):
+        """The property whose payments an owner statement and an owner dunning notice read (#675).
+
+        The property asked for, otherwise the one of the selected accounting scope, otherwise the one
+        of the economic plan: a payment booked for another WEG never reduces what one WEG shows as
+        open. Without any of them the account is the owner's over every property.
+        """
+        if property_id is not None:
+            return property_id
+        if sphere is not None:
+            return sphere.property_id
+        return plan.property_id if plan is not None else None
 
     @staticmethod
     def _scope_payments_to_period(payments, period_start: date, period_end: date):
