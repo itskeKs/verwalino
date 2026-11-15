@@ -284,7 +284,12 @@ The engine sums **three subtotals** per owner (`SUBTOTAL` lines): Σ allocable, 
   run's property and accounting scope **whose due date lies within the settlement period** (both
   days inclusive; `SpecialLevyService.property_allocations`). The allocation already says who owes
   it: the owner on the due date, the unit's co-owners by their relative shares, a corrected
-  ownership row never receives one, and a later correction changes no frozen share. A levy due
+  ownership row never receives one, and a later correction that leaves the same owners on the due
+  date changes no frozen share. The allocation is written when the levy is created, so a sale
+  recorded afterwards leaves the seller allocated: the settlement therefore compares, per levy and
+  unit, the allocated owners with the owners the ownership rows name on the due date (all
+  co-owners named, nobody else) and refuses the calculation with HTTP 422 `weg_levy_owner_mismatch`
+  (levy, unit, due date, German message) until the allocation follows the ownership (#681). A levy due
   outside the period is not read at all and the engine refuses one that is passed in. The costs stay
   distributed as before: there is no link from a cost entry to a levy, so a levy above or below the
   repair it financed leaves a credit (Guthaben) or an additional payment (Nachschuss) in the Spitze.

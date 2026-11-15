@@ -145,7 +145,7 @@ class TestI4C_SpitzeIstMinusSoll:
             plan_reserve=tuple(OwnerAdvanceInput(_U(100 + i), amount)
                 for i, amount in enumerate(distribute_amount(reserve, meas))),
             # One special levy (#405), allocated to the owners by the levy's own largest remainder.
-            special_levies=tuple(OwnerLevyInput(_U(100 + i), _U(60), date(2025, 6, 1), amount)
+            special_levies=tuple(OwnerLevyInput(_U(100 + i), _U(60), _U(10 + i), date(2025, 6, 1), amount)
                 for i, amount in enumerate(distribute_amount(levy, meas))),
         )
         r = compute_weg_jahresabrechnung(inp)

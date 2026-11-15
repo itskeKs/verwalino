@@ -394,11 +394,12 @@ def build_weg_snapshot_payload(
                 {
                     "owner_profile_id": str(lv.owner_profile_id),
                     "special_levy_id": str(lv.special_levy_id),
+                    "unit_id": str(lv.unit_id),
                     "due_date": lv.due_date.isoformat(),
                     "amount": _m(lv.amount),
                 }
                 for lv in sorted(inp.special_levies, key=lambda lv: (
-                    str(lv.owner_profile_id), lv.due_date.isoformat(), str(lv.special_levy_id)))
+                    str(lv.owner_profile_id), lv.due_date.isoformat(), str(lv.special_levy_id), str(lv.unit_id)))
             ]} if inp.special_levies else {}),
             **({"levy_paid": [
                 {

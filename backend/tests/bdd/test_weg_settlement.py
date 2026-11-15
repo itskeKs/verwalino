@@ -206,6 +206,12 @@ def yearless_hausgeld(world, weg_balance):
        target_fixture='weg_balance')
 def payment_only_successor(world, seed_data):
     w = create_balance_world(world, seed_data, cost_period_end='2026-06-30')
+    record_sale_of_unit_2(world, w)
+    return w
+
+
+def record_sale_of_unit_2(world, w):
+    """Berta's ownership of unit 2 ends 30.06.2026, Clara owns it from 01.07.2026."""
     response = world.act('GET', f"/api/ownership?unit_id={w['units'][1]}")
     assert response.status_code == 200, response.text
     old = next(row for row in response.json() if row['owner_profile_id'] == w['owners'][1])
@@ -217,7 +223,6 @@ def payment_only_successor(world, seed_data):
         'valid_from': '2026-07-01'})
     w['successor'] = owner['id']
     w['owners'].append(owner['id'])
-    return w
 
 
 @given('the successor has booked 1900 euros for December 2026 with a January 2027 value date')
@@ -1147,3 +1152,35 @@ def levy_block_browser(browser_world, weg_balance):
         assert not console_errors and not b.errors, (console_errors, b.errors)
 
     b.run(check())
+
+
+@given('the sale of unit 2 from Berta to Clara from July is recorded afterwards')
+def sale_recorded_after_the_levy(world, weg_balance):
+    record_sale_of_unit_2(world, weg_balance)
+
+
+@given('Clara has paid 2000 euros of the levy in October')
+def successor_levy_payment(world, weg_balance):
+    w = weg_balance
+    book_payment(world, w, w['successor'], '2000.00', 'SONDERZAHLUNG', '2026-10-05', period_year=2026, period_month=10)
+
+
+@when('I try to compute the WEG annual settlement with the levy')
+def try_compute_with_levy(world, weg_balance):
+    w = weg_balance
+    values = {'paid_advances': [{'owner_profile_id': owner, 'paid_total': '0.00'} for owner in w['owners']]}
+    world.run(attest_fixture(world.actor, 'settlement', w['run'], values))
+    w['response'] = world.act('POST', f"/api/weg-settlements/{w['run']}/compute", json=values)
+
+
+@then('the calculation is refused in German, naming the 5.000,00 euro levy, unit 2 and 1 October 2026')
+def levy_owner_refusal(world, weg_balance):
+    w = weg_balance
+    response = w['response']
+    assert response.status_code == 422, response.text
+    detail = response.json()['detail']
+    assert {key: detail[key] for key in ('code', 'special_levy_id', 'unit_id', 'unit_number', 'due_date')} == {
+        'code': 'weg_levy_owner_mismatch', 'special_levy_id': world.data['levy']['id'], 'unit_id': w['units'][1],
+        'unit_number': '2', 'due_date': '2026-10-01'}
+    for expected in ('5.000,00 €', 'Einheit 2', '01.10.2026', 'vor der Erfassung des Eigentümerwechsels'):
+        assert expected in detail['message']

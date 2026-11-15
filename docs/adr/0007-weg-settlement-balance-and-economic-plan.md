@@ -182,7 +182,10 @@ An owner's `levy_soll` is the sum of that owner's frozen levy allocations
 (`SpecialLevyService.property_allocations`) of the settlement's property and accounting scope
 whose **due date lies within the settlement period**, both days inclusive. The allocation
 already decides who owes a levy (the owner on the due date, co-owners by their relative
-shares) and in which cents; the settlement adds shares up and rounds nothing. A levy due
+shares) and in which cents; the settlement adds shares up and rounds nothing. A sale recorded after
+the levy was created leaves the allocation with the seller, so the settlement refuses (HTTP 422,
+`weg_levy_owner_mismatch`) a levy whose allocated owners per unit differ from the owners the ownership
+rows name on its due date, until the allocation follows the ownership (#681). A levy due
 outside the period belongs to the settlement that contains its due date. The planned reserve
 Soll of amendment #401 is unchanged.
 

@@ -63,6 +63,7 @@ from app.engine.types import (
     COST_GROUP_UMLAGEFAEHIG,
     DIRECT_KEYS,
     OwnerCostStep,
+    OwnerPeriodInput,
     OwnerResult,
     PeriodOverlapError,
     ReserveDevelopment,
@@ -103,6 +104,29 @@ class WegShareSumError(WegValidationError):
         super().__init__(
             f"Co-owner shares of unit {unit_number} ({unit_id}) sum to {share_sum} on "
             f"[{span_start}..{span_end}], neither 1 nor 100 (escalate, #404)."
+        )
+
+
+class WegLevyOwnerError(WegValidationError):
+    """A levy allocation names other owners of a unit than the ownership rows do on its due date (#405).
+
+    The allocation is written when the levy is created; an ownership change recorded afterwards
+    leaves it with the previous owner. Charging that owner would put the levy Soll on the wrong
+    Spitze, so the calculation stops and names the levy, the unit and the due date.
+    """
+
+    def __init__(
+        self, levy_id: uuid.UUID, levy_amount: Decimal, unit_id: uuid.UUID, unit_number: str,
+        due_date: date,
+    ) -> None:
+        self.levy_id = levy_id
+        self.levy_amount = levy_amount
+        self.unit_id = unit_id
+        self.unit_number = unit_number
+        self.due_date = due_date
+        super().__init__(
+            f"Special levy {levy_id} due {due_date}: its allocation for unit {unit_number} ({unit_id}) "
+            f"does not name the owners of the unit on the due date (escalate, #405)."
         )
 
 
@@ -272,6 +296,37 @@ def _require_share_sums(unit: UnitInput, spans: list[_OwnerSpan]) -> None:
         tolerance = SHARE_ROUNDING_NOISE * len(span.fractions)
         if not any(abs(span.share_sum - scale) <= tolerance for scale in SHARE_SUM_SCALES):
             raise WegShareSumError(unit.id, unit.number, span.start, span.end, span.share_sum)
+
+
+def _require_levy_owners(
+    inp: WegSettlementInput, units: list[UnitInput], owner_periods: list[OwnerPeriodInput]
+) -> None:
+    """Refuse a levy whose allocation does not name, per unit, the owners of its due date (#405).
+
+    The ownership rows are read as they are now. Per levy and unit the allocated owners must be
+    exactly the owners active on the due date: co-owners all named, and nobody named who does not
+    own the unit on that day. The first offending levy (by due date, then id) and unit (by number)
+    is reported.
+    """
+    allocated: dict[uuid.UUID, dict[uuid.UUID, set[uuid.UUID]]] = {}
+    amounts: dict[uuid.UUID, Decimal] = {}
+    due_dates: dict[uuid.UUID, date] = {}
+    for levy in inp.special_levies:
+        allocated.setdefault(levy.special_levy_id, {}).setdefault(levy.unit_id, set()).add(levy.owner_profile_id)
+        amounts[levy.special_levy_id] = amounts.get(levy.special_levy_id, Decimal("0.00")) + levy.amount
+        due_dates[levy.special_levy_id] = levy.due_date
+    numbers = {unit.id: unit.number for unit in units}
+    for levy_id in sorted(allocated, key=lambda i: (due_dates[i], str(i))):
+        due = due_dates[levy_id]
+        by_unit = allocated[levy_id]
+        for unit_id in sorted(set(numbers) | set(by_unit), key=lambda i: (numbers.get(i, ""), str(i))):
+            owners = {
+                period.owner_profile_id for period in owner_periods
+                if period.unit_id == unit_id and period.valid_from <= due
+                and (period.valid_to is None or due <= period.valid_to)
+            }
+            if owners != by_unit.get(unit_id, set()):
+                raise WegLevyOwnerError(levy_id, amounts[levy_id], unit_id, numbers.get(unit_id, str(unit_id)), due)
 
 
 def _owner_time_weight(
@@ -501,6 +556,7 @@ def compute_weg_jahresabrechnung(inp: WegSettlementInput) -> WegResult:
     for unit in units:
         owner_spans[unit.id] = _unit_owner_spans(unit, owner_covers[unit.id])
         _require_share_sums(unit, owner_spans[unit.id])
+    _require_levy_owners(inp, units, owner_periods)
 
     # Deterministic position order (by category_code then id) -> reproducible
     # sort_order + snapshot.

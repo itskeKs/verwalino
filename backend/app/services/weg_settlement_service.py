@@ -63,7 +63,7 @@ from app.engine.types import (
     WegSettlementInput,
 )
 from app.engine.vermoegensbericht import AssetReportResult, build_vermoegensbericht
-from app.engine.weg import WegShareSumError, WegValidationError, compute_weg_jahresabrechnung
+from app.engine.weg import WegLevyOwnerError, WegShareSumError, WegValidationError, compute_weg_jahresabrechnung
 from app.models.audit_event import AuditEvent
 from app.services.financial_scope_service import FinancialScopeService
 from app.services.financial_computation_service import begin_computation, record_computation
@@ -109,6 +109,23 @@ def _share_sum_refusal(exc: WegShareSumError) -> dict:
             f'{exc.span_start:%d.%m.%Y} bis {exc.span_end:%d.%m.%Y} zusammen {total.replace(".", ",")} '
             f'statt 1 oder 100. Bitte korrigieren Sie die MEA-Anteile mit „Korrigieren“ in der '
             f'Eigentümer-Historie der Einheit und berechnen Sie die Abrechnung erneut.'),
+    }
+
+
+def _levy_owner_refusal(exc: WegLevyOwnerError) -> dict:
+    """The structured 422 of a levy whose allocation names other owners than its due date does (#405)."""
+    amount = f'{exc.levy_amount:,.2f}'.replace(',', '_').replace('.', ',').replace('_', '.')
+    return {
+        'code': 'weg_levy_owner_mismatch',
+        'special_levy_id': str(exc.levy_id), 'unit_id': str(exc.unit_id), 'unit_number': exc.unit_number,
+        'due_date': exc.due_date.isoformat(), 'levy_amount': str(exc.levy_amount),
+        'message': (
+            f'Die Sonderumlage über {amount} € mit Fälligkeit am {exc.due_date:%d.%m.%Y} wurde Einheit '
+            f'{exc.unit_number} vor der Erfassung des Eigentümerwechsels zugeordnet: Die zugeordneten Eigentümer '
+            f'sind nicht die Eigentümer der Einheit am Fälligkeitstag laut Eigentümer-Historie. Die Abrechnung '
+            f'kann nicht berechnet werden, solange die Sonderumlage dem bisherigen Eigentümer zugeordnet ist, '
+            f'weil sonst dessen Abrechnungsspitze falsch wäre. Die Zuordnung einer Sonderumlage lässt sich '
+            f'derzeit nicht ändern.'),
     }
 
 
@@ -559,6 +576,8 @@ class WegSettlementService:
             result = compute_weg_jahresabrechnung(inp)
         except WegShareSumError as exc:
             raise HTTPException(status_code=422, detail=_share_sum_refusal(exc)) from exc
+        except WegLevyOwnerError as exc:
+            raise HTTPException(status_code=422, detail=_levy_owner_refusal(exc)) from exc
         except (WegValidationError, DistributionError, PeriodOverlapError) as exc:
             raise HTTPException(status_code=422, detail=f"WEG-Berechnung nicht moeglich: {exc}")
         return inp, result
@@ -781,8 +800,8 @@ class WegSettlementService:
         allocations = await SpecialLevyService(self._session, self._org_id, self._user_id).property_allocations(
             run.property_id, run.period_start, run.period_end, scope_id)
         levies = tuple(
-            OwnerLevyInput(owner_profile_id=allocation.owner_profile_id,
-                           special_levy_id=allocation.special_levy_id, due_date=due, amount=allocation.amount)
+            OwnerLevyInput(owner_profile_id=allocation.owner_profile_id, special_levy_id=allocation.special_levy_id,
+                           unit_id=allocation.unit_id, due_date=due, amount=allocation.amount)
             for allocation, due in allocations)
         paid = []
         for owner_id in sorted(roster | {str(levy.owner_profile_id) for levy in levies}):

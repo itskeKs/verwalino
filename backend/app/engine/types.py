@@ -356,12 +356,14 @@ class OwnerLevyInput:
     """One owner's frozen share of a special levy due within the settlement period (#405).
 
     The levy allocation decides who owes it (the owner at the due date, with the unit's
-    co-owner split) and in which cents; the settlement only adds the shares up as the
-    owner's additional Soll.
+    co-owner split) and in which cents; the settlement adds the shares up as the owner's
+    additional Soll, after checking per unit that the allocated owners are the owners the
+    ownership rows name on the due date.
     """
 
     owner_profile_id: uuid.UUID
     special_levy_id: uuid.UUID
+    unit_id: uuid.UUID
     due_date: date
     amount: Decimal
 
