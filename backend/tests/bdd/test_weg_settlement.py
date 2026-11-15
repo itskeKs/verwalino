@@ -1139,7 +1139,11 @@ def levy_block_browser(browser_world, weg_balance):
             if os.environ.get('VERWALINO_CAPTURE_DESIGN') == '1':
                 directory = Path(__file__).resolve().parents[3] / 'docs/assets/design/weg-special-levy'
                 directory.mkdir(parents=True, exist_ok=True)
-                await region.locator('..').screenshot(path=str(directory / f'after-{width}.png'))
+                card = region.locator('..')
+                height = await card.evaluate('el => Math.ceil(el.getBoundingClientRect().height) + 200')
+                await b.page.set_viewport_size({'width': width, 'height': max(1000, height)})
+                await card.screenshot(path=str(directory / f'after-{width}.png'))
+                await b.page.set_viewport_size({'width': width, 'height': 1000})
         assert not console_errors and not b.errors, (console_errors, b.errors)
 
     b.run(check())
