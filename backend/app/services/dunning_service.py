@@ -258,7 +258,9 @@ class DunningService:
         charges.extend(special_levy_expected_charges(
             [(due, allocation.amount) for allocation, due in allocations],
             owner_profile_id, period_start, period_end))
-        payments = await self._payments.list_for_owner(owner_profile_id)
+        # The payments of the notice's property only, like the owner statement of that property (#675).
+        read_property = PaymentService.owner_payments_property(sphere, plan)
+        payments = await self._payments.list_for_owner(owner_profile_id, property_id=read_property)
         scoped = self._scope_payments_to_period(payments, period_start, period_end)
         fees, rates = await self.terms()
         result = account_statement(charges, [to_payment_input(p) for p in scoped],
@@ -276,7 +278,7 @@ class DunningService:
                 ),
             )
 
-        property_id = self._owner_notice_property(sphere, plan, overdue, scoped)
+        property_id = self._owner_notice_property(read_property, overdue, scoped)
         await context.history(owner_id=owner_profile_id)
         demanded = await self._repo.highest_item_demand_count(
             item_keys=[item_key(item) for item in overdue], owner_profile_id=owner_profile_id,
@@ -334,19 +336,17 @@ class DunningService:
         return notice
 
     @staticmethod
-    def _owner_notice_property(sphere, plan, overdue, payments):
-        """The one property (WEG) an owner notice belongs to, taken from where its items come from.
+    def _owner_notice_property(read_property, overdue, payments):
+        """The one property (WEG) an owner notice belongs to: the property its payments were read for.
 
-        The selected accounting scope names it, otherwise the economic plan whose Hausgeld the items
-        are. Without both, the items are the owner's booked payments (a refund without a charge is an
-        open item; levies always carry a scope): the property is the one of the payments that make up
-        the overdue items. No or several properties are refused, because a notice has to count the
-        demands of its own WEG only.
+        That is the selected accounting scope's, otherwise the economic plan's (`owner_payments_property`).
+        Without both, the owner's payments of every property are read and the items are those payments
+        (a refund without a charge is an open item; levies always carry a scope): the property is the one
+        of the payments that make up the overdue items. No or several properties are refused, because a
+        notice has to count the demands of its own WEG only.
         """
-        if sphere is not None:
-            return sphere.property_id
-        if plan is not None:
-            return plan.property_id
+        if read_property is not None:
+            return read_property
         keys = {(item.period_year, item.period_month, item.payment_type) for item in overdue}
         properties = {p.property_id for p in payments
                       if p.status == "booked" and p.reversed_by_id is None and p.reverses_id is None

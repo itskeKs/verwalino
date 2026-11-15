@@ -3291,3 +3291,45 @@ async def test_the_scoped_notice_and_the_owner_statement_of_a_weg_show_the_same_
         assert balances == ["0.00", "5000.00"]
         notice = await _weg_notice(api, other, 0, "2026-06-30", (1, "0.00", "5000.00"), issue=False)
         assert notice["principal_amount"] == balances[1]
+
+
+@pytest.mark.no_db
+def test_the_property_an_owner_account_reads_payments_for_comes_from_the_request_then_the_scope_then_the_plan():
+    from types import SimpleNamespace
+    from app.services.payment_service import PaymentService
+
+    asked, scope, plan = uuid.uuid4(), uuid.uuid4(), uuid.uuid4()
+    read = PaymentService.owner_payments_property
+    assert read(SimpleNamespace(property_id=scope), SimpleNamespace(property_id=plan), asked) == asked
+    assert read(SimpleNamespace(property_id=scope), SimpleNamespace(property_id=plan)) == scope
+    assert read(None, SimpleNamespace(property_id=plan)) == plan
+    # Without a property, a scope and a plan the account is the owner's over every property.
+    assert read(None, None) is None
+
+
+@pytest.mark.no_db
+def test_an_owner_notice_takes_the_property_its_payments_were_read_for_or_else_the_one_of_the_payments_it_consists_of():
+    from fastapi import HTTPException
+    from types import SimpleNamespace as Row
+    from app.services.dunning_service import DunningService
+
+    a, b = uuid.uuid4(), uuid.uuid4()
+    march = [Row(period_year=2026, period_month=3, payment_type="HAUSGELD_VORSCHUSS")]
+
+    def payment(property_id, *, month=3, status="booked", reversed_by_id=None, reverses_id=None):
+        return Row(property_id=property_id, period_year=2026, period_month=month, payment_type="HAUSGELD_VORSCHUSS",
+                   status=status, reversed_by_id=reversed_by_id, reverses_id=reverses_id)
+
+    owned = DunningService._owner_notice_property
+    # A property the payments were read for is the property of the notice, whatever the payments are.
+    assert owned(a, march, [payment(b)]) == a
+    # Without one, the booked payments that make up the overdue items name it; the others name nothing.
+    assert owned(None, march, [payment(b)]) == b
+    ignored = [payment(a, month=4), payment(a, status="draft"), payment(a, reversed_by_id=uuid.uuid4()),
+               payment(a, reverses_id=uuid.uuid4())]
+    assert owned(None, march, [payment(b), *ignored]) == b
+    # Payments of several properties, or none, belong to no one property: refused.
+    for payments in ([payment(a), payment(b)], ignored, []):
+        with pytest.raises(HTTPException) as refused:
+            owned(None, march, payments)
+        assert refused.value.status_code == 422
