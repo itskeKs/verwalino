@@ -190,7 +190,7 @@ scenarios in [hausgeld_booking.feature](../../features/hausgeld_booking.feature)
 
 ## Reversing a booked payment (Stornobuchung)
 
-On a booked payment, **Stornobuchung erstellen** creates a counter booking: a new booked
+On a booked payment, **Stornieren (Gegenbuchung)** creates a counter booking: a new booked
 payment with the opposite direction, the original's amount, counterparty, accounting period
 and value date, linked to the original. The original is never edited; it only points to its
 Storno. A Storno cannot itself be reversed; a correction is a new payment.
