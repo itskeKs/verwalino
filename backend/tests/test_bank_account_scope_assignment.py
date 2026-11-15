@@ -9,7 +9,10 @@ import uuid
 import pytest
 from sqlalchemy import text
 
-pytestmark = pytest.mark.asyncio
+from tests.settlement_period_support import period_data_cleanup  # noqa: F401
+
+# Classified finance makes an organization answer no unscoped statement read, so every test releases its records.
+pytestmark = [pytest.mark.asyncio, pytest.mark.usefixtures('period_data_cleanup')]
 
 
 async def weg_with_open_account(admin, seed_data, *, account_label='Laufendes Konto', account_type='LAUFEND'):

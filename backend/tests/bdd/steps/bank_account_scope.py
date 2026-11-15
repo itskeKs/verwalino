@@ -7,10 +7,13 @@ from pytest_bdd import given, then, when, parsers
 from tests.bdd.steps.browser_common import browser_step
 from tests.bdd.steps.browser_setup import create
 from tests.bdd.steps.special_levy import levy_payload, prepare_levy_form
+from tests.settlement_period_support import period_data_cleanup as period_data_cleanup  # noqa: F401
+
 
 @given('the Laufendes Konto of Gartenstraße 5 was saved without an Abrechnungskreis')
-def account_without_scope(world):
-    # Accounts of earlier scenarios stay in the shared organization: the label is unique per scenario.
+def account_without_scope(world, period_data_cleanup):
+    # An organization with classified finance answers no unscoped statement read, so the records of this
+    # scenario are released at its end for the features that run after it.
     label = f"Girokonto {hashlib.sha256(world.data['scenario'].encode()).hexdigest()[:8]}"
     world.data['account'] = create(world, '/api/bank-accounts', {
         'property_id': world.data['property']['id'], 'account_type': 'LAUFEND', 'label': label})
