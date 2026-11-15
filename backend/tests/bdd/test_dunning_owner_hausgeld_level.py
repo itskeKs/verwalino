@@ -19,7 +19,7 @@ def two_wegs(world, period_data_cleanup, first, second):
     world.actor = world.administrator_of("Verwaltung Alpha")
     person = world.run(create(world.actor, "/api/persons", {"first_name": "Anna", "last_name": "Hausgeld"}))
     owner = world.run(create(world.actor, "/api/owner-profiles", {"person_id": person["id"]}))
-    plans = {}
+    plans, properties = {}, {}
     for name, monthly in (("Gartenstraße 5", first), ("Lindenweg 2", second)):
         prop = world.run(create(world.actor, "/api/properties", {
             "name": name, "management_type": "MISCH", "fiscal_year_start_month": 1, "mea_denominator": 1000}))
@@ -34,7 +34,8 @@ def two_wegs(world, period_data_cleanup, first, second):
         answer = world.act("POST", f"/api/economic-plans/{plan['id']}/finalize", json=inputs)
         assert answer.status_code == 200, world.describe_response()
         plans[name] = plan["id"]
-    world.data["hausgeld_wegs"] = {"owner": owner, "plans": plans}
+        properties[name] = prop["id"]
+    world.data["hausgeld_wegs"] = {"owner": owner, "plans": plans, "properties": properties}
 
 
 def create_notice(world, name, day):
@@ -53,6 +54,19 @@ def reminded(world, name, day):
     assert issued.status_code == 200, world.describe_response()
 
 
+@given(parsers.parse("Anna paid {amount} euros of Hausgeld for March 2026 in {name}"))
+def paid(world, name, amount):
+    data = world.data["hausgeld_wegs"]
+    account = world.run(create(world.actor, "/api/bank-accounts", {
+        "property_id": data["properties"][name], "account_type": "LAUFEND", "label": f"Hausgeld {name}"}))
+    payment = world.run(create(world.actor, "/api/payments", {
+        "bank_account_id": account["id"], "direction": "IN", "amount": amount, "value_date": "2026-03-05",
+        "payment_type": "HAUSGELD_VORSCHUSS", "owner_profile_id": data["owner"]["id"],
+        "period_year": 2026, "period_month": 3}))
+    booked = world.act("POST", f"/api/payments/{payment['id']}/book")
+    assert booked.status_code == 200, world.describe_response()
+
+
 @when(parsers.parse("the manager creates a notice for Anna's Hausgeld of March 2026 in {name} as of {day:d} March 2026"))
 def create_march_notice(world, name, day):
     world.data["notice"] = create_notice(world, name, day)
@@ -62,3 +76,12 @@ def create_march_notice(world, name, day):
 def notice_level_fee_total(world, level, kind, fee, total):
     notice = world.data["notice"]
     assert (notice["level"], notice["fee_amount"], notice["total_amount"]) == (level, fee, total), notice
+
+
+@then(parsers.parse("the owner statement of {name} for March 2026 shows {amount} open"))
+def statement_open(world, name, amount):
+    data = world.data["hausgeld_wegs"]
+    response = world.act("GET", f"/api/payments/mietkonto/owner/{data['owner']['id']}", params={
+        "period_start": "2026-03-01", "period_end": "2026-03-31", "economic_plan_id": data["plans"][name]})
+    assert response.status_code == 200, world.describe_response()
+    assert response.json()["balance"] == amount, response.json()

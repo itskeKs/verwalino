@@ -206,6 +206,7 @@ monthly expected(owner, month k) = sum of the owner's line installments[k]
 - **Historical compatibility:** Existing explicit days 29–31 remain stored and visible as resolved. If the day is absent from a month, the derived date first clamps to that month's final calendar day, then shifts to the next working day. A historical day 31 therefore gives 02.03.2026 for February 2026 (28 February is a Saturday). Historical NULL is read as day 1. No frozen column, snapshot or issued PDF is rewritten; new input still accepts only 1–28.
 - **Deadline monitor:** Owner arrears use the statement and overdue filter within the selected WEG scope (or the complete unclassified organization). The scoped monitor counts frozen levies for each recipient, including levies outside any active finalized plan. Levies for the same owner, property and month share the existing payment allocation, even when a plan starts or ends that month. If active finalized plans for the same property share a billing month, the monitor returns a conflict (`hausgeld_plan_ambiguous`). This covers overlapping dates and disjoint plan periods within one month. The existing correction chain resolves which plan applies.
 - **Dated ownership and dunning:** The account and owner dunning share the same calculation, limited to the finalized plan's period. Ownership transitions are applied in one walk from the plan's beginning to all installments of each line, and month `k` charges installment `k` (at most twelve calendar months per unit); a transfer month splits that month's installment by owner days, so the short-plan count and the owner time share are never multiplied twice. A month the plan starts or ends in is shared by its plan days only (#662): plan 15.07.–10.09.2026 of 3000 EUR, unit sold with effect from 10.07., the seller owes nothing and the buyer 3 × 1000 EUR; sold with effect from 20.07., July's 1000 EUR splits 5 : 12 by the plan days 15.–31.07., 294.12 EUR and 705.88 EUR, after the same largest-remainder rule as every dated share; see [M4 §5.3a](m4-weg-abrechnung.md#53a-plans-shorter-than-twelve-months-602). Continuing co-owners retain their own installment cents; a full departing share passes to its unambiguous successor, including a sole remaining co-owner. Transfer months split by inclusive owner-days; concurrent successors split by positive MEA shares. Zero-rate shares stay zero. Ambiguous transfers are refused. For Karl through June and Lena from July at 400 EUR per month, each account and dunning principal is 2400 EUR for the year. The annual settlement's frozen plan basis remains unchanged.
+- **Payments per property (#675):** The owner account and the owner dunning notice subtract the owner's booked payments of one property only: the one asked for (`property_id`, which the deadline monitor and the bank assignment pass), otherwise the property of the selected accounting scope, otherwise the property of the selected economic plan (`PaymentService.owner_payments_property`, one function for both). A receipt booked for WEG A therefore never reduces what WEG B shows as open: with a Hausgeld of March of 400,00 EUR in A and 200,00 EUR in B and a receipt of 400,00 EUR for A, the account and the notice of B both show 200,00 EUR open and A shows 0,00 EUR. Without scope and plan the account is the owner's over every property, as before (a notice then belongs to the one property of the payments that make up its items, see "Escalation levels"). Rent and the other tenant accounts are not affected.
 
 #### Special levies since Phase 2 (T32)
 
@@ -349,11 +350,12 @@ selected, only its own notices are visible, so special levies, which are always 
 collide across WEGs); the property separates the notices of an organization without scopes. A new owner
 notice stores its property in the first row of its frozen items as `_dunning_property_id`, hidden
 from the API like `_dunning_lease_id`, and the next notice of the owner counts earlier demands of
-that property only. The property comes from where the items come from: the selected accounting
-scope, otherwise the economic plan; without both, the items are booked payments of the owner (a
-refund without a charge is an open item) and the property is the one of the payments that make up
-the overdue items. If those payments belong to several properties the notice is refused (422,
-choose a plan or an Abrechnungskreis), so every new owner notice carries a property. An owner
+that property only. The property is the one whose payments the notice reads (§2.2, payments per
+property): the selected accounting scope, otherwise the economic plan; without both, the items are
+booked payments of the owner of every property (a refund without a charge is an open item) and the
+property is the one of the payments that make up the overdue items. If those payments belong to
+several properties the notice is refused (422, choose a plan or an Abrechnungskreis), so every new
+owner notice carries a property. An owner
 notice issued before this rule carries none and counts for every property, as it always did.
 Issued notices are not changed. Rent and the other tenant notices are not affected.
 
