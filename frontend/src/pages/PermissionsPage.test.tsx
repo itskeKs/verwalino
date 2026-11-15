@@ -62,3 +62,23 @@ it("reports an unavailable status and denies access to a clerk", async () => {
   renderPage("CLERK");
   expect(await screen.findByText("Zugriff nur für Inhaber/Admin.")).toBeVisible();
 });
+
+it("links the open account count to the accounts without an Abrechnungskreis", async () => {
+  const counts = { ...inventory.counts, bank_accounts_without_scope: 2 };
+  vi.spyOn(api, "get").mockImplementation(async path => {
+    if (path === "/api/access-preparation/source-security") return { mode: "PREPARATION", changed_at: null } as never;
+    return { ...inventory, counts } as never;
+  });
+  renderPage("OWNER_ADMIN");
+  expect(await screen.findByRole("link", { name: "Konten ohne Abrechnungskreis" })).toHaveAttribute("href", "/bankkonten?ohne_abrechnungskreis=1");
+});
+
+it("offers no link when every account has an Abrechnungskreis", async () => {
+  vi.spyOn(api, "get").mockImplementation(async path => {
+    if (path === "/api/access-preparation/source-security") return { mode: "PREPARATION", changed_at: null } as never;
+    return inventory as never;
+  });
+  renderPage("OWNER_ADMIN");
+  expect(await screen.findByText("Konten ohne Abrechnungskreis")).toBeVisible();
+  expect(screen.queryByRole("link", { name: "Konten ohne Abrechnungskreis" })).toBeNull();
+});

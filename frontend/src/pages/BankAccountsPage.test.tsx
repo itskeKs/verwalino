@@ -1,5 +1,5 @@
 import { afterEach, expect, it, vi } from "vitest";
-import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import { AuthCtx } from "../auth/useAuth";
 import { BankAccountsPage } from "./BankAccountsPage";
@@ -111,4 +111,95 @@ it("keeps the canonical account label during a second edit opened before refresh
   fireEvent.click(screen.getByRole('button', { name: 'Änderungen speichern' }));
   await waitFor(() => expect(changes).toHaveLength(2));
   expect(changes).toEqual([{ label: canonical.label }, { bank_name: 'New bank' }]);
+});
+
+const adminAuth = { loading: false, session: { user_id: "user", organization_id: "org", role: "OWNER_ADMIN" }, login: vi.fn(), completeSecondFactor: vi.fn(), reloadSession: vi.fn(), logout: vi.fn() } as never;
+const openAccount = { id: "offen", label: "Girokonto Testhaus", property_id: "property", property_name: "Testhaus", account_type: "LAUFEND", iban: null, bic: null, bank_name: null, is_active: true, accounting_scope_label: null };
+const filedAccount = { ...openAccount, id: "zugeordnet", label: "Rücklagenkonto", account_type: "RUECKLAGE", accounting_scope_label: "WEG Testhaus" };
+
+it("lists the accounts without an Abrechnungskreis behind the overview link", async () => {
+  vi.stubGlobal("fetch", vi.fn(async (input: string) => {
+    if (input.startsWith("/api/bank-accounts")) return json([openAccount, filedAccount]);
+    return json({ items: [], next_cursor: null });
+  }));
+  render(<AuthCtx.Provider value={adminAuth}><MemoryRouter initialEntries={["/bankkonten?ohne_abrechnungskreis=1"]}><BankAccountsPage /></MemoryRouter></AuthCtx.Provider>);
+  await screen.findByText("Girokonto Testhaus");
+  expect(screen.getByText("Nicht zugeordnet")).toBeVisible();
+  expect(screen.queryByText("Rücklagenkonto")).toBeNull();
+  expect(screen.getByRole("checkbox", { name: "Nur Konten ohne Abrechnungskreis" })).toBeChecked();
+});
+
+it("says so when every account has an Abrechnungskreis", async () => {
+  vi.stubGlobal("fetch", vi.fn(async (input: string) => input.startsWith("/api/bank-accounts") ? json([filedAccount]) : json({ items: [], next_cursor: null })));
+  render(<AuthCtx.Provider value={adminAuth}><MemoryRouter initialEntries={["/bankkonten?ohne_abrechnungskreis=1"]}><BankAccountsPage /></MemoryRouter></AuthCtx.Provider>);
+  expect(await screen.findByText("Alle Bankkonten haben einen Abrechnungskreis.")).toBeVisible();
+});
+
+it("assigns an Abrechnungskreis to an existing account with a reason", async () => {
+  let assigned = false;
+  const calls: { url: string; body: unknown }[] = [];
+  vi.stubGlobal("fetch", vi.fn(async (input: string, options?: RequestInit) => {
+    const url = new URL(input, "http://test");
+    if (options?.method === "POST") { assigned = true; calls.push({ url: url.pathname, body: JSON.parse(String(options.body)) }); return json({ id: "binding" }); }
+    if (url.pathname === "/api/bank-accounts") return json([assigned ? { ...openAccount, accounting_scope_label: "WEG Testhaus" } : openAccount]);
+    if (url.pathname === "/api/accounting-scopes/page") {
+      expect(url.searchParams.get("capability")).toBe("prepare");
+      expect(url.searchParams.get("property_id")).toBe("property");
+      return json({ items: [{ id: "scope", property_id: "property", label: "WEG Testhaus", scope_type: "WEG", valid_from: "2025-01-01", valid_to: null }], next_cursor: null });
+    }
+    return json({ items: [], next_cursor: null });
+  }));
+  render(<AuthCtx.Provider value={adminAuth}><MemoryRouter><BankAccountsPage /></MemoryRouter></AuthCtx.Provider>);
+  await screen.findByText("Girokonto Testhaus");
+  fireEvent.click(screen.getByRole("button", { name: "Abrechnungskreis zuordnen" }));
+  expect(screen.getByRole("button", { name: "Zuordnung speichern" })).toBeDisabled();
+  await screen.findByRole("option", { name: /WEG Testhaus/ });
+  fireEvent.change(screen.getByRole("combobox", { name: "Abrechnungskreis" }), { target: { value: "scope" } });
+  fireEvent.change(screen.getByLabelText("Begründung *"), { target: { value: "Konto der Eigentümergemeinschaft" } });
+  fireEvent.click(screen.getByRole("button", { name: "Zuordnung speichern" }));
+  expect(await screen.findByRole("status")).toHaveTextContent("Abrechnungskreis zugeordnet.");
+  expect(calls).toEqual([{ url: "/api/accounting-scopes/scope/bindings", body: { resource_type: "bank_account", resource_id: "offen", reason: "Konto der Eigentümergemeinschaft" } }]);
+  await waitFor(() => expect(screen.queryByRole("button", { name: "Abrechnungskreis zuordnen" })).toBeNull());
+  expect(screen.getByText("WEG Testhaus")).toBeVisible();
+});
+
+it("keeps the dialog open with a German refusal when the assignment is not accepted", async () => {
+  vi.stubGlobal("fetch", vi.fn(async (input: string, options?: RequestInit) => {
+    const url = new URL(input, "http://test");
+    if (options?.method === "POST") return new Response(JSON.stringify({ detail: "Original type, mandate or period conflicts with the selected accounting scope" }), { status: 422, headers: { "Content-Type": "application/json" } });
+    if (url.pathname === "/api/bank-accounts") return json([openAccount]);
+    if (url.pathname === "/api/accounting-scopes/page") return json({ items: [{ id: "scope", property_id: "property", label: "WEG Testhaus", scope_type: "WEG", valid_from: "2025-01-01", valid_to: null }], next_cursor: null });
+    return json({ items: [], next_cursor: null });
+  }));
+  render(<AuthCtx.Provider value={adminAuth}><MemoryRouter><BankAccountsPage /></MemoryRouter></AuthCtx.Provider>);
+  await screen.findByText("Girokonto Testhaus");
+  fireEvent.click(screen.getByRole("button", { name: "Abrechnungskreis zuordnen" }));
+  await screen.findByRole("option", { name: /WEG Testhaus/ });
+  fireEvent.change(screen.getByRole("combobox", { name: "Abrechnungskreis" }), { target: { value: "scope" } });
+  fireEvent.change(screen.getByLabelText("Begründung *"), { target: { value: "Konto der Eigentümergemeinschaft" } });
+  fireEvent.click(screen.getByRole("button", { name: "Zuordnung speichern" }));
+  expect(await screen.findByRole("alert")).toHaveTextContent("Der Abrechnungskreis passt nicht zu Objekt, Kontotyp oder Mandat dieses Bankkontos.");
+  expect(screen.getByLabelText("Begründung *")).toHaveValue("Konto der Eigentümergemeinschaft");
+});
+
+it("offers the assignment to administrators only", async () => {
+  vi.stubGlobal("fetch", vi.fn(async (input: string) => input.startsWith("/api/bank-accounts") ? json([openAccount]) : json({ items: [], next_cursor: null })));
+  render(<AuthCtx.Provider value={{ ...(adminAuth as object), session: { user_id: "u", organization_id: "o", role: "CLERK" } } as never}><MemoryRouter><BankAccountsPage /></MemoryRouter></AuthCtx.Provider>);
+  await screen.findByText("Girokonto Testhaus");
+  expect(screen.getByText("Nicht zugeordnet")).toBeVisible();
+  expect(screen.queryByRole("button", { name: "Abrechnungskreis zuordnen" })).toBeNull();
+});
+
+it("lets a 255-character account label wrap inside the assignment dialog", async () => {
+  // One unbroken word has no break opportunity: without overflow-wrap it widens the dialog far past a 360 px screen.
+  const label = `Girokonto${"G".repeat(246)}`;
+  vi.stubGlobal("fetch", vi.fn(async (input: string) => input.startsWith("/api/bank-accounts") ? json([{ ...openAccount, label }]) : json({ items: [], next_cursor: null })));
+  render(<AuthCtx.Provider value={adminAuth}><MemoryRouter><BankAccountsPage /></MemoryRouter></AuthCtx.Provider>);
+  await screen.findByText(label);
+  fireEvent.click(screen.getByRole("button", { name: "Abrechnungskreis zuordnen" }));
+  const dialog = await screen.findByRole("dialog");
+  expect(within(dialog).getByText(label).className).toContain("[overflow-wrap:anywhere]");
+  // A long dialog scrolls inside the screen instead of running off it.
+  expect(dialog.className).toContain("overflow-y-auto");
+  expect(within(dialog).getByRole("button", { name: "Zuordnung speichern" })).toBeInTheDocument();
 });

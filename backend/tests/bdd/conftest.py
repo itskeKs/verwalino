@@ -285,6 +285,7 @@ from tests.bdd.steps.browser_declaration_principal import *  # noqa: E402,F401,F
 
 from tests.bdd.steps.meetings import *  # noqa: E402,F401,F403
 from tests.bdd.steps.special_levy import *  # noqa: E402,F401,F403
+from tests.bdd.steps.bank_account_scope import *  # noqa: E402,F401,F403
 from tests.bdd.steps.vorwegabzug import *  # noqa: E402,F401,F403
 
 
