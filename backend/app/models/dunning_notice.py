@@ -34,6 +34,9 @@ from app.models.dunning_scope_context import DunningScopeContext
 
 # Internal snapshot metadata for notices created without a scope context.
 LEASE_SOURCE_KEY = "_dunning_lease_id"
+# Internal snapshot metadata of an owner notice: the property (WEG) its items belong to. The next
+# notice of the owner counts earlier demands only within the same property.
+PROPERTY_SOURCE_KEY = "_dunning_property_id"
 
 
 class DunningNotice(Base, UUIDPrimaryKeyMixin, TimestampMixin):

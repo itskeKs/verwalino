@@ -22,7 +22,7 @@ from app.core.live_principal import get_live_admin_db, get_live_writer_db
 
 from app.core.tenant import AuthContext, get_current_user, get_db, require_admin_dep, require_write_dep
 from app.engine.dunning import NOTICE_FORMAT_KEY
-from app.models.dunning_notice import LEASE_SOURCE_KEY, DunningNotice
+from app.models.dunning_notice import LEASE_SOURCE_KEY, PROPERTY_SOURCE_KEY, DunningNotice
 from app.repositories.dunning_notice_repo import DunningNoticeRepository
 from app.repositories.dunning_settings_repo import DunningSettingsRepository
 from app.services.dunning_pdf import render_dunning_pdf
@@ -189,7 +189,7 @@ def _to_out(n: DunningNotice) -> DunningOut:
         interest_amount=str(n.interest_amount),
         interest_snapshot=n.interest_snapshot,
         included_items=(
-            [{key: value for key, value in row.items() if key not in {NOTICE_FORMAT_KEY, LEASE_SOURCE_KEY}} for row in n.included_items]
+            [{key: value for key, value in row.items() if key not in {NOTICE_FORMAT_KEY, LEASE_SOURCE_KEY, PROPERTY_SOURCE_KEY}} for row in n.included_items]
             if n.included_items is not None else None
         ),
         status="cancelled" if n.cancelled_at else n.status,

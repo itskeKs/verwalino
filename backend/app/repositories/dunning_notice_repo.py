@@ -12,7 +12,7 @@ from sqlalchemy import Boolean, and_, cast, func, or_, select
 from sqlalchemy.dialects.postgresql import JSONB, JSONPATH
 
 from app.engine.mietkonto import PT_HK_VORAUSZAHLUNG, PT_NK_VORAUSZAHLUNG
-from app.models.dunning_notice import LEASE_SOURCE_KEY, DunningNotice
+from app.models.dunning_notice import LEASE_SOURCE_KEY, PROPERTY_SOURCE_KEY, DunningNotice
 from app.models.dunning_scope_context import DunningScopeContext
 from app.models.lease_agreement import LeaseAgreement
 from app.repositories.base import TenantRepository
@@ -100,12 +100,13 @@ class DunningNoticeRepository(TenantRepository[DunningNotice]):
         owner_profile_id: uuid.UUID | None = None,
         lease_id: uuid.UUID | None = None,
         scope_id: uuid.UUID | None = None,
+        property_id: uuid.UUID | None = None,
     ) -> int:
         """How often the most often demanded of the given items was already demanded.
 
         An item was demanded once per already-issued notice of the same person (the
-        same lease for tenants, mirroring issued_for_lease) whose frozen included_items
-        contain it -- identity is the engine's item_key (payment_type + period_year +
+        same lease for tenants, mirroring issued_for_lease; the same property for owners)
+        whose frozen included_items contain it -- identity is the engine's item_key (payment_type + period_year +
         period_month, plus the due date of a special levy), so part payments, corrected or
         reversed postings and a moved due date stay the same item while two levies of one
         month stay apart. An item stored without a due date matches every item of its
@@ -116,6 +117,12 @@ class DunningNoticeRepository(TenantRepository[DunningNotice]):
         counts 0. The level of a new notice is one more than this number
         (next_dunning_level). An unscoped tenant notice without any lease link (issued
         before the link existed) matches on the tenant and the item alone.
+
+        An owner holds units in several WEGs, and one month of the same payment type (a Hausgeld
+        instalment, a levy due on the same day) exists once per WEG: with a property_id only the
+        owner's notices of that property count (PROPERTY_SOURCE_KEY in the first stored item). A
+        notice issued before the key existed stores no property and counts for every property;
+        without a property_id every notice of the owner counts.
         """
         if not item_keys:
             return 0
@@ -123,7 +130,7 @@ class DunningNoticeRepository(TenantRepository[DunningNotice]):
             return max([await self.highest_item_demand_count(
                 item_keys=item_keys[start:start + ITEM_KEYS_PER_STATEMENT],
                 tenant_profile_id=tenant_profile_id, owner_profile_id=owner_profile_id,
-                lease_id=lease_id, scope_id=scope_id,
+                lease_id=lease_id, scope_id=scope_id, property_id=property_id,
             ) for start in range(0, len(item_keys), ITEM_KEYS_PER_STATEMENT)])
         demanded = [func.jsonb_path_exists(DunningNotice.included_items, _DEMANDED_ITEM, cast({
             "payment_type": key["payment_type"], "period_year": key["period_year"],
@@ -148,6 +155,9 @@ class DunningNoticeRepository(TenantRepository[DunningNotice]):
             stmt = stmt.where(DunningNotice.tenant_profile_id == tenant_profile_id)
         else:
             stmt = stmt.where(DunningNotice.owner_profile_id == owner_profile_id)
+            if property_id is not None:
+                linked_property = DunningNotice.included_items[0][PROPERTY_SOURCE_KEY].astext
+                stmt = stmt.where(or_(linked_property.is_(None), linked_property == str(property_id)))
         if lease_id is not None:
             # An unscoped notice issued before the lease link existed carries neither
             # the link nor a scope context; it counts for the tenant as it always did.

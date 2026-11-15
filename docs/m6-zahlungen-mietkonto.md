@@ -340,6 +340,23 @@ advance (`combined_advance`) demands the heating advance of its month too: after
 receipt is reversed, `HK_VORAUSZAHLUNG` is an item of its own again and counts the demand made
 in the joint item.
 
+An owner's notices count only within the same property (the WEG the notice belongs to): an
+owner with a unit in WEG A and one in WEG B who was reminded about the Hausgeld of March in A
+gets a Zahlungserinnerung (level 1) without a fee for the Hausgeld of March in B, and the next
+notice for A is level 2, not level 3, because both WEGs have the same payment type and month.
+Notices of a selected accounting scope are already kept apart by that scope (while a scope is
+selected, only its own notices are visible, so special levies, which are always scoped, never
+collide across WEGs); the property separates the notices of an organization without scopes. A new owner
+notice stores its property in the first row of its frozen items as `_dunning_property_id`, hidden
+from the API like `_dunning_lease_id`, and the next notice of the owner counts earlier demands of
+that property only. The property comes from where the items come from: the selected accounting
+scope, otherwise the economic plan; without both, the items are booked payments of the owner (a
+refund without a charge is an open item) and the property is the one of the payments that make up
+the overdue items. If those payments belong to several properties the notice is refused (422,
+choose a plan or an Abrechnungskreis), so every new owner notice carries a property. An owner
+notice issued before this rule carries none and counts for every property, as it always did.
+Issued notices are not changed. Rent and the other tenant notices are not affected.
+
 Notices issued before the lease link was stored carry neither `_dunning_lease_id` in
 their frozen items nor a scope context. When a new unscoped tenant notice is created, such
 an old notice counts for the tenant, whichever lease it was for, as long as its frozen

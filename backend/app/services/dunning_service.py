@@ -37,7 +37,7 @@ from app.engine.mietkonto import (
 from app.models.accounting_scope import AccountingScopeBinding
 from app.models.audit_event import AuditEvent
 from app.models.bank_account import BankAccount
-from app.models.dunning_notice import LEASE_SOURCE_KEY, DunningNotice
+from app.models.dunning_notice import LEASE_SOURCE_KEY, PROPERTY_SOURCE_KEY, DunningNotice
 from app.models.dunning_scope_context import DunningScopeContext
 from app.repositories.audit_repo import AuditRepository
 from app.core.rbac import ScopeCapability
@@ -236,6 +236,7 @@ class DunningService:
 
         # Compute Soll from finalized plan (if available)
         charges = []
+        plan = None
         if economic_plan_id is not None:
             plan = await self._plans.get_by_id(economic_plan_id)
             if plan is None:
@@ -275,9 +276,11 @@ class DunningService:
                 ),
             )
 
+        property_id = self._owner_notice_property(sphere, plan, overdue, scoped)
         await context.history(owner_id=owner_profile_id)
         demanded = await self._repo.highest_item_demand_count(
-            item_keys=[item_key(item) for item in overdue], owner_profile_id=owner_profile_id)
+            item_keys=[item_key(item) for item in overdue], owner_profile_id=owner_profile_id,
+            property_id=property_id)
         dunning = self._engine_result(
             assemble_dunning,
             overdue_items=overdue,
@@ -289,6 +292,8 @@ class DunningService:
         if dunning is None:
             raise HTTPException(status_code=422, detail="Could not assemble dunning notice")
 
+        items = dunning.items_snapshot()
+        items[0][PROPERTY_SOURCE_KEY] = str(property_id)
         notice = DunningNotice(
             organization_id=self._org_id,
             owner_profile_id=owner_profile_id,
@@ -301,7 +306,7 @@ class DunningService:
             total_amount=dunning.total_amount,
             interest_amount=dunning.interest_amount,
             interest_snapshot=dunning.interest_snapshot,
-            included_items=dunning.items_snapshot(),
+            included_items=items,
             status="draft",
         )
         await context.attach(notice, sphere, period_start, period_end, plan_id=economic_plan_id,
@@ -327,6 +332,34 @@ class DunningService:
             )
         )
         return notice
+
+    @staticmethod
+    def _owner_notice_property(sphere, plan, overdue, payments):
+        """The one property (WEG) an owner notice belongs to, taken from where its items come from.
+
+        The selected accounting scope names it, otherwise the economic plan whose Hausgeld the items
+        are. Without both, the items are the owner's booked payments (a refund without a charge is an
+        open item; levies always carry a scope): the property is the one of the payments that make up
+        the overdue items. No or several properties are refused, because a notice has to count the
+        demands of its own WEG only.
+        """
+        if sphere is not None:
+            return sphere.property_id
+        if plan is not None:
+            return plan.property_id
+        keys = {(item.period_year, item.period_month, item.payment_type) for item in overdue}
+        properties = {p.property_id for p in payments
+                      if p.status == "booked" and p.reversed_by_id is None and p.reverses_id is None
+                      and (p.period_year or 0, p.period_month, p.payment_type) in keys}
+        if len(properties) != 1:
+            raise HTTPException(
+                status_code=422,
+                detail=(
+                    "Die offenen Beträge des Eigentümers gehören zu mehreren Objekten. "
+                    "Bitte einen Wirtschaftsplan oder Abrechnungskreis auswählen."
+                ),
+            )
+        return properties.pop()
 
     # ------------------------------------------------------------------
     # Issue (freeze)
