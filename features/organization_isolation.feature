@@ -209,6 +209,11 @@ Feature: Organization isolation
     When Verwaltung Beta tries to read and change Alpha's AI settings
     Then the AI settings are reported missing and Alpha keeps its model
 
+  Scenario: Another organization cannot correct or end an ownership entry
+    Given an owner's ownership entry for a unit belongs to Verwaltung Alpha
+    When Verwaltung Beta tries to correct that ownership entry
+    Then the ownership entry is not found and Verwaltung Alpha's entry stays as entered
+
   Scenario: Another organization cannot read legal document assents
     Given a hosted signup's legal document assent belongs to Verwaltung Alpha
     When Verwaltung Beta asks for the legal document assents

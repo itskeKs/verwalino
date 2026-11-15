@@ -77,6 +77,7 @@ import type {
   OwnershipRecord,
   OwnershipCreate,
   OwnershipEndRequest,
+  OwnershipCorrectionRequest,
   LeaseRecord,
   LeaseCreate,
   LeaseUpdate,
@@ -594,6 +595,11 @@ export function createOwnership(body: OwnershipCreate): Promise<OwnershipRecord>
 
 export function patchOwnership(id: string, body: OwnershipEndRequest): Promise<OwnershipRecord> {
   return api.patch<OwnershipRecord>(`/api/ownership/${id}`, body);
+}
+
+/** Mark a mistaken row as corrected; the answer is its replacement row. */
+export function correctOwnership(id: string, body: OwnershipCorrectionRequest): Promise<OwnershipRecord> {
+  return api.post<OwnershipRecord>(`/api/ownership/${id}/correction`, body);
 }
 
 // --- Leases ---

@@ -105,6 +105,7 @@ class ReserveLedgerRepository(TenantRepository[ReserveLedgerEntry]):
         rows = await self._session.execute(select(Payment.id, OwnershipHistory.unit_id)
             .join(OwnershipHistory, (OwnershipHistory.organization_id == Payment.organization_id)
                   & (OwnershipHistory.owner_profile_id == Payment.owner_profile_id)
+                  & OwnershipHistory.corrected_at.is_(None)
                   & (OwnershipHistory.valid_from <= Payment.value_date)
                   & or_(OwnershipHistory.valid_to.is_(None), OwnershipHistory.valid_to > Payment.value_date))
             .join(Unit, (Unit.organization_id == OwnershipHistory.organization_id)

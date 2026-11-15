@@ -40,6 +40,7 @@ async def test_0128_migration_roundtrip_before_levy_notices(migrator_session):
     await migrator_session.commit()
     migration = importlib.import_module('migrations.versions.0128_special_levy_dunning')
     successor_migration = importlib.import_module('migrations.versions.0163_dated_successor_dunning')
+    ownership_migration = importlib.import_module('migrations.versions.0190_ownership_correction')
     engine = create_engine(MIGRATOR_SYNC_URL)
     try:
         with engine.begin() as connection, Operations.context(MigrationContext.configure(connection)):
@@ -48,6 +49,9 @@ async def test_0128_migration_roundtrip_before_levy_notices(migrator_session):
             before_contexts = connection.execute(contexts_sql).scalars().all()
             point = connection.begin_nested()
             try:
+                # 0190 patched this function after 0163; the roundtrip below starts from the 0163 body.
+                ownership_migration.patch_functions(reverse=True)
+                before_0190 = connection.scalar(text("SELECT pg_get_functiondef('validate_dunning_context()'::regprocedure)"))
                 successors = connection.execute(text("""SELECT c.dunning_notice_id
                     FROM dunning_scope_context c JOIN dunning_notice n
                       ON n.id=c.dunning_notice_id AND n.organization_id=c.organization_id
@@ -71,6 +75,8 @@ async def test_0128_migration_roundtrip_before_levy_notices(migrator_session):
                 migration.upgrade()
                 assert connection.scalar(text("SELECT pg_get_functiondef('validate_dunning_context()'::regprocedure)")) == historical
                 successor_migration.upgrade()
+                assert connection.scalar(text("SELECT pg_get_functiondef('validate_dunning_context()'::regprocedure)")) == before_0190
+                ownership_migration.patch_functions()
                 assert connection.scalar(text("SELECT pg_get_functiondef('validate_dunning_context()'::regprocedure)")) == before
             finally:
                 point.rollback()

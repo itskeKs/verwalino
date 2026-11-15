@@ -16,6 +16,7 @@ class OwnershipHistoryRepository(TenantRepository[OwnershipHistory]):
     model = OwnershipHistory
 
     async def list_by_unit(self, unit_id: uuid.UUID) -> Sequence[OwnershipHistory]:
+        """The unit's whole history, corrected rows included (they stay visible, #668)."""
         stmt = self._base_query().where(
             OwnershipHistory.unit_id == unit_id
         ).order_by(OwnershipHistory.valid_from)
@@ -27,12 +28,13 @@ class OwnershipHistoryRepository(TenantRepository[OwnershipHistory]):
     ) -> Sequence[OwnershipHistory]:
         """Point-in-time query: who owned the unit on target_date?
 
-        Returns all ownership records where target_date falls within
+        Returns all uncorrected ownership records where target_date falls within
         [valid_from, valid_to).  If valid_to is NULL, ownership is open-ended.
         """
         stmt = self._base_query().where(
             and_(
                 OwnershipHistory.unit_id == unit_id,
+                OwnershipHistory.corrected_at.is_(None),
                 OwnershipHistory.valid_from <= target_date,
                 or_(
                     OwnershipHistory.valid_to.is_(None),

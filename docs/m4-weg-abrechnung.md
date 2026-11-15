@@ -434,6 +434,26 @@ creates a new row. The write role, existing prepare/source permissions, and the
 financial-input lock apply; co-ownership is not banned across the board. Historical master
 data and booked payments are not overwritten, finalized settlements remain frozen.
 
+**Correcting a mistaken row (#668).** A „MEA-Anteil“ or start date typed wrongly cannot be
+repaired by ending the row, so „Korrigieren“ replaces it: `POST /api/ownership/{id}/correction`
+takes the corrected `valid_from` and `mea_share` (both in full; a blank share clears it) and
+answers 201 with the replacement row, which keeps the unit, the person and the end of the
+corrected row. The corrected row keeps its values untouched and gets `corrected_at` and
+`corrected_by` (the history shows „Korrigiert am … von …“); it is no longer shown by the point-in-time
+query (`at_date`) and no calculation reads it: plan, Hausgeld Soll, annual settlement, special levy,
+document recipients, letters and the reserve ledger all use the uncorrected rows only. Results that
+were frozen (finalized settlements and plans, their PDFs, special levy allocations) are not
+recalculated, because they carry their own snapshot or amounts; the correction applies to drafts and
+later calculations, and a draft recomputed afterwards needs its input confirmation again like after
+any change of the sources. A corrected row cannot be corrected or ended again (409
+`ownership_already_corrected` / `ownership_corrected`); its replacement can be. A correction is
+refused with a German `message` and a `code` when nothing changes (422 `ownership_correction_unchanged`),
+the share is not a positive number (422 `ownership_correction_share`), the new start is not before the
+end of the row (422 `ownership_correction_period`) or the replacement would overlap another uncorrected
+row of the same person and unit (409 `ownership_correction_overlap`); a refusal changes nothing. The
+no-overlap constraint is partial over uncorrected rows (migration 0190). The annual settlement's refusal
+for shares that do not add up (§4.3.3) names „Korrigieren“ as the way out.
+
 For drafts, `GET /api/weg-settlements/{id}/input-owners` returns the complete authorized
 owner set of the settlement period, with READ scope and disclosure checks. The UI uses the
 same set as coverage validation and paid-Hausgeld derivation: owners whose ownership
@@ -511,7 +531,8 @@ settlement period in which two or more owners are active and their `mea_share` a
 **neither 1 nor 100** is refused with HTTP 422 and the structured detail
 `code: weg_co_owner_shares_mismatch`, `unit_id`, `unit_number`, `span_start`, `span_end`, `share_sum`
 and a German `message`, for example „Die Miteigentumsanteile der Eigentümer von Einheit 2 ergeben
-vom 01.01.2026 bis 31.12.2026 zusammen 0,9 statt 1 oder 100. …“. Normalising such a sum would hide
+vom 01.01.2026 bis 31.12.2026 zusammen 0,9 statt 1 oder 100. Bitte korrigieren Sie die MEA-Anteile mit
+„Korrigieren“ in der Eigentümer-Historie der Einheit und berechnen Sie die Abrechnung erneut.“. Normalising such a sum would hide
 an incomplete co-owner list. The annual settlement page shows the message in its „Fehler“ banner like
 its other calculation refusals; classification uses the code, never the text.
 

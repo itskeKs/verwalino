@@ -553,7 +553,8 @@ it("T26 ends June 30, preserves source data, persists and requires an explicit b
   expect(posts()).toHaveLength(0); expect(screen.getByRole("status")).toHaveTextContent(/30\.06\.2026/);
   const row = screen.getByRole("row", { name: /Anna Alt/ });
   expect(row).toHaveTextContent("01.01.2026"); expect(row).toHaveTextContent("30.06.2026"); expect(row).toHaveTextContent("125.0000");
-  expect(within(row).queryByRole("button")).not.toBeInTheDocument();
+  expect(within(row).queryByRole("button", { name: "Eigentum beenden" })).not.toBeInTheDocument();
+  expect(within(row).getByRole("button", { name: "Korrigieren" })).toBeVisible(); // an ended entry can still be corrected (#668)
   expect(screen.getByRole("combobox", { name: "Eigentuemer *" })).toHaveValue("");
   expect(screen.getByLabelText("Gueltig ab *", { exact: true })).toHaveValue("2026-07-01");
   expect(screen.getByLabelText("Gueltig bis", { exact: true })).toHaveValue("");
@@ -1004,4 +1005,120 @@ it('keeps a long household history and large saved counts readable', async () =>
   expect(items).toHaveLength(24);
   expect(items[0]).toHaveTextContent('01.01.2000');
   expect(items[23]).toHaveTextContent('01.01.2023');
+});
+
+// -- #668: a mistaken share or start date is corrected, the old entry stays visible --------
+
+const mistakenOwner: OwnershipRecord = {
+  ...originalOwner, id: "ownership-mistaken", mea_share: "30.000000",
+  corrected_at: "2026-11-15T12:00:00+00:00", corrected_by_name: "Chris Admin",
+};
+const currentOwner: OwnershipRecord = { ...originalOwner, id: "ownership-current", mea_share: "50.000000" };
+const correctionUrl = "/api/ownership/ownership-old/correction";
+function correctionPosts() { return fetchMock.mock.calls.filter(([url]) => url === correctionUrl); }
+async function openCorrection(index = 0) {
+  fireEvent.click((await screen.findAllByRole("button", { name: "Korrigieren" }))[index]);
+  return screen.findByRole("dialog", { name: "Eintrag korrigieren" });
+}
+function saveCorrection() { fireEvent.click(screen.getByRole("button", { name: "Korrigierten Eintrag speichern" })); }
+function answerCorrection(respond: (body: { valid_from: string; mea_share: string | null }) => Response) {
+  const previous = fetchMock.getMockImplementation()! as (url: string, options?: RequestInit) => Promise<Response>;
+  fetchMock.mockImplementation(async (url: string, options?: RequestInit) =>
+    url === correctionUrl ? respond(JSON.parse(options!.body as string)) : previous(url, options));
+}
+
+it("#668 shows a corrected entry as corrected with who and when and offers no action on it", async () => {
+  ownershipSetup([mistakenOwner, currentOwner]); show();
+  const rows = await screen.findAllByRole("row", { name: /Anna Alt/ });
+  expect(within(rows[0]).getByText("Korrigiert")).toBeVisible();
+  expect(rows[0]).toHaveTextContent(/15\.11\.2026.*Chris Admin/);
+  expect(rows[0]).toHaveTextContent("30.000000");
+  expect(within(rows[0]).queryByRole("button")).not.toBeInTheDocument();
+  expect(within(rows[1]).queryByText("Korrigiert")).not.toBeInTheDocument();
+  expect(within(rows[1]).getAllByRole("button").map(button => button.textContent)).toEqual(["Eigentum beenden", "Korrigieren"]);
+});
+
+it("#668 corrects a share and a start date with one request and shows the history again", async () => {
+  ownershipSetup([{ ...originalOwner, mea_share: "30.000000" }]);
+  answerCorrection(body => {
+    ownerRows = [{ ...ownerRows[0], corrected_at: "2026-11-15T12:00:00+00:00", corrected_by_name: "Chris Admin" },
+      { ...originalOwner, id: "ownership-new", valid_from: body.valid_from, mea_share: body.mea_share }];
+    return new Response(JSON.stringify(ownerRows[1]), { status: 201 });
+  });
+  show(); const dialog = await openCorrection();
+  expect(within(dialog).getByLabelText("MEA-Anteil", { exact: true })).toHaveValue("30");
+  expect(within(dialog).getByLabelText("Eigentum ab", { exact: true })).toHaveValue("2026-01-01");
+  fireEvent.change(within(dialog).getByLabelText("MEA-Anteil", { exact: true }), { target: { value: "50" } });
+  fireEvent.change(within(dialog).getByLabelText("Eigentum ab", { exact: true }), { target: { value: "2026-02-01" } });
+  saveCorrection();
+  await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+  expect(correctionPosts()).toHaveLength(1);
+  expect(JSON.parse(correctionPosts()[0][1].body)).toEqual({ valid_from: "2026-02-01", mea_share: "50" });
+  expect(await screen.findByText("Korrigiert")).toBeVisible();
+  expect(screen.getByRole("status")).toHaveTextContent(/Eintrag korrigiert/);
+  const rows = screen.getAllByRole("row", { name: /Anna Alt/ });
+  expect(rows).toHaveLength(2);
+  expect(rows[1]).toHaveTextContent("01.02.2026");
+});
+
+it("#668 sends a cleared share as null and a decimal comma as typed", async () => {
+  ownershipSetup([{ ...originalOwner, mea_share: "30.000000" }]);
+  answerCorrection(() => new Response(JSON.stringify({ ...originalOwner, id: "ownership-new" }), { status: 201 }));
+  show(); await openCorrection();
+  fireEvent.change(screen.getByLabelText("MEA-Anteil", { exact: true }), { target: { value: "" } }); saveCorrection();
+  await waitFor(() => expect(correctionPosts()).toHaveLength(1));
+  expect(JSON.parse(correctionPosts()[0][1].body).mea_share).toBeNull();
+  await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+  await openCorrection(); fireEvent.change(screen.getByLabelText("MEA-Anteil", { exact: true }), { target: { value: "0,5" } }); saveCorrection();
+  await waitFor(() => expect(correctionPosts()).toHaveLength(2));
+  expect(JSON.parse(correctionPosts()[1][1].body).mea_share).toBe("0,5");
+});
+
+it.each([
+  [409, "Die Korrektur überschneidet sich mit einem anderen Eintrag derselben Person in dieser Einheit."],
+  [422, "Das Eigentum muss vor seinem Ende beginnen. Bitte wählen Sie einen früheren Beginn."],
+] as const)("#668 keeps the dialog and the inputs after the refusal %s and shows its German message", async (status, message) => {
+  ownershipSetup([{ ...originalOwner, mea_share: "30.000000" }]);
+  answerCorrection(() => new Response(JSON.stringify({ detail: { code: "refusal", message } }), { status }));
+  show(); const dialog = await openCorrection();
+  fireEvent.change(within(dialog).getByLabelText("MEA-Anteil", { exact: true }), { target: { value: "50" } }); saveCorrection();
+  expect(await within(screen.getByRole("dialog")).findByRole("alert")).toHaveTextContent(message);
+  expect(within(screen.getByRole("dialog")).getByLabelText("MEA-Anteil", { exact: true })).toHaveValue("50");
+  expect(ownerRows[0].corrected_at).toBeUndefined();
+  expect(screen.queryByText("Korrigiert")).not.toBeInTheDocument();
+});
+
+it("#668 asks for the start date before it sends anything", async () => {
+  ownershipSetup(); show(); await openCorrection();
+  fireEvent.change(screen.getByLabelText("Eigentum ab", { exact: true }), { target: { value: "" } }); saveCorrection();
+  expect(await within(screen.getByRole("dialog")).findByRole("alert")).toHaveTextContent("Bitte den Beginn des Eigentums eingeben.");
+  expect(correctionPosts()).toHaveLength(0);
+});
+
+it("#668 limits the start of an ended entry to its last day", async () => {
+  ownershipSetup([{ ...originalOwner, valid_to: "2026-06-30" }]); show(); await openCorrection();
+  expect(screen.getByLabelText("Eigentum ab", { exact: true })).toHaveAttribute("max", "2026-06-30");
+});
+
+it.each(["READ_ONLY", "UNKNOWN", ""])("#668 offers no correction to role %s but still shows corrected entries", async role => {
+  ownershipSetup([mistakenOwner, currentOwner]); show(role);
+  expect(await screen.findAllByRole("row", { name: /Anna Alt/ })).toHaveLength(2);
+  expect(screen.getByText("Korrigiert")).toBeVisible();
+  expect(screen.queryByRole("button", { name: "Korrigieren" })).not.toBeInTheDocument();
+});
+
+it("#668 blocks a second submit while the correction is pending", async () => {
+  ownershipSetup(); show(); const dialog = await openCorrection(); let finish!: (response: Response) => void;
+  const previous = fetchMock.getMockImplementation()! as (url: string, options?: RequestInit) => Promise<Response>;
+  fetchMock.mockImplementation((url: string, options?: RequestInit) => url === correctionUrl
+    ? new Promise<Response>(resolve => { finish = resolve; }) : previous(url, options));
+  fireEvent.change(within(dialog).getByLabelText("MEA-Anteil", { exact: true }), { target: { value: "50" } });
+  const form = within(dialog).getByRole("button", { name: "Korrigierten Eintrag speichern" }).closest("form")!;
+  fireEvent.submit(form); fireEvent.submit(form);
+  expect(correctionPosts()).toHaveLength(1);
+  expect(within(dialog).getByRole("button", { name: "Korrigierten Eintrag speichern" })).toBeDisabled();
+  fireEvent.keyDown(dialog, { key: "Escape" });
+  expect(screen.getByRole("dialog", { name: "Eintrag korrigieren" })).toBeVisible();
+  finish(new Response(JSON.stringify({ ...originalOwner, id: "ownership-new" }), { status: 201 }));
+  await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
 });

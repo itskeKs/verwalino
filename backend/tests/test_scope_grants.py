@@ -217,6 +217,26 @@ async def test_empty_sev_binding_fails_without_poisoning_unit_review(migrator_se
             await s.execute(text("INSERT INTO accounting_scope_unit(organization_id,scope_id,property_id,unit_id,owner_profile_id) VALUES (:org,:sev,:property,:unit,:owner)"), ids)
 
 
+async def test_a_corrected_ownership_row_does_not_cover_a_sev_scope(migrator_session, seed_data):
+    s = migrator_session
+    ids = await scope_fixture(s, seed_data)
+    ids.update(sev=uuid.uuid4(), unit=uuid.uuid4(), person=uuid.uuid4(), owner=uuid.uuid4())
+    await s.execute(text("INSERT INTO accounting_scope(id,organization_id,property_id,scope_type,label,valid_from,whole_property,origin,created_by) VALUES (:sev,:org,:property,'SEV','Reviewed unit set','2025-01-01',false,'REVIEWED',:actor)"), ids)
+    await s.execute(text("INSERT INTO unit(id,organization_id,property_id,number,location,usage_type) VALUES (:unit,:org,:property,'1','','WOHNUNG')"), ids)
+    await s.execute(text("INSERT INTO person(id,organization_id,first_name,last_name,street,zip_code,city) VALUES (:person,:org,'Test','Owner','','','')"), ids)
+    await s.execute(text("INSERT INTO owner_profile(id,organization_id,person_id,notes) VALUES (:owner,:org,:person,'')"), ids)
+    # The mistaken row alone would cover the scope from its first day; its replacement starts later (#668).
+    await s.execute(text("INSERT INTO ownership_history(organization_id,unit_id,owner_profile_id,valid_from,corrected_at,corrected_by) VALUES (:org,:unit,:owner,'2025-01-01',clock_timestamp(),:actor)"), ids)
+    await s.execute(text("INSERT INTO ownership_history(organization_id,unit_id,owner_profile_id,valid_from) VALUES (:org,:unit,:owner,'2025-06-01')"), ids)
+    insert = text("INSERT INTO accounting_scope_unit(organization_id,scope_id,property_id,unit_id,owner_profile_id) VALUES (:org,:sev,:property,:unit,:owner)")
+    with pytest.raises(DBAPIError) as refused:
+        async with s.begin_nested():
+            await s.execute(insert, ids)
+    assert 'SEV owner history must cover' in str(refused.value)
+    await s.execute(text("UPDATE ownership_history SET valid_from='2025-01-01' WHERE unit_id=:unit AND corrected_at IS NULL"), ids)
+    await s.execute(insert, ids)
+
+
 async def test_payment_service_inherits_mandate_and_reversal_scope(migrator_session, seed_data):
     from datetime import date
     from decimal import Decimal

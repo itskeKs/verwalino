@@ -220,6 +220,7 @@ class SettlementRunRepository(TenantRepository[SettlementRun]):
             select(OwnershipHistory)
             .join(Unit, Unit.id == OwnershipHistory.unit_id)
             .where(OwnershipHistory.organization_id == self._org_id)
+            .where(OwnershipHistory.corrected_at.is_(None))
             .where(Unit.property_id == property_id)
             .order_by(OwnershipHistory.valid_from)
         )

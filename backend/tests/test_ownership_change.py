@@ -656,3 +656,300 @@ async def test_input_owners_requires_complete_live_property_and_contact_sources(
         revoked = await api.post(f"/api/person-data-domains/{contact_domain}/grants/{receipt}/revoke")
         assert revoked.status_code == 204, revoked.text
         assert (await reader.get(path)).status_code == 404
+
+
+# -- #668: a mistaken share or start date is corrected, never rewritten ---------------------
+
+async def correct(api, row, **changes):
+    body = {"valid_from": row["valid_from"], "mea_share": row["mea_share"], **changes}
+    return await api.post(f"{url(row)}/correction", json=body)
+
+
+async def history(api, w):
+    response = await api.get("/api/ownership", params={"unit_id": w["unit"]})
+    assert response.status_code == 200, response.text
+    return {row["id"]: row for row in response.json()}
+
+
+async def test_correcting_a_share_keeps_the_mistaken_row_visible_and_out_of_the_present(
+    client_a_admin, ownership_world,
+):
+    w, api = ownership_world, client_a_admin
+    mistaken = await create_owner(api, w, "buyer", mea_share="30")
+    response = await correct(api, mistaken, mea_share="50")
+    assert response.status_code == 201, response.text
+    replacement = response.json()
+    assert replacement["id"] != mistaken["id"]
+    assert replacement["corrected_at"] is None and replacement["corrected_by_name"] is None
+    assert [replacement[k] for k in ("unit_id", "owner_profile_id", "valid_from", "valid_to")] == [
+        mistaken[k] for k in ("unit_id", "owner_profile_id", "valid_from", "valid_to")]
+    assert Decimal(replacement["mea_share"]) == 50
+    rows = await history(api, w)
+    assert set(rows) == {mistaken["id"], replacement["id"]}
+    old = rows[mistaken["id"]]
+    assert (old["valid_from"], old["valid_to"], Decimal(old["mea_share"])) == ("2026-01-01", None, 30)
+    assert old["corrected_at"] is not None and old["corrected_by_name"] == "T26"
+    at = await api.get("/api/ownership", params={"unit_id": w["unit"], "at_date": "2026-03-01"})
+    assert [row["id"] for row in at.json()] == [replacement["id"]]
+    async with get_tenant_session(w["org_a_id"]) as db:
+        author = await db.scalar(text("SELECT corrected_by FROM ownership_history WHERE id=:id"),
+                                 {"id": uuid.UUID(mistaken["id"])})
+        assert author == w["user_a_admin_id"]
+
+
+async def test_correcting_a_start_date_keeps_the_end_of_an_ended_row(client_a_admin, ownership_world):
+    w, api = ownership_world, client_a_admin
+    ended = await create_owner(api, w, valid_to="2026-06-30")
+    response = await correct(api, ended, valid_from="2026-03-15")
+    assert response.status_code == 201, response.text
+    assert (response.json()["valid_from"], response.json()["valid_to"]) == ("2026-03-15", "2026-06-30")
+    assert Decimal(response.json()["mea_share"]) == 1
+    async with get_tenant_session(w["org_a_id"]) as db:
+        stored = await db.scalar(text("SELECT valid_to FROM ownership_history WHERE id=:id"),
+                                 {"id": uuid.UUID(response.json()["id"])})
+        assert stored == date(2026, 7, 1)  # the exclusive bound is carried over unchanged
+    one_day = await correct(api, response.json(), valid_from="2026-06-30")
+    assert one_day.status_code == 201, one_day.text
+
+
+async def test_a_row_can_be_corrected_twice_through_its_replacement(client_a_admin, ownership_world):
+    w, api = ownership_world, client_a_admin
+    first = await create_owner(api, w, "buyer", mea_share="30")
+    second = (await correct(api, first, mea_share="40")).json()
+    third = await correct(api, second, mea_share="50", valid_from="2026-02-01")
+    assert third.status_code == 201, third.text
+    rows = await history(api, w)
+    assert sorted(r["id"] for r in rows.values() if r["corrected_at"] is None) == [third.json()["id"]]
+    assert {rows[first["id"]]["mea_share"], rows[second["id"]]["mea_share"]} == {"30.000000", "40.000000"}
+    assert rows[first["id"]]["corrected_at"] and rows[second["id"]]["corrected_at"]
+    again = await correct(api, first, mea_share="60")
+    assert again.status_code == 409, again.text
+    assert again.json()["detail"]["code"] == "ownership_already_corrected"
+    assert again.json()["detail"]["message"].startswith("Dieser Eintrag wurde bereits korrigiert.")
+    assert await history(api, w) == rows
+
+
+@pytest.mark.parametrize("changes,status,code", [
+    ({}, 422, "ownership_correction_unchanged"),
+    ({"mea_share": "30.0"}, 422, "ownership_correction_unchanged"),
+    ({"valid_from": "2026-07-01"}, 422, "ownership_correction_period"),
+    ({"valid_from": "2027-01-01"}, 422, "ownership_correction_period"),
+    *[({"mea_share": share}, 422, "ownership_correction_share")
+      for share in ("abc", "0", "-5", "1000000", "NaN", "Infinity", "1,2,3")],
+])
+async def test_a_refused_correction_names_its_reason_and_changes_nothing(
+    client_a_admin, ownership_world, changes, status, code,
+):
+    w, api = ownership_world, client_a_admin
+    row = await create_owner(api, w, mea_share="30", valid_to="2026-06-30")
+    before = await history(api, w)
+    response = await correct(api, row, **changes)
+    assert response.status_code == status, response.text
+    detail = response.json()["detail"]
+    assert detail["code"] == code and detail["message"].endswith(".")
+    assert await history(api, w) == before
+
+
+async def test_a_blank_share_and_a_decimal_comma_are_accepted(client_a_admin, ownership_world):
+    w, api = ownership_world, client_a_admin
+    row = await create_owner(api, w, "buyer", mea_share="30")
+    comma = await correct(api, row, mea_share="0,5")
+    assert comma.status_code == 201, comma.text
+    assert Decimal(comma.json()["mea_share"]) == Decimal("0.5")
+    blank = await correct(api, comma.json(), mea_share=None)
+    assert blank.status_code == 201, blank.text
+    assert blank.json()["mea_share"] is None
+
+
+async def test_a_correction_that_overlaps_the_same_person_is_refused_in_german_and_rolled_back(
+    client_a_admin, ownership_world,
+):
+    w, api = ownership_world, client_a_admin
+    earlier = await create_owner(api, w, valid_to="2026-06-30")
+    later = await create_owner(api, w, valid_from="2026-07-01")
+    before = await history(api, w)
+    response = await correct(api, later, valid_from="2026-06-30")
+    assert response.status_code == 409, response.text
+    detail = response.json()["detail"]
+    assert detail["code"] == "ownership_correction_overlap"
+    assert "überschneidet sich" in detail["message"]
+    assert await history(api, w) == before  # the mistaken row was not marked either
+    ok = await correct(api, later, valid_from="2026-07-02")  # a healthy next transaction
+    assert ok.status_code == 201, ok.text
+    assert (await history(api, w))[earlier["id"]]["corrected_at"] is None
+
+
+async def test_a_corrected_row_cannot_be_ended_and_its_replacement_can(client_a_admin, ownership_world):
+    w, api = ownership_world, client_a_admin
+    mistaken = await create_owner(api, w, mea_share="30")
+    replacement = (await correct(api, mistaken, mea_share="50")).json()
+    response = await client_a_admin.patch(url(mistaken), json={"valid_to": "2026-06-30"})
+    assert response.status_code == 409, response.text
+    assert response.json()["detail"]["code"] == "ownership_corrected"
+    assert (await history(api, w))[mistaken["id"]]["valid_to"] is None
+    await end_owner(api, replacement)
+
+
+async def test_correction_roles_and_organization_isolation(client_a_admin, client_b_admin, ownership_world):
+    w = ownership_world
+    row = await create_owner(client_a_admin, w, mea_share="30")
+    body = {"valid_from": "2026-01-01", "mea_share": "50"}
+    async with ownership_client(w, "user_a_readonly_id") as reader:
+        assert (await reader.post(f"{url(row)}/correction", json=body)).status_code == 403
+    assert (await client_b_admin.post(f"{url(row)}/correction", json=body)).status_code == 404
+    assert (await client_a_admin.post(f"/api/ownership/{uuid.uuid4()}/correction", json=body)).status_code == 404
+    assert (await client_a_admin.post("/api/ownership/not-a-uuid/correction", json=body)).status_code == 422
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as anon:
+        assert (await anon.post(f"{url(row)}/correction", json=body)).status_code == 401
+    assert (await client_a_admin.post(f"{url(row)}/correction", json={**body, "valid_to": "2026-06-30"})).status_code == 422
+    assert (await history(client_a_admin, w))[row["id"]]["corrected_at"] is None
+    async with ownership_client(w, "user_a_clerk_id") as clerk:
+        assert (await correct(clerk, row, mea_share="50")).status_code == 201
+    async with get_tenant_session(w["org_b_id"]) as db:
+        assert await db.scalar(text("SELECT count(*) FROM ownership_history")) == 0
+
+
+def settlement_values(w):
+    return {"reserve_override_reason": "Reviewed synthetic opening balance", "reserve_opening_balance": "0.00",
+            "paid_advances": [{"owner_profile_id": w[owner], "paid_total": "0.00"} for owner in ("seller", "buyer")]}
+
+
+async def new_settlement(api, w, plan):
+    response = await api.post("/api/weg-settlements", json={
+        "property_id": w["property"], "economic_plan_id": plan,
+        "period_start": "2026-01-01", "period_end": "2026-12-31"})
+    assert response.status_code == 201, response.text
+    return response.json()["id"]
+
+
+async def run_settlement(api, w, run, action="compute"):
+    values = settlement_values(w)
+    await attest_fixture(api, "settlement", run, values)
+    return await api.post(f"/api/weg-settlements/{run}/{action}", json=values)
+
+
+def owner_costs(statement, w):
+    lines = {line["addressee_owner_profile_id"]: Decimal(line["amount"])
+             for line in statement["lines"] if line["line_type"] == "OWNER_COST_TOTAL"}
+    return {owner: lines[w[owner]] for owner in ("seller", "buyer")}
+
+
+async def test_corrections_apply_to_the_next_settlement_and_never_change_a_finalized_one(
+    client_a_admin, ownership_world,
+):
+    w, api = ownership_world, client_a_admin
+    seed_financial_inputs(w)
+    seller = await create_owner(api, w, mea_share="50")
+    buyer = await create_owner(api, w, "buyer", mea_share="30")
+    plan = await finalize_plan(api, w)
+    run = await new_settlement(api, w, plan)
+    refused = await run_settlement(api, w, run)
+    assert refused.status_code == 422, refused.text
+    assert refused.json()["detail"]["code"] == "weg_co_owner_shares_mismatch"
+    assert "„Korrigieren“" in refused.json()["detail"]["message"]
+    buyer = (await correct(api, buyer, mea_share="50")).json()
+    computed = await run_settlement(api, w, run)
+    assert computed.status_code == 200, computed.text
+    assert owner_costs(computed.json(), w) == {"seller": Decimal("182.50"), "buyer": Decimal("182.50")}
+    finalized = await run_settlement(api, w, run, "finalize")
+    assert finalized.status_code == 200, finalized.text
+    frozen, pdf = finalized.json(), (await api.get(f"/api/weg-settlements/{run}/pdf")).content
+    # The real shares were 75 and 25: correct both after the settlement was finalized.
+    assert (await correct(api, seller, mea_share="75")).status_code == 201
+    assert (await correct(api, buyer, mea_share="25")).status_code == 201
+    assert (await api.get(f"/api/weg-settlements/{run}")).json() == frozen
+    assert (await api.get(f"/api/weg-settlements/{run}/pdf")).content == pdf
+    second = await new_settlement(api, w, plan)
+    statement = await run_settlement(api, w, second)
+    assert statement.status_code == 200, statement.text
+    assert owner_costs(statement.json(), w) == {"seller": Decimal("273.75"), "buyer": Decimal("91.25")}
+
+
+async def test_a_corrected_start_date_closes_the_ownership_gap_of_the_settlement(client_a_admin, ownership_world):
+    w, api = ownership_world, client_a_admin
+    seed_financial_inputs(w)
+    await create_owner(api, w, valid_to="2026-06-30")
+    buyer = await create_owner(api, w, "buyer", valid_from="2026-09-01")  # the real start was 1 July
+    plan = await finalize_plan(api, w)
+    run = await new_settlement(api, w, plan)
+    refused = await run_settlement(api, w, run)
+    assert refused.status_code == 422, refused.text
+    assert (await correct(api, buyer, valid_from="2026-07-01")).status_code == 201
+    statement = await run_settlement(api, w, run)
+    assert statement.status_code == 200, statement.text
+    assert owner_costs(statement.json(), w) == {"seller": Decimal("181.00"), "buyer": Decimal("184.00")}
+
+
+async def draft_plan_advances(api, w, year):
+    response = await api.post("/api/economic-plans", json={
+        "property_id": w["property"], "plan_year": year,
+        "period_start": f"{year}-01-01", "period_end": f"{year}-12-31"})
+    assert response.status_code == 201, response.text
+    plan = response.json()["id"]
+    values = {"planned_costs": [{"category_code": "WEG_VERWALTERKOSTEN", "label": "Annual cost",
+               "planned_amount": "4800.00", "cost_group": "NICHT_UMLAGEFAEHIG"}],
+              "reserve_contribution_total": "0.00"}
+    await attest_fixture(api, "economic_plan", plan, values)
+    response = await api.post(f"/api/economic-plans/{plan}/compute", json=values)
+    assert response.status_code == 200, response.text
+    return {line["owner_profile_id"]: Decimal(line["planned_amount"])
+            for line in response.json()["lines"] if line["line_type"] == "OWNER_ADVANCE"}
+
+
+async def test_a_corrected_share_applies_to_the_next_plan_and_not_to_a_finalized_one(
+    client_a_admin, ownership_world,
+):
+    w, api = ownership_world, client_a_admin
+    await create_owner(api, w, mea_share="50")
+    buyer = await create_owner(api, w, "buyer", mea_share="30")
+    plan = await finalize_plan(api, w, planned_amount="4800.00")
+    frozen = (await api.get(f"/api/economic-plans/{plan}")).json()
+    advances = {line["owner_profile_id"]: Decimal(line["planned_amount"])
+                for line in frozen["lines"] if line["line_type"] == "OWNER_ADVANCE"}
+    assert advances == {w["seller"]: Decimal("3000.00"), w["buyer"]: Decimal("1800.00")}
+    assert (await correct(api, buyer, mea_share="50")).status_code == 201
+    assert (await api.get(f"/api/economic-plans/{plan}")).json() == frozen
+    assert await draft_plan_advances(api, w, 2027) == {w["seller"]: Decimal("2400.00"), w["buyer"]: Decimal("2400.00")}
+
+
+async def test_hausgeld_soll_follows_the_corrected_start_date(client_a_admin, ownership_world):
+    w, api = ownership_world, client_a_admin
+    await create_owner(api, w, valid_to="2026-06-30")
+    buyer = await create_owner(api, w, "buyer", valid_from="2026-09-01")  # the real start was 1 July
+    plan = await finalize_plan(api, w, planned_amount="4800.00")
+    period = {"period_start": "2026-01-01", "period_end": "2026-12-31", "economic_plan_id": plan}
+    gap = await api.get(f"/api/payments/mietkonto/owner/{w['seller']}", params=period)
+    assert gap.status_code == 422, gap.text
+    assert gap.json()["detail"]["code"] == "hausgeld_ownership_invalid"
+    assert (await correct(api, buyer, valid_from="2026-07-01")).status_code == 201
+    for owner, months in (("seller", range(1, 7)), ("buyer", range(7, 13))):
+        ledger = await api.get(f"/api/payments/mietkonto/owner/{w[owner]}", params=period)
+        assert ledger.status_code == 200, ledger.text
+        assert Decimal(ledger.json()["soll_total"]) == Decimal("2400.00")
+        assert [r["period_month"] for r in ledger.json()["open_items"]] == list(months)
+
+
+# SQL functions that decide on the dates of an ownership row skip corrected rows (migration 0190); the
+# others follow only the relation, the evidence or the retention of a row, which must also resolve a
+# corrected row that a levy allocation or a snapshot points to. A new function that reads the table
+# has to be put in one of the two sets, which is the review of that choice.
+SKIPS_CORRECTED_ROWS = {"payment_computation_context_valid", "reserve_contribution_headroom",
+                        "validate_dunning_context", "validate_sev_owner"}
+FOLLOWS_THE_ROW_ITSELF = {
+    "access_coverage_actor_access", "access_coverage_manifest_pre_intake", "access_coverage_manifest_v1",
+    "access_item_disposition_pre_intake", "apply_person_privacy", "dunning_legacy_subject_clear",
+    "financial_computation_source_digest", "guard_special_levy", "history_source_before_contacts_at_mode",
+    "organization_retention_plan", "organization_retention_plan_before0160", "organization_retention_plan_before0162",
+    "privacy_sources_before_contacts", "property_audit_before_contact_setup",
+    "property_financial_contact_access_at_mode", "property_history_graph_valid", "special_levy_sources",
+}
+
+
+async def test_every_sql_function_reading_ownership_rows_is_classified_for_corrected_rows():
+    with psycopg2.connect(MIGRATOR_SYNC_URL) as conn, conn.cursor() as cur:
+        cur.execute("""SELECT p.proname, p.prosrc ILIKE '%corrected_at%' FROM pg_proc p
+            JOIN pg_namespace n ON n.oid=p.pronamespace
+            WHERE n.nspname='public' AND p.prosrc ILIKE '%ownership_history%'""")
+        rows = cur.fetchall()
+    assert {name for name, skips in rows if skips} == SKIPS_CORRECTED_ROWS
+    assert {name for name, skips in rows if not skips} == FOLLOWS_THE_ROW_ITSELF
