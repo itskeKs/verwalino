@@ -188,6 +188,23 @@ month gives both owners that month, split by days. Single payments and the bank 
 assignment stay as they are. Details: [M4 §2.4a](../m4-weg-abrechnung.md#24a-booking-the-monthly-hausgeld-from-the-finalized-plan-186),
 scenarios in [hausgeld_booking.feature](../../features/hausgeld_booking.feature).
 
+## Reversing a booked payment (Stornobuchung)
+
+On a booked payment, **Stornieren (Gegenbuchung)** creates a counter booking: a new booked
+payment with the opposite direction, the original's amount, counterparty, accounting period
+and value date, linked to the original. The original is never edited; it only points to its
+Storno. A Storno cannot itself be reversed; a correction is a new payment.
+
+The Storno is a new booking record, so its retention period counts from its own booking, not
+from the old value date: `retention_until` (shown by `GET /api/payments/{id}`) is 31 December of
+the year of the later of the original's value date and the Storno's booking date (UTC), plus
+8 years. A payment dated 15.03.2016 and reversed on 08.11.2026 gives a Storno with value date
+2016-03-15 and `retention_until` 2034-12-31; the original keeps 2024-12-31. Until that date the
+person's retention, the organization deletion preview and the erasure run keep the Storno and
+its tenant or owner, even when the original's own period has expired. Storno rows booked before
+this rule keep the date they were stored with; booked rows are not rewritten. The deadline rule
+is the project's provisional one (see [ADR-0012](../adr/0012-gdpr-erasure-vs-gobd-retention.md)).
+
 ## Payment and cost lists as CSV
 
 Both lists offer **CSV herunterladen** (download CSV) with the same active filters as the
