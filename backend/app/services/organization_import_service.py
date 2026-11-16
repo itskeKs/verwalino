@@ -487,6 +487,7 @@ async def import_organization(db, auth, source):
             bank_dependencies['accounting_scope_binding', row['id']] = [
                 ('accounting_scope_binding', bank_bindings[draft['bank_account_id']])]
             bank_dependencies['payment', draft['id']] = [('accounting_scope_binding', row['id'])]
+        context_notices = {row['dunning_notice_id'] for row in entities.get('dunning_scope_context', [])}
         registrations = {}
         for row in entities.get('document_ref', []):
             kind = row['source_kind']
@@ -499,10 +500,14 @@ async def import_organization(db, auth, source):
                 progress = False
                 for name, original in pending[:]:
                     dependencies = list(bank_dependencies.get((name, original.get('id')), ()))
-                    if name == 'accounting_scope_binding':
-                        # Native binding admission needs the archived live grants.
+                    if name in {'accounting_scope_binding', 'dunning_scope_context'}:
+                        # Native binding and dunning-context admission need the archived live grants.
                         dependencies.extend(('scope_grant', grant['id']) for grant in entities.get('scope_grant', [])
                                             if grant['scope_id'] == original['scope_id'])
+                    if name == 'dunning_notice' and original['id'] in context_notices:
+                        # `protect_dunning_context` refuses a context whose notice already exists,
+                        # so the context goes first and the notice waits for it.
+                        dependencies.append(('dunning_scope_context', original['id']))
                     if name == 'settlement_run':
                         # Snapshot cost references are not foreign keys. Rules
                         # must precede finalized runs even after FK retry passes.
@@ -512,6 +517,9 @@ async def import_organization(db, auth, source):
                         if child == name and 'id' in parent_columns and parent not in {'organization', 'cost_category'}:
                             if name == 'accounting_scope_binding' and parent == 'payment' and original['id'] in early_payment_bindings:
                                 # Its payment FKs and semantic validation are deferred.
+                                continue
+                            if name == 'dunning_scope_context' and parent == 'dunning_notice':
+                                # Reversed edge: see the dependency on the context above.
                                 continue
                             if name == 'payment' and list(child_columns) == ['reversed_by_id']:
                                 # The original and its Storno point at each other; the Storno
@@ -576,17 +584,20 @@ async def import_organization(db, auth, source):
                     columns = ','.join(f'"{c}"' for c in row)
                     projection = ','.join(f'(v)."{c}"' for c in row)
                     # Levy INSERT RLS requires an explicit financial context,
-                    # including for historical null-reference headers. Select
-                    # only this archived scope; native source/capability guards
-                    # still decide whether the administrator may restore it.
-                    if name == 'special_levy':
+                    # including for historical null-reference headers, and
+                    # `protect_dunning_context` wants the context's own scope
+                    # selected. Select only this archived scope; native
+                    # source/capability guards still decide whether the
+                    # administrator may restore it.
+                    scope_column = {'special_levy': 'accounting_scope_id', 'dunning_scope_context': 'scope_id'}.get(name)
+                    if scope_column:
                         previous_scope = await db.scalar(text("SELECT current_setting('app.current_scope_id',true)"))
                         await db.execute(text("SELECT set_config('app.current_scope_id',:scope,true)"),
-                            {'scope': row['accounting_scope_id']})
+                            {'scope': row[scope_column]})
                     await db.execute(text(f'INSERT INTO public."{name}" ({columns}) SELECT {projection} '
                         f'FROM json_populate_record(NULL::public."{name}",CAST(:row AS json)) v'),
                         {'row': json_bytes(row).decode()})
-                    if name == 'special_levy':
+                    if scope_column:
                         await db.execute(text("SELECT set_config('app.current_scope_id',:scope,true)"),
                             {'scope': previous_scope or ''})
                     if name == 'payment' and original.get('id') in reversals:
@@ -598,7 +609,7 @@ async def import_organization(db, auth, source):
                         if linked.rowcount != 1:
                             refuse('Die Stornoverknüpfung konnte nicht wiederhergestellt werden.',
                                    code='IMPORT_PAYMENT_REVERSAL_CHAIN', entity=name, source_ids=[original['id']], count=1)
-                    inserted.add((name, original.get('id')))
+                    inserted.add((name, original['dunning_notice_id'] if name == 'dunning_scope_context' else original.get('id')))
                     pending.remove((name, original))
                     progress = True
                 if not progress:

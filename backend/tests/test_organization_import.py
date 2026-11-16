@@ -2,9 +2,11 @@
 import hashlib
 import io
 import json
+import re
 import tarfile
 import uuid
 from datetime import date, datetime, timezone
+from decimal import Decimal
 
 import pytest
 from sqlalchemy import text
@@ -782,6 +784,163 @@ async def test_import_restores_the_superseded_allocations_of_a_moved_levy_with_t
         (mapping['owner_profile'][str(ids['owner'])], mapping['user'][str(ids['actor'])])]
     # The restore keeps the archived time of the supersession.
     assert restored[0].superseded_at == datetime.fromisoformat(markers[0]['superseded_at'])
+    await rent_db.rollback()
+
+
+async def levy_notice_source(db, seed):
+    """A WEG with three owners and one live grant: everything an issued levy notice needs, nothing revoked.
+
+    A revoked grant cannot be restored (`scope_insert` takes only live rows), so unlike `levy_fixture`
+    this source keeps the one grant of the administrator who prepared and issued the notices.
+    """
+    ids = {key: uuid.uuid4() for key in ('property', 'scope', 'meeting', 'resolution')}
+    ids.update(org=seed['org_a_id'], actor=seed['user_a_admin_id'], owners=[])
+    for statement in (
+        "INSERT INTO property(id,organization_id,name,management_type) VALUES (:property,:org,'Levy notice WEG','WEG')",
+        "INSERT INTO accounting_scope(id,organization_id,property_id,scope_type,label,valid_from,whole_property,origin,created_by)"
+        " VALUES (:scope,:org,:property,'WEG','Levy notice WEG','2025-01-01',true,'REVIEWED',:actor)",
+        "INSERT INTO owners_meeting(id,organization_id,property_id,meeting_date,location,meeting_type,status)"
+        " VALUES (:meeting,:org,:property,'2025-05-15','Test','ORDENTLICH','HELD')",
+        "INSERT INTO resolution(id,organization_id,meeting_id,wording,votes_yes,votes_no,votes_abstain,result)"
+        " VALUES (:resolution,:org,:meeting,'Dachreparatur',2,0,0,'ANGENOMMEN')",
+        "INSERT INTO scope_grant(organization_id,scope_id,user_id,capabilities,granted_by,reason) VALUES"
+        " (:org,:scope,:actor,ARRAY['read','prepare','approve','confirm','export'],:actor,'Prepare and issue levy notices')",
+    ):
+        await db.execute(text(statement), ids)
+    for number, mea in enumerate((300, 300, 400), 1):
+        unit, person, owner = uuid.uuid4(), uuid.uuid4(), uuid.uuid4()
+        params = {**ids, 'unit': unit, 'person': person, 'owner': owner, 'mea': mea, 'number': str(number)}
+        for statement in (
+            "INSERT INTO unit(id,organization_id,property_id,number,usage_type,mea) VALUES (:unit,:org,:property,:number,'WOHNUNG',:mea)",
+            "INSERT INTO person(id,organization_id,first_name,last_name,street,zip_code,city) VALUES (:person,:org,'Levy',:number,'','','')",
+            "INSERT INTO owner_profile(id,organization_id,person_id,notes) VALUES (:owner,:org,:person,'')",
+            "INSERT INTO ownership_history(organization_id,unit_id,owner_profile_id,valid_from) VALUES (:org,:unit,:owner,'2024-01-01')",
+        ):
+            await db.execute(text(statement), params)
+        ids['owners'].append(owner)
+    await db.commit()
+    return ids
+
+
+def levy_notice_body(ids, owner):
+    """The owner notice form: scope, owner, period and the reference date."""
+    return {'accounting_scope_id': str(ids['scope']), 'owner_profile_id': str(owner),
+            'period_start': '2026-03-01', 'period_end': '2026-03-31', 'reference_date': '2026-03-16'}
+
+
+def in_target_ids(value, mapping):
+    """The same JSON with every archived identity replaced by the restored one."""
+    flat = {source: target for kind in mapping.values() for source, target in kind.items()}
+    pattern = re.compile('|'.join(map(re.escape, flat)))
+    return json.loads(pattern.sub(lambda found: flat[found.group(0)], json.dumps(value)))
+
+
+LEVY_NOTICE_WINDOW = {'period_start': '2026-03-01', 'period_end': '2026-03-31'}
+
+
+async def levy_notice_archive(db, seed):
+    """Source organization with two levies, an issued owner notice and a draft beside it, and its export.
+
+    Returns the ids, both notices as the API showed them, the owner statements and the archive bytes.
+    """
+    ids = await levy_notice_source(db, seed)
+    first, _second, third = ids['owners']
+    async with levy_client(ids, 'actor') as api:
+        # The requests of the UI: the levy form, the owner notice form and the issue button
+        # send no Idempotency-Key and no scope header. The levies stay unpaid: a payment on a
+        # scope-classified bank account is refused by the import for its own reason (#686).
+        for amount, due in (('5000.00', '2026-03-01'), ('2000.00', '2026-03-15')):
+            made = await api.post('/api/special-levies', json={
+                'property_id': str(ids['property']), 'accounting_scope_id': str(ids['scope']),
+                'amount': amount, 'due_date': due, 'resolution_id': str(ids['resolution'])})
+            assert made.status_code == 201, made.text
+        fees = await api.put('/api/dunning/settings', json={'fee_level_1': '5.00', 'fee_level_2': '10.00',
+            'fee_level_3': '15.00', 'default_interest_enabled': True})
+        assert fees.status_code == 200, fees.text
+        issued_draft = await api.post('/api/dunning/owner', json=levy_notice_body(ids, first))
+        assert issued_draft.status_code == 201, issued_draft.text
+        issued = await api.post(f"/api/dunning/{issued_draft.json()['id']}/issue")
+        assert issued.status_code == 200, issued.text
+        draft = await api.post('/api/dunning/owner', json=levy_notice_body(ids, third))
+        assert draft.status_code == 201, draft.text
+        notices = {'issued': issued.json(), 'draft': draft.json()}
+        # The first owner holds 30 % of 5000.00 and 2000.00, both due in March: 1500.00 + 600.00 overdue on 16.03.
+        assert (notices['issued']['principal_amount'], notices['issued']['level'], notices['issued']['status']) == ('2100.00', 1, 'issued')
+        assert notices['issued']['fee_amount'] == '5.00' and Decimal(notices['issued']['interest_amount']) > 0
+        assert Decimal(notices['issued']['total_amount']) == sum(
+            Decimal(notices['issued'][key]) for key in ('principal_amount', 'fee_amount', 'interest_amount'))
+        assert notices['draft']['status'] == 'draft'
+        statements = {}
+        for owner in ids['owners']:
+            statement = await api.get(f'/api/payments/mietkonto/owner/{owner}', params={
+                'accounting_scope_id': str(ids['scope']), **LEVY_NOTICE_WINDOW})
+            assert statement.status_code == 200, statement.text
+            statements[owner] = statement.json()
+        # 30 %, 30 % and 40 % of the 7000.00 of both levies; the third owner has a draft, the second no notice.
+        assert [statements[owner]['balance'] for owner in ids['owners']] == ['2100.00', '2100.00', '2800.00']
+        archive = await api.post('/api/organizations/export')
+        assert archive.status_code == 200, archive.text
+    return ids, notices, statements, archive.content
+
+
+async def test_import_restores_the_issued_owner_notice_of_a_special_levy(
+    levy_db, scope_seed, import_target, rent_db, export_store,
+):
+    ids, notices, before, archive = await levy_notice_archive(levy_db, scope_seed)
+    source = {'notices': await rent_db.scalar(text('SELECT count(*) FROM dunning_notice WHERE organization_id=:org'), ids),
+              'contexts': await rent_db.scalar(text('SELECT count(*) FROM dunning_scope_context WHERE organization_id=:org'), ids)}
+    assert source == {'notices': 2, 'contexts': 2}
+    await source_organization_deleted(rent_db, ids['org'], ids['actor'], import_target)
+    async with api_client(import_target) as api:
+        restored = await api.post('/api/organizations/import', files={'file': ('levy-notices.tar.gz', archive)})
+        assert restored.status_code == 200, restored.text
+        mapping = restored.json()['id_map']
+        scope = mapping['accounting_scope'][str(ids['scope'])]
+        for owner in ids['owners']:
+            target = mapping['owner_profile'][str(owner)]
+            statement = await api.get(f'/api/payments/mietkonto/owner/{target}', params={'accounting_scope_id': scope, **LEVY_NOTICE_WINDOW})
+            assert statement.status_code == 200, statement.text
+            assert in_target_ids(before[owner], mapping) == statement.json()
+        for kind, notice in notices.items():
+            shown = await api.get(f"/api/dunning/{mapping['dunning_notice'][notice['id']]}")
+            assert shown.status_code == 200, shown.text
+            assert in_target_ids(notice, mapping) == shown.json(), kind
+        listed = await api.get('/api/dunning')
+        assert sorted(row['status'] for row in listed.json()) == ['draft', 'issued']
+        # The issued notice stays frozen: it is not issued again, renumbered or deleted.
+        restored_issued = mapping['dunning_notice'][notices['issued']['id']]
+        assert (await api.post(f'/api/dunning/{restored_issued}/issue')).status_code == 409
+        assert (await api.delete(f'/api/dunning/{restored_issued}')).status_code == 409
+    target_id = {'org': import_target['org']}
+    assert await rent_db.scalar(text('SELECT count(*) FROM dunning_notice WHERE organization_id=:org'), target_id) == 2
+    assert await rent_db.scalar(text("SELECT count(*) FROM audit_event WHERE organization_id=:org AND action='dunning_notice.issued'"), target_id) == 1
+    contexts = (await rent_db.execute(text('SELECT special_levy_ids,scope_id FROM dunning_scope_context WHERE organization_id=:org'), target_id)).all()
+    levies = sorted(mapping['special_levy'].values())
+    assert [(sorted(str(levy) for levy in row.special_levy_ids), str(row.scope_id)) for row in contexts] == [(levies, scope)] * 2
+    # The source organization keeps exactly the rows it had.
+    assert await rent_db.scalar(text('SELECT count(*) FROM dunning_notice WHERE organization_id=:org'), ids) == source['notices']
+    assert await rent_db.scalar(text('SELECT count(*) FROM dunning_scope_context WHERE organization_id=:org'), ids) == source['contexts']
+    await rent_db.rollback()
+
+
+async def test_import_still_refuses_a_levy_notice_whose_context_names_a_levy_without_the_owners_share(
+    levy_db, scope_seed, import_target, rent_db, export_store, caplog,
+):
+    """The 0128 check runs on the restored rows too: an archive cannot plant a context the allocations do not back."""
+    ids, _notices, _statements, archive = await levy_notice_archive(levy_db, scope_seed)
+    files = unpack(archive)
+    rows = [json.loads(line) for line in files['entities/dunning_scope_context.jsonl'].splitlines()]
+    rows[0]['special_levy_ids'] = [str(uuid.uuid4())]
+    files['entities/dunning_scope_context.jsonl'] = b''.join(json.dumps(row).encode() + b'\n' for row in rows)
+    await source_organization_deleted(rent_db, ids['org'], ids['actor'], import_target)
+    async with api_client(import_target) as api:
+        refused = await api.post('/api/organizations/import', files={'file': ('forged.tar.gz', repack(files))})
+        assert refused.status_code == 422, refused.text
+        assert refused.json()['detail']['code'] == 'IMPORT_INTEGRITY_REFUSAL'
+    # Check violation of `validate_dunning_context`, not the insert guard (42501) the restore used to hit.
+    assert 'sqlstate=23514' in caplog.text
+    for table in ('dunning_notice', 'dunning_scope_context', 'special_levy'):
+        assert await rent_db.scalar(text(f'SELECT count(*) FROM {table} WHERE organization_id=:org'), import_target) == 0
     await rent_db.rollback()
 
 
