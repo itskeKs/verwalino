@@ -130,42 +130,45 @@ class SpecialLevyService:
     async def follow_ownership(self, unit_id):
         """Move the unit's amount of every levy naming it to the owners of the levy's due date (#681).
 
-        Called in the transaction of every write to the unit's ownership history, after the write.
+        Called in the transaction of every write to the unit's ownership history, after the write
+        (also a write that changes nothing, which repairs an allocation that predates the rule).
         Allocation rows are immutable evidence, so a unit whose counting rows differ from the
         owners and shares of the due date gets its rows superseded (a marker with who and when)
         and new rows for the owners of the due date, the cents of the unit's amount preserved.
         Nothing moves while the due date has no owner or co-owners without positive shares: the
         rows stay as they are (the sale is recorded in two steps, and the settlement refuses an
-        ownership gap or missing shares on its own). A levy the actor may not read or prepare
-        refuses the ownership change instead of staying with the previous owner unseen.
+        ownership gap or missing shares on its own). Whether a levy moves is decided from the
+        definer view of the unit's counting rows, so a levy the actor may not read refuses the
+        write only when it would move through it, instead of staying with the previous owner unseen.
         """
-        named = await self.db.scalar(text("SELECT special_levy_unit_ids(:org,:unit)"), {"org": self.org, "unit": unit_id})
+        named = (await self.db.execute(text("SELECT * FROM special_levy_unit_allocations(:org,:unit)"),
+            {"org": self.org, "unit": unit_id})).all()
         if not named:
             return
-        levies = list((await self.db.scalars(select(SpecialLevy).where(SpecialLevy.organization_id == self.org,
-            SpecialLevy.id.in_(named)).order_by(SpecialLevy.due_date, SpecialLevy.id))).all())
-        if len(levies) != len(named):
-            raise self._levy_access_refusal()
-        for levy in levies:
-            await self._follow_ownership_of(levy, unit_id)
+        held = {row.id: row for row in (await self.db.scalars(select(OwnershipHistory).where(
+            OwnershipHistory.organization_id == self.org,
+            OwnershipHistory.id.in_({row.history_id for row in named})))).all()}
+        by_levy = defaultdict(list)
+        for row in named:
+            by_levy[row.levy_id].append(row)
+        for levy_id, rows in by_levy.items():  # by due date, then id
+            owners = await self._due_date_owners([unit_id], rows[0].due)
+            target = self._owner_fractions(owners) if owners else None
+            basis = [held.get(row.history_id) for row in rows]
+            if target is None or (None not in basis and self._owner_fractions(basis) == target):
+                continue
+            levy = await self.db.scalar(select(SpecialLevy).where(SpecialLevy.organization_id == self.org,
+                SpecialLevy.id == levy_id))
+            if levy is None:
+                raise self._levy_access_refusal()
+            await self._move(levy, unit_id, owners)
 
-    async def _follow_ownership_of(self, levy, unit_id):
+    async def _move(self, levy, unit_id, owners):
         rows = list((await self.db.scalars(select(SpecialLevyAllocation).where(
             SpecialLevyAllocation.organization_id == self.org, SpecialLevyAllocation.special_levy_id == levy.id,
             SpecialLevyAllocation.unit_id == unit_id, counting_allocation(),
         ).order_by(SpecialLevyAllocation.owner_profile_id))).all())
-        owners = await self._due_date_owners([unit_id], levy.due_date)
-        target = self._owner_fractions(owners) if owners else None
-        if not rows or target is None:
-            return
-        held = {row.id: row for row in (await self.db.scalars(select(OwnershipHistory).where(
-            OwnershipHistory.organization_id == self.org,
-            OwnershipHistory.id.in_([row.ownership_history_id for row in rows])))).all()}
-        basis = [held.get(row.ownership_history_id) for row in rows]
-        current = self._owner_fractions(basis) if None not in basis else None
-        if current == target:
-            return
-        if not await self.db.scalar(text("SELECT has_scope_capability(:org,:scope,'prepare')"),
+        if not rows or not await self.db.scalar(text("SELECT has_scope_capability(:org,:scope,'prepare')"),
                 {"org": self.org, "scope": levy.accounting_scope_id}):
             raise self._levy_access_refusal()
         for owner in owners:

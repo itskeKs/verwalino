@@ -105,12 +105,14 @@ only. A levy due before the change stays with the seller; payments already booke
 who paid; an issued dunning notice of the seller is not rewritten, and the buyer's first notice for the
 levy is level 1. When the sale is recorded in two steps nothing moves until the buyer is added (the
 annual settlement refuses the ownership gap meanwhile). An
-actor without read and prepare access to the levy's accounting scope cannot change the ownership
-history of a unit that the levy names (409 `ownership_levy_access`). The organization export carries the
-counting rows only; the audit entry lists the superseded rows. A levy that was already allocated to a
+actor without read and prepare access to the levy's accounting scope cannot record a change that
+would move that levy (409 `ownership_levy_access`); a change that moves nothing is accepted. The organization export carries the superseded
+rows with their markers and an import restores them. A levy that was already allocated to a
 seller before this rule is not rewritten by the upgrade; the annual settlement refuses it
-(`weg_levy_owner_mismatch`) and it moves with the next write that changes the unit's owners or shares
-on the due date.
+(`weg_levy_owner_mismatch`). Every write to the unit's ownership history runs the move, also a `PATCH`
+with an unchanged end date, and moves such a levy when the owners or shares of its due date differ.
+A draft owner dunning notice written before a move is refused at issue (409 `dunning_levy_moved`) when
+its levy no longer counts for that owner; delete the draft and create the notice for the owner on the due date.
 Special levies become overdue only after their actual due date (plus grace period);
 payments of the same month are applied once to the oldest due date.
 `features/special_levy.feature` exercises the ordinary API and browser flow at

@@ -383,12 +383,14 @@ class DunningService:
         notice = await self._repo.get_by_id_for_update(dunning_id)
         if notice is None:
             raise HTTPException(status_code=404, detail="Dunning notice not found")
-        await context.enter(notice, ScopeCapability.APPROVE)
+        scope_context = await context.enter(notice, ScopeCapability.APPROVE)
         if notice.status != "draft" or notice.cancelled_at is not None:
             raise HTTPException(
                 status_code=409,
                 detail=f"Cannot issue from status '{notice.status}'",
             )
+        if notice.owner_profile_id is not None and scope_context is not None:
+            await self._require_levies_count_for_owner(notice, scope_context)
 
         values = await self._display_values(notice)
         # Owner notices are outside the destination rule (#578): they issue as
@@ -432,6 +434,26 @@ class DunningService:
             )
         )
         return notice
+
+    async def _require_levies_count_for_owner(self, notice: DunningNotice, scope_context) -> None:
+        """Refuse a draft whose special levy no longer counts for its owner (#681).
+
+        A sale recorded after the draft moved the levy to the owner on its due date; issuing the draft
+        would freeze a demand on the previous owner. Issued notices are documents and stay as they are.
+        """
+        if not scope_context.special_levy_ids:
+            return
+        levies = SpecialLevyService(self._session, self._org_id, self._user_id)
+        counting = {allocation.special_levy_id for allocation, _due in await levies.owner_allocations(
+            notice.owner_profile_id, scope_context.period_start, scope_context.period_end, scope_context.scope_id)}
+        moved = [levy_id for levy_id in scope_context.special_levy_ids if levy_id not in counting]
+        if moved:
+            levy = await levies.repo.get(moved[0])
+            when = f" mit Fälligkeit am {levy.due_date:%d.%m.%Y}" if levy is not None else ""
+            raise HTTPException(409, {"code": "dunning_levy_moved", "message":
+                f"Die Mahnung enthält eine Sonderumlage{when}, die diesem Eigentümer nach einem Eigentümerwechsel "
+                f"nicht mehr zugeordnet ist. Löschen Sie diesen Entwurf und erstellen Sie die Mahnung für den "
+                f"Eigentümer am Fälligkeitstag."})
 
     # ------------------------------------------------------------------
     # Payment destination selection (Owner decision on #331)

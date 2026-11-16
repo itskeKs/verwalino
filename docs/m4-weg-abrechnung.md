@@ -297,11 +297,13 @@ The engine sums **three subtotals** per owner (`SUBTOTAL` lines): Σ allocable, 
   same largest-remainder rule as at creation, so the levy total over the counting rows stays exact.
   A levy due before the change of ownership stays with the seller, a unit the levy has no row for
   is not touched, payments already booked stay with the owner who paid (the seller then shows a credit,
-  the buyer the Soll), and an issued dunning notice stays as it is. While the unit has no owner on the
+  the buyer the Soll), and an issued dunning notice stays as it is (a draft owner notice whose levy no longer
+  counts for its owner is refused at issue with 409 `dunning_levy_moved`). While the unit has no owner on the
   due date (the sale is recorded in two steps: end the seller, then add the buyer) or its co-owners
-  lack positive shares, nothing moves and the rows stay; the actor needs read and prepare access to
-  the levy's accounting scope, otherwise the ownership change is refused with 409
-  `ownership_levy_access`. The settlement still compares, per levy and unit it names, the counting
+  lack positive shares, nothing moves and the rows stay. A change that would move a levy the actor
+  cannot read or prepare (accounting scope capabilities) is refused with 409 `ownership_levy_access`;
+  a change that moves nothing is accepted. Every write to the unit's ownership history runs the move,
+  also a `PATCH` with an unchanged end date. The settlement still compares, per levy and unit it names, the counting
   allocated owners with the owners the ownership rows name on the due date (all co-owners named,
   nobody else; a unit added after the levy has no row, is not checked and bears no levy) and refuses the
   calculation with HTTP 422 `weg_levy_owner_mismatch` (levy, unit, due date, German message). That guard

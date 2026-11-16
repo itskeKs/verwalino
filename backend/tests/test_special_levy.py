@@ -650,10 +650,8 @@ async def test_only_the_levies_of_the_unit_due_after_the_sale_move(levy_db, levy
     assert await levy_db.scalar(text("SELECT count(*) FROM special_levy_allocation_supersession WHERE organization_id=:org"), ids) == 1
 
 
-@pytest.mark.parametrize("capabilities,end_refused", [(None, True), ("ARRAY['read']", False)])
-async def test_an_actor_who_may_not_move_a_levy_cannot_change_the_ownership_under_it(
-    levy_db, levy_fixture, capabilities, end_refused,
-):
+@pytest.mark.parametrize("capabilities", [None, "ARRAY['read']"])
+async def test_an_actor_who_may_not_move_a_levy_cannot_record_the_change_that_moves_it(levy_db, levy_fixture, capabilities):
     ids = levy_fixture
     unit = ids["units"][0]
     buyer = await new_owner(levy_db, ids)
@@ -663,30 +661,48 @@ async def test_an_actor_who_may_not_move_a_levy_cannot_change_the_ownership_unde
         if capabilities:
             await levy_db.execute(text(f"INSERT INTO scope_grant(organization_id,scope_id,user_id,capabilities,granted_by,reason) VALUES (:org,:scope,:clerk,{capabilities},:actor,'Read only')"), ids)
         await levy_db.commit()
-        # A levy the actor cannot even read refuses every change of the unit's history. A readable one refuses
-        # the change that would move it: ending the seller alone moves nothing and is accepted.
+        # Ending the seller alone moves nothing (nobody owns the unit on the due date yet) and is accepted; adding the
+        # buyer would move the levy, which the actor may not do.
         ended = await api.patch(f"/api/ownership/{ids['histories'][0]}", json={"valid_to": "2025-05-31"})
-        assert ended.status_code == (409 if end_refused else 200), ended.text
-        if end_refused:
-            assert ended.json()["detail"]["code"] == "ownership_levy_access"
+        assert ended.status_code == 200, ended.text
         refused = await api.post("/api/ownership", json={"unit_id": str(unit), "owner_profile_id": str(buyer), "valid_from": "2025-06-01"})
         assert refused.status_code == 409, refused.text
         assert refused.json()["detail"]["code"] == "ownership_levy_access"
-    assert await levy_db.scalar(text("SELECT valid_to FROM ownership_history WHERE id=:id"), {"id": ids["histories"][0]}) == (
-        None if end_refused else date(2025, 6, 1))
+    assert await levy_db.scalar(text("SELECT valid_to FROM ownership_history WHERE id=:id"), {"id": ids["histories"][0]}) == date(2025, 6, 1)
     assert await levy_db.scalar(text("SELECT count(*) FROM ownership_history WHERE unit_id=:unit"), {"unit": unit}) == 1
     assert await levy_db.scalar(text("SELECT count(*) FROM special_levy_allocation_supersession WHERE organization_id=:org"), ids) == 0
     assert await moves(levy_db, levy) == 0
 
 
-async def test_the_unit_lookup_names_only_levies_of_the_callers_organization(levy_db, levy_fixture):
+@pytest.mark.parametrize("capabilities", [None, "ARRAY['read']"])
+async def test_a_levy_that_cannot_move_through_a_write_does_not_refuse_it(levy_db, levy_fixture, capabilities):
+    ids = levy_fixture
+    unit, seller = ids["units"][0], ids["owners"][0]
+    buyer = await new_owner(levy_db, ids)
+    async with client(ids) as api:
+        levy = await create(api, ids, due_date="2025-03-01")
+        await levy_db.execute(text("UPDATE scope_grant SET revoked_at=now(),revoked_by=:actor WHERE id=:grant"), ids)
+        if capabilities:
+            await levy_db.execute(text(f"INSERT INTO scope_grant(organization_id,scope_id,user_id,capabilities,granted_by,reason) VALUES (:org,:scope,:clerk,{capabilities},:actor,'Read only')"), ids)
+        await levy_db.commit()
+        # The levy falls due before the sale: the seller owns the unit on that day before and after the write.
+        await end(api, ids["histories"][0], "2025-05-31")
+        await start(api, unit, buyer, "2025-06-01")
+    assert await levy_db.scalar(text("SELECT count(*) FROM ownership_history WHERE unit_id=:unit"), {"unit": unit}) == 2
+    assert [(r.owner_profile_id, r.superseded_by) for r in await unit_rows(levy_db, levy, unit)] == [(seller, None)]
+    assert await moves(levy_db, levy) == 0
+
+
+async def test_the_unit_lookup_names_only_counting_rows_of_the_callers_organization(levy_db, levy_fixture):
     ids = levy_fixture
     async with client(ids) as api:
         levy = await create(api, ids)
     await actor(levy_db, ids)
-    assert await levy_db.scalar(text("SELECT special_levy_unit_ids(:org,:unit)"), {"org": ids["org"], "unit": ids["units"][0]}) == [uuid.UUID(levy["id"])]
-    assert await levy_db.scalar(text("SELECT special_levy_unit_ids(:org,:unit)"), {"org": uuid.uuid4(), "unit": ids["units"][0]}) == []
-    assert await levy_db.scalar(text("SELECT special_levy_unit_ids(:org,:unit)"), {"org": ids["org"], "unit": uuid.uuid4()}) == []
+    named = (await levy_db.execute(text("SELECT * FROM special_levy_unit_allocations(:org,:unit)"), {"org": ids["org"], "unit": ids["units"][0]})).all()
+    assert [(r.levy_id, r.scope_id, r.due, r.owner_id, r.history_id) for r in named] == [
+        (uuid.UUID(levy["id"]), ids["scope"], date(2025, 6, 15), ids["owners"][0], ids["histories"][0])]
+    assert (await levy_db.execute(text("SELECT * FROM special_levy_unit_allocations(:org,:unit)"), {"org": uuid.uuid4(), "unit": ids["units"][0]})).all() == []
+    assert (await levy_db.execute(text("SELECT * FROM special_levy_unit_allocations(:org,:unit)"), {"org": ids["org"], "unit": uuid.uuid4()})).all() == []
     await levy_db.execute(text("RESET ROLE"))
     await levy_db.rollback()
 
@@ -772,7 +788,7 @@ async def test_the_supersession_migration_roundtrips_and_refuses_to_discard_a_ma
                 project_superseded_levy_allocations(db)
                 migration.downgrade()
                 assert db.scalar(text("SELECT to_regclass('special_levy_allocation_supersession')")) is None
-                assert db.scalar(text("SELECT to_regprocedure('special_levy_unit_ids(uuid,uuid)')")) is None
+                assert db.scalar(text("SELECT to_regprocedure('special_levy_unit_allocations(uuid,uuid)')")) is None
                 assert (db.scalar(text(guard)), db.scalar(text(total))) != current
                 assert db.scalar(text("SELECT count(*) FROM pg_constraint WHERE conname='uq_special_levy_owner_unit'")) == 1
                 migration.upgrade()
@@ -800,3 +816,69 @@ async def test_the_supersession_migration_roundtrips_and_refuses_to_discard_a_ma
                 savepoint.rollback()
     finally:
         engine.dispose()
+
+
+async def test_a_move_must_keep_the_amount_of_every_unit_it_touches(levy_db, levy_fixture):
+    ids = levy_fixture
+    async with client(ids) as api:
+        levy = await create(api, ids)
+    ids["levy"] = uuid.UUID(levy["id"])
+    rows = (await levy_db.execute(text("SELECT id,unit_id FROM special_levy_allocation WHERE special_levy_id=:levy"), ids)).all()
+    first, second = (next(r.id for r in rows if r.unit_id == ids["units"][n]) for n in (0, 1))
+    marker = "INSERT INTO special_levy_allocation_supersession(allocation_id,organization_id,superseded_by) VALUES (:allocation,:org,:clerk)"
+    insert = ("INSERT INTO special_levy_allocation(organization_id,property_id,special_levy_id,unit_id,owner_profile_id,"
+              "ownership_history_id,mea,amount) VALUES (:org,:property,:levy,:unit,:owner,:history,1,:amount)")
+    first_cell = {**ids, "unit": ids["units"][0], "owner": ids["owners"][0], "history": ids["histories"][0]}
+    second_cell = {**ids, "unit": ids["units"][1], "owner": ids["owners"][1], "history": ids["histories"][1]}
+    # Unit 2's amount is superseded too and one row carries both amounts for unit 1's owner: the levy total is
+    # still exact, the amount of each unit is not.
+    with pytest.raises(DBAPIError, match="amount of each unit"):
+        async with levy_db.begin_nested():
+            for allocation in (first, second):
+                await levy_db.execute(text(marker), {**ids, "allocation": allocation})
+            await levy_db.execute(text(insert), {**first_cell, "amount": Decimal("6000.00")})
+            await levy_db.execute(text("SET CONSTRAINTS ALL IMMEDIATE"))
+    # Shifting cents between the two units is refused as well, a replacement of exactly each unit's amount is accepted,
+    # also when a replacement is superseded again within the same transaction.
+    with pytest.raises(DBAPIError, match="amount of each unit"):
+        async with levy_db.begin_nested():
+            for allocation in (first, second):
+                await levy_db.execute(text(marker), {**ids, "allocation": allocation})
+            await levy_db.execute(text(insert), {**first_cell, "amount": Decimal("3000.01")})
+            await levy_db.execute(text(insert), {**second_cell, "amount": Decimal("2999.99")})
+            await levy_db.execute(text("SET CONSTRAINTS ALL IMMEDIATE"))
+    async with levy_db.begin_nested():
+        for allocation in (first, second):
+            await levy_db.execute(text(marker), {**ids, "allocation": allocation})
+        await levy_db.execute(text(insert), {**first_cell, "amount": Decimal("3000.00")})
+        await levy_db.execute(text(insert), {**second_cell, "amount": Decimal("3000.00")})
+        await levy_db.execute(text("SET CONSTRAINTS ALL IMMEDIATE"))
+        await levy_db.execute(text("SET CONSTRAINTS ALL DEFERRED"))
+        replacement = await levy_db.scalar(text("SELECT id FROM special_levy_allocation WHERE special_levy_id=:levy AND unit_id=:unit AND amount=3000 AND NOT EXISTS(SELECT 1 FROM special_levy_allocation_supersession s WHERE s.allocation_id=special_levy_allocation.id)"), first_cell)
+        await levy_db.execute(text(marker), {**ids, "allocation": replacement})
+        await levy_db.execute(text(insert), {**first_cell, "amount": Decimal("3000.00")})
+        await levy_db.execute(text("SET CONSTRAINTS ALL IMMEDIATE"))
+    await levy_db.rollback()
+
+
+async def test_a_counting_row_must_name_an_owner_of_the_due_date_when_the_transaction_commits(levy_db, levy_fixture):
+    ids = levy_fixture
+    levy = uuid.uuid4()
+    insert_levy = ("INSERT INTO special_levy(id,organization_id,property_id,accounting_scope_id,amount,due_date) "
+                   "VALUES (:levy,:org,:property,:scope,1,'2025-06-15')")
+    insert_row = ("INSERT INTO special_levy_allocation(organization_id,property_id,special_levy_id,unit_id,owner_profile_id,"
+                  "ownership_history_id,mea,amount) VALUES (:org,:property,:levy,:unit,:owner,:history,1,1)")
+    params = {**ids, "levy": levy, "unit": ids["units"][0], "owner": ids["owners"][0]}
+    # The ownership row belongs to another unit: refused at commit, no longer by the row-level guard.
+    with pytest.raises(DBAPIError, match="does not match due-date ownership"):
+        async with levy_db.begin_nested():
+            await levy_db.execute(text(insert_levy), params)
+            await levy_db.execute(text(insert_row), {**params, "history": ids["histories"][1]})
+            await levy_db.execute(text("SET CONSTRAINTS ALL IMMEDIATE"))
+    # The row's own ownership row covers the due date.
+    async with levy_db.begin_nested():
+        await levy_db.execute(text(insert_levy), params)
+        await levy_db.execute(text(insert_row), {**params, "history": ids["histories"][0]})
+        await levy_db.execute(text("SET CONSTRAINTS ALL IMMEDIATE"))
+    await levy_db.rollback()
+

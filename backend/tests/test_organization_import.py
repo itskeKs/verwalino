@@ -713,7 +713,7 @@ async def test_import_retains_historical_unlinked_levy_and_frozen_allocations(
     await rent_db.rollback()
 
 
-async def test_import_carries_the_counting_allocation_of_a_moved_levy_and_its_audit_entry(
+async def test_import_restores_the_superseded_allocations_of_a_moved_levy_with_their_markers(
     levy_db, scope_seed, import_target, rent_db, export_store,
 ):
     ids = {'org': scope_seed['org_a_id'], 'actor': scope_seed['user_a_admin_id'],
@@ -740,25 +740,46 @@ async def test_import_carries_the_counting_allocation_of_a_moved_levy_and_its_au
         assert (await api.patch(f"/api/ownership/{ids['history']}", json={'valid_to': '2026-06-30'})).status_code == 200
         sold = await api.post('/api/ownership', json={'unit_id': str(ids['unit']), 'owner_profile_id': str(ids['buyer']), 'valid_from': '2026-07-01'})
         assert sold.status_code == 201, sold.text
+        before = {}
+        for who in ('owner', 'buyer'):
+            statement = await api.get(f"/api/payments/mietkonto/owner/{ids[who]}", params={
+                'accounting_scope_id': str(ids['scope']), 'period_start': '2026-07-01', 'period_end': '2026-07-31'})
+            assert statement.status_code == 200, statement.text
+            before[who] = {key: statement.json()[key] for key in ('soll_total', 'ist_total', 'balance')}
+        assert (before['owner']['soll_total'], before['buyer']['soll_total']) == ('0.00', '1200.00')
         answer = await api.post('/api/organizations/export')
         assert answer.status_code == 200, answer.text
     files = unpack(answer.content)
-    assert 'special_levy_allocation_supersession' not in {name.split('/')[-1].removesuffix('.jsonl') for name in files}
-    exported = [json.loads(line) for line in files['entities/special_levy_allocation.jsonl'].splitlines()]
-    assert [(row['owner_profile_id'], row['amount']) for row in exported] == [(str(ids['buyer']), '1200.00')]
+    allocations = [json.loads(line) for line in files['entities/special_levy_allocation.jsonl'].splitlines()]
+    markers = [json.loads(line) for line in files['entities/special_levy_allocation_supersession.jsonl'].splitlines()]
+    assert sorted((row['owner_profile_id'], row['amount']) for row in allocations) == sorted(
+        [(str(ids['owner']), '1200.00'), (str(ids['buyer']), '1200.00')])
+    superseded = next(row['id'] for row in allocations if row['owner_profile_id'] == str(ids['owner']))
+    assert [(row['allocation_id'], row['superseded_by']) for row in markers] == [(superseded, str(ids['actor']))]
     await source_organization_deleted(rent_db, ids['org'], ids['actor'], import_target)
     async with api_client(import_target) as api:
         answer = await api.post('/api/organizations/import', files={'file': ('moved.tar.gz', repack(files))})
         assert answer.status_code == 200, answer.text
         mapping = answer.json()['id_map']
+        scope = mapping['accounting_scope'][str(ids['scope'])]
         response = await api.get('/api/special-levies', params={'property_id': mapping['property'][str(ids['property'])],
-            'accounting_scope_id': mapping['accounting_scope'][str(ids['scope'])]})
+            'accounting_scope_id': scope})
         assert response.status_code == 200, response.text
         row = next(row for row in response.json() if row['id'] == mapping['special_levy'][str(levy)])
         assert [(a['owner_profile_id'], a['amount']) for a in row['allocations']] == [(mapping['owner_profile'][str(ids['buyer'])], '1200.00')]
-    assert await rent_db.scalar(text("SELECT count(*) FROM audit_event WHERE entity_id=:levy AND action='special_levy.allocation_moved'"),
-                                {'levy': uuid.UUID(mapping['special_levy'][str(levy)])}) == 1
-    assert await rent_db.scalar(text('SELECT count(*) FROM special_levy_allocation_supersession WHERE organization_id=:org'), import_target) == 0
+        # Owner accounts are the same after the restore: the superseded row is back but does not count.
+        for who, source in (('owner', 'owner'), ('buyer', 'buyer')):
+            statement = await api.get(f"/api/payments/mietkonto/owner/{mapping['owner_profile'][str(ids[source])]}", params={
+                'accounting_scope_id': scope, 'period_start': '2026-07-01', 'period_end': '2026-07-31'})
+            assert statement.status_code == 200, statement.text
+            assert {key: statement.json()[key] for key in ('soll_total', 'ist_total', 'balance')} == before[who]
+    levy_id = {'levy': uuid.UUID(mapping['special_levy'][str(levy)])}
+    assert await rent_db.scalar(text("SELECT count(*) FROM audit_event WHERE entity_id=:levy AND action='special_levy.allocation_moved'"), levy_id) == 1
+    assert await rent_db.scalar(text('SELECT count(*) FROM special_levy_allocation WHERE special_levy_id=:levy'), levy_id) == 2
+    restored = (await rent_db.execute(text("""SELECT a.owner_profile_id,s.superseded_by FROM special_levy_allocation_supersession s
+        JOIN special_levy_allocation a ON a.id=s.allocation_id WHERE a.special_levy_id=:levy"""), levy_id)).all()
+    assert [(str(owner), str(user)) for owner, user in restored] == [
+        (mapping['owner_profile'][str(ids['owner'])], mapping['user'][str(ids['actor'])])]
     await rent_db.rollback()
 
 

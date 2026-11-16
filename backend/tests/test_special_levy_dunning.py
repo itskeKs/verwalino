@@ -600,3 +600,30 @@ async def test_an_issued_notice_of_the_seller_stays_and_the_buyer_starts_at_leve
         assert first.status_code == 201, first.text
         assert (first.json()['level'], first.json()['principal_amount']) == (1, '3000.00')
         assert first.json()['included_items'][0]['due_date'] == '2026-06-15'
+
+
+@pytest.mark.asyncio
+async def test_a_draft_notice_of_the_seller_is_refused_at_issue_after_the_levy_moved(levy_db, levy_fixture):
+    """A draft written before the sale demands a levy that no longer counts for the seller (#681)."""
+    from tests.test_special_levy import end, new_owner, start
+    ids = levy_fixture
+    await levy_db.execute(text("INSERT INTO scope_grant(organization_id,scope_id,user_id,capabilities,granted_by,reason) VALUES (:org,:scope,:actor,ARRAY['read','prepare','approve','confirm','export'],:actor,'Draft of a moved levy')"), ids)
+    await levy_db.commit()
+    buyer = await new_owner(levy_db, ids)
+    async with client(ids, 'actor') as api:
+        await create(api, ids, due_date='2026-06-15')
+        draft = (await api.post('/api/dunning/owner', json=dunning_body(ids))).json()
+        await end(api, ids['histories'][0], '2026-05-31')
+        await start(api, ids['units'][0], buyer, '2026-06-01')
+        refused = await api.post(f"/api/dunning/{draft['id']}/issue")
+        assert refused.status_code == 409, refused.text
+        detail = refused.json()['detail']
+        assert detail['code'] == 'dunning_levy_moved'
+        assert 'Sonderumlage' in detail['message'] and '15.06.2026' in detail['message']
+        assert (await api.get(f"/api/dunning/{draft['id']}")).json()['status'] == 'draft'
+        assert (await api.delete(f"/api/dunning/{draft['id']}")).status_code == 204
+        # The notice for the owner on the due date issues as before.
+        first = await api.post('/api/dunning/owner', json=dunning_body(ids, owner_profile_id=str(buyer)))
+        assert first.status_code == 201, first.text
+        assert (await api.post(f"/api/dunning/{first.json()['id']}/issue")).status_code == 200
+
