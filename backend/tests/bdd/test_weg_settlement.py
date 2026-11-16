@@ -10,8 +10,12 @@ from tests.bdd.steps.records import create_person
 from tests.financial_coverage_helpers import attest_fixture
 from tests.test_reserve_ledger import pdf_text
 from tests.bdd.world import target_url
+from tests.settlement_period_support import period_data_cleanup as period_data_cleanup  # noqa: F401
 
 FEATURE = str(Path(__file__).resolve().parents[3] / 'features/weg_settlement.feature')
+# Each scenario creates a property of its own; together they exceed the hosted allowance of 20, so the
+# records are released after every scenario instead of once per feature.
+pytestmark = pytest.mark.usefixtures('period_data_cleanup')
 
 
 @pytest.mark.skipif(bool(target_url()), reason='ASGI response-start observation needs the in-process app and test DB')

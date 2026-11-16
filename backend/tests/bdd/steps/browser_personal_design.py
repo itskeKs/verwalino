@@ -245,6 +245,7 @@ async def capture_design_table(browser_world, world, tmp_path):
                         await expect(page.get_by_text('Aufgaben werden geladen…', exact=True)).to_be_hidden()
                         await expect(page.locator('.dashboard-portfolio-count')).not_to_contain_text('…')
                     if name == 'properties':
+                        await list_until_visible(page, page.get_by_role('link', name='Musterhaus an der Musterstraße 12', exact=True))
                         await expect(page.get_by_role('link', name='Musterhaus an der Musterstraße 12', exact=True)).to_be_visible()
                         await page.get_by_role('button', name='+ Neues Objekt', exact=True).click()
                         await expect(page.get_by_role('heading', name='Neues Objekt anlegen', exact=True)).to_be_visible()
@@ -255,6 +256,17 @@ async def capture_design_table(browser_world, world, tmp_path):
                         overflows.append(f'{theme}/{name}/{width}')
     finally:
         await api.patch('/api/auth/preferences', data=original)
+
+
+async def list_until_visible(page, link):
+    """The list shows fifty rows a page and a shared organization holds more: load pages until the link is there."""
+    await expect(page.get_by_text('Lade...', exact=True)).to_be_hidden()
+    more = page.get_by_role('button', name='Weitere laden', exact=True)
+    for _ in range(40):
+        if await link.is_visible() or not await more.is_visible():
+            return
+        await more.click()
+        await expect(page.get_by_role('button', name='Lade…', exact=True)).to_be_hidden()
 
 
 @then('every captured screen fits its viewport')
