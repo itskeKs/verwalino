@@ -1072,6 +1072,43 @@ async def client_unauth() -> AsyncGenerator[httpx.AsyncClient, None]:
 CONFIRMED_FACTOR_SECRET = "JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP"
 
 
+def confirm_second_factors(organization_id, *user_ids) -> list[tuple[str, str]]:
+    """Insert a confirmed factor (secret CONFIRMED_FACTOR_SECRET) for each user without one.
+
+    Returns the (organization, user) pairs it inserted, for release_second_factors.
+    """
+    import psycopg2
+
+    from app.services.second_factor_service import encrypt_secret
+
+    given: list[tuple[str, str]] = []
+    secret = encrypt_secret(uuid.UUID(str(organization_id)), CONFIRMED_FACTOR_SECRET)
+    with psycopg2.connect(MIGRATOR_SYNC_URL) as connection, connection.cursor() as cursor:
+        for user_id in user_ids:
+            cursor.execute(
+                "INSERT INTO public.user_second_factor"
+                " (organization_id, user_id, secret_encrypted, confirmed, confirmed_at)"
+                " VALUES (%s, %s, %s, true, now())"
+                " ON CONFLICT (organization_id, user_id) DO NOTHING RETURNING id",
+                (str(organization_id), str(user_id), secret),
+            )
+            if cursor.fetchone():
+                given.append((str(organization_id), str(user_id)))
+    return given
+
+
+def release_second_factors(given: list[tuple[str, str]]) -> None:
+    import psycopg2
+
+    if given:
+        with psycopg2.connect(MIGRATOR_SYNC_URL) as connection, connection.cursor() as cursor:
+            for organization_id, user_id in given:
+                cursor.execute(
+                    "DELETE FROM public.user_second_factor WHERE organization_id = %s AND user_id = %s",
+                    (organization_id, user_id),
+                )
+
+
 @pytest.fixture
 def confirmed_second_factor():
     """Give users a confirmed second factor for the length of one test.
@@ -1082,34 +1119,13 @@ def confirmed_second_factor():
     The rows it inserted are removed when the test ends, so the shared seed
     users keep signing in with the password alone in every other test.
     """
-    import psycopg2
-
-    from app.services.second_factor_service import encrypt_secret
-
     given: list[tuple[str, str]] = []
 
     def confirm(organization_id, *user_ids) -> None:
-        secret = encrypt_secret(uuid.UUID(str(organization_id)), CONFIRMED_FACTOR_SECRET)
-        with psycopg2.connect(MIGRATOR_SYNC_URL) as connection, connection.cursor() as cursor:
-            for user_id in user_ids:
-                cursor.execute(
-                    "INSERT INTO public.user_second_factor"
-                    " (organization_id, user_id, secret_encrypted, confirmed, confirmed_at)"
-                    " VALUES (%s, %s, %s, true, now())"
-                    " ON CONFLICT (organization_id, user_id) DO NOTHING RETURNING id",
-                    (str(organization_id), str(user_id), secret),
-                )
-                if cursor.fetchone():
-                    given.append((str(organization_id), str(user_id)))
+        given.extend(confirm_second_factors(organization_id, *user_ids))
 
     yield confirm
-    if given:
-        with psycopg2.connect(MIGRATOR_SYNC_URL) as connection, connection.cursor() as cursor:
-            for organization_id, user_id in given:
-                cursor.execute(
-                    "DELETE FROM public.user_second_factor WHERE organization_id = %s AND user_id = %s",
-                    (organization_id, user_id),
-                )
+    release_second_factors(given)
 
 
 # ---------------------------------------------------------------------------

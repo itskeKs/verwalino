@@ -29,6 +29,12 @@ from tests.test_auth_password import password_identity as local_password_identit
 
 _SHARED_HOSTED_USAGE = pytest.StashKey[dict | None]()
 
+# Features that freeze a special levy in the shared organization (see pytest_collection_modifyitems).
+LEVY_FEATURES = frozenset({
+    "bank_account_scope_assignment.feature", "dunning_levy_level.feature", "dunning_owner_weg_level.feature",
+    "special_levy.feature", "weg_settlement.feature",
+})
+
 
 @pytest.fixture(scope="session", autouse=True)
 def run_migrations(request):
@@ -147,6 +153,8 @@ def world(bdd_loop, request, shared_hosted_property_headroom, shared_hosted_reco
             confirm = request.getfixturevalue("confirmed_second_factor")
             confirm(seeded["org_a_id"], seeded["user_a_admin_id"])
             confirm(seeded["org_b_id"], seeded["user_b_admin_id"])
+            # Steps that sign in another user of the scenario give it a factor for the scenario's length too.
+            state.give_second_factor = confirm
     state.data["scenario"] = request.node.name
     try:
         if target_url():
@@ -190,6 +198,11 @@ def pytest_addoption(parser):
     parser.addoption("--run-browser", action="store_true", help="Run the opt-in @browser features")
 
 
+def freezes_levy(item):
+    template = getattr(item.obj, "__scenario__", None)
+    return bool(template) and Path(template.feature.filename).name in LEVY_FEATURES
+
+
 def pytest_collection_modifyitems(config, items):
     """Keep fixtures that control the local app out of HTTP-only target runs.
 
@@ -219,6 +232,7 @@ def pytest_collection_modifyitems(config, items):
                     "organization_export_import.feature": "needs direct database fixtures and in-process archive storage",
                     "bank_cost_correction.feature": "needs local reviewed intake and its document store",
                     "password_reset.feature": "needs the Mailpit test mailbox",
+                    "user_invitation.feature": "needs the Mailpit test mailbox and the local app's public host",
                     "profile_hints.feature": "needs a fresh organization seeded through the local database fixture",
                     "second_factor.feature": "the audit-log assertion reads the database directly",
                     "cost_table_browser.feature": "needs an isolated organization seeded through the local database fixture",
@@ -227,6 +241,11 @@ def pytest_collection_modifyitems(config, items):
                     item.add_marker(pytest.mark.skip(reason=reason))
         if item.get_closest_marker("browser") and not config.getoption("--run-browser", default=False):
             item.add_marker(pytest.mark.skip(reason="Use make test-browser to run browser journeys"))
+    if target_url():
+        # A frozen special levy ends every unscoped overview read of its organization (#722) and no
+        # API removes it. A local run releases the records after each scenario; an external target cannot,
+        # so the features that freeze a levy run after all others there. The sort is stable.
+        items.sort(key=freezes_levy)
 
 
 def pytest_bdd_step_error(feature, scenario, step, exception, **_):

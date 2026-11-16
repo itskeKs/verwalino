@@ -395,3 +395,45 @@ def test_external_login_lockout_refuses_a_mismatched_target_mode_before_password
         look=lambda client, path: httpx.Response(200, json={'deployment_mode': 'hosted'}))
     with pytest.raises(AssertionError, match='deployment mode'):
         login_lockout.too_many_wrong_passwords(world, monkeypatch)
+
+
+def scenario_item(feature):
+    from types import SimpleNamespace
+
+    markers = []
+    template = SimpleNamespace(feature=SimpleNamespace(filename=f'/features/{feature}'))
+    return SimpleNamespace(obj=SimpleNamespace(__scenario__=template), get_closest_marker=lambda name: None,
+                           add_marker=markers.append, feature=feature, markers=markers)
+
+
+@pytest.mark.parametrize('external', [False, True])
+def test_external_target_runs_the_features_that_freeze_a_special_levy_after_all_others(monkeypatch, external):
+    from types import SimpleNamespace
+    from tests.bdd.conftest import pytest_collection_modifyitems
+
+    monkeypatch.setenv('VERWALINO_TARGET_URL', 'http://synthetic.invalid' if external else '')
+    collected = ['bank_account_scope_assignment.feature', 'dunning_batch.feature', 'dunning_levy_level.feature',
+                 'economic_plan.feature', 'special_levy.feature', 'user_creation.feature', 'weg_settlement.feature']
+    items = [scenario_item(feature) for feature in collected]
+    pytest_collection_modifyitems(SimpleNamespace(getoption=lambda *args, **kwargs: True), items)
+    ordered = [item.feature for item in items]
+    if external:
+        assert ordered == ['dunning_batch.feature', 'economic_plan.feature', 'user_creation.feature',
+                           'bank_account_scope_assignment.feature', 'dunning_levy_level.feature',
+                           'special_levy.feature', 'weg_settlement.feature']
+    else:
+        assert ordered == collected
+
+
+@pytest.mark.parametrize('feature,skipped', [('user_invitation.feature', True), ('password_reset.feature', True),
+                                             ('user_creation.feature', False)])
+def test_external_target_skips_the_mail_features_that_need_the_local_app(monkeypatch, feature, skipped):
+    from types import SimpleNamespace
+    from tests.bdd.conftest import pytest_collection_modifyitems
+
+    monkeypatch.setenv('VERWALINO_TARGET_URL', 'http://synthetic.invalid')
+    item = scenario_item(feature)
+    pytest_collection_modifyitems(SimpleNamespace(getoption=lambda *args, **kwargs: True), [item])
+    assert [mark.name for mark in item.markers] == (['skip'] if skipped else [])
+    if skipped:
+        assert 'Mailpit' in item.markers[0].kwargs['reason']

@@ -87,7 +87,10 @@ foreign mutations. The session fixture enforces shared property headroom.
 In a local hosted run the `world` fixture also clears the domain records scenarios created
 (properties and everything below them) once before the first scenario of each feature;
 organizations, users, memberships and mandates stay. Features therefore do not add up to
-the free-plan cap of 20 properties.
+the free-plan cap of 20 properties. A feature whose scenarios together create more than the
+allowance (`weg_settlement.feature`, `maintenance_reserve_ledger.feature`) requests the
+`period_data_cleanup` fixture, which releases the same records after every scenario. A feature whose
+scenarios reuse one set of records (organization isolation) must not.
 At the end of a local hosted run, a guard requires at least two free property
 slots in each shared organization. It reports both final counts and peak counts
 with the scenario name, sampling before fixture cleanup can empty the tables.
@@ -95,9 +98,16 @@ Fresh-installation scenarios use an isolated rollback-only transaction and are
 excluded from shared-count sampling.
 No external network or model call is involved.
 `@browser` remains a separate opt-in tag. The browser runner passes the selected mode to its
-app process but not the public host and SMTP settings that hosted mode requires at startup, so
-browser scenarios run in selfhost mode only until #537. Browser scenarios do not
-send mail; the backend shards and the nightly workflow provision the same digest-pinned Mailpit service for the mail scenarios.
+app process; in hosted mode it also passes the fixed test hostname `browser.example.test` as
+`HV_PUBLIC_HOST` and the `HV_SMTP_*` values of `scripts/test-env.sh`, which hosted mode requires at
+startup, and its one sign-in answers the second-factor code step with a factor that exists only for
+that sign-in. A scenario that signs in another user in hosted mode gives that user a factor for the
+scenario's length (`world.give_second_factor`, or `confirmed_second_factor` in a fixture) and mints
+its session, because one factor accepts one code per 30 seconds; a scenario about the sign-in itself
+answers the code step once. `HV_DEPLOYMENT_MODE=hosted make test-browser` therefore runs the browser
+scenarios in hosted mode; `property_listing.feature` is `@selfhost` because its 55 properties exceed
+the hosted allowance of 20. Browser scenarios do not send mail; the backend shards and the nightly workflow provision
+the same digest-pinned Mailpit service for the mail scenarios.
 
 **Where each mode runs.** Changing the pytest process's mode only selects tags; the
 application under test has to run in the same mode. The portable installer starts only
@@ -106,9 +116,9 @@ fixtures and Mailpit sit in the pytest process's reach.
 
 | Where | selfhost | hosted |
 |---|---|---|
-| Developer machine | `make test-bdd`, `make test-browser`, `make test-scenarios-report` | `make test-bdd-hosted` (API scenarios) |
+| Developer machine | `make test-bdd`, `make test-browser`, `make test-scenarios-report` | `make test-bdd-hosted` (API scenarios), `HV_DEPLOYMENT_MODE=hosted make test-browser` and `HV_DEPLOYMENT_MODE=hosted make test-scenarios-report` |
 | PR CI (`tests-on-pr.yaml`) | `Backend shard n/4` (`make test-backend`, including the `@selfhost` scenarios) and `Browser` (`make test-browser`) | the same shards' step `Hosted API scenarios` (`make test-bdd-hosted`: `@hosted` and untagged scenarios, own Postgres and Mailpit) |
-| Nightly (`nightly-scenarios.yaml`) | leg `selfhost`: all API and browser features against the installer's stack; `@hosted` scenarios skip by mode and the ones that need local fixtures skip by target (see [external targets](#external-disposable-targets)) | leg `hosted`: the API features through `make test-bdd-hosted` on the local stack with Postgres and Mailpit |
+| Nightly (`nightly-scenarios.yaml`) | leg `selfhost`: all API and browser features against the installer's stack; `@hosted` scenarios skip by mode and the ones that need local fixtures skip by target (see [external targets](#external-disposable-targets)) | leg `hosted`: all API and browser features through `make test-scenarios-report` on the local stack in hosted mode, with Postgres and Mailpit |
 
 The `save_lifecycle.feature` browser journey saves units, people, profiles, leases and bank
 accounts and assigns a receipt at desktop and 360 px. It pauses each real post-save read to
@@ -204,6 +214,11 @@ the structured exception class; if absent, it is the first error line with ids,
 numbers, paths, timestamps and request ids normalized. Setup/teardown failures use
 the scenario error and a `setup/teardown` step. Browser/API variants with the same
 fingerprint share one lookup and one issue per run; artifact names are combined.
+
+Failures of different scenarios that carry the same `scenario-error` hash (the second marker
+in the issue body, a hash of the normalized error text) are one issue: the fingerprints differ,
+the cause is one. Work from the oldest open one, fix them together and close the others as its
+duplicates.
 
 The reporter searches both open and closed issues with label `scenario` and the
 token in the body, then checks the complete marker line for an exact match. A new
@@ -317,7 +332,9 @@ in-process invoice worker and direct database fixtures, so the external nightly
 run skips it too. The same applies to `organization_deletion.feature` (direct
 database fixtures and the in-process deletion CLI), `organization_export_import.feature`
 (direct database fixtures and in-process archive storage) and `password_reset.feature`
-(the Mailpit test mailbox).
+(the Mailpit test mailbox). `user_invitation.feature` is in the same class: its emailed link
+needs the local app's public host, which the installer's configuration never sets (DEPLOY.md),
+and its mail needs the test mailbox; the hosted leg and PR CI run it.
 The four `journeys/profile_hints.feature` browser examples seed a fresh organization
 through the local database fixture and are skipped on external targets; they run
 against the local browser stack and in PR CI's browser job.
@@ -332,6 +349,13 @@ The `scope_creation_forms`, `scoped_statements` and `legacy_payment_review` brow
 immutable scopes and booked payments; on an external installation they pile up in the one shared
 organization and break org-wide lists (the scope selector page, the payments order of
 `weg_settlement.feature`), so they are skipped there too and run in PR CI's browser job.
+The five features that freeze a special levy (`bank_account_scope_assignment`, `dunning_levy_level`,
+`dunning_owner_weg_level`, `special_levy` and `weg_settlement`) run after all other features on an
+external target. A levy cannot be removed through the API, and while an organization holds one every
+unscoped overview read of it answers 404 „Complete report sources not accessible“ (#722), so
+a levy frozen early would fail every later feature that reads unscoped. Local runs release the records
+after each scenario and need no order. A new feature that freezes a levy joins `LEVY_FEATURES` in
+`backend/tests/bdd/conftest.py`.
 Each skipped scenario records its reason in the report. Local runs continue to
 exercise both organizations, all isolation scenarios, first-run setup, the inbox
 review chain, deletion, export/import and password reset; PR CI retains this
@@ -373,9 +397,9 @@ they run one after the other; a manual run on another ref that starts meanwhile 
 the only leg that uses it. The `hosted` leg skips the installer, because the portable installer
 never starts hosted mode (DEPLOY.md). It starts the shared test database and the
 workflow's Mailpit service, installs the system libraries of the PR backend shards and
-runs `make test-bdd-hosted PYTEST_ARGS="-q --scenario-report ../report"`; its report has
-the same shape, with `mode: hosted` and no `target_url`. Browser scenarios appear in it as
-skipped until #537.
+the Node.js of the browser job, and runs `make test-scenarios-report PYTEST_ARGS="-q"` with the
+job's mode: the API and browser features on the local stack, in hosted mode. Its report has
+the same shape, with `mode: hosted`; its `target_url` is the address of the local browser stack.
 **The self-host startup and full nightly integration are unverified until the first
 GitHub runner run, and so is the hosted leg's runner setup (its command is the one PR CI
 runs).** Local checks parse the workflow and test the local runners;

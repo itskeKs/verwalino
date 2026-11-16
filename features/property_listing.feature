@@ -1,4 +1,5 @@
-@browser
+# Paging at fifty rows needs 55 properties; the hosted free plan allows 20, so the claim holds in selfhost mode only.
+@browser @selfhost
 Feature: Property list paging and bounded filters
   Long result sets page in without duplicates. The bank-account property
   filter stays bounded and keeps an explicitly selected property across

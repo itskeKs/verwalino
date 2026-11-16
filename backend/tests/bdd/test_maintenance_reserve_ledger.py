@@ -7,7 +7,11 @@ from pytest_bdd import given, when, then, scenarios
 from tests.bdd.steps.browser_setup import create
 from tests.bdd.steps.records import create_person
 from tests.financial_coverage_helpers import attest_fixture
+from tests.settlement_period_support import period_data_cleanup as period_data_cleanup  # noqa: F401
 
+# Each scenario builds a WEG of its own; with the browser scenarios they exceed the hosted allowance of
+# 20 properties, so the records are released after every scenario instead of once per feature.
+pytestmark = pytest.mark.usefixtures('period_data_cleanup')
 scenarios(str(Path(__file__).resolve().parents[3] / 'features/maintenance_reserve_ledger.feature'))
 
 

@@ -330,9 +330,10 @@ def missing_dependency_refusal(world):
 
 
 @when('the administrator inspects the import refusal in the browser')
-def browser_import_refusal(world, browser_world, empty_import_organization, tmp_path):
+def browser_import_refusal(world, browser_world, empty_import_organization, tmp_path, confirmed_second_factor):
     import uuid
     from playwright.async_api import expect
+    from tests.bdd.steps.browser_common import answer_second_factor, hosted_stack
     from tests.test_organization_import import repack
     email = f"import-browser-{uuid.uuid4()}@example.invalid"
     password = 'Synthetic-Import-Browser-123'
@@ -341,7 +342,10 @@ def browser_import_refusal(world, browser_world, empty_import_organization, tmp_
             answer = await api.post('/api/users', json={'email': email, 'password': password,
                 'display_name': 'Synthetische Importprüfung', 'role': 'OWNER_ADMIN'})
             assert answer.status_code == 201, answer.text
-    world.run(prepare_user())
+            return answer.json()['id']
+    user_id = world.run(prepare_user())
+    if hosted_stack():
+        confirmed_second_factor(empty_import_organization['org'], user_id)
     files = dict(world.data['export_files'])
     files['entities/person.jsonl'] = b''
     manifest = json.loads(files['manifest.json'])
@@ -356,6 +360,7 @@ def browser_import_refusal(world, browser_world, empty_import_organization, tmp_
         await page.get_by_label('E-Mail', exact=True).fill(email)
         await page.get_by_label('Passwort', exact=True).fill(password)
         await page.get_by_role('button', name='Anmelden', exact=True).click()
+        await answer_second_factor(page)
         await expect(page.get_by_role('link', name='Objekte', exact=True)).to_be_visible()
         await browser_world.visit('/users')
         await page.get_by_label('Exportarchiv', exact=True).set_input_files({
@@ -558,17 +563,24 @@ def browser_deletion_organization(world, signup_mail, monkeypatch):
 
 
 @when('the administrator reviews and cancels deletion in the browser')
-def browser_lifecycle(browser_world, browser_deletion_organization, tmp_path):
+def browser_lifecycle(browser_world, browser_deletion_organization, tmp_path, confirmed_second_factor):
     import os
     from tests.bdd.browser import ROOT
+    from tests.bdd.steps.browser_common import hosted_stack, hosted_session, user_identity
     from playwright.async_api import expect
     screenshots = ROOT / 'docs/assets/design' if os.environ.get('VERWALINO_CAPTURE_DESIGN') == '1' else tmp_path
     async def operate():
         page = browser_world.page
         credentials = browser_deletion_organization
-        login = await page.request.post('/api/auth/login', data={
-            'email': credentials['email'], 'password': credentials['password']})
-        assert login.status == 200, await login.text()
+        if hosted_stack():
+            from app.core.config import settings
+            token = hosted_session(confirmed_second_factor, *user_identity(credentials['email']))
+            await page.context.add_cookies([{'name': settings.session_cookie_name, 'value': token,
+                                             'url': browser_world.session.base_url}])
+        else:
+            login = await page.request.post('/api/auth/login', data={
+                'email': credentials['email'], 'password': credentials['password']})
+            assert login.status == 200, await login.text()
         prop = await page.request.post('/api/properties', data={
             'name': 'Wohnhaus mit langem synthetischem Namen', 'management_type': 'MIET'})
         assert prop.status == 201, await prop.text()

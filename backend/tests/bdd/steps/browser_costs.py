@@ -11,7 +11,7 @@ from app.core.security import hash_password
 from app.models.membership import Membership
 from app.models.organization import Organization
 from app.models.user import User
-from tests.bdd.steps.browser_common import browser_step, button
+from tests.bdd.steps.browser_common import answer_second_factor, browser_step, button, sign_in_identity
 from tests.bdd.steps.browser_setup import create, create_scope
 from tests.conftest import _api_test_client
 
@@ -19,7 +19,7 @@ ROOT = Path(__file__).resolve().parents[4]
 
 
 @pytest_asyncio.fixture
-async def isolated_cost_identity(migrator_session):
+async def isolated_cost_identity(migrator_session, confirmed_second_factor):
     """Keep unrelated long selector labels out of this table regression."""
     organization = Organization(id=uuid4(), name="Kostentabelle Testverwaltung")
     user = User(id=uuid4(), organization_id=organization.id,
@@ -32,8 +32,7 @@ async def isolated_cost_identity(migrator_session):
     migrator_session.add(Membership(organization_id=organization.id, user_id=user.id, role="OWNER_ADMIN"))
     await migrator_session.commit()
     async with _api_test_client() as client:
-        response = await client.post("/api/auth/login", json={"email": user.email, "password": "testpass1234"})
-        assert response.status_code == 200
+        await sign_in_identity(client, user.email, "testpass1234", organization.id, user.id, confirmed_second_factor)
         yield client, str(user.id), user.email
 
 
@@ -80,6 +79,7 @@ async def open_costs(browser_world, width):
     await page.get_by_label("E-Mail", exact=True).fill(b.world.data["cost_email"])
     await page.get_by_label("Passwort", exact=True).fill("testpass1234")
     await button(page, "Anmelden").click()
+    await answer_second_factor(page)
     await expect(page.get_by_role("heading", name="Kostenpositionen", exact=True)).to_be_visible()
     await expect(page.locator("tbody tr")).to_have_count(6)
 
