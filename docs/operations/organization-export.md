@@ -255,6 +255,24 @@ without their private admission and rejects an explicit successor submitted
 without a native reviewed correction. Supported ordinary archives restore the
 original bank link and derive remaining coverage from the ordinary cost versions.
 
+A booked payment and its Storno name each other (`reverses_id` on the Storno,
+`reversed_by_id` on the original), so neither row can be inserted first. Import
+inserts the original unlinked, then its Storno, then sets `reversed_by_id` on the
+original: the one change the payment immutability trigger allows on a booked row.
+Every other column, including `value_date`, `booked_at` and `retention_until`, is
+the archived value. Before any row is written the archived payments must form whole
+pairs: two booked rows that name each other, with opposite `direction` and the same
+value in every column a Storno copies from its original (bank account, property,
+mandate, amount, value date, type, tenant, owner, lease, period, settlement run and
+reserve links; the list is shared with `reverse_payment`). Only the mandate may
+differ, and only by being set on the Storno when the original has none, because the
+database derives it from the account's scope at insert. A Storno without its original,
+an original without its Storno, two Stornos for one original, a `reversed_by_id` that
+names a payment which does not reverse it, a reversed Storno, a draft in a pair, a
+cycle that is not one reversal pair and a pair that differs in direction or in any of
+those columns are refused with **422**, code `IMPORT_PAYMENT_REVERSAL_CHAIN`, entity
+`payment` and the offending source IDs; nothing is written.
+
 ## Organization erasure
 
 `POST /api/organizations/deletion` creates a request and returns a retention

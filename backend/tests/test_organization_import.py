@@ -4,7 +4,7 @@ import io
 import json
 import tarfile
 import uuid
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 
 import pytest
 from sqlalchemy import text
@@ -907,3 +907,312 @@ async def test_import_accepts_but_does_not_restore_forged_ai_confirmations(rent_
         'SELECT count(*) FROM organization_ai_confirmation WHERE organization_id=:org'),
         {'org': import_target['org']})).scalar()
     assert stored == 0
+
+
+from tests.payment_reversal_support import book_then_reverse, payment_clock as payment_clock  # noqa: E402,F401
+
+REVERSAL_COLUMNS = ('direction', 'amount', 'value_date', 'status', 'booked_at', 'retention_until',
+                    'payment_type', 'period_year', 'period_month', 'note', 'created_at')
+
+
+async def reversed_payment_world(api, world, payment_clock, *, rebooked_reversal=False):
+    """One reversed payment (with its re-booking reversed again when asked) and one open payment."""
+    bank = await api.post('/api/bank-accounts', json={
+        'property_id': str(world['property']), 'account_type': 'LAUFEND', 'label': 'Archive reversal bank'})
+    assert bank.status_code == 201, bank.text
+    body = {'bank_account_id': bank.json()['id'], 'direction': 'IN', 'amount': '700.00', 'value_date': '2026-03-15',
+            'payment_type': 'KALTMIETE', 'tenant_profile_id': str(world['tenant']),
+            'lease_agreement_id': str(world['lease']), 'period_year': 2026, 'period_month': 3}
+    original, storno = await book_then_reverse(api, body, payment_clock,
+        booked_on='2026-03-16T09:00:00', reversed_on='2026-04-02T09:00:00')
+    pairs = [(original, storno)]
+    if rebooked_reversal:
+        # The correction is a fresh booking; reversing it again is a second, independent pair.
+        pairs.append(await book_then_reverse(api, {**body, 'amount': '650.00', 'value_date': '2026-03-20'},
+            payment_clock, booked_on='2026-04-03T09:00:00', reversed_on='2026-05-04T09:00:00'))
+    payment_clock('2026-06-01T09:00:00')
+    open_payment = await api.post('/api/payments', json={**body, 'amount': '700.00', 'period_month': 4,
+                                                          'value_date': '2026-04-15'})
+    assert open_payment.status_code == 201, open_payment.text
+    assert (await api.post(f"/api/payments/{open_payment.json()['id']}/book")).status_code == 200
+    return pairs, open_payment.json()['id']
+
+
+async def payment_rows(rent_db, ids):
+    rows = (await rent_db.execute(text(f'''SELECT id::text,reverses_id::text,reversed_by_id::text,{','.join(REVERSAL_COLUMNS)}
+        FROM payment WHERE id=ANY(CAST(:ids AS uuid[]))'''), {'ids': list(ids)})).mappings().all()
+    return {row['id']: dict(row) for row in rows}
+
+
+@pytest.mark.parametrize('rebooked_reversal', [False, True])
+async def test_import_restores_reversed_payments_with_their_storno_links(
+    rent_world, import_target, rent_db, export_store, payment_clock, rebooked_reversal,
+):
+    async with api_client(rent_world) as api:
+        pairs, open_id = await reversed_payment_world(api, rent_world, payment_clock, rebooked_reversal=rebooked_reversal)
+        window = {'period_start': '2026-01-01', 'period_end': '2026-12-31'}
+        statement = await api.get(f"/api/payments/mietkonto/lease/{rent_world['lease']}", params=window)
+        assert statement.status_code == 200, statement.text
+        before = {key: statement.json()[key] for key in ('soll_total', 'ist_total', 'balance')}
+        archive = await api.post('/api/organizations/export')
+        assert archive.status_code == 200, archive.text
+    source = await payment_rows(rent_db, [p['id'] for pair in pairs for p in pair] + [open_id])
+    await source_organization_deleted(rent_db, rent_world['org'], rent_world['admin'], import_target)
+    async with api_client(import_target) as api:
+        answer = await api.post('/api/organizations/import', files={'file': ('reversed.tar.gz', archive.content)})
+        assert answer.status_code == 200, answer.text
+        mapping = answer.json()['id_map']['payment']
+        restored = await payment_rows(rent_db, [mapping[i] for i in source])
+        for original, storno in pairs:
+            new_original, new_storno = restored[mapping[original['id']]], restored[mapping[storno['id']]]
+            assert (new_original['reversed_by_id'], new_original['reverses_id']) == (mapping[storno['id']], None)
+            assert (new_storno['reverses_id'], new_storno['reversed_by_id']) == (mapping[original['id']], None)
+            assert (new_storno['direction'], new_original['direction']) == ('OUT', 'IN')
+        assert restored[mapping[open_id]]['reversed_by_id'] is None
+        for identifier, row in source.items():
+            # Dates, amounts and every retention anchor are exactly the archived values.
+            assert {k: restored[mapping[identifier]][k] for k in REVERSAL_COLUMNS} == {k: row[k] for k in REVERSAL_COLUMNS}
+        assert [source[p['id']]['retention_until'] for p in pairs[0]] == [date(2034, 12, 31), date(2034, 12, 31)]
+        statement = await api.get(f"/api/payments/mietkonto/lease/{answer.json()['id_map']['lease_agreement'][str(rent_world['lease'])]}",
+                                  params=window)
+        assert statement.status_code == 200, statement.text
+        assert {key: statement.json()[key] for key in ('soll_total', 'ist_total', 'balance')} == before
+    await rent_db.rollback()
+
+
+async def bank_matched_split(api, db, world, bank):
+    """A bank movement booked as rent plus advance: two payments that carry the movement's id."""
+    movement = uuid.uuid4()
+    await db.execute(text("""INSERT INTO bank_transaction(id,organization_id,bank_account_id,booking_date,value_date,amount,
+        counterparty_name,counterparty_iban,purpose,import_hash,status) VALUES (:id,:org,:bank,'2026-03-03','2026-03-03',850.00,
+        'Synthetic payer','DE89370400440532013000','Warmmiete Maerz 2026',:hash,'NEU')"""),
+        {'id': movement, 'org': world['org'], 'bank': uuid.UUID(bank), 'hash': movement.hex})
+    await db.commit()
+    assigned = await api.post(f'/api/bank-transactions/{movement}/assign', json={'lines': [
+        {'payment_type': kind, 'amount': amount, 'period_year': 2026, 'period_month': 3,
+         'lease_agreement_id': str(world['lease']), 'tenant_profile_id': str(world['tenant'])}
+        for kind, amount in (('KALTMIETE', '700.00'), ('NK_VORAUSZAHLUNG', '150.00'))]})
+    assert assigned.status_code == 200, assigned.text
+    return str(movement), assigned.json()['payments']
+
+
+async def test_import_restores_a_reversed_payment_of_a_bank_movement_beside_its_open_sibling(
+    rent_world, import_target, rent_db, export_store, payment_clock,
+):
+    async with api_client(rent_world) as api:
+        bank = await api.post('/api/bank-accounts', json={'property_id': str(rent_world['property']),
+            'account_type': 'LAUFEND', 'label': 'Matched reversal bank'})
+        assert bank.status_code == 201, bank.text
+        payment_clock('2026-03-04T09:00:00')
+        movement, (rent, advance) = await bank_matched_split(api, rent_db, rent_world, bank.json()['id'])
+        payment_clock('2026-04-02T09:00:00')
+        storno = await api.post(f"/api/payments/{rent['id']}/reverse")
+        assert storno.status_code == 201, storno.text
+        window = {'period_start': '2026-01-01', 'period_end': '2026-12-31'}
+        statement = await api.get(f"/api/payments/mietkonto/lease/{rent_world['lease']}", params=window)
+        assert statement.status_code == 200, statement.text
+        before = {key: statement.json()[key] for key in ('soll_total', 'ist_total', 'balance')}
+        archive = await api.post('/api/organizations/export')
+        assert archive.status_code == 200, archive.text
+    source = await payment_rows(rent_db, [rent['id'], advance['id'], storno.json()['id']])
+    await source_organization_deleted(rent_db, rent_world['org'], rent_world['admin'], import_target)
+    async with api_client(import_target) as api:
+        answer = await api.post('/api/organizations/import', files={'file': ('matched.tar.gz', archive.content)})
+        assert answer.status_code == 200, answer.text
+        ids = answer.json()['id_map']
+        restored = await payment_rows(rent_db, [ids['payment'][i] for i in source])
+        assert restored[ids['payment'][rent['id']]]['reversed_by_id'] == ids['payment'][storno.json()['id']]
+        assert restored[ids['payment'][storno.json()['id']]]['reverses_id'] == ids['payment'][rent['id']]
+        assert restored[ids['payment'][advance['id']]]['reversed_by_id'] is None
+        for identifier, row in source.items():
+            assert {k: restored[ids['payment'][identifier]][k] for k in REVERSAL_COLUMNS} == {k: row[k] for k in REVERSAL_COLUMNS}
+        links = (await rent_db.execute(text('SELECT id::text,bank_transaction_id::text FROM payment WHERE id=ANY(CAST(:ids AS uuid[]))'),
+                                       {'ids': [ids['payment'][i] for i in source]})).all()
+        assert dict(links) == {ids['payment'][rent['id']]: ids['bank_transaction'][movement],
+                               ids['payment'][advance['id']]: ids['bank_transaction'][movement],
+                               ids['payment'][storno.json()['id']]: None}
+        statement = await api.get(f"/api/payments/mietkonto/lease/{ids['lease_agreement'][str(rent_world['lease'])]}", params=window)
+        assert statement.status_code == 200, statement.text
+        assert {key: statement.json()[key] for key in ('soll_total', 'ist_total', 'balance')} == before
+    await rent_db.rollback()
+
+
+def archive_with_payments(files, change):
+    """The archive with its payment rows rewritten by `change(rows)`; hashes and counts follow."""
+    rows = change([json.loads(line) for line in files['entities/payment.jsonl'].splitlines()])
+    manifest = json.loads(files['manifest.json'])
+    manifest['row_counts']['payment'] = len(rows)
+    return repack({**files, 'entities/payment.jsonl': b''.join(json.dumps(row).encode() + b'\n' for row in rows),
+                   'manifest.json': json.dumps(manifest).encode()})
+
+
+def forge(case, pairs, open_id):
+    """Row rewrites that turn a sound archive into a forged or damaged reversal chain."""
+    (original, storno), (second_original, second_storno) = pairs
+
+    def edit(rows, **changes):
+        for row in rows:
+            for identifier, values in changes.items():
+                if row['id'] == identifier:
+                    row.update(values)
+        return rows
+
+    return {
+        'storno_without_original': lambda rows: [r for r in rows if r['id'] != original['id']],
+        'original_without_storno': lambda rows: [r for r in rows if r['id'] != storno['id']],
+        'two_stornos_for_one_original': lambda rows: rows + [
+            {**next(r for r in rows if r['id'] == storno['id']), 'id': str(uuid.uuid4())}],
+        'pointer_to_another_reversal': lambda rows: edit(rows, **{original['id']: {'reversed_by_id': second_storno['id']}}),
+        'pointer_to_an_unrelated_payment': lambda rows: edit(rows, **{original['id']: {'reversed_by_id': open_id}}),
+        'cycle_between_unreversed_payments': lambda rows: edit(rows, **{
+            open_id: {'reversed_by_id': second_original['id']}, second_original['id']: {'reversed_by_id': open_id}}),
+        'cycle_between_stornos': lambda rows: edit(rows, **{
+            storno['id']: {'reverses_id': second_storno['id']}, second_storno['id']: {'reverses_id': storno['id']}}),
+        'storno_reversed_again': lambda rows: edit(rows, **{storno['id']: {'reversed_by_id': second_storno['id']}}),
+        'payment_reversing_itself': lambda rows: edit(rows, **{
+            open_id: {'reverses_id': open_id, 'reversed_by_id': open_id}}),
+        'original_not_booked': lambda rows: edit(rows, **{original['id']: {'status': 'draft'}}),
+        # A Storno is the application's copy of its original with the opposite direction.
+        'storno_amount_changed': lambda rows: edit(rows, **{storno['id']: {'amount': '1.00'}}),
+        'storno_direction_not_opposite': lambda rows: edit(rows, **{storno['id']: {'direction': 'IN'}}),
+        'storno_period_month_changed': lambda rows: edit(rows, **{storno['id']: {'period_month': 4}}),
+        'storno_payment_type_changed': lambda rows: edit(rows, **{storno['id']: {'payment_type': 'NK_VORAUSZAHLUNG'}}),
+        'original_value_date_changed': lambda rows: edit(rows, **{original['id']: {'value_date': '2026-03-16'}}),
+        'storno_reserve_link_added': lambda rows: edit(rows, **{storno['id']: {'reserve_cost_entry_id': str(uuid.uuid4())}}),
+    }[case]
+
+
+FORGED_CHAINS = ['storno_without_original', 'original_without_storno', 'two_stornos_for_one_original',
+                 'pointer_to_another_reversal', 'pointer_to_an_unrelated_payment', 'cycle_between_unreversed_payments',
+                 'cycle_between_stornos', 'storno_reversed_again', 'payment_reversing_itself', 'original_not_booked',
+                 'storno_amount_changed', 'storno_direction_not_opposite', 'storno_period_month_changed',
+                 'storno_payment_type_changed', 'original_value_date_changed', 'storno_reserve_link_added']
+
+
+@pytest.mark.parametrize('case', FORGED_CHAINS)
+async def test_import_refuses_a_forged_reversal_chain_and_writes_nothing(
+    rent_world, import_target, rent_db, export_store, payment_clock, case,
+):
+    async with api_client(rent_world) as api:
+        pairs, open_id = await reversed_payment_world(api, rent_world, payment_clock, rebooked_reversal=True)
+        archive = await api.post('/api/organizations/export')
+        assert archive.status_code == 200, archive.text
+    forged = archive_with_payments(unpack(archive.content), forge(case, pairs, open_id))
+    await source_organization_deleted(rent_db, rent_world['org'], rent_world['admin'], import_target)
+    async with api_client(import_target) as api:
+        answer = await api.post('/api/organizations/import', files={'file': ('forged.tar.gz', forged)})
+    assert answer.status_code == 422, answer.text
+    assert answer.json()['detail']['code'] == 'IMPORT_PAYMENT_REVERSAL_CHAIN'
+    assert answer.json()['detail']['entity'] == 'payment' and answer.json()['detail']['count'] >= 1
+    for table in ('payment', 'property', 'bank_account'):
+        assert await rent_db.scalar(text(f'SELECT count(*) FROM {table} WHERE organization_id=:org'), import_target) == 0
+    await rent_db.rollback()
+
+
+async def test_import_refuses_a_reversal_pair_of_another_organization_and_writes_nothing(
+    rent_world, import_target, rent_db, export_store, payment_clock,
+):
+    async with api_client(rent_world) as api:
+        pairs, _ = await reversed_payment_world(api, rent_world, payment_clock)
+        archive = await api.post('/api/organizations/export')
+        assert archive.status_code == 200, archive.text
+    foreign = str(rent_world['foreign_org'])
+    forged = archive_with_payments(unpack(archive.content), lambda rows: [
+        {**row, 'organization_id': foreign} if row['id'] == pairs[0][1]['id'] else row for row in rows])
+    await source_organization_deleted(rent_db, rent_world['org'], rent_world['admin'], import_target)
+    async with api_client(import_target) as api:
+        answer = await api.post('/api/organizations/import', files={'file': ('foreign.tar.gz', forged)})
+    assert answer.status_code == 422, answer.text
+    for table in ('payment', 'property'):
+        assert await rent_db.scalar(text(f'SELECT count(*) FROM {table} WHERE organization_id=:org'), import_target) == 0
+    await rent_db.rollback()
+
+
+async def test_import_keeps_the_owner_account_of_a_reversed_special_payment(
+    rent_world, import_target, rent_db, export_store, payment_clock,
+):
+    owner, person = uuid.uuid4(), uuid.uuid4()
+    async with api_client(rent_world) as api:
+        weg = await api.post('/api/properties', json={'name': 'Owner reversal WEG', 'management_type': 'WEG'})
+        assert weg.status_code == 201, weg.text
+        prop = weg.json()['id']
+        await rent_db.execute(text("INSERT INTO person(id,organization_id,first_name,last_name) VALUES (:person,:org,'Olga','Owner')"),
+                              {'person': person, 'org': rent_world['org']})
+        await rent_db.execute(text("INSERT INTO owner_profile(id,organization_id,person_id) VALUES (:owner,:org,:person)"),
+                              {'owner': owner, 'org': rent_world['org'], 'person': person})
+        await rent_db.commit()
+        bank = await api.post('/api/bank-accounts', json={'property_id': prop, 'account_type': 'LAUFEND', 'label': 'WEG bank'})
+        assert bank.status_code == 201, bank.text
+        body = {'bank_account_id': bank.json()['id'], 'direction': 'IN', 'amount': '400.00', 'value_date': '2026-03-10',
+                'payment_type': 'SONDERZAHLUNG', 'owner_profile_id': str(owner), 'period_year': 2026, 'period_month': 3}
+        pair = await book_then_reverse(api, body, payment_clock, booked_on='2026-03-11T09:00:00', reversed_on='2026-04-02T09:00:00')
+        payment_clock('2026-04-03T09:00:00')
+        kept = await api.post('/api/payments', json={**body, 'amount': '250.00', 'value_date': '2026-04-03'})
+        assert kept.status_code == 201, kept.text
+        assert (await api.post(f"/api/payments/{kept.json()['id']}/book")).status_code == 200
+        window = {'period_start': '2026-01-01', 'period_end': '2026-12-31'}
+        statement = await api.get(f'/api/payments/mietkonto/owner/{owner}', params=window)
+        assert statement.status_code == 200, statement.text
+        before = {key: statement.json()[key] for key in ('soll_total', 'ist_total', 'balance')}
+        assert before['ist_total'] == '250.00'
+        archive = await api.post('/api/organizations/export')
+        assert archive.status_code == 200, archive.text
+    await source_organization_deleted(rent_db, rent_world['org'], rent_world['admin'], import_target)
+    async with api_client(import_target) as api:
+        answer = await api.post('/api/organizations/import', files={'file': ('owner.tar.gz', archive.content)})
+        assert answer.status_code == 200, answer.text
+        ids = answer.json()['id_map']
+        statement = await api.get(f"/api/payments/mietkonto/owner/{ids['owner_profile'][str(owner)]}", params=window)
+        assert statement.status_code == 200, statement.text
+        assert {key: statement.json()[key] for key in ('soll_total', 'ist_total', 'balance')} == before
+        restored = await payment_rows(rent_db, [ids['payment'][p['id']] for p in pair])
+        assert restored[ids['payment'][pair[0]['id']]]['reversed_by_id'] == ids['payment'][pair[1]['id']]
+    await rent_db.rollback()
+
+
+async def test_import_refuses_when_the_storno_link_cannot_be_restored_and_writes_nothing(
+    rent_world, import_target, rent_db, export_store, payment_clock, monkeypatch,
+):
+    from sqlalchemy.ext.asyncio import AsyncSession
+    async with api_client(rent_world) as api:
+        await reversed_payment_world(api, rent_world, payment_clock)
+        archive = await api.post('/api/organizations/export')
+        assert archive.status_code == 200, archive.text
+    await source_organization_deleted(rent_db, rent_world['org'], rent_world['admin'], import_target)
+    execute = AsyncSession.execute
+
+    class NoRow:
+        rowcount = 0
+
+    async def link_matches_no_row(self, statement, *args, **kwargs):
+        return NoRow() if 'SET reversed_by_id' in str(statement) else await execute(self, statement, *args, **kwargs)
+
+    monkeypatch.setattr(AsyncSession, 'execute', link_matches_no_row)
+    async with api_client(import_target) as api:
+        answer = await api.post('/api/organizations/import', files={'file': ('unlinked.tar.gz', archive.content)})
+    monkeypatch.undo()
+    assert answer.status_code == 422, answer.text
+    assert answer.json()['detail']['code'] == 'IMPORT_PAYMENT_REVERSAL_CHAIN'
+    assert await rent_db.scalar(text('SELECT count(*) FROM payment WHERE organization_id=:org'), import_target) == 0
+    await rent_db.rollback()
+
+
+@pytest.mark.no_db
+@pytest.mark.parametrize('original_mandate, storno_mandate, accepted', [
+    (None, None, True), ('m1', 'm1', True),
+    (None, 'm1', True),  # classified into a scope after the original was booked
+    ('m1', None, False), ('m1', 'm2', False)])
+def test_a_storno_may_gain_the_mandate_of_a_later_account_scope_but_never_change_it(original_mandate, storno_mandate, accepted):
+    from fastapi import HTTPException
+    from app.services.organization_import_service import payment_reversal_pairs
+    common = {'status': 'booked', 'amount': '10.00', 'value_date': '2026-03-15', 'payment_type': 'KALTMIETE'}
+    rows = [{**common, 'id': 'o', 'direction': 'IN', 'reverses_id': None, 'reversed_by_id': 's',
+             'management_mandate_id': original_mandate},
+            {**common, 'id': 's', 'direction': 'OUT', 'reverses_id': 'o', 'reversed_by_id': None,
+             'management_mandate_id': storno_mandate}]
+    if accepted:
+        assert payment_reversal_pairs(rows) == {'s': 'o'}
+    else:
+        with pytest.raises(HTTPException) as refusal:
+            payment_reversal_pairs(rows)
+        assert refusal.value.status_code == 422 and refusal.value.detail['code'] == 'IMPORT_PAYMENT_REVERSAL_CHAIN'
