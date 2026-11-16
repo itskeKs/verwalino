@@ -100,7 +100,11 @@ The manifest lists inaccessible entities and excluded column names. It never
 reports hidden row IDs or hidden counts. Password hashes, authentication/reset
 tokens, worker lease tokens and session generations are excluded, including
 credential fields in structured audit payloads. Global authentication/setup/signup
-and throttle tables are outside the export. Original files are copied unchanged;
+and throttle tables are outside the export. Special levy allocation rows that a later change of
+ownership superseded are exported with their markers (`special_levy_allocation_supersession`), and an
+import restores both, so owner accounts, dunning and the settlement count the same rows after a
+restore: only rows without a marker count. The audit entry `special_levy.allocation_moved` is exported
+as well. Original files are copied unchanged;
 their uploaded content can itself contain sensitive information.
 
 Metadata rows are currently buffered in memory. Archive output and individual

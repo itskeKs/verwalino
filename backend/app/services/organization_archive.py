@@ -18,7 +18,7 @@ ENTITY_ORDER = (
     "lease_rent_change", "ownership_history", "cost_category", "cost_entry", "commercial_preallocation",
     "bank_account", "bank_transaction", "payment", "settlement_run",
     "settlement_line", "economic_plan", "economic_plan_line", "special_levy",
-    "special_levy_allocation", "dunning_notice", "meter", "meter_reading",
+    "special_levy_allocation", "special_levy_allocation_supersession", "dunning_notice", "meter", "meter_reading",
     "letter_template", "letter_document", "invoice_document", "attachment",
     "property_document", "mandate_document", "intake_original", "document_ref",
     "user", "membership", "audit_event",

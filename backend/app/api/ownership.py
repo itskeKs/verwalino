@@ -13,6 +13,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.services.financial_scope_service import FinancialScopeService
+from app.services.special_levy_service import SpecialLevyService
 
 from app.core.tenant import (
     AuthContext,
@@ -81,6 +82,8 @@ async def create_ownership(
 ):
     from decimal import Decimal
 
+    # Match financial computations and T23: ACL/input locks precede parent locks.
+    await FinancialScopeService(db, auth.organization_id, auth.user_id).lock_inputs()
     repo = OwnershipHistoryRepository(db, auth.organization_id)
     unit_id = uuid.UUID(body.unit_id)
     owner_profile_id = uuid.UUID(body.owner_profile_id)
@@ -111,6 +114,7 @@ async def create_ownership(
                 detail="Overlapping ownership period for this unit/owner combination",
             )
         raise
+    await SpecialLevyService(db, auth.organization_id, auth.user_id).follow_ownership(unit_id)
     return _to_out(oh)
 
 
@@ -162,6 +166,7 @@ async def end_ownership(
                     409, "Overlapping ownership period for this unit/owner combination"
                 ) from exc
             raise
+    await SpecialLevyService(db, auth.organization_id, auth.user_id).follow_ownership(existing.unit_id)
     return _to_out(existing)
 
 
@@ -244,6 +249,7 @@ async def correct_ownership(
                 "Einheit. Bitte wählen Sie einen anderen Beginn oder beenden Sie den anderen Eintrag zuerst.",
             ) from exc
         raise
+    await SpecialLevyService(db, auth.organization_id, auth.user_id).follow_ownership(existing.unit_id)
     return _to_out(replacement)
 
 

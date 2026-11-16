@@ -110,8 +110,9 @@ class WegShareSumError(WegValidationError):
 class WegLevyOwnerError(WegValidationError):
     """A levy allocation names other owners of a unit than the ownership rows do on its due date (#405).
 
-    The allocation is written when the levy is created; an ownership change recorded afterwards
-    leaves it with the previous owner. Charging that owner would put the levy Soll on the wrong
+    The allocation follows the ownership on the due date whenever the ownership history of the unit
+    is written (#681), so this only happens for an allocation that was written before that rule or
+    by a write that bypassed the service. Charging those owners would put the levy Soll on the wrong
     Spitze, so the calculation stops and names the levy, the unit and the due date.
     """
 
@@ -314,9 +315,12 @@ def _require_levy_owners(
 
     The ownership rows are read as they are now. For every unit the levy has at least one
     allocation row for, the allocated owners must be exactly the owners active on the due date:
-    co-owners all named, and nobody named who does not own the unit on that day. A unit without
-    any row of the levy (added after the levy was created) is not checked and bears no levy. The
-    first offending levy (by due date, then id) and unit (by number) is reported.
+    co-owners all named, and nobody named who does not own the unit on that day. The service
+    moves a counting allocation to those owners whenever the unit's history is written (#681), so
+    this guard only triggers for an allocation that predates that rule or a write that bypassed
+    the service. A unit without any row of the levy (added after the levy was created) is not
+    checked and bears no levy. The first offending levy (by due date, then id) and unit (by
+    number) is reported.
     """
     allocated: dict[uuid.UUID, dict[uuid.UUID, set[uuid.UUID]]] = {}
     amounts: dict[uuid.UUID, Decimal] = {}

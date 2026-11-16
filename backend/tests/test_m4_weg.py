@@ -2775,3 +2775,15 @@ def test_planned_reserve_sums_the_ledger_planned_rows_per_owner():
     assert service._plan_reserve_per_owner(entries) == (
         OwnerAdvanceInput(owner_a, Decimal('3600.01')), OwnerAdvanceInput(owner_b, Decimal('2400.00')))
     assert service._plan_reserve_per_owner([]) == ()
+
+
+def test_a_levy_allocated_before_the_owner_rule_is_refused_naming_levy_unit_and_due_date_in_german():
+    from app.engine.weg import WegLevyOwnerError
+    from app.services.weg_settlement_service import _levy_owner_refusal
+    levy, unit = uuid.uuid4(), uuid.uuid4()
+    detail = _levy_owner_refusal(WegLevyOwnerError(levy, Decimal('5000.00'), unit, '2', date(2026, 10, 1)))
+    assert {key: detail[key] for key in ('code', 'special_levy_id', 'unit_id', 'unit_number', 'due_date')} == {
+        'code': 'weg_levy_owner_mismatch', 'special_levy_id': str(levy), 'unit_id': str(unit),
+        'unit_number': '2', 'due_date': '2026-10-01'}
+    for expected in ('5.000,00 €', 'Einheit 2', '01.10.2026', 'Eigentümer-Historie', 'wird nicht rückwirkend umgeschrieben'):
+        assert expected in detail['message']

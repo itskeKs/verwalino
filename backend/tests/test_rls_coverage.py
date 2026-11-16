@@ -73,6 +73,7 @@ TENANT_TABLES = frozenset({
     "settlement_run", "settlement_line", "coverage_declaration", "reserve_ledger_entry", "commercial_preallocation",
     # M4 WEG-Abrechnung (Wirtschaftsplan eigene Entitaet)
     "economic_plan", "economic_plan_line", "special_levy", "special_levy_allocation",
+    "special_levy_allocation_supersession",
     # M6 Zahlungen, Mietkonto & offene Posten
     "payment", "bank_transaction", "sepa_creditor", "sepa_mandate",
     # M7 Mahnwesen

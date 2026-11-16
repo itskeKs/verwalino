@@ -23,6 +23,17 @@ Feature: Special levy
     Then the levy is refused because a unit has no owner on its due date
     And no special levy has been created
 
+  Scenario: A sale recorded after the levy moves Berta's share to the buyer on the due date
+    When the manager creates the roof repair levy due on 1 July 2026
+    And Berta's unit is sold to Clara from 1 June 2026, recorded after the levy
+    Then the levy shows 480 euros for Clara and nothing for Berta
+    And Clara's owner account shows 480 euros due and Berta's shows nothing due
+
+  Scenario: A levy due before the sale stays with the seller although the sale is recorded afterwards
+    When the manager creates the roof repair levy due on 1 July 2026
+    And Berta's unit is sold to Clara from 1 August 2026, recorded after the levy
+    Then the levy shows 480 euros for Berta and nothing for Clara
+
   @browser
   Scenario Outline: Missing resolution feedback preserves the levy inputs at <width> pixels
     When the manager clicks create without a resolution in the browser at <width> pixels

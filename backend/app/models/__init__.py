@@ -174,6 +174,7 @@ __all__ = [
     "IntakeOriginal",
     "SpecialLevy",
     "SpecialLevyAllocation",
+    "SpecialLevyAllocationSupersession",
     "ReserveLedgerEntry",
     "BaseInterestRate",
     "DunningSettings",
@@ -203,7 +204,7 @@ from app.models.master_import_batch import MasterImportBatch
 
 from app.models.intake_original import IntakeOriginal
 
-from app.models.special_levy import SpecialLevy, SpecialLevyAllocation
+from app.models.special_levy import SpecialLevy, SpecialLevyAllocation, SpecialLevyAllocationSupersession
 from app.models.reserve_ledger_entry import ReserveLedgerEntry
 
 from app.models.dunning_settings import BaseInterestRate, DunningSettings

@@ -571,3 +571,131 @@ async def test_t35_levy_interest_actual_dates_payment_and_configuration_frozen(l
     async with client(ids, 'actor') as api:
         assert (await api.get(f'/api/dunning/{notice}')).status_code == 404
         assert (await api.get(f'/api/dunning/{notice}/pdf')).status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_an_issued_notice_of_the_seller_stays_and_the_buyer_starts_at_level_one(levy_db, levy_fixture):
+    """A sale recorded after a notice moves the levy; the issued document is not rewritten (#681)."""
+    from tests.test_special_levy import end, new_owner, start
+    ids = levy_fixture
+    await levy_db.execute(text("INSERT INTO scope_grant(organization_id,scope_id,user_id,capabilities,granted_by,reason) VALUES (:org,:scope,:actor,ARRAY['read','prepare','approve','confirm','export'],:actor,'Dunning of a moved levy')"), ids)
+    await levy_db.commit()
+    buyer = await new_owner(levy_db, ids)
+    async with client(ids, 'actor') as api:
+        await create(api, ids, due_date='2026-06-15')
+        seller_notice = await api.post('/api/dunning/owner', json=dunning_body(ids))
+        assert seller_notice.status_code == 201, seller_notice.text
+        notice_id = seller_notice.json()['id']
+        assert (await api.post(f'/api/dunning/{notice_id}/issue')).status_code == 200
+        issued = (await api.get(f'/api/dunning/{notice_id}')).json()
+        assert (issued['status'], issued['level'], issued['principal_amount']) == ('issued', 1, '3000.00')
+        await end(api, ids['histories'][0], '2026-05-31')
+        await start(api, ids['units'][0], buyer, '2026-06-01')
+        # The seller no longer owes the levy: nothing is overdue for them, the issued notice is unchanged.
+        gone = await api.post('/api/dunning/owner', json=dunning_body(ids, reference_date='2026-06-30'))
+        assert gone.status_code == 422, gone.text
+        assert (await api.get(f'/api/dunning/{notice_id}')).json() == issued
+        # The buyer was never asked: their first notice for the levy is level 1 with the unit's amount.
+        first = await api.post('/api/dunning/owner', json=dunning_body(ids, owner_profile_id=str(buyer)))
+        assert first.status_code == 201, first.text
+        assert (first.json()['level'], first.json()['principal_amount']) == (1, '3000.00')
+        assert first.json()['included_items'][0]['due_date'] == '2026-06-15'
+
+
+@pytest.mark.asyncio
+async def test_a_draft_notice_of_the_seller_is_refused_at_issue_after_the_levy_moved(levy_db, levy_fixture):
+    """A draft written before the sale demands a levy that no longer counts for the seller (#681)."""
+    from tests.test_special_levy import end, new_owner, start
+    ids = levy_fixture
+    await levy_db.execute(text("INSERT INTO scope_grant(organization_id,scope_id,user_id,capabilities,granted_by,reason) VALUES (:org,:scope,:actor,ARRAY['read','prepare','approve','confirm','export'],:actor,'Draft of a moved levy')"), ids)
+    await levy_db.commit()
+    buyer = await new_owner(levy_db, ids)
+    async with client(ids, 'actor') as api:
+        await create(api, ids, due_date='2026-06-15')
+        draft = (await api.post('/api/dunning/owner', json=dunning_body(ids))).json()
+        await end(api, ids['histories'][0], '2026-05-31')
+        await start(api, ids['units'][0], buyer, '2026-06-01')
+        refused = await api.post(f"/api/dunning/{draft['id']}/issue")
+        assert refused.status_code == 409, refused.text
+        detail = refused.json()['detail']
+        assert detail['code'] == 'dunning_levy_moved'
+        assert 'Sonderumlage' in detail['message'] and '15.06.2026' in detail['message']
+        assert (await api.get(f"/api/dunning/{draft['id']}")).json()['status'] == 'draft'
+        assert (await api.delete(f"/api/dunning/{draft['id']}")).status_code == 204
+        # The notice for the owner on the due date issues as before.
+        first = await api.post('/api/dunning/owner', json=dunning_body(ids, owner_profile_id=str(buyer)))
+        assert first.status_code == 201, first.text
+        assert (await api.post(f"/api/dunning/{first.json()['id']}/issue")).status_code == 200
+
+
+async def draft_dunning_grants(levy_db, ids):
+    await levy_db.execute(text("INSERT INTO scope_grant(organization_id,scope_id,user_id,capabilities,granted_by,reason) VALUES (:org,:scope,:actor,ARRAY['read','prepare','approve','confirm','export'],:actor,'Draft of a moved levy')"), ids)
+    await levy_db.commit()
+
+
+@pytest.mark.asyncio
+async def test_a_draft_is_refused_at_issue_when_the_owner_now_holds_a_share_of_the_levy(levy_db, levy_fixture):
+    """The levy still counts for the seller, but only by half of what the draft demands (#681)."""
+    from tests.test_special_levy import end, new_owner, start
+    ids = levy_fixture
+    await draft_dunning_grants(levy_db, ids)
+    buyer = await new_owner(levy_db, ids)
+    seller, unit = ids['owners'][0], ids['units'][0]
+    async with client(ids, 'actor') as api:
+        await create(api, ids, due_date='2026-06-15')
+        draft = (await api.post('/api/dunning/owner', json=dunning_body(ids))).json()
+        assert draft['principal_amount'] == '3000.00'
+        await end(api, ids['histories'][0], '2026-05-31')
+        await start(api, unit, seller, '2026-06-01', '50')
+        await start(api, unit, buyer, '2026-06-01', '50')
+        refused = await api.post(f"/api/dunning/{draft['id']}/issue")
+        assert refused.status_code == 409, refused.text
+        detail = refused.json()['detail']
+        assert detail['code'] == 'dunning_levy_moved'
+        assert '15.06.2026' in detail['message'] and '3.000,00' in detail['message'] and '1.500,00' in detail['message']
+        assert (await api.get(f"/api/dunning/{draft['id']}")).json()['status'] == 'draft'
+        fresh = await api.post('/api/dunning/owner', json=dunning_body(ids))
+        assert fresh.status_code == 201 and fresh.json()['principal_amount'] == '1500.00'
+        assert (await api.post(f"/api/dunning/{fresh.json()['id']}/issue")).status_code == 200
+
+
+@pytest.mark.asyncio
+async def test_a_draft_is_refused_at_issue_after_a_share_correction_between_co_owners(levy_db, levy_fixture):
+    from tests.test_special_levy import correct_row, end, new_owner, start
+    ids = levy_fixture
+    await draft_dunning_grants(levy_db, ids)
+    first, second = await new_owner(levy_db, ids), await new_owner(levy_db, ids)
+    async with client(ids, 'actor') as api:
+        await end(api, ids['histories'][0], '2025-12-31')
+        first_row = await start(api, ids['units'][0], first, '2026-01-01', '50')
+        await start(api, ids['units'][0], second, '2026-01-01', '50')
+        await create(api, ids, due_date='2026-06-15')
+        draft = (await api.post('/api/dunning/owner', json=dunning_body(ids, owner_profile_id=str(first)))).json()
+        assert draft['principal_amount'] == '1500.00'
+        await correct_row(api, first_row, '2026-01-01', '70')
+        refused = await api.post(f"/api/dunning/{draft['id']}/issue")
+        assert refused.status_code == 409, refused.text
+        assert refused.json()['detail']['code'] == 'dunning_levy_moved'
+        # The co-owner whose share shrank was not asked yet, the one whose draft still matches issues.
+        unchanged = (await api.post('/api/dunning/owner', json=dunning_body(ids, owner_profile_id=str(second)))).json()
+        assert unchanged['principal_amount'] == '1250.00'
+        assert (await api.post(f"/api/dunning/{unchanged['id']}/issue")).status_code == 200
+
+
+@pytest.mark.asyncio
+async def test_a_draft_is_issued_when_only_a_levy_it_does_not_contain_moved(levy_db, levy_fixture):
+    from tests.test_special_levy import end, new_owner, start
+    ids = levy_fixture
+    await draft_dunning_grants(levy_db, ids)
+    buyer = await new_owner(levy_db, ids)
+    async with client(ids, 'actor') as api:
+        await create(api, ids, due_date='2026-06-10')
+        await create(api, ids, due_date='2026-06-25')
+        draft = (await api.post('/api/dunning/owner', json=dunning_body(ids))).json()
+        assert [item['due_date'] for item in draft['included_items']] == ['2026-06-10']
+        await end(api, ids['histories'][0], '2026-06-19')
+        await start(api, ids['units'][0], buyer, '2026-06-20')  # moves the levy due 25.06 only
+        issued = await api.post(f"/api/dunning/{draft['id']}/issue")
+        assert issued.status_code == 200, issued.text
+        assert (issued.json()['status'], issued.json()['principal_amount']) == ('issued', '3000.00')
+

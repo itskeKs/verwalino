@@ -1,6 +1,7 @@
 """Special-levy authority and frozen shares through the ordinary API and UI."""
 import os
 import re
+from datetime import date, timedelta
 from pathlib import Path
 from uuid import uuid4
 
@@ -9,6 +10,15 @@ from pytest_bdd import given, when, then, parsers
 
 from tests.bdd.steps.browser_setup import create
 from tests.bdd.steps.browser_common import browser_step
+
+
+def create_owner(world, user, first):
+    """An owner profile of a new person the signed-in user may read, prepare and export."""
+    person = create(world, '/api/persons', {'first_name': first, 'last_name': 'Berg'})
+    domain = create(world, '/api/person-data-domains', {'person_id': person['id'], 'reason_code': 'INITIAL_SETUP'}, keyed=True)
+    create(world, f"/api/person-data-domains/{domain['id']}/grants", {'user_id': user,
+        'capabilities': ['read', 'prepare', 'export'], 'reason_code': 'TEAM_ACCESS'}, keyed=True)
+    return create(world, '/api/owner-profiles', {'person_id': person['id']})
 
 
 @given('Gartenstraße 5 has two owners and an adopted roof repair resolution')
@@ -29,15 +39,13 @@ def roof_repair(world, seed_data):
         'user_id': user, 'capabilities': ['read', 'prepare', 'approve', 'confirm', 'export'], 'reason': 'Synthetic special levy',
     }, keyed=True)
     owners = []
+    units = []
     for number, mea, first in [(1, '600', 'Anna'), (2, '400', 'Berta')]:
         unit = create(world, '/api/units', {'property_id': prop['id'], 'number': str(number), 'usage_type': 'WOHNUNG', 'mea': mea, 'area': '70'})
-        person = create(world, '/api/persons', {'first_name': first, 'last_name': 'Berg'})
-        domain = create(world, '/api/person-data-domains', {'person_id': person['id'], 'reason_code': 'INITIAL_SETUP'}, keyed=True)
-        create(world, f"/api/person-data-domains/{domain['id']}/grants", {'user_id': user,
-            'capabilities': ['read', 'prepare', 'export'], 'reason_code': 'TEAM_ACCESS'}, keyed=True)
-        owner = create(world, '/api/owner-profiles', {'person_id': person['id']})
+        owner = create_owner(world, user, first)
         create(world, '/api/ownership', {'unit_id': unit['id'], 'owner_profile_id': owner['id'], 'valid_from': '2026-01-01'})
         owners.append(owner)
+        units.append(unit)
     meeting = create(world, '/api/meetings', {'property_id': prop['id'], 'meeting_date': '2026-05-15',
         'meeting_type': 'ORDENTLICH', 'location': 'Gemeinschaftsraum Gartenstraße 5'})
     for title in ['Begrüßung', 'Bericht der Verwaltung', 'Dachreparatur']:
@@ -47,7 +55,8 @@ def roof_repair(world, seed_data):
         'wording': 'Dachreparatur durch Sonderumlage von 1.200,00 € finanzieren.',
         'votes_yes': 2, 'votes_no': 0, 'votes_abstain': 0, 'result': 'ANGENOMMEN'})
     entry = create(world, f"/api/meetings/resolutions/{resolution['id']}/register", {})
-    world.data.update(property=prop, scope=scope, levy_owners=owners, levy_resolution=resolution, levy_entry=entry)
+    world.data.update(property=prop, scope=scope, levy_owners=owners, levy_units=units, levy_user=user,
+        levy_resolution=resolution, levy_entry=entry)
 
 
 def levy_payload(world):
@@ -116,6 +125,47 @@ def register_levy(world):
     assert answer.status_code == 200, world.describe_response()
     entry = next(e for e in answer.json() if e['id'] == world.data['levy_entry']['id'])
     assert entry['special_levies'] == [{'id': world.data['levy']['id'], 'accounting_scope_id': world.data['scope']['id'], 'amount': '1200.00', 'due_date': '2026-07-01'}]
+
+
+MONTHS = {'June': 6, 'August': 8}
+
+
+@when(parsers.parse("Berta's unit is sold to Clara from {day:d} {month} {year:d}, recorded after the levy"))
+def sale_recorded_after_the_levy(world, day, month, year):
+    unit = world.data['levy_units'][1]['id']
+    first_day = date(year, MONTHS[month], day)
+    berta = world.data['levy_owners'][1]['id']
+    entry = next(row for row in world.act('GET', '/api/ownership', params={'unit_id': unit}).json()
+                 if row['owner_profile_id'] == berta)
+    answer = world.act('PATCH', f"/api/ownership/{entry['id']}", json={'valid_to': (first_day - timedelta(days=1)).isoformat()})
+    assert answer.status_code == 200, world.describe_response()
+    clara = create_owner(world, world.data['levy_user'], 'Clara')
+    create(world, '/api/ownership', {'unit_id': unit, 'owner_profile_id': clara['id'], 'valid_from': first_day.isoformat()})
+    world.data['levy_buyer'] = clara
+
+
+def levy_amounts(world):
+    answer = world.act('GET', '/api/special-levies', params={'accounting_scope_id': world.data['scope']['id']})
+    assert answer.status_code == 200, world.describe_response()
+    (levy,) = answer.json()
+    return {row['owner_profile_id']: row['amount'] for row in levy['allocations']
+            if row['unit_id'] == world.data['levy_units'][1]['id']}
+
+
+@then(parsers.parse('the levy shows 480 euros for {recipient} and nothing for {other}'))
+def levy_names_only_the_owner_on_the_due_date(world, recipient, other):
+    people = {'Berta': world.data['levy_owners'][1]['id'], 'Clara': world.data.get('levy_buyer', {}).get('id')}
+    assert levy_amounts(world) == {people[recipient]: '480.00'}
+    assert people[other] not in levy_amounts(world)
+
+
+@then("Clara's owner account shows 480 euros due and Berta's shows nothing due")
+def owner_accounts_follow_the_levy(world):
+    for owner, expected in ((world.data['levy_buyer'], '480.00'), (world.data['levy_owners'][1], '0.00')):
+        answer = world.act('GET', f"/api/payments/mietkonto/owner/{owner['id']}", params={
+            'accounting_scope_id': world.data['scope']['id'], 'period_start': '2026-07-01', 'period_end': '2026-07-31'})
+        assert answer.status_code == 200, world.describe_response()
+        assert answer.json()['balance'] == expected
 
 
 async def capture(browser, screen):

@@ -280,17 +280,36 @@ The engine sums **three subtotals** per owner (`SUBTOTAL` lines): Σ allocable, 
   `owner_cost_total`: `abrechnungsspitze = owner_cost_total + plan_reserve_soll − plan_advance − levy_soll`.
 - **Special levy Soll (#405):** a special levy is an additional Soll of the owner (a resolved advance,
   § 28 Abs. 1 WEG; to be confirmed by a WEG specialist like ADR-0007 itself). An owner's `levy_soll`
-  is the sum of that owner's frozen shares (`special_levy_allocation.amount`) of the levies of the
+  is the sum of that owner's counting shares (`special_levy_allocation.amount`) of the levies of the
   run's property and accounting scope **whose due date lies within the settlement period** (both
-  days inclusive; `SpecialLevyService.property_allocations`). The allocation already says who owes
-  it: the owner on the due date, the unit's co-owners by their relative shares, a corrected
-  ownership row never receives one, and a later correction that leaves the same owners on the due
-  date changes no frozen share. The allocation is written when the levy is created, so a sale
-  recorded afterwards leaves the seller allocated: the settlement therefore compares, per levy and
-  unit it names, the allocated owners with the owners the ownership rows name on the due date (all
-  co-owners named, nobody else; a unit added after the levy has no row, is not checked and bears no
-  levy) and refuses the calculation with HTTP 422 `weg_levy_owner_mismatch`
-  (levy, unit, due date, German message) until the allocation follows the ownership (#681). A levy due
+  days inclusive; `SpecialLevyService.property_allocations`, which reads the counting rows only).
+  The allocation says who owes it: the owner on the due date, the unit's co-owners by their relative
+  shares, a corrected ownership row never receives one. It follows the ownership on the due date
+  (#681): whenever a row of the unit's ownership history is created, ended or corrected
+  (`POST /api/ownership`, `PATCH /api/ownership/{id}`, `POST /api/ownership/{id}/correction`),
+  `SpecialLevyService.follow_ownership` compares, for every levy that names the unit, the counting
+  allocation rows of the unit with the uncorrected ownership rows holding it on the due date. Where
+  the owners or their relative shares differ (a sale, a start or end moved across the due date, 50/50
+  corrected to 70/30), the unit's rows are **superseded**, never updated or deleted (GoBD): each gets a
+  marker in `special_levy_allocation_supersession` (who and when) and new rows carry the unit's
+  amount for the owners of the due date, in the same transaction with the audit entry
+  `special_levy.allocation_moved`. The unit's amount is kept to the cent, co-owners split it by the
+  same largest-remainder rule as at creation, so the levy total over the counting rows stays exact.
+  A levy due before the change of ownership stays with the seller, a unit the levy has no row for
+  is not touched, payments already booked stay with the owner who paid (the seller then shows a credit,
+  the buyer the Soll), and an issued dunning notice stays as it is (a draft owner notice whose levy item no longer
+  matches the owner's counting amount for that due date is refused at issue with 409 `dunning_levy_moved`). While the unit has no owner on the
+  due date (the sale is recorded in two steps: end the seller, then add the buyer) or its co-owners
+  lack positive shares, nothing moves and the rows stay. A change that would move a levy the actor
+  cannot read or prepare (accounting scope capabilities) is refused with 409 `ownership_levy_access`;
+  a change that moves nothing is accepted. Every write to the unit's ownership history runs the move,
+  also a `PATCH` with an unchanged end date. The settlement still compares, per levy and unit it names, the counting
+  allocated owners with the owners the ownership rows name on the due date (all co-owners named,
+  nobody else; a unit added after the levy has no row, is not checked and bears no levy) and refuses the
+  calculation with HTTP 422 `weg_levy_owner_mismatch` (levy, unit, due date, German message). That guard
+  now triggers only for an allocation that predates this rule (existing data is not rewritten) or a
+  write that bypassed the service; an ownership gap or missing co-owner shares are refused earlier
+  by their own checks. A levy due
   outside the period is not read at all and the engine refuses one that is passed in. The costs stay
   distributed as before: there is no link from a cost entry to a levy, so a levy above or below the
   repair it financed leaves a credit (Guthaben) or an additional payment (Nachschuss) in the Spitze.
@@ -479,8 +498,9 @@ corrected row. The corrected row keeps its values untouched and gets `corrected_
 `corrected_by` (the history shows „Korrigiert am … von …“); it is no longer shown by the point-in-time
 query (`at_date`) and no calculation reads it: plan, Hausgeld Soll, annual settlement, special levy,
 document recipients, letters and the reserve ledger all use the uncorrected rows only. Results that
-were frozen (finalized settlements and plans, their PDFs, special levy allocations) are not
-recalculated, because they carry their own snapshot or amounts; the correction applies to drafts and
+were frozen (finalized settlements and plans, their PDFs) are not
+recalculated, because they carry their own snapshot or amounts; a special levy allocation is
+superseded, not rewritten, when the correction changes the owners or shares of its due date (§2.4); the correction applies to drafts and
 later calculations, and a draft recomputed afterwards needs its input confirmation again like after
 any change of the sources. A corrected row cannot be corrected or ended again (409
 `ownership_already_corrected` / `ownership_corrected`); its replacement can be. A correction is
