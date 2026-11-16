@@ -37,6 +37,12 @@ MAX_MEMBERS = 10_000
 MAX_ROWS = 20_000
 MAX_JSON_ROW_BYTES = 2 * 1024**2
 MAX_DECODED_METADATA_BYTES = 64 * 1024**2
+# Entities the archive carries but the import never writes; docs/operations/organization-export.md
+# says why for each. The first two are evidence this installation collected itself. The other two
+# are retry records whose insert policy binds them to the acting user: the archived actor is an
+# inactive placeholder after the import, and the importing administrator did not make the request.
+NOT_RESTORED_ENTITIES = frozenset({
+    'legal_document_assent', 'organization_ai_confirmation', 'property_creation_receipt', 'master_import_batch'})
 logger = logging.getLogger(__name__)
 
 
@@ -429,12 +435,13 @@ async def import_organization(db, auth, source):
             if name in {'organization', 'cost_category', 'organization_deletion'}:
                 continue
             for row in rows:
-                if name in {'legal_document_assent', 'organization_ai_confirmation'}:
+                if name in NOT_RESTORED_ENTITIES:
                     # Exported for the customer's own portability, but never
                     # imported: an assent or provider confirmation is evidence
                     # this installation collected, and an archive must not be
-                    # able to plant it. docs/operations/organization-export.md
-                    # documents this.
+                    # able to plant it; a creation receipt or CSV batch is a
+                    # retry record of the archived actor, not of the importer.
+                    # docs/operations/organization-export.md documents this.
                     continue
                 if name == 'user' and row['id'] in reused_users:
                     inserted.add((name, row['id']))
@@ -576,10 +583,9 @@ async def import_organization(db, auth, source):
                         previous_scope = await db.scalar(text("SELECT current_setting('app.current_scope_id',true)"))
                         await db.execute(text("SELECT set_config('app.current_scope_id',:scope,true)"),
                             {'scope': row['accounting_scope_id']})
-                    if name not in {'legal_document_assent', 'organization_ai_confirmation'}:
-                        await db.execute(text(f'INSERT INTO public."{name}" ({columns}) SELECT {projection} '
-                            f'FROM json_populate_record(NULL::public."{name}",CAST(:row AS json)) v'),
-                            {'row': json_bytes(row).decode()})
+                    await db.execute(text(f'INSERT INTO public."{name}" ({columns}) SELECT {projection} '
+                        f'FROM json_populate_record(NULL::public."{name}",CAST(:row AS json)) v'),
+                        {'row': json_bytes(row).decode()})
                     if name == 'special_levy':
                         await db.execute(text("SELECT set_config('app.current_scope_id',:scope,true)"),
                             {'scope': previous_scope or ''})

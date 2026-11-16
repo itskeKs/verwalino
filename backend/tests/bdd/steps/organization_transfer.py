@@ -3,6 +3,7 @@ import hashlib
 import io
 import json
 import tarfile
+import uuid
 
 import pytest
 from pytest_bdd import given, when, then
@@ -57,6 +58,33 @@ def export_organization_with_storno(world, rent_world, export_client):
     storno = world.act("POST", f"/api/payments/{original}/reverse")
     assert storno.status_code == 201, world.describe_response()
     world.data["payment_original"], world.data["payment_storno"] = original, storno.json()["id"]
+
+
+@given("a separate organization has a property from the property form with a unit and a booked rent payment for export")
+def export_organization_with_form_property(world, rent_world, export_client):
+    world.actor = export_client
+    world.data["export_source"] = rent_world
+    # "+ Neues Objekt" always sends an Idempotency-Key, so the server keeps a creation receipt.
+    created = world.act("POST", "/api/properties", headers={"Idempotency-Key": str(uuid.uuid4())}, json={
+        "name": "Probehaus", "street": "Probeweg 1", "zip_code": "12345", "city": "Teststadt",
+        "management_type": "MIET", "fiscal_year_start_month": 1})
+    assert created.status_code == 201, world.describe_response()
+    prop = created.json()["id"]
+    unit = world.act("POST", "/api/units", json={"property_id": prop, "number": "W1", "usage_type": "WOHNUNG"})
+    assert unit.status_code == 201, world.describe_response()
+    lease = world.act("POST", "/api/leases", json={"unit_id": unit.json()["id"],
+        "tenant_profile_id": str(rent_world["tenant"]), "valid_from": "2026-01-01", "base_rent": "700.00",
+        "advance_payment": "0.00"})
+    assert lease.status_code == 201, world.describe_response()
+    bank = world.act("POST", "/api/bank-accounts", json={"property_id": prop, "account_type": "LAUFEND", "label": "Probehaus Konto"})
+    assert bank.status_code == 201, world.describe_response()
+    payment = world.act("POST", "/api/payments", json={
+        "bank_account_id": bank.json()["id"], "direction": "IN", "amount": "700.00", "value_date": "2026-03-15",
+        "payment_type": "KALTMIETE", "tenant_profile_id": str(rent_world["tenant"]),
+        "lease_agreement_id": lease.json()["id"], "period_year": 2026, "period_month": 3})
+    assert payment.status_code == 201, world.describe_response()
+    assert world.act("POST", f"/api/payments/{payment.json()['id']}/book").status_code == 200, world.describe_response()
+    world.data["form_property"], world.data["form_payment"] = prop, payment.json()["id"]
 
 
 @when("its administrator downloads the organization archive")
@@ -173,6 +201,20 @@ def imported_payments_are_linked(world):
     assert (rows[storno]['reverses_id'], rows[storno]['direction']) == (original, 'OUT')
     assert {rows[original]['value_date'], rows[storno]['value_date']} == {'2026-03-15'}
     assert {rows[original]['amount'], rows[storno]['amount']} == {'700.00'}
+
+
+@then('the imported property list shows the form property and its payment of 700.00 on 15.03.2026')
+def imported_form_property(world):
+    mapping = world.data['import_result']['id_map']
+    async def lists():
+        async with api_client(world.data['import_target']) as target:
+            return await target.get('/api/properties'), await target.get('/api/payments')
+    properties, payments = world.run(lists())
+    assert properties.status_code == 200 and payments.status_code == 200, (properties.text, payments.text)
+    names = {row['id']: row['name'] for row in properties.json()}
+    assert names[mapping['property'][world.data['form_property']]] == 'Probehaus'
+    paid = {row['id']: row for row in payments.json()}[mapping['payment'][world.data['form_payment']]]
+    assert (paid['amount'], paid['value_date'], paid['status']) == ('700.00', '2026-03-15', 'booked')
 
 
 @when('a required person is removed from the archive before import')
