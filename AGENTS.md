@@ -170,9 +170,13 @@ Report cleanup in one line in the status/report, never in a repository file.
 - Done means a user can do it. An issue whose change a user notices carries a "User check"
   written before the change ([docs/acceptance/README.md](docs/acceptance/README.md)); the
   PR is merged only after it passed on the PR's state: by a blind acceptance run that sees only
-  the running product (a portable install, the separately authorized portable acceptance of
-  "Databases and containers" below), or by the owner where no agent can go. The core journeys in
-  [docs/acceptance/journeys.md](docs/acceptance/journeys.md) run blind at every milestone, and
+  the running product, or by the owner where no agent can go. A per-PR user check runs on an
+  instance of the PR's commit that `scripts/acceptance-env.sh` starts on the shared test database
+  (`start <commit>`, `create-organization`, `erase-organization`, `stop`; it holds
+  `/tmp/hausverwaltung-acceptance.lock` and `/tmp/verwalino-testdb.lock` until `stop`). The core
+  journeys in [docs/acceptance/journeys.md](docs/acceptance/journeys.md) run blind at every
+  milestone on a portable install (the separately authorized portable acceptance of
+  "Databases and containers" below), and
   each has an automated twin in `features/journeys/` that runs in CI; a confirmed acceptance
   finding first fails as a step there, then gets fixed. Expected values come from the domain,
   never from the implementation.
@@ -246,7 +250,7 @@ gate and the merge itself, and never longer than twice the duration of the whole
 30 minutes) plus 30 minutes. A lock older than that, or one naming a merged or closed PR and older
 than 30 minutes, is a crash remnant; it is removed atomically (`mv` to a private name, check
 `info`, then `rm -r`). An acceptance run on a shared environment holds
-`/tmp/verwalino-acceptance.lock` under the same rules. All sessions of a project run on one
+`/tmp/hausverwaltung-acceptance.lock` under the same rules. All sessions of a project run on one
 machine, because these locks and the worktree claims only work there. A maintainer session's
 review worktree is detached on `origin/<branch>`, because the issue worktree holds the branch.
 

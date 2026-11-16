@@ -273,6 +273,7 @@ downloaded `.test_durations` to `backend/.test_durations` before reviewing the d
 | `scripts/build-release-bundle.sh` | shared flat release payload/checksum assembly for releases and the install matrix |
 | `scripts/install-scenarios.sh` | four install journeys on disposable VMs; JSON/Markdown reports and failure artifacts |
 | `scripts/test-install.py`, `scripts/test-self-host.py`, `scripts/test-install-scenarios.py` | installer, portable stack and scenario-report contracts; fake downloads/Docker, no database |
+| `scripts/acceptance-env.sh`, `scripts/test-acceptance-env.py` | per-PR acceptance instance of a commit on the shared test database (start, organization, erase, stop); fake uv/npm/Alembic/app contracts, no database ([acceptance](docs/acceptance/README.md#where-a-run-happens)) |
 | `.github/workflows/release-image.yaml` | stable tags only: publishes/signs release platforms and installer assets |
 | `infra/docker-compose.staging.yml`, `infra/Caddyfile.staging` | hosted staging project and crawler-blocking shared Caddy site; [operator runbook](docs/operations/staging-and-canary.md) |
 | `infra/docker-compose.hosted-proxy.yml`, `infra/Caddyfile.hosted` | opt-in shared wrapper; apply with the site overlay to preserve production, staging and website routing |

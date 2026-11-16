@@ -4,8 +4,8 @@ Tests check that the code does what an issue says; this folder checks that the p
 user. It holds the **core journeys**, the flows the product exists for, written in the user's
 words, and the **sample data** with the correct results worked out by hand. A blind acceptance run
 (an agent or a person who sees only the running product) walks the journeys and compares what it
-sees with these results. Agent runs happen on a portable install, never on production
-([AGENTS.md](../../AGENTS.md), "Databases and containers").
+sees with these results. Agent runs never happen on production; where they do happen is
+[below](#where-a-run-happens).
 
 The journeys and the expected values are the owner's: they change only with an owner decision,
 never to make a run pass. An expected value comes from the domain (law, a standard, a bank format,
@@ -50,6 +50,46 @@ user does, what they then see with concrete values, and who checks. It is writte
 change, and the PR is merged only once it has passed. A change to a core journey updates
 [journeys.md](journeys.md) in the same PR.
 
+## Where a run happens
+
+| Run | Environment | Started by |
+| --- | --- | --- |
+| A user check of one PR | A local instance of the PR's commit on the shared test database, `127.0.0.1:18000`, self-hosted mode | `scripts/acceptance-env.sh` |
+| The core journeys at a milestone | A portable install ([AGENTS.md](../../AGENTS.md), "Databases and containers"), removed per [acceptance cleanup](../operations/acceptance-cleanup.md) | `scripts/self-host.sh` |
+
+The per-PR environment is built from the commit, not from the checkout, so it runs beside any
+worktree and shows exactly what the PR changed. The script has four subcommands:
+
+- `start <commit>` takes `/tmp/hausverwaltung-acceptance.lock` and `/tmp/verwalino-testdb.lock`
+  (a second `start` is refused while either is held), unpacks the commit with `git archive` into a
+  scratch directory under `/tmp`, installs and builds it there, brings the test database to the
+  commit's migration head and runs the app detached. The database is migrated up when the commit
+  carries a newer revision; it is refused when it is ahead of the commit, and also when the schema
+  was built by other migration scripts than the commit's (a parallel branch can own the same
+  revision number), judged by the same schema-origin note the backend tests keep on the database,
+  which `start` writes again after a migration. It prints the URL, the PID and the scratch path
+  once `/api/health/live` answers. The test database must already be running; the script starts none.
+- `create-organization <name> <admin-email>` creates an empty organization with an administrator
+  through the installation's own bootstrap command and prints a sign-in that it has checked. A name
+  that already exists in the test database is refused before anything is written, because the
+  bootstrap command would add the administrator to that organization; an address that already
+  exists is refused too. The script records the id of the organization it created.
+- `erase-organization <name>` runs the product's erasure for the organization of this run recorded
+  under that name, by its id, once its deletion was confirmed in the product. The seven-day waiting
+  time is simulated: the clock of that one command runs eight days ahead, and the output says so.
+  No other organization is touched. Afterwards the administrator address can be used again.
+- `stop` ends the app after checking that the process is the one `start` launched (and says when
+  the app was already gone), removes the scratch directory, releases both locks and reports that the
+  port is free. It refuses to signal any other process, and deletes only a directory that carries the
+  script's name pattern and marker and is not a link. The record of the run is the acceptance lock,
+  not the scratch directory, so a `stop` that was interrupted can simply be run again: a scratch
+  directory that is already gone or half removed does not keep the locks. A directory that fails the
+  checks is left in place and named, with the exit status 1, after the locks are released.
+
+The tester gets the URL and the sign-in, nothing else. While an instance runs, no backend test
+process may use the test database, because the lock stays with the run until `stop`. Production
+(`docker-compose.prod.yml`) is never involved.
+
 ## Runs and rounds per PR
 
 This section is the maintainer brief and the review checklist for a PR's acceptance and review
@@ -72,7 +112,8 @@ rounds ([AGENTS.md](../../AGENTS.md), "Work comes from issues").
 
 After every run, including a failed or abandoned run, the launching session must remove the
 disposable acceptance stack completely using the
-[label-filtered cleanup commands](../operations/acceptance-cleanup.md).
+[label-filtered cleanup commands](../operations/acceptance-cleanup.md), or, for a per-PR instance,
+run `scripts/acceptance-env.sh stop`.
 Stop every background process and dev server the run started; remove its scratch directories,
 temporary screenshots and inactive lock files. Remove its worktree and local branch only after
 the PR is merged or closed, following [Worktrees and cleanup](../../AGENTS.md#worktrees-and-cleanup).
