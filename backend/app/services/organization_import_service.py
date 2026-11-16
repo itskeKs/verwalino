@@ -190,6 +190,39 @@ def backfill_legacy_register_dates(entities, schema_head, source_org):
         entry['resolution_date'] = meeting['meeting_date']
 
 
+def payment_reversal_pairs(rows):
+    """Archived Storno links as {Storno id: original id}; anything but whole pairs is refused.
+
+    A pair points both ways (`reverses_id` and `reversed_by_id`), so neither row can be
+    inserted first with both pointers set. The original is inserted unlinked and linked
+    once its Storno exists. The application only ever creates one Storno per booked
+    original, and a Storno is never reversed itself; an archive that says otherwise is
+    forged or damaged and must not plant a reversal the application cannot book.
+    """
+    by_id = {row['id']: row for row in rows}
+    pairs, broken = {}, set()
+    for row in rows:
+        original_id, storno_id = row.get('reverses_id'), row.get('reversed_by_id')
+        if original_id is not None:
+            original = by_id.get(original_id)
+            if (storno_id is None and original is not None and original.get('reverses_id') is None
+                    and original.get('reversed_by_id') == row['id']
+                    and row.get('status') == original.get('status') == 'booked'):
+                pairs[row['id']] = original_id
+            else:
+                broken.add(row['id'])
+        if storno_id is not None:
+            storno = by_id.get(storno_id)
+            if not (original_id is None and storno is not None and storno.get('reverses_id') == row['id']
+                    and storno.get('reversed_by_id') is None
+                    and row.get('status') == storno.get('status') == 'booked'):
+                broken.add(row['id'])
+    if broken:
+        refuse('Die Stornoverknüpfung von Zahlungen im Archiv ist unvollständig oder nicht eindeutig.',
+               code='IMPORT_PAYMENT_REVERSAL_CHAIN', entity='payment', source_ids=sorted(broken), count=len(broken))
+    return pairs
+
+
 def remap(value, identities):
     """Resolve UUID references, including typed UUIDs embedded in JSON snapshots."""
     if isinstance(value, dict):
@@ -242,6 +275,7 @@ async def import_organization(db, auth, source):
                         refuse('Das Archiv enthält doppelte Datensatzkennungen.', entity=name)
                     ids.add(row['id'])
         backfill_legacy_register_dates(entities, manifest['schema_head'], source_org)
+        reversals = payment_reversal_pairs(entities.get('payment', []))
         keys = await foreign_keys(db)
         missing = {}
         categories = (await db.execute(text('SELECT id,code,plan_version FROM cost_category'))).mappings().all()
@@ -461,6 +495,10 @@ async def import_organization(db, auth, source):
                             if name == 'accounting_scope_binding' and parent == 'payment' and original['id'] in early_payment_bindings:
                                 # Its payment FKs and semantic validation are deferred.
                                 continue
+                            if name == 'payment' and list(child_columns) == ['reversed_by_id']:
+                                # The original and its Storno point at each other; the Storno
+                                # comes first and links the original below.
+                                continue
                             value = original.get(child_columns[parent_columns.index('id')])
                             if value is not None:
                                 dependencies.append((parent, value))
@@ -484,6 +522,8 @@ async def import_organization(db, auth, source):
                         if canonical_sha256(original['snapshot_payload']) != original['snapshot_sha256']:
                             refuse('Die Prüfsumme eines eingefrorenen Datenstands stimmt nicht.', entity=name)
                         row['snapshot_sha256'] = canonical_sha256(row['snapshot_payload'])
+                    if name == 'payment' and row.get('reversed_by_id'):
+                        row['reversed_by_id'] = None
                     if name == 'user':
                         row.update(password_hash='!', is_active=False)
                         if await db.scalar(text('SELECT public.signup_email_registered(:email)'), {'email': row['email']}):
@@ -532,6 +572,14 @@ async def import_organization(db, auth, source):
                     if name == 'special_levy':
                         await db.execute(text("SELECT set_config('app.current_scope_id',:scope,true)"),
                             {'scope': previous_scope or ''})
+                    if name == 'payment' and original.get('id') in reversals:
+                        # The one change the payment immutability trigger allows on a booked row.
+                        linked = await db.execute(text('UPDATE public.payment SET reversed_by_id=:storno '
+                            'WHERE organization_id=:org AND id=:original'),
+                            {'storno': uuid.UUID(flat[original['id']]), 'original': uuid.UUID(flat[reversals[original['id']]]),
+                             'org': auth.organization_id})
+                        if linked.rowcount != 1:
+                            refuse('Die Stornoverknüpfung konnte nicht wiederhergestellt werden.', entity=name)
                     inserted.add((name, original.get('id')))
                     pending.remove((name, original))
                     progress = True

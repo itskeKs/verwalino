@@ -14,6 +14,13 @@ Feature: Organization export import
     And the archive is imported into an empty organization after its source organization was deleted
     Then the imported organization has equal entity counts and normalized content
 
+  Scenario: A reversed payment and its Storno are restored linked and unchanged
+    Given a separate organization has a booked payment and its Storno for export
+    When its administrator downloads the organization archive
+    And the archive is imported into an empty organization after its source organization was deleted
+    Then the imported organization has equal entity counts and normalized content
+    And the imported payments list shows the original linked to its Storno with the archived dates
+
   Scenario: Missing dependencies refuse the whole import
     Given a separate organization has rental records and an original for export
     When its administrator downloads the organization archive

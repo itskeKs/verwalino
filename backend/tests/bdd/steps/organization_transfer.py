@@ -40,6 +40,25 @@ def export_organization(world, rent_world, export_client):
     world.data["export_document_id"] = answer.json()["id"]
 
 
+@given("a separate organization has a booked payment and its Storno for export")
+def export_organization_with_storno(world, rent_world, export_client):
+    world.actor = export_client
+    world.data["export_source"] = rent_world
+    bank = world.act("POST", "/api/bank-accounts", json={
+        "property_id": str(rent_world["property"]), "account_type": "LAUFEND", "label": "Archive reversal bank"})
+    assert bank.status_code == 201, world.describe_response()
+    created = world.act("POST", "/api/payments", json={
+        "bank_account_id": bank.json()["id"], "direction": "IN", "amount": "700.00", "value_date": "2026-03-15",
+        "payment_type": "KALTMIETE", "tenant_profile_id": str(rent_world["tenant"]),
+        "lease_agreement_id": str(rent_world["lease"]), "period_year": 2026, "period_month": 3})
+    assert created.status_code == 201, world.describe_response()
+    original = created.json()["id"]
+    assert world.act("POST", f"/api/payments/{original}/book").status_code == 200, world.describe_response()
+    storno = world.act("POST", f"/api/payments/{original}/reverse")
+    assert storno.status_code == 201, world.describe_response()
+    world.data["payment_original"], world.data["payment_storno"] = original, storno.json()["id"]
+
+
 @when("its administrator downloads the organization archive")
 def download_archive(world):
     answer = world.act("POST", "/api/organizations/export")
@@ -138,6 +157,22 @@ def import_equals_source(world):
         def normalize(rows):
             return sorted(json_bytes({k: v for k, v in row.items() if k not in {'created_by', 'storage_uri', 'registered_at'}}) for row in rows)
         assert hashlib.sha256(b''.join(normalize(original))).digest() == hashlib.sha256(b''.join(normalize(restored))).digest(), name
+
+
+@then('the imported payments list shows the original linked to its Storno with the archived dates')
+def imported_payments_are_linked(world):
+    mapping = world.data['import_result']['id_map']['payment']
+    original, storno = (mapping[world.data[key]] for key in ('payment_original', 'payment_storno'))
+    async def payments():
+        async with api_client(world.data['import_target']) as target:
+            return await target.get('/api/payments')
+    answer = world.run(payments())
+    assert answer.status_code == 200, answer.text
+    rows = {row['id']: row for row in answer.json()}
+    assert (rows[original]['reversed_by_id'], rows[original]['direction']) == (storno, 'IN')
+    assert (rows[storno]['reverses_id'], rows[storno]['direction']) == (original, 'OUT')
+    assert {rows[original]['value_date'], rows[storno]['value_date']} == {'2026-03-15'}
+    assert {rows[original]['amount'], rows[storno]['amount']} == {'700.00'}
 
 
 @when('a required person is removed from the archive before import')
