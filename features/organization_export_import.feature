@@ -27,6 +27,13 @@ Feature: Organization export import
     And the archive is imported into an empty organization
     Then the imported property list shows the form property and its payment of 700.00 on 15.03.2026
 
+  Scenario: The owner notices of a special levy are restored with the owner accounts
+    Given a separate organization has a WEG with two roof repair levies, an issued owner notice and a draft for export
+    When its administrator downloads the organization archive
+    And the archive is imported into an empty organization after its source organization was deleted
+    Then the imported organization has equal entity counts and normalized content
+    And the imported owner notices and owner accounts show the archived levy amounts
+
   Scenario: Missing dependencies refuse the whole import
     Given a separate organization has rental records and an original for export
     When its administrator downloads the organization archive

@@ -235,16 +235,17 @@ user). This is the same limit as on earlier releases. In practice:
 - It works when the source organization is gone (deleted, or the archive is
   restored on another installation), the importing administrator signs in with
   the address of the archived administrator, and that administrator is the only
-  account that created the scopes, reviewed the bindings, gave the grants and
-  uploaded the attachments. Deleting an organization rewrites all its account
-  addresses to `<id>@deleted.invalid`, which frees that address, and the address
-  match above maps the archived administrator to the importing administrator.
-  Evidence keeps its original actors; the importing administrator receives no
-  extra grant.
+  account that created the scopes, reviewed the bindings, gave the grants,
+  prepared the dunning notices and uploaded the attachments. Deleting an
+  organization rewrites all its account addresses to `<id>@deleted.invalid`,
+  which frees that address, and the address match above maps the archived
+  administrator to the importing administrator. Evidence keeps its original
+  actors; the importing administrator receives no extra grant.
 - It is refused when any of these rows names another archived account, even
   after the source organization is gone: a scope grant given, a binding
-  reviewed or an attachment uploaded by a second administrator or a clerk, or
-  by an administrator whose address the importing administrator does not carry.
+  reviewed, a dunning notice prepared or an attachment uploaded by a second
+  administrator or a clerk, or by an administrator whose address the importing
+  administrator does not carry.
   Such an account is an inactive placeholder after the import, so its first row
   cannot be inserted.
 - It is refused while the source organization still holds the archived
@@ -254,12 +255,30 @@ user). This is the same limit as on earlier releases. In practice:
 On a refusal the administrator sees the German message "Die Daten können unter
 den aktuellen Integritäts- und Freigaberegeln nicht importiert werden." with the
 technical details (code `IMPORT_INTEGRITY_REFUSAL`, entity such as
-`accounting_scope`, `scope_grant` or `attachment`, source IDs, count). Nothing
-is written: rows, files and the destination organization stay as they were. To
-restore an archive whose scopes were created by the archived administrator,
-delete the source organization first and import as the administrator who
-carries the archived address. Cloning an organization with its scopes beside
+`accounting_scope`, `scope_grant`, `dunning_scope_context` or `attachment`,
+source IDs, count). Nothing is written: rows, files and the destination
+organization stay as they were. To restore an archive whose scopes were created
+by the archived administrator, delete the source organization first and import
+as the administrator who carries the archived address. Cloning an organization with its scopes beside
 the living original is not supported (owner decision on issue #134).
+
+**Dunning notices.** A scoped dunning notice is restored with its immutable
+scope context (`dunning_scope_context`: scope, period, lease or plan, and for an
+owner notice on a special levy the frozen levy IDs) and with the archived
+principal, fee, interest and level. An issued notice stays issued and frozen: it
+is not issued again, renumbered or deletable, and its archived
+`dunning_notice.issued` event is restored as it was, without a new one. The
+database accepts a context only before its notice, with its scope selected and
+with the importing administrator's live `prepare` grant on that scope, and an
+issued notice only with their `approve` grant (`protect_dunning_context`,
+`authorize_dunning_write`). The importer therefore writes the grants of the scope
+first, then each context with its scope selected, then its notice. No guard is
+relaxed: the deferred `validate_dunning_context` check (the frozen levies must
+carry an allocation for the notice's owner and lie in the period and scope) still
+runs on the restored rows, so an archive whose context the allocations do not back
+is refused. The limits of the list above apply to the preparer of the notice: a
+notice prepared by another account, or one the importing administrator holds no
+live grant for, is refused.
 
 Rows are inserted in dependency order in one transaction under ordinary runtime
 RLS and integrity guards. Original registration reuses its native validated

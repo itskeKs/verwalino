@@ -87,6 +87,63 @@ def export_organization_with_form_property(world, rent_world, export_client):
     world.data["form_property"], world.data["form_payment"] = prop, payment.json()["id"]
 
 
+@given("a separate organization has a WEG with two roof repair levies, an issued owner notice and a draft for export")
+def export_organization_with_levy_notices(world, rent_world, export_client):
+    from tests.bdd.steps.browser_setup import create
+    world.actor = export_client
+    world.data["export_source"] = rent_world
+    # No person data domain (the import cannot insert its generated `label` column) and no property
+    # creation receipt (the import leaves it out), so the counts below compare entity by entity.
+    prop = create(world, "/api/properties", {"name": "Gartenstraße 5", "management_type": "WEG"})
+    scale = world.act("POST", f"/api/properties/{prop['id']}/mea-scale/confirm", json={
+        "denominator": 1000, "expected_scale_status": "LEGACY_UNCONFIRMED", "confirm_existing_values_as_numerators": True})
+    assert scale.status_code == 200, world.describe_response()
+    scope = create(world, "/api/accounting-scopes", {"property_id": prop["id"], "scope_type": "WEG",
+        "label": "WEG Gartenstraße 5", "valid_from": "2026-01-01", "whole_property": True}, keyed=True)
+    create(world, f"/api/accounting-scopes/{scope['id']}/grants", {"user_id": str(rent_world["admin"]),
+        "capabilities": ["read", "prepare", "approve", "confirm", "export"], "reason": "Synthetic levy notices"}, keyed=True)
+    owners = []
+    for number, mea, first in (("1", "600", "Anna"), ("2", "400", "Berta")):
+        unit = create(world, "/api/units", {"property_id": prop["id"], "number": number, "usage_type": "WOHNUNG", "mea": mea, "area": "70"})
+        person = create(world, "/api/persons", {"first_name": first, "last_name": "Berg"})
+        owner = create(world, "/api/owner-profiles", {"person_id": person["id"]})
+        create(world, "/api/ownership", {"unit_id": unit["id"], "owner_profile_id": owner["id"], "valid_from": "2026-01-01"})
+        owners.append(owner)
+    meeting = create(world, "/api/meetings", {"property_id": prop["id"], "meeting_date": "2026-05-15",
+        "meeting_type": "ORDENTLICH", "location": "Gemeinschaftsraum Gartenstraße 5"})
+    agenda = create(world, f"/api/meetings/{meeting['id']}/agenda", {"meeting_id": meeting["id"], "title": "Dachreparatur"})
+    assert world.act("POST", f"/api/meetings/{meeting['id']}/hold").status_code == 200, world.describe_response()
+    resolution = create(world, "/api/meetings/resolutions", {"meeting_id": meeting["id"], "agenda_item_id": agenda["id"],
+        "wording": "Dachreparatur durch Sonderumlage von 7.000,00 € finanzieren.",
+        "votes_yes": 2, "votes_no": 0, "votes_abstain": 0, "result": "ANGENOMMEN"})
+    create(world, f"/api/meetings/resolutions/{resolution['id']}/register", {})
+    world.data.update(property=prop, scope=scope, levy_owners=owners)
+    # The levy form, the notice form and the issue button send no Idempotency-Key.
+    for amount, due_date in (("5000.00", "2026-06-05"), ("2000.00", "2026-06-25")):
+        create(world, "/api/special-levies", {"property_id": prop["id"], "accounting_scope_id": scope["id"],
+            "amount": amount, "due_date": due_date, "resolution_id": resolution["id"]})
+    notices = {}
+    for owner, name in zip(owners, ("Anna", "Berta"), strict=True):
+        notices[name] = create(world, "/api/dunning/owner", {
+            "owner_profile_id": owner["id"], "period_start": "2026-06-01", "period_end": "2026-06-30",
+            "reference_date": "2026-06-28", "accounting_scope_id": scope["id"]})
+    issued = world.act("POST", f"/api/dunning/{notices['Anna']['id']}/issue")
+    assert issued.status_code == 200, world.describe_response()
+    notices["Anna"] = issued.json()
+    # Anna holds 60 % and Berta 40 % of both levies, which are overdue on 28 June.
+    assert [(name, notice["status"], notice["principal_amount"]) for name, notice in notices.items()] == [
+        ("Anna", "issued", "4200.00"), ("Berta", "draft", "2800.00")]
+    world.data["levy_notices"] = notices
+    world.data["levy_accounts"] = {name: levy_account(world, owner["id"]) for owner, name in zip(owners, notices)}
+
+
+def levy_account(world, owner):
+    answer = world.act("GET", f"/api/payments/mietkonto/owner/{owner}", params={
+        "accounting_scope_id": world.data["scope"]["id"], "period_start": "2026-06-01", "period_end": "2026-06-30"})
+    assert answer.status_code == 200, world.describe_response()
+    return {key: answer.json()[key] for key in ("soll_total", "ist_total", "balance")}
+
+
 @when("its administrator downloads the organization archive")
 def download_archive(world):
     answer = world.act("POST", "/api/organizations/export")
@@ -150,12 +207,13 @@ def import_archive(world, empty_import_organization):
 
 
 @when('the archive is imported into an empty organization after its source organization was deleted')
-def import_archive_after_source_deletion(world, empty_import_organization, rent_db, rent_world):
+def import_archive_after_source_deletion(world, empty_import_organization, rent_db):
     from tests.test_organization_import import source_organization_deleted
     # The supported restore (issue #134): the source organization no longer
     # holds its administrator's address, which the importing administrator carries.
+    source = world.data['export_source']
     restore_archive(world, empty_import_organization, lambda: source_organization_deleted(
-        rent_db, rent_world['org'], rent_world['admin'], empty_import_organization))
+        rent_db, source['org'], source['admin'], empty_import_organization))
 
 
 @then('the imported organization has equal entity counts and normalized content')
@@ -183,7 +241,9 @@ def import_equals_source(world):
         restored = [remap(json.loads(line), reverse) for line in target[f'entities/{name}.jsonl'].splitlines()]
         assert len(restored) == count, name
         def normalize(rows):
-            return sorted(json_bytes({k: v for k, v in row.items() if k not in {'created_by', 'storage_uri', 'registered_at'}}) for row in rows)
+            # The import regenerates request identifiers (an Idempotency-Key is not an identity of the data) and
+            # stamps the transaction that wrote a row (`creation_xid`).
+            return sorted(json_bytes({k: v for k, v in row.items() if k not in {'created_by', 'storage_uri', 'registered_at', 'request_key', 'creation_xid'}}) for row in rows)
         assert hashlib.sha256(b''.join(normalize(original))).digest() == hashlib.sha256(b''.join(normalize(restored))).digest(), name
 
 
@@ -215,6 +275,32 @@ def imported_form_property(world):
     assert names[mapping['property'][world.data['form_property']]] == 'Probehaus'
     paid = {row['id']: row for row in payments.json()}[mapping['payment'][world.data['form_payment']]]
     assert (paid['amount'], paid['value_date'], paid['status']) == ('700.00', '2026-03-15', 'booked')
+
+
+@then('the imported owner notices and owner accounts show the archived levy amounts')
+def imported_levy_notices(world):
+    mapping = world.data['import_result']['id_map']
+    async def read():
+        async with api_client(world.data['import_target']) as target:
+            return [await target.get(f"/api/dunning/{mapping['dunning_notice'][notice['id']]}")
+                    for notice in world.data['levy_notices'].values()]
+    anna, berta = world.run(read())
+    assert anna.status_code == 200 and berta.status_code == 200, (anna.text, berta.text)
+    assert [(row['status'], row['level'], row['principal_amount'], row['fee_amount']) for row in (anna.json(), berta.json())] == [
+        ('issued', 1, '4200.00', '0.00'), ('draft', 1, '2800.00', '0.00')]
+    # Only the first owner's notice was issued, and it keeps its archived issue time.
+    assert anna.json()['issued_at'] == world.data['levy_notices']['Anna']['issued_at']
+    scope = mapping['accounting_scope'][world.data['scope']['id']]
+    async def accounts():
+        async with api_client(world.data['import_target']) as target:
+            return [await target.get(f"/api/payments/mietkonto/owner/{mapping['owner_profile'][owner['id']]}", params={
+                'accounting_scope_id': scope, 'period_start': '2026-06-01', 'period_end': '2026-06-30'})
+                for owner in world.data['levy_owners']]
+    restored = {}
+    for name, answer in zip(world.data['levy_accounts'], world.run(accounts())):
+        assert answer.status_code == 200, answer.text
+        restored[name] = {key: answer.json()[key] for key in ('soll_total', 'ist_total', 'balance')}
+    assert restored == world.data['levy_accounts']
 
 
 @when('a required person is removed from the archive before import')
