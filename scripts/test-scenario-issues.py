@@ -409,13 +409,16 @@ class NightlyWorkflowTests(unittest.TestCase):
         self.assertIn("matrix.mode == 'selfhost'", selfhost_run.split("\n        run:", 1)[0])
         self.assertIn("pytest tests/bdd --run-browser", selfhost_run)
 
-    def test_hosted_leg_runs_the_local_stack_through_the_hosted_make_target(self):
+    def test_hosted_leg_runs_the_local_stack_with_browser_features_through_the_report_target(self):
         database = self.steps["Start test database"]
         self.assertIn("matrix.mode == 'hosted'", database.split("\n        run:", 1)[0])
         self.assertIn("docker compose -f infra/docker-compose.declaration-test.yml up -d --wait postgres", database)
-        run = self.steps["Run the API features in hosted mode on the local stack"]
+        node = self.steps["Set up Node.js"]
+        self.assertIn("matrix.mode == 'hosted'", node.split("\n        with:", 1)[0])
+        run = self.steps["Run all API and browser features in hosted mode on the local stack"]
         self.assertIn("matrix.mode == 'hosted'", run.split("\n        run:", 1)[0])
-        self.assertIn('make test-bdd-hosted PYTEST_ARGS="-q --scenario-report ../report"', run)
+        # The target adds --run-browser and --scenario-report ../report and the job's mode selects hosted policy.
+        self.assertIn('make test-scenarios-report PYTEST_ARGS="-q"', run)
         self.assertNotIn("self-host.sh", run)
         self.assertIn("      mailpit:\n        image: axllent/mailpit:", self.job)
 
