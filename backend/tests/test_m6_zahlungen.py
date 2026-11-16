@@ -252,6 +252,23 @@ def _insert_payment_sql() -> str:
     """
 
 
+def _insert_reversing_payment_sql() -> str:
+    """Like `_insert_payment_sql`, for a row that claims to reverse another payment (`reverses_id`)."""
+    return """
+        INSERT INTO payment (
+            id, organization_id, bank_account_id, property_id,
+            direction, amount, value_date, payment_type,
+            tenant_profile_id, owner_profile_id, lease_agreement_id,
+            period_year, period_month, status, booked_at, booked_by, reverses_id
+        ) VALUES (
+            :id, :org, :acct, :prop,
+            :dir, :amount, :vdate, :ptype,
+            :tenant, :owner, :lease,
+            :year, :month, :status, :booked_at, :booked_by, :reverses
+        )
+    """
+
+
 # asyncpg binds DATE/TIMESTAMPTZ params at the protocol layer (it infers the
 # type from the target column), so plain string literals fail with
 # "'str' object has no attribute 'toordinal'". Pass native date/datetime.
@@ -372,35 +389,178 @@ class TestPaymentImmutability:
                 text("DELETE FROM payment WHERE id = :id"), {"id": str(pid)}
             )
 
+    async def _insert_reversing(
+        self, session, m6_seed, reverses, *, status="booked", org="a", pid=None
+    ) -> uuid.UUID:
+        """Insert a payment that claims to reverse `reverses`; org "b" inserts it as organization B."""
+        pid = pid or uuid.uuid4()
+        other = org == "b"
+        booked = status == "booked"
+        await _set_org(session, m6_seed["org_b_id" if other else "org_a_id"])
+        await session.execute(
+            text(_insert_reversing_payment_sql()),
+            {
+                "id": str(pid), "org": str(m6_seed["org_b_id" if other else "org_a_id"]),
+                "acct": str(m6_seed["acct_b_org" if other else "acct_a"]),
+                "prop": str(m6_seed["prop_b_org" if other else "prop_a"]),
+                "dir": "OUT", "amount": "150.00", "vdate": _VDATE,
+                "ptype": "NK_VORAUSZAHLUNG",
+                "tenant": str(m6_seed["tenant_b" if other else "tenant"]), "owner": None,
+                "lease": None if other else str(m6_seed["lease"]),
+                "year": 2025, "month": 6, "status": status,
+                "booked_at": _BOOKED_AT if booked else None,
+                "booked_by": str(m6_seed["user_a_admin_id"]) if booked else None,
+                "reverses": None if reverses is None else str(reverses),
+            },
+        )
+        await _set_org(session, m6_seed["org_a_id"])
+        return pid
+
+    @staticmethod
+    async def _link(session, original, storno):
+        await session.execute(
+            text("UPDATE payment SET reversed_by_id = :s WHERE id = :id"),
+            {"s": None if storno is None else str(storno), "id": str(original)},
+        )
+
+    @staticmethod
+    async def _reversed_by(session, original):
+        row = await session.execute(
+            text("SELECT reversed_by_id FROM payment WHERE id = :id"), {"id": str(original)}
+        )
+        return row.scalar_one()
+
     @pytest.mark.asyncio
     async def test_set_reversed_by_id_on_booked_allowed(self, app_rw_session, m6_seed):
-        """The SINGLE allowed mutation of a booked row: setting reversed_by_id."""
+        """The SINGLE allowed mutation of a booked row: NULL -> the id of its booked Storno."""
         session = app_rw_session
         await _set_org(session, m6_seed["org_a_id"])
         pid = await self._insert_booked(session, m6_seed)
-        # A real Storno row must exist (self-FK reversed_by_id -> payment.id).
-        storno_id = uuid.uuid4()
-        await session.execute(
-            text(_insert_payment_sql()),
-            {
-                "id": str(storno_id), "org": str(m6_seed["org_a_id"]),
-                "acct": str(m6_seed["acct_a"]), "prop": str(m6_seed["prop_a"]),
-                "dir": "OUT", "amount": "150.00", "vdate": _VDATE,
-                "ptype": "NK_VORAUSZAHLUNG", "tenant": str(m6_seed["tenant"]),
-                "owner": None, "lease": str(m6_seed["lease"]),
-                "year": 2025, "month": 6, "status": "booked",
-                "booked_at": _BOOKED_AT, "booked_by": str(m6_seed["user_a_admin_id"]),
-            },
-        )
+        # The real Storno: booked, same organization, reverses_id -> the original.
+        storno_id = await self._insert_reversing(session, m6_seed, pid)
         # Setting reversed_by_id on the booked original is the allowed mutation.
+        await self._link(session, pid, storno_id)
+        assert await self._reversed_by(session, pid) == storno_id
+
+    @pytest.mark.asyncio
+    async def test_reversed_by_id_cannot_be_repointed_or_cleared_once_set(self, app_rw_session, m6_seed):
+        """A reversal link is part of the booking chain: once set, no statement changes it."""
+        session = app_rw_session
+        savepoint = await session.begin_nested()
+        await _set_org(session, m6_seed["org_a_id"])
+        original = await self._insert_booked(session, m6_seed)
+        storno = await self._insert_reversing(session, m6_seed, original)
+        await self._link(session, original, storno)
+        # Candidates a forged link could name: a second Storno of the same payment, an unrelated booked payment.
+        second_storno = await self._insert_reversing(session, m6_seed, original)
+        unrelated = await self._insert_booked(session, m6_seed)
+        for target in (second_storno, unrelated, None, original):
+            with pytest.raises(Exception, match="GoBD.*reversed_by_id.*booked"):
+                async with session.begin_nested():
+                    await self._link(session, original, target)
+            assert await self._reversed_by(session, original) == storno
+        # Writing the same link again and the technical timestamp stay allowed.
+        await self._link(session, original, storno)
         await session.execute(
-            text("UPDATE payment SET reversed_by_id = :s WHERE id = :id"),
-            {"s": str(storno_id), "id": str(pid)},
+            text("UPDATE payment SET updated_at = now() WHERE id = :id"), {"id": str(original)}
         )
-        row = await session.execute(
-            text("SELECT reversed_by_id FROM payment WHERE id = :id"), {"id": str(pid)}
-        )
-        assert row.scalar_one() == storno_id
+        assert await self._reversed_by(session, original) == storno
+        await savepoint.rollback()
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("claim", [
+        "no_reverses_id", "reverses_another_payment", "draft", "other_organization", "itself",
+        "reverses_itself",
+    ])
+    async def test_reversed_by_id_must_name_the_booked_storno_of_the_same_organization(
+        self, app_rw_session, m6_seed, claim,
+    ):
+        """NULL -> id is accepted only for a booked payment of this organization that reverses this row."""
+        session = app_rw_session
+        savepoint = await session.begin_nested()
+        await _set_org(session, m6_seed["org_a_id"])
+        original = await self._insert_booked(session, m6_seed)
+        other = await self._insert_booked(session, m6_seed)
+        subject, claimed = original, original
+        if claim == "no_reverses_id":
+            claimed = await self._insert_reversing(session, m6_seed, None)
+        elif claim == "reverses_another_payment":
+            claimed = await self._insert_reversing(session, m6_seed, other)
+        elif claim == "draft":
+            claimed = await self._insert_reversing(session, m6_seed, original, status="draft")
+        elif claim == "other_organization":
+            claimed = await self._insert_reversing(session, m6_seed, original, org="b")
+        elif claim == "reverses_itself":
+            # A forged booked row whose `reverses_id` is its own id (the foreign key accepts it).
+            subject = claimed = uuid.uuid4()
+            await self._insert_reversing(session, m6_seed, subject, pid=subject)
+        with pytest.raises(Exception, match="GoBD.*reversed_by_id.*booked"):
+            async with session.begin_nested():
+                await self._link(session, subject, claimed)
+        assert await self._reversed_by(session, subject) is None
+        # The refusal is about the claim: the real Storno of the same payment still links.
+        storno = await self._insert_reversing(session, m6_seed, original)
+        await self._link(session, original, storno)
+        assert await self._reversed_by(session, original) == storno
+        await savepoint.rollback()
+
+    @pytest.mark.asyncio
+    async def test_reversal_link_check_does_not_depend_on_what_the_actor_can_see(
+        self, migrator_session, m6_seed,
+    ):
+        """A legitimate link is not refused because row-level security hides the Storno from the actor."""
+        session = migrator_session
+        savepoint = await session.begin_nested()
+        await session.execute(text("SELECT set_config('app.current_org_id', :o, true)"), {"o": str(m6_seed["org_a_id"])})
+        await session.execute(text("SET LOCAL ROLE app_rw"))
+        original = await self._insert_booked(session, m6_seed)
+        storno = await self._insert_reversing(session, m6_seed, original)
+        await session.execute(text("RESET ROLE"))
+        # Stand-in for a scope the actor cannot read: the actor's queries no longer see the Storno.
+        await session.execute(text(f"CREATE POLICY hide_storno ON payment AS RESTRICTIVE FOR SELECT USING (id <> '{storno}')"))
+        await session.execute(text("SET LOCAL ROLE app_rw"))
+        assert (await session.execute(text("SELECT count(*) FROM payment WHERE id = :id"), {"id": str(storno)})).scalar_one() == 0
+        await self._link(session, original, storno)
+        await session.execute(text("RESET ROLE"))
+        assert await self._reversed_by(session, original) == storno
+        await savepoint.rollback()
+
+    def test_reversal_link_migration_roundtrip_restores_the_previous_function(self, monkeypatch):
+        """0192 replaces only the function; its downgrade restores the body 0018 created, exactly."""
+        import importlib
+        from alembic.migration import MigrationContext
+        from alembic.operations import Operations
+        from sqlalchemy import create_engine
+        from tests.conftest import MIGRATOR_SYNC_URL
+
+        first = importlib.import_module("migrations.versions.0018_payment_immutability_trigger")
+        migration = importlib.import_module("migrations.versions.0192_payment_reversal_link_immutable")
+        issued = []
+        monkeypatch.setattr(first, "op", type("RecordingOp", (), {"execute": staticmethod(issued.append)}))
+        first.upgrade()
+        created = issued[0].split("$$")[1]  # the body and settings 0018 gave the function
+
+        function = text("""SELECT prosrc, prosecdef, proconfig, proacl::text AS acl, pg_get_triggerdef(t.oid) AS trigger
+            FROM pg_proc p, pg_trigger t
+            WHERE p.oid = 'trg_payment_immutability()'::regprocedure AND t.tgname = 'trg_payment_immutability'""")
+        engine = create_engine(MIGRATOR_SYNC_URL)
+        try:
+            with engine.begin() as db, Operations.context(MigrationContext.configure(db)):
+                current = db.execute(function).one()
+                assert current.prosecdef and "row_security=off" in current.proconfig
+                savepoint = db.begin_nested()
+                try:
+                    migration.downgrade()
+                    restored = db.execute(function).one()
+                    assert restored.prosrc == created
+                    assert (restored.prosecdef, restored.proconfig) == (False, None)
+                    assert (restored.acl, restored.trigger) == (current.acl, current.trigger)
+                    migration.upgrade()
+                    assert db.execute(function).one() == current
+                finally:
+                    savepoint.rollback()
+        finally:
+            engine.dispose()
 
     @pytest.mark.asyncio
     async def test_delete_draft_allowed(self, app_rw_session, m6_seed):
@@ -718,6 +878,17 @@ class TestPaymentAPI:
         again = await client_a_clerk.post(f"/api/payments/{storno['id']}/reverse")
         assert again.status_code == 409, again.text
         assert (await client_a_clerk.get(f"/api/payments/{storno['id']}")).json()["retention_until"] == "2034-12-31"
+
+    @pytest.mark.asyncio
+    async def test_a_reversed_payment_answers_409_to_a_second_reversal_and_keeps_its_link(
+            self, client_a_clerk, m6_seed, payment_clock):
+        original, storno = await self._book_then_reverse(
+            client_a_clerk, m6_seed, payment_clock,
+            value_date="2025-06-01", booked_on="2026-11-08T08:00:00", reversed_on="2026-11-08T09:00:00")
+        again = await client_a_clerk.post(f"/api/payments/{original['id']}/reverse")
+        assert again.status_code == 409, again.text
+        assert again.json()["detail"] == "This payment has already been reversed"
+        assert (await client_a_clerk.get(f"/api/payments/{original['id']}")).json()["reversed_by_id"] == storno["id"]
 
     @pytest.mark.asyncio
     async def test_readonly_cannot_create(self, client_a_readonly, m6_seed):
