@@ -283,7 +283,7 @@ async def test_revision_chain_head_0131_head_preserves_full_state_and_issued_pdf
     from app.deployment import TARGET
     from app.models.base import Base
     from tests.conftest import MIGRATOR_SYNC_URL
-    from tests.migration_rehearsal import project_legacy_advance_modes
+    from tests.migration_rehearsal import project_legacy_advance_modes, project_superseded_levy_allocations
     from tests.test_letters import contract_body, create_template, issue_body
     from tests.test_reserve_ledger import reserve_world, finalize
     from tests.financial_coverage_helpers import attest_fixture, reserve_evidence
@@ -399,7 +399,7 @@ async def test_revision_chain_head_0131_head_preserves_full_state_and_issued_pdf
     config.set_main_option('script_location', str(Path(__file__).parents[1] / 'migrations'))
     scripts = ScriptDirectory.from_config(config)
     assert scripts.get_heads() == [TARGET]
-    expected_ancestry = [f'{number:04}' for number in range(131, 156)] + ['0159', '0160', '0161', '0162', '0163', '0164', '0165', '0166', '0167', '0168', '0169', '0170', '0171', '0172', '0173', '0174', '0175', '0176', '0177', '0178', '0179', '0180', '0181', '0182', '0183', '0184', '0185', '0186', '0187', '0188', '0189', '0190']
+    expected_ancestry = [f'{number:04}' for number in range(131, 156)] + ['0159', '0160', '0161', '0162', '0163', '0164', '0165', '0166', '0167', '0168', '0169', '0170', '0171', '0172', '0173', '0174', '0175', '0176', '0177', '0178', '0179', '0180', '0181', '0182', '0183', '0184', '0185', '0186', '0187', '0188', '0189', '0190', '0191']
     assert [r.revision for r in scripts.iterate_revisions(TARGET, '0131')] == expected_ancestry[:0:-1]
     engine = create_engine(MIGRATOR_SYNC_URL)
     try:
@@ -462,10 +462,17 @@ async def test_revision_chain_head_0131_head_preserves_full_state_and_issued_pdf
                 assert any(row['unit_id'] == str(w['unit']) for row in retained['data']['unit_household'])
                 connection.execute(text('LOCK TABLE public.lease_agreement, public.lease_rent_change, '
                                         'public.audit_event IN ACCESS EXCLUSIVE MODE'))
+                if connection.scalar(text('SELECT EXISTS(SELECT 1 FROM public.special_levy_allocation_supersession)')):
+                    # Earlier scenarios of the session may have moved levies (#681): 0191 refuses to discard the markers.
+                    with pytest.raises(DBAPIError, match='Cannot discard superseded special levy allocations'):
+                        with connection.begin_nested():
+                            migrate('0190', downgrade=True)
+                    assert _chain_snapshot(connection) == retained
                 if connection.scalar(text('SELECT EXISTS(SELECT 1 FROM public.ownership_history WHERE corrected_at IS NOT NULL)')):
                     # Earlier scenarios of the session may have corrected ownership rows (#668): 0190 refuses to discard them.
                     with pytest.raises(DBAPIError, match='Cannot discard corrected ownership rows'):
                         with connection.begin_nested():
+                            project_superseded_levy_allocations(connection)  # 0191 comes first and has its own refusal
                             migrate('0189', downgrade=True)
                     assert _chain_snapshot(connection) == retained
                 def project_planned_reserve():
@@ -476,6 +483,8 @@ async def test_revision_chain_head_0131_head_preserves_full_state_and_issued_pdf
                     connection.execute(text('ALTER TABLE public.settlement_line ENABLE TRIGGER USER'))
                     # Schemas before 0190 cannot represent a corrected row, and its mistaken values would count again.
                     connection.execute(text('DELETE FROM public.ownership_history WHERE corrected_at IS NOT NULL'))
+                    # Nor can schemas before 0191 mark a superseded levy allocation.
+                    project_superseded_levy_allocations(connection)
 
                 with pytest.raises(DBAPIError, match='Retain explicit tenant advance modes'):
                     with connection.begin_nested():

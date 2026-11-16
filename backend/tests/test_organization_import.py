@@ -713,6 +713,55 @@ async def test_import_retains_historical_unlinked_levy_and_frozen_allocations(
     await rent_db.rollback()
 
 
+async def test_import_carries_the_counting_allocation_of_a_moved_levy_and_its_audit_entry(
+    levy_db, scope_seed, import_target, rent_db, export_store,
+):
+    ids = {'org': scope_seed['org_a_id'], 'actor': scope_seed['user_a_admin_id'],
+        'property': uuid.uuid4(), 'scope': uuid.uuid4(), 'unit': uuid.uuid4(), 'owner': uuid.uuid4(),
+        'person': uuid.uuid4(), 'history': uuid.uuid4(), 'buyer': uuid.uuid4(), 'buyer_person': uuid.uuid4()}
+    await levy_db.execute(text("INSERT INTO property(id,organization_id,name,management_type) VALUES (:property,:org,'Moved WEG','WEG')"), ids)
+    await levy_db.execute(text("INSERT INTO accounting_scope(id,organization_id,property_id,scope_type,label,valid_from,whole_property,origin,created_by) VALUES (:scope,:org,:property,'WEG','Moved WEG','2025-01-01',true,'REVIEWED',:actor)"), ids)
+    for statement in (
+        "INSERT INTO unit(id,organization_id,property_id,number,usage_type,mea) VALUES (:unit,:org,:property,'Archive unit','WOHNUNG',1000)",
+        "INSERT INTO person(id,organization_id,first_name,last_name) VALUES (:person,:org,'Berta','Archive')",
+        "INSERT INTO owner_profile(id,organization_id,person_id) VALUES (:owner,:org,:person)",
+        "INSERT INTO ownership_history(id,organization_id,unit_id,owner_profile_id,valid_from) VALUES (:history,:org,:unit,:owner,'2025-01-01')",
+        "INSERT INTO person(id,organization_id,first_name,last_name) VALUES (:buyer_person,:org,'Clara','Archive')",
+        "INSERT INTO owner_profile(id,organization_id,person_id) VALUES (:buyer,:org,:buyer_person)",
+    ):
+        await levy_db.execute(text(statement), ids)
+    ids.update(units=[ids['unit']], owners=[ids['owner']], histories=[ids['history']], legacy_meas=[1000])
+    await levy_db.commit()
+    levy = await legacy_levy(levy_db, ids)
+    await levy_db.execute(text("INSERT INTO scope_grant(organization_id,scope_id,user_id,capabilities,granted_by,reason) VALUES (:org,:scope,:actor,ARRAY['read','prepare','export'],:actor,'Archive a moved levy')"), ids)
+    await levy_db.commit()
+    async with levy_client(ids, 'actor') as api:
+        # The sale is recorded after the levy: the allocation moves from Berta to Clara.
+        assert (await api.patch(f"/api/ownership/{ids['history']}", json={'valid_to': '2026-06-30'})).status_code == 200
+        sold = await api.post('/api/ownership', json={'unit_id': str(ids['unit']), 'owner_profile_id': str(ids['buyer']), 'valid_from': '2026-07-01'})
+        assert sold.status_code == 201, sold.text
+        answer = await api.post('/api/organizations/export')
+        assert answer.status_code == 200, answer.text
+    files = unpack(answer.content)
+    assert 'special_levy_allocation_supersession' not in {name.split('/')[-1].removesuffix('.jsonl') for name in files}
+    exported = [json.loads(line) for line in files['entities/special_levy_allocation.jsonl'].splitlines()]
+    assert [(row['owner_profile_id'], row['amount']) for row in exported] == [(str(ids['buyer']), '1200.00')]
+    await source_organization_deleted(rent_db, ids['org'], ids['actor'], import_target)
+    async with api_client(import_target) as api:
+        answer = await api.post('/api/organizations/import', files={'file': ('moved.tar.gz', repack(files))})
+        assert answer.status_code == 200, answer.text
+        mapping = answer.json()['id_map']
+        response = await api.get('/api/special-levies', params={'property_id': mapping['property'][str(ids['property'])],
+            'accounting_scope_id': mapping['accounting_scope'][str(ids['scope'])]})
+        assert response.status_code == 200, response.text
+        row = next(row for row in response.json() if row['id'] == mapping['special_levy'][str(levy)])
+        assert [(a['owner_profile_id'], a['amount']) for a in row['allocations']] == [(mapping['owner_profile'][str(ids['buyer'])], '1200.00')]
+    assert await rent_db.scalar(text("SELECT count(*) FROM audit_event WHERE entity_id=:levy AND action='special_levy.allocation_moved'"),
+                                {'levy': uuid.UUID(mapping['special_levy'][str(levy)])}) == 1
+    assert await rent_db.scalar(text('SELECT count(*) FROM special_levy_allocation_supersession WHERE organization_id=:org'), import_target) == 0
+    await rent_db.rollback()
+
+
 async def test_import_restores_a_corrected_ownership_row_beside_its_replacement(
     rent_world, import_target, rent_db, export_store,
 ):

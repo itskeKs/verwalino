@@ -32,6 +32,23 @@ def lock_for_rehearsal(db, *tables):
         db.execute(text(f'LOCK TABLE {relations} IN ACCESS EXCLUSIVE MODE'))
 
 
+def project_superseded_levy_allocations(connection):
+    """Drop the superseded special levy allocations and their markers for a rollback-only historical projection.
+
+    Schemas before 0191 cannot mark an allocation row as superseded, and 0191 refuses to discard a
+    marker. Earlier scenarios of a session may have moved levies (#681); the caller rolls the deletion back.
+    """
+    for statement in (
+        "ALTER TABLE public.special_levy_allocation DISABLE TRIGGER USER",
+        "ALTER TABLE public.special_levy_allocation_supersession DISABLE TRIGGER USER",
+        "WITH gone AS (DELETE FROM public.special_levy_allocation_supersession RETURNING allocation_id) "
+        "DELETE FROM public.special_levy_allocation WHERE id IN (SELECT allocation_id FROM gone)",
+        "ALTER TABLE public.special_levy_allocation_supersession ENABLE TRIGGER USER",
+        "ALTER TABLE public.special_levy_allocation ENABLE TRIGGER USER",
+    ):
+        connection.execute(text(statement))
+
+
 def rewind_bank_allocation_functions(connection):
     """Expose pre-bank function bodies for bespoke allocation DDL rehearsals.
 

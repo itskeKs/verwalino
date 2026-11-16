@@ -1812,7 +1812,7 @@ async def test_0174_downgrade_refuses_default_policy_notice_without_interest(iso
     from alembic import command
     from alembic.config import Config
     from sqlalchemy.exc import DBAPIError
-    from tests.migration_rehearsal import project_legacy_advance_modes
+    from tests.migration_rehearsal import project_legacy_advance_modes, project_superseded_levy_allocations
 
     client, seed = isolated_batch_seed
     payload = TestT35Interest.tenant_body(seed)
@@ -1846,6 +1846,7 @@ async def test_0174_downgrade_refuses_default_policy_notice_without_interest(iso
                     connection.execute(text('ALTER TABLE public.settlement_line DISABLE TRIGGER USER'))
                     connection.execute(text("DELETE FROM public.settlement_line WHERE line_type='RESERVE_SOLL'"))
                     connection.execute(text('ALTER TABLE public.settlement_line ENABLE TRIGGER USER'))
+                    project_superseded_levy_allocations(connection)
                     command.downgrade(cfg, "0176")
                     connection.execute(text("SET CONSTRAINTS ALL IMMEDIATE"))
                     project_legacy_advance_modes(connection)
@@ -1860,7 +1861,7 @@ async def test_0174_downgrade_refuses_default_policy_notice_without_interest(iso
                         with connection.begin_nested():
                             command.downgrade(cfg, "0173")
                     historical.rollback()
-            assert connection.scalar(text("SELECT version_num FROM alembic_version")) == "0190"
+            assert connection.scalar(text("SELECT version_num FROM alembic_version")) == "0191"
             assert connection.scalar(text("SELECT to_regclass('public.dunning_settings')")) is not None
             assert connection.scalar(text("SELECT count(*) FROM dunning_notice WHERE id=:id"), params) == 1
     finally:

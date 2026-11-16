@@ -3,7 +3,7 @@ from sqlalchemy import select, text
 
 from app.models.owners_meeting import OwnersMeeting
 from app.models.resolution import Resolution
-from app.models.special_levy import SpecialLevy, SpecialLevyAllocation
+from app.models.special_levy import SpecialLevy, SpecialLevyAllocation, counting_allocation
 
 
 class SpecialLevyRepository:
@@ -28,6 +28,7 @@ class SpecialLevyRepository:
     async def allocations(self, levy_id):
         return list((await self.db.scalars(select(SpecialLevyAllocation).where(
             SpecialLevyAllocation.organization_id == self.org, SpecialLevyAllocation.special_levy_id == levy_id,
+            counting_allocation(),
         ).order_by(SpecialLevyAllocation.unit_id, SpecialLevyAllocation.owner_profile_id))).all())
 
     async def resolution(self, resolution_id, property_id):

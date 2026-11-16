@@ -72,8 +72,9 @@ once. Retrying the same reference returns the persisted levy; replacement return
 Native organization archives and operator restores retain their historical INSERT
 semantics. Import selects each archived levy’s explicit scope for its native
 INSERT checks and then restores the prior context; ordinary service/API creation
-always requires an adopted reference. Later MEA/ownership changes
-do not recalculate old levies. `GET /api/special-levies` reads with an optional
+always requires an adopted reference. Later MEA changes
+do not recalculate old levies; a later change of the ownership history does move the unit's amount
+(see below). `GET /api/special-levies` reads with an optional
 property/scope filter under actual scope and source permissions; incomplete
 access is not output as a complete empty list. The existing
 owner account counts the share once as `SONDERZAHLUNG` in the
@@ -84,7 +85,7 @@ and due date plus “Beschluss *”. The levy links to the meeting date and TOP,
 the frozen register date when available. Its register entry shows
 “Sonderumlage 1.200,00 €, fällig 01.07.2026” with a link back to the selected scope.
 These summaries use the existing financial/source read grants; reading a register
-does not itself disclose levy amounts. The page shows the fixed shares with owner and
+does not itself disclose levy amounts. The page shows the counting shares with owner and
 unit names and uses the existing account/dunning pages. Without an
 economic plan, a WEG property and its scope can be explicitly selected there.
 The annual settlement counts the levy as an additional Soll of the owner: the levies that fall due
@@ -93,6 +94,23 @@ within the settlement period (both days inclusive) reduce the Abrechnungsspitze,
 the “Zahlbetrag” ([M4 §2.4](../m4-weg-abrechnung.md#24-origin-of-expected-advances-booked-hausgeld-and-the-payment-amount),
 ADR-0007 amendment of 2026-11-15, subject to confirmation by a WEG specialist). The costs a levy
 financed are distributed as usual; no cost is linked to a levy.
+The allocation follows the ownership on the due date. Recording a sale after the levy was created
+(`PATCH /api/ownership/{id}` for the seller's end and `POST /api/ownership` for the buyer), moving a
+start or end across the due date or correcting a co-owner's share moves the unit's amount of that
+levy to the owners of the due date, co-owners by their shares, to the cent, in the same transaction
+and with the audit entry `special_levy.allocation_moved`. Allocation rows stay immutable: the old rows
+get a marker (who and when, table `special_levy_allocation_supersession`) and stop counting, the levy
+list, the owner account, dunning, the Fristen monitor and the annual settlement read the counting rows
+only. A levy due before the change stays with the seller; payments already booked stay with the owner
+who paid; an issued dunning notice of the seller is not rewritten, and the buyer's first notice for the
+levy is level 1. When the sale is recorded in two steps nothing moves until the buyer is added (the
+annual settlement refuses the ownership gap meanwhile). An
+actor without read and prepare access to the levy's accounting scope cannot change the ownership
+history of a unit that the levy names (409 `ownership_levy_access`). The organization export carries the
+counting rows only; the audit entry lists the superseded rows. A levy that was already allocated to a
+seller before this rule is not rewritten by the upgrade; the annual settlement refuses it
+(`weg_levy_owner_mismatch`) and it moves with the next write that changes the unit's owners or shares
+on the due date.
 Special levies become overdue only after their actual due date (plus grace period);
 payments of the same month are applied once to the oldest due date.
 `features/special_levy.feature` exercises the ordinary API and browser flow at

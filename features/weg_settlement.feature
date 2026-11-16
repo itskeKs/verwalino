@@ -210,13 +210,13 @@ Feature: WEG settlement and the owner's Hausgeld balance
     When I compute the WEG annual settlement with the levy
     Then the levy Soll is 3000 euros for Anna and 2000 euros once for Berta
 
-  Scenario: A levy allocated before the sale was recorded refuses the calculation
+  Scenario: A sale recorded after the levy moves the levy to the owner on the due date and the settlement calculates
     Given the WEG plan has 7000 euros of costs and the roof repair cost another 5000 euros
     And a resolved special levy of 5000 euros is due on 1 October 2026
     And the sale of unit 2 from Berta to Clara from July is recorded afterwards
     And Clara has paid 2000 euros of the levy in October
-    When I try to compute the WEG annual settlement with the levy
-    Then the calculation is refused in German, naming the 5.000,00 euro levy, unit 2 and 1 October 2026
+    When I compute the WEG annual settlement with the levy
+    Then the levy Soll is 3000 euros for Anna, 0 euros for Berta and 2000 euros for her successor Clara
 
   Scenario: A levy due before the sale stays with the seller although the sale is recorded afterwards
     Given the WEG plan has 7000 euros of costs and the roof repair cost another 5000 euros

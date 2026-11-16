@@ -571,3 +571,32 @@ async def test_t35_levy_interest_actual_dates_payment_and_configuration_frozen(l
     async with client(ids, 'actor') as api:
         assert (await api.get(f'/api/dunning/{notice}')).status_code == 404
         assert (await api.get(f'/api/dunning/{notice}/pdf')).status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_an_issued_notice_of_the_seller_stays_and_the_buyer_starts_at_level_one(levy_db, levy_fixture):
+    """A sale recorded after a notice moves the levy; the issued document is not rewritten (#681)."""
+    from tests.test_special_levy import end, new_owner, start
+    ids = levy_fixture
+    await levy_db.execute(text("INSERT INTO scope_grant(organization_id,scope_id,user_id,capabilities,granted_by,reason) VALUES (:org,:scope,:actor,ARRAY['read','prepare','approve','confirm','export'],:actor,'Dunning of a moved levy')"), ids)
+    await levy_db.commit()
+    buyer = await new_owner(levy_db, ids)
+    async with client(ids, 'actor') as api:
+        await create(api, ids, due_date='2026-06-15')
+        seller_notice = await api.post('/api/dunning/owner', json=dunning_body(ids))
+        assert seller_notice.status_code == 201, seller_notice.text
+        notice_id = seller_notice.json()['id']
+        assert (await api.post(f'/api/dunning/{notice_id}/issue')).status_code == 200
+        issued = (await api.get(f'/api/dunning/{notice_id}')).json()
+        assert (issued['status'], issued['level'], issued['principal_amount']) == ('issued', 1, '3000.00')
+        await end(api, ids['histories'][0], '2026-05-31')
+        await start(api, ids['units'][0], buyer, '2026-06-01')
+        # The seller no longer owes the levy: nothing is overdue for them, the issued notice is unchanged.
+        gone = await api.post('/api/dunning/owner', json=dunning_body(ids, reference_date='2026-06-30'))
+        assert gone.status_code == 422, gone.text
+        assert (await api.get(f'/api/dunning/{notice_id}')).json() == issued
+        # The buyer was never asked: their first notice for the levy is level 1 with the unit's amount.
+        first = await api.post('/api/dunning/owner', json=dunning_body(ids, owner_profile_id=str(buyer)))
+        assert first.status_code == 201, first.text
+        assert (first.json()['level'], first.json()['principal_amount']) == (1, '3000.00')
+        assert first.json()['included_items'][0]['due_date'] == '2026-06-15'

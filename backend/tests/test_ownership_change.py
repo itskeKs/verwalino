@@ -946,12 +946,14 @@ async def test_hausgeld_soll_follows_the_corrected_start_date(client_a_admin, ow
 # others follow only the relation, the evidence or the retention of a row, which must also resolve a
 # corrected row that a levy allocation or a snapshot points to. A new function that reads the table
 # has to be put in one of the two sets, which is the review of that choice.
-SKIPS_CORRECTED_ROWS = {"payment_computation_context_valid", "reserve_contribution_headroom",
+# guard_special_levy (migration 0191) accepts a corrected row only for the rows of a levy's creation or
+# import, which point at the row the levy was calculated from, and refuses it for a moved allocation.
+SKIPS_CORRECTED_ROWS = {"guard_special_levy", "payment_computation_context_valid", "reserve_contribution_headroom",
                         "validate_dunning_context", "validate_sev_owner"}
 FOLLOWS_THE_ROW_ITSELF = {
     "access_coverage_actor_access", "access_coverage_manifest_pre_intake", "access_coverage_manifest_v1",
     "access_item_disposition_pre_intake", "apply_person_privacy", "dunning_legacy_subject_clear",
-    "financial_computation_source_digest", "guard_special_levy", "history_source_before_contacts_at_mode",
+    "financial_computation_source_digest", "history_source_before_contacts_at_mode",
     "organization_retention_plan", "organization_retention_plan_before0160", "organization_retention_plan_before0162",
     "privacy_sources_before_contacts", "property_audit_before_contact_setup",
     "property_financial_contact_access_at_mode", "property_history_graph_valid", "special_levy_sources",

@@ -1,0 +1,152 @@
+"""Let a special levy's allocation follow the owners of its due date by superseding rows (issue #681).
+
+A levy is allocated when it is created. A sale or a share correction recorded afterwards makes
+other owners hold the unit on the due date, but allocation rows are immutable evidence: they are
+never updated or deleted. The unit's amount therefore moves by superseding: the rows that
+stop counting get a marker in the new append-only table ``special_levy_allocation_supersession``
+(who and when), and new allocation rows carry the amount for the owners of the due date. A row
+counts when it has no marker. The new rows may only be inserted in the transaction that
+supersedes rows of the same unit and levy, and the deferred total check now sums the counting
+rows only, so the levy total stays exact before and after every move.
+
+An owner can hold a unit's share of a levy again after it was superseded (a sale and a
+buy-back), so the unique key ``(levy, unit, owner)`` of 0127 cannot stay; the deferred check
+refuses two counting rows of one owner and unit instead. ``special_levy_unit_ids`` lets the
+ownership routes see which levies name a unit even when the actor may not read them, so a levy
+that cannot be moved refuses the ownership change instead of staying with the seller unseen.
+
+Revision ID: 0191
+Revises: 0190
+"""
+from alembic import op
+from sqlalchemy import text
+
+revision = '0191'
+down_revision = '0190'
+branch_labels = None
+depends_on = None
+
+CREATION_ONLY = "IF l.creation_xid IS DISTINCT FROM pg_current_xact_id() THEN"
+OR_MOVE = """IF l.creation_xid IS DISTINCT FROM pg_current_xact_id() AND NOT (
+          EXISTS(SELECT 1 FROM public.special_levy_allocation_supersession sup
+            JOIN public.special_levy_allocation prior ON prior.organization_id=sup.organization_id AND prior.id=sup.allocation_id
+            WHERE prior.organization_id=NEW.organization_id AND prior.special_levy_id=NEW.special_levy_id
+              AND prior.unit_id=NEW.unit_id AND sup.supersession_xid=pg_current_xact_id())
+          AND EXISTS(SELECT 1 FROM public.ownership_history own WHERE own.id=NEW.ownership_history_id
+            AND own.organization_id=NEW.organization_id AND own.corrected_at IS NULL)) THEN"""
+
+
+def patch_guard(reverse=False):
+    definition = op.get_bind().scalar(text("SELECT pg_get_functiondef('guard_special_levy()'::regprocedure)"))
+    before, after = (OR_MOVE, CREATION_ONLY) if reverse else (CREATION_ONLY, OR_MOVE)
+    if definition.count(before) != 1:
+        raise RuntimeError('Unexpected special levy guard; repair forward')
+    op.execute(definition.replace(before, after, 1))
+
+
+COUNTING = """NOT EXISTS(SELECT 1 FROM public.special_levy_allocation_supersession s WHERE s.allocation_id=a.id)"""
+
+
+def upgrade():
+    op.execute("""
+    ALTER TABLE special_levy_allocation
+      DROP CONSTRAINT uq_special_levy_owner_unit,
+      ADD CONSTRAINT uq_special_levy_allocation_context UNIQUE(organization_id,id);
+    CREATE INDEX ix_special_levy_allocation_unit ON special_levy_allocation(organization_id,unit_id);
+
+    CREATE TABLE special_levy_allocation_supersession (
+      allocation_id uuid PRIMARY KEY, organization_id uuid NOT NULL REFERENCES organization(id),
+      superseded_by uuid NOT NULL, superseded_at timestamptz NOT NULL DEFAULT now(),
+      supersession_xid xid8 NOT NULL DEFAULT pg_current_xact_id(),
+      FOREIGN KEY(organization_id,allocation_id) REFERENCES special_levy_allocation(organization_id,id),
+      FOREIGN KEY(organization_id,superseded_by) REFERENCES "user"(organization_id,id)
+    );
+
+    CREATE FUNCTION guard_special_levy_supersession() RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER
+      SET search_path=pg_catalog,pg_temp SET row_security=off AS $$
+    BEGIN
+      IF TG_OP<>'INSERT' THEN RAISE EXCEPTION 'Special levy supersessions are append-only' USING ERRCODE='23514'; END IF;
+      PERFORM pg_advisory_xact_lock_shared(hashtextextended('scope-acl:'||NEW.organization_id::text,0));
+      PERFORM pg_advisory_xact_lock(hashtextextended('financial-inputs:'||NEW.organization_id::text,0));
+      NEW.supersession_xid:=pg_current_xact_id();
+      RETURN NEW;
+    END $$;
+    REVOKE ALL ON FUNCTION guard_special_levy_supersession() FROM PUBLIC;
+    ALTER TABLE special_levy_allocation_supersession ENABLE ROW LEVEL SECURITY;
+    ALTER TABLE special_levy_allocation_supersession FORCE ROW LEVEL SECURITY;
+    GRANT SELECT,INSERT ON special_levy_allocation_supersession TO app_rw;
+    CREATE TRIGGER a_organization_lifecycle BEFORE INSERT OR UPDATE OR DELETE ON special_levy_allocation_supersession
+      FOR EACH ROW EXECUTE FUNCTION public.organization_lifecycle_guard();
+    CREATE TRIGGER guard_special_levy_supersession BEFORE INSERT OR UPDATE OR DELETE ON special_levy_allocation_supersession
+      FOR EACH ROW EXECUTE FUNCTION guard_special_levy_supersession();
+    CREATE POLICY special_levy_supersession_read ON special_levy_allocation_supersession FOR SELECT USING (
+      organization_id=NULLIF(current_setting('app.current_org_id',true),'')::uuid
+      AND EXISTS(SELECT 1 FROM special_levy_allocation a
+        WHERE a.organization_id=special_levy_allocation_supersession.organization_id AND a.id=allocation_id));
+    CREATE POLICY special_levy_supersession_insert ON special_levy_allocation_supersession FOR INSERT WITH CHECK (
+      organization_id=NULLIF(current_setting('app.current_org_id',true),'')::uuid
+      AND scope_actor_role(organization_id) IN ('OWNER_ADMIN','CLERK')
+      AND superseded_by=NULLIF(current_setting('app.current_user_id',true),'')::uuid
+      AND EXISTS(SELECT 1 FROM special_levy_allocation a JOIN special_levy l
+          ON l.organization_id=a.organization_id AND l.id=a.special_levy_id
+        WHERE a.organization_id=special_levy_allocation_supersession.organization_id AND a.id=allocation_id
+          AND has_scope_capability(l.organization_id,l.accounting_scope_id,'prepare')));
+
+    CREATE OR REPLACE FUNCTION validate_special_levy_total() RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER
+      SET search_path=pg_catalog,pg_temp SET row_security=off AS $$
+    DECLARE target uuid; total numeric;
+    BEGIN
+      IF TG_TABLE_NAME='special_levy' THEN target:=NEW.id;
+      ELSIF TG_TABLE_NAME='special_levy_allocation' THEN target:=NEW.special_levy_id;
+      ELSE SELECT a.special_levy_id INTO target FROM public.special_levy_allocation a WHERE a.id=NEW.allocation_id; END IF;
+      SELECT amount INTO total FROM public.special_levy WHERE id=target;
+      IF NOT EXISTS(SELECT 1 FROM public.special_levy_allocation a WHERE a.special_levy_id=target AND """ + COUNTING + """)
+        OR total IS DISTINCT FROM (SELECT sum(a.amount) FROM public.special_levy_allocation a
+          WHERE a.special_levy_id=target AND """ + COUNTING + """) THEN
+        RAISE EXCEPTION 'Special levy allocations must conserve the exact total' USING ERRCODE='23514'; END IF;
+      IF EXISTS(SELECT 1 FROM public.special_levy_allocation a WHERE a.special_levy_id=target AND """ + COUNTING + """
+          GROUP BY a.unit_id,a.owner_profile_id HAVING count(*)>1) THEN
+        RAISE EXCEPTION 'An owner holds one counting allocation per unit' USING ERRCODE='23514'; END IF;
+      RETURN NEW;
+    END $$;
+    CREATE CONSTRAINT TRIGGER special_levy_supersession_total AFTER INSERT ON special_levy_allocation_supersession
+      DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION validate_special_levy_total();
+
+    CREATE FUNCTION special_levy_unit_ids(org uuid, unit uuid) RETURNS uuid[]
+      LANGUAGE sql STABLE SECURITY DEFINER SET search_path=pg_catalog,pg_temp SET row_security=off AS $$
+      SELECT COALESCE(array_agg(DISTINCT a.special_levy_id ORDER BY a.special_levy_id),ARRAY[]::uuid[])
+      FROM public.special_levy_allocation a
+      WHERE org=NULLIF(current_setting('app.current_org_id',true),'')::uuid
+        AND public.scope_actor_role(org) IS NOT NULL AND a.organization_id=org AND a.unit_id=unit
+    $$;
+    REVOKE ALL ON FUNCTION special_levy_unit_ids(uuid,uuid) FROM PUBLIC;
+    GRANT EXECUTE ON FUNCTION special_levy_unit_ids(uuid,uuid) TO app_rw;
+    """)
+    patch_guard()
+
+
+def downgrade():
+    op.execute("""DO $$ BEGIN IF EXISTS(SELECT 1 FROM special_levy_allocation_supersession)
+      THEN RAISE EXCEPTION 'Cannot discard superseded special levy allocations'; END IF; END $$""")
+    patch_guard(reverse=True)
+    op.execute("""
+    DROP FUNCTION special_levy_unit_ids(uuid,uuid);
+    DROP TRIGGER special_levy_supersession_total ON special_levy_allocation_supersession;
+    CREATE OR REPLACE FUNCTION validate_special_levy_total() RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER
+      SET search_path=pg_catalog,pg_temp SET row_security=off AS $$
+    DECLARE target uuid; total numeric;
+    BEGIN
+      IF TG_TABLE_NAME='special_levy' THEN target:=NEW.id; ELSE target:=NEW.special_levy_id; END IF;
+      SELECT amount INTO total FROM public.special_levy WHERE id=target;
+      IF NOT EXISTS(SELECT 1 FROM public.special_levy_allocation a WHERE a.special_levy_id=target)
+        OR total IS DISTINCT FROM (SELECT sum(a.amount) FROM public.special_levy_allocation a WHERE a.special_levy_id=target) THEN
+        RAISE EXCEPTION 'Special levy allocations must conserve the exact total' USING ERRCODE='23514'; END IF;
+      RETURN NEW;
+    END $$;
+    DROP TABLE special_levy_allocation_supersession;
+    DROP FUNCTION guard_special_levy_supersession();
+    DROP INDEX ix_special_levy_allocation_unit;
+    ALTER TABLE special_levy_allocation
+      DROP CONSTRAINT uq_special_levy_allocation_context,
+      ADD CONSTRAINT uq_special_levy_owner_unit UNIQUE(special_levy_id,unit_id,owner_profile_id);
+    """)

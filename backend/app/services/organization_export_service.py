@@ -99,11 +99,13 @@ async def inventory(db):
           SELECT 1 FROM pg_attribute org WHERE org.attrelid=c.oid AND org.attname='organization_id'))
       GROUP BY c.oid,c.relname ORDER BY c.relname"""))).mappings().all()
     # Password-reset links, invitations and second-factor credentials are
-    # credential infrastructure, never data.
+    # credential infrastructure, never data. Superseded levy allocations (#681) are
+    # not portable: the archive carries the counting rows and the audit entry of the move.
     return {r["name"]: r for r in rows if r["name"] not in {
         "password_reset_request", "user_invitation",
         "user_second_factor", "user_recovery_code",
-        "organization_deletion", "organization_ai_settings"}}
+        "organization_deletion", "organization_ai_settings",
+        "special_levy_allocation_supersession"}}
 
 
 def export_predicate(name, columns):
@@ -140,6 +142,8 @@ def export_predicate(name, columns):
         checks.append("dunning_source_access(:org,t.id,'export')")
     elif name == "special_levy":
         checks.append("special_levy_sources(:org,t.property_id,t.id,t.resolution_id,'export')")
+    elif name == "special_levy_allocation":
+        checks.append("NOT EXISTS(SELECT 1 FROM public.special_levy_allocation_supersession s WHERE s.allocation_id=t.id)")
     elif name in {"owners_meeting", "agenda_item", "resolution", "resolution_register_entry"}:
         checks.append(f"property_meeting_row_access(:org,'{name}',to_jsonb(t),'export')")
     elif name in {"declaration_import", "declaration_import_document", "declaration_extraction_run", "declaration_import_pass",

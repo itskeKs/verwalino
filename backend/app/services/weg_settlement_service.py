@@ -113,19 +113,19 @@ def _share_sum_refusal(exc: WegShareSumError) -> dict:
 
 
 def _levy_owner_refusal(exc: WegLevyOwnerError) -> dict:
-    """The structured 422 of a levy whose allocation names other owners than its due date does (#405)."""
+    """The structured 422 of a levy whose allocation names other owners than its due date does (#405, #681)."""
     amount = f'{exc.levy_amount:,.2f}'.replace(',', '_').replace('.', ',').replace('_', '.')
     return {
         'code': 'weg_levy_owner_mismatch',
         'special_levy_id': str(exc.levy_id), 'unit_id': str(exc.unit_id), 'unit_number': exc.unit_number,
         'due_date': exc.due_date.isoformat(), 'levy_amount': str(exc.levy_amount),
         'message': (
-            f'Die Sonderumlage über {amount} € mit Fälligkeit am {exc.due_date:%d.%m.%Y} wurde Einheit '
-            f'{exc.unit_number} vor der Erfassung des Eigentümerwechsels zugeordnet: Die zugeordneten Eigentümer '
-            f'sind nicht die Eigentümer der Einheit am Fälligkeitstag laut Eigentümer-Historie. Die Abrechnung '
-            f'kann nicht berechnet werden, solange die Sonderumlage dem bisherigen Eigentümer zugeordnet ist, '
-            f'weil sonst dessen Abrechnungsspitze falsch wäre. Die Zuordnung einer Sonderumlage lässt sich '
-            f'derzeit nicht ändern.'),
+            f'Die Sonderumlage über {amount} € mit Fälligkeit am {exc.due_date:%d.%m.%Y} ist Einheit '
+            f'{exc.unit_number} noch einem früheren Eigentümer zugeordnet: Die zugeordneten Eigentümer sind nicht '
+            f'die Eigentümer der Einheit am Fälligkeitstag laut Eigentümer-Historie. Die Abrechnung kann nicht '
+            f'berechnet werden, weil sonst die Abrechnungsspitze des Eigentümers falsch wäre. Eine Sonderumlage '
+            f'folgt dem Eigentümer, wenn die Eigentümer-Historie der Einheit geändert wird; diese wurde vorher '
+            f'zugeordnet und wird nicht rückwirkend umgeschrieben.'),
     }
 
 
