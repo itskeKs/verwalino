@@ -63,19 +63,28 @@ worktree and shows exactly what the PR changed. The script has four subcommands:
 - `start <commit>` takes `/tmp/hausverwaltung-acceptance.lock` and `/tmp/verwalino-testdb.lock`
   (a second `start` is refused while either is held), unpacks the commit with `git archive` into a
   scratch directory under `/tmp`, installs and builds it there, brings the test database to the
-  commit's migration head (it migrates up when the commit carries a newer revision and refuses when
-  the database is ahead) and runs the app detached. It prints the URL, the PID and the scratch path
+  commit's migration head and runs the app detached. The database is migrated up when the commit
+  carries a newer revision; it is refused when it is ahead of the commit, and also when the schema
+  was built by other migration scripts than the commit's (a parallel branch can own the same
+  revision number), judged by the same schema-origin note the backend tests keep on the database,
+  which `start` writes again after a migration. It prints the URL, the PID and the scratch path
   once `/api/health/live` answers. The test database must already be running; the script starts none.
 - `create-organization <name> <admin-email>` creates an empty organization with an administrator
-  through the installation's own bootstrap command and prints a sign-in that it has checked. An
-  address that already exists is refused.
-- `erase-organization <name>` runs the product's erasure for an organization of this run whose
-  deletion was confirmed in the product. The seven-day waiting time is simulated: the clock of that
-  one command runs eight days ahead, and the output says so. No other organization is touched.
-  Afterwards the administrator address can be used again.
-- `stop` ends the app after checking that the process is the one `start` launched, removes the
-  scratch directory, releases both locks and reports that the port is free. It refuses to signal any
-  other process.
+  through the installation's own bootstrap command and prints a sign-in that it has checked. A name
+  that already exists in the test database is refused before anything is written, because the
+  bootstrap command would add the administrator to that organization; an address that already
+  exists is refused too. The script records the id of the organization it created.
+- `erase-organization <name>` runs the product's erasure for the organization of this run recorded
+  under that name, by its id, once its deletion was confirmed in the product. The seven-day waiting
+  time is simulated: the clock of that one command runs eight days ahead, and the output says so.
+  No other organization is touched. Afterwards the administrator address can be used again.
+- `stop` ends the app after checking that the process is the one `start` launched (and says when
+  the app was already gone), removes the scratch directory, releases both locks and reports that the
+  port is free. It refuses to signal any other process, and deletes only a directory that carries the
+  script's name pattern and marker and is not a link. The record of the run is the acceptance lock,
+  not the scratch directory, so a `stop` that was interrupted can simply be run again: a scratch
+  directory that is already gone or half removed does not keep the locks. A directory that fails the
+  checks is left in place and named, with the exit status 1, after the locks are released.
 
 The tester gets the URL and the sign-in, nothing else. While an instance runs, no backend test
 process may use the test database, because the lock stays with the run until `stop`. Production

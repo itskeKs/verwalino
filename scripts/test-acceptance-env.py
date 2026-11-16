@@ -30,7 +30,7 @@ with socket.socket() as port_probe:
 # One source for every fake binary; the file name selects the tool. The state directory is baked in
 # because the script runs the venv tools in a cleaned environment.
 FAKE_TOOL = r'''#!/usr/bin/env python3
-import json, os, pathlib, sys
+import json, os, pathlib, sys, uuid
 STATE = pathlib.Path("@STATE@")
 name = pathlib.Path(sys.argv[0]).name
 args = sys.argv[1:]
@@ -60,6 +60,8 @@ elif name == "npm":
         pathlib.Path("node_modules").mkdir()
 elif name == "npx":
     log()
+    if (STATE / "drop_marker").exists():
+        pathlib.Path("../../.acceptance-env").unlink()
     if (STATE / "fail_build").exists():
         sys.exit("fake build failure")
     out = pathlib.Path(args[args.index("--outDir") + 1])
@@ -115,10 +117,26 @@ elif name == "python":
         else:
             accounts[email.lower()] = password
             write("accounts.json", json.dumps(accounts))
+            # The bootstrap joins an organization of the same name instead of creating one.
+            organizations = json.loads(read("organizations.json", "{}"))
+            organizations.setdefault(org, str(uuid.uuid4()))
+            write("organizations.json", json.dumps(organizations))
             print("Created organization '%s'." % org)
     elif args[:1] == ["-c"]:
         log()
-        if read("db_rev"):
+        code = args[1]
+        if "schema_origin_note" in code:
+            # check: what the database recorded, then what the commit's own scripts say; record: note the latter
+            if args[2] == "record":
+                write("origin_recorded", read("origin_expected", "scripts-A"))
+            else:
+                print(read("origin_recorded", "scripts-A"))
+                print(read("origin_expected", "scripts-A"))
+        elif "public.organization WHERE name" in code:
+            found = json.loads(read("organizations.json", "{}")).get(args[2])
+            if found:
+                print(found)
+        elif read("db_rev"):
             print(read("db_rev"))
     elif args[:1] == ["-"]:
         write("erase_helper.py", sys.stdin.read())
@@ -131,6 +149,14 @@ elif name == "python":
         sys.exit(99)
 else:
     sys.exit(97)
+'''
+
+# The real ps, except that under a German locale the start time comes out in another form, as it does on a machine
+# whose locale differs between the shell that started the app and the shell that stops it.
+PS_WRAPPER = r'''#!/bin/sh
+out="$(@PS@ "$@")" || exit $?
+case "$*" in *lstart=*) [ "${LC_ALL:-}" != de_DE.UTF-8 ] || out="Mo $out" ;; esac
+printf '%s\n' "$out"
 '''
 
 
@@ -150,6 +176,8 @@ class AcceptanceEnvCase(unittest.TestCase):
             path = self.bin / tool
             path.write_text(FAKE_TOOL.replace("@STATE@", str(self.state)))
             path.chmod(0o755)
+        (self.bin / "ps").write_text(PS_WRAPPER.replace("@PS@", shutil.which("ps")))
+        (self.bin / "ps").chmod(0o755)
         (self.state / "known").write_text("0001,0002")
         (self.state / "db_rev").write_text("0002")
         self.checkout = self.base / "checkout"
@@ -220,6 +248,34 @@ class AcceptanceEnvCase(unittest.TestCase):
     def alive(self, pid):
         return subprocess.run(["ps", "-p", str(pid)], capture_output=True).returncode == 0
 
+    def origin_modes(self):
+        """Modes of the schema-origin reads and writes (check, record), in order."""
+        return [row["args"][2] for row in self.calls("python")
+                if row["args"][:1] == ["-c"] and "schema_origin_note" in row["args"][1]]
+
+    def wipe(self):
+        """Back to an empty sandbox between sub-tests, whatever state a sub-test left behind."""
+        self.stop_leftover_app()
+        for lock in (self.acceptance_lock, self.testdb_lock):
+            shutil.rmtree(lock, ignore_errors=True)
+        for leftover in self.scratch_dirs():
+            leftover.unlink() if leftover.is_symlink() else shutil.rmtree(leftover)
+
+    def kill_app(self):
+        pid = int(self.instance()["pid"])
+        os.kill(pid, 9)
+        deadline = time.monotonic() + 10
+        while self.alive(pid) and time.monotonic() < deadline:
+            time.sleep(0.05)
+        return pid
+
+    def interrupted_after_the_app_stopped(self):
+        """A started instance whose app an earlier `stop` has already ended; returns its scratch directory."""
+        self.start()
+        scratch = Path(self.instance()["scratch"])
+        self.kill_app()
+        return scratch
+
     def scratch_dirs(self):
         return sorted(self.base.glob("scratch.*"))
 
@@ -272,7 +328,8 @@ class StartStopTests(AcceptanceEnvCase):
         # A database at the commit's head is left alone; its revision is read directly, since
         # `alembic current` fails for a revision the commit does not know.
         self.assertEqual([row["args"] for row in self.calls("alembic")], [["heads"]])
-        self.assertEqual([row["args"][0] for row in self.calls("python")], ["-c"])
+        self.assertEqual([row["args"][0] for row in self.calls("python")], ["-c", "-c"])
+        self.assertEqual(self.origin_modes(), ["check"])
 
         before = {path: (path / "info").read_text() for path in (self.acceptance_lock, self.testdb_lock)}
         second = self.script("start", self.commit)
@@ -323,6 +380,39 @@ class StartStopTests(AcceptanceEnvCase):
         self.assertNotIn(["upgrade", "head"], [row["args"] for row in self.calls("alembic")])
         self.assertEqual((self.state / "db_rev").read_text(), "0009")
         self.assertNothingLeft()
+
+    def test_start_is_refused_when_the_database_was_built_by_another_branchs_migrations(self):
+        # Revision ids are bare numbers: the same number can belong to a parallel branch, whose scripts differ.
+        for label, revision, recorded in (("at the commit's head", "0002", "scripts-B"),
+                                          ("behind the commit's head", "0001", "scripts-B"),
+                                          ("without a record of its origin", "0002", "")):
+            with self.subTest(label):
+                (self.state / "db_rev").write_text(revision)
+                (self.state / "origin_recorded").write_text(recorded)
+                result = self.script("start", self.commit)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn("other or unrecorded migration scripts", result.stderr)
+                self.assertEqual(self.calls("uvicorn"), [])
+                self.assertNotIn(["upgrade", "head"], [row["args"] for row in self.calls("alembic")])
+                self.assertNotIn("record", self.origin_modes())
+                self.assertEqual((self.state / "db_rev").read_text(), revision)
+                self.assertEqual((self.state / "origin_recorded").read_text(), recorded)
+                self.assertNothingLeft()
+
+    def test_start_notes_the_origin_of_the_schema_it_migrates_to(self):
+        (self.state / "db_rev").write_text("0001")
+        (self.state / "origin_recorded").write_text("scripts-A")
+        self.start()
+        self.assertEqual(self.origin_modes(), ["check", "record"])
+        self.assertEqual(self.script("stop").returncode, 0)
+        # An empty database has no origin to compare; the script builds it and notes where it came from.
+        (self.state / "db_rev").unlink()
+        (self.state / "origin_recorded").unlink()
+        (self.state / "calls.jsonl").unlink()
+        self.start()
+        self.assertEqual(self.origin_modes(), ["record"])
+        self.assertEqual((self.state / "origin_recorded").read_text(), "scripts-A")
+        self.assertEqual(self.script("stop").returncode, 0)
 
     def test_start_migrates_a_database_behind_the_commit(self):
         (self.state / "db_rev").write_text("0001")
@@ -403,12 +493,119 @@ class StartStopTests(AcceptanceEnvCase):
     def test_stop_finishes_a_run_whose_app_is_already_gone(self):
         self.start()
         pid = int(self.instance()["pid"])
-        os.kill(pid, 9)
-        deadline = time.monotonic() + 10
-        while self.alive(pid) and time.monotonic() < deadline:
-            time.sleep(0.05)
-        self.assertEqual(self.script("stop").returncode, 0)
+        self.kill_app()
+        result = self.script("stop")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn(f"The app (PID {pid}) was already gone", result.stdout)
+        self.assertNotIn("Stopped the app", result.stdout)
         self.assertNothingLeft()
+
+    def test_stop_says_when_it_stopped_the_app_itself(self):
+        self.start()
+        pid = int(self.instance()["pid"])
+        result = self.script("stop")
+        self.assertIn(f"Stopped the app (PID {pid})", result.stdout)
+        self.assertNotIn("already gone", result.stdout)
+
+    def test_stop_leaves_a_test_database_lock_held_by_someone_else(self):
+        self.start()
+        (self.testdb_lock / "info").write_text("someone-else 2026-11-16T10:00:00Z\n")
+        scratch = Path(self.instance()["scratch"])
+        pid = int(self.instance()["pid"])
+        result = self.script("stop")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("not the lock of this run", result.stderr)
+        # The foreign lock stays exactly as it was; everything of this run is gone.
+        self.assertEqual((self.testdb_lock / "info").read_text(), "someone-else 2026-11-16T10:00:00Z\n")
+        self.assertFalse(self.acceptance_lock.exists())
+        self.assertFalse(scratch.exists())
+        self.assertFalse(self.alive(pid))
+
+    def test_stop_finishes_from_every_state_its_own_interruption_can_leave(self):
+        def scratch_gone(scratch):
+            shutil.rmtree(scratch)
+
+        def scratch_half_removed(scratch):
+            shutil.rmtree(scratch / "venv")
+            shutil.rmtree(scratch / "src/frontend/node_modules")
+
+        def only_the_empty_directory_is_left(scratch):
+            for child in scratch.iterdir():
+                shutil.rmtree(child) if child.is_dir() else child.unlink()
+
+        def test_database_lock_already_released(scratch):
+            (self.testdb_lock / "info").unlink()
+            self.testdb_lock.rmdir()
+
+        def scratch_and_test_database_lock_gone(scratch):
+            scratch_gone(scratch)
+            test_database_lock_already_released(scratch)
+
+        for state in (scratch_gone, scratch_half_removed, only_the_empty_directory_is_left,
+                      test_database_lock_already_released, scratch_and_test_database_lock_gone):
+            with self.subTest(state.__name__):
+                self.wipe()
+                scratch = self.interrupted_after_the_app_stopped()
+                state(scratch)
+                result = self.script("stop")
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                self.assertNotIn("not the lock of this run", result.stderr)
+                self.assertNothingLeft()
+                again = self.script("stop")
+                self.assertEqual(again.returncode, 0, again.stdout + again.stderr)
+                self.assertIn("No acceptance instance is running", again.stdout)
+
+    def test_stop_deletes_nothing_that_fails_the_checks_but_still_gives_the_locks_back(self):
+        foreign = self.base / "foreign"
+        (foreign / "keep").mkdir(parents=True)
+        (foreign / ".acceptance-env").write_text("")
+
+        def marker_lost(scratch):
+            (scratch / ".acceptance-env").unlink()
+            return scratch
+
+        def a_link_in_place_of_the_directory(scratch):
+            shutil.rmtree(scratch)
+            scratch.symlink_to(foreign)
+            return scratch
+
+        def a_recorded_path_outside_the_prefix(scratch):
+            instance = self.acceptance_lock / "instance"
+            instance.write_text(instance.read_text().replace(f"scratch={scratch}\n", f"scratch={foreign}\n"))
+            return foreign
+
+        for state in (marker_lost, a_link_in_place_of_the_directory, a_recorded_path_outside_the_prefix):
+            with self.subTest(state.__name__):
+                self.wipe()
+                scratch = state(self.interrupted_after_the_app_stopped())
+                result = self.script("stop")
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn("left in place", result.stderr)
+                self.assertIn(str(scratch), result.stderr)
+                self.assertFalse(self.acceptance_lock.exists())
+                self.assertFalse(self.testdb_lock.exists())
+                self.assertTrue((foreign / "keep").is_dir() and (foreign / ".acceptance-env").is_file())
+                if state is marker_lost:
+                    self.assertTrue((scratch / "src/backend/pyproject.toml").is_file())
+                self.assertEqual(self.script("stop").returncode, 0)
+
+    def test_a_failed_start_that_lost_its_marker_gives_back_both_locks_and_deletes_nothing(self):
+        (self.state / "drop_marker").write_text("")
+        (self.state / "fail_build").write_text("")
+        result = self.script("start", self.commit)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertFalse(self.acceptance_lock.exists() or self.testdb_lock.exists())
+        (scratch,) = self.scratch_dirs()
+        self.assertTrue((scratch / "src/backend/pyproject.toml").is_file())
+
+    def test_the_start_time_is_read_in_the_c_locale_at_start_and_at_stop(self):
+        for label, at_start, at_stop in (("german at start", "de_DE.UTF-8", "C"), ("german at stop", "C", "de_DE.UTF-8")):
+            with self.subTest(label):
+                self.wipe()
+                self.start(env={"LC_ALL": at_start})
+                stopped = self.script("stop", env={"LC_ALL": at_stop})
+                self.assertEqual(stopped.returncode, 0, stopped.stdout + stopped.stderr)
+                self.assertNothingLeft()
 
 
 class OrganizationTests(AcceptanceEnvCase):
@@ -435,6 +632,42 @@ class OrganizationTests(AcceptanceEnvCase):
         self.assertNotIn("Password:", result.stdout)
         self.assertEqual(self.script("stop").returncode, 0)
 
+    def test_create_organization_refuses_a_name_that_already_exists_before_the_bootstrap_runs(self):
+        existing = "11111111-1111-4111-8111-111111111111"
+        (self.state / "organizations.json").write_text(json.dumps({"Bestand": existing}))
+        self.start()
+        scratch = Path(self.instance()["scratch"])
+        result = self.script("create-organization", "Bestand", "admin@example.de")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("already exists", result.stderr)
+        self.assertNotIn("Password:", result.stdout)
+        self.assertEqual(self.commands(), [])
+        self.assertFalse((self.state / "accounts.json").exists())
+        self.assertFalse((scratch / "organizations").exists())
+        # An organization this run did not create is not one it may erase.
+        self.assertNotEqual(self.script("erase-organization", "Bestand").returncode, 0)
+        self.assertEqual(self.commands(), [])
+        # The same holds for the name of an organization this run created: no second administrator joins it.
+        self.assertEqual(self.script("create-organization", "Neu", "a@example.de").returncode, 0)
+        again = self.script("create-organization", "Neu", "b@example.de")
+        self.assertNotEqual(again.returncode, 0)
+        self.assertEqual(list(json.loads((self.state / "accounts.json").read_text())), ["a@example.de"])
+        self.assertEqual(len(self.commands()), 1)
+        self.assertEqual(self.script("stop").returncode, 0)
+
+    def test_organization_names_reach_the_database_lookup_as_a_parameter(self):
+        self.start()
+        name = "Verwaltung \"O'Brien\"; DROP TABLE organization; --"
+        self.assertEqual(self.script("create-organization", name, "admin@example.de").returncode, 0)
+        lookups = [row["args"] for row in self.calls("python")
+                   if row["args"][:1] == ["-c"] and "public.organization WHERE name" in row["args"][1]]
+        self.assertEqual(len(lookups), 2)  # before the bootstrap command, and for the id it created
+        for arguments in lookups:
+            self.assertEqual(arguments[2:], [name])
+            self.assertNotIn("DROP TABLE", arguments[1])
+            self.assertIn("%s", arguments[1])
+        self.assertEqual(self.script("stop").returncode, 0)
+
     def test_organization_commands_need_a_running_instance_and_arguments(self):
         self.assertNotEqual(self.script("create-organization", "Name", "a@example.de").returncode, 0)
         self.assertNotEqual(self.script("erase-organization", "Name").returncode, 0)
@@ -454,12 +687,17 @@ class OrganizationTests(AcceptanceEnvCase):
         self.assertNotEqual(refused.returncode, 0)
         self.assertEqual(self.commands(), [])
         self.assertEqual(self.script("create-organization", "Verwaltung Abnahme", "admin@example.de").returncode, 0)
+        # What this run created is recorded by its id, and the erasure works on that id.
+        identifier = json.loads((self.state / "organizations.json").read_text())["Verwaltung Abnahme"]
+        organizations = Path(self.instance()["scratch"]) / "organizations"
+        self.assertEqual(organizations.read_text(), f"{identifier} Verwaltung Abnahme\n")
         result = self.script("erase-organization", "Verwaltung Abnahme")
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertIn("waiting time", result.stdout.lower())
         self.assertIn("simulated", result.stdout.lower())
         call = self.commands()[-1]
-        self.assertEqual(call["args"], ["-", "Verwaltung Abnahme"])
+        self.assertEqual(call["args"], ["-", identifier])
+        self.assertNotIn(identifier, organizations.read_text())
         self.assertTrue(call["cwd"].endswith("src/backend"))
         self.assertIn("127.0.0.1:55432", call["env"]["HV_DATABASE_URL_MIGRATOR"])
         self.assertEqual(call["env"]["HV_DOCUMENT_STORAGE_ROOT"], str(Path(self.instance()["scratch"]) / "documents"))
@@ -468,6 +706,7 @@ class OrganizationTests(AcceptanceEnvCase):
         compile(helper, "erase-helper", "exec")
         self.assertIn("cooling_off", helper)
         self.assertIn("organization_ids=[", helper)
+        self.assertNotIn("o.name", helper)
         self.assertEqual(self.script("stop").returncode, 0)
 
     def test_erase_organization_fails_when_the_erasure_does_not_complete(self):
