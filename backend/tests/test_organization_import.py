@@ -1072,12 +1072,21 @@ def forge(case, pairs, open_id):
         'payment_reversing_itself': lambda rows: edit(rows, **{
             open_id: {'reverses_id': open_id, 'reversed_by_id': open_id}}),
         'original_not_booked': lambda rows: edit(rows, **{original['id']: {'status': 'draft'}}),
+        # A Storno is the application's copy of its original with the opposite direction.
+        'storno_amount_changed': lambda rows: edit(rows, **{storno['id']: {'amount': '1.00'}}),
+        'storno_direction_not_opposite': lambda rows: edit(rows, **{storno['id']: {'direction': 'IN'}}),
+        'storno_period_month_changed': lambda rows: edit(rows, **{storno['id']: {'period_month': 4}}),
+        'storno_payment_type_changed': lambda rows: edit(rows, **{storno['id']: {'payment_type': 'NK_VORAUSZAHLUNG'}}),
+        'original_value_date_changed': lambda rows: edit(rows, **{original['id']: {'value_date': '2026-03-16'}}),
+        'storno_reserve_link_added': lambda rows: edit(rows, **{storno['id']: {'reserve_cost_entry_id': str(uuid.uuid4())}}),
     }[case]
 
 
 FORGED_CHAINS = ['storno_without_original', 'original_without_storno', 'two_stornos_for_one_original',
                  'pointer_to_another_reversal', 'pointer_to_an_unrelated_payment', 'cycle_between_unreversed_payments',
-                 'cycle_between_stornos', 'storno_reversed_again', 'payment_reversing_itself', 'original_not_booked']
+                 'cycle_between_stornos', 'storno_reversed_again', 'payment_reversing_itself', 'original_not_booked',
+                 'storno_amount_changed', 'storno_direction_not_opposite', 'storno_period_month_changed',
+                 'storno_payment_type_changed', 'original_value_date_changed', 'storno_reserve_link_added']
 
 
 @pytest.mark.parametrize('case', FORGED_CHAINS)
@@ -1159,3 +1168,51 @@ async def test_import_keeps_the_owner_account_of_a_reversed_special_payment(
         restored = await payment_rows(rent_db, [ids['payment'][p['id']] for p in pair])
         assert restored[ids['payment'][pair[0]['id']]]['reversed_by_id'] == ids['payment'][pair[1]['id']]
     await rent_db.rollback()
+
+
+async def test_import_refuses_when_the_storno_link_cannot_be_restored_and_writes_nothing(
+    rent_world, import_target, rent_db, export_store, payment_clock, monkeypatch,
+):
+    from sqlalchemy.ext.asyncio import AsyncSession
+    async with api_client(rent_world) as api:
+        await reversed_payment_world(api, rent_world, payment_clock)
+        archive = await api.post('/api/organizations/export')
+        assert archive.status_code == 200, archive.text
+    await source_organization_deleted(rent_db, rent_world['org'], rent_world['admin'], import_target)
+    execute = AsyncSession.execute
+
+    class NoRow:
+        rowcount = 0
+
+    async def link_matches_no_row(self, statement, *args, **kwargs):
+        return NoRow() if 'SET reversed_by_id' in str(statement) else await execute(self, statement, *args, **kwargs)
+
+    monkeypatch.setattr(AsyncSession, 'execute', link_matches_no_row)
+    async with api_client(import_target) as api:
+        answer = await api.post('/api/organizations/import', files={'file': ('unlinked.tar.gz', archive.content)})
+    monkeypatch.undo()
+    assert answer.status_code == 422, answer.text
+    assert answer.json()['detail']['code'] == 'IMPORT_PAYMENT_REVERSAL_CHAIN'
+    assert await rent_db.scalar(text('SELECT count(*) FROM payment WHERE organization_id=:org'), import_target) == 0
+    await rent_db.rollback()
+
+
+@pytest.mark.no_db
+@pytest.mark.parametrize('original_mandate, storno_mandate, accepted', [
+    (None, None, True), ('m1', 'm1', True),
+    (None, 'm1', True),  # classified into a scope after the original was booked
+    ('m1', None, False), ('m1', 'm2', False)])
+def test_a_storno_may_gain_the_mandate_of_a_later_account_scope_but_never_change_it(original_mandate, storno_mandate, accepted):
+    from fastapi import HTTPException
+    from app.services.organization_import_service import payment_reversal_pairs
+    common = {'status': 'booked', 'amount': '10.00', 'value_date': '2026-03-15', 'payment_type': 'KALTMIETE'}
+    rows = [{**common, 'id': 'o', 'direction': 'IN', 'reverses_id': None, 'reversed_by_id': 's',
+             'management_mandate_id': original_mandate},
+            {**common, 'id': 's', 'direction': 'OUT', 'reverses_id': 'o', 'reversed_by_id': None,
+             'management_mandate_id': storno_mandate}]
+    if accepted:
+        assert payment_reversal_pairs(rows) == {'s': 'o'}
+    else:
+        with pytest.raises(HTTPException) as refusal:
+            payment_reversal_pairs(rows)
+        assert refusal.value.status_code == 422 and refusal.value.detail['code'] == 'IMPORT_PAYMENT_REVERSAL_CHAIN'

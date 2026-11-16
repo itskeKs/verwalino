@@ -25,6 +25,7 @@ from app.core.uploads import MAX_UPLOAD_BYTES
 from app.deployment import TARGET
 from app.services.organization_archive import FORMAT, SECRET_COLUMNS, json_bytes
 from app.services.organization_export_service import inventory
+from app.services.payment_service import REVERSAL_COPIED_COLUMNS
 from app.services.quota_service import lock_quota, require_counts
 
 # Bounded synchronous product import; larger transfers need a worker increment.
@@ -195,27 +196,37 @@ def payment_reversal_pairs(rows):
 
     A pair points both ways (`reverses_id` and `reversed_by_id`), so neither row can be
     inserted first with both pointers set. The original is inserted unlinked and linked
-    once its Storno exists. The application only ever creates one Storno per booked
-    original, and a Storno is never reversed itself; an archive that says otherwise is
-    forged or damaged and must not plant a reversal the application cannot book.
+    once its Storno exists. A pair is two booked rows that name each other, the Storno
+    reversed by nobody and the original reversing nobody, with opposite directions and
+    the same value in every column `reverse_payment` copies (REVERSAL_COPIED_COLUMNS).
+    The one exception is the mandate: the database derives it from the account's scope
+    when a payment is inserted, so a Storno booked after the account was classified may
+    carry a mandate that an older original lacks. The application books nothing else,
+    so an archive that says otherwise is forged or damaged and must not plant a reversal.
     """
     by_id = {row['id']: row for row in rows}
+
+    def pair(storno, original):
+        return (storno.get('status') == original.get('status') == 'booked'
+                and storno.get('reverses_id') == original['id'] and storno.get('reversed_by_id') is None
+                and original.get('reverses_id') is None and original.get('reversed_by_id') == storno['id']
+                and {storno.get('direction'), original.get('direction')} == {'IN', 'OUT'}
+                and original.get('management_mandate_id') in (None, storno.get('management_mandate_id'))
+                and all(storno.get(column) == original.get(column)
+                        for column in REVERSAL_COPIED_COLUMNS if column != 'management_mandate_id'))
+
     pairs, broken = {}, set()
     for row in rows:
         original_id, storno_id = row.get('reverses_id'), row.get('reversed_by_id')
         if original_id is not None:
             original = by_id.get(original_id)
-            if (storno_id is None and original is not None and original.get('reverses_id') is None
-                    and original.get('reversed_by_id') == row['id']
-                    and row.get('status') == original.get('status') == 'booked'):
+            if original is not None and pair(row, original):
                 pairs[row['id']] = original_id
             else:
                 broken.add(row['id'])
         if storno_id is not None:
             storno = by_id.get(storno_id)
-            if not (original_id is None and storno is not None and storno.get('reverses_id') == row['id']
-                    and storno.get('reversed_by_id') is None
-                    and row.get('status') == storno.get('status') == 'booked'):
+            if storno is None or not pair(storno, row):
                 broken.add(row['id'])
     if broken:
         refuse('Die Stornoverknüpfung von Zahlungen im Archiv ist unvollständig oder nicht eindeutig.',
@@ -579,7 +590,8 @@ async def import_organization(db, auth, source):
                             {'storno': uuid.UUID(flat[original['id']]), 'original': uuid.UUID(flat[reversals[original['id']]]),
                              'org': auth.organization_id})
                         if linked.rowcount != 1:
-                            refuse('Die Stornoverknüpfung konnte nicht wiederhergestellt werden.', entity=name)
+                            refuse('Die Stornoverknüpfung konnte nicht wiederhergestellt werden.',
+                                   code='IMPORT_PAYMENT_REVERSAL_CHAIN', entity=name, source_ids=[original['id']], count=1)
                     inserted.add((name, original.get('id')))
                     pending.remove((name, original))
                     progress = True

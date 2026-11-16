@@ -89,6 +89,16 @@ TENANT_TYPES = frozenset({"KALTMIETE", "NK_VORAUSZAHLUNG", "HK_VORAUSZAHLUNG", "
 OWNER_TYPES = frozenset({"HAUSGELD_VORSCHUSS", "RUECKLAGENANTEIL", "SONDERZAHLUNG"})
 
 
+# What a Storno copies unchanged from its original (reverse_payment); direction is the
+# opposite one, and booking, retention and note are the Storno's own. The organization
+# import refuses an archived pair that differs in any of these.
+REVERSAL_COPIED_COLUMNS = (
+    "bank_account_id", "property_id", "management_mandate_id", "amount", "value_date", "payment_type",
+    "tenant_profile_id", "owner_profile_id", "lease_agreement_id", "period_year", "period_month",
+    "settlement_run_id", "reserve_cost_entry_id", "reserve_register_entry_id",
+)
+
+
 def payment_counterparty_error(payment_type: str) -> HTTPException:
     if payment_type in TENANT_TYPES:
         message = "Dieser Zahlungstyp gehört zu einem Mietverhältnis, nicht zu einem Eigentümer."
@@ -562,19 +572,8 @@ class PaymentService:
         opposite = "OUT" if original.direction == "IN" else "IN"
         storno = Payment(
             organization_id=self._org_id,
-            bank_account_id=original.bank_account_id,
-            property_id=original.property_id,
-            management_mandate_id=original.management_mandate_id,
+            **{column: getattr(original, column) for column in REVERSAL_COPIED_COLUMNS},
             direction=opposite,
-            amount=original.amount,
-            value_date=original.value_date,
-            payment_type=original.payment_type,
-            tenant_profile_id=original.tenant_profile_id,
-            owner_profile_id=original.owner_profile_id,
-            lease_agreement_id=original.lease_agreement_id,
-            period_year=original.period_year,
-            period_month=original.period_month,
-            settlement_run_id=original.settlement_run_id,
             status="booked",
             booked_at=now,
             booked_by=self._user_id,
@@ -583,8 +582,6 @@ class PaymentService:
             # value date keeps the anchor no earlier than the original's.
             retention_until=_compute_retention_until(max(original.value_date, now.date())),
             reverses_id=original.id,
-            reserve_cost_entry_id=original.reserve_cost_entry_id,
-            reserve_register_entry_id=original.reserve_register_entry_id,
             note=note or f"Storno zu {original.id}",
         )
         storno = await self._repo.create(storno)
