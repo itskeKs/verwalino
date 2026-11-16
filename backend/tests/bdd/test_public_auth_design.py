@@ -5,6 +5,7 @@ from pathlib import Path
 from playwright.async_api import expect
 from pytest_bdd import given, parsers, scenarios, then, when
 
+from tests.bdd.steps.browser_common import answer_second_factor
 from tests.bdd.world import admin_credentials
 
 scenarios(str(Path(__file__).resolve().parents[3] / "features/public_auth_design.feature"))
@@ -56,6 +57,7 @@ def corrected_password(browser_world):
         page = browser_world.page
         await page.get_by_label("Passwort", exact=True).fill(admin_credentials()[1])
         await page.get_by_role("button", name="Anmelden", exact=True).click()
+        await answer_second_factor(page)
     browser_world.run(run())
 
 

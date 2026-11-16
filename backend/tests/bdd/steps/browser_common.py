@@ -8,7 +8,7 @@ from urllib.parse import urlsplit
 
 from playwright.async_api import expect
 
-from tests.bdd.browser import VIEWPORT
+from tests.bdd.browser import VIEWPORT, hosted_stack
 
 
 def euro(amount):
@@ -29,6 +29,45 @@ def browser_step(function):
     def run(browser_world, *args, **kwargs):
         return browser_world.run(function(browser_world, *args, **kwargs))
     return run
+
+
+def user_identity(email):
+    """The (organization id, user id) of a user of the disposable database."""
+    import psycopg2
+    from tests.conftest import MIGRATOR_SYNC_URL
+    with psycopg2.connect(MIGRATOR_SYNC_URL) as connection, connection.cursor() as cursor:
+        cursor.execute('SELECT organization_id, id FROM public."user" WHERE email=%s', (email,))
+        return cursor.fetchone()
+
+
+def hosted_session(give_second_factor, organization_id, user_id):
+    """A session token of a user who got a confirmed factor for the length of the scenario.
+
+    A password sign-in of such a user answers the code step, and one factor accepts one code per 30 seconds
+    (#208), so scenarios that open a session several times mint it, as the seeded API clients do.
+    """
+    from tests.conftest import _make_session_cookie
+    give_second_factor(organization_id, user_id)
+    return _make_session_cookie(user_id, organization_id)
+
+
+async def sign_in_identity(client, email, password, organization_id, user_id, give_second_factor):
+    """Sign an API client in as the user of a database-seeded organization; the cookie stays in the client."""
+    if hosted_stack():
+        from app.core.config import settings
+        client.cookies.set(settings.session_cookie_name, hosted_session(give_second_factor, organization_id, user_id))
+        return
+    response = await client.post("/api/auth/login", json={"email": email, "password": password})
+    assert response.status_code == 200, response.text
+
+
+async def answer_second_factor(page):
+    """Hosted mode answers the password of an account with a confirmed factor with the code step (#208)."""
+    if hosted_stack():
+        from tests.conftest import CONFIRMED_FACTOR_SECRET
+        from tests.bdd.steps.second_factor import totp_code
+        await page.get_by_label("6-stelliger Code", exact=True).fill(totp_code(CONFIRMED_FACTOR_SECRET))
+        await page.get_by_role("button", name="Anmelden", exact=True).click()
 
 
 async def sign_in_context(browser_world, email, password):
@@ -52,10 +91,16 @@ async def sign_in_context(browser_world, email, password):
     page = await context.new_page()
     page.set_default_timeout(10000)
     page.on("pageerror", lambda error: browser_world.errors.append(str(error)))
-    await page.goto("/login")
-    await page.get_by_label("E-Mail", exact=True).fill(email)
-    await page.get_by_label("Passwort", exact=True).fill(password)
-    await page.get_by_role("button", name="Anmelden", exact=True).click()
+    if hosted_stack():
+        from app.core.config import settings
+        token = hosted_session(browser_world.world.give_second_factor, *user_identity(email))
+        await context.add_cookies([{"name": settings.session_cookie_name, "value": token, "url": session.base_url}])
+        await page.goto("/")
+    else:
+        await page.goto("/login")
+        await page.get_by_label("E-Mail", exact=True).fill(email)
+        await page.get_by_label("Passwort", exact=True).fill(password)
+        await page.get_by_role("button", name="Anmelden", exact=True).click()
     await expect(page.get_by_role("link", name="Objekte", exact=True)).to_be_visible()
     return context, page
 
@@ -118,6 +163,10 @@ def signed_in_client(world, email, password):
     """An API client signed in as another user, closed by the caller."""
     from tests.conftest import _api_test_client
     client = _api_test_client()
+    if hosted_stack():
+        from app.core.config import settings
+        client.cookies.set(settings.session_cookie_name, hosted_session(world.give_second_factor, *user_identity(email)))
+        return client
     answer = world.send(client, "POST", "/api/auth/login", json={"email": email, "password": password})
     assert answer.status_code == 200, world.describe_response()
     return client

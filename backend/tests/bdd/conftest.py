@@ -147,6 +147,8 @@ def world(bdd_loop, request, shared_hosted_property_headroom, shared_hosted_reco
             confirm = request.getfixturevalue("confirmed_second_factor")
             confirm(seeded["org_a_id"], seeded["user_a_admin_id"])
             confirm(seeded["org_b_id"], seeded["user_b_admin_id"])
+            # Steps that sign in another user of the scenario give it a factor for the scenario's length too.
+            state.give_second_factor = confirm
     state.data["scenario"] = request.node.name
     try:
         if target_url():

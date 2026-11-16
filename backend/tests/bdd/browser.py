@@ -23,12 +23,20 @@ from playwright.async_api import Error as PlaywrightError, TimeoutError as Playw
 
 from tests.bank_browser_trace import BankPageTrace, BankTraceLog, TRACE_FILE_ENV
 from tests.bdd.report import artifact_directory, attach_artifact
+from tests.bdd.steps.second_factor import totp_code
 from tests.bdd.world import admin_credentials, target_url
 
 ROOT = Path(__file__).resolve().parents[3]
 BASE_URL = "http://127.0.0.1:13000"
 VIEWPORT = {"width": 1440, "height": 1000}
+HOSTED_PUBLIC_HOST = "browser.example.test"
+HOSTED_SMTP_KEYS = ("HV_SMTP_HOST", "HV_SMTP_PORT", "HV_SMTP_SECURITY", "HV_SMTP_FROM", "HV_SMTP_USERNAME", "HV_SMTP_PASSWORD")
 _BANK_TRACE = pytest.StashKey[BankTraceLog]()
+
+
+def hosted_stack():
+    """The local stack runs in hosted mode. The process environment decides, which a test cannot patch."""
+    return not target_url() and os.environ.get("HV_DEPLOYMENT_MODE", "").lower() == "hosted"
 
 
 def _stop(process):
@@ -69,6 +77,11 @@ def browser_app(seed_data, request, browser_storage):
     )})
     env.update(HV_INVOICE_EXTRACTION_ENABLED="false")
     env["HV_DEPLOYMENT_MODE"] = get_deployment_policy().deployment_mode
+    if env["HV_DEPLOYMENT_MODE"] == "hosted":
+        # The hosted lifespan refuses to start without a routing hostname and a usable SMTP
+        # configuration (validate_signup_configuration); these journeys send no mail.
+        env["HV_PUBLIC_HOST"] = HOSTED_PUBLIC_HOST
+        env.update({key: os.environ[key] for key in HOSTED_SMTP_KEYS if key in os.environ})
     commands = [
         ([sys.executable, "-m", "uvicorn", "tests.dunning_response_app:app", "--host", "127.0.0.1", "--port", "18000"], ROOT / "backend", "http://127.0.0.1:18000/api/health/live"),
         (["node", "node_modules/vite/bin/vite.js", "--host", "127.0.0.1", "--port", "13000", "--strictPort"], ROOT / "frontend", BASE_URL),
@@ -125,7 +138,7 @@ class BrowserSession:
     def run(self, coroutine):
         return self.loop.run_until_complete(coroutine)
 
-    async def start(self, launch_args):
+    async def start(self, launch_args, second_factor_secret=None):
         self.playwright = await async_playwright().start()
         self.browser = await self.playwright.chromium.launch(**{"channel": "chromium", **launch_args})
         context = await self.browser.new_context(base_url=self.base_url, viewport=VIEWPORT, service_workers="block")
@@ -136,6 +149,9 @@ class BrowserSession:
             await page.get_by_label("E-Mail", exact=True).fill(email)
             await page.get_by_label("Passwort", exact=True).fill(password)
             await page.get_by_role("button", name="Anmelden", exact=True).click()
+            if second_factor_secret:
+                await page.get_by_label("6-stelliger Code", exact=True).fill(totp_code(second_factor_secret))
+                await page.get_by_role("button", name="Anmelden", exact=True).click()
             await expect(page.get_by_role("link", name="Objekte", exact=True)).to_be_visible()
             self.auth = await context.storage_state()
         finally:
@@ -149,10 +165,20 @@ class BrowserSession:
 
 
 @pytest.fixture(scope="session")
-def browser_session(browser_app, browser_type_launch_args):
+def browser_session(browser_app, browser_type_launch_args, seed_data):
     session = BrowserSession(browser_app)
     try:
-        session.run(session.start(browser_type_launch_args))
+        if hosted_stack():
+            # Hosted mode answers the password sign-in of an account with a confirmed factor with the code
+            # step (#208). The factor exists for this sign-in only; each scenario's world gives its own.
+            from tests.conftest import CONFIRMED_FACTOR_SECRET, confirm_second_factors, release_second_factors
+            given = confirm_second_factors(seed_data["org_a_id"], seed_data["user_a_admin_id"])
+            try:
+                session.run(session.start(browser_type_launch_args, CONFIRMED_FACTOR_SECRET))
+            finally:
+                release_second_factors(given)
+        else:
+            session.run(session.start(browser_type_launch_args))
         yield session
     finally:
         session.run(session.close())

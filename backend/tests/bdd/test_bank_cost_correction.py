@@ -8,7 +8,7 @@ from pytest_bdd import given, scenario, then, when
 
 from app.core.config import settings
 from app.core.storage import LocalFsDocumentStore, set_store
-from tests.bdd.steps.browser_common import browser_step
+from tests.bdd.steps.browser_common import browser_step, hosted_stack
 from tests.conftest import _make_session_cookie
 from tests.test_allocation_adoptions import confirm_grant
 from tests.test_allocation_correction_preview import prepared
@@ -25,8 +25,10 @@ def test_reviewed_cost_correction():
 
 
 @pytest_asyncio.fixture
-async def covered_allocation(migrator_session, scope_seed, browser_storage):
+async def covered_allocation(migrator_session, scope_seed, browser_storage, confirmed_second_factor):
     ids = await fixture(migrator_session, scope_seed)
+    if hosted_stack():
+        confirmed_second_factor(ids['org'], ids['clerk'])
     await confirm_grant(ids)
     set_store(LocalFsDocumentStore(browser_storage))
     try:

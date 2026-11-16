@@ -7,12 +7,13 @@ import pytest_asyncio
 from playwright.async_api import expect
 from pytest_bdd import given, parsers, scenarios, then, when
 
+from app.core.config import settings
 from app.core.security import hash_password
 from app.models.membership import Membership
 from app.models.organization import Organization
 from app.models.user import User
 from tests.conftest import _api_test_client
-from tests.bdd.steps.browser_common import browser_step
+from tests.bdd.steps.browser_common import browser_step, sign_in_identity
 from tests.bdd.world import target_url
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -21,7 +22,7 @@ pytestmark = pytest.mark.skipif(bool(target_url()), reason="Fresh dashboard iden
 
 
 @pytest_asyncio.fixture
-async def dashboard_identity(migrator_session):
+async def dashboard_identity(migrator_session, confirmed_second_factor):
     organization = Organization(id=uuid4(), name="Sabine Muster Hausverwaltung")
     user = User(id=uuid4(), organization_id=organization.id,
                 email=f"dashboard-{uuid4()}@example.test", display_name="Sabine Muster",
@@ -33,9 +34,8 @@ async def dashboard_identity(migrator_session):
     migrator_session.add(Membership(organization_id=organization.id, user_id=user.id, role="OWNER_ADMIN"))
     await migrator_session.commit()
     async with _api_test_client() as client:
-        response = await client.post("/api/auth/login", json={"email": user.email, "password": "testpass1234"})
-        assert response.status_code == 200
-        yield response.cookies["hv_session"]
+        await sign_in_identity(client, user.email, "testpass1234", organization.id, user.id, confirmed_second_factor)
+        yield client.cookies[settings.session_cookie_name]
 
 
 @given(parsers.parse('a fresh organization named "{organization}"'))

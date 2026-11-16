@@ -12,7 +12,7 @@ from app.models.user import User
 from app.models.membership import Membership
 from app.core.security import hash_password
 from tests.conftest import _api_test_client
-from tests.bdd.steps.browser_common import browser_step, button
+from tests.bdd.steps.browser_common import answer_second_factor, browser_step, button, sign_in_identity
 from tests.bdd.steps.browser_setup import create
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -20,7 +20,7 @@ scenarios(str(ROOT / 'features/journeys/profile_hints.feature'))
 
 
 @pytest_asyncio.fixture
-async def profile_identity(migrator_session):
+async def profile_identity(migrator_session, confirmed_second_factor):
     """Like the shared seeds, commit an isolated organization visible to the UI."""
     organization = Organization(id=uuid4(), name='Profilhinweise Testverwaltung')
     user = User(id=uuid4(), organization_id=organization.id,
@@ -33,8 +33,7 @@ async def profile_identity(migrator_session):
     migrator_session.add(Membership(organization_id=organization.id, user_id=user.id, role='OWNER_ADMIN'))
     await migrator_session.commit()
     async with _api_test_client() as client:
-        response = await client.post('/api/auth/login', json={'email': user.email, 'password': 'testpass1234'})
-        assert response.status_code == 200
+        await sign_in_identity(client, user.email, 'testpass1234', organization.id, user.id, confirmed_second_factor)
         yield client, user
 
 
@@ -74,6 +73,7 @@ async def follow_hint(browser_world, kind, width):
     await page.get_by_label('E-Mail', exact=True).fill(b.world.data['profile_email'])
     await page.get_by_label('Passwort', exact=True).fill('testpass1234')
     await button(page, 'Anmelden').click()
+    await answer_second_factor(page)
     await expect(page.get_by_role('heading', name='Objekte', exact=True)).to_be_visible()
     d = b.world.data
     await b.visit(f"/objekte/{d['profile_property']['id']}/einheiten/{d['profile_unit']['id']}")
