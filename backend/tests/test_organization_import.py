@@ -776,10 +776,12 @@ async def test_import_restores_the_superseded_allocations_of_a_moved_levy_with_t
     levy_id = {'levy': uuid.UUID(mapping['special_levy'][str(levy)])}
     assert await rent_db.scalar(text("SELECT count(*) FROM audit_event WHERE entity_id=:levy AND action='special_levy.allocation_moved'"), levy_id) == 1
     assert await rent_db.scalar(text('SELECT count(*) FROM special_levy_allocation WHERE special_levy_id=:levy'), levy_id) == 2
-    restored = (await rent_db.execute(text("""SELECT a.owner_profile_id,s.superseded_by FROM special_levy_allocation_supersession s
+    restored = (await rent_db.execute(text("""SELECT a.owner_profile_id,s.superseded_by,s.superseded_at FROM special_levy_allocation_supersession s
         JOIN special_levy_allocation a ON a.id=s.allocation_id WHERE a.special_levy_id=:levy"""), levy_id)).all()
-    assert [(str(owner), str(user)) for owner, user in restored] == [
+    assert [(str(owner), str(user)) for owner, user, _at in restored] == [
         (mapping['owner_profile'][str(ids['owner'])], mapping['user'][str(ids['actor'])])]
+    # The restore keeps the archived time of the supersession.
+    assert restored[0].superseded_at == datetime.fromisoformat(markers[0]['superseded_at'])
     await rent_db.rollback()
 
 

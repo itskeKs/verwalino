@@ -79,11 +79,17 @@ def upgrade():
 
     CREATE FUNCTION guard_special_levy_supersession() RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER
       SET search_path=pg_catalog,pg_temp SET row_security=off AS $$
+    DECLARE restoring boolean;
     BEGIN
       IF TG_OP<>'INSERT' THEN RAISE EXCEPTION 'Special levy supersessions are append-only' USING ERRCODE='23514'; END IF;
       PERFORM pg_advisory_xact_lock_shared(hashtextextended('scope-acl:'||NEW.organization_id::text,0));
       PERFORM pg_advisory_xact_lock(hashtextextended('financial-inputs:'||NEW.organization_id::text,0));
       NEW.supersession_xid:=pg_current_xact_id();
+      -- The time is the transaction's, except while an archive restores the levy with its archived markers.
+      SELECT l.creation_xid=pg_current_xact_id() INTO restoring FROM public.special_levy_allocation a
+        JOIN public.special_levy l ON l.organization_id=a.organization_id AND l.id=a.special_levy_id
+        WHERE a.organization_id=NEW.organization_id AND a.id=NEW.allocation_id;
+      IF restoring IS DISTINCT FROM true THEN NEW.superseded_at:=now(); END IF;
       RETURN NEW;
     END $$;
     REVOKE ALL ON FUNCTION guard_special_levy_supersession() FROM PUBLIC;
@@ -123,10 +129,11 @@ def upgrade():
       IF EXISTS(SELECT 1 FROM public.special_levy_allocation a WHERE a.special_levy_id=target AND """ + COUNTING + """
           GROUP BY a.unit_id,a.owner_profile_id HAVING count(*)>1) THEN
         RAISE EXCEPTION 'An owner holds one counting allocation per unit' USING ERRCODE='23514'; END IF;
-      -- A counting row written in this transaction names an owner of the due date (a moved row an uncorrected
-      -- ownership row); a superseded row keeps the ownership row it was calculated from, which may have ended.
+      -- Every row written in this transaction names an owner of the due date (a moved row an uncorrected ownership
+      -- row), also one superseded at once. Only while the levy itself is being created or restored may a superseded
+      -- row keep the ownership row it was calculated from, which may have ended.
       IF EXISTS(SELECT 1 FROM public.special_levy_allocation a JOIN public.special_levy l ON l.id=a.special_levy_id
-          WHERE a.special_levy_id=target AND a.creation_xid=pg_current_xact_id() AND """ + COUNTING + """
+          WHERE a.special_levy_id=target AND a.creation_xid=pg_current_xact_id() AND (NOT created OR """ + COUNTING + """)
             AND NOT EXISTS(SELECT 1 FROM public.ownership_history h WHERE h.id=a.ownership_history_id
               AND h.organization_id=a.organization_id AND h.unit_id=a.unit_id AND h.owner_profile_id=a.owner_profile_id
               AND h.valid_from<=l.due_date AND (h.valid_to IS NULL OR h.valid_to>l.due_date)

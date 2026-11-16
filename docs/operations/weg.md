@@ -112,7 +112,9 @@ seller before this rule is not rewritten by the upgrade; the annual settlement r
 (`weg_levy_owner_mismatch`). Every write to the unit's ownership history runs the move, also a `PATCH`
 with an unchanged end date, and moves such a levy when the owners or shares of its due date differ.
 A draft owner dunning notice written before a move is refused at issue (409 `dunning_levy_moved`) when
-its levy no longer counts for that owner; delete the draft and create the notice for the owner on the due date.
+the Soll of one of its levy items differs from what the owner now holds of the levies due that day
+(another owner, or another share); levies the notice does not contain are not looked at. Delete the
+draft and create the notice again.
 Special levies become overdue only after their actual due date (plus grace period);
 payments of the same month are applied once to the oldest due date.
 `features/special_levy.feature` exercises the ordinary API and browser flow at

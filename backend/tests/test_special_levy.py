@@ -882,3 +882,55 @@ async def test_a_counting_row_must_name_an_owner_of_the_due_date_when_the_transa
         await levy_db.execute(text("SET CONSTRAINTS ALL IMMEDIATE"))
     await levy_db.rollback()
 
+
+async def test_a_row_superseded_in_the_move_that_created_it_still_names_an_owner_of_the_due_date(levy_db, levy_fixture):
+    ids = levy_fixture
+    async with client(ids) as api:
+        levy = await create(api, ids)
+    ids["levy"] = uuid.UUID(levy["id"])
+    first = await levy_db.scalar(text("SELECT id FROM special_levy_allocation WHERE special_levy_id=:levy AND unit_id=:unit"), {**ids, "unit": ids["units"][0]})
+    marker = "INSERT INTO special_levy_allocation_supersession(allocation_id,organization_id,superseded_by) SELECT id,organization_id,:clerk FROM special_levy_allocation WHERE id=:allocation"
+    insert = ("INSERT INTO special_levy_allocation(id,organization_id,property_id,special_levy_id,unit_id,owner_profile_id,"
+              "ownership_history_id,mea,amount) VALUES (:id,:org,:property,:levy,:unit,:owner,:history,1,:amount)")
+    stray, proper = uuid.uuid4(), uuid.uuid4()
+    unit = {**ids, "unit": ids["units"][0]}
+    # A row for unit 1 that names unit 3's owner is inserted and superseded at once; the proper row balances the unit.
+    with pytest.raises(DBAPIError, match="does not match due-date ownership"):
+        async with levy_db.begin_nested():
+            await levy_db.execute(text(marker), {**ids, "allocation": first})
+            await levy_db.execute(text(insert), {**unit, "id": stray, "owner": ids["owners"][2], "history": ids["histories"][2], "amount": Decimal("99999.00")})
+            await levy_db.execute(text(marker), {**ids, "allocation": stray})
+            await levy_db.execute(text(insert), {**unit, "id": proper, "owner": ids["owners"][0], "history": ids["histories"][0], "amount": Decimal("3000.00")})
+            await levy_db.execute(text("SET CONSTRAINTS ALL IMMEDIATE"))
+    # A replacement that is right at every step is accepted, also when it is superseded again in the same transaction.
+    async with levy_db.begin_nested():
+        await levy_db.execute(text(marker), {**ids, "allocation": first})
+        await levy_db.execute(text(insert), {**unit, "id": stray, "owner": ids["owners"][0], "history": ids["histories"][0], "amount": Decimal("3000.00")})
+        await levy_db.execute(text(marker), {**ids, "allocation": stray})
+        await levy_db.execute(text(insert), {**unit, "id": proper, "owner": ids["owners"][0], "history": ids["histories"][0], "amount": Decimal("3000.00")})
+        await levy_db.execute(text("SET CONSTRAINTS ALL IMMEDIATE"))
+    await levy_db.rollback()
+
+
+async def test_a_supersession_is_stamped_with_the_transaction_time_unless_the_levy_is_being_restored(levy_db, levy_fixture):
+    ids = levy_fixture
+    async with client(ids) as api:
+        levy = await create(api, ids)
+    ids["levy"] = uuid.UUID(levy["id"])
+    first = await levy_db.scalar(text("SELECT id FROM special_levy_allocation WHERE special_levy_id=:levy AND unit_id=:unit"), {**ids, "unit": ids["units"][0]})
+    async with levy_db.begin_nested():
+        await levy_db.execute(text("INSERT INTO special_levy_allocation_supersession(allocation_id,organization_id,superseded_by,superseded_at) VALUES (:allocation,:org,:clerk,'2000-01-01')"), {**ids, "allocation": first})
+        stamped = await levy_db.scalar(text("SELECT superseded_at>now()-interval '1 minute' FROM special_levy_allocation_supersession WHERE allocation_id=:allocation"), {"allocation": first})
+        assert stamped is True
+    # A levy created in the same transaction (an archive restore) keeps the archived time.
+    restored = uuid.uuid4()
+    params = {**ids, "restored": restored, "unit": ids["units"][0], "owner": ids["owners"][0], "history": ids["histories"][0]}
+    async with levy_db.begin_nested():
+        await levy_db.execute(text("INSERT INTO special_levy(id,organization_id,property_id,accounting_scope_id,amount,due_date) VALUES (:restored,:org,:property,:scope,1,'2025-06-15')"), params)
+        rows = []
+        for _ in range(2):
+            rows.append(await levy_db.scalar(text("INSERT INTO special_levy_allocation(organization_id,property_id,special_levy_id,unit_id,owner_profile_id,ownership_history_id,mea,amount) VALUES (:org,:property,:restored,:unit,:owner,:history,1,1) RETURNING id"), params))
+        await levy_db.execute(text("INSERT INTO special_levy_allocation_supersession(allocation_id,organization_id,superseded_by,superseded_at) VALUES (:allocation,:org,:clerk,'2000-01-01')"), {**ids, "allocation": rows[0]})
+        assert await levy_db.scalar(text("SELECT superseded_at='2000-01-01'::timestamptz FROM special_levy_allocation_supersession WHERE allocation_id=:allocation"), {"allocation": rows[0]}) is True
+    await levy_db.rollback()
+

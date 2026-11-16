@@ -15,6 +15,7 @@ Lifecycle (mirrors payment_service / cost_entry_service):
 from __future__ import annotations
 
 import uuid
+from collections import defaultdict
 from datetime import date, datetime, timezone
 from decimal import Decimal
 
@@ -436,24 +437,29 @@ class DunningService:
         return notice
 
     async def _require_levies_count_for_owner(self, notice: DunningNotice, scope_context) -> None:
-        """Refuse a draft whose special levy no longer counts for its owner (#681).
+        """Refuse a draft whose special levy items no longer match what counts for its owner (#681).
 
-        A sale recorded after the draft moved the levy to the owner on its due date; issuing the draft
-        would freeze a demand on the previous owner. Issued notices are documents and stay as they are.
+        A sale or a share correction recorded after the draft moved the levy: each levy item of the
+        notice (due date and Soll) is compared with the owner's counting amount of the levies due that
+        day, and any difference refuses the issue. Levies the notice does not contain are not looked at.
+        Issuing would freeze a demand the owner no longer owes; issued notices are documents and stay.
         """
-        if not scope_context.special_levy_ids:
+        demanded = {date.fromisoformat(item["due_date"]): Decimal(item["soll"]) for item in notice.included_items
+                    if item.get("payment_type") == "SONDERZAHLUNG" and item.get("due_date")}
+        if not demanded:
             return
-        levies = SpecialLevyService(self._session, self._org_id, self._user_id)
-        counting = {allocation.special_levy_id for allocation, _due in await levies.owner_allocations(
-            notice.owner_profile_id, scope_context.period_start, scope_context.period_end, scope_context.scope_id)}
-        moved = [levy_id for levy_id in scope_context.special_levy_ids if levy_id not in counting]
-        if moved:
-            levy = await levies.repo.get(moved[0])
-            when = f" mit Fälligkeit am {levy.due_date:%d.%m.%Y}" if levy is not None else ""
-            raise HTTPException(409, {"code": "dunning_levy_moved", "message":
-                f"Die Mahnung enthält eine Sonderumlage{when}, die diesem Eigentümer nach einem Eigentümerwechsel "
-                f"nicht mehr zugeordnet ist. Löschen Sie diesen Entwurf und erstellen Sie die Mahnung für den "
-                f"Eigentümer am Fälligkeitstag."})
+        counting = defaultdict(Decimal)
+        for allocation, due in await SpecialLevyService(self._session, self._org_id, self._user_id).owner_allocations(
+                notice.owner_profile_id, scope_context.period_start, scope_context.period_end, scope_context.scope_id):
+            counting[due] += allocation.amount
+        for due, soll in sorted(demanded.items()):
+            if counting[due] != soll:
+                def euro(value):
+                    return f"{value:,.2f}".replace(",", "_").replace(".", ",").replace("_", ".")
+                raise HTTPException(409, {"code": "dunning_levy_moved", "message":
+                    f"Die Mahnung fordert für die Sonderumlage mit Fälligkeit am {due:%d.%m.%Y} {euro(soll)} €, "
+                    f"diesem Eigentümer sind nach einem Eigentümerwechsel oder einer Anteilskorrektur aber nur noch "
+                    f"{euro(counting[due])} € zugeordnet. Löschen Sie diesen Entwurf und erstellen Sie die Mahnung neu."})
 
     # ------------------------------------------------------------------
     # Payment destination selection (Owner decision on #331)
