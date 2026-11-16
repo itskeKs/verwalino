@@ -399,7 +399,7 @@ never starts hosted mode (DEPLOY.md). It starts the shared test database and the
 workflow's Mailpit service, installs the system libraries of the PR backend shards and
 the Node.js of the browser job, and runs `make test-scenarios-report PYTEST_ARGS="-q"` with the
 job's mode: the API and browser features on the local stack, in hosted mode. Its report has
-the same shape, with `mode: hosted` and no `target_url`.
+the same shape, with `mode: hosted`; its `target_url` is the address of the local browser stack.
 **The self-host startup and full nightly integration are unverified until the first
 GitHub runner run, and so is the hosted leg's runner setup (its command is the one PR CI
 runs).** Local checks parse the workflow and test the local runners;
