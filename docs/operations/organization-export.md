@@ -148,6 +148,38 @@ archive containing `entities/organization_ai_confirmation.jsonl` imports with
 collected, and an archive must not be able to plant or rewrite it. The table
 carries no key material and is erased with the organization.
 
+Property creation receipts (`property_creation_receipt`) and the batches of the
+CSV master-data import (`master_import_batch`) are the two retry records that
+complete the list. The property form always sends an `Idempotency-Key`, and the
+server keeps a receipt of it (organization, acting user, key, request digest,
+property); the CSV import keeps one batch per applied import and one receipt per
+property it created. Their insert policies (`property_creation_insert`,
+`master_import_insert`) accept only rows whose actor is the signed-in user, and
+the archived actor is an inactive placeholder after an import. They are exported
+for the customer's own portability, but an archive containing
+`entities/property_creation_receipt.jsonl` or `entities/master_import_batch.jsonl`
+imports with 200 while their rows are skipped. Nothing reads them after an
+import: they only answer a repeated request of the same user with the same key,
+no screen lists them, no other row refers to them, and restoring a batch as the
+importing administrator would record an import that person did not run. The
+restored property, units, persons and everything booked on them equal the
+source. In the source organization the same key still answers as before (the
+same property, or 409 for a changed request). One visible difference: the
+restored organization holds no receipt for those records, so deleting one that
+nothing else references is no longer refused with "An immutable creation or
+import receipt retains this record."; a record created through the API without
+a key was always deletable that way.
+
+**What the import restores and what it leaves out.** Everything the manifest
+lists in `entity_order` is restored in dependency order, except the four
+entities above (`NOT_RESTORED_ENTITIES` in `organization_import_service.py`,
+the one list the importer reads): legal assents, AI provider confirmations,
+property creation receipts and CSV master-data batches. Accounts other than
+the importing administrator are restored as inactive placeholders without
+credentials; accounting scopes, scope bindings, scope grants and attachments
+that name such an account are refused (see "Importing accounting scopes and
+attachments" below).
+
 The importer checks the format, safe regular-file members, exact manifest/member
 hash coverage, row counts, organization identity, and the release's Alembic
 ancestry. The same or an older known schema is accepted; newer/unknown heads are

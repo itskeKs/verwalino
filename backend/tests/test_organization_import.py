@@ -1216,3 +1216,122 @@ def test_a_storno_may_gain_the_mandate_of_a_later_account_scope_but_never_change
         with pytest.raises(HTTPException) as refusal:
             payment_reversal_pairs(rows)
         assert refusal.value.status_code == 422 and refusal.value.detail['code'] == 'IMPORT_PAYMENT_REVERSAL_CHAIN'
+
+
+PROPERTY_FORM = {'federal_state': None, 'construction_year': None, 'total_area': None, 'name': 'Probehaus',
+                 'street': 'Probeweg 1', 'zip_code': '12345', 'city': 'Teststadt',
+                 'management_type': 'MIET', 'fiscal_year_start_month': 1}
+
+
+async def rented_form_property(api, world, payment_clock, key):
+    """What a user does: "+ Neues Objekt" (the form always sends an Idempotency-Key),
+    a Wohnung, a Mietvertrag, a Bankkonto and a booked payment of 700,00 EUR on 15.03.2026."""
+    created = await api.post('/api/properties', headers={'Idempotency-Key': key}, json=PROPERTY_FORM)
+    assert created.status_code == 201, created.text
+    property_id = created.json()['id']
+    unit = await api.post('/api/units', json={'property_id': property_id, 'number': 'W1', 'usage_type': 'WOHNUNG', 'area': '60,25'})
+    assert unit.status_code == 201, unit.text
+    lease = await api.post('/api/leases', json={'unit_id': unit.json()['id'], 'tenant_profile_id': str(world['tenant']),
+        'valid_from': '2026-01-01', 'base_rent': '700.00', 'advance_payment': '0.00'})
+    assert lease.status_code == 201, lease.text
+    bank = await api.post('/api/bank-accounts', json={'property_id': property_id, 'account_type': 'LAUFEND', 'label': 'Probehaus Konto'})
+    assert bank.status_code == 201, bank.text
+    payment_clock('2026-06-01T09:00:00')
+    payment = await api.post('/api/payments', json={
+        'bank_account_id': bank.json()['id'], 'direction': 'IN', 'amount': '700.00', 'value_date': '2026-03-15',
+        'payment_type': 'KALTMIETE', 'tenant_profile_id': str(world['tenant']),
+        'lease_agreement_id': lease.json()['id'], 'period_year': 2026, 'period_month': 3})
+    assert payment.status_code == 201, payment.text
+    assert (await api.post(f"/api/payments/{payment.json()['id']}/book")).status_code == 200
+    return property_id, unit.json()['id'], payment.json()['id']
+
+
+@pytest.mark.parametrize('restore', ['beside_the_living_source', 'source_deleted_other_address', 'source_deleted_same_address'])
+async def test_import_restores_an_organization_whose_property_was_created_with_an_idempotency_key(
+    rent_world, import_target, rent_db, export_store, payment_clock, restore,
+):
+    """The creation receipt is a retry record bound to the acting user; the import does
+    not write it, so the property, its Wohnung and the booked payment come back."""
+    key = str(uuid.uuid4())
+    async with api_client(rent_world) as api:
+        property_id, unit_id, payment_id = await rented_form_property(api, rent_world, payment_clock, key)
+        archive = await api.post('/api/organizations/export')
+        assert archive.status_code == 200, archive.text
+    assert len(unpack(archive.content)['entities/property_creation_receipt.jsonl'].splitlines()) == 1
+    if restore == 'source_deleted_same_address':
+        await source_organization_deleted(rent_db, rent_world['org'], rent_world['admin'], import_target)
+    elif restore == 'source_deleted_other_address':
+        await rent_db.execute(text("""UPDATE "user" SET email=id::text||'@deleted.invalid' WHERE organization_id=:org"""),
+                              {'org': rent_world['org']})
+        await rent_db.commit()
+    async with api_client(import_target) as api:
+        answer = await api.post('/api/organizations/import', files={'file': ('form-property.tar.gz', archive.content)})
+        assert answer.status_code == 200, answer.text
+        mapping = answer.json()['id_map']
+        properties = {row['id']: row for row in (await api.get('/api/properties')).json()}
+        restored = properties[mapping['property'][property_id]]
+        assert {k: restored[k] for k in ('name', 'street', 'zip_code', 'city', 'management_type')} == {
+            k: PROPERTY_FORM[k] for k in ('name', 'street', 'zip_code', 'city', 'management_type')}
+        units = (await api.get('/api/units')).json()
+        assert [(u['id'], u['property_id'], u['number']) for u in units if u['property_id'] == restored['id']] == [
+            (mapping['unit'][unit_id], restored['id'], 'W1')]
+        payments = {row['id']: row for row in (await api.get('/api/payments')).json()}
+        paid = payments[mapping['payment'][payment_id]]
+        assert (paid['amount'], paid['value_date'], paid['status'], paid['payment_type']) == ('700.00', '2026-03-15', 'booked', 'KALTMIETE')
+    # The retry record of the source is not carried over; nothing of it exists in the target.
+    assert await rent_db.scalar(text('SELECT count(*) FROM property_creation_receipt WHERE organization_id=:org'), import_target) == 0
+    if restore == 'beside_the_living_source':
+        # The source still answers a repeated creation as before: same key, same body, same property.
+        async with api_client(rent_world) as api:
+            again = await api.post('/api/properties', headers={'Idempotency-Key': key}, json=PROPERTY_FORM)
+            assert (again.status_code, again.json()['id']) == (201, property_id)
+            changed = await api.post('/api/properties', headers={'Idempotency-Key': key}, json={**PROPERTY_FORM, 'name': 'Anderes Haus'})
+            assert changed.status_code == 409, changed.text
+        assert await rent_db.scalar(text('SELECT count(*) FROM property_creation_receipt WHERE organization_id=:org'), rent_world) == 1
+    await rent_db.rollback()
+
+
+@pytest.mark.parametrize('restore', ['beside_the_living_source', 'source_deleted_same_address'])
+async def test_import_restores_an_organization_whose_master_data_came_from_the_csv_import(
+    rent_world, import_target, rent_db, export_store, restore,
+):
+    """The batch of a CSV master-data import and the receipts of the properties it created
+    are retry records of the importing user; the import leaves them out, and the master
+    data itself comes back equal."""
+    from tests.test_master_import import apply, body, inventory, preview
+    request_id = uuid.uuid4()
+    async with api_client(rent_world) as api:
+        value = body()
+        projected = await preview(api, value)
+        applied = await apply(api, value, projected, request_id)
+        assert applied.status_code == 201, applied.text
+        before = await inventory(api)
+        archive = await api.post('/api/organizations/export')
+        assert archive.status_code == 200, archive.text
+    files = unpack(archive.content)
+    assert len(files['entities/master_import_batch.jsonl'].splitlines()) == 1
+    assert len(files['entities/property_creation_receipt.jsonl'].splitlines()) == 1
+    if restore == 'source_deleted_same_address':
+        await source_organization_deleted(rent_db, rent_world['org'], rent_world['admin'], import_target)
+    async with api_client(import_target) as api:
+        answer = await api.post('/api/organizations/import', files={'file': ('csv-master-data.tar.gz', archive.content)})
+        assert answer.status_code == 200, answer.text
+        ids = answer.json()['id_map']
+        after = await inventory(api)
+    expected = {
+        'properties': [{**row, 'id': ids['property'][row['id']]} for row in before['properties']],
+        'units': [{**row, 'id': ids['unit'][row['id']], 'property_id': ids['property'][row['property_id']]}
+                  for row in before['units']],
+        'persons': [{**row, 'id': ids['person'][row['id']]} for row in before['persons']],
+    }
+    assert {kind: sorted(rows, key=lambda row: row['id']) for kind, rows in expected.items()} == after
+    assert [row['name'] for row in after['properties']].count('T51 CSV Objekt') == 1
+    for table in ('master_import_batch', 'property_creation_receipt'):
+        assert await rent_db.scalar(text(f'SELECT count(*) FROM {table} WHERE organization_id=:org'), import_target) == 0
+    if restore == 'beside_the_living_source':
+        # The source still answers a repeated request as before: same key and CSV, the stored result.
+        async with api_client(rent_world) as api:
+            again = await apply(api, value, projected, request_id)
+            assert again.status_code == 201 and again.json() == applied.json(), again.text
+        assert await rent_db.scalar(text('SELECT count(*) FROM master_import_batch WHERE organization_id=:org'), rent_world) == 1
+    await rent_db.rollback()

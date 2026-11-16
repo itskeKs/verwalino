@@ -21,6 +21,12 @@ Feature: Organization export import
     Then the imported organization has equal entity counts and normalized content
     And the imported payments list shows the original linked to its Storno with the archived dates
 
+  Scenario: An organization whose property was created in the property form is restored beside its source
+    Given a separate organization has a property from the property form with a unit and a booked rent payment for export
+    When its administrator downloads the organization archive
+    And the archive is imported into an empty organization
+    Then the imported property list shows the form property and its payment of 700.00 on 15.03.2026
+
   Scenario: Missing dependencies refuse the whole import
     Given a separate organization has rental records and an original for export
     When its administrator downloads the organization archive
