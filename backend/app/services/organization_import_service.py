@@ -487,6 +487,12 @@ async def import_organization(db, auth, source):
             bank_dependencies['accounting_scope_binding', row['id']] = [
                 ('accounting_scope_binding', bank_bindings[draft['bank_account_id']])]
             bank_dependencies['payment', draft['id']] = [('accounting_scope_binding', row['id'])]
+        # A payment binding names the binding of its bank account and scope by a composite
+        # foreign key on (bank_account_id, scope_id), which has no `id` column and so no edge below.
+        account_bindings = {(row['bank_account_id'], row['scope_id']): row['id'] for row in bindings if row.get('bank_account_id')}
+        for row in bindings:
+            if row.get('payment_bank_account_id') and (parent := account_bindings.get((row['payment_bank_account_id'], row['scope_id']))):
+                bank_dependencies.setdefault(('accounting_scope_binding', row['id']), []).append(('accounting_scope_binding', parent))
         context_notices = {row['dunning_notice_id'] for row in entities.get('dunning_scope_context', [])}
         registrations = {}
         for row in entities.get('document_ref', []):

@@ -847,8 +847,8 @@ async def levy_notice_archive(db, seed):
     first, _second, third = ids['owners']
     async with levy_client(ids, 'actor') as api:
         # The requests of the UI: the levy form, the owner notice form and the issue button
-        # send no Idempotency-Key and no scope header. The levies stay unpaid: a payment on a
-        # scope-classified bank account is refused by the import for its own reason (#686).
+        # send no Idempotency-Key and no scope header. The levies stay unpaid here; a payment on a
+        # scope-classified bank account has its own test below.
         for amount, due in (('5000.00', '2026-03-01'), ('2000.00', '2026-03-15')):
             made = await api.post('/api/special-levies', json={
                 'property_id': str(ids['property']), 'accounting_scope_id': str(ids['scope']),
@@ -1493,4 +1493,248 @@ async def test_import_restores_an_organization_whose_master_data_came_from_the_c
             again = await apply(api, value, projected, request_id)
             assert again.status_code == 201 and again.json() == applied.json(), again.text
         assert await rent_db.scalar(text('SELECT count(*) FROM master_import_batch WHERE organization_id=:org'), rent_world) == 1
+    await rent_db.rollback()
+
+
+RENT_WINDOW = {'period_start': '2026-01-01', 'period_end': '2026-12-31'}
+BINDING_COLUMNS = ('scope_id', 'property_id', 'bank_account_id', 'payment_id', 'payment_bank_account_id',
+                   'origin', 'reason', 'reviewed_by')
+
+
+async def rent_booked_on_a_scoped_account(api, world, *, kind=''):
+    """The UI path: a rent scope, a bank account classified into it, one bank movement booked as rent plus advance.
+
+    The statement is imported as a CSV, the movement is assigned in the matching dialog, and the account is
+    classified with the button of the bank account page; none of these requests carries an Idempotency-Key.
+    """
+    scope = await classify_scope(api, world, world[kind + 'property'], 'MIET')
+    bank = await api.post('/api/bank-accounts', json={
+        'property_id': str(world[kind + 'property']), 'account_type': 'LAUFEND', 'label': f'Scoped rent {kind or "main"}'})
+    assert bank.status_code == 201, bank.text
+    bank = bank.json()['id']
+    classified = await api.post(f'/api/accounting-scopes/{scope}/bindings', json={
+        'resource_type': 'bank_account', 'resource_id': bank, 'reason': 'Konto der Mieten'})
+    assert classified.status_code == 201, classified.text
+    statement = ('Buchungstag;Wertstellung;Betrag;Name;Verwendungszweck\n'
+                 '03.03.2026;03.03.2026;850,00;Synthetic payer;Warmmiete Maerz 2026\n').encode()
+    imported = await api.post(f'/api/bank-accounts/{bank}/imports', params={'dry_run': 'false'},
+                              files={'file': ('rent.csv', statement, 'text/csv')})
+    assert imported.status_code == 200, imported.text
+    page = await api.get('/api/bank-transactions', params={'bank_account_id': bank})
+    movement, = [row['id'] for row in page.json()['items']]
+    assigned = await api.post(f'/api/bank-transactions/{movement}/assign', json={'lines': [
+        {'payment_type': payment_type, 'amount': amount, 'period_year': 2026, 'period_month': 3,
+         'lease_agreement_id': str(world[kind + 'lease']), 'tenant_profile_id': str(world[kind + 'tenant'])}
+        for payment_type, amount in (('KALTMIETE', '700.00'), ('NK_VORAUSZAHLUNG', '150.00'))]})
+    assert assigned.status_code == 200, assigned.text
+    rent, advance = assigned.json()['payments']
+    assert (rent['status'], advance['status']) == ('booked', 'booked')
+    return scope, bank, [rent['id'], advance['id']]
+
+
+async def rent_statement(api, lease, scope):
+    statement = await api.get(f'/api/payments/mietkonto/lease/{lease}', params={**RENT_WINDOW, 'accounting_scope_id': scope})
+    assert statement.status_code == 200, statement.text
+    return {key: statement.json()[key] for key in ('soll_total', 'ist_total', 'balance')}
+
+
+async def binding_rows(db, org):
+    rows = (await db.execute(text(f"""SELECT id::text,{','.join(c + '::text' for c in BINDING_COLUMNS)}
+        FROM accounting_scope_binding WHERE organization_id=:org"""), {'org': org})).mappings().all()
+    return {row['id']: dict(row) for row in rows}
+
+
+def archive_with_bindings(files, change):
+    """The archive with its accounting_scope_binding rows rewritten by `change(rows)`; counts and hashes follow."""
+    rows = change([json.loads(line) for line in files['entities/accounting_scope_binding.jsonl'].splitlines()])
+    manifest = json.loads(files['manifest.json'])
+    manifest['row_counts']['accounting_scope_binding'] = len(rows)
+    return repack({**files, 'entities/accounting_scope_binding.jsonl': b''.join(json.dumps(row).encode() + b'\n' for row in rows),
+                   'manifest.json': json.dumps(manifest).encode()})
+
+
+def payment_bindings_ordered(first):
+    """Rewrite that puts every payment binding row before ('payment') or after ('bank_account') the account bindings."""
+    def order(rows):
+        rows = sorted(rows, key=lambda row: (row.get('payment_bank_account_id') is None) == (first == 'payment'))
+        leading = [row.get('payment_bank_account_id') is not None for row in rows]
+        assert leading == sorted(leading, reverse=first == 'payment') and any(leading) and not all(leading)
+        return rows
+    return order
+
+
+def mapped_binding(row, ids):
+    """A source binding row as it must look after the restore: every archived identity replaced by its target."""
+    mapping = {'scope_id': 'accounting_scope', 'property_id': 'property', 'bank_account_id': 'bank_account',
+               'payment_id': 'payment', 'payment_bank_account_id': 'bank_account', 'reviewed_by': 'user'}
+    return {column: ids[mapping[column]][value] if column in mapping and value else value for column, value in row.items()}
+
+
+@pytest.mark.parametrize('first', ['payment', 'bank_account'])
+async def test_import_restores_payments_on_a_scope_classified_bank_account_in_either_archive_order(
+    rent_world, import_target, rent_db, export_store, first,
+):
+    async with api_client(rent_world) as api:
+        scope, bank, payments = await rent_booked_on_a_scoped_account(api, rent_world)
+        before = await rent_statement(api, rent_world['lease'], scope)
+        assert before['ist_total'] == '850.00'
+        archive = await api.post('/api/organizations/export')
+        assert archive.status_code == 200, archive.text
+    source = await binding_rows(rent_db, rent_world['org'])
+    source_payments = await payment_rows(rent_db, payments)
+    assert sorted((row['payment_id'] is None, row['bank_account_id'] is None) for row in source.values()) == [
+        (False, True), (False, True), (True, False)]
+    await rent_db.rollback()
+    archive = archive_with_bindings(unpack(archive.content), payment_bindings_ordered(first))
+    await source_organization_deleted(rent_db, rent_world['org'], rent_world['admin'], import_target)
+    async with api_client(import_target) as api:
+        answer = await api.post('/api/organizations/import', files={'file': ('scoped-rent.tar.gz', archive)})
+        assert answer.status_code == 200, answer.text
+        ids = answer.json()['id_map']
+        restored = await binding_rows(rent_db, import_target['org'])
+        assert restored == {ids['accounting_scope_binding'][identifier]: {**mapped_binding(row, ids),
+            'id': ids['accounting_scope_binding'][identifier]} for identifier, row in source.items()}
+        assert all(restored[ids['accounting_scope_binding'][b]]['scope_id'] == ids['accounting_scope'][scope] for b in source)
+        paid = await payment_rows(rent_db, [ids['payment'][identifier] for identifier in payments])
+        for identifier in payments:
+            assert {k: paid[ids['payment'][identifier]][k] for k in REVERSAL_COLUMNS} == {
+                k: source_payments[identifier][k] for k in REVERSAL_COLUMNS}
+        assert await rent_statement(api, ids['lease_agreement'][str(rent_world['lease'])], ids['accounting_scope'][scope]) == before
+    await rent_db.rollback()
+
+
+async def test_import_refuses_a_payment_binding_without_its_account_binding_and_writes_nothing(
+    rent_world, import_target, rent_db, export_store,
+):
+    async with api_client(rent_world) as api:
+        await rent_booked_on_a_scoped_account(api, rent_world)
+        archive = await api.post('/api/organizations/export')
+        assert archive.status_code == 200, archive.text
+    forged = archive_with_bindings(unpack(archive.content), lambda rows: [row for row in rows if row.get('bank_account_id') is None])
+    await source_organization_deleted(rent_db, rent_world['org'], rent_world['admin'], import_target)
+    async with api_client(import_target) as api:
+        answer = await api.post('/api/organizations/import', files={'file': ('forged.tar.gz', forged)})
+    assert answer.status_code == 422, answer.text
+    assert [row['entity'] for row in answer.json()['detail']['missing_dependencies']] == ['accounting_scope_binding']
+    for table in ('payment', 'bank_account', 'accounting_scope_binding'):
+        assert await rent_db.scalar(text(f'SELECT count(*) FROM {table} WHERE organization_id=:org'), import_target) == 0
+    await rent_db.rollback()
+
+
+@pytest.mark.parametrize('first', ['payment', 'bank_account'])
+async def test_import_restores_each_scope_binding_of_two_scopes_with_one_bank_account_each(
+    rent_world, import_target, rent_db, export_store, first,
+):
+    async with api_client(rent_world) as api:
+        scopes = [await rent_booked_on_a_scoped_account(api, rent_world, kind=kind)
+                  for kind in ('', 'hidden_')]
+        before = [await rent_statement(api, rent_world[kind + 'lease'], scope) for kind, (scope, _, _) in zip(('', 'hidden_'), scopes, strict=True)]
+        archive = await api.post('/api/organizations/export')
+        assert archive.status_code == 200, archive.text
+    source = await binding_rows(rent_db, rent_world['org'])
+    await rent_db.rollback()
+    assert len(source) == 6 and {row['scope_id'] for row in source.values()} == {scope for scope, _, _ in scopes}
+    archive = archive_with_bindings(unpack(archive.content), payment_bindings_ordered(first))
+    await source_organization_deleted(rent_db, rent_world['org'], rent_world['admin'], import_target)
+    async with api_client(import_target) as api:
+        answer = await api.post('/api/organizations/import', files={'file': ('two-scopes.tar.gz', archive)})
+        assert answer.status_code == 200, answer.text
+        ids = answer.json()['id_map']
+        restored = await binding_rows(rent_db, import_target['org'])
+        assert restored == {ids['accounting_scope_binding'][identifier]: {**mapped_binding(row, ids),
+            'id': ids['accounting_scope_binding'][identifier]} for identifier, row in source.items()}
+        for kind, (scope, _, _), expected in zip(('', 'hidden_'), scopes, before, strict=True):
+            assert await rent_statement(api, ids['lease_agreement'][str(rent_world[kind + 'lease'])], ids['accounting_scope'][scope]) == expected
+    await rent_db.rollback()
+
+
+@pytest.mark.parametrize('first', ['payment', 'bank_account'])
+async def test_import_restores_a_reversed_payment_on_a_scope_classified_bank_account_in_either_archive_order(
+    rent_world, import_target, rent_db, export_store, payment_clock, first,
+):
+    async with api_client(rent_world) as api:
+        scope = await classify_scope(api, rent_world, rent_world['property'], 'MIET')
+        bank = await api.post('/api/bank-accounts', json={'property_id': str(rent_world['property']),
+            'account_type': 'LAUFEND', 'label': 'Scoped reversal bank'})
+        assert bank.status_code == 201, bank.text
+        classified = await api.post(f'/api/accounting-scopes/{scope}/bindings', json={
+            'resource_type': 'bank_account', 'resource_id': bank.json()['id'], 'reason': 'Konto der Mieten'})
+        assert classified.status_code == 201, classified.text
+        body = {'bank_account_id': bank.json()['id'], 'direction': 'IN', 'amount': '700.00', 'value_date': '2026-03-15',
+                'payment_type': 'KALTMIETE', 'tenant_profile_id': str(rent_world['tenant']),
+                'lease_agreement_id': str(rent_world['lease']), 'period_year': 2026, 'period_month': 3}
+        original, storno = await book_then_reverse(api, body, payment_clock,
+            booked_on='2026-03-16T09:00:00', reversed_on='2026-04-02T09:00:00')
+        before = await rent_statement(api, rent_world['lease'], scope)
+        archive = await api.post('/api/organizations/export')
+        assert archive.status_code == 200, archive.text
+    source = await binding_rows(rent_db, rent_world['org'])
+    source_payments = await payment_rows(rent_db, [original['id'], storno['id']])
+    await rent_db.rollback()
+    assert len(source) == 3
+    archive = archive_with_bindings(unpack(archive.content), payment_bindings_ordered(first))
+    await source_organization_deleted(rent_db, rent_world['org'], rent_world['admin'], import_target)
+    async with api_client(import_target) as api:
+        answer = await api.post('/api/organizations/import', files={'file': ('scoped-reversal.tar.gz', archive)})
+        assert answer.status_code == 200, answer.text
+        ids = answer.json()['id_map']
+        restored = await binding_rows(rent_db, import_target['org'])
+        assert restored == {ids['accounting_scope_binding'][identifier]: {**mapped_binding(row, ids),
+            'id': ids['accounting_scope_binding'][identifier]} for identifier, row in source.items()}
+        paid = await payment_rows(rent_db, [ids['payment'][identifier] for identifier in source_payments])
+        assert paid[ids['payment'][original['id']]]['reversed_by_id'] == ids['payment'][storno['id']]
+        for identifier, row in source_payments.items():
+            assert {k: paid[ids['payment'][identifier]][k] for k in REVERSAL_COLUMNS} == {k: row[k] for k in REVERSAL_COLUMNS}
+        assert await rent_statement(api, ids['lease_agreement'][str(rent_world['lease'])], ids['accounting_scope'][scope]) == before
+    await rent_db.rollback()
+
+
+@pytest.mark.parametrize('first', ['payment', 'bank_account'])
+async def test_import_restores_a_partly_paid_special_levy_on_a_scope_classified_account_in_either_archive_order(
+    levy_db, scope_seed, import_target, rent_db, export_store, first,
+):
+    ids = await levy_notice_source(levy_db, scope_seed)
+    owner = ids['owners'][0]
+    async with levy_client(ids, 'actor') as api:
+        bank = await api.post('/api/bank-accounts', json={
+            'property_id': str(ids['property']), 'account_type': 'LAUFEND', 'label': 'WEG levy account'})
+        assert bank.status_code == 201, bank.text
+        classified = await api.post(f"/api/accounting-scopes/{ids['scope']}/bindings", json={
+            'resource_type': 'bank_account', 'resource_id': bank.json()['id'], 'reason': 'Konto der Eigentümergemeinschaft'})
+        assert classified.status_code == 201, classified.text
+        levy = await api.post('/api/special-levies', json={
+            'property_id': str(ids['property']), 'accounting_scope_id': str(ids['scope']),
+            'amount': '5000.00', 'due_date': '2026-03-01', 'resolution_id': str(ids['resolution'])})
+        assert levy.status_code == 201, levy.text
+        paid = await api.post('/api/payments', json={'bank_account_id': bank.json()['id'], 'amount': '1000.00',
+            'direction': 'IN', 'value_date': '2026-03-10', 'payment_type': 'SONDERZAHLUNG',
+            'owner_profile_id': str(owner), 'period_year': 2026, 'period_month': 3})
+        assert paid.status_code == 201, paid.text
+        booked = await api.post(f"/api/payments/{paid.json()['id']}/book")
+        assert booked.status_code == 200, booked.text
+        statement = await api.get(f'/api/payments/mietkonto/owner/{owner}', params={
+            'accounting_scope_id': str(ids['scope']), **LEVY_NOTICE_WINDOW})
+        assert statement.status_code == 200, statement.text
+        before = statement.json()
+        # 30 % of the 5000.00 levy fall due on 01.03.; 1000.00 of it are paid.
+        assert (before['soll_total'], before['ist_total'], before['balance']) == ('1500.00', '1000.00', '500.00')
+        archive = await api.post('/api/organizations/export')
+        assert archive.status_code == 200, archive.text
+    source = await binding_rows(rent_db, ids['org'])
+    await rent_db.rollback()
+    assert sorted((row['payment_id'] is None, row['bank_account_id'] is None) for row in source.values()) == [
+        (False, True), (True, False)]
+    archive = archive_with_bindings(unpack(archive.content), payment_bindings_ordered(first))
+    await source_organization_deleted(rent_db, ids['org'], ids['actor'], import_target)
+    async with api_client(import_target) as api:
+        restored = await api.post('/api/organizations/import', files={'file': ('levy-payment.tar.gz', archive)})
+        assert restored.status_code == 200, restored.text
+        mapping = restored.json()['id_map']
+        rows = await binding_rows(rent_db, import_target['org'])
+        assert rows == {mapping['accounting_scope_binding'][identifier]: {**mapped_binding(row, mapping),
+            'id': mapping['accounting_scope_binding'][identifier]} for identifier, row in source.items()}
+        statement = await api.get(f"/api/payments/mietkonto/owner/{mapping['owner_profile'][str(owner)]}", params={
+            'accounting_scope_id': mapping['accounting_scope'][str(ids['scope'])], **LEVY_NOTICE_WINDOW})
+        assert statement.status_code == 200, statement.text
+        assert in_target_ids(before, mapping) == statement.json()
     await rent_db.rollback()
