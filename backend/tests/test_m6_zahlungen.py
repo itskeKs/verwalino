@@ -525,6 +525,52 @@ class TestPaymentImmutability:
         assert await self._reversed_by(session, original) == storno
         await savepoint.rollback()
 
+    @pytest.mark.asyncio
+    async def test_the_runtime_role_cannot_use_the_immutability_function_to_probe_another_organization(
+        self, app_rw_session, m6_seed,
+    ):
+        """As organization B, attaching the definer function to a temp table must not tell what A's payments are."""
+        session = app_rw_session
+        savepoint = await session.begin_nested()
+        await _set_org(session, m6_seed["org_a_id"])
+        original = await self._insert_booked(session, m6_seed)
+        storno = await self._insert_reversing(session, m6_seed, original)
+
+        async def probe(guess):
+            """SQLSTATE of the attempt, or "accepted": the update passes only for the real Storno of the row."""
+            try:
+                async with session.begin_nested():
+                    await session.execute(text(
+                        "CREATE TEMP TABLE payment_probe (LIKE public.payment INCLUDING DEFAULTS) ON COMMIT DROP"))
+                    await session.execute(text(
+                        "CREATE TRIGGER probe BEFORE UPDATE ON payment_probe FOR EACH ROW "
+                        "EXECUTE FUNCTION public.trg_payment_immutability()"))
+                    # A row that names organization A's payment; B can read neither it nor the Storno.
+                    await session.execute(text(
+                        "INSERT INTO payment_probe (id, organization_id, bank_account_id, property_id, direction, "
+                        "amount, value_date, payment_type, status) VALUES (:id, :org, :acct, :prop, 'IN', 150.00, "
+                        ":vdate, 'NK_VORAUSZAHLUNG', 'booked')"),
+                        {"id": str(original), "org": str(m6_seed["org_a_id"]), "acct": str(m6_seed["acct_a"]),
+                         "prop": str(m6_seed["prop_a"]), "vdate": _VDATE})
+                    await session.execute(
+                        text("UPDATE payment_probe SET reversed_by_id = :g"), {"g": str(guess)})
+                    await session.execute(text("DROP TABLE payment_probe"))
+                return "accepted"
+            except Exception as exc:  # noqa: BLE001 - the state code is the answer
+                return getattr(getattr(exc, "orig", None), "sqlstate", repr(exc))
+
+        await _set_org(session, m6_seed["org_b_id"])
+        # Insufficient privilege (42501) for the real Storno and for a wrong guess alike: no pass/refuse oracle.
+        assert [await probe(storno), await probe(uuid.uuid4())] == ["42501", "42501"]
+        # The trigger on payment itself still fires for the runtime role, without EXECUTE on the function.
+        await _set_org(session, m6_seed["org_a_id"])
+        await self._link(session, original, storno)
+        with pytest.raises(Exception, match="GoBD.*reversed_by_id.*booked"):
+            async with session.begin_nested():
+                await self._link(session, original, uuid.uuid4())
+        assert await self._reversed_by(session, original) == storno
+        await savepoint.rollback()
+
     def test_reversal_link_migration_roundtrip_restores_the_previous_function(self, monkeypatch):
         """0192 replaces only the function; its downgrade restores the body 0018 created, exactly."""
         import importlib
@@ -540,23 +586,40 @@ class TestPaymentImmutability:
         first.upgrade()
         created = issued[0].split("$$")[1]  # the body and settings 0018 gave the function
 
-        function = text("""SELECT prosrc, prosecdef, proconfig, proacl::text AS acl, pg_get_triggerdef(t.oid) AS trigger
+        function = text("""SELECT prosrc, prosecdef, proconfig, pg_get_triggerdef(t.oid) AS trigger
             FROM pg_proc p, pg_trigger t
             WHERE p.oid = 'trg_payment_immutability()'::regprocedure AND t.tgname = 'trg_payment_immutability'""")
+        # Who may execute the function, as the repo's other ACL tests read it: the stored ACL, or the
+        # default of its owner while none is stored (revoke + grant stores an equal ACL, not NULL).
+        executors = text("""SELECT array_agg(CASE WHEN a.grantee = 0 THEN 'PUBLIC' ELSE a.grantee::regrole::text END
+                ORDER BY a.grantee) FROM pg_proc p
+            CROSS JOIN LATERAL aclexplode(COALESCE(p.proacl, acldefault('f', p.proowner))) a
+            WHERE p.oid = 'trg_payment_immutability()'::regprocedure AND a.privilege_type = 'EXECUTE'""")
+        default_executors = text("""SELECT array_agg(CASE WHEN a.grantee = 0 THEN 'PUBLIC' ELSE a.grantee::regrole::text END
+                ORDER BY a.grantee) FROM pg_proc p
+            CROSS JOIN LATERAL aclexplode(acldefault('f', p.proowner)) a
+            WHERE p.oid = 'trg_payment_immutability()'::regprocedure AND a.privilege_type = 'EXECUTE'""")
         engine = create_engine(MIGRATOR_SYNC_URL)
         try:
             with engine.begin() as db, Operations.context(MigrationContext.configure(db)):
                 current = db.execute(function).one()
                 assert current.prosecdef and "row_security=off" in current.proconfig
+                # Only the owner may execute the definer function; the runtime role may not.
+                assert db.scalar(executors) == ["app_migrator"]
+                assert not db.scalar(text("SELECT has_function_privilege('app_rw', 'trg_payment_immutability()', 'EXECUTE')"))
                 savepoint = db.begin_nested()
                 try:
                     migration.downgrade()
                     restored = db.execute(function).one()
                     assert restored.prosrc == created
                     assert (restored.prosecdef, restored.proconfig) == (False, None)
-                    assert (restored.acl, restored.trigger) == (current.acl, current.trigger)
+                    assert restored.trigger == current.trigger
+                    # The ACL 0018 left: its owner's default, EXECUTE for PUBLIC included.
+                    assert db.scalar(executors) == db.scalar(default_executors) == ["PUBLIC", "app_migrator"]
+                    assert db.scalar(text("SELECT has_function_privilege('app_rw', 'trg_payment_immutability()', 'EXECUTE')"))
                     migration.upgrade()
                     assert db.execute(function).one() == current
+                    assert db.scalar(executors) == ["app_migrator"]
                 finally:
                     savepoint.rollback()
         finally:

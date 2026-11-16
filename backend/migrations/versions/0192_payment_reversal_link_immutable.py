@@ -13,8 +13,12 @@ Every other check keeps its behaviour. The lookup of the Storno runs with the fu
 owner's rights and row security off (the repo's cross-row guard pattern, see
 `guard_reserve_payment_evidence`), so a legitimate link is not refused because the
 acting role cannot read the Storno; the organization of both rows is compared
-explicitly. No row is touched and no data can be lost: `downgrade()` restores the
-0018 function exactly (body, invoker rights, no function settings).
+explicitly. Execute is revoked from PUBLIC like the other definer trigger functions:
+a trigger fires without the privilege, but a runtime role that could execute the
+function could attach it to a temporary table of its own and learn from the pass or
+refuse which payment is the Storno of which in another organization. No row is
+touched and no data can be lost: `downgrade()` restores the 0018 function exactly
+(body, invoker rights, no function settings, EXECUTE for PUBLIC again).
 
 Writers of the link that keep working (it is set after the Storno is inserted booked):
 `PaymentService.reverse_payment` and the organization import's reversal pairs.
@@ -264,7 +268,11 @@ CURRENT_FUNCTION = """
 
 def upgrade() -> None:
     op.execute(CURRENT_FUNCTION)
+    # A definer function must not be callable by the runtime role; the trigger on payment needs no grant.
+    op.execute("REVOKE ALL ON FUNCTION public.trg_payment_immutability() FROM PUBLIC")
 
 
 def downgrade() -> None:
     op.execute(PREVIOUS_FUNCTION)
+    # 0018 left the default ACL: EXECUTE for PUBLIC.
+    op.execute("GRANT EXECUTE ON FUNCTION public.trg_payment_immutability() TO PUBLIC")
