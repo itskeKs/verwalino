@@ -25,21 +25,27 @@ fi; \
 trap 'rmdir /tmp/verwalino-testdb.lock' EXIT
 endef
 
-.PHONY: help test test-agent-rules test-scenario-issues test-backend test-installer test-selfhost-format test-frontend test-bdd test-bdd-hosted test-browser test-scenarios-report typecheck lint lint-backend lint-frontend \
-        docs-check mail-previews screenshots frontend-deps hooks check-testdb
+.PHONY: help test test-agent-rules test-scenario-issues test-record-finding test-review-worktree test-backend test-installer test-selfhost-format test-frontend test-bdd test-bdd-hosted test-browser test-scenarios-report typecheck lint lint-backend lint-frontend \
+        docs-check mail-previews review-worktree review-worktree-remove screenshots frontend-deps hooks check-testdb
 
 help: ## List the documented targets
 	@awk 'BEGIN {FS = ":.*## "} /^[a-zA-Z_-]+:.*## / {printf "  %-16s %s\n", $$1, $$2}' $(MAKEFILE_LIST)
 
 # ---- tests -----------------------------------------------------------------
 
-test: test-agent-rules test-scenario-issues test-installer test-backend test-frontend typecheck ## Whole suite before a merge: agent rules + scenario filing + installer contracts + backend pytest (incl. BDD) + frontend vitest + typecheck
+test: test-agent-rules test-scenario-issues test-record-finding test-review-worktree test-installer test-backend test-frontend typecheck ## Whole suite before a merge: agent rules + scenario filing + record-finding + review-worktree + installer contracts + backend pytest (incl. BDD) + frontend vitest + typecheck
 
 test-agent-rules: ## Paired agent rules, CLAUDE.md symlink and Codex hook contracts (stdlib only; no DB)
 	python3 -B scripts/test_agent_rules.py
 
 test-scenario-issues: ## Scenario failure filing contracts (stdlib only; GitHub is faked, no DB)
 	python3 -B scripts/test-scenario-issues.py
+
+test-record-finding: ## Record-finding contracts (stdlib only; GitHub is faked, no DB)
+	python3 -B scripts/test-record-finding.py
+
+test-review-worktree: ## Review-worktree contracts (stdlib only; gh, uv and lsof are faked, git runs on sandbox repositories, no DB)
+	python3 -B scripts/test-review-worktree.py
 
 test-backend: check-testdb ## Backend pytest against the test DB (PYTEST_ARGS="-q tests/test_x.py -k name" narrows it)
 	@$(TESTDB_LOCK); \
@@ -112,6 +118,14 @@ docs-check: ## Relative Markdown links and image paths resolve (docs/archive/ ex
 
 mail-previews: ## Render all mail templates, gallery and light/dark PNGs (no DB or SMTP)
 	cd backend && $(UV_LINT) python scripts/render_mail_previews.py
+
+# ---- review ----------------------------------------------------------------
+
+review-worktree: ## Detached worktree ../verwalino-review-<PR> on the PR's head with the backend environment installed (PR=<n>; no DB lock, no tests)
+	@scripts/review-worktree.sh create "$(PR)"
+
+review-worktree-remove: ## Remove that worktree when it is clean and no process uses it (PR=<n>)
+	@scripts/review-worktree.sh remove "$(PR)"
 
 # ---- setup -----------------------------------------------------------------
 

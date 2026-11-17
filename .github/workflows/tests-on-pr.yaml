@@ -294,3 +294,9 @@ jobs:
 
       - name: Scenario failure filing contracts
         run: make test-scenario-issues
+
+      - name: Record-finding contracts
+        run: make test-record-finding
+
+      - name: Review-worktree contracts
+        run: make test-review-worktree

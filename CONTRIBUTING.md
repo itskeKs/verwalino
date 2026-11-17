@@ -69,7 +69,7 @@ AGENTS.md retains the safety baseline and tests/CI check parity.
 
 `make help` lists every target.
 
-- **`make test`** — the whole run before a merge: agent-rule, scenario-filing and installer contracts, the backend
+- **`make test`** — the whole run before a merge: agent-rule, scenario-filing, record-finding, review-worktree and installer contracts, the backend
   suite (including the BDD scenarios), frontend vitest and typecheck. Needs the test database.
 - **`make lint`** — ruff over the backend, eslint and `tsc` over the frontend.
 - **`make mail-previews`** — synthetic transactional mail gallery and 600/375 px light/dark PNGs;
@@ -95,6 +95,17 @@ AGENTS.md retains the safety baseline and tests/CI check parity.
   A SIGKILL delivered to the runner cannot run Python cleanup.
 - **`make test-scenario-issues`** — scenario failure fingerprints, deduplication and regression
   filing; Python stdlib, fake GitHub, no network or database.
+- **`make test-record-finding`** — record-finding line format, duplicate skip, one comment per issue and refusals; Python stdlib, fake GitHub, no network or database.
+- **`make test-review-worktree`** — review-worktree creation and removal and every refusal; Python stdlib,
+  fake `gh`, `uv` and `lsof`, real git on sandbox repositories, no network or database.
+- **`make review-worktree PR=<n>`** — first step of a fresh review: the detached worktree
+  `../verwalino-review-<n>` on the head of open PR `<n>`, the locked backend environment installed
+  (`uv sync --locked --extra dev --extra ops --extra ocr`), then the directory and the line that loads the
+  test environment. It refuses a directory that already exists (that PR is under review), a PR that is
+  not open and a PR from a fork (its head is not a branch of this repository). It takes no
+  test-database lock and runs no tests; frontend dependencies stay a review's own business.
+  `make review-worktree-remove PR=<n>` is the last step: it removes that worktree only when its
+  tree is clean and no process uses it, otherwise it says what keeps it.
 - **`make docs-check`** — relative links and images in every Markdown file outside `docs/archive/`.
 - While iterating, run one file: `cd backend && uv run pytest tests/test_x.py -k name`,
   `cd frontend && npm test -- src/pages/X.test.tsx`; `make test-backend PYTEST_ARGS="…"` does the
@@ -318,5 +329,7 @@ downloaded `.test_durations` to `backend/.test_durations` before reviewing the d
 | `.github/workflows/install-matrix.yaml` | nightly, manual and tag-triggered native install checks; reports retained for 90 days |
 | `scripts/` | dev, self-host, deploy, checks; `acceptance/` holds legacy browser scripts (being migrated, #54) |
 | `scripts/scenario_issues.py`, `scripts/test-scenario-issues.py` | stdlib report consumer and fake-GitHub filing contracts; `@known-flaky` failures are excluded |
+| `scripts/record-finding.py`, `scripts/test-record-finding.py` | posts finding lines once per key on a bundle, inbox or task issue, and its fake-GitHub contracts |
+| `scripts/review-worktree.sh`, `scripts/test-review-worktree.py` | prepares and removes the review worktree of a PR (`make review-worktree`, `make review-worktree-remove`), and its contracts with fake `gh`, `uv` and `lsof` |
 | `DESIGN.md` | frontend design contract: tokens, layout, components, states, copy and formats; screenshots in `docs/assets/design/` |
 | `docs/` | architecture, domain pages (`m*.md`), ADRs, operations, roadmap, feature status |
