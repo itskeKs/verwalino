@@ -86,7 +86,9 @@ AGENTS.md retains the safety baseline and tests/CI check parity.
   contracts; Python stdlib, no database or backend dependencies. Run after changing rules or the adapter.
 - **`make test-installer`** — release-download, install-scenario reporting, portable
   self-host/hosted deploy contracts and canary tests; fake curl/wget, Docker and cosign,
-  plus a local fake HTTP server, no network downloads or database.
+  plus a local fake HTTP server, no network downloads or database. It also runs the
+  acceptance-environment and merge-script contracts (`python3 -B scripts/test-merge-pr.py` runs
+  standalone: fake `gh` and `lsof`, real git on local repositories).
   `python3 -B scripts/test-install.py` and `python3 -B scripts/test-install-scenarios.py`
   also run standalone with stdlib only. The self-host and install test runners stop their owned
   subprocess groups on Ctrl-C, SIGTERM or command timeout before removing their test directories.
@@ -203,8 +205,42 @@ If `frontend/node_modules` is missing, eslint is skipped with a message.
    look or copy update it in the same PR.
 6. `make lint` green before every push; `make test` (the whole suite) before the merge — CI runs it on
    every PR. A change is merged by the session that made it, or by a maintainer session for a PR
-   no session works on any more, after a fresh review and on green CI; the implementers a session
-   delegates to never push or merge.
+   no session works on any more, after a fresh review and on green CI, with the command below;
+   the implementers a session delegates to never push or merge.
+
+**Merging a reviewed PR.** `scripts/merge-pr.sh <PR> --reviewed <sha> --note-file <file>` is the
+whole merge under the lock. `<sha>` is the full id of the commit the last review covered; the note
+file holds the merge comment (reviewed SHA, gates run on that SHA with results, user check outcome,
+follow-up issues) and is posted as written. The caller holds the maintainer lock
+`/tmp/verwalino-maintainer.lock` (a directory whose `info` names a PR number and a time); the script
+neither takes nor releases it. In order, the script
+
+1. takes the merge lock `/tmp/hausverwaltung-merge.lock` (`info`: PR number and time), waiting while
+   another merge holds it, for at most 155 minutes; it releases only what it took, on failure and on
+   interrupt too, and removes no crash remnant: a lock still held when the wait ends is reported with
+   its `info`;
+2. checks that the PR is open and based on `main`, that its head is the reviewed commit (or that commit
+   plus merges of `main`, which an earlier run left) and that no other open PR is based on its branch:
+   deleting the branch at the merge would close that PR, so the script names it and stops; retarget
+   it first (`gh pr edit <number> --base main`);
+3. merges `origin/main` into the branch in a temporary detached worktree under `/tmp`, stops on a
+   conflict, and pushes the branch when that produced a commit (the only push, never to `main`);
+4. waits for CI on exactly that commit, in one bounded wait of 45 minutes: every check concluded
+   success or skipped; a failed or neutral check, a moved head or the end of the wait stops it;
+5. posts the note file as a comment (a rerun after a refused merge posts it again);
+6. merges with a merge commit pinned to that commit (`gh pr merge --merge --delete-branch
+   --match-head-commit`; never squash, rebase or an admin override), verifies state `MERGED` and the
+   merge commit on `origin/main`, and prints the merge commit;
+7. ticks the boxes of the `## Acceptance` section of the issues the PR closes (`Closes #N` means every
+   box is done; with a box that has no proof, do not merge with `Closes`) and closes those that are
+   still open;
+8. removes the issue worktree (named `verwalino-issue-<N>`, holding the PR branch) and the local branch
+   when the branch is contained in `main`, the tree is clean, it is not locked and no process has its
+   working directory in it; otherwise it says what it kept;
+9. releases the merge lock.
+
+A refusal before step 6 leaves nothing merged, no lock and no temporary worktree behind. After the
+merge nothing is undone: what could not be finished is named and the exit status is 1.
 
 ## Pull requests
 
@@ -288,6 +324,7 @@ downloaded `.test_durations` to `backend/.test_durations` before reviewing the d
 | `.github/workflows/release-image.yaml` | stable tags only: publishes/signs release platforms and installer assets |
 | `infra/docker-compose.staging.yml`, `infra/Caddyfile.staging` | hosted staging project and crawler-blocking shared Caddy site; [operator runbook](docs/operations/staging-and-canary.md) |
 | `infra/docker-compose.hosted-proxy.yml`, `infra/Caddyfile.hosted` | opt-in shared wrapper; apply with the site overlay to preserve production, staging and website routing |
+| `scripts/merge-pr.sh`, `scripts/test-merge-pr.py` | the merge of a reviewed PR under the merge lock ([above](#making-a-change)); fake `gh` and `lsof`, real git on local repositories, no network |
 | `scripts/deploy-server.sh`, `scripts/test-server-deploy.py` | strict production/staging/site forced-command targets and fake server contracts |
 | `.github/workflows/install-matrix.yaml` | nightly, manual and tag-triggered native install checks; reports retained for 90 days |
 | `scripts/` | dev, self-host, deploy, checks; `acceptance/` holds legacy browser scripts (being migrated, #54) |
