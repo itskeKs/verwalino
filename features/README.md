@@ -351,11 +351,11 @@ organization and break org-wide lists (the scope selector page, the payments ord
 `weg_settlement.feature`), so they are skipped there too and run in PR CI's browser job.
 The seven features that freeze a special levy (`bank_account_scope_assignment`, `dunning_batch`,
 `dunning_levy_level`, `dunning_notice`, `dunning_owner_weg_level`, `special_levy` and `weg_settlement`)
-run after all other features on an external target. A levy cannot be removed through the API, and while an
-organization holds one every unscoped overview read of it is refused with a 409 that asks for an
-accounting scope (#722), so a levy frozen early would fail every later feature that reads unscoped.
-Local runs release the records after each scenario and need no order. A new feature that freezes a levy
-joins `LEVY_FEATURES` in `backend/tests/bdd/conftest.py`.
+run after all other features. A levy cannot be removed through the API, the records of a browser run and
+of an external target stay in their organization, and while an organization holds a levy every unscoped
+overview read of it is refused with a 409 that asks for an accounting scope (#722), so a levy frozen
+early would fail every later feature that reads unscoped. A new feature that freezes a levy joins
+`LEVY_FEATURES` in `backend/tests/bdd/conftest.py`.
 Each skipped scenario records its reason in the report. Local runs continue to
 exercise both organizations, all isolation scenarios, first-run setup, the inbox
 review chain, deletion, export/import and password reset; PR CI retains this

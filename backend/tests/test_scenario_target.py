@@ -407,7 +407,7 @@ def scenario_item(feature):
 
 
 @pytest.mark.parametrize('external', [False, True])
-def test_external_target_runs_the_features_that_freeze_a_special_levy_after_all_others(monkeypatch, external):
+def test_the_features_that_freeze_a_special_levy_run_after_all_others(monkeypatch, external):
     from types import SimpleNamespace
     from tests.bdd.conftest import pytest_collection_modifyitems
 
@@ -417,14 +417,10 @@ def test_external_target_runs_the_features_that_freeze_a_special_levy_after_all_
                  'special_levy.feature', 'user_creation.feature', 'weg_settlement.feature']
     items = [scenario_item(feature) for feature in collected]
     pytest_collection_modifyitems(SimpleNamespace(getoption=lambda *args, **kwargs: True), items)
-    ordered = [item.feature for item in items]
-    if external:
-        assert ordered == ['dunning_interest.feature', 'economic_plan.feature', 'user_creation.feature',
-                           'bank_account_scope_assignment.feature', 'dunning_batch.feature',
-                           'dunning_levy_level.feature', 'dunning_notice.feature',
-                           'special_levy.feature', 'weg_settlement.feature']
-    else:
-        assert ordered == collected
+    assert [item.feature for item in items] == ['dunning_interest.feature', 'economic_plan.feature', 'user_creation.feature',
+                                                'bank_account_scope_assignment.feature', 'dunning_batch.feature',
+                                                'dunning_levy_level.feature', 'dunning_notice.feature',
+                                                'special_levy.feature', 'weg_settlement.feature']
 
 
 @pytest.mark.parametrize('feature,skipped', [('user_invitation.feature', True), ('password_reset.feature', True),
