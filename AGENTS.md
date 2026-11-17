@@ -194,6 +194,9 @@ Report cleanup in one line in the status/report, never in a repository file.
 | `make test-browser` | headless `@browser` scenarios; owns the shared DB lock and local stack |
 | `make docs-check` | relative links in all Markdown outside `docs/archive/` |
 | `make test-record-finding` | record-finding script contracts (stdlib only; GitHub is faked, no DB) |
+| `make test-review-worktree` | review-worktree script contracts (stdlib only; `gh`, `uv` and `lsof` are faked, git runs on sandbox repositories, no DB) |
+| `make review-worktree PR=<n>` | first step of a fresh review: detached `../verwalino-review-<n>` on the head of open PR `<n>` with the locked backend environment installed; prints the directory and the line that loads the test environment; refuses an existing directory and a PR that is not open; takes no DB lock and runs no tests |
+| `make review-worktree-remove PR=<n>` | last step of a fresh review: removes that worktree when its tree is clean and no process uses it, otherwise says what keeps it |
 | `make hooks` | enables `.githooks/pre-commit` (ruff and eslint on staged code, docs link check) |
 
 CI (`.github/workflows/tests-on-pr.yaml`) runs the same on every PR. A red job is fixed, not

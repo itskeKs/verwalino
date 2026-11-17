@@ -297,3 +297,6 @@ jobs:
 
       - name: Record-finding contracts
         run: make test-record-finding
+
+      - name: Review-worktree contracts
+        run: make test-review-worktree
