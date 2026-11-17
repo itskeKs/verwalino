@@ -78,10 +78,12 @@ do not recalculate old levies; a later change of the ownership history does move
 property/scope filter under actual scope and source permissions; incomplete
 access is not output as a complete empty list. A levy is read only in its own scope, so once an
 organization holds one, every overview read without an accounting scope (the Fristen and their
-context, open items, owner and tenant accounts, new notices) is refused with the 409 that
-classified data already gives („Wählen Sie einen eindeutigen Abrechnungskreis …“), and
+context, open items, owner and tenant accounts, new notices) is refused with the German 409
+of classified data („Wählen Sie einen eindeutigen Abrechnungskreis …“), and
 `GET /api/fristen/context` answers `requires_accounting_scope: true`, so the Mahnlauf offers the
-scope selector. Reads with the levy's scope are unchanged. The existing
+scope selector. Unlike the refusal for classified data, this one covers every property of the
+organization, also one without an accounting scope (#739). Reads with the levy's scope are
+unchanged. The existing
 owner account counts the share once as `SONDERZAHLUNG` in the
 due month, even without an economic plan; regularly booked special payments
 reduce the open amount. Under `/sonderumlagen`, property and read scope are
