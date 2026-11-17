@@ -10,7 +10,15 @@ from app.models.accounting_scope import AccountingScopeBinding
 from app.models.bank_account import BankAccount
 from app.repositories.property_repo import PropertyRepository
 from app.repositories.mandate_repo import MandateRepository
+from app.repositories.payment_repo import SCOPE_REQUIRED_MESSAGE
 from app.services.authorization_service import AuthorizationService
+
+
+class ScopeRequired(HTTPException):
+    """An unscoped read that a special levy of its organization refuses: only a scope can select the view."""
+
+    def __init__(self):
+        super().__init__(409, SCOPE_REQUIRED_MESSAGE)
 
 
 class FinancialScopeService:
@@ -86,9 +94,25 @@ class FinancialScopeService:
         return sphere
 
     async def require_report_sources(self, scope_id):
-        if not await self.session.scalar(text("SELECT report_scope_source_access(:org,:scope,'read')"),
+        if await self.session.scalar(text("SELECT report_scope_source_access(:org,:scope,'read')"),
                 {'org': self.org_id, 'scope': scope_id}):
-            raise HTTPException(404, 'Complete report sources not accessible')
+            return
+        if scope_id is None and await self.levy_refuses_unscoped_read():
+            raise ScopeRequired()
+        raise HTTPException(404, 'Complete report sources not accessible')
+
+    async def levy_refuses_unscoped_read(self):
+        """Whether a special levy, not hidden sources, made the unscoped source check fail.
+
+        In preparation mode the check passes for a read without scope unless the organization holds a
+        levy, which only its own scope reads completely; every other mode refuses an unscoped read by
+        itself and keeps the plain 404. The classification is the definer's, so each caller of the
+        organization gets the refusal that classified data already gives.
+        """
+        return bool(await self.session.scalar(text(
+            "SELECT property_source_security_mode(:org)='PREPARATION' AND EXISTS("
+            "SELECT 1 FROM property p WHERE p.organization_id=:org AND property_has_classified_finance(:org,p.id))"),
+            {'org': self.org_id}))
 
     async def select_report_scope(self, scope_id, *, scope_type, period_start, period_end):
         """Read-only statement context, including an inherited plan context."""

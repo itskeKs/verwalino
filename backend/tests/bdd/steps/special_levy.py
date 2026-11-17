@@ -86,6 +86,29 @@ def create_roof_levy(world):
     world.data['levy'] = create(world, '/api/special-levies', {**levy_payload(world), 'resolution_id': world.data['levy_resolution']['id']})
 
 
+@then('the Mahnlauf asks for an accounting scope')
+def mahnlauf_asks_for_scope(world):
+    answer = world.act('GET', '/api/fristen/context')
+    assert answer.status_code == 200 and answer.json() == {'requires_accounting_scope': True}, world.describe_response()
+
+
+@then('an overview opened without an accounting scope is explained in German')
+def unscoped_overview_explained(world):
+    answer = world.act('GET', '/api/payments/open-items', params={'period_start': '2026-01-01', 'period_end': '2026-12-31'})
+    assert answer.status_code == 409, world.describe_response()
+    assert answer.json()['detail'] == ('Wählen Sie einen eindeutigen Abrechnungskreis und prüfen Sie noch nicht '
+                                       'zugeordnete Daten, bevor Sie die Zahlungen berechnen.')
+
+
+@given('the organization holds a frozen special levy')
+def levy_elsewhere(world, seed_data):
+    """Gartenstraße 5 and its roof repair levy next to the scenario's own property and accounting scope."""
+    own = {key: world.data[key] for key in ('property', 'scope')}
+    roof_repair(world, seed_data)
+    create_roof_levy(world)
+    world.data.update(own)
+
+
 @when("Berta's ownership entry is corrected to start on 1 August 2026")
 def correct_berta_start(world):
     berta = world.data['levy_owners'][1]['id']

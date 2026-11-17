@@ -19,3 +19,8 @@ Feature: Dunning batch
     When the manager previews October arrears above 100 EUR as of 15 November 2026
     And the manager selects the three arrears and confirms "Mahnentwürfe anlegen"
     Then three unissued drafts remain in the history after reload
+
+  Scenario: A frozen special levy of the organization does not stop the preview
+    Given the organization holds a frozen special levy
+    When the manager previews October arrears above 100 EUR as of 15 November 2026
+    Then the preview offers three unselected arrears of 850 EUR each with 6.23 EUR interest
