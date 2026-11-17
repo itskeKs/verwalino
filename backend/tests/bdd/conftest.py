@@ -31,8 +31,8 @@ _SHARED_HOSTED_USAGE = pytest.StashKey[dict | None]()
 
 # Features that freeze a special levy in the shared organization (see pytest_collection_modifyitems).
 LEVY_FEATURES = frozenset({
-    "bank_account_scope_assignment.feature", "dunning_levy_level.feature", "dunning_owner_weg_level.feature",
-    "special_levy.feature", "weg_settlement.feature",
+    "bank_account_scope_assignment.feature", "dunning_batch.feature", "dunning_levy_level.feature",
+    "dunning_notice.feature", "dunning_owner_weg_level.feature", "special_levy.feature", "weg_settlement.feature",
 })
 
 
@@ -241,11 +241,10 @@ def pytest_collection_modifyitems(config, items):
                     item.add_marker(pytest.mark.skip(reason=reason))
         if item.get_closest_marker("browser") and not config.getoption("--run-browser", default=False):
             item.add_marker(pytest.mark.skip(reason="Use make test-browser to run browser journeys"))
-    if target_url():
-        # A frozen special levy ends every unscoped overview read of its organization (#722) and no
-        # API removes it. A local run releases the records after each scenario; an external target cannot,
-        # so the features that freeze a levy run after all others there. The sort is stable.
-        items.sort(key=freezes_levy)
+    # A frozen special levy makes every unscoped overview read of its organization ask for a scope (#722)
+    # and no API removes it. The records of a browser run and of an external target stay in their
+    # organization, so the features that freeze a levy run after all others. The sort is stable.
+    items.sort(key=freezes_levy)
 
 
 def pytest_bdd_step_error(feature, scenario, step, exception, **_):

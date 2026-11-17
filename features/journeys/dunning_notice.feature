@@ -49,6 +49,12 @@ Feature: Readable issued dunning notice
       | 1280  |
       | 360   |
 
+  Scenario: A missing accounting scope is explained in German in an organization with a special levy
+    Given a rental agreement with receipts in two separate accounting scopes
+    And the organization holds a frozen special levy
+    When the manager submits a June tenant notice without an accounting scope at 1280 px
+    Then the form explains the accounting scope requirement in German and no draft exists
+
   Scenario: Issued principal, interest and arrears are readable without horizontal scrolling
     Given an unpaid rental agreement for 1234.56 EUR rent and no advance payment
     When the manager creates a January notice as of 2 March 2026 with automatic interest

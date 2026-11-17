@@ -34,6 +34,11 @@ Feature: Special levy
     And Berta's unit is sold to Clara from 1 August 2026, recorded after the levy
     Then the levy shows 480 euros for Berta and nothing for Clara
 
+  Scenario: The Mahnlauf still asks for an accounting scope once the organization holds a levy
+    When the manager creates the roof repair levy due on 1 July 2026
+    Then the Mahnlauf asks for an accounting scope
+    And an overview opened without an accounting scope is explained in German
+
   @browser
   Scenario Outline: Missing resolution feedback preserves the levy inputs at <width> pixels
     When the manager clicks create without a resolution in the browser at <width> pixels

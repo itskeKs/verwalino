@@ -22,6 +22,13 @@ from app.models.reserve_ledger_entry import ReserveLedgerEntry
 from app.repositories.base import TenantRepository
 
 
+# What a read without an accounting scope answers when only a scope can say which payments it includes.
+SCOPE_REQUIRED_MESSAGE = (
+    'Wählen Sie einen eindeutigen Abrechnungskreis und prüfen Sie noch nicht zugeordnete Daten, '
+    'bevor Sie die Zahlungen berechnen.'
+)
+
+
 class PaymentRepository(TenantRepository[Payment]):
     model = Payment
 
@@ -30,11 +37,7 @@ class PaymentRepository(TenantRepository[Payment]):
             'SELECT payment_computation_context_valid(:org,:lease,:owner)'),
             {'org': self._org_id, 'lease': lease_id, 'owner': owner_id})
         if not allowed:
-            raise HTTPException(
-                409,
-                'Wählen Sie einen eindeutigen Abrechnungskreis und prüfen Sie noch nicht zugeordnete Daten, '
-                'bevor Sie die Zahlungen berechnen.',
-            )
+            raise HTTPException(409, SCOPE_REQUIRED_MESSAGE)
 
     # ------------------------------------------------------------------
     # General queries

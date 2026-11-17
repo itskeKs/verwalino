@@ -20,7 +20,7 @@ import uuid
 from datetime import date
 
 from fastapi import HTTPException
-from app.services.financial_scope_service import FinancialScopeService
+from app.services.financial_scope_service import FinancialScopeService, ScopeRequired
 from app.core.temporal import db_exclusive_to_engine_inclusive
 from app.engine.periods import period_for_date, period_label
 from app.engine.dunning import find_overdue_items
@@ -61,9 +61,12 @@ class FristenService:
 
     async def requires_accounting_scope(self) -> bool:
         """Check monitor admission only, without loading financial report rows."""
-        sphere = await FinancialScopeService(
-            self._session, self._org_id, self._user_id
-        ).select_read_scope(None)
+        try:
+            sphere = await FinancialScopeService(
+                self._session, self._org_id, self._user_id
+            ).select_read_scope(None)
+        except ScopeRequired:
+            return True
         # An inherited database context is never an organization-wide legacy view.
         if sphere is not None:
             return True
@@ -78,7 +81,12 @@ class FristenService:
         return False
 
     async def build_monitor(self, reference_date: date, accounting_scope_id=None) -> list[DeadlineItem]:
-        sphere = await FinancialScopeService(self._session, self._org_id, self._user_id).select_read_scope(accounting_scope_id)
+        try:
+            sphere = await FinancialScopeService(self._session, self._org_id, self._user_id).select_read_scope(accounting_scope_id)
+        except ScopeRequired:
+            # The refusal of a special levy is the classified refusal: the monitor words it itself.
+            await self._repo.require_complete_overview()
+            raise
         if sphere is None:
             await self._repo.require_complete_overview()
         elif sphere.scope_type not in ('MIET', 'WEG'):
