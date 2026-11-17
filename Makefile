@@ -25,7 +25,7 @@ fi; \
 trap 'rmdir /tmp/verwalino-testdb.lock' EXIT
 endef
 
-.PHONY: help test test-agent-rules test-scenario-issues test-backend test-installer test-selfhost-format test-frontend test-bdd test-bdd-hosted test-browser test-scenarios-report typecheck lint lint-backend lint-frontend \
+.PHONY: help test test-agent-rules test-scenario-issues test-record-finding test-backend test-installer test-selfhost-format test-frontend test-bdd test-bdd-hosted test-browser test-scenarios-report typecheck lint lint-backend lint-frontend \
         docs-check mail-previews screenshots frontend-deps hooks check-testdb
 
 help: ## List the documented targets
@@ -33,13 +33,16 @@ help: ## List the documented targets
 
 # ---- tests -----------------------------------------------------------------
 
-test: test-agent-rules test-scenario-issues test-installer test-backend test-frontend typecheck ## Whole suite before a merge: agent rules + scenario filing + installer contracts + backend pytest (incl. BDD) + frontend vitest + typecheck
+test: test-agent-rules test-scenario-issues test-record-finding test-installer test-backend test-frontend typecheck ## Whole suite before a merge: agent rules + scenario filing + record-finding + installer contracts + backend pytest (incl. BDD) + frontend vitest + typecheck
 
 test-agent-rules: ## Paired agent rules, CLAUDE.md symlink and Codex hook contracts (stdlib only; no DB)
 	python3 -B scripts/test_agent_rules.py
 
 test-scenario-issues: ## Scenario failure filing contracts (stdlib only; GitHub is faked, no DB)
 	python3 -B scripts/test-scenario-issues.py
+
+test-record-finding: ## Record-finding contracts (stdlib only; GitHub is faked, no DB)
+	python3 -B scripts/test-record-finding.py
 
 test-backend: check-testdb ## Backend pytest against the test DB (PYTEST_ARGS="-q tests/test_x.py -k name" narrows it)
 	@$(TESTDB_LOCK); \
