@@ -99,9 +99,10 @@ AGENTS.md retains the safety baseline and tests/CI check parity.
 - **`make review-worktree PR=<n>`** — first step of a fresh review: the detached worktree
   `../verwalino-review-<n>` on the head of open PR `<n>`, the locked backend environment installed
   (`uv sync --locked --extra dev --extra ops --extra ocr`), then the directory and the line that loads the
-  test environment. It refuses a directory that already exists (that PR is under review) and a PR that is
-  not open. It takes no test-database lock and runs no tests; frontend dependencies stay a review's own
-  business. `make review-worktree-remove PR=<n>` is the last step: it removes that worktree only when its
+  test environment. It refuses a directory that already exists (that PR is under review), a PR that is
+  not open and a PR from a fork (its head is not a branch of this repository). It takes no
+  test-database lock and runs no tests; frontend dependencies stay a review's own business.
+  `make review-worktree-remove PR=<n>` is the last step: it removes that worktree only when its
   tree is clean and no process uses it, otherwise it says what keeps it.
 - **`make docs-check`** — relative links and images in every Markdown file outside `docs/archive/`.
 - While iterating, run one file: `cd backend && uv run pytest tests/test_x.py -k name`,

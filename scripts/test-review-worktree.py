@@ -45,7 +45,9 @@ if name == "gh":
         print("fake gh: no pull request found", file=sys.stderr)
         sys.exit(1)
     template = args[args.index("--template") + 1]
-    sys.stdout.write(re.sub(r"\{\{\.(\w+)\}\}", lambda match: pull_request[match.group(1)], template))
+    def render(value):
+        return ("true" if value else "false") if isinstance(value, bool) else value
+    sys.stdout.write(re.sub(r"\{\{\.(\w+)\}\}", lambda match: render(pull_request[match.group(1)]), template))
 elif name == "uv":
     if (STATE / "uv_fail").exists():
         print("fake uv: resolution failed", file=sys.stderr)
@@ -90,7 +92,7 @@ class Sandbox(unittest.TestCase):
         self.origin = self.base / "origin.git"
         self.checkout = self.base / "checkout"
         self.make_repositories()
-        self.set_pull_requests({"42": {"state": "OPEN", "headRefName": BRANCH}})
+        self.set_pull_requests({"42": {"state": "OPEN", "headRefName": BRANCH, "isCrossRepository": False}})
 
     # ---- fixtures ----------------------------------------------------------
 
@@ -210,11 +212,11 @@ class CreateTests(Sandbox):
         self.assertEqual(self.git(review, "status", "--porcelain").stdout, "", "clean, .venv is ignored")
         self.assertEqual((review / "feature.txt").read_text(), "second\n")
 
-    def test_create_asks_github_once_for_the_state_and_head_branch_of_that_pr(self):
+    def test_create_asks_github_once_for_the_state_origin_and_head_branch_of_that_pr(self):
         self.create_ok()
         self.assertEqual(
             [call["args"] for call in self.calls("gh")],
-            [["pr", "view", "42", "-R", REPO, "--json", "state,headRefName", "--template", "{{.state}} {{.headRefName}}"]],
+            [["pr", "view", "42", "-R", REPO, "--json", "state,isCrossRepository,headRefName", "--template", "{{.state}} {{.isCrossRepository}} {{.headRefName}}"]],
         )
 
     def test_create_installs_the_locked_backend_extras_in_the_review_backend(self):
@@ -258,12 +260,30 @@ class CreateTests(Sandbox):
     def test_create_refuses_a_pr_that_is_not_open(self):
         for state in ("MERGED", "CLOSED"):
             with self.subTest(state=state):
-                self.set_pull_requests({"42": {"state": state, "headRefName": BRANCH}})
+                self.set_pull_requests({"42": {"state": state, "headRefName": BRANCH, "isCrossRepository": False}})
                 result = self.create()
                 self.assertNotEqual(result.returncode, 0)
                 self.assertIn(state, result.stderr)
                 self.assertIn("not open", result.stderr)
                 self.assertNothingChanged()
+        self.assertEqual(self.calls("uv"), [])
+
+    def test_create_refuses_a_pr_from_a_fork_before_any_fetch(self):
+        # The fork's head branch has the name of a branch that exists on origin: without the refusal the
+        # worktree would be built on that unrelated branch and the script would report success.
+        self.set_pull_requests({"42": {"state": "OPEN", "headRefName": BRANCH, "isCrossRepository": True}})
+        tip = self.push_new_commit()
+        tracked = self.git(self.checkout, "rev-parse", f"origin/{BRANCH}").stdout.strip()
+        self.assertNotEqual(tracked, tip)
+
+        result = self.create()
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("PR #42", result.stderr)
+        self.assertIn("from a fork", result.stderr)
+        self.assertIn("no review worktree was made", result.stderr)
+        self.assertNothingChanged()
+        self.assertEqual(self.git(self.checkout, "rev-parse", f"origin/{BRANCH}").stdout.strip(), tracked, "no fetch ran")
         self.assertEqual(self.calls("uv"), [])
 
     def test_create_refuses_a_pr_github_does_not_know(self):
@@ -280,7 +300,7 @@ class CreateTests(Sandbox):
         self.assertEqual(self.calls("uv"), [])
 
     def test_create_refuses_a_branch_that_is_gone_from_origin(self):
-        self.set_pull_requests({"42": {"state": "OPEN", "headRefName": "feat/deleted"}})
+        self.set_pull_requests({"42": {"state": "OPEN", "headRefName": "feat/deleted", "isCrossRepository": False}})
         result = self.create()
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("feat/deleted", result.stderr)
@@ -333,7 +353,7 @@ class RemoveTests(Sandbox):
         self.assertNothingChanged()
 
     def test_remove_works_for_a_pr_that_is_no_longer_open_and_never_asks_github(self):
-        self.set_pull_requests({"42": {"state": "MERGED", "headRefName": BRANCH}})
+        self.set_pull_requests({"42": {"state": "MERGED", "headRefName": BRANCH, "isCrossRepository": False}})
         self.flag("gh_fail")
         self.assertEqual(self.remove().returncode, 0)
         self.assertEqual([call["tool"] for call in self.calls()[self.calls_before:]], ["lsof"])

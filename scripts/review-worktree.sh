@@ -4,11 +4,12 @@
 #   scripts/review-worktree.sh create <PR>
 #   scripts/review-worktree.sh remove <PR>
 #
-# `create` asks GitHub for the PR's state and head branch, refuses a PR that is not open and a directory that
-# already exists (an existing review worktree means that PR is under review), fetches the branch, adds the
-# detached worktree ../verwalino-review-<PR> beside the main checkout on origin/<branch>, installs the locked
-# backend environment there and prints the directory and the line that loads the test environment. A failed
-# install removes the worktree again, so that a second call is not refused because of it.
+# `create` asks GitHub for the PR's state, origin and head branch, refuses a PR that is not open, a PR from a
+# fork and a directory that already exists (an existing review worktree means that PR is under review),
+# fetches the branch, adds the detached worktree ../verwalino-review-<PR> beside the main checkout on
+# origin/<branch>, installs the locked backend environment there and prints the directory and the line that
+# loads the test environment. A failed install removes the worktree again, so that a second call is not
+# refused because of it.
 #
 # `remove` needs no network. It removes the worktree only when its tree is clean and no process has a file or
 # its working directory in it; otherwise it names what keeps it and changes nothing.
@@ -33,14 +34,16 @@ usage_error() {
 die() { echo "review-worktree: $*" >&2; exit 1; }
 
 create() { # PR
-  local pr="$1" dir="$BASE/verwalino-review-$1" listing state branch
+  local pr="$1" dir="$BASE/verwalino-review-$1" listing state cross branch
   if [ -e "$dir" ] || [ -L "$dir" ]; then
     die "$dir exists: PR #$pr is under review there, or it is a leftover; nothing was changed"
   fi
-  listing="$(gh pr view "$pr" -R "$REPO" --json state,headRefName --template '{{.state}} {{.headRefName}}')" \
+  listing="$(gh pr view "$pr" -R "$REPO" --json state,isCrossRepository,headRefName \
+    --template '{{.state}} {{.isCrossRepository}} {{.headRefName}}')" \
     || die "cannot read PR #$pr from GitHub"
-  read -r state branch <<< "$listing"
+  read -r state cross branch <<< "$listing"
   [ "$state" = OPEN ] || die "PR #$pr is ${state:-unknown}, not open; no review worktree was made"
+  [ "$cross" = false ] || die "PR #$pr comes from a fork, its head is not a branch of $REPO; no review worktree was made"
   [ -n "$branch" ] || die "PR #$pr has no head branch; no review worktree was made"
   git -C "$MAIN" fetch --quiet origin "+refs/heads/$branch:refs/remotes/origin/$branch" \
     || die "cannot fetch branch $branch of PR #$pr from origin; no review worktree was made"
