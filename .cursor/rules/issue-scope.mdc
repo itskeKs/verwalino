@@ -22,6 +22,12 @@ alwaysApply: true
 
   Line format, several lines may share one comment:
   `- [ ] <class or ?> | <screen or file:line> | <what was seen; UI text verbatim> | <SHA> | PR #<n>`
+- A repeated procedure is recorded too, so that it can become a script: before running a
+  procedure of several commands, look in `make help` and `scripts/`. A procedure of three or more
+  commands that a session runs by hand and that an earlier session ran too gets one line on the
+  inbox issue with the class `repeat`:
+  `- [ ] repeat | <what the procedure is for> | <the commands, shortened> | <SHA> | PR #<n>`
+  A triage run asks the owner whether it becomes a script; no session writes the script in passing.
 - Immediate issue only for the four blocker categories, security, data loss, or a step of a core
   journey a user cannot finish, after searching open issues (comment there if one covers it).
   Outside that: at most one new issue per PR, only for a self-contained defect on the PR's own
