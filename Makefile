@@ -51,13 +51,14 @@ test-backend: check-testdb ## Backend pytest against the test DB (PYTEST_ARGS="-
 	@$(TESTDB_LOCK); \
 	( . ./scripts/test-env.sh && cd backend && $(UV_TEST) pytest $(PYTEST_ARGS) )
 
-test-installer: ## Self-host installer, hosted-server and acceptance-environment script contract tests (no DB; Docker, uv and npm are faked)
+test-installer: ## Self-host installer, hosted-server, acceptance-environment and merge script contract tests (no DB; Docker, uv, npm and gh are faked)
 	python3 -B scripts/test-install.py
 	python3 -B scripts/test-install-scenarios.py
 	cd backend && exec $(UV_LINT) python -B ../scripts/test-self-host.py
 	cd backend && $(UV_LINT) python ../scripts/test-server-deploy.py
 	cd backend && $(UV_LINT) python ../scripts/test-canary.py
 	python3 -B scripts/test-acceptance-env.py
+	python3 -B scripts/test-merge-pr.py
 
 test-selfhost-format: ## Opt-in backup format round trip in scratch test databases; owns the test DB lock
 	@( $(TESTDB_LOCK); \

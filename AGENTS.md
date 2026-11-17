@@ -77,6 +77,12 @@ enforcement; every baseline and safety rule here stays in force.
   Line format, several lines may share one comment:
   `- [ ] <class or ?> | <screen or file:line> | <what was seen; UI text verbatim> | <SHA> | PR #<n>`
   `scripts/record-finding.py` posts these lines and guards against duplicates.
+- A repeated procedure is recorded too, so that it can become a script: before running a
+  procedure of several commands, look in `make help` and `scripts/`. A procedure of three or more
+  commands that a session runs by hand and that an earlier session ran too gets one line on the
+  inbox issue with the class `repeat`:
+  `- [ ] repeat | <what the procedure is for> | <the commands, shortened> | <SHA> | PR #<n>`
+  A triage run asks the owner whether it becomes a script; no session writes the script in passing.
 - Immediate issue only for the four blocker categories, security, data loss, or a step of a core
   journey a user cannot finish, after searching open issues (comment there if one covers it).
   Outside that: at most one new issue per PR, only for a self-contained defect on the PR's own
@@ -93,7 +99,8 @@ enforcement; every baseline and safety rule here stays in force.
   "Owner decision"); a question one of them settles is answered on the issue, not asked again.
 - A session pushes only its own PR branch and merges only the PR it works on: after a fresh
   review by an agent that gets nothing from the session's context, on green CI, under the merge
-  lock (Context economy). Codex and subagents never push or merge. Never push to `main`. A risky
+  lock (Context economy), with `scripts/merge-pr.sh` (Gates). Codex and subagents never push or
+  merge. Never push to `main`. A risky
   PR (migrations, isolation or RLS, money, GoBD, auth, backup and restore) gets a parallel,
   blind cross-review by independent reviewers before the merge (`.coddy/crossreview.json`);
   that is recommended, not a chain.
@@ -198,6 +205,7 @@ Report cleanup in one line in the status/report, never in a repository file.
 | `make review-worktree PR=<n>` | first step of a fresh review: detached `../verwalino-review-<n>` on the head of open PR `<n>` with the locked backend environment installed; prints the directory and the line that loads the test environment; refuses an existing directory, a PR that is not open and a PR from a fork; takes no DB lock and runs no tests |
 | `make review-worktree-remove PR=<n>` | last step of a fresh review: removes that worktree when its tree is clean and no process uses it, otherwise says what keeps it |
 | `make hooks` | enables `.githooks/pre-commit` (ruff and eslint on staged code, docs link check) |
+| `scripts/merge-pr.sh <PR> --reviewed <sha> --note-file <file>` | the merge of a reviewed PR: needs the maintainer lock `/tmp/verwalino-maintainer.lock` held by its caller, takes the merge lock itself, merges `main` into the branch, waits for CI on that commit, posts the note, merges with a merge commit, ticks the issue's boxes, removes its worktree; contract test in `make test-installer` |
 
 CI (`.github/workflows/tests-on-pr.yaml`) runs the same on every PR. A red job is fixed, not
 skipped. Do not bypass the hook to land code.
@@ -248,13 +256,14 @@ session that the owner starts by hand finishes it, like any other PR that no ses
 more. Sessions do not message each other; what another session must know is a comment on the
 issue or PR; an issue a session gives up before its PR gets a comment starting with `Blocked:`,
 and no session takes it again before a later "Owner decision".
-Merges are serialized by a short lock, `/tmp/verwalino-merge.lock` (a `mkdir`, with the PR number
-and time in `info`): taken right before the branch is brought up to date with `main` and merged,
+Merges are serialized by a short lock, `/tmp/hausverwaltung-merge.lock` (a `mkdir`, with the PR
+number and time in `info`): taken right before the branch is brought up to date with `main` and merged,
 released as soon as the merge is on `main`, never held longer than for that CI run, the local
 gate and the merge itself, and never longer than twice the duration of the whole suite (about
 30 minutes) plus 30 minutes. A lock older than that, or one naming a merged or closed PR and older
 than 30 minutes, is a crash remnant; it is removed atomically (`mv` to a private name, check
-`info`, then `rm -r`). An acceptance run on a shared environment holds
+`info`, then `rm -r`). `scripts/merge-pr.sh` takes and releases this lock for its run and removes
+no remnant. An acceptance run on a shared environment holds
 `/tmp/hausverwaltung-acceptance.lock` under the same rules. All sessions of a project run on one
 machine, because these locks and the worktree claims only work there. A maintainer session's
 review worktree is detached on `origin/<branch>`, because the issue worktree holds the branch.
