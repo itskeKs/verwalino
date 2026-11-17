@@ -76,6 +76,7 @@ enforcement; every baseline and safety rule here stays in force.
 
   Line format, several lines may share one comment:
   `- [ ] <class or ?> | <screen or file:line> | <what was seen; UI text verbatim> | <SHA> | PR #<n>`
+  `scripts/record-finding.py` posts these lines and guards against duplicates.
 - Immediate issue only for the four blocker categories, security, data loss, or a step of a core
   journey a user cannot finish, after searching open issues (comment there if one covers it).
   Outside that: at most one new issue per PR, only for a self-contained defect on the PR's own
@@ -192,6 +193,7 @@ Report cleanup in one line in the status/report, never in a repository file.
 | `make test-bdd` | API scenarios in `features/` |
 | `make test-browser` | headless `@browser` scenarios; owns the shared DB lock and local stack |
 | `make docs-check` | relative links in all Markdown outside `docs/archive/` |
+| `make test-record-finding` | record-finding script contracts (stdlib only; GitHub is faked, no DB) |
 | `make hooks` | enables `.githooks/pre-commit` (ruff and eslint on staged code, docs link check) |
 
 CI (`.github/workflows/tests-on-pr.yaml`) runs the same on every PR. A red job is fixed, not
