@@ -669,7 +669,8 @@ class PaymentService:
     ) -> MietkontoResult:
         """Soll/Ist/Saldo + offene Posten of one lease over a period (§3.1)."""
         await FinancialScopeService(self._session, self._org_id, self._user_id).select_report_scope(
-            accounting_scope_id, scope_type='MIET', period_start=period_start, period_end=period_end)
+            accounting_scope_id, scope_type='MIET', period_start=period_start, period_end=period_end,
+            lease_id=lease_agreement_id)
         lease = await self._leases.get_by_id(lease_agreement_id)
         if lease is None:
             raise HTTPException(status_code=404, detail="Lease agreement not found")
@@ -876,7 +877,7 @@ class PaymentService:
                 raise HTTPException(404, 'Economic plan not found')
             await context.enter(inherited_plan, computation=True)
         sphere = await context.select_report_scope(accounting_scope_id,
-            scope_type='WEG', period_start=period_start, period_end=period_end)
+            scope_type='WEG', period_start=period_start, period_end=period_end, owner_id=owner_profile_id)
         if not await self._session.scalar(text("SELECT property_source_security_mode(:org)='PREPARATION' OR profile_source_access(:org,'owner_profile',:profile,'read')"),
                 {'org': self._org_id, 'profile': owner_profile_id}):
             raise HTTPException(404, 'Owner profile not accessible')
@@ -888,7 +889,7 @@ class PaymentService:
                 raise HTTPException(status_code=404, detail="Economic plan not found")
             await context.enter(plan, computation=True)
             sphere = await context.select_report_scope(accounting_scope_id,
-                scope_type='WEG', period_start=period_start, period_end=period_end)
+                scope_type='WEG', period_start=period_start, period_end=period_end, owner_id=owner_profile_id)
             if sphere is not None and (period_start < plan.period_start or period_end > plan.period_end):
                 raise HTTPException(422, 'Report period is outside economic plan')
             if plan.status == "finalized":

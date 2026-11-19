@@ -74,15 +74,19 @@ class FinancialScopeService:
         await self.session.execute(text("SELECT pg_advisory_xact_lock(hashtextextended(:key,0))"),
             {'key': f'financial-inputs:{self.org_id}'})
 
-    async def select_read_scope(self, scope_id=None):
-        """Install one live, complete read context; omitted means legacy only."""
+    async def select_read_scope(self, scope_id=None, *, lease_id=None, owner_id=None):
+        """Install one live, complete read context; omitted means legacy only.
+
+        An unscoped read that concerns exactly one lease or one owner names it (`lease_id`, `owner_id`):
+        a special levy of the organization then refuses it only where classified data refuses it.
+        """
         await self.lock_inputs()
         selected = await self.session.scalar(text("SELECT NULLIF(current_setting('app.current_scope_id',true),'')::uuid"))
         if selected is not None and scope_id is not None and selected != scope_id:
             raise HTTPException(409, 'Report scope differs from its financial source')
         scope_id = scope_id or selected
         if scope_id is None:
-            await self.require_report_sources(None)
+            await self.require_report_sources(None, lease_id=lease_id, owner_id=owner_id)
             return None
         sphere = await AuthorizationService(self.session,
             AuthContext(self.user_id, self.org_id, 'live database role required')).require(scope_id, ScopeCapability.READ)
@@ -93,9 +97,9 @@ class FinancialScopeService:
         await self.require_report_sources(scope_id)
         return sphere
 
-    async def require_report_sources(self, scope_id):
-        if await self.session.scalar(text("SELECT report_scope_source_access(:org,:scope,'read')"),
-                {'org': self.org_id, 'scope': scope_id}):
+    async def require_report_sources(self, scope_id, *, lease_id=None, owner_id=None):
+        if await self.session.scalar(text("SELECT report_scope_source_access(:org,:scope,'read',:lease,:owner)"),
+                {'org': self.org_id, 'scope': scope_id, 'lease': lease_id, 'owner': owner_id}):
             return
         if scope_id is None and await self.levy_refuses_unscoped_read():
             raise ScopeRequired()
@@ -114,11 +118,11 @@ class FinancialScopeService:
             "SELECT 1 FROM property p WHERE p.organization_id=:org AND property_has_classified_finance(:org,p.id))"),
             {'org': self.org_id}))
 
-    async def select_report_scope(self, scope_id, *, scope_type, period_start, period_end):
+    async def select_report_scope(self, scope_id, *, scope_type, period_start, period_end, lease_id=None, owner_id=None):
         """Read-only statement context, including an inherited plan context."""
         if period_start > period_end:
             raise HTTPException(422, 'Report period must not end before it starts')
-        sphere = await self.select_read_scope(scope_id)
+        sphere = await self.select_read_scope(scope_id, lease_id=lease_id, owner_id=owner_id)
         if sphere is None:
             return None
         if sphere.scope_type != scope_type:

@@ -77,13 +77,20 @@ do not recalculate old levies; a later change of the ownership history does move
 (see below). `GET /api/special-levies` reads with an optional
 property/scope filter under actual scope and source permissions; incomplete
 access is not output as a complete empty list. A levy is read only in its own scope, so once an
-organization holds one, every overview read without an accounting scope (the Fristen and their
-context, open items, owner and tenant accounts, new notices) is refused with the German 409
-of classified data („Wählen Sie einen eindeutigen Abrechnungskreis …“), and
+organization holds one, a read without an accounting scope is refused with the German 409
+of classified data („Wählen Sie einen eindeutigen Abrechnungskreis …“) wherever it could
+include a levy: the organization-wide overviews (the Fristen and their context, the Mahnlauf,
+the open items of all leases) and every account or new notice of one tenant lease or one owner
+that touches a property with classified finance, the levy's own property included.
 `GET /api/fristen/context` answers `requires_accounting_scope: true`, so the Mahnlauf offers the
-scope selector. Unlike the refusal for classified data, this one covers every property of the
-organization, also one without an accounting scope (#739). Reads with the levy's scope are
-unchanged. The existing
+scope selector. The account or a new notice of one tenant lease or one owner whose properties
+have no classified finance (no scope-bound inputs, no levy), such as a property without an
+accounting scope, is answered as before the levy (#739). A lease belongs to the property of its
+unit; an owner is judged by every property of its ownership entries, payments, plan lines and
+levy allocations. The decision is one database function,
+`report_scope_source_access(org, sphere, capability, lease, owner)` (migration 0193), next to the
+three-argument function that exports, SEPA and the source policies keep calling. Reads with the
+levy's scope are unchanged. The existing
 owner account counts the share once as `SONDERZAHLUNG` in the
 due month, even without an economic plan; regularly booked special payments
 reduce the open amount. Under `/sonderumlagen`, property and read scope are
