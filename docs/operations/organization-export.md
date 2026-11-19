@@ -286,6 +286,16 @@ by the archived administrator, delete the source organization first and import
 as the administrator who carries the archived address. Cloning an organization with its scopes beside
 the living original is not supported (owner decision on issue #134).
 
+**Contact data domains.** A contact's data domain (`person_data_domain`) is
+evidence of an administrator's act and has the same limit. The trigger
+`protect_person_data_setup` accepts a new domain only when its `created_by` is
+the session user, so the domain is restored when the archived creator is the
+importing administrator's own account (source organization gone, same address)
+and refused with entity `person_data_domain` beside the living original or when
+another archived account created it. The same trigger accepts a grant
+(`person_data_grant`) only from the session user as `granted_by` and only for
+an active member.
+
 **Dunning notices.** A scoped dunning notice is restored with its immutable
 scope context (`dunning_scope_context`: scope, period, lease or plan, and for an
 owner notice on a special levy the frozen levy IDs) and with the archived
