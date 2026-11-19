@@ -562,6 +562,11 @@ async def import_organization(db, auth, source):
                             row['email'] = f"{row['id']}-{auth.organization_id}@imported.archive.invalid"
                     if name == 'person':
                         row['created_by'] = str(auth.user_id)
+                    if name == 'task':
+                        # The importer performs the insert: `task_insert` binds the creator to the
+                        # signed-in user, and `task_parent_guard` takes only an active member as
+                        # assignee, which an archived user is not after the import.
+                        row['created_by'] = row['assigned_user_id'] = str(auth.user_id)
                     member = documents.get((name, original.get('id')))
                     if row.get('storage_uri') and row.get('content_sha256'):
                         if member is None or members[member][1] != row['content_sha256']:
