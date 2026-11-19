@@ -39,6 +39,12 @@ Feature: Special levy
     Then the Mahnlauf asks for an accounting scope
     And an overview opened without an accounting scope is explained in German
 
+  Scenario: A tenant of a property without an accounting scope keeps the rent account and the notice once the organization holds a levy
+    Given Sonnenweg 5 has no accounting scope and its tenant owes 700 euros rent for January 2026
+    When the manager creates the roof repair levy due on 1 July 2026
+    Then the rent account and the open items of that tenant show 700 euros open for January 2026
+    And the manager can create a tenant notice over 700 euros for that rent
+
   @browser
   Scenario Outline: Missing resolution feedback preserves the levy inputs at <width> pixels
     When the manager clicks create without a resolution in the browser at <width> pixels

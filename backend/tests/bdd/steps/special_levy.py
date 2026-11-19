@@ -9,6 +9,7 @@ from playwright.async_api import expect
 from pytest_bdd import given, when, then, parsers
 
 from tests.bdd.steps.browser_setup import create
+from tests.bdd.steps.records import create_person
 from tests.bdd.steps.browser_common import browser_step
 
 
@@ -107,6 +108,48 @@ def levy_elsewhere(world, seed_data):
     roof_repair(world, seed_data)
     create_roof_levy(world)
     world.data.update(own)
+
+
+@given('Sonnenweg 5 has no accounting scope and its tenant owes 700 euros rent for January 2026')
+def rental_without_scope(world, seed_data):
+    user = str(seed_data['user_a_admin_id'])
+    prop = create(world, '/api/properties', {
+        'name': 'Sonnenweg 5', 'management_type': 'MIET', 'street': 'Sonnenweg 5', 'zip_code': '12345', 'city': 'Teststadt',
+        'data_audience': {'label': f'Sonnenweg {uuid4()}', 'reason': 'Synthetic special levy',
+            'grants': [{'user_id': user, 'capabilities': ['read', 'prepare', 'approve', 'export'], 'reason': 'Synthetic special levy'}]},
+    }, keyed=True)
+    unit = create(world, '/api/units', {'property_id': prop['id'], 'number': '1', 'usage_type': 'WOHNUNG', 'area': '70'})
+    person = create_person(world, 'Verwaltung Alpha', 'Synthetisch')
+    domain = create(world, '/api/person-data-domains', {'person_id': person.id, 'reason_code': 'INITIAL_SETUP'}, keyed=True)
+    create(world, f"/api/person-data-domains/{domain['id']}/grants", {'user_id': user,
+        'capabilities': ['read', 'prepare', 'export'], 'reason_code': 'TEAM_ACCESS'}, keyed=True)
+    tenant = create(world, '/api/tenant-profiles', {'person_id': person.id})
+    lease = create(world, '/api/leases', {'unit_id': unit['id'], 'tenant_profile_id': tenant['id'],
+        'valid_from': '2026-01-01', 'base_rent': '700.00', 'advance_payment': '0.00'})
+    world.data.update(plain_tenant=tenant, plain_lease=lease)
+
+
+JANUARY = {'period_start': '2026-01-01', 'period_end': '2026-01-31'}
+
+
+@then('the rent account and the open items of that tenant show 700 euros open for January 2026')
+def rent_account_without_scope(world):
+    lease = world.data['plain_lease']['id']
+    account = world.act('GET', f'/api/payments/mietkonto/lease/{lease}', params=JANUARY)
+    assert account.status_code == 200, world.describe_response()
+    assert (account.json()['soll_total'], account.json()['ist_total'], account.json()['balance']) == ('700.00', '0.00', '700.00')
+    items = world.act('GET', f'/api/payments/open-items/lease/{lease}', params=JANUARY)
+    assert items.status_code == 200, world.describe_response()
+    assert [(row['payment_type'], row['open_amount']) for row in items.json()] == [('KALTMIETE', '700.00')]
+
+
+@then('the manager can create a tenant notice over 700 euros for that rent')
+def notice_without_scope(world):
+    answer = world.act('POST', '/api/dunning/tenant', json={
+        'tenant_profile_id': world.data['plain_tenant']['id'], 'lease_agreement_id': world.data['plain_lease']['id'],
+        **JANUARY, 'reference_date': '2026-03-02'})
+    assert answer.status_code == 201, world.describe_response()
+    assert (answer.json()['principal_amount'], answer.json()['total_amount']) == ('700.00', '700.00')
 
 
 @when("Berta's ownership entry is corrected to start on 1 August 2026")

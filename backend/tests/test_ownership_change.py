@@ -948,9 +948,11 @@ async def test_hausgeld_soll_follows_the_corrected_start_date(client_a_admin, ow
 # has to be put in one of the two sets, which is the review of that choice.
 # guard_special_levy and validate_special_levy_total (migration 0191) accept a corrected row only for the rows of
 # a levy's creation or import, which point at the row the levy was calculated from, and refuse it for a moved
-# allocation.
-SKIPS_CORRECTED_ROWS = {"guard_special_levy", "payment_computation_context_valid", "reserve_contribution_headroom",
-                        "validate_dunning_context", "validate_sev_owner", "validate_special_levy_total"}
+# allocation. report_scope_source_access (migration 0193) names the properties an owner holds units of now; a levy
+# whose share a corrected row still carries is found through the owner's allocation.
+SKIPS_CORRECTED_ROWS = {"guard_special_levy", "payment_computation_context_valid", "report_scope_source_access",
+                        "reserve_contribution_headroom", "validate_dunning_context", "validate_sev_owner",
+                        "validate_special_levy_total"}
 FOLLOWS_THE_ROW_ITSELF = {
     "access_coverage_actor_access", "access_coverage_manifest_pre_intake", "access_coverage_manifest_v1",
     "access_item_disposition_pre_intake", "apply_person_privacy", "dunning_legacy_subject_clear",

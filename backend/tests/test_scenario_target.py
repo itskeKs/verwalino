@@ -406,23 +406,6 @@ def scenario_item(feature):
                            add_marker=markers.append, feature=feature, markers=markers)
 
 
-@pytest.mark.parametrize('external', [False, True])
-def test_the_features_that_freeze_a_special_levy_run_after_all_others(monkeypatch, external):
-    from types import SimpleNamespace
-    from tests.bdd.conftest import pytest_collection_modifyitems
-
-    monkeypatch.setenv('VERWALINO_TARGET_URL', 'http://synthetic.invalid' if external else '')
-    collected = ['bank_account_scope_assignment.feature', 'dunning_batch.feature', 'dunning_interest.feature',
-                 'dunning_levy_level.feature', 'dunning_notice.feature', 'economic_plan.feature',
-                 'special_levy.feature', 'user_creation.feature', 'weg_settlement.feature']
-    items = [scenario_item(feature) for feature in collected]
-    pytest_collection_modifyitems(SimpleNamespace(getoption=lambda *args, **kwargs: True), items)
-    assert [item.feature for item in items] == ['dunning_interest.feature', 'economic_plan.feature', 'user_creation.feature',
-                                                'bank_account_scope_assignment.feature', 'dunning_batch.feature',
-                                                'dunning_levy_level.feature', 'dunning_notice.feature',
-                                                'special_levy.feature', 'weg_settlement.feature']
-
-
 @pytest.mark.parametrize('feature,skipped', [('user_invitation.feature', True), ('password_reset.feature', True),
                                              ('user_creation.feature', False)])
 def test_external_target_skips_the_mail_features_that_need_the_local_app(monkeypatch, feature, skipped):

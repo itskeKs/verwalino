@@ -104,7 +104,7 @@ class DunningService:
         """
         ref_date = reference_date or date.today()
         context = DunningScopeService(self._session, self._org_id, self._user_id)
-        sphere = await context.prepare(accounting_scope_id, 'MIET', period_start, period_end)
+        sphere = await context.prepare(accounting_scope_id, 'MIET', period_start, period_end, lease_id=lease_agreement_id)
 
         lease, tenant, result, dunning = await self.tenant_basis(
             tenant_profile_id, lease_agreement_id, period_start, period_end,
@@ -188,7 +188,7 @@ class DunningService:
     ):
         """One history-aware canonical statement and engine assembly, without writes."""
         context = DunningScopeService(self._session, self._org_id, self._user_id)
-        sphere = await context.prepare(accounting_scope_id, 'MIET', period_start, period_end)
+        sphere = await context.prepare(accounting_scope_id, 'MIET', period_start, period_end, lease_id=lease_agreement_id)
         lease, tenant, _, unit, _ = await self.require_tenant_sources(
             lease_agreement_id, tenant_profile_id, sphere)
         if lease.valid_from > period_end or (lease.valid_to is not None and lease.valid_to <= period_start):
@@ -229,7 +229,7 @@ class DunningService:
         """Create a draft dunning notice for an owner based on overdue open items."""
         ref_date = reference_date or date.today()
         context = DunningScopeService(self._session, self._org_id, self._user_id)
-        sphere = await context.prepare(accounting_scope_id, 'WEG', period_start, period_end)
+        sphere = await context.prepare(accounting_scope_id, 'WEG', period_start, period_end, owner_id=owner_profile_id)
 
         owner = await self._owners.get_by_id(owner_profile_id)
         if owner is None:
@@ -243,7 +243,7 @@ class DunningService:
             if plan is None:
                 raise HTTPException(404, "Economic plan not found")
             plan_scope = await context.financial.enter(plan, computation=True)
-            sphere = await context.prepare(accounting_scope_id, 'WEG', period_start, period_end)
+            sphere = await context.prepare(accounting_scope_id, 'WEG', period_start, period_end, owner_id=owner_profile_id)
             if sphere is not None and plan_scope is None:
                 raise HTTPException(422, 'Economic plan must be bound to the selected scope')
             if sphere is not None and (plan.status != 'finalized' or period_start < plan.period_start or period_end > plan.period_end):

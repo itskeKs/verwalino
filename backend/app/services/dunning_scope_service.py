@@ -17,13 +17,15 @@ class DunningScopeService:
         self.financial = FinancialScopeService(session, org_id, user_id)
         self.auth = AuthorizationService(session, AuthContext(user_id, org_id, 'live database role required'))
 
-    async def prepare(self, scope_id, scope_type, period_start, period_end):
+    async def prepare(self, scope_id, scope_type, period_start, period_end, *, lease_id=None, owner_id=None):
+        """A notice that concerns exactly one lease or one owner names it, like the statement it is built from."""
         sphere = await self.financial.select_report_scope(scope_id, scope_type=scope_type,
-            period_start=period_start, period_end=period_end)
+            period_start=period_start, period_end=period_end, lease_id=lease_id, owner_id=owner_id)
         if sphere is not None:
             await self.auth.require(sphere.id, ScopeCapability.PREPARE)
-        if not await self.session.scalar(text("SELECT report_scope_source_access(:org,:scope,'prepare')"),
-                {'org': self.org_id, 'scope': sphere.id if sphere is not None else None}):
+        if not await self.session.scalar(text("SELECT report_scope_source_access(:org,:scope,'prepare',:lease,:owner)"),
+                {'org': self.org_id, 'scope': sphere.id if sphere is not None else None,
+                 'lease': lease_id, 'owner': owner_id}):
             raise HTTPException(404, 'Complete dunning sources not accessible')
         return sphere
 
