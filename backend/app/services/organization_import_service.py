@@ -254,6 +254,13 @@ async def admission(db, org, identities=None):
                            {'org': org, 'ids': json.dumps(identities or {})})
 
 
+def without_generated_columns(row, spec):
+    """The database computes generated columns and refuses any statement that names one (sqlstate
+    428C9), so the import never writes them, also when the archive carries them (the export does)."""
+    generated = set(spec['generated_columns'] or [])
+    return {k: v for k, v in row.items() if k not in generated}
+
+
 async def import_organization(db, auth, source):
     # ACL exclusive comes first (user relinking), followed by the ordinary quota
     # lock. All emptiness checks, row inserts and audit commit in this transaction.
@@ -418,7 +425,8 @@ async def import_organization(db, auth, source):
                     except OSError:
                         logger.warning('Import rollback file cleanup failed for %s', key, exc_info=True)
 
-        organization = {k: v for k, v in entities['organization'][0].items() if k not in {'id', 'source_id'}}
+        organization = without_generated_columns(
+            {k: v for k, v in entities['organization'][0].items() if k not in {'id', 'source_id'}}, specs['organization'])
         columns = ','.join(f'"{c}"' for c in organization)
         projection = ','.join(f'(v)."{c}"' for c in organization)
         try:
@@ -548,7 +556,8 @@ async def import_organization(db, auth, source):
                         pending.remove((name, original))
                         progress = True
                         continue
-                    row = remap({k: v for k, v in original.items() if k != 'source_id'}, {**flat, **storage_map})
+                    row = remap(without_generated_columns({k: v for k, v in original.items() if k != 'source_id'}, specs[name]),
+                                {**flat, **storage_map})
                     if row.get('snapshot_payload') is not None and row.get('snapshot_sha256'):
                         from app.engine.canonical import canonical_sha256
                         if canonical_sha256(original['snapshot_payload']) != original['snapshot_sha256']:

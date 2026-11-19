@@ -33,6 +33,12 @@ Feature: Organization export import
     And the archive is imported into an empty organization
     Then the imported task list shows both tasks with their titles, due dates and status and the first one linked to the imported property
 
+  Scenario: An organization whose owner contact has a data domain is restored with its label
+    Given a separate organization has an owner contact with a data domain for export
+    When its administrator downloads the organization archive
+    And the archive is imported into an empty organization after its source organization was deleted
+    Then the imported owner contact shows its data domain labelled after the contact's imported identifier
+
   Scenario: The owner notices of a special levy are restored with the owner accounts
     Given a separate organization has a WEG with two roof repair levies, an issued owner notice and a draft for export
     When its administrator downloads the organization archive

@@ -91,7 +91,8 @@ async def inventory(db):
         array_agg(a.attname ORDER BY a.attnum) FILTER
           (WHERE a.atttypid IN ('numeric'::regtype,'float4'::regtype,'float8'::regtype)) AS numeric_columns,
         array_agg(a.attname ORDER BY a.attnum) FILTER
-          (WHERE has_column_privilege(current_user,c.oid,a.attnum,'SELECT')) AS readable
+          (WHERE has_column_privilege(current_user,c.oid,a.attnum,'SELECT')) AS readable,
+        array_agg(a.attname ORDER BY a.attnum) FILTER (WHERE a.attgenerated<>'') AS generated_columns
       FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace
       JOIN pg_attribute a ON a.attrelid=c.oid AND a.attnum>0 AND NOT a.attisdropped
       WHERE n.nspname='public' AND c.relkind='r'

@@ -237,6 +237,17 @@ shows the importing administrator as responsible until someone reassigns the tas
 [ADR 0015](../adr/0015-import-writes-the-importer-into-actor-bound-columns.md)
 states the rule and where it does not carry over to other entities.
 
+**Generated columns.** The export lists every readable column, so a column the
+database computes from the others is in the archive too (for example
+`person_data_domain.label`, `Contact ` followed by the contact's id). The import
+never writes one: the database refuses a statement that names a generated column,
+so `inventory` in `organization_export_service.py` reads the generated columns of
+every entity from the catalog (`pg_attribute.attgenerated`) and
+`without_generated_columns` in `organization_import_service.py` leaves them out of
+every restored row. The restored value follows the restored row: the archived one
+when the contact's id is kept, otherwise computed from the new id. An archive that
+carries a generated column, whatever its value, imports the same way.
+
 **Importing accounting scopes and attachments: when it works and when it is refused.**
 Scopes, scope bindings, scope grants and attachments keep the archived account
 as creator, reviewer, grantor or uploader. The import runs as the importing
@@ -274,6 +285,16 @@ organization stay as they were. To restore an archive whose scopes were created
 by the archived administrator, delete the source organization first and import
 as the administrator who carries the archived address. Cloning an organization with its scopes beside
 the living original is not supported (owner decision on issue #134).
+
+**Contact data domains.** A contact's data domain (`person_data_domain`) is
+evidence of an administrator's act and has the same limit. The trigger
+`protect_person_data_setup` accepts a new domain only when its `created_by` is
+the session user, so the domain is restored when the archived creator is the
+importing administrator's own account (source organization gone, same address)
+and refused with entity `person_data_domain` beside the living original or when
+another archived account created it. The same trigger accepts a grant
+(`person_data_grant`) only from the session user as `granted_by` and only for
+an active member.
 
 **Dunning notices.** A scoped dunning notice is restored with its immutable
 scope context (`dunning_scope_context`: scope, period, lease or plan, and for an

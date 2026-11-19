@@ -105,6 +105,21 @@ def export_organization_with_form_tasks(world, rent_world, export_client):
     world.data["form_tasks"][1] = done.json()
 
 
+@given("a separate organization has an owner contact with a data domain for export")
+def export_organization_with_person_data_domain(world, rent_world, export_client):
+    world.actor = export_client
+    world.data["export_source"] = rent_world
+    # The contact pages create the person and its owner profile, then the data domain under an Idempotency-Key.
+    person = world.act("POST", "/api/persons", json={"first_name": "Synthetic", "last_name": "Owner contact"})
+    assert person.status_code == 201, world.describe_response()
+    owner = world.act("POST", "/api/owner-profiles", json={"person_id": person.json()["id"], "notes": ""})
+    assert owner.status_code == 201, world.describe_response()
+    domain = world.act("POST", "/api/person-data-domains", headers={"Idempotency-Key": str(uuid.uuid4())},
+                       json={"person_id": person.json()["id"], "reason_code": "INITIAL_SETUP"})
+    assert domain.status_code == 201, world.describe_response()
+    world.data["contact"], world.data["contact_domain"] = person.json()["id"], domain.json()["id"]
+
+
 @given("a separate organization has a WEG with two roof repair levies, an issued owner notice and a draft for export")
 def export_organization_with_levy_notices(world, rent_world, export_client):
     from tests.bdd.steps.browser_setup import create
@@ -311,6 +326,19 @@ def imported_form_tasks(world):
         'Dach prüfen', '2026-12-01', False, mapping['property'][str(world.data['export_source']['property'])])
     assert (second['title'], second['due_date'], second['completed'], second['property_id']) == (
         'Heizung warten lassen', '2027-01-15', True, None)
+
+
+@then("the imported owner contact shows its data domain labelled after the contact's imported identifier")
+def imported_person_data_domain(world):
+    mapping = world.data['import_result']['id_map']
+    contact = mapping['person'][world.data['contact']]
+    async def domains():
+        async with api_client(world.data['import_target']) as target:
+            return await target.get(f'/api/person-data-domains/page?person_id={contact}')
+    answer = world.run(domains())
+    assert answer.status_code == 200, answer.text
+    assert [(row['id'], row['label']) for row in answer.json()['items']] == [
+        (mapping['person_data_domain'][world.data['contact_domain']], f'Contact {contact}')]
 
 
 @then('the imported owner notices and owner accounts show the archived levy amounts')
