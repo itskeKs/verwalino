@@ -9,7 +9,7 @@ from sqlalchemy import create_engine, text
 from sqlalchemy.ext.asyncio import create_async_engine
 
 from tests.conftest import APP_RW_URL, MIGRATOR_SYNC_URL
-from tests.test_financial_scope_boundary import scope_seed as scope_seed
+from tests.test_financial_scope_boundary import actor, scope_seed as scope_seed
 from tests.test_invoice_extraction_worker import worker_tenant as worker_tenant
 from tests.test_property_source_enforcement import synthetic_enforcement
 from tests.test_scope_payment_reconciliation import read_value
@@ -264,8 +264,8 @@ async def test_report_scope_source_access_answers_for_one_lease_or_owner(levy_db
     # A corrected entry is no ownership: a mistaken entry on the levy's property does not make it one the owner touches.
     await levy_db.execute(text("INSERT INTO ownership_history(id,organization_id,unit_id,owner_profile_id,valid_from,valid_to,corrected_at,corrected_by) VALUES (gen_random_uuid(),:org,:unit,:b_owner,'2024-01-01','2024-06-01',now(),:actor)"),
                           {**ids, 'unit': ids['units'][2]})
-    await levy_db.commit()
-    assert await answer(owner=ids['b_owner'])
+    assert await uncommitted_answer(levy_db, ids, owner=ids['b_owner'])
+    await levy_db.rollback()
     # An id that concerns no property of the organization (unknown, or of another organization) concerns no levy either.
     assert await answer(lease=uuid.uuid4()) and await answer(owner=uuid.uuid4())
     # The levy's property is one the read concerns, whichever way it is reached.
@@ -294,6 +294,18 @@ async def function_answer(ids, *, actor_key='clerk', **arguments):
     """The five-argument function as the runtime role, for a member of the organization; unnamed arguments are NULL."""
     params = {**ids, 'sphere': None, 'capability': 'read', 'lease': None, 'owner': None, **arguments}
     return await read_value("SELECT report_scope_source_access(:org,:sphere,:capability,:lease,:owner)", params, actor_key=actor_key)
+
+
+async def uncommitted_answer(db, ids, **arguments):
+    """The five-argument function as the runtime role inside the open transaction of `db`, so that a corrected
+    ownership row it must see is never committed: 0190 refuses to discard corrected rows, and a later downgrade
+    rehearsal of the same session (test_m7_dunning) would fail on it. The caller rolls the transaction back."""
+    await actor(db, ids)
+    try:
+        return await db.scalar(text("SELECT report_scope_source_access(:org,NULL,'read',:lease,:owner)"),
+                               {'org': ids['org'], 'lease': None, 'owner': None, **arguments})
+    finally:
+        await db.execute(text('RESET ROLE'))
 
 
 async def test_report_scope_source_access_refuses_an_owner_reached_only_through_a_payment_or_a_plan_line(levy_db, levy_fixture):
@@ -332,12 +344,13 @@ async def test_report_scope_source_access_refuses_an_owner_reached_only_through_
     # The entry of the owner is corrected (0190): it is no ownership any more, but the levy still carries the owner's share.
     await levy_db.execute(text("UPDATE ownership_history SET corrected_at=now(),corrected_by=:actor WHERE id=:history"),
                           {**ids, 'history': ids['histories'][0]})
-    await levy_db.commit()
     assert await levy_db.scalar(text("SELECT count(*) FROM ownership_history WHERE organization_id=:org AND owner_profile_id=:owner AND corrected_at IS NULL"),
                                 {**ids, 'owner': owner}) == 0
     assert await levy_db.scalar(text("SELECT count(*) FROM special_levy_allocation WHERE organization_id=:org AND owner_profile_id=:owner"),
                                 {**ids, 'owner': owner}) == 1
-    assert not await function_answer(ids, owner=owner)
+    assert not await uncommitted_answer(levy_db, ids, owner=owner)
+    await levy_db.rollback()
+    assert await levy_db.scalar(text("SELECT count(*) FROM ownership_history WHERE organization_id=:org AND corrected_at IS NOT NULL"), ids) == 0
 
 
 async def test_report_scope_source_access_answers_a_scoped_call_for_an_unclassified_subject_as_the_three_argument_function(levy_db, levy_fixture):
