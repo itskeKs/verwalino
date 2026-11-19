@@ -17,10 +17,11 @@ levy). In every other case it is the three-argument function: an unscoped read t
 lease and no owner (the organization-wide overviews, exports, SEPA), one that names both, one
 on a property with classified finance (the levy's own property included), and every read of a
 scope. The properties are resolved inside the function from the row ids, the way 0036 does it
-(lease: its unit; owner: units of its ownership entries, its payments, the lines of its plans,
-its levy allocations), and only for rows of the caller's organization, so the caller hands over
-only the id the request already names and an id of another organization or an unknown one
-concerns no property and answers as before the levy.
+(lease: its unit; owner: the units of its ownership entries that were not corrected (0190), its
+payments, the lines of its plans, its levy allocations, which also find a levy whose share a corrected
+entry still carries), and only for rows of the caller's organization, so the caller hands over only
+the id the request already names and an id of another organization or an unknown one concerns no
+property and answers as before the levy.
 
 The three-argument function, its callers and the policies that call it stay as they are. The new
 function has the same attributes (definer rights, fixed search path, row security off, EXECUTE for
@@ -54,7 +55,7 @@ def upgrade() -> None:
             WHERE l.organization_id=org AND l.id=lease
           UNION SELECT u.property_id FROM public.ownership_history h
             JOIN public.unit u ON u.organization_id=h.organization_id AND u.id=h.unit_id
-            WHERE h.organization_id=org AND h.owner_profile_id=owner
+            WHERE h.organization_id=org AND h.owner_profile_id=owner AND h.corrected_at IS NULL
           UNION SELECT p.property_id FROM public.payment p
             WHERE p.organization_id=org AND p.owner_profile_id=owner
           UNION SELECT e.property_id FROM public.economic_plan_line ln

@@ -261,6 +261,11 @@ async def test_report_scope_source_access_answers_for_one_lease_or_owner(levy_db
     for capability in ('read', 'prepare'):
         assert await answer(capability=capability, lease=ids['b_lease'])
         assert await answer(capability=capability, owner=ids['b_owner'])
+    # A corrected entry is no ownership: a mistaken entry on the levy's property does not make it one the owner touches.
+    await levy_db.execute(text("INSERT INTO ownership_history(id,organization_id,unit_id,owner_profile_id,valid_from,valid_to,corrected_at,corrected_by) VALUES (gen_random_uuid(),:org,:unit,:b_owner,'2024-01-01','2024-06-01',now(),:actor)"),
+                          {**ids, 'unit': ids['units'][2]})
+    await levy_db.commit()
+    assert await answer(owner=ids['b_owner'])
     # An id that concerns no property of the organization (unknown, or of another organization) concerns no levy either.
     assert await answer(lease=uuid.uuid4()) and await answer(owner=uuid.uuid4())
     # The levy's property is one the read concerns, whichever way it is reached.

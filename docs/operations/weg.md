@@ -86,8 +86,8 @@ that touches a property with classified finance, the levy's own property include
 scope selector. The account or a new notice of one tenant lease or one owner whose properties
 have no classified finance (no scope-bound inputs, no levy), such as a property without an
 accounting scope, is answered as before the levy (#739). A lease belongs to the property of its
-unit; an owner is judged by every property of its ownership entries, payments, plan lines and
-levy allocations. The decision is one database function,
+unit; an owner is judged by every property of its uncorrected ownership entries, payments, plan
+lines and levy allocations. The decision is one database function,
 `report_scope_source_access(org, sphere, capability, lease, owner)` (migration 0193), next to the
 three-argument function that exports, SEPA and the source policies keep calling. Reads with the
 levy's scope are unchanged. The existing
