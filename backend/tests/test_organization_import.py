@@ -1496,6 +1496,68 @@ async def test_import_restores_an_organization_whose_master_data_came_from_the_c
     await rent_db.rollback()
 
 
+# creator, assignee, linked to the property, title, due date, done: the administrator and the
+# second user (clerk) of the source each make one task on the property and one without.
+TASK_FORM_ROWS = (
+    ('admin', 'admin', True, 'Dach prüfen', '2026-12-01', False),
+    ('admin', 'clerk', False, 'Heizung warten lassen', '2027-01-15', True),
+    ('clerk', 'clerk', True, 'Treppenhaus streichen', '2026-12-20', False),
+    ('clerk', 'admin', False, 'Mieterliste prüfen', None, False),
+)
+
+
+async def tasks_from_the_task_form(world):
+    """What the task form sends: title, note, due date, the assignee it pre-selects (the signed-in
+    user, or another one chosen in the list) and the property or none; a done task is a later PATCH."""
+    made = []
+    for creator, assignee, linked, title, due, done in TASK_FORM_ROWS:
+        async with api_client(world, creator) as api:
+            created = await api.post('/api/tasks', json={
+                'title': title, 'note': '', 'due_date': due, 'assigned_user_id': str(world[assignee]),
+                'property_id': str(world['property']) if linked else None, 'unit_id': None, 'lease_agreement_id': None})
+            assert created.status_code == 201, created.text
+            if done:
+                patched = await api.patch(f"/api/tasks/{created.json()['id']}", json={'completed': True})
+                assert patched.status_code == 200, patched.text
+                created = patched
+            made.append(created.json())
+    return made
+
+
+@pytest.mark.parametrize('restore', ['beside_the_living_source', 'source_deleted_same_address'])
+async def test_import_restores_tasks_made_in_the_task_form_by_the_administrator_and_a_second_user(
+    rent_world, import_target, rent_db, export_store, restore,
+):
+    """`task_insert` binds the creator to the signed-in user and the task guard accepts only an active
+    member as assignee; the archived users are inactive placeholders after an import, so the import
+    writes the importing administrator as creator and assignee and keeps everything else."""
+    source = await tasks_from_the_task_form(rent_world)
+    assert [t['created_by'] for t in source] == [str(rent_world[c]) for c, *_ in TASK_FORM_ROWS]
+    archive = await exported(rent_world)
+    assert len(unpack(archive)['entities/task.jsonl'].splitlines()) == len(TASK_FORM_ROWS)
+    if restore == 'source_deleted_same_address':
+        await source_organization_deleted(rent_db, rent_world['org'], rent_world['admin'], import_target)
+    async with api_client(import_target) as api:
+        answer = await api.post('/api/organizations/import', files={'file': ('tasks.tar.gz', archive)})
+        assert answer.status_code == 200, answer.text
+        mapping = answer.json()['id_map']
+        restored = {row['id']: row for row in (await api.get('/api/tasks?limit=100')).json()['items']}
+    assert len(restored) == len(source)
+    for task in source:
+        row = restored[mapping['task'][task['id']]]
+        linked = mapping['property'][task['property_id']] if task['property_id'] else None
+        assert (row['title'], row['due_date'], row['completed'], row['property_id']) == (
+            task['title'], task['due_date'], task['completed'], linked)
+        assert (row['created_by'], row['assigned_user_id']) == (str(import_target['admin']),) * 2
+    if restore == 'beside_the_living_source':
+        # The source keeps its own creators and assignees.
+        rows = (await rent_db.execute(text('SELECT id,created_by,assigned_user_id FROM task WHERE organization_id=:org'),
+                                      {'org': rent_world['org']})).all()
+        assert {str(r[0]): (str(r[1]), str(r[2])) for r in rows} == {
+            t['id']: (t['created_by'], t['assigned_user_id']) for t in source}
+    await rent_db.rollback()
+
+
 RENT_WINDOW = {'period_start': '2026-01-01', 'period_end': '2026-12-31'}
 BINDING_COLUMNS = ('scope_id', 'property_id', 'bank_account_id', 'payment_id', 'payment_bank_account_id',
                    'origin', 'reason', 'reviewed_by')

@@ -87,6 +87,24 @@ def export_organization_with_form_property(world, rent_world, export_client):
     world.data["form_property"], world.data["form_payment"] = prop, payment.json()["id"]
 
 
+@given("a separate organization has a task on its property and a task without a property from the task form for export")
+def export_organization_with_form_tasks(world, rent_world, export_client):
+    world.actor = export_client
+    world.data["export_source"] = rent_world
+    # The task form sends the assignee it pre-selects (the signed-in user) and the property or none.
+    world.data["form_tasks"] = []
+    for title, due, property_id in (("Dach prüfen", "2026-12-01", str(rent_world["property"])),
+                                    ("Heizung warten lassen", "2027-01-15", None)):
+        created = world.act("POST", "/api/tasks", json={
+            "title": title, "note": "", "due_date": due, "assigned_user_id": str(rent_world["admin"]),
+            "property_id": property_id, "unit_id": None, "lease_agreement_id": None})
+        assert created.status_code == 201, world.describe_response()
+        world.data["form_tasks"].append(created.json())
+    done = world.act("PATCH", f"/api/tasks/{world.data['form_tasks'][1]['id']}", json={"completed": True})
+    assert done.status_code == 200, world.describe_response()
+    world.data["form_tasks"][1] = done.json()
+
+
 @given("a separate organization has a WEG with two roof repair levies, an issued owner notice and a draft for export")
 def export_organization_with_levy_notices(world, rent_world, export_client):
     from tests.bdd.steps.browser_setup import create
@@ -275,6 +293,24 @@ def imported_form_property(world):
     assert names[mapping['property'][world.data['form_property']]] == 'Probehaus'
     paid = {row['id']: row for row in payments.json()}[mapping['payment'][world.data['form_payment']]]
     assert (paid['amount'], paid['value_date'], paid['status']) == ('700.00', '2026-03-15', 'booked')
+
+
+@then('the imported task list shows both tasks with their titles, due dates and status and the first one linked to the imported property')
+def imported_form_tasks(world):
+    mapping = world.data['import_result']['id_map']
+    async def tasks():
+        async with api_client(world.data['import_target']) as target:
+            return await target.get('/api/tasks?limit=100')
+    answer = world.run(tasks())
+    assert answer.status_code == 200, answer.text
+    rows = {row['id']: row for row in answer.json()['items']}
+    assert len(rows) == 2
+    linked, unlinked = world.data['form_tasks']
+    first, second = (rows[mapping['task'][task['id']]] for task in (linked, unlinked))
+    assert (first['title'], first['due_date'], first['completed'], first['property_id']) == (
+        'Dach prüfen', '2026-12-01', False, mapping['property'][str(world.data['export_source']['property'])])
+    assert (second['title'], second['due_date'], second['completed'], second['property_id']) == (
+        'Heizung warten lassen', '2027-01-15', True, None)
 
 
 @then('the imported owner notices and owner accounts show the archived levy amounts')

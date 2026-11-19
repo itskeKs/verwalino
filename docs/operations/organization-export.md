@@ -224,6 +224,19 @@ local user and membership row) and exclude the new local import audit receipt.
 Contact creation records the importing administrator as the new
 custodian, without claiming the historical author performed a local operation.
 
+**Tasks.** A restored task keeps its title, note, due date, status and its links to
+the property, unit and lease. Its creator and its assignee are the importing
+administrator, not the archived accounts: the import is the actor of the insert,
+`task_insert` binds the creator to the signed-in user, and the task guard takes
+only an active member of the organization as assignee, which an archived account
+is not after the import. This holds beside the living source organization and
+after it was deleted, whoever created or was assigned the task. The original
+creator and assignee are not recorded in the restored organization; they remain
+in the archive file and in the source organization while it exists. The task list
+shows the importing administrator as responsible until someone reassigns the task.
+[ADR 0015](../adr/0015-import-writes-the-importer-into-actor-bound-columns.md)
+states the rule and where it does not carry over to other entities.
+
 **Importing accounting scopes and attachments: when it works and when it is refused.**
 Scopes, scope bindings, scope grants and attachments keep the archived account
 as creator, reviewer, grantor or uploader. The import runs as the importing

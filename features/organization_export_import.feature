@@ -27,6 +27,12 @@ Feature: Organization export import
     And the archive is imported into an empty organization
     Then the imported property list shows the form property and its payment of 700.00 on 15.03.2026
 
+  Scenario: An organization whose tasks were created in the task form is restored beside its source
+    Given a separate organization has a task on its property and a task without a property from the task form for export
+    When its administrator downloads the organization archive
+    And the archive is imported into an empty organization
+    Then the imported task list shows both tasks with their titles, due dates and status and the first one linked to the imported property
+
   Scenario: The owner notices of a special levy are restored with the owner accounts
     Given a separate organization has a WEG with two roof repair levies, an issued owner notice and a draft for export
     When its administrator downloads the organization archive
