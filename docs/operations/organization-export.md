@@ -237,6 +237,17 @@ shows the importing administrator as responsible until someone reassigns the tas
 [ADR 0015](../adr/0015-import-writes-the-importer-into-actor-bound-columns.md)
 states the rule and where it does not carry over to other entities.
 
+**Generated columns.** The export lists every readable column, so a column the
+database computes from the others is in the archive too (for example
+`person_data_domain.label`, `Contact ` followed by the contact's id). The import
+never writes one: the database refuses a statement that names a generated column,
+so `inventory` in `organization_export_service.py` reads the generated columns of
+every entity from the catalog (`pg_attribute.attgenerated`) and
+`without_generated_columns` in `organization_import_service.py` leaves them out of
+every restored row. The restored value follows the restored row: the archived one
+when the contact's id is kept, otherwise computed from the new id. An archive that
+carries a generated column, whatever its value, imports the same way.
+
 **Importing accounting scopes and attachments: when it works and when it is refused.**
 Scopes, scope bindings, scope grants and attachments keep the archived account
 as creator, reviewer, grantor or uploader. The import runs as the importing

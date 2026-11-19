@@ -1558,6 +1558,121 @@ async def test_import_restores_tasks_made_in_the_task_form_by_the_administrator_
     await rent_db.rollback()
 
 
+async def person_data_domain_of_an_owner(world):
+    """What the person pages send: an owner person, then the data domain for it under a fresh idempotency key."""
+    async with api_client(world) as api:
+        person = await api.post('/api/persons', json={'first_name': 'Synthetic', 'last_name': 'Owner contact'})
+        assert person.status_code == 201, person.text
+        owner = await api.post('/api/owner-profiles', json={'person_id': person.json()['id'], 'notes': ''})
+        assert owner.status_code == 201, owner.text
+        domain = await api.post('/api/person-data-domains', json={
+            'person_id': person.json()['id'], 'reason_code': 'INITIAL_SETUP'}, headers={'Idempotency-Key': str(uuid.uuid4())})
+        assert domain.status_code == 201, domain.text
+        return person.json()['id'], domain.json()
+
+
+async def person_data_domain_page(world, person):
+    async with api_client(world) as api:
+        answer = await api.get(f'/api/person-data-domains/page?person_id={person}')
+        assert answer.status_code == 200, answer.text
+        return answer.json()['items']
+
+
+def archive_with_person_id_moved(files, person):
+    """The archive as a restore after the source's deletion has it: the contact's id is one nobody holds in the target."""
+    from app.services.organization_import_service import remap
+    fresh = str(uuid.uuid4())
+    moved = dict(files)
+    for name in json.loads(files['manifest.json'])['entity_order']:
+        rows = [remap(json.loads(line), {person: fresh}) for line in files[f'entities/{name}.jsonl'].splitlines()]
+        for row in rows:
+            if name == 'person_data_domain':
+                row['label'] = f'Contact {fresh}'
+        moved[f'entities/{name}.jsonl'] = b''.join(json.dumps(row).encode() + b'\n' for row in rows)
+    return moved, fresh
+
+
+@pytest.mark.parametrize('ids', ['remapped', 'kept'])
+async def test_import_restores_a_person_data_domain_with_the_label_the_database_derives(
+    rent_world, import_target, rent_db, export_store, ids,
+):
+    """`person_data_domain.label` is generated from the contact's id: the archive carries it, the import must not write it.
+
+    Restored as after a deletion of the source, so the importer is the archived creator of the domain.
+    """
+    person, domain = await person_data_domain_of_an_owner(rent_world)
+    assert domain['label'] == f'Contact {person}'
+    files = unpack(await exported(rent_world))
+    assert files['entities/person_data_domain.jsonl'].splitlines()
+    if ids == 'kept':
+        files, person = archive_with_person_id_moved(files, person)
+    await source_organization_deleted(rent_db, rent_world['org'], rent_world['admin'], import_target)
+    async with api_client(import_target) as api:
+        answer = await api.post('/api/organizations/import', files={'file': ('domain.tar.gz', repack(files))})
+        assert answer.status_code == 200, answer.text
+        mapping = answer.json()['id_map']
+    restored = await person_data_domain_page(import_target, mapping['person'][person])
+    assert len(restored) == 1
+    # The target derives the label from the contact's id there: the archived one when the id is kept.
+    assert restored[0]['label'] == f"Contact {mapping['person'][person]}"
+    if ids == 'kept':
+        assert mapping['person'][person] == person and restored[0]['label'] == f'Contact {person}'
+    await rent_db.rollback()
+
+
+async def test_import_ignores_the_generated_column_an_archive_carries(
+    rent_world, import_target, rent_db, export_store,
+):
+    """Every archive exported so far carries `label`; the database value wins over the archived one."""
+    person, domain = await person_data_domain_of_an_owner(rent_world)
+    files = unpack(await exported(rent_world))
+    rows = [json.loads(line) for line in files['entities/person_data_domain.jsonl'].splitlines()]
+    assert rows and all(row['label'] == domain['label'] for row in rows)
+    rows[0]['label'] = 'Contact edited after the export'
+    files['entities/person_data_domain.jsonl'] = b''.join(json.dumps(row).encode() + b'\n' for row in rows)
+    await source_organization_deleted(rent_db, rent_world['org'], rent_world['admin'], import_target)
+    async with api_client(import_target) as api:
+        answer = await api.post('/api/organizations/import', files={'file': ('old.tar.gz', repack(files))})
+        assert answer.status_code == 200, answer.text
+        mapped = answer.json()['id_map']['person'][person]
+    assert [d['label'] for d in await person_data_domain_page(import_target, mapped)] == [f'Contact {mapped}']
+    await rent_db.rollback()
+
+
+async def test_a_person_data_domain_beside_the_living_source_is_not_refused_for_its_generated_column(
+    rent_world, import_target, rent_db, export_store, caplog,
+):
+    """Here the archived creator is an inactive placeholder, so the actor-bound insert rule of the domain
+    (`protect_person_data_setup`, sqlstate 42501) may still refuse it; whatever it does, `label` (428C9) is not the cause."""
+    await person_data_domain_of_an_owner(rent_world)
+    archive = await exported(rent_world)
+    async with api_client(import_target) as api:
+        answer = await api.post('/api/organizations/import', files={'file': ('domain.tar.gz', archive)})
+    assert answer.status_code in (200, 422), answer.text
+    assert 'sqlstate=428C9' not in caplog.text
+    await rent_db.rollback()
+
+
+async def test_the_import_writes_no_generated_column_of_any_exported_entity(rent_db):
+    """Catalog-driven: a migration that adds a generated column needs no change here or in the import."""
+    from app.services.organization_export_service import inventory
+    from app.services.organization_import_service import without_generated_columns
+    generated = {}
+    for name, column in (await rent_db.execute(text("""SELECT c.relname,a.attname FROM pg_class c
+        JOIN pg_namespace n ON n.oid=c.relnamespace
+        JOIN pg_attribute a ON a.attrelid=c.oid AND a.attnum>0 AND NOT a.attisdropped
+        WHERE n.nspname='public' AND c.relkind='r' AND a.attgenerated<>''"""))).all():
+        generated.setdefault(name, set()).add(column)
+    specs = await inventory(rent_db)
+    assert 'label' in generated['person_data_domain'] and 'person_data_domain' in specs
+    for name, spec in specs.items():
+        archived = {column: None for column in spec['columns']}
+        written = set(without_generated_columns(archived, spec))
+        assert not written & generated.get(name, set()), name
+        assert written == set(spec['columns']) - generated.get(name, set()), name
+    await rent_db.rollback()
+
+
 RENT_WINDOW = {'period_start': '2026-01-01', 'period_end': '2026-12-31'}
 BINDING_COLUMNS = ('scope_id', 'property_id', 'bank_account_id', 'payment_id', 'payment_bank_account_id',
                    'origin', 'reason', 'reviewed_by')
