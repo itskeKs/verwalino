@@ -13,7 +13,7 @@ from tests.test_financial_scope_boundary import scope_seed as scope_seed
 from tests.test_invoice_extraction_worker import worker_tenant as worker_tenant
 from tests.test_property_source_enforcement import synthetic_enforcement
 from tests.test_scope_payment_reconciliation import read_value
-from tests.test_special_levy import client, create, levy_db as levy_db, levy_fixture as levy_fixture, query
+from tests.test_special_levy import client, create, levy_db as levy_db, levy_fixture as levy_fixture, new_owner, query
 
 pytestmark = pytest.mark.asyncio
 
@@ -288,6 +288,80 @@ async def test_report_scope_source_access_answers_for_one_lease_or_owner(levy_db
         await engine.dispose()
     # An unknown capability is refused by the function it delegates to.
     assert not await answer(capability='delete', lease=ids['b_lease'])
+
+
+async def function_answer(ids, *, actor_key='clerk', **arguments):
+    """The five-argument function as the runtime role, for a member of the organization; unnamed arguments are NULL."""
+    params = {**ids, 'sphere': None, 'capability': 'read', 'lease': None, 'owner': None, **arguments}
+    return await read_value("SELECT report_scope_source_access(:org,:sphere,:capability,:lease,:owner)", params, actor_key=actor_key)
+
+
+async def test_report_scope_source_access_refuses_an_owner_reached_only_through_a_payment_or_a_plan_line(levy_db, levy_fixture):
+    ids = levy_fixture
+    async with client(ids) as api:
+        await create(api, ids)
+    paid, planned = await new_owner(levy_db, ids), await new_owner(levy_db, ids)
+    ids.update(plan_of_levy_property=uuid.uuid4())
+    # Neither owner holds a unit or any other link: a read of them concerns no property, so the levy does not refuse it.
+    assert await function_answer(ids, owner=paid) and await function_answer(ids, owner=planned)
+    # A booked payment on the levy's property is the only link of the first owner (a payment-only recipient).
+    await levy_db.execute(text("SELECT set_config('app.current_org_id',:org,true),set_config('app.current_user_id',:clerk,true)"),
+                          {'org': str(ids['org']), 'clerk': str(ids['clerk'])})
+    await levy_db.execute(text("""INSERT INTO payment(id,organization_id,property_id,bank_account_id,direction,amount,value_date,
+        payment_type,owner_profile_id,period_year,period_month,status)
+        VALUES (gen_random_uuid(),:org,:property,:bank,'IN',100,'2025-06-15','SONDERZAHLUNG',:owner,2025,6,'booked')"""),
+                          {**ids, 'owner': paid})
+    await levy_db.commit()
+    assert not await function_answer(ids, owner=paid)
+    assert await function_answer(ids, owner=planned)
+    # A line of an economic plan of the levy's property is the only link of the second owner.
+    await levy_db.execute(text("INSERT INTO economic_plan(id,organization_id,property_id,plan_year,period_start,period_end,status,engine_version) VALUES (:plan_of_levy_property,:org,:property,2025,'2025-01-01','2025-12-31','draft','test')"), ids)
+    await levy_db.execute(text("INSERT INTO economic_plan_line(organization_id,economic_plan_id,line_type,owner_profile_id,label,planned_amount,monthly_amount,sort_order) VALUES (:org,:plan_of_levy_property,'OWNER_ADVANCE',:owner,'Plan line',120,10,1)"),
+                          {**ids, 'owner': planned})
+    await levy_db.commit()
+    assert not await function_answer(ids, owner=planned)
+    assert not await function_answer(ids, owner=paid)
+
+
+async def test_report_scope_source_access_refuses_an_owner_reached_only_through_a_levy_allocation(levy_db, levy_fixture):
+    ids = levy_fixture
+    async with client(ids) as api:
+        await create(api, ids)
+    owner = ids['owners'][0]
+    assert not await function_answer(ids, owner=owner)
+    # The entry of the owner is corrected (0190): it is no ownership any more, but the levy still carries the owner's share.
+    await levy_db.execute(text("UPDATE ownership_history SET corrected_at=now(),corrected_by=:actor WHERE id=:history"),
+                          {**ids, 'history': ids['histories'][0]})
+    await levy_db.commit()
+    assert await levy_db.scalar(text("SELECT count(*) FROM ownership_history WHERE organization_id=:org AND owner_profile_id=:owner AND corrected_at IS NULL"),
+                                {**ids, 'owner': owner}) == 0
+    assert await levy_db.scalar(text("SELECT count(*) FROM special_levy_allocation WHERE organization_id=:org AND owner_profile_id=:owner"),
+                                {**ids, 'owner': owner}) == 1
+    assert not await function_answer(ids, owner=owner)
+
+
+async def test_report_scope_source_access_answers_a_scoped_call_for_an_unclassified_subject_as_the_three_argument_function(levy_db, levy_fixture):
+    from tests.contact_source_fixtures import grant_property_contacts
+    from tests.test_property_source_access import grant
+    ids = levy_fixture
+    seed = {'org_a_id': ids['org'], 'user_a_admin_id': ids['actor']}
+    await add_property_without_scope(levy_db, ids)
+    await levy_db.execute(text("INSERT INTO scope_grant(organization_id,scope_id,user_id,capabilities,granted_by,reason) VALUES (:org,:scope,:actor,ARRAY['read','prepare'],:actor,'Source boundary test')"), ids)
+    await levy_db.commit()
+    async with client(ids, 'actor') as api:
+        await create(api, ids)
+        await grant_property_contacts(api, seed, ids['property'])
+        await grant(api, seed, ids['property'], caps=['read', 'prepare'])
+        # Enforced sources refuse every unscoped read, as before the levy, and answer a scoped read from its scope. The
+        # subjects sit on the property without a scope, which has no classified finance, so only the guard on the
+        # scope keeps the five-argument function from answering the scoped call as the unscoped one.
+        async with synthetic_enforcement(seed):
+            for capability in ('read', 'prepare'):
+                of_the_scope = await read_value("SELECT report_scope_source_access(:org,:scope,:capability)", {**ids, 'capability': capability}, actor_key='actor')
+                assert of_the_scope is True
+                for subject in ({'lease': ids['b_lease']}, {'owner': ids['b_owner']}):
+                    assert await function_answer(ids, actor_key='actor', capability=capability, **subject) is False
+                    assert await function_answer(ids, actor_key='actor', sphere=ids['scope'], capability=capability, **subject) == of_the_scope
 
 
 async def test_the_new_overload_has_the_attributes_and_acl_of_the_function_it_extends(levy_db):
