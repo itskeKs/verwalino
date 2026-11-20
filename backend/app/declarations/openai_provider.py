@@ -145,9 +145,25 @@ _STATIC_HARNESS = (
 )
 _SAFE_RESPONSE_IDENTIFIER = re.compile(r"^[A-Za-z0-9._:-]{1,128}$")
 _OPENAI_API_BASE_URL = "https://api.openai.com/v1"
-# A reading request differs from every extraction request only by its image block, so a request the provider
-# rejects for its content with one of these statuses means the model cannot take the image.
-_IMAGE_REJECTED_STATUSES = frozenset({400, 415, 422})
+# A reading request differs from every extraction request only by its image block. The provider says that its
+# model cannot take the image by the status 415, or, for a 400 or 422, by the structured identifiers of its error
+# object: the ``param`` (the field of the request at fault) naming the image part, or one of the codes OpenAI gives
+# a rejected image. Message text never decides; any other rejection keeps the code of a rejected request.
+_IMAGE_PARAMETER = re.compile(r"(?:^|[.\[\]])(?:image|image_url|input_image)(?:$|[.\[\]])")
+_IMAGE_REJECTION_CODES = frozenset({"invalid_image", "invalid_image_format", "invalid_image_url", "image_parse_error"})
+
+
+def _rejects_the_image_input(error: Exception) -> bool:
+    status = getattr(error, "status_code", None)
+    if isinstance(status, bool) or not isinstance(status, int):
+        return False
+    if status == 415:
+        return True
+    if status not in {400, 422}:
+        return False
+    param, code = getattr(error, "param", None), getattr(error, "code", None)
+    return (isinstance(param, str) and _IMAGE_PARAMETER.search(param) is not None) or (
+        isinstance(code, str) and code in _IMAGE_REJECTION_CODES)
 
 # Only these disjoint tagged unions have an equivalent anyOf wire form.
 _WIRE_KIND_UNIONS = {
@@ -1368,12 +1384,7 @@ class OpenAiDeclarationProvider:
             code = "OPENAI_REQUEST_FAILED"
             retryable = self._is_retryable_exception(error)
             message = "OpenAI request failed."
-            if (
-                pass_id == READING_PASS_ID
-                and isinstance(status_code, int)
-                and status_code in _IMAGE_REJECTED_STATUSES
-            ):
-                # By status code alone: the transports discard response bodies and message text never decides.
+            if pass_id == READING_PASS_ID and _rejects_the_image_input(error):
                 code, retryable, message = (
                     PROVIDER_IMAGE_INPUT_UNSUPPORTED, False, "The model cannot take the image input."
                 )

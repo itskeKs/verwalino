@@ -25,6 +25,9 @@ from app.declarations.provider import ProviderFailure
 
 ORIGINS = {"openai": "https://api.openai.com/v1", "anthropic": "https://api.anthropic.com/v1"}
 MAX_RESPONSE_BYTES = 16 * 1024 * 1024
+# An error response is read only for the structured identifiers of its error object, never for its message.
+MAX_ERROR_BYTES = 64 * 1024
+_ERROR_IDENTIFIER = re.compile(r"^[A-Za-z0-9_.\[\]-]{1,128}$")
 MAX_MODEL_PAGES = 20
 MODEL_ID = re.compile(r"^[A-Za-z0-9._:/-]{1,255}$")
 
@@ -106,6 +109,29 @@ def _schema_instruction(schema):
             "do not emit the example values or invent facts.")
 
 
+async def _error_identifiers(response) -> dict[str, str] | None:
+    """The ``type``, ``code`` and ``param`` of an error response's error object, each only as a short identifier.
+
+    The message and every other field are dropped unread; an unreadable, oversized or unexpected body gives no
+    evidence at all, never a failure of its own.
+    """
+    content = bytearray()
+    try:
+        async for chunk in response.aiter_bytes():
+            content.extend(chunk)
+            if len(content) > MAX_ERROR_BYTES:
+                return None
+        body = json.loads(content)
+    except Exception:
+        return None
+    error = body.get("error") if isinstance(body, dict) else None
+    if not isinstance(error, dict):
+        return None
+    found = {name: error[name] for name in ("type", "code", "param")
+             if isinstance(error.get(name), str) and _ERROR_IDENTIFIER.fullmatch(error[name])}
+    return found or None
+
+
 class ProviderClient:
     """Small Responses-shaped facade; each call uses one configured API only."""
     def __init__(self, *, provider, api_key, base_url=None, transport=None):
@@ -135,10 +161,11 @@ class ProviderClient:
                 url = url.copy_with(host=ips[0])
             async with self._http.stream(method, url, json=body, params=params, headers=headers, timeout=timeout, extensions=extensions) as response:
                 if response.status_code >= 300:
-                    # Discard response bodies: SDK exceptions must never contain credentials/documents.
+                    # Discard response bodies: SDK exceptions must never contain credentials/documents. Only the
+                    # type, code and param identifiers of the error object are kept (as the SDK exposes them).
                     safe_response = httpx.Response(response.status_code, request=httpx.Request(method, original))
                     error_type = RateLimitError if response.status_code == 429 else APIStatusError
-                    raise error_type("Provider request failed", response=safe_response, body=None)
+                    raise error_type("Provider request failed", response=safe_response, body=await _error_identifiers(response))
                 content = bytearray()
                 async for chunk in response.aiter_bytes():
                     content.extend(chunk)

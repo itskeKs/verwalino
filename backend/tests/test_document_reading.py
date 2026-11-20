@@ -121,10 +121,10 @@ class _SdkResponse:
         self.output = []
 
 
-def _status_error(status):
+def _status_error(status, fields=None):
     request = httpx.Request('POST', 'https://api.openai.com/v1/responses')
     cls = {400: BadRequestError, 422: UnprocessableEntityError}.get(status, InternalServerError if status >= 500 else APIStatusError)
-    return cls('rejected', response=httpx.Response(status, request=request), body=None)
+    return cls((fields or {}).get('message', 'rejected'), response=httpx.Response(status, request=request), body=fields)
 
 
 class Transport:
@@ -134,7 +134,7 @@ class Transport:
         self.requests = []
 
     def build(self, answers):
-        """`answers` is a list of ('ok', answer) / ('raw', text) / ('refusal',) / ('status', code); the last repeats."""
+        """`answers`: ('ok', answer) / ('raw', text) / ('refusal',) / ('status', code[, error fields]); the last repeats."""
         raise NotImplementedError
 
 
@@ -149,7 +149,7 @@ class OpenAiTransport(Transport):
             elif kind == 'refusal':
                 outcomes.append(_SdkResponse(None, refusal='refused'))
             else:
-                outcomes.append(_status_error(rest[0]))
+                outcomes.append(_status_error(*rest))
         self.client = type('Client', (), {'responses': _Responses(outcomes)})()
         return OpenAiDeclarationProvider(client=self.client, primary_model=READING_MODEL, escalation_model=READING_MODEL, token_encoder=_Encoder())
 
@@ -171,7 +171,8 @@ class CompatibleTransport(Transport):
             self.bodies.append(json.loads(request.content))
             kind, *rest = queue.pop(0) if len(queue) > 1 else queue[0]
             if kind == 'status':
-                return httpx.Response(rest[0], json={'error': {'message': 'any text', 'type': 'invalid_request_error'}})
+                return httpx.Response(rest[0], json={'error': {'message': 'any text', 'type': 'invalid_request_error',
+                                                               **(rest[1] if len(rest) > 1 else {})}})
             text = json.dumps(rest[0]) if kind == 'ok' else '' if kind == 'refusal' else '{"blocks": "not a list"}'
             if self.provider == 'anthropic':
                 return httpx.Response(200, json={'id': 'msg_reading', 'model': READING_MODEL, 'stop_reason': 'refusal' if kind == 'refusal' else 'end_turn',
@@ -251,17 +252,59 @@ async def test_a_refused_answer_ends_in_a_typed_error_that_keeps_the_reported_us
     assert transport.count() == 1
 
 
-@pytest.mark.asyncio
-@pytest.mark.parametrize('status', [400, 415, 422])
-async def test_a_model_that_cannot_take_the_image_ends_in_an_explicit_typed_error(transport, status):
-    provider = transport.build([('status', status)])
+GENERAL_REJECTION = 'OPENAI_REQUEST_FAILED'  # the code an extraction pass gets for a rejected request
+
+
+async def _failure_of(transport, answer):
+    provider = transport.build([answer])
     with pytest.raises(ProviderFailure) as failure:
         await _read(provider)
-    assert failure.value.code == PROVIDER_IMAGE_INPUT_UNSUPPORTED
-    assert failure.value.retryable is False
-    # No other model, provider or text path is tried.
-    assert transport.count() == 1
-    assert failure.value.metadata.failure_class == PROVIDER_IMAGE_INPUT_UNSUPPORTED
+    # Nothing else is tried: no other model, provider or text path, and a rejected request is not repeated.
+    assert transport.count() == 1 and failure.value.retryable is False
+    return failure.value
+
+
+@pytest.mark.asyncio
+async def test_status_415_says_the_model_cannot_take_the_image(transport):
+    failure = await _failure_of(transport, ('status', 415))
+    assert failure.code == PROVIDER_IMAGE_INPUT_UNSUPPORTED
+    assert failure.metadata.failure_class == PROVIDER_IMAGE_INPUT_UNSUPPORTED
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('status', [400, 422])
+@pytest.mark.parametrize('fields', [
+    {'param': 'messages.0.content.1.image_url.url'},
+    {'param': 'input[0].content[1].image_url'},
+    {'param': 'image'},
+    {'code': 'invalid_image_format', 'type': 'invalid_request_error'},
+], ids=['chat-image-url', 'responses-image-url', 'image', 'image-code'])
+async def test_a_rejection_whose_structured_fields_point_at_the_image_says_the_model_cannot_take_it(transport, status, fields):
+    failure = await _failure_of(transport, ('status', status, fields))
+    assert failure.code == PROVIDER_IMAGE_INPUT_UNSUPPORTED
+    assert failure.metadata.failure_class == PROVIDER_IMAGE_INPUT_UNSUPPORTED
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('status', [400, 422])
+@pytest.mark.parametrize('fields', [
+    {},
+    {'param': 'max_output_tokens', 'code': 'unsupported_parameter'},
+    {'param': 'response_format', 'code': 'invalid_value'},
+    {'param': 'messages.0.content.0.text', 'code': 'string_above_max_length', 'type': 'invalid_request_error'},
+    {'param': 'imagery_mode'},
+], ids=['no-fields', 'output-limit', 'output-format', 'text-part', 'similar-name'])
+async def test_any_other_rejected_request_keeps_the_general_code_even_when_its_message_names_images(transport, status, fields):
+    # The messages the mocks send are 'any text'; a real one may say anything, and a message never decides.
+    failure = await _failure_of(transport, ('status', status, fields))
+    assert failure.code == GENERAL_REJECTION
+    assert failure.metadata.failure_class == GENERAL_REJECTION
+
+
+@pytest.mark.asyncio
+async def test_a_message_about_images_without_a_structured_pointer_is_not_evidence(transport):
+    failure = await _failure_of(transport, ('status', 400, {'message': 'Invalid image: this model does not support image inputs'}))
+    assert failure.code == GENERAL_REJECTION
 
 
 @pytest.mark.asyncio
