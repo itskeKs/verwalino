@@ -51,7 +51,8 @@ decide them.
 - The column must record who made a row of working data. A column that attests an act the
   importer did not perform (a reviewer, a preparer: #716, #694) would state something untrue
   about that act; whether the importer may stand there, or another way is needed, is that
-  issue's decision.
+  issue's decision. [ADR 0016](0016-import-names-the-restored-dunning-context-for-its-preparer.md)
+  decides it for the preparer of a dunning context (#694): the archived preparer stays.
 - One acting user must satisfy every rule on the row and on its chain. A rule that needs two
   different users (for example a preparer and a separate approver) cannot be met by writing
   the importer into both columns.

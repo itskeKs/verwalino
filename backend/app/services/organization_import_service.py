@@ -614,9 +614,18 @@ async def import_organization(db, auth, source):
                         previous_scope = await db.scalar(text("SELECT current_setting('app.current_scope_id',true)"))
                         await db.execute(text("SELECT set_config('app.current_scope_id',:scope,true)"),
                             {'scope': row[scope_column]})
+                    # A context another user prepared keeps its archived preparer (ADR 0016), which
+                    # `protect_dunning_context` accepts only for an inactive placeholder of this
+                    # organization that this marker names together with the context's own notice.
+                    other_preparer = name == 'dunning_scope_context' and row['created_by'] != str(auth.user_id)
+                    if other_preparer:
+                        await db.execute(text("SELECT set_config('app.organization_import_dunning_context',:marker,true)"),
+                            {'marker': json.dumps({'notice_id': row['dunning_notice_id'], 'created_by': row['created_by']})})
                     await db.execute(text(f'INSERT INTO public."{name}" ({columns}) SELECT {projection} '
                         f'FROM json_populate_record(NULL::public."{name}",CAST(:row AS json)) v'),
                         {'row': json_bytes(row).decode()})
+                    if other_preparer:
+                        await db.execute(text("SELECT set_config('app.organization_import_dunning_context','',true)"))
                     if scope_column:
                         await db.execute(text("SELECT set_config('app.current_scope_id',:scope,true)"),
                             {'scope': previous_scope or ''})

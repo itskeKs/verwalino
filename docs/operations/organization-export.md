@@ -259,17 +259,16 @@ user). This is the same limit as on earlier releases. In practice:
 - It works when the source organization is gone (deleted, or the archive is
   restored on another installation), the importing administrator signs in with
   the address of the archived administrator, and that administrator is the only
-  account that created the scopes, reviewed the bindings, gave the grants,
-  prepared the dunning notices and uploaded the attachments. Deleting an
+  account that created the scopes, reviewed the bindings, gave the grants and
+  uploaded the attachments. Deleting an
   organization rewrites all its account addresses to `<id>@deleted.invalid`,
   which frees that address, and the address match above maps the archived
   administrator to the importing administrator. Evidence keeps its original
   actors; the importing administrator receives no extra grant.
 - It is refused when any of these rows names another archived account, even
   after the source organization is gone: a scope grant given, a binding
-  reviewed, a dunning notice prepared or an attachment uploaded by a second
-  administrator or a clerk, or by an administrator whose address the importing
-  administrator does not carry.
+  reviewed or an attachment uploaded by a second administrator or a clerk, or
+  by an administrator whose address the importing administrator does not carry.
   Such an account is an inactive placeholder after the import, so its first row
   cannot be inserted.
 - It is refused while the source organization still holds the archived
@@ -310,9 +309,25 @@ first, then each context with its scope selected, then its notice. No guard is
 relaxed: the deferred `validate_dunning_context` check (the frozen levies must
 carry an allocation for the notice's owner and lie in the period and scope) still
 runs on the restored rows, so an archive whose context the allocations do not back
-is refused. The limits of the list above apply to the preparer of the notice: a
-notice prepared by another account, or one the importing administrator holds no
-live grant for, is refused.
+is refused. A notice the importing administrator holds no live grant for is refused.
+
+**Who is the preparer of a restored notice.** The archived preparer stays the
+preparer. `dunning_scope_context.created_by` is the account the import maps the
+archived preparer to: the importing administrator's own account when the archived
+preparer carried that sign-in address, otherwise the inactive placeholder account of
+the clerk or second administrator who prepared the notice (it keeps the archived
+name, has no credentials and cannot sign in). The importing administrator is never
+recorded as the preparer of a notice they did not prepare. Normally `protect_dunning_context` binds the
+preparer of a new context to the signed-in user. For the one row an import is
+restoring it accepts another preparer: the import names that context's notice and
+its archived preparer in the transaction-local setting
+`app.organization_import_dunning_context` around that one insert, and the guard
+accepts it only for an inactive account of the same organization whose password is
+the unusable `!` the import writes for an archived user (a colleague deactivated in
+the user list keeps their password and is no placeholder). Organization, selected
+scope, the importing administrator's live `prepare` grant and the order (context
+before its notice) are still required, and a context stays immutable
+([ADR 0016](../adr/0016-import-names-the-restored-dunning-context-for-its-preparer.md)).
 
 Rows are inserted in dependency order in one transaction under ordinary runtime
 RLS and integrity guards. Original registration reuses its native validated
