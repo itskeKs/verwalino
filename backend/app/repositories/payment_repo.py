@@ -89,6 +89,24 @@ class PaymentRepository(TenantRepository[Payment]):
         result = await self._session.execute(stmt)
         return result.scalars().all()
 
+    async def list_outside_scope_for_lease(
+        self, lease_agreement_id: uuid.UUID, listed: Sequence[uuid.UUID],
+    ) -> list[Payment]:
+        """Booked payments of the lease that the selected accounting scope does not let this session read (#803).
+
+        `listed` are the ids `list_for_lease` returned, so no payment counts twice. The rows come from
+        `lease_payments_outside_scope` (0194), which answers only where the statement itself is admitted, and
+        hold what the calculation reads and nothing else: type, direction, amount, assigned month, value date and
+        booking time. Never added to a session; id, account, counterparty and text stay empty, so such a payment
+        can be summed and allocated but not named or opened. One query.
+        """
+        rows = await self._session.execute(text(
+            'SELECT payment_type, direction, amount, period_year, period_month, value_date, booked_at '
+            'FROM lease_payments_outside_scope(:org, :lease, CAST(:listed AS uuid[]))'),
+            {'org': self._org_id, 'lease': lease_agreement_id, 'listed': list(listed)})
+        return [Payment(organization_id=self._org_id, lease_agreement_id=lease_agreement_id, status='booked',
+                        **row._mapping) for row in rows]
+
     async def list_for_owner(
         self, owner_profile_id: uuid.UUID, *, property_id: uuid.UUID | None = None,
     ) -> Sequence[Payment]:

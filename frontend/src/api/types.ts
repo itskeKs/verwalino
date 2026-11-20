@@ -1304,6 +1304,8 @@ export interface TenantMietkontoResult extends MietkontoResult {
   open_items: (OpenItem & { is_due: boolean; combined_advance?: boolean })[];
   due_balance: string;
   not_yet_due_balance: string;
+  /** The part of ist_total paid into accounts of other accounting scopes, as one amount; null if none. */
+  other_scope_ist: string | null;
 }
 
 export interface OwnerMietkontoResult extends MietkontoResult {

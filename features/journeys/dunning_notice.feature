@@ -37,12 +37,14 @@ Feature: Readable issued dunning notice
     Then the combined notice is a level 2 dunning with 2.50 fee and 1402.50 total
 
   Scenario Outline: A missing accounting scope is explained in German before a draft is created
-    Given a rental agreement with receipts in two separate accounting scopes
+    Given a rental agreement of 850 EUR rent with receipts in two separate accounting scopes
     When the manager submits a June tenant notice without an accounting scope at <width> px
     Then the form explains the accounting scope requirement in German and no draft exists
     And the explanation is fully in view without manual scrolling and the form keeps its values
     When the manager selects the first accounting scope and submits the same notice
-    Then exactly one tenant draft exists and opens with 750 EUR principal
+    Then the form reports that nothing is overdue for June and no draft exists
+    When the manager asks for July instead and submits the notice
+    Then exactly one tenant draft exists and opens with 850 EUR principal
 
     Examples:
       | width |
@@ -50,7 +52,7 @@ Feature: Readable issued dunning notice
       | 360   |
 
   Scenario: A missing accounting scope is explained in German in an organization with a special levy
-    Given a rental agreement with receipts in two separate accounting scopes
+    Given a rental agreement of 850 EUR rent with receipts in two separate accounting scopes
     And the organization holds a frozen special levy
     When the manager submits a June tenant notice without an accounting scope at 1280 px
     Then the form explains the accounting scope requirement in German and no draft exists

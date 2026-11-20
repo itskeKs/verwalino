@@ -162,6 +162,8 @@ class TenantMietkontoOut(MietkontoOut):
     due_balance: str
     not_yet_due_balance: str
     dunning_notices: list[IssuedDunningInfo]
+    # The part of ist_total paid into accounts of other accounting scopes, as one amount (#803); null if none.
+    other_scope_ist: str | None = None
 
 
 class OwnerOpenItemOut(TenantOpenItemOut):
@@ -274,6 +276,7 @@ async def lease_statement(
     )
     return TenantMietkontoOut(**statement, due_balance=str(result.due_balance),
         not_yet_due_balance=str(result.not_yet_due_balance),
+        other_scope_ist=None if result.other_scope_ist is None else str(result.other_scope_ist),
         dunning_notices=[IssuedDunningInfo.model_validate(row) for row in notices])
 
 

@@ -74,8 +74,10 @@ async def test_prepare_and_confirm_without_approve_can_book_real_mietkonto(migra
         statement = await api.get(url(ids, "lease"), params={**query(ids), "period_start": "2025-06-01", "period_end": "2025-06-30"})
         assert statement.status_code == 200, statement.text
         assert statement.json()["soll_total"] == "600.00"
-        assert statement.json()["ist_total"] == "600.00"
-        assert statement.json()["balance"] == "0.00"
+        # 100.00 + 400.00 + 100.00 in this scope's account, and the 900.00 paid for June into the second scope's.
+        assert statement.json()["ist_total"] == "1500.00"
+        assert statement.json()["other_scope_ist"] == "900.00"
+        assert statement.json()["balance"] == "-900.00"
 
 
 async def test_prepare_without_confirm_cannot_book_but_can_ignore(migrator_session, scope_seed):
@@ -89,7 +91,8 @@ async def test_prepare_without_confirm_cannot_book_but_can_ignore(migrator_sessi
         assert [row["id"] for row in unchanged.json()["items"]] == [str(ids["transaction"])]
         statement = await api.get(url(ids, "lease"), params={**query(ids), "period_start": "2025-06-01", "period_end": "2025-06-30"})
         assert statement.status_code == 200, statement.text
-        assert statement.json()["ist_total"] == "100.00"
+        # The 100.00 of this scope's account and the 900.00 of the second scope's: the lease's debt counts both.
+        assert statement.json()["ist_total"] == "1000.00"
         ignored = await api.post(f"/api/bank-transactions/{ids['transaction']}/ignore")
         assert ignored.status_code == 200, ignored.text
         assert ignored.json()["status"] == "IGNORIERT"

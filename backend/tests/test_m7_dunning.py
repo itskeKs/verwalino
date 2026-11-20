@@ -423,11 +423,13 @@ async def test_batch_scope_members_and_revoked_replay_fail_closed(migrator_sessi
     ids = await statement_fixture(migrator_session, scope_seed, "lease")
     await grant(ids, ["read", "prepare"])
     body = batch_request(period_end="2025-12-31", reference_date="2026-01-15",
-                         threshold="7000.00", accounting_scope_id=str(ids["scope"]))
+                         threshold="6500.00", accounting_scope_id=str(ids["scope"]))
     async with client(ids) as api:
         preview = await batch_preview(api, body)
         assert [r["lease_agreement_id"] for r in preview["candidates"]] == [str(ids["lease"])]
-        assert Decimal(preview["candidates"][0]["principal_amount"]) == Decimal("7100.00")
+        # 11 months of 500.00 rent and 12 x 100.00 advance; June's rent was paid twice over (100.00 + 900.00 into
+        # the accounts of two scopes), which is no credit against another month.
+        assert Decimal(preview["candidates"][0]["principal_amount"]) == Decimal("6700.00")
         request = selected_batch(body, preview, [ids["lease"]])
         created = await api.post("/api/dunning/batch", json=request)
         assert created.status_code == 201, created.text
@@ -1861,7 +1863,7 @@ async def test_0174_downgrade_refuses_default_policy_notice_without_interest(iso
                         with connection.begin_nested():
                             command.downgrade(cfg, "0173")
                     historical.rollback()
-            assert connection.scalar(text("SELECT version_num FROM alembic_version")) == "0193"
+            assert connection.scalar(text("SELECT version_num FROM alembic_version")) == "0194"
             assert connection.scalar(text("SELECT to_regclass('public.dunning_settings')")) is not None
             assert connection.scalar(text("SELECT count(*) FROM dunning_notice WHERE id=:id"), params) == 1
     finally:
