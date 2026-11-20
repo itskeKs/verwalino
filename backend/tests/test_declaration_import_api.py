@@ -970,6 +970,51 @@ async def test_start_is_idempotent_and_queues_without_extraction(client_a_admin)
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("operation", ["start", "retry"])
+@pytest.mark.parametrize(("extraction_model", "reading_model", "refused"), [
+    ("unpriced-extraction-model", "gpt-5.4-mini", True),  # only the reading model is priced: it counts like the other
+    ("gpt-5.6-luna", "unpriced-vision-model", True),  # as before: a priced extraction model
+    ("unpriced-extraction-model", "unpriced-vision-model", False),  # as before: nothing priced, nothing held
+])
+async def test_start_and_retry_check_the_monthly_limit_for_the_extraction_and_the_reading_model(
+    client_a_admin, seed_data, operation, extraction_model, reading_model, refused
+) -> None:
+    from tests.test_scoped_account_statements import fetch, mutate
+    org = seed_data["org_a_id"]
+    created = await client_a_admin.post("/api/declaration-imports", json={"mode": "NEW_PROPERTY"})
+    import_id = created.json()["id"]
+    if operation == "start":
+        uploaded = await client_a_admin.post(
+            f"/api/declaration-imports/{import_id}/documents",
+            files={"file": ("teilung.pdf", b"%PDF-1.4\n%%EOF", "application/pdf")},
+            data={"document_role": "DECLARATION", "sequence_no": "1"},
+        )
+        assert uploaded.status_code == 201
+    else:
+        await mutate(text("UPDATE declaration_import SET status='FAILED', error_code='PROVIDER_TIMEOUT' WHERE id=:job"),
+                     {"job": uuid.UUID(import_id)})
+    configured_ai(org, model=extraction_model, document_model=reading_model, monthly_limit_usd=Decimal("0.00"))
+    headers = {"Idempotency-Key": str(uuid.uuid4())}
+
+    response = await client_a_admin.post(f"/api/declaration-imports/{import_id}/{operation}", headers=headers)
+
+    if not refused:
+        assert response.status_code == 200 and response.json()["status"] == "QUEUED", response.text
+        return
+    # The worker would refuse it terminally; the request is refused up front, with the existing code.
+    assert response.status_code == 409, response.text
+    assert response.json()["detail"]["code"] == "ORGANIZATION_AI_BUDGET_EXCEEDED"
+    params = {"job": uuid.UUID(import_id)}
+    assert await fetch("SELECT count(*) FROM declaration_extraction_run WHERE import_id=:job", params) == 0
+    assert await fetch("SELECT count(*) FROM declaration_queue_request WHERE import_id=:job", params) == 0
+    assert await fetch("SELECT status FROM declaration_import WHERE id=:job", params) == ("DRAFT" if operation == "start" else "FAILED")
+    # Raising the limit makes the same import, with the same request key, startable again.
+    configured_ai(org, model=extraction_model, document_model=reading_model, monthly_limit_usd=None)
+    again = await client_a_admin.post(f"/api/declaration-imports/{import_id}/{operation}", headers=headers)
+    assert again.status_code == 200 and again.json()["status"] == "QUEUED", again.text
+
+
+@pytest.mark.asyncio
 async def test_upload_rejects_duplicate_sequence_and_non_draft_update(client_a_admin) -> None:
     created = await client_a_admin.post(
         "/api/declaration-imports", json={"mode": "NEW_PROPERTY"}

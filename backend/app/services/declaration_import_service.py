@@ -207,8 +207,14 @@ class DeclarationImportService:
             if (await self._imports.count_extraction_runs(import_id) >= settings.declaration_max_attempts
                 or item.estimated_cost_usd >= item.max_cost_usd):
                 raise HTTPException(status_code=409, detail="RETRY_BUDGET_EXHAUSTED")
+        from app.repositories.organization_ai_settings_repo import OrganizationAiSettingsRepository
         from app.services.ai_settings_service import require_organization_ai_budget
         await require_organization_ai_budget(self._session, self._org_id, item.max_cost_usd)
+        # The worker holds the import's cap against the monthly limit for the reading model as well; refusing here
+        # keeps an import it would end terminally from being accepted.
+        ai_row = await OrganizationAiSettingsRepository(self._session, self._org_id).get()
+        if ai_row is not None and ai_row.document_model:
+            await require_organization_ai_budget(self._session, self._org_id, item.max_cost_usd, model=ai_row.document_model)
         receipt_id = await self._session.scalar(text("SELECT record_declaration_queue_request(:org,:job,:key,:operation)"),
             {"org": self._org_id, "job": import_id, "key": key, "operation": operation})
         await self._session.refresh(item)
