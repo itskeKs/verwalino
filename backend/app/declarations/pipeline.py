@@ -484,6 +484,9 @@ class DeclarationPipeline:
         source_pdf_bytes: dict[str, bytes] = {}
         # Transcripts an earlier run of this import finished; loaded once, when the first page needs reading.
         saved_readings: dict[tuple[uuid.UUID, int], list[dict[str, object]]] | None = None
+        # Every document is validated and its page and pixel bounds are reserved first, so that a refusal of a later
+        # document costs no paid reading of an earlier one. Reading starts only when all of them passed.
+        prepared = []
         for _link, document in documents:
             key = _document_key(document)
             try:
@@ -506,6 +509,8 @@ class DeclarationPipeline:
             source_pdf_bytes[key] = data
             counts[key] = result.page_count
             ids[key] = document.id
+            prepared.append((key, document, data, result))
+        for key, document, data, result in prepared:
             for artifact in result.pages:
                 text, source = artifact.text, artifact.source
                 if source == IMAGE_PAGE_SOURCE:

@@ -143,6 +143,40 @@ def test_upgrade_accepts_a_read_page_ledger_row_and_downgrade_restores_the_old_v
         engine.dispose()
 
 
+def _monthly_usage_definition(db):
+    return db.scalar(text("SELECT pg_get_functiondef('public.organization_ai_monthly_usage(uuid,text[])'::regprocedure)"))
+
+
+def test_upgrade_holds_a_running_import_by_its_reading_model_too_and_downgrade_restores_the_older_definition(seed_data):
+    migration = _migration()
+    engine = create_engine(MIGRATOR_SYNC_URL)
+    reading_openai = "r.document_model_name=ANY(priced_models)"
+    reading_anthropic = "r.document_model_name IN ('claude-haiku-4-5','claude-haiku-4-5-20251001')"
+    try:
+        with engine.begin() as db, Operations.context(MigrationContext.configure(db)):
+            savepoint = db.begin_nested()
+            try:
+                current = _monthly_usage_definition(db)
+                assert reading_openai in current and reading_anthropic in current
+                # The provider guard of 0179 stays around both models.
+                assert "(r.provider='OpenAiDeclarationProvider' AND (r.model_name=ANY(priced_models) OR " in current
+                assert "(r.provider='AnthropicDeclarationProvider' AND (r.model_name IN " in current
+                _discard_reading_ledger(db)
+                db.execute(text('UPDATE organization_ai_settings SET document_model=NULL'))
+                migration.downgrade()
+                older = _monthly_usage_definition(db)
+                assert 'document_model_name' not in older
+                assert ("r.status='RUNNING' AND ((r.provider='OpenAiDeclarationProvider' AND r.model_name=ANY(priced_models)) "
+                        "OR (r.provider='AnthropicDeclarationProvider' AND r.model_name IN "
+                        "('claude-haiku-4-5','claude-haiku-4-5-20251001')))") in older
+                migration.upgrade()
+                assert _monthly_usage_definition(db) == current
+            finally:
+                savepoint.rollback()
+    finally:
+        engine.dispose()
+
+
 def test_the_page_transcript_table_is_worker_fenced_isolated_and_follows_the_import(seed_data):
     with create_engine(MIGRATOR_SYNC_URL).begin() as db:
         savepoint = db.begin_nested()

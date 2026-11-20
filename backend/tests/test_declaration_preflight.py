@@ -4,6 +4,7 @@ import hashlib
 import io
 import base64
 from dataclasses import FrozenInstanceError
+from decimal import Decimal
 from pathlib import Path
 
 import pikepdf
@@ -19,7 +20,7 @@ from app.declarations.preflight import (
     PageArtifact,
     PdfPreflight,
 )
-from tests.declaration_fixtures import make_text_pdf, mutate_pdf
+from tests.declaration_fixtures import make_scanned_pdf, make_text_pdf, mutate_pdf
 
 
 def _integrity(data: bytes) -> dict[str, int | str]:
@@ -107,7 +108,12 @@ def test_render_page_data_url_renders_exact_safe_page_as_png() -> None:
     assert decoded.startswith(b"\x89PNG\r\n\x1a\n")
     assert budget.ocr_pages == 0
     assert budget.rendered_pixels > 0
-    assert budget.temporary_bytes >= len(decoded) + len(encoded)
+    assert budget.temporary_bytes == 0, "the render's count is released when its directory is deleted"
+    with pytest.raises(DocumentIntegrityError) as error:  # the encoded copies count while the render is held
+        PdfPreflight(max_temp_bytes=len(decoded) + len(encoded)).render_page_data_url(
+            data, 2, budget=preflight.new_import_budget()
+        )
+    assert error.value.code == "VISION_IMPORT_TEMP_BYTES_LIMIT_EXCEEDED"
 
 
 def test_render_page_data_url_rejects_out_of_range_page_before_poppler() -> None:
@@ -120,14 +126,14 @@ def test_render_page_data_url_rejects_out_of_range_page_before_poppler() -> None
     assert error.value.code == "PDF_PAGE_OUT_OF_RANGE"
 
 
-def test_render_page_data_url_counts_encoded_bytes_and_cleans_its_temp_directory(tmp_path: Path) -> None:
+def test_render_page_data_url_cleans_its_temp_directory_and_releases_its_count(tmp_path: Path) -> None:
     data = make_text_pdf("Sichere Textseite für den temporären Renderpfad.")
     preflight = PdfPreflight(temporary_root=tmp_path)
     budget = preflight.new_import_budget()
 
     preflight.render_page_data_url(data, 1, budget=budget)
 
-    assert budget.temporary_bytes > 0
+    assert budget.temporary_bytes == 0
     assert list(tmp_path.iterdir()) == []
 
 
@@ -442,7 +448,8 @@ def test_settings_have_declaration_preflight_defaults() -> None:
     assert settings.declaration_ocr_max_pixels_per_page == 20_000_000
     assert settings.declaration_ocr_max_temp_bytes == 256 * 1024 * 1024
     assert settings.declaration_ocr_max_pages_per_import == 200
-    assert settings.declaration_ocr_max_pixels_per_import == 400_000_000
+    assert settings.declaration_ocr_max_pixels_per_import == 800_000_000
+    assert settings.declaration_max_cost_usd == Decimal("3.00")
     assert settings.declaration_preflight_deadline_seconds == 600
 
 
@@ -513,7 +520,7 @@ def test_a_page_is_rendered_to_png_at_its_dpi_with_its_resources_accounted(
     assert png.startswith(b"\x89PNG\r\n\x1a\n")
     assert Image.open(io.BytesIO(png)).size == (800, 600)
     assert (renderer.calls[0]["dpi"], renderer.calls[0]["first_page"], renderer.calls[0]["last_page"]) == (180, 1, 1)
-    assert budget.rendered_pixels == 480_000 and budget.temporary_bytes >= 7
+    assert budget.rendered_pixels == 480_000 and budget.temporary_bytes == 0
     assert list(tmp_path.iterdir()) == [], "no image file outlives the call"
 
 
@@ -538,6 +545,103 @@ def test_an_a4_scan_at_the_worker_dpi_is_not_scaled() -> None:
     png = preflight.render_page_for_reading(data, page, budget=preflight.new_import_budget())
 
     assert Image.open(io.BytesIO(png)).size == (1_489, 2_105)
+
+
+def test_a_thirty_page_a4_scan_is_rendered_page_after_page_within_the_temporary_bound(tmp_path: Path) -> None:
+    """The real renderer writes about 9.4 MB per A4 page at 180 dpi and deletes it after every page: the bound of
+    256 MiB limits one render, so a scan of any permitted page count passes it (it stopped at page 29 before)."""
+    data = make_scanned_pdf(30)
+    preflight = PdfPreflight(temporary_root=tmp_path)
+    budget = preflight.new_import_budget()
+    result = preflight.run_bytes(data, budget=budget, **_integrity(data))
+    assert [page.source for page in result.pages] == ["IMAGE"] * 30
+
+    for page in result.pages:
+        assert preflight.render_page_for_reading(data, page, budget=budget).startswith(b"\x89PNG\r\n\x1a\n")
+
+    assert budget.temporary_bytes == 0
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_the_temporary_count_is_one_renders_disk_use_and_is_released_when_its_directory_closes(
+    renderer: Renderer,
+) -> None:
+    data = make_text_pdf("kurz")
+    renderer.extra_bytes = 400_000
+    preflight = PdfPreflight(max_temp_bytes=1_000_000)
+    budget = preflight.new_import_budget()
+    page = _image_page(preflight, data, budget)
+
+    for _ in range(5):  # five renders of 400,000 bytes each pass a bound of 1,000,000: nothing is summed
+        preflight.render_page_for_reading(data, page, budget=budget)
+        assert budget.temporary_bytes == 0
+    renderer.extra_bytes = 1_000_001  # one render above the bound still fails, and its count is released too
+    with pytest.raises(DocumentIntegrityError) as error:
+        preflight.render_page_for_reading(data, page, budget=budget)
+    assert error.value.code == "OCR_TEMP_BYTES_LIMIT_EXCEEDED"
+    assert budget.temporary_bytes == 0
+
+
+def test_the_count_of_a_render_that_fails_after_it_was_counted_is_released(renderer: Renderer) -> None:
+    data = make_text_pdf("kurz")
+    renderer.extra_bytes = 400_000
+    renderer.size = (2_000, 2_000)
+    preflight = PdfPreflight(ocr_dpi=72, max_pixels_per_page=1_000_000)
+    budget = preflight.new_import_budget()
+    page = _image_page(preflight, data, budget)
+
+    with pytest.raises(DocumentIntegrityError) as error:
+        preflight.render_page_for_reading(data, page, budget=budget)
+
+    assert error.value.code == "OCR_RENDERED_PIXELS_LIMIT_EXCEEDED"
+    assert budget.temporary_bytes == 0
+
+
+def test_rechecks_count_the_temporary_bytes_of_one_render_at_a_time(renderer: Renderer) -> None:
+    data = make_text_pdf("kurz")
+    renderer.extra_bytes = 400_000
+    preflight = PdfPreflight(max_temp_bytes=1_000_000)
+    budget = preflight.new_import_budget()
+
+    for _ in range(5):
+        preflight.render_page_data_url(data, 1, budget=budget)
+        assert budget.temporary_bytes == 0
+    renderer.extra_bytes = 1_000_001
+    with pytest.raises(DocumentIntegrityError) as error:
+        preflight.render_page_data_url(data, 1, budget=budget)
+    assert error.value.code == "VISION_IMPORT_TEMP_BYTES_LIMIT_EXCEEDED"
+    assert budget.temporary_bytes == 0
+
+
+def _preflight_with_the_default_import_bounds() -> PdfPreflight:
+    fields = Settings.model_fields
+    return PdfPreflight(
+        max_ocr_pages_per_import=fields["declaration_ocr_max_pages_per_import"].default,
+        max_pixels_per_import=fields["declaration_ocr_max_pixels_per_import"].default,
+    )
+
+
+def test_the_pixel_reservation_admits_the_permitted_200_scanned_a4_pages() -> None:
+    data = make_scanned_pdf(200)
+    preflight = _preflight_with_the_default_import_bounds()
+    budget = preflight.new_import_budget()
+
+    result = preflight.run_bytes(data, budget=budget, **_integrity(data))
+
+    assert [(page.source, page.dpi) for page in result.pages] == [("IMAGE", 180)] * 200
+    assert budget.ocr_pages == 200 and budget.estimated_pixels == 200 * 1_488 * 2_105
+    # The pages as the worker renders them (1,489 x 2,105 pixels) stay inside the bound as well, with room for rechecks.
+    assert 200 * 1_489 * 2_105 + 12 * 1_489 * 2_105 < Settings.model_fields["declaration_ocr_max_pixels_per_import"].default
+
+
+def test_a_document_clearly_beyond_the_import_pixel_bound_is_refused_in_the_precheck() -> None:
+    data = make_scanned_pdf(60, size=(1_700, 1_700))  # 18 million pixels per page at 180 dpi, 1.08 billion in all
+    preflight = _preflight_with_the_default_import_bounds()
+
+    with pytest.raises(DocumentIntegrityError) as error:
+        preflight.run_bytes(data, **_integrity(data))
+
+    assert error.value.code == "OCR_IMPORT_PIXEL_LIMIT_EXCEEDED"
 
 
 def test_rendered_pixels_above_the_page_limit_fail_closed(renderer: Renderer) -> None:

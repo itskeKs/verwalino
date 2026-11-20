@@ -5,6 +5,7 @@ no provider call is made, and Tesseract is made unusable for the cases that prov
 """
 from __future__ import annotations
 
+import hashlib
 import io
 import subprocess
 import sys
@@ -17,7 +18,7 @@ from pathlib import Path
 import pytest
 from PIL import Image
 from pydantic import SecretStr
-from sqlalchemy import func, select
+from sqlalchemy import func, select, text
 
 from app.core.config import settings
 from app.core.db import get_worker_tenant_session as get_tenant_session
@@ -31,6 +32,7 @@ from app.models.declaration_candidate import DeclarationCandidate, DeclarationCa
 from app.models.declaration_import import (
     DeclarationExtractionRun,
     DeclarationImport,
+    DeclarationImportDocument,
     DeclarationImportPass,
     DeclarationPageReading,
 )
@@ -297,6 +299,94 @@ async def test_the_reading_models_price_counts_against_the_monthly_limit(
         assert (item.status, item.error_code) == ("NEEDS_REVIEW", None) and len(reader.reads) == 1
 
 
+@pytest.fixture
+def running_run():
+    """Commit RUNNING runs of imports (the worker's sessions must see them) and settle them afterwards, so that their
+    cap does not count for a later test of the shared organization."""
+    import psycopg2
+    from tests.conftest import MIGRATOR_SYNC_URL
+
+    created: list[uuid.UUID] = []
+
+    def seed(lease: WorkerLease, *, model_name: str, document_model_name: str | None,
+             provider: str = "OpenAiDeclarationProvider") -> None:
+        run = uuid.uuid4()
+        with psycopg2.connect(MIGRATOR_SYNC_URL) as connection, connection.cursor() as cursor:
+            cursor.execute(
+                """INSERT INTO declaration_extraction_run(id,organization_id,import_id,status,provider,model_name,
+                   document_model_name,prompt_version,schema_version,harness_version)
+                   VALUES (%s,%s,%s,'RUNNING',%s,%s,%s,'test','1','2')""",
+                (str(run), str(lease.organization_id), str(lease.import_id), provider, model_name, document_model_name))
+        created.append(run)
+
+    yield seed
+    with psycopg2.connect(MIGRATOR_SYNC_URL) as connection, connection.cursor() as cursor:
+        cursor.execute("UPDATE declaration_extraction_run SET status='FAILED', completed_at=now() WHERE id=ANY(%s::uuid[])",
+                       ([str(run) for run in created],))
+
+
+async def _month_to_date(organization_id: uuid.UUID) -> Decimal:
+    """What the shared organization has already used this month: other tests retain costs and running imports in it,
+    so the limits below are set relative to it."""
+    from app.core.ai_models import MODEL_PRICES
+
+    async with get_tenant_session(organization_id) as session:
+        return await session.scalar(text("SELECT organization_ai_monthly_usage(:org,CAST(:models AS text[]))"),
+                                    {"org": organization_id, "models": list(MODEL_PRICES)})
+
+
+async def _monthly_budget_check(organization_id: uuid.UUID, amount: Decimal, model: str) -> str | None:
+    """The check an import start and a question reservation run; the refusal code, or None when it passes."""
+    from fastapi import HTTPException
+    from app.services.ai_settings_service import require_organization_ai_budget
+
+    async with get_tenant_session(organization_id) as session:
+        try:
+            await require_organization_ai_budget(session, organization_id, amount, model=model, provider="openai")
+        except HTTPException as refusal:
+            return refusal.detail["code"]
+    return None
+
+
+@pytest.mark.parametrize(("running_extraction", "running_reading", "refused"), [
+    ("unpriced-extraction-model", READING_MODEL, True),  # only the reading model is priced: it counts, like the other
+    (EXTRACTION_MODEL, "unpriced-vision-model", True),  # as before: a priced extraction model
+    ("unpriced-extraction-model", "unpriced-vision-model", False),  # as before: nothing priced, nothing held
+])
+async def test_a_running_import_is_held_at_its_cap_when_its_extraction_or_its_reading_model_is_priced(
+    seed_data, configured_ai, running_run, running_extraction, running_reading, refused
+) -> None:
+    org = seed_data["org_a_id"]
+    configure_ai(org, model=EXTRACTION_MODEL, document_model=READING_MODEL,
+                 monthly_limit_usd=await _month_to_date(org) + Decimal("1.50"))
+    first, _key, _store = await _seed_pipeline_import(seed_data, _scan())  # its cap is 1.00 USD, nothing charged yet
+    running_run(first, model_name=running_extraction, document_model_name=running_reading)
+
+    # A priced request that would take the month past the limit once the running import's cap counts.
+    code = await _monthly_budget_check(org, Decimal("1"), READING_MODEL)
+
+    assert code == ("ORGANIZATION_AI_BUDGET_EXCEEDED" if refused else None)
+
+
+async def test_a_second_import_is_refused_at_the_limit_while_a_priced_reading_model_holds_the_first_ones_cap(
+    seed_data, configured_ai, running_run
+) -> None:
+    org = seed_data["org_a_id"]
+    configure_ai(org, model="unpriced-extraction-model", document_model=READING_MODEL,
+                 monthly_limit_usd=await _month_to_date(org) + Decimal("1.50"))
+    first, _key, _store = await _seed_pipeline_import(seed_data, _scan())
+    running_run(first, model_name="unpriced-extraction-model", document_model_name=READING_MODEL)
+    lease, key, store = await _seed_pipeline_import(seed_data, _scan())
+    extraction = ModelRecording(_RecordingProvider(key, usage=UNPRICED), "unpriced-extraction-model")
+    reader = FakeDocumentReadingProvider(transcripts={(key, 1): _text()})
+
+    await DeclarationImportWorker(_pipeline(extraction, reader, store))._run_claimed(lease)
+
+    item = await _item(lease)
+    assert (item.status, item.error_code) == ("FAILED", "ORGANIZATION_AI_BUDGET_EXCEEDED")
+    assert reader.reads == [] and extraction.records == []
+
+
 # ---- the per-import token limits fit the permitted 200 scanned pages --------------------------------------------------
 
 # What a dense scanned A4 page costs in a declaration import, by the derivation beside the limits in
@@ -423,6 +513,47 @@ def test_an_import_far_beyond_the_permitted_pages_still_stops_at_the_import_toke
             completed += 1
     assert stopped.value.code == "IMPORT_TOKEN_BUDGET_EXCEEDED"
     assert settings.declaration_ocr_max_pages_per_import <= completed < 2 * settings.declaration_ocr_max_pages_per_import
+
+
+# ---- every document passes the precheck before the first paid reading --------------------------------------------------
+
+
+async def _add_scan(lease: WorkerLease, store, pdf: bytes, sequence_no: int) -> str:
+    """A further document of the import; its key is returned."""
+    document_id = uuid.uuid4()
+    store._data[f"memory/{document_id}.pdf"] = pdf
+    async with get_tenant_session(lease.organization_id) as session:
+        item = await session.get(DeclarationImport, lease.import_id)
+        session.add(PropertyDocument(
+            id=document_id, organization_id=lease.organization_id, doc_type="AMENDMENT", title="Nachtrag",
+            original_filename="nachtrag.pdf", mime_type="application/pdf", content_byte_size=len(pdf),
+            content_sha256=hashlib.sha256(pdf).hexdigest(), storage_uri=f"memory/{document_id}.pdf",
+            storage_backend="TEST", page_count=1, uploaded_by=item.initiated_by))
+        await session.flush()
+        session.add(DeclarationImportDocument(
+            organization_id=lease.organization_id, import_id=lease.import_id, document_id=document_id,
+            sequence_no=sequence_no, document_role="AMENDMENT"))
+    return str(document_id)
+
+
+@pytest.mark.parametrize("limit", [
+    {"declaration_ocr_max_pages_per_import": 1},
+    {"declaration_ocr_max_pixels_per_import": 600_000},  # one 200 x 300 pt page at 180 dpi is 375,000 pixels
+], ids=["page-bound", "pixel-bound"])
+async def test_a_refusal_of_a_later_document_costs_no_paid_reading_of_an_earlier_one(seed_data, limit) -> None:
+    lease, key, store = await _seed_pipeline_import(seed_data, _scan())
+    second_key = await _add_scan(lease, store, _scan(), 2)
+    extraction = ModelRecording(_RecordingProvider(key), EXTRACTION_MODEL)
+    reader = FakeDocumentReadingProvider(transcripts={(key, 1): _text(), (second_key, 1): _text("Nachtrag")})
+
+    await DeclarationImportWorker(_pipeline(
+        extraction, reader, store, configured=settings.model_copy(update=limit)))._run_claimed(lease)
+
+    item = await _item(lease)
+    code = "OCR_IMPORT_PAGE_LIMIT_EXCEEDED" if "declaration_ocr_max_pages_per_import" in limit else "OCR_IMPORT_PIXEL_LIMIT_EXCEEDED"
+    assert (item.status, item.error_code) == ("FAILED", code)
+    assert reader.reads == [], "no page was read, so none was paid"
+    assert extraction.records == [] and (item.input_tokens, item.output_tokens) == (0, 0)
 
 
 # ---- resume ---------------------------------------------------------------------------------------------------------

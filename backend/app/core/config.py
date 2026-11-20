@@ -102,7 +102,9 @@ class Settings(BaseSettings):
     declaration_ocr_max_pixels_per_page: int = 20_000_000
     declaration_ocr_max_temp_bytes: int = 256 * 1024 * 1024
     declaration_ocr_max_pages_per_import: int = 200
-    declaration_ocr_max_pixels_per_import: int = 400_000_000
+    # 200 scanned A4 pages at the render ceiling of 4,000,000 pixels (READING_MAX_IMAGE_PIXELS in the preflight).
+    # A scan reaches that many pages only within the upload limit of 25 MiB per PDF (declaration_max_pdf_bytes).
+    declaration_ocr_max_pixels_per_import: int = 800_000_000
     declaration_preflight_deadline_seconds: int = 600
 
     # --- Declaration import / OpenAI provider ---
@@ -111,7 +113,7 @@ class Settings(BaseSettings):
     declaration_schema_version: str = "2"
     declaration_harness_version: str = "4"
     declaration_provider_timeout_seconds: int = 60
-    declaration_max_cost_usd: Decimal = Decimal("1.00")
+    declaration_max_cost_usd: Decimal = Decimal("3.00")
     declaration_max_recheck_pages: int = 12
     declaration_max_recheck_calls: int = 2
     declaration_provider_batch_pages: int = 20
@@ -129,7 +131,8 @@ class Settings(BaseSettings):
     # * total 2,060,000 in, 460,000 out. A reservation settles to the reported usage after its call, so the
     #   peak is that plus ONE outstanding worst-case reservation, up to 200,000 input (an 80,000 character batch
     #   counted twice, bytes as tokens, on a compatible endpoint) -> 2,200,000. Round numbers with at most 25 %
-    #   headroom. The cost limit above stays the money guard; dearer models reach it first.
+    #   headroom. The cost limit above stays the money guard; dearer models reach it first. The upload limit of
+    #   25 MiB per PDF bounds a large scan before the page limit: 200 pages in high resolution can exceed it.
     declaration_max_input_tokens: int = 2_500_000
     declaration_max_output_tokens: int = 500_000
     declaration_provider_max_output_tokens_per_call: int = 12_000

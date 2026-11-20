@@ -17,10 +17,14 @@ The reading stage of the declaration import needs three more things, all in this
   of a finished import against the text they were taken from. The transcripts stay with the import, like its
   original; they leave the database with it (cascade) and with the organization (erasure).
 * the pass-ledger validator accepts the pass id ``read_page``.
+* ``organization_ai_monthly_usage`` holds a RUNNING run at its cap (``greatest(max_cost_usd, estimated)``) when
+  its extraction model or its reading model is priced, with the same provider guard as before for both; it
+  asked only for the extraction model, so a priced reading model beside an unpriced extraction model left a
+  running import counted at what was already charged.
 
 ``downgrade()`` refuses while a reading model or a reading-pass record is stored, so that neither is discarded
-silently; the older runtime has no reading role and would run the import without it. The transient page
-transcripts are working data and are dropped.
+silently; the older runtime has no reading role and would run the import without it. The page transcripts are
+dropped with their table: they are re-readable working data of the import, and a resumed job reads them again.
 
 Revision ID: 0196
 Revises: 0195
@@ -36,6 +40,20 @@ depends_on = None
 
 _PASS_IDS_OLD = "NOT IN ('inventory', 'extract_core', 'extract_rules', 'reconcile', 'recheck')"
 _PASS_IDS_NEW = "NOT IN ('inventory', 'extract_core', 'extract_rules', 'reconcile', 'recheck', 'read_page')"
+_ANTHROPIC_PRICED = "('claude-haiku-4-5','claude-haiku-4-5-20251001')"
+_MONTHLY_USAGE = 'organization_ai_monthly_usage(uuid,text[])'
+# As patched in 0179: a RUNNING run is held at its cap only when its extraction model is priced.
+_MONTHLY_OLD = (
+    "r.status='RUNNING' AND ((r.provider='OpenAiDeclarationProvider' AND r.model_name=ANY(priced_models)) "
+    f"OR (r.provider='AnthropicDeclarationProvider' AND r.model_name IN {_ANTHROPIC_PRICED}))"
+)
+# The reading model counts like the extraction model, under the same provider guard.
+_MONTHLY_NEW = (
+    "r.status='RUNNING' AND ((r.provider='OpenAiDeclarationProvider' AND (r.model_name=ANY(priced_models) "
+    "OR r.document_model_name=ANY(priced_models))) "
+    f"OR (r.provider='AnthropicDeclarationProvider' AND (r.model_name IN {_ANTHROPIC_PRICED} "
+    f"OR r.document_model_name IN {_ANTHROPIC_PRICED})))"
+)
 
 
 def _replace_definition(function, before, after):
@@ -52,6 +70,7 @@ def upgrade():
     op.add_column('organization_ai_settings', sa.Column('document_model', sa.String(255)))
     op.add_column('declaration_extraction_run', sa.Column('document_model_name', sa.String(255)))
     _replace_definition('declaration_import_pass_safe_metadata_is_valid(jsonb,integer)', _PASS_IDS_OLD, _PASS_IDS_NEW)
+    _replace_definition(_MONTHLY_USAGE, _MONTHLY_OLD, _MONTHLY_NEW)
     op.execute("""
     CREATE TABLE public.declaration_page_reading (
       id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -119,5 +138,6 @@ def downgrade():
     op.execute('DROP FUNCTION public.guard_declaration_page_reading()')
     op.execute('DROP FUNCTION public.declaration_page_reading_readable(uuid,uuid)')
     _replace_definition('declaration_import_pass_safe_metadata_is_valid(jsonb,integer)', _PASS_IDS_NEW, _PASS_IDS_OLD)
+    _replace_definition(_MONTHLY_USAGE, _MONTHLY_NEW, _MONTHLY_OLD)
     op.drop_column('declaration_extraction_run', 'document_model_name')
     op.drop_column('organization_ai_settings', 'document_model')

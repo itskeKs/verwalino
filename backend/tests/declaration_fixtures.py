@@ -50,6 +50,16 @@ def make_text_pdf(*pages: str) -> bytes:
     return buffer.getvalue()
 
 
+def make_scanned_pdf(pages: int, *, size: tuple[int, int] = (595, 842)) -> bytes:
+    """A scanned document: one flat image per page and no text layer. The size is in points (default A4)."""
+    from PIL import Image
+
+    images = [Image.new("L", size, 255) for _ in range(pages)]
+    out = io.BytesIO()
+    images[0].save(out, "PDF", save_all=True, append_images=images[1:], resolution=72)
+    return out.getvalue()
+
+
 def mutate_pdf(data: bytes, mutate: Callable[[pikepdf.Pdf], None]) -> bytes:
     """Return a synthetic PDF with a deliberately unsafe object graph."""
     output = io.BytesIO()

@@ -106,7 +106,7 @@ class PdfPreflight:
         max_pixels_per_page: int = 20_000_000,
         max_temp_bytes: int = 256 * 1024 * 1024,
         max_ocr_pages_per_import: int = 200,
-        max_pixels_per_import: int = 400_000_000,
+        max_pixels_per_import: int = 800_000_000,
         deadline_seconds: int = 600,
         temporary_root: Path | None = None,
         monotonic: Callable[[], float] = time.monotonic,
@@ -143,10 +143,12 @@ class PdfPreflight:
         """Rasterize one already-selected safe PDF page into a PNG data URL.
 
         This is deliberately independent from the rendering for the reading model:
-        a vision recheck is allowed to consume the shared import deadline, pixel
-        and temporary-byte budgets, but it never increments the page-reading allowance.  The caller
-        owns ``pdf_bytes`` and must retain it only on its stack until this
-        method returns; no image or source bytes are retained by preflight.
+        a vision recheck is allowed to consume the shared import deadline and pixel
+        budget and, for the duration of this one render, the temporary-byte bound (its
+        count is released when the render ends, as for the reading render), but it never
+        increments the page-reading allowance.  The caller owns ``pdf_bytes`` and must
+        retain it only on its stack until this method returns; no image or source bytes
+        are retained by preflight.
         """
         if not isinstance(pdf_bytes, bytes):
             raise DocumentIntegrityError("VISION_RENDER_UNAVAILABLE")
@@ -167,7 +169,6 @@ class PdfPreflight:
         dpi, estimated_pixels = self._safe_vision_dpi(page)
         self._reserve_vision_budget(budget, estimated_pixels)
         temp_root = str(self._temporary_root) if self._temporary_root is not None else None
-        counted_temp_bytes = 0
         try:
             from pdf2image import convert_from_bytes
             from pdf2image.exceptions import PDFPopplerTimeoutError, PopplerNotInstalledError
@@ -177,6 +178,14 @@ class PdfPreflight:
 
         directory_path: Path | None = None
         counted_temp_bytes = 0
+        # What this render added to the import's temporary count; it leaves the count when the render ends.
+        held = 0
+
+        def hold_temp_bytes(value: int) -> None:
+            nonlocal held
+            held += _nonnegative_int(value)
+            self._account_vision_temp_bytes(budget, value)
+
         try:
             with tempfile.TemporaryDirectory(dir=temp_root, prefix="hv-declaration-vision-") as directory:
                 directory_path = Path(directory)
@@ -191,7 +200,7 @@ class PdfPreflight:
                     paths_only=True,
                 )
                 counted_temp_bytes = _directory_size(directory_path)
-                self._account_vision_temp_bytes(budget, counted_temp_bytes)
+                hold_temp_bytes(counted_temp_bytes)
                 if len(paths) != 1:
                     raise DocumentIntegrityError("VISION_RENDER_UNAVAILABLE")
                 with Image.open(paths[0]) as image:
@@ -201,7 +210,7 @@ class PdfPreflight:
                     image.save(encoded, format="PNG")
                 png = encoded.getvalue()
                 value = base64.b64encode(png).decode("ascii")
-                self._account_vision_temp_bytes(budget, len(png) + len(value))
+                hold_temp_bytes(len(png) + len(value))
                 self._ensure_deadline(budget)
                 return f"data:image/png;base64,{value}"
         except DocumentIntegrityError:
@@ -213,17 +222,18 @@ class PdfPreflight:
         except Exception as error:
             raise DocumentIntegrityError("VISION_RENDER_UNAVAILABLE") from error
         finally:
-            if directory_path is not None:
-                try:
-                    observed_temp_bytes = _directory_size(directory_path)
-                    if observed_temp_bytes > counted_temp_bytes:
-                        self._account_vision_temp_bytes(
-                            budget, observed_temp_bytes - counted_temp_bytes
-                        )
-                except DocumentIntegrityError:
-                    raise
-                except Exception as error:
-                    raise DocumentIntegrityError("VISION_RENDER_UNAVAILABLE") from error
+            try:
+                if directory_path is not None:
+                    try:
+                        observed_temp_bytes = _directory_size(directory_path)
+                        if observed_temp_bytes > counted_temp_bytes:
+                            hold_temp_bytes(observed_temp_bytes - counted_temp_bytes)
+                    except DocumentIntegrityError:
+                        raise
+                    except Exception as error:
+                        raise DocumentIntegrityError("VISION_RENDER_UNAVAILABLE") from error
+            finally:
+                budget.temporary_bytes -= held
 
     def render_page_for_reading(
         self,
@@ -235,7 +245,9 @@ class PdfPreflight:
         """Render exactly one ``IMAGE`` page to PNG bytes for the reading model.
 
         The page was validated and its count and pixel bounds reserved by :meth:`run_bytes`; this accounts the
-        actual temporary bytes and rendered pixels against the import's budget and the shared deadline. No
+        actual rendered pixels against the import's budget and the shared deadline, and the temporary bytes of
+        this render against the temporary bound: the count is released when the render's directory is deleted,
+        so the bound limits the disk use of one render and not the sum over the pages of the import. No
         image file outlives the call and only this one page is in memory. A render above
         ``READING_MAX_IMAGE_PIXELS`` is scaled down deterministically instead of failing.
         """
@@ -258,6 +270,7 @@ class PdfPreflight:
             raise DocumentIntegrityError("PAGE_RENDER_UNAVAILABLE") from error
 
         temp_root = str(self._temporary_root) if self._temporary_root is not None else None
+        held = 0
         try:
             with tempfile.TemporaryDirectory(dir=temp_root, prefix="hv-declaration-page-") as directory:
                 paths = convert_from_bytes(
@@ -274,6 +287,7 @@ class PdfPreflight:
                 if temporary_bytes > self._max_temp_bytes:
                     raise DocumentIntegrityError("OCR_TEMP_BYTES_LIMIT_EXCEEDED")
                 budget.temporary_bytes += temporary_bytes
+                held = temporary_bytes
                 if budget.temporary_bytes > self._max_temp_bytes:
                     raise DocumentIntegrityError("OCR_IMPORT_TEMP_BYTES_LIMIT_EXCEEDED")
                 if len(paths) != 1:
@@ -294,6 +308,9 @@ class PdfPreflight:
         except Exception as error:
             # Poppler missing, an unreadable render or a full disk: one stable code, no detail.
             raise DocumentIntegrityError("PAGE_RENDER_UNAVAILABLE") from error
+        finally:
+            # The render's directory is gone: its bytes no longer occupy the disk and leave the count.
+            budget.temporary_bytes -= held
         self._ensure_deadline(budget)
         return encoded.getvalue()
 
