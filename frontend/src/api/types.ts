@@ -237,6 +237,7 @@ export interface DeclarationRunBudget {
   input_tokens: number;
   output_tokens: number;
   runtime_seconds: number;
+  closed: boolean;
   estimated_cost_usd: string | null;
 }
 

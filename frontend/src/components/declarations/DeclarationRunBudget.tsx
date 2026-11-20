@@ -11,7 +11,9 @@ const STAGE_TITLES: Record<DeclarationRunStage['stage'], string> = {
 const number = (value: number | null | undefined) => value?.toLocaleString('de-DE');
 
 // The usage vocabulary is shared by the stages and the total of a run: reported, reserved, both, or unknown.
-function UsageRows({ usage, runtime }: { usage: Usage; runtime?: number }) {
+// Unknown usage has no cost row: there is nothing to price, and a number there would read as a known zero.
+// `inFlight` is set for the reservation of a run that is still open: the call that holds it has not ended.
+function UsageRows({ usage, runtime, inFlight = false }: { usage: Usage; runtime?: number; inFlight?: boolean }) {
   const status = usage.usage_status;
   return <>
     <dl className="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-2 mt-3 text-sm">
@@ -26,9 +28,11 @@ function UsageRows({ usage, runtime }: { usage: Usage; runtime?: number }) {
         </>}
       </>}
       {runtime !== undefined && <div><dt>Laufzeit</dt><dd>{Math.round(runtime).toLocaleString('de-DE')} s</dd></div>}
-      <div><dt>{status === 'REPORTED' ? 'Geschätzte Kosten' : 'Konservative Kostenschätzung'}</dt><dd>{usage.estimated_cost_usd === null ? 'kein Preis bekannt' : `${Number(usage.estimated_cost_usd).toLocaleString('de-DE', {minimumFractionDigits:2, maximumFractionDigits:6})} USD`}</dd></div>
+      {status !== 'UNKNOWN' && <div><dt>{status === 'REPORTED' ? 'Geschätzte Kosten' : 'Konservative Kostenschätzung'}</dt><dd>{usage.estimated_cost_usd === null ? 'kein Preis bekannt' : `${Number(usage.estimated_cost_usd).toLocaleString('de-DE', {minimumFractionDigits:2, maximumFractionDigits:6})} USD`}</dd></div>}
     </dl>
-    {status === 'RESERVED' && <p className="text-sm text-muted-foreground mt-3">Der tatsächliche Tokenverbrauch ist noch nicht bekannt. Die Reservierung bleibt bis zur Klärung vorsorglich im Budget erfasst.</p>}
+    {status === 'RESERVED' && <p className="text-sm text-muted-foreground mt-3">{inFlight
+      ? 'Reserviert für den Aufruf, der gerade läuft. Nach dessen Abschluss wird der Verbrauch der Stufe zugeordnet.'
+      : 'Der tatsächliche Tokenverbrauch ist noch nicht bekannt. Die Reservierung bleibt bis zur Klärung vorsorglich im Budget erfasst.'}</p>}
     {status === 'PARTIAL' && <p className="text-sm text-muted-foreground mt-3">Anbieterangaben liegen nur teilweise vor. Die konservativ erfassten Werte enthalten auch den weiterhin reservierten Anteil.</p>}
   </>;
 }
@@ -53,7 +57,7 @@ export function DeclarationRunBudget({ runs }: { runs: Run[] }) {
         <UsageRows usage={stage} />
       </Block>)}
       {run.unassigned && <Block id={`${run.id}-unassigned`} title="Nicht zugeordnet">
-        <UsageRows usage={{ ...run.unassigned, usage_status: 'RESERVED', reported_input_tokens: null, reported_output_tokens: null }} />
+        <UsageRows usage={{ ...run.unassigned, usage_status: 'RESERVED', reported_input_tokens: null, reported_output_tokens: null }} inFlight={!run.closed} />
       </Block>}
       {run.stages.length > 0 || run.unassigned
         ? <Block id={`${run.id}-total`} title="Gesamt"><UsageRows usage={run} runtime={run.runtime_seconds} /></Block>

@@ -86,7 +86,8 @@ def _assert_the_lines_add_up_to_the_total(result):
     assert sum(line.input_tokens for line in lines) == result.input_tokens
     assert sum(line.output_tokens for line in lines) == result.output_tokens
     if result.estimated_cost_usd is not None:
-        assert sum(line.estimated_cost_usd for line in lines) == result.estimated_cost_usd
+        # A stage with unknown usage carries no cost; its reservation is in the unassigned line.
+        assert sum(line.estimated_cost_usd for line in lines if line.estimated_cost_usd is not None) == result.estimated_cost_usd
 
 
 def test_each_stage_reports_its_own_model_tokens_and_cost_and_the_total_stays_the_sum():
@@ -123,9 +124,20 @@ def test_a_run_that_failed_in_reading_shows_what_the_failed_call_consumed_and_no
 def test_a_reading_call_with_unknown_usage_leaves_its_reservation_unassigned():
     # The failed call reported nothing; its reservation stays in the run's totals, but no ledger entry carries it.
     result = _run_out(_stage_run((17, 12000), '0.054'), [_entry('read_page', (0, 0), failure='PROVIDER_TIMEOUT')])
-    assert _stages(result) == [('READING', READING, 'UNKNOWN', None, None, 0, 0, Decimal('0.000000'))]
+    # The stage's cost is unknown, not zero: the money sits in the unassigned line.
+    assert _stages(result) == [('READING', READING, 'UNKNOWN', None, None, 0, 0, None)]
     assert _unassigned(result) == (17, 12000, Decimal('0.054000'))
     assert result.usage_status == 'RESERVED'
+    _assert_the_lines_add_up_to_the_total(result)
+
+
+def test_a_stage_with_unknown_usage_does_not_make_the_total_unpriced():
+    # Its cost is null because nothing is known about it, not because its model has no price: the total stays known.
+    passes = [_entry('read_page', (0, 0), failure='PROVIDER_TIMEOUT'), _entry('inventory', (300, 50), cost='0.000135')]
+    result = _run_out(_stage_run((300 + 17, 50 + 12000), '0.054135'), passes)
+    assert [(stage.stage, stage.usage_status, stage.estimated_cost_usd) for stage in result.stages] == [
+        ('READING', 'UNKNOWN', None), ('EXTRACTION', 'REPORTED', Decimal('0.000135'))]
+    assert result.estimated_cost_usd == Decimal('0.054135')
     _assert_the_lines_add_up_to_the_total(result)
 
 
@@ -157,12 +169,18 @@ def test_a_crashed_run_left_running_assigns_its_held_reservation_to_no_stage():
     _assert_the_lines_add_up_to_the_total(result)
 
 
+@pytest.mark.parametrize('closed', [True, False])
+def test_the_run_says_whether_it_is_still_open(closed):
+    # The screen explains the unassigned line of an open run as the call in flight; nothing else tells the two apart.
+    assert _run_out(_stage_run((17, 12000), '0.054', closed=closed), []).closed is closed
+
+
 def test_a_run_that_failed_in_extraction_keeps_the_finished_reading_and_the_reserved_extraction_call_apart():
     passes = [_entry('read_page', (100, 20), cost='0.000165'), _entry('inventory', (0, 0), failure='PROVIDER_TIMEOUT')]
     result = _run_out(_stage_run((600, 12020), '0.0145'), passes)
     assert _stages(result) == [
         ('READING', READING, 'REPORTED', 100, 20, 100, 20, Decimal('0.000165')),
-        ('EXTRACTION', EXTRACTION, 'UNKNOWN', None, None, 0, 0, Decimal('0.000000')),
+        ('EXTRACTION', EXTRACTION, 'UNKNOWN', None, None, 0, 0, None),
     ]
     assert _unassigned(result) == (500, 12000, Decimal('0.014335'))
     _assert_the_lines_add_up_to_the_total(result)

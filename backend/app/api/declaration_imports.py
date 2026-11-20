@@ -80,6 +80,7 @@ class DeclarationRunOut(BaseModel):
     input_tokens: int
     output_tokens: int
     runtime_seconds: float
+    closed: bool
     estimated_cost_usd: Decimal | None
 
 
@@ -335,8 +336,9 @@ def _run_out(run, passes=()) -> DeclarationRunOut:
     end = run.completed_at or datetime.now(timezone.utc)
     stages, unassigned = _run_stages(run, passes, priced)
     # The total is priced only when every line that consumed something is; an unpriced model that made no call
-    # does not hide a known cost.
-    lines = [*stages, *([unassigned] if unassigned else [])]
+    # does not hide a known cost, and a stage with unknown usage has no cost to price (its reservation is in the
+    # unassigned line, which carries the price rule).
+    lines = [*(stage for stage in stages if stage.usage_status != "UNKNOWN"), *([unassigned] if unassigned else [])]
     total_priced = all(line.estimated_cost_usd is not None for line in lines) if lines else priced(run.model_name)
     return DeclarationRunOut(id=str(run.id), model=run.model_name,
         usage_status=usage_status,
@@ -344,7 +346,7 @@ def _run_out(run, passes=()) -> DeclarationRunOut:
         reported_output_tokens=output_tokens if reported else None,
         stages=stages, unassigned=unassigned,
         input_tokens=run.input_tokens, output_tokens=run.output_tokens,
-        runtime_seconds=max(0, (end - run.started_at).total_seconds()),
+        runtime_seconds=max(0, (end - run.started_at).total_seconds()), closed=run.completed_at is not None,
         estimated_cost_usd=run.estimated_cost_usd if total_priced else None)
 
 
@@ -376,7 +378,9 @@ def _run_stages(run, passes, is_priced) -> tuple[list[DeclarationStageOut], Decl
             reported_input_tokens=sums[name][0] if has_reported else None,
             reported_output_tokens=sums[name][1] if has_reported else None,
             input_tokens=sums[name][0], output_tokens=sums[name][1],
-            estimated_cost_usd=sums[name][2].quantize(Decimal("0.000001")) if is_priced(model) else None))
+            # A stage whose calls reported nothing has no cost either: its reservation is not shown here, and a
+            # stage line of 0,00 USD would read as a known zero.
+            estimated_cost_usd=sums[name][2].quantize(Decimal("0.000001")) if has_reported and is_priced(model) else None))
     held_input = max(0, run.input_tokens - sum(total[0] for total in sums.values()))
     held_output = max(0, run.output_tokens - sum(total[1] for total in sums.values()))
     held_cost = max(Decimal("0"), Decimal(run.estimated_cost_usd) - sum(total[2] for total in sums.values()))
