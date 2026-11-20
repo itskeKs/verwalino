@@ -62,7 +62,7 @@ def alpha_ai(world):
     alpha = world.administrator_of('Verwaltung Alpha')
     org = world.look(alpha, '/api/organizations/me').json()['id']
     path = f'/api/organizations/{org}/ai-settings'
-    response = world.send(alpha, 'PUT', path, json={'model':'alpha-only-model'})
+    response = world.send(alpha, 'PUT', path, json={'model':'alpha-only-model','document_model':'alpha-only-reader'})
     assert response.status_code == 200, world.describe_response()
     world.data['ai_alpha_path'] = path
 
@@ -79,7 +79,8 @@ def foreign_ai(world):
 def alpha_unchanged(world):
     response = world.look(world.administrator_of('Verwaltung Alpha'), world.data['ai_alpha_path'])
     assert response.json()['model'] == 'alpha-only-model'
-    assert 'alpha-only-model' not in world.response.text
+    assert response.json()['document_model'] == 'alpha-only-reader'
+    assert 'alpha-only-model' not in world.response.text and 'alpha-only-reader' not in world.response.text
 
 
 @given("a compatible provider lists a synthetic model")
@@ -277,3 +278,50 @@ def audit_records(world):
         ('ai_settings.updated', {'api_key': 'removed', 'import_enabled': {'from': True, 'to': False}}),
     ], rows
     assert 'synthetic-audit-key' not in json.dumps(rows)
+
+
+@when("the administrator chooses a reading model and a different extraction model")
+def choose_both_models(world):
+    world.act('PUT', _ai_path(world), json={
+        'api_key': 'synthetic-ai-settings-key', 'model': 'future-model', 'document_model': 'gpt-5.4-mini', 'confirmation': True})
+    assert world.response.status_code == 200, world.describe_response()
+
+
+@when("the administrator changes only the extraction model")
+def change_extraction_model(world):
+    # The settings form sends both choices on every save.
+    world.act('PUT', _ai_path(world), json={'model': 'gpt-5.6-luna', 'document_model': 'gpt-5.4-mini'})
+    assert world.response.status_code == 200, world.describe_response()
+
+
+@then("the settings keep the reading model and report the price status of each model")
+def both_models_kept(world):
+    body = world.act('GET', _ai_path(world)).json()
+    assert (body['model'], body['document_model']) == ('gpt-5.6-luna', 'gpt-5.4-mini')
+    assert (body['price_known'], body['document_price_known']) == (True, True)
+
+
+@when("the administrator enables declaration import with an extraction model only")
+def import_with_extraction_model_only(world):
+    world.act('PUT', _ai_path(world), json={
+        'api_key': 'synthetic-ai-settings-key', 'model': 'gpt-5.6-luna', 'import_enabled': True, 'confirmation': True})
+    assert world.response.status_code == 200, world.describe_response()
+
+
+@then("starting a declaration import is refused because the reading model is missing")
+def import_refused_without_reading_model(world):
+    response = world.act('POST', '/api/declaration-imports', json={'mode': 'NEW_PROPERTY'})
+    assert response.status_code == 503, world.describe_response()
+    assert response.json()['detail'] == 'DECLARATION_IMPORT_DOCUMENT_MODEL_MISSING'
+
+
+@when("the administrator chooses a reading model")
+def choose_reading_model(world):
+    world.act('PUT', _ai_path(world), json={'model': 'gpt-5.6-luna', 'document_model': 'gpt-5.4-mini', 'import_enabled': True})
+    assert world.response.status_code == 200, world.describe_response()
+
+
+@then("a declaration import can be started")
+def import_can_be_started(world):
+    response = world.act('POST', '/api/declaration-imports', json={'mode': 'NEW_PROPERTY'})
+    assert response.status_code == 201, world.describe_response()
