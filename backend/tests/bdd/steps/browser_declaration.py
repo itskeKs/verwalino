@@ -4,7 +4,7 @@ import re
 import uuid
 from pathlib import Path
 from playwright.async_api import expect
-from pytest_bdd import when, then
+from pytest_bdd import given, when, then
 
 from tests.declaration_fixtures import DeclarationProcessingGate
 from tests.offline_declaration_import import fictional_provider, process_queued_imports  # noqa: F401
@@ -20,6 +20,18 @@ DESKTOP, PHONE = {'width': 1440, 'height': 1000}, {'width': 360, 'height': 800}
 
 async def _fits_the_width(page):
     assert not await page.evaluate('document.documentElement.scrollWidth > document.documentElement.clientWidth'), 'horizontal scrolling'
+
+
+@given("the organization enables declaration import with its synthetic AI key")
+def declaration_settings(world):
+    # By the API: the scenarios that only need an enabled import do not exercise the settings screen.
+    org = world.act('GET', '/api/organizations/me').json()['id']
+    world.data['declaration_org'] = org
+    response = world.act('PUT', f'/api/organizations/{org}/ai-settings', json={
+        'api_key':'synthetic-journey-key', 'model':EXTRACTION_MODEL, 'document_model':READING_MODEL, 'import_enabled':True,
+        'confirmation':True,
+    })
+    assert response.status_code == 200, world.describe_response()
 
 
 @when("the administrator chooses different models for reading documents and extracting information in the settings")
