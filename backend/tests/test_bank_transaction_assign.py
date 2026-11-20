@@ -750,14 +750,15 @@ async def test_real_target_mismatches_and_foreign_target(bank_seed, bank_db, see
 @pytest.mark.parametrize('write_grant', [False, True])
 async def test_scoped_matching_and_booking_respect_exact_grants_and_units(migrator_session, scope_seed, bank_db, write_grant):
     ids = await statement_fixture(migrator_session, scope_seed, 'lease')
-    # The existing report fixture has 500+100 Soll and 100 already paid in June.
+    # The existing report fixture has 500+100 Soll a month; June's rent was paid twice over (100 and 900 into the two
+    # scopes), so July is the month with a full 500+100 open.
     await bank_db.execute(text("UPDATE person SET iban='DE89370400440532013000' WHERE id=:person"),ids)
     await bank_db.commit()
-    tid = await transaction(bank_db,ids,amount='500.00')
+    tid = await transaction(bank_db,ids,amount='600.00',purpose='Warmmiete Juli 2025',value_date='2025-07-03')
     ids['tenant'] = ids['profile']
     body = split(ids)
-    body['lines'][0]['amount'] = '400.00'
-    body['lines'][1]['amount'] = '100.00'
+    for line,amount in zip(body['lines'],('500.00','100.00')):
+        line.update(amount=amount,period_month=7)
     async with scope_client(ids) as api:
         result = await listing(api,ids)
         assert result.status_code == 200,result.text
@@ -789,14 +790,19 @@ async def test_scoped_list_restores_context_between_accounts(migrator_session,sc
     ids = await statement_fixture(migrator_session,scope_seed,'lease')
     await bank_db.execute(text("UPDATE person SET iban='DE89370400440532013000' WHERE id=:person"),ids)
     await bank_db.commit()
-    await transaction(bank_db,ids,amount='500.00')
+    july = await transaction(bank_db,ids,amount='600.00',purpose='Warmmiete Juli 2025',value_date='2025-07-03')
+    june = await transaction(bank_db,ids,amount='500.00')
     await transaction(bank_db,ids,amount='600.00',bank='second_bank')
     async with scope_client(ids) as api:
         response = await api.get(BASE)
         assert response.status_code==200,response.text
         assert {row['bank_account_id'] for row in response.json()['items']}=={str(ids['bank']),str(ids['second_bank'])}
-        suggestions = {row['bank_account_id']:row['suggestions'] for row in response.json()['items']}
-        assert suggestions[str(ids['bank'])][0]['lines'][0]['open_amount']=='400.00'
+        by_transaction = {row['id']:row['suggestions'] for row in response.json()['items']}
+        suggestions = {row['bank_account_id']:row['suggestions'] for row in response.json()['items'] if row['id'] not in (july,june)}
+        assert by_transaction[july][0]['lines'][0]['open_amount']=='500.00'
+        # June's rent was paid twice over, 100.00 into this scope's account and 900.00 into the second one's: only the
+        # advance is open, so 500.00 matches nothing.
+        assert by_transaction[june]==[]
         second = suggestions[str(ids['second_bank'])]
         assert len(second) == 1
         assert second[0]['lines'][0]['lease_agreement_id'] == str(ids['excluded_lease'])
