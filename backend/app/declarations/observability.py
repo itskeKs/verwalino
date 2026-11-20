@@ -29,7 +29,7 @@ _FORBIDDEN_FIELDS = frozenset(
         "exception_message",
     }
 )
-_PASS_IDS = frozenset({"inventory", "extract_core", "extract_rules", "reconcile", "recheck"})
+_PASS_IDS = frozenset({"inventory", "extract_core", "extract_rules", "reconcile", "recheck", "read_page"})
 _STAGES = frozenset({"provider", "schema_repair"})
 _REASONING_EFFORTS = frozenset({"default", "none", "low", "medium", "high", "xhigh", "max"})
 _ROUTE_ACTIONS = frozenset({"NONE", "VISION_RECHECK", "HUMAN_REVIEW"})

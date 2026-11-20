@@ -13,7 +13,7 @@ import json
 import re
 import time
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from decimal import Decimal
 from functools import lru_cache
 from json import JSONDecodeError
@@ -37,6 +37,8 @@ from app.core.ai_models import MODEL_PRICES
 from app.declarations.prompts import (
     CORE_EXTRACTION_PROMPT,
     INVENTORY_PROMPT,
+    PAGE_READING_PROMPT,
+    READING_PROMPT_VERSION,
     RECHECK_PROMPT,
     RECONCILIATION_PROMPT,
     RULE_EXTRACTION_PROMPT,
@@ -45,10 +47,14 @@ from app.declarations.provider import (
     DocumentInput,
     PageInput,
     PROVIDER_CONNECTION_ERROR,
+    PROVIDER_IMAGE_INPUT_UNSUPPORTED,
     PROVIDER_INCOMPLETE,
     PROVIDER_REFUSAL,
     PROVIDER_SCHEMA_FAILURE,
     PROVIDER_TIMEOUT,
+    READING_IMAGE_MEDIA_TYPE,
+    READING_PASS_ID,
+    PageImage,
     ProviderCallResult,
     ProviderFailure,
     ProviderReservationEstimate,
@@ -61,8 +67,11 @@ from app.declarations.observability import (
     log_schema_validation_diagnostic,
 )
 from app.declarations.schemas import (
+    READING_SCHEMA_VERSION,
     CoreExtractionOutput,
     DocumentInventoryOutput,
+    PageReadingOutput,
+    PageTranscript,
     ReconciliationOutput,
     RuleExtractionOutput,
     StrictModel,
@@ -85,6 +94,9 @@ _STATIC_HARNESS = (
 )
 _SAFE_RESPONSE_IDENTIFIER = re.compile(r"^[A-Za-z0-9._:-]{1,128}$")
 _OPENAI_API_BASE_URL = "https://api.openai.com/v1"
+# A reading request differs from every extraction request only by its image block, so a request the provider
+# rejects for its content with one of these statuses means the model cannot take the image.
+_IMAGE_REJECTED_STATUSES = frozenset({400, 415, 422})
 
 # Only these disjoint tagged unions have an equivalent anyOf wire form.
 _WIRE_KIND_UNIONS = {
@@ -131,7 +143,7 @@ def _convert_wire_kind_unions(schema: dict[str, Any]) -> dict[str, Any]:
     return schema
 
 
-@lru_cache(maxsize=5)
+@lru_cache(maxsize=6)
 def _sdk_output_type(output_type: type[T]) -> type[T]:
     if output_type is DocumentInventoryOutput:
         return output_type
@@ -406,6 +418,37 @@ class OpenAiDeclarationProvider:
             output_type=TargetedRecheckOutput,
             max_output_tokens=max_output_tokens,
         )
+
+    async def read_page(
+        self, page: PageImage, *, model: str, max_output_tokens: int
+    ) -> ProviderCallResult[PageTranscript]:
+        """Reading stage: one rendered page per request, copied into a typed transcript.
+
+        One page, because the per-call output ceiling (``declaration_provider_max_output_tokens_per_call``) is
+        far below what a stack of dense pages transcribes to, a malformed page costs one page and not a
+        batch, and a failed page can be read again alone. The page identity comes from the caller, never from
+        the model. ``model`` must be the model this provider is configured for: no other model is asked.
+        """
+        if page.media_type != READING_IMAGE_MEDIA_TYPE:
+            raise ProviderFailure(
+                "OPENAI_IMAGE_INPUT_INVALID", False, "Image input must be a valid PNG data URL."
+            )
+        encoded = base64.b64encode(page.data).decode("ascii")
+        result = await self._run(
+            pass_id=READING_PASS_ID,
+            model=model,
+            prompt=PAGE_READING_PROMPT,
+            content_blocks=[
+                {"type": "input_text", "text": f"pdf_page={page.pdf_page}"},
+                {"type": "input_image", "image_url": f"data:{READING_IMAGE_MEDIA_TYPE};base64,{encoded}", "detail": "high"},
+            ],
+            output_type=PageReadingOutput,
+            max_output_tokens=max_output_tokens,
+        )
+        transcript = PageTranscript(
+            document_key=page.document_key, pdf_page=page.pdf_page, blocks=result.output.blocks
+        )
+        return replace(result, output=transcript)
 
     def estimate_reservation(
         self,
@@ -1248,6 +1291,17 @@ class OpenAiDeclarationProvider:
                 )
                 raise _SchemaFailure(metadata=metadata) from None
             code = "OPENAI_REQUEST_FAILED"
+            retryable = self._is_retryable_exception(error)
+            message = "OpenAI request failed."
+            if (
+                pass_id == READING_PASS_ID
+                and isinstance(status_code, int)
+                and status_code in _IMAGE_REJECTED_STATUSES
+            ):
+                # By status code alone: the transports discard response bodies and message text never decides.
+                code, retryable, message = (
+                    PROVIDER_IMAGE_INPUT_UNSUPPORTED, False, "The model cannot take the image input."
+                )
             metadata = self._metadata(
                 pass_id=pass_id,
                 attempt_no=attempt_no,
@@ -1260,8 +1314,8 @@ class OpenAiDeclarationProvider:
             )
             raise ProviderFailure(
                 code,
-                self._is_retryable_exception(error),
-                "OpenAI request failed.",
+                retryable,
+                message,
                 attempt_metadata=(metadata,),
             ) from None
 
@@ -1422,6 +1476,12 @@ class OpenAiDeclarationProvider:
         request_id: str | None = None,
     ) -> ProviderPassMetadata:
         observed = usage or ProviderUsage(0, 0, Decimal("0"), 1)
+        # The reading stage versions its prompt and schema apart from the extraction passes' settings.
+        prompt_version, schema_version = (
+            (READING_PROMPT_VERSION, READING_SCHEMA_VERSION)
+            if pass_id == READING_PASS_ID
+            else (self._prompt_version, self._schema_version)
+        )
         reason_codes = (
             (failure_class,)
             if failure_class in {
@@ -1440,9 +1500,9 @@ class OpenAiDeclarationProvider:
             returned_model_id=returned_model_id,
             reasoning_effort=self._reasoning_effort(model) or "default",
             request_id=request_id,
-            prompt_version=self._prompt_version,
+            prompt_version=prompt_version,
             prompt_sha256=fingerprints.prompt_sha256,
-            schema_version=self._schema_version,
+            schema_version=schema_version,
             schema_sha256=fingerprints.schema_sha256,
             harness_version=self._harness_version,
             harness_sha256=fingerprints.harness_sha256,

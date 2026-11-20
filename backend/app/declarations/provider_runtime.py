@@ -10,6 +10,7 @@ import ipaddress
 import json
 import re
 import socket
+from dataclasses import replace
 from decimal import Decimal
 from types import SimpleNamespace
 from urllib.parse import urlsplit
@@ -20,6 +21,7 @@ from pydantic import ValidationError
 
 from app.core.config import settings
 from app.core.ai_models import model_price, endpoint_request_timeout
+from app.declarations.provider import ProviderFailure
 
 ORIGINS = {"openai": "https://api.openai.com/v1", "anthropic": "https://api.anthropic.com/v1"}
 MAX_RESPONSE_BYTES = 16 * 1024 * 1024
@@ -252,6 +254,15 @@ def create_extraction_provider(effective, *, configured_settings=None):
 
 
 from app.declarations.openai_provider import OpenAiDeclarationProvider, _Rates
+
+
+def create_reading_provider(effective, *, configured_settings=None):
+    """The reading stage's transport: the extraction transport of the same provider, endpoint, key and timeout,
+    bound to the document reading model. Without a reading model there is none; the extraction model never
+    stands in for it."""
+    if not effective.document_model:
+        raise ProviderFailure("DOCUMENT_MODEL_NOT_CONFIGURED", False, "No document reading model is configured.")
+    return create_extraction_provider(replace(effective, model=effective.document_model), configured_settings=configured_settings)
 
 
 class CompatibleDeclarationProvider(OpenAiDeclarationProvider):

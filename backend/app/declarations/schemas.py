@@ -230,3 +230,42 @@ class TargetedRecheckOutput(StrictModel):
     additional_facts: list[AdditionalFactPayload] = Field(default_factory=list)
     resolved_issue_codes: list[str] = Field(default_factory=list)
     unresolved_issues: list[str] = Field(default_factory=list)
+
+
+# ---- document reading stage (issue #499, ADR 0017) ---------------------------------------------
+
+READING_SCHEMA_VERSION = "reading-1"
+# Where a word, number or table cell cannot be read, the transcript says so with this literal instead of a guess.
+UNREADABLE_MARKER = "[unreadable]"
+
+
+class ReadingBlock(StrictModel):
+    """One block of a page, in reading order: copied text, a table as rows of cells, or an unreadable region."""
+
+    kind: Literal["TEXT", "TABLE", "UNREADABLE"]
+    text: str | None = Field(default=None, max_length=50_000)
+    rows: list[list[str]] | None = None
+
+    @model_validator(mode="after")
+    def content_matches_kind(self) -> "ReadingBlock":
+        if self.kind == "TEXT" and (not self.text or self.rows is not None):
+            raise ValueError("a TEXT block carries text and no rows")
+        if self.kind == "TABLE" and (not self.rows or self.text is not None):
+            raise ValueError("a TABLE block carries rows and no text")
+        if self.kind == "UNREADABLE" and (self.text is not None or self.rows is not None):
+            raise ValueError("an UNREADABLE block carries neither text nor rows")
+        return self
+
+
+class PageReadingOutput(StrictModel):
+    """What the reading model returns for one page; it names no page, the caller owns the identity."""
+
+    blocks: list[ReadingBlock]
+
+
+class PageTranscript(StrictModel):
+    """The typed transcript of one rendered page with its source identity and original page number."""
+
+    document_key: str = Field(min_length=1, max_length=120)
+    pdf_page: int = Field(ge=1)
+    blocks: list[ReadingBlock]

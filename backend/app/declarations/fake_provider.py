@@ -2,20 +2,28 @@
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from copy import deepcopy
+from dataclasses import dataclass
 from decimal import Decimal
 
+from app.declarations.prompts import READING_PROMPT_VERSION
 from app.declarations.provider import (
+    READING_PASS_ID,
     DocumentInput,
+    PageImage,
     ProviderCallResult,
+    ProviderFailure,
     ProviderReservationEstimate,
     ProviderUsage,
 )
 from app.declarations.observability import ProviderPassMetadata
 from app.declarations.schemas import (
+    READING_SCHEMA_VERSION,
     CoreExtractionOutput,
     DocumentInventoryOutput,
+    PageTranscript,
+    ReadingBlock,
     ReconciliationOutput,
     RuleExtractionOutput,
     TargetedRecheckOutput,
@@ -130,3 +138,78 @@ class FakeDeclarationProvider:
         max_output_tokens: int,
     ) -> ProviderCallResult[TargetedRecheckOutput]:
         return self._result("recheck", self._recheck_output)
+
+
+@dataclass(frozen=True)
+class ReadingRecord:
+    """One request the fake reading stage received: which model was asked for which page."""
+
+    model: str
+    document_key: str
+    pdf_page: int
+
+
+class FakeDocumentReadingProvider:
+    """Deterministic reading stage for tests and local, no-network flows.
+
+    ``reads`` lists every request in order, also the ones scripted to fail. A page without a scripted transcript
+    gets one text block naming it. ``failures`` maps (document_key, pdf_page) to the ``ProviderFailure`` raised.
+    """
+
+    def __init__(
+        self,
+        transcripts: Mapping[tuple[str, int], Sequence[ReadingBlock]] | None = None,
+        failures: Mapping[tuple[str, int], ProviderFailure] | None = None,
+        usage: ProviderUsage | None = None,
+    ) -> None:
+        self._transcripts = {key: list(blocks) for key, blocks in (transcripts or {}).items()}
+        self._failures = dict(failures or {})
+        self._usage = usage or ProviderUsage(
+            input_tokens=17, output_tokens=11, cost_usd=Decimal("0.000001"), attempt_count=1
+        )
+        self.reads: list[ReadingRecord] = []
+
+    async def read_page(
+        self, page: PageImage, *, model: str, max_output_tokens: int
+    ) -> ProviderCallResult[PageTranscript]:
+        key = (page.document_key, page.pdf_page)
+        self.reads.append(ReadingRecord(model, page.document_key, page.pdf_page))
+        if key in self._failures:
+            raise self._failures[key]
+        blocks = self._transcripts.get(key) or [
+            ReadingBlock(kind="TEXT", text=f"Synthetic page {page.pdf_page} of {page.document_key}")
+        ]
+        usage = deepcopy(self._usage)
+        metadata = ProviderPassMetadata.from_values(
+            pass_id=READING_PASS_ID,
+            attempt_no=1,
+            stage="provider",
+            configured_model=model,
+            returned_model_id=model,
+            reasoning_effort="default",
+            request_id=None,
+            prompt_version=READING_PROMPT_VERSION,
+            prompt_sha256="0" * 64,
+            schema_version=READING_SCHEMA_VERSION,
+            schema_sha256="1" * 64,
+            harness_version="1",
+            harness_sha256="2" * 64,
+            input_tokens=usage.input_tokens,
+            cached_input_tokens=usage.cached_input_tokens,
+            cache_write_input_tokens=usage.cache_write_input_tokens,
+            output_tokens=usage.output_tokens,
+            estimated_cost_usd=usage.cost_usd,
+            latency_ms=0,
+            retry_count=0,
+            route_action="NONE",
+            route_reason_codes=(),
+            failure_class=None,
+        )
+        transcript = PageTranscript(
+            document_key=page.document_key,
+            pdf_page=page.pdf_page,
+            blocks=[block.model_copy(deep=True) for block in blocks],
+        )
+        return ProviderCallResult(
+            output=transcript, usage=usage, metadata=metadata, attempt_metadata=(metadata,)
+        )
