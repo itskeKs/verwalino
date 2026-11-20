@@ -1983,12 +1983,14 @@ export interface OrganizationAiSettings {
   base_url: string | null;
   key_set: boolean;
   model: string | null;
+  document_model: string | null;
   import_enabled: boolean;
   qa_enabled: boolean;
   monthly_limit_usd: string | null;
   price_known: boolean;
+  document_price_known: boolean;
   confirmation: OrganizationAiConfirmation | null;
   confirmation_required: boolean;
 }
 export interface AiModel { id: string; evaluated: boolean; price_known: boolean }
-export type OrganizationAiSettingsBody = Omit<OrganizationAiSettings, 'key_set' | 'price_known' | 'confirmation' | 'confirmation_required'> & { api_key?: string | null; confirmation?: boolean };
+export type OrganizationAiSettingsBody = Omit<OrganizationAiSettings, 'key_set' | 'price_known' | 'document_price_known' | 'confirmation' | 'confirmation_required'> & { api_key?: string | null; confirmation?: boolean };

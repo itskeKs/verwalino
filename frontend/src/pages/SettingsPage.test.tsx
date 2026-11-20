@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { beforeEach, expect, it, vi } from 'vitest';
 import { SettingsPage } from './SettingsPage';
 import { api } from '../api/client';
@@ -20,9 +20,11 @@ it('allows every listed model, explains unknown prices and clears a saved key', 
   const key = await screen.findByLabelText('API-Schlüssel');
   fireEvent.change(key,{target:{value:'synthetic-entered-key'}});
   fireEvent.click(screen.getByRole('button',{name:'Modelle laden'}));
-  await screen.findByRole('option',{name:'evaluated-model · geprüft'});
-  fireEvent.change(screen.getByLabelText('Modell'),{target:{value:'future-model-with-a-long-name-2026-11-07'}});
-  expect(screen.getByText(/Für dieses Modell ist kein Preis bekannt/)).toBeVisible();
+  await within(screen.getByLabelText('Informationen extrahieren')).findByRole('option',{name:'evaluated-model · geprüft'});
+  // Both model roles list the same provider models.
+  expect(within(screen.getByLabelText('Dokumente einlesen')).getByRole('option',{name:'evaluated-model · geprüft'})).toBeInTheDocument();
+  fireEvent.change(screen.getByLabelText('Informationen extrahieren'),{target:{value:'future-model-with-a-long-name-2026-11-07'}});
+  expect(screen.getByText(/Für das Modell „Informationen extrahieren“ ist kein Preis bekannt/)).toBeVisible();
   fireEvent.click(screen.getByLabelText('Teilungserklärungen importieren'));
   fireEvent.click(screen.getByLabelText('Fragen zum Objektwissen'));
   fireEvent.change(screen.getByLabelText('Monatliches Limit in USD (optional)'),{target:{value:'12.50'}});
@@ -41,7 +43,7 @@ it('retains a typed key and chosen model after a failed save', async () => {
   fireEvent.click(screen.getByRole('button',{name:'KI-Einstellungen speichern'}));
   await screen.findByRole('alert');
   expect(key).toHaveValue('synthetic-replacement');
-  expect(screen.getByLabelText('Modell')).toHaveValue('gpt-5.6-luna');
+  expect(screen.getByLabelText('Informationen extrahieren')).toHaveValue('gpt-5.6-luna');
 });
 
 it('keeps personal settings for non-admins without fetching organization AI settings', async () => {
@@ -58,12 +60,12 @@ it('switches provider and endpoint without carrying the old key or model to disc
   const discover = vi.spyOn(api,'post').mockResolvedValue({models:[{id:'local-very-long-model-name',evaluated:false,price_known:false}]});
   render(<SettingsPage />);
   fireEvent.change(await screen.findByLabelText('Anbieter'), {target:{value:'openai_compatible'}});
-  expect(screen.getByLabelText('Modell')).toHaveValue('');
+  expect(screen.getByLabelText('Informationen extrahieren')).toHaveValue('');
   expect(screen.getByRole('button',{name:'Modelle laden'})).toBeDisabled();
   fireEvent.change(screen.getByLabelText('API-Basis-URL'), {target:{value:'http://localhost:11434/v1'}});
   fireEvent.change(screen.getByLabelText('API-Schlüssel'), {target:{value:'synthetic-local-placeholder'}});
   fireEvent.click(screen.getByRole('button',{name:'Modelle laden'}));
-  await screen.findByRole('option',{name:'local-very-long-model-name'});
+  await within(screen.getByLabelText('Dokumente einlesen')).findByRole('option',{name:'local-very-long-model-name'});
   expect(discover).toHaveBeenCalledWith('/api/organizations/org-a/ai-settings/models', {provider:'openai_compatible',base_url:'http://localhost:11434/v1',api_key:'synthetic-local-placeholder'});
 });
 

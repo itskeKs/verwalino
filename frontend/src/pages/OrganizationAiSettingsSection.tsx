@@ -7,6 +7,23 @@ import { Input } from '../components/ui/input';
 import { Label } from '../components/ui/label';
 import { formatDateTime } from '../lib/format';
 
+// One selector for both model roles, fed from the same provider model list.
+function ModelSelect({ id, label, value, models, hint, onChange }: {
+  id: string; label: string; value: string | null | undefined; models: AiModel[]; hint: string; onChange: (model: AiModel | undefined, id: string | null) => void;
+}) {
+  return <div>
+    <Label htmlFor={id}>{label}</Label>
+    <select id={id} className="w-full min-w-0 rounded-md border border-input bg-background p-2 text-sm" value={value ?? ''} aria-describedby={`${id}-hint`} onChange={event => {
+      onChange(models.find(item => item.id === event.target.value), event.target.value || null);
+    }}>
+      <option value="">Bitte Modelle laden und auswählen</option>
+      {value && !models.some(item => item.id === value) && <option value={value}>{value}</option>}
+      {models.map(model => <option key={model.id} value={model.id}>{model.id}{model.evaluated ? ' · geprüft' : ''}</option>)}
+    </select>
+    <p id={`${id}-hint`} className="text-sm text-muted-foreground mt-2">{hint}</p>
+  </div>;
+}
+
 export function OrganizationAiSettingsSection({ organizationId }: { organizationId: string }) {
   const [settings, setSettings] = useState<OrganizationAiSettings | null>(null);
   const [models, setModels] = useState<AiModel[]>([]);
@@ -40,7 +57,7 @@ export function OrganizationAiSettingsSection({ organizationId }: { organization
     if (!settings) return;
     setBusy(true); setError(null); setMessage('');
     const body: OrganizationAiSettingsBody = {
-      provider:settings.provider, base_url:settings.base_url ?? null, model:settings.model, import_enabled:settings.import_enabled,
+      provider:settings.provider, base_url:settings.base_url ?? null, model:settings.model, document_model:settings.document_model ?? null, import_enabled:settings.import_enabled,
       qa_enabled:settings.qa_enabled, monthly_limit_usd:limit.trim() || null, request_timeout_seconds:settings.request_timeout_seconds ?? null,
       ...(removeKey ? { api_key:null } : key.trim() ? { api_key:key.trim() } : {}),
       ...(confirmationNeeded ? { confirmation } : {}),
@@ -55,14 +72,14 @@ export function OrganizationAiSettingsSection({ organizationId }: { organization
     }
     finally { setBusy(false); }
   }
-  const selected = models.find(item => item.id === settings?.model);
-  const known = selected?.price_known ?? settings?.price_known;
+  const known = models.find(item => item.id === settings?.model)?.price_known ?? settings?.price_known;
+  const documentKnown = models.find(item => item.id === settings?.document_model)?.price_known ?? settings?.document_price_known;
   // Storing or replacing the key, or confirming a stored key that predates
   // the confirmation, requires the provider confirmation in the same save.
   const confirmationNeeded = !removeKey && Boolean(key.trim() || (settings?.key_set && settings.confirmation_required));
   return <section className="card mt-6 p-5 sm:p-6 min-w-0" aria-labelledby="ai-heading">
     <h2 id="ai-heading">KI für Ihre Organisation</h2>
-    <p className="text-sm text-muted-foreground mt-2">Ihre Organisation verwendet ihren eigenen API-Schlüssel beim gewählten Anbieter. Das gewählte Modell gilt für alle Imports, Nachprüfungen und Fragen zum Objektwissen.</p>
+    <p className="text-sm text-muted-foreground mt-2">Ihre Organisation verwendet ihren eigenen API-Schlüssel beim gewählten Anbieter. Sie wählen zwei Modelle des Anbieters: eines zum Einlesen Ihrer Dokumente und eines zum Extrahieren der Informationen. Dasselbe Modell darf für beide Aufgaben gewählt werden.</p>
     <p className="text-sm text-muted-foreground mt-2">Bei aktivierten Funktionen werden die benötigten Dokumentinhalte an den gewählten Anbieter bzw. die konfigurierte Basis-URL übermittelt. Verwalino stellt keinen API-Schlüssel bereit.</p>
     {error && <p role="alert" className="error-text mt-4">{error}</p>}
     {!settings ? error ? <Button variant="outline" onClick={() => setReload(value => value + 1)}>Erneut laden</Button> : <p role="status" className="mt-4">KI-Einstellungen werden geladen …</p> :
@@ -70,7 +87,7 @@ export function OrganizationAiSettingsSection({ organizationId }: { organization
         <fieldset disabled={busy} className="space-y-5 min-w-0">
           <div><Label htmlFor="ai-provider">Anbieter</Label>
             <select id="ai-provider" className="w-full min-w-0 rounded-md border border-input bg-background p-2 text-sm" value={settings.provider} onChange={event => {
-              setSettings({...settings, provider:event.target.value as OrganizationAiSettings['provider'], base_url:null, request_timeout_seconds:null, model:null, key_set:false, price_known:false, import_enabled:false, qa_enabled:false});
+              setSettings({...settings, provider:event.target.value as OrganizationAiSettings['provider'], base_url:null, request_timeout_seconds:null, model:null, document_model:null, key_set:false, price_known:false, document_price_known:false, import_enabled:false, qa_enabled:false});
               setKey(''); setModels([]); setRemoveKey(false); setConfirmation(false); setConfirmationError(null); setMessage('Bitte geben Sie für den neuen Anbieter einen eigenen Schlüssel ein und laden Sie dessen Modelle.');
             }}>
               <option value="openai">OpenAI</option><option value="openai_compatible">OpenAI-kompatible API</option><option value="anthropic">Anthropic</option>
@@ -79,7 +96,7 @@ export function OrganizationAiSettingsSection({ organizationId }: { organization
           {settings.provider === 'openai_compatible' && <div>
             <Label htmlFor="ai-base-url">API-Basis-URL</Label>
             <Input id="ai-base-url" type="url" value={settings.base_url ?? ''} maxLength={2048} placeholder="http://localhost:11434/v1" onChange={event => {
-              setSettings({...settings, base_url:event.target.value, request_timeout_seconds:null, key_set:false, model:null, price_known:false, import_enabled:false, qa_enabled:false}); setKey(''); setModels([]); setConfirmation(false); setConfirmationError(null); setMessage('');
+              setSettings({...settings, base_url:event.target.value, request_timeout_seconds:null, key_set:false, model:null, document_model:null, price_known:false, document_price_known:false, import_enabled:false, qa_enabled:false}); setKey(''); setModels([]); setConfirmation(false); setConfirmationError(null); setMessage('');
             }} aria-describedby="ai-endpoint-info" />
             <p id="ai-endpoint-info" className="text-sm text-muted-foreground mt-2">Verwenden Sie die API-Adresse einschließlich Pfad, z. B. /v1. Lokale Ziele sind nur im selbst gehosteten Betrieb verfügbar. Auch ein lokaler Dienst benötigt hier einen Schlüsselwert. Prüfen Sie Datenschutz und Speicherregeln des Anbieters.</p>
           </div>}
@@ -110,25 +127,21 @@ export function OrganizationAiSettingsSection({ organizationId }: { organization
               </div>}
           </div>
           <div><Button type="button" variant="outline" disabled={removeKey || (!key.trim() && !settings.key_set)} onClick={() => void loadModels()}>{busy ? 'Bitte warten …' : 'Modelle laden'}</Button></div>
-          <div>
-            <Label htmlFor="ai-model">Modell</Label>
-            <select id="ai-model" className="w-full min-w-0 rounded-md border border-input bg-background p-2 text-sm" value={settings.model ?? ''} onChange={event => {
-              const choice = models.find(item => item.id === event.target.value);
-              setSettings({...settings, model:event.target.value || null, price_known:choice?.price_known ?? false}); setMessage('');
-            }}>
-              <option value="">Bitte Modelle laden und auswählen</option>
-              {settings.model && !models.some(item => item.id === settings.model) && <option value={settings.model}>{settings.model}</option>}
-              {models.map(model => <option key={model.id} value={model.id}>{model.id}{model.evaluated ? ' · geprüft' : ''}</option>)}
-            </select>
-            <p className="text-sm text-muted-foreground mt-2">Alle vom Anbieter gelisteten Modelle sind auswählbar. „geprüft“ kennzeichnet bestandene Verwalino-Evaluationen. Andere Modelle können erforderliche Funktionen ablehnen.</p>
-          </div>
+          <ModelSelect id="ai-document-model" label="Dokumente einlesen" value={settings.document_model} models={models}
+            hint="Dieses Modell liest die Seiten Ihrer Dokumente und überträgt, was dort zu sehen ist. Es muss Bilder lesen können."
+            onChange={(choice, id) => { setSettings({...settings, document_model:id, document_price_known:choice?.price_known ?? false}); setMessage(''); }} />
+          {settings.import_enabled && !settings.document_model && <p className="text-sm -mt-3">Für den Import von Teilungserklärungen fehlt noch ein Modell unter „Dokumente einlesen“. Ohne diese Auswahl startet kein Import; bereits hochgeladene Dokumente bleiben erhalten.</p>}
+          <ModelSelect id="ai-model" label="Informationen extrahieren" value={settings.model} models={models}
+            hint="Dieses Modell wertet das Eingelesene aus, schlägt Zuordnungen vor und beantwortet Fragen zum Objektwissen. Alle vom Anbieter gelisteten Modelle sind auswählbar. „geprüft“ kennzeichnet bestandene Verwalino-Evaluationen. Andere Modelle können erforderliche Funktionen ablehnen."
+            onChange={(choice, id) => { setSettings({...settings, model:id, price_known:choice?.price_known ?? false}); setMessage(''); }} />
           <label className="flex gap-2 items-start"><input type="checkbox" checked={settings.import_enabled} disabled={removeKey} onChange={event => { setSettings({...settings, import_enabled:event.target.checked}); setMessage(''); }} />Teilungserklärungen importieren</label>
           <label className="flex gap-2 items-start"><input type="checkbox" checked={settings.qa_enabled} disabled={removeKey} onChange={event => { setSettings({...settings, qa_enabled:event.target.checked}); setMessage(''); }} />Fragen zum Objektwissen</label>
           <div>
             <Label htmlFor="ai-monthly-limit">Monatliches Limit in USD (optional)</Label>
             <Input id="ai-monthly-limit" type="number" min="0" step="0.01" inputMode="decimal" value={limit} onChange={event => { setLimit(event.target.value); setMessage(''); }} aria-describedby="ai-budget-info" />
             <p id="ai-budget-info" className="text-sm text-muted-foreground mt-2">Leer lassen für kein monatliches Limit. Das Limit gilt pro Kalendermonat (UTC) für Imports und Fragen zusammen, einschließlich laufender Reservierungen. Die Abrechnung erfolgt durch den gewählten Anbieter.</p>
-            {settings.model && !known && <p className="text-sm mt-2">Für dieses Modell ist kein Preis bekannt. Das monatliche Limit wird für dieses Modell nicht durchgesetzt.</p>}
+            {settings.document_model && !documentKnown && <p className="text-sm mt-2">Für das Modell „Dokumente einlesen“ ist kein Preis bekannt. Das monatliche Limit wird für dieses Modell nicht durchgesetzt.</p>}
+            {settings.model && !known && <p className="text-sm mt-2">Für das Modell „Informationen extrahieren“ ist kein Preis bekannt. Das monatliche Limit wird für dieses Modell nicht durchgesetzt.</p>}
           </div>
           <Button type="submit" disabled={busy}>{busy ? 'Wird gespeichert …' : 'KI-Einstellungen speichern'}</Button>
         </fieldset>

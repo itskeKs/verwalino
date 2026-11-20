@@ -284,3 +284,71 @@ async def test_confirmation_rows_are_immutable_and_bound_to_the_acting_session_u
         confirmed_at = await db.scalar(text("SELECT confirmed_at FROM organization_ai_confirmation"
                                             " WHERE organization_id=:org AND provider='openai' ORDER BY confirmed_at DESC LIMIT 1"), {'org': org})
         assert confirmed_at.year >= 2026
+
+
+def _models(body):
+    return body['model'], body['document_model']
+
+
+@pytest.mark.asyncio
+async def test_reading_and_extraction_models_persist_and_change_independently(client_a_admin, seed_data):
+    path = f"/api/organizations/{seed_data['org_a_id']}/ai-settings"
+    saved = await client_a_admin.put(path, json={'api_key': 'synthetic-key', 'model': 'gpt-5.6-luna', 'document_model': 'gpt-5.4-mini', 'confirmation': True})
+    assert saved.status_code == 200, saved.text
+    assert _models((await client_a_admin.get(path)).json()) == ('gpt-5.6-luna', 'gpt-5.4-mini')
+    # The settings form sends both choices on every save: changing one keeps the other.
+    changed = await client_a_admin.put(path, json={'model': 'future-model', 'document_model': 'gpt-5.4-mini'})
+    assert _models(changed.json()) == ('future-model', 'gpt-5.4-mini')
+    changed = await client_a_admin.put(path, json={'model': 'future-model', 'document_model': 'gpt-5.6-luna'})
+    assert _models(changed.json()) == ('future-model', 'gpt-5.6-luna')
+    assert _models((await client_a_admin.get(path)).json()) == ('future-model', 'gpt-5.6-luna')
+    # The same model may serve both roles.
+    both = await client_a_admin.put(path, json={'model': 'gpt-5.6-luna', 'document_model': 'gpt-5.6-luna'})
+    assert _models(both.json()) == ('gpt-5.6-luna', 'gpt-5.6-luna')
+    assert both.json()['key_set'] is True
+
+
+@pytest.mark.asyncio
+async def test_reading_model_stays_unset_until_an_administrator_chooses_it(client_a_admin, seed_data):
+    path = f"/api/organizations/{seed_data['org_a_id']}/ai-settings"
+    assert (await client_a_admin.get(path)).json()['document_model'] is None
+    saved = await client_a_admin.put(path, json={'api_key': 'synthetic-key', 'model': 'gpt-5.6-luna', 'import_enabled': True, 'qa_enabled': True, 'confirmation': True})
+    assert saved.status_code == 200, saved.text
+    assert saved.json()['document_model'] is None
+    assert saved.json()['document_price_known'] is False
+
+
+@pytest.mark.asyncio
+async def test_reading_model_price_status_is_reported_apart_from_the_extraction_model(client_a_admin, seed_data):
+    path = f"/api/organizations/{seed_data['org_a_id']}/ai-settings"
+    saved = await client_a_admin.put(path, json={'api_key': 'synthetic-key', 'model': 'future-model', 'document_model': 'gpt-5.4-mini', 'confirmation': True})
+    assert (saved.json()['price_known'], saved.json()['document_price_known']) == (False, True)
+    swapped = await client_a_admin.put(path, json={'model': 'gpt-5.6-luna', 'document_model': 'future-model'})
+    assert (swapped.json()['price_known'], swapped.json()['document_price_known']) == (True, False)
+    # A compatible endpoint never takes an official price from a reused model name.
+    local = await client_a_admin.put(path, json={'provider': 'openai_compatible', 'base_url': 'http://localhost:11434/v1', 'api_key': 'synthetic-local',
+        'model': 'gpt-5.6-luna', 'document_model': 'gpt-5.4-mini', 'confirmation': True})
+    assert (local.json()['price_known'], local.json()['document_price_known']) == (False, False)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('field', ['model', 'document_model'])
+@pytest.mark.parametrize('value', ['', 'two words', 'x' * 256, 'bad;model', 'modell\u00fc', None])
+async def test_both_model_choices_are_validated_alike(client_a_admin, seed_data, field, value):
+    path = f"/api/organizations/{seed_data['org_a_id']}/ai-settings"
+    response = await client_a_admin.put(path, json={field: value})
+    assert response.status_code == (200 if value is None else 422), response.text
+
+
+@pytest.mark.asyncio
+async def test_reading_and_extraction_choices_are_isolated_between_organizations(client_a_admin, client_b_admin, seed_data):
+    path_a = f"/api/organizations/{seed_data['org_a_id']}/ai-settings"
+    path_b = f"/api/organizations/{seed_data['org_b_id']}/ai-settings"
+    assert (await client_a_admin.put(path_a, json={'api_key': 'synthetic-a', 'model': 'model-a', 'document_model': 'reader-a', 'confirmation': True})).status_code == 200
+    assert _models((await client_b_admin.get(path_b)).json()) == (None, None)
+    assert (await client_b_admin.put(path_b, json={'api_key': 'synthetic-b', 'model': 'model-b', 'document_model': 'reader-b', 'confirmation': True})).status_code == 200
+    assert _models((await client_a_admin.get(path_a)).json()) == ('model-a', 'reader-a')
+    assert _models((await client_b_admin.get(path_b)).json()) == ('model-b', 'reader-b')
+    # Another organization's settings stay a 404 for either administrator.
+    assert (await client_b_admin.put(path_a, json={'document_model': 'reader-b'})).status_code == 404
+    assert _models((await client_a_admin.get(path_a)).json()) == ('model-a', 'reader-a')

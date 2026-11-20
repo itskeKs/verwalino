@@ -48,6 +48,7 @@ class EffectiveAiSettings:
     monthly_limit_usd: Decimal | None = None
     base_url: str | None = None
     request_timeout_seconds: int | None = None
+    document_model: str | None = None
 
 
 def _confirmation_match(provider, base_url):
@@ -79,7 +80,7 @@ async def effective_ai_settings(db, organization_id) -> EffectiveAiSettings:
             # A stored key without a recorded confirmation for its destination
             # stays unused: every AI entry point fails closed on a missing key.
             key = None
-    return EffectiveAiSettings(row.provider, key, row.model, row.import_enabled, row.qa_enabled, row.monthly_limit_usd, row.base_url, row.request_timeout_seconds)
+    return EffectiveAiSettings(row.provider, key, row.model, row.import_enabled, row.qa_enabled, row.monthly_limit_usd, row.base_url, row.request_timeout_seconds, row.document_model)
 
 
 async def worker_ai_settings(organization_id):
@@ -98,9 +99,10 @@ def public_settings(row, confirmation=None) -> AiSettingsOut:
         record, confirmer_name = confirmation
         active = AiConfirmationOut(confirmed_by_name=confirmer_name, confirmed_at=record.confirmed_at)
     return AiSettingsOut(request_timeout_seconds=row.request_timeout_seconds if row else None, provider=row.provider if row else 'openai', base_url=row.base_url if row else None, key_set=bool(row and row.encrypted_api_key),
-        model=row.model if row else None, import_enabled=bool(row and row.import_enabled),
+        model=row.model if row else None, document_model=row.document_model if row else None, import_enabled=bool(row and row.import_enabled),
         qa_enabled=bool(row and row.qa_enabled), monthly_limit_usd=row.monthly_limit_usd if row else None,
         price_known=bool(row and model_price(row.model, row.provider)),
+        document_price_known=bool(row and model_price(row.document_model, row.provider)),
         confirmation=active, confirmation_required=bool(row and row.encrypted_api_key and confirmation is None))
 
 
