@@ -205,12 +205,27 @@ export type DeclarationImportStatus =
   | "FAILED"
   | "CANCELLED";
 
+export type DeclarationUsageStatus = 'REPORTED' | 'PARTIAL' | 'RESERVED' | 'UNKNOWN';
+
+/** What one stage of a run consumed: reading the pages ("READING") or extracting the information ("EXTRACTION"). */
+export interface DeclarationRunStage {
+  stage: 'READING' | 'EXTRACTION';
+  model: string;
+  usage_status: DeclarationUsageStatus;
+  reported_input_tokens: number | null;
+  reported_output_tokens: number | null;
+  input_tokens: number;
+  output_tokens: number;
+  estimated_cost_usd: string | null;
+}
+
 export interface DeclarationRunBudget {
-  usage_status: 'REPORTED' | 'PARTIAL' | 'RESERVED' | 'UNKNOWN';
+  usage_status: DeclarationUsageStatus;
   reported_input_tokens: number | null;
   reported_output_tokens: number | null;
   id: string;
   model: string;
+  stages: DeclarationRunStage[];
   input_tokens: number;
   output_tokens: number;
   runtime_seconds: number;

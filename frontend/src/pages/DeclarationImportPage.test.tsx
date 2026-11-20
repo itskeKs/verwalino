@@ -447,6 +447,46 @@ describe("Teilungserklärung upload wizard", () => {
     expect(screen.queryByRole("button", { name: "Erneut versuchen" })).toBeNull();
   });
 
+  const KEPT = /Das hochgeladene Dokument bleibt erhalten; es wurde nichts übernommen\./;
+  it.each([
+    ["DOCUMENT_MODEL_NOT_CONFIGURED", /Für den Import fehlt das Modell zum Einlesen von Dokumenten\..*unter „Dokumente einlesen“ ein Modell ausgewählt werden, das Bilder lesen kann/],
+    ["PROVIDER_IMAGE_INPUT_UNSUPPORTED", /Das Modell unter „Dokumente einlesen“ kann keine Bilder lesen.*ein Modell ausgewählt werden, das Bilder lesen kann/],
+    ["PROVIDER_REFUSAL", /Das Modell hat sich geweigert.*anderes Modell/],
+    ["PROVIDER_SCHEMA_FAILURE", /Das Modell hat keine auswertbare Antwort geliefert.*anderes Modell/],
+    ["IMPORT_TOKEN_BUDGET_EXCEEDED", /Das Tokenlimit für diesen Import ist erreicht\. Das Einlesen der Seiten und das Extrahieren der Informationen zählen zusammen/],
+    ["IMPORT_COST_BUDGET_EXCEEDED", /Das Kostenlimit für diesen Import ist erreicht\. Das Einlesen der Seiten und das Extrahieren der Informationen zählen zusammen/],
+    ["ORGANIZATION_AI_BUDGET_EXCEEDED", /Das monatliche KI-Budget ist ausgeschöpft\. Bitte wenden Sie sich an den Betreiber\./],
+    ["PAGE_RENDER_TIMEOUT", /Das Aufbereiten einer Seite hat zu lange gedauert/],
+    ["PAGE_RENDER_UNAVAILABLE", /Eine Seite des Dokuments konnte nicht zum Einlesen aufbereitet werden/],
+  ])("explains the failure %s in German, keeps the original and says nothing was applied", async (code, explanation) => {
+    vi.spyOn(declarationApi, "getDeclarationImport").mockResolvedValue(
+      pendingImport({ status: "FAILED", error_code: code, error_message: code }),
+    );
+    vi.spyOn(declarationApi, "listDeclarationDocuments").mockResolvedValue([]);
+    vi.spyOn(declarationApi, "pollDeclarationImport").mockImplementation(() => () => undefined);
+    renderImportRoute("/teilungserklaerung/import/import-1");
+
+    const alert = await screen.findByRole("alert");
+    expect(alert).toHaveTextContent(/Verarbeitung fehlgeschlagen\./);
+    expect(alert).toHaveTextContent(explanation);
+    expect(alert).toHaveTextContent(KEPT);
+    expect(alert).not.toHaveTextContent(code);
+    expect(screen.queryByRole("button", { name: "Erneut versuchen" })).toBeNull();
+  });
+
+  it("never shows a raw code for a failure it has no text for", async () => {
+    vi.spyOn(declarationApi, "getDeclarationImport").mockResolvedValue(
+      pendingImport({ status: "FAILED", error_code: "SOME_FUTURE_CODE", error_message: "SOME_FUTURE_CODE" }),
+    );
+    vi.spyOn(declarationApi, "listDeclarationDocuments").mockResolvedValue([]);
+    vi.spyOn(declarationApi, "pollDeclarationImport").mockImplementation(() => () => undefined);
+    renderImportRoute("/teilungserklaerung/import/import-1");
+
+    const alert = await screen.findByRole("alert");
+    expect(alert).toHaveTextContent("Der Import kann nicht fortgesetzt werden.");
+    expect(alert).not.toHaveTextContent("SOME_FUTURE_CODE");
+  });
+
   it("restores uploaded documents from a draft URL and continues at the highest sequence", async () => {
     vi.spyOn(declarationApi, "getDeclarationImport").mockResolvedValue(pendingImport());
     vi.spyOn(declarationApi, "listDeclarationDocuments").mockResolvedValue([

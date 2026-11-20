@@ -16,6 +16,7 @@ from app.core.config import settings
 from app.core.tenant import AuthContext, require_write_dep
 from app.core.live_principal import get_live_writer_db, get_live_publication_db, get_live_review_db
 from app.core.uploads import read_upload_limited
+from app.declarations.provider import READING_PASS_ID
 from app.declarations.review_schemas import (
     ApprovalPreviewOut,
     ApprovalRequest,
@@ -46,12 +47,26 @@ class DeclarationImportCreate(BaseModel):
     target_property_id: uuid.UUID | None = None
 
 
+class DeclarationStageOut(BaseModel):
+    """What one stage of a run (reading pages, extracting information) consumed, with the model that did it."""
+
+    stage: Literal["READING", "EXTRACTION"]
+    model: str
+    usage_status: Literal["REPORTED", "PARTIAL", "RESERVED", "UNKNOWN"]
+    reported_input_tokens: int | None
+    reported_output_tokens: int | None
+    input_tokens: int
+    output_tokens: int
+    estimated_cost_usd: Decimal | None
+
+
 class DeclarationRunOut(BaseModel):
     usage_status: Literal["REPORTED", "PARTIAL", "RESERVED", "UNKNOWN"]
     reported_input_tokens: int | None
     reported_output_tokens: int | None
     id: str
     model: str
+    stages: list[DeclarationStageOut]
     input_tokens: int
     output_tokens: int
     runtime_seconds: float
@@ -199,7 +214,7 @@ async def get_import(
     runs = await repository.list_runs(import_id)
     passes = await repository.list_run_passes(import_id)
     result = _import_out(item)
-    result.runs = [_run_out(run, [entry.safe_metadata for entry in passes if entry.declaration_extraction_run_id == run.id]) for run in runs]
+    result.runs = [_run_out(run, [entry.safe_metadata for entry in passes if entry.declaration_extraction_run_id == run.id], item.status) for run in runs]
     return result
 
 
@@ -291,23 +306,83 @@ async def cancel_import(
     return _import_out(await DeclarationImportService(db, auth.organization_id, auth.user_id).cancel(import_id))
 
 
-def _run_out(run, passes=()) -> DeclarationRunOut:
+def _is_reported(entry) -> bool:
+    return entry["failure_class"] is None or entry["input_tokens"] > 0 or entry["output_tokens"] > 0
+
+
+def _run_out(run, passes=(), import_status: str | None = None) -> DeclarationRunOut:
     from app.core.ai_models import model_price
     provider = {"OpenAiDeclarationProvider": "openai", "AnthropicDeclarationProvider": "anthropic"}.get(run.provider)
-    priced = provider is not None and model_price(run.model_name, provider) is not None
-    reported = [entry for entry in passes if entry["failure_class"] is None or entry["input_tokens"] > 0 or entry["output_tokens"] > 0]
+
+    def priced(model: str) -> bool:
+        return provider is not None and model_price(model, provider) is not None
+
+    reported = [entry for entry in passes if _is_reported(entry)]
     input_tokens = sum(entry["input_tokens"] for entry in reported)
     output_tokens = sum(entry["output_tokens"] for entry in reported)
     complete = bool(reported) and len(reported) == len(passes) and (input_tokens, output_tokens) == (run.input_tokens, run.output_tokens)
     usage_status = "REPORTED" if complete else "PARTIAL" if reported else "RESERVED" if run.input_tokens or run.output_tokens else "UNKNOWN"
     end = run.completed_at or datetime.now(timezone.utc)
+    stages = _run_stages(run, passes, import_status, priced)
+    # The total is priced only when every stage that consumed something is; an unpriced model that made no call
+    # does not hide a known cost.
+    total_priced = all(stage.estimated_cost_usd is not None for stage in stages) if stages else priced(run.model_name)
     return DeclarationRunOut(id=str(run.id), model=run.model_name,
         usage_status=usage_status,
         reported_input_tokens=input_tokens if reported else None,
         reported_output_tokens=output_tokens if reported else None,
+        stages=stages,
         input_tokens=run.input_tokens, output_tokens=run.output_tokens,
         runtime_seconds=max(0, (end - run.started_at).total_seconds()),
-        estimated_cost_usd=run.estimated_cost_usd if priced else None)
+        estimated_cost_usd=run.estimated_cost_usd if total_priced else None)
+
+
+def _run_stages(run, passes, import_status: str | None, is_priced) -> list[DeclarationStageOut]:
+    """The two stages of a run from the durable pass ledger and the run row (ADR 0017).
+
+    The ledger entries carry what the provider reported per call, tagged with their pass; a stage with no entry and
+    no reservation made no call and has no block. The run row carries the totals including every reservation that
+    is still held (a call whose usage the provider did not report keeps its reservation). What no entry reports is
+    that held part; it belongs to the stage that made the call. Within a run all reading precedes all extraction
+    and a failed reading ends the run, so a closed run holds it in the stage of its last ledger entry, and a live
+    run in the stage the import is in (PREFLIGHT is the reading, any later status the extraction).
+    """
+    reading_model = run.document_model_name or next(
+        (entry["configured_model"] for entry in passes if entry["pass_id"] == READING_PASS_ID), None)
+    models = {"READING": reading_model, "EXTRACTION": run.model_name}
+    entries = {name: [entry for entry in passes if (entry["pass_id"] == READING_PASS_ID) == (name == "READING")] for name in models}
+    reported = {name: [entry for entry in items if _is_reported(entry)] for name, items in entries.items()}
+    sums = {name: (sum(entry["input_tokens"] for entry in items), sum(entry["output_tokens"] for entry in items),
+                   sum((Decimal(entry["estimated_cost_usd"]) for entry in items), Decimal("0")))
+            for name, items in reported.items()}
+    held_input = max(0, run.input_tokens - sum(total[0] for total in sums.values()))
+    held_output = max(0, run.output_tokens - sum(total[1] for total in sums.values()))
+    held_cost = max(Decimal("0"), Decimal(run.estimated_cost_usd) - sum(total[2] for total in sums.values()))
+    holder = None
+    if held_input or held_output:
+        if run.completed_at is None:
+            holder = "READING" if import_status == "PREFLIGHT" else "EXTRACTION"
+        elif passes:
+            holder = "READING" if passes[-1]["pass_id"] == READING_PASS_ID else "EXTRACTION"
+        if holder == "READING" and reading_model is None:
+            holder = "EXTRACTION"
+    result = []
+    for name, model in models.items():
+        holds = holder == name
+        if not entries[name] and not holds:
+            continue
+        has_reported = bool(reported[name])
+        complete = has_reported and len(reported[name]) == len(entries[name]) and not holds
+        status = "REPORTED" if complete else "PARTIAL" if has_reported else "RESERVED" if holds else "UNKNOWN"
+        cost = sums[name][2] + (held_cost if holds else Decimal("0"))
+        result.append(DeclarationStageOut(
+            stage=name, model=model, usage_status=status,
+            reported_input_tokens=sums[name][0] if has_reported else None,
+            reported_output_tokens=sums[name][1] if has_reported else None,
+            input_tokens=sums[name][0] + (held_input if holds else 0),
+            output_tokens=sums[name][1] + (held_output if holds else 0),
+            estimated_cost_usd=cost.quantize(Decimal("0.000001")) if is_priced(model) else None))
+    return result
 
 
 def _import_out(item: DeclarationImport) -> DeclarationImportOut:

@@ -382,3 +382,90 @@ async def test_a_settings_change_does_not_change_the_two_model_identities_of_a_r
     runs = (await migrator_session.scalars(select(DeclarationExtractionRun).where(
         DeclarationExtractionRun.import_id == lease.import_id).order_by(DeclarationExtractionRun.started_at))).all()
     assert [(run.model_name, run.document_model_name) for run in runs] == [("gpt-first-extraction", "gpt-first-reading")] * 2
+
+
+# ---- the cost view: the usage of each stage in the import response ----------------------------------------------
+
+
+class _RefusingExtraction(_RecordingProvider):
+    """Extraction that finishes the inventory, then refuses the core pass after having consumed usage."""
+
+    async def extract_core(self, documents, *, max_output_tokens):
+        self.calls.append("extract_core")
+        usage = ProviderUsage(10, 3, Decimal("0.000001"), 1)  # within the 13 tokens the test provider reserves
+        metadata = _safe_attempt_metadata(pass_id="extract_core", usage=usage, failure_class="PROVIDER_REFUSAL")
+        raise ProviderFailure("PROVIDER_REFUSAL", False, "The model refused.", usage=usage, attempt_metadata=(metadata,))
+
+
+async def _stage_rows(client, lease) -> tuple[dict, list[tuple]]:
+    response = await client.get(f"/api/declaration-imports/{lease.import_id}")
+    assert response.status_code == 200, response.text
+    (run,) = response.json()["runs"]
+    return run, [(s["stage"], s["model"], s["usage_status"], s["input_tokens"], s["output_tokens"]) for s in run["stages"]]
+
+
+async def test_a_finished_scan_reports_reading_and_extraction_apart_and_they_add_up_to_the_run(
+    seed_data, client_a_admin, tesseract_unusable
+) -> None:
+    pdf = (ROOT / "docs/acceptance/data/teilungserklaerung-lindenallee-12.pdf").read_bytes()
+    lease, key, store = await _seed_pipeline_import(seed_data, pdf)
+    reader = FakeDocumentReadingProvider(transcripts={(key, 1): lindenallee_reading_blocks()})
+
+    await DeclarationImportWorker(_pipeline(ModelRecording(fictional_provider(key), EXTRACTION_MODEL), reader, store))._run_claimed(lease)
+
+    run, rows = await _stage_rows(client_a_admin, lease)
+    assert [row[:3] for row in rows] == [("READING", READING_MODEL, "REPORTED"), ("EXTRACTION", EXTRACTION_MODEL, "REPORTED")]
+    assert rows[0][3:] == (17, 11), "one page was read"
+    assert sum(row[3] for row in rows) == run["input_tokens"] and sum(row[4] for row in rows) == run["output_tokens"]
+    assert run["usage_status"] == "REPORTED"
+
+
+async def test_a_job_that_failed_in_reading_still_shows_the_usage_the_failed_call_consumed(
+    seed_data, client_a_admin, tesseract_unusable
+) -> None:
+    lease, key, store = await _seed_pipeline_import(seed_data, _scan())
+    usage = ProviderUsage(40, 3, Decimal("0.000002"), 1)
+    reader = FakeDocumentReadingProvider(failures={(key, 1): _failure("PROVIDER_REFUSAL", usage=usage)})
+
+    await DeclarationImportWorker(_pipeline(ModelRecording(_RecordingProvider(key), EXTRACTION_MODEL), reader, store))._run_claimed(lease)
+
+    _run, rows = await _stage_rows(client_a_admin, lease)
+    assert rows == [("READING", READING_MODEL, "REPORTED", 40, 3)], "nothing was extracted, so there is no extraction block"
+
+
+async def test_a_job_that_failed_in_extraction_shows_the_finished_reading_and_the_failed_extraction_call(
+    seed_data, client_a_admin, tesseract_unusable
+) -> None:
+    lease, key, store = await _seed_pipeline_import(seed_data, _scan())
+    reader = FakeDocumentReadingProvider(transcripts={(key, 1): _text()})
+
+    await DeclarationImportWorker(_pipeline(ModelRecording(_RefusingExtraction(key), EXTRACTION_MODEL), reader, store))._run_claimed(lease)
+
+    assert (await _item(lease)).error_code == "PROVIDER_REFUSAL"
+    _run, rows = await _stage_rows(client_a_admin, lease)
+    # The inventory (13 + 7 tokens) finished before the core pass refused after 10 + 3 tokens.
+    assert rows == [("READING", READING_MODEL, "REPORTED", 17, 11), ("EXTRACTION", EXTRACTION_MODEL, "REPORTED", 23, 10)]
+
+
+async def test_a_text_layer_document_has_no_reading_block(seed_data, client_a_admin) -> None:
+    from tests.declaration_fixtures import make_text_pdf
+
+    lease, key, store = await _seed_pipeline_import(seed_data, make_text_pdf(f"{TEXT}\nEinheit 1 Wohnung im Erdgeschoss"))
+
+    await DeclarationImportWorker(_pipeline(ModelRecording(_RecordingProvider(key), EXTRACTION_MODEL), FakeDocumentReadingProvider(), store))._run_claimed(lease)
+
+    _run, rows = await _stage_rows(client_a_admin, lease)
+    assert [row[:2] for row in rows] == [("EXTRACTION", EXTRACTION_MODEL)]
+
+
+async def test_the_stage_figures_are_part_of_the_organization_isolated_import_response(
+    seed_data, client_a_admin, client_b_admin, tesseract_unusable
+) -> None:
+    lease, key, store = await _seed_pipeline_import(seed_data, _scan())
+    await DeclarationImportWorker(_pipeline(ModelRecording(_RecordingProvider(key), EXTRACTION_MODEL),
+                                            FakeDocumentReadingProvider(), store))._run_claimed(lease)
+
+    assert (await client_a_admin.get(f"/api/declaration-imports/{lease.import_id}")).json()["runs"][0]["stages"]
+    foreign = await client_b_admin.get(f"/api/declaration-imports/{lease.import_id}")
+    unknown = await client_b_admin.get(f"/api/declaration-imports/{uuid.uuid4()}")
+    assert foreign.status_code == unknown.status_code == 404 and foreign.json() == unknown.json()
