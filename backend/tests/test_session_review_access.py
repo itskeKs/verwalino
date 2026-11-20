@@ -571,6 +571,14 @@ async def test_revision_chain_head_0131_head_preserves_full_state_and_issued_pdf
                     connection.execute(text('ALTER TABLE settlement_line DISABLE TRIGGER USER'))
                     connection.execute(text('DELETE FROM settlement_line WHERE id=ANY(:ids)'), {'ids': wide_lines})
                     connection.execute(text('ALTER TABLE settlement_line ENABLE TRIGGER USER'))
+                if connection.scalar(text('SELECT EXISTS(SELECT 1 FROM public.dunning_settings)')):
+                    # Earlier scenarios of the session may have saved dunning settings: 0174 refuses to discard them.
+                    with pytest.raises(DBAPIError, match='Downgrade would discard saved dunning settings'):
+                        with connection.begin_nested():
+                            migrate('0173', downgrade=True)
+                    # Older releases cannot represent them, nor the notices that rest on them. Project only inside
+                    # this rollback-only TX; the final snapshot proves restoration.
+                    connection.execute(text('TRUNCATE public.dunning_settings, public.dunning_notice CASCADE'))
                 before_household_projection = _chain_snapshot(connection)
                 with pytest.raises(RuntimeError, match='Cannot discard saved household history; repair forward'):
                     with connection.begin_nested():
