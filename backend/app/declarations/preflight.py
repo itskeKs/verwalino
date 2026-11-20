@@ -93,7 +93,7 @@ class _StructuralPage:
 
 
 class PdfPreflight:
-    """Validate PDFs before text/OCR extraction and enforce local resource caps."""
+    """Validate PDFs before text extraction and page reading and enforce local resource caps."""
 
     def __init__(
         self,
@@ -142,9 +142,9 @@ class PdfPreflight:
     ) -> str:
         """Rasterize one already-selected safe PDF page into a PNG data URL.
 
-        This is deliberately independent from OCR: a vision recheck is allowed
-        to consume the shared import deadline, pixel and temporary-byte
-        budgets, but it never increments the OCR page allowance.  The caller
+        This is deliberately independent from the rendering for the reading model:
+        a vision recheck is allowed to consume the shared import deadline, pixel
+        and temporary-byte budgets, but it never increments the page-reading allowance.  The caller
         owns ``pdf_bytes`` and must retain it only on its stack until this
         method returns; no image or source bytes are retained by preflight.
         """
@@ -309,7 +309,7 @@ class PdfPreflight:
 
         Integrity verification intentionally precedes every PDF parser import
         and open operation.  ``budget`` may be shared between every document in
-        one import to carry OCR resource accounting across the batch.
+        one import to carry the page-reading resource accounting across the batch.
         """
         active_budget = budget or self.new_import_budget()
         self._validate_integrity(data, expected_sha256, expected_size)
@@ -460,7 +460,7 @@ class PdfPreflight:
         budget.estimated_pixels += estimated_pixels
 
     def _reserve_vision_budget(self, budget: ImportPreflightBudget, estimated_pixels: int) -> None:
-        """Reserve shared rendering resources without spending an OCR page."""
+        """Reserve shared rendering resources without spending a page of the reading allowance."""
         self._ensure_deadline(budget)
         if budget.temporary_bytes >= self._max_temp_bytes:
             raise DocumentIntegrityError("VISION_IMPORT_TEMP_BYTES_LIMIT_EXCEEDED")

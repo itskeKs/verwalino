@@ -6,50 +6,45 @@
 
 ## Context
 
-Three import paths read scans with local Tesseract before a model interprets the text. The owner's
-authorized three-page comparison found all six checked ownership shares with a small image-capable
-model and none with corrected Tesseract. It motivates the change; it is no quality guarantee. The
-earlier proposal of a separate OCR service is superseded.
+Three import paths read scans with local Tesseract before a model interprets the text. The owner's three-page
+comparison found all six checked ownership shares with a small image-capable model and none with corrected
+Tesseract: a motivation, no quality guarantee. A separate OCR service is superseded.
 
 ## Decision
 
-- **Two model roles, one provider.** An organization chooses a document reading model
-  ("Dokumente einlesen", `document_model`) and an extraction model ("Informationen extrahieren",
-  `model`, also used for property questions). Both use the organization's one provider, endpoint,
-  timeout and encrypted key; there is no second credential and no third selector. One model may fill
-  both roles.
-- **Nothing is chosen for the organization.** `document_model` is NULL after the upgrade and never
-  defaulted from the extraction model or a price list. Declaration import needs both; without the
-  reading model it refuses to run and says so in German. Uploaded originals stay available.
-- **Model reading replaces Tesseract path by path.** A path that reads with a model has no Tesseract
-  step and no fallback: declaration import (#499), invoices (#500), inbox (#501), then removal of the
-  runtime (#502).
-- **Structured e-invoices stay deterministic.** XRechnung and ZUGFeRD data, also embedded in a PDF, use
-  the existing parser without a model call.
-- **No fallback.** A model that cannot take image input, a refusal, a malformed answer or a failed call
-  ends the reading of that page with a typed error and the usage the provider reported. The application
-  never switches model or provider and never falls back to Tesseract.
-- **Output stays provisional.** A transcript copies what is visible; it is not a fact. Extraction,
+- **Two model roles, one provider.** An organization chooses a document reading model („Dokumente
+  einlesen“, `document_model`) and an extraction model („Informationen extrahieren“, `model`, also
+  used for property questions). Both use the organization's one provider, endpoint, timeout and
+  encrypted key; no second credential, no third selector. One model may fill both roles.
+- **Nothing is chosen for the organization.** `document_model` is NULL after the upgrade, never defaulted
+  from the extraction model or a price list. Declaration import needs both and says in German what is
+  missing; uploaded originals stay available.
+- **Model reading replaces Tesseract path by path** and keeps no fallback: declaration import (#499, done),
+  invoices (#500), inbox (#501), then removal of the runtime (#502). Structured e-invoices stay deterministic.
+- **No fallback, provisional output.** A model that cannot take the image, a refusal, a malformed answer
+  or a failed call ends the job with a typed code and the usage reported; the application never switches
+  model or provider and never falls back to Tesseract. A transcript copies what is visible and is no fact;
   review, approval and source evidence keep their guards.
 
 ## The reading stage behind the provider boundary
 
-`DocumentReadingProvider.read_page` (`declarations/provider.py`) takes one rendered PNG page (bytes,
-media type, source identity, original page number) and the reading model id. It returns a
-`PageTranscript` (ordered `TEXT`, `TABLE` and `UNREADABLE` blocks, tables as rows of cells, the inline
-marker `[unreadable]`) with the `ProviderUsage` of the extraction passes. The OpenAI, compatible and
-Anthropic transports of ADR 0014 implement it on the same bounded request path;
-`create_reading_provider` binds one to `document_model`. One page is one request: the per-call output
-ceiling is far below the transcript of a stack of dense pages, a malformed page costs one page, and a
-failed page is read again alone. Prompt (`reading-v1`) and schema (`reading-1`) are versioned
-constants; the caller, never the model, assigns the page identity. A model that cannot take the image
-is recognised by the HTTP status of the rejected request (`PROVIDER_IMAGE_INPUT_UNSUPPORTED`), never
-by message text. `FakeDocumentReadingProvider` records which model was asked for which page.
+`DocumentReadingProvider.read_page` takes one rendered PNG page (source identity, page number) and the
+reading model and returns a `PageTranscript` (ordered `TEXT`, `TABLE` and `UNREADABLE` blocks, the marker
+`[unreadable]`) with the call's `ProviderUsage`; the OpenAI, compatible and Anthropic transports implement it.
+One page is one request; an unsupported image is recognised by the HTTP status of the rejected request, never
+by message text. Prompt `reading-v1`, schema `reading-1`; extraction prompt `declaration-v4`. Routing is
+unchanged, as the owner decision names none: pages with fewer than `declaration_text_min_chars` characters in
+the text layer go to the model, the others keep the deterministic text path.
 
-Page routing: the owner decision of #65 says that the reading model reads unstructured files but names no
-rule for which pages go to it, so the declaration import keeps the routing it had: exactly the pages
-that went to Tesseract before, those with fewer than `declaration_text_min_chars` characters in their embedded
-text layer, go to the reading model; a page with a usable text layer keeps the deterministic text path.
+## State as implemented (#499)
 
-Consequences: organizations with import enabled choose a reading model before their next import;
-reading costs a model call per page, and unknown prices stay visibly unpriced and unenforced.
+- Each call is reserved before and metered in one ledger by the model that made it (`read_page` for reading);
+  both stages count against the import and monthly budgets. Usage of failed calls stays; an unknown usage
+  keeps its reservation. A finished page transcript is saved with its settled usage
+  (`declaration_page_reading`, 0196); a resumed job reads and pays for no page twice and keeps the two
+  model identities of its first run.
+- The cost view lists the stages apart, then the total. Failure codes have German texts on the import
+  screen (original kept, nothing applied, what to do). The browser twin chooses two models in the
+  settings and runs offline providers; no live provider run belongs to this ADR.
+- Consequences: organizations with import enabled choose a reading model before their next import;
+  reading costs a model call per page; unknown prices stay visibly unpriced and unenforced.

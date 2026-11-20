@@ -2662,3 +2662,23 @@ An organization without switch, key or extraction model keeps
 `DECLARATION_IMPORT_DISABLED`. Uploaded originals and their listing stay available;
 property questions need only the extraction model. No restart or `.env` change is needed.
 
+**What the declaration worker needs.** Reading a scan is a model request of the existing
+`declaration-worker`, in the same process, with the same egress to the organization's provider
+and the same memory and CPU limits: no new service, port or volume. The worker renders one page at
+a time with Poppler (`pdftoppm`) and checks PDFs with qpdf; **it no longer needs Tesseract or the
+German language pack**, and its healthcheck (`python -m app.workers.declaration_import
+--healthcheck`) no longer asks for them (it checks qpdf, `pdftoppm`, the database role and the
+document storage). The image keeps Tesseract for the invoice and inbox workers until their paths
+read with a model too (#500, #501, #502). The reading model must accept image input: otherwise
+the job ends with `PROVIDER_IMAGE_INPUT_UNSUPPORTED` and the import screen says so in German;
+the original is kept and nothing is applied. Reading and extraction are both metered and count
+together against the per-import limits (`HV_DECLARATION_MAX_*`, unchanged) and the organization's
+monthly limit. The `HV_DECLARATION_OCR_*` keys keep their names and now bound the page rendering.
+
+**Version defaults.** The extraction prompt version is `declaration-v4` and the harness version
+`4` (compatible endpoints `8`, Anthropic fingerprint `v5`); the reading prompt is `reading-v1`
+with schema `reading-1`. `docker-compose.prod.yml` and `.env.example` carry the new defaults.
+A protected env file that still pins `HV_DECLARATION_PROMPT_VERSION=declaration-v3` or
+`HV_DECLARATION_HARNESS_VERSION=3` keeps recording the old labels on new runs: remove the pins
+when upgrading.
+

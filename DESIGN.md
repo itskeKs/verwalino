@@ -190,7 +190,9 @@ usage only in hosted mode. Selfhost renders no quota, loading or error card and
 never requests the aggregate. Aggregate
 usage is available to every authenticated member, independently of source grants.
 The declaration-import failure `ORGANIZATION_AI_BUDGET_EXCEEDED` uses “Das
-monatliche KI-Budget ist ausgeschöpft. Bitte wenden Sie sich an den Betreiber.”
+monatliche KI-Budget ist ausgeschöpft. Bitte wenden Sie sich an den Betreiber.” followed by
+the sentence every import failure carries (see “Declaration import: consumption per stage and
+failure explanations”).
 Quota refusals carry a stable `detail.code` and German `detail.message`. The shared
 API client reads the code for JSON and multipart refusals, exposes it on `ApiError`,
 and preserves the German message in existing error surfaces.
@@ -2328,6 +2330,37 @@ the administrator's organization card after this change.
 | Model roles after („Dokumente einlesen“, „Informationen extrahieren“) | [view](docs/assets/design/ai-settings/models-after-1280.png) | [view](docs/assets/design/ai-settings/models-after-360.png) |
 | Import on, reading model not chosen | [view](docs/assets/design/ai-settings/models-missing-reading-model-1280.png) | [view](docs/assets/design/ai-settings/models-missing-reading-model-360.png) |
 | Import screen without a reading model | [view](docs/assets/design/ai-settings/models-import-refused-1280.png) | [view](docs/assets/design/ai-settings/models-import-refused-360.png) |
+
+### Declaration import: consumption per stage and failure explanations
+
+The card „Verbrauch je Importlauf“ (import screen and review screen, a kit `card` with an `h2`)
+lists per run a `role="group"` block for each stage that made a call, in this order: „Dokumente
+einlesen“ (the reading model) and „Informationen extrahieren“ (the extraction model), each with
+the model name (wrapping), its tokens and its cost; then a „Gesamt“ block with the run total and
+the runtime. Every block is a definition list that is one column up to 640 px and two columns
+above, with the usage vocabulary of the total: „Eingabetoken“/„Ausgabetoken“ for provider-reported
+usage; „Reservierte …“ while usage is unknown, with the sentence that the Reservierung stays in
+the budget; „Gemeldete …“ and „Konservativ erfasste …“ together when only part was reported;
+„Tokenverbrauch unbekannt“ when nothing is known. The cost reads „Geschätzte Kosten“ for reported
+usage and „Konservative Kostenschätzung“ otherwise, in USD with at most six decimals, or „kein
+Preis bekannt“ for a model without a price, never 0,00 USD. A stage that made no call has no block
+(a text-layer document shows no „Dokumente einlesen“; a run that failed in reading shows no
+„Informationen extrahieren“), and a failed run keeps what its calls consumed. A run without any
+stage keeps the model name and the total as before. Nothing scrolls horizontally at 360 px.
+
+The import screen's „4. Ergebnis“ card explains every failure code in German, in one
+`role="alert"` paragraph under „Verarbeitung fehlgeschlagen.“: what happened, that the uploaded
+original is kept and nothing was applied (“Das hochgeladene Dokument bleibt erhalten; es wurde
+nichts übernommen.”), and what to do (choose another model in Einstellungen, import less, contact
+the operator). The map lives in `pages/DeclarationImportPage.tsx` (`FAILURE_MESSAGES`); a code
+without a text shows only “Der Import kann nicht fortgesetzt werden.”, never the code or English.
+
+| Synthetic import on the test database | Desktop (1280 px) | Mobile (360 px) |
+| --- | --- | --- |
+| Cost view before (one model, one total) | [view](docs/assets/design/declaration-cost/cost-before-1280.png) | [view](docs/assets/design/declaration-cost/cost-before-360.png) |
+| Cost view after (reading, extraction, total) | [view](docs/assets/design/declaration-cost/cost-after-1280.png) | [view](docs/assets/design/declaration-cost/cost-after-360.png) |
+| Failure before (raw code) | [view](docs/assets/design/declaration-cost/failure-before-1280.png) | [view](docs/assets/design/declaration-cost/failure-before-360.png) |
+| Failure after (reading model cannot take images) | [view](docs/assets/design/declaration-cost/failure-after-1280.png) | [view](docs/assets/design/declaration-cost/failure-after-360.png) |
 
 
 Provider selection uses the same settings card and native select. API-Basis-URL appears

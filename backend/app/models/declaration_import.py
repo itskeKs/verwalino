@@ -249,8 +249,8 @@ class DeclarationExtractionRun(Base, UUIDPrimaryKeyMixin, TimestampMixin):
 class DeclarationPageReading(Base, UUIDPrimaryKeyMixin):
     """The transcript of one page the reading model finished: working data of a running import.
 
-    It lets a resumed job skip a page it already paid for. Written and read by the worker only, deleted when
-    the import reaches review (migration 0196).
+    It lets a resumed job skip a page it already paid for. Written and read by the worker only; it stays with the
+    import like its original (removed with the import and with its organization, not exported; migration 0196).
     """
 
     __tablename__ = "declaration_page_reading"

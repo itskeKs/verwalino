@@ -100,7 +100,12 @@ The manifest lists inaccessible entities and excluded column names. It never
 reports hidden row IDs or hidden counts. Password hashes, authentication/reset
 tokens, worker lease tokens and session generations are excluded, including
 credential fields in structured audit payloads. Global authentication/setup/signup
-and throttle tables are outside the export. Special levy allocation rows that a later change of
+and throttle tables are outside the export. So are the organization's AI settings (the key and
+the two model choices, „Dokumente einlesen“ and „Informationen extrahieren“) and the page
+transcripts of declaration imports (`declaration_page_reading`): the transcripts are working data
+copied from originals that the archive does contain, and after an import an administrator
+chooses the models again. The model names of finished runs stay with the run
+(`declaration_extraction_run.model_name`, `document_model_name`). Special levy allocation rows that a later change of
 ownership superseded are exported with their markers (`special_levy_allocation_supersession`), and an
 import restores both, so owner accounts, dunning and the settlement count the same rows after a
 restore: only rows without a marker count. The audit entry `special_levy.allocation_moved` is exported

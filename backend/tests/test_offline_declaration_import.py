@@ -49,8 +49,10 @@ async def test_the_command_line_entry_processes_the_queued_import_with_the_model
         cwd=ROOT / "backend", capture_output=True, text=True, timeout=240, check=False,
     )
 
-    assert done.returncode == 0, done.stdout + done.stderr
     lines = done.stdout.splitlines()
+    # Other tests of the session may have left queued imports of this organization; they are processed too.
+    states = [line.rsplit(": ", 1)[1] for line in lines if line.startswith("import ")]
+    assert done.returncode == (0 if set(states) == {"NEEDS_REVIEW"} else 1), done.stdout + done.stderr
     assert f"import {import_id}: NEEDS_REVIEW" in lines
     assert "  models from the saved settings: reading saved-reading-model, extraction saved-extraction-model" in lines
     # One page is read by the reading model; every extraction call names the extraction model and that page.
@@ -60,7 +62,7 @@ async def test_the_command_line_entry_processes_the_queued_import_with_the_model
     assert any(f" call=inventory pages={document_id}:1" in line for line in extraction)
     assert "saved-reading-model" not in "".join(extraction) and "saved-extraction-model" not in "".join(
         line for line in lines if line.startswith("  reading "))
-    assert lines[-1] == "worker results: PROCESSED, IDLE"
+    assert lines[-1] == "worker results: " + ", ".join(["PROCESSED"] * len(states) + ["IDLE"])
     state = await client_a_admin.get(f"/api/declaration-imports/{import_id}")
     assert state.json()["status"] == "NEEDS_REVIEW"
     assert [(stage["stage"], stage["model"]) for stage in state.json()["runs"][0]["stages"]] == [
